@@ -1,0 +1,49 @@
+{
+  "name": "swarm-coder",
+  "version": "0.0.1",
+  "description": "swarm-compatible coding agent",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "swarm-coder": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "swarm",
+    "agents",
+    "claude",
+    "coding"
+  ],
+  "author": "Alex Ngai <alexander.s.ngai@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alexngai/swarm-coder.git"
+  },
+  "bugs": {
+    "url": "https://github.com/alexngai/swarm-coder/issues"
+  },
+  "homepage": "https://github.com/alexngai/swarm-coder",
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "typescript": "^5.6.3"
+  }
+}
