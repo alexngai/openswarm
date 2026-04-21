@@ -13,6 +13,7 @@ Early design capture for swarm-coder — a TypeScript agent harness built around
 - [06-open-questions.md](./06-open-questions.md) — unresolved decisions, provisional leans, and decision log
 - [07-implementation-plan.md](./07-implementation-plan.md) — tiered milestones (M0 → M5+) with exit criteria
 - [08-m0-plan.md](./08-m0-plan.md) — M0 runtime core: phased plan with acceptance criteria, risks, verification
+- [09-m1-plan.md](./09-m1-plan.md) — M1 minimum viable swarm: subprocess workers + IPC + nested spawning + orchestrator CLI
 
 ## Research
 
