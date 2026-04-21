@@ -102,8 +102,16 @@ export class ClaudeCodeSource implements PluginSource {
   private _manifestArray: readonly PluginManifest[] | null = null;
 
   constructor(opts?: ClaudeCodeSourceOptions) {
+    // Priority: explicit opts.pluginsDir > SWARM_CODER_PLUGINS_DIR env > default.
+    // The env override is for testing / smoke scripts only — not a production
+    // config surface. It lets integration tests point at fixture plugin trees
+    // without touching the user's real `~/.claude/plugins`.
+    const envDir = process.env.SWARM_CODER_PLUGINS_DIR;
     this.pluginsDir =
-      opts?.pluginsDir ?? path.join(os.homedir(), ".claude", "plugins");
+      opts?.pluginsDir ??
+      (envDir !== undefined && envDir.length > 0
+        ? envDir
+        : path.join(os.homedir(), ".claude", "plugins"));
     this.enforceEntryModuleBoundary =
       opts?.enforceEntryModuleBoundary ?? true;
   }

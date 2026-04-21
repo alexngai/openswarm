@@ -15,6 +15,20 @@
 
 set -uo pipefail
 
+# --all — run every smoke script in sequence (M0 + M1 + M2, live then offline).
+# Keep this simple; bash is not where cleverness belongs.
+if [[ "${1:-}" == "--all" ]]; then
+  REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+  set -e
+  "$REPO_ROOT/scripts/smoke.sh"
+  "$REPO_ROOT/scripts/smoke-swarm.sh"
+  "$REPO_ROOT/scripts/smoke-repl.sh"
+  "$REPO_ROOT/scripts/smoke.sh" --offline
+  "$REPO_ROOT/scripts/smoke-swarm.sh" --offline
+  "$REPO_ROOT/scripts/smoke-repl.sh" --offline
+  exit 0
+fi
+
 OFFLINE=false
 [[ "${1:-}" == "--offline" ]] && OFFLINE=true
 

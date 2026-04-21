@@ -16,6 +16,7 @@ import { ToolDispatcher } from "../tools/dispatcher.js";
 import { buildTier0Tools } from "../tools/tier0/index.js";
 import { PermissionEngine } from "../permissions/index.js";
 import { ClaudeAgentSdkEngine } from "../engine/claude-agent-sdk.js";
+import { ScriptedTestEngine } from "../engine/test-engine.js";
 import { SessionStore } from "../session/store.js";
 import { runHeadless } from "../ui/headless.js";
 import { PluginRegistry } from "../plugins/registry.js";
@@ -129,14 +130,18 @@ function withErrorTracking(
 // ---------------------------------------------------------------------------
 
 async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
-  // 1. Validate auth.
-  const authStatus = await detectAuth();
-  if (authStatus.state === "none") {
-    process.stderr.write(
-      "error: no auth found.\n" +
-        "  Run `claude auth login` or set ANTHROPIC_API_KEY.\n",
-    );
-    return 1;
+  // 1. Validate auth. In scripted-test mode (SWARM_CODER_TEST_SCRIPT set) we
+  // skip the auth check — the scripted engine never calls the API.
+  const scriptedMode = !!process.env.SWARM_CODER_TEST_SCRIPT;
+  if (!scriptedMode) {
+    const authStatus = await detectAuth();
+    if (authStatus.state === "none") {
+      process.stderr.write(
+        "error: no auth found.\n" +
+          "  Run `claude auth login` or set ANTHROPIC_API_KEY.\n",
+      );
+      return 1;
+    }
   }
 
   // 2. Load hook config (before building the dispatcher so we can thread the
@@ -278,6 +283,28 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     });
   }
 
+  // 2d. --dump-tools: print registered tools as JSON and exit 0. Useful for
+  // smoke scripts and integration tests verifying plugin / MCP registration.
+  // Intentionally placed after all tool registrations so the dump reflects
+  // the real runtime state.
+  if (opts.dumpTools) {
+    const dumped = dispatcher.list().map((spec) => ({
+      name: spec.name,
+      description: spec.description,
+      requiredPermission: spec.requiredPermission,
+    }));
+    process.stdout.write(JSON.stringify(dumped) + "\n");
+    // Close any opened MCP clients so we exit cleanly.
+    for (const c of mcpClients) {
+      try {
+        await c.close();
+      } catch {
+        // swallow — best effort
+      }
+    }
+    return 0;
+  }
+
   // 3. Build permission engine.
   const permEngine = new PermissionEngine(opts.permissionMode);
 
@@ -302,8 +329,11 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     }
   }
 
-  // 6. Build the engine.
-  const engine = new ClaudeAgentSdkEngine();
+  // 6. Build the engine. SWARM_CODER_TEST_SCRIPT toggles the scripted engine
+  // for offline smoke / integration tests; no live API traffic.
+  const engine = scriptedMode
+    ? new ScriptedTestEngine()
+    : new ClaudeAgentSdkEngine();
 
   // 7. Build permission gate.
   const canUseTool: PermissionGate = async (toolName, input) => {
@@ -325,6 +355,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     permissionMode: opts.permissionMode,
     resumeFrom,
     hooks: hooksConfig.config,
+    ...(opts.enableWebSearch ? { enabledBuiltinTools: ["WebSearch"] } : {}),
   };
 
   // 9. Route to UI.

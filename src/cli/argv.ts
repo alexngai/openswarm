@@ -39,6 +39,17 @@ export interface CommonOpts {
   mcp: boolean;
   /** When false, hook config discovery is disabled at startup. Default: true. */
   hooks: boolean;
+  /**
+   * When true, the runtime prints the registered tool list as JSON and exits
+   * 0 without running a turn. For testing / smoke only — not advertised in
+   * --help production output. See `runPrompt` for the implementation.
+   */
+  dumpTools: boolean;
+  /**
+   * When true, enables the Anthropic SDK's built-in `WebSearch` tool (via
+   * `RunConfig.enabledBuiltinTools = ["WebSearch"]`). Default: false.
+   */
+  enableWebSearch: boolean;
 }
 
 export type ParsedArgs =
@@ -94,6 +105,8 @@ export function parseArgv(args: string[]): ParsedArgs {
   let skills = true;
   let mcp = true;
   let hooks = true;
+  let dumpTools = false;
+  let enableWebSearch = false;
 
   // Defaults for swarm-run (consumed when subcommand === "swarm").
   let swarmConcurrency = 3;
@@ -183,6 +196,18 @@ export function parseArgv(args: string[]): ParsedArgs {
 
     if (tok === "--hooks") {
       hooks = true;
+      i++;
+      continue;
+    }
+
+    if (tok === "--dump-tools") {
+      dumpTools = true;
+      i++;
+      continue;
+    }
+
+    if (tok === "--enable-web-search") {
+      enableWebSearch = true;
       i++;
       continue;
     }
@@ -328,6 +353,8 @@ export function parseArgv(args: string[]): ParsedArgs {
     skills,
     mcp,
     hooks,
+    dumpTools,
+    enableWebSearch,
   };
 
   switch (subcommand) {
