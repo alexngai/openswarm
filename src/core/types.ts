@@ -139,4 +139,20 @@ export type NormalizedEvent =
         readonly exitCode?: number;
         readonly outcome?: "success" | "error" | "cancelled";
       };
+    }
+  /**
+   * Emitted when the SDK fires a compact_boundary system message.
+   * The translator emits a `begin` event immediately followed by an `end`
+   * event (the SDK emits a single boundary message per compaction, not two).
+   *
+   * SDK shape: SDKCompactBoundaryMessage — type "system", subtype "compact_boundary",
+   * compact_metadata: { trigger: "manual" | "auto", pre_tokens, post_tokens?, ... }
+   */
+  | {
+      readonly type: "compaction";
+      readonly payload: {
+        readonly phase: "begin" | "end";
+        readonly trigger: "auto" | "manual";
+        readonly compact_metadata?: Record<string, unknown>;
+      };
     };

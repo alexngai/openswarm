@@ -1,9 +1,18 @@
 /**
  * /compact — hint the engine to compact the conversation.
  *
- * Phase 3 only surfaces the engine-hint prompt; Phase 5 wires the
- * Compactor observer. The REPL will inject this prompt as the next
- * user turn, nudging the model to summarize.
+ * Round-trip flow (Phase 5):
+ *   1. User types `/compact` → this command returns `{ kind: "engine-hint", prompt: HINT }`.
+ *   2. `applySlashResult` in app.tsx dispatches `{ type: "submit" }` and calls
+ *      `onSubmit(HINT)`, injecting the hint as the next user turn.
+ *   3. The engine receives the hint prompt and the SDK internally triggers compaction.
+ *   4. The SDK emits an `SDKCompactBoundaryMessage` (type "system", subtype
+ *      "compact_boundary") with `compact_metadata.trigger === "manual"`.
+ *   5. `translateSdkMessage` in event-translator.ts maps this to two `compaction`
+ *      NormalizedEvents: `{ phase: "begin" }` then `{ phase: "end" }`.
+ *   6. `translateEngineEvent` in app.tsx maps begin → `compact-begin` reducer event
+ *      (+ system transcript entry) and end → `compact-end` reducer event.
+ *   7. The REPL reducer drives: streaming → compact (on begin) → streaming (on end).
  */
 
 import type { SlashCommand } from "../index.js";

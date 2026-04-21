@@ -854,3 +854,191 @@ describe("Scenario 9: structuredOutput", () => {
     expect((stop as { structuredOutput?: unknown }).structuredOutput).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Scenario 10: getCumulativeUsage accumulates across runs
+// ---------------------------------------------------------------------------
+
+describe("Scenario 10: getCumulativeUsage", () => {
+  const makeResultMsg = (input: number, output: number, sessionId = "s10") =>
+    sdkMsg({
+      type: "result",
+      subtype: "success",
+      stop_reason: "end_turn",
+      result: "ok",
+      usage: { input_tokens: input, output_tokens: output },
+      duration_ms: 100,
+      duration_api_ms: 80,
+      is_error: false,
+      num_turns: 1,
+      total_cost_usd: 0,
+      modelUsage: {},
+      permission_denials: [],
+      session_id: sessionId,
+      uuid: "u-result",
+    });
+
+  it("returns zero usage before any runs", () => {
+    const engine = new ClaudeAgentSdkEngine();
+    expect(engine.getCumulativeUsage()).toEqual({ inputTokens: 0, outputTokens: 0 });
+  });
+
+  it("accumulates usage across two consecutive runs", async () => {
+    const engine = new ClaudeAgentSdkEngine();
+
+    // First run
+    mockQueryMessages.length = 0;
+    mockQueryMessages.push(makeResultMsg(100, 50, "s10a"));
+    for await (const _ of engine.run(makeConfig())) { /* consume */ }
+
+    // Second run
+    mockQueryMessages.length = 0;
+    mockQueryMessages.push(makeResultMsg(200, 75, "s10b"));
+    for await (const _ of engine.run(makeConfig())) { /* consume */ }
+
+    const usage = engine.getCumulativeUsage();
+    expect(usage.inputTokens).toBe(300);
+    expect(usage.outputTokens).toBe(125);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 11: compact_boundary → compaction events + health probe
+// ---------------------------------------------------------------------------
+
+describe("Scenario 11: compact_boundary events", () => {
+  beforeEach(() => {
+    mockQueryMessages.length = 0;
+    mockQueryMessages.push(
+      sdkMsg({
+        type: "system",
+        subtype: "compact_boundary",
+        compact_metadata: { trigger: "auto", pre_tokens: 150000 },
+        session_id: "s11",
+        uuid: "u-compact",
+      }),
+      sdkMsg({
+        type: "result",
+        subtype: "success",
+        stop_reason: "end_turn",
+        result: "ok",
+        usage: { input_tokens: 5, output_tokens: 5 },
+        duration_ms: 50,
+        duration_api_ms: 40,
+        is_error: false,
+        num_turns: 1,
+        total_cost_usd: 0,
+        modelUsage: {},
+        permission_denials: [],
+        session_id: "s11",
+        uuid: "u-result",
+      }),
+    );
+  });
+
+  it("emits compaction begin then end events from compact_boundary", async () => {
+    const events = await collectEvents(makeConfig());
+    const compactionEvents = events.filter((e) => e.type === "compaction");
+    expect(compactionEvents).toHaveLength(2);
+    expect(compactionEvents[0]).toMatchObject({
+      type: "compaction",
+      payload: { phase: "begin", trigger: "auto" },
+    });
+    expect(compactionEvents[1]).toMatchObject({
+      type: "compaction",
+      payload: { phase: "end", trigger: "auto" },
+    });
+  });
+
+  it("emits error event when dispatcher health probe fails after compaction end", async () => {
+    const mockDispatcher = {
+      dispatch: vi.fn().mockRejectedValue(new Error("transport closed")),
+    };
+
+    const events = await collectEvents(
+      makeConfig({ dispatcher: mockDispatcher as unknown as import("../tools/dispatcher.js").ToolDispatcher }),
+    );
+
+    expect(mockDispatcher.dispatch).toHaveBeenCalledWith(
+      "glob",
+      { pattern: "*" },
+      expect.objectContaining({ cwd: expect.any(String) }),
+    );
+
+    const errorEvent = events.find(
+      (e) =>
+        e.type === "error" &&
+        (e as { error: { code: string } }).error.code === "transport" &&
+        (e as { error: { message: string } }).error.message.includes("health probe"),
+    );
+    expect(errorEvent).toBeDefined();
+  });
+
+  it("does NOT invoke health probe when dispatcher is absent", async () => {
+    // No dispatcher — should complete without error events from health probe.
+    const events = await collectEvents(makeConfig());
+    const probeErrors = events.filter(
+      (e) =>
+        e.type === "error" &&
+        (e as { error: { message: string } }).error.message.includes("health probe"),
+    );
+    expect(probeErrors).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 12: /resume threading via RunConfig.resumeFrom
+// ---------------------------------------------------------------------------
+
+describe("Scenario 12: resume threading", () => {
+  beforeEach(() => {
+    mockQueryMessages.length = 0;
+    mockQueryMessages.push(
+      sdkMsg({
+        type: "result",
+        subtype: "success",
+        stop_reason: "end_turn",
+        result: "resumed",
+        usage: { input_tokens: 5, output_tokens: 5 },
+        duration_ms: 50,
+        duration_api_ms: 40,
+        is_error: false,
+        num_turns: 1,
+        total_cost_usd: 0,
+        modelUsage: {},
+        permission_denials: [],
+        session_id: "resume-session",
+        uuid: "u1",
+      }),
+    );
+  });
+
+  it("passes resumeFrom.data.sessionId to query options.resume", async () => {
+    const { query: mockQuery } = await import("@anthropic-ai/claude-agent-sdk");
+
+    const config = makeConfig({
+      resumeFrom: {
+        engineId: "claude-agent-sdk",
+        data: { sessionId: "resume-session" },
+      },
+    });
+
+    await collectEvents(config);
+
+    const callArgs = (mockQuery as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as {
+      options?: { resume?: string };
+    };
+    expect(callArgs?.options?.resume).toBe("resume-session");
+  });
+
+  it("passes undefined to query options.resume when no resumeFrom", async () => {
+    const { query: mockQuery } = await import("@anthropic-ai/claude-agent-sdk");
+
+    await collectEvents(makeConfig());
+
+    const callArgs = (mockQuery as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as {
+      options?: { resume?: string };
+    };
+    expect(callArgs?.options?.resume).toBeUndefined();
+  });
+});

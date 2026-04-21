@@ -48,6 +48,11 @@ export interface AppProps {
   readonly onExit?: () => void;
   /** Called when the user submits a non-slash prompt — triggers the next engine turn. */
   readonly onSubmit?: (line: string) => void;
+  /**
+   * Called when /resume emits a session-id reducer event so the outer caller
+   * can wire RunConfig.resumeFrom for the next turn.
+   */
+  readonly onSessionId?: (sessionId: string) => void;
 }
 
 export function App(props: AppProps): React.ReactElement {
@@ -115,7 +120,7 @@ export function App(props: AppProps): React.ReactElement {
           registry,
           props.slashDeps ?? {},
         );
-        applySlashResult(result, dispatch, ink, props.onSubmit);
+        applySlashResult(result, dispatch, ink, props.onSubmit, props.onSessionId);
       })();
       return;
     }
@@ -195,6 +200,21 @@ export function translateEngineEvent(evt: NormalizedEvent): ReplEvent[] {
           text: `hook ${evt.payload.hookName} (${evt.payload.event}) ${evt.payload.subtype}`,
         },
       ];
+    case "compaction": {
+      const actions: ReplEvent[] = [];
+      if (evt.payload.phase === "begin") {
+        // Add a transcript entry so the user sees that compaction occurred.
+        actions.push({
+          type: "system-entry",
+          id: `compaction-${Date.now()}`,
+          text: `[compaction: ${evt.payload.trigger}]`,
+        });
+        actions.push({ type: "compact-begin" });
+      } else {
+        actions.push({ type: "compact-end" });
+      }
+      return actions;
+    }
   }
 }
 
@@ -213,6 +233,7 @@ export function applySlashResult(
   dispatch: (e: ReplEvent) => void,
   ink: ReturnType<typeof useApp>,
   onSubmit?: (line: string) => void,
+  onSessionId?: (sessionId: string) => void,
 ): void {
   slashSeq += 1;
   switch (result.kind) {
@@ -235,6 +256,10 @@ export function applySlashResult(
       // /exit result surfaces as a shutdown reducer event — unmount ink.
       if (result.event.type === "shutdown") {
         setTimeout(() => ink.exit(), 20);
+      }
+      // /resume emits session-id — notify outer caller so it can wire resumeFrom.
+      if (result.event.type === "session-id") {
+        onSessionId?.(result.event.sessionId);
       }
       return;
     case "engine-hint":

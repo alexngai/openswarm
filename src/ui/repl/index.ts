@@ -51,6 +51,12 @@ export interface RunReplConfig {
    * registry via `buildDefaultRegistry()`.
    */
   readonly slashDeps?: BuildDefaultRegistryDeps;
+  /**
+   * Called when the REPL reducer receives a `session-id` event (emitted by
+   * `/resume <sessionId>`). The outer caller uses this to set
+   * `RunConfig.resumeFrom` for the next turn.
+   */
+  readonly onSessionId?: (sessionId: string) => void;
 }
 
 /**
@@ -127,6 +133,7 @@ export async function runRepl(config: RunReplConfig): Promise<void> {
       registry,
       slashDeps: config.slashDeps,
       getTokens: config.getTokens,
+      onSessionId: config.onSessionId,
       onExit: () => {
         closeQueue();
         unmountResolve?.();

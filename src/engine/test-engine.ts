@@ -4,7 +4,7 @@ import type {
   EngineCapabilities,
   RunConfig,
 } from "./index.js";
-import type { NormalizedEvent } from "../core/types.js";
+import type { NormalizedEvent, Usage } from "../core/types.js";
 
 /** One entry in a scripted fixture. */
 export interface ScriptedEvent {
@@ -38,6 +38,7 @@ export class ScriptedTestEngine implements AgentEngine {
   };
 
   private readonly script: readonly ScriptedEvent[];
+  private _cumulativeUsage: Usage = { inputTokens: 0, outputTokens: 0 };
 
   constructor(opts: ScriptedTestEngineOptions = {}) {
     if (opts.script) {
@@ -54,12 +55,38 @@ export class ScriptedTestEngine implements AgentEngine {
     }
   }
 
+  getCumulativeUsage(): Usage {
+    return this._cumulativeUsage;
+  }
+
   async *run(_config: RunConfig): AsyncIterable<NormalizedEvent> {
     for (const entry of this.script) {
       if (entry.delayMs && entry.delayMs > 0) {
         await new Promise((r) => setTimeout(r, entry.delayMs));
       }
-      yield entry.event;
+      const event = entry.event;
+      // Accumulate usage from message_stop events.
+      if (event.type === "message_stop") {
+        const u = event.usage;
+        const prev = this._cumulativeUsage;
+        this._cumulativeUsage = {
+          inputTokens: prev.inputTokens + u.inputTokens,
+          outputTokens: prev.outputTokens + u.outputTokens,
+          ...((prev.cacheReadInputTokens ?? 0) + (u.cacheReadInputTokens ?? 0) > 0
+            ? {
+                cacheReadInputTokens:
+                  (prev.cacheReadInputTokens ?? 0) + (u.cacheReadInputTokens ?? 0),
+              }
+            : {}),
+          ...((prev.cacheWriteInputTokens ?? 0) + (u.cacheWriteInputTokens ?? 0) > 0
+            ? {
+                cacheWriteInputTokens:
+                  (prev.cacheWriteInputTokens ?? 0) + (u.cacheWriteInputTokens ?? 0),
+              }
+            : {}),
+        };
+      }
+      yield event;
     }
   }
 }

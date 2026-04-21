@@ -293,8 +293,41 @@ function handleHookResponse(msg: SDKHookResponseMessage): NormalizedEvent {
 // Public API
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Compact boundary handler
+// ---------------------------------------------------------------------------
+
 /**
- * Translate one SDKMessage into a NormalizedEvent (or null to discard).
+ * Translate a compact_boundary system message into a begin + end pair.
+ *
+ * The SDK emits one `compact_boundary` message per compaction. We emit two
+ * NormalizedEvents (begin then end) so the REPL reducer can transition
+ * streaming → compact → streaming without requiring a second SDK message.
+ */
+function handleCompactBoundary(msg: {
+  compact_metadata: { trigger: "auto" | "manual"; [k: string]: unknown };
+}): readonly NormalizedEvent[] {
+  const { trigger, ...rest } = msg.compact_metadata;
+  const metadata: Record<string, unknown> = rest;
+  return [
+    {
+      type: "compaction",
+      payload: { phase: "begin", trigger, compact_metadata: metadata },
+    },
+    {
+      type: "compaction",
+      payload: { phase: "end", trigger, compact_metadata: metadata },
+    },
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/**
+ * Translate one SDKMessage into a NormalizedEvent, an array of events
+ * (e.g. compact_boundary emits begin + end), or null to discard.
  *
  * @param msg   The raw SDK message.
  * @param state Mutable translator state (call makeTranslatorState() once per run).
@@ -302,7 +335,7 @@ function handleHookResponse(msg: SDKHookResponseMessage): NormalizedEvent {
 export function translateSdkMessage(
   msg: SDKMessage,
   state: TranslatorState,
-): NormalizedEvent | null {
+): NormalizedEvent | readonly NormalizedEvent[] | null {
   switch (msg.type) {
     case "stream_event":
       return handleStreamEvent(msg as SDKPartialAssistantMessage, state);
@@ -332,6 +365,15 @@ export function translateSdkMessage(
       }
       if (sys.subtype === "hook_response") {
         return handleHookResponse(msg as unknown as SDKHookResponseMessage);
+      }
+      // compact_boundary: SDK emits a single message per compaction. We emit
+      // begin + end so the REPL reducer can drive streaming → compact → streaming.
+      if (sys.subtype === "compact_boundary") {
+        return handleCompactBoundary(
+          msg as unknown as {
+            compact_metadata: { trigger: "auto" | "manual"; [k: string]: unknown };
+          },
+        );
       }
       return null;
     }

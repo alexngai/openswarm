@@ -28,8 +28,10 @@ import type { AuthSource } from "../auth/index.js";
 import type {
   NormalizedEvent,
   PermissionMode,
+  Usage,
 } from "../core/types.js";
 import type { ToolImpl } from "../tools/types.js";
+import type { ToolDispatcher } from "../tools/dispatcher.js";
 
 // ---------------------------------------------------------------------------
 // Engine
@@ -53,6 +55,13 @@ export interface AgentEngine {
    * the abort signal fires, or `maxTurns` is exceeded.
    */
   run(config: RunConfig): AsyncIterable<NormalizedEvent>;
+
+  /**
+   * Return the cumulative token usage across all `run()` calls since this
+   * engine instance was created. Returns zero-valued Usage when no runs have
+   * completed yet.
+   */
+  getCumulativeUsage(): Usage;
 }
 
 // ---------------------------------------------------------------------------
@@ -107,6 +116,13 @@ export interface RunConfig {
   readonly resumeFrom?: SessionSnapshot;
 
   readonly abort?: AbortSignal;
+
+  /**
+   * Optional tool dispatcher. When present, the engine may invoke it for
+   * post-compaction health probes (Phase 5). Swarm subprocess runs that do
+   * not own a dispatcher omit this field.
+   */
+  readonly dispatcher?: ToolDispatcher;
 
   /**
    * Built-in SDK tools to allowlist. When present, these tool names are

@@ -201,3 +201,74 @@ describe("ScriptedTestEngine — delayMs", () => {
     expect(elapsed).toBeLessThan(100);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Test 4: getCumulativeUsage accumulates across runs
+// ---------------------------------------------------------------------------
+
+describe("ScriptedTestEngine — getCumulativeUsage", () => {
+  it("returns zero usage before any runs", () => {
+    const engine = new ScriptedTestEngine({ script: [] });
+    expect(engine.getCumulativeUsage()).toEqual({ inputTokens: 0, outputTokens: 0 });
+  });
+
+  it("accumulates usage from message_stop events across two runs", async () => {
+    const makeStop = (input: number, output: number): ScriptedEvent => ({
+      event: {
+        type: "message_stop",
+        stopReason: "end_turn",
+        usage: { inputTokens: input, outputTokens: output },
+      },
+    });
+
+    const engine = new ScriptedTestEngine({
+      script: [makeStop(100, 50), makeStop(200, 75)],
+    });
+
+    // First run — consume both stops.
+    await collectEvents(engine);
+
+    const usage = engine.getCumulativeUsage();
+    expect(usage.inputTokens).toBe(300);
+    expect(usage.outputTokens).toBe(125);
+  });
+
+  it("accumulates cache tokens when present", async () => {
+    const engine = new ScriptedTestEngine({
+      script: [
+        {
+          event: {
+            type: "message_stop",
+            stopReason: "end_turn",
+            usage: {
+              inputTokens: 10,
+              outputTokens: 5,
+              cacheReadInputTokens: 20,
+              cacheWriteInputTokens: 8,
+            },
+          },
+        },
+        {
+          event: {
+            type: "message_stop",
+            stopReason: "end_turn",
+            usage: {
+              inputTokens: 10,
+              outputTokens: 5,
+              cacheReadInputTokens: 30,
+              cacheWriteInputTokens: 4,
+            },
+          },
+        },
+      ],
+    });
+
+    await collectEvents(engine);
+
+    const usage = engine.getCumulativeUsage();
+    expect(usage.inputTokens).toBe(20);
+    expect(usage.outputTokens).toBe(10);
+    expect(usage.cacheReadInputTokens).toBe(50);
+    expect(usage.cacheWriteInputTokens).toBe(12);
+  });
+});

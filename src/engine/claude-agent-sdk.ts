@@ -79,6 +79,15 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
     maxOutputTokens: 64_000,
   };
 
+  private _cumulativeUsage: import("../core/types.js").Usage = {
+    inputTokens: 0,
+    outputTokens: 0,
+  };
+
+  getCumulativeUsage(): import("../core/types.js").Usage {
+    return this._cumulativeUsage;
+  }
+
   async *run(config: RunConfig): AsyncIterable<NormalizedEvent> {
     // 1. Build in-process MCP server wrapping our ToolImpls.
     const mcpTools = config.tools.map((toolImpl) => {
@@ -250,12 +259,42 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
 
     try {
       for await (const msg of response) {
-        const event = translateSdkMessage(msg, state);
-        if (event != null) {
+        const result = translateSdkMessage(msg, state);
+        if (result == null) continue;
+
+        // translateSdkMessage may return a single event or an array (compact_boundary → begin+end).
+        const events: readonly NormalizedEvent[] = Array.isArray(result)
+          ? (result as readonly NormalizedEvent[])
+          : [result as NormalizedEvent];
+
+        for (const event of events) {
+          // Accumulate cumulative usage at each message_stop.
+          if (event.type === "message_stop") {
+            const u = event.usage;
+            const prev = this._cumulativeUsage;
+            this._cumulativeUsage = {
+              inputTokens: prev.inputTokens + u.inputTokens,
+              outputTokens: prev.outputTokens + u.outputTokens,
+              ...((prev.cacheReadInputTokens ?? 0) + (u.cacheReadInputTokens ?? 0) > 0
+                ? {
+                    cacheReadInputTokens:
+                      (prev.cacheReadInputTokens ?? 0) + (u.cacheReadInputTokens ?? 0),
+                  }
+                : {}),
+              ...((prev.cacheWriteInputTokens ?? 0) + (u.cacheWriteInputTokens ?? 0) > 0
+                ? {
+                    cacheWriteInputTokens:
+                      (prev.cacheWriteInputTokens ?? 0) + (u.cacheWriteInputTokens ?? 0),
+                  }
+                : {}),
+            };
+          }
+
           // Accumulate text deltas when structured output is expected.
           if (bufferingEnabled && event.type === "text_delta") {
             textBuffer += event.text;
           }
+
           // At message_stop, attempt to parse the buffered JSON.
           if (bufferingEnabled && event.type === "message_stop") {
             try {
@@ -274,7 +313,30 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
             }
             continue;
           }
+
           yield event;
+
+          // Post-compaction health probe: after compaction end, verify the
+          // tool transport is still alive by dispatching a benign glob call.
+          // Guard: only when a dispatcher is present (subprocess runs omit it).
+          if (
+            event.type === "compaction" &&
+            event.payload.phase === "end" &&
+            config.dispatcher != null
+          ) {
+            try {
+              await config.dispatcher.dispatch("glob", { pattern: "*" }, { cwd: process.cwd() });
+            } catch {
+              yield {
+                type: "error" as const,
+                error: {
+                  code: "transport" as const,
+                  message: "post-compaction tool-transport health probe failed",
+                  retryable: false,
+                },
+              };
+            }
+          }
         }
       }
     } catch (err: unknown) {

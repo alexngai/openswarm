@@ -7,6 +7,7 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { NormalizedEvent } from "../core/types.js";
 import {
   translateSdkMessage,
   makeTranslatorState,
@@ -695,7 +696,7 @@ describe("system and misc messages → null", () => {
     expect(result).toBeNull();
   });
 
-  it("returns null for system compact_boundary message", () => {
+  it("translates compact_boundary to begin+end compaction event pair", () => {
     const state = makeState();
     const result = translateSdkMessage(
       msg({
@@ -707,7 +708,49 @@ describe("system and misc messages → null", () => {
       }),
       state,
     );
-    expect(result).toBeNull();
+    expect(Array.isArray(result)).toBe(true);
+    const events = result as NormalizedEvent[];
+    expect(events).toHaveLength(2);
+    expect(events[0]).toEqual({
+      type: "compaction",
+      payload: { phase: "begin", trigger: "auto", compact_metadata: { pre_tokens: 100 } },
+    });
+    expect(events[1]).toEqual({
+      type: "compaction",
+      payload: { phase: "end", trigger: "auto", compact_metadata: { pre_tokens: 100 } },
+    });
+  });
+
+  it("translates compact_boundary with trigger manual and full metadata", () => {
+    const state = makeState();
+    const result = translateSdkMessage(
+      msg({
+        type: "system",
+        subtype: "compact_boundary",
+        compact_metadata: {
+          trigger: "manual",
+          pre_tokens: 180000,
+          post_tokens: 5000,
+          duration_ms: 1200,
+        },
+        session_id: "s1",
+        uuid: "u1",
+      }),
+      state,
+    );
+    expect(Array.isArray(result)).toBe(true);
+    const events = result as NormalizedEvent[];
+    expect(events[0]).toMatchObject({
+      type: "compaction",
+      payload: { phase: "begin", trigger: "manual" },
+    });
+    expect(events[1]).toMatchObject({
+      type: "compaction",
+      payload: { phase: "end", trigger: "manual" },
+    });
+    const meta = (events[0] as { payload: { compact_metadata?: Record<string, unknown> } }).payload.compact_metadata;
+    expect(meta?.post_tokens).toBe(5000);
+    expect(meta?.duration_ms).toBe(1200);
   });
 
   it("returns null for tool_progress message", () => {

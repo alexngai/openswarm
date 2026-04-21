@@ -199,19 +199,32 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   const parentMode = opts.permissionMode;
   let currentModel = config.model;
   let currentPermissionMode = opts.permissionMode;
+  // resumeFrom for the next turn (set by /resume, cleared after one use).
+  let pendingResumeFrom: { engineId: string; data: unknown } | undefined = resumeFrom;
   const turnAbort = new AbortController();
   await runRepl({
     engine,
-    buildRunConfig: (prompt) => ({
-      ...config,
-      prompt,
-      model: currentModel,
-      permissionMode: currentPermissionMode,
-      abort: turnAbort.signal,
-    }),
+    buildRunConfig: (prompt) => {
+      const rf = pendingResumeFrom;
+      // Resume applies once — clear after consuming.
+      pendingResumeFrom = undefined;
+      return {
+        ...config,
+        prompt,
+        model: currentModel,
+        permissionMode: currentPermissionMode,
+        abort: turnAbort.signal,
+        dispatcher,
+        resumeFrom: rf,
+      };
+    },
     initialPrompt: text,
     model: currentModel,
     permissionMode: currentPermissionMode,
+    onSessionId: (sessionId) => {
+      // /resume emits a session-id reducer event. Wire it into the next RunConfig.
+      pendingResumeFrom = { engineId: engine.id, data: { sessionId } };
+    },
     slashDeps: {
       getModel: () => currentModel,
       setModel: (m) => {
@@ -221,18 +234,14 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
       setPermissionMode: (m) => {
         currentPermissionMode = clampPermissionMode(m, parentMode);
       },
-      // Phase 5 will wire real usage via `engine.getCumulativeUsage()`.
-      getUsage: () => ({
-        inputTokens: 0,
-        outputTokens: 0,
-        cacheReadInputTokens: 0,
-        cacheWriteInputTokens: 0,
-      }),
+      getUsage: () => engine.getCumulativeUsage(),
       abort: turnAbort,
       sessionLogPath: ".swarm-coder/sessions.log",
     },
-    // Phase 5 will wire a real usage accumulator; Phase 2 stubs to 0.
-    getTokens: () => 0,
+    getTokens: () => {
+      const u = engine.getCumulativeUsage();
+      return u.inputTokens + u.outputTokens;
+    },
   });
   return 0;
 }
