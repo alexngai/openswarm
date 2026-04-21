@@ -8,7 +8,7 @@ import type {
   TaskRecord,
   TaskFilter,
 } from "./host.js";
-import type { AgentId, SessionId } from "../core/types.js";
+import type { AgentId, PermissionMode, SessionId } from "../core/types.js";
 import type { LaneEvent } from "./events.js";
 import type { ParentTransport } from "./ipc/parent-transport.js";
 import type { AgentResult } from "./host.js";
@@ -19,6 +19,7 @@ export class WorkerHost implements SwarmHost {
   constructor(
     readonly agentId: AgentId,
     readonly depth: number,
+    readonly permissionMode: PermissionMode,
     private readonly transport: ParentTransport,
     private readonly parentToolUseId?: string,
   ) {}

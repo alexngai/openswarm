@@ -46,6 +46,11 @@ export interface SwarmHost {
    * orchestrator for WorkerHost instances (via `SWARM_CODER_DEPTH` env var).
    */
   readonly depth: number;
+  /**
+   * This host's permission mode. Sub-agents cannot escalate beyond this.
+   * Set by the orchestrator; workers receive it via `SWARM_CODER_PERMISSION_MODE` env.
+   */
+  readonly permissionMode: PermissionMode;
 
   /** Emit a lane event. In standalone mode goes to local subscribers + log. */
   emit(event: Omit<LaneEvent, "ts" | "agentId">): void;

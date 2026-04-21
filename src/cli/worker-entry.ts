@@ -19,7 +19,9 @@ export async function runWorkerEntry(): Promise<number> {
   const parentToolUseId = process.env.SWARM_CODER_PARENT_TOOL_USE_ID;
 
   const transport = new ParentTransport({ agentId });
-  const host = new WorkerHost(agentId, depth, transport, parentToolUseId);
+  const permissionMode = (process.env.SWARM_CODER_PERMISSION_MODE ??
+    "workspace-write") as PermissionMode;
+  const host = new WorkerHost(agentId, depth, permissionMode, transport, parentToolUseId);
 
   // Announce readiness.
   await transport.notify("worker_ready", {
@@ -43,9 +45,6 @@ export async function runWorkerEntry(): Promise<number> {
   for (const tool of [...buildTier0Tools(), ...buildTier2Tools()]) {
     dispatcher.register(tool);
   }
-  // Permission mode from env (orchestrator sets this) or default workspace-write.
-  const permissionMode = (process.env.SWARM_CODER_PERMISSION_MODE ??
-    "workspace-write") as PermissionMode;
   const permissionEngine = new PermissionEngine(permissionMode);
   const auth = new AnthropicEnvAuth();
   const engine = new ClaudeAgentSdkEngine();

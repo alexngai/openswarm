@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import * as path from "node:path";
+import type { PermissionMode } from "../core/types.js";
 
 export interface SpawnWorkerArgs {
   readonly agentId: string;
@@ -7,6 +8,7 @@ export interface SpawnWorkerArgs {
   readonly parentPid: number;
   readonly orchestratorPid: number;
   readonly parentToolUseId?: string;
+  readonly permissionMode?: PermissionMode;
   readonly testScript?: string; // optional path to ScriptedTestEngine fixture
   readonly cwd?: string;        // default process.cwd()
   readonly nodeExecPath?: string; // default process.execPath
@@ -25,6 +27,9 @@ export function spawnWorker(args: SpawnWorkerArgs): ChildProcess {
   };
   if (args.parentToolUseId !== undefined) {
     env.SWARM_CODER_PARENT_TOOL_USE_ID = args.parentToolUseId;
+  }
+  if (args.permissionMode !== undefined) {
+    env.SWARM_CODER_PERMISSION_MODE = args.permissionMode;
   }
   if (args.testScript !== undefined) {
     env.SWARM_CODER_TEST_SCRIPT = args.testScript;

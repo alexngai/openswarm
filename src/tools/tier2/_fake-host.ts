@@ -129,6 +129,7 @@ export function makeFakeHost(opts: FakeHostOpts = {}): {
     mode: "standalone",
     agentId: "fake-agent" as AgentId,
     depth: 0,
+    permissionMode: "workspace-write",
     emit: vi.fn(),
     spawn,
     async send(_to: AgentId, _message: AgentMessage) {

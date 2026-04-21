@@ -67,7 +67,7 @@ export class Orchestrator extends EventEmitter {
 
   constructor(private readonly opts: OrchestratorOptions) {
     super();
-    this.host = opts.host ?? new StandaloneHost();
+    this.host = opts.host ?? new StandaloneHost({ permissionMode: opts.permissionMode });
     this.pool = new WorkerPool(opts.concurrency);
     // Prevent resultsOut stream errors from becoming uncaught exceptions.
     // Write errors are surfaced via the writeResult() promise rejection instead.

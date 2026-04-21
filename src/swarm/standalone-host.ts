@@ -12,17 +12,19 @@ import type {
   TaskPacket,
   TaskFilter,
 } from "./host.js";
-import type { AgentId, SessionId } from "../core/types.js";
+import type { AgentId, PermissionMode, SessionId } from "../core/types.js";
 import type { LaneEvent } from "./events.js";
 import { TaskRegistry } from "./task-registry.js";
 import { WorkerTransport } from "./ipc/worker-transport.js";
 import { spawnWorker } from "./subprocess-spawner.js";
 import { resolveMaxDepth } from "./depth-limit.js";
+import { clampPermissionMode } from "./permission-order.js";
 
 export interface StandaloneHostOptions {
   readonly registry?: TaskRegistry;
   readonly agentId?: AgentId;
   readonly maxDepth?: number;
+  readonly permissionMode?: PermissionMode;
   /** For tests: override subprocess spawn so no real child is created. */
   readonly spawnWorker?: typeof spawnWorker;
 }
@@ -31,6 +33,7 @@ export class StandaloneHost implements SwarmHost {
   readonly mode = "standalone" as const;
   readonly agentId: AgentId;
   readonly depth: number = 0; // root is always depth 0
+  readonly permissionMode: PermissionMode;
 
   private readonly registry: TaskRegistry;
   private readonly depths = new Map<AgentId, number>();
@@ -45,6 +48,7 @@ export class StandaloneHost implements SwarmHost {
     this.agentId = (opts.agentId ?? (randomUUID() as string)) as AgentId;
     this.registry = opts.registry ?? new TaskRegistry();
     this.maxDepth = opts.maxDepth ?? resolveMaxDepth();
+    this.permissionMode = opts.permissionMode ?? "workspace-write";
     this.spawnFn = opts.spawnWorker ?? spawnWorker;
     this.depths.set(this.agentId, 0);
 
@@ -124,12 +128,19 @@ export class StandaloneHost implements SwarmHost {
       },
     });
 
+    // Clamp child permission mode: child cannot escalate beyond parent's level.
+    const clampedMode = clampPermissionMode(
+      request.permissionMode,
+      this.permissionMode,
+    );
+
     const child = this.spawnFn({
       agentId: childAgentId,
       depth: childDepth,
       parentPid: process.pid,
       orchestratorPid: process.pid,
       parentToolUseId: request.parentToolUseId,
+      permissionMode: clampedMode,
     });
     const transport = new WorkerTransport(child);
 

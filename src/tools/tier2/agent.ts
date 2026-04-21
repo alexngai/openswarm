@@ -4,6 +4,7 @@ import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import type { SpawnRequest } from "../../swarm/host.js";
 import { requireHost } from "./require-host.js";
+import { clampPermissionMode } from "../../swarm/permission-order.js";
 
 const inputSchema = z.object({
   prompt: z.string(),
@@ -36,11 +37,11 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   if (!parsed.success) return { status: "error", message: parsed.error.message };
   const input: Input = parsed.data;
 
-  // Permission clamping (Phase 6 will tighten this against an authoritative
-  // parent-mode source via host). For now: use input.permissionMode if
-  // provided, else default to workspace-write. TODO(M1 Phase 6): clamp against
-  // parent's actual mode to guarantee sub-agents cannot escalate.
-  const permissionMode = input.permissionMode ?? "workspace-write";
+  // Permission clamping: sub-agent mode cannot exceed parent's mode.
+  // The authoritative clamp also happens inside StandaloneHost.spawn() — this
+  // pre-clamp in the tool just makes the intent visible in the SpawnRequest.
+  const requested = input.permissionMode ?? host.permissionMode;
+  const permissionMode = clampPermissionMode(requested, host.permissionMode);
 
   // Register the task in the orchestrator's registry.
   const record = await host.task.create({
