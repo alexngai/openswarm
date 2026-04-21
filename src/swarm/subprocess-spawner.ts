@@ -13,6 +13,17 @@ export interface SpawnWorkerArgs {
   readonly cwd?: string;        // default process.cwd()
   readonly nodeExecPath?: string; // default process.execPath
   readonly cliJsPath?: string;    // default <repoRoot>/dist/cli.js
+  /**
+   * Role name applied to this worker (M3a Phase 6). Worker entry looks it
+   * up in its RoleRegistry to overlay systemPrompt + allowedTools.
+   */
+  readonly role?: string;
+  /**
+   * Explicit tool allowlist for this worker (M3a Phase 6). Serialised as
+   * JSON in `SWARM_CODER_ALLOWED_TOOLS`. Overrides any role-derived list
+   * on the worker side when both are provided.
+   */
+  readonly allowedTools?: readonly string[];
 }
 
 export function spawnWorker(args: SpawnWorkerArgs): ChildProcess {
@@ -33,6 +44,12 @@ export function spawnWorker(args: SpawnWorkerArgs): ChildProcess {
   }
   if (args.testScript !== undefined) {
     env.SWARM_CODER_TEST_SCRIPT = args.testScript;
+  }
+  if (args.role !== undefined) {
+    env.SWARM_CODER_ROLE = args.role;
+  }
+  if (args.allowedTools !== undefined) {
+    env.SWARM_CODER_ALLOWED_TOOLS = JSON.stringify(args.allowedTools);
   }
   // Intentionally NOT setting SWARM_CODER_SESSION_ID — resume is out of M1.
 

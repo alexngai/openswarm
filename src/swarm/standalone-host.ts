@@ -201,6 +201,10 @@ export class StandaloneHost implements SwarmHost {
       orchestratorPid: process.pid,
       parentToolUseId: request.parentToolUseId,
       permissionMode: clampedMode,
+      ...(request.role !== undefined && { role: request.role }),
+      ...(request.allowedTools !== undefined && {
+        allowedTools: request.allowedTools,
+      }),
     });
     const transport = new WorkerTransport(child);
     this.transports.set(childAgentId, transport);

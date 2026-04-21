@@ -210,6 +210,13 @@ export interface TaskPacket {
   readonly escalationPolicy: EscalationPolicy;
   readonly budget?: TaskBudget;
   readonly context?: TaskContext;
+  /**
+   * Per-task role override. When set, the orchestrator looks it up in its
+   * RoleRegistry and applies the role's systemPromptSuffix + allowedTools
+   * to the worker that runs this task. Takes precedence over the
+   * orchestrator's `--role` default.
+   */
+  readonly role?: string;
 }
 
 export type BranchPolicy =

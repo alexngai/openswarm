@@ -24,6 +24,7 @@ import { StandaloneHost } from "./standalone-host.js";
 import { WorkerPool } from "./worker-pool.js";
 import { planRetry } from "./retry-policy.js";
 import { DeadLetterWriter } from "./dead-letter.js";
+import type { RoleRegistry, Role } from "./roles.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -43,6 +44,17 @@ export interface OrchestratorOptions {
    * non-zero. Default: false.
    */
   readonly allowDeadLetter?: boolean;
+  /**
+   * Role registry used to resolve `task.role` / `defaultRole` names to
+   * full Role objects at dispatch (M3a Phase 6). Omit to run without
+   * role wiring; tasks with a `role` field then fail with "unknown role".
+   */
+  readonly roles?: RoleRegistry;
+  /**
+   * Role name applied to every task that doesn't set its own `role`
+   * field. Resolved against `roles` at dispatch.
+   */
+  readonly defaultRole?: string;
 }
 
 export interface RunResult {
@@ -166,6 +178,35 @@ export class Orchestrator extends EventEmitter {
         return;
       }
 
+      // Resolve role (per-task override beats orchestrator default). Unknown
+      // role → fail-fast at dispatch with a clear error.
+      const roleName = task.role ?? this.opts.defaultRole;
+      let role: Role | undefined;
+      if (roleName !== undefined) {
+        role = this.opts.roles?.get(roleName);
+        if (role === undefined) {
+          token.release();
+          const line: ResultLine = {
+            id: task.id,
+            status: "failed",
+            error: `unknown role: ${roleName}`,
+            wallClockMs: 0,
+            agentId: this.host.agentId,
+            sessionId: "none",
+            completedAt: Date.now(),
+          };
+          await this.writeResult(line).catch((e) => {
+            firstResultWriteError ??= e;
+          });
+          counts.failed++;
+          return;
+        }
+        this.host.emit({
+          type: "role_applied",
+          payload: { taskId: task.id, role: role.name },
+        });
+      }
+
       // Initialize per-task retry state.
       this.attempts.set(task.id, 0);
       this.cumulativeTokens.set(task.id, 0);
@@ -190,6 +231,10 @@ export class Orchestrator extends EventEmitter {
             task,
             permissionMode: this.opts.permissionMode,
             parentAgentId: this.host.agentId,
+            ...(role !== undefined && {
+              role: role.name,
+              allowedTools: role.allowedTools,
+            }),
           });
           result = await handle.wait();
         } catch (err) {

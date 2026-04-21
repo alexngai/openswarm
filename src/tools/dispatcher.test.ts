@@ -242,3 +242,66 @@ describe("ToolDispatcher — hook integration (Tier 2 coverage)", () => {
     expect(result.status).toBe("ok");
   });
 });
+
+describe("ToolDispatcher — allowedTools allowlist (M3a Phase 6)", () => {
+  it("filters tools at registration time: filtered tools are not listed", () => {
+    const dispatcher = new ToolDispatcher({
+      allowedTools: ["read_file", "grep"],
+    });
+    dispatcher.register(makeTool("read_file"));
+    dispatcher.register(makeTool("bash"));
+    dispatcher.register(makeTool("grep"));
+    dispatcher.register(makeTool("write_file"));
+    const names = dispatcher.list().map((s) => s.name);
+    expect(names.sort()).toEqual(["grep", "read_file"]);
+    expect(dispatcher.get("bash")).toBeUndefined();
+    expect(dispatcher.get("write_file")).toBeUndefined();
+  });
+
+  it("dispatch on a filtered-out tool returns 'unknown tool' error (model never sees bash)", async () => {
+    const dispatcher = new ToolDispatcher({
+      allowedTools: ["read_file"],
+    });
+    dispatcher.register(makeTool("read_file"));
+    dispatcher.register(makeTool("bash"));
+    // bash was filtered at registration — dispatch returns "unknown tool".
+    const bashResult = await dispatcher.dispatch(
+      "bash",
+      { x: "echo hi" },
+      ctx,
+    );
+    expect(bashResult.status).toBe("error");
+    expect(
+      (bashResult as { status: "error"; message: string }).message,
+    ).toContain("unknown tool: bash");
+    // read_file is in the allowlist — dispatch succeeds.
+    const good = await dispatcher.dispatch("read_file", { x: "f.txt" }, ctx);
+    expect(good.status).toBe("ok");
+  });
+
+  it("no filtering when allowedTools is omitted (back-compat)", () => {
+    const dispatcher = new ToolDispatcher();
+    dispatcher.register(makeTool("read_file"));
+    dispatcher.register(makeTool("bash"));
+    const names = dispatcher.list().map((s) => s.name);
+    expect(names.sort()).toEqual(["bash", "read_file"]);
+  });
+
+  it("filtering composes with canUseTool / permission-mode clamps (orthogonal layers)", async () => {
+    // allowlist hides `bash`; a separate canUseTool-like gate would deny it
+    // even if visible. With filtering, bash is invisible BEFORE the gate runs,
+    // which is the intended composition: allowlist → visibility, canUseTool
+    // → per-call permission, permission-mode → ceiling.
+    const dispatcher = new ToolDispatcher({
+      allowedTools: ["read_file"],
+    });
+    dispatcher.register(makeTool("bash"));
+    dispatcher.register(makeTool("read_file"));
+    // bash not in list, not retrievable.
+    expect(dispatcher.get("bash")).toBeUndefined();
+    expect(dispatcher.list().map((s) => s.name)).toEqual(["read_file"]);
+    // Dispatching bash errors at the dispatch layer, before any per-call gate.
+    const r = await dispatcher.dispatch("bash", { x: "hi" }, ctx);
+    expect(r.status).toBe("error");
+  });
+});

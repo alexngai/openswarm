@@ -221,4 +221,46 @@ describe("parseArgv", () => {
     expect(result.deadLetter).toBe("./dead-letter.jsonl");
     expect(result.allowDeadLetter).toBe(false);
   });
+
+  // ---- swarm run --role (M3a Phase 6) --------------------------------------
+
+  it("swarm run with --role architect propagates the role name", () => {
+    const result = parseArgv([
+      "swarm", "run", "tasks.json",
+      "--role", "architect",
+    ]);
+    if (result.kind !== "swarm-run") throw new Error("expected swarm-run");
+    expect(result.role).toBe("architect");
+  });
+
+  it("swarm run --role without a value errors clearly", () => {
+    const result = parseArgv(["swarm", "run", "tasks.json", "--role"]);
+    expect(result).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("--role requires a value"),
+      showHelp: true,
+    });
+  });
+
+  it("swarm run with --role, --dead-letter and --allow-dead-letter all parse and propagate", () => {
+    const result = parseArgv([
+      "swarm", "run", "tasks.json",
+      "--role", "executor",
+      "--dead-letter", "/tmp/dl.jsonl",
+      "--allow-dead-letter",
+    ]);
+    if (result.kind !== "swarm-run") throw new Error("expected swarm-run");
+    expect(result.role).toBe("executor");
+    expect(result.deadLetter).toBe("/tmp/dl.jsonl");
+    expect(result.allowDeadLetter).toBe(true);
+  });
+
+  it("swarm run --role=executor (equals form) works", () => {
+    const result = parseArgv([
+      "swarm", "run", "tasks.json",
+      "--role=executor",
+    ]);
+    if (result.kind !== "swarm-run") throw new Error("expected swarm-run");
+    expect(result.role).toBe("executor");
+  });
 });

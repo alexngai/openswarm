@@ -67,6 +67,7 @@ export type ParsedArgs =
       permissionMode: PermissionMode;
       deadLetter: string;
       allowDeadLetter: boolean;
+      role?: string;
     }
   | { kind: "error"; message: string; showHelp: boolean };
 
@@ -115,6 +116,7 @@ export function parseArgv(args: string[]): ParsedArgs {
   let swarmOutput = "./results.jsonl";
   let swarmDeadLetter = "./dead-letter.jsonl";
   let swarmAllowDeadLetter = false;
+  let swarmRole: string | undefined;
 
   // First pass: scan for early-exit flags (--help, -h, --version, -V) and
   // collect flags that precede the subcommand / positional.
@@ -345,6 +347,20 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
+    if (tok === "--role") {
+      const val = expanded[i + 1];
+      if (val === undefined || val.startsWith("-")) {
+        return {
+          kind: "error",
+          message: "--role requires a value",
+          showHelp: true,
+        };
+      }
+      swarmRole = val;
+      i += 2;
+      continue;
+    }
+
     // Unknown flag.
     if (tok.startsWith("-")) {
       return {
@@ -452,6 +468,7 @@ export function parseArgv(args: string[]): ParsedArgs {
         permissionMode: swarmPermissionMode,
         deadLetter: swarmDeadLetter,
         allowDeadLetter: swarmAllowDeadLetter,
+        ...(swarmRole !== undefined && { role: swarmRole }),
       };
     }
 

@@ -18,6 +18,16 @@ export interface ToolDispatcherOptions {
    * Optional agentId surfaced in hook payloads.
    */
   readonly agentId?: string;
+  /**
+   * When set, only tools whose `spec.name` appears in this allowlist are
+   * registered. Filtered tools never appear in `list()` and the engine
+   * never sees them in the tool surface advertised to the model.
+   *
+   * This is ORTHOGONAL to `canUseTool` (per-call permission) and
+   * `clampPermissionMode` (permission ceiling). Role-driven filtering
+   * (M3a Phase 6) writes this from the worker entry.
+   */
+  readonly allowedTools?: readonly string[];
 }
 
 /**
@@ -29,18 +39,32 @@ export class ToolDispatcher {
   private readonly hooks?: HookRuntime;
   private readonly sessionId?: string;
   private readonly agentId?: string;
+  /**
+   * When set, `register()` silently skips tools whose name isn't in this
+   * allowlist. `undefined` means "no filtering" (prior behaviour).
+   */
+  private readonly allowedTools?: ReadonlySet<string>;
 
   constructor(options: ToolDispatcherOptions = {}) {
     if (options.hooks !== undefined) this.hooks = options.hooks;
     if (options.sessionId !== undefined) this.sessionId = options.sessionId;
     if (options.agentId !== undefined) this.agentId = options.agentId;
+    if (options.allowedTools !== undefined) {
+      this.allowedTools = new Set(options.allowedTools);
+    }
   }
 
   /**
-   * Register a tool. Throws if a tool with the same name is already registered.
+   * Register a tool. Throws if a tool with the same name is already
+   * registered. When an `allowedTools` allowlist is configured, tools
+   * outside the list are silently skipped — the model never sees them
+   * in `list()` and `get(name)` returns undefined.
    */
   register(tool: ToolImpl): void {
     const name = tool.spec.name;
+    if (this.allowedTools !== undefined && !this.allowedTools.has(name)) {
+      return;
+    }
     if (this.registry.has(name)) {
       throw new Error(
         `ToolDispatcher: duplicate tool registration — a tool named "${name}" is already registered`,

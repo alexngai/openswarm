@@ -71,6 +71,9 @@ Flags:
 swarm run flags:
   --concurrency N                Max parallel workers (default: 3)
   --output <path>                Results JSONL file (default: ./results.jsonl)
+  --role <name>                  Default role applied to every task without a per-task override
+  --dead-letter <path>           Dead-letter JSONL file (default: ./dead-letter.jsonl)
+  --allow-dead-letter            Do not exit non-zero when this run appends to dead-letter
 
 Examples:
   swarm-coder "explain this codebase"
@@ -460,6 +463,7 @@ export async function main(argv: string[]): Promise<number> {
         ...(parsed.allowDeadLetter !== undefined
           ? { allowDeadLetter: parsed.allowDeadLetter }
           : {}),
+        ...(parsed.role !== undefined ? { defaultRole: parsed.role } : {}),
       });
 
     case "error":

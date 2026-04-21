@@ -468,3 +468,179 @@ describe("Orchestrator", () => {
     expect(summary.cancelled).toBeGreaterThanOrEqual(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// M3a Phase 6 — Role dispatch
+// ---------------------------------------------------------------------------
+
+describe("Orchestrator — role dispatch (M3a Phase 6)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("applies defaultRole to every task without a per-task role", async () => {
+    const { RoleRegistry, BUILTIN_ROLES } = await import("./roles.js");
+    const roles = new RoleRegistry();
+    for (const r of BUILTIN_ROLES) roles.register(r);
+
+    const observed: Array<{ role?: string; allowedTools?: readonly string[] }> = [];
+    const host = fakeHost(async (req) => {
+      observed.push({
+        role: req.role,
+        allowedTools: req.allowedTools,
+      });
+      return makeHandle(successResult());
+    });
+
+    const resultsOut = new PassThrough();
+    resultsOut.resume();
+
+    const orch = new Orchestrator({
+      concurrency: 2,
+      permissionMode: "workspace-write",
+      resultsOut,
+      host,
+      roles,
+      defaultRole: "executor",
+    });
+
+    await orch.run([samplePacket("a"), samplePacket("b")]);
+    resultsOut.end();
+
+    expect(observed).toHaveLength(2);
+    for (const o of observed) {
+      expect(o.role).toBe("executor");
+      expect(o.allowedTools).toBeDefined();
+      expect(o.allowedTools!).toContain("bash");
+      expect(o.allowedTools!).not.toContain("agent");
+    }
+  });
+
+  it("per-task role overrides defaultRole", async () => {
+    const { RoleRegistry, BUILTIN_ROLES } = await import("./roles.js");
+    const roles = new RoleRegistry();
+    for (const r of BUILTIN_ROLES) roles.register(r);
+
+    const observed: Array<{ taskId: string; role?: string }> = [];
+    const host = fakeHost(async (req) => {
+      observed.push({ taskId: req.task.id, role: req.role });
+      return makeHandle(successResult());
+    });
+
+    const resultsOut = new PassThrough();
+    resultsOut.resume();
+
+    const orch = new Orchestrator({
+      concurrency: 2,
+      permissionMode: "workspace-write",
+      resultsOut,
+      host,
+      roles,
+      defaultRole: "executor",
+    });
+
+    await orch.run([
+      samplePacket("default"),
+      samplePacket("override", { role: "architect" } as Partial<TaskPacket>),
+    ]);
+    resultsOut.end();
+
+    const defaultTask = observed.find((o) => o.taskId === "default");
+    const overrideTask = observed.find((o) => o.taskId === "override");
+    expect(defaultTask?.role).toBe("executor");
+    expect(overrideTask?.role).toBe("architect");
+  });
+
+  it("unknown role fails the task at dispatch with 'unknown role: X'", async () => {
+    const { RoleRegistry, BUILTIN_ROLES } = await import("./roles.js");
+    const roles = new RoleRegistry();
+    for (const r of BUILTIN_ROLES) roles.register(r);
+
+    let spawnCalls = 0;
+    const host = fakeHost(async (_req) => {
+      spawnCalls++;
+      return makeHandle(successResult());
+    });
+
+    const resultsOut = new PassThrough();
+    const collectPromise = collectJsonl(resultsOut);
+
+    const orch = new Orchestrator({
+      concurrency: 1,
+      permissionMode: "workspace-write",
+      resultsOut,
+      host,
+      roles,
+    });
+
+    await orch.run([
+      samplePacket("bad", { role: "nonexistent-role" } as Partial<TaskPacket>),
+    ]);
+    resultsOut.end();
+    const lines = (await collectPromise) as Array<{
+      id: string;
+      status: string;
+      error?: string;
+    }>;
+
+    expect(spawnCalls).toBe(0); // never spawned
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.status).toBe("failed");
+    expect(lines[0]!.error).toContain("unknown role: nonexistent-role");
+  });
+
+  it("no roles configured + no role on task → spawn proceeds without role info", async () => {
+    const observed: Array<{ role?: string }> = [];
+    const host = fakeHost(async (req) => {
+      observed.push({ role: req.role });
+      return makeHandle(successResult());
+    });
+
+    const resultsOut = new PassThrough();
+    resultsOut.resume();
+
+    const orch = new Orchestrator({
+      concurrency: 1,
+      permissionMode: "workspace-write",
+      resultsOut,
+      host,
+    });
+
+    await orch.run([samplePacket("t1")]);
+    resultsOut.end();
+
+    expect(observed).toHaveLength(1);
+    expect(observed[0]!.role).toBeUndefined();
+  });
+
+  it("emits role_applied lane event when role is used", async () => {
+    const { RoleRegistry, BUILTIN_ROLES } = await import("./roles.js");
+    const roles = new RoleRegistry();
+    for (const r of BUILTIN_ROLES) roles.register(r);
+
+    const events: Array<{ type: string; payload?: unknown }> = [];
+    const host = fakeHost(async (_req) => makeHandle(successResult()));
+    (host as unknown as { emit: (e: unknown) => void }).emit = (e) => {
+      events.push(e as { type: string; payload?: unknown });
+    };
+
+    const resultsOut = new PassThrough();
+    resultsOut.resume();
+
+    const orch = new Orchestrator({
+      concurrency: 1,
+      permissionMode: "workspace-write",
+      resultsOut,
+      host,
+      roles,
+      defaultRole: "reviewer",
+    });
+
+    await orch.run([samplePacket("t1")]);
+    resultsOut.end();
+
+    const roleApplied = events.find((e) => e.type === "role_applied");
+    expect(roleApplied).toBeDefined();
+    expect(roleApplied!.payload).toMatchObject({ taskId: "t1", role: "reviewer" });
+  });
+});

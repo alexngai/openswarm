@@ -6,10 +6,16 @@
  */
 
 import * as fs from "node:fs";
+import * as path from "node:path";
 import type { PermissionMode } from "../core/types.js";
 import { Orchestrator } from "../swarm/orchestrator.js";
 import type { TaskPacket } from "../swarm/host.js";
 import { TaskPacketSchema, isPolicyParseError } from "../swarm/policies.js";
+import {
+  BUILTIN_ROLES,
+  RoleRegistry,
+  loadCustomRoles,
+} from "../swarm/roles.js";
 
 // ---------------------------------------------------------------------------
 // Schema (Phase 2: discriminated-union policies)
@@ -35,6 +41,12 @@ export interface SwarmRunOptions {
    * non-zero. Default: false.
    */
   readonly allowDeadLetter?: boolean;
+  /**
+   * Default role name applied to every task that doesn't override via its
+   * own `role` field (M3a Phase 6). Resolved against the RoleRegistry
+   * built at startup (built-ins + custom from `.swarm-coder/roles.json`).
+   */
+  readonly defaultRole?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -87,6 +99,29 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
     return 2;
   }
 
+  // Build RoleRegistry: built-ins + custom from .swarm-coder/roles.json.
+  const roles = new RoleRegistry();
+  for (const r of BUILTIN_ROLES) roles.register(r);
+  const customRolesPath = path.join(
+    process.cwd(),
+    ".swarm-coder",
+    "roles.json",
+  );
+  const custom = await loadCustomRoles(customRolesPath);
+  for (const r of custom) roles.register(r);
+
+  // If a default role was supplied, validate it now so we fail early with a
+  // clear error rather than per-task.
+  if (opts.defaultRole !== undefined && roles.get(opts.defaultRole) === undefined) {
+    process.stderr.write(
+      `error: unknown role "${opts.defaultRole}" (known: ${roles
+        .list()
+        .map((r) => r.name)
+        .join(", ")})\n`,
+    );
+    return 2;
+  }
+
   // Open results stream.
   const resultsOut = fs.createWriteStream(opts.output, { flags: "a" });
   const orch = new Orchestrator({
@@ -94,6 +129,8 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
     permissionMode: opts.permissionMode,
     resultsOut,
     eventsOut: process.stderr,
+    roles,
+    ...(opts.defaultRole !== undefined ? { defaultRole: opts.defaultRole } : {}),
     ...(opts.deadLetter !== undefined ? { deadLetterPath: opts.deadLetter } : {}),
     ...(opts.allowDeadLetter !== undefined
       ? { allowDeadLetter: opts.allowDeadLetter }

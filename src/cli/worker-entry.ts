@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import type { AgentId } from "../core/types.js";
 import { ParentTransport } from "../swarm/ipc/parent-transport.js";
 import { WorkerHost } from "../swarm/worker-host.js";
@@ -8,10 +9,15 @@ import { buildTier0Tools } from "../tools/tier0/index.js";
 import { buildTier2Tools } from "../tools/tier2/index.js";
 import { PermissionEngine } from "../permissions/index.js";
 import { AnthropicEnvAuth } from "../auth/anthropic-env-auth.js";
+import {
+  BUILTIN_ROLES,
+  RoleRegistry,
+  loadCustomRoles,
+} from "../swarm/roles.js";
 import type { AgentResult, TaskPacket } from "../swarm/host.js";
 import type { IpcRequest } from "../swarm/ipc/protocol.js";
 import type { PermissionMode, Usage } from "../core/types.js";
-import type { ToolExecutionContext } from "../tools/types.js";
+import type { ToolExecutionContext, ToolImpl } from "../tools/types.js";
 
 export async function runWorkerEntry(): Promise<number> {
   const agentId = (process.env.SWARM_CODER_AGENT_ID ?? "unknown") as AgentId;
@@ -44,8 +50,58 @@ export async function runWorkerEntry(): Promise<number> {
   // Ack the run immediately.
   transport.respond(runReq.id, { accepted: true });
 
-  // Build tools + permission engine.
-  const dispatcher = new ToolDispatcher();
+  // M3a Phase 6: role overlay + allowedTools filter.
+  // `SWARM_CODER_ROLE` names a role; we look it up in a worker-local
+  // RoleRegistry (built-ins + custom roles loaded fresh from cwd).
+  // `SWARM_CODER_ALLOWED_TOOLS` carries an explicit JSON array that wins
+  // over the role-derived list when both are present. The system prompt
+  // suffix is appended to RunConfig.systemPrompt (role suffix wins on
+  // conflicts per the plan).
+  const roleName = process.env.SWARM_CODER_ROLE;
+  let roleSuffix = "";
+  let resolvedAllowedTools: readonly string[] | undefined;
+  if (roleName !== undefined && roleName.length > 0) {
+    const roleReg = new RoleRegistry();
+    for (const r of BUILTIN_ROLES) roleReg.register(r);
+    try {
+      const custom = await loadCustomRoles(
+        path.join(process.cwd(), ".swarm-coder", "roles.json"),
+      );
+      for (const r of custom) roleReg.register(r);
+    } catch {
+      // loader is fault-tolerant — any surprise error is swallowed to
+      // keep the worker alive.
+    }
+    const role = roleReg.get(roleName);
+    if (role !== undefined) {
+      roleSuffix = role.systemPromptSuffix;
+      resolvedAllowedTools = role.allowedTools;
+    } else {
+      process.stderr.write(
+        `[swarm-coder] worker: unknown role "${roleName}" — proceeding without role overlay\n`,
+      );
+    }
+  }
+  const envAllowed = process.env.SWARM_CODER_ALLOWED_TOOLS;
+  if (envAllowed !== undefined && envAllowed.length > 0) {
+    try {
+      const parsed = JSON.parse(envAllowed);
+      if (Array.isArray(parsed) && parsed.every((s) => typeof s === "string")) {
+        resolvedAllowedTools = parsed as readonly string[];
+      }
+    } catch {
+      // keep role-derived list if env is malformed
+    }
+  }
+
+  // Build tools + permission engine. When a role allowlist is in effect,
+  // the dispatcher filters tools at registration — the model never sees
+  // tools outside the list.
+  const dispatcher = new ToolDispatcher(
+    resolvedAllowedTools !== undefined
+      ? { allowedTools: resolvedAllowedTools }
+      : {},
+  );
   for (const tool of [...buildTier0Tools(), ...buildTier2Tools()]) {
     dispatcher.register(tool);
   }
@@ -61,7 +117,15 @@ export async function runWorkerEntry(): Promise<number> {
   let usage: Usage | undefined;
 
   try {
-    const allTools = [...buildTier0Tools(), ...buildTier2Tools()].map((t) => ({
+    // Build the tool list the engine sees. When an allowlist is in effect,
+    // only tools that survived dispatcher filtering are advertised —
+    // dispatcher.list() is the source of truth.
+    const allImpls: readonly ToolImpl[] = [
+      ...buildTier0Tools(),
+      ...buildTier2Tools(),
+    ];
+    const filtered = allImpls.filter((t) => dispatcher.get(t.spec.name) !== undefined);
+    const allTools = filtered.map((t) => ({
       ...t,
       execute: async (input: unknown, ctx: ToolExecutionContext) => {
         // Inject SwarmHost into the execution context for Tier 2 tools.
@@ -69,8 +133,13 @@ export async function runWorkerEntry(): Promise<number> {
       },
     }));
 
+    // Append the role suffix (if any) to the base system prompt. Role suffix
+    // wins on conflicts because it lands last — matches the plan's
+    // "last-writer-wins on model-perceived directives" guidance.
+    const systemPrompt = roleSuffix.length > 0 ? roleSuffix : "";
+
     const runConfig = {
-      systemPrompt: "",
+      systemPrompt,
       prompt: task.prompt,
       model: "claude-sonnet-4-6",
       auth,
@@ -83,6 +152,9 @@ export async function runWorkerEntry(): Promise<number> {
         }
         return permissionEngine.check(tool.spec);
       },
+      ...(resolvedAllowedTools !== undefined && {
+        allowedTools: resolvedAllowedTools,
+      }),
     };
 
     for await (const evt of engine.run(runConfig)) {
