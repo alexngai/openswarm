@@ -28,8 +28,8 @@ import type { AuthSource } from "../auth/index.js";
 import type {
   NormalizedEvent,
   PermissionMode,
-  ToolSpec,
 } from "../core/types.js";
+import type { ToolImpl } from "../tools/types.js";
 
 // ---------------------------------------------------------------------------
 // Engine
@@ -46,7 +46,7 @@ export interface AgentEngine {
    *   - streams text deltas
    *   - surfaces tool calls via `NormalizedEvent`
    *   - calls back through `canUseTool` for permission gating
-   *   - calls back through `executeTool` to run permitted tools
+   *   - invokes `ToolImpl.execute` directly from its MCP handler after gates pass
    *   - emits `message_stop` when the model ends the conversation
    *
    * Iteration completes when the engine reaches a terminal stop reason,
@@ -87,13 +87,14 @@ export interface RunConfig {
   readonly model: string;
   readonly auth: AuthSource;
 
-  /** Tool specs the engine exposes to the model this run. */
-  readonly tools: readonly ToolSpec[];
+  /**
+   * Tools available to the model this run. Engine calls ToolImpl.execute
+   * directly from inside its MCP handler after canUseTool gates.
+   */
+  readonly tools: readonly ToolImpl[];
 
   /** Engine calls this when a tool needs permission. */
   readonly canUseTool: PermissionGate;
-  /** Engine calls this to execute a permitted tool call. */
-  readonly executeTool: ToolExecutor;
 
   readonly permissionMode: PermissionMode;
 
@@ -129,31 +130,6 @@ export type PermissionGate = (
 export type PermissionDecision =
   | { readonly allow: true; readonly updatedInput?: unknown }
   | { readonly allow: false; readonly reason: string };
-
-// ---------------------------------------------------------------------------
-// Tool executor
-// ---------------------------------------------------------------------------
-
-/**
- * Engine → outer tool execution. Outer code owns tool dispatch; engines
- * never execute tools themselves. This keeps all side effects gated by the
- * permission engine and lane-event logging, regardless of which engine
- * is driving.
- */
-export type ToolExecutor = (
-  toolName: string,
-  input: unknown,
-  context: ToolExecutionContext,
-) => Promise<ToolResult>;
-
-export interface ToolExecutionContext {
-  readonly cwd: string;
-  readonly abort?: AbortSignal;
-}
-
-export type ToolResult =
-  | { readonly status: "ok"; readonly output: string }
-  | { readonly status: "error"; readonly message: string };
 
 // ---------------------------------------------------------------------------
 // Session snapshot
