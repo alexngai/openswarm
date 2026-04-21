@@ -108,4 +108,27 @@ export type NormalizedEvent =
       readonly stopReason: StopReason;
       readonly usage: Usage;
     }
-  | { readonly type: "error"; readonly error: ProviderError };
+  | { readonly type: "error"; readonly error: ProviderError }
+  /**
+   * Emitted when the SDK fires a hook lifecycle message (hook_started,
+   * hook_progress, hook_response). Requires includeHookEvents: true on
+   * the SDK query() options (set unconditionally in ClaudeAgentSdkEngine).
+   *
+   * SDK type names mapped: SDKHookStartedMessage (subtype "hook_started"),
+   * SDKHookProgressMessage (subtype "hook_progress"),
+   * SDKHookResponseMessage (subtype "hook_response") — all have type "system".
+   */
+  | {
+      readonly type: "hook_event";
+      readonly payload: {
+        readonly hookId: string;
+        readonly hookName: string;
+        /** The HookEvent name, e.g. "PreToolUse", "PostToolUse", "SessionStart". */
+        readonly event: string;
+        readonly subtype: "hook_started" | "hook_progress" | "hook_response";
+        readonly stdout?: string;
+        readonly stderr?: string;
+        readonly exitCode?: number;
+        readonly outcome?: "success" | "error" | "cancelled";
+      };
+    };

@@ -511,6 +511,7 @@ describe("Engine metadata", () => {
 // Scenario 6: Resume passes sessionId to query options
 // ---------------------------------------------------------------------------
 
+
 describe("Scenario 6: resume passes sessionId", () => {
   beforeEach(() => {
     mockQueryMessages.length = 0;
@@ -550,5 +551,177 @@ describe("Scenario 6: resume passes sessionId", () => {
       options?: { resume?: string };
     };
     expect(callArgs?.options?.resume).toBe("session-abc");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 7: enabledBuiltinTools passthrough
+// ---------------------------------------------------------------------------
+
+describe("Scenario 7: enabledBuiltinTools passthrough", () => {
+  beforeEach(() => {
+    mockQueryMessages.length = 0;
+    mockQueryMessages.push(
+      sdkMsg({
+        type: "result",
+        subtype: "success",
+        stop_reason: "end_turn",
+        result: "ok",
+        usage: { input_tokens: 5, output_tokens: 5 },
+        duration_ms: 50,
+        duration_api_ms: 40,
+        is_error: false,
+        num_turns: 1,
+        total_cost_usd: 0,
+        modelUsage: {},
+        permission_denials: [],
+        session_id: "s7",
+        uuid: "u1",
+      }),
+    );
+  });
+
+  it("passes enabledBuiltinTools to query options.tools", async () => {
+    const { query: mockQuery } = await import("@anthropic-ai/claude-agent-sdk");
+
+    await collectEvents(makeConfig({ enabledBuiltinTools: ["WebSearch"] }));
+
+    const callArgs = (mockQuery as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as {
+      options?: { tools?: unknown };
+    };
+    expect(callArgs?.options?.tools).toEqual(["WebSearch"]);
+  });
+
+  it("defaults to empty tools array when enabledBuiltinTools is omitted", async () => {
+    const { query: mockQuery } = await import("@anthropic-ai/claude-agent-sdk");
+
+    await collectEvents(makeConfig());
+
+    const callArgs = (mockQuery as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as {
+      options?: { tools?: unknown };
+    };
+    expect(callArgs?.options?.tools).toEqual([]);
+  });
+
+  it("passes includeHookEvents: true unconditionally", async () => {
+    const { query: mockQuery } = await import("@anthropic-ai/claude-agent-sdk");
+
+    await collectEvents(makeConfig());
+
+    const callArgs = (mockQuery as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as {
+      options?: { includeHookEvents?: boolean };
+    };
+    expect(callArgs?.options?.includeHookEvents).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 8: Hook-event translator
+// ---------------------------------------------------------------------------
+
+describe("Scenario 8: hook-event translator", () => {
+  beforeEach(() => {
+    mockQueryMessages.length = 0;
+    // hook_started → hook_progress → hook_response sequence
+    mockQueryMessages.push(
+      sdkMsg({
+        type: "system",
+        subtype: "hook_started",
+        hook_id: "hk_001",
+        hook_name: "log-bash.sh",
+        hook_event: "PreToolUse",
+        uuid: "u1",
+        session_id: "s8",
+      }),
+      sdkMsg({
+        type: "system",
+        subtype: "hook_progress",
+        hook_id: "hk_001",
+        hook_name: "log-bash.sh",
+        hook_event: "PreToolUse",
+        stdout: "running...",
+        stderr: "",
+        output: "",
+        uuid: "u2",
+        session_id: "s8",
+      }),
+      sdkMsg({
+        type: "system",
+        subtype: "hook_response",
+        hook_id: "hk_001",
+        hook_name: "log-bash.sh",
+        hook_event: "PreToolUse",
+        stdout: "done",
+        stderr: "",
+        output: "",
+        exit_code: 0,
+        outcome: "success",
+        uuid: "u3",
+        session_id: "s8",
+      }),
+      sdkMsg({
+        type: "result",
+        subtype: "success",
+        stop_reason: "end_turn",
+        result: "ok",
+        usage: { input_tokens: 5, output_tokens: 5 },
+        duration_ms: 50,
+        duration_api_ms: 40,
+        is_error: false,
+        num_turns: 1,
+        total_cost_usd: 0,
+        modelUsage: {},
+        permission_denials: [],
+        session_id: "s8",
+        uuid: "u4",
+      }),
+    );
+  });
+
+  it("translates hook_started to hook_event with correct fields", async () => {
+    const events = await collectEvents(makeConfig());
+    const hookEvents = events.filter((e) => e.type === "hook_event");
+
+    expect(hookEvents).toHaveLength(3);
+    expect(hookEvents[0]).toEqual({
+      type: "hook_event",
+      payload: {
+        hookId: "hk_001",
+        hookName: "log-bash.sh",
+        event: "PreToolUse",
+        subtype: "hook_started",
+      },
+    });
+  });
+
+  it("translates hook_progress with stdout/stderr", async () => {
+    const events = await collectEvents(makeConfig());
+    const hookEvents = events.filter((e) => e.type === "hook_event");
+
+    expect(hookEvents[1]).toMatchObject({
+      type: "hook_event",
+      payload: {
+        subtype: "hook_progress",
+        event: "PreToolUse",
+        stdout: "running...",
+        stderr: "",
+      },
+    });
+  });
+
+  it("translates hook_response with exit_code and outcome", async () => {
+    const events = await collectEvents(makeConfig());
+    const hookEvents = events.filter((e) => e.type === "hook_event");
+
+    expect(hookEvents[2]).toMatchObject({
+      type: "hook_event",
+      payload: {
+        subtype: "hook_response",
+        event: "PreToolUse",
+        exitCode: 0,
+        outcome: "success",
+        stdout: "done",
+      },
+    });
   });
 });

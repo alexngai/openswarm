@@ -200,8 +200,12 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
         systemPrompt,
         model: config.model,
         settingSources: ["project"],
-        // Disable all built-in tools — ours are MCP-registered.
-        tools: [],
+        // Built-in SDK tools allowlisted via RunConfig.enabledBuiltinTools.
+        // Our custom tools are MCP-registered via mcpServers below.
+        // Built-in tools are permission-gated at engine-config time (not via
+        // canUseTool — see RunConfig.enabledBuiltinTools JSDoc). Default is
+        // empty (no built-in tools) unless explicitly enabled by the caller.
+        tools: [...(config.enabledBuiltinTools ?? [])],
         mcpServers: { "swarm-coder": mcpServer },
         canUseTool: sdkCanUseTool,
         permissionMode: sdkPermissionMode,
@@ -213,7 +217,10 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
           ? (config.resumeFrom.data as { sessionId?: string }).sessionId
           : undefined,
         includePartialMessages: true,
-        includeHookEvents: false,
+        // Hook-event messages (SDKHookStartedMessage, SDKHookProgressMessage,
+        // SDKHookResponseMessage) propagate through the stream and are
+        // translated to "hook_event" NormalizedEvents by the translator.
+        includeHookEvents: true,
         ...(abortController != null && { abortController }),
       },
     });

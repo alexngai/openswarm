@@ -107,6 +107,21 @@ export interface RunConfig {
   readonly resumeFrom?: SessionSnapshot;
 
   readonly abort?: AbortSignal;
+
+  /**
+   * Built-in SDK tools to allowlist. When present, these tool names are
+   * passed through to `options.tools` on the SDK's query() call.
+   *
+   * Permission gating for built-in tools happens here at engine-config
+   * time — `canUseTool` does NOT fire for SDK built-ins. If a caller
+   * wants to deny e.g. `WebSearch` under `read-only` permission mode,
+   * they simply omit it from this list. Our MCP-registered tools
+   * continue to use `canUseTool` for per-call gating — unchanged.
+   *
+   * Known values: "WebSearch" (Anthropic's first-party web search).
+   * Phase 4 uses this to enable web_search.
+   */
+  readonly enabledBuiltinTools?: readonly string[];
 }
 
 // ---------------------------------------------------------------------------
