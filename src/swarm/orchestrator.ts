@@ -63,8 +63,17 @@ export interface RunResult {
   readonly timeout: number;
   readonly cancelled: number;
   readonly resultWriteFailures: number;
-  /** True when tasks were written to dead-letter AND allowDeadLetter is false. */
+  /**
+   * True when tasks were written to dead-letter AND allowDeadLetter is false,
+   * OR when the dead-letter writer recorded any write failures (M2 guard).
+   */
   readonly deadLetterViolation: boolean;
+  /**
+   * How many times the dead-letter writer failed to persist a line. Surfaced
+   * so the CLI can differentiate "tasks dropped" from "drop file is broken"
+   * in its exit message.
+   */
+  readonly deadLetterWriteFailures: number;
 }
 
 export interface ResultLine {
@@ -95,7 +104,10 @@ export class Orchestrator extends EventEmitter {
 
   // Per-task retry state (keyed by task.id).
   private readonly attempts = new Map<string, number>();
-  private readonly cumulativeTokens = new Map<string, number>();
+  // Split cumulative token tracking so dead-letter lines record input/output
+  // usage accurately (M4 fix — previously output was always written as 0).
+  private readonly cumulativeInputTokens = new Map<string, number>();
+  private readonly cumulativeOutputTokens = new Map<string, number>();
   private readonly perAttemptDurations = new Map<string, number[]>();
 
   constructor(private readonly opts: OrchestratorOptions) {
@@ -209,7 +221,8 @@ export class Orchestrator extends EventEmitter {
 
       // Initialize per-task retry state.
       this.attempts.set(task.id, 0);
-      this.cumulativeTokens.set(task.id, 0);
+      this.cumulativeInputTokens.set(task.id, 0);
+      this.cumulativeOutputTokens.set(task.id, 0);
       this.perAttemptDurations.set(task.id, []);
 
       let finalResult: AgentResult | undefined;
@@ -220,6 +233,7 @@ export class Orchestrator extends EventEmitter {
         const startedAt = Date.now();
         let result: AgentResult;
         let handle;
+        const perAttemptCeiling = task.budget?.maxWallClockMsPerAttempt;
         try {
           // NOTE: we intentionally omit `taskId` — StandaloneHost treats
           // non-undefined taskId as "look up an EXISTING record", which we
@@ -236,7 +250,37 @@ export class Orchestrator extends EventEmitter {
               allowedTools: role.allowedTools,
             }),
           });
-          result = await handle.wait();
+          // When a per-attempt ceiling is configured, race wait() against a
+          // timer. On timeout, kill the worker and synthesize a timeout
+          // result so downstream bookkeeping + dead-letter path fires with
+          // the correct reason.
+          if (perAttemptCeiling != null && perAttemptCeiling > 0) {
+            const timeoutSentinel = Symbol("per-attempt-timeout");
+            const waitPromise = handle.wait();
+            const racePromise = new Promise<typeof timeoutSentinel>((resolve) => {
+              setTimeout(() => resolve(timeoutSentinel), perAttemptCeiling);
+            });
+            const raced = await Promise.race([waitPromise, racePromise]);
+            if (raced === timeoutSentinel) {
+              // Per-attempt ceiling hit — kill the worker, then let wait()
+              // resolve (it will return a killed result from the host).
+              await handle.kill().catch(() => {
+                /* best-effort — ceiling enforcement is what matters */
+              });
+              // Don't await waitPromise forever; synthesize a timeout result.
+              result = {
+                status: "timeout",
+                wallClockMs: perAttemptCeiling,
+              };
+              // Let the underlying wait() settle in the background so any
+              // resources get cleaned up; swallow its outcome.
+              void waitPromise.catch(() => {});
+            } else {
+              result = raced;
+            }
+          } else {
+            result = await handle.wait();
+          }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           result = {
@@ -261,27 +305,53 @@ export class Orchestrator extends EventEmitter {
           break retryLoop;
         }
 
-        // Accumulate token usage.
+        // Accumulate token usage (separate input/output totals — M4 fix).
         if ("usage" in result && result.usage != null) {
-          const prev = this.cumulativeTokens.get(task.id) ?? 0;
-          this.cumulativeTokens.set(
+          const prevIn = this.cumulativeInputTokens.get(task.id) ?? 0;
+          const prevOut = this.cumulativeOutputTokens.get(task.id) ?? 0;
+          this.cumulativeInputTokens.set(
             task.id,
-            prev + (result.usage.inputTokens ?? 0) + (result.usage.outputTokens ?? 0),
+            prevIn + (result.usage.inputTokens ?? 0),
+          );
+          this.cumulativeOutputTokens.set(
+            task.id,
+            prevOut + (result.usage.outputTokens ?? 0),
           );
         }
 
         // Budget exhaustion checks.
-        const cumTokens = this.cumulativeTokens.get(task.id) ?? 0;
+        const cumIn = this.cumulativeInputTokens.get(task.id) ?? 0;
+        const cumOut = this.cumulativeOutputTokens.get(task.id) ?? 0;
+        const cumTokens = cumIn + cumOut;
         const cumWallClock = (this.perAttemptDurations.get(task.id) ?? []).reduce(
           (a, b) => a + b,
           0,
         );
 
+        // Per-attempt wall-clock ceiling: if THIS attempt exceeded the cap,
+        // dead-letter immediately without consulting the retry policy (C2).
+        if (
+          perAttemptCeiling != null &&
+          attemptDurationMs > perAttemptCeiling
+        ) {
+          await this.sendToDeadLetter(
+            task,
+            result,
+            cumIn,
+            cumOut,
+            cumWallClock,
+            "per_attempt_budget_exceeded",
+          );
+          finalResult = result;
+          finalHandle = handle;
+          break retryLoop;
+        }
+
         if (
           task.budget?.maxTokens != null &&
           cumTokens > task.budget.maxTokens
         ) {
-          await this.sendToDeadLetter(task, result, cumTokens, cumWallClock, "token_budget_exceeded");
+          await this.sendToDeadLetter(task, result, cumIn, cumOut, cumWallClock, "token_budget_exceeded");
           finalResult = result;
           finalHandle = handle;
           break retryLoop;
@@ -291,7 +361,7 @@ export class Orchestrator extends EventEmitter {
           task.budget?.maxWallClockMs != null &&
           cumWallClock > task.budget.maxWallClockMs
         ) {
-          await this.sendToDeadLetter(task, result, cumTokens, cumWallClock, "wall_clock_budget_exceeded");
+          await this.sendToDeadLetter(task, result, cumIn, cumOut, cumWallClock, "wall_clock_budget_exceeded");
           finalResult = result;
           finalHandle = handle;
           break retryLoop;
@@ -322,14 +392,14 @@ export class Orchestrator extends EventEmitter {
         // Retries exhausted or handoff.
         if (task.escalationPolicy.kind === "handoff") {
           // Minimal M3a: redispatch-or-dead-letter handled by handoff method.
-          await this.handleHandoff(task, task.escalationPolicy.targetRole, result, cumTokens, cumWallClock);
+          await this.handleHandoff(task, task.escalationPolicy.targetRole, result, cumIn, cumOut, cumWallClock);
           finalResult = result;
           finalHandle = handle;
           break retryLoop;
         }
 
         // Retry exhausted — dead-letter.
-        await this.sendToDeadLetter(task, result, cumTokens, cumWallClock, result.status);
+        await this.sendToDeadLetter(task, result, cumIn, cumOut, cumWallClock, result.status);
         finalResult = result;
         finalHandle = handle;
         break retryLoop;
@@ -390,16 +460,33 @@ export class Orchestrator extends EventEmitter {
 
     await this.deadLetter.close();
 
+    // Force violation when the dead-letter writer recorded any failures —
+    // allowDeadLetter is meant to tolerate *content* (dropped tasks), not
+    // silent data loss on the file itself (M2 fix).
+    const deadLetterWriteFailures = this.deadLetter.writeFailures();
+    if (deadLetterWriteFailures > 0) {
+      this.host.emit({
+        type: "dead_letter_write_failure",
+        payload: { failures: deadLetterWriteFailures },
+      });
+    }
     const deadLetterViolation =
-      this.deadLetter.hasDelta() && !(this.opts.allowDeadLetter ?? false);
+      deadLetterWriteFailures > 0 ||
+      (this.deadLetter.hasDelta() && !(this.opts.allowDeadLetter ?? false));
 
-    return { ...counts, resultWriteFailures: this.resultWriteFailures, deadLetterViolation };
+    return {
+      ...counts,
+      resultWriteFailures: this.resultWriteFailures,
+      deadLetterViolation,
+      deadLetterWriteFailures,
+    };
   }
 
   private async sendToDeadLetter(
     task: TaskPacket,
     result: AgentResult,
-    cumTokens: number,
+    cumInputTokens: number,
+    cumOutputTokens: number,
     cumWallClockMs: number,
     lastStatus: string,
   ): Promise<void> {
@@ -418,7 +505,7 @@ export class Orchestrator extends EventEmitter {
         attempts,
         lastStatus,
         ...(lastError !== undefined && { lastError }),
-        cumulativeUsage: { input: cumTokens, output: 0 },
+        cumulativeUsage: { input: cumInputTokens, output: cumOutputTokens },
         cumulativeWallClockMs: cumWallClockMs,
         droppedAt: Date.now(),
       });
@@ -446,9 +533,12 @@ export class Orchestrator extends EventEmitter {
     task: TaskPacket,
     targetRole: string,
     result: AgentResult,
-    cumTokens: number,
+    cumInputTokens: number,
+    cumOutputTokens: number,
     cumWallClockMs: number,
   ): Promise<void> {
+    // `result` kept for signature symmetry with sendToDeadLetter; not used here.
+    void result;
     this.host.emit({
       type: "retry_exhausted",
       payload: { taskId: task.id, reason: `handoff to role ${targetRole}` },
@@ -460,7 +550,7 @@ export class Orchestrator extends EventEmitter {
         id: task.id,
         attempts: this.attempts.get(task.id) ?? 0,
         lastStatus: "handoff_not_supported",
-        cumulativeUsage: { input: cumTokens, output: 0 },
+        cumulativeUsage: { input: cumInputTokens, output: cumOutputTokens },
         cumulativeWallClockMs: cumWallClockMs,
         droppedAt: Date.now(),
       });

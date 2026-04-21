@@ -76,6 +76,8 @@ export type LaneEventType =
   | "retry_exhausted"
   /** A task record has been written to dead-letter.jsonl. */
   | "dead_letter_written"
+  /** DeadLetterWriter encountered one or more write failures this run. */
+  | "dead_letter_write_failure"
   // ---------------- Roles ----------------
   /** A role was registered in the RoleRegistry. */
   | "role_registered"

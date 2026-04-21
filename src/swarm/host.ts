@@ -238,6 +238,12 @@ export interface TaskBudget {
   readonly maxTurns?: number;
   readonly maxTokens?: number;
   readonly maxWallClockMs?: number;
+  /**
+   * Per-attempt wall-clock ceiling. If a single attempt exceeds this value,
+   * the orchestrator kills the worker and dead-letters the task immediately
+   * with `lastStatus: "per_attempt_budget_exceeded"` — no further retries.
+   */
+  readonly maxWallClockMsPerAttempt?: number;
 }
 
 export interface TaskContext {

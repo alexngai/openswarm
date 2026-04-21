@@ -176,6 +176,11 @@ export class StandaloneHost implements SwarmHost {
       const { id: _ignored, ...packetWithoutId } = request.task;
       taskRecord = this.registry.create(packetWithoutId);
     }
+    // Populate TaskRecord.owner with the spawned child's agentId so
+    // host.task.ownerOf(taskId) resolves to the running worker. Without this,
+    // every worker-side `task_stop` would short-circuit to "unknown taskId".
+    // Also handles the reuse case (existing record is re-owned by the new child).
+    this.registry.update(taskRecord.id, { owner: childAgentId });
 
     // Spawn the subprocess.
     this.emit({
@@ -342,15 +347,25 @@ export class StandaloneHost implements SwarmHost {
     message: AgentMessage,
   ): Promise<SendResult> {
     // 1. Resolve recipients.
+    //
+    // Broadcasts (`*` and `role:<name>`) exclude depth-0 agents (the root
+    // orchestrator). Nothing drains root's inbox automatically in M3a, so
+    // fanning out to it just leaks messages until exit. Direct sends to
+    // depth-0 are still allowed — they route to drainInbox() on the root
+    // StandaloneHost if the caller explicitly wants to push a message there.
     const from = message.from;
     let recipients: AgentId[];
     if (to === "*") {
-      recipients = [...this.depths.keys()].filter((id) => id !== from);
+      recipients = [...this.depths.keys()].filter(
+        (id) => id !== from && (this.depths.get(id) ?? 0) > 0,
+      );
     } else if (typeof to === "string" && to.startsWith("role:")) {
       const role = to.slice("role:".length);
       recipients = this.roles
         .agentsInRole(role)
-        .filter((id) => id !== from);
+        .filter(
+          (id) => id !== from && (this.depths.get(id) ?? 0) > 0,
+        );
     } else {
       const direct = to as AgentId;
       if (!this.depths.has(direct)) {

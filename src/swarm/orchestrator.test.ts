@@ -473,6 +473,235 @@ describe("Orchestrator", () => {
 // M3a Phase 6 — Role dispatch
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// M3a revisions — budget + dead-letter + usage fixes
+// ---------------------------------------------------------------------------
+
+describe("Orchestrator — per-attempt wall-clock ceiling (C2 regression)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("kills a runaway attempt at maxWallClockMsPerAttempt and dead-letters with per_attempt_budget_exceeded", async () => {
+    const nodeFs = await import("node:fs/promises");
+    const nodePath = await import("node:path");
+    const os = await import("node:os");
+    const tmpDir = await nodeFs.mkdtemp(nodePath.join(os.tmpdir(), "swarm-c2-"));
+    const deadLetterPath = nodePath.join(tmpDir, "dl.jsonl");
+
+    // Handle whose wait() never resolves — simulates a frozen attempt that
+    // the orchestrator must kill at the per-attempt ceiling.
+    const killSpy = vi.fn(() => Promise.resolve());
+    const host = fakeHost(async () => ({
+      agentId: "stuck-agent" as AgentId,
+      sessionId: "stuck-session" as SessionId,
+      wait: () => new Promise<AgentResult>(() => {}), // never resolves
+      kill: killSpy,
+      events: async function* () { return; },
+    }));
+
+    const resultsOut = new PassThrough();
+    resultsOut.resume();
+
+    const orch = new Orchestrator({
+      concurrency: 1,
+      permissionMode: "workspace-write",
+      resultsOut,
+      host,
+      deadLetterPath,
+    });
+
+    const task = samplePacket("runaway", {
+      budget: { maxWallClockMsPerAttempt: 50 },
+      escalationPolicy: { kind: "retry", max: 3, backoff: "fixed" },
+    });
+
+    const summary = await orch.run([task]);
+    resultsOut.end();
+
+    // kill() must have been called at least once.
+    expect(killSpy).toHaveBeenCalled();
+
+    // Dead-letter file must contain a line with per_attempt_budget_exceeded.
+    const dlContent = await nodeFs.readFile(deadLetterPath, "utf8");
+    const lines = dlContent
+      .split("\n")
+      .filter((l) => l.trim().length > 0)
+      .map((l) => JSON.parse(l) as { id: string; lastStatus: string });
+    const ours = lines.find((l) => l.id === "runaway");
+    expect(ours).toBeDefined();
+    expect(ours!.lastStatus).toBe("per_attempt_budget_exceeded");
+
+    // Summary should reflect deadLetterViolation (no allowDeadLetter).
+    expect(summary.deadLetterViolation).toBe(true);
+
+    await nodeFs.rm(tmpDir, { recursive: true, force: true });
+  }, 10_000);
+});
+
+describe("Orchestrator — dead-letter write failures force exit non-zero (M2 regression)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("forces deadLetterViolation=true even with allowDeadLetter=true when DeadLetterWriter has write failures", async () => {
+    const nodeFs = await import("node:fs/promises");
+    const nodePath = await import("node:path");
+    const os = await import("node:os");
+    const tmpDir = await nodeFs.mkdtemp(nodePath.join(os.tmpdir(), "swarm-m2-"));
+    // Point deadLetterPath at a DIRECTORY so every write fails with EISDIR.
+    const deadLetterPath = tmpDir;
+
+    const host = fakeHost(async () => makeHandle(failureResult("boom")));
+
+    const resultsOut = new PassThrough();
+    resultsOut.resume();
+
+    const orch = new Orchestrator({
+      concurrency: 1,
+      permissionMode: "workspace-write",
+      resultsOut,
+      host,
+      deadLetterPath,
+      allowDeadLetter: true, // should NOT suppress write failures
+    });
+
+    const task = samplePacket("will-fail", {
+      escalationPolicy: { kind: "retry", max: 1, backoff: "fixed" },
+    });
+
+    const summary = await orch.run([task]);
+    resultsOut.end();
+
+    expect(summary.deadLetterWriteFailures).toBeGreaterThan(0);
+    expect(summary.deadLetterViolation).toBe(true);
+
+    await nodeFs.rm(tmpDir, { recursive: true, force: true });
+  }, 10_000);
+});
+
+describe("Orchestrator — dead-letter cumulativeUsage input/output split (M4 regression)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("records separate input/output token totals across retries", async () => {
+    const nodeFs = await import("node:fs/promises");
+    const nodePath = await import("node:path");
+    const os = await import("node:os");
+    const tmpDir = await nodeFs.mkdtemp(nodePath.join(os.tmpdir(), "swarm-m4-"));
+    const deadLetterPath = nodePath.join(tmpDir, "dl.jsonl");
+
+    let call = 0;
+    const host = fakeHost(async () => {
+      call += 1;
+      // Two failures with distinct input/output usage values.
+      const result: AgentResult =
+        call === 1
+          ? {
+              status: "failure",
+              error: "first",
+              usage: { inputTokens: 11, outputTokens: 22 },
+              wallClockMs: 5,
+            }
+          : {
+              status: "failure",
+              error: "second",
+              usage: { inputTokens: 33, outputTokens: 44 },
+              wallClockMs: 5,
+            };
+      return makeHandle(result);
+    });
+
+    const resultsOut = new PassThrough();
+    resultsOut.resume();
+
+    const orch = new Orchestrator({
+      concurrency: 1,
+      permissionMode: "workspace-write",
+      resultsOut,
+      host,
+      deadLetterPath,
+    });
+
+    const task = samplePacket("usage-split", {
+      escalationPolicy: { kind: "retry", max: 1, backoff: "fixed" },
+    });
+
+    await orch.run([task]);
+    resultsOut.end();
+
+    const dlContent = await nodeFs.readFile(deadLetterPath, "utf8");
+    const lines = dlContent
+      .split("\n")
+      .filter((l) => l.trim().length > 0)
+      .map(
+        (l) =>
+          JSON.parse(l) as {
+            id: string;
+            cumulativeUsage?: { input: number; output: number };
+          },
+      );
+    const ours = lines.find((l) => l.id === "usage-split");
+    expect(ours).toBeDefined();
+    // After 2 failures: inputs = 11+33 = 44, outputs = 22+44 = 66.
+    expect(ours!.cumulativeUsage).toEqual({ input: 44, output: 66 });
+
+    await nodeFs.rm(tmpDir, { recursive: true, force: true });
+  }, 10_000);
+});
+
+describe("Orchestrator — cross-run dead-letter delta (M3 regression)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("second run with --allow-dead-letter does not see prior run's lines as a delta", async () => {
+    const { mkdtemp, readFile, rm, writeFile } = await import("node:fs/promises");
+    const nodePath = await import("node:path");
+    const os = await import("node:os");
+    const tmpDir = await mkdtemp(nodePath.join(os.tmpdir(), "swarm-m3-"));
+    const deadLetterPath = nodePath.join(tmpDir, "dl.jsonl");
+
+    // Seed the file with a prior run's entries.
+    await writeFile(
+      deadLetterPath,
+      JSON.stringify({
+        id: "prior",
+        attempts: 2,
+        lastStatus: "failure",
+        droppedAt: Date.now(),
+      }) + "\n",
+    );
+
+    // Second "run" that succeeds with no new failures — it should NOT see
+    // the prior file contents as a delta. allowDeadLetter still true.
+    const host = fakeHost(async () => makeHandle(successResult()));
+    const resultsOut = new PassThrough();
+    resultsOut.resume();
+    const orch = new Orchestrator({
+      concurrency: 1,
+      permissionMode: "workspace-write",
+      resultsOut,
+      host,
+      deadLetterPath,
+      allowDeadLetter: true,
+    });
+
+    const summary = await orch.run([samplePacket("clean")]);
+    resultsOut.end();
+
+    expect(summary.deadLetterViolation).toBe(false);
+    expect(summary.deadLetterWriteFailures).toBe(0);
+
+    // File still holds the prior entry.
+    const content = await readFile(deadLetterPath, "utf8");
+    expect(content).toContain("prior");
+
+    await rm(tmpDir, { recursive: true, force: true });
+  }, 10_000);
+});
+
 describe("Orchestrator — role dispatch (M3a Phase 6)", () => {
   afterEach(() => {
     vi.restoreAllMocks();

@@ -152,9 +152,15 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
 
   if (summary.resultWriteFailures > 0) return 1;
   if (summary.deadLetterViolation) {
-    process.stderr.write(
-      `[swarm-coder] exiting non-zero: ${opts.deadLetter ?? "./dead-letter.jsonl"} has new entries from this run; pass --allow-dead-letter to accept\n`,
-    );
+    if (summary.deadLetterWriteFailures > 0) {
+      process.stderr.write(
+        `[swarm-coder] exiting non-zero: dead-letter writer failed ${summary.deadLetterWriteFailures} time(s) writing to ${opts.deadLetter ?? "./dead-letter.jsonl"}; --allow-dead-letter does NOT suppress write failures\n`,
+      );
+    } else {
+      process.stderr.write(
+        `[swarm-coder] exiting non-zero: ${opts.deadLetter ?? "./dead-letter.jsonl"} has new entries from this run; pass --allow-dead-letter to accept\n`,
+      );
+    }
     return 1;
   }
   if (summary.failed > 0 || summary.timeout > 0 || summary.cancelled > 0)

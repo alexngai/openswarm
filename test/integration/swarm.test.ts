@@ -372,6 +372,108 @@ describe("Scenario 9: orchestrator routes message.send between two depth-1 worke
 });
 
 // ---------------------------------------------------------------------------
+// Scenario 9b (C1 + Phase 6 coverage gap): real-spawn ancestry + task_stop
+// ---------------------------------------------------------------------------
+
+describe("Scenario 9b: real spawn chain — ancestry-based task_stop end-to-end", () => {
+  it(
+    "A can stop C; B (peer) cannot (permission denied); registry captures stoppedBy=A",
+    async () => {
+      const { taskStopTool } = await import(
+        "../../src/tools/tier2/task_stop.js"
+      );
+
+      // Use maxDepth=3 so depth-2 (C) spawn is allowed.
+      const root = new StandaloneHost({
+        agentId: "root-for-9b" as AgentId,
+        maxDepth: 3,
+      });
+
+      // Spawn A and B at depth 1 using the text-only fixture so they don't
+      // exit instantly — slow.json keeps the workers alive long enough for
+      // the ancestry check + registry lookup to succeed.
+      const handleA = await root.spawn({
+        task: { ...makeTaskPacket("worker A"), id: "task-a-9b" },
+        permissionMode: "workspace-write",
+      });
+      const handleB = await root.spawn({
+        task: { ...makeTaskPacket("worker B"), id: "task-b-9b" },
+        permissionMode: "workspace-write",
+      });
+
+      // "Spawn" C as depth-2 under A. We use the host API directly (not
+      // the `agent` tool) because that's what the worker's spawn IPC would
+      // trigger anyway — and ScriptedTestEngine can't dispatch tool bodies.
+      const handleC = await root.spawn({
+        task: { ...makeTaskPacket("worker C"), id: "task-c-9b" },
+        permissionMode: "workspace-write",
+        parentAgentId: handleA.agentId,
+      });
+
+      // Registry.create assigns a fresh UUID id, so the packet's id field is
+      // not the registry id. Look up C's actual TaskRecord by owner.
+      const cTasks = await root.task.list({ owner: handleC.agentId });
+      expect(cTasks).toHaveLength(1);
+      const taskCId = cTasks[0]!.id;
+
+      // C1 regression: TaskRecord.owner must equal C's agentId.
+      const ownerOfC = await root.task.ownerOf(taskCId);
+      expect(ownerOfC).toBe(handleC.agentId);
+
+      // Ancestry check: A IS an ancestor of C; B is NOT.
+      expect(
+        await root.isAncestorOf(handleA.agentId, handleC.agentId),
+      ).toBe(true);
+      expect(
+        await root.isAncestorOf(handleB.agentId, handleC.agentId),
+      ).toBe(false);
+
+      // Build worker-flavored hosts for A and B that proxy task.* through
+      // `root` so the tool walks the real ancestry path.
+      const hostFor = (agentId: AgentId) =>
+        ({
+          ...root,
+          agentId,
+          kind: "worker" as const,
+          mode: "worker" as const,
+          task: root.task,
+          isAncestorOf: root.isAncestorOf.bind(root),
+        }) as unknown as import("../../src/swarm/host.js").SwarmHost;
+
+      // B (peer) calls task_stop on C — should be rejected.
+      const denied = await taskStopTool.execute(
+        { taskId: taskCId },
+        { cwd: process.cwd(), host: hostFor(handleB.agentId) },
+      );
+      expect(denied.status).toBe("error");
+      expect(
+        (denied as { status: "error"; message: string }).message,
+      ).toContain("permission denied");
+
+      // A (ancestor) stops C — should succeed.
+      const allowed = await taskStopTool.execute(
+        { taskId: taskCId },
+        { cwd: process.cwd(), host: hostFor(handleA.agentId) },
+      );
+      expect(allowed.status).toBe("ok");
+
+      // Registry captures the canceling caller.
+      const stoppedRecord = await root.task.get(taskCId);
+      expect(stoppedRecord?.status).toBe("stopped");
+      expect(stoppedRecord?.stoppedBy).toBe(handleA.agentId);
+
+      // Drain all workers so the test exits cleanly.
+      await Promise.all([
+        handleA.wait().catch(() => {}),
+        handleB.wait().catch(() => {}),
+        handleC.wait().catch(() => {}),
+      ]);
+    },
+    30_000,
+  );
+});
+
+// ---------------------------------------------------------------------------
 // Scenario 10 (M3a Phase 3): depth-2 sender is rejected with a typed reason
 // ---------------------------------------------------------------------------
 

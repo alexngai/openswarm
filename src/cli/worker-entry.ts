@@ -19,6 +19,23 @@ import type { IpcRequest } from "../swarm/ipc/protocol.js";
 import type { PermissionMode, Usage } from "../core/types.js";
 import type { ToolExecutionContext, ToolImpl } from "../tools/types.js";
 
+/**
+ * Combine the parent's base system prompt with the role's system-prompt
+ * suffix. Role suffix APPENDS to base (role wins on conflicts because it
+ * lands last — matches the plan §6.6 "last-writer-wins" guidance).
+ *
+ * Exported so unit tests can assert the join behavior without standing up
+ * a full worker IPC process (M1 regression).
+ */
+export function composeSystemPrompt(
+  basePrompt: string | undefined,
+  roleSuffix: string | undefined,
+): string {
+  return [basePrompt ?? "", roleSuffix ?? ""]
+    .filter((s) => s.length > 0)
+    .join("\n\n");
+}
+
 export async function runWorkerEntry(): Promise<number> {
   const agentId = (process.env.SWARM_CODER_AGENT_ID ?? "unknown") as AgentId;
   const depthStr = process.env.SWARM_CODER_DEPTH ?? "0";
@@ -136,7 +153,8 @@ export async function runWorkerEntry(): Promise<number> {
     // Append the role suffix (if any) to the base system prompt. Role suffix
     // wins on conflicts because it lands last — matches the plan's
     // "last-writer-wins on model-perceived directives" guidance.
-    const systemPrompt = roleSuffix.length > 0 ? roleSuffix : "";
+    const basePrompt = process.env.SWARM_CODER_BASE_SYSTEM_PROMPT ?? "";
+    const systemPrompt = composeSystemPrompt(basePrompt, roleSuffix);
 
     const runConfig = {
       systemPrompt,

@@ -177,6 +177,41 @@ describe("StandaloneHost", () => {
     expect(callArgs.depth).toBe(1);
   });
 
+  // Regression (C1): StandaloneHost.spawn must populate TaskRecord.owner with
+  // the spawned child's agentId so host.task.ownerOf(taskId) resolves to the
+  // running worker. Without this, task_stop's ancestry check short-circuits
+  // to "unknown taskId" for every worker-side caller.
+  it("spawn populates TaskRecord.owner with child agentId (C1 regression)", async () => {
+    const { spawnFn, emitFromWorker } = makeSpawnOverride();
+    const registry = new TaskRegistry();
+    const host = new StandaloneHost({ maxDepth: 5, spawnWorker: spawnFn, registry });
+
+    const spawnPromise = host.spawn({
+      task: samplePacket(),
+      permissionMode: "workspace-write",
+    });
+
+    await new Promise((r) => setImmediate(r));
+    emitFromWorker({ kind: "notification", method: "worker_ready", params: {} });
+    await new Promise((r) => setImmediate(r));
+    emitFromWorker({
+      kind: "notification",
+      method: "task_result",
+      params: { status: "success", output: "done", usage: { inputTokens: 0, outputTokens: 0 }, wallClockMs: 0 },
+    });
+
+    const handle = await spawnPromise;
+
+    // Find the registry record created by spawn.
+    const records = registry.list();
+    expect(records).toHaveLength(1);
+    const taskId = records[0]!.id;
+
+    const owner = await host.task.ownerOf(taskId);
+    expect(owner).toBeDefined();
+    expect(owner).toBe(handle.agentId);
+  });
+
   it("spawning with parentAgentId from first child computes depth=2", async () => {
     const { spawnFn, emitFromWorker } = makeSpawnOverride();
     const host = new StandaloneHost({ maxDepth: 5, spawnWorker: spawnFn });

@@ -112,7 +112,7 @@ describe("send_message + check_inbox", () => {
     });
   });
 
-  it('broadcast "*" fans out to all peers except the sender', async () => {
+  it('broadcast "*" fans out to depth-1 peers only (excludes root + sender) (M6 regression)', async () => {
     const root = new StandaloneHost({ agentId: "R" as AgentId });
     const A = "A" as AgentId;
     const B = "B" as AgentId;
@@ -130,8 +130,9 @@ describe("send_message + check_inbox", () => {
     const parsed = JSON.parse(
       (res as { status: "ok"; output: string }).output,
     );
-    // Root (R) + B + C all receive; A excluded as sender.
-    expect(parsed.delivered).toBe(3);
+    // B + C receive; A excluded as sender; root (R, depth 0) excluded by
+    // design — nothing drains root's inbox, so fanning to it would leak.
+    expect(parsed.delivered).toBe(2);
 
     // Sender A should NOT have received its own broadcast.
     const aInbox = hostAs(root, A, 1).drainInbox(10);
@@ -140,6 +141,9 @@ describe("send_message + check_inbox", () => {
     // B and C each receive exactly one.
     expect(hostAs(root, B, 1).drainInbox(10)).toHaveLength(1);
     expect(hostAs(root, C, 1).drainInbox(10)).toHaveLength(1);
+
+    // Root's own inbox stays empty — the core guarantee of the M6 fix.
+    expect(root.drainInbox(10)).toEqual([]);
   });
 
   it("role broadcast only reaches agents registered under that role", async () => {

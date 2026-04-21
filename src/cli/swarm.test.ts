@@ -216,6 +216,7 @@ describe("runSwarm migration hint", () => {
       cancelled: 0,
       resultWriteFailures: 0,
       deadLetterViolation: false,
+      deadLetterWriteFailures: 0,
     });
 
     const { runSwarm } = await import("./swarm.js");
@@ -256,6 +257,7 @@ describe("runSwarm migration hint", () => {
       cancelled: 0,
       resultWriteFailures: 0,
       deadLetterViolation: true,
+      deadLetterWriteFailures: 0,
     });
 
     const { runSwarm } = await import("./swarm.js");
