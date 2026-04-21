@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { z } from "zod";
 import type { NormalizedEvent } from "../core/types.js";
 
 // ---------------------------------------------------------------------------
@@ -723,5 +724,133 @@ describe("Scenario 8: hook-event translator", () => {
         stdout: "done",
       },
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 9: structuredOutput
+// ---------------------------------------------------------------------------
+
+/** Minimal result message for structured output scenarios. */
+function makeResultMsg(sessionId = "s9"): object {
+  return sdkMsg({
+    type: "result",
+    subtype: "success",
+    stop_reason: "end_turn",
+    result: '{"foo":"bar"}',
+    usage: { input_tokens: 10, output_tokens: 5 },
+    duration_ms: 100,
+    duration_api_ms: 80,
+    is_error: false,
+    num_turns: 1,
+    total_cost_usd: 0,
+    modelUsage: {},
+    permission_denials: [],
+    session_id: sessionId,
+    uuid: "u-result",
+  });
+}
+
+function makeTextDelta(text: string, sessionId = "s9", uuidSuffix = "td"): object {
+  return sdkMsg({
+    type: "stream_event",
+    event: {
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "text_delta", text },
+    },
+    session_id: sessionId,
+    uuid: `u-${uuidSuffix}`,
+    parent_tool_use_id: null,
+  });
+}
+
+describe("Scenario 9: structuredOutput", () => {
+  beforeEach(() => {
+    mockQueryMessages.length = 0;
+  });
+
+  it("Zod schema is converted to JSON Schema and passed as outputFormat", async () => {
+    const { query: mockQuery } = await import("@anthropic-ai/claude-agent-sdk");
+
+    mockQueryMessages.push(makeResultMsg());
+
+    const zodSchema = z.object({ foo: z.string() });
+    await collectEvents(
+      makeConfig({
+        structuredOutput: { schema: { kind: "zod", schema: zodSchema } },
+      }),
+    );
+
+    const callArgs = (mockQuery as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as {
+      options?: { outputFormat?: { type: string; schema: Record<string, unknown> } };
+    };
+    const outputFormat = callArgs?.options?.outputFormat;
+    expect(outputFormat?.type).toBe("json_schema");
+    expect(outputFormat?.schema?.type).toBe("object");
+    expect(
+      (outputFormat?.schema?.properties as Record<string, unknown>)?.foo,
+    ).toBeDefined();
+  });
+
+  it("pre-built JSON Schema passes through unchanged to outputFormat", async () => {
+    const { query: mockQuery } = await import("@anthropic-ai/claude-agent-sdk");
+
+    mockQueryMessages.push(makeResultMsg());
+
+    const rawSchema = { type: "object", properties: { bar: { type: "number" } } };
+    await collectEvents(
+      makeConfig({
+        structuredOutput: { schema: { kind: "json-schema", schema: rawSchema } },
+      }),
+    );
+
+    const callArgs = (mockQuery as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as {
+      options?: { outputFormat?: { type: string; schema: Record<string, unknown> } };
+    };
+    expect(callArgs?.options?.outputFormat?.schema).toEqual(rawSchema);
+  });
+
+  it("successful parse attaches structuredOutput to message_stop event", async () => {
+    mockQueryMessages.push(
+      makeTextDelta('{"foo":', "s9", "1"),
+      makeTextDelta('"bar"}', "s9", "2"),
+      makeResultMsg(),
+    );
+
+    const events = await collectEvents(
+      makeConfig({
+        structuredOutput: { schema: { kind: "json-schema", schema: { type: "object" } } },
+      }),
+    );
+
+    const stop = events.find((e) => e.type === "message_stop");
+    expect(stop).toBeDefined();
+    expect((stop as { structuredOutput?: unknown }).structuredOutput).toEqual({ foo: "bar" });
+  });
+
+  it("parse failure emits error event with code structured_output_parse_failed", async () => {
+    mockQueryMessages.push(
+      makeTextDelta("not valid json!!", "s9", "bad"),
+      makeResultMsg(),
+    );
+
+    const events = await collectEvents(
+      makeConfig({
+        structuredOutput: { schema: { kind: "json-schema", schema: { type: "object" } } },
+      }),
+    );
+
+    const errorEvent = events.find(
+      (e) => e.type === "error" &&
+        (e as { error: { code: string } }).error.code === "structured_output_parse_failed",
+    );
+    expect(errorEvent).toBeDefined();
+
+    // message_stop still emitted after the error
+    const stop = events.find((e) => e.type === "message_stop");
+    expect(stop).toBeDefined();
+    // structuredOutput should be absent on the stop event
+    expect((stop as { structuredOutput?: unknown }).structuredOutput).toBeUndefined();
   });
 });

@@ -122,6 +122,42 @@ export interface RunConfig {
    * Phase 4 uses this to enable web_search.
    */
   readonly enabledBuiltinTools?: readonly string[];
+
+  /**
+   * When present, forces the engine to produce a JSON object matching
+   * the supplied schema. Translates to the SDK's `outputFormat:
+   * { type: "json_schema", schema }` option. When set, the model's
+   * output is expected to be a single JSON document parseable against
+   * this schema; text_delta events still stream as usual, and the
+   * final parsed object is surfaced via RunResult.
+   *
+   * Accepts either a Zod schema (converted to JSON Schema via Zod v4's
+   * built-in `z.toJSONSchema()`) or a pre-built JSON Schema object.
+   */
+  readonly structuredOutput?: {
+    readonly schema:
+      | { kind: "zod"; schema: import("zod").ZodTypeAny }
+      | { kind: "json-schema"; schema: Record<string, unknown> };
+    /** Name for the schema — SDK uses this in the prompt. Default: "Output". */
+    readonly name?: string;
+  };
+}
+
+// ---------------------------------------------------------------------------
+// RunResult
+// ---------------------------------------------------------------------------
+
+/**
+ * Final result of a run. Returned after the stream ends.
+ *
+ * `structuredOutput` is populated when `RunConfig.structuredOutput` was set
+ * and the model's response parsed successfully as JSON. The value is `unknown`
+ * — callers that supplied a Zod schema should re-parse with `.safeParse()` for
+ * type safety. On parse failure an error event is emitted instead and this
+ * field is absent.
+ */
+export interface RunResult {
+  readonly structuredOutput?: unknown;
 }
 
 // ---------------------------------------------------------------------------

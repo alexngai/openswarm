@@ -21,7 +21,7 @@ import type {
   RunConfig,
 } from "./index.js";
 import type { NormalizedEvent, PermissionMode } from "../core/types.js";
-import { ZodObject } from "zod";
+import { ZodObject, toJSONSchema as zodToJSONSchema } from "zod";
 
 /**
  * Claude Agent SDK exposes MCP-registered tools to the model under the
@@ -193,7 +193,18 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
       }
     }
 
-    // 7. Call query().
+    // 7. Resolve outputFormat when structuredOutput is configured.
+    let outputFormat: { type: "json_schema"; schema: Record<string, unknown> } | undefined;
+    if (config.structuredOutput != null) {
+      const { schema: schemaDef } = config.structuredOutput;
+      const jsonSchema: Record<string, unknown> =
+        schemaDef.kind === "zod"
+          ? (zodToJSONSchema(schemaDef.schema) as Record<string, unknown>)
+          : schemaDef.schema;
+      outputFormat = { type: "json_schema", schema: jsonSchema };
+    }
+
+    // 8. Call query().
     const response = query({
       prompt: buildPrompt(),
       options: {
@@ -222,20 +233,47 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
         // translated to "hook_event" NormalizedEvents by the translator.
         includeHookEvents: true,
         ...(abortController != null && { abortController }),
+        ...(outputFormat != null && { outputFormat }),
       },
     });
 
-    // 8. Iterate and translate. Wrap in try/catch so a mid-stream SDK
-    //    exception (transport error, etc.) surfaces as a terminal
-    //    `error` event instead of propagating up — callers (ink UI,
-    //    headless JSONL) always see a clean end of stream.
-    //    The translator strips the MCP prefix from tool names so outer
-    //    code sees bare names everywhere (matches canUseTool wrapper).
+    // 9. Iterate and translate. When structuredOutput is configured, buffer
+    //    all text_delta content so we can JSON.parse at message_stop.
+    //    Wrap in try/catch so a mid-stream SDK exception (transport error,
+    //    etc.) surfaces as a terminal `error` event instead of propagating up
+    //    — callers (ink UI, headless JSONL) always see a clean end of stream.
+    //    The translator strips the MCP prefix from tool names so outer code
+    //    sees bare names everywhere (matches canUseTool wrapper).
     const state = makeTranslatorState(MCP_PREFIX);
+    let textBuffer = "";
+    const bufferingEnabled = config.structuredOutput != null;
+
     try {
       for await (const msg of response) {
         const event = translateSdkMessage(msg, state);
         if (event != null) {
+          // Accumulate text deltas when structured output is expected.
+          if (bufferingEnabled && event.type === "text_delta") {
+            textBuffer += event.text;
+          }
+          // At message_stop, attempt to parse the buffered JSON.
+          if (bufferingEnabled && event.type === "message_stop") {
+            try {
+              const parsed: unknown = JSON.parse(textBuffer);
+              yield { ...event, structuredOutput: parsed };
+            } catch {
+              yield {
+                type: "error" as const,
+                error: {
+                  code: "structured_output_parse_failed" as const,
+                  message: `Failed to parse structured output as JSON: ${textBuffer.slice(0, 200)}`,
+                  retryable: false,
+                },
+              };
+              yield event;
+            }
+            continue;
+          }
           yield event;
         }
       }

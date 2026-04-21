@@ -81,6 +81,7 @@ export interface ProviderError {
     | "invalid_request"
     | "provider_unavailable"
     | "transport"
+    | "structured_output_parse_failed"
     | "unknown";
   readonly message: string;
   readonly retryable: boolean;
@@ -107,6 +108,13 @@ export type NormalizedEvent =
       readonly type: "message_stop";
       readonly stopReason: StopReason;
       readonly usage: Usage;
+      /**
+       * Present when `RunConfig.structuredOutput` was set and the model's
+       * response parsed successfully as JSON. `unknown` — callers that
+       * supplied a Zod schema should re-parse with `.safeParse()` for type
+       * safety.
+       */
+      readonly structuredOutput?: unknown;
     }
   | { readonly type: "error"; readonly error: ProviderError }
   /**
