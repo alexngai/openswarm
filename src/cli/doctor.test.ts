@@ -40,8 +40,11 @@ describe("runDoctor", () => {
     detectAuth.mockResolvedValue({ state: "env-api-key", source: "ANTHROPIC_API_KEY" });
 
     const fs = await getFsMock();
-    // config dir: not found
-    (fs.access as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("ENOENT"));
+    // config dir: not found; binary access: success
+    (fs.access as ReturnType<typeof vi.fn>).mockImplementation((p: unknown) => {
+      if (String(p).includes(".swarm-coder")) return Promise.reject(new Error("ENOENT"));
+      return Promise.resolve(undefined);
+    });
     // workspace probe: success
     (fs.writeFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (fs.unlink as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
@@ -144,7 +147,11 @@ describe("runDoctor", () => {
     detectAuth.mockResolvedValue({ state: "env-api-key", source: "ANTHROPIC_API_KEY" });
 
     const fs = await getFsMock();
-    (fs.access as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("ENOENT"));
+    // config dir: not found; binary access: success
+    (fs.access as ReturnType<typeof vi.fn>).mockImplementation((p: unknown) => {
+      if (String(p).includes(".swarm-coder")) return Promise.reject(new Error("ENOENT"));
+      return Promise.resolve(undefined);
+    });
     (fs.writeFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (fs.unlink as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
@@ -202,7 +209,11 @@ describe("runDoctor", () => {
     detectAuth.mockResolvedValue({ state: "keychain", service: "Claude Code-credentials" });
 
     const fs = await getFsMock();
-    (fs.access as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("ENOENT"));
+    // config dir: not found; binary access: success
+    (fs.access as ReturnType<typeof vi.fn>).mockImplementation((p: unknown) => {
+      if (String(p).includes(".swarm-coder")) return Promise.reject(new Error("ENOENT"));
+      return Promise.resolve(undefined);
+    });
     (fs.writeFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (fs.unlink as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
@@ -218,5 +229,109 @@ describe("runDoctor", () => {
     const output = chunks.join("");
     expect(output).toContain("keychain credential found");
     expect(code).toBe(0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // install check — CLI binary branches
+  // ---------------------------------------------------------------------------
+
+  it("install check passes when CLI binary is accessible", async () => {
+    const detectAuth = await getDetectAuth();
+    detectAuth.mockResolvedValue({ state: "env-api-key", source: "ANTHROPIC_API_KEY" });
+
+    const fs = await getFsMock();
+    // Distinguish config-dir access from binary access by argument.
+    // Config dir contains ".swarm-coder"; binary path contains "claude".
+    (fs.access as ReturnType<typeof vi.fn>).mockImplementation((p: unknown) => {
+      if (String(p).includes(".swarm-coder")) return Promise.reject(new Error("ENOENT"));
+      // binary access — success
+      return Promise.resolve(undefined);
+    });
+    (fs.writeFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (fs.unlink as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    const chunks: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+      chunks.push(String(chunk));
+      return true;
+    });
+
+    const { runDoctor } = await import("./doctor.js");
+    const code = await runDoctor("json", process.cwd());
+
+    const parsed = JSON.parse(chunks.join("").trim()) as {
+      checks: Array<{ name: string; status: string; message: string }>;
+    };
+    const installCheck = parsed.checks.find((c) => c.name === "install");
+    expect(installCheck?.status).toBe("pass");
+    expect(installCheck?.message).toContain("CLI binary at");
+    expect(code).toBe(0);
+  });
+
+  it("install check fails when CLI binary is missing", async () => {
+    const detectAuth = await getDetectAuth();
+    detectAuth.mockResolvedValue({ state: "env-api-key", source: "ANTHROPIC_API_KEY" });
+
+    const fs = await getFsMock();
+    // All fs.access calls fail — config dir missing and binary missing.
+    (fs.access as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("ENOENT"));
+    (fs.writeFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (fs.unlink as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    const chunks: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+      chunks.push(String(chunk));
+      return true;
+    });
+
+    const { runDoctor } = await import("./doctor.js");
+    const code = await runDoctor("json", process.cwd());
+
+    const parsed = JSON.parse(chunks.join("").trim()) as {
+      checks: Array<{ name: string; status: string; message: string }>;
+    };
+    const installCheck = parsed.checks.find((c) => c.name === "install");
+    expect(installCheck?.status).toBe("fail");
+    expect(installCheck?.message).toContain("bundled CLI binary missing");
+    expect(installCheck?.message).toContain("npm rebuild");
+    expect(code).toBe(1);
+  });
+
+  it("install check warns when platform is not in the known bundled-binary list", async () => {
+    const detectAuth = await getDetectAuth();
+    detectAuth.mockResolvedValue({ state: "env-api-key", source: "ANTHROPIC_API_KEY" });
+
+    const fs = await getFsMock();
+    (fs.access as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("ENOENT"));
+    (fs.writeFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (fs.unlink as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    // Temporarily override platform to something unsupported.
+    const origPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+    const origArch = Object.getOwnPropertyDescriptor(process, "arch");
+    Object.defineProperty(process, "platform", { value: "freebsd", configurable: true });
+    Object.defineProperty(process, "arch", { value: "x64", configurable: true });
+
+    const chunks: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+      chunks.push(String(chunk));
+      return true;
+    });
+
+    try {
+      const { runDoctor } = await import("./doctor.js");
+      await runDoctor("json", process.cwd());
+
+      const parsed = JSON.parse(chunks.join("").trim()) as {
+        checks: Array<{ name: string; status: string; message: string }>;
+      };
+      const installCheck = parsed.checks.find((c) => c.name === "install");
+      expect(installCheck?.status).toBe("warn");
+      expect(installCheck?.message).toContain("not in the known bundled-binary list");
+    } finally {
+      // Restore platform/arch.
+      if (origPlatform) Object.defineProperty(process, "platform", origPlatform);
+      if (origArch) Object.defineProperty(process, "arch", origArch);
+    }
   });
 });

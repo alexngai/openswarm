@@ -4,7 +4,7 @@
  * Four checks:
  *   auth      — detectAuth() presence check
  *   config    — .swarm-coder/ directory exists
- *   install   — @anthropic-ai/claude-agent-sdk importable + version
+ *   install   — @anthropic-ai/claude-agent-sdk importable + version + CLI binary
  *   workspace — cwd is writable (probe file)
  *
  * Text format: ✓ auth: ... / ✗ workspace: ...
@@ -14,6 +14,7 @@
  */
 
 import * as fs from "node:fs/promises";
+import * as fsc from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { detectAuth } from "../auth/status.js";
@@ -69,6 +70,68 @@ async function checkConfig(cwd: string): Promise<CheckResult> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Binary-location helper
+// ---------------------------------------------------------------------------
+
+const PLATFORM_DEP_MAP: Record<string, string> = {
+  "darwin-arm64": "@anthropic-ai/claude-agent-sdk-darwin-arm64",
+  "darwin-x64": "@anthropic-ai/claude-agent-sdk-darwin-x64",
+  "linux-x64": "@anthropic-ai/claude-agent-sdk-linux-x64",
+  "linux-arm64": "@anthropic-ai/claude-agent-sdk-linux-arm64",
+  "linux-x64-musl": "@anthropic-ai/claude-agent-sdk-linux-x64-musl",
+  "linux-arm64-musl": "@anthropic-ai/claude-agent-sdk-linux-arm64-musl",
+  "win32-x64": "@anthropic-ai/claude-agent-sdk-win32-x64",
+  "win32-arm64": "@anthropic-ai/claude-agent-sdk-win32-arm64",
+};
+
+/**
+ * Returns { binaryPath } on success, or { warn: reason } for unsupported
+ * platform, or { error: reason } when the dep is missing/inaccessible.
+ */
+async function findCliBinary(): Promise<
+  | { kind: "found"; binaryPath: string }
+  | { kind: "warn"; reason: string }
+  | { kind: "missing"; expectedPath: string }
+> {
+  const key = `${process.platform}-${process.arch}`;
+  const depName = PLATFORM_DEP_MAP[key];
+  if (!depName) {
+    return { kind: "warn", reason: `platform ${key} not in the known bundled-binary list` };
+  }
+
+  let depDir: string;
+  try {
+    const req = createRequire(import.meta.url);
+    const depPkgPath = req.resolve(`${depName}/package.json`);
+    depDir = path.dirname(depPkgPath);
+  } catch {
+    // Optional dep not installed at all — construct a best-effort path for
+    // the error message using node_modules relative to this file.
+    const guessedDir = path.resolve(
+      path.dirname(new URL(import.meta.url).pathname),
+      "../../node_modules",
+      depName,
+    );
+    const binaryName = process.platform === "win32" ? "claude.exe" : "claude";
+    return { kind: "missing", expectedPath: path.join(guessedDir, binaryName) };
+  }
+
+  const binaryName = process.platform === "win32" ? "claude.exe" : "claude";
+  const binaryPath = path.join(depDir, binaryName);
+
+  try {
+    await fs.access(binaryPath, fsc.constants.X_OK);
+    return { kind: "found", binaryPath };
+  } catch {
+    return { kind: "missing", expectedPath: binaryPath };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Install check
+// ---------------------------------------------------------------------------
+
 async function checkInstall(): Promise<CheckResult> {
   try {
     // Verify the SDK is importable via a dynamic import of its main export.
@@ -81,8 +144,6 @@ async function checkInstall(): Promise<CheckResult> {
     try {
       const require = createRequire(import.meta.url);
       const mainPath = require.resolve("@anthropic-ai/claude-agent-sdk");
-      // mainPath looks like .../node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs
-      // Walk up until we find a package.json that declares the right name.
       let dir = path.dirname(mainPath);
       for (let i = 0; i < 5; i++) {
         const candidate = path.join(dir, "package.json");
@@ -104,11 +165,29 @@ async function checkInstall(): Promise<CheckResult> {
       // version read failed — still pass, just report unknown
     }
 
-    return {
-      name: "install",
-      status: "pass",
-      message: `@anthropic-ai/claude-agent-sdk v${version} found`,
-    };
+    // Check for the bundled CLI binary.
+    const binResult = await findCliBinary();
+    if (binResult.kind === "found") {
+      return {
+        name: "install",
+        status: "pass",
+        message: `SDK v${version} + CLI binary at ${binResult.binaryPath} found`,
+      };
+    } else if (binResult.kind === "warn") {
+      return {
+        name: "install",
+        status: "warn",
+        message: `SDK v${version} found; ${binResult.reason} — SDK may fall back to a system binary`,
+      };
+    } else {
+      return {
+        name: "install",
+        status: "fail",
+        message:
+          `SDK importable but bundled CLI binary missing (expected ${binResult.expectedPath}); ` +
+          `try \`npm rebuild ${PLATFORM_DEP_MAP[`${process.platform}-${process.arch}`] ?? "@anthropic-ai/claude-agent-sdk"}\` or reinstall`,
+      };
+    }
   } catch {
     return {
       name: "install",
