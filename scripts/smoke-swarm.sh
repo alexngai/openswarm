@@ -67,9 +67,9 @@ npm run build > /dev/null
 # [O1] 3 tasks happy path
 SMOKE_DIR=$(mktemp -d)
 cat > "$SMOKE_DIR/tasks.jsonl" <<'EOF'
-{"id":"t1","prompt":"task one","branchPolicy":"main","commitPolicy":"never","escalationPolicy":"abort-on-error"}
-{"id":"t2","prompt":"task two","branchPolicy":"main","commitPolicy":"never","escalationPolicy":"abort-on-error"}
-{"id":"t3","prompt":"task three","branchPolicy":"main","commitPolicy":"never","escalationPolicy":"abort-on-error"}
+{"id":"t1","prompt":"task one","branchPolicy":{"kind":"none"},"commitPolicy":{"kind":"none"},"escalationPolicy":{"kind":"none"}}
+{"id":"t2","prompt":"task two","branchPolicy":{"kind":"none"},"commitPolicy":{"kind":"none"},"escalationPolicy":{"kind":"none"}}
+{"id":"t3","prompt":"task three","branchPolicy":{"kind":"none"},"commitPolicy":{"kind":"none"},"escalationPolicy":{"kind":"none"}}
 EOF
 export SWARM_CODER_TEST_SCRIPT="$REPO_ROOT/test/fixtures/worker-scripts/text-only.json"
 EXIT_CODE=0
@@ -86,11 +86,11 @@ rm -rf "$SMOKE_DIR"
 # [O2] 5 tasks concurrency=2
 SMOKE_DIR=$(mktemp -d)
 cat > "$SMOKE_DIR/tasks.jsonl" <<'EOF'
-{"id":"t1","prompt":"a","branchPolicy":"main","commitPolicy":"never","escalationPolicy":"abort-on-error"}
-{"id":"t2","prompt":"b","branchPolicy":"main","commitPolicy":"never","escalationPolicy":"abort-on-error"}
-{"id":"t3","prompt":"c","branchPolicy":"main","commitPolicy":"never","escalationPolicy":"abort-on-error"}
-{"id":"t4","prompt":"d","branchPolicy":"main","commitPolicy":"never","escalationPolicy":"abort-on-error"}
-{"id":"t5","prompt":"e","branchPolicy":"main","commitPolicy":"never","escalationPolicy":"abort-on-error"}
+{"id":"t1","prompt":"a","branchPolicy":{"kind":"none"},"commitPolicy":{"kind":"none"},"escalationPolicy":{"kind":"none"}}
+{"id":"t2","prompt":"b","branchPolicy":{"kind":"none"},"commitPolicy":{"kind":"none"},"escalationPolicy":{"kind":"none"}}
+{"id":"t3","prompt":"c","branchPolicy":{"kind":"none"},"commitPolicy":{"kind":"none"},"escalationPolicy":{"kind":"none"}}
+{"id":"t4","prompt":"d","branchPolicy":{"kind":"none"},"commitPolicy":{"kind":"none"},"escalationPolicy":{"kind":"none"}}
+{"id":"t5","prompt":"e","branchPolicy":{"kind":"none"},"commitPolicy":{"kind":"none"},"escalationPolicy":{"kind":"none"}}
 EOF
 export SWARM_CODER_TEST_SCRIPT="$REPO_ROOT/test/fixtures/worker-scripts/text-only.json"
 EXIT_CODE=0
@@ -110,11 +110,11 @@ rm -rf "$SMOKE_DIR"
 # should leave ≥1 queued task cancelled.
 SMOKE_DIR=$(mktemp -d)
 cat > "$SMOKE_DIR/tasks.jsonl" <<'EOF'
-{"id":"t1","prompt":"one","branchPolicy":"main","commitPolicy":"never","escalationPolicy":"abort-on-error"}
-{"id":"t2","prompt":"two","branchPolicy":"main","commitPolicy":"never","escalationPolicy":"abort-on-error"}
-{"id":"t3","prompt":"three","branchPolicy":"main","commitPolicy":"never","escalationPolicy":"abort-on-error"}
-{"id":"t4","prompt":"four","branchPolicy":"main","commitPolicy":"never","escalationPolicy":"abort-on-error"}
-{"id":"t5","prompt":"five","branchPolicy":"main","commitPolicy":"never","escalationPolicy":"abort-on-error"}
+{"id":"t1","prompt":"one","branchPolicy":{"kind":"none"},"commitPolicy":{"kind":"none"},"escalationPolicy":{"kind":"none"}}
+{"id":"t2","prompt":"two","branchPolicy":{"kind":"none"},"commitPolicy":{"kind":"none"},"escalationPolicy":{"kind":"none"}}
+{"id":"t3","prompt":"three","branchPolicy":{"kind":"none"},"commitPolicy":{"kind":"none"},"escalationPolicy":{"kind":"none"}}
+{"id":"t4","prompt":"four","branchPolicy":{"kind":"none"},"commitPolicy":{"kind":"none"},"escalationPolicy":{"kind":"none"}}
+{"id":"t5","prompt":"five","branchPolicy":{"kind":"none"},"commitPolicy":{"kind":"none"},"escalationPolicy":{"kind":"none"}}
 EOF
 export SWARM_CODER_TEST_SCRIPT="$REPO_ROOT/test/fixtures/worker-scripts/slow.json"
 $BIN swarm run "$SMOKE_DIR/tasks.jsonl" --concurrency 2 --output "$SMOKE_DIR/results.jsonl" > /tmp/swc-o3.log 2>&1 &
@@ -139,7 +139,7 @@ rm -rf "$SMOKE_DIR"
 # asynchronously on write.
 SMOKE_DIR=$(mktemp -d)
 cat > "$SMOKE_DIR/tasks.jsonl" <<'EOF'
-{"id":"t1","prompt":"x","branchPolicy":"main","commitPolicy":"never","escalationPolicy":"abort-on-error"}
+{"id":"t1","prompt":"x","branchPolicy":{"kind":"none"},"commitPolicy":{"kind":"none"},"escalationPolicy":{"kind":"none"}}
 EOF
 export SWARM_CODER_TEST_SCRIPT="$REPO_ROOT/test/fixtures/worker-scripts/text-only.json"
 EXIT_CODE=0
@@ -177,9 +177,9 @@ else
     # [L1] 3 tasks happy path against real API
     SMOKE_DIR=$(mktemp -d)
     cat > "$SMOKE_DIR/tasks.jsonl" <<'EOF'
-{"id":"live1","prompt":"Reply with exactly the word: alpha","branchPolicy":"main","commitPolicy":"never","escalationPolicy":"abort-on-error"}
-{"id":"live2","prompt":"Reply with exactly the word: beta","branchPolicy":"main","commitPolicy":"never","escalationPolicy":"abort-on-error"}
-{"id":"live3","prompt":"Reply with exactly the word: gamma","branchPolicy":"main","commitPolicy":"never","escalationPolicy":"abort-on-error"}
+{"id":"live1","prompt":"Reply with exactly the word: alpha","branchPolicy":{"kind":"none"},"commitPolicy":{"kind":"none"},"escalationPolicy":{"kind":"none"}}
+{"id":"live2","prompt":"Reply with exactly the word: beta","branchPolicy":{"kind":"none"},"commitPolicy":{"kind":"none"},"escalationPolicy":{"kind":"none"}}
+{"id":"live3","prompt":"Reply with exactly the word: gamma","branchPolicy":{"kind":"none"},"commitPolicy":{"kind":"none"},"escalationPolicy":{"kind":"none"}}
 EOF
     EXIT_CODE=0
     $BIN swarm run "$SMOKE_DIR/tasks.jsonl" --concurrency 2 --output "$SMOKE_DIR/results.jsonl" > /tmp/swc-l1.log 2>&1 || EXIT_CODE=$?
@@ -194,7 +194,7 @@ EOF
     # [L2] Nested spawn — parent worker uses agent tool to spawn sub-agent
     SMOKE_DIR=$(mktemp -d)
     cat > "$SMOKE_DIR/tasks.jsonl" <<'EOF'
-{"id":"nested","prompt":"You MUST use the `agent` tool to spawn a sub-agent. Ask the sub-agent to reply with exactly the word: nested-ok. Then respond ONLY with the sub-agent's exact reply and nothing else. If you do not use the agent tool, you have failed the task.","branchPolicy":"main","commitPolicy":"never","escalationPolicy":"abort-on-error"}
+{"id":"nested","prompt":"You MUST use the `agent` tool to spawn a sub-agent. Ask the sub-agent to reply with exactly the word: nested-ok. Then respond ONLY with the sub-agent's exact reply and nothing else. If you do not use the agent tool, you have failed the task.","branchPolicy":{"kind":"none"},"commitPolicy":{"kind":"none"},"escalationPolicy":{"kind":"none"}}
 EOF
     EXIT_CODE=0
     $BIN swarm run "$SMOKE_DIR/tasks.jsonl" --concurrency 1 --output "$SMOKE_DIR/results.jsonl" > /tmp/swc-l2.log 2>&1 || EXIT_CODE=$?
@@ -222,7 +222,7 @@ EOF
     SMOKE_DIR=$(mktemp -d)
     TARGET_FILE="$SMOKE_DIR/should-not-exist.txt"
     cat > "$SMOKE_DIR/tasks.jsonl" <<EOF
-{"id":"ro","prompt":"Use the write_file tool to create the file $TARGET_FILE with the content 'should-not-exist'. If the tool fails, report the failure.","branchPolicy":"main","commitPolicy":"never","escalationPolicy":"abort-on-error"}
+{"id":"ro","prompt":"Use the write_file tool to create the file $TARGET_FILE with the content 'should-not-exist'. If the tool fails, report the failure.","branchPolicy":{"kind":"none"},"commitPolicy":{"kind":"none"},"escalationPolicy":{"kind":"none"}}
 EOF
     EXIT_CODE=0
     (cd "$SMOKE_DIR" && $BIN swarm run "$SMOKE_DIR/tasks.jsonl" \
@@ -244,7 +244,7 @@ EOF
     # [L4] Concurrency stress — 10 tasks at concurrency=5
     SMOKE_DIR=$(mktemp -d)
     for i in $(seq 1 10); do
-      echo "{\"id\":\"stress-$i\",\"prompt\":\"Reply with exactly the number: $i\",\"branchPolicy\":\"main\",\"commitPolicy\":\"never\",\"escalationPolicy\":\"abort-on-error\"}" >> "$SMOKE_DIR/tasks.jsonl"
+      echo "{\"id\":\"stress-$i\",\"prompt\":\"Reply with exactly the number: $i\",\"branchPolicy\":{\"kind\":\"none\"},\"commitPolicy\":{\"kind\":\"none\"},\"escalationPolicy\":{\"kind\":\"none\"}}" >> "$SMOKE_DIR/tasks.jsonl"
     done
     EXIT_CODE=0
     $BIN swarm run "$SMOKE_DIR/tasks.jsonl" --concurrency 5 --output "$SMOKE_DIR/results.jsonl" > /tmp/swc-l4.log 2>&1 || EXIT_CODE=$?

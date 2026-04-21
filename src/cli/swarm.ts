@@ -6,48 +6,18 @@
  */
 
 import * as fs from "node:fs";
-import { z } from "zod";
 import type { PermissionMode } from "../core/types.js";
 import { Orchestrator } from "../swarm/orchestrator.js";
 import type { TaskPacket } from "../swarm/host.js";
+import { TaskPacketSchema, isPolicyParseError } from "../swarm/policies.js";
 
 // ---------------------------------------------------------------------------
-// Schema
+// Schema (Phase 2: discriminated-union policies)
 // ---------------------------------------------------------------------------
 
-// TODO M3a Phase 2: replace with BranchPolicySchema / CommitPolicySchema /
-// EscalationPolicySchema discriminated unions from src/swarm/policies.ts.
-// Phase 2 also wires the migration hint to stderr on parse failure.
-// Kept as legacy enums here so existing tests remain green until Phase 2 migrates fixtures.
-const taskPacketSchema = z.object({
-  id: z.string().optional(),
-  prompt: z.string(),
-  branchPolicy: z
-    .enum(["main", "worktree", "feature-branch", "detached"])
-    .optional()
-    .default("main"),
-  commitPolicy: z
-    .enum(["never", "on-success", "on-every-tool", "manual"])
-    .optional()
-    .default("never"),
-  escalationPolicy: z
-    .enum(["abort-on-error", "ask-user", "retry-with-backoff"])
-    .optional()
-    .default("abort-on-error"),
-  budget: z
-    .object({
-      maxTurns: z.number().int().positive().optional(),
-      maxTokens: z.number().int().positive().optional(),
-      maxWallClockMs: z.number().int().positive().optional(),
-    })
-    .optional(),
-  context: z
-    .object({
-      files: z.array(z.string()).optional(),
-      parentTaskId: z.string().optional(),
-    })
-    .optional(),
-});
+// Extend TaskPacketSchema to allow an optional id (CLI generates one if absent).
+import { z } from "zod";
+const taskPacketSchema = TaskPacketSchema.extend({ id: z.string().optional() });
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -94,11 +64,15 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
       process.stderr.write(
         `error: tasks file line ${i + 1}: ${parsed.error.message}\n`,
       );
+      if (isPolicyParseError(parsed.error.message)) {
+        process.stderr.write(
+          `[swarm-coder] TaskPacket policies are now discriminated unions — see docs/11-m3a-plan.md §Policy migration\n`,
+        );
+      }
       return 2;
     }
     const id = parsed.data.id ?? `task-${i + 1}`;
-    // TODO M3a Phase 2: remove cast once taskPacketSchema uses discriminated-union policy schemas.
-    tasks.push({ ...parsed.data, id } as unknown as TaskPacket);
+    tasks.push({ ...parsed.data, id } as TaskPacket);
   }
 
   if (tasks.length === 0) {

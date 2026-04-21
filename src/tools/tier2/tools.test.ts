@@ -16,12 +16,11 @@ import { buildTier2Tools } from "./index.js";
 import type { AgentId } from "../../core/types.js";
 import type { TaskPacket } from "../../swarm/host.js";
 
-// TODO M3a Phase 2: replace these legacy-string policy stubs with discriminated-union shapes.
-function legacyPolicies(): Pick<TaskPacket, "branchPolicy" | "commitPolicy" | "escalationPolicy"> {
+function defaultPolicies(): Pick<TaskPacket, "branchPolicy" | "commitPolicy" | "escalationPolicy"> {
   return {
-    branchPolicy: "main" as unknown as TaskPacket["branchPolicy"],
-    commitPolicy: "never" as unknown as TaskPacket["commitPolicy"],
-    escalationPolicy: "abort-on-error" as unknown as TaskPacket["escalationPolicy"],
+    branchPolicy: { kind: "none" },
+    commitPolicy: { kind: "none" },
+    escalationPolicy: { kind: "none" },
   };
 }
 
@@ -36,7 +35,7 @@ describe("task_create", () => {
     const result = await taskCreateTool.execute(
       {
         prompt: "do something",
-        ...legacyPolicies(),
+        ...defaultPolicies(),
       },
       ctx,
     );
@@ -71,9 +70,9 @@ describe("task_create", () => {
       taskCreateTool.execute(
         {
           prompt: "x",
-          branchPolicy: "main",
-          commitPolicy: "never",
-          escalationPolicy: "abort-on-error",
+          branchPolicy: { kind: "none" },
+          commitPolicy: { kind: "none" },
+          escalationPolicy: { kind: "none" },
         },
         ctx,
       ),
@@ -93,7 +92,7 @@ describe("task_update", () => {
     // Seed a task first.
     await host.task.create({
       prompt: "x",
-      ...legacyPolicies(),
+      ...defaultPolicies(),
     });
 
     const result = await taskUpdateTool.execute(
@@ -134,7 +133,7 @@ describe("task_get", () => {
     const ctx: ToolExecutionContext = { cwd: "/tmp", host };
     const created = await host.task.create({
       prompt: "hello",
-      ...legacyPolicies(),
+      ...defaultPolicies(),
     });
     const result = await taskGetTool.execute({ id: created.id }, ctx);
     expect(result.status).toBe("ok");
@@ -172,11 +171,11 @@ describe("task_list", () => {
     const ctx: ToolExecutionContext = { cwd: "/tmp", host };
     await host.task.create({
       prompt: "a",
-      ...legacyPolicies(),
+      ...defaultPolicies(),
     });
     await host.task.create({
       prompt: "b",
-      ...legacyPolicies(),
+      ...defaultPolicies(),
     });
     const result = await taskListTool.execute({}, ctx);
     expect(result.status).toBe("ok");
@@ -191,11 +190,11 @@ describe("task_list", () => {
     const ctx: ToolExecutionContext = { cwd: "/tmp", host };
     const t1 = await host.task.create({
       prompt: "a",
-      ...legacyPolicies(),
+      ...defaultPolicies(),
     });
     await host.task.create({
       prompt: "b",
-      ...legacyPolicies(),
+      ...defaultPolicies(),
     });
     await host.task.update(t1.id, { status: "succeeded" });
 
@@ -217,7 +216,7 @@ describe("task_list", () => {
     const longPrompt = "x".repeat(250);
     await host.task.create({
       prompt: longPrompt,
-      ...legacyPolicies(),
+      ...defaultPolicies(),
     });
     const result = await taskListTool.execute({}, ctx);
     expect(result.status).toBe("ok");

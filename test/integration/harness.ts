@@ -79,9 +79,9 @@ export function makeTaskPacket(prompt = "test task"): TaskPacket {
   return {
     id: `task-${Date.now()}`,
     prompt,
-    branchPolicy: "main",
-    commitPolicy: "never",
-    escalationPolicy: "abort-on-error",
+    branchPolicy: { kind: "none" },
+    commitPolicy: { kind: "none" },
+    escalationPolicy: { kind: "none" },
   };
 }
 

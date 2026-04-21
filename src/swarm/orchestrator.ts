@@ -14,9 +14,11 @@
  */
 
 import { EventEmitter } from "node:events";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import type { Writable } from "node:stream";
 import type { PermissionMode } from "../core/types.js";
-import type { AgentResult, TaskPacket } from "./host.js";
+import type { AgentResult, TaskPacket, BranchPolicy, CommitPolicy } from "./host.js";
 import type { LaneEvent } from "./events.js";
 import { StandaloneHost } from "./standalone-host.js";
 import { WorkerPool } from "./worker-pool.js";
@@ -124,6 +126,26 @@ export class Orchestrator extends EventEmitter {
         return;
       }
 
+      // Pre-flight policy validation before spawn.
+      const preflightError = this.runPreflightValidators(task);
+      if (preflightError !== null) {
+        token.release();
+        const line: ResultLine = {
+          id: task.id,
+          status: "failed",
+          error: preflightError,
+          wallClockMs: 0,
+          agentId: this.host.agentId,
+          sessionId: "none",
+          completedAt: Date.now(),
+        };
+        await this.writeResult(line).catch((e) => {
+          firstResultWriteError ??= e;
+        });
+        counts.failed++;
+        return;
+      }
+
       const startedAt = Date.now();
       let result: AgentResult;
       let handle;
@@ -191,6 +213,68 @@ export class Orchestrator extends EventEmitter {
     }
 
     return { ...counts, resultWriteFailures: this.resultWriteFailures };
+  }
+
+  /**
+   * Run pre-flight policy validators before spawning a worker.
+   * Returns an error string if the task should fail immediately, null otherwise.
+   * Emits advisory lane events for no-op policies.
+   */
+  private runPreflightValidators(task: TaskPacket): string | null {
+    const branchError = this.validateBranchPolicy(task);
+    if (branchError !== null) return branchError;
+    this.emitCommitPolicyNoop(task);
+    return null;
+  }
+
+  private validateBranchPolicy(task: TaskPacket): string | null {
+    const policy = task.branchPolicy as BranchPolicy;
+
+    if (policy.kind === "reuse") {
+      const result = spawnSync("git", ["rev-parse", "--verify", policy.branch], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+      if (result.status !== 0) {
+        return `branch ${policy.branch} not found`;
+      }
+      // Branch exists — emit noop event (git ops deferred to M3b).
+      this.host.emit({
+        type: "branch_policy_noop",
+        payload: { id: task.id, kind: "reuse", branch: policy.branch },
+      });
+      return null;
+    }
+
+    if (policy.kind === "create") {
+      const result = spawnSync("git", ["rev-parse", "--verify", policy.from], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+      if (result.status !== 0) {
+        return `branch ${policy.from} not found`;
+      }
+      // Generate name if absent.
+      const name =
+        policy.name ??
+        `task-${task.id}-${createHash("sha256").update(task.id).digest("hex").slice(0, 7)}`;
+      this.host.emit({
+        type: "branch_policy_noop",
+        payload: { id: task.id, kind: "create", from: policy.from, name },
+      });
+      return null;
+    }
+
+    // kind === "none" — no git operation needed.
+    return null;
+  }
+
+  private emitCommitPolicyNoop(task: TaskPacket): void {
+    const policy = task.commitPolicy as CommitPolicy;
+    this.host.emit({
+      type: "commit_policy_noop",
+      payload: { id: task.id, kind: policy.kind },
+    });
   }
 
   private async writeResult(line: ResultLine): Promise<void> {

@@ -533,6 +533,22 @@ Run after each phase:
 - Research: `docs/research/05-swarm.md` §2 (task registry), §4 (subprocess env), §5 (lane events), §9 (ask_user_question anti-pattern — informs send_message real-delivery requirement)
 - Anti-patterns refused: `docs/07-implementation-plan.md` §"What we explicitly refuse to copy from claw" items #6 (roleless TeamRegistry — M3a ships real roles) and #7 (echoing SendUserMessage — M3a delivers)
 
+## Policy migration
+
+M3a Phase 2 replaced flat-string policy fields with discriminated unions. Existing `tasks.jsonl` files must migrate before running against M3a+.
+
+| Before (M1/M2 flat) | After (M3a discriminated) | Intent |
+|---|---|---|
+| `"branchPolicy": "main"` | `"branchPolicy": { "kind": "none" }` | no git |
+| `"branchPolicy": "main"` | `"branchPolicy": { "kind": "reuse", "branch": "main" }` | operate on main |
+| `"branchPolicy": "worktree"` | `"branchPolicy": { "kind": "create", "from": "main" }` | new worktree branch |
+| `"commitPolicy": "never"` | `"commitPolicy": { "kind": "none" }` | no commits |
+| `"commitPolicy": "auto"` | `"commitPolicy": { "kind": "auto" }` | one commit at task end |
+| `"escalationPolicy": "abort-on-error"` | `"escalationPolicy": { "kind": "none" }` | fail fast |
+| `"escalationPolicy": "retry-with-backoff"` | `"escalationPolicy": { "kind": "retry", "max": 3, "backoff": "exponential" }` | retry 3× |
+
+Git operations are no-op in M3a (they land in M3b git coordination); `BranchPolicy` / `CommitPolicy` are validated at dispatch but not yet enforced against a working tree. `EscalationPolicy` is live (drives Phase 5 retry).
+
 ## Revision history
 
 - **rev 1 (2026-04-20):** initial draft. Four scope/mechanism decisions locked: (1) orchestrator-routed message delivery over shared registry — simpler, single SoT, fits existing transport graph; (2) inbox in-memory-per-live-agent, flushed on exit, no respawn-redelivery — avoids persistence work that belongs with M3b file-backed registry; (3) `task_stop` permission model: orchestrator unconditional, peers only for descendants — cheap ancestor check against existing depth map; (4) retry wall-clock: per-attempt reset with 3x hard cap — prevents silent budget multiplication. Out-of-scope items explicitly enumerated: git coordination, prompt caching, parallel tool execution, notebook_edit, ask_user_question via SwarmHost, server-side preflight — all deferred to M3b. Total effort 5d, sits in 4-6d target.

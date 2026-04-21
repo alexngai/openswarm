@@ -46,7 +46,6 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   // Register the task in the orchestrator's registry.
   const record = await host.task.create({
     prompt: input.prompt,
-    // TODO M3a Phase 2: migrate to discriminated-union policy shapes.
     branchPolicy: { kind: "none" },
     commitPolicy: { kind: "none" },
     escalationPolicy: { kind: "none" },

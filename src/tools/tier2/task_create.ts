@@ -1,17 +1,19 @@
-import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { requireHost } from "./require-host.js";
+import {
+  BranchPolicySchema,
+  CommitPolicySchema,
+  EscalationPolicySchema,
+} from "../../swarm/policies.js";
+import { z } from "zod";
 
 const inputSchema = z.object({
   prompt: z.string(),
-  // TODO M3a Phase 2: replace with BranchPolicySchema / CommitPolicySchema /
-  // EscalationPolicySchema discriminated unions from src/swarm/policies.ts.
-  // Kept as legacy enums here so existing tests remain green until Phase 2 migrates fixtures.
-  branchPolicy: z.enum(["main", "worktree", "feature-branch", "detached"]),
-  commitPolicy: z.enum(["never", "on-success", "on-every-tool", "manual"]),
-  escalationPolicy: z.enum(["abort-on-error", "ask-user", "retry-with-backoff"]),
+  branchPolicy: BranchPolicySchema,
+  commitPolicy: CommitPolicySchema,
+  escalationPolicy: EscalationPolicySchema,
   budget: z
     .object({
       maxTurns: z.number().int().positive().optional(),
@@ -46,7 +48,7 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   if (!parsed.success) return { status: "error", message: parsed.error.message };
   const input: Input = parsed.data;
 
-  const record = await host.task.create(input as any);
+  const record = await host.task.create(input);
   return {
     status: "ok",
     output: JSON.stringify({ id: record.id, status: record.status }),

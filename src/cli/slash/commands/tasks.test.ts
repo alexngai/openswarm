@@ -71,10 +71,9 @@ describe("/tasks", () => {
       {
         id: "t1",
         prompt: "do the thing",
-        // TODO M3a Phase 2: migrate to discriminated-union policy shapes.
-        branchPolicy: "main" as unknown as TaskRecord["branchPolicy"],
-        commitPolicy: "never" as unknown as TaskRecord["commitPolicy"],
-        escalationPolicy: "abort-on-error" as unknown as TaskRecord["escalationPolicy"],
+        branchPolicy: { kind: "none" },
+        commitPolicy: { kind: "none" },
+        escalationPolicy: { kind: "none" },
         status: "running",
         createdAt: now,
         updatedAt: now,

@@ -8,24 +8,29 @@
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { PassThrough, Writable } from "node:stream";
+import { spawnSync } from "node:child_process";
 import { Orchestrator } from "./orchestrator.js";
 import type { OrchestratorOptions } from "./orchestrator.js";
 import type { StandaloneHost } from "./standalone-host.js";
 import type { AgentHandle, AgentResult, TaskPacket } from "./host.js";
 import type { AgentId, SessionId } from "../core/types.js";
 
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return { ...actual };
+});
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 function samplePacket(id: string, overrides: Partial<TaskPacket> = {}): TaskPacket {
-  // TODO M3a Phase 2: migrate to discriminated-union policy shapes.
   return {
     id,
     prompt: `task ${id}`,
-    branchPolicy: "main" as unknown as TaskPacket["branchPolicy"],
-    commitPolicy: "never" as unknown as TaskPacket["commitPolicy"],
-    escalationPolicy: "abort-on-error" as unknown as TaskPacket["escalationPolicy"],
+    branchPolicy: { kind: "none" },
+    commitPolicy: { kind: "none" },
+    escalationPolicy: { kind: "none" },
     ...overrides,
   };
 }
@@ -267,6 +272,143 @@ describe("Orchestrator", () => {
     const summary = await orch.run([samplePacket("x")]);
 
     expect(summary.resultWriteFailures).toBeGreaterThan(0);
+  });
+
+  // 7. Pre-flight: branchPolicy reuse — missing branch → task fails without spawn.
+  it("pre-flight: branchPolicy reuse with missing branch fails task without spawn", async () => {
+    const spawnMock = vi.fn();
+    const host = fakeHost(spawnMock);
+
+    const spawnSyncSpy = vi.spyOn(
+      await import("node:child_process"),
+      "spawnSync",
+    ).mockReturnValue({
+      status: 1,
+      stdout: Buffer.from(""),
+      stderr: Buffer.from("fatal: not a git branch"),
+      pid: 0,
+      output: [],
+      signal: null,
+    } as ReturnType<typeof spawnSync>);
+
+    const resultsOut = new PassThrough();
+    const collectPromise = collectJsonl(resultsOut);
+
+    const orch = new Orchestrator({
+      concurrency: 1,
+      permissionMode: "workspace-write",
+      resultsOut,
+      host,
+    });
+
+    const task = samplePacket("branch-missing", {
+      branchPolicy: { kind: "reuse", branch: "feature/nonexistent" },
+    });
+
+    const summary = await orch.run([task]);
+    resultsOut.end();
+    const lines = (await collectPromise) as Array<{ id: string; status: string; error?: string }>;
+
+    expect(summary.failed).toBe(1);
+    expect(summary.succeeded).toBe(0);
+    expect(spawnMock).not.toHaveBeenCalled();
+
+    const failedLine = lines.find((l) => l.id === "branch-missing");
+    expect(failedLine).toBeDefined();
+    expect(failedLine!.status).toBe("failed");
+    expect(failedLine!.error).toContain("feature/nonexistent");
+
+    spawnSyncSpy.mockRestore();
+  });
+
+  // 8. Pre-flight: branchPolicy reuse with existing branch → spawn proceeds.
+  it("pre-flight: branchPolicy reuse with existing branch proceeds to spawn", async () => {
+    const spawnSyncSpy = vi.spyOn(
+      await import("node:child_process"),
+      "spawnSync",
+    ).mockReturnValue({
+      status: 0,
+      stdout: Buffer.from("abc1234"),
+      stderr: Buffer.from(""),
+      pid: 0,
+      output: [],
+      signal: null,
+    } as ReturnType<typeof spawnSync>);
+
+    const host = fakeHost(async (req) =>
+      makeHandle(successResult(`spawned for ${req.task.id}`)),
+    );
+
+    const resultsOut = new PassThrough();
+    const collectPromise = collectJsonl(resultsOut);
+
+    const orch = new Orchestrator({
+      concurrency: 1,
+      permissionMode: "workspace-write",
+      resultsOut,
+      host,
+    });
+
+    const task = samplePacket("branch-exists", {
+      branchPolicy: { kind: "reuse", branch: "main" },
+    });
+
+    const summary = await orch.run([task]);
+    resultsOut.end();
+    const lines = (await collectPromise) as Array<{ id: string; status: string }>;
+
+    expect(summary.succeeded).toBe(1);
+    expect(summary.failed).toBe(0);
+
+    const line = lines.find((l) => l.id === "branch-exists");
+    expect(line?.status).toBe("succeeded");
+
+    spawnSyncSpy.mockRestore();
+  });
+
+  // 9. Pre-flight: branchPolicy create with missing from branch → task fails.
+  it("pre-flight: branchPolicy create with missing from branch fails task", async () => {
+    const spawnMock = vi.fn();
+    const host = fakeHost(spawnMock);
+
+    const spawnSyncSpy = vi.spyOn(
+      await import("node:child_process"),
+      "spawnSync",
+    ).mockReturnValue({
+      status: 1,
+      stdout: Buffer.from(""),
+      stderr: Buffer.from("fatal: not a valid object name"),
+      pid: 0,
+      output: [],
+      signal: null,
+    } as ReturnType<typeof spawnSync>);
+
+    const resultsOut = new PassThrough();
+    const collectPromise = collectJsonl(resultsOut);
+
+    const orch = new Orchestrator({
+      concurrency: 1,
+      permissionMode: "workspace-write",
+      resultsOut,
+      host,
+    });
+
+    const task = samplePacket("create-bad-base", {
+      branchPolicy: { kind: "create", from: "nonexistent-base" },
+    });
+
+    const summary = await orch.run([task]);
+    resultsOut.end();
+    const lines = (await collectPromise) as Array<{ id: string; status: string; error?: string }>;
+
+    expect(summary.failed).toBe(1);
+    expect(spawnMock).not.toHaveBeenCalled();
+
+    const failedLine = lines.find((l) => l.id === "create-bad-base");
+    expect(failedLine?.status).toBe("failed");
+    expect(failedLine?.error).toContain("nonexistent-base");
+
+    spawnSyncSpy.mockRestore();
   });
 
   // 6. Cancelled: pool.close() called mid-run → queued tasks written as cancelled.
