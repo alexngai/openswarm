@@ -14,15 +14,14 @@ Runnable single-agent CLI. No swarm yet.
 
 **Scope:**
 
-- `Provider` tagged-union interface — `TransportProvider` only in M0 (Vercel AI SDK). `FrameworkProvider` deferred to M3.
-- `AuthSource` interface + `AnthropicApiKeyAuth` implementation (reads `ANTHROPIC_API_KEY`)
-- `AnthropicTransportProvider` — ~20 LOC wrapping `createAnthropic({ apiKey })` from `@ai-sdk/anthropic`
-  - Streaming handled by Vercel AI SDK (no SSE parsing in our code)
-  - Auth delegated to `AuthSource`; OAuth deferred to M3
-  - Preflight: local byte-length estimate (`bytes/4+1`). Server-side `count_tokens` deferred to M3 (research/01-api.md §8)
-- `ConversationRuntime`: synchronous turn loop, tool-use / tool-result boundary correctness at every stop point (research/03-runtime.md §2, §7)
-- `PermissionEngine`: three modes (`read-only`, `workspace-write`, `danger-full-access`); two-layer evaluation (deny → mode-required → allow). Hook layer deferred to M2 (research/03-runtime.md §4)
-- `SessionStore`: per-worktree isolation at `.swarm-coder/sessions/<fnv1a(cwd)>/` — non-negotiable. Append-on-push JSONL with atomic-rename snapshots (research/03-runtime.md §3; research/05-swarm.md §2)
+- `AgentEngine` interface + `ClaudeAgentSdkEngine` implementation wrapping `@anthropic-ai/claude-agent-sdk`. Engine owns turn loop, streaming, MCP, compaction, session, prompt cache internally.
+- `AuthSource` interface + `AnthropicApiKeyAuth` (`ANTHROPIC_API_KEY`) **+ `AnthropicOAuthAuth`** (Claude Max subscription). OAuth is first-class in M0 — not deferred.
+- Tool and permission callbacks bound at the engine boundary: our `PermissionEngine` implements `canUseTool`; our tool dispatcher implements `executeTool`. Tools stay out of the engine's internal surface.
+- Preflight handled by Agent SDK — we don't implement token estimation in M0.
+- `PermissionEngine`: three modes (`read-only`, `workspace-write`, `danger-full-access`); two-layer evaluation (deny → mode-required → allow). Bound to the engine's `canUseTool` callback. Hook layer deferred to M2 (research/03-runtime.md §4).
+- No `ConversationRuntime` / turn loop in M0 — Agent SDK owns it. Our turn loop arrives with `NativeEngine` in M4.
+- `SessionStore`: per-worktree isolation at `.swarm-coder/sessions/<fnv1a(cwd)>/` — non-negotiable. Append-on-push JSONL with atomic-rename snapshots (research/03-runtime.md §3; research/05-swarm.md §2). Stores the engine's opaque `SessionSnapshot` alongside our JSONL log so `--resume` works against whichever engine produced the session.
+- CLI: `swarm-coder login` + `swarm-coder logout` commands for OAuth (`AnthropicOAuthAuth.login()` → Max subscription flow). Tokens persist to `~/.swarm-coder/auth.json`.
 - Tier 0 tools:
   - `bash` — timeout, 16 KiB stdout/stderr truncation on UTF-8 boundaries, background PID return (research/02-tools.md §2)
   - `read_file` — 10 MiB cap, NUL-in-first-8-KiB binary detection, offset/limit
@@ -38,9 +37,13 @@ Runnable single-agent CLI. No swarm yet.
 - Headless mode: JSONL events on stdout; ink is bypassed when `!process.stdout.isTTY`
 
 **Out of scope for M0:**
-MCP, LSP, plugins, skills, hooks, compaction, tier 1+ tools, any swarm primitives.
+Our own MCP client (Agent SDK's is used), LSP, plugin loader, skill loader, hooks, our compactor (Agent SDK's is used), Tier 1+ tools, any swarm primitives, Vercel AI SDK / `NativeEngine` / `Provider` impls.
 
-**Exit criterion:** `swarm-coder prompt "add a docstring to file.ts"` completes a real multi-turn tool-using session, writes the session log, and the task actually succeeds. `swarm-coder --headless --task-file=t.json` produces a parseable event stream on stdout.
+**Exit criterion:** Two paths both work end-to-end:
+1. API-key path: `ANTHROPIC_API_KEY=... swarm-coder prompt "add a docstring to file.ts"` completes a real multi-turn tool-using session and writes the session log.
+2. Subscription path: `swarm-coder login` → OAuth flow → `swarm-coder prompt "..."` runs against the user's Claude Max subscription.
+
+`swarm-coder --headless --task-file=t.json` produces a parseable event stream on stdout in both paths.
 
 ## Milestone M1 — minimum viable swarm
 
@@ -186,20 +189,25 @@ These run continuously alongside milestones:
 
 To make M0 executable without further planning, here is the dependency order:
 
-1. `src/providers/index.ts` — `Provider` tagged union, `NormalizedEvent`, `ProviderCapabilities` types
-2. `src/providers/transport/anthropic.ts` — `AnthropicTransportProvider` wrapping `@ai-sdk/anthropic`
-3. `src/auth/index.ts` — `AuthSource` interface
+1. `src/core/types.ts` — `PermissionMode`, `Usage`, `StopReason`, `AgentId`, `ToolSpec`, `NormalizedEvent`, `ProviderError` *(drafted)*
+2. `src/engine/index.ts` — `AgentEngine`, `RunConfig`, `PermissionGate`, `ToolExecutor`, `SessionSnapshot` *(drafted)*
+3. `src/auth/index.ts` — `AuthSource` + `InteractiveAuth` *(drafted)*
 4. `src/auth/anthropic-api-key.ts` — `AnthropicApiKeyAuth` reading `ANTHROPIC_API_KEY`
-5. `src/session/store.ts` — per-worktree `SessionStore` with JSONL append + atomic snapshots
-6. `src/core/permissions.ts` — permission mode enum + evaluator
-7. `src/tools/tier0/bash.ts`, `read_file.ts`, `write_file.ts`, `edit_file.ts`, `multi_edit.ts`, `glob.ts`, `grep.ts`, `todo_write.ts`
-8. `src/core/conversation.ts` — turn loop (calls `streamText`), tool dispatch, boundary guard
-9. `src/cli/argv.ts` — flag parsing (hand-rolled or commander — TBD)
-10. `src/cli/doctor.ts` — four checks (auth / config / install / workspace)
-11. `src/cli/init.ts` — scaffolding
-12. `src/ui/headless.ts` — JSONL event emitter
-13. `src/ui/ink/app.tsx` — minimal ink shell, TTY-gated; `ink-markdown` for streaming output
-14. `src/cli/main.ts` — entry wiring it all together
-15. Tests — mock Anthropic service + 3-5 scripted scenarios
+5. `src/auth/anthropic-oauth.ts` — `AnthropicOAuthAuth` implementing `InteractiveAuth` (delegates to Agent SDK's OAuth flow, or reimplements from claw-code's `oauth.rs` if the SDK's helpers aren't public)
+6. `src/engine/claude-agent-sdk.ts` — `ClaudeAgentSdkEngine` wrapping `@anthropic-ai/claude-agent-sdk`; translates SDK events → `NormalizedEvent`; binds engine's `canUseTool` to our `PermissionEngine`; binds engine's tool execution to our dispatcher
+7. `src/session/store.ts` — per-worktree `SessionStore` with JSONL append + atomic snapshots, persists engine `SessionSnapshot` alongside our log
+8. `src/permissions/index.ts` — `PermissionEngine`: mode evaluator + rule grammar (`tool(subject:*)`)
+9. `src/tools/tier0/{bash,read_file,write_file,edit_file,multi_edit,glob,grep,todo_write}.ts` — Tier 0 tools, each implementing the dispatcher contract (not auto-executed by the engine)
+10. `src/tools/dispatcher.ts` — resolves tool name → implementation, applies permission check, returns `ToolResult` to the engine
+11. `src/cli/argv.ts` — flag parsing (hand-rolled or `commander` — TBD)
+12. `src/cli/login.ts` / `src/cli/logout.ts` — OAuth entry commands
+13. `src/cli/doctor.ts` — four checks (auth / config / install / workspace)
+14. `src/cli/init.ts` — scaffolding (`.swarm-coder/`, `.gitignore`, `CLAUDE.md`)
+15. `src/ui/headless.ts` — JSONL event emitter
+16. `src/ui/ink/app.tsx` — minimal ink shell, TTY-gated; `ink-markdown` for streaming output
+17. `src/cli/main.ts` — entry wiring: argv → auth + engine → session → dispatcher → UI
+18. Tests — mock Agent SDK fixture + 3–5 scripted scenarios
 
-Everything else waits. No premature tier 1+ tools, no MCP, no swarm, no hooks, no `FrameworkProvider`.
+Everything else waits. No premature Tier 1+ tools, no `Provider` impls, no `NativeEngine`, no MCP client, no compactor, no swarm primitives, no hooks.
+
+**Files already drafted:** core/types.ts, engine/index.ts, auth/index.ts, providers/index.ts (stub), swarm/host.ts, swarm/events.ts, plugins/index.ts, skills/index.ts. Typechecks clean under `tsc --noEmit`. Real implementations are next.

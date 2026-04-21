@@ -1,0 +1,135 @@
+/**
+ * PluginSource — where plugins come from.
+ *
+ * Plugins in claw/Claude Code are JSON-manifest-declared packages that bring
+ * tools, commands, and optional hooks (docs/research/04-integrations.md §2).
+ * They execute tools as subprocesses with a specific env contract.
+ *
+ * v0 ships a single `claude-code` source (read-only discovery).
+ * M4 adds install/enable/disable/update/uninstall lifecycle.
+ * Additional sources (e.g. `claw`, remote registries) can register later
+ * without breaking consumers.
+ *
+ * Separate from SkillSource — manifest, invocation, and lifecycle differ.
+ */
+
+import type { JsonSchema, RequiredPermission } from "../core/types.js";
+
+// ---------------------------------------------------------------------------
+// Source
+// ---------------------------------------------------------------------------
+
+export interface PluginSource {
+  /** Stable source id — "claude-code" | "claw" | … */
+  readonly id: string;
+
+  /** Enumerate available plugins without loading them. */
+  discover(): Promise<readonly PluginManifest[]>;
+
+  /** Load a plugin by id. Rejects if the plugin is unknown or invalid. */
+  load(pluginId: string): Promise<LoadedPlugin>;
+}
+
+// ---------------------------------------------------------------------------
+// Manifest
+// ---------------------------------------------------------------------------
+
+export interface PluginManifest {
+  /** Unique within the source. Typically `<publisher>/<name>`. */
+  readonly id: string;
+  readonly name: string;
+  readonly version: string;
+  readonly description?: string;
+  readonly author?: string;
+
+  /** Which source produced this manifest. Disambiguates cross-source collisions. */
+  readonly sourceId: string;
+  /** Absolute path to the plugin root on disk. */
+  readonly rootPath: string;
+
+  /** Tools this plugin contributes. */
+  readonly tools?: readonly PluginToolSpec[];
+  /** Slash commands this plugin contributes. */
+  readonly commands?: readonly PluginCommandSpec[];
+  /** Lifecycle hooks, if any. */
+  readonly hooks?: PluginHooksSpec;
+
+  /** Aggregate permissions the plugin has declared. */
+  readonly permissions?: readonly RequiredPermission[];
+}
+
+export interface PluginToolSpec {
+  readonly name: string;
+  readonly description: string;
+  readonly inputSchema: JsonSchema;
+  readonly requiredPermission: RequiredPermission;
+  /** Subprocess command the plugin runs to execute this tool. */
+  readonly command: readonly string[];
+}
+
+export interface PluginCommandSpec {
+  readonly name: string;
+  readonly description: string;
+  readonly command: readonly string[];
+}
+
+export interface PluginHooksSpec {
+  readonly preToolUse?: readonly string[];
+  readonly postToolUse?: readonly string[];
+  readonly onSessionStart?: readonly string[];
+  readonly onSessionEnd?: readonly string[];
+}
+
+// ---------------------------------------------------------------------------
+// Loaded plugin
+// ---------------------------------------------------------------------------
+
+export interface LoadedPlugin {
+  readonly manifest: PluginManifest;
+
+  /**
+   * Execute one of the plugin's tools.
+   * The subprocess receives tool input as JSON on stdin and writes its
+   * result to stdout. Environment variables follow claw's contract:
+   *   CLAWD_PLUGIN_ID, CLAWD_TOOL_NAME, CLAWD_TOOL_INPUT, etc.
+   */
+  executeTool(
+    toolName: string,
+    input: unknown,
+    context: PluginExecutionContext,
+  ): Promise<PluginToolResult>;
+
+  /** Release plugin resources (kill long-running processes, close channels). */
+  dispose(): Promise<void>;
+}
+
+export interface PluginExecutionContext {
+  readonly cwd: string;
+  readonly timeoutMs?: number;
+  readonly abort?: AbortSignal;
+  /** Environment variables to merge into the subprocess env. */
+  readonly env?: Readonly<Record<string, string>>;
+}
+
+export type PluginToolResult =
+  | { readonly status: "ok"; readonly output: string }
+  | {
+      readonly status: "error";
+      readonly message: string;
+      readonly exitCode?: number;
+      readonly stderr?: string;
+    };
+
+// ---------------------------------------------------------------------------
+// Registry
+// ---------------------------------------------------------------------------
+
+/**
+ * Multiple sources can be registered. Discovery unions across all; load
+ * resolves to the first source that knows the id. Collisions are reported.
+ */
+export interface PluginRegistry {
+  register(source: PluginSource): void;
+  discover(): Promise<readonly PluginManifest[]>;
+  load(pluginId: string): Promise<LoadedPlugin>;
+}

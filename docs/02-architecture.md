@@ -33,26 +33,30 @@ Single npm package, internal modules. Split into sub-packages only if an externa
 
 ```
 src/
-  core/              # conversation loop, tool dispatcher, permission engine
-  providers/
-    index.ts         # Provider tagged union (TransportProvider | FrameworkProvider)
-    transport/
-      anthropic.ts   # M0 — wraps @ai-sdk/anthropic
-      openai.ts      # M2
-      google.ts      # M4
-      xai.ts         # M4
-      openai-compat.ts # M2 — Ollama / LM Studio / OpenRouter
-    framework/
-      claude-agent-sdk.ts  # M3 — Claude Max subscription
-      codex-chatgpt.ts     # M4 — ChatGPT Plus/Pro subscription
+  core/
+    types.ts         # shared primitives (PermissionMode, NormalizedEvent, ToolSpec, ...)
+  engine/            # PRIMARY abstraction — AgentEngine
+    index.ts         # AgentEngine, RunConfig, SessionSnapshot
+    claude-agent-sdk.ts  # M0 — default engine, wraps @anthropic-ai/claude-agent-sdk
+    native.ts        # M4 — composes Provider + our loop + Compactor + MCP
+  providers/         # inner layer — used ONLY by NativeEngine (M4+)
+    index.ts         # Provider stub; finalized in M4
+    anthropic.ts     # M4 — wraps @ai-sdk/anthropic
+    openai.ts        # M4
+    google.ts        # M4
+    xai.ts           # M4
+    openai-compat.ts # M4 — Ollama / LM Studio / OpenRouter
+    codex-chatgpt.ts # M4 — custom provider for ChatGPT Plus/Pro
   auth/
-    index.ts         # AuthSource interface
-    anthropic-api-key.ts
-    anthropic-oauth.ts     # M3 (framework-managed — delegates to Agent SDK)
-    openai-api-key.ts
+    index.ts         # AuthSource, InteractiveAuth
+    anthropic-api-key.ts   # M0
+    anthropic-oauth.ts     # M0 — Claude Max subscription
+    openai-api-key.ts      # M4
     openai-oauth.ts        # M4 — Codex App Server flow
-    google-api-key.ts
-    xai-api-key.ts
+    google-api-key.ts      # M4
+    xai-api-key.ts         # M4
+  permissions/       # our permission engine, bound to AgentEngine.canUseTool
+  session/           # per-worktree JSONL + engine SessionSnapshot
   tools/
     tier0/           # bash, file_ops, search, todo
     tier1/           # web, notebook, structured_output, skill

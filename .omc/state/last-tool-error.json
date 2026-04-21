@@ -1,0 +1,7 @@
+{
+  "tool_name": "Read",
+  "tool_input_preview": "{\"file_path\":\"/tmp/sdk-inspect/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs\"}",
+  "error": "File content (662.8KB) exceeds maximum allowed size (256KB). Use offset and limit parameters to read specific portions of the file, or search for specific content instead of reading the whole file.",
+  "timestamp": "2026-04-21T00:31:51.340Z",
+  "retry_count": 2
+}
