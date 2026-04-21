@@ -175,6 +175,8 @@ export interface SwarmHost {
 }
 ```
 
+**M3a additions (Phase 6):** `SpawnRequest.role` and `SpawnRequest.allowedTools` are now load-bearing — the orchestrator populates them from the resolved `Role` object, the subprocess spawner propagates `SWARM_CODER_ROLE` to the child, and the worker entry wires them into `RunConfig.systemPrompt` + `RunConfig.allowedTools`. The `BranchPolicy`, `CommitPolicy`, and `EscalationPolicy` fields on `TaskPacket` are discriminated-kind records (not flat strings); Zod schemas live in `src/swarm/policies.ts`. See `docs/11-m3a-plan.md` for the migration path from legacy flat strings.
+
 Two implementations:
 
 - **`StandaloneHost`** — no parent. `spawn` subprocess-spawns a child. `send`/`inbox` operate on an in-process pub/sub so tool behavior stays consistent.

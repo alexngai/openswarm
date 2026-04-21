@@ -23,9 +23,11 @@ if [[ "${1:-}" == "--all" ]]; then
   "$REPO_ROOT/scripts/smoke.sh"
   "$REPO_ROOT/scripts/smoke-swarm.sh"
   "$REPO_ROOT/scripts/smoke-repl.sh"
+  "$REPO_ROOT/scripts/smoke-swarm-m3a.sh"
   "$REPO_ROOT/scripts/smoke.sh" --offline
   "$REPO_ROOT/scripts/smoke-swarm.sh" --offline
   "$REPO_ROOT/scripts/smoke-repl.sh" --offline
+  "$REPO_ROOT/scripts/smoke-swarm-m3a.sh" --offline
   exit 0
 fi
 

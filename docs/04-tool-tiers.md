@@ -38,10 +38,10 @@ What makes swarm-coder a *swarm*. Dispatched via `SwarmHost`. Works in both stan
 | `task_get` | Read task state |
 | `task_list` | List tasks by filter |
 | `task_update` | Update status, owner, or output |
-| `task_stop` | Cancel a running task |
-| `task_output` | Append to a task's output stream |
-| `send_message` | Message another agent by id |
-| `check_inbox` | Read messages for this agent |
+| `task_stop` | Cancel a running task | **shipped M3a** |
+| `task_output` | Append to a task's output stream | **shipped M3a** |
+| `send_message` | Message another agent by id | **shipped M3a** |
+| `check_inbox` | Read messages for this agent | **shipped M3a** |
 
 ## Tier 3 — Team / schedule
 

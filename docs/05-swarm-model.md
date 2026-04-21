@@ -72,19 +72,37 @@ Event types (non-exhaustive — full list ported to `src/core/events.ts`):
 
 ### TaskPacket shape
 
-Structured task format (research/05-swarm.md §2). Claw ships `branch_policy` / `commit_policy` / `escalation_policy` as free-form strings that are just hints to the model. **Ours are enums enforced at runtime:**
+Structured task format (research/05-swarm.md §2). Claw ships `branch_policy` / `commit_policy` / `escalation_policy` as free-form strings that are just hints to the model. **Ours are discriminated-union records enforced at runtime (M3a Phase 2):**
 
 ```ts
+type BranchPolicy =
+  | { kind: "none" }
+  | { kind: "reuse"; branch: string }
+  | { kind: "create"; from: string; name?: string };
+
+type CommitPolicy =
+  | { kind: "none" }
+  | { kind: "auto"; message?: string }
+  | { kind: "atomic" };
+
+type EscalationPolicy =
+  | { kind: "none" }
+  | { kind: "retry"; max: number; backoff: "fixed" | "exponential" }
+  | { kind: "handoff"; targetRole: string };
+
 interface TaskPacket {
   id: string;
   prompt: string;
-  branchPolicy: "main" | "worktree" | "feature-branch" | "detached";
-  commitPolicy: "never" | "on-success" | "on-every-tool" | "manual";
-  escalationPolicy: "abort-on-error" | "ask-user" | "retry-with-backoff";
-  budget?: { maxTurns?: number; maxTokens?: number; maxWallClockMs?: number };
+  branchPolicy: BranchPolicy;
+  commitPolicy: CommitPolicy;
+  escalationPolicy: EscalationPolicy;
+  budget?: { maxTurns?: number; maxTokens?: number; maxWallClockMs?: number; maxWallClockMsPerAttempt?: number };
   context?: { files?: string[]; parentTaskId?: string };
+  role?: string;  // optional role name — applied by orchestrator at dispatch time (M3a Phase 6)
 }
 ```
+
+The Zod schemas live in `src/swarm/policies.ts`. Legacy flat strings (`"main"`, `"worktree"`, `"never"`, `"abort-on-error"`, etc.) are rejected at CLI parse time with a migration hint. See `docs/11-m3a-plan.md §Policy migration` for the before/after table.
 
 ### Worker state file
 
