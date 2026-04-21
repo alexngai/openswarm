@@ -76,8 +76,8 @@ vi.mock("../ui/headless.js", () => ({
   runHeadless: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("../ui/ink/index.js", () => ({
-  renderInkApp: vi.fn().mockResolvedValue(undefined),
+vi.mock("../ui/repl/index.js", () => ({
+  runRepl: vi.fn().mockResolvedValue(undefined),
 }));
 
 // ---------------------------------------------------------------------------
@@ -164,15 +164,15 @@ describe("main", () => {
     expect(runHeadless).toHaveBeenCalled();
   });
 
-  it("prompt → calls renderInkApp when stdout is a TTY and --headless is not set", async () => {
+  it("prompt → calls runRepl when stdout is a TTY and --headless is not set", async () => {
     const { main } = await import("./main.js");
-    const { renderInkApp } = await import("../ui/ink/index.js");
+    const { runRepl } = await import("../ui/repl/index.js");
 
     Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
 
     await main(["say hi"]);
 
-    expect(renderInkApp).toHaveBeenCalled();
+    expect(runRepl).toHaveBeenCalled();
   });
 
   it("prompt → auth failure returns 1 with error message", async () => {

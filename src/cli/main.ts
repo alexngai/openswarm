@@ -18,9 +18,9 @@ import { PermissionEngine } from "../permissions/index.js";
 import { ClaudeAgentSdkEngine } from "../engine/claude-agent-sdk.js";
 import { SessionStore } from "../session/store.js";
 import { runHeadless } from "../ui/headless.js";
-// Note: ink / ink-markdown are lazy-loaded inside runPrompt only when the
-// TTY path is taken. ink-markdown is CJS and requires() ink (which has
-// top-level await) — pulling it in eagerly crashes non-TTY paths like
+// Note: the ink REPL (`src/ui/repl/`) is lazy-loaded inside runPrompt only
+// when the TTY path is taken. ink-markdown is CJS and requires() ink (which
+// has top-level await) — pulling it in eagerly crashes non-TTY paths like
 // `--version`, `--help`, `doctor`, `init`.
 import type { CommonOpts } from "./argv.js";
 import type { NormalizedEvent } from "../core/types.js";
@@ -179,22 +179,31 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     resumeFrom,
   };
 
-  // 9. Run engine.
-  const rawEvents = engine.run(config);
-  const { events, hadError } = withErrorTracking(rawEvents);
-
-  // 10. Route to UI.
+  // 9. Route to UI.
   const useHeadless = opts.headless || !process.stdout.isTTY;
   if (useHeadless) {
+    // Headless path: one-shot engine run → JSONL.
+    const rawEvents = engine.run(config);
+    const { events, hadError } = withErrorTracking(rawEvents);
     await runHeadless(events);
-  } else {
-    // Lazy import so ink / ink-markdown are only loaded on TTY paths.
-    // See note near the top-of-file imports.
-    const { renderInkApp } = await import("../ui/ink/index.js");
-    await renderInkApp(events, { prompt: text });
+    return hadError() ? 1 : 0;
   }
 
-  return hadError() ? 1 : 0;
+  // TTY path: mount the state-machine REPL. `runRepl` owns the multi-turn
+  // event loop — each user prompt triggers a fresh `engine.run(...)` with the
+  // same RunConfig template (only the `prompt` field changes per turn).
+  // Lazy-loaded so ink / ink-markdown don't get pulled into non-TTY paths.
+  const { runRepl } = await import("../ui/repl/index.js");
+  await runRepl({
+    engine,
+    buildRunConfig: (prompt) => ({ ...config, prompt }),
+    initialPrompt: text,
+    model: config.model,
+    permissionMode: opts.permissionMode,
+    // Phase 5 will wire a real usage accumulator; Phase 2 stubs to 0.
+    getTokens: () => 0,
+  });
+  return 0;
 }
 
 // ---------------------------------------------------------------------------
