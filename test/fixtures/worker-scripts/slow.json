@@ -1,0 +1,6 @@
+[
+  { "delayMs": 200, "event": { "type": "text_delta", "text": "thinking..." } },
+  { "delayMs": 200, "event": { "type": "text_delta", "text": "still thinking..." } },
+  { "delayMs": 200, "event": { "type": "text_delta", "text": "almost done..." } },
+  { "delayMs": 200, "event": { "type": "message_stop", "stopReason": "end_turn", "usage": { "inputTokens": 10, "outputTokens": 5 } } }
+]

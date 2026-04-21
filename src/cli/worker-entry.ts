@@ -2,6 +2,7 @@ import type { AgentId } from "../core/types.js";
 import { ParentTransport } from "../swarm/ipc/parent-transport.js";
 import { WorkerHost } from "../swarm/worker-host.js";
 import { ClaudeAgentSdkEngine } from "../engine/claude-agent-sdk.js";
+import { ScriptedTestEngine } from "../engine/test-engine.js";
 import { ToolDispatcher } from "../tools/dispatcher.js";
 import { buildTier0Tools } from "../tools/tier0/index.js";
 import { buildTier2Tools } from "../tools/tier2/index.js";
@@ -18,7 +19,10 @@ export async function runWorkerEntry(): Promise<number> {
   const depth = Number.parseInt(depthStr, 10);
   const parentToolUseId = process.env.SWARM_CODER_PARENT_TOOL_USE_ID;
 
-  const transport = new ParentTransport({ agentId });
+  const heartbeatIntervalMs = process.env.SWARM_CODER_HEARTBEAT_MS
+    ? Number.parseInt(process.env.SWARM_CODER_HEARTBEAT_MS, 10)
+    : undefined;
+  const transport = new ParentTransport({ agentId, heartbeatIntervalMs });
   const permissionMode = (process.env.SWARM_CODER_PERMISSION_MODE ??
     "workspace-write") as PermissionMode;
   const host = new WorkerHost(agentId, depth, permissionMode, transport, parentToolUseId);
@@ -47,7 +51,9 @@ export async function runWorkerEntry(): Promise<number> {
   }
   const permissionEngine = new PermissionEngine(permissionMode);
   const auth = new AnthropicEnvAuth();
-  const engine = new ClaudeAgentSdkEngine();
+  const engine = process.env.SWARM_CODER_TEST_SCRIPT
+    ? new ScriptedTestEngine()
+    : new ClaudeAgentSdkEngine();
 
   const startedAt = Date.now();
   let finalText = "";

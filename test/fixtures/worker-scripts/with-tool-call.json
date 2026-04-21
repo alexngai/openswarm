@@ -1,0 +1,8 @@
+[
+  { "event": { "type": "tool_use_start", "id": "tu_test_001", "name": "read_file" } },
+  { "event": { "type": "tool_use_input", "id": "tu_test_001", "jsonDelta": "{\"path\":\"README.md\"}" } },
+  { "event": { "type": "tool_use_end", "id": "tu_test_001" } },
+  { "event": { "type": "tool_result", "toolUseId": "tu_test_001", "content": "file contents here", "isError": false } },
+  { "event": { "type": "text_delta", "text": "I read the file successfully." } },
+  { "event": { "type": "message_stop", "stopReason": "end_turn", "usage": { "inputTokens": 20, "outputTokens": 10 } } }
+]
