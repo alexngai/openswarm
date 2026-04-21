@@ -1,0 +1,194 @@
+import { describe, it, expect, vi, afterEach } from "vitest";
+
+// ---------------------------------------------------------------------------
+// Module mocks — must be hoisted before any imports of the modules under test.
+// ---------------------------------------------------------------------------
+
+vi.mock("./doctor.js", () => ({
+  runDoctor: vi.fn().mockResolvedValue(0),
+}));
+
+vi.mock("./init.js", () => ({
+  runInit: vi.fn().mockResolvedValue(0),
+}));
+
+vi.mock("../auth/status.js", () => ({
+  detectAuth: vi.fn().mockResolvedValue({ state: "env-api-key", source: "ANTHROPIC_API_KEY" }),
+}));
+
+vi.mock("../auth/anthropic-env-auth.js", () => ({
+  AnthropicEnvAuth: function AnthropicEnvAuth() {
+    return {
+      kind: "api-key",
+      providerId: "anthropic",
+      headers: async () => ({}),
+      isAuthenticated: async () => true,
+    };
+  },
+}));
+
+vi.mock("../tools/dispatcher.js", () => ({
+  ToolDispatcher: function ToolDispatcher() {
+    return {
+      register: vi.fn(),
+      get: vi.fn().mockReturnValue(undefined),
+      list: vi.fn().mockReturnValue([]),
+    };
+  },
+}));
+
+vi.mock("../tools/tier0/index.js", () => ({
+  buildTier0Tools: vi.fn().mockReturnValue([]),
+}));
+
+vi.mock("../permissions/index.js", () => ({
+  PermissionEngine: function PermissionEngine() {
+    return {
+      check: vi.fn().mockReturnValue({ allow: true }),
+    };
+  },
+}));
+
+vi.mock("../engine/claude-agent-sdk.js", () => ({
+  ClaudeAgentSdkEngine: function ClaudeAgentSdkEngine() {
+    return {
+      id: "claude-agent-sdk",
+      capabilities: {},
+      run: vi.fn().mockReturnValue(
+        (async function* () {
+          yield { type: "message_stop", stopReason: "end_turn", usage: { inputTokens: 1, outputTokens: 1 } };
+        })(),
+      ),
+    };
+  },
+}));
+
+vi.mock("../session/store.js", () => ({
+  SessionStore: function SessionStore() {
+    return {
+      resolveLatest: vi.fn().mockResolvedValue("session-abc"),
+      buildSnapshot: vi.fn().mockReturnValue({ engineId: "claude-agent-sdk", data: { sessionId: "session-abc" } }),
+    };
+  },
+}));
+
+vi.mock("../ui/headless.js", () => ({
+  runHeadless: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("../ui/ink/index.js", () => ({
+  renderInkApp: vi.fn().mockResolvedValue(undefined),
+}));
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe("main", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("help → returns 0 and prints help text", async () => {
+    const chunks: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+      chunks.push(String(chunk));
+      return true;
+    });
+
+    const { main } = await import("./main.js");
+    const code = await main(["help"]);
+
+    expect(code).toBe(0);
+    expect(chunks.join("")).toContain("swarm-coder");
+  });
+
+  it("version → returns 0 and prints version", async () => {
+    const chunks: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+      chunks.push(String(chunk));
+      return true;
+    });
+
+    const { main } = await import("./main.js");
+    const code = await main(["version"]);
+
+    expect(code).toBe(0);
+    expect(chunks.join("")).toMatch(/\d+\.\d+\.\d+/);
+  });
+
+  it("doctor → delegates to runDoctor with correct outputFormat", async () => {
+    const { main } = await import("./main.js");
+    const { runDoctor } = await import("./doctor.js");
+
+    await main(["doctor", "--output-format", "json"]);
+
+    expect(runDoctor).toHaveBeenCalledWith("json");
+  });
+
+  it("init → delegates to runInit with process.cwd() when no path given", async () => {
+    const { main } = await import("./main.js");
+    const { runInit } = await import("./init.js");
+
+    await main(["init"]);
+
+    expect(runInit).toHaveBeenCalledWith(process.cwd());
+  });
+
+  it("error → returns 2 and prints message", async () => {
+    const errChunks: string[] = [];
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
+      errChunks.push(String(chunk));
+      return true;
+    });
+
+    const { main } = await import("./main.js");
+    const code = await main(["--unknown-flag-xyz", "hello"]);
+
+    expect(code).toBe(2);
+    expect(errChunks.join("")).toContain("unknown flag");
+  });
+
+  it("prompt → calls runHeadless when --headless flag is set", async () => {
+    const { main } = await import("./main.js");
+    const { runHeadless } = await import("../ui/headless.js");
+
+    // Stub isTTY so we can test headless flag directly.
+    const origIsTTY = process.stdout.isTTY;
+    Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+
+    await main(["--headless", "say hi"]);
+
+    Object.defineProperty(process.stdout, "isTTY", { value: origIsTTY, configurable: true });
+
+    expect(runHeadless).toHaveBeenCalled();
+  });
+
+  it("prompt → calls renderInkApp when stdout is a TTY and --headless is not set", async () => {
+    const { main } = await import("./main.js");
+    const { renderInkApp } = await import("../ui/ink/index.js");
+
+    Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+
+    await main(["say hi"]);
+
+    expect(renderInkApp).toHaveBeenCalled();
+  });
+
+  it("prompt → auth failure returns 1 with error message", async () => {
+    const { detectAuth } = await import("../auth/status.js");
+    (detectAuth as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ state: "none" });
+
+    const errChunks: string[] = [];
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
+      errChunks.push(String(chunk));
+      return true;
+    });
+
+    const { main } = await import("./main.js");
+    const code = await main(["say hi"]);
+
+    expect(code).toBe(1);
+    expect(errChunks.join("")).toContain("no auth found");
+  });
+});
