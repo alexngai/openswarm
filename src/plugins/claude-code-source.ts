@@ -53,6 +53,15 @@ export interface ClaudeCodeSourceOptions {
 const ToolDescriptorSchema = z.object({
   name: z.string(),
   description: z.string().optional(),
+  // JSON Schema passed through to the engine so the model sees accurate
+  // arg names. Defaults to an empty object schema when omitted.
+  inputSchema: z.record(z.string(), z.unknown()).optional(),
+  // Permission level declared by the plugin. Defaults to "exec" for shell
+  // plugins (they spawn subprocesses) and "none" for simple in-process
+  // plugins. Callers can still override via canUseTool.
+  requiredPermission: z
+    .enum(["none", "read", "write", "exec", "network"])
+    .optional(),
 });
 
 const PluginJsonSchema = z.object({
@@ -204,7 +213,7 @@ export class ClaudeCodeSource implements PluginSource {
 
   private _loadShell(
     manifest: PluginManifest,
-    _pluginDir: string,
+    pluginDir: string,
   ): LoadedPlugin {
     const toolNames = new Set((manifest.tools ?? []).map((t) => t.name));
     const command = (manifest as PluginManifest & { command?: string }).command;
@@ -248,10 +257,14 @@ export class ClaudeCodeSource implements PluginSource {
         }, TIMEOUT_MS);
 
         // Use `bash -c` for shell compatibility — matches claw-code's contract.
+        // cwd: pluginDir so the manifest's `command` can use paths relative
+        // to its own directory (e.g., "./run.sh"). CLAWD_CWD still carries
+        // the host's project cwd per the claw-code env contract.
         const child = cp.spawn("bash", ["-c", shellCommand], {
           env,
           stdio: ["pipe", "pipe", "pipe"],
           signal: ac.signal,
+          cwd: pluginDir,
         });
 
         const stdoutChunks: Buffer[] = [];
@@ -408,8 +421,14 @@ export class ClaudeCodeSource implements PluginSource {
       tools: (pj.tools ?? []).map((t) => ({
         name: t.name,
         description: t.description ?? "",
-        inputSchema: { type: "object" },
-        requiredPermission: "exec" as const,
+        // Preserve the plugin's declared JSON Schema so the engine can
+        // derive a matching raw shape (see src/engine/claude-agent-sdk.ts).
+        // Default: empty object schema (no declared args).
+        inputSchema: (t.inputSchema ?? { type: "object" }) as { type: "object" },
+        // Default requiredPermission: "exec" for shell plugins, "none" for
+        // in-process. Plugin authors can override either per-tool.
+        requiredPermission:
+          t.requiredPermission ?? (pj.execMode === "shell" ? "exec" : "none"),
         command: [],
       })),
       execMode: pj.execMode,

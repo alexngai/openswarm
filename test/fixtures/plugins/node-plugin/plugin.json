@@ -4,6 +4,19 @@
   "execMode": "in-process",
   "entryModule": "./index.mjs",
   "tools": [
-    { "name": "greet", "description": "Returns a greeting" }
+    {
+      "name": "greet",
+      "description": "Returns a greeting for the supplied name",
+      "requiredPermission": "none",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "who": {
+            "type": "string",
+            "description": "Name to greet; defaults to 'world' when omitted"
+          }
+        }
+      }
+    }
   ]
 }

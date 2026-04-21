@@ -205,9 +205,26 @@ else
     record SKIP 4 "(depends on criterion 1 auth)"
     record SKIP 5 "(depends on criterion 1 auth)"
   else
-    # [1] Simple text response
+    # [1] Simple text response. Concatenate all text_delta payloads before
+    # matching: the SDK streams tokens in many small chunks, so 'hello-smoke'
+    # can split across deltas (e.g. "hello" + "-smoke") and line-by-line
+    # grep fails intermittently depending on how the model tokenizes.
     OUT1=$($BIN --headless prompt "Reply with exactly the word: hello-smoke" 2>&1)
-    if echo "$OUT1" | grep -qi 'hello-smoke'; then
+    CONCAT1=$(echo "$OUT1" | python3 -c '
+import json, sys
+out = []
+for line in sys.stdin:
+    line = line.strip()
+    if not line.startswith("{"): continue
+    try:
+        e = json.loads(line)
+    except Exception:
+        continue
+    if e.get("type") == "text_delta" and isinstance(e.get("text"), str):
+        out.append(e["text"])
+print("".join(out))
+' 2>/dev/null)
+    if echo "$CONCAT1" | grep -qi 'hello-smoke'; then
       record PASS 1 "prompt returned expected text"
     else
       SNIPPET=$(echo "$OUT1" | head -c 300 | tr '\n' ' ')

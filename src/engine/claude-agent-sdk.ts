@@ -21,7 +21,7 @@ import type {
   RunConfig,
 } from "./index.js";
 import type { NormalizedEvent, PermissionMode } from "../core/types.js";
-import { ZodObject, toJSONSchema as zodToJSONSchema } from "zod";
+import { z, ZodObject, toJSONSchema as zodToJSONSchema } from "zod";
 
 /**
  * Claude Agent SDK exposes MCP-registered tools to the model under the
@@ -93,19 +93,31 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
     // 1. Build in-process MCP server wrapping our ToolImpls.
     const mcpTools = config.tools.map((toolImpl) => {
       // tool() wants a Zod raw shape (plain object of field → ZodType),
-      // not a ZodObject. Enforce at construction — tool authors who pass
-      // a non-object schema get a clear error instead of a silent empty
-      // shape (which would register a zero-arg tool and mislead the model).
+      // not a ZodObject. Tier 0/1/2 tools pass a ZodObject whose .shape is
+      // the declared fields. Plugin + MCP tools register with a permissive
+      // non-ZodObject schema (z.unknown() / z.record(...)) because their
+      // true schema lives in spec.inputSchema (JSON Schema from the plugin
+      // manifest or MCP descriptor) — for those we synthesize the raw
+      // shape from spec.inputSchema.properties so the model sees accurate
+      // field names, keyed with z.unknown() for permissive typing.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let rawShape: Record<string, any> = {};
-      if (toolImpl.zodSchema != null) {
-        if (!(toolImpl.zodSchema instanceof ZodObject)) {
-          throw new TypeError(
-            `Tool "${toolImpl.spec.name}" zodSchema must be a z.object({...}). ` +
-              `Got ${toolImpl.zodSchema.constructor.name}.`,
+      if (toolImpl.zodSchema instanceof ZodObject) {
+        rawShape = toolImpl.zodSchema.shape as Record<string, unknown>;
+      } else if (toolImpl.zodSchema != null) {
+        // Non-ZodObject schema — derive field list from spec.inputSchema
+        // (plugin/MCP path). Fall back to empty rawShape if inputSchema
+        // isn't a JSON Schema object with `properties`.
+        const inputSchema = toolImpl.spec.inputSchema as {
+          properties?: Record<string, unknown>;
+        } | undefined;
+        if (inputSchema != null && typeof inputSchema === "object"
+            && inputSchema.properties != null
+            && typeof inputSchema.properties === "object") {
+          rawShape = Object.fromEntries(
+            Object.keys(inputSchema.properties).map((k) => [k, z.unknown()]),
           );
         }
-        rawShape = toolImpl.zodSchema.shape as Record<string, unknown>;
       }
 
       return tool(

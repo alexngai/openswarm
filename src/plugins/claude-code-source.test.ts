@@ -245,6 +245,41 @@ describe("ClaudeCodeSource", () => {
     }
   });
 
+  // 7b. Shell plugin command resolves relative paths against pluginDir
+  //     (regression: earlier revisions spawned in process.cwd(), so
+  //     manifests like `command: "./run.sh"` failed with "No such file".)
+  it("spawns shell plugin with cwd set to the plugin directory", async () => {
+    const pluginDir = path.join(tmpDir, "rel-plugin");
+    await fs.promises.mkdir(pluginDir, { recursive: true });
+    const script = path.join(pluginDir, "run.sh");
+    await fs.promises.writeFile(
+      script,
+      '#!/usr/bin/env bash\necho \'{"status":"ok","output":"rel-ok"}\'\n',
+      { mode: 0o755 },
+    );
+    await fs.promises.chmod(script, 0o755);
+    await fs.promises.writeFile(
+      path.join(pluginDir, "plugin.json"),
+      JSON.stringify({
+        id: "rel-plugin",
+        version: "1.0.0",
+        execMode: "shell",
+        tools: [{ name: "go" }],
+        command: "./run.sh",
+      }),
+    );
+
+    const src = new ClaudeCodeSource({ pluginsDir: tmpDir });
+    await src.discover();
+    const plugin = await src.load("rel-plugin");
+
+    const result = await plugin.executeTool("go", {}, { cwd: tmpDir });
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.output).toBe("rel-ok");
+    }
+  });
+
   // 8. Shell plugin non-zero exit → error result
   it("returns error result when shell plugin exits non-zero", async () => {
     await writePluginJson(tmpDir, "fail-plugin", {

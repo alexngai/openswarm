@@ -1042,3 +1042,103 @@ describe("Scenario 12: resume threading", () => {
     expect(callArgs?.options?.resume).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Scenario 10: Non-ZodObject schemas (plugin + MCP tools)
+// ---------------------------------------------------------------------------
+
+describe("Scenario 10: non-ZodObject schema acceptance", () => {
+  beforeEach(() => {
+    mockQueryMessages.length = 0;
+    vi.clearAllMocks();
+    mockQueryMessages.push(sdkMsg({
+      type: "result",
+      subtype: "success",
+      duration_ms: 1,
+      duration_api_ms: 1,
+      is_error: false,
+      num_turns: 1,
+      result: "ok",
+      session_id: "s",
+      total_cost_usd: 0,
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }));
+  });
+
+  it("accepts ToolImpl with ZodRecord schema + derives rawShape from spec.inputSchema.properties", async () => {
+    const { tool: mockTool } = await import("@anthropic-ai/claude-agent-sdk");
+
+    const pluginTool = {
+      spec: {
+        name: "plugin__p__echo",
+        description: "Echoes input back",
+        inputSchema: {
+          type: "object",
+          properties: { marker: { type: "string" }, extra: { type: "number" } },
+        },
+        requiredPermission: "write" as const,
+        tier: 3 as const,
+      },
+      zodSchema: z.record(z.string(), z.unknown()),
+      execute: async (args: unknown) => ({
+        status: "ok" as const,
+        output: JSON.stringify(args),
+      }),
+    };
+
+    await collectEvents(makeConfig({ tools: [pluginTool] }));
+
+    const toolCall = (mockTool as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c: unknown[]) => c[0] === "plugin__p__echo",
+    );
+    expect(toolCall).toBeDefined();
+    const rawShape = toolCall![2] as Record<string, unknown>;
+    // Fields derived from inputSchema.properties — not empty.
+    expect(Object.keys(rawShape).sort()).toEqual(["extra", "marker"]);
+  });
+
+  it("accepts ToolImpl with z.unknown() schema (MCP bridge path)", async () => {
+    const { tool: mockTool } = await import("@anthropic-ai/claude-agent-sdk");
+
+    const mcpTool = {
+      spec: {
+        name: "mcp__srv__get_time",
+        description: "Returns ISO time",
+        inputSchema: { type: "object", properties: {} },
+        requiredPermission: "none" as const,
+        tier: 4 as const,
+      },
+      zodSchema: z.unknown(),
+      execute: async () => ({ status: "ok" as const, output: "2026-01-01T00:00:00Z" }),
+    };
+
+    await expect(collectEvents(makeConfig({ tools: [mcpTool] }))).resolves.toBeDefined();
+    const toolCall = (mockTool as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c: unknown[]) => c[0] === "mcp__srv__get_time",
+    );
+    expect(toolCall).toBeDefined();
+  });
+
+  it("falls back to empty rawShape when inputSchema has no properties", async () => {
+    const { tool: mockTool } = await import("@anthropic-ai/claude-agent-sdk");
+
+    const mcpTool = {
+      spec: {
+        name: "mcp__srv__noarg",
+        description: "No-arg tool",
+        inputSchema: { type: "object" }, // no properties
+        requiredPermission: "none" as const,
+        tier: 4 as const,
+      },
+      zodSchema: z.unknown(),
+      execute: async () => ({ status: "ok" as const, output: "" }),
+    };
+
+    await collectEvents(makeConfig({ tools: [mcpTool] }));
+    const toolCall = (mockTool as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c: unknown[]) => c[0] === "mcp__srv__noarg",
+    );
+    expect(toolCall).toBeDefined();
+    expect(Object.keys(toolCall![2] as object)).toHaveLength(0);
+  });
+});
