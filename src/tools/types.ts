@@ -11,11 +11,19 @@
  * ToolImpl boundary.
  */
 
+import type { ZodTypeAny } from "zod";
 import type { ToolSpec } from "../core/types.js";
 
 export interface ToolImpl {
   readonly spec: ToolSpec;
   readonly execute: (input: unknown, ctx: ToolExecutionContext) => Promise<ToolResult>;
+  /**
+   * Zod schema for validating input at dispatch time.
+   * This is the single source of truth for input shape; `spec.inputSchema`
+   * (JSON Schema) is derived from this via `zodToJsonSchema`.
+   * Optional to allow test fixtures without full schema setup.
+   */
+  readonly zodSchema?: ZodTypeAny;
 }
 
 export interface ToolExecutionContext {
