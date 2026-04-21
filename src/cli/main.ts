@@ -16,7 +16,10 @@ import { PermissionEngine } from "../permissions/index.js";
 import { ClaudeAgentSdkEngine } from "../engine/claude-agent-sdk.js";
 import { SessionStore } from "../session/store.js";
 import { runHeadless } from "../ui/headless.js";
-import { renderInkApp } from "../ui/ink/index.js";
+// Note: ink / ink-markdown are lazy-loaded inside runPrompt only when the
+// TTY path is taken. ink-markdown is CJS and requires() ink (which has
+// top-level await) — pulling it in eagerly crashes non-TTY paths like
+// `--version`, `--help`, `doctor`, `init`.
 import type { CommonOpts } from "./argv.js";
 import type { NormalizedEvent } from "../core/types.js";
 import type { PermissionGate, RunConfig } from "../engine/index.js";
@@ -177,6 +180,9 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   if (useHeadless) {
     await runHeadless(events);
   } else {
+    // Lazy import so ink / ink-markdown are only loaded on TTY paths.
+    // See note near the top-of-file imports.
+    const { renderInkApp } = await import("../ui/ink/index.js");
     await renderInkApp(events, { prompt: text });
   }
 

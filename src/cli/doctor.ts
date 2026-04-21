@@ -74,14 +74,32 @@ async function checkInstall(): Promise<CheckResult> {
     // Verify the SDK is importable via a dynamic import of its main export.
     await import("@anthropic-ai/claude-agent-sdk");
 
-    // Read version from package.json via createRequire (avoids typed-import issues).
+    // Read version from package.json. The SDK's exports map does not expose
+    // "./package.json", so resolve the main entry and climb up to find its
+    // package.json on disk.
     let version = "unknown";
     try {
       const require = createRequire(import.meta.url);
-      const pkgPath = require.resolve("@anthropic-ai/claude-agent-sdk/package.json");
-      const raw = await fs.readFile(pkgPath, "utf8");
-      const pkg = JSON.parse(raw) as { version?: string };
-      version = pkg.version ?? "unknown";
+      const mainPath = require.resolve("@anthropic-ai/claude-agent-sdk");
+      // mainPath looks like .../node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs
+      // Walk up until we find a package.json that declares the right name.
+      let dir = path.dirname(mainPath);
+      for (let i = 0; i < 5; i++) {
+        const candidate = path.join(dir, "package.json");
+        try {
+          const raw = await fs.readFile(candidate, "utf8");
+          const pkg = JSON.parse(raw) as { name?: string; version?: string };
+          if (pkg.name === "@anthropic-ai/claude-agent-sdk") {
+            version = pkg.version ?? "unknown";
+            break;
+          }
+        } catch {
+          // keep climbing
+        }
+        const parent = path.dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+      }
     } catch {
       // version read failed — still pass, just report unknown
     }
