@@ -16,6 +16,10 @@ import type { AgentEngine, RunConfig } from "../../engine/index.js";
 import type { NormalizedEvent, PermissionMode } from "../../core/types.js";
 import type { SlashCommandRegistry } from "./state.js";
 import type { TokenGetter } from "./status.js";
+import {
+  buildDefaultRegistry,
+  type BuildDefaultRegistryDeps,
+} from "../../cli/slash/index.js";
 
 export {
   createInitialState,
@@ -41,6 +45,12 @@ export interface RunReplConfig {
   readonly permissionMode: PermissionMode;
   readonly registry?: SlashCommandRegistry;
   readonly getTokens?: TokenGetter;
+  /**
+   * Dependencies injected into every `SlashCommandContext`. If `registry`
+   * is omitted, these are also used to build the default 14-command
+   * registry via `buildDefaultRegistry()`.
+   */
+  readonly slashDeps?: BuildDefaultRegistryDeps;
 }
 
 /**
@@ -106,12 +116,16 @@ export async function runRepl(config: RunReplConfig): Promise<void> {
 
   const events = multiTurnEvents();
 
+  const registry =
+    config.registry ?? buildDefaultRegistry(config.slashDeps ?? {});
+
   const instance = render(
     React.createElement(App, {
       events,
       model: config.model,
       permissionMode: config.permissionMode,
-      registry: config.registry,
+      registry,
+      slashDeps: config.slashDeps,
       getTokens: config.getTokens,
       onExit: () => {
         closeQueue();

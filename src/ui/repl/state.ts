@@ -161,25 +161,38 @@ export function createInitialState(opts?: InitialStateOptions): ReplState {
 // Slash command registry (stub)
 // ---------------------------------------------------------------------------
 
-export interface SlashCommandRegistry {
-  list(): ReadonlyArray<{ readonly name: string; readonly description: string }>;
-  get(
-    name: string,
-  ): { readonly name: string; readonly description: string } | undefined;
+/**
+ * Canonical registry type lives in `src/cli/slash/index.ts`. We re-export
+ * it as a type here so state.ts consumers don't need to cross-module the
+ * slash layer directly. The cycle is type-only (erased at runtime).
+ */
+export type SlashCommandRegistry =
+  import("../../cli/slash/index.js").SlashCommandRegistry;
+
+interface StubCommand {
+  readonly name: string;
+  readonly description: string;
+  readonly execute: () => { readonly kind: "ok" };
 }
 
-const STUB_COMMANDS: ReadonlyArray<{ readonly name: string; readonly description: string }> = [
-  { name: "help", description: "Show available commands" },
-  { name: "exit", description: "Exit the REPL" },
-  { name: "clear", description: "Clear the transcript" },
-  { name: "status", description: "Show session status" },
+const STUB_COMMANDS: ReadonlyArray<StubCommand> = [
+  { name: "help", description: "Show available commands", execute: () => ({ kind: "ok" }) },
+  { name: "exit", description: "Exit the REPL", execute: () => ({ kind: "ok" }) },
+  { name: "clear", description: "Clear the transcript", execute: () => ({ kind: "ok" }) },
+  { name: "status", description: "Show session status", execute: () => ({ kind: "ok" }) },
 ];
 
-/** Minimal registry used in Phase 2. Phase 3 swaps in the full one. */
+/**
+ * Minimal fallback registry. The canonical path is
+ * `buildDefaultRegistry(deps)` from `src/cli/slash/index.ts`, which returns
+ * the full 14-command registry. This stub is kept only so tests and the
+ * REPL can render without wiring the full dependency graph.
+ */
 export function createStubSlashRegistry(): SlashCommandRegistry {
   return {
-    list: () => STUB_COMMANDS,
-    get: (name) => STUB_COMMANDS.find((c) => c.name === name),
+    list: () =>
+      STUB_COMMANDS.map((c) => ({ name: c.name, description: c.description })),
+    get: (name: string) => STUB_COMMANDS.find((c) => c.name === name),
   };
 }
 

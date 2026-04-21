@@ -191,15 +191,46 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
 
   // TTY path: mount the state-machine REPL. `runRepl` owns the multi-turn
   // event loop — each user prompt triggers a fresh `engine.run(...)` with the
-  // same RunConfig template (only the `prompt` field changes per turn).
+  // same RunConfig template (the `prompt`, `model`, and `permissionMode`
+  // fields are read from locals so slash-commands can mutate them).
   // Lazy-loaded so ink / ink-markdown don't get pulled into non-TTY paths.
   const { runRepl } = await import("../ui/repl/index.js");
+  const { clampPermissionMode } = await import("../swarm/permission-order.js");
+  const parentMode = opts.permissionMode;
+  let currentModel = config.model;
+  let currentPermissionMode = opts.permissionMode;
+  const turnAbort = new AbortController();
   await runRepl({
     engine,
-    buildRunConfig: (prompt) => ({ ...config, prompt }),
+    buildRunConfig: (prompt) => ({
+      ...config,
+      prompt,
+      model: currentModel,
+      permissionMode: currentPermissionMode,
+      abort: turnAbort.signal,
+    }),
     initialPrompt: text,
-    model: config.model,
-    permissionMode: opts.permissionMode,
+    model: currentModel,
+    permissionMode: currentPermissionMode,
+    slashDeps: {
+      getModel: () => currentModel,
+      setModel: (m) => {
+        currentModel = m;
+      },
+      getPermissionMode: () => currentPermissionMode,
+      setPermissionMode: (m) => {
+        currentPermissionMode = clampPermissionMode(m, parentMode);
+      },
+      // Phase 5 will wire real usage via `engine.getCumulativeUsage()`.
+      getUsage: () => ({
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadInputTokens: 0,
+        cacheWriteInputTokens: 0,
+      }),
+      abort: turnAbort,
+      sessionLogPath: ".swarm-coder/sessions.log",
+    },
     // Phase 5 will wire a real usage accumulator; Phase 2 stubs to 0.
     getTokens: () => 0,
   });

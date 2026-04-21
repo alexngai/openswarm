@@ -26,11 +26,15 @@ import {
   reduce,
   createStubSlashRegistry,
   type ReplEvent,
-  type SlashCommandRegistry,
 } from "./state.js";
 import { Transcript } from "./transcript.js";
 import { Input } from "./input.js";
 import { Status, type TokenGetter } from "./status.js";
+import { dispatchSlashLine } from "../../cli/slash/dispatcher.js";
+import type {
+  BuildDefaultRegistryDeps,
+  SlashCommandRegistry,
+} from "../../cli/slash/index.js";
 
 export interface AppProps {
   readonly events: AsyncIterable<NormalizedEvent>;
@@ -38,6 +42,8 @@ export interface AppProps {
   readonly permissionMode: PermissionMode;
   readonly registry?: SlashCommandRegistry;
   readonly getTokens?: TokenGetter;
+  /** Deps threaded through the slash dispatcher into each SlashCommandContext. */
+  readonly slashDeps?: BuildDefaultRegistryDeps;
   /** Called when the REPL should shut down (e.g. user typed /exit). */
   readonly onExit?: () => void;
   /** Called when the user submits a non-slash prompt — triggers the next engine turn. */
@@ -95,17 +101,25 @@ export function App(props: AppProps): React.ReactElement {
     }
   }, [state.name, ink]);
 
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
   const onSubmit = (line: string): void => {
     if (line.length === 0) return;
     if (line.startsWith("/")) {
-      // Phase 2: minimal inline handling of the stub commands.
-      const name = line.slice(1).trim().split(/\s+/)[0] ?? "";
-      handleStubSlashCommand(name, dispatch, ink);
+      // Phase 3: dispatch through the real registry.
+      void (async () => {
+        const result = await dispatchSlashLine(
+          line,
+          stateRef.current,
+          registry,
+          props.slashDeps ?? {},
+        );
+        applySlashResult(result, dispatch, ink, props.onSubmit);
+      })();
       return;
     }
     // Normal prompt — append to transcript and transition to streaming.
-    // The parent (`runRepl`) is responsible for feeding another engine turn;
-    // Phase 2 ships a single-turn REPL wired via `onSubmit`.
     dispatch({ type: "submit", text: line });
     props.onSubmit?.(line);
   };
@@ -185,42 +199,50 @@ export function translateEngineEvent(evt: NormalizedEvent): ReplEvent[] {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 2 stub slash-command handler
+// Slash result → reducer event / transcript / engine hint
 // ---------------------------------------------------------------------------
 
-function handleStubSlashCommand(
-  name: string,
+let slashSeq = 0;
+
+/**
+ * Translate a `SlashCommandResult` into reducer dispatches + optional
+ * `onSubmit` callback (for engine-hint prompts). Exported for tests.
+ */
+export function applySlashResult(
+  result: import("../../cli/slash/index.js").SlashCommandResult,
   dispatch: (e: ReplEvent) => void,
   ink: ReturnType<typeof useApp>,
+  onSubmit?: (line: string) => void,
 ): void {
-  switch (name) {
-    case "exit":
-      dispatch({ type: "shutdown" });
-      setTimeout(() => ink.exit(), 20);
-      return;
-    case "clear":
-      dispatch({ type: "clear" });
-      return;
-    case "help":
+  slashSeq += 1;
+  switch (result.kind) {
+    case "message":
       dispatch({
         type: "system-entry",
-        id: `help-${Date.now()}`,
-        text: "available: /help, /exit, /clear, /status (Phase 3 swaps in the full registry)",
+        id: `slash-msg-${slashSeq}`,
+        text: result.text,
       });
       return;
-    case "status":
+    case "error":
       dispatch({
         type: "system-entry",
-        id: `status-${Date.now()}`,
-        text: "status shown in the bar below",
+        id: `slash-err-${slashSeq}`,
+        text: `error: ${result.message}`,
       });
       return;
-    default:
-      dispatch({
-        type: "system-entry",
-        id: `unknown-${Date.now()}`,
-        text: `unknown slash command: /${name}`,
-      });
+    case "reducer-event":
+      dispatch(result.event);
+      // /exit result surfaces as a shutdown reducer event — unmount ink.
+      if (result.event.type === "shutdown") {
+        setTimeout(() => ink.exit(), 20);
+      }
+      return;
+    case "engine-hint":
+      // Inject the hint as if the user had typed it — triggers a turn.
+      dispatch({ type: "submit", text: result.prompt });
+      onSubmit?.(result.prompt);
+      return;
+    case "ok":
       return;
   }
 }
