@@ -36,6 +36,7 @@ export type ParsedArgs =
   | { kind: "init"; cwd?: string }
   | { kind: "help" }
   | { kind: "version" }
+  | { kind: "worker" }
   | { kind: "error"; message: string; showHelp: boolean };
 
 // ---------------------------------------------------------------------------
@@ -88,6 +89,22 @@ export function parseArgv(args: string[]): ParsedArgs {
 
     if (tok === "--version" || tok === "-V") {
       return { kind: "version" };
+    }
+
+    // Internal worker flags — not advertised in --help.
+    if (tok === "--worker") {
+      return { kind: "worker" };
+    }
+
+    if (tok === "--agent-id" || tok.startsWith("--agent-id=")) {
+      // Accept and ignore — agentId is read from SWARM_CODER_AGENT_ID env var.
+      // The flag exists only for process-listing clarity.
+      if (tok === "--agent-id") {
+        i += 2; // skip the value token too
+      } else {
+        i++;
+      }
+      continue;
     }
 
     if (tok === "--headless") {

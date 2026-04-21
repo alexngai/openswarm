@@ -8,6 +8,7 @@
 import { parseArgv } from "./argv.js";
 import { runDoctor } from "./doctor.js";
 import { runInit } from "./init.js";
+import { runWorkerEntry } from "./worker-entry.js";
 import { detectAuth } from "../auth/status.js";
 import { AnthropicEnvAuth } from "../auth/anthropic-env-auth.js";
 import { ToolDispatcher } from "../tools/dispatcher.js";
@@ -210,6 +211,9 @@ export async function main(argv: string[]): Promise<number> {
 
     case "init":
       return runInit(parsed.cwd ?? process.cwd());
+
+    case "worker":
+      return runWorkerEntry();
 
     case "error":
       process.stderr.write(`error: ${parsed.message}\n`);
