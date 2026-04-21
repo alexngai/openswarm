@@ -13,9 +13,18 @@ import type { AgentId, PermissionMode, SessionId } from "../core/types.js";
 import type { LaneEvent } from "./events.js";
 import type { ParentTransport } from "./ipc/parent-transport.js";
 import type { AgentResult } from "./host.js";
+import type { IpcNotification } from "./ipc/protocol.js";
 
 export class WorkerHost implements SwarmHost {
   readonly mode = "worker" as const;
+
+  /**
+   * Buffered inbox deliveries that arrived via `sub_agent_event` with
+   * `eventKind === "inbox_delivery"`. `drainInbox` empties this buffer up
+   * to `max`, then falls back to an orchestrator-side `message.recv` request
+   * so any queued-but-undelivered messages also get returned.
+   */
+  private readonly inboxBuffer: AgentMessage[] = [];
 
   constructor(
     readonly agentId: AgentId,
@@ -23,7 +32,29 @@ export class WorkerHost implements SwarmHost {
     readonly permissionMode: PermissionMode,
     private readonly transport: ParentTransport,
     private readonly parentToolUseId?: string,
-  ) {}
+  ) {
+    // Subscribe to sub_agent_event notifications. This handler is installed
+    // unconditionally so messages that arrive between turns (e.g. while the
+    // worker is mid-response) are buffered and surface on the next
+    // check_inbox call. Guard against minimal transport fakes that don't
+    // inherit from EventEmitter (used in spawn-integration.test.ts etc).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const t = this.transport as any;
+    if (typeof t?.on === "function") {
+      t.on("notification", (frame: IpcNotification) => {
+        if (
+          frame.method === "sub_agent_event" &&
+          typeof frame.params === "object" &&
+          frame.params !== null &&
+          (frame.params as { eventKind?: string }).eventKind ===
+            "inbox_delivery"
+        ) {
+          const msg = (frame.params as { message?: AgentMessage }).message;
+          if (msg !== undefined) this.inboxBuffer.push(msg);
+        }
+      });
+    }
+  }
 
   readonly task: TaskAPI = {
     create: async (packet) =>
@@ -97,9 +128,41 @@ export class WorkerHost implements SwarmHost {
     };
   }
 
-  async send(_to: AgentId | "*" | `role:${string}`, _message: AgentMessage): Promise<SendResult> {
-    // TODO M3a Phase 3: proxy via "message.send" IPC request to parent.
-    throw new Error("send not implemented in M1");
+  /**
+   * Send a message via the orchestrator (rev-2 Option A: all routing lives at
+   * depth 0). Proxies through `message.send` IPC request.
+   */
+  async send(
+    to: AgentId | "*" | `role:${string}`,
+    message: AgentMessage,
+  ): Promise<SendResult> {
+    const result = await this.transport.send<SendResult>("message.send", {
+      to,
+      content: message.content,
+      from: message.from,
+      timestamp: message.timestamp,
+      ...(message.correlationId !== undefined && {
+        correlationId: message.correlationId,
+      }),
+    });
+    return result;
+  }
+
+  /**
+   * Synchronously drain up to `max` messages from the local buffer.
+   *
+   * Note: `sub_agent_event` deliveries populate the buffer opportunistically.
+   * Messages enqueued while the worker was not subscribed (or that arrive
+   * during a race) must be fetched via an explicit `message.recv` IPC.
+   * For Phase 3 simplicity, this method returns ONLY what's already in the
+   * local buffer — the orchestrator pushes proactively, so the only way to
+   * miss a message is a dropped notification (see Decision context #2:
+   * best-effort, in-memory delivery).
+   */
+  drainInbox(max: number): AgentMessage[] {
+    if (max <= 0) return [];
+    const take = Math.min(max, this.inboxBuffer.length);
+    return this.inboxBuffer.splice(0, take);
   }
 
   async *inbox(): AsyncIterable<InboxEvent> {

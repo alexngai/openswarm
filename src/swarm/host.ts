@@ -45,6 +45,12 @@ export interface SendResult {
   readonly dropped?: number;
   /** True when broadcast had some drops (delivered < total recipients). */
   readonly partial?: boolean;
+  /**
+   * Present when `ok === false`. Machine-readable discriminator:
+   *   - "unknown_recipient" — direct `to` is not a live agent
+   *   - "depth>1 messaging unsupported" — rev-2 Option A scope violation
+   */
+  readonly reason?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -84,6 +90,13 @@ export interface SwarmHost {
    * Iteration completes when the host shuts down.
    */
   inbox(): AsyncIterable<InboxEvent>;
+
+  /**
+   * Synchronously drain up to `max` queued messages for this host's own agent.
+   * Used by the Tier 2 `check_inbox` tool — returns [] when nothing is queued,
+   * never blocks. Introduced in M3a Phase 3.
+   */
+  drainInbox(max: number): AgentMessage[];
 
   /** Task registry API — see below. */
   readonly task: TaskAPI;

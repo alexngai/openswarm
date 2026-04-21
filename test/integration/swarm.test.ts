@@ -24,6 +24,9 @@ import {
   runWorker,
   type HarnessResult,
 } from "./harness.js";
+import { StandaloneHost } from "../../src/swarm/standalone-host.js";
+import type { AgentId } from "../../src/core/types.js";
+import type { AgentMessage, SendResult } from "../../src/swarm/host.js";
 
 // ---------------------------------------------------------------------------
 // Setup: build dist so subprocess tests use current code.
@@ -306,4 +309,97 @@ describe("Scenario 8: with-tool-call worker returns success", () => {
     const r = result as { output: string };
     expect(r.output).toContain("I read the file");
   }, 15_000);
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 9 (M3a Phase 3): cross-worker send_message routed by orchestrator
+// ---------------------------------------------------------------------------
+
+describe("Scenario 9: orchestrator routes message.send between two depth-1 workers", () => {
+  it("worker A sends 'ping' to worker B via message.send IPC; orchestrator buffers for B's drain", async () => {
+    // Spawn a real StandaloneHost (depth 0) that owns the inbox + routing.
+    const root = new StandaloneHost({ agentId: "root-for-p3" as AgentId });
+
+    // Spawn two scripted workers through the host. Each task ends quickly so
+    // we can exercise message routing during the window before `close`.
+    const handleA = await root.spawn({
+      task: {
+        ...makeTaskPacket("worker A"),
+        id: "task-a",
+      },
+      permissionMode: "workspace-write",
+    });
+    const handleB = await root.spawn({
+      task: {
+        ...makeTaskPacket("worker B"),
+        id: "task-b",
+      },
+      permissionMode: "workspace-write",
+    });
+
+    // Orchestrator-side send: from A → B. Since ScriptedTestEngine doesn't
+    // dispatch tool bodies, the worker can't itself call send_message; we
+    // exercise the host routing path directly, which is what the IPC handler
+    // reaches into when a live worker proxies via "message.send".
+    const msg: AgentMessage = {
+      from: handleA.agentId,
+      to: handleB.agentId,
+      content: "ping",
+      timestamp: Date.now(),
+    };
+    const result: SendResult = await root.send(handleB.agentId, msg);
+    expect(result.ok).toBe(true);
+    expect(result.delivered).toBe(1);
+
+    // Drain from B's orchestrator-side queue via the same internal API the
+    // "message.recv" IPC handler uses. (B is a real subprocess; its in-process
+    // check_inbox would hit this queue via IPC.)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const inbox = (root as any).messageInbox as {
+      drain: (id: AgentId, n: number) => AgentMessage[];
+    };
+    const drained = inbox.drain(handleB.agentId, 10);
+    expect(drained).toHaveLength(1);
+    expect(drained[0]).toMatchObject({
+      from: handleA.agentId,
+      to: handleB.agentId,
+      content: "ping",
+    });
+
+    // Wait for workers to finish their scripts (text-only completes quickly).
+    await Promise.all([handleA.wait(), handleB.wait()]);
+  }, 20_000);
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 10 (M3a Phase 3): depth-2 sender is rejected with a typed reason
+// ---------------------------------------------------------------------------
+
+describe("Scenario 10: depth>1 messaging is rejected (rev-2 Option A)", () => {
+  it("a message from a depth-2 agent returns { ok: false, reason: 'depth>1 messaging unsupported' }", async () => {
+    const root = new StandaloneHost({
+      agentId: "root-for-p3-d2" as AgentId,
+      maxDepth: 4,
+    });
+
+    // Manually register a depth-1 peer and a depth-2 grandchild in the host
+    // so we can drive a send without having to spawn two real subprocesses.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const depths: Map<AgentId, number> = (root as any).depths;
+    const A = "depth1-A" as AgentId;
+    const G = "depth2-G" as AgentId;
+    depths.set(A, 1);
+    depths.set(G, 2);
+
+    const msg: AgentMessage = {
+      from: G,
+      to: A,
+      content: "hi",
+      timestamp: Date.now(),
+    };
+    const result = await root.send(A, msg);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("depth>1 messaging unsupported");
+    expect(result.delivered).toBe(0);
+  });
 });

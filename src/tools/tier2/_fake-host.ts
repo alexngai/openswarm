@@ -139,6 +139,9 @@ export function makeFakeHost(opts: FakeHostOpts = {}): {
     async *inbox(): AsyncIterable<InboxEvent> {
       return;
     },
+    drainInbox(_max: number): AgentMessage[] {
+      return [];
+    },
     task,
   };
 

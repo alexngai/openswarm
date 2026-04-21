@@ -20,6 +20,7 @@ function makeHost(records: readonly TaskRecord[]): SwarmHost {
     inbox: () => {
       throw new Error("not used");
     },
+    drainInbox: () => [],
     task: {
       create: () => {
         throw new Error("not used");
