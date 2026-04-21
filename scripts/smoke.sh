@@ -200,8 +200,11 @@ else
       record FAIL 1 "prompt did not return 'hello-smoke' (got: ${SNIPPET})"
     fi
 
-    # [2] Tool use — observe read_file in JSONL stream
-    OUT2=$($BIN --headless prompt "Use the read_file tool to read package.json. After reading it, reply only with the word 'used-tool'." 2>&1)
+    # [2] Tool use — force real invocation by asking something the model
+    #     cannot answer without reading the file. A purely instructional
+    #     prompt ("respond 'used-tool' if you invoked it") can be satisfied
+    #     without actual tool use.
+    OUT2=$($BIN --headless prompt "Use the read_file tool to read package.json, then tell me exactly how many top-level keys the JSON object has. Do not guess." 2>&1)
     if echo "$OUT2" | grep -q '"name":"read_file"'; then
       record PASS 2 "prompt with read_file tool: tool_use observed in stream"
     else

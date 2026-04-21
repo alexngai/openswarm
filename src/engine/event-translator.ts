@@ -22,15 +22,27 @@ import type { NormalizedEvent, StopReason, Usage } from "../core/types.js";
 /**
  * Mutable state carried across calls for a single stream.
  * Tracks the most-recently opened tool_use block so content_block_stop
- * can emit tool_use_end with the right id.
+ * can emit tool_use_end with the right id. Also holds the MCP tool-name
+ * prefix the engine wants stripped from emitted event names, so consumers
+ * see a single canonical bare name (e.g. "read_file") instead of the
+ * SDK-internal "mcp__<server>__read_file".
  */
 export interface TranslatorState {
   /** Stack of open tool-use ids in document order. */
   openToolUseIds: string[];
+  /** Prefix to strip from tool names in emitted events. Default "". */
+  stripPrefix: string;
 }
 
-export function makeTranslatorState(): TranslatorState {
-  return { openToolUseIds: [] };
+export function makeTranslatorState(stripPrefix = ""): TranslatorState {
+  return { openToolUseIds: [], stripPrefix };
+}
+
+function stripToolName(name: string, prefix: string): string {
+  if (prefix && name.startsWith(prefix)) {
+    return name.slice(prefix.length);
+  }
+  return name;
 }
 
 // ---------------------------------------------------------------------------
@@ -92,7 +104,7 @@ function handleStreamEvent(
       return {
         type: "tool_use_start",
         id: block.id,
-        name: block.name,
+        name: stripToolName(block.name, state.stripPrefix),
       };
     }
     return null;

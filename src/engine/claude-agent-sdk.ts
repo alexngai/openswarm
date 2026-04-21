@@ -222,7 +222,9 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
     //    exception (transport error, etc.) surfaces as a terminal
     //    `error` event instead of propagating up — callers (ink UI,
     //    headless JSONL) always see a clean end of stream.
-    const state = makeTranslatorState();
+    //    The translator strips the MCP prefix from tool names so outer
+    //    code sees bare names everywhere (matches canUseTool wrapper).
+    const state = makeTranslatorState(MCP_PREFIX);
     try {
       for await (const msg of response) {
         const event = translateSdkMessage(msg, state);
