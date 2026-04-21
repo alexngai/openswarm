@@ -22,6 +22,8 @@ import type { AgentResult, TaskPacket, BranchPolicy, CommitPolicy } from "./host
 import type { LaneEvent } from "./events.js";
 import { StandaloneHost } from "./standalone-host.js";
 import { WorkerPool } from "./worker-pool.js";
+import { planRetry } from "./retry-policy.js";
+import { DeadLetterWriter } from "./dead-letter.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -34,6 +36,13 @@ export interface OrchestratorOptions {
   readonly eventsOut?: Writable;
   /** Inject a pre-built host for testing. */
   readonly host?: StandaloneHost;
+  /** Path for dead-letter JSONL file. Default: ./dead-letter.jsonl */
+  readonly deadLetterPath?: string;
+  /**
+   * When true, a non-empty dead-letter delta does NOT cause the run to exit
+   * non-zero. Default: false.
+   */
+  readonly allowDeadLetter?: boolean;
 }
 
 export interface RunResult {
@@ -42,6 +51,8 @@ export interface RunResult {
   readonly timeout: number;
   readonly cancelled: number;
   readonly resultWriteFailures: number;
+  /** True when tasks were written to dead-letter AND allowDeadLetter is false. */
+  readonly deadLetterViolation: boolean;
 }
 
 export interface ResultLine {
@@ -65,14 +76,21 @@ export interface ResultLine {
 export class Orchestrator extends EventEmitter {
   private readonly host: StandaloneHost;
   private readonly pool: WorkerPool;
+  private readonly deadLetter: DeadLetterWriter;
   private resultWriteFailures = 0;
   private shuttingDown = false;
   private sigintHandler?: () => void;
+
+  // Per-task retry state (keyed by task.id).
+  private readonly attempts = new Map<string, number>();
+  private readonly cumulativeTokens = new Map<string, number>();
+  private readonly perAttemptDurations = new Map<string, number[]>();
 
   constructor(private readonly opts: OrchestratorOptions) {
     super();
     this.host = opts.host ?? new StandaloneHost({ permissionMode: opts.permissionMode });
     this.pool = new WorkerPool(opts.concurrency);
+    this.deadLetter = new DeadLetterWriter(opts.deadLetterPath ?? "./dead-letter.jsonl");
     // Prevent resultsOut stream errors from becoming uncaught exceptions.
     // Write errors are surfaced via the writeResult() promise rejection instead.
     opts.resultsOut.on("error", () => {
@@ -148,32 +166,134 @@ export class Orchestrator extends EventEmitter {
         return;
       }
 
-      const startedAt = Date.now();
-      let result: AgentResult;
-      let handle;
-      try {
-        // NOTE: we intentionally omit `taskId` — StandaloneHost treats
-        // non-undefined taskId as "look up an EXISTING record", which we
-        // don't have (orchestrator-level task ids are user-supplied and
-        // never registered here). Letting the host create a fresh
-        // TaskRecord is fine; result lines still use `task.id` from the
-        // user's input via buildResultLine().
-        handle = await this.host.spawn({
-          task,
-          permissionMode: this.opts.permissionMode,
-          parentAgentId: this.host.agentId,
-        });
-        result = await handle.wait();
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        result = {
-          status: "failure",
-          error: msg,
-          wallClockMs: Date.now() - startedAt,
-        };
-      } finally {
-        token.release();
+      // Initialize per-task retry state.
+      this.attempts.set(task.id, 0);
+      this.cumulativeTokens.set(task.id, 0);
+      this.perAttemptDurations.set(task.id, []);
+
+      let finalResult: AgentResult | undefined;
+      let finalHandle: Awaited<ReturnType<StandaloneHost["spawn"]>> | undefined;
+
+      // Retry loop — runs at least once.
+      retryLoop: while (true) {
+        const startedAt = Date.now();
+        let result: AgentResult;
+        let handle;
+        try {
+          // NOTE: we intentionally omit `taskId` — StandaloneHost treats
+          // non-undefined taskId as "look up an EXISTING record", which we
+          // don't have (orchestrator-level task ids are user-supplied and
+          // never registered here). Letting the host create a fresh
+          // TaskRecord is fine; result lines still use `task.id` from the
+          // user's input via buildResultLine().
+          handle = await this.host.spawn({
+            task,
+            permissionMode: this.opts.permissionMode,
+            parentAgentId: this.host.agentId,
+          });
+          result = await handle.wait();
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          result = {
+            status: "failure",
+            error: msg,
+            wallClockMs: Date.now() - startedAt,
+          };
+        }
+
+        const attemptDurationMs = Date.now() - startedAt;
+        this.perAttemptDurations.get(task.id)!.push(attemptDurationMs);
+
+        const isFailure =
+          result.status === "failure" ||
+          result.status === "timeout" ||
+          result.status === "killed";
+
+        if (!isFailure || task.escalationPolicy.kind === "none") {
+          // Success, cancelled, or no-retry policy — exit the loop.
+          finalResult = result;
+          finalHandle = handle;
+          break retryLoop;
+        }
+
+        // Accumulate token usage.
+        if ("usage" in result && result.usage != null) {
+          const prev = this.cumulativeTokens.get(task.id) ?? 0;
+          this.cumulativeTokens.set(
+            task.id,
+            prev + (result.usage.inputTokens ?? 0) + (result.usage.outputTokens ?? 0),
+          );
+        }
+
+        // Budget exhaustion checks.
+        const cumTokens = this.cumulativeTokens.get(task.id) ?? 0;
+        const cumWallClock = (this.perAttemptDurations.get(task.id) ?? []).reduce(
+          (a, b) => a + b,
+          0,
+        );
+
+        if (
+          task.budget?.maxTokens != null &&
+          cumTokens > task.budget.maxTokens
+        ) {
+          await this.sendToDeadLetter(task, result, cumTokens, cumWallClock, "token_budget_exceeded");
+          finalResult = result;
+          finalHandle = handle;
+          break retryLoop;
+        }
+
+        if (
+          task.budget?.maxWallClockMs != null &&
+          cumWallClock > task.budget.maxWallClockMs
+        ) {
+          await this.sendToDeadLetter(task, result, cumTokens, cumWallClock, "wall_clock_budget_exceeded");
+          finalResult = result;
+          finalHandle = handle;
+          break retryLoop;
+        }
+
+        const currentAttempt = this.attempts.get(task.id) ?? 0;
+        const plan = planRetry(task.escalationPolicy, currentAttempt);
+
+        if (plan.shouldRetry) {
+          // Emit retry_scheduled lane event.
+          this.host.emit({
+            type: "retry_scheduled",
+            payload: {
+              taskId: task.id,
+              attempt: currentAttempt,
+              delayMs: plan.delayMs,
+              policyKind: task.escalationPolicy.kind,
+            },
+          });
+          if (plan.delayMs > 0) {
+            await new Promise<void>((r) => setTimeout(r, plan.delayMs));
+          }
+          this.attempts.set(task.id, currentAttempt + 1);
+          // Loop again.
+          continue retryLoop;
+        }
+
+        // Retries exhausted or handoff.
+        if (task.escalationPolicy.kind === "handoff") {
+          // Minimal M3a: redispatch-or-dead-letter handled by handoff method.
+          await this.handleHandoff(task, task.escalationPolicy.targetRole, result, cumTokens, cumWallClock);
+          finalResult = result;
+          finalHandle = handle;
+          break retryLoop;
+        }
+
+        // Retry exhausted — dead-letter.
+        await this.sendToDeadLetter(task, result, cumTokens, cumWallClock, result.status);
+        finalResult = result;
+        finalHandle = handle;
+        break retryLoop;
       }
+
+      token.release();
+
+      const result = finalResult!;
+      const handle = finalHandle;
 
       // When a task is killed (via task_stop), fetch stoppedBy from the
       // registry so the results.jsonl line carries it. Registry lookup is
@@ -223,7 +343,96 @@ export class Orchestrator extends EventEmitter {
       );
     }
 
-    return { ...counts, resultWriteFailures: this.resultWriteFailures };
+    await this.deadLetter.close();
+
+    const deadLetterViolation =
+      this.deadLetter.hasDelta() && !(this.opts.allowDeadLetter ?? false);
+
+    return { ...counts, resultWriteFailures: this.resultWriteFailures, deadLetterViolation };
+  }
+
+  private async sendToDeadLetter(
+    task: TaskPacket,
+    result: AgentResult,
+    cumTokens: number,
+    cumWallClockMs: number,
+    lastStatus: string,
+  ): Promise<void> {
+    const lastError =
+      "error" in result && result.error != null ? result.error : undefined;
+    const attempts = this.attempts.get(task.id) ?? 0;
+
+    this.host.emit({
+      type: "retry_exhausted",
+      payload: { taskId: task.id, attempts, lastStatus },
+    });
+
+    try {
+      await this.deadLetter.write({
+        id: task.id,
+        attempts,
+        lastStatus,
+        ...(lastError !== undefined && { lastError }),
+        cumulativeUsage: { input: cumTokens, output: 0 },
+        cumulativeWallClockMs: cumWallClockMs,
+        droppedAt: Date.now(),
+      });
+      this.host.emit({
+        type: "dead_letter_written",
+        payload: { taskId: task.id },
+      });
+    } catch (err) {
+      this.host.emit({
+        type: "error",
+        payload: {
+          class: "transport",
+          message: `dead-letter write failed for task ${task.id}: ${err instanceof Error ? err.message : String(err)}`,
+          retryable: false,
+        },
+      });
+    }
+  }
+
+  /**
+   * Minimal M3a handoff: redispatch to targetRole's agents, or dead-letter if
+   * no agent of that role exists. Full handoff tracking deferred to M3b.
+   */
+  private async handleHandoff(
+    task: TaskPacket,
+    targetRole: string,
+    result: AgentResult,
+    cumTokens: number,
+    cumWallClockMs: number,
+  ): Promise<void> {
+    this.host.emit({
+      type: "retry_exhausted",
+      payload: { taskId: task.id, reason: `handoff to role ${targetRole}` },
+    });
+    // M3a: always dead-letter with handoff_not_supported status.
+    // Full role-based redispatch is M3b work.
+    try {
+      await this.deadLetter.write({
+        id: task.id,
+        attempts: this.attempts.get(task.id) ?? 0,
+        lastStatus: "handoff_not_supported",
+        cumulativeUsage: { input: cumTokens, output: 0 },
+        cumulativeWallClockMs: cumWallClockMs,
+        droppedAt: Date.now(),
+      });
+      this.host.emit({
+        type: "dead_letter_written",
+        payload: { taskId: task.id },
+      });
+    } catch (err) {
+      this.host.emit({
+        type: "error",
+        payload: {
+          class: "transport",
+          message: `dead-letter write failed for handoff task ${task.id}: ${err instanceof Error ? err.message : String(err)}`,
+          retryable: false,
+        },
+      });
+    }
   }
 
   /**

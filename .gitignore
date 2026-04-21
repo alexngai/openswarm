@@ -4,3 +4,6 @@ dist/
 .DS_Store
 .omc/
 .swarm-coder/
+# swarm-coder run artifacts (tests and smoke scripts emit these at repo root)
+results.jsonl
+dead-letter.jsonl

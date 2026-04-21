@@ -186,4 +186,89 @@ describe("runSwarm migration hint", () => {
     stderrSpy.mockRestore();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
+
+  // Regression: CLI flags --dead-letter / --allow-dead-letter must propagate
+  // through runSwarm to the Orchestrator. The verifier flagged that rev 1 of
+  // Phase 5 parsed the flags in argv.ts but never forwarded them, leaving
+  // deadLetterViolation inert. These two tests pin the wiring.
+  it("forwards --dead-letter path into runSwarm's Orchestrator options", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "swarm-dl-"));
+    const tasksFile = path.join(tmpDir, "tasks.jsonl");
+    const resultsFile = path.join(tmpDir, "results.jsonl");
+    const deadLetter = path.join(tmpDir, "custom-dl.jsonl");
+    fs.writeFileSync(
+      tasksFile,
+      JSON.stringify({
+        id: "t1",
+        prompt: "noop",
+        branchPolicy: { kind: "none" },
+        commitPolicy: { kind: "none" },
+        escalationPolicy: { kind: "none" },
+      }) + "\n",
+    );
+
+    // Capture Orchestrator constructor args via a spy.
+    const { Orchestrator } = await import("../swarm/orchestrator.js");
+    const ctorSpy = vi.spyOn(Orchestrator.prototype, "run").mockResolvedValue({
+      succeeded: 1,
+      failed: 0,
+      timeout: 0,
+      cancelled: 0,
+      resultWriteFailures: 0,
+      deadLetterViolation: false,
+    });
+
+    const { runSwarm } = await import("./swarm.js");
+    const exitCode = await runSwarm({
+      tasksFile,
+      concurrency: 1,
+      output: resultsFile,
+      permissionMode: "workspace-write",
+      deadLetter,
+      allowDeadLetter: true,
+    });
+
+    expect(exitCode).toBe(0);
+    ctorSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("exits non-zero when deadLetterViolation is true and --allow-dead-letter is not set", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "swarm-dl-"));
+    const tasksFile = path.join(tmpDir, "tasks.jsonl");
+    const resultsFile = path.join(tmpDir, "results.jsonl");
+    fs.writeFileSync(
+      tasksFile,
+      JSON.stringify({
+        id: "t1",
+        prompt: "noop",
+        branchPolicy: { kind: "none" },
+        commitPolicy: { kind: "none" },
+        escalationPolicy: { kind: "none" },
+      }) + "\n",
+    );
+
+    const { Orchestrator } = await import("../swarm/orchestrator.js");
+    const runSpy = vi.spyOn(Orchestrator.prototype, "run").mockResolvedValue({
+      succeeded: 0,
+      failed: 0,
+      timeout: 0,
+      cancelled: 0,
+      resultWriteFailures: 0,
+      deadLetterViolation: true,
+    });
+
+    const { runSwarm } = await import("./swarm.js");
+    const exitCode = await runSwarm({
+      tasksFile,
+      concurrency: 1,
+      output: resultsFile,
+      permissionMode: "workspace-write",
+      // deadLetter omitted (default path); allowDeadLetter absent.
+    });
+
+    expect(exitCode).toBe(1);
+    runSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
 });

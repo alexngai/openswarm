@@ -28,6 +28,13 @@ export interface SwarmRunOptions {
   readonly concurrency: number;
   readonly output: string;
   readonly permissionMode: PermissionMode;
+  /** Path for dead-letter JSONL file. Default: ./dead-letter.jsonl */
+  readonly deadLetter?: string;
+  /**
+   * When true, a non-empty dead-letter delta does NOT cause the run to exit
+   * non-zero. Default: false.
+   */
+  readonly allowDeadLetter?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -87,6 +94,10 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
     permissionMode: opts.permissionMode,
     resultsOut,
     eventsOut: process.stderr,
+    ...(opts.deadLetter !== undefined ? { deadLetterPath: opts.deadLetter } : {}),
+    ...(opts.allowDeadLetter !== undefined
+      ? { allowDeadLetter: opts.allowDeadLetter }
+      : {}),
   });
 
   const startedAt = Date.now();
@@ -103,6 +114,12 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
   );
 
   if (summary.resultWriteFailures > 0) return 1;
+  if (summary.deadLetterViolation) {
+    process.stderr.write(
+      `[swarm-coder] exiting non-zero: ${opts.deadLetter ?? "./dead-letter.jsonl"} has new entries from this run; pass --allow-dead-letter to accept\n`,
+    );
+    return 1;
+  }
   if (summary.failed > 0 || summary.timeout > 0 || summary.cancelled > 0)
     return 1;
   return 0;

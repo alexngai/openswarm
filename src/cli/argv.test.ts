@@ -189,4 +189,36 @@ describe("parseArgv", () => {
     expect(result.opts.model).toBe("opus");
     expect(result.text).toBe("hello");
   });
+
+  // ---- swarm run + dead-letter flags ---------------------------------------
+
+  it("swarm run with --dead-letter sets deadLetter path", () => {
+    const result = parseArgv(["swarm", "run", "tasks.json", "--dead-letter", "/tmp/dl.jsonl"]);
+    if (result.kind !== "swarm-run") throw new Error("expected swarm-run");
+    expect(result.deadLetter).toBe("/tmp/dl.jsonl");
+  });
+
+  it("swarm run --allow-dead-letter sets the boolean", () => {
+    const result = parseArgv(["swarm", "run", "tasks.json", "--allow-dead-letter"]);
+    if (result.kind !== "swarm-run") throw new Error("expected swarm-run");
+    expect(result.allowDeadLetter).toBe(true);
+  });
+
+  it("swarm run with both --dead-letter and --allow-dead-letter parses without error", () => {
+    const result = parseArgv([
+      "swarm", "run", "tasks.json",
+      "--dead-letter", "/tmp/dl.jsonl",
+      "--allow-dead-letter",
+    ]);
+    if (result.kind !== "swarm-run") throw new Error("expected swarm-run");
+    expect(result.deadLetter).toBe("/tmp/dl.jsonl");
+    expect(result.allowDeadLetter).toBe(true);
+  });
+
+  it("swarm run defaults: deadLetter = ./dead-letter.jsonl, allowDeadLetter = false", () => {
+    const result = parseArgv(["swarm", "run", "tasks.json"]);
+    if (result.kind !== "swarm-run") throw new Error("expected swarm-run");
+    expect(result.deadLetter).toBe("./dead-letter.jsonl");
+    expect(result.allowDeadLetter).toBe(false);
+  });
 });

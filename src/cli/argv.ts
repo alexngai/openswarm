@@ -65,6 +65,8 @@ export type ParsedArgs =
       concurrency: number;
       output: string;
       permissionMode: PermissionMode;
+      deadLetter: string;
+      allowDeadLetter: boolean;
     }
   | { kind: "error"; message: string; showHelp: boolean };
 
@@ -111,6 +113,8 @@ export function parseArgv(args: string[]): ParsedArgs {
   // Defaults for swarm-run (consumed when subcommand === "swarm").
   let swarmConcurrency = 3;
   let swarmOutput = "./results.jsonl";
+  let swarmDeadLetter = "./dead-letter.jsonl";
+  let swarmAllowDeadLetter = false;
 
   // First pass: scan for early-exit flags (--help, -h, --version, -V) and
   // collect flags that precede the subcommand / positional.
@@ -321,6 +325,26 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
+    if (tok === "--dead-letter") {
+      const val = expanded[i + 1];
+      if (val === undefined || val.startsWith("-")) {
+        return {
+          kind: "error",
+          message: "--dead-letter requires a value",
+          showHelp: true,
+        };
+      }
+      swarmDeadLetter = val;
+      i += 2;
+      continue;
+    }
+
+    if (tok === "--allow-dead-letter") {
+      swarmAllowDeadLetter = true;
+      i++;
+      continue;
+    }
+
     // Unknown flag.
     if (tok.startsWith("-")) {
       return {
@@ -426,6 +450,8 @@ export function parseArgv(args: string[]): ParsedArgs {
         concurrency,
         output,
         permissionMode: swarmPermissionMode,
+        deadLetter: swarmDeadLetter,
+        allowDeadLetter: swarmAllowDeadLetter,
       };
     }
 

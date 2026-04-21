@@ -456,6 +456,10 @@ export async function main(argv: string[]): Promise<number> {
         concurrency: parsed.concurrency,
         output: parsed.output,
         permissionMode: parsed.permissionMode,
+        ...(parsed.deadLetter !== undefined ? { deadLetter: parsed.deadLetter } : {}),
+        ...(parsed.allowDeadLetter !== undefined
+          ? { allowDeadLetter: parsed.allowDeadLetter }
+          : {}),
       });
 
     case "error":
