@@ -38,6 +38,7 @@ import {
   translateSdkMessage,
   makeTranslatorState,
 } from "./event-translator.js";
+import { HookRuntime } from "../hooks/runtime.js";
 
 // ---------------------------------------------------------------------------
 // Permission-mode mapping
@@ -202,6 +203,15 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
       }
     }
 
+    // 6b. Build SDK-shaped hooks map from RunConfig.hooks (if any). Empty
+    //     config produces `undefined`, which we omit from the query() options
+    //     below rather than passing `{}`.
+    const sdkHooks =
+      config.hooks != null
+        ? new HookRuntime(config.hooks).buildSdkHooks()
+        : undefined;
+    const hasHooks = sdkHooks != null && Object.keys(sdkHooks).length > 0;
+
     // 7. Resolve outputFormat when structuredOutput is configured.
     let outputFormat: { type: "json_schema"; schema: Record<string, unknown> } | undefined;
     if (config.structuredOutput != null) {
@@ -243,6 +253,7 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
         includeHookEvents: true,
         ...(abortController != null && { abortController }),
         ...(outputFormat != null && { outputFormat }),
+        ...(hasHooks && { hooks: sdkHooks }),
       },
     });
 

@@ -37,6 +37,8 @@ export interface CommonOpts {
   skills: boolean;
   /** When false, MCP server discovery is disabled at startup. Default: true. */
   mcp: boolean;
+  /** When false, hook config discovery is disabled at startup. Default: true. */
+  hooks: boolean;
 }
 
 export type ParsedArgs =
@@ -91,6 +93,7 @@ export function parseArgv(args: string[]): ParsedArgs {
   let plugins = true;
   let skills = true;
   let mcp = true;
+  let hooks = true;
 
   // Defaults for swarm-run (consumed when subcommand === "swarm").
   let swarmConcurrency = 3;
@@ -168,6 +171,18 @@ export function parseArgv(args: string[]): ParsedArgs {
 
     if (tok === "--mcp") {
       mcp = true;
+      i++;
+      continue;
+    }
+
+    if (tok === "--no-hooks") {
+      hooks = false;
+      i++;
+      continue;
+    }
+
+    if (tok === "--hooks") {
+      hooks = true;
       i++;
       continue;
     }
@@ -312,6 +327,7 @@ export function parseArgv(args: string[]): ParsedArgs {
     plugins,
     skills,
     mcp,
+    hooks,
   };
 
   switch (subcommand) {

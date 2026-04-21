@@ -32,6 +32,7 @@ import type {
 } from "../core/types.js";
 import type { ToolImpl } from "../tools/types.js";
 import type { ToolDispatcher } from "../tools/dispatcher.js";
+import type { HooksConfigFile } from "../hooks/config.js";
 
 // ---------------------------------------------------------------------------
 // Engine
@@ -157,6 +158,18 @@ export interface RunConfig {
     /** Name for the schema — SDK uses this in the prompt. Default: "Output". */
     readonly name?: string;
   };
+
+  /**
+   * Hook configuration loaded from `.swarm-coder/hooks.json` (or Claude Code's
+   * `settings.json.hooks` field). The engine translates each HookConfig into
+   * a JS async callback via `new HookRuntime(hooks).buildSdkHooks()` and
+   * passes the result to `query({ options: { hooks } })`.
+   *
+   * Dispatcher-level invocation (Tier 2 coverage, rev-2 Major M6) is wired
+   * separately — callers construct `HookRuntime` directly and pass it to
+   * the `ToolDispatcher` constructor.
+   */
+  readonly hooks?: HooksConfigFile;
 }
 
 // ---------------------------------------------------------------------------

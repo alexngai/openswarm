@@ -26,6 +26,8 @@ import { buildTier1Tools } from "../tools/tier1/index.js";
 import { loadMcpConfig } from "../mcp/config.js";
 import { McpStdioClient } from "../mcp/client.js";
 import { buildMcpToolImpl } from "../mcp/bridge.js";
+import { loadHooksConfig, countEvents, countMatchers } from "../hooks/config.js";
+import { HookRuntime } from "../hooks/runtime.js";
 // Note: the ink REPL (`src/ui/repl/`) is lazy-loaded inside runPrompt only
 // when the TTY path is taken. ink-markdown is CJS and requires() ink (which
 // has top-level await) — pulling it in eagerly crashes non-TTY paths like
@@ -61,6 +63,7 @@ Flags:
   --no-plugins                   Disable plugin discovery at startup
   --no-skills                    Disable skill discovery at startup
   --no-mcp                       Disable MCP server discovery at startup
+  --no-hooks                     Disable hook config discovery at startup
   --help, -h                     Show this message
   --version, -V                  Print version
 
@@ -136,8 +139,31 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     return 1;
   }
 
-  // 2. Build tool dispatcher and register Tier 0 tools.
-  const dispatcher = new ToolDispatcher();
+  // 2. Load hook config (before building the dispatcher so we can thread the
+  //    HookRuntime into its constructor — covers Tier 2 tools per rev-2 Major M6).
+  let hooksConfig: Awaited<ReturnType<typeof loadHooksConfig>> = { config: {} };
+  if (opts.hooks) {
+    try {
+      hooksConfig = await loadHooksConfig({ cwd: process.cwd() });
+    } catch (err) {
+      process.stderr.write(
+        `[swarm-coder] hooks config error: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+    }
+    const n = countMatchers(hooksConfig.config);
+    if (n > 0 && hooksConfig.resolvedPath !== undefined) {
+      process.stderr.write(
+        `[swarm-coder] hooks loaded from ${hooksConfig.resolvedPath} (${n} matchers across ${countEvents(hooksConfig.config)} events)\n`,
+      );
+    }
+  }
+  const hookRuntime = new HookRuntime(hooksConfig.config);
+
+  // Build tool dispatcher and register Tier 0 tools. When hooks are present
+  // the dispatcher fires PreToolUse/PostToolUse for every tier (the SDK's
+  // hook path covers its own tool dispatch; Tier 2 tools bypass it, so the
+  // dispatcher owns uniform coverage).
+  const dispatcher = new ToolDispatcher({ hooks: hookRuntime });
   for (const tool of buildTier0Tools()) {
     dispatcher.register(tool);
   }
@@ -298,6 +324,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     canUseTool,
     permissionMode: opts.permissionMode,
     resumeFrom,
+    hooks: hooksConfig.config,
   };
 
   // 9. Route to UI.
