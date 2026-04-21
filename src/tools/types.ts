@@ -13,6 +13,7 @@
 
 import type { ZodTypeAny } from "zod";
 import type { ToolSpec } from "../core/types.js";
+import type { SwarmHost } from "../swarm/host.js";
 
 export interface ToolImpl {
   readonly spec: ToolSpec;
@@ -26,9 +27,25 @@ export interface ToolImpl {
   readonly zodSchema?: ZodTypeAny;
 }
 
+/**
+ * Execution context passed to every tool's `execute` function.
+ *
+ * `host` is present when the runtime is swarm-aware; Tier 0 tools ignore it,
+ * Tier 2 tools require it via `requireHost()`.
+ *
+ * `toolUseId` is the SDK's tool_use_id for this invocation, used by the
+ * `agent` tool to set `parentToolUseId` on spawned children (per plan §0.5).
+ */
 export interface ToolExecutionContext {
   readonly cwd: string;
   readonly abort?: AbortSignal;
+  /** Present when the runtime is swarm-aware. Tier 0 tools ignore this field. */
+  readonly host?: SwarmHost;
+  /**
+   * The SDK's tool_use_id for this invocation. Used by the `agent` tool to
+   * propagate `parentToolUseId` to spawned child agents (plan §0.5).
+   */
+  readonly toolUseId?: string;
 }
 
 export type ToolResult =
