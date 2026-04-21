@@ -3,7 +3,7 @@
  *
  * Parses process.argv.slice(2). No external dependencies.
  *
- * Subcommands: prompt, doctor, init, help, version
+ * Subcommands: prompt, doctor, init, help, version, swarm
  * Bare positional (not a flag, not a known subcommand) → treated as prompt text.
  *
  * Flags:
@@ -14,6 +14,9 @@
  *   --headless
  *   --help / -h
  *   --version / -V
+ *
+ * swarm subcommand:
+ *   swarm run <tasks-file> [--concurrency N] [--output <path>] [--permission-mode <mode>]
  */
 
 import type { PermissionMode } from "../core/types.js";
@@ -37,13 +40,20 @@ export type ParsedArgs =
   | { kind: "help" }
   | { kind: "version" }
   | { kind: "worker" }
+  | {
+      kind: "swarm-run";
+      tasksFile: string;
+      concurrency: number;
+      output: string;
+      permissionMode: PermissionMode;
+    }
   | { kind: "error"; message: string; showHelp: boolean };
 
 // ---------------------------------------------------------------------------
 // Known subcommands
 // ---------------------------------------------------------------------------
 
-const SUBCOMMANDS = new Set(["prompt", "doctor", "init", "help", "version"]);
+const SUBCOMMANDS = new Set(["prompt", "doctor", "init", "help", "version", "swarm"]);
 
 const VALID_PERMISSION_MODES = new Set<string>([
   "read-only",
@@ -239,6 +249,71 @@ export function parseArgv(args: string[]): ParsedArgs {
         };
       }
       return { kind: "prompt", text, opts };
+    }
+
+    case "swarm": {
+      // swarm run <tasks-file> [--concurrency N] [--output <path>]
+      const subSub = positionals[0];
+      if (subSub !== "run") {
+        return {
+          kind: "error",
+          message:
+            subSub === undefined
+              ? 'swarm requires a sub-subcommand, e.g. swarm run <tasks-file>'
+              : `unknown swarm sub-subcommand: ${subSub}`,
+          showHelp: true,
+        };
+      }
+      const tasksFile = positionals[1];
+      if (tasksFile === undefined) {
+        return {
+          kind: "error",
+          message: "swarm run requires a tasks file path",
+          showHelp: true,
+        };
+      }
+      // Parse swarm-specific flags from the remaining positionals. Flags
+      // that appeared before the subcommand were already consumed by the
+      // main loop above, so we re-scan positionals[2..] for swarm flags.
+      let concurrency = 3;
+      let output = "./results.jsonl";
+      // swarm run inherits permissionMode from the main flag parse.
+      const swarmPermissionMode: PermissionMode = permissionMode;
+
+      const swarmArgs = positionals.slice(2);
+      let si = 0;
+      while (si < swarmArgs.length) {
+        const stok = swarmArgs[si]!;
+        if (stok === "--concurrency") {
+          const val = swarmArgs[si + 1];
+          if (val === undefined || val.startsWith("-")) {
+            return { kind: "error", message: "--concurrency requires a value", showHelp: true };
+          }
+          const n = Number(val);
+          if (!Number.isInteger(n) || n < 1) {
+            return { kind: "error", message: `--concurrency must be a positive integer, got "${val}"`, showHelp: true };
+          }
+          concurrency = n;
+          si += 2;
+        } else if (stok === "--output") {
+          const val = swarmArgs[si + 1];
+          if (val === undefined || val.startsWith("-")) {
+            return { kind: "error", message: "--output requires a value", showHelp: true };
+          }
+          output = val;
+          si += 2;
+        } else {
+          return { kind: "error", message: `unknown flag for swarm run: ${stok}`, showHelp: true };
+        }
+      }
+
+      return {
+        kind: "swarm-run",
+        tasksFile,
+        concurrency,
+        output,
+        permissionMode: swarmPermissionMode,
+      };
     }
 
     case undefined: {

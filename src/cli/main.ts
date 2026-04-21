@@ -9,6 +9,7 @@ import { parseArgv } from "./argv.js";
 import { runDoctor } from "./doctor.js";
 import { runInit } from "./init.js";
 import { runWorkerEntry } from "./worker-entry.js";
+import { runSwarm } from "./swarm.js";
 import { detectAuth } from "../auth/status.js";
 import { AnthropicEnvAuth } from "../auth/anthropic-env-auth.js";
 import { ToolDispatcher } from "../tools/dispatcher.js";
@@ -38,6 +39,7 @@ Usage:
   swarm-coder prompt [flags] <prompt-text>
   swarm-coder doctor [--output-format text|json]
   swarm-coder init [<dir>]
+  swarm-coder swarm run <tasks-file> [--concurrency N] [--output <path>]
   swarm-coder help
   swarm-coder version
 
@@ -51,6 +53,10 @@ Flags:
   --help, -h                     Show this message
   --version, -V                  Print version
 
+swarm run flags:
+  --concurrency N                Max parallel workers (default: 3)
+  --output <path>                Results JSONL file (default: ./results.jsonl)
+
 Examples:
   swarm-coder "explain this codebase"
   swarm-coder prompt --model sonnet "refactor src/foo.ts"
@@ -58,6 +64,7 @@ Examples:
   swarm-coder --permission-mode read-only "what does this code do?"
   swarm-coder doctor
   swarm-coder init
+  swarm-coder swarm run tasks.jsonl --concurrency 5 --output out.jsonl
 `.trimStart();
 
 export function printHelp(): void {
@@ -214,6 +221,14 @@ export async function main(argv: string[]): Promise<number> {
 
     case "worker":
       return runWorkerEntry();
+
+    case "swarm-run":
+      return runSwarm({
+        tasksFile: parsed.tasksFile,
+        concurrency: parsed.concurrency,
+        output: parsed.output,
+        permissionMode: parsed.permissionMode,
+      });
 
     case "error":
       process.stderr.write(`error: ${parsed.message}\n`);
