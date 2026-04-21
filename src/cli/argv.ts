@@ -83,6 +83,10 @@ export function parseArgv(args: string[]): ParsedArgs {
   let outputFormat: "text" | "json" = "text";
   let headless = false;
 
+  // Defaults for swarm-run (consumed when subcommand === "swarm").
+  let swarmConcurrency = 3;
+  let swarmOutput = "./results.jsonl";
+
   // First pass: scan for early-exit flags (--help, -h, --version, -V) and
   // collect flags that precede the subcommand / positional.
   // We do a single-pass left-to-right parse so flags can appear anywhere.
@@ -193,6 +197,45 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
+    // Swarm-specific flags: accepted by the main loop so they don't trip the
+    // unknown-flag guard. The swarm-run dispatch branch re-reads them from
+    // the captured values below.
+    if (tok === "--concurrency") {
+      const val = expanded[i + 1];
+      if (val === undefined || val.startsWith("-")) {
+        return {
+          kind: "error",
+          message: "--concurrency requires a value",
+          showHelp: true,
+        };
+      }
+      const n = Number.parseInt(val, 10);
+      if (Number.isNaN(n) || n < 1) {
+        return {
+          kind: "error",
+          message: `--concurrency must be a positive integer, got "${val}"`,
+          showHelp: true,
+        };
+      }
+      swarmConcurrency = n;
+      i += 2;
+      continue;
+    }
+
+    if (tok === "--output") {
+      const val = expanded[i + 1];
+      if (val === undefined || val.startsWith("-")) {
+        return {
+          kind: "error",
+          message: "--output requires a value",
+          showHelp: true,
+        };
+      }
+      swarmOutput = val;
+      i += 2;
+      continue;
+    }
+
     // Unknown flag.
     if (tok.startsWith("-")) {
       return {
@@ -272,40 +315,19 @@ export function parseArgv(args: string[]): ParsedArgs {
           showHelp: true,
         };
       }
-      // Parse swarm-specific flags from the remaining positionals. Flags
-      // that appeared before the subcommand were already consumed by the
-      // main loop above, so we re-scan positionals[2..] for swarm flags.
-      let concurrency = 3;
-      let output = "./results.jsonl";
-      // swarm run inherits permissionMode from the main flag parse.
-      const swarmPermissionMode: PermissionMode = permissionMode;
-
-      const swarmArgs = positionals.slice(2);
-      let si = 0;
-      while (si < swarmArgs.length) {
-        const stok = swarmArgs[si]!;
-        if (stok === "--concurrency") {
-          const val = swarmArgs[si + 1];
-          if (val === undefined || val.startsWith("-")) {
-            return { kind: "error", message: "--concurrency requires a value", showHelp: true };
-          }
-          const n = Number(val);
-          if (!Number.isInteger(n) || n < 1) {
-            return { kind: "error", message: `--concurrency must be a positive integer, got "${val}"`, showHelp: true };
-          }
-          concurrency = n;
-          si += 2;
-        } else if (stok === "--output") {
-          const val = swarmArgs[si + 1];
-          if (val === undefined || val.startsWith("-")) {
-            return { kind: "error", message: "--output requires a value", showHelp: true };
-          }
-          output = val;
-          si += 2;
-        } else {
-          return { kind: "error", message: `unknown flag for swarm run: ${stok}`, showHelp: true };
-        }
+      // --concurrency / --output / --permission-mode were consumed by the
+      // main flag loop into swarmConcurrency / swarmOutput / permissionMode.
+      // positionals[2..] should be empty; surface anything unexpected.
+      if (positionals.length > 2) {
+        return {
+          kind: "error",
+          message: `unexpected extra positional for swarm run: ${positionals[2]}`,
+          showHelp: true,
+        };
       }
+      const concurrency = swarmConcurrency;
+      const output = swarmOutput;
+      const swarmPermissionMode: PermissionMode = permissionMode;
 
       return {
         kind: "swarm-run",

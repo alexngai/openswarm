@@ -128,10 +128,15 @@ export class Orchestrator extends EventEmitter {
       let result: AgentResult;
       let handle;
       try {
+        // NOTE: we intentionally omit `taskId` — StandaloneHost treats
+        // non-undefined taskId as "look up an EXISTING record", which we
+        // don't have (orchestrator-level task ids are user-supplied and
+        // never registered here). Letting the host create a fresh
+        // TaskRecord is fine; result lines still use `task.id` from the
+        // user's input via buildResultLine().
         handle = await this.host.spawn({
           task,
           permissionMode: this.opts.permissionMode,
-          taskId: task.id,
           parentAgentId: this.host.agentId,
         });
         result = await handle.wait();
