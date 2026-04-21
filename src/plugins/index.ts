@@ -56,6 +56,19 @@ export interface PluginManifest {
 
   /** Aggregate permissions the plugin has declared. */
   readonly permissions?: readonly RequiredPermission[];
+
+  /**
+   * Execution mode for this plugin's tools.
+   * - "shell": tools are spawned as subprocesses (default claw behavior).
+   * - "in-process": tools are loaded from `entryModule` and called directly.
+   */
+  readonly execMode: "shell" | "in-process";
+
+  /**
+   * Path to a Node module that exports `{ buildTools(): ToolImpl[] }`.
+   * Required when `execMode === "in-process"`, ignored otherwise.
+   */
+  readonly entryModule?: string;
 }
 
 export interface PluginToolSpec {

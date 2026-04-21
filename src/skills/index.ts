@@ -59,8 +59,8 @@ export interface LoadedSkill {
   readonly manifest: SkillManifest;
 
   /**
-   * Parsed skill body — the Markdown after the frontmatter, ready to be
-   * injected into a system prompt or returned as a tool result.
+   * Raw Markdown body (post-frontmatter, no YAML header, no leading blank line).
+   * Ready to be injected into a system prompt or returned as a tool result.
    */
   readonly body: string;
 }
