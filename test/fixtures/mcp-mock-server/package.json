@@ -1,0 +1,7 @@
+{
+  "name": "swarm-coder-mcp-mock-server",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Mock MCP server fixture for swarm-coder tests"
+}

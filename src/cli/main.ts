@@ -23,6 +23,9 @@ import { ClaudeCodeSource } from "../plugins/claude-code-source.js";
 import { SkillRegistry } from "../skills/registry.js";
 import { ClaudeCodeSource as ClaudeCodeSkillSource } from "../skills/claude-code-source.js";
 import { buildTier1Tools } from "../tools/tier1/index.js";
+import { loadMcpConfig } from "../mcp/config.js";
+import { McpStdioClient } from "../mcp/client.js";
+import { buildMcpToolImpl } from "../mcp/bridge.js";
 // Note: the ink REPL (`src/ui/repl/`) is lazy-loaded inside runPrompt only
 // when the TTY path is taken. ink-markdown is CJS and requires() ink (which
 // has top-level await) — pulling it in eagerly crashes non-TTY paths like
@@ -57,6 +60,7 @@ Flags:
   --headless                     Force JSONL output even on a TTY
   --no-plugins                   Disable plugin discovery at startup
   --no-skills                    Disable skill discovery at startup
+  --no-mcp                       Disable MCP server discovery at startup
   --help, -h                     Show this message
   --version, -V                  Print version
 
@@ -178,6 +182,76 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     }
   }
 
+  // 2c. Discover and register MCP tools (opt-in via --mcp, default enabled).
+  // Fail-soft: a server that hangs / errors within its 10s connect budget is
+  // logged to stderr and its tools are skipped.
+  const mcpTools: import("../tools/types.js").ToolImpl[] = [];
+  const mcpClients: McpStdioClient[] = [];
+  if (opts.mcp) {
+    let loaded: Awaited<ReturnType<typeof loadMcpConfig>>;
+    try {
+      loaded = await loadMcpConfig();
+    } catch (err) {
+      process.stderr.write(
+        `[swarm-coder] mcp config load error: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+      loaded = { configs: [] };
+    }
+    if (loaded.resolvedPath !== undefined) {
+      process.stderr.write(
+        `[swarm-coder] mcp config: ${loaded.resolvedPath}\n`,
+      );
+    }
+    if (loaded.configs.length > 0) {
+      const results = await Promise.allSettled(
+        loaded.configs.map(async (cfg) => {
+          const client = new McpStdioClient(cfg);
+          await client.connect();
+          return client;
+        }),
+      );
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i]!;
+        const cfg = loaded.configs[i]!;
+        if (r.status === "rejected") {
+          process.stderr.write(
+            `[swarm-coder] mcp server '${cfg.name}' failed to connect: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}\n`,
+          );
+          continue;
+        }
+        const client = r.value;
+        mcpClients.push(client);
+        try {
+          const descriptors = await client.listTools();
+          for (const descriptor of descriptors) {
+            const toolImpl = buildMcpToolImpl(client, descriptor);
+            try {
+              dispatcher.register(toolImpl);
+              mcpTools.push(toolImpl);
+            } catch {
+              // Name collision — keep first-registered copy, skip silently.
+            }
+          }
+        } catch (err) {
+          process.stderr.write(
+            `[swarm-coder] mcp server '${cfg.name}' listTools failed: ${err instanceof Error ? err.message : String(err)}\n`,
+          );
+        }
+      }
+    }
+  }
+
+  // Cleanup hook: best-effort close on process exit (synchronous handler —
+  // cannot await; the SDK's transport sends SIGTERM via close()).
+  if (mcpClients.length > 0) {
+    process.on("exit", () => {
+      for (const c of mcpClients) {
+        // Fire-and-forget: we cannot await in a synchronous exit handler.
+        void c.close().catch(() => {});
+      }
+    });
+  }
+
   // 3. Build permission engine.
   const permEngine = new PermissionEngine(opts.permissionMode);
 
@@ -220,7 +294,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     prompt: text,
     model: opts.model ?? DEFAULT_MODEL,
     auth,
-    tools: [...Array.from(buildTier0Tools()), ...tier1Tools, ...pluginTools],
+    tools: [...Array.from(buildTier0Tools()), ...tier1Tools, ...pluginTools, ...mcpTools],
     canUseTool,
     permissionMode: opts.permissionMode,
     resumeFrom,
