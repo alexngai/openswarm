@@ -13,6 +13,21 @@
  * works, send/inbox operate on an in-process pub/sub). The tool SURFACE does
  * not change — the model sees the same tool list either way, so behavior
  * stays consistent.
+ *
+ * ---------------------------------------------------------------------------
+ * Authoritative depth enforcement
+ * ---------------------------------------------------------------------------
+ * Recursion depth is computed by the orchestrator, never trusted from
+ * incoming IPC. `StandaloneHost` maintains a `Map<AgentId, number>` of
+ * live agent depths. When `SwarmHost.spawn()` is invoked (locally or via
+ * IPC from a `WorkerHost`), the orchestrator looks up the requesting
+ * agent's depth and passes `parentDepth + 1` to the child via env.
+ * `SpawnRequest.depth` is output-only; any value on an incoming request
+ * is ignored. This is defense-in-depth against malicious or hallucinating
+ * workers — no worker, however buggy, can bypass MAX_DEPTH.
+ *
+ * The actual `Map` + enforcement lives in StandaloneHost (Phase 4);
+ * this interface module only documents the contract.
  */
 
 import type { AgentId, PermissionMode, SessionId, Usage } from "../core/types.js";
@@ -25,6 +40,12 @@ import type { LaneEvent } from "./events.js";
 export interface SwarmHost {
   readonly mode: "standalone" | "worker";
   readonly agentId: AgentId;
+  /**
+   * This agent's own depth in the recursion tree.
+   * 0 for the orchestrator's StandaloneHost; set authoritatively by the
+   * orchestrator for WorkerHost instances (via `SWARM_CODER_DEPTH` env var).
+   */
+  readonly depth: number;
 
   /** Emit a lane event. In standalone mode goes to local subscribers + log. */
   emit(event: Omit<LaneEvent, "ts" | "agentId">): void;
@@ -63,6 +84,28 @@ export interface SpawnRequest {
   readonly allowedTools?: readonly string[];
   /** Cooperative cancellation handle. */
   readonly abort?: AbortSignal;
+  /**
+   * Recursion depth of the spawned child agent.
+   * Ignored on incoming IPC. Set by orchestrator when passing to child env.
+   * See "Authoritative depth enforcement" in the module-level JSDoc.
+   */
+  readonly depth?: number;
+  /** The immediate parent agent that invoked this spawn. Used for lane-event attribution and orchestrator bookkeeping. */
+  readonly parentAgentId?: AgentId;
+  /**
+   * If provided, orchestrator registers the spawn under this task id;
+   * otherwise creates a new TaskRecord.
+   */
+  readonly taskId?: string;
+  /**
+   * When spawned via the `agent` tool, the tool_use_id from the parent's
+   * transcript. Orchestrator propagates to child via
+   * `SWARM_CODER_PARENT_TOOL_USE_ID` env var. Child's event translator stamps
+   * this id on every emitted NormalizedEvent / LaneEvent so the orchestrator's
+   * merged stream can attribute sub-agent events back to the invoking tool_use
+   * in the parent's transcript.
+   */
+  readonly parentToolUseId?: string;
 }
 
 export interface AgentHandle {

@@ -55,6 +55,11 @@ export type LaneEventType =
   | "stale_base_detected"
   | "message_sent"
   | "message_received"
+  | "spawn_requested"
+  | "spawn_completed"
+  | "recursion_limit_hit"
+  | "worker_stuck"
+  | "heartbeat"
   // ---------------- User loop ----------------
   | "question_asked"
   | "answer_received"
