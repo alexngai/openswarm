@@ -22,12 +22,13 @@ import type { SpawnWorkerArgs } from "./subprocess-spawner.js";
 // ---------------------------------------------------------------------------
 
 function samplePacket(overrides: Partial<Omit<TaskPacket, "id">> = {}): TaskPacket {
+  // TODO M3a Phase 2: migrate to discriminated-union policy shapes.
   return {
     id: "task-" + Math.random().toString(36).slice(2),
     prompt: "do something",
-    branchPolicy: "main",
-    commitPolicy: "never",
-    escalationPolicy: "abort-on-error",
+    branchPolicy: "main" as unknown as TaskPacket["branchPolicy"],
+    commitPolicy: "never" as unknown as TaskPacket["commitPolicy"],
+    escalationPolicy: "abort-on-error" as unknown as TaskPacket["escalationPolicy"],
     ...overrides,
   };
 }

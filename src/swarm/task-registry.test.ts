@@ -7,11 +7,12 @@ import type { LaneEvent } from "./events.js";
 function samplePacket(
   overrides: Partial<Omit<TaskPacket, "id">> = {},
 ): Omit<TaskPacket, "id"> {
+  // TODO M3a Phase 2: migrate to discriminated-union policy shapes.
   return {
     prompt: "sample prompt",
-    branchPolicy: "main",
-    commitPolicy: "never",
-    escalationPolicy: "abort-on-error",
+    branchPolicy: "main" as unknown as TaskPacket["branchPolicy"],
+    commitPolicy: "never" as unknown as TaskPacket["commitPolicy"],
+    escalationPolicy: "abort-on-error" as unknown as TaskPacket["escalationPolicy"],
     ...overrides,
   };
 }

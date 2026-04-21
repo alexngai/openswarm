@@ -15,6 +15,10 @@ import type { TaskPacket } from "../swarm/host.js";
 // Schema
 // ---------------------------------------------------------------------------
 
+// TODO M3a Phase 2: replace with BranchPolicySchema / CommitPolicySchema /
+// EscalationPolicySchema discriminated unions from src/swarm/policies.ts.
+// Phase 2 also wires the migration hint to stderr on parse failure.
+// Kept as legacy enums here so existing tests remain green until Phase 2 migrates fixtures.
 const taskPacketSchema = z.object({
   id: z.string().optional(),
   prompt: z.string(),
@@ -93,7 +97,8 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
       return 2;
     }
     const id = parsed.data.id ?? `task-${i + 1}`;
-    tasks.push({ ...parsed.data, id } as TaskPacket);
+    // TODO M3a Phase 2: remove cast once taskPacketSchema uses discriminated-union policy schemas.
+    tasks.push({ ...parsed.data, id } as unknown as TaskPacket);
   }
 
   if (tasks.length === 0) {

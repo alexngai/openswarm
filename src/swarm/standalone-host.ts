@@ -11,6 +11,7 @@ import type {
   TaskRecord,
   TaskPacket,
   TaskFilter,
+  SendResult,
 } from "./host.js";
 import type { AgentId, PermissionMode, SessionId } from "../core/types.js";
 import type { LaneEvent } from "./events.js";
@@ -215,7 +216,8 @@ export class StandaloneHost implements SwarmHost {
     return handle;
   }
 
-  async send(_to: AgentId, _message: AgentMessage): Promise<void> {
+  async send(_to: AgentId | "*" | `role:${string}`, _message: AgentMessage): Promise<SendResult> {
+    // TODO M3a Phase 3: implement broadcast + role addressing + inbox delivery.
     throw new Error("send not implemented in M1");
   }
 

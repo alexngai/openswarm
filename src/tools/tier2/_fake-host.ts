@@ -17,6 +17,7 @@ import type {
   TaskPacket,
   TaskFilter,
   AgentResult,
+  SendResult,
 } from "../../swarm/host.js";
 import type { AgentId, SessionId } from "../../core/types.js";
 import type { LaneEvent } from "../../swarm/events.js";
@@ -132,7 +133,7 @@ export function makeFakeHost(opts: FakeHostOpts = {}): {
     permissionMode: "workspace-write",
     emit: vi.fn(),
     spawn,
-    async send(_to: AgentId, _message: AgentMessage) {
+    send(_to: AgentId | "*" | `role:${string}`, _message: AgentMessage): Promise<SendResult> {
       throw new Error("send not implemented in fake host");
     },
     async *inbox(): AsyncIterable<InboxEvent> {

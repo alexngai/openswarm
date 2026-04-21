@@ -14,7 +14,7 @@ function makeHost(records: readonly TaskRecord[]): SwarmHost {
     spawn: () => {
       throw new Error("not used");
     },
-    send: () => {
+    send: (): never => {
       throw new Error("not used");
     },
     inbox: () => {
@@ -71,9 +71,10 @@ describe("/tasks", () => {
       {
         id: "t1",
         prompt: "do the thing",
-        branchPolicy: "main",
-        commitPolicy: "never",
-        escalationPolicy: "abort-on-error",
+        // TODO M3a Phase 2: migrate to discriminated-union policy shapes.
+        branchPolicy: "main" as unknown as TaskRecord["branchPolicy"],
+        commitPolicy: "never" as unknown as TaskRecord["commitPolicy"],
+        escalationPolicy: "abort-on-error" as unknown as TaskRecord["escalationPolicy"],
         status: "running",
         createdAt: now,
         updatedAt: now,

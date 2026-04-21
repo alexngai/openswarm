@@ -15,8 +15,12 @@ import { taskCreateTool } from "./task_create.js";
 import { taskGetTool } from "./task_get.js";
 import { taskListTool } from "./task_list.js";
 import { taskUpdateTool } from "./task_update.js";
+import { sendMessageTool } from "./send_message.js";
+import { checkInboxTool } from "./check_inbox.js";
+import { taskStopTool } from "./task_stop.js";
+import { taskOutputTool } from "./task_output.js";
 
-/** All five Tier 2 tools in a stable order. */
+/** All Tier 2 tools in a stable order. */
 export function buildTier2Tools(): readonly ToolImpl[] {
   return [
     taskCreateTool,
@@ -24,7 +28,21 @@ export function buildTier2Tools(): readonly ToolImpl[] {
     taskGetTool,
     taskListTool,
     agentTool,
+    sendMessageTool,
+    checkInboxTool,
+    taskStopTool,
+    taskOutputTool,
   ] as const;
 }
 
-export { agentTool, taskCreateTool, taskGetTool, taskListTool, taskUpdateTool };
+export {
+  agentTool,
+  taskCreateTool,
+  taskGetTool,
+  taskListTool,
+  taskUpdateTool,
+  sendMessageTool,
+  checkInboxTool,
+  taskStopTool,
+  taskOutputTool,
+};

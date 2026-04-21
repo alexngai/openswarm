@@ -60,6 +60,32 @@ export type LaneEventType =
   | "recursion_limit_hit"
   | "worker_stuck"
   | "heartbeat"
+  // ---------------- Inbox ----------------
+  /** Inbox drained when a worker exits; messages discarded (in-memory only). */
+  | "inbox_drained_on_exit"
+  /** Per-message event when a per-agent inbox overflows (oldest evicted). */
+  | "inbox_overflow"
+  // ---------------- Task stop ----------------
+  /** Emitted when a stop request is received for a running task. */
+  | "task_stop_requested"
+  // task_stopped already in Task section above
+  // ---------------- Retry / dead-letter ----------------
+  /** A retry has been scheduled for a failed task. */
+  | "retry_scheduled"
+  /** A task has exhausted its retry budget; going to dead-letter. */
+  | "retry_exhausted"
+  /** A task record has been written to dead-letter.jsonl. */
+  | "dead_letter_written"
+  // ---------------- Roles ----------------
+  /** A role was registered in the RoleRegistry. */
+  | "role_registered"
+  /** A role was applied to a spawned worker. */
+  | "role_applied"
+  // ---------------- Policy no-ops (M3a advisory) ----------------
+  /** BranchPolicy was advisory-only this run (git ops deferred to M3b). */
+  | "branch_policy_noop"
+  /** CommitPolicy was advisory-only this run (git ops deferred to M3b). */
+  | "commit_policy_noop"
   // ---------------- User loop ----------------
   | "question_asked"
   | "answer_received"

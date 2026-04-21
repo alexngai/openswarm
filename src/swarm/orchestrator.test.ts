@@ -19,12 +19,13 @@ import type { AgentId, SessionId } from "../core/types.js";
 // ---------------------------------------------------------------------------
 
 function samplePacket(id: string, overrides: Partial<TaskPacket> = {}): TaskPacket {
+  // TODO M3a Phase 2: migrate to discriminated-union policy shapes.
   return {
     id,
     prompt: `task ${id}`,
-    branchPolicy: "main",
-    commitPolicy: "never",
-    escalationPolicy: "abort-on-error",
+    branchPolicy: "main" as unknown as TaskPacket["branchPolicy"],
+    commitPolicy: "never" as unknown as TaskPacket["commitPolicy"],
+    escalationPolicy: "abort-on-error" as unknown as TaskPacket["escalationPolicy"],
     ...overrides,
   };
 }

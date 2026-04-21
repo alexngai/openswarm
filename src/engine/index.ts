@@ -170,6 +170,15 @@ export interface RunConfig {
    * the `ToolDispatcher` constructor.
    */
   readonly hooks?: HooksConfigFile;
+
+  /**
+   * Optional tool allowlist. When set, the ToolDispatcher filters the
+   * registered tools array before passing to the engine — the model
+   * never sees tools outside this list. Orthogonal to canUseTool
+   * (per-call gate) and clampPermissionMode (permission ceiling).
+   * Role-driven tool filtering writes to this field (M3a Phase 6).
+   */
+  readonly allowedTools?: readonly string[];
 }
 
 // ---------------------------------------------------------------------------

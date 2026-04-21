@@ -6,6 +6,9 @@ import { requireHost } from "./require-host.js";
 
 const inputSchema = z.object({
   prompt: z.string(),
+  // TODO M3a Phase 2: replace with BranchPolicySchema / CommitPolicySchema /
+  // EscalationPolicySchema discriminated unions from src/swarm/policies.ts.
+  // Kept as legacy enums here so existing tests remain green until Phase 2 migrates fixtures.
   branchPolicy: z.enum(["main", "worktree", "feature-branch", "detached"]),
   commitPolicy: z.enum(["never", "on-success", "on-every-tool", "manual"]),
   escalationPolicy: z.enum(["abort-on-error", "ask-user", "retry-with-backoff"]),

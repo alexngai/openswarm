@@ -34,6 +34,20 @@ import type { AgentId, PermissionMode, SessionId, Usage } from "../core/types.js
 import type { LaneEvent } from "./events.js";
 
 // ---------------------------------------------------------------------------
+// SendResult
+// ---------------------------------------------------------------------------
+
+export interface SendResult {
+  readonly ok: boolean;
+  /** How many inboxes actually received the message. */
+  readonly delivered: number;
+  /** Number of messages dropped due to per-agent inbox overflow. */
+  readonly dropped?: number;
+  /** True when broadcast had some drops (delivered < total recipients). */
+  readonly partial?: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // Host
 // ---------------------------------------------------------------------------
 
@@ -59,7 +73,10 @@ export interface SwarmHost {
   spawn(request: SpawnRequest): Promise<AgentHandle>;
 
   /** Send an agent-to-agent message. Rejects if recipient is unknown. */
-  send(to: AgentId, message: AgentMessage): Promise<void>;
+  send(
+    to: AgentId | "*" | `role:${string}`,
+    message: AgentMessage,
+  ): Promise<SendResult>;
 
   /**
    * Async iterable over inbox events for this agent.
@@ -83,9 +100,15 @@ export interface SpawnRequest {
   readonly model?: string;
   /** Opt into a FrameworkProvider mode (subscription auth). */
   readonly framework?: "claude-agent-sdk" | "codex-chatgpt";
-  /** Role overlay applied to the system prompt (M3+: architect/executor/reviewer). */
+  /**
+   * Role overlay applied to the system prompt (M3+: architect/executor/reviewer).
+   * M3a: wired end-to-end in Phase 6.
+   */
   readonly role?: string;
-  /** Tool allowlist; overrides default tool set for this worker. */
+  /**
+   * Tool allowlist; overrides default tool set for this worker.
+   * M3a: wired end-to-end in Phase 6.
+   */
   readonly allowedTools?: readonly string[];
   /** Cooperative cancellation handle. */
   readonly abort?: AbortSignal;
@@ -164,9 +187,20 @@ export interface TaskPacket {
   readonly context?: TaskContext;
 }
 
-export type BranchPolicy = "main" | "worktree" | "feature-branch" | "detached";
-export type CommitPolicy = "never" | "on-success" | "on-every-tool" | "manual";
-export type EscalationPolicy = "abort-on-error" | "ask-user" | "retry-with-backoff";
+export type BranchPolicy =
+  | { readonly kind: "none" }
+  | { readonly kind: "reuse"; readonly branch: string }
+  | { readonly kind: "create"; readonly from: string; readonly name?: string };
+
+export type CommitPolicy =
+  | { readonly kind: "none" }
+  | { readonly kind: "auto"; readonly message?: string }
+  | { readonly kind: "atomic" };
+
+export type EscalationPolicy =
+  | { readonly kind: "none" }
+  | { readonly kind: "retry"; readonly max: number; readonly backoff: "fixed" | "exponential" }
+  | { readonly kind: "handoff"; readonly targetRole: string };
 
 export interface TaskBudget {
   readonly maxTurns?: number;

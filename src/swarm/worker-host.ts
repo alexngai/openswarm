@@ -7,6 +7,7 @@ import type {
   TaskAPI,
   TaskRecord,
   TaskFilter,
+  SendResult,
 } from "./host.js";
 import type { AgentId, PermissionMode, SessionId } from "../core/types.js";
 import type { LaneEvent } from "./events.js";
@@ -96,7 +97,8 @@ export class WorkerHost implements SwarmHost {
     };
   }
 
-  async send(_to: AgentId, _message: AgentMessage): Promise<void> {
+  async send(_to: AgentId | "*" | `role:${string}`, _message: AgentMessage): Promise<SendResult> {
+    // TODO M3a Phase 3: proxy via "message.send" IPC request to parent.
     throw new Error("send not implemented in M1");
   }
 
