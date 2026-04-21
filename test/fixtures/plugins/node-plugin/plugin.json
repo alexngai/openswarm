@@ -1,0 +1,9 @@
+{
+  "id": "node-plugin",
+  "version": "0.1.0",
+  "execMode": "in-process",
+  "entryModule": "./index.mjs",
+  "tools": [
+    { "name": "greet", "description": "Returns a greeting" }
+  ]
+}

@@ -31,6 +31,8 @@ export interface CommonOpts {
   permissionMode: PermissionMode;
   outputFormat: "text" | "json";
   headless: boolean;
+  /** When false, plugin discovery is disabled at startup. Default: true. */
+  plugins: boolean;
 }
 
 export type ParsedArgs =
@@ -82,6 +84,7 @@ export function parseArgv(args: string[]): ParsedArgs {
   let permissionMode: PermissionMode = "workspace-write";
   let outputFormat: "text" | "json" = "text";
   let headless = false;
+  let plugins = true;
 
   // Defaults for swarm-run (consumed when subcommand === "swarm").
   let swarmConcurrency = 3;
@@ -123,6 +126,18 @@ export function parseArgv(args: string[]): ParsedArgs {
 
     if (tok === "--headless") {
       headless = true;
+      i++;
+      continue;
+    }
+
+    if (tok === "--no-plugins") {
+      plugins = false;
+      i++;
+      continue;
+    }
+
+    if (tok === "--plugins") {
+      plugins = true;
       i++;
       continue;
     }
@@ -264,6 +279,7 @@ export function parseArgv(args: string[]): ParsedArgs {
     permissionMode,
     outputFormat,
     headless,
+    plugins,
   };
 
   switch (subcommand) {

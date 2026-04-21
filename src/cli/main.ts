@@ -18,6 +18,8 @@ import { PermissionEngine } from "../permissions/index.js";
 import { ClaudeAgentSdkEngine } from "../engine/claude-agent-sdk.js";
 import { SessionStore } from "../session/store.js";
 import { runHeadless } from "../ui/headless.js";
+import { PluginRegistry } from "../plugins/registry.js";
+import { ClaudeCodeSource } from "../plugins/claude-code-source.js";
 // Note: the ink REPL (`src/ui/repl/`) is lazy-loaded inside runPrompt only
 // when the TTY path is taken. ink-markdown is CJS and requires() ink (which
 // has top-level await) — pulling it in eagerly crashes non-TTY paths like
@@ -50,6 +52,7 @@ Flags:
                                  (default: workspace-write)
   --output-format <fmt>          text | json (default: text)
   --headless                     Force JSONL output even on a TTY
+  --no-plugins                   Disable plugin discovery at startup
   --help, -h                     Show this message
   --version, -V                  Print version
 
@@ -131,6 +134,30 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     dispatcher.register(tool);
   }
 
+  // 2a. Discover and register plugin tools (opt-in via --plugins, default enabled).
+  const pluginTools: import("../tools/types.js").ToolImpl[] = [];
+  if (opts.plugins) {
+    const pluginRegistry = new PluginRegistry();
+    pluginRegistry.registerSource(new ClaudeCodeSource());
+    process.stderr.write("[swarm-coder] discovering plugins...\n");
+    try {
+      const discovered = await pluginRegistry.buildPluginTools();
+      for (const tool of discovered) {
+        try {
+          dispatcher.register(tool);
+          pluginTools.push(tool);
+        } catch {
+          // Name collision with higher-priority tool — skip silently (collision
+          // already warned by ToolDispatcher or registry).
+        }
+      }
+    } catch (err) {
+      process.stderr.write(
+        `[swarm-coder] plugin discovery error: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+    }
+  }
+
   // 3. Build permission engine.
   const permEngine = new PermissionEngine(opts.permissionMode);
 
@@ -173,7 +200,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     prompt: text,
     model: opts.model ?? DEFAULT_MODEL,
     auth,
-    tools: Array.from(buildTier0Tools()),
+    tools: [...Array.from(buildTier0Tools()), ...pluginTools],
     canUseTool,
     permissionMode: opts.permissionMode,
     resumeFrom,

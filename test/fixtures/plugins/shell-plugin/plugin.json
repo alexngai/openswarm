@@ -1,0 +1,9 @@
+{
+  "id": "shell-plugin",
+  "version": "0.1.0",
+  "execMode": "shell",
+  "command": "./run.sh",
+  "tools": [
+    { "name": "echo", "description": "Echo the input JSON back" }
+  ]
+}
