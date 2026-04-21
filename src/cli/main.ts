@@ -20,6 +20,9 @@ import { SessionStore } from "../session/store.js";
 import { runHeadless } from "../ui/headless.js";
 import { PluginRegistry } from "../plugins/registry.js";
 import { ClaudeCodeSource } from "../plugins/claude-code-source.js";
+import { SkillRegistry } from "../skills/registry.js";
+import { ClaudeCodeSource as ClaudeCodeSkillSource } from "../skills/claude-code-source.js";
+import { buildTier1Tools } from "../tools/tier1/index.js";
 // Note: the ink REPL (`src/ui/repl/`) is lazy-loaded inside runPrompt only
 // when the TTY path is taken. ink-markdown is CJS and requires() ink (which
 // has top-level await) — pulling it in eagerly crashes non-TTY paths like
@@ -53,6 +56,7 @@ Flags:
   --output-format <fmt>          text | json (default: text)
   --headless                     Force JSONL output even on a TTY
   --no-plugins                   Disable plugin discovery at startup
+  --no-skills                    Disable skill discovery at startup
   --help, -h                     Show this message
   --version, -V                  Print version
 
@@ -158,6 +162,22 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     }
   }
 
+  // 2b. Build skill registry and Tier 1 tools (opt-in via --skills, default enabled).
+  let skillRegistry: SkillRegistry | undefined;
+  const tier1Tools: import("../tools/types.js").ToolImpl[] = [];
+  if (opts.skills) {
+    skillRegistry = new SkillRegistry();
+    skillRegistry.registerSource(new ClaudeCodeSkillSource());
+  }
+  for (const tool of buildTier1Tools({ skillRegistry })) {
+    try {
+      dispatcher.register(tool);
+      tier1Tools.push(tool);
+    } catch {
+      // Name collision — skip silently.
+    }
+  }
+
   // 3. Build permission engine.
   const permEngine = new PermissionEngine(opts.permissionMode);
 
@@ -200,7 +220,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     prompt: text,
     model: opts.model ?? DEFAULT_MODEL,
     auth,
-    tools: [...Array.from(buildTier0Tools()), ...pluginTools],
+    tools: [...Array.from(buildTier0Tools()), ...tier1Tools, ...pluginTools],
     canUseTool,
     permissionMode: opts.permissionMode,
     resumeFrom,

@@ -25,8 +25,8 @@ export interface SkillSource {
   /** Enumerate available skills without reading their bodies. */
   discover(): Promise<readonly SkillManifest[]>;
 
-  /** Load a skill by id. Resolves with the parsed prompt body. */
-  load(skillId: string): Promise<LoadedSkill>;
+  /** Load a skill by id. Resolves undefined if not found. */
+  load(skillId: string): Promise<LoadedSkill | undefined>;
 }
 
 // ---------------------------------------------------------------------------
