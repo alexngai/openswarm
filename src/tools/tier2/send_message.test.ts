@@ -48,6 +48,7 @@ function registerPeer(
 function hostAs(root: StandaloneHost, agentId: AgentId, depth: number): SwarmHost {
   return {
     mode: "standalone",
+    kind: "standalone",
     agentId,
     depth,
     permissionMode: "workspace-write",
@@ -55,6 +56,7 @@ function hostAs(root: StandaloneHost, agentId: AgentId, depth: number): SwarmHos
     spawn: () => {
       throw new Error("spawn not used in this test");
     },
+    isAncestorOf: (ancestor, descendant) => root.isAncestorOf(ancestor, descendant),
     send: (to, message) => root.send(to, message),
     inbox: async function* () {
       return;

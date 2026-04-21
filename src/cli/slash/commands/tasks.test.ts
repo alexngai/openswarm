@@ -7,6 +7,7 @@ import type { SwarmHost, TaskRecord } from "../../../swarm/host.js";
 function makeHost(records: readonly TaskRecord[]): SwarmHost {
   return {
     mode: "standalone",
+    kind: "standalone",
     agentId: "root" as SwarmHost["agentId"],
     depth: 0,
     permissionMode: "workspace-write",
@@ -14,6 +15,7 @@ function makeHost(records: readonly TaskRecord[]): SwarmHost {
     spawn: () => {
       throw new Error("not used");
     },
+    isAncestorOf: () => Promise.resolve(true),
     send: (): never => {
       throw new Error("not used");
     },
@@ -29,6 +31,8 @@ function makeHost(records: readonly TaskRecord[]): SwarmHost {
       list: () => Promise.resolve(records),
       update: () => Promise.resolve(),
       stop: () => Promise.resolve(),
+      ownerOf: () => Promise.resolve(undefined),
+      appendOutput: () => undefined,
       output: () => {
         throw new Error("not used");
       },

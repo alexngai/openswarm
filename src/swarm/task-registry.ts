@@ -77,6 +77,40 @@ export class TaskRegistry {
   }
 
   /**
+   * Transition a task to "stopped" status. When `by` is supplied, persists
+   * it on the TaskRecord.stoppedBy field so the orchestrator can surface
+   * it in the cancelled results.jsonl line. No-op if task is not found.
+   * Throws if the task is not in a stoppable state (already terminal).
+   */
+  stop(id: string, by?: string): void {
+    const existing = this.records.get(id);
+    if (!existing) {
+      throw new Error(`TaskRegistry.stop: unknown task id "${id}"`);
+    }
+    const updated: TaskRecord = {
+      ...existing,
+      status: "stopped",
+      updatedAt: Date.now(),
+      ...(by !== undefined ? { stoppedBy: by } : {}),
+    };
+    this.records.set(id, updated);
+  }
+
+  /**
+   * Append a chunk of text to an existing task's output field.
+   * Silently no-ops if the taskId is unknown (task may have been stopped).
+   * Do NOT confuse with `update(id, patch)` which REPLACES output.
+   */
+  appendOutput(id: string, chunk: string): void {
+    const record = this.records.get(id);
+    if (record === undefined) return; // silently ignore — task may have been stopped
+    this.records.set(id, {
+      ...record,
+      output: (record.output ?? "") + chunk,
+    });
+  }
+
+  /**
    * Emit a LaneEvent to all registered listeners in FIFO order.
    * Used by the orchestrator's results emitter to fan out events.
    */

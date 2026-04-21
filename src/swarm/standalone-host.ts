@@ -15,6 +15,7 @@ import type {
 } from "./host.js";
 import type { AgentId, PermissionMode, SessionId } from "../core/types.js";
 import type { LaneEvent } from "./events.js";
+import { isAncestorOf as ancestorCheck } from "./ancestry.js";
 import { TaskRegistry } from "./task-registry.js";
 import { WorkerTransport } from "./ipc/worker-transport.js";
 import { spawnWorker } from "./subprocess-spawner.js";
@@ -25,6 +26,10 @@ import { RoleIndex } from "./role-index.js";
 import {
   IPC_ERROR_CODES,
   MessageSendParamsSchema,
+  TaskStopParamsSchema,
+  TaskOutputParamsSchema,
+  TaskOwnerOfParamsSchema,
+  AncestryIsAncestorOfParamsSchema,
   type IpcRequest,
 } from "./ipc/protocol.js";
 
@@ -39,12 +44,28 @@ export interface StandaloneHostOptions {
 
 export class StandaloneHost implements SwarmHost {
   readonly mode = "standalone" as const;
+  readonly kind = "standalone" as const;
   readonly agentId: AgentId;
   readonly depth: number = 0; // root is always depth 0
   readonly permissionMode: PermissionMode;
 
   private readonly registry: TaskRegistry;
   private readonly depths = new Map<AgentId, number>();
+  /**
+   * Spawn-parent map: childAgentId → parentAgentId.
+   * Populated at spawn() time. Eviction on worker_exited is deferred to M3b
+   * alongside worker lifecycle tracking. The pre-existing `depths` map has
+   * the same non-eviction behavior today.
+   */
+  private readonly spawnParents = new Map<AgentId, AgentId>();
+  /** AgentHandle keyed by taskId — populated at spawn() to enable task_stop. */
+  private readonly taskHandles = new Map<string, AgentHandle>();
+  /**
+   * agentId → taskId: used to route incoming text_delta lane events to
+   * appendOutput. Populated at spawn() alongside taskHandles.
+   * Wiring approach: agentId lookup (simpler than annotating text_delta frames).
+   */
+  private readonly agentToTaskId = new Map<AgentId, string>();
   private readonly maxDepth: number;
   private readonly events = new EventEmitter();
   private readonly spawnFn: typeof spawnWorker;
@@ -71,13 +92,32 @@ export class StandaloneHost implements SwarmHost {
       get: async (id) => this.registry.get(id),
       list: async (filter?: TaskFilter) => this.registry.list(filter),
       update: async (id, patch) => this.registry.update(id, patch),
-      stop: async () => {
-        throw new Error("task.stop not implemented in M1");
+      ownerOf: async (taskId: string) => {
+        const record = this.registry.get(taskId);
+        return record?.owner;
       },
-      output: async function* () {
-        // Empty iterator; output streaming is M3.
-        return;
+      appendOutput: (id: string, chunk: string) => {
+        this.registry.appendOutput(id, chunk);
       },
+      stop: async (id: string, by?: AgentId | "orchestrator") => {
+        const handle = this.taskHandles.get(id);
+        if (!handle) {
+          throw new Error(`unknown taskId: ${id}`);
+        }
+        this.emit({
+          type: "task_stop_requested",
+          payload: { taskId: id },
+        });
+        await handle.kill();
+        // Default `by` to "orchestrator" when called without an explicit caller —
+        // the root StandaloneHost uses itself as the implicit stopper.
+        this.registry.stop(id, by ?? "orchestrator");
+        this.emit({
+          type: "task_stopped",
+          payload: { taskId: id },
+        });
+      },
+      output: (id: string) => this.taskOutput(id),
     };
   }
 
@@ -112,6 +152,7 @@ export class StandaloneHost implements SwarmHost {
     // Allocate child identity.
     const childAgentId = randomUUID() as AgentId;
     this.depths.set(childAgentId, childDepth);
+    this.spawnParents.set(childAgentId, parentId);
     // Register role if the spawn request carries one (M3a Phase 3 — used by
     // `role:<name>` addressing in send_message; full role wiring lands in Phase 6).
     if (request.role !== undefined) {
@@ -205,10 +246,22 @@ export class StandaloneHost implements SwarmHost {
     });
 
     // Collect lane events into a buffer + re-emit on our bus.
+    // Also wire text_delta events to appendOutput for task_output polling.
     const laneBuffer: LaneEvent[] = [];
     const laneListener = (params: unknown) => {
-      laneBuffer.push(params as LaneEvent);
-      this.events.emit("lane_event", params as LaneEvent);
+      const evt = params as LaneEvent;
+      laneBuffer.push(evt);
+      this.events.emit("lane_event", evt);
+      // Route text_delta → appendOutput via agentId → taskId map.
+      if (evt.type === "text_delta") {
+        const taskId = this.agentToTaskId.get(evt.agentId);
+        if (taskId !== undefined) {
+          const text = (evt.payload as { text?: string } | null)?.text;
+          if (typeof text === "string" && text.length > 0) {
+            this.registry.appendOutput(taskId, text);
+          }
+        }
+      }
     };
     transport.on("lane_event", laneListener);
 
@@ -249,7 +302,26 @@ export class StandaloneHost implements SwarmHost {
         return;
       },
     };
+    // Register handle by taskId so task_stop can kill the worker.
+    this.taskHandles.set(taskRecord.id, handle);
+    // Register agentId → taskId mapping for text_delta → appendOutput routing.
+    this.agentToTaskId.set(childAgentId, taskRecord.id);
     return handle;
+  }
+
+  private async *taskOutput(id: string): AsyncIterable<string> {
+    // M3a: snapshot only (streaming is M3b).
+    const record = this.registry.get(id);
+    if (record === undefined) {
+      throw new Error(`unknown taskId: ${id}`);
+    }
+    if (record.output !== undefined && record.output.length > 0) {
+      yield record.output;
+    }
+  }
+
+  async isAncestorOf(ancestor: AgentId, descendant: AgentId): Promise<boolean> {
+    return ancestorCheck(ancestor, descendant, this.spawnParents);
   }
 
   /**
@@ -416,6 +488,68 @@ export class StandaloneHost implements SwarmHost {
           : 10;
       const messages = this.messageInbox.drain(from, max);
       transport.respond(frame.id, messages);
+      return;
+    }
+    if (frame.method === "task.stop") {
+      const parsed = TaskStopParamsSchema.safeParse(frame.params);
+      if (!parsed.success) {
+        transport.respondError(frame.id, IPC_ERROR_CODES.INVALID_PARAMS, parsed.error.message);
+        return;
+      }
+      try {
+        await this.task.stop(
+          parsed.data.taskId,
+          parsed.data.by as AgentId | "orchestrator" | undefined,
+        );
+        transport.respond(frame.id, null);
+      } catch (err) {
+        transport.respondError(
+          frame.id,
+          IPC_ERROR_CODES.INTERNAL_ERROR,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+      return;
+    }
+    if (frame.method === "task.output") {
+      const parsed = TaskOutputParamsSchema.safeParse(frame.params);
+      if (!parsed.success) {
+        transport.respondError(frame.id, IPC_ERROR_CODES.INVALID_PARAMS, parsed.error.message);
+        return;
+      }
+      const record = this.registry.get(parsed.data.taskId);
+      if (record === undefined) {
+        transport.respondError(
+          frame.id,
+          IPC_ERROR_CODES.INTERNAL_ERROR,
+          `unknown taskId: ${parsed.data.taskId}`,
+        );
+        return;
+      }
+      transport.respond(frame.id, { output: record.output });
+      return;
+    }
+    if (frame.method === "task.owner_of") {
+      const parsed = TaskOwnerOfParamsSchema.safeParse(frame.params);
+      if (!parsed.success) {
+        transport.respondError(frame.id, IPC_ERROR_CODES.INVALID_PARAMS, parsed.error.message);
+        return;
+      }
+      const record = this.registry.get(parsed.data.taskId);
+      transport.respond(frame.id, record?.owner ?? null);
+      return;
+    }
+    if (frame.method === "ancestry.is_ancestor_of") {
+      const parsed = AncestryIsAncestorOfParamsSchema.safeParse(frame.params);
+      if (!parsed.success) {
+        transport.respondError(frame.id, IPC_ERROR_CODES.INVALID_PARAMS, parsed.error.message);
+        return;
+      }
+      const result = await this.isAncestorOf(
+        parsed.data.ancestor as AgentId,
+        parsed.data.descendant as AgentId,
+      );
+      transport.respond(frame.id, result);
       return;
     }
     // Unknown / unsupported method — reply so the worker doesn't hang.

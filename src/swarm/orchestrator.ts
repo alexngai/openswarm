@@ -54,6 +54,8 @@ export interface ResultLine {
   readonly agentId: string;
   readonly sessionId: string;
   readonly completedAt: number;
+  /** Present when a task was cancelled via task_stop; identifies who stopped it. */
+  readonly stoppedBy?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -173,11 +175,20 @@ export class Orchestrator extends EventEmitter {
         token.release();
       }
 
+      // When a task is killed (via task_stop), fetch stoppedBy from the
+      // registry so the results.jsonl line carries it. Registry lookup is
+      // async; pre-fetch before the sync buildResultLine call.
+      let stoppedBy: string | undefined;
+      if (result.status === "killed") {
+        const record = await this.host.task.get(task.id).catch(() => undefined);
+        stoppedBy = record?.stoppedBy;
+      }
       const line = this.buildResultLine(
         task,
         result,
         handle?.agentId,
         handle?.sessionId,
+        stoppedBy,
       );
       await this.writeResult(line).catch((e) => {
         firstResultWriteError ??= e;
@@ -312,6 +323,7 @@ export class Orchestrator extends EventEmitter {
     result: AgentResult,
     agentId: string | undefined,
     sessionId: string | undefined,
+    stoppedBy?: string,
   ): ResultLine {
     const base = {
       id: task.id,
@@ -355,6 +367,7 @@ export class Orchestrator extends EventEmitter {
           ...base,
           status: "cancelled",
           wallClockMs: result.wallClockMs,
+          ...(stoppedBy !== undefined ? { stoppedBy } : {}),
         };
     }
   }

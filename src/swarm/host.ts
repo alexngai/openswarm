@@ -59,6 +59,11 @@ export interface SendResult {
 
 export interface SwarmHost {
   readonly mode: "standalone" | "worker";
+  /**
+   * Discriminator for ancestry / permission checks in tools.
+   * "standalone" = root orchestrator (StandaloneHost); "worker" = subprocess (WorkerHost).
+   */
+  readonly kind: "standalone" | "worker";
   readonly agentId: AgentId;
   /**
    * This agent's own depth in the recursion tree.
@@ -71,6 +76,13 @@ export interface SwarmHost {
    * Set by the orchestrator; workers receive it via `SWARM_CODER_PERMISSION_MODE` env.
    */
   readonly permissionMode: PermissionMode;
+
+  /**
+   * Returns true if `ancestor` is the same as or a transitive ancestor of
+   * `descendant` in the spawn tree. StandaloneHost walks its spawnParents map;
+   * WorkerHost proxies the check to the orchestrator via IPC.
+   */
+  isAncestorOf(ancestor: AgentId, descendant: AgentId): Promise<boolean>;
 
   /** Emit a lane event. In standalone mode goes to local subscribers + log. */
   emit(event: Omit<LaneEvent, "ts" | "agentId">): void;
@@ -241,6 +253,16 @@ export interface TaskRecord extends TaskPacket {
   readonly updatedAt: number;
   readonly output?: string;
   readonly error?: string;
+  /** Final token usage (populated when task reaches a terminal state). */
+  readonly usage?: Usage;
+  /** Wall-clock duration in ms (populated when task reaches a terminal state). */
+  readonly wallClockMs?: number;
+  /**
+   * Populated by TaskRegistry.stop() when the task was cancelled via
+   * `task_stop`. Value is the caller's agentId, or the string
+   * "orchestrator" when the root StandaloneHost stopped the task.
+   */
+  readonly stoppedBy?: string;
 }
 
 export interface TaskFilter {
@@ -257,7 +279,23 @@ export interface TaskAPI {
     id: string,
     patch: Partial<Pick<TaskRecord, "status" | "owner" | "output" | "error">>,
   ): Promise<void>;
-  stop(id: string): Promise<void>;
+  /**
+   * Stop a running task. `by` is the agentId of the caller, or the string
+   * "orchestrator" when the root StandaloneHost is stopping the task.
+   * Persisted on the TaskRecord.stoppedBy field and surfaced in the
+   * orchestrator's results.jsonl line.
+   */
+  stop(id: string, by?: AgentId | "orchestrator"): Promise<void>;
+  /**
+   * Look up which agentId "owns" (is running) a given taskId.
+   * Returns undefined if the task is unknown.
+   */
+  ownerOf(taskId: string): Promise<AgentId | undefined>;
+  /**
+   * Append a chunk of text to the task's accumulated output.
+   * Silently no-ops if the task is unknown (may have been stopped).
+   */
+  appendOutput(id: string, chunk: string): void;
   /** Append-only output stream; iteration completes when task reaches a terminal status. */
   output(id: string): AsyncIterable<string>;
 }

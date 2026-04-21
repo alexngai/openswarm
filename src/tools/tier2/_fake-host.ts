@@ -91,11 +91,31 @@ export function makeFakeHost(opts: FakeHostOpts = {}): {
       }
       records.set(id, { ...existing, ...patch, updatedAt: Date.now() });
     },
-    async stop() {
-      throw new Error("stop not implemented in fake host");
+    async stop(id: string, by?: AgentId | "orchestrator") {
+      const existing = records.get(id);
+      if (!existing) throw new Error(`unknown task id: ${id}`);
+      records.set(id, {
+        ...existing,
+        status: "stopped",
+        updatedAt: Date.now(),
+        stoppedBy: by ?? "orchestrator",
+      });
     },
-    async *output() {
-      return;
+    async ownerOf(taskId: string) {
+      return records.get(taskId)?.owner;
+    },
+    appendOutput(id: string, chunk: string) {
+      const existing = records.get(id);
+      if (!existing) return;
+      records.set(id, {
+        ...existing,
+        output: (existing.output ?? "") + chunk,
+        updatedAt: Date.now(),
+      });
+    },
+    async *output(id: string) {
+      const record = records.get(id);
+      if (record?.output) yield record.output;
     },
   };
 
@@ -128,11 +148,16 @@ export function makeFakeHost(opts: FakeHostOpts = {}): {
 
   const host: SwarmHost = {
     mode: "standalone",
+    kind: "standalone",
     agentId: "fake-agent" as AgentId,
     depth: 0,
     permissionMode: "workspace-write",
     emit: vi.fn(),
     spawn,
+    async isAncestorOf(_ancestor: AgentId, _descendant: AgentId): Promise<boolean> {
+      // Default fake: always return true (permissive for unit tests).
+      return true;
+    },
     send(_to: AgentId | "*" | `role:${string}`, _message: AgentMessage): Promise<SendResult> {
       throw new Error("send not implemented in fake host");
     },

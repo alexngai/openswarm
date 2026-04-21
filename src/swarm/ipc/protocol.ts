@@ -56,7 +56,9 @@ export type IpcRequestMethod =
   | "message.send"
   | "message.recv"
   | "task.stop"
-  | "task.output";
+  | "task.output"
+  | "task.owner_of"
+  | "ancestry.is_ancestor_of";
 
 export type IpcResponse = IpcOk | IpcErr;
 
@@ -139,9 +141,17 @@ export const MessageRecvParamsSchema = z.object({
 });
 export type MessageRecvParams = z.infer<typeof MessageRecvParamsSchema>;
 
-/** params for "task.stop" request. */
+/**
+ * params for "task.stop" request.
+ *
+ * `by` carries the caller's agentId so the orchestrator can persist it on
+ * the TaskRegistry record (surfaces in the cancelled results.jsonl line).
+ * Optional for backward compatibility; when absent the orchestrator
+ * defaults to "orchestrator".
+ */
 export const TaskStopParamsSchema = z.object({
   taskId: z.string(),
+  by: z.string().optional(),
 });
 export type TaskStopParams = z.infer<typeof TaskStopParamsSchema>;
 
@@ -157,3 +167,16 @@ export const TaskStopSignalParamsSchema = z.object({
   reason: z.string().optional(),
 });
 export type TaskStopSignalParams = z.infer<typeof TaskStopSignalParamsSchema>;
+
+/** params for "task.owner_of" request (worker → orchestrator). */
+export const TaskOwnerOfParamsSchema = z.object({
+  taskId: z.string(),
+});
+export type TaskOwnerOfParams = z.infer<typeof TaskOwnerOfParamsSchema>;
+
+/** params for "ancestry.is_ancestor_of" request (worker → orchestrator). */
+export const AncestryIsAncestorOfParamsSchema = z.object({
+  ancestor: z.string(),
+  descendant: z.string(),
+});
+export type AncestryIsAncestorOfParams = z.infer<typeof AncestryIsAncestorOfParamsSchema>;

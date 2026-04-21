@@ -1,21 +1,24 @@
 /**
- * task_output — Tier 2 tool placeholder.
+ * task_output — Tier 2 tool.
  *
  * Polls partial or final output of a task. For running tasks returns a
  * snapshot of accumulated output so far. For completed tasks returns
  * the full output, status, usage, and wallClockMs.
  *
- * Real implementation lands in M3a Phase 4.
+ * Real implementation: M3a Phase 4.
  */
 
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
+import { requireHost } from "./require-host.js";
 
 const inputSchema = z.object({
   taskId: z.string().describe("Id of the task to query."),
 });
+
+type Input = z.infer<typeof inputSchema>;
 
 const spec: ToolSpec = {
   name: "task_output",
@@ -29,9 +32,38 @@ const spec: ToolSpec = {
   tier: 2,
 };
 
-async function execute(_raw: unknown, _ctx: ToolExecutionContext): Promise<ToolResult> {
-  // TODO M3a Phase 4: implement via host.task.output() + task registry lookup.
-  return { status: "error", message: "M3a Phase 4 — not yet implemented" };
+async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolResult> {
+  const host = requireHost(ctx, "task_output");
+  const parsed = inputSchema.safeParse(raw);
+  if (!parsed.success) return { status: "error", message: parsed.error.message };
+  const input: Input = parsed.data;
+
+  const record = await host.task.get(input.taskId);
+  if (record === undefined) {
+    return { status: "error", message: `unknown taskId: ${input.taskId}` };
+  }
+
+  if (record.status === "running" || record.status === "pending") {
+    return {
+      status: "ok",
+      output: JSON.stringify({
+        status: "running",
+        partialOutput: record.output ?? "",
+        sizeBytes: (record.output ?? "").length,
+      }),
+    };
+  }
+
+  // Terminal state.
+  return {
+    status: "ok",
+    output: JSON.stringify({
+      status: record.status,
+      output: record.output,
+      usage: record.usage,
+      wallClockMs: record.wallClockMs,
+    }),
+  };
 }
 
 export const taskOutputTool: ToolImpl = {

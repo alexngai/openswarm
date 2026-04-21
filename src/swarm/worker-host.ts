@@ -17,6 +17,7 @@ import type { IpcNotification } from "./ipc/protocol.js";
 
 export class WorkerHost implements SwarmHost {
   readonly mode = "worker" as const;
+  readonly kind = "worker" as const;
 
   /**
    * Buffered inbox deliveries that arrived via `sub_agent_event` with
@@ -70,13 +71,40 @@ export class WorkerHost implements SwarmHost {
     update: async (id, patch) => {
       await this.transport.send("task.update", { id, patch });
     },
-    stop: async () => {
-      throw new Error("task.stop not implemented in M1");
+    stop: async (id: string, by?: import("../core/types.js").AgentId | "orchestrator") => {
+      await this.transport.send("task.stop", { taskId: id, by });
     },
-    output: async function* () {
-      return;
+    ownerOf: async (taskId: string) => {
+      const result = await this.transport.send<string | null>(
+        "task.owner_of",
+        { taskId },
+      );
+      return (result ?? undefined) as import("../core/types.js").AgentId | undefined;
     },
+    appendOutput: (_id: string, _chunk: string) => {
+      // Workers do not call appendOutput directly — the orchestrator wires
+      // text_delta events from lane_event notifications. This is a no-op on
+      // the worker side to satisfy the interface.
+    },
+    output: (id: string) => this.taskOutput(id),
   };
+
+  private async *taskOutput(id: string): AsyncIterable<string> {
+    const result = await this.transport.send<{ output?: string }>(
+      "task.output",
+      { taskId: id },
+    );
+    if (result.output !== undefined && result.output.length > 0) {
+      yield result.output;
+    }
+  }
+
+  async isAncestorOf(ancestor: AgentId, descendant: AgentId): Promise<boolean> {
+    return this.transport.send<boolean>("ancestry.is_ancestor_of", {
+      ancestor,
+      descendant,
+    });
+  }
 
   emit(event: Omit<LaneEvent, "ts" | "agentId">): void {
     const full: LaneEvent = {
