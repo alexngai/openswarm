@@ -25,7 +25,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run test/integration",
-    "test:ui": "bun test src/ui/repl-solid/opentui.test.tsx",
+    "test:ui": "bun test src/ui/repl-solid/",
+    "test:ui:unit": "bun test src/ui/repl-solid/opentui.test.tsx src/ui/repl-solid/store.test.ts src/ui/repl-solid/transcript.test.tsx src/ui/repl-solid/input.test.tsx src/ui/repl-solid/status.test.tsx src/ui/repl-solid/dropdown.test.tsx src/ui/repl-solid/spinner.test.tsx src/ui/repl-solid/app.test.tsx src/ui/repl-solid/e2e.test.tsx",
+    "test:ui:live": "bun test src/ui/repl-solid/cli-bun.test.ts",
+    "test:all": "npm run test && npm run test:ui",
     "typecheck:ui": "tsc -p src/ui/repl-solid/tsconfig.json"
   },
   "engines": {
