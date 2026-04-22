@@ -1,14 +1,14 @@
 # M3b Git Coordination + Performance + Niche Tools — Implementation Plan
 
-**Status:** draft (rev 2)
+**Status:** draft (rev 3)
 **Owner:** alex
 **Created:** 2026-04-20
-**Prereq:** M2 complete (588 tests passing at `3b17fbd` on branch `mvp`). **M3a is NOT a hard prerequisite** — M3b ships independently; see "Relationship to M3a" below for the one optional seam.
+**Prereq:** M3a complete (`3240a43`, 739 tests passing).
 **Refines:** the six remaining items from §"Milestone M3 — orchestration depth + Claude Max subscription" in `docs/07-implementation-plan.md` that are not covered by `docs/11-m3a-plan.md`.
 
 ## Scope
 
-M3a picked up the four coordination primitives that all share the messaging/role spine (send_message, check_inbox, task_stop/output, policy enums, retry + dead-letter, team roles). M3b picks up the six M3 items that are **valuable but structurally isolated** from messaging/roles:
+M3a delivered the coordination primitives (messaging, policies, retry, roles). M3b builds on that foundation with git + perf + niche tools, picking up the six M3 items that are **valuable but structurally isolated** from messaging/roles:
 
 1. **Git coordination** (`branch_lock`, `stale_base`, `stale_branch`): port `detect_branch_lock_collisions` (pure collision detection logic, ~100 LOC) near-verbatim from claw; BUILD a new atomic filesystem lock on top of it (not present in claw).
 2. **Prompt caching** (Anthropic): declare cache boundary via SDK's `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` marker, fingerprint the prefix, and surface cache-delta analytics (cacheReadInputTokens is already threaded through Phase 5 of M2).
@@ -73,29 +73,25 @@ Six scope/mechanism choices need locking before implementation starts. Default p
 6. **`count_tokens` failure policy: silent fallback, warn on repeated misses.**
    Rationale: claw's convention (research/01-api.md §8). If the first `count_tokens` call fails, fall back to local estimate and emit a single `preflight_degraded` lane event. If 3 consecutive preflights fail, emit `preflight_disabled` and cease calling for the rest of the session (cost-avoidance; preflight is best-effort). Re-enable on next session. Alternative "retry with backoff" rejected: preflight is cheap-failure — the local estimate is already the correctness path; `count_tokens` is a precision upgrade we skip gracefully.
 
-### Branch name resolution precedence
+**Policy shape assumed throughout M3b:** `BranchPolicy`, `CommitPolicy`, and `EscalationPolicy` are discriminated unions (M3a Phase 2 migrated all callers). No legacy flat-string handling is needed anywhere in M3b.
 
-When acquiring a branch lock, the lock key is ALWAYS a real git branch name, never a policy enum value:
+7. **M3b does NOT implement real handoff dispatch — keeps M3a's dead-letter shortcut.**
+   Rationale: M3a's `EscalationPolicy.handoff` variant is wired but simplified — `orchestrator.handleHandoff()` always routes to dead-letter with `lastStatus: "handoff_not_supported"`. Real handoff (redispatch to `targetRole`) requires role-based scheduling, which is M4 territory. If M3b wants the feature, add a new Phase 9. Otherwise leave the simplified path as-is and defer to M4.
 
-1. **M3a `{ kind: "reuse", branch }`** — use `branch` directly (already a real name).
-2. **M3a `{ kind: "create", from, name? }`** — `name` is advisory input to the checkout command. After checkout completes, call `git symbolic-ref --short HEAD` to obtain the actual branch name; use that as the lock key.
-3. **M3a `{ kind: "none" }`** — no lock acquired.
-4. **M1/M2 legacy enum** (`"main" | "worktree" | "feature-branch" | "detached"`) — the enum value is a STRATEGY IDENTIFIER, not a branch name. Call `git symbolic-ref --short HEAD` in the worker's cwd to resolve the actual git branch at runtime; use that as the lock key.
-
-Example: `branchPolicy: "main"` (legacy) supplied when the current git branch is `feature/x` → lock key is `feature-x` (not `main`).
-
-M3b remains fully independent of M3a: the git-resolve approach (item 4 above) handles all M1/M2 legacy enum values without needing M3a's discriminated union. M3a's union simply makes the branch name explicit (item 1), which is preferable but not required.
-
-The plan below assumes all six default picks; flip any before implementation starts if needed.
+The plan below assumes all seven default picks; flip any before implementation starts if needed.
 
 ## Relationship to M3a
 
-M3b can ship **independently** of M3a — every item in this plan is decoupled from messaging/roles. The only seam is a soft integration point in Phase 2 (git coord):
+M3a is shipped (`3240a43`). M3a delivered the coordination primitives — messaging, policies (discriminated-union `BranchPolicy` / `CommitPolicy` / `EscalationPolicy`), retry, dead-letter, and team roles. M3b builds directly on that foundation with git coordination, performance, and niche tools.
 
-- If M3a is merged when M3b lands, the orchestrator acquires the branch lock using `TaskPacket.branchPolicy` (the discriminated union M3a shipped), keyed on `policy.branch` when `kind === "reuse"` or `policy.name ?? \`task-${task.id}\`` when `kind === "create"`.
-- If M3a is NOT merged (M3b ships first), `TaskPacket.branchPolicy` is still the M1/M2 legacy enum string (`"main" | "worktree" | "feature-branch" | "detached"`). Phase 2 does NOT treat the enum value as a branch name — that would lock every task with `branchPolicy: "main"` on the literal `"main"` (global bottleneck). Instead, Phase 2 resolves the ACTUAL current git branch at runtime by calling `git symbolic-ref --short HEAD` (or equivalent) inside the worker's cwd and uses that as the lock key. Example: `branchPolicy: "main"` on a checkout of `feature/x` → lock key is `feature-x`. Phase 2 tests cover both the M3a discriminated-union shape and the M1/M2 legacy enum shape.
+Concrete integration points:
 
-No other M3b phase depends on M3a. Team roles, messaging, retry, and dead-letter are all untouched by M3b.
+- **Phase 2 (git coord)** uses `BranchPolicy.kind` directly — `"reuse"` reads `.branch`; `"create"` reads `.from` and optional `.name`. No legacy enum handling needed; M3a Phase 2 already migrated all callers.
+- **Phase 5 (`notebook_edit`)** composes with M3a's `ToolDispatcher.allowedTools` filter — reviewer role hides it automatically via the existing allowlist mechanism.
+- **Phase 6 (`ask_user_question`)** uses M3a's IPC protocol extension pattern (same `IpcRequestMethod` union, same request/response framing).
+- **`TaskRecord.owner`** is populated by `StandaloneHost.spawn` (post-audit fix in `3240a43`). Any M3b work referencing task ownership can rely on this invariant.
+
+M3a's `EscalationPolicy.handoff` variant is wired but simplified: `orchestrator.handleHandoff()` always routes to dead-letter with `lastStatus: "handoff_not_supported"`. M3b leaves this as-is; real handoff dispatch defers to M4 (requires role-based scheduling).
 
 ## Acceptance criteria
 
@@ -108,7 +104,7 @@ Each is executable with a one-line test harness or manual smoke step.
 5. `stale_branch`: given a branch 3 commits behind `main` with 0 ahead and 2 of those commits having `[fix]`-ish subjects, returns `{ kind: "stale", commitsBehind: 3, missingFixes: ["...", "..."] }`. Ahead + behind → `{ kind: "diverged", ahead, behind, missingFixes }`. Same commit → `{ kind: "fresh" }`.
 6. `stale_branch.applyPolicy("stale", "AutoRebase")` returns intent `{ kind: "Rebase" }`; `"Block"` returns `{ kind: "Block", reason }`; `"WarnOnly"` returns `{ kind: "Warn", message }`. No rebase/merge is actually performed — intent only.
 7. Orchestrator integration: dispatching two tasks with `branchPolicy.branch === "feature/x"` serializes — second task's `branch_lock_acquired` lane event is emitted only after first task's `branch_lock_released`. Verified via integration test with 2 in-process task runs.
-7a. Branch name resolution: when `branchPolicy: "main"` (legacy M1/M2 enum) is supplied and the current git branch is `feature/x`, the lock key is `feature-x` (not `main`). Verified via unit test mocking `git symbolic-ref --short HEAD` to return `feature/x`.
+7a. Branch name resolution: when `branchPolicy: { kind: "create", from: "main" }` is supplied WITHOUT an explicit `.name`, the lock key is derived from the post-checkout `git symbolic-ref --short HEAD` (the actual branch the worker checked out), NOT from the advisory `.name` field. Verified via unit test mocking the post-checkout `symbolic-ref` return value.
 7b. Git worktree serialization: two git worktrees of the same repo checked out to the same branch both attempt to acquire a branch lock and serialize — second worktree's `branch_lock_acquired` event fires only after the first worktree's `branch_lock_released`. Lock directory is shared via `git rev-parse --git-common-dir`. Verified via integration test with two in-process worktree path fixtures pointing to the same git common dir.
 8. Orchestrator integration: on `branch_lock_acquired`, orchestrator runs `stale_base.check()` and emits `stale_base_diverged` lane event if diverged; the task is still dispatched (non-blocking), but the event is observable.
 9. Prompt cache: running the SAME prompt against the SAME base system prompt twice within 5 minutes produces a `cache_hit` lane event on the second run; `cacheReadInputTokens` on the `message_stop` usage is > 0; the first run emits `cache_miss`.
@@ -128,7 +124,7 @@ Each is executable with a one-line test harness or manual smoke step.
 21. Token preflight: before dispatching a turn, `engine.countTokens(prompt, tools)` is called. The implementation uses local estimation only (2.5 chars/token heuristic: `Math.ceil(bytes / 2.5)`), as the Anthropic `count_tokens` REST endpoint requires API-key auth and would 401 under Claude Max subscription users. If the SDK exposes a `query().count_tokens` method at implementation time (verify against `sdk.d.ts`), use it; otherwise fall back to the local estimate exclusively — do NOT implement a separate REST call to `https://api.anthropic.com/v1/messages/count_tokens`. Token preflight is best-effort: exact count requires API-key auth (not available under Claude Max); we default to local estimate to support all auth paths uniformly.
 22. `/status` extension: shows `preflight: <N> tokens (<X>% of 200k context window)` when preflight succeeded; shows `preflight: ~<N> tokens (local estimate; count_tokens unavailable)` after fallback.
 23. `npx tsc --noEmit` passes strict mode.
-24. `npm test` baseline 588 + M3a's delta (if merged) → target `588 + M3a_delta + 30..50` for M3b; all passing.
+24. `npm test` baseline 739 (76 test files, M3a complete) → target `739 + 30..50` for M3b; all passing.
 25. `scripts/smoke-m3b.sh --offline` covers: branch-lock contention, stale_base detection, stale_branch detection, notebook_edit round-trip, ask_user_question scripted answer, parallel-tool-use scripted batch, preflight-with-fallback.
 26. `scripts/smoke-m3b.sh` (live) covers: (L1) prompt-cache hit on repeat prompt (verify `cacheReadInputTokens > 0`); (L2) parallel tool execution on a real "read these 3 files in parallel" prompt (verify all 3 `tool_use` blocks execute within 5 ms of each other); (L3) `ask_user_question` from standalone TTY mode round-trip.
 27. `scripts/smoke.sh --all` invokes `smoke-m3b.sh` alongside `smoke.sh`, `smoke-swarm.sh`, `smoke-repl.sh`, and `smoke-m3a.sh` (if present).
@@ -246,11 +242,11 @@ export function applyPolicy(freshness: Freshness, policy: PolicyKind): PolicyInt
 - MissingFixes: `git log --format=%s ${branch}..${mainRef}` filtered by subjects matching a regex. **Do not invent the regex** — verify the exact pattern by reading `references/claw-code/rust/crates/runtime/src/stale_branch.rs` at implementation time and port it faithfully.
 
 2.4. `src/swarm/orchestrator.ts` — wire into task dispatch. Before `host.spawn`:
-- Resolve lock key from `task.branchPolicy` using the following precedence:
-  - M3a discriminated-union shape (`{ kind: "reuse", branch }`) → lock on `branch` (exact field value, already a real branch name).
-  - M3a discriminated-union shape (`{ kind: "create", from, name? }`) → resolve POST-checkout actual branch via `git symbolic-ref --short HEAD` after checkout; use that as lock key. `BranchPolicy.name` is ADVISORY input to the checkout command, not the lock key. See "Branch name resolution precedence" below.
-  - M3a discriminated-union shape (`{ kind: "none" }`) → skip lock.
-  - M1/M2 legacy enum string (`"main" | "worktree" | "feature-branch" | "detached"`) → call `git symbolic-ref --short HEAD` in the worker's cwd to obtain the actual branch name; use that as lock key (NOT the enum value). Empty/missing → skip lock.
+- Consult `BranchPolicy.kind` directly:
+  - `"reuse"` → `.branch` IS the lock key (the branch already exists; no checkout needed).
+  - `"create"` → perform the git checkout first using `.from` and optional `.name` (advisory — git's own naming rules apply if `.name` is absent); then read back `git symbolic-ref --short HEAD` in the worktree and use THAT as the lock key. This avoids the pre-creation ambiguity flagged in Open Item M6 and keeps the lock key tied to the real branch that the worker is operating on.
+  - `"none"` → skip lock acquisition entirely.
+  No legacy enum fallback needed.
 - `await branchLock.acquire(key, { agentId: orchestratorId, timeoutMs: 60_000 })`.
 - Emit `branch_lock_acquired`.
 - Run `staleBase.check({ cwd, expectedBase })`; if `diverged`, emit `stale_base_diverged` (warning only — do not block).
@@ -417,7 +413,13 @@ Token preflight is best-effort. Exact server-side count requires API-key auth, u
 
 7.4. Tests (`token-preflight.test.ts`, ≥ 4): server-success, server-403 → fallback, network-timeout → fallback, localEstimate correctness (sanity: known JSON → expected ±10% token count).
 
-### Phase 8 — Tests + smoke + docs (~0.4 day)
+### Phase 8 — Tests + smoke + docs (~0.6 day)
+
+**M3a carry-over items (folded here):**
+
+8.0a. **Clear per-attempt `setTimeout` on race-win in `orchestrator.ts` retry loop** — 1-line fix: call `clearTimeout` on the per-attempt timer when the wait-promise wins the race, preventing event-loop delay at task end. Add test asserting process can exit within 50ms after the wait-promise wins. Budget: +0.1d.
+
+8.0b. **Real-subprocess integration test for per-attempt wall-clock timeout** — M3a's per-attempt timeout is unit-tested with a fake host; a real-subprocess integration test is an M3a open item. Add 1 integration test that spawns an actual subprocess and asserts the timeout fires within the expected window. Budget: +0.1d.
 
 8.1. `scripts/smoke-m3b.sh` — mirrors `smoke-m3a.sh` format (offline + live scenarios):
 - **Offline** (ScriptedTestEngine + fixtures):
@@ -554,10 +556,10 @@ Run after each phase:
 | 5 `notebook_edit` tool | 0.5 d |
 | 6 `ask_user_question` via SwarmHost | 0.75 d |
 | 7 Server-side token preflight + /status | 0.4 d |
-| 8 Smoke + docs + integration glue | 0.4 d |
+| 8 Smoke + docs + integration glue (incl. M3a carry-overs) | 0.6 d |
 | Buffer | 0.55 d |
 
-**Total: ~6.25 engineer-days.** Phase 2 increased from 1.5d → 2.0d to account for the new atomic-lock design (NFS-safe acquire, stale-PID reclaim, release-on-crash, worktree git-common-dir anchoring) which is new work not present in claw. Phase 3 increased +0.1d for the structuredOutput regression test. Phase 4 reduced from 0.75d → 0.4d (infrastructure only; actual parallelism defers to M4 NativeEngine — acceptance criterion 12 is the gate).
+**Total: ~6.45 engineer-days.** Phase 2 increased from 1.5d → 2.0d to account for the new atomic-lock design (NFS-safe acquire, stale-PID reclaim, release-on-crash, worktree git-common-dir anchoring) which is new work not present in claw. Phase 3 increased +0.1d for the structuredOutput regression test. Phase 4 reduced from 0.75d → 0.4d (infrastructure only; actual parallelism defers to M4 NativeEngine — acceptance criterion 12 is the gate). Phase 8 increased from 0.4d → 0.6d for two M3a carry-over items (real-subprocess per-attempt timeout test; clear setTimeout on race-win).
 
 If a phase slips, drop order: `scripts/branch-lock-report` diagnostic (Phase 2.5) → `/status` preflight extension (Phase 7.3; keep countTokens API) → `ask_user_question` TTY-ink modal path (ship worker-mode IPC only; standalone falls back to error-on-headless and readline-on-TTY).
 
@@ -585,5 +587,7 @@ If a phase slips, drop order: `scripts/branch-lock-report` diagnostic (Phase 2.5
 ## Revision history
 
 - **rev 1 (2026-04-20):** initial draft. Six scope/mechanism decisions locked: (1) `notebook_edit` classified Tier 1 (user-facing productivity, permission `write`); (2) `ask_user_question` worker-mode IPC uses existing request/response protocol with a new `"ask_user_question"` method + 10-min default timeout; (3) prompt-cache boundary via SDK's `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` string[] marker (the only caching surface the SDK exposes publicly — verified against `sdk.d.ts:4958–4966`), not a per-block `cacheControl`; (4) parallel tool execution gates permissions pre-fan-out with batch-wide deny on any sibling deny; (5) branch-lock granularity is per-branch (module-level is a diagnostic only — ship as separate CLI); (6) `count_tokens` failure policy is silent fallback with 3-fail disable. M3b can ship independently of M3a — only soft seam is consuming `TaskPacket.branchPolicy` which Phase 2 handles either shape. Total effort 6d, sits at high end of 4-6 day target. Biggest risk: Phase 4 parallel tool execution depends on SDK-internal behavior that may serialize dispatch — acceptance criterion 12 is the gate; fallback ships machinery with caveat documented.
+
+- **rev 3 (2026-04-21):** post-M3a refresh. Prereq updated from M2 to M3a complete (3240a43). Dropped "branch name resolution precedence" fallback path — BranchPolicy is discriminated-union shape throughout (M3a Phase 2 migrated callers; no legacy handling needed). Added two M3a carry-over items to Phase 8 (real-subprocess per-attempt timeout test; clear setTimeout on race-win). Total effort 6.25d → 6.45d.
 
 - **rev 2 (2026-04-21):** critic REVISE (3 critical + 8 major + 6 minor). All findings addressed. Key changes: **(C1)** `BranchPolicy` enum vs branch name — `"main"|"worktree"|"feature-branch"|"detached"` are strategy identifiers, not branch names; Phase 2.4 and new "Branch name resolution precedence" subsection mandate `git symbolic-ref --short HEAD` resolution for legacy enum values; lock key is always the real git branch. New AC 7a confirms `branchPolicy:"main"` on `feature/x` checkout → lock key `feature-x`. M3b independence from M3a preserved via git-resolve path (option b). **(C2)** Scope corrected: `branch_lock.rs` in claw is 100 LOC pure collision detection only — no atomic lock. Wording changed throughout to "port `detect_branch_lock_collisions` near-verbatim; BUILD atomic filesystem lock (new design work)." Phase 2 effort bumped 1.5d → 2.0d. **(C3)** Phase 4.1 added: HookRuntime reentrancy contract (inspect shared mutable state; conservative serial fallback if uncertain; AC 12a for cross-tool isolation). **(M1)** Phase 4.4: `concurrencySafe: boolean` on `ToolSpec`; `todo_write` marked `false`; AC 12b for serialization. **(M2)** Phase 2.1: lock dir anchored to `git rev-parse --git-common-dir` (shared across worktrees); NFS wording clarified (O_EXCL safe on acquire; stale-PID reclaim single-host only; cross-host deferred to M4); AC 7b for worktree serialization. **(M3)** Phase 0.3: full `IpcRequestMethod` union update + request/response payload shapes. **(M4)** Phase 6.2: `transport_closed` and `compacted` status variants; orchestrator-disconnect AC; `SWARM_CODER_ASK_TIMEOUT_MS` env var documented. **(M6)** Open item resolved: `BranchPolicy.name` is advisory to checkout; lock key is POST-checkout `git symbolic-ref` result. **(M7)** Phase 3.5: `structuredOutput` + `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` regression test; +0.1d budget. **(M8)** Phase 7.1 / AC 21: local-estimate-only path (2.5 chars/token); no REST call to `count_tokens` endpoint (would 401 under Claude Max); SDK native method preferred if exposed. **(N1)** SDK version verified at `3b17fbd`; pin `package.json` at M3b end. **(N2)** Lock filename always includes 4-char FNV-1a hash suffix; no filesystem-read collision detection. **(N3)** `stale_branch` missing-fixes regex: read from `stale_branch.rs` at implementation time; not invented. **(N4)** AC 12 timing relaxed 5ms → 50ms for CI stability. **(N5)** Notebook indent: `JSON.stringify(null, 1) + "\n"` (1-space + trailing newline, Jupyter canonical). **(N6)** `cacheSavingsPct` renamed → `cacheHitRatio` throughout. **Phase 4 scope:** downscoped to infrastructure-only (0.4d); actual parallelism defers to M4 NativeEngine. **New total: ~6.25d.**
