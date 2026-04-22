@@ -18,7 +18,8 @@ export const statusCommand: SlashCommand = {
         `permission: ${ctx.getPermissionMode()}\n` +
         `session: ${session}\n` +
         `model: ${ctx.getModel()}\n` +
-        `tokens: ${totalTokens}`,
+        `tokens: ${totalTokens}\n` +
+        `token preflight: local-estimate`,
     };
   },
 };

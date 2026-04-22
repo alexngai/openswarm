@@ -41,6 +41,8 @@ import {
   makeTranslatorState,
 } from "./event-translator.js";
 import { HookRuntime } from "../hooks/runtime.js";
+import { countTokens } from "./token-preflight.js";
+import type { CountTokensInput, CountTokensResult } from "./index.js";
 
 // ---------------------------------------------------------------------------
 // Permission-mode mapping
@@ -415,5 +417,14 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
         },
       };
     }
+  }
+
+  /**
+   * M3b Phase 7 — local-estimate-only. No server path, so no failure
+   * counter / preflight_degraded / preflight_disabled lane events fire
+   * in this milestone. Those surface when M4 adds a server counter.
+   */
+  async countTokens(input: CountTokensInput): Promise<CountTokensResult> {
+    return countTokens(input);
   }
 }

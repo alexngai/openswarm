@@ -1046,6 +1046,23 @@ describe("Scenario 12: resume threading", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Scenario (Phase 7): countTokens method
+// ---------------------------------------------------------------------------
+
+describe("countTokens (Phase 7)", () => {
+  it("is callable and returns {inputTokens, source: local-estimate}", async () => {
+    const engine = new ClaudeAgentSdkEngine();
+    const result = await engine.countTokens({
+      messages: [{ role: "user", content: "hello" }],
+      systemPrompt: "You are a helpful assistant.",
+    });
+    expect(result.source).toBe("local-estimate");
+    expect(typeof result.inputTokens).toBe("number");
+    expect(result.inputTokens).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Scenario 10: Non-ZodObject schemas (plugin + MCP tools)
 // ---------------------------------------------------------------------------
 

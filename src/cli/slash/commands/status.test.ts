@@ -25,6 +25,7 @@ describe("/status", () => {
       expect(res.text).toContain("permission: read-only");
       expect(res.text).toContain("session: s-abc");
       expect(res.text).toContain("tokens: 165");
+      expect(res.text).toContain("token preflight: local-estimate");
     }
   });
 
