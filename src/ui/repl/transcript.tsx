@@ -1,20 +1,20 @@
 /**
  * transcript.tsx — renders past turns.
  *
- * Assistant text is rendered as streaming markdown via ink-markdown. User,
- * tool, and system entries are plain text. Full rendering of tool input /
- * output is out of scope for Phase 2 — tool rows show name + summary only.
+ * Assistant text renders as plain `<Text>` — ink-markdown was removed
+ * because it is a CJS module whose `require("ink")` fails against
+ * ink@5's ESM graph (yoga-wasm-web contains top-level await;
+ * `ERR_REQUIRE_ASYNC_MODULE` on every TTY invocation, all Node
+ * versions — the limitation is "CJS require cannot satisfy ESM+TLA"
+ * and is not tied to any Node release). Markdown styling in the TUI
+ * is a follow-up when we adopt an ESM-native renderer.
+ *
+ * Full rendering of tool input / output is out of scope — tool rows
+ * show name + summary only.
  */
 
 import React from "react";
 import { Box, Text } from "ink";
-// ink-markdown is built against React 16 types; cast to any to sidestep the
-// JSX element-type mismatch with React 19 @types/react (same workaround we
-// used before the ink-REPL rewrite).
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-import MarkdownRaw from "ink-markdown";
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const Markdown: any = MarkdownRaw;
 import type { TranscriptEntry } from "./state.js";
 
 export interface TranscriptProps {
@@ -33,7 +33,7 @@ function AssistantEntry(props: { text: string }): React.ReactElement {
   if (props.text.length === 0) return <Box />;
   return (
     <Box flexDirection="column">
-      <Markdown>{props.text}</Markdown>
+      <Text>{props.text}</Text>
     </Box>
   );
 }

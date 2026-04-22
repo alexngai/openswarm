@@ -63,7 +63,6 @@
     "ai": "6.0.168",
     "fast-glob": "^3.3.3",
     "ink": "^5.2.1",
-    "ink-markdown": "^1.0.4",
     "proper-lockfile": "4.1.2",
     "turndown": "^7.2.4",
     "zod": "^4.3.6",
