@@ -140,7 +140,7 @@ vi.mock("../ui/headless.js", () => ({
   runHeadless: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("../ui/repl/index.js", () => ({
+vi.mock("../ui/repl-solid/index.js", () => ({
   runRepl: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -230,7 +230,7 @@ describe("main", () => {
 
   it("prompt → calls runRepl when stdout is a TTY and --headless is not set", async () => {
     const { main } = await import("./main.js");
-    const { runRepl } = await import("../ui/repl/index.js");
+    const { runRepl } = await import("../ui/repl-solid/index.js");
 
     Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
 

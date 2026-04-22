@@ -20,11 +20,13 @@
 import type { AgentEngine, RunConfig } from "../../engine/index.js";
 import type { NormalizedEvent, PermissionMode } from "../../core/types.js";
 import type { SlashCommandRegistry } from "../repl/state.js";
-import type { TokenGetter } from "../repl/status.js";
 import {
   buildDefaultRegistry,
   type BuildDefaultRegistryDeps,
 } from "../../cli/slash/index.js";
+
+/** Getter returning the current session's token count. */
+export type TokenGetter = () => number;
 
 export interface RunReplConfig {
   readonly engine: AgentEngine;

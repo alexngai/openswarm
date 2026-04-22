@@ -53,7 +53,6 @@
   "devDependencies": {
     "@types/node": "^25.6.0",
     "@types/proper-lockfile": "^4.1.4",
-    "@types/react": "^19.2.14",
     "@types/turndown": "^5.0.6",
     "typescript": "^5.6.3",
     "vitest": "^4.1.4"
@@ -69,7 +68,6 @@
     "@vscode/ripgrep": "^1.17.1",
     "ai": "6.0.168",
     "fast-glob": "^3.3.3",
-    "ink": "^5.2.1",
     "proper-lockfile": "4.1.2",
     "solid-js": "^1.9.11",
     "turndown": "^7.2.4",
