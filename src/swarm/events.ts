@@ -91,6 +91,26 @@ export type LaneEventType =
   // ---------------- User loop ----------------
   | "question_asked"
   | "answer_received"
+  // ---------------- Branch lock ----------------
+  | "branch_lock_acquired"
+  | "branch_lock_released"
+  | "branch_lock_reclaimed"
+  | "branch_lock_timeout"
+  // ---------------- Stale base ----------------
+  | "stale_base_diverged"
+  | "stale_base_ok"
+  // ---------------- Cache ----------------
+  | "cache_hit"
+  | "cache_miss"
+  // ---------------- Parallel tool batch ----------------
+  | "parallel_tool_batch"
+  // ---------------- Preflight ----------------
+  | "preflight_degraded"
+  | "preflight_disabled"
+  // ---------------- Ask user ----------------
+  | "ask_user_question_sent"
+  | "ask_user_question_answered"
+  | "ask_user_question_timeout"
   // ---------------- Error ----------------
   | "error";
 
@@ -99,6 +119,80 @@ export type LaneEventType =
  * Payloads are unknown at this layer; concrete shapes live in feature modules.
  */
 export type LaneEventPayload = unknown;
+
+// ---------------------------------------------------------------------------
+// M3b Phase 0.2 — payload interfaces for new event types
+// ---------------------------------------------------------------------------
+
+export interface BranchLockAcquiredPayload {
+  readonly branch: string;
+  readonly laneId: string;
+}
+
+export interface BranchLockReleasedPayload {
+  readonly branch: string;
+  readonly laneId: string;
+}
+
+export interface BranchLockReclaimedPayload {
+  readonly branch: string;
+  readonly laneId: string;
+  readonly previousOwner: string;
+}
+
+export interface BranchLockTimeoutPayload {
+  readonly branch: string;
+  readonly laneId: string;
+  readonly waitedMs: number;
+}
+
+export interface StaleBaseDivergedPayload {
+  readonly branch: string;
+  readonly baseBranch: string;
+  readonly behindBy: number;
+}
+
+export interface StaleBaseOkPayload {
+  readonly branch: string;
+  readonly baseBranch: string;
+}
+
+export interface CacheHitPayload {
+  readonly fingerprint?: string;
+  readonly savedTokens?: number;
+}
+
+export interface CacheMissPayload {
+  readonly fingerprint?: string;
+}
+
+export interface ParallelToolBatchPayload {
+  readonly toolNames: readonly string[];
+  readonly batchSize: number;
+}
+
+export interface PreflightDegradedPayload {
+  readonly reason: string;
+}
+
+export interface PreflightDisabledPayload {
+  readonly reason: string;
+}
+
+export interface AskUserQuestionSentPayload {
+  readonly correlationId: string;
+  readonly question: string;
+}
+
+export interface AskUserQuestionAnsweredPayload {
+  readonly correlationId: string;
+  readonly answer: string;
+}
+
+export interface AskUserQuestionTimeoutPayload {
+  readonly correlationId: string;
+  readonly timeoutMs: number;
+}
 
 /** Structured failure classes for `error` events. */
 export type FailureClass =

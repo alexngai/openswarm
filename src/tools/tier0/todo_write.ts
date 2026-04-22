@@ -52,6 +52,8 @@ const spec: ToolSpec = {
   inputSchema: zodToJsonSchema(inputSchema as never) as JsonSchema,
   requiredPermission: "none",
   tier: 0,
+  // Module-level singleton races under parallel dispatch — must serialize.
+  concurrencySafe: false,
 };
 
 async function execute(raw: unknown, _ctx: ToolExecutionContext): Promise<ToolResult> {

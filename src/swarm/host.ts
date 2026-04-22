@@ -34,6 +34,16 @@ import type { AgentId, PermissionMode, SessionId, Usage } from "../core/types.js
 import type { LaneEvent } from "./events.js";
 
 // ---------------------------------------------------------------------------
+// AskUserResponse
+// ---------------------------------------------------------------------------
+
+export type AskUserResponse =
+  | { readonly status: "answered"; readonly answer: string }
+  | { readonly status: "cancelled" }
+  | { readonly status: "timed-out" }
+  | { readonly status: "error"; readonly message: string };
+
+// ---------------------------------------------------------------------------
 // SendResult
 // ---------------------------------------------------------------------------
 
@@ -109,6 +119,12 @@ export interface SwarmHost {
    * never blocks. Introduced in M3a Phase 3.
    */
   drainInbox(max: number): AgentMessage[];
+
+  /**
+   * Ask the operator a question and wait for a response.
+   * M3b Phase 6 implements the real transport; Phase 0 stubs throw.
+   */
+  askUser(question: string, options?: readonly string[]): Promise<AskUserResponse>;
 
   /** Task registry API — see below. */
   readonly task: TaskAPI;

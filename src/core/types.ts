@@ -55,6 +55,13 @@ export interface ToolSpec {
   readonly requiredPermission: RequiredPermission;
   /** 0..5 — see docs/04-tool-tiers.md */
   readonly tier: 0 | 1 | 2 | 3 | 4 | 5;
+  /**
+   * When true (default), the tool can be dispatched in parallel with other
+   * tools in a batch. When false, the dispatcher serializes calls to this
+   * tool even when parallel_tool_use is enabled. Stateful tools (e.g.
+   * todo_write with a module-level singleton) must set this to false.
+   */
+  readonly concurrencySafe?: boolean;
 }
 
 /**

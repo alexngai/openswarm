@@ -167,6 +167,9 @@ export function makeFakeHost(opts: FakeHostOpts = {}): {
     drainInbox(_max: number): AgentMessage[] {
       return [];
     },
+    askUser(_question: string, _options?: readonly string[]): Promise<import("../../swarm/host.js").AskUserResponse> {
+      throw new Error("M3b Phase 6 — not yet implemented");
+    },
     task,
   };
 

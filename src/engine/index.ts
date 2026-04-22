@@ -33,6 +33,7 @@ import type {
 import type { ToolImpl } from "../tools/types.js";
 import type { ToolDispatcher } from "../tools/dispatcher.js";
 import type { HooksConfigFile } from "../hooks/config.js";
+import type { ToolSpec } from "../core/types.js";
 
 // ---------------------------------------------------------------------------
 // Engine
@@ -63,6 +64,29 @@ export interface AgentEngine {
    * completed yet.
    */
   getCumulativeUsage(): Usage;
+
+  /**
+   * Optional server-side token preflight. Implementations that can't reach a
+   * counting endpoint (e.g. OAuth-only auth) should NOT implement this —
+   * callers fall back to a local estimate.
+   */
+  countTokens?(input: CountTokensInput): Promise<CountTokensResult>;
+}
+
+// ---------------------------------------------------------------------------
+// M3b Phase 0.4 — token preflight types
+// ---------------------------------------------------------------------------
+
+export interface CountTokensInput {
+  readonly systemPrompt?: string | readonly string[];
+  readonly messages: readonly unknown[]; // SDK's shape
+  readonly tools?: readonly ToolSpec[];
+  readonly model?: string;
+}
+
+export interface CountTokensResult {
+  readonly inputTokens: number;
+  readonly source: "server" | "local-estimate";
 }
 
 // ---------------------------------------------------------------------------

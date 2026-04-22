@@ -23,6 +23,9 @@ function makeHost(records: readonly TaskRecord[]): SwarmHost {
       throw new Error("not used");
     },
     drainInbox: () => [],
+    askUser: (): never => {
+      throw new Error("M3b Phase 6 — not yet implemented");
+    },
     task: {
       create: () => {
         throw new Error("not used");

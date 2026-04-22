@@ -196,4 +196,8 @@ export class WorkerHost implements SwarmHost {
   async *inbox(): AsyncIterable<InboxEvent> {
     return;
   }
+
+  askUser(_question: string, _options?: readonly string[]): Promise<import("./host.js").AskUserResponse> {
+    throw new Error("M3b Phase 6 — not yet implemented");
+  }
 }

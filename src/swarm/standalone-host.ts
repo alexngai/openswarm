@@ -451,6 +451,10 @@ export class StandaloneHost implements SwarmHost {
     return; // M3b+: full inbox iterator. Phase 3 uses drainInbox + sub_agent_event.
   }
 
+  askUser(_question: string, _options?: readonly string[]): Promise<import("./host.js").AskUserResponse> {
+    throw new Error("M3b Phase 6 — not yet implemented");
+  }
+
   // -------------------------------------------------------------------------
   // Worker lifecycle + IPC plumbing (M3a Phase 3)
   // -------------------------------------------------------------------------

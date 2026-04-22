@@ -2,6 +2,16 @@ import type { ToolSpec } from "../core/types.js";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "./types.js";
 import type { HookRuntime } from "../hooks/runtime.js";
 
+// ---------------------------------------------------------------------------
+// M3b Phase 0.6 — batch dispatch types
+// ---------------------------------------------------------------------------
+
+export interface ToolRequest {
+  readonly name: string;
+  readonly input: unknown;
+  readonly ctx: ToolExecutionContext;
+}
+
 export interface ToolDispatcherOptions {
   /**
    * Optional HookRuntime. When present, `dispatch()` fires `PreToolUse` before
@@ -162,5 +172,19 @@ export class ToolDispatcher {
     }
 
     return result;
+  }
+
+  /**
+   * Dispatch a batch of tool requests and return results in input order.
+   *
+   * Phase 0: serial loop — each request dispatched one at a time.
+   * Phase 4 will replace this with parallel dispatch for concurrencySafe tools.
+   */
+  async dispatchBatch(requests: readonly ToolRequest[]): Promise<readonly ToolResult[]> {
+    const results: ToolResult[] = [];
+    for (const req of requests) {
+      results.push(await this.dispatch(req.name, req.input, req.ctx));
+    }
+    return results;
   }
 }

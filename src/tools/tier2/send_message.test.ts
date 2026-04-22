@@ -66,6 +66,9 @@ function hostAs(root: StandaloneHost, agentId: AgentId, depth: number): SwarmHos
       ((root as any).messageInbox as {
         drain: (id: AgentId, n: number) => AgentMessage[];
       }).drain(agentId, max),
+    askUser: (): never => {
+      throw new Error("M3b Phase 6 — not yet implemented");
+    },
     task: root.task,
   };
 }

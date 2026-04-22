@@ -58,7 +58,8 @@ export type IpcRequestMethod =
   | "task.stop"
   | "task.output"
   | "task.owner_of"
-  | "ancestry.is_ancestor_of";
+  | "ancestry.is_ancestor_of"
+  | "ask_user_question";
 
 export type IpcResponse = IpcOk | IpcErr;
 
@@ -180,3 +181,25 @@ export const AncestryIsAncestorOfParamsSchema = z.object({
   descendant: z.string(),
 });
 export type AncestryIsAncestorOfParams = z.infer<typeof AncestryIsAncestorOfParamsSchema>;
+
+// ---------------------------------------------------------------------------
+// M3b Phase 0.3 — ask_user_question
+// ---------------------------------------------------------------------------
+
+/**
+ * params for "ask_user_question" request (worker → orchestrator).
+ *
+ * Response (ok: true): { answer: string }
+ * Response (ok: false): { code: "timeout" | "transport_closed" | "no_operator"; message: string }
+ *
+ * Error codes:
+ *   - "timeout"          — operator did not respond within timeoutMs
+ *   - "transport_closed" — IPC channel closed before a response arrived
+ *   - "no_operator"      — orchestrator has no operator attached (non-interactive mode)
+ */
+export const AskUserQuestionParamsSchema = z.object({
+  question: z.string().min(1),
+  options: z.array(z.string()).optional(),
+  timeoutMs: z.number().int().positive().optional(),
+});
+export type AskUserQuestionParams = z.infer<typeof AskUserQuestionParamsSchema>;
