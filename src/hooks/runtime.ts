@@ -98,6 +98,19 @@ function escapeRegex(s: string): string {
 // Runtime
 // ---------------------------------------------------------------------------
 
+/**
+ * HookRuntime is REENTRANCY-SAFE.
+ *
+ * invoke() creates all per-call state inside the function body: a fresh
+ * AbortController, fresh child process, fresh stdout/stderr buffers, and
+ * a fresh timeout. No shared mutable state is mutated across concurrent
+ * invocations. Parallel tool dispatch (M3b Phase 4) may call invoke()
+ * from multiple Promise.all branches simultaneously; each branch sees
+ * its own isolated state.
+ *
+ * Shared reads (the config passed at construction) are immutable after
+ * constructor and safe to read concurrently.
+ */
 export class HookRuntime {
   constructor(private readonly config: HooksConfigFile) {}
 

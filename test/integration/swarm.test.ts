@@ -469,7 +469,9 @@ describe("Scenario 9b: real spawn chain — ancestry-based task_stop end-to-end"
         handleC.wait().catch(() => {}),
       ]);
     },
-    30_000,
+    // 60s to accommodate 3 subprocess spawns + the task_stop protocol
+    // under CI load. Observed ~20-35s wall-clock locally; 30s was borderline.
+    60_000,
   );
 });
 

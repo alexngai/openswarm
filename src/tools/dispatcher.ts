@@ -177,14 +177,50 @@ export class ToolDispatcher {
   /**
    * Dispatch a batch of tool requests and return results in input order.
    *
-   * Phase 0: serial loop — each request dispatched one at a time.
-   * Phase 4 will replace this with parallel dispatch for concurrencySafe tools.
+   * Phase 4: parallel fan-out for concurrencySafe tools, serial for unsafe.
+   *
+   * Partitions requests by `spec.concurrencySafe`:
+   *   - `undefined` or `true`  → safe, dispatched in parallel via Promise.all
+   *   - `false`                → unsafe, dispatched serially in input order
+   *     after all safe tools complete (preserves determinism, e.g. two
+   *     todo_write calls write in input order).
+   *
+   * Results are returned in the SAME order as input regardless of partition.
+   *
+   * Note: parallel_tool_batch lane events are emitted by upstream callers
+   * rather than here, to avoid emitter-plumbing complexity in the dispatcher.
    */
   async dispatchBatch(requests: readonly ToolRequest[]): Promise<readonly ToolResult[]> {
-    const results: ToolResult[] = [];
-    for (const req of requests) {
-      results.push(await this.dispatch(req.name, req.input, req.ctx));
+    // Partition by concurrencySafe.
+    // Safe tools dispatch in parallel via Promise.all.
+    // Unsafe tools dispatch serially, in input-order after all safe tools complete
+    // (to preserve determinism).
+    //
+    // Results returned in the SAME order as input regardless of partition.
+
+    const results: ToolResult[] = new Array(requests.length);
+    const safeIndices: number[] = [];
+    const unsafeIndices: number[] = [];
+
+    for (let i = 0; i < requests.length; i++) {
+      const spec = this.registry.get(requests[i]!.name)?.spec;
+      const isSafe = spec?.concurrencySafe !== false; // undefined / true = safe
+      if (isSafe) safeIndices.push(i);
+      else unsafeIndices.push(i);
     }
+
+    // Parallel dispatch of safe tools.
+    await Promise.all(
+      safeIndices.map(async (i) => {
+        results[i] = await this.dispatch(requests[i]!.name, requests[i]!.input, requests[i]!.ctx);
+      }),
+    );
+
+    // Serial dispatch of unsafe tools (input-order).
+    for (const i of unsafeIndices) {
+      results[i] = await this.dispatch(requests[i]!.name, requests[i]!.input, requests[i]!.ctx);
+    }
+
     return results;
   }
 }

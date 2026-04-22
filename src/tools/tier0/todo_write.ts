@@ -43,6 +43,12 @@ function formatTodos(todos: readonly Todo[]): string {
     .join("\n");
 }
 
+/**
+ * todo_write is marked `concurrencySafe: false` because it maintains a
+ * module-level `currentTodos` array. Two concurrent invocations would
+ * race on the singleton. The dispatcher's batch path detects this and
+ * serializes calls to todo_write.
+ */
 const spec: ToolSpec = {
   name: "todo_write",
   description:
