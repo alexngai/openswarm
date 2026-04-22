@@ -23,7 +23,7 @@ The minimum viable coding agent. An atomic unit must have exactly these to be us
 |---|---|
 | `web_fetch` | GET a URL, return markdown |
 | `web_search` | Query the web |
-| `notebook_edit` | Jupyter notebook cell operations |
+| `notebook_edit` | Jupyter notebook cell operations | **shipped M3b** |
 | `structured_output` | Force JSON-shaped final answer |
 | `skill` | Invoke a loaded skill |
 
@@ -42,6 +42,7 @@ What makes swarm-coder a *swarm*. Dispatched via `SwarmHost`. Works in both stan
 | `task_output` | Append to a task's output stream | **shipped M3a** |
 | `send_message` | Message another agent by id | **shipped M3a** |
 | `check_inbox` | Read messages for this agent | **shipped M3a** |
+| `ask_user_question` | Structured question back to the human, routed via `SwarmHost` | **shipped M3b** |
 
 ## Tier 3 — Team / schedule
 
@@ -53,7 +54,6 @@ What makes swarm-coder a *swarm*. Dispatched via `SwarmHost`. Works in both stan
 | `cron_list` | List scheduled crons |
 | `cron_delete` | Remove a cron |
 | `remote_trigger` | Invoke a remote agent |
-| `ask_user_question` | Structured question back to the human |
 
 ## Tier 4 — Developer surface
 

@@ -141,6 +141,18 @@ Multi-agent swarms writing to the same git working tree need coordination to avo
 
 These are the only parts of claw's coordination layer we import directly.
 
+## Branch coordination (M3b)
+
+M3b ships the atomic lock + staleness modules the orchestrator consults before and after each worker spawn.
+
+- **`BranchPolicy.kind`** determines whether a lock is acquired at dispatch:
+  - `"none"` — no lock; policies like scratch commits or read-only inspection runs pass through unserialized.
+  - `"reuse"` — lock keyed on `policy.branch`; two tasks declaring the same branch name serialize.
+  - `"create"` — lock keyed on `policy.name` when provided, else a synthesized `task-<id>-<shortHash>`. (Post-checkout `git symbolic-ref --short HEAD` resolution lands with `NativeEngine` in M4; M3b uses the advisory key.)
+- **Lock directory** is anchored to `git rev-parse --git-common-dir` so two worktrees of the same repo share the same lock space. File format is JSON `{ ownerAgentId, acquiredAt, pid, branch }`; acquire uses `fs.open(path, "wx")` (O_EXCL-equivalent). Stale reclaim triggers when the holder pid is dead AND the file is older than `staleReclaimAfterMs` (default 30 s).
+- **`stale_base`** runs at acquire time. A `diverged` result emits a `stale_base_diverged` lane event but does NOT block dispatch — it is advisory. `no-expected-base` and `not-a-git-repo` are silent (no event).
+- **`stale_branch`** returns `fresh | stale | diverged`. Pair with `applyPolicy(freshness, policyKind)` to produce a `PolicyIntent`: `Noop | Warn | Block | Rebase | MergeForward`. Intents are advisory — M3b does NOT perform the rebase/merge itself; a future `NativeEngine` auto-executor can honor them.
+
 ## Anti-patterns we reject
 
 From claw-code research (05-swarm.md §3, §9; see `07-implementation-plan.md` for the full list):

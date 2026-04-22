@@ -329,8 +329,13 @@ export class Orchestrator extends EventEmitter {
           if (perAttemptCeiling != null && perAttemptCeiling > 0) {
             const timeoutSentinel = Symbol("per-attempt-timeout");
             const waitPromise = handle.wait();
+            // Capture the timer id so we can clear it if waitPromise wins the
+            // race. Without this, the pending timer keeps the event loop alive
+            // for up to `perAttemptCeiling` ms (minutes) after the task ends,
+            // delaying process exit. M3a carry-over 8.0a.
+            let timeoutId: ReturnType<typeof setTimeout> | undefined;
             const racePromise = new Promise<typeof timeoutSentinel>((resolve) => {
-              setTimeout(() => resolve(timeoutSentinel), perAttemptCeiling);
+              timeoutId = setTimeout(() => resolve(timeoutSentinel), perAttemptCeiling);
             });
             const raced = await Promise.race([waitPromise, racePromise]);
             if (raced === timeoutSentinel) {
@@ -348,6 +353,9 @@ export class Orchestrator extends EventEmitter {
               // resources get cleaned up; swallow its outcome.
               void waitPromise.catch(() => {});
             } else {
+              // waitPromise won — clear the still-pending timer so it doesn't
+              // hold the event loop open.
+              if (timeoutId !== undefined) clearTimeout(timeoutId);
               result = raced;
             }
           } else {

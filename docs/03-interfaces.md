@@ -177,6 +177,11 @@ export interface SwarmHost {
 
 **M3a additions (Phase 6):** `SpawnRequest.role` and `SpawnRequest.allowedTools` are now load-bearing — the orchestrator populates them from the resolved `Role` object, the subprocess spawner propagates `SWARM_CODER_ROLE` to the child, and the worker entry wires them into `RunConfig.systemPrompt` + `RunConfig.allowedTools`. The `BranchPolicy`, `CommitPolicy`, and `EscalationPolicy` fields on `TaskPacket` are discriminated-kind records (not flat strings); Zod schemas live in `src/swarm/policies.ts`. See `docs/11-m3a-plan.md` for the migration path from legacy flat strings.
 
+**M3b additions:**
+- `SwarmHost.askUser(question, options?): Promise<AskUserResponse>` (Phase 6) — routes through the host, so Tier 2 `ask_user_question` works identically in standalone (TTY readline fallback) and worker (IPC → orchestrator) modes. `AskUserResponse = { status: "answered"; answer } | { status: "cancelled" | "timed-out" } | { status: "error"; message }`.
+- `RunConfig.systemPrompt` now accepts `string | readonly string[]` (Phase 3). When a string is supplied, `ClaudeAgentSdkEngine` wraps it with `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` from the SDK so the static prefix is eligible for prompt caching while per-run dynamic context stays uncached. If the marker export is missing at runtime (SDK version skew), the engine falls back to a plain string and emits `prompt_cache_unavailable`.
+- `AgentEngine.countTokens?(input): Promise<CountTokensResult>` (Phase 7) — optional preflight. M3b ships a local-estimate-only implementation (`source: "local-estimate"`); the server path waits for an SDK-native count method since the REST endpoint needs API-key auth unavailable under Claude Max.
+
 Two implementations:
 
 - **`StandaloneHost`** — no parent. `spawn` subprocess-spawns a child. `send`/`inbox` operate on an in-process pub/sub so tool behavior stays consistent.

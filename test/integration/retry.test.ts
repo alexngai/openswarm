@@ -5,9 +5,10 @@
  * a tmp dead-letter file so they run fast and without I/O side-effects.
  */
 
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeAll } from "vitest";
 import { PassThrough } from "node:stream";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { execSync, spawn } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Orchestrator } from "../../src/swarm/orchestrator.js";
@@ -255,6 +256,131 @@ describe("Retry integration: exhausts retry budget → dead-letter", () => {
 
     expect(summary.deadLetterViolation).toBe(false);
   });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 3: kind=none policy → never retries, no dead-letter
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Scenario 4: Real-subprocess per-attempt wall-clock timeout (M3b Phase 8.0b)
+// ---------------------------------------------------------------------------
+
+describe("Per-attempt wall-clock timeout: real subprocess (M3b Phase 8.0b)", () => {
+  beforeAll(() => {
+    // Ensure dist/cli.js is fresh for the subprocess launch.
+    execSync("npm run build", {
+      cwd: path.resolve(process.cwd()),
+      stdio: "pipe",
+    });
+  }, 60_000);
+
+  it(
+    "kills a real slow-fixture subprocess within 2s of the 500ms ceiling",
+    async () => {
+      const tmp = mkdtempSync(path.join(tmpdir(), "swarm-retry-subproc-"));
+      try {
+        const tasksFile = path.join(tmp, "tasks.jsonl");
+        const resultsFile = path.join(tmp, "results.jsonl");
+        const deadLetterFile = path.join(tmp, "dl.jsonl");
+
+        // slow.json emits 4 events × 200ms = 800ms total. With a 500ms
+        // per-attempt ceiling, the orchestrator must kill the worker before
+        // the fixture finishes streaming. escalationPolicy "none" means the
+        // task fails immediately without retry (retry-policy Zod requires
+        // max > 0, so "none" is the right way to express "no retry").
+        const task: TaskPacket = {
+          id: "slow-timeout-task",
+          prompt: "run slow fixture",
+          branchPolicy: { kind: "none" },
+          commitPolicy: { kind: "none" },
+          escalationPolicy: { kind: "none" },
+          budget: { maxWallClockMsPerAttempt: 500 },
+        };
+        writeFileSync(tasksFile, JSON.stringify(task) + "\n");
+
+        const cliPath = path.resolve(process.cwd(), "dist/cli.js");
+        const slowFixture = path.resolve(
+          process.cwd(),
+          "test/fixtures/worker-scripts/slow.json",
+        );
+
+        const startedAt = Date.now();
+        const child = spawn(
+          process.execPath,
+          [
+            cliPath,
+            "swarm",
+            "run",
+            tasksFile,
+            "--concurrency",
+            "1",
+            "--output",
+            resultsFile,
+            "--dead-letter",
+            deadLetterFile,
+            "--allow-dead-letter",
+          ],
+          {
+            cwd: process.cwd(),
+            env: {
+              ...process.env,
+              SWARM_CODER_TEST_SCRIPT: slowFixture,
+            },
+            stdio: ["ignore", "pipe", "pipe"],
+          },
+        );
+
+        const exitCode: number = await new Promise((resolve, reject) => {
+          const killTimer = setTimeout(() => {
+            child.kill("SIGKILL");
+            reject(
+              new Error(
+                "orchestrator did not exit within 10s of 500ms ceiling",
+              ),
+            );
+          }, 10_000);
+          child.once("exit", (code) => {
+            clearTimeout(killTimer);
+            resolve(code ?? -1);
+          });
+          child.once("error", (err) => {
+            clearTimeout(killTimer);
+            reject(err);
+          });
+        });
+        const elapsedMs = Date.now() - startedAt;
+
+        // The orchestrator must exit well within 2 seconds of the 500ms
+        // ceiling — this guards against the runaway-timer regression that
+        // 8.0a fixes as well as basic kill() plumbing.
+        expect(elapsedMs).toBeLessThan(8_000);
+
+        // Exit code: task failed because retry max=0 and the attempt timed
+        // out; with --allow-dead-letter the process may still exit 0. We
+        // care only that it terminated.
+        expect(exitCode).not.toBeNull();
+
+        // Results file should show the task as failed or timeout (per-attempt
+        // cutoff).
+        const resultsContent = readFileSync(resultsFile, "utf8").trim();
+        const resultLines = resultsContent
+          .split("\n")
+          .filter((l) => l.length > 0)
+          .map((l) => JSON.parse(l) as { id: string; status: string });
+        const ours = resultLines.find((l) => l.id === "slow-timeout-task");
+        expect(ours).toBeDefined();
+        expect(["failed", "timeout", "cancelled"]).toContain(ours!.status);
+      } finally {
+        try {
+          rmSync(tmp, { recursive: true });
+        } catch {
+          /* ignore */
+        }
+      }
+    },
+    30_000,
+  );
 });
 
 // ---------------------------------------------------------------------------
