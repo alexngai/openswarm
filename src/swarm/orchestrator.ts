@@ -25,6 +25,8 @@ import { WorkerPool } from "./worker-pool.js";
 import { planRetry } from "./retry-policy.js";
 import { DeadLetterWriter } from "./dead-letter.js";
 import type { RoleRegistry, Role } from "./roles.js";
+import * as branchLock from "./git/branch-lock.js";
+import * as staleBase from "./git/stale-base.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -109,6 +111,9 @@ export class Orchestrator extends EventEmitter {
   private readonly cumulativeInputTokens = new Map<string, number>();
   private readonly cumulativeOutputTokens = new Map<string, number>();
   private readonly perAttemptDurations = new Map<string, number[]>();
+  // M3b Phase 2: per-task branch-lock handles, keyed by task.id. Released on
+  // terminal transition (succeeded/failed/timeout/cancelled/dead-letter).
+  private readonly branchLocks = new Map<string, branchLock.LockHandle>();
 
   constructor(private readonly opts: OrchestratorOptions) {
     super();
@@ -188,6 +193,73 @@ export class Orchestrator extends EventEmitter {
         });
         counts.failed++;
         return;
+      }
+
+      // M3b Phase 2: acquire branch lock (advisory for create/reuse).
+      // Release is guaranteed via releaseBranchLock() on terminal transition.
+      const lockKey = this.branchLockKey(task);
+      if (lockKey !== null) {
+        try {
+          const handle = await branchLock.acquire(lockKey, {
+            agentId: this.host.agentId,
+            timeoutMs: 60_000,
+            cwd: process.cwd(),
+          });
+          this.branchLocks.set(task.id, handle);
+          this.host.emit({
+            type: "branch_lock_acquired",
+            payload: { branch: lockKey, laneId: task.id },
+          });
+        } catch (err) {
+          token.release();
+          const msg = err instanceof Error ? err.message : String(err);
+          this.host.emit({
+            type: "branch_lock_timeout",
+            payload: {
+              branch: lockKey,
+              laneId: task.id,
+              waitedMs: 60_000,
+            },
+          });
+          const line: ResultLine = {
+            id: task.id,
+            status: "failed",
+            error: msg,
+            wallClockMs: 0,
+            agentId: this.host.agentId,
+            sessionId: "none",
+            completedAt: Date.now(),
+          };
+          await this.writeResult(line).catch((e) => {
+            firstResultWriteError ??= e;
+          });
+          counts.failed++;
+          return;
+        }
+
+        // M3b Phase 2: stale-base check (best-effort, non-blocking).
+        try {
+          const result = await staleBase.check({ cwd: process.cwd() });
+          if (result.kind === "diverged") {
+            this.host.emit({
+              type: "stale_base_diverged",
+              payload: {
+                branch: lockKey,
+                baseBranch: result.expected,
+                behindBy: 0, // unknown at this layer; payload shape requires a number
+              },
+            });
+          } else if (result.kind === "matches") {
+            this.host.emit({
+              type: "stale_base_ok",
+              payload: { branch: lockKey, baseBranch: "" },
+            });
+          }
+          // no-expected-base / not-a-git-repo → silent, no event.
+        } catch {
+          // stale_base.check should not throw, but swallow any surprise so
+          // advisory check never fails a task dispatch.
+        }
       }
 
       // Resolve role (per-task override beats orchestrator default). Unknown
@@ -406,6 +478,8 @@ export class Orchestrator extends EventEmitter {
       }
 
       token.release();
+      // Release branch lock on terminal transition (if one was acquired).
+      await this.releaseBranchLock(task.id);
 
       const result = finalResult!;
       const handle = finalHandle;
@@ -568,6 +642,53 @@ export class Orchestrator extends EventEmitter {
         },
       });
     }
+  }
+
+  /**
+   * Compute the branch-lock key for a task's BranchPolicy, or null if no
+   * lock should be acquired.
+   *
+   * Mapping:
+   *   - `none`   → null (skip lock entirely)
+   *   - `reuse`  → policy.branch
+   *   - `create` → policy.name ?? `task-<id>-<shortHash(id)>` (TEMPORARY —
+   *                a future phase with real `git checkout` will replace this
+   *                with post-checkout `git symbolic-ref --short HEAD`).
+   */
+  private branchLockKey(task: TaskPacket): string | null {
+    const policy = task.branchPolicy as BranchPolicy;
+    if (policy.kind === "none") return null;
+    if (policy.kind === "reuse") return policy.branch;
+    // kind === "create"
+    if (policy.name !== undefined) return policy.name;
+    const shortHash = createHash("sha256")
+      .update(task.id)
+      .digest("hex")
+      .slice(0, 7);
+    return `task-${task.id}-${shortHash}`;
+  }
+
+  /**
+   * Release the branch lock for a task (if held). Emits `branch_lock_released`.
+   * Idempotent — safe to call even when no lock was acquired. Errors during
+   * release are swallowed after a single stderr message (lock file persistence
+   * would block future tasks, but we've already accounted for stale reclaim).
+   */
+  private async releaseBranchLock(taskId: string): Promise<void> {
+    const handle = this.branchLocks.get(taskId);
+    if (handle === undefined) return;
+    this.branchLocks.delete(taskId);
+    try {
+      await handle.release();
+    } catch (err) {
+      process.stderr.write(
+        `[swarm-coder] branch-lock release failed for task ${taskId}: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+    }
+    this.host.emit({
+      type: "branch_lock_released",
+      payload: { branch: handle.branch, laneId: taskId },
+    });
   }
 
   /**

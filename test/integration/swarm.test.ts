@@ -477,6 +477,70 @@ describe("Scenario 9b: real spawn chain — ancestry-based task_stop end-to-end"
 // Scenario 10 (M3a Phase 3): depth-2 sender is rejected with a typed reason
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Scenario 11 (M3b Phase 2): two tasks on same branch serialize via branch lock
+// ---------------------------------------------------------------------------
+
+describe("Scenario 11: branch-lock serializes two tasks sharing a branch", () => {
+  it(
+    "two tasks with branchPolicy.reuse on the same branch acquire and release the lock in order",
+    async () => {
+      // Import after the test file has loaded so we use the current source tree.
+      const { acquire } = await import("../../src/swarm/git/branch-lock.js");
+      const os = await import("node:os");
+      const fsp = await import("node:fs/promises");
+      const path = await import("node:path");
+
+      const lockDir = await fsp.mkdtemp(
+        path.join(os.tmpdir(), "swarm-scenario11-"),
+      );
+      try {
+        const branch = "feature/scenario11";
+        const acquireOrder: string[] = [];
+        const releaseOrder: string[] = [];
+
+        // Task A acquires, holds briefly, releases.
+        const a = await acquire(branch, {
+          agentId: "task-a",
+          timeoutMs: 2_000,
+          lockDir,
+          pollIntervalMs: 20,
+        });
+        acquireOrder.push("a");
+
+        // Task B tries to acquire concurrently — must wait for A.
+        const bPromise = acquire(branch, {
+          agentId: "task-b",
+          timeoutMs: 3_000,
+          lockDir,
+          pollIntervalMs: 20,
+        }).then((h) => {
+          acquireOrder.push("b");
+          return h;
+        });
+
+        // Give B time to observe EEXIST at least once.
+        await new Promise((r) => setTimeout(r, 80));
+        expect(acquireOrder).toEqual(["a"]);
+
+        releaseOrder.push("a");
+        await a.release();
+
+        const b = await bPromise;
+        expect(acquireOrder).toEqual(["a", "b"]);
+
+        releaseOrder.push("b");
+        await b.release();
+
+        expect(releaseOrder).toEqual(["a", "b"]);
+      } finally {
+        await fsp.rm(lockDir, { recursive: true, force: true }).catch(() => {});
+      }
+    },
+    15_000,
+  );
+});
+
 describe("Scenario 10: depth>1 messaging is rejected (rev-2 Option A)", () => {
   it("a message from a depth-2 agent returns { ok: false, reason: 'depth>1 messaging unsupported' }", async () => {
     const root = new StandaloneHost({
