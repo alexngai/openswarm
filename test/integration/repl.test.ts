@@ -6,30 +6,19 @@
  * These tests spawn `node dist/cli.js prompt --headless ...` with the
  * scripted engine enabled via SWARM_CODER_TEST_SCRIPT. No live API calls.
  *
- * Prereq: `npm run build` — the beforeAll hook runs it automatically.
+ * Prereq: `npm run build` — runs once via test/integration/global-setup.ts
+ * (vitest globalSetup hook). No per-file build needed.
  */
 
 import {
   describe,
   it,
   expect,
-  beforeAll,
 } from "vitest";
-import { execSync, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-
-// ---------------------------------------------------------------------------
-// Setup: build dist so subprocess tests use current code.
-// ---------------------------------------------------------------------------
-
-beforeAll(() => {
-  execSync("npm run build", {
-    cwd: process.cwd(),
-    stdio: "pipe",
-  });
-}, 60_000);
 
 // ---------------------------------------------------------------------------
 // Paths

@@ -5,9 +5,9 @@
  * a tmp dead-letter file so they run fast and without I/O side-effects.
  */
 
-import { describe, it, expect, vi, afterEach, beforeAll } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { PassThrough } from "node:stream";
-import { execSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -267,13 +267,8 @@ describe("Retry integration: exhausts retry budget → dead-letter", () => {
 // ---------------------------------------------------------------------------
 
 describe("Per-attempt wall-clock timeout: real subprocess (M3b Phase 8.0b)", () => {
-  beforeAll(() => {
-    // Ensure dist/cli.js is fresh for the subprocess launch.
-    execSync("npm run build", {
-      cwd: path.resolve(process.cwd()),
-      stdio: "pipe",
-    });
-  }, 60_000);
+  // Build runs once via test/integration/global-setup.ts (vitest globalSetup).
+  // No per-describe beforeAll needed — see vitest.config.ts.
 
   it(
     "kills a real slow-fixture subprocess within 2s of the 500ms ceiling",

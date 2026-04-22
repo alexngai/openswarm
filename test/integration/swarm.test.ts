@@ -5,19 +5,17 @@
  * ScriptedTestEngine fixtures (no real Anthropic API calls).
  *
  * Prerequisites: `npm run build` must have been run (dist/cli.js must exist).
- * The beforeAll block runs the build automatically.
+ * Build runs once via test/integration/global-setup.ts — vitest's globalSetup
+ * hook — to avoid per-file parallel-build races on the shared dist/ output.
  */
 
 import {
   describe,
   it,
   expect,
-  beforeAll,
   afterEach,
 } from "vitest";
-import { execSync } from "node:child_process";
 import * as path from "node:path";
-import * as fs from "node:fs";
 import {
   spawnWorkerProcess,
   makeTaskPacket,
@@ -27,17 +25,6 @@ import {
 import { StandaloneHost } from "../../src/swarm/standalone-host.js";
 import type { AgentId } from "../../src/core/types.js";
 import type { AgentMessage, SendResult } from "../../src/swarm/host.js";
-
-// ---------------------------------------------------------------------------
-// Setup: build dist so subprocess tests use current code.
-// ---------------------------------------------------------------------------
-
-beforeAll(() => {
-  execSync("npm run build", {
-    cwd: path.resolve(process.cwd()),
-    stdio: "pipe",
-  });
-}, 60_000);
 
 // ---------------------------------------------------------------------------
 // Helpers
