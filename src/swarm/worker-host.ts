@@ -197,7 +197,45 @@ export class WorkerHost implements SwarmHost {
     return;
   }
 
-  askUser(_question: string, _options?: readonly string[]): Promise<import("./host.js").AskUserResponse> {
-    throw new Error("M3b Phase 6 — not yet implemented");
+  /**
+   * Proxy ask_user_question through the orchestrator.
+   *
+   * Timeout: controlled by `SWARM_CODER_ASK_TIMEOUT_MS` env var (default
+   * 600_000 ms). On orchestrator-side timeout the IPC layer surfaces
+   * `request_timeout`, which we translate to `{status: "timed-out"}`.
+   * Transport close returns `{status: "error", message: "transport_closed: ..."}`.
+   */
+  async askUser(
+    question: string,
+    options?: readonly string[],
+  ): Promise<import("./host.js").AskUserResponse> {
+    const rawTimeout = process.env.SWARM_CODER_ASK_TIMEOUT_MS ?? "600000";
+    const parsedTimeout = parseInt(rawTimeout, 10);
+    const timeoutMs =
+      Number.isFinite(parsedTimeout) && parsedTimeout > 0
+        ? parsedTimeout
+        : 600_000;
+
+    try {
+      const result = await this.transport.send<{ answer: string }>(
+        "ask_user_question",
+        { question, options, timeoutMs },
+        { timeoutMs },
+      );
+      return { status: "answered", answer: result.answer };
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code;
+      const msg = err instanceof Error ? err.message : String(err);
+      if (code === "request_timeout" || code === "timeout") {
+        return { status: "timed-out" };
+      }
+      if (code === "cancelled") {
+        return { status: "cancelled" };
+      }
+      if (code === "transport_closed") {
+        return { status: "error", message: `transport_closed: ${msg}` };
+      }
+      return { status: "error", message: msg };
+    }
   }
 }

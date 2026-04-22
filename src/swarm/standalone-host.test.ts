@@ -269,3 +269,119 @@ describe("StandaloneHost", () => {
     void emit2;
   });
 });
+
+// ---------------------------------------------------------------------------
+// askUser — M3b Phase 6
+// ---------------------------------------------------------------------------
+
+describe("StandaloneHost.askUser", () => {
+  /**
+   * Temporarily force process.stdin/stdout `isTTY` to a given value for the
+   * duration of a test. `isTTY` is a runtime-set readonly property; we use
+   * defineProperty so the override is reversible.
+   */
+  function withIsTTY(value: boolean): () => void {
+    const prevIn = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+    const prevOut = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+    Object.defineProperty(process.stdin, "isTTY", {
+      configurable: true,
+      value,
+    });
+    Object.defineProperty(process.stdout, "isTTY", {
+      configurable: true,
+      value,
+    });
+    return () => {
+      if (prevIn) Object.defineProperty(process.stdin, "isTTY", prevIn);
+      else delete (process.stdin as { isTTY?: boolean }).isTTY;
+      if (prevOut) Object.defineProperty(process.stdout, "isTTY", prevOut);
+      else delete (process.stdout as { isTTY?: boolean }).isTTY;
+    };
+  }
+
+  it("TTY: reads a free-form answer via readline", async () => {
+    const restore = withIsTTY(true);
+    try {
+      const host = new StandaloneHost({
+        readlineFactory: async () => ({
+          question: async () => "yes please",
+          close: () => {},
+        }),
+      });
+      const events: string[] = [];
+      host["events"].on("lane_event", (e: { type: string }) =>
+        events.push(e.type),
+      );
+      const result = await host.askUser("do you?");
+      expect(result).toEqual({ status: "answered", answer: "yes please" });
+      expect(events).toContain("ask_user_question_sent");
+      expect(events).toContain("ask_user_question_answered");
+    } finally {
+      restore();
+    }
+  });
+
+  it("headless (no TTY): returns {status: 'error'} with TTY message", async () => {
+    const restore = withIsTTY(false);
+    try {
+      const host = new StandaloneHost();
+      const result = await host.askUser("ping?");
+      expect(result.status).toBe("error");
+      if (result.status === "error") {
+        expect(result.message).toMatch(/TTY/);
+      }
+    } finally {
+      restore();
+    }
+  });
+
+  it("TTY + options: numeric answer maps to the option at that index", async () => {
+    const restore = withIsTTY(true);
+    try {
+      const host = new StandaloneHost({
+        readlineFactory: async () => ({
+          // User types "2" → second option ("b").
+          question: async () => "2",
+          close: () => {},
+        }),
+      });
+      const result = await host.askUser("pick one", ["a", "b", "c"]);
+      expect(result).toEqual({ status: "answered", answer: "b" });
+    } finally {
+      restore();
+    }
+  });
+
+  it("TTY + options: out-of-range numeric answer is returned as-is (literal)", async () => {
+    const restore = withIsTTY(true);
+    try {
+      const host = new StandaloneHost({
+        readlineFactory: async () => ({
+          question: async () => "9",
+          close: () => {},
+        }),
+      });
+      const result = await host.askUser("pick one", ["a", "b"]);
+      // 9 is out of range — fall through to raw answer.
+      expect(result).toEqual({ status: "answered", answer: "9" });
+    } finally {
+      restore();
+    }
+  });
+
+  it("TTY: trims whitespace from the answer", async () => {
+    const restore = withIsTTY(true);
+    try {
+      const host = new StandaloneHost({
+        readlineFactory: async () => ({
+          question: async () => "   hello world   \n",
+          close: () => {},
+        }),
+      });
+      const result = await host.askUser("q");
+      expect(result).toEqual({ status: "answered", answer: "hello world" });
+    } finally {
+      restore();
+    }
+  });
+});

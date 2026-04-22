@@ -30,8 +30,19 @@ import {
   TaskOutputParamsSchema,
   TaskOwnerOfParamsSchema,
   AncestryIsAncestorOfParamsSchema,
+  AskUserQuestionParamsSchema,
   type IpcRequest,
 } from "./ipc/protocol.js";
+
+/**
+ * Injectable readline factory (for testability). Default uses the real
+ * node:readline/promises module; tests override via `StandaloneHostOptions.readlineFactory`.
+ */
+export interface ReadlineLike {
+  question(prompt: string): Promise<string>;
+  close(): void;
+}
+export type ReadlineFactory = () => Promise<ReadlineLike>;
 
 export interface StandaloneHostOptions {
   readonly registry?: TaskRegistry;
@@ -40,6 +51,11 @@ export interface StandaloneHostOptions {
   readonly permissionMode?: PermissionMode;
   /** For tests: override subprocess spawn so no real child is created. */
   readonly spawnWorker?: typeof spawnWorker;
+  /**
+   * For tests: override the readline/promises interface used by askUser().
+   * When absent, askUser() lazy-imports node:readline/promises.
+   */
+  readonly readlineFactory?: ReadlineFactory;
 }
 
 export class StandaloneHost implements SwarmHost {
@@ -69,6 +85,7 @@ export class StandaloneHost implements SwarmHost {
   private readonly maxDepth: number;
   private readonly events = new EventEmitter();
   private readonly spawnFn: typeof spawnWorker;
+  private readonly readlineFactory: ReadlineFactory;
 
   // M3a Phase 3 messaging state.
   private readonly messageInbox = new AgentInbox();
@@ -85,6 +102,19 @@ export class StandaloneHost implements SwarmHost {
     this.maxDepth = opts.maxDepth ?? resolveMaxDepth();
     this.permissionMode = opts.permissionMode ?? "workspace-write";
     this.spawnFn = opts.spawnWorker ?? spawnWorker;
+    this.readlineFactory =
+      opts.readlineFactory ??
+      (async () => {
+        const readline = await import("node:readline/promises");
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
+        return {
+          question: (prompt: string) => rl.question(prompt),
+          close: () => rl.close(),
+        };
+      });
     this.depths.set(this.agentId, 0);
 
     this.task = {
@@ -451,8 +481,67 @@ export class StandaloneHost implements SwarmHost {
     return; // M3b+: full inbox iterator. Phase 3 uses drainInbox + sub_agent_event.
   }
 
-  askUser(_question: string, _options?: readonly string[]): Promise<import("./host.js").AskUserResponse> {
-    throw new Error("M3b Phase 6 — not yet implemented");
+  /**
+   * Prompt the operator via the attached TTY and await an answer.
+   *
+   * Paths:
+   *  - Headless (non-TTY stdin or stdout): returns `{status: "error"}` so the
+   *    caller can detect there's no operator to ask. Worker agents must go
+   *    through `SwarmHost` IPC instead.
+   *  - TTY: uses `node:readline/promises` via the injectable
+   *    `readlineFactory`. If `options` is provided and the operator types a
+   *    number, that number maps 1-indexed into the list.
+   *
+   * The ink-modal integration noted in the plan is deferred; readline is the
+   * M3b TTY fallback.
+   */
+  async askUser(
+    question: string,
+    options?: readonly string[],
+  ): Promise<import("./host.js").AskUserResponse> {
+    this.emit({
+      type: "ask_user_question_sent",
+      payload: { question, optionsCount: options?.length ?? 0 },
+    });
+
+    if (!process.stdout.isTTY || !process.stdin.isTTY) {
+      return {
+        status: "error",
+        message:
+          "ask_user_question requires a TTY; use worker-mode IPC in headless contexts",
+      };
+    }
+
+    const rl = await this.readlineFactory();
+    try {
+      const promptLines: string[] = [question];
+      if (options != null && options.length > 0) {
+        options.forEach((opt, i) => promptLines.push(`  ${i + 1}) ${opt}`));
+      }
+      const prompt = promptLines.join("\n") + "\n> ";
+      const raw = await rl.question(prompt);
+      const answer = raw.trim();
+
+      if (options != null && /^\d+$/.test(answer)) {
+        const idx = parseInt(answer, 10) - 1;
+        if (idx >= 0 && idx < options.length) {
+          const selected = options[idx]!;
+          this.emit({
+            type: "ask_user_question_answered",
+            payload: { question, answer: selected },
+          });
+          return { status: "answered", answer: selected };
+        }
+      }
+
+      this.emit({
+        type: "ask_user_question_answered",
+        payload: { question, answer },
+      });
+      return { status: "answered", answer };
+    } finally {
+      rl.close();
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -573,6 +662,39 @@ export class StandaloneHost implements SwarmHost {
         parsed.data.descendant as AgentId,
       );
       transport.respond(frame.id, result);
+      return;
+    }
+    if (frame.method === "ask_user_question") {
+      const parsed = AskUserQuestionParamsSchema.safeParse(frame.params);
+      if (!parsed.success) {
+        transport.respondError(
+          frame.id,
+          IPC_ERROR_CODES.INVALID_PARAMS,
+          parsed.error.message,
+        );
+        return;
+      }
+      try {
+        const response = await this.askUser(
+          parsed.data.question,
+          parsed.data.options,
+        );
+        if (response.status === "answered") {
+          transport.respond(frame.id, { answer: response.answer });
+        } else if (response.status === "timed-out") {
+          transport.respondError(frame.id, "timeout", "user did not respond in time");
+        } else if (response.status === "cancelled") {
+          transport.respondError(frame.id, "cancelled", "question cancelled by user");
+        } else {
+          transport.respondError(frame.id, "error", response.message);
+        }
+      } catch (err) {
+        transport.respondError(
+          frame.id,
+          IPC_ERROR_CODES.INTERNAL_ERROR,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
       return;
     }
     // Unknown / unsupported method — reply so the worker doesn't hang.

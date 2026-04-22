@@ -21,12 +21,18 @@ import type {
 } from "../../swarm/host.js";
 import type { AgentId, SessionId } from "../../core/types.js";
 import type { LaneEvent } from "../../swarm/events.js";
+import type { AskUserResponse } from "../../swarm/host.js";
 
 export interface FakeHostOpts {
   /** Override what handle.wait() resolves with. */
   readonly waitResult?: AgentResult;
   /** Override task records returned by get/create. */
   readonly taskRecords?: Map<string, TaskRecord>;
+  /**
+   * Override what `host.askUser` returns. Defaults to a canned
+   * `{status: "answered", answer: "fake-answer"}`; tests configure per-case.
+   */
+  readonly askUserResponse?: AskUserResponse;
 }
 
 export function makeFakeHost(opts: FakeHostOpts = {}): {
@@ -38,6 +44,7 @@ export function makeFakeHost(opts: FakeHostOpts = {}): {
     taskList: TaskFilter[];
     spawn: SpawnRequest[];
     waitResolved: number;
+    askUser: Array<{ question: string; options?: readonly string[] }>;
   };
 } {
   const calls = {
@@ -47,6 +54,7 @@ export function makeFakeHost(opts: FakeHostOpts = {}): {
     taskList: [] as TaskFilter[],
     spawn: [] as SpawnRequest[],
     waitResolved: 0,
+    askUser: [] as Array<{ question: string; options?: readonly string[] }>,
   };
 
   const records =
@@ -167,9 +175,23 @@ export function makeFakeHost(opts: FakeHostOpts = {}): {
     drainInbox(_max: number): AgentMessage[] {
       return [];
     },
-    askUser(_question: string, _options?: readonly string[]): Promise<import("../../swarm/host.js").AskUserResponse> {
-      throw new Error("M3b Phase 6 — not yet implemented");
-    },
+    askUser: vi.fn(
+      async (
+        question: string,
+        options?: readonly string[],
+      ): Promise<AskUserResponse> => {
+        calls.askUser.push({
+          question,
+          ...(options !== undefined && { options }),
+        });
+        return (
+          opts.askUserResponse ?? {
+            status: "answered",
+            answer: "fake-answer",
+          }
+        );
+      },
+    ),
     task,
   };
 
