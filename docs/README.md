@@ -16,6 +16,7 @@ Early design capture for swarm-coder — a TypeScript agent harness built around
 - [09-m1-plan.md](./09-m1-plan.md) — M1 minimum viable swarm: subprocess workers + IPC + nested spawning + orchestrator CLI
 - [10-m2-plan.md](./10-m2-plan.md) — M2 UI depth + productivity: ink REPL rewrite + 14 slash commands + Tier 1 tools + plugins/skills/MCP/hooks
 - [13-m4a-plan.md](./13-m4a-plan.md) — M4a NativeEngine: Vercel AI SDK integration, OpenAI provider, routing, aliases, compaction, parallel tool fan-out
+- [14-m4b-plan.md](./14-m4b-plan.md) — M4b provider breadth + OAuth: xAI/Google/DashScope providers, plugin lifecycle, OpenAI PKCE OAuth, quirks, framework-filter, CLI plumbing. Phase 5 (Codex ChatGPT custom provider) deferred pending operator SSE spike.
 
 ## Research
 

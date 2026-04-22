@@ -123,7 +123,15 @@ export type ProviderEvent =
   | { type: "message_stop"; stopReason: StopReason; usage: Usage };
 ```
 
-Shipped in M4a: `openai` (`@ai-sdk/openai`). Planned M4b: `anthropic`, `google`, `xai`, `openai-compat`, `codex-chatgpt`.
+Shipped in M4a: `openai` (`@ai-sdk/openai`). Shipped in M4b: `google` (`@ai-sdk/google`), `xai` (`@ai-sdk/xai`), `dashscope` (OpenAI-compat via `DASHSCOPE_BASE_URL`). Planned (Phase 5, pending operator SSE spike): `codex-chatgpt`.
+
+### Codex-ChatGPT provider (Phase 5 — pending)
+
+`CodexChatGPTProvider` is a custom `TransportProvider` targeting `https://chatgpt.com/backend-api/codex/responses` (NOT `api.openai.com`; `@ai-sdk/openai` cannot be reused). It is gated behind `--framework codex-chatgpt`. Authentication uses `OpenAIOAuthAuth` (PKCE Codex App Server flow — shipped in M4b Phase 4); the custom stream translator (`CodexStreamState`) is Phase 5 and requires a real SSE trace captured via the operator spike.
+
+**Login path (works today):** `swarm-coder login --provider codex-chatgpt` runs the OAuth PKCE flow end-to-end and persists tokens to `~/.swarm-coder/auth.json`. End-to-end model turns require Phase 5 to land.
+
+**Risk note:** OpenAI can revoke the shared Codex App Server client id at any time. If the login flow starts returning 4xx, the feature is unavailable until OpenAI restores it or we find an alternative OAuth path. No auto-fallback. See `src/auth/openai-oauth.ts` top-of-file comment. This arrangement is policy-tolerated, not contracted — the client id is in production use by other tools (Cline, OpenClaw, opencode) but carries no formal third-party agreement.
 
 Model-prefix routing (`claude*` / `grok*` / `openai/` / `gpt-` / `qwen*` / `gemini-*`) and alias resolution live in `src/providers/routing.ts` and `src/providers/aliases.ts`.
 
