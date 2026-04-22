@@ -112,6 +112,17 @@ export type LaneEventType =
   | "ask_user_question_sent"
   | "ask_user_question_answered"
   | "ask_user_question_timeout"
+  // ---------------- M4a NativeEngine ----------------
+  /** A user alias in settings.json shadowed a built-in alias. */
+  | "alias_shadowed"
+  /** NativeEngine sent a request to Provider.stream(); useful for observability. */
+  | "provider_request_sent"
+  /** Provider.stream() yielded an error event. */
+  | "provider_stream_error"
+  /** Compactor walked the keep boundary back to preserve a tool_use/tool_result pair. */
+  | "native_compaction_boundary_walked"
+  /** NativeEngine refused a resume because the snapshot's engineId did not match. */
+  | "native_resume_rejected"
   // ---------------- Error ----------------
   | "error";
 
@@ -193,6 +204,41 @@ export interface AskUserQuestionAnsweredPayload {
 export interface AskUserQuestionTimeoutPayload {
   readonly correlationId: string;
   readonly timeoutMs: number;
+}
+
+// ---------------------------------------------------------------------------
+// M4a Phase 0.5 — payload interfaces for NativeEngine lane events
+// ---------------------------------------------------------------------------
+
+export interface AliasShadowedPayload {
+  readonly alias: string;
+  readonly builtInTarget: string;
+  readonly userTarget: string;
+}
+
+export interface ProviderRequestSentPayload {
+  readonly providerId: string;
+  readonly modelId: string;
+  readonly messageCount: number;
+  readonly toolCount: number;
+}
+
+export interface ProviderStreamErrorPayload {
+  readonly providerId: string;
+  readonly code: string;
+  readonly message: string;
+  readonly retryable: boolean;
+}
+
+export interface NativeCompactionBoundaryWalkedPayload {
+  readonly originalKeepFrom: number;
+  readonly walkedKeepFrom: number;
+  readonly reason: "tool_result_first" | "orphan";
+}
+
+export interface NativeResumeRejectedPayload {
+  readonly snapshotEngineId: string;
+  readonly attemptedBy: "native";
 }
 
 /** Structured failure classes for `error` events. */

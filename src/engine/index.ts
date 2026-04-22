@@ -13,10 +13,15 @@
  *     streaming, MCP, compaction, session, prompt cache. Ships with
  *     OAuth for Claude Max subscription.
  *
- *   - NativeEngine (M4) — composes finer-grained pieces: our turn loop,
+ *   - NativeEngine (M4a) — composes finer-grained pieces: our turn loop,
  *     Provider (Vercel AI SDK transport), our Compactor, our MCP client,
- *     our session format. Adds OpenAI / Google / xAI + ChatGPT Codex
- *     subscription auth.
+ *     our session format. M4a ships the engine + OpenAI transport; M4b
+ *     adds xAI / Google / DashScope + ChatGPT Codex subscription auth.
+ *     NativeEngine declares `capabilities.mcp: false, compaction: false`
+ *     — it composes these as separate concerns rather than absorbing
+ *     them into the engine surface. Resume snapshots are keyed by
+ *     `SessionSnapshot.engineId: "native"` and cannot cross over to
+ *     the SDK engine (see Q3 stability policy).
  *
  * Both implementations present the same surface. Swapping engines is
  * transparent to outer code.
