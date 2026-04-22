@@ -24,7 +24,9 @@
     "prepublishOnly": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:integration": "vitest run test/integration"
+    "test:integration": "vitest run test/integration",
+    "test:ui": "bun test src/ui/repl-solid/opentui.test.tsx",
+    "typecheck:ui": "tsc -p src/ui/repl-solid/tsconfig.json"
   },
   "engines": {
     "node": ">=18"

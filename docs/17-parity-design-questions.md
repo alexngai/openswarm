@@ -360,4 +360,22 @@ Add more here as they surface:
 
 **Updated lean after comparison: (a) migrate now, sequenced as Phase 0.** Evidence shifts this from "maybe" to "defensible yes" — opencode proves the stack works in production, and every one of our biggest TUI gaps has a native OpenTUI answer. The Solid.js shift is real but unavoidable if we want those primitives. Sequencing: Phase 0 (OpenTUI migration, ~3–6w) runs in parallel with Phase 1 (non-TUI plugin + provider ship). Phase 2–5 happen on OpenTUI from the start, avoiding the rework cost. **Risk owned:** pre-1.0 API may churn. Mitigation: pin versions, mirror opencode's upgrade-opentui.ts script pattern for batch bumps.
 
-**DECISION — 2026-04-22:** Migrate to OpenTUI as Phase 0. Move Q15 to resolved.
+**DECISION — 2026-04-22 (initial):** Migrate to OpenTUI as Phase 0.
+
+**BLOCKER — 2026-04-22 (same day, post-spike):** `@opentui/core` depends on `bun:ffi` and loads a native Zig rendering library. Node cannot resolve `bun:` imports. This was missed in the initial evaluation. Every grep under `node_modules/@opentui/core/` for `from "bun:` returned multiple hits in both `.d.ts` and runtime `.js` files. README examples exclusively use `bun install` / `bun run`. OpenTUI is Bun-only by design.
+
+**EMPIRICAL PROBE — 2026-04-22 (same day, post-blocker):** Investigated whether migrating swarm-coder to Bun is viable. Results:
+
+| Probe | Result | Notes |
+|---|---|---|
+| `bun src/cli.ts --help` | ✅ | Full CLI help prints; all imports resolve under Bun. |
+| `bun src/cli.ts doctor` | ✅ | Real code paths (auth, config discovery, install, workspace) all pass. |
+| `bun src/ui/repl-solid/bun-smoke.tsx` (OpenTUI + preload) | ✅ | Renders `<box><text>hello opentui</text></box>` via `bun:ffi` + Zig core. Frame captured. |
+| `bun build src/cli.ts --target=bun` | ⚠️ | Fails on `react-devtools-core` (Ink's optional dep). Moot once Ink is removed. |
+| `bun x vitest run <non-TUI tests>` | ✅ | Existing vitest tests pass under Bun-launched vitest. |
+
+**Conclusion:** swarm-coder's existing TypeScript is **already Bun-compatible without code changes**. The migration is tooling + distribution, not a rewrite. Estimated migration effort drops from 3–6w to **2–3w**.
+
+**DECISION — 2026-04-22 (resolved):** Migrate swarm-coder from Node → Bun runtime **and** Ink/React → OpenTUI/Solid as combined Phase 0. Distribution strategy: single compiled binary via `bun build --compile` so end users don't install Bun separately. Test strategy: mixed — keep vitest for the 1171 non-TUI tests; use `bun test` for OpenTUI-touching tests. Both coexist in the repo.
+
+**Tradeoff owned:** Pinning to Bun 1.x as a first-class runtime. Bun 1.3.8 is production-mature; distribution via compiled binary removes the user-facing install requirement. We accept Bun's `bun:ffi` and plugin system as load-bearing infrastructure.

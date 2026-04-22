@@ -11,49 +11,76 @@ Phased execution plan for closing the prioritized gaps in [15-parity-gaps.md](do
 
 ---
 
-## Phase 0 — OpenTUI + Solid migration
+## Phase 0 — Bun runtime + OpenTUI/Solid migration
 
-**Goal:** Replace the Ink/React TUI substrate with OpenTUI/Solid before we invest in Ink-specific patterns for markdown, multi-line input, or inline approvals. Decided 2026-04-22 per Q15 in [17-parity-design-questions.md](docs/17-parity-design-questions.md).
+**Goal:** Migrate swarm-coder from Node → Bun (required by `@opentui/core`'s `bun:ffi` native dependency) AND replace the Ink/React TUI substrate with OpenTUI/Solid. Decided 2026-04-22 per Q15 in [17-parity-design-questions.md](docs/17-parity-design-questions.md) after Bun viability was confirmed empirically.
 
-**Why Phase 0, not later:** opencode's production use of OpenTUI provides every primitive we'd otherwise hand-roll in Phases 3–4. Migrating first avoids ~1–2w of rework on phases that would otherwise build against Ink.
+**Why both at once:** OpenTUI is Bun-only (uses `bun:ffi` to load a native Zig rendering library). Empirical probe showed swarm-coder's existing TypeScript runs cleanly under Bun with zero code changes — migration is tooling + distribution, not a rewrite. Doing the runtime swap alongside the TUI swap avoids two disruptive transitions.
 
-**Gaps closed:** None directly — this is enabling work. Unlocks native solutions for T1, T2, T3, T4 (see [15-parity-gaps.md](docs/15-parity-gaps.md)).
+**Gaps closed:** None directly — enabling work. Unlocks native solutions for T1, T2, T3, T4 (see [15-parity-gaps.md](docs/15-parity-gaps.md)).
 
-**Scope:**
-1. **Pin OpenTUI versions** — add `@opentui/core` and `@opentui/solid` to [package.json](package.json) at the same versions opencode uses (currently `0.1.99`). Mirror opencode's batch-upgrade script pattern (see [references/opencode/packages/opencode/script/upgrade-opentui.ts](references/opencode/packages/opencode/script/upgrade-opentui.ts)) for future bumps.
-2. **Port state model** — rewrite [src/ui/repl/state.ts](src/ui/repl/state.ts) from a React-style reducer to Solid's `createStore` + `setStore`. The state shape stays the same; the reactivity primitives change. Keep the existing tests; port them to the new store.
-3. **Port components one-for-one:**
-   - `app.tsx` → Solid root with `CliRenderer`
-   - `transcript.tsx` → `<scrollbox>` of message `<box>` elements
-   - `input.tsx` → `TextareaRenderable` (sets up T1 for free — see Phase 4)
-   - `status.tsx` → `<box>` with reactive Solid signals
-   - `dropdown.tsx` → custom Solid component using `<box>` + `<text>`
-   - `spinner.tsx` → port or replace with `opentui-spinner`
-4. **Context providers** — set up equivalents for theme, keybinds, route, SDK client. Model after opencode's [context/](references/opencode/packages/opencode/src/cli/cmd/tui/context/) directory but keep only what we need.
-5. **Wire streaming events** — dispatch assistant deltas into the Solid store; let `<code streaming={true}>` handle rendering.
-6. **Manual scroll tracking** — `ScrollBoxRenderable` doesn't auto-scroll. Port opencode's scroll utilities ([util/scroll.ts](references/opencode/packages/opencode/src/cli/cmd/tui/util/scroll.ts)).
-7. **Keybinding map** — every textarea action must be mapped. Start from opencode's [component/textarea-keybindings.ts](references/opencode/packages/opencode/src/cli/cmd/tui/component/textarea-keybindings.ts) and adapt to our keybind config.
-8. **Tests** — at minimum, reducer-equivalent state tests, input-submit test, permission-prompt-transition test, streaming-append test.
+**Scope (split into sub-phases for sequencing):**
+
+### Phase 0a — Runtime + tooling foundation (sequential, 2–3 days)
+1. Add `bunfig.toml` with `preload = ["@opentui/solid/preload"]` so Bun registers the Solid JSX plugin at startup.
+2. Create `src/ui/repl-solid/tsconfig.json` extending main with `"jsx": "preserve"` + `"jsxImportSource": "@opentui/solid"` for editor/type-checking.
+3. Update [package.json](package.json) scripts:
+   - `build`: `bun build src/cli.ts --target=bun --outfile=dist/cli.js` (bundle) + `tsc --noEmit` (type check).
+   - `build:compile`: `bun build --compile --target=bun-darwin-arm64 src/cli.ts --outfile=dist/swarm-coder` (standalone binary).
+   - `test`: keep `vitest run` for non-TUI tests. Add `test:ui` as `bun test src/ui/repl-solid/**/*.test.tsx`.
+4. Keep [src/ui/repl-solid/store.ts](src/ui/repl-solid/store.ts) from the spike (already committed in 9bc1925).
+
+### Phase 0b — Component ports (parallelizable across a team, ~1–2 weeks)
+Port each component one-for-one. All take store state as input; write bun tests per component:
+- `app-solid.tsx` — Solid root with `CliRenderer`, event iteration, shutdown wiring.
+- `transcript-solid.tsx` — `<scrollbox>` of message entries, use `<code filetype="markdown" streaming={true}>` for assistant text.
+- `input-solid.tsx` — `TextareaRenderable` + keybinding map (reference opencode's [textarea-keybindings.ts](references/opencode/packages/opencode/src/cli/cmd/tui/component/textarea-keybindings.ts)).
+- `status-solid.tsx` — status bar, reactive to store.
+- `dropdown-solid.tsx` — slash-command autocomplete.
+- `spinner-solid.tsx` — use `opentui-spinner` or port from [spinner.tsx](src/ui/repl/spinner.tsx).
+
+### Phase 0c — CLI integration (sequential, 2–3 days)
+1. Rewire [src/cli.ts](src/cli.ts) to use `render(() => <AppSolid .../>)` from `@opentui/solid` when TTY.
+2. Keep headless (`--headless`) path unchanged — still emits JSONL.
+3. Verify Ctrl-C/shutdown, session persistence, prompt-history persistence.
+4. Remove the Ink path once the Solid path is proven on real terminals.
+
+### Phase 0d — Dependency cleanup (sequential, 1 day)
+1. Remove `ink`, `@types/react` from package.json.
+2. Delete [src/ui/repl/](src/ui/repl/) after Phase 0c proves the Solid root works.
+3. Run full test suite under Bun + vitest + bun test to confirm no regressions.
+
+### Phase 0e — Distribution (sequential, 1–2 days)
+1. Set up `bun build --compile` for darwin-arm64, darwin-x64, linux-x64 targets.
+2. GitHub Releases pipeline: attach compiled binaries per platform.
+3. Update install docs: `curl | sh` style installer that downloads the right binary. Or keep npm install for the Node-compatible path if we ship a dual distribution.
+4. Deprecate the npm distribution OR clearly document that npm install gives a Node/Ink build (without OpenTUI).
 
 **Acceptance criteria:**
-- Clean `npm run build` and `npm test` green.
-- Running `swarm-coder` drops into an OpenTUI REPL with transcript, input, and status line visually equivalent to the current Ink version.
-- Streaming assistant responses render progressively.
-- Slash-command dropdown works (don't regress T9 from gaps doc).
-- Compaction lifecycle UI works (don't regress T10).
-- Pending-permission status bar works (don't regress T11).
+- `bun run build` produces a working bundle at `dist/cli.js`.
+- `bun dist/cli.js --help` matches current `node dist/cli.js --help` output.
+- `bun dist/cli.js doctor` passes all checks under Bun.
+- Running `bun dist/cli.js` interactively drops into an OpenTUI REPL with transcript, input, status line, slash-command dropdown, compaction UI, pending-permission status — all visually equivalent to or better than the current Ink version.
+- Streaming assistant responses render progressively via `<code streaming={true}>`.
 - `--headless` mode still emits plain JSONL; OpenTUI is bypassed in non-TTY paths.
-- No `ERR_REQUIRE_ASYNC_MODULE` on Node 18/20/22 (what bit us with `ink-markdown`).
+- `bun build --compile` produces a standalone binary for at least darwin-arm64 that runs without Bun installed on the target machine.
+- Full test suite: vitest suite (1171+ tests) still green; new bun test suite for OpenTUI components green.
 
-**Estimate:** 3–6 weeks for a single dev. Breakdown per research in [17-parity-design-questions.md](docs/17-parity-design-questions.md) Q15.
+**Estimate:** 2–3 weeks total for a single dev (revised down from 3–6w after Bun compatibility was confirmed empirically). Breakdown:
+- Phase 0a (runtime/tooling): 2–3 days
+- Phase 0b (component ports): 1–2 weeks (parallelizable — good team candidate)
+- Phase 0c (CLI integration): 2–3 days
+- Phase 0d (Ink cleanup): 1 day
+- Phase 0e (distribution): 1–2 days
 
 **Risks:**
-- **Pre-1.0 API churn.** Mitigation: pin versions; plan one dedicated upgrade sprint before v0.1.
+- **OpenTUI/Solid pre-1.0 API churn.** Mitigation: pin versions; mirror opencode's batch-upgrade script pattern.
+- **Bun runtime quirks in code we haven't exercised.** Mitigation: full test suite under Bun in Phase 0a before starting component ports. Known risk areas: native modules, worker_threads, some fs edge cases.
 - **Solid reactivity model is unfamiliar.** Mitigation: opencode's code is a working reference for every pattern we need.
-- **Scope creep into opencode-parity features.** Mitigation: port only what existing components do; don't build new affordances in this phase.
-- **Regression on existing tests.** Mitigation: run the existing state.ts tests against the Solid port first; that's the contract.
+- **Distribution disruption.** Mitigation: document the migration path clearly; offer compiled-binary install before deprecating npm path.
+- **Scope creep into opencode-parity features.** Mitigation: port only what existing components do; don't build new affordances.
 
-**Dependencies:** None. Can run in parallel with Phase 1 (Phase 1 is non-TUI work).
+**Dependencies:** None. Can run in parallel with Phase 1 (Phase 1 is non-TUI, non-runtime work — Bun hasn't been proven to break anything there).
 
 ---
 
