@@ -455,8 +455,14 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   // event loop — each user prompt triggers a fresh `engine.run(...)` with the
   // same RunConfig template (the `prompt`, `model`, and `permissionMode`
   // fields are read from locals so slash-commands can mutate them).
-  // Lazy-loaded so ink / ink-markdown don't get pulled into non-TTY paths.
-  const { runRepl } = await import("../ui/repl/index.js");
+  // Lazy-loaded so TUI deps don't get pulled into non-TTY paths.
+  //
+  // Runtime-routed: Bun → OpenTUI/Solid path (Phase 0c), Node → Ink path
+  // (legacy, removed in Phase 0d). See docs/16-parity-plan.md.
+  const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
+  const { runRepl } = isBun
+    ? await import("../ui/repl-solid/index.js")
+    : await import("../ui/repl/index.js");
   const { clampPermissionMode } = await import("../swarm/permission-order.js");
   const parentMode = opts.permissionMode;
   let currentModel = config.model;

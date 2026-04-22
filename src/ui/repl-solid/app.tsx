@@ -17,19 +17,11 @@ import { Transcript } from "./transcript.js";
 import { Input } from "./input.js";
 import { Status } from "./status.js";
 import { Spinner } from "./spinner.js";
-import type { NormalizedEvent, PermissionMode } from "../../core/types.js";
+import type { NormalizedEvent } from "../../core/types.js";
 import type { ReplEvent } from "../repl/state.js";
+import type { AppProps } from "./types.js";
 
-export interface AppProps {
-  readonly events: AsyncIterable<NormalizedEvent>;
-  readonly model: string;
-  readonly permissionMode: PermissionMode;
-  readonly getTokens?: () => number;
-  /** Called when the REPL transitions to shutdown (e.g. SIGINT, /exit). */
-  readonly onExit?: () => void;
-  /** Called when the user submits a non-slash prompt — triggers the next engine turn. */
-  readonly onSubmit?: (line: string) => void;
-}
+export type { AppProps };
 
 export function App(props: AppProps) {
   const { state, dispatch } = createReplStore({
