@@ -25,6 +25,8 @@ import type { PermissionMode } from "../core/types.js";
 // Public types
 // ---------------------------------------------------------------------------
 
+export type FrameworkChoice = "native" | "claude-agent-sdk" | "auto";
+
 export interface CommonOpts {
   model?: string;
   resume?: string;
@@ -50,6 +52,16 @@ export interface CommonOpts {
    * `RunConfig.enabledBuiltinTools = ["WebSearch"]`). Default: false.
    */
   enableWebSearch: boolean;
+  /**
+   * Engine/framework selection. Default: "auto" (claude* → claude-agent-sdk,
+   * everything else → native). Not advertised prominently in --help.
+   */
+  readonly framework: FrameworkChoice;
+  /**
+   * When true, print { engineId, providerId?, modelId } as JSON to stdout
+   * and exit 0 before running any turn. For smoke tests only — not in --help.
+   */
+  readonly dumpEngine?: boolean;
 }
 
 export type ParsedArgs =
@@ -110,6 +122,8 @@ export function parseArgv(args: string[]): ParsedArgs {
   let hooks = true;
   let dumpTools = false;
   let enableWebSearch = false;
+  let framework: FrameworkChoice = "auto";
+  let dumpEngine = false;
 
   // Defaults for swarm-run (consumed when subcommand === "swarm").
   let swarmConcurrency = 3;
@@ -214,6 +228,34 @@ export function parseArgv(args: string[]): ParsedArgs {
 
     if (tok === "--enable-web-search") {
       enableWebSearch = true;
+      i++;
+      continue;
+    }
+
+    if (tok === "--framework") {
+      const val = expanded[i + 1];
+      if (val === undefined || val.startsWith("-")) {
+        return {
+          kind: "error",
+          message: "--framework requires a value",
+          showHelp: true,
+        };
+      }
+      if (val !== "native" && val !== "claude-agent-sdk" && val !== "auto") {
+        return {
+          kind: "error",
+          message: `invalid --framework "${val}". Valid values: native, claude-agent-sdk, auto`,
+          showHelp: true,
+        };
+      }
+      framework = val as FrameworkChoice;
+      i += 2;
+      continue;
+    }
+
+    // Internal debug flag — not advertised in --help.
+    if (tok === "--dump-engine") {
+      dumpEngine = true;
       i++;
       continue;
     }
@@ -395,6 +437,8 @@ export function parseArgv(args: string[]): ParsedArgs {
     hooks,
     dumpTools,
     enableWebSearch,
+    framework,
+    dumpEngine,
   };
 
   switch (subcommand) {

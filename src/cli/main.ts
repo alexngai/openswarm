@@ -16,6 +16,7 @@ import { ToolDispatcher } from "../tools/dispatcher.js";
 import { buildTier0Tools } from "../tools/tier0/index.js";
 import { PermissionEngine } from "../permissions/index.js";
 import { ClaudeAgentSdkEngine } from "../engine/claude-agent-sdk.js";
+import { NativeEngine } from "../engine/native.js";
 import { ScriptedTestEngine } from "../engine/test-engine.js";
 import { SessionStore } from "../session/store.js";
 import { runHeadless } from "../ui/headless.js";
@@ -29,13 +30,17 @@ import { McpStdioClient } from "../mcp/client.js";
 import { buildMcpToolImpl } from "../mcp/bridge.js";
 import { loadHooksConfig, countEvents, countMatchers } from "../hooks/config.js";
 import { HookRuntime } from "../hooks/runtime.js";
+import { loadAliases, resolveAlias } from "../providers/aliases.js";
+import { resolveProvider } from "../providers/routing.js";
+import { OpenAIEnvAuth } from "../auth/openai-env.js";
 // Note: the ink REPL (`src/ui/repl/`) is lazy-loaded inside runPrompt only
 // when the TTY path is taken. ink-markdown is CJS and requires() ink (which
 // has top-level await) — pulling it in eagerly crashes non-TTY paths like
 // `--version`, `--help`, `doctor`, `init`.
 import type { CommonOpts } from "./argv.js";
 import type { NormalizedEvent } from "../core/types.js";
-import type { PermissionGate, RunConfig } from "../engine/index.js";
+import type { AgentEngine, PermissionGate, RunConfig } from "../engine/index.js";
+import type { AuthSource } from "../auth/index.js";
 import { VERSION } from "../index.js";
 
 // ---------------------------------------------------------------------------
@@ -131,6 +136,11 @@ function withErrorTracking(
 // ---------------------------------------------------------------------------
 // runPrompt
 // ---------------------------------------------------------------------------
+
+async function buildAuthForProvider(modelId: string): Promise<AuthSource> {
+  if (/^(gpt|o[134])/i.test(modelId)) return new OpenAIEnvAuth();
+  throw new Error(`no auth source wired for model ${modelId}`);
+}
 
 async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   // 1. Validate auth. In scripted-test mode (SWARM_CODER_TEST_SCRIPT set) we
@@ -332,11 +342,64 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     }
   }
 
-  // 6. Build the engine. SWARM_CODER_TEST_SCRIPT toggles the scripted engine
-  // for offline smoke / integration tests; no live API traffic.
-  const engine = scriptedMode
-    ? new ScriptedTestEngine()
-    : new ClaudeAgentSdkEngine();
+  // 6. Resolve model alias + select engine based on --framework.
+  const aliases = await loadAliases();
+  const rawModel = opts.model ?? DEFAULT_MODEL;
+  const resolvedModelId = resolveAlias(rawModel, aliases);
+
+  let engine: AgentEngine;
+  let providerId: string | undefined;
+
+  if (scriptedMode) {
+    engine = new ScriptedTestEngine();
+  } else {
+    const resolved = resolveProvider(resolvedModelId);
+    if (resolved.kind === "error") {
+      process.stderr.write(`${resolved.message}\n`);
+      return 2;
+    }
+
+    if (opts.framework === "claude-agent-sdk") {
+      if (resolved.kind !== "sdk") {
+        process.stderr.write(
+          `error: --framework claude-agent-sdk requires an Anthropic model; received ${resolvedModelId}.\n`,
+        );
+        return 2;
+      }
+      engine = resolved.engineFactory!();
+    } else if (opts.framework === "native") {
+      if (resolved.kind !== "native") {
+        process.stderr.write(
+          "error: --framework native does not support Claude models in M4a.\n" +
+            "Use `--framework auto` (default) or `--framework claude-agent-sdk`.\n" +
+            "Native-via-@ai-sdk/anthropic is scheduled for M4b.\n",
+        );
+        return 2;
+      }
+      const auth = await buildAuthForProvider(resolved.modelId!);
+      const provider = await resolved.providerFactory!(auth, resolved.modelId!);
+      engine = new NativeEngine({ provider });
+      providerId = provider.id;
+    } else {
+      // auto
+      if (resolved.kind === "sdk") {
+        engine = resolved.engineFactory!();
+      } else {
+        const auth = await buildAuthForProvider(resolved.modelId!);
+        const provider = await resolved.providerFactory!(auth, resolved.modelId!);
+        engine = new NativeEngine({ provider });
+        providerId = provider.id;
+      }
+    }
+  }
+
+  // --dump-engine: print engine info as JSON and exit 0 (smoke tests only).
+  if (opts.dumpEngine) {
+    process.stdout.write(
+      JSON.stringify({ engineId: engine.id, ...(providerId !== undefined && { providerId }), modelId: resolvedModelId }) + "\n",
+    );
+    return 0;
+  }
 
   // 7. Build permission gate.
   const canUseTool: PermissionGate = async (toolName, input) => {
@@ -351,7 +414,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   const config: RunConfig = {
     systemPrompt: "",
     prompt: text,
-    model: opts.model ?? DEFAULT_MODEL,
+    model: resolvedModelId,
     auth,
     tools: [...Array.from(buildTier0Tools()), ...tier1Tools, ...pluginTools, ...mcpTools],
     canUseTool,

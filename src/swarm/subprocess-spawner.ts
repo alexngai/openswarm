@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import * as path from "node:path";
 import type { PermissionMode } from "../core/types.js";
+import type { FrameworkChoice } from "../cli/argv.js";
 
 export interface SpawnWorkerArgs {
   readonly agentId: string;
@@ -24,6 +25,11 @@ export interface SpawnWorkerArgs {
    * on the worker side when both are provided.
    */
   readonly allowedTools?: readonly string[];
+  /**
+   * Engine/framework selection propagated from the orchestrator.
+   * Written to `SWARM_CODER_FRAMEWORK`. Default: "auto".
+   */
+  readonly framework?: FrameworkChoice;
 }
 
 export function spawnWorker(args: SpawnWorkerArgs): ChildProcess {
@@ -50,6 +56,9 @@ export function spawnWorker(args: SpawnWorkerArgs): ChildProcess {
   }
   if (args.allowedTools !== undefined) {
     env.SWARM_CODER_ALLOWED_TOOLS = JSON.stringify(args.allowedTools);
+  }
+  if (args.framework !== undefined) {
+    env.SWARM_CODER_FRAMEWORK = args.framework;
   }
   // Intentionally NOT setting SWARM_CODER_SESSION_ID — resume is out of M1.
 

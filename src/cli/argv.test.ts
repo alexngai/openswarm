@@ -263,4 +263,45 @@ describe("parseArgv", () => {
     if (result.kind !== "swarm-run") throw new Error("expected swarm-run");
     expect(result.role).toBe("executor");
   });
+
+  // ---- --framework flag (M4a Phase 6) --------------------------------------
+
+  it("--framework native is parsed correctly", () => {
+    const result = parseArgv(["--framework", "native", "do work"]);
+    if (result.kind !== "prompt") throw new Error("expected prompt");
+    expect(result.opts.framework).toBe("native");
+  });
+
+  it("--framework claude-agent-sdk is parsed correctly", () => {
+    const result = parseArgv(["--framework", "claude-agent-sdk", "do work"]);
+    if (result.kind !== "prompt") throw new Error("expected prompt");
+    expect(result.opts.framework).toBe("claude-agent-sdk");
+  });
+
+  it("--framework auto is the default when the flag is omitted", () => {
+    const result = parseArgv(["do work"]);
+    if (result.kind !== "prompt") throw new Error("expected prompt");
+    expect(result.opts.framework).toBe("auto");
+  });
+
+  it("--framework auto is parsed explicitly", () => {
+    const result = parseArgv(["--framework", "auto", "do work"]);
+    if (result.kind !== "prompt") throw new Error("expected prompt");
+    expect(result.opts.framework).toBe("auto");
+  });
+
+  it("--framework with invalid value returns error kind", () => {
+    const result = parseArgv(["--framework", "foobar", "do work"]);
+    expect(result).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("invalid --framework"),
+      showHelp: true,
+    });
+  });
+
+  it("--dump-engine flag is parsed and sets dumpEngine: true", () => {
+    const result = parseArgv(["--dump-engine", "do work"]);
+    if (result.kind !== "prompt") throw new Error("expected prompt");
+    expect(result.opts.dumpEngine).toBe(true);
+  });
 });

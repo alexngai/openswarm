@@ -63,6 +63,54 @@ vi.mock("../engine/claude-agent-sdk.js", () => ({
   },
 }));
 
+vi.mock("../engine/native.js", () => ({
+  NativeEngine: function NativeEngine() {
+    return {
+      id: "native",
+      capabilities: {},
+      run: vi.fn().mockReturnValue(
+        (async function* () {
+          yield { type: "message_stop", stopReason: "end_turn", usage: { inputTokens: 1, outputTokens: 1 } };
+        })(),
+      ),
+    };
+  },
+}));
+
+vi.mock("../providers/routing.js", () => ({
+  resolveProvider: vi.fn((modelId: string) => {
+    if (/^claude/i.test(modelId)) {
+      return {
+        kind: "sdk",
+        engineFactory: () => ({
+          id: "claude-agent-sdk",
+          capabilities: {},
+          run: async function* () {
+            yield { type: "message_stop", stopReason: "end_turn", usage: { inputTokens: 1, outputTokens: 1 } };
+          },
+        }),
+        modelId,
+      };
+    }
+    return {
+      kind: "native",
+      providerFactory: async () => ({ id: "openai", model: {}, capabilities: {}, stream: async function* () {} }),
+      modelId,
+    };
+  }),
+}));
+
+vi.mock("../providers/aliases.js", () => ({
+  loadAliases: vi.fn().mockResolvedValue({}),
+  resolveAlias: vi.fn((modelId: string) => modelId),
+}));
+
+vi.mock("../auth/openai-env.js", () => ({
+  OpenAIEnvAuth: function OpenAIEnvAuth() {
+    return { kind: "api-key", providerId: "openai", headers: async () => ({}), isAuthenticated: async () => true };
+  },
+}));
+
 vi.mock("../session/store.js", () => ({
   SessionStore: function SessionStore() {
     return {
@@ -190,5 +238,55 @@ describe("main", () => {
 
     expect(code).toBe(1);
     expect(errChunks.join("")).toContain("no auth found");
+  });
+
+  // ---- --dump-engine (M4a Phase 6) ----------------------------------------
+
+  it("--model gpt-4o --framework auto --dump-engine → JSON with engineId:native, providerId:openai", async () => {
+    const { resolveProvider } = await import("../providers/routing.js");
+    (resolveProvider as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+      kind: "native",
+      providerFactory: async () => ({ id: "openai", model: {}, capabilities: {}, stream: async function* () {} }),
+      modelId: "gpt-4o",
+    });
+
+    const outChunks: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+      outChunks.push(String(chunk));
+      return true;
+    });
+
+    const { main } = await import("./main.js");
+    const code = await main(["--model", "gpt-4o", "--framework", "auto", "--dump-engine", "--headless", "say hi"]);
+
+    expect(code).toBe(0);
+    const parsed = JSON.parse(outChunks.join("").trim());
+    expect(parsed.engineId).toBe("native");
+    expect(parsed.providerId).toBe("openai");
+    expect(parsed.modelId).toBe("gpt-4o");
+  });
+
+  it("--model claude-sonnet-4-6 --framework auto --dump-engine → JSON with engineId:claude-agent-sdk", async () => {
+    const { resolveProvider } = await import("../providers/routing.js");
+    (resolveProvider as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+      kind: "sdk",
+      engineFactory: () => ({ id: "claude-agent-sdk", capabilities: {}, run: async function* () {} }),
+      modelId: "claude-sonnet-4-6",
+    });
+
+    const outChunks: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+      outChunks.push(String(chunk));
+      return true;
+    });
+
+    const { main } = await import("./main.js");
+    const code = await main(["--model", "claude-sonnet-4-6", "--framework", "auto", "--dump-engine", "--headless", "say hi"]);
+
+    expect(code).toBe(0);
+    const parsed = JSON.parse(outChunks.join("").trim());
+    expect(parsed.engineId).toBe("claude-agent-sdk");
+    expect(parsed.providerId).toBeUndefined();
+    expect(parsed.modelId).toBe("claude-sonnet-4-6");
   });
 });

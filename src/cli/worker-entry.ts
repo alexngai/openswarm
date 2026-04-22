@@ -3,7 +3,12 @@ import type { AgentId } from "../core/types.js";
 import { ParentTransport } from "../swarm/ipc/parent-transport.js";
 import { WorkerHost } from "../swarm/worker-host.js";
 import { ClaudeAgentSdkEngine } from "../engine/claude-agent-sdk.js";
+import { NativeEngine } from "../engine/native.js";
 import { ScriptedTestEngine } from "../engine/test-engine.js";
+import { resolveProvider } from "../providers/routing.js";
+import { OpenAIEnvAuth } from "../auth/openai-env.js";
+import type { AgentEngine } from "../engine/index.js";
+import type { FrameworkChoice } from "./argv.js";
 import { ToolDispatcher } from "../tools/dispatcher.js";
 import { buildTier0Tools } from "../tools/tier0/index.js";
 import { buildTier2Tools } from "../tools/tier2/index.js";
@@ -124,9 +129,30 @@ export async function runWorkerEntry(): Promise<number> {
   }
   const permissionEngine = new PermissionEngine(permissionMode);
   const auth = new AnthropicEnvAuth();
-  const engine = process.env.SWARM_CODER_TEST_SCRIPT
-    ? new ScriptedTestEngine()
-    : new ClaudeAgentSdkEngine();
+
+  // Engine selection: read SWARM_CODER_FRAMEWORK env var (default: "auto").
+  const frameworkEnv = (process.env.SWARM_CODER_FRAMEWORK ?? "auto") as FrameworkChoice;
+  const workerModel = "claude-sonnet-4-6";
+
+  let engine: AgentEngine;
+  if (process.env.SWARM_CODER_TEST_SCRIPT) {
+    engine = new ScriptedTestEngine();
+  } else if (frameworkEnv === "claude-agent-sdk") {
+    engine = new ClaudeAgentSdkEngine();
+  } else if (frameworkEnv === "native") {
+    const resolved = resolveProvider(workerModel);
+    if (resolved.kind === "native") {
+      const nativeAuth = new OpenAIEnvAuth();
+      const provider = await resolved.providerFactory!(nativeAuth, resolved.modelId!);
+      engine = new NativeEngine({ provider });
+    } else {
+      // Fallback: native requested but model resolves to sdk — use sdk.
+      engine = new ClaudeAgentSdkEngine();
+    }
+  } else {
+    // auto — default to ClaudeAgentSdkEngine (worker model is always claude).
+    engine = new ClaudeAgentSdkEngine();
+  }
 
   const startedAt = Date.now();
   let finalText = "";
