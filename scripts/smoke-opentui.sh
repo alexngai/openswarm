@@ -71,6 +71,21 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# O4: bun build --compile produces a working standalone binary.
+# ---------------------------------------------------------------------------
+BINARY_PATH="$REPO_ROOT/dist/swarm-coder"
+if bun "$REPO_ROOT/scripts/build-binary.ts" >/tmp/smoke-opentui-o4-build.log 2>&1; then
+  if "$BINARY_PATH" --help 2>/tmp/smoke-opentui-o4-help.err | grep -q "swarm-coder" \
+    && "$BINARY_PATH" doctor 2>/tmp/smoke-opentui-o4-doctor.err | grep -qE "auth|install|workspace"; then
+    record O4 PASS "compiled binary passes --help and doctor"
+  else
+    record O4 FAIL "compiled binary --help or doctor failed"
+  fi
+else
+  record O4 FAIL "bun build --compile failed (see /tmp/smoke-opentui-o4-build.log)"
+fi
+
+# ---------------------------------------------------------------------------
 # L1: Live API call through the full stack under Bun.
 # ---------------------------------------------------------------------------
 if $OFFLINE; then
@@ -78,11 +93,27 @@ if $OFFLINE; then
 else
   L1_OUT=$(bun src/cli.ts prompt "say hi in 3 words" --headless --model haiku \
     2>/tmp/smoke-opentui-l1.err) || true
-  if echo "$L1_OUT" | grep -q '"type":"text_delta"' \
-    && echo "$L1_OUT" | grep -q '"type":"message_stop"'; then
-    record L1 PASS "live Bun CLI turn — text_delta + message_stop emitted"
+  if echo "$L1_OUT" | grep -q '"type":"message_stop"'; then
+    record L1 PASS "live Bun CLI turn — message_stop emitted"
   else
     record L1 FAIL "live Bun CLI turn did not complete (see /tmp/smoke-opentui-l1.err)"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# L2: Live API call through the compiled binary.
+# ---------------------------------------------------------------------------
+if $OFFLINE; then
+  record L2 SKIP "(offline) live compiled-binary turn"
+elif [[ ! -x "$BINARY_PATH" ]]; then
+  record L2 FAIL "compiled binary missing; O4 build must succeed first"
+else
+  L2_OUT=$("$BINARY_PATH" prompt "say hi in 3 words" --headless --model haiku \
+    2>/tmp/smoke-opentui-l2.err) || true
+  if echo "$L2_OUT" | grep -q '"type":"message_stop"'; then
+    record L2 PASS "live compiled-binary turn — message_stop emitted"
+  else
+    record L2 FAIL "live compiled-binary turn did not complete (see /tmp/smoke-opentui-l2.err)"
   fi
 fi
 

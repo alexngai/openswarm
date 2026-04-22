@@ -21,6 +21,10 @@
   ],
   "scripts": {
     "build": "tsc",
+    "build:compile": "bun scripts/build-binary.ts",
+    "build:compile:darwin-arm64": "bun scripts/build-binary.ts bun-darwin-arm64",
+    "build:compile:darwin-x64": "bun scripts/build-binary.ts bun-darwin-x64",
+    "build:compile:linux-x64": "bun scripts/build-binary.ts bun-linux-x64",
     "prepublishOnly": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
