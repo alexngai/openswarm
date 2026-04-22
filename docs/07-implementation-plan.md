@@ -127,16 +127,22 @@ The swarm becomes a real coordination platform. Subscription auth arrives for An
 
 Flexibility milestone. Additional `TransportProvider`s slot in behind the existing `Provider` interface. ChatGPT subscription auth lands as a second `FrameworkProvider`.
 
-**Scope:**
+### M4a — SHIPPED (commit 0abb6d4)
+
+- **NativeEngine** — full turn loop: streaming, tool fan-out via `dispatchBatch`, compaction with tool-pair boundary guard, post-compaction probe, session snapshots, cross-engine resume rejection. See `docs/13-m4a-plan.md`.
+- **OpenAI TransportProvider** (`gpt-*`, `o1/o3/o4/*`) via `@ai-sdk/openai`. Reasoning-model quirks (strip temperature/top_p, use `max_completion_tokens`) handled at provider boundary.
+- **Model-prefix routing** (`claude*` / `grok*` / `openai/` / `gpt-` / `qwen*` / `gemini-*`) — `src/providers/routing.ts`.
+- **Model alias table** — built-in aliases + user-defined extension (`~/.swarm-coder/settings.json aliases`), cycle detection — `src/providers/aliases.ts`.
+- **`--framework native` CLI flag** — routes to NativeEngine; `--model` selects provider via routing table.
+- **Vercel AI SDK spike** — findings captured in `docs/research/vercel-sdk-spike.md`.
+
+### M4b — TODO
 
 - xAI TransportProvider (`grok*`) via `@ai-sdk/xai`
 - Google TransportProvider (`gemini-*`) via `@ai-sdk/google`
 - DashScope via OpenAI-compat TransportProvider (`qwen*`, `qwen/*`) — **6 MB request-body cap** enforced at preflight (research/01-api.md §8)
-- Model-prefix routing (`claude*` / `grok*` / `openai/` / `gpt-` / `qwen*` / `gemini-*`) takes precedence over env-var sniffing (research/01-api.md §6)
-- Model-family quirks handled at provider boundary: `gpt-5*` uses `max_completion_tokens`, reasoning models (`o1/o3/o4/*-thinking/qwq*`) strip tuning params, Kimi rejects `is_error` on tool results. Vercel AI SDK handles most of these; we layer the rest.
 - Cross-provider stream translation is **handled inside Vercel AI SDK** — we don't port claw's OpenAI→Anthropic translator.
 - Plugin install / enable / disable / update / uninstall (research/04-integrations.md §2)
-- Per-provider model alias table with user-defined extension (`~/.swarm-coder/settings.json aliases`)
 
 ### ChatGPT Plus/Pro subscription auth (FrameworkProvider)
 

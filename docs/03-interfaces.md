@@ -82,9 +82,9 @@ Opaque per-engine state, stored alongside our per-worktree JSONL log. `--resume`
 
 **Rule:** No Anthropic SDK, Vercel AI SDK, or Agent SDK types leak past `src/engine/*` and `src/providers/*`. Everything else imports only from `src/engine/index.ts`.
 
-## 2. Provider (inner layer, M4+)
+## 2. Provider (inner layer, M4a shipped)
 
-Finer-grained LLM transport. Lives *inside* `NativeEngine`. Not consumed by outer code.
+Finer-grained LLM transport. Lives *inside* `NativeEngine`. Not consumed by outer code. Shipped in M4a — see `docs/13-m4a-plan.md` for implementation detail.
 
 ```ts
 export interface Provider {
@@ -92,11 +92,40 @@ export interface Provider {
   readonly model: LanguageModel;     // from `ai` (Vercel AI SDK)
   readonly capabilities: ProviderCapabilities;
 }
+
+/** Marker for providers that own the turn loop (Agent SDK, Codex App Server). */
+export interface TransportProvider extends Provider {
+  readonly _transport: true;
+}
+
+export interface ProviderCapabilities {
+  readonly streaming: boolean;
+  readonly parallelToolUse: boolean;
+  readonly reasoning: boolean;        // true for o1/o3/o4/* and QwQ model families
+  readonly maxContextTokens: number;
+  readonly maxOutputTokens: number;
+}
+
+export interface ProviderRequest {
+  readonly model: string;
+  readonly messages: CoreMessage[];
+  readonly tools?: ToolDefinition[];
+  readonly system?: string;
+  readonly maxTokens?: number;
+  readonly temperature?: number;
+}
+
+export type ProviderEvent =
+  | { type: "text_delta"; text: string }
+  | { type: "tool_use_start"; id: string; name: string }
+  | { type: "tool_use_delta"; id: string; partial: string }
+  | { type: "tool_use_end"; id: string }
+  | { type: "message_stop"; stopReason: StopReason; usage: Usage };
 ```
 
-Implementations land in M4: `anthropic`, `openai`, `google`, `xai`, `openai-compat`, `codex-chatgpt`. Each wraps the matching `@ai-sdk/*` package (or a custom provider for `codex-chatgpt`, which targets `chatgpt.com/backend-api/codex/responses`).
+Shipped in M4a: `openai` (`@ai-sdk/openai`). Planned M4b: `anthropic`, `google`, `xai`, `openai-compat`, `codex-chatgpt`.
 
-Stub shape lives in `src/providers/index.ts`. Final shape is finalized when M4 work starts.
+Model-prefix routing (`claude*` / `grok*` / `openai/` / `gpt-` / `qwen*` / `gemini-*`) and alias resolution live in `src/providers/routing.ts` and `src/providers/aliases.ts`.
 
 ## 3. AuthSource
 

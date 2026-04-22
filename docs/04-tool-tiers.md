@@ -79,6 +79,10 @@ What makes swarm-coder a *swarm*. Dispatched via `SwarmHost`. Works in both stan
 | `sleep` | Deliberate wait |
 | `repl` | Persistent stateful REPL (python/node) |
 
+## NativeEngine compatibility
+
+Tier 2 tools work identically under NativeEngine — SwarmHost is engine-agnostic. The `dispatchBatch` fan-out in NativeEngine calls the same `ToolDispatcher.dispatchBatch` path that `ClaudeAgentSdkEngine` uses, so `send_message`, `check_inbox`, `task_*`, and `ask_user_question` all route through SwarmHost regardless of which engine drives the turn loop. Swapping from `--framework claude-agent-sdk` to `--framework native` requires no tool-layer changes.
+
 ## Tier ordering ≠ release ordering
 
 Release milestones live in [`07-implementation-plan.md`](./07-implementation-plan.md). Summary: M0 = Tier 0 only; M1 = Tier 2 subset (`agent`, `task_create/update/get/list`); M2 = Tier 1 + plugin/skill/MCP; M3 = Tier 2 remainder + teams + git coord; M4 = provider breadth; M5+ = Tier 3–5.

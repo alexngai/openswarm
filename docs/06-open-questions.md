@@ -126,3 +126,15 @@ Dynamic (mid-session) tool registration deferred to M5 — needed only if users 
 | 2026-04-20 | Q15 AskUserQuestion headless | Lane event `question_asked` / `answer_received` | Consistent with Q8 permission-prompt pattern |
 
 All open questions resolved as of 2026-04-20. New questions will be added at the bottom as they arise during M0+.
+
+## Q19. NativeEngine concurrency — RESOLVED
+
+**Question (from M3b Phase 4 caveat):** Parallel tool execution was untested on a real concurrent path — only the Agent SDK's MCP bridge had exercised it, and whether it serialized internally was unknown.
+
+**Resolution:** NativeEngine's `dispatchBatch` fan-out is proven concurrent in M4a. The `native.test.ts` suite exercises three simultaneous MockProvider tool calls and asserts that all three start within a 50 ms window. The compactor's tool-pair boundary guard correctly handles tool-use/tool-result pairs that span a compaction cut. NativeEngine is engine-agnostic w.r.t. SwarmHost — Tier 2 tools work identically under both `ClaudeAgentSdkEngine` and `NativeEngine`.
+
+**Decision log entry:**
+
+| Date | Question | Decision | Rationale |
+|---|---|---|---|
+| 2026-04-21 | Q19 NativeEngine concurrency | Concurrent via dispatchBatch fan-out; proven in M4a test suite | native.test.ts 3-tool parallel start verified within 50ms window |
