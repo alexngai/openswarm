@@ -21,11 +21,14 @@ export function isReasoningModel(modelId: string): boolean {
 }
 
 /**
- * Returns true for GPT-5 family: gpt-5-* (case-insensitive).
- * Does NOT match gpt-4.5, gpt-4o, gpt-5o (non-standard).
+ * Returns true for GPT-5 family: `gpt-5` or `gpt-5-*` (case-insensitive).
+ * Does NOT match gpt-4.5, gpt-4o, gpt-5o (non-standard prefix).
+ *
+ * The `(-|$)` guard admits a bare "gpt-5" (e.g. a user passing --model gpt-5
+ * without going through the alias table) while rejecting "gpt-5o" or similar.
  */
 export function isGpt5(modelId: string): boolean {
-  return /^gpt-5-/i.test(modelId);
+  return /^gpt-5(-|$)/i.test(modelId);
 }
 
 // ---------------------------------------------------------------------------

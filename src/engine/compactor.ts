@@ -55,7 +55,8 @@ export function estimateTokens(msg: ProviderMessage): number {
       const inputStr = JSON.stringify(block.input);
       total += Math.floor((block.name.length + inputStr.length) / 4) + 1;
     } else if (block.type === "tool_result") {
-      total += Math.floor(block.content.length / 4) + 1;
+      total +=
+        Math.floor((block.tool_use_id.length + block.content.length) / 4) + 1;
     }
   }
   return total;

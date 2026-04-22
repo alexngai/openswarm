@@ -39,11 +39,11 @@ describe("isReasoningModel", () => {
 // ---------------------------------------------------------------------------
 
 describe("isGpt5", () => {
+  it("matches bare gpt-5", () => expect(isGpt5("gpt-5")).toBe(true));
   it("matches gpt-5-turbo", () => expect(isGpt5("gpt-5-turbo")).toBe(true));
   it("matches gpt-5-2026-02-01", () => expect(isGpt5("gpt-5-2026-02-01")).toBe(true));
   it("matches GPT-5-turbo (case-insensitive)", () => expect(isGpt5("GPT-5-turbo")).toBe(true));
 
-  it("does not match gpt-5 (no trailing dash)", () => expect(isGpt5("gpt-5")).toBe(false));
   it("does not match gpt-4.5", () => expect(isGpt5("gpt-4.5")).toBe(false));
   it("does not match gpt-4o", () => expect(isGpt5("gpt-4o")).toBe(false));
   it("does not match gpt-5o (non-standard)", () => expect(isGpt5("gpt-5o")).toBe(false));
