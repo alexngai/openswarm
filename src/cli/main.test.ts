@@ -12,6 +12,22 @@ vi.mock("./init.js", () => ({
   runInit: vi.fn().mockResolvedValue(0),
 }));
 
+vi.mock("./plugin.js", () => ({
+  pluginMain: vi.fn().mockResolvedValue(0),
+}));
+
+vi.mock("./login.js", () => ({
+  loginMain: vi.fn().mockResolvedValue(0),
+}));
+
+vi.mock("./logout.js", () => ({
+  logoutMain: vi.fn().mockResolvedValue(0),
+}));
+
+vi.mock("../tools/framework-filter.js", () => ({
+  filterToolsForFramework: vi.fn((tools: unknown[]) => tools),
+}));
+
 vi.mock("../auth/status.js", () => ({
   detectAuth: vi.fn().mockResolvedValue({ state: "env-api-key", source: "ANTHROPIC_API_KEY" }),
 }));
@@ -264,6 +280,81 @@ describe("main", () => {
     expect(parsed.engineId).toBe("native");
     expect(parsed.providerId).toBe("openai");
     expect(parsed.modelId).toBe("gpt-4o");
+  });
+
+  // ---- Phase 7: plugin / login / logout routing ---------------------------
+
+  it("plugin install . → pluginMain invoked with ['install', '.'], exit code honored", async () => {
+    const { pluginMain } = await import("./plugin.js");
+    (pluginMain as ReturnType<typeof vi.fn>).mockResolvedValueOnce(0);
+
+    const { main } = await import("./main.js");
+    const code = await main(["plugin", "install", "."]);
+
+    expect(code).toBe(0);
+    expect(pluginMain).toHaveBeenCalledWith(["install", "."]);
+  });
+
+  it("plugin install . non-zero exit → propagated from pluginMain", async () => {
+    const { pluginMain } = await import("./plugin.js");
+    (pluginMain as ReturnType<typeof vi.fn>).mockResolvedValueOnce(1);
+
+    const { main } = await import("./main.js");
+    const code = await main(["plugin", "install", "."]);
+
+    expect(code).toBe(1);
+  });
+
+  it("logout --provider codex-chatgpt → logoutMain invoked", async () => {
+    const { logoutMain } = await import("./logout.js");
+    (logoutMain as ReturnType<typeof vi.fn>).mockResolvedValueOnce(0);
+
+    const { main } = await import("./main.js");
+    const code = await main(["logout", "--provider", "codex-chatgpt"]);
+
+    expect(code).toBe(0);
+    expect(logoutMain).toHaveBeenCalledWith(["--provider", "codex-chatgpt"]);
+  });
+
+  it("login --provider codex-chatgpt → loginMain invoked", async () => {
+    const { loginMain } = await import("./login.js");
+    (loginMain as ReturnType<typeof vi.fn>).mockResolvedValueOnce(0);
+
+    const { main } = await import("./main.js");
+    const code = await main(["login", "--provider", "codex-chatgpt"]);
+
+    expect(code).toBe(0);
+    expect(loginMain).toHaveBeenCalledWith(["--provider", "codex-chatgpt"]);
+  });
+
+  it("--framework codex-chatgpt → exit 2 with 'not yet wired' error text", async () => {
+    const errChunks: string[] = [];
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
+      errChunks.push(String(chunk));
+      return true;
+    });
+    // process.exit will throw in tests — catch it.
+    vi.spyOn(process, "exit").mockImplementation((code?: number | string | null) => {
+      throw new Error(`process.exit(${code})`);
+    });
+
+    const { main } = await import("./main.js");
+    await expect(main(["--framework", "codex-chatgpt", "--headless", "say hi"])).rejects.toThrow(
+      "process.exit(2)",
+    );
+    expect(errChunks.join("")).toContain("not yet wired");
+  });
+
+  it("--framework claude-agent-sdk → filterToolsForFramework called with 'claude-agent-sdk'", async () => {
+    const { filterToolsForFramework } = await import("../tools/framework-filter.js");
+
+    const { main } = await import("./main.js");
+    await main(["--framework", "claude-agent-sdk", "--headless", "say hi"]);
+
+    expect(filterToolsForFramework).toHaveBeenCalledWith(
+      expect.any(Array),
+      "claude-agent-sdk",
+    );
   });
 
   it("--model claude-sonnet-4-6 --framework auto --dump-engine → JSON with engineId:claude-agent-sdk", async () => {

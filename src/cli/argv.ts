@@ -25,7 +25,7 @@ import type { PermissionMode } from "../core/types.js";
 // Public types
 // ---------------------------------------------------------------------------
 
-export type FrameworkChoice = "native" | "claude-agent-sdk" | "auto";
+export type FrameworkChoice = "native" | "claude-agent-sdk" | "codex-chatgpt" | "auto";
 
 export interface CommonOpts {
   model?: string;
@@ -81,13 +81,16 @@ export type ParsedArgs =
       allowDeadLetter: boolean;
       role?: string;
     }
+  | { kind: "plugin"; pluginArgv: string[] }
+  | { kind: "login"; provider: string }
+  | { kind: "logout"; provider: string }
   | { kind: "error"; message: string; showHelp: boolean };
 
 // ---------------------------------------------------------------------------
 // Known subcommands
 // ---------------------------------------------------------------------------
 
-const SUBCOMMANDS = new Set(["prompt", "doctor", "init", "help", "version", "swarm"]);
+const SUBCOMMANDS = new Set(["prompt", "doctor", "init", "help", "version", "swarm", "plugin", "login", "logout"]);
 
 const VALID_PERMISSION_MODES = new Set<string>([
   "read-only",
@@ -131,6 +134,9 @@ export function parseArgv(args: string[]): ParsedArgs {
   let swarmDeadLetter = "./dead-letter.jsonl";
   let swarmAllowDeadLetter = false;
   let swarmRole: string | undefined;
+
+  // --provider flag (used by login / logout subcommands).
+  let provider: string | undefined;
 
   // First pass: scan for early-exit flags (--help, -h, --version, -V) and
   // collect flags that precede the subcommand / positional.
@@ -241,10 +247,10 @@ export function parseArgv(args: string[]): ParsedArgs {
           showHelp: true,
         };
       }
-      if (val !== "native" && val !== "claude-agent-sdk" && val !== "auto") {
+      if (val !== "native" && val !== "claude-agent-sdk" && val !== "codex-chatgpt" && val !== "auto") {
         return {
           kind: "error",
-          message: `invalid --framework "${val}". Valid values: native, claude-agent-sdk, auto`,
+          message: `invalid --framework "${val}". Valid values: native, claude-agent-sdk, codex-chatgpt, auto`,
           showHelp: true,
         };
       }
@@ -403,6 +409,20 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
+    if (tok === "--provider") {
+      const val = expanded[i + 1];
+      if (val === undefined || val.startsWith("-")) {
+        return {
+          kind: "error",
+          message: "--provider requires a value",
+          showHelp: true,
+        };
+      }
+      provider = val;
+      i += 2;
+      continue;
+    }
+
     // Unknown flag.
     if (tok.startsWith("-")) {
       return {
@@ -424,6 +444,16 @@ export function parseArgv(args: string[]): ParsedArgs {
   // ---------------------------------------------------------------------------
   // Dispatch on resolved subcommand.
   // ---------------------------------------------------------------------------
+
+  // Validate: --framework codex-chatgpt does not accept --model.
+  if (framework === "codex-chatgpt" && model !== undefined) {
+    return {
+      kind: "error",
+      message:
+        "--framework codex-chatgpt does not accept --model (uses ChatGPT Plus/Pro's default).",
+      showHelp: false,
+    };
+  }
 
   const opts: CommonOpts = {
     model,
@@ -514,6 +544,28 @@ export function parseArgv(args: string[]): ParsedArgs {
         allowDeadLetter: swarmAllowDeadLetter,
         ...(swarmRole !== undefined && { role: swarmRole }),
       };
+    }
+
+    case "plugin": {
+      // Pass all remaining positionals (sub-subcommand + args) to pluginMain.
+      return { kind: "plugin", pluginArgv: positionals };
+    }
+
+    case "login": {
+      // --provider was consumed by the main flag loop.
+      // Default to claude-agent-sdk when omitted.
+      return { kind: "login", provider: provider ?? "claude-agent-sdk" };
+    }
+
+    case "logout": {
+      if (!provider) {
+        return {
+          kind: "error",
+          message: "logout requires --provider <name>",
+          showHelp: true,
+        };
+      }
+      return { kind: "logout", provider };
     }
 
     case undefined: {

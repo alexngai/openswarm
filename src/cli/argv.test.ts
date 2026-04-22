@@ -304,4 +304,69 @@ describe("parseArgv", () => {
     if (result.kind !== "prompt") throw new Error("expected prompt");
     expect(result.opts.dumpEngine).toBe(true);
   });
+
+  // ---- Phase 7: codex-chatgpt framework ------------------------------------
+
+  it("--framework codex-chatgpt is parsed correctly", () => {
+    const result = parseArgv(["--framework", "codex-chatgpt", "do work"]);
+    if (result.kind !== "prompt") throw new Error("expected prompt");
+    expect(result.opts.framework).toBe("codex-chatgpt");
+  });
+
+  it("--framework codex-chatgpt --model gpt-4o errors with specific message", () => {
+    const result = parseArgv(["--framework", "codex-chatgpt", "--model", "gpt-4o", "do work"]);
+    expect(result).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("--framework codex-chatgpt does not accept --model"),
+    });
+  });
+
+  // ---- Phase 7: plugin subcommand ------------------------------------------
+
+  it("plugin install . is detected as plugin subcommand", () => {
+    const result = parseArgv(["plugin", "install", "."]);
+    expect(result).toMatchObject({ kind: "plugin", pluginArgv: ["install", "."] });
+  });
+
+  it("plugin list is detected as plugin subcommand", () => {
+    const result = parseArgv(["plugin", "list"]);
+    expect(result).toMatchObject({ kind: "plugin", pluginArgv: ["list"] });
+  });
+
+  // ---- Phase 7: login subcommand -------------------------------------------
+
+  it("login --provider codex-chatgpt is detected", () => {
+    const result = parseArgv(["login", "--provider", "codex-chatgpt"]);
+    expect(result).toMatchObject({ kind: "login", provider: "codex-chatgpt" });
+  });
+
+  it("login --provider claude-agent-sdk is detected", () => {
+    const result = parseArgv(["login", "--provider", "claude-agent-sdk"]);
+    expect(result).toMatchObject({ kind: "login", provider: "claude-agent-sdk" });
+  });
+
+  it("login without --provider defaults to claude-agent-sdk", () => {
+    const result = parseArgv(["login"]);
+    expect(result).toMatchObject({ kind: "login", provider: "claude-agent-sdk" });
+  });
+
+  // ---- Phase 7: logout subcommand ------------------------------------------
+
+  it("logout --provider codex-chatgpt is detected", () => {
+    const result = parseArgv(["logout", "--provider", "codex-chatgpt"]);
+    expect(result).toMatchObject({ kind: "logout", provider: "codex-chatgpt" });
+  });
+
+  it("logout --provider claude-agent-sdk is detected", () => {
+    const result = parseArgv(["logout", "--provider", "claude-agent-sdk"]);
+    expect(result).toMatchObject({ kind: "logout", provider: "claude-agent-sdk" });
+  });
+
+  it("logout without --provider returns error", () => {
+    const result = parseArgv(["logout"]);
+    expect(result).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("logout requires --provider"),
+    });
+  });
 });

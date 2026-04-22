@@ -10,6 +10,10 @@ import { runDoctor } from "./doctor.js";
 import { runInit } from "./init.js";
 import { runWorkerEntry } from "./worker-entry.js";
 import { runSwarm } from "./swarm.js";
+import { pluginMain } from "./plugin.js";
+import { logoutMain } from "./logout.js";
+import { loginMain } from "./login.js";
+import { filterToolsForFramework } from "../tools/framework-filter.js";
 import { detectAuth } from "../auth/status.js";
 import { AnthropicEnvAuth } from "../auth/anthropic-env-auth.js";
 import { ToolDispatcher } from "../tools/dispatcher.js";
@@ -350,6 +354,16 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   let engine: AgentEngine;
   let providerId: string | undefined;
 
+  // codex-chatgpt framework: auth path works, but end-to-end provider is
+  // blocked pending Phase 5 (operator SSE trace capture). Error cleanly.
+  if (opts.framework === "codex-chatgpt") {
+    process.stderr.write(
+      "error: --framework codex-chatgpt is not yet wired — Phase 5 Codex provider is blocked on an operator SSE trace capture.\n" +
+        "Login DOES work: `swarm-coder login --provider codex-chatgpt`. End-to-end turns require Phase 5 to ship.\n",
+    );
+    process.exit(2);
+  }
+
   if (scriptedMode) {
     engine = new ScriptedTestEngine();
   } else {
@@ -416,7 +430,10 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     prompt: text,
     model: resolvedModelId,
     auth,
-    tools: [...Array.from(buildTier0Tools()), ...tier1Tools, ...pluginTools, ...mcpTools],
+    tools: filterToolsForFramework(
+      [...Array.from(buildTier0Tools()), ...tier1Tools, ...pluginTools, ...mcpTools],
+      opts.framework,
+    ),
     canUseTool,
     permissionMode: opts.permissionMode,
     resumeFrom,
@@ -528,6 +545,15 @@ export async function main(argv: string[]): Promise<number> {
           : {}),
         ...(parsed.role !== undefined ? { defaultRole: parsed.role } : {}),
       });
+
+    case "plugin":
+      return pluginMain(parsed.pluginArgv);
+
+    case "login":
+      return loginMain(["--provider", parsed.provider]);
+
+    case "logout":
+      return logoutMain(["--provider", parsed.provider]);
 
     case "error":
       process.stderr.write(`error: ${parsed.message}\n`);
