@@ -89,6 +89,7 @@ export interface ProviderError {
     | "provider_unavailable"
     | "transport"
     | "structured_output_parse_failed"
+    | "prompt_cache_unavailable"
     | "unknown";
   readonly message: string;
   readonly retryable: boolean;
@@ -161,5 +162,21 @@ export type NormalizedEvent =
         readonly phase: "begin" | "end";
         readonly trigger: "auto" | "manual";
         readonly compact_metadata?: Record<string, unknown>;
+      };
+    }
+  /** Emitted when a cached system-prompt prefix was read (cache hit). */
+  | {
+      readonly type: "cache_hit";
+      readonly payload: {
+        readonly tokens: number;
+        readonly fingerprint?: string;
+      };
+    }
+  /** Emitted when a system-prompt prefix was written to cache (cache miss/write). */
+  | {
+      readonly type: "cache_miss";
+      readonly payload: {
+        readonly tokens: number;
+        readonly fingerprint?: string;
       };
     };

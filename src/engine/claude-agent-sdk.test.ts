@@ -51,6 +51,8 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => {
         handler,
       }),
     ),
+
+    SYSTEM_PROMPT_DYNAMIC_BOUNDARY: "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__",
   };
 });
 
@@ -1140,5 +1142,196 @@ describe("Scenario 10: non-ZodObject schema acceptance", () => {
     );
     expect(toolCall).toBeDefined();
     expect(Object.keys(toolCall![2] as object)).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 13: SYSTEM_PROMPT_DYNAMIC_BOUNDARY wiring
+// ---------------------------------------------------------------------------
+
+describe("Scenario 13: SYSTEM_PROMPT_DYNAMIC_BOUNDARY in systemPrompt", () => {
+  const minimalResult = sdkMsg({
+    type: "result",
+    subtype: "success",
+    stop_reason: "end_turn",
+    result: "ok",
+    usage: { input_tokens: 5, output_tokens: 5 },
+    duration_ms: 50,
+    duration_api_ms: 40,
+    is_error: false,
+    num_turns: 1,
+    total_cost_usd: 0,
+    modelUsage: {},
+    permission_denials: [],
+    session_id: "s13",
+    uuid: "u1",
+  });
+
+  beforeEach(() => {
+    mockQueryMessages.length = 0;
+    mockQueryMessages.push(minimalResult);
+  });
+
+  it("passes systemPrompt as array with BOUNDARY marker when systemPrompt is a non-empty string", async () => {
+    const { query: mockQuery } = await import("@anthropic-ai/claude-agent-sdk");
+
+    await collectEvents(makeConfig({ systemPrompt: "You are a helpful assistant." }));
+
+    const callArgs = (mockQuery as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as {
+      options?: { systemPrompt?: unknown };
+    };
+    const sp = callArgs?.options?.systemPrompt;
+    expect(Array.isArray(sp)).toBe(true);
+    const arr = sp as string[];
+    expect(arr[0]).toBe("You are a helpful assistant.");
+    expect(arr[1]).toBe("__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__");
+    expect(arr[2]).toBe("");
+  });
+
+  it("falls back to preset when systemPrompt is empty string", async () => {
+    const { query: mockQuery } = await import("@anthropic-ai/claude-agent-sdk");
+
+    await collectEvents(makeConfig({ systemPrompt: "" }));
+
+    const callArgs = (mockQuery as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as {
+      options?: { systemPrompt?: unknown };
+    };
+    const sp = callArgs?.options?.systemPrompt;
+    expect(sp).toEqual({ type: "preset", preset: "claude_code" });
+  });
+
+  it("respects user-supplied array systemPrompt without adding boundary", async () => {
+    const { query: mockQuery } = await import("@anthropic-ai/claude-agent-sdk");
+
+    const customArray = ["static-prefix", "__CUSTOM_BOUNDARY__", "dynamic-part"];
+    await collectEvents(makeConfig({ systemPrompt: customArray as unknown as string }));
+
+    const callArgs = (mockQuery as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as {
+      options?: { systemPrompt?: unknown };
+    };
+    const sp = callArgs?.options?.systemPrompt;
+    expect(sp).toEqual(customArray);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 14: cache_hit event in stream when cacheReadInputTokens > 0
+// ---------------------------------------------------------------------------
+
+describe("Scenario 14: cache_hit + cache_miss events from engine", () => {
+  beforeEach(() => {
+    mockQueryMessages.length = 0;
+  });
+
+  it("emits cache_hit event when result has cacheReadInputTokens > 0", async () => {
+    mockQueryMessages.push(
+      sdkMsg({
+        type: "result",
+        subtype: "success",
+        stop_reason: "end_turn",
+        result: "ok",
+        usage: {
+          input_tokens: 100,
+          output_tokens: 50,
+          cache_read_input_tokens: 200,
+        },
+        duration_ms: 100,
+        duration_api_ms: 80,
+        is_error: false,
+        num_turns: 1,
+        total_cost_usd: 0,
+        modelUsage: {},
+        permission_denials: [],
+        session_id: "s14a",
+        uuid: "u1",
+      }),
+    );
+
+    const events = await collectEvents(makeConfig({ systemPrompt: "sys" }));
+    const cacheHit = events.find((e) => e.type === "cache_hit");
+    expect(cacheHit).toBeDefined();
+    expect(cacheHit?.type === "cache_hit" && cacheHit.payload.tokens).toBe(200);
+  });
+
+  it("emits cache_miss event when result has cacheWriteInputTokens > 0", async () => {
+    mockQueryMessages.push(
+      sdkMsg({
+        type: "result",
+        subtype: "success",
+        stop_reason: "end_turn",
+        result: "ok",
+        usage: {
+          input_tokens: 100,
+          output_tokens: 50,
+          cache_creation_input_tokens: 300,
+        },
+        duration_ms: 100,
+        duration_api_ms: 80,
+        is_error: false,
+        num_turns: 1,
+        total_cost_usd: 0,
+        modelUsage: {},
+        permission_denials: [],
+        session_id: "s14b",
+        uuid: "u1",
+      }),
+    );
+
+    const events = await collectEvents(makeConfig({ systemPrompt: "sys" }));
+    const cacheMiss = events.find((e) => e.type === "cache_miss");
+    expect(cacheMiss).toBeDefined();
+    expect(cacheMiss?.type === "cache_miss" && cacheMiss.payload.tokens).toBe(300);
+  });
+
+  it("structuredOutput + cache boundary: both parsed JSON and cache_hit fire", async () => {
+    mockQueryMessages.push(
+      sdkMsg({
+        type: "stream_event",
+        event: {
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "text_delta", text: '{"result":"ok"}' },
+        },
+        session_id: "s14c",
+        uuid: "u-td",
+        parent_tool_use_id: null,
+      }),
+      sdkMsg({
+        type: "result",
+        subtype: "success",
+        stop_reason: "end_turn",
+        result: '{"result":"ok"}',
+        usage: {
+          input_tokens: 50,
+          output_tokens: 10,
+          cache_read_input_tokens: 150,
+        },
+        duration_ms: 100,
+        duration_api_ms: 80,
+        is_error: false,
+        num_turns: 1,
+        total_cost_usd: 0,
+        modelUsage: {},
+        permission_denials: [],
+        session_id: "s14c",
+        uuid: "u-result",
+      }),
+    );
+
+    const events = await collectEvents(
+      makeConfig({
+        systemPrompt: "You are a JSON assistant.",
+        structuredOutput: { schema: { kind: "json-schema", schema: { type: "object" } } },
+      }),
+    );
+
+    // cache_hit should be present
+    const cacheHit = events.find((e) => e.type === "cache_hit");
+    expect(cacheHit).toBeDefined();
+
+    // message_stop with structuredOutput should be present
+    const stop = events.find((e) => e.type === "message_stop");
+    expect(stop).toBeDefined();
+    expect((stop as { structuredOutput?: unknown }).structuredOutput).toEqual({ result: "ok" });
   });
 });

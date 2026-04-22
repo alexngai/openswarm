@@ -41,6 +41,11 @@ export const costCommand: SlashCommand = {
       (u.outputTokens / 1_000_000) * p.output +
       (cacheRead / 1_000_000) * p.cacheRead +
       (cacheWrite / 1_000_000) * p.cacheWrite;
+    const hitRatioLine =
+      cacheRead + u.inputTokens > 0
+        ? `\n  cache hit ratio: ${Math.round((cacheRead / (cacheRead + u.inputTokens)) * 100)}%  (cacheRead / (cacheRead + input))`
+        : "";
+
     return {
       kind: "message",
       text:
@@ -49,7 +54,8 @@ export const costCommand: SlashCommand = {
         `  output: ${u.outputTokens}\n` +
         `  cache_read: ${cacheRead}\n` +
         `  cache_write: ${cacheWrite}\n` +
-        `  estimated cost: ${fmtUsd(cost)}`,
+        `  estimated cost: ${fmtUsd(cost)}` +
+        hitRatioLine,
     };
   },
 };

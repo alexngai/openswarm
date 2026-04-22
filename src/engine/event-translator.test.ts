@@ -400,7 +400,11 @@ describe("result message / message_stop", () => {
       }),
       state,
     );
-    expect(result).toEqual({
+    // When cache tokens are present, result is an array [cache_hit, cache_miss, message_stop].
+    // Extract the message_stop event to verify its shape.
+    const events = Array.isArray(result) ? (result as NormalizedEvent[]) : [result as NormalizedEvent];
+    const stop = events.find((e) => e.type === "message_stop");
+    expect(stop).toEqual({
       type: "message_stop",
       stopReason: "end_turn",
       usage: {
@@ -410,6 +414,9 @@ describe("result message / message_stop", () => {
         cacheWriteInputTokens: 10,
       },
     });
+    // Also assert cache events are present.
+    expect(events.find((e) => e.type === "cache_hit")).toBeDefined();
+    expect(events.find((e) => e.type === "cache_miss")).toBeDefined();
   });
 
   it("maps tool_use stop reason", () => {
@@ -820,5 +827,97 @@ describe("system and misc messages → null", () => {
       state,
     );
     expect(result).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// cache_hit / cache_miss emission from result message
+// ---------------------------------------------------------------------------
+
+describe("result message / cache_hit and cache_miss events", () => {
+  function makeResultMsg(opts: {
+    cacheRead?: number;
+    cacheWrite?: number;
+  }): object {
+    return {
+      type: "result",
+      subtype: "success",
+      stop_reason: "end_turn",
+      result: "ok",
+      usage: {
+        input_tokens: 100,
+        output_tokens: 50,
+        ...(opts.cacheRead != null && { cache_read_input_tokens: opts.cacheRead }),
+        ...(opts.cacheWrite != null && { cache_creation_input_tokens: opts.cacheWrite }),
+      },
+      duration_ms: 100,
+      duration_api_ms: 80,
+      is_error: false,
+      num_turns: 1,
+      total_cost_usd: 0,
+      modelUsage: {},
+      permission_denials: [],
+      session_id: "s-cache",
+      uuid: "u-cache",
+    };
+  }
+
+  it("emits cache_hit before message_stop when cacheReadInputTokens > 0", () => {
+    const state = makeState();
+    const result = translateSdkMessage(msg(makeResultMsg({ cacheRead: 42 })), state);
+    expect(Array.isArray(result)).toBe(true);
+    const events = result as NormalizedEvent[];
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({ type: "cache_hit" });
+    expect(events[0].type === "cache_hit" && events[0].payload.tokens).toBe(42);
+    expect(events[1]).toMatchObject({ type: "message_stop" });
+  });
+
+  it("emits cache_miss before message_stop when cacheWriteInputTokens > 0", () => {
+    const state = makeState();
+    const result = translateSdkMessage(msg(makeResultMsg({ cacheWrite: 99 })), state);
+    expect(Array.isArray(result)).toBe(true);
+    const events = result as NormalizedEvent[];
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({ type: "cache_miss" });
+    expect(events[0].type === "cache_miss" && events[0].payload.tokens).toBe(99);
+    expect(events[1]).toMatchObject({ type: "message_stop" });
+  });
+
+  it("emits both cache_hit and cache_miss when both > 0", () => {
+    const state = makeState();
+    const result = translateSdkMessage(
+      msg(makeResultMsg({ cacheRead: 10, cacheWrite: 20 })),
+      state,
+    );
+    expect(Array.isArray(result)).toBe(true);
+    const events = result as NormalizedEvent[];
+    expect(events).toHaveLength(3);
+    expect(events[0]).toMatchObject({ type: "cache_hit" });
+    expect(events[1]).toMatchObject({ type: "cache_miss" });
+    expect(events[2]).toMatchObject({ type: "message_stop" });
+  });
+
+  it("does NOT emit cache_hit or cache_miss when both are 0 or absent", () => {
+    const state = makeState();
+    const result = translateSdkMessage(msg(makeResultMsg({})), state);
+    // Returns a single event (not array) when no cache tokens
+    const events = Array.isArray(result) ? result as NormalizedEvent[] : [result as NormalizedEvent];
+    const cacheEvents = events.filter(
+      (e) => e.type === "cache_hit" || e.type === "cache_miss",
+    );
+    expect(cacheEvents).toHaveLength(0);
+  });
+
+  it("includes fingerprint hash in cache event payload when state has fingerprint", () => {
+    const fingerprint = { hash: "abcd1234efgh5678", version: "v1" as const };
+    const state = { openToolUseIds: [], stripPrefix: "", fingerprint };
+    const result = translateSdkMessage(msg(makeResultMsg({ cacheRead: 5 })), state);
+    expect(Array.isArray(result)).toBe(true);
+    const events = result as NormalizedEvent[];
+    const cacheHit = events.find((e) => e.type === "cache_hit");
+    expect(cacheHit?.type === "cache_hit" && cacheHit.payload.fingerprint).toBe(
+      "abcd1234efgh5678",
+    );
   });
 });

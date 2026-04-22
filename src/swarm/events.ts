@@ -102,6 +102,7 @@ export type LaneEventType =
   // ---------------- Cache ----------------
   | "cache_hit"
   | "cache_miss"
+  | "prompt_cache_unavailable"
   // ---------------- Parallel tool batch ----------------
   | "parallel_tool_batch"
   // ---------------- Preflight ----------------

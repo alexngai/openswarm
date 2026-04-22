@@ -215,6 +215,10 @@ export function translateEngineEvent(evt: NormalizedEvent): ReplEvent[] {
       }
       return actions;
     }
+    case "cache_hit":
+    case "cache_miss":
+      // Analytics-only events — no UI action needed.
+      return [];
   }
 }
 

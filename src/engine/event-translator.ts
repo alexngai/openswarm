@@ -17,6 +17,7 @@ import type {
   SDKHookResponseMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { NormalizedEvent, StopReason, Usage } from "../core/types.js";
+import type { PromptCacheFingerprint } from "./prompt-cache.js";
 
 // ---------------------------------------------------------------------------
 // Translator state (per-run)
@@ -35,10 +36,15 @@ export interface TranslatorState {
   openToolUseIds: string[];
   /** Prefix to strip from tool names in emitted events. Default "". */
   stripPrefix: string;
+  /** Fingerprint of the system-prompt prefix + tool surface for cache analytics. */
+  fingerprint?: PromptCacheFingerprint;
 }
 
-export function makeTranslatorState(stripPrefix = ""): TranslatorState {
-  return { openToolUseIds: [], stripPrefix };
+export function makeTranslatorState(
+  stripPrefix = "",
+  fingerprint?: PromptCacheFingerprint,
+): TranslatorState {
+  return { openToolUseIds: [], stripPrefix, fingerprint };
 }
 
 function stripToolName(name: string, prefix: string): string {
@@ -207,13 +213,42 @@ function handleUserMessage(msg: SDKUserMessage): NormalizedEvent | null {
 // result message handler
 // ---------------------------------------------------------------------------
 
-function handleResultMessage(msg: SDKResultMessage): NormalizedEvent {
+function handleResultMessage(
+  msg: SDKResultMessage,
+  state: TranslatorState,
+): NormalizedEvent | readonly NormalizedEvent[] {
   if (msg.subtype === "success") {
-    return {
+    const usage = mapUsage(msg.usage);
+    const stopEvent: NormalizedEvent = {
       type: "message_stop",
       stopReason: mapStopReason(msg.stop_reason),
-      usage: mapUsage(msg.usage),
+      usage,
     };
+
+    const extra: NormalizedEvent[] = [];
+    if (usage.cacheReadInputTokens != null && usage.cacheReadInputTokens > 0) {
+      extra.push({
+        type: "cache_hit",
+        payload: {
+          tokens: usage.cacheReadInputTokens,
+          fingerprint: state.fingerprint?.hash,
+        },
+      } as unknown as NormalizedEvent);
+    }
+    if (usage.cacheWriteInputTokens != null && usage.cacheWriteInputTokens > 0) {
+      extra.push({
+        type: "cache_miss",
+        payload: {
+          tokens: usage.cacheWriteInputTokens,
+          fingerprint: state.fingerprint?.hash,
+        },
+      } as unknown as NormalizedEvent);
+    }
+
+    if (extra.length > 0) {
+      return [...extra, stopEvent];
+    }
+    return stopEvent;
   }
 
   // Error subtypes: error_during_execution | error_max_turns | error_max_budget_usd | ...
@@ -348,7 +383,7 @@ export function translateSdkMessage(
       return handleUserMessage(msg as SDKUserMessage);
 
     case "result":
-      return handleResultMessage(msg as SDKResultMessage);
+      return handleResultMessage(msg as SDKResultMessage, state);
 
     case "system": {
       // SDK hook lifecycle messages: SDKHookStartedMessage, SDKHookProgressMessage,
