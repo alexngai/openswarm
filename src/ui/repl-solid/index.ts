@@ -21,7 +21,10 @@ import type { AgentEngine, RunConfig } from "../../engine/index.js";
 import type { NormalizedEvent, PermissionMode } from "../../core/types.js";
 import type { SlashCommandRegistry } from "../repl/state.js";
 import type { TokenGetter } from "../repl/status.js";
-import type { BuildDefaultRegistryDeps } from "../../cli/slash/index.js";
+import {
+  buildDefaultRegistry,
+  type BuildDefaultRegistryDeps,
+} from "../../cli/slash/index.js";
 
 export interface RunReplConfig {
   readonly engine: AgentEngine;
@@ -52,9 +55,15 @@ export async function runRepl(config: RunReplConfig): Promise<void> {
       getTokens?: () => number;
       onExit?: () => void;
       onSubmit?: (line: string) => void;
+      registry?: SlashCommandRegistry;
+      slashDeps?: BuildDefaultRegistryDeps;
+      onSessionId?: (sessionId: string) => void;
     }) => Promise<void>;
   };
   const { mountSolidRender } = mountModule;
+
+  const registry =
+    config.registry ?? buildDefaultRegistry(config.slashDeps ?? {});
 
   const promptQueue: string[] = [];
   let resolveNext: ((value: string | null) => void) | undefined;
@@ -120,6 +129,9 @@ export async function runRepl(config: RunReplConfig): Promise<void> {
       getTokens: config.getTokens,
       onExit: finish,
       onSubmit: (line: string) => enqueuePrompt(line),
+      registry,
+      slashDeps: config.slashDeps,
+      onSessionId: config.onSessionId,
     }).catch((err: unknown) => {
       if (!finished) {
         finished = true;

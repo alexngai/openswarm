@@ -20,6 +20,7 @@
   "exclude": [
     "node_modules",
     "dist",
-    "src/ui/repl-solid/**/*.tsx"
+    "src/ui/repl-solid/**/*.tsx",
+    "src/ui/repl-solid/cli-bun.test.ts"
   ]
 }

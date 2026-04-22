@@ -1,35 +1,43 @@
 /**
  * app.tsx — Solid root for the OpenTUI REPL.
  *
- * Phase 0b composition: wires Transcript, Input, Status, Spinner together,
- * drives the store from engine events, handles SIGINT → shutdown. API shape
- * mirrors the Ink `App` in ../repl/app.tsx so src/cli.ts can swap the mount
- * point in Phase 0c with a minimal change.
+ * Composes Transcript, Input, Status, Spinner, Dropdown. Drives the store
+ * from engine events; handles SIGINT → shutdown; routes slash-prefixed
+ * submits through the existing `dispatchSlashLine` pipeline and applies
+ * the resulting `SlashCommandResult` back into the store.
  *
- * Intentionally scoped: slash-command dispatch + dropdown wiring are deferred
- * to Phase 0c when cli.ts integration decides the slash pipeline shape. The
- * Dropdown component exists and is tested; it's just not composed here yet.
+ * Phase 0c.5 change: slash-command dispatch + dropdown wiring landed.
+ * Dropdown shows filtered candidates when input starts with "/". Enter
+ * submits the current input as-is (no tab-autocomplete yet; that can
+ * come later).
  */
 
-import { Show, onMount, onCleanup, createEffect } from "solid-js";
+import { Show, onMount, onCleanup, createEffect, createMemo } from "solid-js";
 import { createReplStore } from "./store.js";
 import { Transcript } from "./transcript.js";
 import { Input } from "./input.js";
 import { Status } from "./status.js";
 import { Spinner } from "./spinner.js";
+import { Dropdown } from "./dropdown.js";
+import { dispatchSlashLine } from "../../cli/slash/dispatcher.js";
+import type {
+  SlashCommandResult,
+  SlashCommandRegistry,
+} from "../../cli/slash/index.js";
 import type { NormalizedEvent } from "../../core/types.js";
 import type { ReplEvent } from "../repl/state.js";
 import type { AppProps } from "./types.js";
 
 export type { AppProps };
 
+let slashSeq = 0;
+
 export function App(props: AppProps) {
   const { state, dispatch } = createReplStore({
     permissionMode: props.permissionMode,
   });
 
-  // Engine event pump — drains the async iterable and translates events into
-  // reducer actions. Runs once on mount; cancels on unmount.
+  // Engine event pump.
   onMount(() => {
     let cancelled = false;
     const pump = async (): Promise<void> => {
@@ -41,8 +49,8 @@ export function App(props: AppProps) {
           }
         }
       } catch {
-        // Iterator-level throws are rare; engine errors surface via the
-        // `error` NormalizedEvent and are translated above.
+        // Engine errors arrive via the `error` NormalizedEvent and are
+        // translated above; iterator-level throws are rare.
       }
     };
     void pump();
@@ -51,8 +59,7 @@ export function App(props: AppProps) {
     });
   });
 
-  // SIGINT → shutdown. Dispatch the state transition; caller's onExit runs
-  // when state.name settles on "shutdown" (effect below).
+  // SIGINT → shutdown.
   onMount(() => {
     const onSigInt = (): void => {
       dispatch({ type: "shutdown" });
@@ -63,8 +70,7 @@ export function App(props: AppProps) {
     });
   });
 
-  // Shutdown watcher — notify the outer caller once the state machine
-  // reaches terminal. Caller is responsible for tearing down the renderer.
+  // Shutdown watcher.
   createEffect(() => {
     if (state.name === "shutdown") {
       props.onExit?.();
@@ -73,11 +79,40 @@ export function App(props: AppProps) {
 
   const handleSubmit = (line: string): void => {
     if (line.length === 0) return;
+    if (line.startsWith("/") && props.registry !== undefined) {
+      const registry = props.registry;
+      void (async () => {
+        const result = await dispatchSlashLine(
+          line,
+          state,
+          registry,
+          props.slashDeps ?? {},
+        );
+        applySlashResult(result, dispatch, props.onSubmit, props.onSessionId);
+      })();
+      return;
+    }
     dispatch({ type: "submit", text: line });
     props.onSubmit?.(line);
   };
 
   const getTokens = (): number => props.getTokens?.() ?? 0;
+
+  // Dropdown candidates — non-empty and visible only when input starts with
+  // "/" and a registry is available. Filter registry entries by the prefix
+  // after "/".
+  const dropdownCandidates = createMemo<
+    ReadonlyArray<{ name: string; description: string }>
+  >(() => {
+    const registry = props.registry;
+    if (registry === undefined) return [];
+    const value = state.input.value;
+    if (!value.startsWith("/")) return [];
+    const prefix = value.slice(1).toLowerCase();
+    return registry
+      .list()
+      .filter((c) => c.name.toLowerCase().startsWith(prefix));
+  });
 
   return (
     <box flexDirection="column" flexGrow={1}>
@@ -96,20 +131,68 @@ export function App(props: AppProps) {
           disabled={state.name === "compact"}
         />
       </Show>
+      <Show when={dropdownCandidates().length > 1}>
+        <Dropdown candidates={dropdownCandidates()} selectedIndex={0} />
+      </Show>
       <Status state={state} model={props.model} getTokens={getTokens} />
     </box>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Engine event → reducer actions
+// Slash result → store dispatch
 // ---------------------------------------------------------------------------
 
 /**
- * Port of translateEngineEvent from src/ui/repl/app.tsx. Kept in sync with
- * the Ink version until Phase 0d removes Ink; then the canonical path is
- * this file and the Ink one is deleted.
+ * Port of `applySlashResult` from src/ui/repl/app.tsx. Translates a
+ * SlashCommandResult into store dispatches + optional onSubmit/onSessionId
+ * callbacks. No Ink-specific API (no `ink.exit()` — shutdown propagates via
+ * the reducer-event variant and App's onExit effect).
  */
+function applySlashResult(
+  result: SlashCommandResult,
+  dispatch: (e: ReplEvent) => void,
+  onSubmit?: (line: string) => void,
+  onSessionId?: (sessionId: string) => void,
+): void {
+  slashSeq += 1;
+  switch (result.kind) {
+    case "message":
+      dispatch({
+        type: "system-entry",
+        id: `slash-msg-${slashSeq}`,
+        text: result.text,
+      });
+      return;
+    case "error":
+      dispatch({
+        type: "system-entry",
+        id: `slash-err-${slashSeq}`,
+        text: `error: ${result.message}`,
+      });
+      return;
+    case "reducer-event":
+      dispatch(result.event);
+      if (result.event.type === "session-id") {
+        onSessionId?.(result.event.sessionId);
+      }
+      // /exit → reducer-event: { type: "shutdown" }. App's effect on
+      // state.name === "shutdown" calls props.onExit, so no explicit call
+      // needed here.
+      return;
+    case "engine-hint":
+      dispatch({ type: "submit", text: result.prompt });
+      onSubmit?.(result.prompt);
+      return;
+    case "ok":
+      return;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Engine event → reducer actions
+// ---------------------------------------------------------------------------
+
 export function translateEngineEvent(evt: NormalizedEvent): ReplEvent[] {
   switch (evt.type) {
     case "text_delta":
@@ -167,3 +250,7 @@ export function translateEngineEvent(evt: NormalizedEvent): ReplEvent[] {
       return [];
   }
 }
+
+// Avoid unused-import errors when SlashCommandRegistry isn't referenced at
+// runtime (it's only used as a type via AppProps).
+export type { SlashCommandRegistry };
