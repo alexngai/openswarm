@@ -52,7 +52,6 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => {
       }),
     ),
 
-    SYSTEM_PROMPT_DYNAMIC_BOUNDARY: "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__",
   };
 });
 
@@ -1189,7 +1188,7 @@ describe("Scenario 13: SYSTEM_PROMPT_DYNAMIC_BOUNDARY in systemPrompt", () => {
     mockQueryMessages.push(minimalResult);
   });
 
-  it("passes systemPrompt as array with BOUNDARY marker when systemPrompt is a non-empty string", async () => {
+  it("passes systemPrompt as plain string (NOT an array) when systemPrompt is a non-empty string", async () => {
     const { query: mockQuery } = await import("@anthropic-ai/claude-agent-sdk");
 
     await collectEvents(makeConfig({ systemPrompt: "You are a helpful assistant." }));
@@ -1198,11 +1197,12 @@ describe("Scenario 13: SYSTEM_PROMPT_DYNAMIC_BOUNDARY in systemPrompt", () => {
       options?: { systemPrompt?: unknown };
     };
     const sp = callArgs?.options?.systemPrompt;
-    expect(Array.isArray(sp)).toBe(true);
-    const arr = sp as string[];
-    expect(arr[0]).toBe("You are a helpful assistant.");
-    expect(arr[1]).toBe("__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__");
-    expect(arr[2]).toBe("");
+    // C2 fix: plain string — SDK caches the static prefix automatically.
+    // The dynamic-boundary array form risks silently degrading cache behavior
+    // when the dynamic suffix is empty. Plain-string is correct until M4+.
+    expect(typeof sp).toBe("string");
+    expect(sp).toBe("You are a helpful assistant.");
+    expect(Array.isArray(sp)).toBe(false);
   });
 
   it("falls back to preset when systemPrompt is empty string", async () => {
@@ -1298,6 +1298,34 @@ describe("Scenario 14: cache_hit + cache_miss events from engine", () => {
     const cacheMiss = events.find((e) => e.type === "cache_miss");
     expect(cacheMiss).toBeDefined();
     expect(cacheMiss?.type === "cache_miss" && cacheMiss.payload.tokens).toBe(300);
+  });
+
+  it("no prompt_cache_unavailable error emitted (C2 regression — plain string path)", async () => {
+    mockQueryMessages.push(
+      sdkMsg({
+        type: "result",
+        subtype: "success",
+        stop_reason: "end_turn",
+        result: "ok",
+        usage: { input_tokens: 10, output_tokens: 5 },
+        duration_ms: 50,
+        duration_api_ms: 40,
+        is_error: false,
+        num_turns: 1,
+        total_cost_usd: 0,
+        modelUsage: {},
+        permission_denials: [],
+        session_id: "s15",
+        uuid: "u1",
+      }),
+    );
+
+    const events = await collectEvents(makeConfig({ systemPrompt: "static prefix" }));
+    const cacheUnavail = events.filter(
+      (e) => e.type === "error" &&
+        (e as { error: { code: string } }).error.code === "prompt_cache_unavailable",
+    );
+    expect(cacheUnavail).toHaveLength(0);
   });
 
   it("structuredOutput + cache boundary: both parsed JSON and cache_hit fire", async () => {

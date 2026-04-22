@@ -29,10 +29,44 @@ const spec: ToolSpec = {
 interface NotebookCell {
   id: string;
   cell_type: string;
-  source: string;
+  /**
+   * Jupyter spec allows source to be either a plain string or an array of
+   * lines (each line retaining its trailing newline except the last).
+   * Internally we normalise to string for editing; on write we restore the
+   * original shape.
+   */
+  source: string | string[];
   metadata: Record<string, unknown>;
   outputs?: unknown[];
   execution_count?: null;
+}
+
+/**
+ * Split a string into Jupyter array-form lines: each element keeps its
+ * trailing '\n' except the final element (matching the Jupyter spec).
+ */
+function splitIntoLines(s: string): string[] {
+  if (s === "") return [];
+  // Split on newline boundaries, keeping the '\n' attached to each line.
+  const lines = s.split(/(?<=\n)/);
+  return lines;
+}
+
+/**
+ * Compute a collision-safe cell id for a newly inserted cell (M3 fix).
+ * Uses the largest numeric suffix of any existing "cell-N" id + 1.
+ * Falls back to cells.length when no numeric ids exist.
+ */
+function nextCellId(cells: NotebookCell[]): string {
+  let max = -1;
+  for (const c of cells) {
+    const m = /^cell-(\d+)$/.exec(c.id);
+    if (m) {
+      const n = parseInt(m[1]!, 10);
+      if (n > max) max = n;
+    }
+  }
+  return `cell-${max >= 0 ? max + 1 : cells.length}`;
 }
 
 interface Notebook {
@@ -82,6 +116,17 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   // Language detection
   const language = notebook.metadata?.kernelspec?.language ?? "python";
 
+  // M2 fix: normalise array-form source to string for editing; track which
+  // cell ids originally had array-form so we can restore on write.
+  // Key: cell id → true when original source was string[].
+  const arraySourceIds = new Set<string>();
+  for (const cell of notebook.cells) {
+    if (Array.isArray(cell.source)) {
+      arraySourceIds.add(cell.id);
+      cell.source = (cell.source as string[]).join("");
+    }
+  }
+
   // Determine cell index
   let cellIndex: number;
   let resolvedCellId: string;
@@ -98,18 +143,24 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   } else {
     if (input.edit_mode === "insert") {
       cellIndex = notebook.cells.length;
-      resolvedCellId = `cell-${notebook.cells.length}`;
+      // M3 fix: compute collision-safe id based on max existing numeric suffix.
+      resolvedCellId = nextCellId(notebook.cells);
       resolvedCellType = input.cell_type ?? "code";
     } else {
       return { status: "error", message: "cell_id required for replace/delete" };
     }
   }
 
+  // The edited/inserted cell gets new content — don't restore its array form.
+  // Remove it from arraySourceIds so the write-back loop leaves it as a plain string.
+  arraySourceIds.delete(resolvedCellId);
+
   // Apply edit
   if (input.edit_mode === "replace") {
     if (input.new_source === undefined) {
       return { status: "error", message: "new_source required for replace" };
     }
+    // Store as plain string; original array shape restored below for unchanged cells.
     notebook.cells[cellIndex].source = input.new_source;
     if (input.cell_type !== undefined) {
       notebook.cells[cellIndex].cell_type = input.cell_type;
@@ -149,6 +200,15 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
     // If cell_id was provided, insert AFTER that index; if absent, append
     const insertAt = input.cell_id !== undefined ? cellIndex + 1 : notebook.cells.length;
     notebook.cells.splice(insertAt, 0, newCell);
+  }
+
+  // M2 fix: restore array-form source for cells that originally had it.
+  // Edited/inserted cells stay as plain strings (Jupyter accepts both forms).
+  // We match by cell id so deletes and inserts don't corrupt the index mapping.
+  for (const cell of notebook.cells) {
+    if (arraySourceIds.has(cell.id) && typeof cell.source === "string") {
+      cell.source = splitIntoLines(cell.source);
+    }
   }
 
   // Write back

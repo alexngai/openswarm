@@ -28,6 +28,9 @@ const inputSchema = z.object({
   ),
 });
 
+// concurrencySafe: false — Tier 2 tools touch shared orchestrator state
+// (task registry, inbox, role index, spawn parents, stdin, transports)
+// that isn't reentrant under Promise.all dispatch.
 const spec: ToolSpec = {
   name: "send_message",
   description:
@@ -38,6 +41,7 @@ const spec: ToolSpec = {
   inputSchema: zodToJsonSchema(inputSchema as any) as JsonSchema,
   requiredPermission: "exec",
   tier: 2,
+  concurrencySafe: false,
 };
 
 async function execute(

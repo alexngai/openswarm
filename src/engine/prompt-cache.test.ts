@@ -51,7 +51,10 @@ describe("fingerprintSystemPrompt", () => {
     expect(fp1.hash).toBe(fp2.hash);
   });
 
-  it("changes when input schema changes", () => {
+  it("is stable across semver-equivalent schema rewrites — hash is based on {name, description} only (M4)", () => {
+    // Two tools with identical name+description but different inputSchema shapes.
+    // Fingerprint must be identical: schema churn (Zod key-ordering, $defs
+    // insertion, etc.) must not invalidate analytics cache_hit events.
     const tool1: ToolSpec = {
       name: "read_file",
       description: "read",
@@ -61,7 +64,25 @@ describe("fingerprintSystemPrompt", () => {
     };
     const tool2: ToolSpec = {
       ...tool1,
+      // Different schema shape — same name & description.
       inputSchema: { type: "object", properties: { file: { type: "string" } } },
+    };
+    const fp1 = fingerprintSystemPrompt("prefix", [tool1]);
+    const fp2 = fingerprintSystemPrompt("prefix", [tool2]);
+    expect(fp1.hash).toBe(fp2.hash);
+  });
+
+  it("changes when tool description changes (M4)", () => {
+    const tool1: ToolSpec = {
+      name: "read_file",
+      description: "read a file",
+      inputSchema: { type: "object", properties: { path: { type: "string" } } },
+      requiredPermission: "read",
+      tier: 1,
+    };
+    const tool2: ToolSpec = {
+      ...tool1,
+      description: "read a file from disk",
     };
     const fp1 = fingerprintSystemPrompt("prefix", [tool1]);
     const fp2 = fingerprintSystemPrompt("prefix", [tool2]);

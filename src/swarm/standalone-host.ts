@@ -39,7 +39,7 @@ import {
  * node:readline/promises module; tests override via `StandaloneHostOptions.readlineFactory`.
  */
 export interface ReadlineLike {
-  question(prompt: string): Promise<string>;
+  question(prompt: string, options?: { signal?: AbortSignal }): Promise<string>;
   close(): void;
 }
 export type ReadlineFactory = () => Promise<ReadlineLike>;
@@ -498,6 +498,7 @@ export class StandaloneHost implements SwarmHost {
   async askUser(
     question: string,
     options?: readonly string[],
+    abort?: AbortSignal,
   ): Promise<import("./host.js").AskUserResponse> {
     this.emit({
       type: "ask_user_question_sent",
@@ -512,6 +513,11 @@ export class StandaloneHost implements SwarmHost {
       };
     }
 
+    // If already aborted before we start, short-circuit immediately.
+    if (abort?.aborted) {
+      return { status: "cancelled" };
+    }
+
     const rl = await this.readlineFactory();
     try {
       const promptLines: string[] = [question];
@@ -519,7 +525,24 @@ export class StandaloneHost implements SwarmHost {
         options.forEach((opt, i) => promptLines.push(`  ${i + 1}) ${opt}`));
       }
       const prompt = promptLines.join("\n") + "\n> ";
-      const raw = await rl.question(prompt);
+
+      let raw: string;
+      try {
+        // node:readline/promises rl.question() accepts {signal} as a second
+        // argument (Node 18+). When the signal fires, question() rejects with
+        // an AbortError. We catch that specifically and return cancelled.
+        raw = await rl.question(prompt, abort != null ? { signal: abort } : undefined);
+      } catch (err: unknown) {
+        // AbortError from readline or any signal-driven cancellation.
+        if (
+          abort?.aborted ||
+          (err instanceof Error && err.name === "AbortError")
+        ) {
+          return { status: "cancelled" };
+        }
+        throw err;
+      }
+
       const answer = raw.trim();
 
       if (options != null && /^\d+$/.test(answer)) {
@@ -674,11 +697,19 @@ export class StandaloneHost implements SwarmHost {
         );
         return;
       }
+      // M1 fix: create an AbortController tied to the worker's timeoutMs so
+      // that if the worker's IPC request times out, the readline prompt is
+      // also cancelled — preventing a zombie readline from holding stdin.
+      const ac = new AbortController();
+      const timeoutMs = parsed.data.timeoutMs ?? 600_000;
+      const timer = setTimeout(() => ac.abort(), timeoutMs);
       try {
         const response = await this.askUser(
           parsed.data.question,
           parsed.data.options,
+          ac.signal,
         );
+        clearTimeout(timer);
         if (response.status === "answered") {
           transport.respond(frame.id, { answer: response.answer });
         } else if (response.status === "timed-out") {
@@ -689,6 +720,7 @@ export class StandaloneHost implements SwarmHost {
           transport.respondError(frame.id, "error", response.message);
         }
       } catch (err) {
+        clearTimeout(timer);
         transport.respondError(
           frame.id,
           IPC_ERROR_CODES.INTERNAL_ERROR,

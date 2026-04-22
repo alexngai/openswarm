@@ -13,7 +13,6 @@ import {
   query,
   createSdkMcpServer,
   tool,
-  SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { fingerprintSystemPrompt } from "./prompt-cache.js";
@@ -195,26 +194,22 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
     const allowDangerouslySkipPermissions =
       sdkPermissionMode === "bypassPermissions";
 
-    // 5. System prompt shape + prompt-cache boundary injection.
+    // 5. System prompt shape.
     //    If the caller passed an array, respect it (user-supplied boundary wins).
-    //    If SYSTEM_PROMPT_DYNAMIC_BOUNDARY is exported by the SDK (string constant),
-    //    compose [staticPrefix, BOUNDARY, ""] so the static prefix gets cached.
-    //    Otherwise fall back to plain string / preset.
+    //    If a non-empty string prefix is provided, pass it as a plain string —
+    //    the SDK caches the full static string automatically. The dynamic-boundary
+    //    ARRAY form ([prefix, BOUNDARY, dynamicSuffix]) is intended for callers
+    //    that supply a non-empty dynamic suffix. Passing [prefix, BOUNDARY, ""]
+    //    risks silently degrading cache behavior (SDK may emit a zero-token
+    //    cacheable prefix or collapse the array). Until a dynamic suffix source
+    //    exists (M4+ per-run context), plain-string is correct and sufficient.
+    //    Otherwise fall back to the claude_code preset.
     let systemPrompt: string | string[] | { type: "preset"; preset: "claude_code" };
-    let promptCacheUnavailable = false;
     const basePrefix = config.systemPrompt;
     if (Array.isArray(basePrefix)) {
       systemPrompt = basePrefix as string[];
     } else if (basePrefix.length > 0) {
-      if (typeof SYSTEM_PROMPT_DYNAMIC_BOUNDARY === "string") {
-        systemPrompt = [basePrefix, SYSTEM_PROMPT_DYNAMIC_BOUNDARY, ""];
-      } else {
-        // SDK version mismatch: no BOUNDARY export. Fall back to plain string,
-        // flag so we yield a one-time prompt_cache_unavailable error event
-        // at the start of the stream below.
-        systemPrompt = basePrefix;
-        promptCacheUnavailable = true;
-      }
+      systemPrompt = basePrefix;
     } else {
       systemPrompt = { type: "preset", preset: "claude_code" } as const;
     }
@@ -307,22 +302,6 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
     const state = makeTranslatorState(MCP_PREFIX, fingerprint);
     let textBuffer = "";
     const bufferingEnabled = config.structuredOutput != null;
-
-    // One-time signal: the pinned SDK version lacks the BOUNDARY export, so
-    // prompt caching is disabled for this run. Emitted as an error event
-    // (non-retryable, informational) before any stream content so a caller
-    // can surface it without racing against the first text_delta.
-    if (promptCacheUnavailable) {
-      yield {
-        type: "error" as const,
-        error: {
-          code: "prompt_cache_unavailable" as const,
-          message:
-            "SDK does not export SYSTEM_PROMPT_DYNAMIC_BOUNDARY — prompt caching is disabled for this run (plain-string systemPrompt sent).",
-          retryable: false,
-        },
-      };
-    }
 
     try {
       for await (const msg of response) {

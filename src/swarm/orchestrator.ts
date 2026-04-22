@@ -659,9 +659,18 @@ export class Orchestrator extends EventEmitter {
    * Mapping:
    *   - `none`   → null (skip lock entirely)
    *   - `reuse`  → policy.branch
-   *   - `create` → policy.name ?? `task-<id>-<shortHash(id)>` (TEMPORARY —
-   *                a future phase with real `git checkout` will replace this
-   *                with post-checkout `git symbolic-ref --short HEAD`).
+   *   - `create` with explicit `.name` → policy.name
+   *   - `create` without `.name` → null (skip lock acquire)
+   *
+   * Rationale for the `create` without `.name` case (M3b audit finding C3):
+   * synthesizing a per-task key from task.id would generate DIFFERENT keys
+   * for two tasks that both target `{ kind: "create", from: "<base>" }` with
+   * no explicit name, so the lock would never serialize anything — defeating
+   * its purpose. When real git-checkout integration lands (post-M3b), the
+   * lock key will come from post-checkout `git symbolic-ref --short HEAD`.
+   * Until then, operators must supply `.name` to opt into serialization.
+   * The skip is surfaced via a `branch_policy_noop` event with
+   * `reason: "create_without_name"`.
    */
   private branchLockKey(task: TaskPacket): string | null {
     const policy = task.branchPolicy as BranchPolicy;
@@ -669,11 +678,15 @@ export class Orchestrator extends EventEmitter {
     if (policy.kind === "reuse") return policy.branch;
     // kind === "create"
     if (policy.name !== undefined) return policy.name;
-    const shortHash = createHash("sha256")
-      .update(task.id)
-      .digest("hex")
-      .slice(0, 7);
-    return `task-${task.id}-${shortHash}`;
+    this.host.emit({
+      type: "branch_policy_noop",
+      payload: {
+        taskId: task.id,
+        kind: "create",
+        reason: "create_without_name",
+      },
+    });
+    return null;
   }
 
   /**

@@ -351,6 +351,54 @@ describe("ToolDispatcher — dispatchBatch parallel dispatch (M3b Phase 4)", () 
     expect(order).toEqual(["unsafe-a", "unsafe-b"]);
   });
 
+  // C1 regression: two Tier-2-tagged unsafe tools must serialize — the second
+  // cannot start until the first has completed. Without this guarantee,
+  // parallel ask_user_question would race on stdin and parallel task_create
+  // would race on TaskRegistry.
+  it("dispatchBatch serializes two Tier-2-tagged unsafe tools (no overlap)", async () => {
+    const dispatcher = new ToolDispatcher();
+    const intervals: Array<{ name: string; start: number; end: number }> = [];
+
+    function makeTier2UnsafeTimed(name: string, delayMs: number): ToolImpl {
+      return {
+        spec: {
+          name,
+          description: `${name} tier-2 unsafe tool`,
+          inputSchema: { type: "object", properties: {}, required: [] },
+          requiredPermission: "none",
+          tier: 2,
+          concurrencySafe: false,
+        },
+        execute: async (_input, _ctx) => {
+          const start = Date.now();
+          await new Promise<void>((res) => setTimeout(res, delayMs));
+          const end = Date.now();
+          intervals.push({ name, start, end });
+          return { status: "ok", output: name };
+        },
+      };
+    }
+
+    dispatcher.register(makeTier2UnsafeTimed("t2-a", 30));
+    dispatcher.register(makeTier2UnsafeTimed("t2-b", 10));
+
+    const results = await dispatcher.dispatchBatch([
+      { name: "t2-a", input: {}, ctx },
+      { name: "t2-b", input: {}, ctx },
+    ]);
+
+    expect(results).toHaveLength(2);
+    expect(results[0]).toEqual({ status: "ok", output: "t2-a" });
+    expect(results[1]).toEqual({ status: "ok", output: "t2-b" });
+
+    // t2-a must have completed fully before t2-b started — no overlap.
+    const a = intervals.find((i) => i.name === "t2-a")!;
+    const b = intervals.find((i) => i.name === "t2-b")!;
+    expect(a).toBeDefined();
+    expect(b).toBeDefined();
+    expect(b.start).toBeGreaterThanOrEqual(a.end);
+  });
+
   it("dispatchBatch with mixed safe + unsafe: safe parallel then unsafe serial, results in input order", async () => {
     const dispatcher = new ToolDispatcher();
     const completions: string[] = [];

@@ -9,16 +9,21 @@ export interface PromptCacheFingerprint {
  * Stable fingerprint of the cacheable system-prompt prefix + tool surface.
  * Used in cache_hit / cache_miss lane events for analytics.
  *
- * FNV-1a over JSON.stringify({ prefix, tools: [{name, schema}...] }).
+ * FNV-1a over JSON.stringify({ prefix, tools: [{name, description}...] }).
  * Deterministic across runs when inputs are identical.
  */
 export function fingerprintSystemPrompt(
   prefix: string,
   tools: readonly ToolSpec[],
 ): PromptCacheFingerprint {
-  // Normalize: extract {name, schema} sorted by name for determinism.
+  // Normalize: extract {name, description} sorted by name for determinism.
+  // Schema is intentionally excluded — Zod-produced JSON schemas can have
+  // non-deterministic key ordering under certain inputs, causing the fingerprint
+  // to rotate uselessly. The fingerprint is analytics-only (cache_hit/cache_miss
+  // lane events); tool schema changes already invalidate the SDK's own cache.
+  // A fingerprint stable on {name, description} is sufficient.
   const normalizedTools = tools
-    .map((t) => ({ name: t.name, schema: t.inputSchema }))
+    .map((t) => ({ name: t.name, description: t.description }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
   const payload = JSON.stringify({ prefix, tools: normalizedTools });

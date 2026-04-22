@@ -384,4 +384,60 @@ describe("StandaloneHost.askUser", () => {
       restore();
     }
   });
+
+  // M1 regression: AbortSignal cancels the readline prompt and closes rl.
+  it("TTY + AbortSignal: aborting mid-question returns {status: cancelled} and closes rl (M1)", async () => {
+    const restore = withIsTTY(true);
+    try {
+      const closeFn = vi.fn();
+      const ac = new AbortController();
+
+      const host = new StandaloneHost({
+        readlineFactory: async () => ({
+          question: async (_prompt: string, opts?: { signal?: AbortSignal }) => {
+            // Simulate readline honouring the AbortSignal: when aborted, reject
+            // with an AbortError (same as node:readline/promises behaviour).
+            return new Promise<string>((_resolve, reject) => {
+              if (opts?.signal) {
+                opts.signal.addEventListener("abort", () => {
+                  const err = new Error("This operation was aborted");
+                  err.name = "AbortError";
+                  reject(err);
+                }, { once: true });
+              }
+              // Abort immediately after listener is registered.
+              ac.abort();
+            });
+          },
+          close: closeFn,
+        }),
+      });
+
+      const result = await host.askUser("continue?", undefined, ac.signal);
+      expect(result).toEqual({ status: "cancelled" });
+      expect(closeFn).toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it("TTY + AbortSignal: already-aborted signal returns {status: cancelled} immediately (M1)", async () => {
+    const restore = withIsTTY(true);
+    try {
+      const ac = new AbortController();
+      ac.abort(); // already aborted before askUser is called
+
+      const host = new StandaloneHost({
+        readlineFactory: async () => ({
+          question: async () => "should not be called",
+          close: () => {},
+        }),
+      });
+
+      const result = await host.askUser("q?", undefined, ac.signal);
+      expect(result).toEqual({ status: "cancelled" });
+    } finally {
+      restore();
+    }
+  });
 });

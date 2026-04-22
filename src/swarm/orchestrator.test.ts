@@ -366,6 +366,197 @@ describe("Orchestrator", () => {
     spawnSyncSpy.mockRestore();
   });
 
+  // C3 regression: branch-lock key for `{ kind: "create", name: undefined }`
+  // must skip lock acquire entirely. Synthesizing a per-task key would
+  // generate DIFFERENT keys for two tasks targeting the same base, making
+  // the lock a no-op — defeating its purpose. The orchestrator must emit a
+  // `branch_policy_noop` event with `reason: "create_without_name"` so
+  // operators see the skip.
+  it("C3: two `create` tasks without name skip lock acquire and emit branch_policy_noop", async () => {
+    const branchLockModule = await import("./git/branch-lock.js");
+
+    const acquireSpy = vi
+      .spyOn(branchLockModule, "acquire")
+      .mockImplementation(async () => ({
+        branch: "should-not-be-called",
+        release: async () => {},
+      }));
+
+    const spawnSyncSpy = vi.spyOn(
+      await import("node:child_process"),
+      "spawnSync",
+    ).mockReturnValue({
+      status: 0,
+      stdout: Buffer.from("abc1234"),
+      stderr: Buffer.from(""),
+      pid: 0,
+      output: [],
+      signal: null,
+    } as ReturnType<typeof spawnSync>);
+
+    const emittedEvents: Array<{ type: string; payload?: unknown }> = [];
+    const host = fakeHost(async (req) =>
+      makeHandle(successResult(`spawned for ${req.task.id}`)),
+    );
+    (host as unknown as { emit: (e: unknown) => void }).emit = (e) => {
+      emittedEvents.push(e as { type: string; payload?: unknown });
+    };
+
+    const resultsOut = new PassThrough();
+    resultsOut.resume();
+
+    const orch = new Orchestrator({
+      concurrency: 2,
+      permissionMode: "workspace-write",
+      resultsOut,
+      host,
+    });
+
+    const tasks = [
+      samplePacket("c3-a", { branchPolicy: { kind: "create", from: "main" } }),
+      samplePacket("c3-b", { branchPolicy: { kind: "create", from: "main" } }),
+    ];
+
+    const summary = await orch.run(tasks);
+    resultsOut.end();
+
+    // Both tasks completed without acquiring any lock.
+    expect(summary.succeeded).toBe(2);
+    expect(acquireSpy).not.toHaveBeenCalled();
+
+    // No branch_lock_acquired events.
+    const lockAcquired = emittedEvents.filter(
+      (e) => e.type === "branch_lock_acquired",
+    );
+    expect(lockAcquired).toHaveLength(0);
+
+    // branch_policy_noop with reason "create_without_name" emitted for both.
+    const noops = emittedEvents.filter(
+      (e) =>
+        e.type === "branch_policy_noop" &&
+        (e.payload as { reason?: string } | undefined)?.reason ===
+          "create_without_name",
+    );
+    expect(noops.length).toBeGreaterThanOrEqual(2);
+    const taskIdsWithNoop = noops
+      .map((e) => (e.payload as { taskId: string }).taskId)
+      .sort();
+    expect(taskIdsWithNoop).toEqual(["c3-a", "c3-b"]);
+
+    acquireSpy.mockRestore();
+    spawnSyncSpy.mockRestore();
+  });
+
+  // C3 regression (positive case): two `create` tasks with the SAME explicit
+  // `.name` must serialize on that name. The second task's acquire must only
+  // begin after the first task's release() has been called.
+  it("C3: two `create` tasks with same explicit name serialize on that name", async () => {
+    const branchLockModule = await import("./git/branch-lock.js");
+
+    // Track acquire lifecycle: record each call's [acquiredAt, releasedAt].
+    const timeline: Array<{
+      taskKey: string;
+      acquiredAt: number;
+      releasedAt?: number;
+    }> = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+
+    const acquireSpy = vi
+      .spyOn(branchLockModule, "acquire")
+      .mockImplementation(async (branch: string) => {
+        // Emulate a mutex on the branch name: block while another holder is
+        // still in flight for the same branch key.
+        while (
+          timeline.some(
+            (e) => e.taskKey === branch && e.releasedAt === undefined,
+          )
+        ) {
+          await new Promise<void>((res) => setTimeout(res, 5));
+        }
+        const entry: {
+          taskKey: string;
+          acquiredAt: number;
+          releasedAt?: number;
+        } = { taskKey: branch, acquiredAt: Date.now() };
+        timeline.push(entry);
+        inFlight++;
+        if (inFlight > maxInFlight) maxInFlight = inFlight;
+        return {
+          branch,
+          release: async () => {
+            entry.releasedAt = Date.now();
+            inFlight--;
+          },
+        };
+      });
+
+    const spawnSyncSpy = vi.spyOn(
+      await import("node:child_process"),
+      "spawnSync",
+    ).mockReturnValue({
+      status: 0,
+      stdout: Buffer.from("abc1234"),
+      stderr: Buffer.from(""),
+      pid: 0,
+      output: [],
+      signal: null,
+    } as ReturnType<typeof spawnSync>);
+
+    // Slow spawn handler so the first task holds the lock long enough for
+    // the second task to observe contention.
+    const host = fakeHost(async (req) =>
+      makeHandle(
+        successResult(`spawned for ${req.task.id}`),
+        `agent-${req.task.id}` as AgentId,
+        `session-${req.task.id}` as SessionId,
+        30, // 30ms wait
+      ),
+    );
+
+    const resultsOut = new PassThrough();
+    resultsOut.resume();
+
+    const orch = new Orchestrator({
+      concurrency: 2,
+      permissionMode: "workspace-write",
+      resultsOut,
+      host,
+    });
+
+    const tasks = [
+      samplePacket("c3-named-a", {
+        branchPolicy: { kind: "create", from: "main", name: "feature/x" },
+      }),
+      samplePacket("c3-named-b", {
+        branchPolicy: { kind: "create", from: "main", name: "feature/x" },
+      }),
+    ];
+
+    const summary = await orch.run(tasks);
+    resultsOut.end();
+
+    expect(summary.succeeded).toBe(2);
+
+    // acquire called twice, both with the explicit branch name.
+    expect(acquireSpy).toHaveBeenCalledTimes(2);
+    expect(acquireSpy.mock.calls[0]![0]).toBe("feature/x");
+    expect(acquireSpy.mock.calls[1]![0]).toBe("feature/x");
+
+    // Serialization: at most one acquire in flight for "feature/x" at a time.
+    expect(maxInFlight).toBe(1);
+
+    // Second acquire started no earlier than first release.
+    expect(timeline).toHaveLength(2);
+    expect(timeline[0]!.releasedAt).toBeDefined();
+    expect(timeline[1]!.acquiredAt).toBeGreaterThanOrEqual(
+      timeline[0]!.releasedAt!,
+    );
+
+    acquireSpy.mockRestore();
+    spawnSyncSpy.mockRestore();
+  });
+
   // 9. Pre-flight: branchPolicy create with missing from branch → task fails.
   it("pre-flight: branchPolicy create with missing from branch fails task", async () => {
     const spawnMock = vi.fn();
