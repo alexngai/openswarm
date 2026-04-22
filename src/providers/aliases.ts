@@ -31,23 +31,77 @@ export const BUILTIN_ALIASES: AliasTable = {
   o3: "o3-mini-2025-01-31",
 };
 
+import fs from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
+
 /**
  * Load user aliases from settings.json and merge with built-ins.
  * User aliases win on name collision. Defaults to built-ins only if the
  * settings file is missing or has no `aliases` field.
- *
- * Full implementation lands in Phase 4.2.
  */
-export declare function loadAliases(settingsPath?: string): Promise<AliasTable>;
+export async function loadAliases(settingsPath?: string): Promise<AliasTable> {
+  const resolved = settingsPath ?? path.join(os.homedir(), ".swarm-coder", "settings.json");
+  let userAliases: AliasTable = {};
+  try {
+    const raw = await fs.readFile(resolved, "utf8");
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      parsed !== null &&
+      typeof parsed === "object" &&
+      "aliases" in parsed &&
+      parsed.aliases !== null &&
+      typeof parsed.aliases === "object"
+    ) {
+      userAliases = parsed.aliases as AliasTable;
+    }
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return { ...BUILTIN_ALIASES };
+    }
+    throw new Error(
+      `Failed to load aliases from ${resolved}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  return { ...BUILTIN_ALIASES, ...userAliases };
+}
 
 /**
- * Resolve an alias-or-id to a concrete model id. One level of indirection:
- * if `aliases[nameOrId]` exists, return its value (unless the value is itself
- * a key in `aliases` — that's a cycle, throw).
+ * Resolve an alias to a concrete model id. One level of indirection only.
  *
- * If `nameOrId` is not in the table, return it unchanged (treat as a direct
- * model id).
- *
- * Full implementation lands in Phase 4.2.
+ * - If `nameOrId` is in `aliases`, return its value, unless that value is
+ *   itself a key in `aliases` (a cycle of length 2+) — throw with a clear
+ *   message listing both names.
+ * - If `nameOrId` is not in `aliases`, return it unchanged.
  */
-export declare function resolveAlias(nameOrId: string, aliases: AliasTable): string;
+export function resolveAlias(nameOrId: string, aliases: AliasTable): string {
+  if (!(nameOrId in aliases)) return nameOrId;
+  const target = aliases[nameOrId];
+  if (target in aliases) {
+    throw new Error(
+      `alias cycle detected: "${nameOrId}" → "${target}" → "${aliases[target]}". Remove the indirection.`,
+    );
+  }
+  return target;
+}
+
+/**
+ * Detect shadowing — user aliases that override a built-in.
+ * Returns array of AliasShadowedPayload-compatible objects for consumers
+ * to emit as lane events.
+ */
+export interface AliasShadowing {
+  readonly alias: string;
+  readonly builtInTarget: string;
+  readonly userTarget: string;
+}
+
+export function detectShadowing(userAliases: AliasTable): AliasShadowing[] {
+  const out: AliasShadowing[] = [];
+  for (const [alias, userTarget] of Object.entries(userAliases)) {
+    if (alias in BUILTIN_ALIASES && BUILTIN_ALIASES[alias] !== userTarget) {
+      out.push({ alias, builtInTarget: BUILTIN_ALIASES[alias], userTarget });
+    }
+  }
+  return out;
+}
