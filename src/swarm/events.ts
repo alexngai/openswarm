@@ -123,6 +123,9 @@ export type LaneEventType =
   | "native_compaction_boundary_walked"
   /** NativeEngine refused a resume because the snapshot's engineId did not match. */
   | "native_resume_rejected"
+  // ---------------- Plugin lifecycle ----------------
+  /** A plugin was skipped because it is disabled in PluginStateStore. */
+  | "plugin_disabled"
   // ---------------- Error ----------------
   | "error";
 
@@ -239,6 +242,14 @@ export interface NativeCompactionBoundaryWalkedPayload {
 export interface NativeResumeRejectedPayload {
   readonly snapshotEngineId: string;
   readonly attemptedBy: "native";
+}
+
+// ---------------------------------------------------------------------------
+// M4b Phase 3 — plugin lifecycle payload interfaces
+// ---------------------------------------------------------------------------
+
+export interface PluginDisabledPayload {
+  readonly pluginId: string;
 }
 
 /** Structured failure classes for `error` events. */

@@ -15,6 +15,7 @@
 import { z } from "zod";
 import type { PluginSource, PluginManifest, LoadedPlugin, PluginExecutionContext } from "./index.js";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../tools/types.js";
+import { PluginStateStore, defaultStore } from "./state.js";
 
 // ---------------------------------------------------------------------------
 // PluginRegistry
@@ -22,8 +23,15 @@ import type { ToolImpl, ToolExecutionContext, ToolResult } from "../tools/types.
 
 export class PluginRegistry {
   private readonly sources: PluginSource[] = [];
+  private _stateStore: PluginStateStore | null = null;
 
-  constructor() {}
+  constructor(stateStore?: PluginStateStore) {
+    this._stateStore = stateStore ?? null;
+  }
+
+  setStateStore(store: PluginStateStore): void {
+    this._stateStore = store;
+  }
 
   /**
    * Register a source. Idempotent by source identity (object reference).
@@ -115,10 +123,29 @@ export class PluginRegistry {
       }
     }
 
+    // Only filter by enabled-set when a state store was explicitly provided.
+    // Without an explicit store, all discovered plugins are treated as enabled
+    // (backward-compatible with pre-M4b callers that never set a store).
+    let enabledSet: ReadonlySet<string> | null = null;
+    if (this._stateStore !== null) {
+      try {
+        const state = await this._stateStore.read();
+        enabledSet = new Set(state.enabled);
+      } catch {
+        // If state is unreadable, treat all as enabled (graceful degradation).
+      }
+    }
+
     const result: ToolImpl[] = [];
     const registeredNames = new Set<string>();
 
     for (const { manifest, source } of seen.values()) {
+      // Skip disabled plugins (only when we have an explicit state store).
+      if (enabledSet !== null && !enabledSet.has(manifest.id)) {
+        this._warn(`plugin '${manifest.id}' is disabled — skipping`);
+        continue;
+      }
+
       let loaded: LoadedPlugin;
       try {
         loaded = await source.load(manifest.id);

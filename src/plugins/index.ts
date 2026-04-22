@@ -146,3 +146,27 @@ export interface PluginRegistry {
   discover(): Promise<readonly PluginManifest[]>;
   load(pluginId: string): Promise<LoadedPlugin>;
 }
+
+// ---------------------------------------------------------------------------
+// Install lifecycle (M4b §0.2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Where a plugin was installed from. Recorded in PluginStateFile so
+ * `plugin update` can re-materialize from the same source.
+ */
+export type PluginInstallSource =
+  | { readonly kind: "LocalPath"; readonly path: string }
+  | { readonly kind: "GitUrl"; readonly url: string; readonly ref?: string };
+
+/**
+ * Persisted plugin state at `~/.claude/plugins/state.json`. Shape chosen
+ * for cheap atomic writes (single-file rewrite) and cheap `plugin list`.
+ * schemaVersion is load-bearing — readers must refuse unknown versions.
+ */
+export interface PluginStateFile {
+  readonly schemaVersion: 1;
+  readonly enabled: readonly string[];
+  readonly versions: Readonly<Record<string, string>>;
+  readonly installSources: Readonly<Record<string, PluginInstallSource>>;
+}

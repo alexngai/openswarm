@@ -1,0 +1,7 @@
+{
+  "id": "hello-plugin",
+  "version": "0.1.0",
+  "name": "Hello Plugin",
+  "execMode": "shell",
+  "tools": []
+}

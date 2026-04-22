@@ -11,7 +11,7 @@
  */
 
 import type { LanguageModel } from "ai";
-import type { ToolSpec, StopReason, Usage } from "../core/types.js";
+import type { ToolSpec, StopReason, Usage, ProviderError } from "../core/types.js";
 import type { AuthSource } from "../auth/index.js";
 
 // ---------------------------------------------------------------------------
@@ -29,6 +29,12 @@ export interface Provider {
    * provider emits a `finish` or `error` event.
    */
   stream(request: ProviderRequest): AsyncIterable<ProviderEvent>;
+  /**
+   * Optional preflight hook. Return `null` to proceed, or a ProviderError
+   * to short-circuit the request before any network I/O (M4b §0.1).
+   * Used by DashScope to enforce the 6 MB body-size cap.
+   */
+  preflight?(request: ProviderRequest): ProviderError | null;
 }
 
 export interface ProviderCapabilities {

@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
+import * as fsp from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 import * as url from "node:url";
 import { PluginRegistry } from "./registry.js";
+import { PluginStateStore } from "./state.js";
 import type { PluginSource, PluginManifest, LoadedPlugin } from "./index.js";
 import { ClaudeCodeSource } from "./claude-code-source.js";
 
@@ -324,5 +327,70 @@ describe("PluginRegistry integration (ClaudeCodeSource + fixtures)", () => {
     if (result.status === "ok") {
       expect(result.output).toContain("shell-plugin echo");
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PluginRegistry + PluginStateStore filtering (M4b Phase 3)
+// ---------------------------------------------------------------------------
+
+async function makeTmpStore(
+  enabled: string[],
+  versions: Record<string, string>,
+): Promise<PluginStateStore> {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "swarm-registry-state-test-"));
+  const store = new PluginStateStore(path.join(dir, "state.json"));
+  const sources: Record<string, import("./index.js").PluginInstallSource> = {};
+  for (const id of Object.keys(versions)) {
+    sources[id] = { kind: "LocalPath", path: `/fake/${id}` };
+  }
+  await store.write({ schemaVersion: 1, enabled, versions, installSources: sources });
+  return store;
+}
+
+describe("PluginRegistry with PluginStateStore filtering", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("buildPluginTools() registers tools for all enabled plugins", async () => {
+    const m1 = makeManifest("plugin-a", [{ name: "tool-a" }]);
+    const m2 = makeManifest("plugin-b", [{ name: "tool-b" }]);
+
+    const store = await makeTmpStore(
+      ["plugin-a", "plugin-b"],
+      { "plugin-a": "1.0.0", "plugin-b": "1.0.0" },
+    );
+
+    const registry = new PluginRegistry(store);
+    registry.registerSource(new FakeSource("s1", [m1, m2]));
+
+    const tools = await registry.buildPluginTools();
+    const names = tools.map((t) => t.spec.name);
+    expect(names).toContain("plugin__plugin-a__tool-a");
+    expect(names).toContain("plugin__plugin-b__tool-b");
+  });
+
+  it("buildPluginTools() skips disabled plugin tools", async () => {
+    const m1 = makeManifest("plugin-a", [{ name: "tool-a" }]);
+    const m2 = makeManifest("plugin-b", [{ name: "tool-b" }]);
+
+    // Only plugin-a is enabled; plugin-b is disabled
+    const store = await makeTmpStore(
+      ["plugin-a"],
+      { "plugin-a": "1.0.0", "plugin-b": "1.0.0" },
+    );
+
+    const stderrSpy = vi.spyOn(process.stderr, "write");
+    const registry = new PluginRegistry(store);
+    registry.registerSource(new FakeSource("s1", [m1, m2]));
+
+    const tools = await registry.buildPluginTools();
+    const names = tools.map((t) => t.spec.name);
+    expect(names).toContain("plugin__plugin-a__tool-a");
+    expect(names).not.toContain("plugin__plugin-b__tool-b");
+    expect(stderrSpy).toHaveBeenCalledWith(
+      expect.stringContaining("plugin-b"),
+    );
   });
 });

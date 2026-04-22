@@ -36,28 +36,66 @@ describe("resolveProvider", () => {
     expect(result.modelId).toBe("o4-preview");
   });
 
-  it('grok-3 → kind "error" with message mentioning M4b', () => {
+  // M4b: grok* → xAI (native)
+  it('grok-3 → kind "native" with modelId "grok-3"', () => {
     const result = resolveProvider("grok-3");
-    expect(result.kind).toBe("error");
-    expect(result.message).toMatch(/M4b/);
+    expect(result.kind).toBe("native");
+    expect(typeof result.providerFactory).toBe("function");
+    expect(result.modelId).toBe("grok-3");
   });
 
-  it('gemini-2.0-pro → kind "error" with message mentioning M4b', () => {
+  it('grok-3-mini → kind "native"', () => {
+    const result = resolveProvider("grok-3-mini");
+    expect(result.kind).toBe("native");
+    expect(result.modelId).toBe("grok-3-mini");
+  });
+
+  // M4b: gemini-* → Google (native)
+  it('gemini-2.0-flash → kind "native" with modelId "gemini-2.0-flash"', () => {
+    const result = resolveProvider("gemini-2.0-flash");
+    expect(result.kind).toBe("native");
+    expect(typeof result.providerFactory).toBe("function");
+    expect(result.modelId).toBe("gemini-2.0-flash");
+  });
+
+  it('gemini-2.0-pro → kind "native"', () => {
     const result = resolveProvider("gemini-2.0-pro");
-    expect(result.kind).toBe("error");
-    expect(result.message).toMatch(/M4b/);
+    expect(result.kind).toBe("native");
+    expect(result.modelId).toBe("gemini-2.0-pro");
   });
 
-  it('qwen-max → kind "error"', () => {
-    const result = resolveProvider("qwen-max");
-    expect(result.kind).toBe("error");
-    expect(result.message).toMatch(/M4b/);
+  // M4b: qwen* / kimi* → DashScope (native)
+  it('qwen-plus → kind "native" with modelId "qwen-plus"', () => {
+    const result = resolveProvider("qwen-plus");
+    expect(result.kind).toBe("native");
+    expect(typeof result.providerFactory).toBe("function");
+    expect(result.modelId).toBe("qwen-plus");
   });
 
-  it('unknown-random-model → kind "error" listing M4a known prefixes', () => {
+  it('qwen/qwen-max → kind "native" with modelId "qwen-max" (prefix stripped)', () => {
+    const result = resolveProvider("qwen/qwen-max");
+    expect(result.kind).toBe("native");
+    expect(result.modelId).toBe("qwen-max");
+  });
+
+  it('kimi-k2 → kind "native"', () => {
+    const result = resolveProvider("kimi-k2");
+    expect(result.kind).toBe("native");
+    expect(result.modelId).toBe("kimi-k2");
+  });
+
+  it('kimi/k2-chat → kind "native" with modelId "k2-chat" (prefix stripped)', () => {
+    const result = resolveProvider("kimi/k2-chat");
+    expect(result.kind).toBe("native");
+    expect(result.modelId).toBe("k2-chat");
+  });
+
+  it('unknown-random-model → kind "error" listing known prefixes', () => {
     const result = resolveProvider("unknown-random-model");
     expect(result.kind).toBe("error");
     expect(result.message).toMatch(/claude\*/);
-    expect(result.message).toMatch(/M4a/);
+    expect(result.message).toMatch(/grok\*/);
+    expect(result.message).toMatch(/gemini-\*/);
+    expect(result.message).toMatch(/qwen\*/);
   });
 });
