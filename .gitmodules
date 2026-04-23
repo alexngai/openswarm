@@ -1,0 +1,6 @@
+[submodule "references/opencode"]
+	path = references/opencode
+	url = https://github.com/anomalyco/opencode.git
+[submodule "references/claw-code"]
+	path = references/claw-code
+	url = https://github.com/ultraworkers/claw-code
