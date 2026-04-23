@@ -22,6 +22,7 @@ import { ToolDispatcher } from "../tools/dispatcher.js";
 import { buildTier0Tools } from "../tools/tier0/index.js";
 import { PermissionEngine } from "../permissions/index.js";
 import { PermissionBridge } from "../permissions/bridge.js";
+import { readHeadlessApproval } from "../permissions/headless-prompt.js";
 import { ClaudeAgentSdkEngine } from "../engine/claude-agent-sdk.js";
 import { NativeEngine } from "../engine/native.js";
 import { ScriptedTestEngine } from "../engine/test-engine.js";
@@ -459,6 +460,9 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   // across turns. Reading it inside the closure picks up the latest value.
   let currentPermissionMode = opts.permissionMode;
   const permissionBridge = new PermissionBridge();
+  // Determined up-front so the canUseTool closure can pick the right driver.
+  // Same heuristic the UI-routing fork uses at step 9.
+  const useHeadless = opts.headless || !process.stdout.isTTY;
   const canUseTool: PermissionGate = async (toolName, input) => {
     const toolImpl = dispatcher.get(toolName);
     if (toolImpl === undefined) {
@@ -466,16 +470,19 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     }
     const modeDecision = permEngine.check(toolImpl.spec, input);
     if (modeDecision.allow) return modeDecision;
-    // Mode denies — prompt the user. PermissionBridge.request dispatches
-    // `permission-request` (via any attached store) and blocks until
-    // `respond()` is called from the UI or headless reader.
-    return await permissionBridge.request({
+    const pending = {
       toolName: toolImpl.spec.name,
       input,
       currentMode: currentPermissionMode,
       requiredPermission: toolImpl.spec.requiredPermission,
       reason: modeDecision.reason,
-    });
+    };
+    // Headless: emit JSONL `permission_required`, block on stdin, EOF = deny.
+    // TTY: dispatch to REPL store via bridge, await keystroke (y/Enter/Ctrl-C).
+    if (useHeadless) {
+      return await readHeadlessApproval(pending);
+    }
+    return await permissionBridge.request(pending);
   };
 
   // 8. Build RunConfig.
@@ -496,7 +503,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   };
 
   // 9. Route to UI.
-  const useHeadless = opts.headless || !process.stdout.isTTY;
+  // useHeadless was declared above (hoisted so canUseTool closes over it).
   if (useHeadless) {
     // Headless path: one-shot engine run → JSONL.
     const rawEvents = engine.run(config);
