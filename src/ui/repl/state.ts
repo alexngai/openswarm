@@ -75,6 +75,13 @@ export interface ReplState {
   readonly pendingPermission: PendingPermission | undefined;
   /** Id of the assistant transcript entry currently being streamed into. */
   readonly streamingEntryId: string | undefined;
+  /**
+   * Selected candidate index when the slash-command dropdown is visible
+   * (input starts with "/"). The Solid app clamps this against the
+   * current candidates list at render time — visibility is driven by the
+   * candidates count, not this value.
+   */
+  readonly dropdownIndex: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -107,6 +114,11 @@ export type ReplEvent =
     }
   // System / hook message
   | { readonly type: "system-entry"; readonly id: string; readonly text: string }
+  // Dropdown navigation (slash-command autocomplete)
+  | { readonly type: "dropdown-up" }
+  | { readonly type: "dropdown-down" }
+  | { readonly type: "dropdown-reset" }
+  | { readonly type: "dropdown-accept"; readonly value: string }
   // Misc controls
   | { readonly type: "clear" }
   | { readonly type: "shutdown" }
@@ -154,6 +166,7 @@ export function createInitialState(opts?: InitialStateOptions): ReplState {
     sessionId: opts?.sessionId,
     pendingPermission: undefined,
     streamingEntryId: undefined,
+    dropdownIndex: 0,
   };
 }
 
@@ -359,6 +372,34 @@ export function reduce(state: ReplState, event: ReplEvent): ReplState {
         transcript: [],
       };
     }
+
+    case "dropdown-up":
+      return {
+        ...state,
+        dropdownIndex: Math.max(0, state.dropdownIndex - 1),
+      };
+
+    case "dropdown-down":
+      // Upper bound clamp happens at the UI layer against the current
+      // candidates list; here we just monotonically increment.
+      return {
+        ...state,
+        dropdownIndex: state.dropdownIndex + 1,
+      };
+
+    case "dropdown-reset":
+      return { ...state, dropdownIndex: 0 };
+
+    case "dropdown-accept":
+      return {
+        ...state,
+        input: {
+          ...state.input,
+          value: event.value,
+          cursor: event.value.length,
+        },
+        dropdownIndex: 0,
+      };
   }
 }
 

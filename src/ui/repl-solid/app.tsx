@@ -12,7 +12,7 @@
  * come later).
  */
 
-import { Show, onMount, onCleanup, createEffect, createMemo } from "solid-js";
+import { Show, onMount, onCleanup, createEffect, createMemo, untrack } from "solid-js";
 import { createReplStore } from "./store.js";
 import { Transcript } from "./transcript.js";
 import { Input } from "./input.js";
@@ -98,9 +98,8 @@ export function App(props: AppProps) {
 
   const getTokens = (): number => props.getTokens?.() ?? 0;
 
-  // Dropdown candidates — non-empty and visible only when input starts with
-  // "/" and a registry is available. Filter registry entries by the prefix
-  // after "/".
+  // Dropdown candidates — visible only when input starts with "/" and a
+  // registry is available. Filter by the prefix after "/".
   const dropdownCandidates = createMemo<
     ReadonlyArray<{ name: string; description: string }>
   >(() => {
@@ -113,6 +112,62 @@ export function App(props: AppProps) {
       .list()
       .filter((c) => c.name.toLowerCase().startsWith(prefix));
   });
+
+  // Effective dropdown selection: store index, clamped to the current
+  // candidates length. If candidates shrink past the store index, we clamp
+  // here so the render is consistent; the next arrow key will catch up.
+  const dropdownSelectedIndex = createMemo(() => {
+    const len = dropdownCandidates().length;
+    if (len === 0) return 0;
+    return Math.min(state.dropdownIndex, len - 1);
+  });
+
+  // When the dropdown becomes inactive (no "/" prefix or no matches), reset
+  // the store index so the next activation starts at 0.
+  createEffect(() => {
+    if (dropdownCandidates().length === 0) {
+      untrack(() => {
+        if (state.dropdownIndex !== 0) {
+          dispatch({ type: "dropdown-reset" });
+        }
+      });
+    }
+  });
+
+  // Keypress routing: when the dropdown is active, arrow-up/down navigate
+  // candidates instead of reaching the reducer's history motion. Tab
+  // auto-completes the current selection into the input buffer. All other
+  // keys fall through to the reducer (which handles Emacs bindings,
+  // history, backspace, etc.).
+  const handleKey = (key: import("../repl/state.js").KeyEvent): void => {
+    const candidates = dropdownCandidates();
+    const dropdownActive = candidates.length > 0;
+    if (dropdownActive) {
+      if (key.upArrow === true) {
+        dispatch({ type: "dropdown-up" });
+        return;
+      }
+      if (key.downArrow === true) {
+        // Clamp to the current candidate length at dispatch time so
+        // repeated down-arrow never rolls past the end.
+        const nextIdx = state.dropdownIndex + 1;
+        if (nextIdx < candidates.length) {
+          dispatch({ type: "dropdown-down" });
+        }
+        return;
+      }
+      // Tab → accept current selection. Lookup via the clamped index.
+      if (key.name === "tab" || key.printable === "\t") {
+        const idx = dropdownSelectedIndex();
+        const chosen = candidates[idx];
+        if (chosen !== undefined) {
+          dispatch({ type: "dropdown-accept", value: `/${chosen.name}` });
+        }
+        return;
+      }
+    }
+    dispatch({ type: "key", key });
+  };
 
   return (
     <box flexDirection="column" flexGrow={1}>
@@ -127,12 +182,15 @@ export function App(props: AppProps) {
             dispatch({ type: "input-changed", value, cursor })
           }
           onSubmit={handleSubmit}
-          onKey={(key) => dispatch({ type: "key", key })}
+          onKey={handleKey}
           disabled={state.name === "compact"}
         />
       </Show>
       <Show when={dropdownCandidates().length > 1}>
-        <Dropdown candidates={dropdownCandidates()} selectedIndex={0} />
+        <Dropdown
+          candidates={dropdownCandidates()}
+          selectedIndex={dropdownSelectedIndex()}
+        />
       </Show>
       <Status state={state} model={props.model} getTokens={getTokens} />
     </box>

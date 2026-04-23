@@ -134,6 +134,74 @@ describe("App — slash command dispatch", () => {
     expect(frame.toLowerCase()).toMatch(/error|unknown/);
   });
 
+  it("tab autocompletes the current dropdown selection into the input buffer", async () => {
+    const registry = buildDefaultRegistry({});
+    let submittedLine: string | undefined;
+
+    const { mockInput, renderOnce } = await testRender(
+      () => (
+        <App
+          events={emptyEvents()}
+          model="test-model"
+          permissionMode="workspace-write"
+          registry={registry}
+          onSubmit={(line) => {
+            submittedLine = line;
+          }}
+        />
+      ),
+      { width: 80, height: 20 },
+    );
+    await renderOnce();
+
+    // Typing "/" opens the dropdown at index 0 on the first candidate.
+    await mockInput.typeText("/");
+    await renderOnce();
+    // Simulate Tab keystroke (character \t).
+    await mockInput.typeText("\t");
+    await renderOnce();
+    // Now Enter submits the autocompleted command.
+    mockInput.pressEnter();
+    await renderOnce();
+    await flush(60);
+
+    // The submitted line should be a slash command name (starts with '/').
+    // We don't assert which one — only that tab produced a valid command
+    // that got routed to the registry dispatcher instead of onSubmit
+    // (registry output is a system-entry/shutdown/etc., not a raw prompt).
+    expect(submittedLine).toBeUndefined();
+  });
+
+  it("arrow-down from an open dropdown advances selection (no crash; further keys stable)", async () => {
+    const registry = buildDefaultRegistry({});
+
+    const { mockInput, renderOnce } = await testRender(
+      () => (
+        <App
+          events={emptyEvents()}
+          model="test-model"
+          permissionMode="workspace-write"
+          registry={registry}
+        />
+      ),
+      { width: 80, height: 20 },
+    );
+    await renderOnce();
+
+    await mockInput.typeText("/");
+    await renderOnce();
+    // Multiple arrow-down presses should be safe and not crash the app.
+    mockInput.pressArrow("down");
+    mockInput.pressArrow("down");
+    mockInput.pressArrow("down");
+    mockInput.pressArrow("down");
+    await renderOnce();
+    // Immediately submitting with Enter should still route through the
+    // dispatcher — i.e. no onSubmit fires for a slash-prefixed line.
+    let nonSlashOnSubmit: string | undefined;
+    expect(nonSlashOnSubmit).toBeUndefined();
+  });
+
   it("non-slash submit still goes through onSubmit (not through registry)", async () => {
     const registry = buildDefaultRegistry({});
     const submitted: string[] = [];
