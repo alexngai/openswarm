@@ -13,6 +13,22 @@ describe("resolveAlias", () => {
     expect(resolveAlias("gpt-4o", BUILTIN_ALIASES)).toBe("gpt-4o-2024-11-20");
   });
 
+  it('resolves "grok" → "grok-3" (claw parity)', () => {
+    expect(resolveAlias("grok", BUILTIN_ALIASES)).toBe("grok-3");
+  });
+
+  it('resolves "grok-mini" → "grok-3-mini"', () => {
+    expect(resolveAlias("grok-mini", BUILTIN_ALIASES)).toBe("grok-3-mini");
+  });
+
+  it('resolves "kimi" → "kimi-k2.5"', () => {
+    expect(resolveAlias("kimi", BUILTIN_ALIASES)).toBe("kimi-k2.5");
+  });
+
+  it('passes "grok-2" through unchanged (no identity alias)', () => {
+    expect(resolveAlias("grok-2", BUILTIN_ALIASES)).toBe("grok-2");
+  });
+
   it("returns unknown-direct-id unchanged when not in aliases", () => {
     expect(resolveAlias("unknown-direct-id", BUILTIN_ALIASES)).toBe("unknown-direct-id");
   });

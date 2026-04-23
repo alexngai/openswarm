@@ -23,12 +23,21 @@ export interface AliasTable {
  * Users can always override via `~/.swarm-coder/settings.json`.
  */
 export const BUILTIN_ALIASES: AliasTable = {
+  // Anthropic — canonical ids as of 2026-04-22.
   sonnet: "claude-sonnet-4-6",
   haiku: "claude-haiku-4-5",
   opus: "claude-opus-4-7",
+  // OpenAI
   "gpt-4o": "gpt-4o-2024-11-20",
   "gpt-5": "gpt-5-2025-08-07",
   o3: "o3-mini-2025-01-31",
+  // xAI — doc 17 Q9 ports claw's short aliases. Identity alias for `grok-2`
+  // is omitted: unaliased ids already route via `^grok/i` prefix in routing.ts
+  // and resolveAlias() rejects `target === nameOrId` as a cycle.
+  grok: "grok-3",
+  "grok-mini": "grok-3-mini",
+  // DashScope (Kimi) — canonical id per doc 17 Q9 claw reference.
+  kimi: "kimi-k2.5",
 };
 
 import fs from "node:fs/promises";
