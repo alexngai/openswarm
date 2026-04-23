@@ -28,6 +28,7 @@ import { SessionStore } from "../session/store.js";
 import { runHeadless } from "../ui/headless.js";
 import { PluginRegistry } from "../plugins/registry.js";
 import { ClaudeCodeSource } from "../plugins/claude-code-source.js";
+import { PluginStateStore } from "../plugins/state.js";
 import { SkillRegistry } from "../skills/registry.js";
 import { ClaudeCodeSource as ClaudeCodeSkillSource } from "../skills/claude-code-source.js";
 import { buildTier1Tools } from "../tools/tier1/index.js";
@@ -200,9 +201,13 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   // The swarm-coder source is registered first so our own installs win on
   // manifest.id collisions (PluginRegistry does first-wins dedup).
   const pluginTools: import("../tools/types.js").ToolImpl[] = [];
+  const swarmPluginsDir = path.join(os.homedir(), ".swarm-coder", "plugins");
+  // One shared store across plugin discovery (enabled-set filtering) and the
+  // `/plugin` slash command. Backed by settings.json + installed.json under
+  // swarmPluginsDir (doc 17 Q1).
+  const pluginStateStore = new PluginStateStore(swarmPluginsDir);
   if (opts.plugins) {
-    const pluginRegistry = new PluginRegistry();
-    const swarmPluginsDir = path.join(os.homedir(), ".swarm-coder", "plugins");
+    const pluginRegistry = new PluginRegistry(pluginStateStore);
     pluginRegistry.registerSource(
       new ClaudeCodeSource({ id: "swarm-coder", pluginsDir: swarmPluginsDir }),
     );
@@ -514,6 +519,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
       getUsage: () => engine.getCumulativeUsage(),
       abort: turnAbort,
       sessionLogPath: ".swarm-coder/sessions.log",
+      pluginStore: pluginStateStore,
     },
     getTokens: () => {
       const u = engine.getCumulativeUsage();

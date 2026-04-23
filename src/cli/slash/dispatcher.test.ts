@@ -157,7 +157,7 @@ describe("dispatchSlashLine", () => {
 });
 
 describe("buildDefaultRegistry", () => {
-  it("returns all 14 commands", () => {
+  it("returns all 15 commands", () => {
     const registry = buildDefaultRegistry();
     const names = registry.list().map((c) => c.name);
     expect(names).toEqual([
@@ -175,8 +175,9 @@ describe("buildDefaultRegistry", () => {
       "deny",
       "stop",
       "compact",
+      "plugin",
     ]);
-    expect(names).toHaveLength(14);
+    expect(names).toHaveLength(15);
   });
 
   it("get() returns the matching command", () => {

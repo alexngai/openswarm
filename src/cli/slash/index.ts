@@ -13,6 +13,7 @@
 
 import type { PermissionMode, Usage } from "../../core/types.js";
 import type { SwarmHost } from "../../swarm/host.js";
+import type { PluginStateStore } from "../../plugins/state.js";
 import type { ReplState, ReplStateName, ReplEvent } from "../../ui/repl/state.js";
 
 import { helpCommand } from "./commands/help.js";
@@ -29,6 +30,7 @@ import { approveCommand } from "./commands/approve.js";
 import { denyCommand } from "./commands/deny.js";
 import { stopCommand } from "./commands/stop.js";
 import { compactCommand } from "./commands/compact.js";
+import { pluginCommand } from "./commands/plugin.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -58,6 +60,8 @@ export interface SlashCommandContext {
   readonly setPermissionMode: (m: PermissionMode) => void;
   readonly abort?: AbortController;
   readonly sessionLogPath?: string;
+  /** Optional plugin state store. `/plugin` falls back to a default store when absent. */
+  readonly pluginStore?: PluginStateStore;
 }
 
 export interface SlashCommand {
@@ -88,6 +92,7 @@ export interface BuildDefaultRegistryDeps {
   readonly host?: SwarmHost;
   readonly sessionLogPath?: string;
   readonly abort?: AbortController;
+  readonly pluginStore?: PluginStateStore;
 }
 
 const ZERO_USAGE: Usage = {
@@ -120,6 +125,7 @@ export function buildDefaultRegistry(
     denyCommand,
     stopCommand,
     compactCommand,
+    pluginCommand,
   ];
 
   const byName = new Map<string, SlashCommand>();
@@ -162,6 +168,7 @@ export function buildSlashContext(
     setPermissionMode: deps.setPermissionMode ?? (() => undefined),
     abort: deps.abort,
     sessionLogPath: deps.sessionLogPath,
+    pluginStore: deps.pluginStore,
   };
 }
 
