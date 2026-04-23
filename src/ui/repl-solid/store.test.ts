@@ -51,7 +51,12 @@ describe("createReplStore — Solid binding over reduce", () => {
     dispatch({ type: "submit", text: "run" });
     dispatch({
       type: "permission-request",
-      request: { toolName: "bash", toolUseId: "tu-1", input: {} },
+      request: {
+        toolName: "bash",
+        input: {},
+        currentMode: "read-only",
+        requiredMode: "workspace-write",
+      },
     });
     expect(state.name).toBe("awaiting-permission");
     expect(state.pendingPermission?.toolName).toBe("bash");

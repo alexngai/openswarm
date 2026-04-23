@@ -26,8 +26,6 @@ import { permissionsCommand } from "./commands/permissions.js";
 import { resumeCommand } from "./commands/resume.js";
 import { doctorCommand } from "./commands/doctor.js";
 import { tasksCommand } from "./commands/tasks.js";
-import { approveCommand } from "./commands/approve.js";
-import { denyCommand } from "./commands/deny.js";
 import { stopCommand } from "./commands/stop.js";
 import { compactCommand } from "./commands/compact.js";
 import { pluginCommand } from "./commands/plugin.js";
@@ -121,8 +119,6 @@ export function buildDefaultRegistry(
     resumeCommand,
     doctorCommand,
     tasksCommand,
-    approveCommand,
-    denyCommand,
     stopCommand,
     compactCommand,
     pluginCommand,

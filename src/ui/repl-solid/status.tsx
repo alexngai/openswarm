@@ -34,7 +34,8 @@ export function Status(props: StatusProps) {
   const permissionLine = createMemo(() => {
     const p = props.state.pendingPermission;
     if (!p) return "";
-    return `permission: ${p.toolName} — /approve or /deny`;
+    // Phase 2: y/N prompt owns the interaction — no slash fallback.
+    return `permission: ${p.toolName} — awaiting y/N`;
   });
 
   return (

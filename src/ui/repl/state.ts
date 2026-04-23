@@ -19,8 +19,9 @@
  *
  * Per-state slash-command validity (see `slashCommandAllowedInState`):
  *   idle                : all commands
- *   streaming           : only /stop, /approve, /deny
- *   awaiting-permission : only /approve, /deny, /stop
+ *   streaming           : only /stop
+ *   awaiting-permission : only /stop — y/N decision is a keypress, not a slash
+ *                         (doc 17 P2.Q5: `/approve` + `/deny` removed in Phase 2)
  *   compact             : none
  *   shutdown            : none
  */
@@ -47,10 +48,19 @@ export interface TranscriptEntry {
   readonly tool?: { readonly name: string; readonly summary?: string };
 }
 
+/**
+ * PendingPermission — the payload shown to the user when a tool call needs
+ * approval. Phase 2 design lock (doc 17 P2.Q3): no `toolUseId` — claw doesn't
+ * capture one and the SDK's CanUseTool callback doesn't pass one. One prompt
+ * at a time; there is no concurrent queue to correlate.
+ */
 export interface PendingPermission {
   readonly toolName: string;
-  readonly toolUseId: string;
   readonly input: unknown;
+  readonly currentMode: PermissionMode;
+  readonly requiredMode: PermissionMode;
+  /** Reason surfaced by PermissionEngine.check when mode denied (optional). */
+  readonly reason?: string;
 }
 
 export interface InputBuffer {
@@ -221,9 +231,11 @@ export function slashCommandAllowedInState(
     case "idle":
       return true;
     case "streaming":
-      return command === "stop" || command === "approve" || command === "deny";
+      return command === "stop";
     case "awaiting-permission":
-      return command === "approve" || command === "deny" || command === "stop";
+      // Phase 2: approve/deny are keypresses (y/Enter), not slash commands.
+      // /stop still needed to cancel mid-prompt.
+      return command === "stop";
     case "compact":
       return false;
     case "shutdown":
@@ -259,7 +271,7 @@ export function reduce(state: ReplState, event: ReplEvent): ReplState {
 
     case "submit": {
       // Only valid from idle (or re-submit during awaiting-permission is
-      // intentionally blocked — user must /approve or /deny).
+      // intentionally blocked — user must answer the y/N prompt or /stop).
       if (state.name !== "idle") return state;
       const text = event.text;
       const entryId = `u-${state.transcript.length}`;

@@ -63,7 +63,12 @@ describe("reducer — transitions", () => {
     const s0 = reduce(idle(), { type: "submit", text: "hi" });
     const s1 = reduce(s0, {
       type: "permission-request",
-      request: { toolName: "bash", toolUseId: "t-1", input: { cmd: "ls" } },
+      request: {
+        toolName: "bash",
+        input: { cmd: "ls" },
+        currentMode: "read-only",
+        requiredMode: "workspace-write",
+      },
     });
     expect(s1.name).toBe("awaiting-permission");
     expect(s1.pendingPermission?.toolName).toBe("bash");
@@ -74,7 +79,12 @@ describe("reducer — transitions", () => {
       { type: "submit", text: "hi" },
       {
         type: "permission-request",
-        request: { toolName: "bash", toolUseId: "t-1", input: {} },
+        request: {
+          toolName: "bash",
+          input: {},
+          currentMode: "read-only",
+          requiredMode: "workspace-write",
+        },
       },
     ]);
     const s1 = reduce(s0, { type: "permission-response", decision: "approve" });
@@ -87,7 +97,12 @@ describe("reducer — transitions", () => {
       { type: "submit", text: "hi" },
       {
         type: "permission-request",
-        request: { toolName: "bash", toolUseId: "t-1", input: {} },
+        request: {
+          toolName: "bash",
+          input: {},
+          currentMode: "read-only",
+          requiredMode: "workspace-write",
+        },
       },
     ]);
     const s1 = reduce(s0, { type: "permission-response", decision: "deny" });
@@ -148,7 +163,12 @@ describe("reducer — transitions", () => {
   it("permission-request outside streaming state is a no-op", () => {
     const s = reduce(idle(), {
       type: "permission-request",
-      request: { toolName: "bash", toolUseId: "t-1", input: {} },
+      request: {
+        toolName: "bash",
+        input: {},
+        currentMode: "read-only",
+        requiredMode: "workspace-write",
+      },
     });
     expect(s.name).toBe("idle");
   });
@@ -286,30 +306,31 @@ describe("reducer — emacs keybindings", () => {
 describe("slashCommandAllowedInState", () => {
   it("idle: allows every command", () => {
     const s = idle();
-    for (const cmd of ["help", "exit", "clear", "status", "stop", "approve", "deny"]) {
+    for (const cmd of ["help", "exit", "clear", "status", "stop"]) {
       expect(slashCommandAllowedInState(s, cmd)).toBe(true);
     }
   });
 
-  it("streaming: allows only /stop, /approve, /deny", () => {
+  it("streaming: allows only /stop", () => {
     const s = reduce(idle(), { type: "submit", text: "hi" });
     expect(slashCommandAllowedInState(s, "stop")).toBe(true);
-    expect(slashCommandAllowedInState(s, "approve")).toBe(true);
-    expect(slashCommandAllowedInState(s, "deny")).toBe(true);
     expect(slashCommandAllowedInState(s, "help")).toBe(false);
     expect(slashCommandAllowedInState(s, "clear")).toBe(false);
   });
 
-  it("awaiting-permission: allows only /approve, /deny, /stop", () => {
+  it("awaiting-permission: allows only /stop (y/N is a keypress, not a slash)", () => {
     const s = runEvents(idle(), [
       { type: "submit", text: "hi" },
       {
         type: "permission-request",
-        request: { toolName: "bash", toolUseId: "t-1", input: {} },
+        request: {
+          toolName: "bash",
+          input: {},
+          currentMode: "read-only",
+          requiredMode: "workspace-write",
+        },
       },
     ]);
-    expect(slashCommandAllowedInState(s, "approve")).toBe(true);
-    expect(slashCommandAllowedInState(s, "deny")).toBe(true);
     expect(slashCommandAllowedInState(s, "stop")).toBe(true);
     expect(slashCommandAllowedInState(s, "help")).toBe(false);
   });
@@ -319,7 +340,7 @@ describe("slashCommandAllowedInState", () => {
       { type: "submit", text: "hi" },
       { type: "compact-begin" },
     ]);
-    for (const cmd of ["help", "exit", "clear", "stop", "approve", "deny"]) {
+    for (const cmd of ["help", "exit", "clear", "stop"]) {
       expect(slashCommandAllowedInState(s, cmd)).toBe(false);
     }
   });

@@ -59,8 +59,9 @@ describe("Status component", () => {
       name: "awaiting-permission",
       pendingPermission: {
         toolName: "bash",
-        toolUseId: "tu-001",
         input: { command: "rm -rf /" },
+        currentMode: "read-only",
+        requiredMode: "workspace-write",
       },
     });
     const { captureCharFrame, renderOnce } = await testRender(
@@ -77,6 +78,6 @@ describe("Status component", () => {
     const frame = captureCharFrame();
     expect(frame).toContain("awaiting-permission");
     expect(frame).toContain("permission: bash");
-    expect(frame).toContain("/approve or /deny");
+    expect(frame).toContain("awaiting y/N");
   });
 });

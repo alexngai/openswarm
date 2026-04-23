@@ -87,7 +87,7 @@ describe("dispatchSlashLine", () => {
     const s1 = reduce(s0, { type: "submit", text: "hi" });
     const s2 = reduce(s1, { type: "compact-begin" });
     expect(s2.name).toBe("compact");
-    for (const line of ["/help", "/stop", "/approve", "/exit"]) {
+    for (const line of ["/help", "/stop", "/exit"]) {
       const res = await dispatchSlashLine(line, s2, registry);
       expect(res.kind).toBe("error");
     }
@@ -99,18 +99,6 @@ describe("dispatchSlashLine", () => {
     const s1 = reduce(s0, { type: "submit", text: "hi" });
     const res = await dispatchSlashLine("/resume abc", s1, registry);
     expect(res.kind).toBe("error");
-  });
-
-  it("allows /approve in awaiting-permission", async () => {
-    const registry = buildDefaultRegistry();
-    const s0 = createInitialState();
-    const s1 = reduce(s0, { type: "submit", text: "hi" });
-    const s2 = reduce(s1, {
-      type: "permission-request",
-      request: { toolName: "bash", toolUseId: "t-1", input: {} },
-    });
-    const res = await dispatchSlashLine("/approve", s2, registry);
-    expect(res.kind).toBe("reducer-event");
   });
 
   it("passes args through to the command", async () => {
@@ -157,9 +145,11 @@ describe("dispatchSlashLine", () => {
 });
 
 describe("buildDefaultRegistry", () => {
-  it("returns all 15 commands", () => {
+  it("returns all 13 commands", () => {
     const registry = buildDefaultRegistry();
     const names = registry.list().map((c) => c.name);
+    // Phase 2: /approve and /deny removed — y/N keypress owns the
+    // awaiting-permission interaction (doc 17 P2.Q5).
     expect(names).toEqual([
       "help",
       "exit",
@@ -171,13 +161,11 @@ describe("buildDefaultRegistry", () => {
       "resume",
       "doctor",
       "tasks",
-      "approve",
-      "deny",
       "stop",
       "compact",
       "plugin",
     ]);
-    expect(names).toHaveLength(15);
+    expect(names).toHaveLength(13);
   });
 
   it("get() returns the matching command", () => {
