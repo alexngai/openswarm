@@ -120,26 +120,36 @@ Port each component one-for-one. All take store state as input; write bun tests 
 
 ## Phase 2 — Inline approvals (unblock headless-ish UX)
 
-**Goal:** Replace `/approve`/`/deny` slash-command approvals with inline y/N prompts. Biggest daily UX friction in the current TUI.
+**Goal:** Build the approval-prompt system for the first time. Claw parity: inline y/N prompt when mode denies a tool; no slash-command fallback. Design locked in [17-parity-design-questions.md](docs/17-parity-design-questions.md) "Phase 2 — design lock (2026-04-22)".
 
 **Gaps closed:** T5
 
-**Scope:**
-1. Add an approval-prompt Solid component modeled on opencode's [routes/session/permission.tsx](references/opencode/packages/opencode/src/cli/cmd/tui/routes/session/permission.tsx). Three-stage flow from opencode is overkill for v0 — start with single-stage (Allow / Reject / Always-this-session-OFF per Q4 decision).
-2. When the store transitions to `awaiting-permission`, render the prompt inline (not modal overlay): tool name, arguments, current mode, required mode, reason. Enter defaults to deny (match claw exactly).
-3. Keep the status-bar pending-permission line (T11).
-4. Keep `/approve`/`/deny` working for backwards compat and scripted headless use.
-5. Store transitions already exist; wire them to the new prompt component.
+**Revised premise.** Pre-Phase-2 audit (2026-04-22) found the existing `/approve` + `/deny` slash commands, `pendingPermission` state, and `status.tsx` pending line are **dead code**: nothing in the engine flow populates `pendingPermission`. `canUseTool` (`main.ts:446-452`) calls `PermissionEngine.check()` synchronously and returns allow/deny to the SDK — no UI interaction ever. Phase 2 builds the bridge end-to-end rather than "replacing" anything.
+
+**Scope (SDK engine first; Native engine stays on sync mode-only gating):**
+1. **Widen `canUseTool` in `main.ts`.** After `PermissionEngine.check()` returns deny, **prompt instead of failing** (claw parity — `permissions.rs:234-264`). Branch:
+   - TTY → dispatch `permission-request` reducer event, await `permission-response`, return decision.
+   - `--headless` → emit JSONL `permission_required` line, block on `process.stdin.read()`, parse `y\n` / `yes\n` / EOF / other.
+2. **Promise bridge** between `canUseTool` and the store. One pending prompt at a time (claw is strictly serial via `conversation.rs:400` for-loop; SDK's `CanUseTool` is one call per tool use). `PendingPermission` drops `toolUseId` — not in the SDK callback and not needed.
+3. **`PermissionPrompt.tsx`** — new Solid component rendered inline in the transcript in `awaiting-permission` state. Content matches claw exactly (`main.rs:7379-7388`): tool name, input JSON (truncated), current mode, required mode, reason. Prompt suffix: `Approve this tool call? [y/N]: `.
+4. **Keystroke routing** — `y` / `Y` → approve; `Enter` / `n` / `N` / `Esc` → deny; Ctrl-C → deny (claw `main.rs:7406-7408` treats stdin-read-error same as deny, engine continues). Partially-typed input survives in `historyDraft`; restored after decision.
+5. **Delete `/approve` + `/deny`** commands, their registry entries, and their tests. Claw has neither; inline prompt owns the interaction. Update `dispatcher.test.ts` command count.
+6. **Keep the status-bar pending-permission line** (T11) — still shows which tool is pending while the user decides.
+7. **SDK-mode integration.** `danger-full-access` → SDK `bypassPermissions` → SDK skips `canUseTool` entirely (no prompt ever fires). `read-only` / `workspace-write` → SDK `default` → every tool use hits `canUseTool`. Our mode mapping (`claude-agent-sdk.ts:57-65`) is already correct; no change needed.
 
 **Acceptance criteria:**
-- Running a command that triggers approval shows y/N inline without a slash command.
-- Ctrl-C during the prompt cancels the tool call cleanly (no zombie).
-- `--headless` still works: stdin-piped `y` approves, EOF denies (matches claw's simpler model per Q5).
-- Store-transition tests cover prompt-accept / prompt-deny.
+- Running a command that requires elevation shows y/N inline; no slash command typed; no modal overlay.
+- Ctrl-C during the prompt denies the tool; engine continues to the next tool in the turn (matches claw). Second Ctrl-C after the prompt resolves cancels the turn (existing behaviour).
+- `--headless` emits `{"type":"permission_required", "tool":..., "input":..., "currentMode":..., "requiredMode":..., "reason":...}` before blocking on stdin; consumer supplies `y\n` / `yes\n` to approve, `EOF` / anything else to deny.
+- `danger-full-access` runs never prompt (SDK skips `canUseTool`).
+- Dead-code removal: no references to `/approve` or `/deny` remain in `src/cli/slash/` or any registry test.
+- Tests: bridge unit test (canUseTool → reducer → Promise resolution), integration test against SDK engine in `default` mode.
 
-**Estimate:** 0.5–1 day, post-Phase-0.
+**Estimate:** 2–3 days. (Doc estimate pre-audit was 0.5–1d; it assumed the bridge existed.)
 
 **Dependencies:** Phase 0 complete.
+
+**Known-risk deferral.** SDK option `settingSources: ["project"]` (`claude-agent-sdk.ts:267`) loads `~/.claude/settings.json`. If that file has permission rules (e.g., "always allow Read"), the SDK *may* auto-allow SDK-side before `canUseTool` fires — silently bypassing our prompt. Risk is low for fresh installs; 90% use case is safe. Logged as **Q18** in the discussion backlog; revisit in a v0.2 security pass.
 
 ---
 

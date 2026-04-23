@@ -308,8 +308,43 @@ Add more here as they surface:
 - Q13. Telemetry: opt-in metrics for us, or strictly local? (Privacy-sensitive; own question.)
 - Q14. Event-emitter layer between runtime and TUI — pay now or defer to v0.2? (Raised by structural comparison.)
 - Q15. Migrate from Ink to OpenTUI? See below.
+- Q18. SDK `settingSources: ["project"]` bypass — [claude-agent-sdk.ts:267](src/engine/claude-agent-sdk.ts) loads `~/.claude/settings.json`. If that file has auto-allow permission rules (e.g., "always allow Read"), the SDK may SDK-side auto-allow certain tools **before** `canUseTool` fires — silently bypassing our Phase 2 inline prompt. **Current stance:** deferred. Fresh-install users have no such rules; 90% use case is safe. Three options when revisited: (i) drop `settingSources` and accept losing project-settings features, (ii) strip the `permissions` block from the loaded settings before handing to SDK, (iii) add a `doctor` check that warns on auto-allow rules. Revisit during v0.2 security pass.
 - Q17. Broader README refresh — pre-Phase-0 language remains in [README.md](README.md). Phase 1 stage 6 added a "Models & aliases" section and struck the "Multi-provider (M4)" not-in-M0 line, but broader edits are deferred (Status says "M0 current", lists REPL + plugins as unshipped, mentions `ink` — all stale). Effort: S.
 - Q16. Drop `execMode: "in-process"` from plugin manifests? (Raised 2026-04-22 during Phase 1 planning.) **Current state:** fully implemented in [claude-code-source.ts](src/plugins/claude-code-source.ts) with a path-traversal guard (`enforceEntryModuleBoundary`) and degraded-plugin fallback; covered by tests. **Parity:** claw has shell-only. **Security:** in-process plugins run with full host privilege — no sandbox. **Tradeoffs:** removing simplifies mental model + matches claw; keeping preserves a working, tested capability. **Lean:** defer to a v0.2 security review; no action in Phase 1. **Evidence of misread during Phase 1 planning:** initial Phase-1 ambiguity list claimed "in-process isn't wired" — incorrect read of `registry.ts:203` which abstracts over execMode via `LoadedPlugin.executeTool()`. Source loaders (`_loadShell` / `_loadInProcess`) own mode dispatch.
+
+---
+
+## Phase 2 — design lock (2026-04-22)
+
+Resolves the pre-implementation ambiguities for Phase 2 (inline y/N approvals, T5). Each decision is grounded in claw's reference (`references/claw-code/`) per user directive, with SDK-specific adjustments where claw has no analogue (it doesn't use the Claude Agent SDK). Numbers are Phase-2-local (distinct from the Q1–Q18 parity questions above).
+
+**Headline finding from the pre-phase audit.** The existing `/approve` + `/deny` slash commands, `pendingPermission` reducer state, and `status.tsx` pending line are **all dead code** — the engine never populates `pendingPermission`. Today, `canUseTool` ([src/cli/main.ts:446-452](src/cli/main.ts)) calls `PermissionEngine.check()` synchronously: if the mode allows, proceed; otherwise return `{allow:false}` to the SDK and the model sees a tool-error. No UI interaction ever fires. Phase 2 builds the bridge end-to-end; doc 16's original 0.5–1d estimate assumed the bridge existed.
+
+**P2.Q1. Sync vs async approval.** → **Async**, no bridge needed. The SDK's `CanUseTool` is already `(toolName, input, {signal}) => Promise<PermissionResult>` ([sdk.d.ts:146](node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts)). Our callback returns a Promise; for elevation-required tools, dispatch `permission-request` → await `permission-response` → resolve with the user's decision. The SDK already awaits our Promise — that IS the async coordination.
+
+**P2.Q2. Which engine first?** → **SDK engine only for Phase 2.** Per user directive; Native engine keeps sync mode-only gating unchanged. SDK is already wired at [claude-agent-sdk.ts:160](src/engine/claude-agent-sdk.ts) via `sdkCanUseTool → config.canUseTool`.
+
+**P2.Q3. `toolUseId` in `PendingPermission`.** → **Drop.** Claw captures only `tool_name`, `input`, `current_mode`, `required_mode`, `reason` (no id — `permissions.rs:70-76`). The SDK's `CanUseTool` signature also has no tool_use_id. Claw's tool loop is **strictly serial** (`conversation.rs:400` for-loop); one prompt at a time. `PendingPermission` shrinks to `{toolName, input, currentMode, requiredMode, reason}`.
+
+**P2.Q4. Headless approval model.** → **Same `canUseTool` in TTY and headless.** Block on stdin read; `y` / `yes` → approve; EOF / anything else → deny (claw `main.rs:7394-7404`). In `--headless`, emit a JSONL `{"type":"permission_required", ...}` line **before** the read so orchestrators know what to feed — small deviation from claw's plain-text prompt, but a swarm-coder format convention, not a semantic change. `danger-full-access` → SDK `bypassPermissions` → no `canUseTool` fires at all; headless runs never block.
+
+**P2.Q5. Keep `/approve` + `/deny` slash commands?** → **Delete them.** Claw has neither (`main.rs:7388` is the only decision surface). Our current slash commands only flip the reducer — they don't resolve any real pending approval, because none exists in the real flow. Clean up: remove the commands from `buildDefaultRegistry`, delete the tests, update `dispatcher.test.ts` count. Adds a 15→16 … wait, Phase 1 brought us to 15; Phase 2 takes us to 13 after removing approve + deny.
+
+**P2.Q6. Input focus during prompt.** → **Exclusive focus** on the prompt while `awaiting-permission`. Input textarea yields; `historyDraft` preserves the partially-typed buffer and restores on decision. Claw's model is implicit via raw stdin ownership; our reducer-based equivalent is routing keystrokes to the prompt handler in that state.
+
+**P2.Q7. Inline vs modal vs status-line.** → **Inline transcript entry.** Match opencode's [permission.tsx](references/opencode/packages/opencode/src/cli/cmd/tui/routes/session/permission.tsx) pattern. Leaves an audit trail in the transcript after decision. Modal overlays fight focus; status-line is too compact for tool arguments.
+
+**P2.Q8. Ctrl-C during prompt.** → **Ctrl-C → deny, engine continues.** Matches claw (`main.rs:7406-7408` — stdin read error becomes `Deny`). Does NOT cancel the turn. Second Ctrl-C after the prompt resolves uses the existing turn-cancel path. Two-level interrupt semantics.
+
+**P2.Q9. Session memory / "always allow".** → **Drop entirely.** Claw has none. Users who want auto-allow set `--permission-mode danger-full-access`. Future "always this session" UX filed as backlog if users request.
+
+**P2.Q10. SDK double-prompting risk.** → **No risk** in default mode. Mode mapping at [claude-agent-sdk.ts:57-65](src/engine/claude-agent-sdk.ts):
+- `danger-full-access` → SDK `bypassPermissions` + `allowDangerouslySkipPermissions: true` → SDK skips `canUseTool` entirely.
+- `read-only` / `workspace-write` → SDK `default` → SDK calls `canUseTool` for every tool use. Our callback IS the prompt surface; no SDK-internal prompt fires before or after.
+
+**One deferred concern surfaced by Q10:** `settingSources: ["project"]` may let SDK auto-allow tools from `~/.claude/settings.json`'s `permissions` block. See **Q18** in the discussion backlog. Deferred to v0.2.
+
+**Consequence for `PermissionEngine.check()`.** Today it returns terminal `{allow:false}` when mode denies. For Phase 2, the mode-deny case becomes **"prompt the user for elevation"**, not "fail immediately". Claw parity: `permissions.rs:234-264` — mode ≥ required → fast-path allow; otherwise prompt. No change to `PermissionEngine` itself; the new logic lives in `main.ts`'s `canUseTool` after the mode check.
 
 ---
 
