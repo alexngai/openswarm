@@ -133,7 +133,8 @@ node dist/cli.js --version
 
 ```
 --model <id>               Model id or alias (default: claude-sonnet-4-6)
-                           Examples: sonnet, claude-sonnet-4-6, opus
+                           Examples: sonnet, opus, grok, gpt-5, kimi
+                           See "Models & aliases" below.
 
 --resume <session-id|latest>
                            Resume a previous session. Use `latest` to
@@ -182,6 +183,32 @@ cd /path/to/project
 node dist/cli.js "set up a test suite"
 ```
 
+## Models & aliases
+
+swarm-coder routes `--model <id>` by prefix to the matching provider transport.
+Built-in aliases (in `src/providers/aliases.ts`) resolve short names to canonical
+model ids; users can override or extend via `~/.swarm-coder/settings.json`:
+
+```json
+{ "aliases": { "my-fast": "gpt-4o-mini" } }
+```
+
+| Prefix | Provider | Auth | Built-in aliases |
+|---|---|---|---|
+| `claude-*` | Anthropic (via Claude Agent SDK) | `ANTHROPIC_API_KEY`, `claude auth login`, or `CLAUDE_CODE_OAUTH_TOKEN` | `opus` → `claude-opus-4-7`, `sonnet` → `claude-sonnet-4-6`, `haiku` → `claude-haiku-4-5` |
+| `gpt-*`, `o[134]*`, `openai/*` | OpenAI | `OPENAI_API_KEY` | `gpt-4o` → `gpt-4o-2024-11-20`, `gpt-5` → `gpt-5-2025-08-07`, `o3` → `o3-mini-2025-01-31` |
+| `grok*` | xAI | `XAI_API_KEY` | `grok` → `grok-3`, `grok-mini` → `grok-3-mini` |
+| `gemini-*` | Google Generative AI | `GOOGLE_GENERATIVE_AI_API_KEY` | (pass-through — e.g. `gemini-2.0-flash`) |
+| `qwen*`, `qwen/*`, `kimi*`, `kimi/*` | DashScope (OpenAI-compatible) | `DASHSCOPE_API_KEY` | `kimi` → `kimi-k2.5` |
+
+Unknown prefixes fail with `unknown model prefix`. Identity aliases (e.g.
+`grok-2 → grok-2`) are rejected as cycles — pass unaliased canonical ids
+directly.
+
+Run `scripts/smoke-m4b.sh --live` to smoke-test each provider with a one-turn
+"say hi" prompt against whichever of `XAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`,
+`DASHSCOPE_API_KEY` are set.
+
 ## Tools (M0)
 
 swarm-coder ships with eight Tier 0 tools:
@@ -211,7 +238,7 @@ These features ship later:
 - **Plugins & skills** (M2) — extend agent behavior via `.claude/plugins` and `.claude/skills`
 - **MCP servers** (M2) — first-class MCP client (M0 uses the Agent SDK's built-in)
 - **Interactive REPL** (M2) — slash commands, tab completion, history
-- **Multi-provider** (M4) — OpenAI, xAI, Gemini support (M0 is Anthropic-only)
+- ~~**Multi-provider** (M4) — OpenAI, xAI, Gemini, DashScope shipped. See "Models & aliases".~~
 - **Subscription auth for other platforms** (M4) — ChatGPT Plus, Codex, etc.
 - **Full permission rule grammar** (M2) — fine-grained tool/subject filtering
 
