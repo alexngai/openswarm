@@ -5,6 +5,8 @@
  * Wires together auth, tools, permissions, session, engine, and UI.
  */
 
+import * as path from "node:path";
+import * as os from "node:os";
 import { parseArgv } from "./argv.js";
 import { runDoctor } from "./doctor.js";
 import { runInit } from "./init.js";
@@ -191,9 +193,19 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   }
 
   // 2a. Discover and register plugin tools (opt-in via --plugins, default enabled).
+  // Two sources per doc 17 Q1:
+  //   - "swarm-coder" at `~/.swarm-coder/plugins/` — owned namespace (install/update/uninstall).
+  //   - "claude-code" at `~/.claude/plugins/`    — read-only discovery for plugins
+  //                                                installed via claw/Claude Code.
+  // The swarm-coder source is registered first so our own installs win on
+  // manifest.id collisions (PluginRegistry does first-wins dedup).
   const pluginTools: import("../tools/types.js").ToolImpl[] = [];
   if (opts.plugins) {
     const pluginRegistry = new PluginRegistry();
+    const swarmPluginsDir = path.join(os.homedir(), ".swarm-coder", "plugins");
+    pluginRegistry.registerSource(
+      new ClaudeCodeSource({ id: "swarm-coder", pluginsDir: swarmPluginsDir }),
+    );
     pluginRegistry.registerSource(new ClaudeCodeSource());
     process.stderr.write("[swarm-coder] discovering plugins...\n");
     try {

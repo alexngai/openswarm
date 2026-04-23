@@ -160,8 +160,12 @@ export type PluginInstallSource =
   | { readonly kind: "GitUrl"; readonly url: string; readonly ref?: string };
 
 /**
- * Persisted plugin state at `~/.claude/plugins/state.json`. Shape chosen
- * for cheap atomic writes (single-file rewrite) and cheap `plugin list`.
+ * Persisted plugin state — unified view over two files under
+ * `~/.swarm-coder/plugins/` (doc 17 Q1):
+ *   - `settings.json`  — enable map `{ [pluginId]: boolean }` (claw's shape).
+ *   - `installed.json` — `{ schemaVersion, plugins: { [id]: { version, installSource } } }`.
+ *
+ * PluginStateStore.read() merges both files into this flat shape for callers.
  * schemaVersion is load-bearing — readers must refuse unknown versions.
  */
 export interface PluginStateFile {

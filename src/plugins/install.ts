@@ -1,6 +1,11 @@
 /**
  * installPlugin — materializes a plugin from a PluginInstallSource into
- * `~/.claude/plugins/<sanitized-id>/` and records it in PluginStateStore.
+ * `~/.swarm-coder/plugins/<sanitized-id>/` and records it in PluginStateStore.
+ *
+ * Doc 17 Q1 (2026-04-22): swarm-coder owns `~/.swarm-coder/plugins/` and never
+ * writes to `~/.claude/plugins/`. Plugins installed via Claude Code under
+ * `~/.claude/plugins/` are surfaced through a separate read-only discovery
+ * source (see src/cli/main.ts).
  */
 
 import * as fs from "node:fs/promises";
@@ -16,7 +21,7 @@ import { PluginStateStore, defaultStore } from "./state.js";
 // ---------------------------------------------------------------------------
 
 export function pluginsDir(): string {
-  return path.join(os.homedir(), ".claude", "plugins");
+  return path.join(os.homedir(), ".swarm-coder", "plugins");
 }
 
 // ---------------------------------------------------------------------------

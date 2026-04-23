@@ -11,7 +11,7 @@ const SOURCE: PluginInstallSource = { kind: "LocalPath", path: "/tmp/test-plugin
 
 async function makeTmpStore(): Promise<PluginStateStore> {
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "swarm-enable-test-"));
-  return new PluginStateStore(path.join(dir, "state.json"));
+  return new PluginStateStore(dir);
 }
 
 describe("enablePlugin / disablePlugin", () => {

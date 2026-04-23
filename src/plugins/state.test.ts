@@ -11,7 +11,7 @@ import type { PluginInstallSource } from "./index.js";
 
 async function makeTmpStore(): Promise<{ store: PluginStateStore; dir: string }> {
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "swarm-state-test-"));
-  const store = new PluginStateStore(path.join(dir, "state.json"));
+  const store = new PluginStateStore(dir);
   return { store, dir };
 }
 
@@ -118,8 +118,31 @@ describe("PluginStateStore", () => {
   // 8. schemaVersion mismatch throws
   it("read() throws on unknown schemaVersion", async () => {
     const { store, dir } = await makeTmpStore();
-    const stateFile = path.join(dir, "state.json");
-    await fsp.writeFile(stateFile, JSON.stringify({ schemaVersion: 99, enabled: [], versions: {}, installSources: {} }));
+    const installedFile = path.join(dir, "installed.json");
+    await fsp.writeFile(
+      installedFile,
+      JSON.stringify({ schemaVersion: 99, plugins: {} }),
+    );
     await expect(store.read()).rejects.toThrow(/schemaVersion/);
+  });
+
+  // 9. settings.json + installed.json layout is on-disk (claw schema)
+  it("writes settings.json and installed.json under the root dir", async () => {
+    const { store, dir } = await makeTmpStore();
+    await store.record("plugin-a", "1.0.0", LOCAL_SOURCE);
+    const settingsRaw = await fsp.readFile(path.join(dir, "settings.json"), "utf8");
+    const installedRaw = await fsp.readFile(path.join(dir, "installed.json"), "utf8");
+    const settings = JSON.parse(settingsRaw) as Record<string, unknown>;
+    const installed = JSON.parse(installedRaw) as Record<string, unknown>;
+    expect(settings).toEqual({ "plugin-a": true });
+    expect(installed).toEqual({
+      schemaVersion: 1,
+      plugins: {
+        "plugin-a": {
+          version: "1.0.0",
+          installSource: LOCAL_SOURCE,
+        },
+      },
+    });
   });
 });

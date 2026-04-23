@@ -339,7 +339,7 @@ async function makeTmpStore(
   versions: Record<string, string>,
 ): Promise<PluginStateStore> {
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "swarm-registry-state-test-"));
-  const store = new PluginStateStore(path.join(dir, "state.json"));
+  const store = new PluginStateStore(dir);
   const sources: Record<string, import("./index.js").PluginInstallSource> = {};
   for (const id of Object.keys(versions)) {
     sources[id] = { kind: "LocalPath", path: `/fake/${id}` };

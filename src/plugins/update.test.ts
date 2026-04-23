@@ -20,7 +20,7 @@ const HELLO_V2_DIR = path.join(FIXTURES_DIR, "hello-plugin-v0.2");
 async function makeTmpEnv(): Promise<{ store: PluginStateStore; tmpDir: string; pluginsRoot: string }> {
   const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), "swarm-update-test-"));
   const pluginsRoot = path.join(tmpDir, "plugins");
-  const store = new PluginStateStore(path.join(tmpDir, "state.json"));
+  const store = new PluginStateStore(tmpDir);
   return { store, tmpDir, pluginsRoot };
 }
 

@@ -44,6 +44,12 @@ export interface ClaudeCodeSourceOptions {
    * Kept configurable ONLY for testing. Never disable in production.
    */
   readonly enforceEntryModuleBoundary?: boolean;
+  /**
+   * Source id surfaced in PluginManifest.sourceId. Default: "claude-code".
+   * Override when registering a second instance that scans
+   * `~/.swarm-coder/plugins/` so PluginRegistry can distinguish origins.
+   */
+  readonly id?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -100,7 +106,7 @@ interface PluginEntryModule {
 // ---------------------------------------------------------------------------
 
 export class ClaudeCodeSource implements PluginSource {
-  readonly id = "claude-code";
+  readonly id: string;
 
   private readonly pluginsDir: string;
   private readonly enforceEntryModuleBoundary: boolean;
@@ -123,6 +129,7 @@ export class ClaudeCodeSource implements PluginSource {
         : path.join(os.homedir(), ".claude", "plugins"));
     this.enforceEntryModuleBoundary =
       opts?.enforceEntryModuleBoundary ?? true;
+    this.id = opts?.id ?? "claude-code";
   }
 
   // ---------------------------------------------------------------------------
