@@ -16,6 +16,12 @@
  */
 
 import { createSolidTransformPlugin } from "@opentui/solid/bun-plugin";
+import sdkPkg from "@anthropic-ai/claude-agent-sdk/package.json" with { type: "json" };
+
+// The compiled binary can't read @anthropic-ai/claude-agent-sdk/package.json
+// at runtime (embedded filesystem doesn't expose node_modules paths). Inject
+// the version as a compile-time constant so `doctor` shows the right value.
+const SDK_VERSION: string = (sdkPkg as { version?: string }).version ?? "unknown";
 
 const target =
   (process.argv[2] as
@@ -39,8 +45,12 @@ const result = await Bun.build({
     outfile,
   },
   plugins: [createSolidTransformPlugin({ moduleName: "@opentui/solid" })],
-  // Mark the OpenTUI preload as external — compile-target bundles it; the
-  // runtime bunfig.toml preload isn't applicable inside the binary.
+  // Inject the SDK version so the compiled binary's `doctor` command reports
+  // the real version (runtime package.json lookup doesn't work in compiled
+  // binaries — the node_modules path isn't in the embedded fs).
+  define: {
+    __SWARM_CODER_AGENT_SDK_VERSION__: JSON.stringify(SDK_VERSION),
+  },
 });
 
 if (!result.success) {

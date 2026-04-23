@@ -6,4 +6,7 @@
 # directly without going through cli.ts.
 
 [test]
-preload = ["@opentui/solid/preload"]
+preload = [
+  "./src/ui/repl-solid/test-setup.ts",
+  "@opentui/solid/preload",
+]

@@ -132,6 +132,12 @@ async function findCliBinary(): Promise<
 // Install check
 // ---------------------------------------------------------------------------
 
+// Build-time-injected fallback (see scripts/build-binary.ts). In dev (tsc
+// output, or `bun src/cli.ts`) this identifier is undefined and the runtime
+// resolve path below is used. In the compiled binary the identifier is
+// replaced with a string literal.
+declare const __SWARM_CODER_AGENT_SDK_VERSION__: string | undefined;
+
 async function checkInstall(): Promise<CheckResult> {
   try {
     // Verify the SDK is importable via a dynamic import of its main export.
@@ -140,7 +146,10 @@ async function checkInstall(): Promise<CheckResult> {
     // Read version from package.json. The SDK's exports map does not expose
     // "./package.json", so resolve the main entry and climb up to find its
     // package.json on disk.
-    let version = "unknown";
+    let version =
+      typeof __SWARM_CODER_AGENT_SDK_VERSION__ === "string"
+        ? __SWARM_CODER_AGENT_SDK_VERSION__
+        : "unknown";
     try {
       const require = createRequire(import.meta.url);
       const mainPath = require.resolve("@anthropic-ai/claude-agent-sdk");
