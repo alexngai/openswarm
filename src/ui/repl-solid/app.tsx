@@ -19,6 +19,7 @@ import { Input } from "./input.js";
 import { Status } from "./status.js";
 import { Spinner } from "./spinner.js";
 import { Dropdown } from "./dropdown.js";
+import { PermissionPrompt } from "./permission-prompt.js";
 import { dispatchSlashLine } from "../../cli/slash/dispatcher.js";
 import type {
   SlashCommandResult,
@@ -35,6 +36,13 @@ let slashSeq = 0;
 export function App(props: AppProps) {
   const { state, dispatch } = createReplStore({
     permissionMode: props.permissionMode,
+  });
+
+  // Phase 2 — attach the permission bridge's dispatch so `canUseTool` can
+  // drive the state machine when it needs to prompt. Detach on unmount so
+  // the bridge doesn't hold a stale reference to a dead store.
+  onMount(() => {
+    props.permissionBridge?.attachDispatch(dispatch);
   });
 
   // Engine event pump.
@@ -134,12 +142,53 @@ export function App(props: AppProps) {
     }
   });
 
+  // Phase 2 — when awaiting a permission decision, the prompt owns keystrokes.
+  // y / Y              → approve
+  // Enter / n / N / Esc → deny (matches claw's default-deny semantics)
+  // Ctrl-C             → deny (claw `main.rs:7406-7408` — stdin read error
+  //                      becomes Deny; engine continues to the next tool)
+  // Everything else is swallowed so the input buffer can't mutate.
+  const respondPermission = (allow: boolean): void => {
+    const pending = state.pendingPermission;
+    const bridge = props.permissionBridge;
+    if (pending === undefined || bridge === undefined) return;
+    bridge.respond(
+      allow
+        ? { allow: true }
+        : {
+            allow: false,
+            reason: `user denied ${pending.toolName} via y/N prompt`,
+          },
+    );
+  };
+
   // Keypress routing: when the dropdown is active, arrow-up/down navigate
   // candidates instead of reaching the reducer's history motion. Tab
   // auto-completes the current selection into the input buffer. All other
   // keys fall through to the reducer (which handles Emacs bindings,
   // history, backspace, etc.).
   const handleKey = (key: import("../repl/state.js").KeyEvent): void => {
+    if (state.name === "awaiting-permission") {
+      if (key.ctrl === true && key.name === "c") {
+        respondPermission(false);
+        return;
+      }
+      if (key.return === true) {
+        respondPermission(false);
+        return;
+      }
+      const ch = key.printable ?? "";
+      if (ch === "y" || ch === "Y") {
+        respondPermission(true);
+        return;
+      }
+      if (ch === "n" || ch === "N" || key.name === "escape") {
+        respondPermission(false);
+        return;
+      }
+      // Swallow everything else — input buffer must not mutate during prompt.
+      return;
+    }
     const candidates = dropdownCandidates();
     const dropdownActive = candidates.length > 0;
     if (dropdownActive) {
@@ -175,6 +224,14 @@ export function App(props: AppProps) {
       <Show when={state.name === "streaming"}>
         <Spinner />
       </Show>
+      <Show
+        when={
+          state.name === "awaiting-permission" &&
+          state.pendingPermission !== undefined
+        }
+      >
+        <PermissionPrompt pending={state.pendingPermission!} />
+      </Show>
       <Show when={state.name !== "shutdown"}>
         <Input
           value={state.input.value}
@@ -183,7 +240,9 @@ export function App(props: AppProps) {
           }
           onSubmit={handleSubmit}
           onKey={handleKey}
-          disabled={state.name === "compact"}
+          disabled={
+            state.name === "compact" || state.name === "awaiting-permission"
+          }
         />
       </Show>
       <Show when={dropdownCandidates().length > 1}>

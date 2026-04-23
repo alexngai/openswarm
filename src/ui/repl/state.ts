@@ -26,7 +26,7 @@
  *   shutdown            : none
  */
 
-import type { PermissionMode } from "../../core/types.js";
+import type { PermissionMode, RequiredPermission } from "../../core/types.js";
 
 // ---------------------------------------------------------------------------
 // State types
@@ -57,8 +57,10 @@ export interface TranscriptEntry {
 export interface PendingPermission {
   readonly toolName: string;
   readonly input: unknown;
+  /** The user's active permission mode (what the CLI is running as). */
   readonly currentMode: PermissionMode;
-  readonly requiredMode: PermissionMode;
+  /** The permission level the tool declared it needs (`read`/`write`/`exec`/`network`). */
+  readonly requiredPermission: RequiredPermission;
   /** Reason surfaced by PermissionEngine.check when mode denied (optional). */
   readonly reason?: string;
 }

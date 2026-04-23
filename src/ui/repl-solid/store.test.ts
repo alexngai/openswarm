@@ -55,7 +55,7 @@ describe("createReplStore — Solid binding over reduce", () => {
         toolName: "bash",
         input: {},
         currentMode: "read-only",
-        requiredMode: "workspace-write",
+        requiredPermission: "write",
       },
     });
     expect(state.name).toBe("awaiting-permission");

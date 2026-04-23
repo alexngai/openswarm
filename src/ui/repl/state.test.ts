@@ -67,7 +67,7 @@ describe("reducer — transitions", () => {
         toolName: "bash",
         input: { cmd: "ls" },
         currentMode: "read-only",
-        requiredMode: "workspace-write",
+        requiredPermission: "write",
       },
     });
     expect(s1.name).toBe("awaiting-permission");
@@ -83,7 +83,7 @@ describe("reducer — transitions", () => {
           toolName: "bash",
           input: {},
           currentMode: "read-only",
-          requiredMode: "workspace-write",
+          requiredPermission: "write",
         },
       },
     ]);
@@ -101,7 +101,7 @@ describe("reducer — transitions", () => {
           toolName: "bash",
           input: {},
           currentMode: "read-only",
-          requiredMode: "workspace-write",
+          requiredPermission: "write",
         },
       },
     ]);
@@ -167,7 +167,7 @@ describe("reducer — transitions", () => {
         toolName: "bash",
         input: {},
         currentMode: "read-only",
-        requiredMode: "workspace-write",
+        requiredPermission: "write",
       },
     });
     expect(s.name).toBe("idle");
@@ -327,7 +327,7 @@ describe("slashCommandAllowedInState", () => {
           toolName: "bash",
           input: {},
           currentMode: "read-only",
-          requiredMode: "workspace-write",
+          requiredPermission: "write",
         },
       },
     ]);

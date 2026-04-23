@@ -61,7 +61,7 @@ describe("Status component", () => {
         toolName: "bash",
         input: { command: "rm -rf /" },
         currentMode: "read-only",
-        requiredMode: "workspace-write",
+        requiredPermission: "write",
       },
     });
     const { captureCharFrame, renderOnce } = await testRender(

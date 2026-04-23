@@ -7,6 +7,7 @@
 import type { NormalizedEvent, PermissionMode } from "../../core/types.js";
 import type { SlashCommandRegistry } from "../repl/state.js";
 import type { BuildDefaultRegistryDeps } from "../../cli/slash/index.js";
+import type { PermissionBridge } from "../../permissions/bridge.js";
 
 export interface AppProps {
   readonly events: AsyncIterable<NormalizedEvent>;
@@ -23,4 +24,12 @@ export interface AppProps {
   readonly slashDeps?: BuildDefaultRegistryDeps;
   /** Called when /resume dispatches a session-id event. */
   readonly onSessionId?: (sessionId: string) => void;
+  /**
+   * Phase 2 permission bridge. When present, App:
+   *   - Calls `attachDispatch(dispatch)` on mount so the bridge can fire
+   *     `permission-request` / `permission-response` reducer events.
+   *   - Routes y/Enter/Esc/Ctrl-C keypresses in `awaiting-permission` state
+   *     to `bridge.respond(...)`.
+   */
+  readonly permissionBridge?: PermissionBridge;
 }

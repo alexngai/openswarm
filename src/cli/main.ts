@@ -21,6 +21,7 @@ import { AnthropicEnvAuth } from "../auth/anthropic-env-auth.js";
 import { ToolDispatcher } from "../tools/dispatcher.js";
 import { buildTier0Tools } from "../tools/tier0/index.js";
 import { PermissionEngine } from "../permissions/index.js";
+import { PermissionBridge } from "../permissions/bridge.js";
 import { ClaudeAgentSdkEngine } from "../engine/claude-agent-sdk.js";
 import { NativeEngine } from "../engine/native.js";
 import { ScriptedTestEngine } from "../engine/test-engine.js";
@@ -443,12 +444,38 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   }
 
   // 7. Build permission gate.
+  //
+  // Phase 2 flow (doc 17 "Phase 2 — design lock"):
+  //   1. Unknown tool → hard deny (never prompt).
+  //   2. Mode allows → fast-path allow (matches claw `permissions.rs:234-264`).
+  //   3. Mode denies → dispatch a prompt via PermissionBridge.
+  //        - TTY path: REPL attaches its dispatch; inline y/N prompt.
+  //        - Headless path: stdin reader attaches nothing to bridge; caller
+  //          drives `respond()` from JSONL-piped stdin (stage F).
+  //   Elevation is the ONLY way to bypass a mode deny — there is no separate
+  //   "structural deny" tier. Matches claw's mode-comparison gate exactly.
+  //
+  // `currentPermissionMode` is the live mutable binding updated by /permissions
+  // across turns. Reading it inside the closure picks up the latest value.
+  let currentPermissionMode = opts.permissionMode;
+  const permissionBridge = new PermissionBridge();
   const canUseTool: PermissionGate = async (toolName, input) => {
     const toolImpl = dispatcher.get(toolName);
     if (toolImpl === undefined) {
       return { allow: false, reason: `unknown tool: ${toolName}` };
     }
-    return permEngine.check(toolImpl.spec, input);
+    const modeDecision = permEngine.check(toolImpl.spec, input);
+    if (modeDecision.allow) return modeDecision;
+    // Mode denies — prompt the user. PermissionBridge.request dispatches
+    // `permission-request` (via any attached store) and blocks until
+    // `respond()` is called from the UI or headless reader.
+    return await permissionBridge.request({
+      toolName: toolImpl.spec.name,
+      input,
+      currentMode: currentPermissionMode,
+      requiredPermission: toolImpl.spec.requiredPermission,
+      reason: modeDecision.reason,
+    });
   };
 
   // 8. Build RunConfig.
@@ -490,7 +517,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   const { clampPermissionMode } = await import("../swarm/permission-order.js");
   const parentMode = opts.permissionMode;
   let currentModel = config.model;
-  let currentPermissionMode = opts.permissionMode;
+  // currentPermissionMode is declared above (hoisted so canUseTool closes over it).
   // resumeFrom for the next turn (set by /resume, cleared after one use).
   let pendingResumeFrom: { engineId: string; data: unknown } | undefined = resumeFrom;
   const turnAbort = new AbortController();
@@ -531,6 +558,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
       sessionLogPath: ".swarm-coder/sessions.log",
       pluginStore: pluginStateStore,
     },
+    permissionBridge,
     getTokens: () => {
       const u = engine.getCumulativeUsage();
       return u.inputTokens + u.outputTokens;

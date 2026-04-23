@@ -24,6 +24,7 @@ import {
   buildDefaultRegistry,
   type BuildDefaultRegistryDeps,
 } from "../../cli/slash/index.js";
+import type { PermissionBridge } from "../../permissions/bridge.js";
 
 /** Getter returning the current session's token count. */
 export type TokenGetter = () => number;
@@ -38,6 +39,8 @@ export interface RunReplConfig {
   readonly getTokens?: TokenGetter;
   readonly slashDeps?: BuildDefaultRegistryDeps;
   readonly onSessionId?: (sessionId: string) => void;
+  /** Phase 2 — approval bridge. See PermissionPrompt + canUseTool wiring. */
+  readonly permissionBridge?: PermissionBridge;
 }
 
 /**
@@ -60,6 +63,7 @@ export async function runRepl(config: RunReplConfig): Promise<void> {
       registry?: SlashCommandRegistry;
       slashDeps?: BuildDefaultRegistryDeps;
       onSessionId?: (sessionId: string) => void;
+      permissionBridge?: PermissionBridge;
     }) => Promise<void>;
   };
   const { mountSolidRender } = mountModule;
@@ -134,6 +138,7 @@ export async function runRepl(config: RunReplConfig): Promise<void> {
       registry,
       slashDeps: config.slashDeps,
       onSessionId: config.onSessionId,
+      permissionBridge: config.permissionBridge,
     }).catch((err: unknown) => {
       if (!finished) {
         finished = true;
