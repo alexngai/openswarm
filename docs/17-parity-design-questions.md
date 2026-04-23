@@ -308,6 +308,7 @@ Add more here as they surface:
 - Q13. Telemetry: opt-in metrics for us, or strictly local? (Privacy-sensitive; own question.)
 - Q14. Event-emitter layer between runtime and TUI — pay now or defer to v0.2? (Raised by structural comparison.)
 - Q15. Migrate from Ink to OpenTUI? See below.
+- Q17. Broader README refresh — pre-Phase-0 language remains in [README.md](README.md). Phase 1 stage 6 added a "Models & aliases" section and struck the "Multi-provider (M4)" not-in-M0 line, but broader edits are deferred (Status says "M0 current", lists REPL + plugins as unshipped, mentions `ink` — all stale). Effort: S.
 - Q16. Drop `execMode: "in-process"` from plugin manifests? (Raised 2026-04-22 during Phase 1 planning.) **Current state:** fully implemented in [claude-code-source.ts](src/plugins/claude-code-source.ts) with a path-traversal guard (`enforceEntryModuleBoundary`) and degraded-plugin fallback; covered by tests. **Parity:** claw has shell-only. **Security:** in-process plugins run with full host privilege — no sandbox. **Tradeoffs:** removing simplifies mental model + matches claw; keeping preserves a working, tested capability. **Lean:** defer to a v0.2 security review; no action in Phase 1. **Evidence of misread during Phase 1 planning:** initial Phase-1 ambiguity list claimed "in-process isn't wired" — incorrect read of `registry.ts:203` which abstracts over execMode via `LoadedPlugin.executeTool()`. Source loaders (`_loadShell` / `_loadInProcess`) own mode dispatch.
 
 ---

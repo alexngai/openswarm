@@ -201,7 +201,17 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   // The swarm-coder source is registered first so our own installs win on
   // manifest.id collisions (PluginRegistry does first-wins dedup).
   const pluginTools: import("../tools/types.js").ToolImpl[] = [];
-  const swarmPluginsDir = path.join(os.homedir(), ".swarm-coder", "plugins");
+  // SWARM_CODER_PLUGINS_DIR is the testing-only override respected by
+  // ClaudeCodeSource (see src/plugins/claude-code-source.ts). When set, the
+  // state store must live alongside the fixture plugins — otherwise the
+  // enabled-set filter looks at the real ~/.swarm-coder state and (legitimately)
+  // reports every fixture plugin as disabled. Production callers leave the
+  // env unset and get the default ~/.swarm-coder/plugins/ location.
+  const envPluginsDir = process.env.SWARM_CODER_PLUGINS_DIR;
+  const swarmPluginsDir =
+    envPluginsDir && envPluginsDir.length > 0
+      ? envPluginsDir
+      : path.join(os.homedir(), ".swarm-coder", "plugins");
   // One shared store across plugin discovery (enabled-set filtering) and the
   // `/plugin` slash command. Backed by settings.json + installed.json under
   // swarmPluginsDir (doc 17 Q1).

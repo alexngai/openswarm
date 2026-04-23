@@ -123,14 +123,23 @@ export class PluginRegistry {
       }
     }
 
-    // Only filter by enabled-set when a state store was explicitly provided.
-    // Without an explicit store, all discovered plugins are treated as enabled
-    // (backward-compatible with pre-M4b callers that never set a store).
+    // Only filter by enabled-set when a state store was provided AND that
+    // store has at least one installed plugin on record. Without a store, or
+    // with an empty/uninitialised store, all discovered plugins are treated
+    // as enabled:
+    //   - pre-M4b callers that never set a store (backward compat)
+    //   - fresh installs where `~/.swarm-coder/plugins/` is empty
+    //   - integration tests that point SWARM_CODER_PLUGINS_DIR at a fixture
+    //     tree without a matching settings.json / installed.json
+    // Filtering activates once the user has installed at least one plugin
+    // through our flow (`swarm-coder plugin install <src>`).
     let enabledSet: ReadonlySet<string> | null = null;
     if (this._stateStore !== null) {
       try {
         const state = await this._stateStore.read();
-        enabledSet = new Set(state.enabled);
+        if (Object.keys(state.versions).length > 0) {
+          enabledSet = new Set(state.enabled);
+        }
       } catch {
         // If state is unreadable, treat all as enabled (graceful degradation).
       }
