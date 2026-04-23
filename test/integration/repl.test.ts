@@ -434,7 +434,8 @@ describe("I: slash dispatcher /help lists all 14 commands", () => {
     const result = await dispatchSlashLine("/help", state, registry);
     expect(result.kind).toBe("message");
     const text = (result as { text: string }).text;
-    // All 14 commands from docs/10-m2-plan.md Phase 3.
+    // 13 commands. /approve + /deny removed in Phase 2 (inline y/N keypress);
+    // /plugin added in Phase 1 for list/enable/disable.
     for (const cmd of [
       "/help",
       "/exit",
@@ -446,10 +447,9 @@ describe("I: slash dispatcher /help lists all 14 commands", () => {
       "/resume",
       "/doctor",
       "/tasks",
-      "/approve",
-      "/deny",
       "/stop",
       "/compact",
+      "/plugin",
     ]) {
       expect(text).toContain(cmd);
     }
