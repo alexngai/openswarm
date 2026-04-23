@@ -86,6 +86,21 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# O5: PTY e2e — real terminal coverage via the compiled binary.
+#     Requires the binary from O4; node-pty runs under Node, not Bun.
+# ---------------------------------------------------------------------------
+if [[ -x "$BINARY_PATH" ]]; then
+  if SWARM_CODER_SKIP_INTEGRATION_BUILD=1 npx vitest run test/integration/pty.test.ts \
+    >/tmp/smoke-opentui-o5.log 2>&1; then
+    record O5 PASS "PTY e2e — mount, slash dropdown, /exit, SIGINT"
+  else
+    record O5 FAIL "PTY e2e failed (see /tmp/smoke-opentui-o5.log)"
+  fi
+else
+  record O5 SKIP "PTY e2e (no binary from O4)"
+fi
+
+# ---------------------------------------------------------------------------
 # L1: Live API call through the full stack under Bun.
 # ---------------------------------------------------------------------------
 if $OFFLINE; then

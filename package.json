@@ -21,6 +21,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper node_modules/node-pty/prebuilds/linux-*/spawn-helper 2>/dev/null || true",
     "build:compile": "bun scripts/build-binary.ts",
     "build:compile:darwin-arm64": "bun scripts/build-binary.ts bun-darwin-arm64",
     "build:compile:darwin-x64": "bun scripts/build-binary.ts bun-darwin-x64",
@@ -58,6 +59,7 @@
     "@types/node": "^25.6.0",
     "@types/proper-lockfile": "^4.1.4",
     "@types/turndown": "^5.0.6",
+    "node-pty": "^1.1.0",
     "typescript": "^5.6.3",
     "vitest": "^4.1.4"
   },
