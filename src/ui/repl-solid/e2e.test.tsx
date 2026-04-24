@@ -172,6 +172,63 @@ describe("App — end-to-end interactive flow", () => {
     close();
   });
 
+  it("assistant markdown renders: heading + bold + fenced code, with syntax markers concealed", async () => {
+    // Phase 3 stage D: proves <markdown> primitive renders assistant content
+    // correctly in the App composition path. Bare-Transcript rendering
+    // crashes Bun with SIGBUS (pre-existing, tracked separately) but the
+    // App-composed path works (see test above).
+    //
+    // Three signals:
+    //   - text content survives (Overview, important, const x)
+    //   - markdown syntax markers are concealed (no literal `#`, `**`, `` ``` ``)
+    //     — confirms we're hitting the <markdown> renderer, not plain text
+    const { events, push, close } = makeEventChannel();
+
+    const { captureCharFrame, mockInput, renderOnce } = await testRender(
+      () => (
+        <App
+          events={events}
+          model="test-model"
+          permissionMode="workspace-write"
+          onSubmit={() => undefined}
+        />
+      ),
+      { width: 80, height: 30 },
+    );
+    await renderOnce();
+
+    await mockInput.typeText("prompt");
+    mockInput.pressEnter();
+    await renderOnce();
+    await flush(30);
+
+    push({
+      type: "text_delta",
+      text:
+        "# Overview\n\n" +
+        "this is **important**\n\n" +
+        "```typescript\nconst x: number = 42;\n```",
+    });
+    push({ type: "message_stop" });
+    await flush(120);
+    await renderOnce();
+
+    const frame = captureCharFrame();
+
+    // Text content survives.
+    expect(frame).toContain("Overview");
+    expect(frame).toContain("important");
+    expect(frame).toContain("const x");
+    expect(frame).toContain("= 42");
+
+    // Negative: markdown syntax markers must NOT appear literally. If the
+    // renderer regressed to plain-text, we'd see these verbatim.
+    expect(frame).not.toContain("# Overview");
+    expect(frame).not.toContain("**important**");
+
+    close();
+  });
+
   it("multiple consecutive user submits build up transcript history", async () => {
     const { events, close } = makeEventChannel();
     const submitted: string[] = [];

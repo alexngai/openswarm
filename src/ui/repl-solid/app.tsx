@@ -220,7 +220,10 @@ export function App(props: AppProps) {
 
   return (
     <box flexDirection="column" flexGrow={1}>
-      <Transcript entries={state.transcript} />
+      <Transcript
+        entries={state.transcript}
+        streamingEntryId={state.streamingEntryId}
+      />
       <Show when={state.name === "streaming"}>
         <Spinner />
       </Show>
