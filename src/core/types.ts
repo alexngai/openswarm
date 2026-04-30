@@ -55,6 +55,13 @@ export interface ToolSpec {
   readonly requiredPermission: RequiredPermission;
   /** 0..5 — see docs/04-tool-tiers.md */
   readonly tier: 0 | 1 | 2 | 3 | 4 | 5;
+  /**
+   * When true (default), the tool can be dispatched in parallel with other
+   * tools in a batch. When false, the dispatcher serializes calls to this
+   * tool even when parallel_tool_use is enabled. Stateful tools (e.g.
+   * todo_write with a module-level singleton) must set this to false.
+   */
+  readonly concurrencySafe?: boolean;
 }
 
 /**
@@ -81,6 +88,8 @@ export interface ProviderError {
     | "invalid_request"
     | "provider_unavailable"
     | "transport"
+    | "structured_output_parse_failed"
+    | "prompt_cache_unavailable"
     | "unknown";
   readonly message: string;
   readonly retryable: boolean;
@@ -107,5 +116,67 @@ export type NormalizedEvent =
       readonly type: "message_stop";
       readonly stopReason: StopReason;
       readonly usage: Usage;
+      /**
+       * Present when `RunConfig.structuredOutput` was set and the model's
+       * response parsed successfully as JSON. `unknown` — callers that
+       * supplied a Zod schema should re-parse with `.safeParse()` for type
+       * safety.
+       */
+      readonly structuredOutput?: unknown;
     }
-  | { readonly type: "error"; readonly error: ProviderError };
+  | { readonly type: "error"; readonly error: ProviderError }
+  /**
+   * Emitted when the SDK fires a hook lifecycle message (hook_started,
+   * hook_progress, hook_response). Requires includeHookEvents: true on
+   * the SDK query() options (set unconditionally in ClaudeAgentSdkEngine).
+   *
+   * SDK type names mapped: SDKHookStartedMessage (subtype "hook_started"),
+   * SDKHookProgressMessage (subtype "hook_progress"),
+   * SDKHookResponseMessage (subtype "hook_response") — all have type "system".
+   */
+  | {
+      readonly type: "hook_event";
+      readonly payload: {
+        readonly hookId: string;
+        readonly hookName: string;
+        /** The HookEvent name, e.g. "PreToolUse", "PostToolUse", "SessionStart". */
+        readonly event: string;
+        readonly subtype: "hook_started" | "hook_progress" | "hook_response";
+        readonly stdout?: string;
+        readonly stderr?: string;
+        readonly exitCode?: number;
+        readonly outcome?: "success" | "error" | "cancelled";
+      };
+    }
+  /**
+   * Emitted when the SDK fires a compact_boundary system message.
+   * The translator emits a `begin` event immediately followed by an `end`
+   * event (the SDK emits a single boundary message per compaction, not two).
+   *
+   * SDK shape: SDKCompactBoundaryMessage — type "system", subtype "compact_boundary",
+   * compact_metadata: { trigger: "manual" | "auto", pre_tokens, post_tokens?, ... }
+   */
+  | {
+      readonly type: "compaction";
+      readonly payload: {
+        readonly phase: "begin" | "end";
+        readonly trigger: "auto" | "manual";
+        readonly compact_metadata?: Record<string, unknown>;
+      };
+    }
+  /** Emitted when a cached system-prompt prefix was read (cache hit). */
+  | {
+      readonly type: "cache_hit";
+      readonly payload: {
+        readonly tokens: number;
+        readonly fingerprint?: string;
+      };
+    }
+  /** Emitted when a system-prompt prefix was written to cache (cache miss/write). */
+  | {
+      readonly type: "cache_miss";
+      readonly payload: {
+        readonly tokens: number;
+        readonly fingerprint?: string;
+      };
+    };

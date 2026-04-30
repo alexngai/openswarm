@@ -21,7 +21,20 @@
   ],
   "scripts": {
     "build": "tsc",
-    "prepublishOnly": "npm run build"
+    "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper node_modules/node-pty/prebuilds/linux-*/spawn-helper 2>/dev/null || true",
+    "build:compile": "bun scripts/build-binary.ts",
+    "build:compile:darwin-arm64": "bun scripts/build-binary.ts bun-darwin-arm64",
+    "build:compile:darwin-x64": "bun scripts/build-binary.ts bun-darwin-x64",
+    "build:compile:linux-x64": "bun scripts/build-binary.ts bun-linux-x64",
+    "prepublishOnly": "npm run build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "vitest run test/integration",
+    "test:ui": "bun test src/ui/repl-solid/",
+    "test:ui:unit": "bun test src/ui/repl-solid/opentui.test.tsx src/ui/repl-solid/store.test.ts src/ui/repl-solid/transcript.test.tsx src/ui/repl-solid/input.test.tsx src/ui/repl-solid/status.test.tsx src/ui/repl-solid/dropdown.test.tsx src/ui/repl-solid/spinner.test.tsx src/ui/repl-solid/app.test.tsx src/ui/repl-solid/e2e.test.tsx",
+    "test:ui:live": "bun test src/ui/repl-solid/cli-bun.test.ts",
+    "test:all": "npm run test && npm run test:ui",
+    "typecheck:ui": "tsc -p src/ui/repl-solid/tsconfig.json"
   },
   "engines": {
     "node": ">=18"
@@ -44,6 +57,27 @@
   "homepage": "https://github.com/alexngai/swarm-coder",
   "devDependencies": {
     "@types/node": "^25.6.0",
-    "typescript": "^5.6.3"
+    "@types/proper-lockfile": "^4.1.4",
+    "@types/turndown": "^5.0.6",
+    "node-pty": "^1.1.0",
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.4"
+  },
+  "dependencies": {
+    "@ai-sdk/google": "3.0.64",
+    "@ai-sdk/openai": "3.0.53",
+    "@ai-sdk/xai": "3.0.83",
+    "@anthropic-ai/claude-agent-sdk": "~0.2.116",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@opentui/core": "^0.1.99",
+    "@opentui/solid": "^0.1.99",
+    "@vscode/ripgrep": "^1.17.1",
+    "ai": "6.0.168",
+    "fast-glob": "^3.3.3",
+    "proper-lockfile": "4.1.2",
+    "solid-js": "^1.9.11",
+    "turndown": "^7.2.4",
+    "zod": "^4.3.6",
+    "zod-to-json-schema": "^3.25.2"
   }
 }

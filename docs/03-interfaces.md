@@ -82,9 +82,9 @@ Opaque per-engine state, stored alongside our per-worktree JSONL log. `--resume`
 
 **Rule:** No Anthropic SDK, Vercel AI SDK, or Agent SDK types leak past `src/engine/*` and `src/providers/*`. Everything else imports only from `src/engine/index.ts`.
 
-## 2. Provider (inner layer, M4+)
+## 2. Provider (inner layer, M4a shipped)
 
-Finer-grained LLM transport. Lives *inside* `NativeEngine`. Not consumed by outer code.
+Finer-grained LLM transport. Lives *inside* `NativeEngine`. Not consumed by outer code. Shipped in M4a — see `docs/13-m4a-plan.md` for implementation detail.
 
 ```ts
 export interface Provider {
@@ -92,11 +92,48 @@ export interface Provider {
   readonly model: LanguageModel;     // from `ai` (Vercel AI SDK)
   readonly capabilities: ProviderCapabilities;
 }
+
+/** Marker for providers that own the turn loop (Agent SDK, Codex App Server). */
+export interface TransportProvider extends Provider {
+  readonly _transport: true;
+}
+
+export interface ProviderCapabilities {
+  readonly streaming: boolean;
+  readonly parallelToolUse: boolean;
+  readonly reasoning: boolean;        // true for o1/o3/o4/* and QwQ model families
+  readonly maxContextTokens: number;
+  readonly maxOutputTokens: number;
+}
+
+export interface ProviderRequest {
+  readonly model: string;
+  readonly messages: CoreMessage[];
+  readonly tools?: ToolDefinition[];
+  readonly system?: string;
+  readonly maxTokens?: number;
+  readonly temperature?: number;
+}
+
+export type ProviderEvent =
+  | { type: "text_delta"; text: string }
+  | { type: "tool_use_start"; id: string; name: string }
+  | { type: "tool_use_delta"; id: string; partial: string }
+  | { type: "tool_use_end"; id: string }
+  | { type: "message_stop"; stopReason: StopReason; usage: Usage };
 ```
 
-Implementations land in M4: `anthropic`, `openai`, `google`, `xai`, `openai-compat`, `codex-chatgpt`. Each wraps the matching `@ai-sdk/*` package (or a custom provider for `codex-chatgpt`, which targets `chatgpt.com/backend-api/codex/responses`).
+Shipped in M4a: `openai` (`@ai-sdk/openai`). Shipped in M4b: `google` (`@ai-sdk/google`), `xai` (`@ai-sdk/xai`), `dashscope` (OpenAI-compat via `DASHSCOPE_BASE_URL`). Planned (Phase 5, pending operator SSE spike): `codex-chatgpt`.
 
-Stub shape lives in `src/providers/index.ts`. Final shape is finalized when M4 work starts.
+### Codex-ChatGPT provider (Phase 5 — pending)
+
+`CodexChatGPTProvider` is a custom `TransportProvider` targeting `https://chatgpt.com/backend-api/codex/responses` (NOT `api.openai.com`; `@ai-sdk/openai` cannot be reused). It is gated behind `--framework codex-chatgpt`. Authentication uses `OpenAIOAuthAuth` (PKCE Codex App Server flow — shipped in M4b Phase 4); the custom stream translator (`CodexStreamState`) is Phase 5 and requires a real SSE trace captured via the operator spike.
+
+**Login path (works today):** `swarm-coder login --provider codex-chatgpt` runs the OAuth PKCE flow end-to-end and persists tokens to `~/.swarm-coder/auth.json`. End-to-end model turns require Phase 5 to land.
+
+**Risk note:** OpenAI can revoke the shared Codex App Server client id at any time. If the login flow starts returning 4xx, the feature is unavailable until OpenAI restores it or we find an alternative OAuth path. No auto-fallback. See `src/auth/openai-oauth.ts` top-of-file comment. This arrangement is policy-tolerated, not contracted — the client id is in production use by other tools (Cline, OpenClaw, opencode) but carries no formal third-party agreement.
+
+Model-prefix routing (`claude*` / `grok*` / `openai/` / `gpt-` / `qwen*` / `gemini-*`) and alias resolution live in `src/providers/routing.ts` and `src/providers/aliases.ts`.
 
 ## 3. AuthSource
 
@@ -174,6 +211,13 @@ export interface SwarmHost {
   readonly task: TaskAPI;
 }
 ```
+
+**M3a additions (Phase 6):** `SpawnRequest.role` and `SpawnRequest.allowedTools` are now load-bearing — the orchestrator populates them from the resolved `Role` object, the subprocess spawner propagates `SWARM_CODER_ROLE` to the child, and the worker entry wires them into `RunConfig.systemPrompt` + `RunConfig.allowedTools`. The `BranchPolicy`, `CommitPolicy`, and `EscalationPolicy` fields on `TaskPacket` are discriminated-kind records (not flat strings); Zod schemas live in `src/swarm/policies.ts`. See `docs/11-m3a-plan.md` for the migration path from legacy flat strings.
+
+**M3b additions:**
+- `SwarmHost.askUser(question, options?): Promise<AskUserResponse>` (Phase 6) — routes through the host, so Tier 2 `ask_user_question` works identically in standalone (TTY readline fallback) and worker (IPC → orchestrator) modes. `AskUserResponse = { status: "answered"; answer } | { status: "cancelled" | "timed-out" } | { status: "error"; message }`.
+- `RunConfig.systemPrompt` now accepts `string | readonly string[]` (Phase 3). When a string is supplied, `ClaudeAgentSdkEngine` wraps it with `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` from the SDK so the static prefix is eligible for prompt caching while per-run dynamic context stays uncached. If the marker export is missing at runtime (SDK version skew), the engine falls back to a plain string and emits `prompt_cache_unavailable`.
+- `AgentEngine.countTokens?(input): Promise<CountTokensResult>` (Phase 7) — optional preflight. M3b ships a local-estimate-only implementation (`source: "local-estimate"`); the server path waits for an SDK-native count method since the REST endpoint needs API-key auth unavailable under Claude Max.
 
 Two implementations:
 

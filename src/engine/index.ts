@@ -13,10 +13,15 @@
  *     streaming, MCP, compaction, session, prompt cache. Ships with
  *     OAuth for Claude Max subscription.
  *
- *   - NativeEngine (M4) — composes finer-grained pieces: our turn loop,
+ *   - NativeEngine (M4a) — composes finer-grained pieces: our turn loop,
  *     Provider (Vercel AI SDK transport), our Compactor, our MCP client,
- *     our session format. Adds OpenAI / Google / xAI + ChatGPT Codex
- *     subscription auth.
+ *     our session format. M4a ships the engine + OpenAI transport; M4b
+ *     adds xAI / Google / DashScope + ChatGPT Codex subscription auth.
+ *     NativeEngine declares `capabilities.mcp: false, compaction: false`
+ *     — it composes these as separate concerns rather than absorbing
+ *     them into the engine surface. Resume snapshots are keyed by
+ *     `SessionSnapshot.engineId: "native"` and cannot cross over to
+ *     the SDK engine (see Q3 stability policy).
  *
  * Both implementations present the same surface. Swapping engines is
  * transparent to outer code.
@@ -28,8 +33,12 @@ import type { AuthSource } from "../auth/index.js";
 import type {
   NormalizedEvent,
   PermissionMode,
-  ToolSpec,
+  Usage,
 } from "../core/types.js";
+import type { ToolImpl } from "../tools/types.js";
+import type { ToolDispatcher } from "../tools/dispatcher.js";
+import type { HooksConfigFile } from "../hooks/config.js";
+import type { ToolSpec } from "../core/types.js";
 
 // ---------------------------------------------------------------------------
 // Engine
@@ -46,13 +55,43 @@ export interface AgentEngine {
    *   - streams text deltas
    *   - surfaces tool calls via `NormalizedEvent`
    *   - calls back through `canUseTool` for permission gating
-   *   - calls back through `executeTool` to run permitted tools
+   *   - invokes `ToolImpl.execute` directly from its MCP handler after gates pass
    *   - emits `message_stop` when the model ends the conversation
    *
    * Iteration completes when the engine reaches a terminal stop reason,
    * the abort signal fires, or `maxTurns` is exceeded.
    */
   run(config: RunConfig): AsyncIterable<NormalizedEvent>;
+
+  /**
+   * Return the cumulative token usage across all `run()` calls since this
+   * engine instance was created. Returns zero-valued Usage when no runs have
+   * completed yet.
+   */
+  getCumulativeUsage(): Usage;
+
+  /**
+   * Optional server-side token preflight. Implementations that can't reach a
+   * counting endpoint (e.g. OAuth-only auth) should NOT implement this —
+   * callers fall back to a local estimate.
+   */
+  countTokens?(input: CountTokensInput): Promise<CountTokensResult>;
+}
+
+// ---------------------------------------------------------------------------
+// M3b Phase 0.4 — token preflight types
+// ---------------------------------------------------------------------------
+
+export interface CountTokensInput {
+  readonly systemPrompt?: string | readonly string[];
+  readonly messages: readonly unknown[]; // SDK's shape
+  readonly tools?: readonly ToolSpec[];
+  readonly model?: string;
+}
+
+export interface CountTokensResult {
+  readonly inputTokens: number;
+  readonly source: "server" | "local-estimate";
 }
 
 // ---------------------------------------------------------------------------
@@ -87,13 +126,14 @@ export interface RunConfig {
   readonly model: string;
   readonly auth: AuthSource;
 
-  /** Tool specs the engine exposes to the model this run. */
-  readonly tools: readonly ToolSpec[];
+  /**
+   * Tools available to the model this run. Engine calls ToolImpl.execute
+   * directly from inside its MCP handler after canUseTool gates.
+   */
+  readonly tools: readonly ToolImpl[];
 
   /** Engine calls this when a tool needs permission. */
   readonly canUseTool: PermissionGate;
-  /** Engine calls this to execute a permitted tool call. */
-  readonly executeTool: ToolExecutor;
 
   readonly permissionMode: PermissionMode;
 
@@ -106,6 +146,85 @@ export interface RunConfig {
   readonly resumeFrom?: SessionSnapshot;
 
   readonly abort?: AbortSignal;
+
+  /**
+   * Optional tool dispatcher. When present, the engine may invoke it for
+   * post-compaction health probes (Phase 5). Swarm subprocess runs that do
+   * not own a dispatcher omit this field.
+   */
+  readonly dispatcher?: ToolDispatcher;
+
+  /**
+   * Built-in SDK tools to allowlist. When present, these tool names are
+   * passed through to `options.tools` on the SDK's query() call.
+   *
+   * Permission gating for built-in tools happens here at engine-config
+   * time — `canUseTool` does NOT fire for SDK built-ins. If a caller
+   * wants to deny e.g. `WebSearch` under `read-only` permission mode,
+   * they simply omit it from this list. Our MCP-registered tools
+   * continue to use `canUseTool` for per-call gating — unchanged.
+   *
+   * Known values: "WebSearch" (Anthropic's first-party web search).
+   * Phase 4 uses this to enable web_search.
+   */
+  readonly enabledBuiltinTools?: readonly string[];
+
+  /**
+   * When present, forces the engine to produce a JSON object matching
+   * the supplied schema. Translates to the SDK's `outputFormat:
+   * { type: "json_schema", schema }` option. When set, the model's
+   * output is expected to be a single JSON document parseable against
+   * this schema; text_delta events still stream as usual, and the
+   * final parsed object is surfaced via RunResult.
+   *
+   * Accepts either a Zod schema (converted to JSON Schema via Zod v4's
+   * built-in `z.toJSONSchema()`) or a pre-built JSON Schema object.
+   */
+  readonly structuredOutput?: {
+    readonly schema:
+      | { kind: "zod"; schema: import("zod").ZodTypeAny }
+      | { kind: "json-schema"; schema: Record<string, unknown> };
+    /** Name for the schema — SDK uses this in the prompt. Default: "Output". */
+    readonly name?: string;
+  };
+
+  /**
+   * Hook configuration loaded from `.swarm-coder/hooks.json` (or Claude Code's
+   * `settings.json.hooks` field). The engine translates each HookConfig into
+   * a JS async callback via `new HookRuntime(hooks).buildSdkHooks()` and
+   * passes the result to `query({ options: { hooks } })`.
+   *
+   * Dispatcher-level invocation (Tier 2 coverage, rev-2 Major M6) is wired
+   * separately — callers construct `HookRuntime` directly and pass it to
+   * the `ToolDispatcher` constructor.
+   */
+  readonly hooks?: HooksConfigFile;
+
+  /**
+   * Optional tool allowlist. When set, the ToolDispatcher filters the
+   * registered tools array before passing to the engine — the model
+   * never sees tools outside this list. Orthogonal to canUseTool
+   * (per-call gate) and clampPermissionMode (permission ceiling).
+   * Role-driven tool filtering writes to this field (M3a Phase 6).
+   */
+  readonly allowedTools?: readonly string[];
+}
+
+// ---------------------------------------------------------------------------
+// RunResult
+// ---------------------------------------------------------------------------
+
+/**
+ * Final result of a run. Returned after the stream ends.
+ *
+ * `structuredOutput` is populated when `RunConfig.structuredOutput` was set
+ * and the model's response parsed successfully as JSON. The value is `unknown`
+ * — callers that supplied a Zod schema should re-parse with `.safeParse()` for
+ * type safety. On parse failure an error event is emitted instead and this
+ * field is absent.
+ */
+export interface RunResult {
+  readonly structuredOutput?: unknown;
 }
 
 // ---------------------------------------------------------------------------
@@ -129,31 +248,6 @@ export type PermissionGate = (
 export type PermissionDecision =
   | { readonly allow: true; readonly updatedInput?: unknown }
   | { readonly allow: false; readonly reason: string };
-
-// ---------------------------------------------------------------------------
-// Tool executor
-// ---------------------------------------------------------------------------
-
-/**
- * Engine → outer tool execution. Outer code owns tool dispatch; engines
- * never execute tools themselves. This keeps all side effects gated by the
- * permission engine and lane-event logging, regardless of which engine
- * is driving.
- */
-export type ToolExecutor = (
-  toolName: string,
-  input: unknown,
-  context: ToolExecutionContext,
-) => Promise<ToolResult>;
-
-export interface ToolExecutionContext {
-  readonly cwd: string;
-  readonly abort?: AbortSignal;
-}
-
-export type ToolResult =
-  | { readonly status: "ok"; readonly output: string }
-  | { readonly status: "error"; readonly message: string };
 
 // ---------------------------------------------------------------------------
 // Session snapshot

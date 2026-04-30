@@ -127,23 +127,37 @@ The swarm becomes a real coordination platform. Subscription auth arrives for An
 
 Flexibility milestone. Additional `TransportProvider`s slot in behind the existing `Provider` interface. ChatGPT subscription auth lands as a second `FrameworkProvider`.
 
-**Scope:**
+### M4a — SHIPPED (commit 0abb6d4)
 
+- **NativeEngine** — full turn loop: streaming, tool fan-out via `dispatchBatch`, compaction with tool-pair boundary guard, post-compaction probe, session snapshots, cross-engine resume rejection. See `docs/13-m4a-plan.md`.
+- **OpenAI TransportProvider** (`gpt-*`, `o1/o3/o4/*`) via `@ai-sdk/openai`. Reasoning-model quirks (strip temperature/top_p, use `max_completion_tokens`) handled at provider boundary.
+- **Model-prefix routing** (`claude*` / `grok*` / `openai/` / `gpt-` / `qwen*` / `gemini-*`) — `src/providers/routing.ts`.
+- **Model alias table** — built-in aliases + user-defined extension (`~/.swarm-coder/settings.json aliases`), cycle detection — `src/providers/aliases.ts`.
+- **`--framework native` CLI flag** — routes to NativeEngine; `--model` selects provider via routing table.
+- **Vercel AI SDK spike** — findings captured in `docs/research/vercel-sdk-spike.md`.
+
+### M4b — PARTIAL (commits 23e2500, 37be22a + Phase 8)
+
+**Shipped in M4b:**
 - xAI TransportProvider (`grok*`) via `@ai-sdk/xai`
 - Google TransportProvider (`gemini-*`) via `@ai-sdk/google`
-- DashScope via OpenAI-compat TransportProvider (`qwen*`, `qwen/*`) — **6 MB request-body cap** enforced at preflight (research/01-api.md §8)
-- Model-prefix routing (`claude*` / `grok*` / `openai/` / `gpt-` / `qwen*` / `gemini-*`) takes precedence over env-var sniffing (research/01-api.md §6)
-- Model-family quirks handled at provider boundary: `gpt-5*` uses `max_completion_tokens`, reasoning models (`o1/o3/o4/*-thinking/qwq*`) strip tuning params, Kimi rejects `is_error` on tool results. Vercel AI SDK handles most of these; we layer the rest.
-- Cross-provider stream translation is **handled inside Vercel AI SDK** — we don't port claw's OpenAI→Anthropic translator.
-- Plugin install / enable / disable / update / uninstall (research/04-integrations.md §2)
-- Per-provider model alias table with user-defined extension (`~/.swarm-coder/settings.json aliases`)
+- DashScope via OpenAI-compat TransportProvider (`qwen*`, `qwen/*`) — **6 MB request-body cap** enforced at preflight (`src/providers/dashscope-preflight.ts`)
+- Cross-provider stream translation handled inside Vercel AI SDK
+- Plugin install / enable / disable / update / uninstall (`src/plugins/`)
+- OpenAI OAuth PKCE flow + token refresh (`src/auth/openai-oauth.ts`) — login path end-to-end
+- Model-family quirks centralization (`src/providers/quirks.ts`)
+- CLI plumbing: `plugin` subcommand, `login --provider`, `logout` subcommand, `--framework` routing
+- Framework-mode tool filter (`src/tools/framework-filter.ts`) — removes SwarmHost tools in `codex-chatgpt` / `claude-agent-sdk` modes
+- Routing extensions: `grok*` / `gemini-*` / `qwen*` / `kimi*` prefixes in `src/providers/routing.ts`
+
+**Deferred to Phase 5 (blocked on operator SSE spike):**
+- `CodexChatGPTProvider` — custom Vercel AI SDK provider targeting `https://chatgpt.com/backend-api/codex/responses`. Requires `test/fixtures/codex/responses-sse.txt` (real SSE trace) and `test/fixtures/codex/required-headers.json` (header whitelist) captured via operator spike before implementation can proceed.
 
 ### ChatGPT Plus/Pro subscription auth (FrameworkProvider)
 
-- `CodexChatGPTProvider` — a second `FrameworkProvider`. Custom Vercel AI SDK provider targeting `https://chatgpt.com/backend-api/codex/responses` (NOT `api.openai.com`; `@ai-sdk/openai` cannot be reused). Per decision Q17.
-- `OpenAIOAuthAuth` — `kind: "oauth-bearer"` — implements Codex App Server OAuth against `auth.openai.com/oauth/` with PKCE. Uses client ID documented by OpenAI's Codex App Server (note: not a formal third-party program — policy-tolerated rather than contracted).
-- CLI flag: `--framework codex-chatgpt` opts in.
-- `swarm-coder login --provider codex-chatgpt` runs the OAuth flow.
+- `OpenAIOAuthAuth` — `kind: "oauth-bearer"` — implements Codex App Server OAuth against `auth.openai.com/oauth/` with PKCE. **SHIPPED in M4b Phase 4.** Uses client ID documented by OpenAI's Codex App Server (policy-tolerated, not contracted).
+- CLI flag: `--framework codex-chatgpt` opts in. **Login path works;** end-to-end model turns pending Phase 5.
+- `swarm-coder login --provider codex-chatgpt` runs the OAuth PKCE flow end-to-end.
 - **Constrained swarm features:** same tradeoff as Claude-Max FrameworkProvider.
 
 ### Explicitly NOT in M4

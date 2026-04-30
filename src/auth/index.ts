@@ -44,8 +44,14 @@ export interface AuthSource {
 }
 
 /**
- * Interactive login flow, implemented by auth sources that support it
- * (currently: oauth-bearer variants).
+ * Interactive login flow — POST-M0 scope.
+ *
+ * M0 does not implement interactive auth. Users run `claude auth login` themselves
+ * (Anthropic's CLI) and swarm-coder inherits credentials from env / keychain.
+ * See docs/06-open-questions.md Q16 for the decision rationale.
+ *
+ * This interface stays here for symmetry; implementations arrive with future
+ * milestones if we ever own an OAuth flow.
  */
 export interface InteractiveAuth extends AuthSource {
   readonly kind: "oauth-bearer";

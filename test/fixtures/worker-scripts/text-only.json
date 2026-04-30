@@ -1,0 +1,4 @@
+[
+  { "event": { "type": "text_delta", "text": "done" } },
+  { "event": { "type": "message_stop", "stopReason": "end_turn", "usage": { "inputTokens": 5, "outputTokens": 2 } } }
+]

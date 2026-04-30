@@ -1,0 +1,22 @@
+{
+  "id": "shell-plugin",
+  "version": "0.1.0",
+  "execMode": "shell",
+  "command": "./run.sh",
+  "tools": [
+    {
+      "name": "echo",
+      "description": "Echo the input JSON back",
+      "requiredPermission": "exec",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "marker": {
+            "type": "string",
+            "description": "Any string payload the caller wants echoed back"
+          }
+        }
+      }
+    }
+  ]
+}

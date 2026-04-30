@@ -55,9 +55,77 @@ export type LaneEventType =
   | "stale_base_detected"
   | "message_sent"
   | "message_received"
+  | "spawn_requested"
+  | "spawn_completed"
+  | "recursion_limit_hit"
+  | "worker_stuck"
+  | "heartbeat"
+  // ---------------- Inbox ----------------
+  /** Inbox drained when a worker exits; messages discarded (in-memory only). */
+  | "inbox_drained_on_exit"
+  /** Per-message event when a per-agent inbox overflows (oldest evicted). */
+  | "inbox_overflow"
+  // ---------------- Task stop ----------------
+  /** Emitted when a stop request is received for a running task. */
+  | "task_stop_requested"
+  // task_stopped already in Task section above
+  // ---------------- Retry / dead-letter ----------------
+  /** A retry has been scheduled for a failed task. */
+  | "retry_scheduled"
+  /** A task has exhausted its retry budget; going to dead-letter. */
+  | "retry_exhausted"
+  /** A task record has been written to dead-letter.jsonl. */
+  | "dead_letter_written"
+  /** DeadLetterWriter encountered one or more write failures this run. */
+  | "dead_letter_write_failure"
+  // ---------------- Roles ----------------
+  /** A role was registered in the RoleRegistry. */
+  | "role_registered"
+  /** A role was applied to a spawned worker. */
+  | "role_applied"
+  // ---------------- Policy no-ops (M3a advisory) ----------------
+  /** BranchPolicy was advisory-only this run (git ops deferred to M3b). */
+  | "branch_policy_noop"
+  /** CommitPolicy was advisory-only this run (git ops deferred to M3b). */
+  | "commit_policy_noop"
   // ---------------- User loop ----------------
   | "question_asked"
   | "answer_received"
+  // ---------------- Branch lock ----------------
+  | "branch_lock_acquired"
+  | "branch_lock_released"
+  | "branch_lock_reclaimed"
+  | "branch_lock_timeout"
+  // ---------------- Stale base ----------------
+  | "stale_base_diverged"
+  | "stale_base_ok"
+  // ---------------- Cache ----------------
+  | "cache_hit"
+  | "cache_miss"
+  | "prompt_cache_unavailable"
+  // ---------------- Parallel tool batch ----------------
+  | "parallel_tool_batch"
+  // ---------------- Preflight ----------------
+  | "preflight_degraded"
+  | "preflight_disabled"
+  // ---------------- Ask user ----------------
+  | "ask_user_question_sent"
+  | "ask_user_question_answered"
+  | "ask_user_question_timeout"
+  // ---------------- M4a NativeEngine ----------------
+  /** A user alias in settings.json shadowed a built-in alias. */
+  | "alias_shadowed"
+  /** NativeEngine sent a request to Provider.stream(); useful for observability. */
+  | "provider_request_sent"
+  /** Provider.stream() yielded an error event. */
+  | "provider_stream_error"
+  /** Compactor walked the keep boundary back to preserve a tool_use/tool_result pair. */
+  | "native_compaction_boundary_walked"
+  /** NativeEngine refused a resume because the snapshot's engineId did not match. */
+  | "native_resume_rejected"
+  // ---------------- Plugin lifecycle ----------------
+  /** A plugin was skipped because it is disabled in PluginStateStore. */
+  | "plugin_disabled"
   // ---------------- Error ----------------
   | "error";
 
@@ -66,6 +134,123 @@ export type LaneEventType =
  * Payloads are unknown at this layer; concrete shapes live in feature modules.
  */
 export type LaneEventPayload = unknown;
+
+// ---------------------------------------------------------------------------
+// M3b Phase 0.2 — payload interfaces for new event types
+// ---------------------------------------------------------------------------
+
+export interface BranchLockAcquiredPayload {
+  readonly branch: string;
+  readonly laneId: string;
+}
+
+export interface BranchLockReleasedPayload {
+  readonly branch: string;
+  readonly laneId: string;
+}
+
+export interface BranchLockReclaimedPayload {
+  readonly branch: string;
+  readonly laneId: string;
+  readonly previousOwner: string;
+}
+
+export interface BranchLockTimeoutPayload {
+  readonly branch: string;
+  readonly laneId: string;
+  readonly waitedMs: number;
+}
+
+export interface StaleBaseDivergedPayload {
+  readonly branch: string;
+  readonly baseBranch: string;
+  readonly behindBy: number;
+}
+
+export interface StaleBaseOkPayload {
+  readonly branch: string;
+  readonly baseBranch: string;
+}
+
+export interface CacheHitPayload {
+  readonly fingerprint?: string;
+  readonly savedTokens?: number;
+}
+
+export interface CacheMissPayload {
+  readonly fingerprint?: string;
+}
+
+export interface ParallelToolBatchPayload {
+  readonly toolNames: readonly string[];
+  readonly batchSize: number;
+}
+
+export interface PreflightDegradedPayload {
+  readonly reason: string;
+}
+
+export interface PreflightDisabledPayload {
+  readonly reason: string;
+}
+
+export interface AskUserQuestionSentPayload {
+  readonly correlationId: string;
+  readonly question: string;
+}
+
+export interface AskUserQuestionAnsweredPayload {
+  readonly correlationId: string;
+  readonly answer: string;
+}
+
+export interface AskUserQuestionTimeoutPayload {
+  readonly correlationId: string;
+  readonly timeoutMs: number;
+}
+
+// ---------------------------------------------------------------------------
+// M4a Phase 0.5 — payload interfaces for NativeEngine lane events
+// ---------------------------------------------------------------------------
+
+export interface AliasShadowedPayload {
+  readonly alias: string;
+  readonly builtInTarget: string;
+  readonly userTarget: string;
+}
+
+export interface ProviderRequestSentPayload {
+  readonly providerId: string;
+  readonly modelId: string;
+  readonly messageCount: number;
+  readonly toolCount: number;
+}
+
+export interface ProviderStreamErrorPayload {
+  readonly providerId: string;
+  readonly code: string;
+  readonly message: string;
+  readonly retryable: boolean;
+}
+
+export interface NativeCompactionBoundaryWalkedPayload {
+  readonly originalKeepFrom: number;
+  readonly walkedKeepFrom: number;
+  readonly reason: "tool_result_first" | "orphan";
+}
+
+export interface NativeResumeRejectedPayload {
+  readonly snapshotEngineId: string;
+  readonly attemptedBy: "native";
+}
+
+// ---------------------------------------------------------------------------
+// M4b Phase 3 — plugin lifecycle payload interfaces
+// ---------------------------------------------------------------------------
+
+export interface PluginDisabledPayload {
+  readonly pluginId: string;
+}
 
 /** Structured failure classes for `error` events. */
 export type FailureClass =

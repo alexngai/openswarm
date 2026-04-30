@@ -1,0 +1,12 @@
+# Top-level preload removed: cli.ts imports @opentui/solid/preload explicitly
+# so the compiled binary (bun build --compile) doesn't fail with
+# "preload not found" when embedded bunfig.toml references a non-bundled
+# package path.
+# [test] still needs its own preload because `bun test` loads test files
+# directly without going through cli.ts.
+
+[test]
+preload = [
+  "./src/ui/repl-solid/test-setup.ts",
+  "@opentui/solid/preload",
+]

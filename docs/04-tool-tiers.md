@@ -23,7 +23,7 @@ The minimum viable coding agent. An atomic unit must have exactly these to be us
 |---|---|
 | `web_fetch` | GET a URL, return markdown |
 | `web_search` | Query the web |
-| `notebook_edit` | Jupyter notebook cell operations |
+| `notebook_edit` | Jupyter notebook cell operations | **shipped M3b** |
 | `structured_output` | Force JSON-shaped final answer |
 | `skill` | Invoke a loaded skill |
 
@@ -38,10 +38,11 @@ What makes swarm-coder a *swarm*. Dispatched via `SwarmHost`. Works in both stan
 | `task_get` | Read task state |
 | `task_list` | List tasks by filter |
 | `task_update` | Update status, owner, or output |
-| `task_stop` | Cancel a running task |
-| `task_output` | Append to a task's output stream |
-| `send_message` | Message another agent by id |
-| `check_inbox` | Read messages for this agent |
+| `task_stop` | Cancel a running task | **shipped M3a** |
+| `task_output` | Append to a task's output stream | **shipped M3a** |
+| `send_message` | Message another agent by id | **shipped M3a** |
+| `check_inbox` | Read messages for this agent | **shipped M3a** |
+| `ask_user_question` | Structured question back to the human, routed via `SwarmHost` | **shipped M3b** |
 
 ## Tier 3 — Team / schedule
 
@@ -53,7 +54,6 @@ What makes swarm-coder a *swarm*. Dispatched via `SwarmHost`. Works in both stan
 | `cron_list` | List scheduled crons |
 | `cron_delete` | Remove a cron |
 | `remote_trigger` | Invoke a remote agent |
-| `ask_user_question` | Structured question back to the human |
 
 ## Tier 4 — Developer surface
 
@@ -78,6 +78,10 @@ What makes swarm-coder a *swarm*. Dispatched via `SwarmHost`. Works in both stan
 | `pdf_extract` | PDF → text |
 | `sleep` | Deliberate wait |
 | `repl` | Persistent stateful REPL (python/node) |
+
+## NativeEngine compatibility
+
+Tier 2 tools work identically under NativeEngine — SwarmHost is engine-agnostic. The `dispatchBatch` fan-out in NativeEngine calls the same `ToolDispatcher.dispatchBatch` path that `ClaudeAgentSdkEngine` uses, so `send_message`, `check_inbox`, `task_*`, and `ask_user_question` all route through SwarmHost regardless of which engine drives the turn loop. Swapping from `--framework claude-agent-sdk` to `--framework native` requires no tool-layer changes.
 
 ## Tier ordering ≠ release ordering
 

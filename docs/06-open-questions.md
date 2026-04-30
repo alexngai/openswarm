@@ -126,3 +126,29 @@ Dynamic (mid-session) tool registration deferred to M5 — needed only if users 
 | 2026-04-20 | Q15 AskUserQuestion headless | Lane event `question_asked` / `answer_received` | Consistent with Q8 permission-prompt pattern |
 
 All open questions resolved as of 2026-04-20. New questions will be added at the bottom as they arise during M0+.
+
+## Q20. Codex ChatGPT endpoint SSE shape — DEFERRED pending operator capture
+
+**Question:** What is the exact SSE event vocabulary emitted by `https://chatgpt.com/backend-api/codex/responses`? What headers does it require beyond the OAuth bearer token?
+
+**Status:** Deferred. This question blocks Phase 5 of M4b (`CodexChatGPTProvider` custom stream translator). Until a real SSE trace is captured via an operator spike, the event-name vocabulary cannot be locked down, and no speculative implementation is permitted.
+
+**What Phase 5 requires before starting:**
+1. `test/fixtures/codex/responses-sse.txt` — real SSE trace of at least one complete turn (text response + one tool call if feasible).
+2. `test/fixtures/codex/required-headers.json` — whitelist of headers the endpoint requires beyond `Authorization: Bearer <token>`.
+
+**Current state:** `swarm-coder login --provider codex-chatgpt` works end-to-end (OAuth PKCE flow, token persistence, refresh). End-to-end model turns are blocked on this spike. See `docs/14-m4b-plan.md` §5.0 for spike procedure.
+
+**Resolution path:** Operator captures a live session trace, commits the two fixture files, then Phase 5.1–5.4 can proceed to implement `CodexStreamState`, wire it into `NativeEngine`, and unlock `--framework codex-chatgpt` for actual turns.
+
+## Q19. NativeEngine concurrency — RESOLVED
+
+**Question (from M3b Phase 4 caveat):** Parallel tool execution was untested on a real concurrent path — only the Agent SDK's MCP bridge had exercised it, and whether it serialized internally was unknown.
+
+**Resolution:** NativeEngine's `dispatchBatch` fan-out is proven concurrent in M4a. The `native.test.ts` suite exercises three simultaneous MockProvider tool calls and asserts that all three start within a 50 ms window. The compactor's tool-pair boundary guard correctly handles tool-use/tool-result pairs that span a compaction cut. NativeEngine is engine-agnostic w.r.t. SwarmHost — Tier 2 tools work identically under both `ClaudeAgentSdkEngine` and `NativeEngine`.
+
+**Decision log entry:**
+
+| Date | Question | Decision | Rationale |
+|---|---|---|---|
+| 2026-04-21 | Q19 NativeEngine concurrency | Concurrent via dispatchBatch fan-out; proven in M4a test suite | native.test.ts 3-tool parallel start verified within 50ms window |

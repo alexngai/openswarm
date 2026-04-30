@@ -72,19 +72,37 @@ Event types (non-exhaustive — full list ported to `src/core/events.ts`):
 
 ### TaskPacket shape
 
-Structured task format (research/05-swarm.md §2). Claw ships `branch_policy` / `commit_policy` / `escalation_policy` as free-form strings that are just hints to the model. **Ours are enums enforced at runtime:**
+Structured task format (research/05-swarm.md §2). Claw ships `branch_policy` / `commit_policy` / `escalation_policy` as free-form strings that are just hints to the model. **Ours are discriminated-union records enforced at runtime (M3a Phase 2):**
 
 ```ts
+type BranchPolicy =
+  | { kind: "none" }
+  | { kind: "reuse"; branch: string }
+  | { kind: "create"; from: string; name?: string };
+
+type CommitPolicy =
+  | { kind: "none" }
+  | { kind: "auto"; message?: string }
+  | { kind: "atomic" };
+
+type EscalationPolicy =
+  | { kind: "none" }
+  | { kind: "retry"; max: number; backoff: "fixed" | "exponential" }
+  | { kind: "handoff"; targetRole: string };
+
 interface TaskPacket {
   id: string;
   prompt: string;
-  branchPolicy: "main" | "worktree" | "feature-branch" | "detached";
-  commitPolicy: "never" | "on-success" | "on-every-tool" | "manual";
-  escalationPolicy: "abort-on-error" | "ask-user" | "retry-with-backoff";
-  budget?: { maxTurns?: number; maxTokens?: number; maxWallClockMs?: number };
+  branchPolicy: BranchPolicy;
+  commitPolicy: CommitPolicy;
+  escalationPolicy: EscalationPolicy;
+  budget?: { maxTurns?: number; maxTokens?: number; maxWallClockMs?: number; maxWallClockMsPerAttempt?: number };
   context?: { files?: string[]; parentTaskId?: string };
+  role?: string;  // optional role name — applied by orchestrator at dispatch time (M3a Phase 6)
 }
 ```
+
+The Zod schemas live in `src/swarm/policies.ts`. Legacy flat strings (`"main"`, `"worktree"`, `"never"`, `"abort-on-error"`, etc.) are rejected at CLI parse time with a migration hint. See `docs/11-m3a-plan.md §Policy migration` for the before/after table.
 
 ### Worker state file
 
@@ -122,6 +140,18 @@ Multi-agent swarms writing to the same git working tree need coordination to avo
 - **`stale_branch`** — detects when a workspace test was run against a branch that has since moved. Blocks bash preflight on stale state.
 
 These are the only parts of claw's coordination layer we import directly.
+
+## Branch coordination (M3b)
+
+M3b ships the atomic lock + staleness modules the orchestrator consults before and after each worker spawn.
+
+- **`BranchPolicy.kind`** determines whether a lock is acquired at dispatch:
+  - `"none"` — no lock; policies like scratch commits or read-only inspection runs pass through unserialized.
+  - `"reuse"` — lock keyed on `policy.branch`; two tasks declaring the same branch name serialize.
+  - `"create"` — lock keyed on `policy.name` when provided, else a synthesized `task-<id>-<shortHash>`. (Post-checkout `git symbolic-ref --short HEAD` resolution lands with `NativeEngine` in M4; M3b uses the advisory key.)
+- **Lock directory** is anchored to `git rev-parse --git-common-dir` so two worktrees of the same repo share the same lock space. File format is JSON `{ ownerAgentId, acquiredAt, pid, branch }`; acquire uses `fs.open(path, "wx")` (O_EXCL-equivalent). Stale reclaim triggers when the holder pid is dead AND the file is older than `staleReclaimAfterMs` (default 30 s).
+- **`stale_base`** runs at acquire time. A `diverged` result emits a `stale_base_diverged` lane event but does NOT block dispatch — it is advisory. `no-expected-base` and `not-a-git-repo` are silent (no event).
+- **`stale_branch`** returns `fresh | stale | diverged`. Pair with `applyPolicy(freshness, policyKind)` to produce a `PolicyIntent`: `Noop | Warn | Block | Rebase | MergeForward`. Intents are advisory — M3b does NOT perform the rebase/merge itself; a future `NativeEngine` auto-executor can honor them.
 
 ## Anti-patterns we reject
 

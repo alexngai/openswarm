@@ -56,6 +56,19 @@ export interface PluginManifest {
 
   /** Aggregate permissions the plugin has declared. */
   readonly permissions?: readonly RequiredPermission[];
+
+  /**
+   * Execution mode for this plugin's tools.
+   * - "shell": tools are spawned as subprocesses (default claw behavior).
+   * - "in-process": tools are loaded from `entryModule` and called directly.
+   */
+  readonly execMode: "shell" | "in-process";
+
+  /**
+   * Path to a Node module that exports `{ buildTools(): ToolImpl[] }`.
+   * Required when `execMode === "in-process"`, ignored otherwise.
+   */
+  readonly entryModule?: string;
 }
 
 export interface PluginToolSpec {
@@ -132,4 +145,32 @@ export interface PluginRegistry {
   register(source: PluginSource): void;
   discover(): Promise<readonly PluginManifest[]>;
   load(pluginId: string): Promise<LoadedPlugin>;
+}
+
+// ---------------------------------------------------------------------------
+// Install lifecycle (M4b §0.2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Where a plugin was installed from. Recorded in PluginStateFile so
+ * `plugin update` can re-materialize from the same source.
+ */
+export type PluginInstallSource =
+  | { readonly kind: "LocalPath"; readonly path: string }
+  | { readonly kind: "GitUrl"; readonly url: string; readonly ref?: string };
+
+/**
+ * Persisted plugin state — unified view over two files under
+ * `~/.swarm-coder/plugins/` (doc 17 Q1):
+ *   - `settings.json`  — enable map `{ [pluginId]: boolean }` (claw's shape).
+ *   - `installed.json` — `{ schemaVersion, plugins: { [id]: { version, installSource } } }`.
+ *
+ * PluginStateStore.read() merges both files into this flat shape for callers.
+ * schemaVersion is load-bearing — readers must refuse unknown versions.
+ */
+export interface PluginStateFile {
+  readonly schemaVersion: 1;
+  readonly enabled: readonly string[];
+  readonly versions: Readonly<Record<string, string>>;
+  readonly installSources: Readonly<Record<string, PluginInstallSource>>;
 }
