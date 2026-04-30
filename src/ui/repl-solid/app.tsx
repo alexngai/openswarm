@@ -21,6 +21,7 @@ import { Spinner } from "./spinner.js";
 import { Dropdown } from "./dropdown.js";
 import { PermissionPrompt } from "./permission-prompt.js";
 import { dispatchSlashLine } from "../../cli/slash/dispatcher.js";
+import { loadHistory, appendHistoryEntry } from "../history.js";
 import type {
   SlashCommandResult,
   SlashCommandRegistry,
@@ -43,6 +44,21 @@ export function App(props: AppProps) {
   // the bridge doesn't hold a stale reference to a dead store.
   onMount(() => {
     props.permissionBridge?.attachDispatch(dispatch);
+  });
+
+  // Stage A — load persistent history from disk and hydrate the store.
+  // Guard against empty results: dispatching {history: []} into the initial
+  // empty-state forces a no-op re-render that breaks downstream e2e tests
+  // by shifting render timing. Skip the dispatch when there's nothing new.
+  onMount(() => {
+    try {
+      const loaded = loadHistory();
+      if (loaded.length > 0) {
+        dispatch({ type: "hydrate-history", history: loaded });
+      }
+    } catch (err) {
+      process.stderr.write(`swarm-harness: failed to load history: ${err}\n`);
+    }
   });
 
   // Engine event pump.
@@ -99,6 +115,12 @@ export function App(props: AppProps) {
         applySlashResult(result, dispatch, props.onSubmit, props.onSessionId);
       })();
       return;
+    }
+    // Persist before dispatch — history is durable even if dispatch errors.
+    try {
+      appendHistoryEntry(line);
+    } catch (err) {
+      process.stderr.write(`swarm-harness: failed to persist history: ${err}\n`);
     }
     dispatch({ type: "submit", text: line });
     props.onSubmit?.(line);

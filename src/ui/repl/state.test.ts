@@ -261,6 +261,35 @@ describe("reducer — emacs keybindings", () => {
     expect(s1.input.value.length).toBeLessThan(10);
   });
 
+  it("Ctrl+Y yanks killBuffer at cursor", () => {
+    // Kill "baz" then yank it back at cursor position 8.
+    const s0 = seed("foo bar ", 8);
+    const s1 = reduce(s0, { type: "key", key: { ctrl: true, name: "k" } });
+    expect(s1.input.killBuffer).toBe("");
+    const s2 = seed("foo bar baz", 11);
+    const s3 = reduce(s2, { type: "key", key: { ctrl: true, name: "w" } });
+    expect(s3.input.killBuffer).toBe("baz");
+    const s4 = reduce(s3, { type: "key", key: { ctrl: true, name: "y" } });
+    expect(s4.input.value).toBe("foo bar baz");
+    expect(s4.input.cursor).toBe(11);
+  });
+
+  it("Ctrl+Y with empty killBuffer is a no-op", () => {
+    const s0 = seed("hello", 5);
+    const s1 = reduce(s0, { type: "key", key: { ctrl: true, name: "y" } });
+    expect(s1.input.value).toBe("hello");
+    expect(s1.input.cursor).toBe(5);
+  });
+
+  it("Ctrl+Y inserts killBuffer mid-value", () => {
+    const s0 = seed("foo bar baz", 11);
+    const s1 = reduce(s0, { type: "key", key: { ctrl: true, name: "w" } });
+    // cursor is now at 8, killBuffer = "baz"
+    const s2 = reduce(s1, { type: "key", key: { ctrl: true, name: "y" } });
+    expect(s2.input.value).toBe("foo bar baz");
+    expect(s2.input.cursor).toBe(11);
+  });
+
   it("Left arrow moves cursor left (clamped at 0)", () => {
     const s0 = seed("abc", 1);
     const s1 = reduce(s0, { type: "key", key: { leftArrow: true } });
@@ -419,6 +448,32 @@ describe("stub slash registry", () => {
     const r = createStubSlashRegistry();
     expect(r.get("help")?.description).toBeTruthy();
     expect(r.get("nope")).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// hydrate-history
+// ---------------------------------------------------------------------------
+
+describe("hydrate-history", () => {
+  it("replaces state.history when idle", () => {
+    const s = reduce(idle(), {
+      type: "hydrate-history",
+      history: ["first", "second", "third"],
+    });
+    expect(s.history).toEqual(["first", "second", "third"]);
+    expect(s.name).toBe("idle");
+  });
+
+  it("no-op when not idle (streaming state)", () => {
+    const streaming = reduce(idle(), { type: "submit", text: "hi" });
+    expect(streaming.name).toBe("streaming");
+    const s = reduce(streaming, {
+      type: "hydrate-history",
+      history: ["should-not-appear"],
+    });
+    expect(s.history).toEqual(["hi"]);
+    expect(s.name).toBe("streaming");
   });
 });
 
