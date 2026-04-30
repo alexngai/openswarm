@@ -2,7 +2,7 @@
 
 ## One-liner
 
-swarm-coder is a TypeScript coding agent where the atomic unit is a single Claude-backed agent, and the primary product surface is multi-agent swarm orchestration.
+swarm-harness is a TypeScript coding agent where the atomic unit is a single Claude-backed agent, and the primary product surface is multi-agent swarm orchestration.
 
 ## Relationship to claw-code
 
@@ -10,9 +10,9 @@ swarm-coder is a TypeScript coding agent where the atomic unit is a single Claud
 
 We are **not** porting line-for-line. We take the atomic-agent design, implement it in TypeScript around Claude's SDK, and build a swarm orchestration layer on top.
 
-## What makes swarm-coder different
+## What makes swarm-harness different
 
-| | claw-code | swarm-coder |
+| | claw-code | swarm-harness |
 |---|---|---|
 | Primary surface | Single-agent CLI (`claw`) | Multi-agent orchestration; atomic unit is spawnable |
 | Language | Rust | TypeScript |

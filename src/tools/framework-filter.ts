@@ -2,7 +2,7 @@
  * framework-filter.ts — remove tools that don't make sense in a given
  * framework mode.
  *
- * In swarm-coder's "native" and "auto" modes the SwarmHost-routed tools
+ * In swarm-harness's "native" and "auto" modes the SwarmHost-routed tools
  * (send_message, check_inbox, task_stop, task_output, ask_user_question)
  * are available. In framework modes (codex-chatgpt, claude-agent-sdk) the
  * framework owns the turn loop and SwarmHost routing doesn't apply — so

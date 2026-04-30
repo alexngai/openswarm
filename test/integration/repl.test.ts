@@ -4,7 +4,7 @@
  * registration, and hook exit-code branches.
  *
  * These tests spawn `node dist/cli.js prompt --headless ...` with the
- * scripted engine enabled via SWARM_CODER_TEST_SCRIPT. No live API calls.
+ * scripted engine enabled via SWARM_HARNESS_TEST_SCRIPT. No live API calls.
  *
  * Prereq: `npm run build` — runs once via test/integration/global-setup.ts
  * (vitest globalSetup hook). No per-file build needed.
@@ -115,7 +115,7 @@ function runCli(
 describe("A: headless prompt lifecycle via scripted engine", () => {
   it("emits text_delta and message_stop events", async () => {
     const res = await runCli(["prompt", "--headless", "hi"], {
-      env: { SWARM_CODER_TEST_SCRIPT: WORKER_SCRIPT },
+      env: { SWARM_HARNESS_TEST_SCRIPT: WORKER_SCRIPT },
     });
     expect(res.exitCode).toBe(0);
     expect(res.stdout).toContain('"type":"text_delta"');
@@ -132,7 +132,7 @@ describe("A: headless prompt lifecycle via scripted engine", () => {
 // ---------------------------------------------------------------------------
 // Scenario B — Plugin-subprocess registration via --dump-tools
 //
-// Points SWARM_CODER_PLUGINS_DIR at the fixture tree and asks the CLI to
+// Points SWARM_HARNESS_PLUGINS_DIR at the fixture tree and asks the CLI to
 // print its tool list. Asserts that both the shell-plugin echo and the
 // node-plugin greet tools appear.
 // ---------------------------------------------------------------------------
@@ -143,10 +143,10 @@ describe("B: plugin discovery registers shell + node plugin tools", () => {
       ["prompt", "--headless", "--dump-tools", "noop"],
       {
         env: {
-          SWARM_CODER_TEST_SCRIPT: WORKER_SCRIPT,
-          SWARM_CODER_PLUGINS_DIR: PLUGINS_FIXTURES,
+          SWARM_HARNESS_TEST_SCRIPT: WORKER_SCRIPT,
+          SWARM_HARNESS_PLUGINS_DIR: PLUGINS_FIXTURES,
           // Isolate from user-level MCP / hooks config during this test.
-          SWARM_CODER_CONFIG_DIR: path.join(os.tmpdir(), "swc-empty-config"),
+          SWARM_HARNESS_CONFIG_DIR: path.join(os.tmpdir(), "swc-empty-config"),
         },
       },
     );
@@ -164,7 +164,7 @@ describe("B: plugin discovery registers shell + node plugin tools", () => {
 // Scenario C — MCP tool registration via --dump-tools
 //
 // Writes a temp `mcp.json` pointed at the mock MCP fixture, sets
-// SWARM_CODER_CONFIG_DIR to its parent, and asserts that get_time + echo
+// SWARM_HARNESS_CONFIG_DIR to its parent, and asserts that get_time + echo
 // appear in the tool list.
 // ---------------------------------------------------------------------------
 
@@ -186,8 +186,8 @@ describe("C: MCP mock server tools register as mcp__mock-mcp__*", () => {
         ["prompt", "--headless", "--dump-tools", "--no-plugins", "noop"],
         {
           env: {
-            SWARM_CODER_TEST_SCRIPT: WORKER_SCRIPT,
-            SWARM_CODER_CONFIG_DIR: tmp,
+            SWARM_HARNESS_TEST_SCRIPT: WORKER_SCRIPT,
+            SWARM_HARNESS_CONFIG_DIR: tmp,
           },
         },
       );
@@ -226,7 +226,7 @@ describe("D: Tier 0 tools present in dump-tools output", () => {
         "--no-skills",
         "noop",
       ],
-      { env: { SWARM_CODER_TEST_SCRIPT: WORKER_SCRIPT } },
+      { env: { SWARM_HARNESS_TEST_SCRIPT: WORKER_SCRIPT } },
     );
     expect(res.exitCode).toBe(0);
     const tools = JSON.parse(
@@ -250,10 +250,10 @@ describe("D: Tier 0 tools present in dump-tools output", () => {
 // ---------------------------------------------------------------------------
 
 describe("E: hook config resolution emits startup log", () => {
-  it("logs 'hooks loaded from' when .swarm-coder/hooks.json is present", async () => {
+  it("logs 'hooks loaded from' when .swarm-harness/hooks.json is present", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "swc-hooks-"));
     try {
-      const hooksDir = path.join(tmp, ".swarm-coder");
+      const hooksDir = path.join(tmp, ".swarm-harness");
       fs.mkdirSync(hooksDir, { recursive: true });
       const hooksCfg = {
         PreToolUse: [
@@ -273,7 +273,7 @@ describe("E: hook config resolution emits startup log", () => {
           "noop",
         ],
         {
-          env: { SWARM_CODER_TEST_SCRIPT: WORKER_SCRIPT },
+          env: { SWARM_HARNESS_TEST_SCRIPT: WORKER_SCRIPT },
           cwd: tmp,
         },
       );

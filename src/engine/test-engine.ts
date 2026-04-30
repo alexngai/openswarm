@@ -15,7 +15,7 @@ export interface ScriptedEvent {
 
 export interface ScriptedTestEngineOptions {
   /** Path to a JSON file containing ScriptedEvent[]. If unset, reads
-   *  SWARM_CODER_TEST_SCRIPT env. */
+   *  SWARM_HARNESS_TEST_SCRIPT env. */
   readonly scriptPath?: string;
   /** In-memory script, overrides scriptPath if both provided (tests). */
   readonly script?: readonly ScriptedEvent[];
@@ -44,10 +44,10 @@ export class ScriptedTestEngine implements AgentEngine {
     if (opts.script) {
       this.script = opts.script;
     } else {
-      const path = opts.scriptPath ?? process.env.SWARM_CODER_TEST_SCRIPT;
+      const path = opts.scriptPath ?? process.env.SWARM_HARNESS_TEST_SCRIPT;
       if (!path) {
         throw new Error(
-          "ScriptedTestEngine: no script provided (opts.script or SWARM_CODER_TEST_SCRIPT)",
+          "ScriptedTestEngine: no script provided (opts.script or SWARM_HARNESS_TEST_SCRIPT)",
         );
       }
       const raw = fs.readFileSync(path, "utf8");

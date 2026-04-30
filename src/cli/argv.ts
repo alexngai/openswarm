@@ -1,5 +1,5 @@
 /**
- * argv.ts — hand-rolled CLI argument parser for swarm-coder.
+ * argv.ts — hand-rolled CLI argument parser for swarm-harness.
  *
  * Parses process.argv.slice(2). No external dependencies.
  *
@@ -162,7 +162,7 @@ export function parseArgv(args: string[]): ParsedArgs {
     }
 
     if (tok === "--agent-id" || tok.startsWith("--agent-id=")) {
-      // Accept and ignore — agentId is read from SWARM_CODER_AGENT_ID env var.
+      // Accept and ignore — agentId is read from SWARM_HARNESS_AGENT_ID env var.
       // The flag exists only for process-listing clarity.
       if (tok === "--agent-id") {
         i += 2; // skip the value token too
@@ -492,7 +492,7 @@ export function parseArgv(args: string[]): ParsedArgs {
       if (text.length === 0) {
         return {
           kind: "error",
-          message: 'prompt requires text, e.g. swarm-coder prompt "say hi"',
+          message: 'prompt requires text, e.g. swarm-harness prompt "say hi"',
           showHelp: true,
         };
       }

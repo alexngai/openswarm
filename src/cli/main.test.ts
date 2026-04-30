@@ -164,7 +164,7 @@ describe("main", () => {
     const code = await main(["help"]);
 
     expect(code).toBe(0);
-    expect(chunks.join("")).toContain("swarm-coder");
+    expect(chunks.join("")).toContain("swarm-harness");
   });
 
   it("version → returns 0 and prints version", async () => {

@@ -2,7 +2,7 @@
  * /resume — restart a prior session.
  *
  * Only valid in `idle` state. With no args, lists the last 10 session ids
- * from the per-worktree session log (`.swarm-coder/sessions.log` unless
+ * from the per-worktree session log (`.swarm-harness/sessions.log` unless
  * overridden via `SlashCommandContext.sessionLogPath`). With one arg,
  * emits a message signalling the REPL to wire `RunConfig.resumeFrom` for
  * the next turn. Phase 5 threads the actual `resumeFrom` through.
@@ -47,7 +47,7 @@ export const resumeCommand: SlashCommand = {
   execute(ctx) {
     if (ctx.args.length === 0) {
       const ids = readLastSessionIds(
-        ctx.sessionLogPath ?? ".swarm-coder/sessions.log",
+        ctx.sessionLogPath ?? ".swarm-harness/sessions.log",
         10,
       );
       if (ids.length === 0) {

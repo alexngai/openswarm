@@ -200,7 +200,7 @@ export class WorkerHost implements SwarmHost {
   /**
    * Proxy ask_user_question through the orchestrator.
    *
-   * Timeout: controlled by `SWARM_CODER_ASK_TIMEOUT_MS` env var (default
+   * Timeout: controlled by `SWARM_HARNESS_ASK_TIMEOUT_MS` env var (default
    * 600_000 ms). On orchestrator-side timeout the IPC layer surfaces
    * `request_timeout`, which we translate to `{status: "timed-out"}`.
    * Transport close returns `{status: "error", message: "transport_closed: ..."}`.
@@ -209,7 +209,7 @@ export class WorkerHost implements SwarmHost {
     question: string,
     options?: readonly string[],
   ): Promise<import("./host.js").AskUserResponse> {
-    const rawTimeout = process.env.SWARM_CODER_ASK_TIMEOUT_MS ?? "600000";
+    const rawTimeout = process.env.SWARM_HARNESS_ASK_TIMEOUT_MS ?? "600000";
     const parsedTimeout = parseInt(rawTimeout, 10);
     const timeoutMs =
       Number.isFinite(parsedTimeout) && parsedTimeout > 0

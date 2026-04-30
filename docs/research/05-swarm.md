@@ -1,6 +1,6 @@
 # 05 · Swarm primitives in claw-code (Rust)
 
-Slice extracted for swarm-coder's orchestrator / `SwarmHost` design. Source: `references/claw-code/rust/crates/runtime/src/*` plus the Tier 2/3 tool sections of `crates/tools/src/lib.rs`.
+Slice extracted for swarm-harness's orchestrator / `SwarmHost` design. Source: `references/claw-code/rust/crates/runtime/src/*` plus the Tier 2/3 tool sections of `crates/tools/src/lib.rs`.
 
 ## 1. Summary
 
@@ -8,7 +8,7 @@ claw-code ships a **per-process, in-memory** swarm substrate. Four `OnceLock`-ba
 
 The Git-coordination primitives (`branch_lock`, `stale_base`, `stale_branch`) are the most reusable layer: small, pure, testable. The `lane_events` catalog is a mature event vocabulary we can borrow nearly verbatim. Everything above the registry layer (cron, team, remote) is either a stub or a single-process shim.
 
-Key implication for swarm-coder: keep claw-code's **data models** (TaskPacket, lane event names, Worker lifecycle states, BranchLock collision detection) but replace the **transport** (threads + in-memory registries + screen-scraping) with subprocess JSONL and a `SwarmHost` interface that allows future swap to a real bus.
+Key implication for swarm-harness: keep claw-code's **data models** (TaskPacket, lane event names, Worker lifecycle states, BranchLock collision detection) but replace the **transport** (threads + in-memory registries + screen-scraping) with subprocess JSONL and a `SwarmHost` interface that allows future swap to a real bus.
 
 ## 2. Task model — registry, packet, lifecycle, dispatch
 
@@ -70,7 +70,7 @@ struct Team {
 }
 ```
 
-`TeamCreate` accepts a `name` and an array of **task objects** (not task IDs) but `run_team_create` only extracts `task_id` fields — so the tool as written requires you to have already called `TaskCreate`. No roles, no member-to-role mapping, no system-prompt overlays. This is a stub for swarm-coder's concept of "team roles."
+`TeamCreate` accepts a `name` and an array of **task objects** (not task IDs) but `run_team_create` only extracts `task_id` fields — so the tool as written requires you to have already called `TaskCreate`. No roles, no member-to-role mapping, no system-prompt overlays. This is a stub for swarm-harness's concept of "team roles."
 
 Delete is a **soft delete** (sets status = Deleted) via `delete`; `remove` is the hard path. `TeamDelete` uses the soft path.
 
@@ -116,9 +116,9 @@ struct WorkerTaskReceipt {
 ```
 Expected on the worker's screen so `WrongTask` can be detected.
 
-### 4.5 Relevance to swarm-coder
+### 4.5 Relevance to swarm-harness
 
-Almost none of this maps directly. swarm-coder's worker is a subprocess we own, talking JSONL over stdio — we do not need to parse terminal text. What *is* reusable:
+Almost none of this maps directly. swarm-harness's worker is a subprocess we own, talking JSONL over stdio — we do not need to parse terminal text. What *is* reusable:
 - The **lifecycle state machine** (Spawning / Ready / Running / Finished / Failed).
 - The **StartupEvidenceBundle** pattern — ship a structured cause object on timeout failure.
 - The **atomic state-file pattern** (tmp + rename) for file-based observability.
@@ -143,7 +143,7 @@ struct LaneEvent {
 ```
 
 ### 5.3 Failure taxonomy
-`prompt_delivery | trust_gate | branch_divergence | compile | test | plugin_startup | mcp_startup | mcp_handshake | gateway_routing | tool_runtime | workspace_mismatch | infra`. This is a directly-borrowable vocabulary; swarm-coder should adopt it almost verbatim in our `events/lane.ts`.
+`prompt_delivery | trust_gate | branch_divergence | compile | test | plugin_startup | mcp_startup | mcp_handshake | gateway_routing | tool_runtime | workspace_mismatch | infra`. This is a directly-borrowable vocabulary; swarm-harness should adopt it almost verbatim in our `events/lane.ts`.
 
 ### 5.4 Provenance
 `live_lane | test | healthcheck | replay | transport` — important for deduping events that came from replay vs. real execution.
@@ -182,7 +182,7 @@ This file is about **upstream HTTPS proxy bootstrap for claw-code's own outbound
 ### 7.3 Python remote_runtime
 `references/claw-code/src/remote_runtime.py` exists (confirmed) but is outside our Rust slice and outside the multi-agent product thesis. Skip.
 
-**Bottom line on "remote":** claw-code has no real remote-agent transport. It has a webhook hammer and an ops-time HTTP proxy. swarm-coder's `remote_trigger` spec can be exactly this — a typed HTTP webhook. Real remote-agent invocation is a future design.
+**Bottom line on "remote":** claw-code has no real remote-agent transport. It has a webhook hammer and an ops-time HTTP proxy. swarm-harness's `remote_trigger` spec can be exactly this — a typed HTTP webhook. Real remote-agent invocation is a future design.
 
 ## 8. Sub-agent spawn (Agent tool, tools/src/lib.rs §572, §2113, §3477)
 
@@ -232,7 +232,7 @@ Parent observes progress by re-reading manifestFile. There is **no live streamin
 Rule-based classifier that reads status/result/error and returns one of `working | finished_cleanable | finished_pending_report | blocked_background_job | blocked_merge_conflict | degraded_mcp | interrupted_transport | truly_idle`. This is a nice UX signal for an orchestrator's dashboard.
 
 ### 8.5 Critical caveat
-The Agent tool runs sub-agents as **in-process threads sharing API client state**. This is wrong for swarm-coder's thesis ("one agent is a tool, N coordinated agents is the product"). swarm-coder must use real subprocesses for the isolation property — a worker crash must not take down the parent.
+The Agent tool runs sub-agents as **in-process threads sharing API client state**. This is wrong for swarm-harness's thesis ("one agent is a tool, N coordinated agents is the product"). swarm-harness must use real subprocesses for the isolation property — a worker crash must not take down the parent.
 
 ## 9. Messaging (SendMessage, AskUserQuestion)
 
@@ -242,7 +242,7 @@ The Agent tool runs sub-agents as **in-process threads sharing API client state*
 ```
 Implementation (§1327): writes the question to stdout, reads a line from stdin, resolves numeric choice against options if provided. Blocks the current thread on stdin. Returns `{question, answer, status: "answered"}`.
 
-This is **strictly single-process, single-user, single-thread**. It can't work from a sub-agent thread (competing for stdin), and it can't work under the `Agent` tool allowlist (it's not whitelisted for any subagent_type). For swarm-coder this is orchestrator-only — our `ask_user_question` must route back to the root TUI/CLI through `SwarmHost`.
+This is **strictly single-process, single-user, single-thread**. It can't work from a sub-agent thread (competing for stdin), and it can't work under the `Agent` tool allowlist (it's not whitelisted for any subagent_type). For swarm-harness this is orchestrator-only — our `ask_user_question` must route back to the root TUI/CLI through `SwarmHost`.
 
 ### 9.2 `SendUserMessage` / `Brief`
 ```rust
@@ -256,15 +256,15 @@ Implementation (`execute_brief`, §5239): **just validates the input and echoes 
 2. Agents read task messages via `TaskGet`.
 3. Agents read peer outputs via `TaskOutput` (polling, not push).
 
-This is the biggest gap vs. what the 04-tool-tiers.md doc describes (`send_message` + `check_inbox` by agentId). swarm-coder designs this fresh.
+This is the biggest gap vs. what the 04-tool-tiers.md doc describes (`send_message` + `check_inbox` by agentId). swarm-harness designs this fresh.
 
-## 10. Requirements for swarm-coder
+## 10. Requirements for swarm-harness
 
 ### v0
 - [v0] **Port TaskPacket shape** (objective, scope, scope_path, repo, worktree, branch_policy, acceptance_tests, commit_policy, reporting_contract, escalation_policy) and validator. Treat the *_policy fields as strings surfaced into the agent's system prompt.
 - [v0] **TaskRegistry lifecycle** (Created / Running / Completed / Failed / Stopped) — in-memory Map is fine for MVP. Terminal states reject further transitions.
-- [v0] **agentId convention** stable for an agent's lifetime; passed via env (`SWARM_CODER_AGENT_ID` per 05-swarm-model.md) and present on every lane event. Ours, not claw-code's.
-- [v0] **Atomic state file** at `{cwd}/.swarm-coder/worker-state.json` (tmp + rename) — this is claw-code's observability pattern and is cheap to adopt.
+- [v0] **agentId convention** stable for an agent's lifetime; passed via env (`SWARM_HARNESS_AGENT_ID` per 05-swarm-model.md) and present on every lane event. Ours, not claw-code's.
+- [v0] **Atomic state file** at `{cwd}/.swarm-harness/worker-state.json` (tmp + rename) — this is claw-code's observability pattern and is cheap to adopt.
 - [v0] **Lane event wire names** — borrow claw-code's catalog wholesale (§5.1): `lane.started`, `lane.ready`, `lane.finished`, `lane.failed`, `lane.blocked`, `lane.red`/`green`, `lane.commit.created`. Defer ship.* until we have a shipper.
 - [v0] **LaneFailureClass** — adopt verbatim (§5.3), plus add `worker_crash` for subprocess isolation failures that have no claw-code analog.
 - [v0] **branch_lock collision detection** — port `detect_branch_lock_collisions` as-is to TS. Pure, tested, small.
@@ -298,7 +298,7 @@ This is the biggest gap vs. what the 04-tool-tiers.md doc describes (`send_messa
 ## 11. Open questions
 
 1. **Is `SwarmHost` a single object per-process or per-agent?** The shape of TaskRegistry singleton suggests per-process would be simplest, but it fights subprocess isolation — two workers in different subprocesses need to share a task registry through some IPC. Decision affects whether `task_create` in a worker writes locally + ships an event, or RPCs to the parent.
-2. **Where does the task registry live across processes?** Options: (a) parent-owned, workers RPC in via JSONL requests; (b) file-backed under `.swarm-coder/tasks/*.json`; (c) no cross-process task registry in v0 — only `agent_id` + lane events. claw-code punts (single-process only); we must decide.
+2. **Where does the task registry live across processes?** Options: (a) parent-owned, workers RPC in via JSONL requests; (b) file-backed under `.swarm-harness/tasks/*.json`; (c) no cross-process task registry in v0 — only `agent_id` + lane events. claw-code punts (single-process only); we must decide.
 3. **Do we carry `TaskPacket` at v0 or only `{prompt, description}`?** 04-tool-tiers.md v0 subset lists only `task_create/get/list/update`. Packet is richer but over-specified for a fanout MVP. Lean: v0 free-form, v1 packet.
 4. **Lane event transport — stream vs. batch?** claw-code stores events on the agent manifest (batch + reread). We should stream via JSONL stdout in worker mode; orchestrator accumulates.
 5. **Do we adopt `workflow_scope` from `LaneOwnership`?** claw-code uses strings like `claw-code-dogfood` to partition events for watchers. For multi-tenant swarm runs this is useful; for MVP likely overkill.
@@ -310,17 +310,17 @@ This is the biggest gap vs. what the 04-tool-tiers.md doc describes (`send_messa
 
 Slice files (all absolute):
 
-- /Users/alexngai/GitHub/swarm-coder/references/claw-code/rust/crates/runtime/src/task_registry.rs
-- /Users/alexngai/GitHub/swarm-coder/references/claw-code/rust/crates/runtime/src/task_packet.rs
-- /Users/alexngai/GitHub/swarm-coder/references/claw-code/rust/crates/runtime/src/team_cron_registry.rs
-- /Users/alexngai/GitHub/swarm-coder/references/claw-code/rust/crates/runtime/src/worker_boot.rs
-- /Users/alexngai/GitHub/swarm-coder/references/claw-code/rust/crates/runtime/src/lane_events.rs
-- /Users/alexngai/GitHub/swarm-coder/references/claw-code/rust/crates/runtime/src/branch_lock.rs
-- /Users/alexngai/GitHub/swarm-coder/references/claw-code/rust/crates/runtime/src/stale_base.rs
-- /Users/alexngai/GitHub/swarm-coder/references/claw-code/rust/crates/runtime/src/stale_branch.rs
-- /Users/alexngai/GitHub/swarm-coder/references/claw-code/rust/crates/runtime/src/remote.rs (upstream proxy bootstrap; not agent-RPC)
+- /Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/crates/runtime/src/task_registry.rs
+- /Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/crates/runtime/src/task_packet.rs
+- /Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/crates/runtime/src/team_cron_registry.rs
+- /Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/crates/runtime/src/worker_boot.rs
+- /Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/crates/runtime/src/lane_events.rs
+- /Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/crates/runtime/src/branch_lock.rs
+- /Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/crates/runtime/src/stale_base.rs
+- /Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/crates/runtime/src/stale_branch.rs
+- /Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/crates/runtime/src/remote.rs (upstream proxy bootstrap; not agent-RPC)
 
-Tool sections in `/Users/alexngai/GitHub/swarm-coder/references/claw-code/rust/crates/tools/src/lib.rs`:
+Tool sections in `/Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/crates/tools/src/lib.rs`:
 
 - Agent tool spec: L572–587; input struct L2305–2312; `execute_agent_with_spawn` L3481–3559; thread spawn L3561–3586; allowlists L3642–3721
 - AskUserQuestion: spec L729–745; impl L1327–1375; input L2404–2409
@@ -338,4 +338,4 @@ Tool sections in `/Users/alexngai/GitHub/swarm-coder/references/claw-code/rust/c
 - Dispatch table: L1230–1284
 
 Out of slice but flagged:
-- /Users/alexngai/GitHub/swarm-coder/references/claw-code/src/remote_runtime.py — Python, skipped
+- /Users/alexngai/GitHub/swarm-harness/references/claw-code/src/remote_runtime.py — Python, skipped

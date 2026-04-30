@@ -251,7 +251,7 @@ describe("OpenAIOAuthAuth", () => {
 
     await expect(auth.refresh()).rejects.toThrow(OAuthRefreshFailedError);
     await expect(auth.refresh()).rejects.toThrow(
-      "Re-authenticate via `swarm-coder login --provider codex-chatgpt`.",
+      "Re-authenticate via `swarm-harness login --provider codex-chatgpt`.",
     );
   });
 

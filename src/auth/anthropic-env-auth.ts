@@ -8,7 +8,7 @@
  *
  * Note: `kind` is set to "api-key" as the least-wrong label given the
  * restricted union. The actual credential source could be OAuth-derived
- * (keychain or CLAUDE_CODE_OAUTH_TOKEN), but since swarm-coder does not
+ * (keychain or CLAUDE_CODE_OAUTH_TOKEN), but since swarm-harness does not
  * own the credential we use the simpler bucket. See docs/06-open-questions.md Q16.
  */
 

@@ -54,7 +54,7 @@ type AuthFile = Record<string, TokenRecord>;
 // ---------------------------------------------------------------------------
 
 export interface OpenAIOAuthAuthOptions {
-  /** Override path to ~/.swarm-coder/auth.json */
+  /** Override path to ~/.swarm-harness/auth.json */
   authFilePath?: string;
   /** Override fetch for token endpoint calls */
   fetch?: typeof globalThis.fetch;
@@ -85,7 +85,7 @@ export class OpenAIOAuthAuth implements InteractiveAuth {
   constructor(opts: OpenAIOAuthAuthOptions = {}) {
     this.authFilePath =
       opts.authFilePath ??
-      path.join(os.homedir(), ".swarm-coder", "auth.json");
+      path.join(os.homedir(), ".swarm-harness", "auth.json");
     this.fetchFn = opts.fetch ?? globalThis.fetch;
     this.openBrowserFn = opts.openBrowser ?? defaultOpenBrowser;
     this.nowFn = opts.now ?? (() => Date.now() / 1000);
@@ -102,7 +102,7 @@ export class OpenAIOAuthAuth implements InteractiveAuth {
   }): Promise<void> {
     const timeoutMs =
       opts?.timeoutMs ??
-      Number(process.env["SWARM_CODER_OAUTH_TIMEOUT_MS"] ?? DEFAULT_TIMEOUT_MS);
+      Number(process.env["SWARM_HARNESS_OAUTH_TIMEOUT_MS"] ?? DEFAULT_TIMEOUT_MS);
 
     const openBrowser = opts?.openBrowser ?? this.openBrowserFn;
 
@@ -195,7 +195,7 @@ export class OpenAIOAuthAuth implements InteractiveAuth {
 
     if (!tokenRes.ok) {
       throw new OAuthRefreshFailedError(
-        `Re-authenticate via \`swarm-coder login --provider codex-chatgpt\`.`,
+        `Re-authenticate via \`swarm-harness login --provider codex-chatgpt\`.`,
       );
     }
 
@@ -248,7 +248,7 @@ export class OpenAIOAuthAuth implements InteractiveAuth {
     const tokens = await this._readTokens();
     if (!tokens) {
       throw new Error(
-        "not authenticated; run `swarm-coder login --provider codex-chatgpt`",
+        "not authenticated; run `swarm-harness login --provider codex-chatgpt`",
       );
     }
 
@@ -258,7 +258,7 @@ export class OpenAIOAuthAuth implements InteractiveAuth {
       const refreshed = await this._readTokens();
       if (!refreshed) {
         throw new Error(
-          "not authenticated; run `swarm-coder login --provider codex-chatgpt`",
+          "not authenticated; run `swarm-harness login --provider codex-chatgpt`",
         );
       }
       return { Authorization: `Bearer ${refreshed.access_token}` };
@@ -275,7 +275,7 @@ export class OpenAIOAuthAuth implements InteractiveAuth {
     const tokens = await this._readTokens();
     if (!tokens?.refresh_token) {
       throw new OAuthRefreshFailedError(
-        `Re-authenticate via \`swarm-coder login --provider codex-chatgpt\`.`,
+        `Re-authenticate via \`swarm-harness login --provider codex-chatgpt\`.`,
       );
     }
 
@@ -293,7 +293,7 @@ export class OpenAIOAuthAuth implements InteractiveAuth {
 
     if (!res.ok) {
       throw new OAuthRefreshFailedError(
-        `Re-authenticate via \`swarm-coder login --provider codex-chatgpt\`.`,
+        `Re-authenticate via \`swarm-harness login --provider codex-chatgpt\`.`,
       );
     }
 

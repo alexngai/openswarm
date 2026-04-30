@@ -14,7 +14,7 @@ Claw-code's user-facing surface is a Rust CLI with:
 - A declarative `BootstrapPlan` enum lists startup fast-path phases (for a telemetry/introspection surface rather than actual control flow).
 - `TrustResolver` handles folder-trust prompts; `recovery_recipes` enumerates seven known failure scenarios with one-shot auto-recovery; `GreenContract` is a verification gating type.
 
-For swarm-coder, the claw CLI is a reasonable v0 blueprint **with heavy trimming** — the slash registry is 10x larger than we need, and many surfaces (acp, sandbox, cron, team, bughunter, stickers) are claw-specific noise.
+For swarm-harness, the claw CLI is a reasonable v0 blueprint **with heavy trimming** — the slash registry is 10x larger than we need, and many surfaces (acp, sandbox, cron, team, bughunter, stickers) are claw-specific noise.
 
 ## 2. CLI surface
 
@@ -84,7 +84,7 @@ Source: `src/input.rs` (editor) + `src/main.rs::run_repl`.
 
 ## 4. Slash command catalog
 
-The catalog lives in `crates/commands/src/lib.rs` as `SLASH_COMMAND_SPECS`. Count: ~140 entries. Most are thin stubs that route prompts to the LLM ("STUB_COMMANDS" are filtered out of help rendering). Below are the meaningful ones grouped by purpose; v0/v1/later reflects swarm-coder priority.
+The catalog lives in `crates/commands/src/lib.rs` as `SLASH_COMMAND_SPECS`. Count: ~140 entries. Most are thin stubs that route prompts to the LLM ("STUB_COMMANDS" are filtered out of help rendering). Below are the meaningful ones grouped by purpose; v0/v1/later reflects swarm-harness priority.
 
 ### Session / visibility (v0 core)
 
@@ -210,7 +210,7 @@ These are almost all stub entries in claw-code's registry that route text to the
 5. **Sandbox** (`check_sandbox_health`) — enabled/active/supported flags, filesystem mode, namespace/network support, fallback reason. Warn if sandbox requested but degraded.
 6. **System** (`check_system_health`) — OS, arch, version, build target, git SHA, default model.
 
-For swarm-coder v0, checks 1/2/4/6 map cleanly (auth → `ANTHROPIC_API_KEY`; config → our hierarchy; workspace → cwd+git; system → node/platform info). Checks 3 and 5 are claw-specific and can be skipped.
+For swarm-harness v0, checks 1/2/4/6 map cleanly (auth → `ANTHROPIC_API_KEY`; config → our hierarchy; workspace → cwd+git; system → node/platform info). Checks 3 and 5 are claw-specific and can be skipped.
 
 ## 6. Bootstrap & trust
 
@@ -220,13 +220,13 @@ A declarative `Vec<BootstrapPhase>` — not actual startup control flow, just a 
 
 `CliEntry, FastPathVersion, StartupProfiler, SystemPromptFastPath, ChromeMcpFastPath, DaemonWorkerFastPath, BridgeFastPath, DaemonFastPath, BackgroundSessionFastPath, TemplateFastPath, EnvironmentRunnerFastPath, MainRuntime`.
 
-`claude_code_default()` returns a fixed dedup-preserving order. Mostly telemetry / mock-parity test hook. **swarm-coder can skip this entirely.**
+`claude_code_default()` returns a fixed dedup-preserving order. Mostly telemetry / mock-parity test hook. **swarm-harness can skip this entirely.**
 
 ### `TrustResolver` (`runtime/src/trust_resolver.rs`)
 
 Implements folder-trust prompting. `detect_trust_prompt(screen_text)` scans for phrases like "do you trust the files in this folder", "yes, proceed". `TrustPolicy::{AutoTrust, RequireApproval, Deny}`. `TrustConfig` holds allowlisted + denied path prefixes. `resolve(cwd, screen_text)` returns either `NotRequired` or `Required { policy, events }` with a small event log (`TrustRequired`, `TrustResolved`, `TrustDenied`). Path matching normalizes via `std::fs::canonicalize` then prefix-matches.
 
-For swarm-coder: a lightweight trust gate at first-run (prompt once, persist trust in config) would satisfy the pattern. **v1 for us.**
+For swarm-harness: a lightweight trust gate at first-run (prompt once, persist trust in config) would satisfy the pattern. **v1 for us.**
 
 ### `init` command (`rusty-claude-cli/src/init.rs`)
 
@@ -239,7 +239,7 @@ Artifacts created on first run (all idempotent — "skipped (already exists)" if
 
 Never overwrites an existing `CLAUDE.md`. Returns an `InitReport` with a table of artifacts + status.
 
-**For swarm-coder v0:** copy this pattern directly — `.swarmcoder/` dir + `.swarmcoder.json` + gitignore + stack-detecting `CLAUDE.md`-ish `SWARM.md`.
+**For swarm-harness v0:** copy this pattern directly — `.swarmharness/` dir + `.swarmharness.json` + gitignore + stack-detecting `CLAUDE.md`-ish `SWARM.md`.
 
 ## 7. Recovery recipes
 
@@ -257,7 +257,7 @@ Never overwrites an existing `CLAUDE.md`. Returns an `InitReport` with a table o
 
 `attempt_recovery(scenario, ctx)` emits structured `RecoveryEvent`s (`RecoveryAttempted`, `RecoverySucceeded`, `RecoveryFailed`, `Escalated`). A `WorkerFailureKind -> FailureScenario` bridge lets worker-boot events consume this policy.
 
-**For swarm-coder:** this is a useful pattern for the orchestrator (Tier 2). v0 can keep it implicit; v1 should formalize at least `ProviderFailure` (retry once then escalate) and `PromptMisdelivery` (router tier).
+**For swarm-harness:** this is a useful pattern for the orchestrator (Tier 2). v0 can keep it implicit; v1 should formalize at least `ProviderFailure` (retry once then escalate) and `PromptMisdelivery` (router tier).
 
 ## 8. Green contract
 
@@ -265,30 +265,30 @@ Never overwrites an existing `CLAUDE.md`. Returns an `InitReport` with a table o
 
 This is used to reason about "do we have enough test signal to claim green?" — e.g., a merge-ready claim requires full workspace tests passing. Not wired into the CLI user surface; lives in the runtime layer for policy checks.
 
-**For swarm-coder:** pattern is useful for a future verifier tool — out of scope for v0. **later.**
+**For swarm-harness:** pattern is useful for a future verifier tool — out of scope for v0. **later.**
 
-## 9. Requirements for swarm-coder
+## 9. Requirements for swarm-harness
 
 ### CLI surface
 
 - [v0] Top-level `--model`, `--output-format text|json`, `--permission-mode {read-only|workspace-write|danger-full-access}`, `--resume [session|latest]`, `--help`, `--version`.
 - [v0] Subcommands `prompt`, `doctor`, `init`, `status`. Bare positional → `prompt` shorthand.
-- [v0] `--headless` (swarm-coder-specific) + `--task-file=PATH` for JSONL orchestrator workers (from `01-requirements.md`, not in claw).
+- [v0] `--headless` (swarm-harness-specific) + `--task-file=PATH` for JSONL orchestrator workers (from `01-requirements.md`, not in claw).
 - [v0] Piped stdin merged into prompt under `danger-full-access` only (keep stdin free for permission approvals in other modes).
 - [v1] `--allowed-tools`, `--dangerously-skip-permissions`, `--compact` (text-only final assistant output).
 - [v1] Subcommands `agents`, `skills`, `plugin`, `export`, `system-prompt`.
-- [v1] Resume mode trailing slash dispatch (`swarm-coder --resume latest /status /diff`).
+- [v1] Resume mode trailing slash dispatch (`swarm-harness --resume latest /status /diff`).
 - [later] `sandbox`, `mcp`, `acp`, `dump-manifests`, `bootstrap-plan`, `state`.
 - [skip] `--base-commit`, `--acp`, `-acp` aliases.
 
 ### REPL
 
-- [v0] ink-based TUI (swarm-coder uses ink, not rustyline — see "Ink vs. rustyline" below).
+- [v0] ink-based TUI (swarm-harness uses ink, not rustyline — see "Ink vs. rustyline" below).
 - [v0] Slash-command completion on `/` prefix (trigger when line starts with `/`).
 - [v0] Multiline input via Shift+Enter (standard ink pattern; Ctrl+J optional).
 - [v0] In-memory history per session, persisted into session JSONL.
 - [v0] Ctrl+C with empty input exits; with input cancels input.
-- [v0] Auto-persist session each turn under `.swarmcoder/sessions/<id>.jsonl`.
+- [v0] Auto-persist session each turn under `.swarmharness/sessions/<id>.jsonl`.
 - [v0] Spinner / thinking indicator during turn.
 - [v1] Startup banner with model, permissions, branch, workspace, directory, session.
 - [v1] Markdown + syntax highlighting stream renderer (nested fence normalization).
@@ -309,18 +309,18 @@ Based on `01-requirements.md` v1 list + this research:
 ### Doctor
 
 - [v0] Auth check (`ANTHROPIC_API_KEY`).
-- [v0] Config check (config file hierarchy: `~/.swarmcoder.json`, `~/.config/swarm-coder/settings.json`, `<repo>/.swarmcoder.json`, `<repo>/.swarmcoder/settings.json`, `<repo>/.swarmcoder/settings.local.json` — mirroring claw's 5-layer hierarchy from `USAGE.md`).
+- [v0] Config check (config file hierarchy: `~/.swarmharness.json`, `~/.config/swarm-harness/settings.json`, `<repo>/.swarmharness.json`, `<repo>/.swarmharness/settings.json`, `<repo>/.swarmharness/settings.local.json` — mirroring claw's 5-layer hierarchy from `USAGE.md`).
 - [v0] Workspace check (cwd, git repo, branch, memory files).
-- [v0] System check (node version, platform, swarm-coder version).
+- [v0] System check (node version, platform, swarm-harness version).
 - [v0] Exit non-zero on failure; `--output-format json` envelope matching `{ kind, has_failures, summary, checks }`.
 - [v1] Provider reachability smoke (optional ping).
 - [later] Sandbox status (out of scope until Tier 5).
 
 ### Bootstrap & init
 
-- [v0] `swarm-coder init` creates `.swarmcoder/`, `.swarmcoder.json` (with starter permissions block), appends `.gitignore`, writes a stack-detected `CLAUDE.md` (or `SWARM.md`). Idempotent per claw pattern — never overwrite existing files; report per-artifact `created|updated|skipped`.
+- [v0] `swarm-harness init` creates `.swarmharness/`, `.swarmharness.json` (with starter permissions block), appends `.gitignore`, writes a stack-detected `CLAUDE.md` (or `SWARM.md`). Idempotent per claw pattern — never overwrite existing files; report per-artifact `created|updated|skipped`.
 - [v0] Stack detection for node (`package.json`, `tsconfig.json`, next/react/vite), python, rust. Emit verification commands.
-- [v1] Folder-trust prompt on first run in an unknown workspace; persist trust allowlist in `~/.swarmcoder/settings.json`.
+- [v1] Folder-trust prompt on first run in an unknown workspace; persist trust allowlist in `~/.swarmharness/settings.json`.
 - [later] `bootstrap-plan` telemetry surface.
 
 ### Recovery & verification
@@ -349,7 +349,7 @@ Based on `01-requirements.md` v1 list + this research:
 
 6. **`init` output file name.** claw writes `CLAUDE.md`; we probably want `CLAUDE.md` too for Claude ecosystem compat, or `SWARM.md`, or both. Open.
 
-7. **Auto-save granularity.** claw saves per-turn. For swarm-coder headless JSONL, events stream continuously — per-event write vs. per-turn flush.
+7. **Auto-save granularity.** claw saves per-turn. For swarm-harness headless JSONL, events stream continuously — per-event write vs. per-turn flush.
 
 8. **Non-TTY prompt detection.** claw blocks interactive prompts when stdin isn't a terminal; worth mirroring.
 
@@ -361,19 +361,19 @@ Based on `01-requirements.md` v1 list + this research:
 
 Primary sources read:
 
-- `/Users/alexngai/GitHub/swarm-coder/references/claw-code/rust/crates/rusty-claude-cli/src/main.rs` (12k lines; read heads, targeted sections, and grep'd for flags/verbs/doctor)
-- `/Users/alexngai/GitHub/swarm-coder/references/claw-code/rust/crates/rusty-claude-cli/src/init.rs`
-- `/Users/alexngai/GitHub/swarm-coder/references/claw-code/rust/crates/rusty-claude-cli/src/input.rs`
-- `/Users/alexngai/GitHub/swarm-coder/references/claw-code/rust/crates/rusty-claude-cli/src/render.rs`
-- `/Users/alexngai/GitHub/swarm-coder/references/claw-code/rust/crates/rusty-claude-cli/tests/cli_flags_and_config_defaults.rs`
-- `/Users/alexngai/GitHub/swarm-coder/references/claw-code/rust/crates/rusty-claude-cli/tests/resume_slash_commands.rs`
-- `/Users/alexngai/GitHub/swarm-coder/references/claw-code/rust/crates/commands/src/lib.rs` (~5600 lines; `SlashCommandSpec` table)
-- `/Users/alexngai/GitHub/swarm-coder/references/claw-code/rust/crates/runtime/src/bootstrap.rs`
-- `/Users/alexngai/GitHub/swarm-coder/references/claw-code/rust/crates/runtime/src/trust_resolver.rs`
-- `/Users/alexngai/GitHub/swarm-coder/references/claw-code/rust/crates/runtime/src/recovery_recipes.rs`
-- `/Users/alexngai/GitHub/swarm-coder/references/claw-code/rust/crates/runtime/src/green_contract.rs`
-- `/Users/alexngai/GitHub/swarm-coder/references/claw-code/USAGE.md`
-- `/Users/alexngai/GitHub/swarm-coder/references/claw-code/rust/README.md`
+- `/Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/crates/rusty-claude-cli/src/main.rs` (12k lines; read heads, targeted sections, and grep'd for flags/verbs/doctor)
+- `/Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/crates/rusty-claude-cli/src/init.rs`
+- `/Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/crates/rusty-claude-cli/src/input.rs`
+- `/Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/crates/rusty-claude-cli/src/render.rs`
+- `/Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/crates/rusty-claude-cli/tests/cli_flags_and_config_defaults.rs`
+- `/Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/crates/rusty-claude-cli/tests/resume_slash_commands.rs`
+- `/Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/crates/commands/src/lib.rs` (~5600 lines; `SlashCommandSpec` table)
+- `/Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/crates/runtime/src/bootstrap.rs`
+- `/Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/crates/runtime/src/trust_resolver.rs`
+- `/Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/crates/runtime/src/recovery_recipes.rs`
+- `/Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/crates/runtime/src/green_contract.rs`
+- `/Users/alexngai/GitHub/swarm-harness/references/claw-code/USAGE.md`
+- `/Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/README.md`
 
 Key symbols:
 

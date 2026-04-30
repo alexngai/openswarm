@@ -12,7 +12,7 @@ M4a delivered the transport foundation (NativeEngine, Provider interface, OpenAI
 
 1. **Provider breadth** — three additional `TransportProvider` implementations plug into M4a's `Provider` interface: xAI (`grok*`), Google (`gemini-*`), and DashScope (`qwen*` / `qwen/*` via OpenAI-compat shim). Model-prefix routing extends; model-family quirks apply at provider boundary.
 2. **Plugin install lifecycle** — `install / enable / disable / update / uninstall` flows on top of M2's read-only `ClaudeCodeSource`. Local-path + git-url install sources; atomic state at `~/.claude/plugins/state.json`; `PluginRegistry` consults `enabled` set before registering tools.
-3. **ChatGPT Plus/Pro subscription auth** — per Q17 resolution: custom Vercel AI SDK provider targeting `https://chatgpt.com/backend-api/codex/responses` (NOT `api.openai.com`). `OpenAIOAuthAuth` implements `InteractiveAuth` against `auth.openai.com/oauth/` with PKCE using the Codex App Server client id. CLI `--framework codex-chatgpt`; `swarm-coder login --provider codex-chatgpt`.
+3. **ChatGPT Plus/Pro subscription auth** — per Q17 resolution: custom Vercel AI SDK provider targeting `https://chatgpt.com/backend-api/codex/responses` (NOT `api.openai.com`). `OpenAIOAuthAuth` implements `InteractiveAuth` against `auth.openai.com/oauth/` with PKCE using the Codex App Server client id. CLI `--framework codex-chatgpt`; `swarm-harness login --provider codex-chatgpt`.
 
 **Prerequisites:** Phase 5.0 Codex Endpoint Spike (operator handoff) must complete before Phase 5.1 implementation begins. See §Phase 5.0 below.
 
@@ -24,7 +24,7 @@ M4a delivered the transport foundation (NativeEngine, Provider interface, OpenAI
 - `src/providers/routing.ts` — extended with `grok*`, `gemini-*`, `qwen*` / `qwen/*` entries; model-family quirk dispatcher (GPT-5* `max_completion_tokens`, reasoning-model tuning-param strip, Kimi `is_error` strip).
 - `src/providers/dashscope-preflight.ts` — 6 MB body-size preflight; returns `ApiError.RequestBodySizeExceeded` equivalent on overflow.
 - `src/auth/xai-api-key.ts`, `src/auth/google-api-key.ts`, `src/auth/openai-compat-api-key.ts` — API-key AuthSource impls for the three new providers (last one reused for DashScope via the base-URL/auth-header shim).
-- `src/auth/openai-oauth.ts` (new) — `OpenAIOAuthAuth implements InteractiveAuth`. PKCE S256 flow against `auth.openai.com/oauth/authorize` with the Codex App Server client id. `login()`, `logout()`, `headers()` returning `Authorization: Bearer <access_token>`, `refresh()` against `/oauth/token`. Token persistence at `~/.swarm-coder/auth.json` under `openai-oauth` key, atomic temp-file + rename.
+- `src/auth/openai-oauth.ts` (new) — `OpenAIOAuthAuth implements InteractiveAuth`. PKCE S256 flow against `auth.openai.com/oauth/authorize` with the Codex App Server client id. `login()`, `logout()`, `headers()` returning `Authorization: Bearer <access_token>`, `refresh()` against `/oauth/token`. Token persistence at `~/.swarm-harness/auth.json` under `openai-oauth` key, atomic temp-file + rename.
 - `src/providers/codex-chatgpt.ts` (new) — custom Vercel AI SDK `LanguageModel` factory. Target base URL `https://chatgpt.com/backend-api/codex/responses`. Uses `OpenAIOAuthAuth.headers()` for bearer. Translates ChatGPT's streaming response shape (SSE, Codex-internal event vocabulary) to the AI SDK's normalized `StreamPart` event stream so NativeEngine consumes it via the standard `Provider` path.
 - `src/plugins/install.ts` (new) — `installPlugin(id, source)` with `PluginInstallSource` discriminated union (`LocalPath { path }` | `GitUrl { url, ref? }`). Validates manifest on install (PluginJsonSchema from M2). Writes to `~/.claude/plugins/<sanitized-id>/`. Records `version`, `installedAt` in state.
 - `src/plugins/enable.ts` / `src/plugins/disable.ts` — toggle `enabled` set in `~/.claude/plugins/state.json` without removing files.
@@ -32,7 +32,7 @@ M4a delivered the transport foundation (NativeEngine, Provider interface, OpenAI
 - `src/plugins/update.ts` — `updatePlugin(id)`. Re-materialize from recorded `install_source`, validate manifest, atomic swap (copy to `<id>.new/`, rename `<id>` → `<id>.old`, rename `<id>.new` → `<id>`, `rm -r <id>.old`). Bumps `versions[id]` in state.
 - `src/plugins/state.ts` (new) — `PluginStateStore` with atomic read/write. Shape `{ enabled: string[]; versions: Record<string, string>; installSources: Record<string, PluginInstallSource> }`. Located at `~/.claude/plugins/state.json`. Atomic write via `fs.writeFile(tmp)` + `fs.rename(tmp, final)`.
 - `src/plugins/registry.ts` — MODIFIED — `buildPluginTools` consults `PluginStateStore.isEnabled(id)` before registering a plugin's tools. Disabled plugins: skip registration (no tool surface, no lifecycle hooks run).
-- `src/cli/plugin.ts` (new) — subcommands `swarm-coder plugin install <source>`, `plugin list`, `plugin enable <id>`, `plugin disable <id>`, `plugin update <id>`, `plugin uninstall <id>`.
+- `src/cli/plugin.ts` (new) — subcommands `swarm-harness plugin install <source>`, `plugin list`, `plugin enable <id>`, `plugin disable <id>`, `plugin update <id>`, `plugin uninstall <id>`.
 - `src/cli/main.ts` — MODIFIED — route `plugin` subcommand to `plugin.ts`; route `login --provider codex-chatgpt` to `OpenAIOAuthAuth.login()`; recognize `--framework codex-chatgpt` flag.
 - `src/cli/login.ts` — MODIFIED — accept `--provider codex-chatgpt`; dispatch to `OpenAIOAuthAuth.login()` or the existing Anthropic path.
 - `scripts/smoke-m4b.sh` offline + live (≥3 offline + ≥2 live scenarios).
@@ -57,10 +57,10 @@ M4a delivered the transport foundation (NativeEngine, Provider interface, OpenAI
 Seven scope/mechanism choices need locking before implementation starts. Default picks below; each has a one-line rationale.
 
 1. **Codex App Server OAuth client id source: reverse-engineered, hard-coded, documented as risk.**
-   Rationale: per Q17, there is no formal third-party program. The client id `app_EMoamEEZ73f0CkXaXp7hrann` is in production use by Cline / OpenClaw / opencode; swarm-coder uses the same value. Documented in `src/auth/openai-oauth.ts` as a top-of-file comment with "policy-tolerated, not contracted" risk note + "OpenAI can revoke this at any time; if login flow starts returning 4xx, the feature is dead pending user action." Alternative "ask each user to register their own app" rejected: OpenAI does not publish a self-serve registration path for this grant type; users can't actually do it.
+   Rationale: per Q17, there is no formal third-party program. The client id `app_EMoamEEZ73f0CkXaXp7hrann` is in production use by Cline / OpenClaw / opencode; swarm-harness uses the same value. Documented in `src/auth/openai-oauth.ts` as a top-of-file comment with "policy-tolerated, not contracted" risk note + "OpenAI can revoke this at any time; if login flow starts returning 4xx, the feature is dead pending user action." Alternative "ask each user to register their own app" rejected: OpenAI does not publish a self-serve registration path for this grant type; users can't actually do it.
 
-2. **Plugin state file location: `~/.claude/plugins/state.json` (NOT `~/.swarm-coder/...`).**
-   Rationale: we discover plugins from `~/.claude/plugins/` already (M2's `ClaudeCodeSource` default). Enable/disable state living alongside keeps the plugin install tree self-contained and interoperable-adjacent with Claude Code's own tooling (users can `rm -r ~/.claude/plugins/<id>` and our state cleans up on next `list`). Alternative "write to `~/.swarm-coder/plugins-state.json`" rejected: would split the source-of-truth across two roots; users deleting a plugin directory manually would leave a stale `enabled` entry that must be detected and reconciled. The chosen location makes `state.json` co-located with the plugins it describes. Note: the file is NOT a Claude Code contract — it's ours. We document its schema and never read anything we didn't write.
+2. **Plugin state file location: `~/.claude/plugins/state.json` (NOT `~/.swarm-harness/...`).**
+   Rationale: we discover plugins from `~/.claude/plugins/` already (M2's `ClaudeCodeSource` default). Enable/disable state living alongside keeps the plugin install tree self-contained and interoperable-adjacent with Claude Code's own tooling (users can `rm -r ~/.claude/plugins/<id>` and our state cleans up on next `list`). Alternative "write to `~/.swarm-harness/plugins-state.json`" rejected: would split the source-of-truth across two roots; users deleting a plugin directory manually would leave a stale `enabled` entry that must be detected and reconciled. The chosen location makes `state.json` co-located with the plugins it describes. Note: the file is NOT a Claude Code contract — it's ours. We document its schema and never read anything we didn't write.
 
 3. **Plugin state shape: flat `{ enabled[], versions{}, installSources{} }` — NOT per-plugin nested objects.**
    Rationale: flat keys simplify atomic writes (single JSON file, whole-file rewrite) and make `list` cheap (one parse, three lookups). Per-plugin nested objects would let each plugin carry its own metadata sidecar but complicate the atomic contract and invite partial-write bugs. Claw's `installed.json` uses a map `{ "<id>": { ... } }` — we diverge here because flat lets us keep `enabled` as a `string[]` (cheapest representation of "set of ids enabled") and versions/installSources as plain maps that never get merged partially. Trade-off: schema evolution is more disruptive (need a `version: 1` field and a migrator). Accepted; we add `schemaVersion: 1` to the file now to enable future migrations.
@@ -105,29 +105,29 @@ M4b does NOT touch: NativeEngine's turn loop internals, compaction logic, `execu
 
 Each is executable with a one-line test harness or manual smoke step.
 
-1. `swarm-coder --model grok-3 prompt "hi"` with `XAI_API_KEY` set routes to `XaiTransportProvider`, runs one turn end-to-end, writes a session log. Verified: the turn's lane-event stream includes a `provider_selected` event with `{ providerId: "xai", model: "grok-3" }`.
-2. `swarm-coder --model gemini-2.0-flash prompt "hi"` with `GOOGLE_GENERATIVE_AI_API_KEY` set routes to `GoogleTransportProvider` likewise. `provider_selected` carries `{ providerId: "google", model: "gemini-2.0-flash" }`.
-3. `swarm-coder --model qwen-plus prompt "hi"` with `DASHSCOPE_API_KEY` set routes to `DashScopeTransportProvider`. `provider_selected` carries `{ providerId: "dashscope", model: "qwen-plus" }`.
-4. `swarm-coder --model qwen/qwen-max prompt "hi"` (slash-prefix form) routes to DashScope. Prefix-strip happens inside the provider; on-wire `model` is `qwen-max`.
+1. `swarm-harness --model grok-3 prompt "hi"` with `XAI_API_KEY` set routes to `XaiTransportProvider`, runs one turn end-to-end, writes a session log. Verified: the turn's lane-event stream includes a `provider_selected` event with `{ providerId: "xai", model: "grok-3" }`.
+2. `swarm-harness --model gemini-2.0-flash prompt "hi"` with `GOOGLE_GENERATIVE_AI_API_KEY` set routes to `GoogleTransportProvider` likewise. `provider_selected` carries `{ providerId: "google", model: "gemini-2.0-flash" }`.
+3. `swarm-harness --model qwen-plus prompt "hi"` with `DASHSCOPE_API_KEY` set routes to `DashScopeTransportProvider`. `provider_selected` carries `{ providerId: "dashscope", model: "qwen-plus" }`.
+4. `swarm-harness --model qwen/qwen-max prompt "hi"` (slash-prefix form) routes to DashScope. Prefix-strip happens inside the provider; on-wire `model` is `qwen-max`.
 5. Model-prefix routing precedence: with BOTH `ANTHROPIC_API_KEY` and `XAI_API_KEY` set, `--model grok-3` still routes to xAI (explicit prefix beats sniffer). Verified via unit test on `resolveProvider(modelName, env)`.
 6. DashScope body-size preflight: a synthesized payload of 7 MB serialized size returns `{ status: "error", code: "request_body_exceeded", limitBytes: 6291456 }` before any network call. Verified via unit test with a mock HTTP layer that asserts zero requests issued.
 7. Reasoning-model param strip: `--model o3-mini` (routed through OpenAI provider in M4a, with M4b quirks extension) serializes the request with `temperature` / `top_p` / `presence_penalty` / `frequency_penalty` fields ABSENT even if the user passed them. Verified via unit test inspecting the request body sent to `@ai-sdk/openai`.
 8. Reasoning-model param strip extends to xAI: `--model grok-3-mini` same behavior. `*-thinking` models and `qwq*` models same behavior routed through DashScope. Each covered by a unit test in `routing.test.ts`.
 9. GPT-5* max-tokens rename: `--model gpt-5` (whenever it lands) serializes with `max_completion_tokens` instead of `max_tokens`. Unit test on the provider request builder.
 10. Kimi `is_error` strip: tool-result message with `{ is_error: true }` sent via DashScope to a `kimi*` model has `is_error` removed from the on-wire payload. Unit test.
-11. Plugin install from local path: `swarm-coder plugin install test/fixtures/plugins/hello-plugin` (an existing fixture directory at test time) copies the directory to `~/.claude/plugins/hello-plugin/`, validates `plugin.json`, writes `~/.claude/plugins/state.json` with `{ enabled: ["hello-plugin"], versions: { "hello-plugin": "0.1.0" }, installSources: { "hello-plugin": { kind: "LocalPath", path: "<resolved-absolute-path>" } } }`. The source detector resolves the path via `path.resolve()` and confirms it exists on disk before classifying as `LocalPath`.
+11. Plugin install from local path: `swarm-harness plugin install test/fixtures/plugins/hello-plugin` (an existing fixture directory at test time) copies the directory to `~/.claude/plugins/hello-plugin/`, validates `plugin.json`, writes `~/.claude/plugins/state.json` with `{ enabled: ["hello-plugin"], versions: { "hello-plugin": "0.1.0" }, installSources: { "hello-plugin": { kind: "LocalPath", path: "<resolved-absolute-path>" } } }`. The source detector resolves the path via `path.resolve()` and confirms it exists on disk before classifying as `LocalPath`.
 12. Plugin install atomicity: simulate a mid-install failure (mock `fs.rename` to throw on the final swap); assert `~/.claude/plugins/hello-plugin/` does NOT exist after the failed install, and `state.json` is unchanged.
-13. Plugin list: `swarm-coder plugin list` prints a table with columns `id`, `version`, `enabled`, `source` for every plugin in `state.json`. Disabled plugins show `enabled=false`.
-14. Plugin enable/disable: `swarm-coder plugin disable hello-plugin` flips the state; subsequent `swarm-coder prompt "..."` runs do NOT register hello-plugin's tools (assert via inspecting the tool list emitted on session start). `plugin enable` reverses it. Verified via integration test.
-15. Plugin update: given an installed plugin at version 0.1.0 and its source path now contains a 0.2.0 manifest, `swarm-coder plugin update hello-plugin` atomically swaps, `state.versions["hello-plugin"] === "0.2.0"`. Verified: during the swap, a concurrent `discover()` call either sees 0.1.0 or 0.2.0 — NEVER a partial directory. Concurrent state writes: Two concurrent `plugin enable` invocations (spawned via `Promise.all` from a test harness) produce a final `state.json` containing BOTH enables. Neither is lost (serialized via `proper-lockfile`).
-16. Plugin uninstall: `swarm-coder plugin uninstall hello-plugin` removes `~/.claude/plugins/hello-plugin/` and drops the id from `state.enabled` / `state.versions` / `state.installSources`. Idempotent: re-running exits 0 with "not installed" message.
+13. Plugin list: `swarm-harness plugin list` prints a table with columns `id`, `version`, `enabled`, `source` for every plugin in `state.json`. Disabled plugins show `enabled=false`.
+14. Plugin enable/disable: `swarm-harness plugin disable hello-plugin` flips the state; subsequent `swarm-harness prompt "..."` runs do NOT register hello-plugin's tools (assert via inspecting the tool list emitted on session start). `plugin enable` reverses it. Verified via integration test.
+15. Plugin update: given an installed plugin at version 0.1.0 and its source path now contains a 0.2.0 manifest, `swarm-harness plugin update hello-plugin` atomically swaps, `state.versions["hello-plugin"] === "0.2.0"`. Verified: during the swap, a concurrent `discover()` call either sees 0.1.0 or 0.2.0 — NEVER a partial directory. Concurrent state writes: Two concurrent `plugin enable` invocations (spawned via `Promise.all` from a test harness) produce a final `state.json` containing BOTH enables. Neither is lost (serialized via `proper-lockfile`).
+16. Plugin uninstall: `swarm-harness plugin uninstall hello-plugin` removes `~/.claude/plugins/hello-plugin/` and drops the id from `state.enabled` / `state.versions` / `state.installSources`. Idempotent: re-running exits 0 with "not installed" message.
 17. PluginRegistry integration: `buildPluginTools()` called when `hello-plugin` is disabled returns a tool list that does NOT include any `plugin__hello-plugin__*` entries. When enabled, it includes them. Verified via unit test with a mock `PluginStateStore`.
-18. ChatGPT login: `swarm-coder login --provider codex-chatgpt` opens a browser URL at `auth.openai.com/oauth/authorize?client_id=app_EMoamEEZ73f0CkXaXp7hrann&code_challenge=...&code_challenge_method=S256&...`, starts a loopback listener on an ephemeral port, waits for the callback, exchanges the code at `/oauth/token`, writes `~/.swarm-coder/auth.json` with `{ "openai-oauth": { access_token, refresh_token, expires_at, scopes } }`. Verified via a mock flow (browser launch mocked, callback URL synthesized, token endpoint mocked).
+18. ChatGPT login: `swarm-harness login --provider codex-chatgpt` opens a browser URL at `auth.openai.com/oauth/authorize?client_id=app_EMoamEEZ73f0CkXaXp7hrann&code_challenge=...&code_challenge_method=S256&...`, starts a loopback listener on an ephemeral port, waits for the callback, exchanges the code at `/oauth/token`, writes `~/.swarm-harness/auth.json` with `{ "openai-oauth": { access_token, refresh_token, expires_at, scopes } }`. Verified via a mock flow (browser launch mocked, callback URL synthesized, token endpoint mocked).
 19. ChatGPT token refresh: when `access_token` is expired (past `expires_at`), `OpenAIOAuthAuth.headers()` transparently refreshes via `POST /oauth/token` with `grant_type=refresh_token`, persists the new token, returns fresh `Authorization` header. Verified via a unit test with a mocked fetch.
-20. ChatGPT refresh-failure graceful degradation: when refresh returns 4xx (e.g. client id revoked or refresh token invalid), the error surfaces as `{ code: "oauth_refresh_failed", message: "Re-authenticate via `swarm-coder login --provider codex-chatgpt`." }`. The CLI process exits with non-zero; no infinite retry loop. Verified via unit test.
-21. Codex ChatGPT end-to-end: `swarm-coder --framework codex-chatgpt prompt "hi"` with a valid `~/.swarm-coder/auth.json` routes through the `CodexChatGPTProvider`, which targets `https://chatgpt.com/backend-api/codex/responses`, streams the response, emits normalized `StreamPart` events to NativeEngine. Verified via smoke test (mocked endpoint using `test/fixtures/codex/responses-sse.txt`) and live smoke (**operator-only**; skip in CI).
+20. ChatGPT refresh-failure graceful degradation: when refresh returns 4xx (e.g. client id revoked or refresh token invalid), the error surfaces as `{ code: "oauth_refresh_failed", message: "Re-authenticate via `swarm-harness login --provider codex-chatgpt`." }`. The CLI process exits with non-zero; no infinite retry loop. Verified via unit test.
+21. Codex ChatGPT end-to-end: `swarm-harness --framework codex-chatgpt prompt "hi"` with a valid `~/.swarm-harness/auth.json` routes through the `CodexChatGPTProvider`, which targets `https://chatgpt.com/backend-api/codex/responses`, streams the response, emits normalized `StreamPart` events to NativeEngine. Verified via smoke test (mocked endpoint using `test/fixtures/codex/responses-sse.txt`) and live smoke (**operator-only**; skip in CI).
 22. Codex ChatGPT constrained swarm features: in `codex-chatgpt` mode, `send_message`, `check_inbox`, `task_stop`, `task_output`, `ask_user_question` are **removed from the tool surface** — the model does not see them. Not degraded to no-op; absent entirely. Verified via integration test: assert none of these tool names appear in the tool list passed to the model. Documented in CLI `--help` and at session-start lane event `framework_mode_active`.
-23. **[operator-only; skip in CI]** Live smoke: `swarm-coder login --provider codex-chatgpt` completes OAuth in a real browser against `auth.openai.com`; a follow-up `--framework codex-chatgpt prompt "reply with one word"` returns a real response. Evidence: HTTP trace log shows request to `chatgpt.com/backend-api/codex/responses` with `Authorization: Bearer <redacted>`, response is a valid SSE stream matching the event vocabulary captured in `test/fixtures/codex/responses-sse.txt`.
+23. **[operator-only; skip in CI]** Live smoke: `swarm-harness login --provider codex-chatgpt` completes OAuth in a real browser against `auth.openai.com`; a follow-up `--framework codex-chatgpt prompt "reply with one word"` returns a real response. Evidence: HTTP trace log shows request to `chatgpt.com/backend-api/codex/responses` with `Authorization: Bearer <redacted>`, response is a valid SSE stream matching the event vocabulary captured in `test/fixtures/codex/responses-sse.txt`.
 24. `npx tsc --noEmit` passes strict mode.
 25. `npm test` baseline ~900-950 (841 from m3b-complete + M4a estimated 60-100) → target `baseline + 60..90` for M4b; all passing.
 26. `scripts/smoke-m4b.sh --offline` covers: (O1) xAI routing + one-turn mock, (O2) Google routing + one-turn mock, (O3) DashScope routing + one-turn mock with 5 MB payload (under cap; should succeed), (O4) DashScope 7 MB payload (over cap; should reject with `request_body_exceeded`), (O5) plugin install → list → disable → uninstall lifecycle on a fixture plugin, (O6) Codex OAuth mock flow (browser launch stubbed; callback synthesized; token exchange mocked).
@@ -282,7 +282,7 @@ export function makeDashScopeProvider(opts: { apiKey: string; model: string }): 
 
 3.1. `src/plugins/state.ts` (new) — implement `PluginStateStore`:
 
-State file at `~/.claude/plugins/state.json` (or `~/.swarm-coder/plugins/state.json` if the `~/.claude` collision-risk is taken seriously per M5). Shape: `{ schemaVersion: 1, enabled: string[], versions: Record<string, string>, installSources: Record<string, PluginInstallSource> }`.
+State file at `~/.claude/plugins/state.json` (or `~/.swarm-harness/plugins/state.json` if the `~/.claude` collision-risk is taken seriously per M5). Shape: `{ schemaVersion: 1, enabled: string[], versions: Record<string, string>, installSources: Record<string, PluginInstallSource> }`.
 
 - File path: `path.join(os.homedir(), ".claude/plugins/state.json")`.
 - `read()`: `fs.readFile` → `JSON.parse` → validate `schemaVersion === 1` (throw if not); on ENOENT return default empty state `{ schemaVersion: 1, enabled: [], versions: {}, installSources: {} }`.
@@ -394,17 +394,17 @@ export class OpenAIOAuthAuth implements InteractiveAuth {
     // 1. Generate PKCE verifier + challenge (S256).
     // 2. Spawn local loopback server on ephemeral port.
     // 3. Open browser at AUTH_URL?client_id=...&redirect_uri=http://127.0.0.1:<port>/callback&response_type=code&code_challenge=...&code_challenge_method=S256&scope=...
-    // 4. Wait for GET /callback?code=... (timeout 5min, configurable via SWARM_CODER_OAUTH_TIMEOUT_MS).
+    // 4. Wait for GET /callback?code=... (timeout 5min, configurable via SWARM_HARNESS_OAUTH_TIMEOUT_MS).
     // 5. POST TOKEN_URL with grant_type=authorization_code, code, code_verifier, client_id, redirect_uri.
-    // 6. Persist { access_token, refresh_token, expires_at, scopes } to ~/.swarm-coder/auth.json under "openai-oauth".
+    // 6. Persist { access_token, refresh_token, expires_at, scopes } to ~/.swarm-harness/auth.json under "openai-oauth".
     // 7. Close loopback server.
   }
 
-  async logout(): Promise<void> { /* delete ~/.swarm-coder/auth.json "openai-oauth" key */ }
+  async logout(): Promise<void> { /* delete ~/.swarm-harness/auth.json "openai-oauth" key */ }
 
   async headers(): Promise<Record<string, string>> {
     const tokens = await this._readTokens();
-    if (!tokens) throw new Error("not authenticated; run `swarm-coder login --provider codex-chatgpt`");
+    if (!tokens) throw new Error("not authenticated; run `swarm-harness login --provider codex-chatgpt`");
     if (tokens.expires_at <= Date.now() / 1000) await this.refresh();
     return { Authorization: `Bearer ${tokens.access_token}` };
   }
@@ -534,14 +534,14 @@ export function applyQuirks(body: ProviderRequestBody, tags: readonly QuirkTag[]
 **7.2a. CLI: logout subcommand**
 
 ```
-swarm-coder logout --provider <codex-chatgpt|anthropic-oauth>
+swarm-harness logout --provider <codex-chatgpt|anthropic-oauth>
 ```
 - Resolves the AuthSource for the provider.
 - If it implements `InteractiveAuth.logout()`, invoke it.
-- Prints `"logged out from <provider>. Credentials removed from ~/.swarm-coder/auth.json."`
+- Prints `"logged out from <provider>. Credentials removed from ~/.swarm-harness/auth.json."`
 - If the provider's credential key is absent, prints `"no credentials stored for <provider>"` and exits 0.
 
-AC: `swarm-coder logout --provider codex-chatgpt` after login removes ONLY the `codex-chatgpt` key from `auth.json`; other provider keys remain.
+AC: `swarm-harness logout --provider codex-chatgpt` after login removes ONLY the `codex-chatgpt` key from `auth.json`; other provider keys remain.
 
 7.3. Tool-surface filter (shared helper):
 ```ts
@@ -573,7 +573,7 @@ export function filterToolsForFramework(
   - [O3] DashScope routing: `--model qwen-plus prompt "hi"` mocked; payload under 6 MB.
   - [O4] DashScope over-cap: synthesized 7 MB payload → `request_body_exceeded` before any HTTP call.
   - [O5] Plugin lifecycle: install → list → disable → enable → update → uninstall on `test/fixtures/plugins/hello-plugin`.
-  - [O6] Codex OAuth mock flow: login with stubbed browser + synthesized callback + mocked token endpoint → `~/.swarm-coder/auth.json` written.
+  - [O6] Codex OAuth mock flow: login with stubbed browser + synthesized callback + mocked token endpoint → `~/.swarm-harness/auth.json` written.
 - **Live** (real API, `--live` flag, operator-driven, skip in CI):
   - [L1] Real xAI turn with `XAI_API_KEY`.
   - [L2] Real Google turn with `GOOGLE_GENERATIVE_AI_API_KEY`.
@@ -677,7 +677,7 @@ docs/
 | Plugin `disable` called on a plugin mid-turn (plugin's tool was registered at session start, then disabled externally) | Low | Low | Tool registration is session-bounded (read once at start). `disable` takes effect on next session start. Document in CLI `--help`. |
 | Plugin install from a malicious git URL runs arbitrary code on load | High | High | Documented risk: M4b has no plugin trust model (M5+). The user accepts the burden. CLI emits a "installing from untrusted source; this will run code from the manifest's `command` field" warning on `plugin install <git-url>` and requires `--yes-i-trust-this-source` for non-TTY use. |
 | `state.json` schema changes break on upgrade | Medium | Medium | `schemaVersion: 1` is encoded now. If a future version bumps, `read()` migrates; refusing to parse a higher `schemaVersion` than we know is also OK (error with a clear upgrade message). |
-| `~/.claude/plugins/state.json` collides with a future Claude Code state file of the same name | Low | Medium | The file is OUR contract, not Claude Code's. We document this in the file header comment (emitted on first write). If Claude Code ever adopts the same path, we rename to `~/.claude/plugins/.swarm-coder-state.json` as a one-release migration. |
+| `~/.claude/plugins/state.json` collides with a future Claude Code state file of the same name | Low | Medium | The file is OUR contract, not Claude Code's. We document this in the file header comment (emitted on first write). If Claude Code ever adopts the same path, we rename to `~/.claude/plugins/.swarm-harness-state.json` as a one-release migration. |
 
 ## Verification steps
 
@@ -686,8 +686,8 @@ Run after each phase:
 - **Phase 0:** `npx tsc --noEmit` clean.
 - **Phase 1:** `npm ci` clean; no new lockfile conflicts.
 - **Phase 2:** `npx vitest run src/providers/{xai,google,dashscope}-transport.test.ts src/providers/routing.test.ts` green; mocked one-turn scenarios for each provider pass.
-- **Phase 3:** `npx vitest run src/plugins/` green; manual: `swarm-coder plugin install ./test/fixtures/plugins/hello-plugin` + `plugin list` round-trip.
-- **Phase 4:** `npx vitest run src/auth/openai-oauth.test.ts` green; manual: `swarm-coder login --provider codex-chatgpt --help` shows expected usage; live login deferred to Phase 8 smoke (operator-driven).
+- **Phase 3:** `npx vitest run src/plugins/` green; manual: `swarm-harness plugin install ./test/fixtures/plugins/hello-plugin` + `plugin list` round-trip.
+- **Phase 4:** `npx vitest run src/auth/openai-oauth.test.ts` green; manual: `swarm-harness login --provider codex-chatgpt --help` shows expected usage; live login deferred to Phase 8 smoke (operator-driven).
 - **Phase 5:** `npx vitest run src/providers/codex-chatgpt.test.ts` green; mocked end-to-end turn with NativeEngine (after M4a ships).
 - **Phase 6:** `npx vitest run src/providers/quirks.test.ts` green.
 - **Phase 7:** `npx vitest run src/cli/plugin.test.ts src/cli/argv.test.ts src/tools/framework-filter.test.ts` green.
@@ -720,7 +720,7 @@ Run after each phase:
 - **`@ai-sdk/google` parallel tool-use claim.** Capability flag reads conservative; upgrade after live validation.
 - **Plugin `installedAt` / `updatedAt` timestamps.** Not in the state shape yet; add if `plugin list --verbose` demands it. Trivial extension.
 - **Git clone depth / branch handling.** M4b uses `git clone --depth 1 --branch <ref?>`. If users have plugins on orphan refs or shallow-clone-incompatible repos, surface a clear error; full-history fallback deferred to M5.
-- **Multi-auth-file co-existence.** `~/.swarm-coder/auth.json` will hold `openai-oauth` here and may hold `anthropic-oauth` or similar later. File locking on concurrent CLI invocations: atomic write-rename is sufficient for single-writer workflows; concurrent writes from two CLI processes could lose an update. Accept for M4b; revisit if users report.
+- **Multi-auth-file co-existence.** `~/.swarm-harness/auth.json` will hold `openai-oauth` here and may hold `anthropic-oauth` or similar later. File locking on concurrent CLI invocations: atomic write-rename is sufficient for single-writer workflows; concurrent writes from two CLI processes could lose an update. Accept for M4b; revisit if users report.
 - **Kimi model routing via DashScope vs. a separate Moonshot provider.** Currently routed through DashScope. If Moonshot ships a direct API endpoint with different semantics, split at that point.
 - **Framework-mode tool filter helper location.** `src/tools/framework-filter.ts` is proposed. If M3 already centralized this for `--framework claude-agent-sdk`, merge with the existing location instead of creating a new one.
 
@@ -734,6 +734,6 @@ Run after each phase:
 
 ## Revision history
 
-- **rev 1 (2026-04-20):** initial draft. Seven scope/mechanism decisions locked: (1) Codex App Server OAuth client id hard-coded from Codex reverse-engineering, policy-tolerated with documented risk; (2) plugin state file at `~/.claude/plugins/state.json`, NOT `~/.swarm-coder/`; (3) flat state shape `{ schemaVersion, enabled[], versions{}, installSources{} }` with explicit schema version for forward migration; (4) install materialization via temp-dir + rename for atomic swap; (5) DashScope 6 MB cap enforced at provider preflight, non-retryable; (6) Codex response-shape translator lives inside `codex-chatgpt.ts` as `CodexStreamState`, NOT shared; (7) plugin update re-materializes from recorded install source, not "pull latest." M4b depends on M4a being complete; tests baseline ~900-950 assuming M4a adds 60-100 tests; target delta +60-90 for M4b. Biggest risk: Phase 5 Codex integration depends on a real-traffic response-shape capture not yet done — acceptance criterion 21 offline smoke uses a canned fixture; live AC 23 is operator-driven. Total effort ~8.0d, sits at top of 5-8 day target.
-- **rev 3 (2026-04-22):** Phases 0/1/2/3/4/6/7/8 shipped in commits 23e2500, 37be22a, and Phase 8 scripts+docs. Phase 5 (Codex ChatGPT custom TransportProvider) deferred — blocked on operator SSE spike per §5.0. Login path via `swarm-coder login --provider codex-chatgpt` works end-to-end (OAuth PKCE flow shipped in Phase 4); end-to-end model turns require Phase 5 to land. See Q20 in `docs/06-open-questions.md` for resolution path.
+- **rev 1 (2026-04-20):** initial draft. Seven scope/mechanism decisions locked: (1) Codex App Server OAuth client id hard-coded from Codex reverse-engineering, policy-tolerated with documented risk; (2) plugin state file at `~/.claude/plugins/state.json`, NOT `~/.swarm-harness/`; (3) flat state shape `{ schemaVersion, enabled[], versions{}, installSources{} }` with explicit schema version for forward migration; (4) install materialization via temp-dir + rename for atomic swap; (5) DashScope 6 MB cap enforced at provider preflight, non-retryable; (6) Codex response-shape translator lives inside `codex-chatgpt.ts` as `CodexStreamState`, NOT shared; (7) plugin update re-materializes from recorded install source, not "pull latest." M4b depends on M4a being complete; tests baseline ~900-950 assuming M4a adds 60-100 tests; target delta +60-90 for M4b. Biggest risk: Phase 5 Codex integration depends on a real-traffic response-shape capture not yet done — acceptance criterion 21 offline smoke uses a canned fixture; live AC 23 is operator-driven. Total effort ~8.0d, sits at top of 5-8 day target.
+- **rev 3 (2026-04-22):** Phases 0/1/2/3/4/6/7/8 shipped in commits 23e2500, 37be22a, and Phase 8 scripts+docs. Phase 5 (Codex ChatGPT custom TransportProvider) deferred — blocked on operator SSE spike per §5.0. Login path via `swarm-harness login --provider codex-chatgpt` works end-to-end (OAuth PKCE flow shipped in Phase 4); end-to-end model turns require Phase 5 to land. See Q20 in `docs/06-open-questions.md` for resolution path.
 - **rev 2 (2026-04-21):** applied critic REVISE feedback. 3 critical (C1 Phase 5.0 Codex spike gate blocks Phase 5.1+; C2 install-source detector replaced with unambiguous `resolveInstallSource` using disk-existence check; C3 `proper-lockfile` for concurrent state writes serializing cross-process `plugin enable`), 6 major (M1 logout CLI subcommand at §7.2a; M2 DashScope >6MB NativeEngine integration test at §5.4 with AC X; M3 framework-filter orthogonality clarified — orthogonal to M3a ToolDispatcher, runs earlier at factory call, no dispatcher.ts changes; M4 tool-surface removal unambiguous — REMOVED not no-op in Scope, AC 22, Phase 5.2; M5 Codex auth headers sourced from Phase 5.0 spike fixture at §2.2a; M6 Google safety-settings budget reserve at §2.2b). Minor fixes: `sanitizeId` explicit `..` rejection, `@ai-sdk/openai` v5 verify-at-implementation note, NFS-safety rewrite, AC 11 uses existing fixture path, AC 21/23 operator-only markers, Open items updated to remove resolved spike items. Total 8.0d → 8.4d. No new scope; fixes only.

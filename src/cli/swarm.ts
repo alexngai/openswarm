@@ -1,5 +1,5 @@
 /**
- * swarm.ts — implementation of `swarm-coder swarm run <tasks-file>`.
+ * swarm.ts — implementation of `swarm-harness swarm run <tasks-file>`.
  *
  * Reads a JSONL file of TaskPackets, validates each line with zod,
  * then drives the Orchestrator to execute them concurrently.
@@ -44,7 +44,7 @@ export interface SwarmRunOptions {
   /**
    * Default role name applied to every task that doesn't override via its
    * own `role` field (M3a Phase 6). Resolved against the RoleRegistry
-   * built at startup (built-ins + custom from `.swarm-coder/roles.json`).
+   * built at startup (built-ins + custom from `.swarm-harness/roles.json`).
    */
   readonly defaultRole?: string;
 }
@@ -85,7 +85,7 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
       );
       if (isPolicyParseError(parsed.error.message)) {
         process.stderr.write(
-          `[swarm-coder] TaskPacket policies are now discriminated unions — see docs/11-m3a-plan.md §Policy migration\n`,
+          `[swarm-harness] TaskPacket policies are now discriminated unions — see docs/11-m3a-plan.md §Policy migration\n`,
         );
       }
       return 2;
@@ -99,12 +99,12 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
     return 2;
   }
 
-  // Build RoleRegistry: built-ins + custom from .swarm-coder/roles.json.
+  // Build RoleRegistry: built-ins + custom from .swarm-harness/roles.json.
   const roles = new RoleRegistry();
   for (const r of BUILTIN_ROLES) roles.register(r);
   const customRolesPath = path.join(
     process.cwd(),
-    ".swarm-coder",
+    ".swarm-harness",
     "roles.json",
   );
   const custom = await loadCustomRoles(customRolesPath);
@@ -147,18 +147,18 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
   // Print summary.
   const total = tasks.length;
   process.stderr.write(
-    `\n[swarm-coder] swarm complete in ${elapsed}ms: ${summary.succeeded}/${total} succeeded, ${summary.failed} failed, ${summary.timeout} timeout, ${summary.cancelled} cancelled${summary.resultWriteFailures > 0 ? ` (${summary.resultWriteFailures} result write failures)` : ""}\n`,
+    `\n[swarm-harness] swarm complete in ${elapsed}ms: ${summary.succeeded}/${total} succeeded, ${summary.failed} failed, ${summary.timeout} timeout, ${summary.cancelled} cancelled${summary.resultWriteFailures > 0 ? ` (${summary.resultWriteFailures} result write failures)` : ""}\n`,
   );
 
   if (summary.resultWriteFailures > 0) return 1;
   if (summary.deadLetterViolation) {
     if (summary.deadLetterWriteFailures > 0) {
       process.stderr.write(
-        `[swarm-coder] exiting non-zero: dead-letter writer failed ${summary.deadLetterWriteFailures} time(s) writing to ${opts.deadLetter ?? "./dead-letter.jsonl"}; --allow-dead-letter does NOT suppress write failures\n`,
+        `[swarm-harness] exiting non-zero: dead-letter writer failed ${summary.deadLetterWriteFailures} time(s) writing to ${opts.deadLetter ?? "./dead-letter.jsonl"}; --allow-dead-letter does NOT suppress write failures\n`,
       );
     } else {
       process.stderr.write(
-        `[swarm-coder] exiting non-zero: ${opts.deadLetter ?? "./dead-letter.jsonl"} has new entries from this run; pass --allow-dead-letter to accept\n`,
+        `[swarm-harness] exiting non-zero: ${opts.deadLetter ?? "./dead-letter.jsonl"} has new entries from this run; pass --allow-dead-letter to accept\n`,
       );
     }
     return 1;

@@ -1,5 +1,5 @@
 {
-  "name": "swarm-coder",
+  "name": "swarm-harness",
   "version": "0.0.1",
   "description": "swarm-compatible coding agent",
   "type": "module",
@@ -12,7 +12,7 @@
     }
   },
   "bin": {
-    "swarm-coder": "dist/cli.js"
+    "swarm-harness": "dist/cli.js"
   },
   "files": [
     "dist",
@@ -49,12 +49,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/alexngai/swarm-coder.git"
+    "url": "git+https://github.com/alexngai/swarm-harness.git"
   },
   "bugs": {
-    "url": "https://github.com/alexngai/swarm-coder/issues"
+    "url": "https://github.com/alexngai/swarm-harness/issues"
   },
-  "homepage": "https://github.com/alexngai/swarm-coder",
+  "homepage": "https://github.com/alexngai/swarm-harness",
   "devDependencies": {
     "@types/node": "^25.6.0",
     "@types/proper-lockfile": "^4.1.4",

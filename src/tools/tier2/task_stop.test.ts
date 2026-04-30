@@ -76,7 +76,7 @@ describe("task_stop tool", () => {
     expect(result.status).toBe("error");
   });
 
-  it("worker host with SWARM_CODER_ALLOW_PEER_TASK_STOP=1 bypasses ancestry check", async () => {
+  it("worker host with SWARM_HARNESS_ALLOW_PEER_TASK_STOP=1 bypasses ancestry check", async () => {
     const taskId = "task-peer";
     const records = new Map<string, TaskRecord>([
       [taskId, makeRunningRecord(taskId, "other-agent" as AgentId)],
@@ -89,8 +89,8 @@ describe("task_stop tool", () => {
       mode: "worker" as const,
     };
 
-    const original = process.env.SWARM_CODER_ALLOW_PEER_TASK_STOP;
-    process.env.SWARM_CODER_ALLOW_PEER_TASK_STOP = "1";
+    const original = process.env.SWARM_HARNESS_ALLOW_PEER_TASK_STOP;
+    process.env.SWARM_HARNESS_ALLOW_PEER_TASK_STOP = "1";
     try {
       const result = await taskStopTool.execute(
         { taskId },
@@ -99,9 +99,9 @@ describe("task_stop tool", () => {
       expect(result.status).toBe("ok");
     } finally {
       if (original === undefined) {
-        delete process.env.SWARM_CODER_ALLOW_PEER_TASK_STOP;
+        delete process.env.SWARM_HARNESS_ALLOW_PEER_TASK_STOP;
       } else {
-        process.env.SWARM_CODER_ALLOW_PEER_TASK_STOP = original;
+        process.env.SWARM_HARNESS_ALLOW_PEER_TASK_STOP = original;
       }
     }
   });
@@ -120,8 +120,8 @@ describe("task_stop tool", () => {
       isAncestorOf: async () => false,
     };
 
-    const original = process.env.SWARM_CODER_ALLOW_PEER_TASK_STOP;
-    delete process.env.SWARM_CODER_ALLOW_PEER_TASK_STOP;
+    const original = process.env.SWARM_HARNESS_ALLOW_PEER_TASK_STOP;
+    delete process.env.SWARM_HARNESS_ALLOW_PEER_TASK_STOP;
     try {
       const result = await taskStopTool.execute(
         { taskId },
@@ -133,7 +133,7 @@ describe("task_stop tool", () => {
       );
     } finally {
       if (original !== undefined) {
-        process.env.SWARM_CODER_ALLOW_PEER_TASK_STOP = original;
+        process.env.SWARM_HARNESS_ALLOW_PEER_TASK_STOP = original;
       }
     }
   });
@@ -152,8 +152,8 @@ describe("task_stop tool", () => {
       isAncestorOf: async () => true,
     };
 
-    const original = process.env.SWARM_CODER_ALLOW_PEER_TASK_STOP;
-    delete process.env.SWARM_CODER_ALLOW_PEER_TASK_STOP;
+    const original = process.env.SWARM_HARNESS_ALLOW_PEER_TASK_STOP;
+    delete process.env.SWARM_HARNESS_ALLOW_PEER_TASK_STOP;
     try {
       const result = await taskStopTool.execute(
         { taskId },
@@ -164,7 +164,7 @@ describe("task_stop tool", () => {
       expect(updated?.status).toBe("stopped");
     } finally {
       if (original !== undefined) {
-        process.env.SWARM_CODER_ALLOW_PEER_TASK_STOP = original;
+        process.env.SWARM_HARNESS_ALLOW_PEER_TASK_STOP = original;
       }
     }
   });

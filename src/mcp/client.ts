@@ -81,7 +81,7 @@ export class McpStdioClient {
     });
 
     const client = new Client(
-      { name: "swarm-coder", version: "0.0.1" },
+      { name: "swarm-harness", version: "0.0.1" },
       { capabilities: {} },
     );
 

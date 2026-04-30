@@ -137,7 +137,7 @@ export interface LockHandle {
 export interface AcquireOptions {
   readonly agentId: string;
   readonly timeoutMs: number;
-  /** Override lock directory (test-only). Default: `<git-common-dir>/swarm-coder/branch-locks`. */
+  /** Override lock directory (test-only). Default: `<git-common-dir>/swarm-harness/branch-locks`. */
   readonly lockDir?: string;
   /** cwd passed to `git rev-parse --git-common-dir` when `lockDir` is absent. */
   readonly cwd?: string;
@@ -240,7 +240,7 @@ async function resolveLockDir(
     const absolute = path.isAbsolute(gitDir)
       ? gitDir
       : path.resolve(cwd ?? process.cwd(), gitDir);
-    return path.join(absolute, "swarm-coder", "branch-locks");
+    return path.join(absolute, "swarm-harness", "branch-locks");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(

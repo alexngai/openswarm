@@ -1,8 +1,8 @@
 /**
  * installPlugin — materializes a plugin from a PluginInstallSource into
- * `~/.swarm-coder/plugins/<sanitized-id>/` and records it in PluginStateStore.
+ * `~/.swarm-harness/plugins/<sanitized-id>/` and records it in PluginStateStore.
  *
- * Doc 17 Q1 (2026-04-22): swarm-coder owns `~/.swarm-coder/plugins/` and never
+ * Doc 17 Q1 (2026-04-22): swarm-harness owns `~/.swarm-harness/plugins/` and never
  * writes to `~/.claude/plugins/`. Plugins installed via Claude Code under
  * `~/.claude/plugins/` are surfaced through a separate read-only discovery
  * source (see src/cli/main.ts).
@@ -21,7 +21,7 @@ import { PluginStateStore, defaultStore } from "./state.js";
 // ---------------------------------------------------------------------------
 
 export function pluginsDir(): string {
-  return path.join(os.homedir(), ".swarm-coder", "plugins");
+  return path.join(os.homedir(), ".swarm-harness", "plugins");
 }
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 /**
- * swarm-coder — TypeScript coding agent built on Anthropic's Claude Agent SDK.
+ * swarm-harness — TypeScript coding agent built on Anthropic's Claude Agent SDK.
  *
  * This file is the library entry point. Most users interact via the CLI
  * (`node dist/cli.js`); library consumers can import the types and classes

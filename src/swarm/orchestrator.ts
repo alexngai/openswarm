@@ -136,12 +136,12 @@ export class Orchestrator extends EventEmitter {
     this.sigintHandler = () => {
       if (this.shuttingDown) {
         // Second Ctrl-C — force exit.
-        process.stderr.write("[swarm-coder] second SIGINT — forcing exit\n");
+        process.stderr.write("[swarm-harness] second SIGINT — forcing exit\n");
         process.exit(130);
       }
       this.shuttingDown = true;
       process.stderr.write(
-        "[swarm-coder] SIGINT received; draining workers...\n",
+        "[swarm-harness] SIGINT received; draining workers...\n",
       );
       this.pool.close();
     };
@@ -536,7 +536,7 @@ export class Orchestrator extends EventEmitter {
 
     if (firstResultWriteError) {
       process.stderr.write(
-        `[swarm-coder] ${this.resultWriteFailures} task result(s) failed to persist; first error: ${String(firstResultWriteError)}\n`,
+        `[swarm-harness] ${this.resultWriteFailures} task result(s) failed to persist; first error: ${String(firstResultWriteError)}\n`,
       );
     }
 
@@ -703,7 +703,7 @@ export class Orchestrator extends EventEmitter {
       await handle.release();
     } catch (err) {
       process.stderr.write(
-        `[swarm-coder] branch-lock release failed for task ${taskId}: ${err instanceof Error ? err.message : String(err)}\n`,
+        `[swarm-harness] branch-lock release failed for task ${taskId}: ${err instanceof Error ? err.message : String(err)}\n`,
       );
     }
     this.host.emit({

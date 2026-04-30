@@ -60,7 +60,7 @@ function countOccurrences(haystack: string, needle: string): number {
  */
 async function atomicWrite(targetPath: string, content: string): Promise<void> {
   const dir = path.dirname(targetPath);
-  const tmp = path.join(dir, `.swarm-coder-tmp-${process.pid}-${Date.now()}`);
+  const tmp = path.join(dir, `.swarm-harness-tmp-${process.pid}-${Date.now()}`);
   try {
     await fs.writeFile(tmp, content, "utf8");
     await fs.rename(tmp, targetPath);

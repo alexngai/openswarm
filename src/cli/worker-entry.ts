@@ -42,16 +42,16 @@ export function composeSystemPrompt(
 }
 
 export async function runWorkerEntry(): Promise<number> {
-  const agentId = (process.env.SWARM_CODER_AGENT_ID ?? "unknown") as AgentId;
-  const depthStr = process.env.SWARM_CODER_DEPTH ?? "0";
+  const agentId = (process.env.SWARM_HARNESS_AGENT_ID ?? "unknown") as AgentId;
+  const depthStr = process.env.SWARM_HARNESS_DEPTH ?? "0";
   const depth = Number.parseInt(depthStr, 10);
-  const parentToolUseId = process.env.SWARM_CODER_PARENT_TOOL_USE_ID;
+  const parentToolUseId = process.env.SWARM_HARNESS_PARENT_TOOL_USE_ID;
 
-  const heartbeatIntervalMs = process.env.SWARM_CODER_HEARTBEAT_MS
-    ? Number.parseInt(process.env.SWARM_CODER_HEARTBEAT_MS, 10)
+  const heartbeatIntervalMs = process.env.SWARM_HARNESS_HEARTBEAT_MS
+    ? Number.parseInt(process.env.SWARM_HARNESS_HEARTBEAT_MS, 10)
     : undefined;
   const transport = new ParentTransport({ agentId, heartbeatIntervalMs });
-  const permissionMode = (process.env.SWARM_CODER_PERMISSION_MODE ??
+  const permissionMode = (process.env.SWARM_HARNESS_PERMISSION_MODE ??
     "workspace-write") as PermissionMode;
   const host = new WorkerHost(agentId, depth, permissionMode, transport, parentToolUseId);
 
@@ -73,13 +73,13 @@ export async function runWorkerEntry(): Promise<number> {
   transport.respond(runReq.id, { accepted: true });
 
   // M3a Phase 6: role overlay + allowedTools filter.
-  // `SWARM_CODER_ROLE` names a role; we look it up in a worker-local
+  // `SWARM_HARNESS_ROLE` names a role; we look it up in a worker-local
   // RoleRegistry (built-ins + custom roles loaded fresh from cwd).
-  // `SWARM_CODER_ALLOWED_TOOLS` carries an explicit JSON array that wins
+  // `SWARM_HARNESS_ALLOWED_TOOLS` carries an explicit JSON array that wins
   // over the role-derived list when both are present. The system prompt
   // suffix is appended to RunConfig.systemPrompt (role suffix wins on
   // conflicts per the plan).
-  const roleName = process.env.SWARM_CODER_ROLE;
+  const roleName = process.env.SWARM_HARNESS_ROLE;
   let roleSuffix = "";
   let resolvedAllowedTools: readonly string[] | undefined;
   if (roleName !== undefined && roleName.length > 0) {
@@ -87,7 +87,7 @@ export async function runWorkerEntry(): Promise<number> {
     for (const r of BUILTIN_ROLES) roleReg.register(r);
     try {
       const custom = await loadCustomRoles(
-        path.join(process.cwd(), ".swarm-coder", "roles.json"),
+        path.join(process.cwd(), ".swarm-harness", "roles.json"),
       );
       for (const r of custom) roleReg.register(r);
     } catch {
@@ -100,11 +100,11 @@ export async function runWorkerEntry(): Promise<number> {
       resolvedAllowedTools = role.allowedTools;
     } else {
       process.stderr.write(
-        `[swarm-coder] worker: unknown role "${roleName}" — proceeding without role overlay\n`,
+        `[swarm-harness] worker: unknown role "${roleName}" — proceeding without role overlay\n`,
       );
     }
   }
-  const envAllowed = process.env.SWARM_CODER_ALLOWED_TOOLS;
+  const envAllowed = process.env.SWARM_HARNESS_ALLOWED_TOOLS;
   if (envAllowed !== undefined && envAllowed.length > 0) {
     try {
       const parsed = JSON.parse(envAllowed);
@@ -130,12 +130,12 @@ export async function runWorkerEntry(): Promise<number> {
   const permissionEngine = new PermissionEngine(permissionMode);
   const auth = new AnthropicEnvAuth();
 
-  // Engine selection: read SWARM_CODER_FRAMEWORK env var (default: "auto").
-  const frameworkEnv = (process.env.SWARM_CODER_FRAMEWORK ?? "auto") as FrameworkChoice;
+  // Engine selection: read SWARM_HARNESS_FRAMEWORK env var (default: "auto").
+  const frameworkEnv = (process.env.SWARM_HARNESS_FRAMEWORK ?? "auto") as FrameworkChoice;
   const workerModel = "claude-sonnet-4-6";
 
   let engine: AgentEngine;
-  if (process.env.SWARM_CODER_TEST_SCRIPT) {
+  if (process.env.SWARM_HARNESS_TEST_SCRIPT) {
     engine = new ScriptedTestEngine();
   } else if (frameworkEnv === "claude-agent-sdk") {
     engine = new ClaudeAgentSdkEngine();
@@ -179,7 +179,7 @@ export async function runWorkerEntry(): Promise<number> {
     // Append the role suffix (if any) to the base system prompt. Role suffix
     // wins on conflicts because it lands last — matches the plan's
     // "last-writer-wins on model-perceived directives" guidance.
-    const basePrompt = process.env.SWARM_CODER_BASE_SYSTEM_PROMPT ?? "";
+    const basePrompt = process.env.SWARM_HARNESS_BASE_SYSTEM_PROMPT ?? "";
     const systemPrompt = composeSystemPrompt(basePrompt, roleSuffix);
 
     const runConfig = {

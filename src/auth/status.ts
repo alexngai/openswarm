@@ -5,7 +5,7 @@
  * decrypting anything. Used by `doctor` to tell the user whether they
  * need to run `claude auth login` or set ANTHROPIC_API_KEY.
  *
- * Per docs/06-open-questions.md Q16, swarm-coder does NOT manage auth.
+ * Per docs/06-open-questions.md Q16, swarm-harness does NOT manage auth.
  * Users authenticate via Anthropic's own CLI; we only detect presence.
  */
 

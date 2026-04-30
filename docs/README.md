@@ -1,10 +1,10 @@
-# swarm-coder design docs
+# swarm-harness design docs
 
-Early design capture for swarm-coder — a TypeScript agent harness built around Claude, where the atomic unit is a single coding agent and the primary product surface is multi-agent swarm orchestration.
+Early design capture for swarm-harness — a TypeScript agent harness built around Claude, where the atomic unit is a single coding agent and the primary product surface is multi-agent swarm orchestration.
 
 ## Map
 
-- [00-vision.md](./00-vision.md) — project intent, what swarm-coder is, relationship to claw-code
+- [00-vision.md](./00-vision.md) — project intent, what swarm-harness is, relationship to claw-code
 - [01-requirements.md](./01-requirements.md) — functional and non-functional requirements, scope
 - [02-architecture.md](./02-architecture.md) — package layout, layering, process topologies
 - [03-interfaces.md](./03-interfaces.md) — the three abstraction seams that must stay stable

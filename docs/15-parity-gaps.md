@@ -1,14 +1,14 @@
-# Parity gaps: swarm-coder vs claw-code
+# Parity gaps: swarm-harness vs claw-code
 
-Living tracker of disparities between `swarm-coder` (TS) and `references/claw-code/` (Rust reference). Not all gaps should be closed — some reflect intentional design divergence. Use this doc to decide which to close, which to defer, and which to reject.
+Living tracker of disparities between `swarm-harness` (TS) and `references/claw-code/` (Rust reference). Not all gaps should be closed — some reflect intentional design divergence. Use this doc to decide which to close, which to defer, and which to reject.
 
-**swarm-coder is not a port.** It is a swarm-native reimplementation that borrows from claw-code where the design aligns. Anchor every decision in `00-vision.md` and `05-swarm-model.md` before adopting a claw pattern.
+**swarm-harness is not a port.** It is a swarm-native reimplementation that borrows from claw-code where the design aligns. Anchor every decision in `00-vision.md` and `05-swarm-model.md` before adopting a claw pattern.
 
 ## Legend
 
 | Status | Meaning |
 |---|---|
-| ❌ missing | No equivalent exists in swarm-coder |
+| ❌ missing | No equivalent exists in swarm-harness |
 | ⚠️ partial | Implemented but incomplete or staged-not-shipped |
 | ✅ present | Behaviorally equivalent |
 | 🟦 divergent | Intentionally different design; not a gap |
@@ -22,7 +22,7 @@ Living tracker of disparities between `swarm-coder` (TS) and `references/claw-co
 
 ## 1. TUI
 
-swarm-coder uses Ink/React; claw-code uses crossterm + rustyline + syntect + pulldown_cmark. The rendering stacks produce visibly different experiences. This section is where the user's pain is most tangible.
+swarm-harness uses Ink/React; claw-code uses crossterm + rustyline + syntect + pulldown_cmark. The rendering stacks produce visibly different experiences. This section is where the user's pain is most tangible.
 
 | # | Gap | Status | Priority | Effort | Notes |
 |---|---|---|---|---|---|
@@ -31,12 +31,12 @@ swarm-coder uses Ink/React; claw-code uses crossterm + rustyline + syntect + pul
 | T3 | Syntax-highlighted code blocks | ❌ | P1 | M | claw uses `syntect` with ANSI output. Options: `cli-highlight`, `shiki` (heavy), or ship without. |
 | T4 | Tables in markdown | ❌ | P2 | S | Follows T2. |
 | T5 | Inline approval prompts (y/N) instead of `/approve`/`/deny` | ❌ | P0 | S | Current slash-command approval is jarring. claw blocks stdin with tool info + y/N inline. See [status.tsx](src/ui/repl/status.tsx). |
-| T6 | Persistent command history across sessions | ❌ | P2 | S | Claw via rustyline. Write to `~/.swarm-coder/history` with size cap. |
+| T6 | Persistent command history across sessions | ❌ | P2 | S | Claw via rustyline. Write to `~/.swarm-harness/history` with size cap. |
 | T7 | Emacs keybindings (full set) | ⚠️ | P2 | S | Partial in [state.ts](src/ui/repl/state.ts); claw sets `EditMode::Emacs` explicitly. Ink defaults vary. |
 | T8 | Spinner that overwrites same line and transitions to ✔/✘ | ⚠️ | P3 | XS | [spinner.tsx](src/ui/repl/spinner.tsx) exists; claw's is more polished. |
-| T9 | Slash-command dropdown menu (swarm-coder has this) | 🟦 | — | — | Nice-to-keep; claw only has silent rustyline completion. Don't regress. |
-| T10 | Compaction lifecycle UI (swarm-coder has this) | 🟦 | — | — | Don't regress. |
-| T11 | Pending-permission display in status bar (swarm-coder has this) | 🟦 | — | — | Keep even after T5 lands — status bar shows *what* is pending. |
+| T9 | Slash-command dropdown menu (swarm-harness has this) | 🟦 | — | — | Nice-to-keep; claw only has silent rustyline completion. Don't regress. |
+| T10 | Compaction lifecycle UI (swarm-harness has this) | 🟦 | — | — | Don't regress. |
+| T11 | Pending-permission display in status bar (swarm-harness has this) | 🟦 | — | — | Keep even after T5 lands — status bar shows *what* is pending. |
 
 **TUI decision needed:** commit to an approach for T2/T3 or accept a stripped-down TUI. Options:
 - (a) Hand-roll ANSI renderer in a dedicated module (full control, ~M+ effort)
@@ -49,7 +49,7 @@ swarm-coder uses Ink/React; claw-code uses crossterm + rustyline + syntect + pul
 
 | # | Gap | Status | Priority | Effort | Notes |
 |---|---|---|---|---|---|
-| A1 | Worker boot state machine (spawning → trust_required → ready_for_prompt → …) | ❌ | P1 | M | claw: `runtime/worker_boot.rs`. swarm-coder's WorkerHost lifecycle is implicit. Makes trust prompts and ready handshakes testable. |
+| A1 | Worker boot state machine (spawning → trust_required → ready_for_prompt → …) | ❌ | P1 | M | claw: `runtime/worker_boot.rs`. swarm-harness's WorkerHost lifecycle is implicit. Makes trust prompts and ready handshakes testable. |
 | A2 | Branch lock / stale-base / stale-branch detection | ⚠️ | P1 | M | claw: `runtime/branch_lock.rs`, `stale_base.rs`, `stale_branch.rs`. swarm has partial git coordination in M3a — verify what's actually ported vs stubbed. |
 | A3 | Recovery recipes | ❌ | P2 | L | claw: `runtime/recovery_recipes.rs`. Structured fallback for known failure modes. Lower priority until we have telemetry showing which failures repeat. |
 | A4 | Policy engine (merge/retry/rebase/escalation) | ❌ | P2 | L | claw: `runtime/policy_engine.rs`. Currently swarm handles retries inline in Orchestrator. |
@@ -57,8 +57,8 @@ swarm-coder uses Ink/React; claw-code uses crossterm + rustyline + syntect + pul
 | A6 | Sandbox abstraction (Linux `unshare`, macOS sandbox-exec) | ❌ | P3 | L | claw: `runtime/sandbox.rs`. Platform-specific; low user value for macOS-first. Defer. |
 | A7 | Green contract (declarative config validation) | ❌ | P3 | S | claw: `runtime/green_contract.rs`. Cosmetic until config becomes complex. |
 | A8 | Server-side token preflight | ⚠️ | P2 | S | swarm has CompactionConfig but no server-reported token counts before send. |
-| A9 | Two-engine design (SDK + Native) | 🟦 | — | — | swarm-coder unique. Don't regress. |
-| A10 | Swarm orchestration (WorkerPool, lane events, role overlays) | 🟦 | — | — | swarm-coder unique. Core differentiator. |
+| A9 | Two-engine design (SDK + Native) | 🟦 | — | — | swarm-harness unique. Don't regress. |
+| A10 | Swarm orchestration (WorkerPool, lane events, role overlays) | 🟦 | — | — | swarm-harness unique. Core differentiator. |
 
 ---
 
@@ -71,7 +71,7 @@ swarm-coder uses Ink/React; claw-code uses crossterm + rustyline + syntect + pul
 | TO3 | `pdf_extract` tool | ❌ | P3 | S | claw tier 3. Defer unless a user hits it. |
 | TO4 | `repl` tool (interactive REPL) | ❌ | P3 | M | claw tier 3. Unclear value relative to bash + write-to-file. |
 | TO5 | `powerShell` tool | ❌ | P3 | S | Windows-specific; out of scope for v0. |
-| TO6 | Edit-file ambiguity rejection (swarm-coder fix vs claw silent-first-match) | 🟦 | — | — | swarm-coder improvement over claw. Keep. |
+| TO6 | Edit-file ambiguity rejection (swarm-harness fix vs claw silent-first-match) | 🟦 | — | — | swarm-harness improvement over claw. Keep. |
 
 ---
 

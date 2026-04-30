@@ -45,19 +45,19 @@ describe("loadHooksConfig", () => {
     expect(result.resolvedPath).toBeUndefined();
   });
 
-  it("loads from $SWARM_CODER_CONFIG_DIR/hooks.json (highest priority)", async () => {
+  it("loads from $SWARM_HARNESS_CONFIG_DIR/hooks.json (highest priority)", async () => {
     const expected = writeJson(envDir, "hooks.json", {
       PreToolUse: [{ matcher: "bash", command: "./env.sh" }],
     });
     // Decoy at lower priorities — should be ignored.
-    writeJson(path.join(cwd, ".swarm-coder"), "hooks.json", {
+    writeJson(path.join(cwd, ".swarm-harness"), "hooks.json", {
       PreToolUse: [{ matcher: "*", command: "./decoy.sh" }],
     });
 
     const result = await loadHooksConfig({
       cwd,
       homedir: homeDir,
-      envOverrides: { SWARM_CODER_CONFIG_DIR: envDir },
+      envOverrides: { SWARM_HARNESS_CONFIG_DIR: envDir },
     });
     expect(result.resolvedPath).toBe(expected);
     expect(result.config.PreToolUse).toEqual([
@@ -65,8 +65,8 @@ describe("loadHooksConfig", () => {
     ]);
   });
 
-  it("falls back to <cwd>/.swarm-coder/hooks.json when env not set", async () => {
-    const expected = writeJson(path.join(cwd, ".swarm-coder"), "hooks.json", {
+  it("falls back to <cwd>/.swarm-harness/hooks.json when env not set", async () => {
+    const expected = writeJson(path.join(cwd, ".swarm-harness"), "hooks.json", {
       PostToolUse: [{ matcher: "*", command: "./audit.sh", timeoutMs: 5000 }],
     });
 
@@ -130,7 +130,7 @@ describe("loadHooksConfig", () => {
   });
 
   it("throws on malformed JSON", async () => {
-    const p = path.join(cwd, ".swarm-coder", "hooks.json");
+    const p = path.join(cwd, ".swarm-harness", "hooks.json");
     fs.mkdirSync(path.dirname(p), { recursive: true });
     fs.writeFileSync(p, "{not-json");
 
@@ -140,7 +140,7 @@ describe("loadHooksConfig", () => {
   });
 
   it("throws on schema mismatch (missing required 'command' field)", async () => {
-    writeJson(path.join(cwd, ".swarm-coder"), "hooks.json", {
+    writeJson(path.join(cwd, ".swarm-harness"), "hooks.json", {
       PreToolUse: [{ matcher: "bash" }],
     });
 

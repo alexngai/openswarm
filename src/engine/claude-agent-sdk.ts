@@ -31,7 +31,7 @@ import { z, ZodObject, toJSONSchema as zodToJSONSchema } from "zod";
  * engine key by the bare tool name (e.g. `read_file`). We strip the prefix
  * at the engine boundary so the rest of the system sees unprefixed names.
  */
-const MCP_PREFIX = "mcp__swarm-coder__";
+const MCP_PREFIX = "mcp__swarm-harness__";
 function stripMcpPrefix(name: string): string {
   return name.startsWith(MCP_PREFIX) ? name.slice(MCP_PREFIX.length) : name;
 }
@@ -145,7 +145,7 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
     });
 
     const mcpServer = createSdkMcpServer({
-      name: "swarm-coder",
+      name: "swarm-harness",
       tools: mcpTools,
     });
 
@@ -271,7 +271,7 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
         // canUseTool — see RunConfig.enabledBuiltinTools JSDoc). Default is
         // empty (no built-in tools) unless explicitly enabled by the caller.
         tools: [...(config.enabledBuiltinTools ?? [])],
-        mcpServers: { "swarm-coder": mcpServer },
+        mcpServers: { "swarm-harness": mcpServer },
         canUseTool: sdkCanUseTool,
         permissionMode: sdkPermissionMode,
         ...(allowDangerouslySkipPermissions && {

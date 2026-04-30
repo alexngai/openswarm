@@ -229,6 +229,75 @@ describe("App — end-to-end interactive flow", () => {
     close();
   });
 
+  // Phase 3 width-regression tests (doc 17 Phase 3 design lock P3.Q6).
+  // Same markdown sample at two terminal widths; both must render the content
+  // and conceal the syntax markers (proves we're hitting <markdown>, not
+  // a plain-text fallback). Drives the App composition because bare
+  // Transcript rendering crashes Bun with SIGBUS (pre-existing, see the
+  // "assistant markdown renders" test above).
+  const widthRegressionSample =
+    "# Heading\n\n" +
+    "Body with **bold** and *italic*.\n\n" +
+    "- first item\n" +
+    "- second item\n\n" +
+    "```typescript\n" +
+    "const greet = (name: string): string => `hi ${name}`;\n" +
+    "```";
+
+  async function renderMarkdownAt(width: number, height: number): Promise<string> {
+    const { events, push, close } = makeEventChannel();
+    const { captureCharFrame, mockInput, renderOnce } = await testRender(
+      () => (
+        <App
+          events={events}
+          model="test-model"
+          permissionMode="workspace-write"
+          onSubmit={() => undefined}
+        />
+      ),
+      { width, height },
+    );
+    await renderOnce();
+    await mockInput.typeText("prompt");
+    mockInput.pressEnter();
+    await renderOnce();
+    await flush(30);
+    push({ type: "text_delta", text: widthRegressionSample });
+    push({ type: "message_stop" });
+    await flush(120);
+    await renderOnce();
+    const frame = captureCharFrame();
+    close();
+    return frame;
+  }
+
+  it("markdown renders at 80-col width without leaking syntax markers", async () => {
+    const frame = await renderMarkdownAt(80, 30);
+    expect(frame).toContain("Heading");
+    expect(frame).toContain("bold");
+    expect(frame).toContain("italic");
+    expect(frame).toContain("first item");
+    expect(frame).toContain("second item");
+    expect(frame).toContain("greet");
+    expect(frame).toContain("name: string");
+    // Markdown markers must not appear literally — proves <markdown> primitive.
+    expect(frame).not.toContain("# Heading");
+    expect(frame).not.toContain("**bold**");
+  });
+
+  it("markdown renders at 120-col width without leaking syntax markers", async () => {
+    const frame = await renderMarkdownAt(120, 30);
+    expect(frame).toContain("Heading");
+    expect(frame).toContain("bold");
+    expect(frame).toContain("italic");
+    expect(frame).toContain("first item");
+    expect(frame).toContain("second item");
+    expect(frame).toContain("greet");
+    expect(frame).toContain("name: string");
+    expect(frame).not.toContain("# Heading");
+    expect(frame).not.toContain("**bold**");
+  });
+
   it("multiple consecutive user submits build up transcript history", async () => {
     const { events, close } = makeEventChannel();
     const submitted: string[] = [];

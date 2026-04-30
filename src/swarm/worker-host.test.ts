@@ -40,15 +40,15 @@ function makeHost(transport: ParentTransport): WorkerHost {
 }
 
 describe("WorkerHost.askUser", () => {
-  const ORIGINAL_ENV = process.env.SWARM_CODER_ASK_TIMEOUT_MS;
+  const ORIGINAL_ENV = process.env.SWARM_HARNESS_ASK_TIMEOUT_MS;
   beforeEach(() => {
-    delete process.env.SWARM_CODER_ASK_TIMEOUT_MS;
+    delete process.env.SWARM_HARNESS_ASK_TIMEOUT_MS;
   });
   afterEach(() => {
     if (ORIGINAL_ENV === undefined) {
-      delete process.env.SWARM_CODER_ASK_TIMEOUT_MS;
+      delete process.env.SWARM_HARNESS_ASK_TIMEOUT_MS;
     } else {
-      process.env.SWARM_CODER_ASK_TIMEOUT_MS = ORIGINAL_ENV;
+      process.env.SWARM_HARNESS_ASK_TIMEOUT_MS = ORIGINAL_ENV;
     }
   });
 
@@ -101,8 +101,8 @@ describe("WorkerHost.askUser", () => {
     }
   });
 
-  it("honors SWARM_CODER_ASK_TIMEOUT_MS env override", async () => {
-    process.env.SWARM_CODER_ASK_TIMEOUT_MS = "1500";
+  it("honors SWARM_HARNESS_ASK_TIMEOUT_MS env override", async () => {
+    process.env.SWARM_HARNESS_ASK_TIMEOUT_MS = "1500";
     const { transport, send } = makeFakeTransport();
     send.mockResolvedValue({ answer: "ok" });
     const host = makeHost(transport);

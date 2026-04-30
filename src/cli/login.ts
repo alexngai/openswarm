@@ -1,5 +1,5 @@
 /**
- * login.ts — `swarm-coder login --provider <name>` subcommand.
+ * login.ts — `swarm-harness login --provider <name>` subcommand.
  *
  * Dispatches to the appropriate auth provider's login() method.
  * Exit codes:
@@ -27,7 +27,7 @@ export async function loginMain(argv: string[]): Promise<number> {
       try {
         await auth.login();
         process.stdout.write(
-          "logged in to codex-chatgpt. Credentials stored in ~/.swarm-coder/auth.json.\n",
+          "logged in to codex-chatgpt. Credentials stored in ~/.swarm-harness/auth.json.\n",
         );
         return 0;
       } catch (err) {

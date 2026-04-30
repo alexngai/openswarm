@@ -3,7 +3,7 @@
  *
  * Four checks:
  *   auth      — detectAuth() presence check
- *   config    — .swarm-coder/ directory exists
+ *   config    — .swarm-harness/ directory exists
  *   install   — @anthropic-ai/claude-agent-sdk importable + version + CLI binary
  *   workspace — cwd is writable (probe file)
  *
@@ -57,15 +57,15 @@ async function checkAuth(): Promise<CheckResult> {
 }
 
 async function checkConfig(cwd: string): Promise<CheckResult> {
-  const configDir = path.join(cwd, ".swarm-coder");
+  const configDir = path.join(cwd, ".swarm-harness");
   try {
     await fs.access(configDir);
-    return { name: "config", status: "pass", message: ".swarm-coder/ directory found" };
+    return { name: "config", status: "pass", message: ".swarm-harness/ directory found" };
   } catch {
     return {
       name: "config",
       status: "warn",
-      message: "no config found — run `swarm-coder init`",
+      message: "no config found — run `swarm-harness init`",
     };
   }
 }
@@ -136,7 +136,7 @@ async function findCliBinary(): Promise<
 // output, or `bun src/cli.ts`) this identifier is undefined and the runtime
 // resolve path below is used. In the compiled binary the identifier is
 // replaced with a string literal.
-declare const __SWARM_CODER_AGENT_SDK_VERSION__: string | undefined;
+declare const __SWARM_HARNESS_AGENT_SDK_VERSION__: string | undefined;
 
 async function checkInstall(): Promise<CheckResult> {
   try {
@@ -147,8 +147,8 @@ async function checkInstall(): Promise<CheckResult> {
     // "./package.json", so resolve the main entry and climb up to find its
     // package.json on disk.
     let version =
-      typeof __SWARM_CODER_AGENT_SDK_VERSION__ === "string"
-        ? __SWARM_CODER_AGENT_SDK_VERSION__
+      typeof __SWARM_HARNESS_AGENT_SDK_VERSION__ === "string"
+        ? __SWARM_HARNESS_AGENT_SDK_VERSION__
         : "unknown";
     try {
       const require = createRequire(import.meta.url);
@@ -208,7 +208,7 @@ async function checkInstall(): Promise<CheckResult> {
 }
 
 async function checkWorkspace(cwd: string): Promise<CheckResult> {
-  const probeFile = path.join(cwd, `.swarm-coder-doctor-probe-${process.pid}`);
+  const probeFile = path.join(cwd, `.swarm-harness-doctor-probe-${process.pid}`);
   try {
     await fs.writeFile(probeFile, "");
     await fs.unlink(probeFile);

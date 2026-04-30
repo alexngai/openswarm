@@ -320,7 +320,7 @@ describe("Per-attempt wall-clock timeout: real subprocess (M3b Phase 8.0b)", () 
             cwd: process.cwd(),
             env: {
               ...process.env,
-              SWARM_CODER_TEST_SCRIPT: slowFixture,
+              SWARM_HARNESS_TEST_SCRIPT: slowFixture,
             },
             stdio: ["ignore", "pipe", "pipe"],
           },

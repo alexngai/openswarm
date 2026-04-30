@@ -301,7 +301,7 @@ export class ClaudeCodeSource implements SkillSource {
 
     if (entries.length > MAX_DIR_ENTRIES) {
       process.stderr.write(
-        `[swarm-coder] skills: directory entry cap (${MAX_DIR_ENTRIES}) hit in ${root} — some skills may be hidden\n`,
+        `[swarm-harness] skills: directory entry cap (${MAX_DIR_ENTRIES}) hit in ${root} — some skills may be hidden\n`,
       );
       entries = entries.slice(0, MAX_DIR_ENTRIES);
     }
@@ -358,7 +358,7 @@ export class ClaudeCodeSource implements SkillSource {
     const split = splitFrontmatter(content);
     if (split === null) {
       process.stderr.write(
-        `[swarm-coder] skills: ${filePath} has no valid frontmatter delimiters — skipping\n`,
+        `[swarm-harness] skills: ${filePath} has no valid frontmatter delimiters — skipping\n`,
       );
       return undefined;
     }
@@ -366,7 +366,7 @@ export class ClaudeCodeSource implements SkillSource {
     const fm = parseFrontmatter(split.fm);
     if (fm === null) {
       process.stderr.write(
-        `[swarm-coder] skills: ${filePath} frontmatter parse failed — skipping\n`,
+        `[swarm-harness] skills: ${filePath} frontmatter parse failed — skipping\n`,
       );
       return undefined;
     }
@@ -374,7 +374,7 @@ export class ClaudeCodeSource implements SkillSource {
     // description is required (or we warn and skip).
     if (typeof fm["description"] !== "string" || fm["description"].trim() === "") {
       process.stderr.write(
-        `[swarm-coder] skills: ${filePath} missing required frontmatter field 'description' — skipping\n`,
+        `[swarm-harness] skills: ${filePath} missing required frontmatter field 'description' — skipping\n`,
       );
       return undefined;
     }

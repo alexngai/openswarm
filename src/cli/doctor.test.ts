@@ -42,7 +42,7 @@ describe("runDoctor", () => {
     const fs = await getFsMock();
     // config dir: not found; binary access: success
     (fs.access as ReturnType<typeof vi.fn>).mockImplementation((p: unknown) => {
-      if (String(p).includes(".swarm-coder")) return Promise.reject(new Error("ENOENT"));
+      if (String(p).includes(".swarm-harness")) return Promise.reject(new Error("ENOENT"));
       return Promise.resolve(undefined);
     });
     // workspace probe: success
@@ -142,14 +142,14 @@ describe("runDoctor", () => {
     expect(code).toBe(1);
   });
 
-  it("config check is warn (not fail) when .swarm-coder/ is absent", async () => {
+  it("config check is warn (not fail) when .swarm-harness/ is absent", async () => {
     const detectAuth = await getDetectAuth();
     detectAuth.mockResolvedValue({ state: "env-api-key", source: "ANTHROPIC_API_KEY" });
 
     const fs = await getFsMock();
     // config dir: not found; binary access: success
     (fs.access as ReturnType<typeof vi.fn>).mockImplementation((p: unknown) => {
-      if (String(p).includes(".swarm-coder")) return Promise.reject(new Error("ENOENT"));
+      if (String(p).includes(".swarm-harness")) return Promise.reject(new Error("ENOENT"));
       return Promise.resolve(undefined);
     });
     (fs.writeFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
@@ -211,7 +211,7 @@ describe("runDoctor", () => {
     const fs = await getFsMock();
     // config dir: not found; binary access: success
     (fs.access as ReturnType<typeof vi.fn>).mockImplementation((p: unknown) => {
-      if (String(p).includes(".swarm-coder")) return Promise.reject(new Error("ENOENT"));
+      if (String(p).includes(".swarm-harness")) return Promise.reject(new Error("ENOENT"));
       return Promise.resolve(undefined);
     });
     (fs.writeFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
@@ -241,9 +241,9 @@ describe("runDoctor", () => {
 
     const fs = await getFsMock();
     // Distinguish config-dir access from binary access by argument.
-    // Config dir contains ".swarm-coder"; binary path contains "claude".
+    // Config dir contains ".swarm-harness"; binary path contains "claude".
     (fs.access as ReturnType<typeof vi.fn>).mockImplementation((p: unknown) => {
-      if (String(p).includes(".swarm-coder")) return Promise.reject(new Error("ENOENT"));
+      if (String(p).includes(".swarm-harness")) return Promise.reject(new Error("ENOENT"));
       // binary access — success
       return Promise.resolve(undefined);
     });

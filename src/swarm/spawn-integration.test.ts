@@ -252,13 +252,13 @@ describe("spawn integration — permission clamping", () => {
   });
 });
 
-describe("spawn integration — SWARM_CODER_MAX_DEPTH env override", () => {
+describe("spawn integration — SWARM_HARNESS_MAX_DEPTH env override", () => {
   afterEach(() => {
-    delete process.env.SWARM_CODER_MAX_DEPTH;
+    delete process.env.SWARM_HARNESS_MAX_DEPTH;
   });
 
-  it("scenario 5: SWARM_CODER_MAX_DEPTH=1 causes depth=2 to reject", async () => {
-    process.env.SWARM_CODER_MAX_DEPTH = "1";
+  it("scenario 5: SWARM_HARNESS_MAX_DEPTH=1 causes depth=2 to reject", async () => {
+    process.env.SWARM_HARNESS_MAX_DEPTH = "1";
     const { spawnFn, emitFromWorker } = makeSpawnOverride();
     // No explicit maxDepth — should pick up from env via resolveMaxDepth().
     const host = new StandaloneHost({ spawnWorker: spawnFn });

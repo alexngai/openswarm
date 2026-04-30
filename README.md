@@ -1,4 +1,4 @@
-# swarm-coder
+# swarm-harness
 
 A TypeScript coding agent built on Anthropic's Claude Agent SDK. M0 is the atomic-unit CLI; swarm orchestration lands in M1+.
 
@@ -13,13 +13,13 @@ A TypeScript coding agent built on Anthropic's Claude Agent SDK. M0 is the atomi
 Clone and build from source:
 
 ```bash
-git clone https://github.com/alexngai/swarm-coder.git
-cd swarm-coder
+git clone https://github.com/alexngai/swarm-harness.git
+cd swarm-harness
 npm install
 npm run build
 ```
 
-The `swarm-coder` binary is now at `dist/cli.js`. Run via:
+The `swarm-harness` binary is now at `dist/cli.js`. Run via:
 
 ```bash
 node dist/cli.js --help
@@ -29,7 +29,7 @@ node dist/cli.js --help
 
 ## Authentication
 
-swarm-coder does NOT manage Claude credentials. It detects what's available from your environment and uses it.
+swarm-harness does NOT manage Claude credentials. It detects what's available from your environment and uses it.
 
 Three paths:
 
@@ -52,7 +52,7 @@ If you have a Claude Max subscription, use Anthropic's own CLI to authenticate:
 claude auth login
 ```
 
-This persists credentials to your system keychain (macOS/Linux) or `~/.claude/.credentials.json`. swarm-coder inherits them automatically.
+This persists credentials to your system keychain (macOS/Linux) or `~/.claude/.credentials.json`. swarm-harness inherits them automatically.
 
 Then:
 
@@ -75,7 +75,7 @@ export CLAUDE_CODE_OAUTH_TOKEN=...
 node dist/cli.js "say hello"
 ```
 
-**Important:** Per Anthropic's Terms of Service, swarm-coder owns zero auth code. Users authenticate via Anthropic's own tools. swarm-coder only reads what's already available in your environment or keychain.
+**Important:** Per Anthropic's Terms of Service, swarm-harness owns zero auth code. Users authenticate via Anthropic's own tools. swarm-harness only reads what's already available in your environment or keychain.
 
 ## Usage
 
@@ -99,7 +99,7 @@ node dist/cli.js doctor
 
 Checks:
 1. **Auth** — detects API key, keychain, or token
-2. **Config** — validates `.swarm-coder/` directory
+2. **Config** — validates `.swarm-harness/` directory
 3. **Install** — confirms Tier 0 tools are available
 4. **Workspace** — tests file I/O in the current directory
 
@@ -116,7 +116,7 @@ node dist/cli.js init
 ```
 
 Creates:
-- `.swarm-coder/` directory for session state
+- `.swarm-harness/` directory for session state
 - `.gitignore` entry
 - Stack-detected `CLAUDE.md` with project context (if needed)
 
@@ -185,9 +185,9 @@ node dist/cli.js "set up a test suite"
 
 ## Models & aliases
 
-swarm-coder routes `--model <id>` by prefix to the matching provider transport.
+swarm-harness routes `--model <id>` by prefix to the matching provider transport.
 Built-in aliases (in `src/providers/aliases.ts`) resolve short names to canonical
-model ids; users can override or extend via `~/.swarm-coder/settings.json`:
+model ids; users can override or extend via `~/.swarm-harness/settings.json`:
 
 ```json
 { "aliases": { "my-fast": "gpt-4o-mini" } }
@@ -211,7 +211,7 @@ Run `scripts/smoke-m4b.sh --live` to smoke-test each provider with a one-turn
 
 ## Tools (M0)
 
-swarm-coder ships with eight Tier 0 tools:
+swarm-harness ships with eight Tier 0 tools:
 
 | Tool | Purpose |
 |------|---------|
@@ -256,7 +256,7 @@ Research notes live in `docs/research/` (3,300+ lines informing the design).
 
 ## Contributing
 
-- File issues at [github.com/alexngai/swarm-coder/issues](https://github.com/alexngai/swarm-coder/issues)
+- File issues at [github.com/alexngai/swarm-harness/issues](https://github.com/alexngai/swarm-harness/issues)
 - See [CLAUDE.md](CLAUDE.md) for local development setup
 
 ## License

@@ -57,16 +57,16 @@ import { VERSION } from "../index.js";
 // ---------------------------------------------------------------------------
 
 const HELP_TEXT = `
-swarm-coder v${VERSION}
+swarm-harness v${VERSION}
 
 Usage:
-  swarm-coder [flags] <prompt-text>
-  swarm-coder prompt [flags] <prompt-text>
-  swarm-coder doctor [--output-format text|json]
-  swarm-coder init [<dir>]
-  swarm-coder swarm run <tasks-file> [--concurrency N] [--output <path>]
-  swarm-coder help
-  swarm-coder version
+  swarm-harness [flags] <prompt-text>
+  swarm-harness prompt [flags] <prompt-text>
+  swarm-harness doctor [--output-format text|json]
+  swarm-harness init [<dir>]
+  swarm-harness swarm run <tasks-file> [--concurrency N] [--output <path>]
+  swarm-harness help
+  swarm-harness version
 
 Flags:
   --model <id>                   Model id or alias (e.g. sonnet, claude-sonnet-4-6)
@@ -90,13 +90,13 @@ swarm run flags:
   --allow-dead-letter            Do not exit non-zero when this run appends to dead-letter
 
 Examples:
-  swarm-coder "explain this codebase"
-  swarm-coder prompt --model sonnet "refactor src/foo.ts"
-  swarm-coder --resume latest "continue where we left off"
-  swarm-coder --permission-mode read-only "what does this code do?"
-  swarm-coder doctor
-  swarm-coder init
-  swarm-coder swarm run tasks.jsonl --concurrency 5 --output out.jsonl
+  swarm-harness "explain this codebase"
+  swarm-harness prompt --model sonnet "refactor src/foo.ts"
+  swarm-harness --resume latest "continue where we left off"
+  swarm-harness --permission-mode read-only "what does this code do?"
+  swarm-harness doctor
+  swarm-harness init
+  swarm-harness swarm run tasks.jsonl --concurrency 5 --output out.jsonl
 `.trimStart();
 
 export function printHelp(): void {
@@ -152,9 +152,9 @@ async function buildAuthForProvider(modelId: string): Promise<AuthSource> {
 }
 
 async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
-  // 1. Validate auth. In scripted-test mode (SWARM_CODER_TEST_SCRIPT set) we
+  // 1. Validate auth. In scripted-test mode (SWARM_HARNESS_TEST_SCRIPT set) we
   // skip the auth check — the scripted engine never calls the API.
-  const scriptedMode = !!process.env.SWARM_CODER_TEST_SCRIPT;
+  const scriptedMode = !!process.env.SWARM_HARNESS_TEST_SCRIPT;
   if (!scriptedMode) {
     const authStatus = await detectAuth();
     if (authStatus.state === "none") {
@@ -174,13 +174,13 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
       hooksConfig = await loadHooksConfig({ cwd: process.cwd() });
     } catch (err) {
       process.stderr.write(
-        `[swarm-coder] hooks config error: ${err instanceof Error ? err.message : String(err)}\n`,
+        `[swarm-harness] hooks config error: ${err instanceof Error ? err.message : String(err)}\n`,
       );
     }
     const n = countMatchers(hooksConfig.config);
     if (n > 0 && hooksConfig.resolvedPath !== undefined) {
       process.stderr.write(
-        `[swarm-coder] hooks loaded from ${hooksConfig.resolvedPath} (${n} matchers across ${countEvents(hooksConfig.config)} events)\n`,
+        `[swarm-harness] hooks loaded from ${hooksConfig.resolvedPath} (${n} matchers across ${countEvents(hooksConfig.config)} events)\n`,
       );
     }
   }
@@ -197,23 +197,23 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
 
   // 2a. Discover and register plugin tools (opt-in via --plugins, default enabled).
   // Two sources per doc 17 Q1:
-  //   - "swarm-coder" at `~/.swarm-coder/plugins/` — owned namespace (install/update/uninstall).
+  //   - "swarm-harness" at `~/.swarm-harness/plugins/` — owned namespace (install/update/uninstall).
   //   - "claude-code" at `~/.claude/plugins/`    — read-only discovery for plugins
   //                                                installed via claw/Claude Code.
-  // The swarm-coder source is registered first so our own installs win on
+  // The swarm-harness source is registered first so our own installs win on
   // manifest.id collisions (PluginRegistry does first-wins dedup).
   const pluginTools: import("../tools/types.js").ToolImpl[] = [];
-  // SWARM_CODER_PLUGINS_DIR is the testing-only override respected by
+  // SWARM_HARNESS_PLUGINS_DIR is the testing-only override respected by
   // ClaudeCodeSource (see src/plugins/claude-code-source.ts). When set, the
   // state store must live alongside the fixture plugins — otherwise the
-  // enabled-set filter looks at the real ~/.swarm-coder state and (legitimately)
+  // enabled-set filter looks at the real ~/.swarm-harness state and (legitimately)
   // reports every fixture plugin as disabled. Production callers leave the
-  // env unset and get the default ~/.swarm-coder/plugins/ location.
-  const envPluginsDir = process.env.SWARM_CODER_PLUGINS_DIR;
+  // env unset and get the default ~/.swarm-harness/plugins/ location.
+  const envPluginsDir = process.env.SWARM_HARNESS_PLUGINS_DIR;
   const swarmPluginsDir =
     envPluginsDir && envPluginsDir.length > 0
       ? envPluginsDir
-      : path.join(os.homedir(), ".swarm-coder", "plugins");
+      : path.join(os.homedir(), ".swarm-harness", "plugins");
   // One shared store across plugin discovery (enabled-set filtering) and the
   // `/plugin` slash command. Backed by settings.json + installed.json under
   // swarmPluginsDir (doc 17 Q1).
@@ -221,10 +221,10 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   if (opts.plugins) {
     const pluginRegistry = new PluginRegistry(pluginStateStore);
     pluginRegistry.registerSource(
-      new ClaudeCodeSource({ id: "swarm-coder", pluginsDir: swarmPluginsDir }),
+      new ClaudeCodeSource({ id: "swarm-harness", pluginsDir: swarmPluginsDir }),
     );
     pluginRegistry.registerSource(new ClaudeCodeSource());
-    process.stderr.write("[swarm-coder] discovering plugins...\n");
+    process.stderr.write("[swarm-harness] discovering plugins...\n");
     try {
       const discovered = await pluginRegistry.buildPluginTools();
       for (const tool of discovered) {
@@ -238,7 +238,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
       }
     } catch (err) {
       process.stderr.write(
-        `[swarm-coder] plugin discovery error: ${err instanceof Error ? err.message : String(err)}\n`,
+        `[swarm-harness] plugin discovery error: ${err instanceof Error ? err.message : String(err)}\n`,
       );
     }
   }
@@ -270,13 +270,13 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
       loaded = await loadMcpConfig();
     } catch (err) {
       process.stderr.write(
-        `[swarm-coder] mcp config load error: ${err instanceof Error ? err.message : String(err)}\n`,
+        `[swarm-harness] mcp config load error: ${err instanceof Error ? err.message : String(err)}\n`,
       );
       loaded = { configs: [] };
     }
     if (loaded.resolvedPath !== undefined) {
       process.stderr.write(
-        `[swarm-coder] mcp config: ${loaded.resolvedPath}\n`,
+        `[swarm-harness] mcp config: ${loaded.resolvedPath}\n`,
       );
     }
     if (loaded.configs.length > 0) {
@@ -292,7 +292,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
         const cfg = loaded.configs[i]!;
         if (r.status === "rejected") {
           process.stderr.write(
-            `[swarm-coder] mcp server '${cfg.name}' failed to connect: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}\n`,
+            `[swarm-harness] mcp server '${cfg.name}' failed to connect: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}\n`,
           );
           continue;
         }
@@ -311,7 +311,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
           }
         } catch (err) {
           process.stderr.write(
-            `[swarm-coder] mcp server '${cfg.name}' listTools failed: ${err instanceof Error ? err.message : String(err)}\n`,
+            `[swarm-harness] mcp server '${cfg.name}' listTools failed: ${err instanceof Error ? err.message : String(err)}\n`,
           );
         }
       }
@@ -388,7 +388,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   if (opts.framework === "codex-chatgpt") {
     process.stderr.write(
       "error: --framework codex-chatgpt is not yet wired — Phase 5 Codex provider is blocked on an operator SSE trace capture.\n" +
-        "Login DOES work: `swarm-coder login --provider codex-chatgpt`. End-to-end turns require Phase 5 to ship.\n",
+        "Login DOES work: `swarm-harness login --provider codex-chatgpt`. End-to-end turns require Phase 5 to ship.\n",
     );
     process.exit(2);
   }
@@ -518,7 +518,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   // fields are read from locals so slash-commands can mutate them).
   // Lazy-loaded so OpenTUI deps don't get pulled into non-TTY paths.
   //
-  // Phase 0d: Ink removed. swarm-coder now runs exclusively on Bun with the
+  // Phase 0d: Ink removed. swarm-harness now runs exclusively on Bun with the
   // OpenTUI/Solid REPL. See docs/16-parity-plan.md.
   const { runRepl } = await import("../ui/repl-solid/index.js");
   const { clampPermissionMode } = await import("../swarm/permission-order.js");
@@ -562,7 +562,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
       },
       getUsage: () => engine.getCumulativeUsage(),
       abort: turnAbort,
-      sessionLogPath: ".swarm-coder/sessions.log",
+      sessionLogPath: ".swarm-harness/sessions.log",
       pluginStore: pluginStateStore,
     },
     permissionBridge,
@@ -624,7 +624,7 @@ export async function main(argv: string[]): Promise<number> {
     case "error":
       process.stderr.write(`error: ${parsed.message}\n`);
       if (parsed.showHelp) {
-        process.stderr.write('\nRun `swarm-coder help` for usage.\n');
+        process.stderr.write('\nRun `swarm-harness help` for usage.\n');
       }
       return 2;
 

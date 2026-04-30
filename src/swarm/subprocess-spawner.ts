@@ -21,13 +21,13 @@ export interface SpawnWorkerArgs {
   readonly role?: string;
   /**
    * Explicit tool allowlist for this worker (M3a Phase 6). Serialised as
-   * JSON in `SWARM_CODER_ALLOWED_TOOLS`. Overrides any role-derived list
+   * JSON in `SWARM_HARNESS_ALLOWED_TOOLS`. Overrides any role-derived list
    * on the worker side when both are provided.
    */
   readonly allowedTools?: readonly string[];
   /**
    * Engine/framework selection propagated from the orchestrator.
-   * Written to `SWARM_CODER_FRAMEWORK`. Default: "auto".
+   * Written to `SWARM_HARNESS_FRAMEWORK`. Default: "auto".
    */
   readonly framework?: FrameworkChoice;
 }
@@ -37,30 +37,30 @@ export function spawnWorker(args: SpawnWorkerArgs): ChildProcess {
     args.cliJsPath ?? path.resolve(process.cwd(), "dist/cli.js");
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    SWARM_CODER_AGENT_ID: args.agentId,
-    SWARM_CODER_PARENT_PID: String(args.parentPid),
-    SWARM_CODER_ORCHESTRATOR_PID: String(args.orchestratorPid),
-    SWARM_CODER_DEPTH: String(args.depth),
+    SWARM_HARNESS_AGENT_ID: args.agentId,
+    SWARM_HARNESS_PARENT_PID: String(args.parentPid),
+    SWARM_HARNESS_ORCHESTRATOR_PID: String(args.orchestratorPid),
+    SWARM_HARNESS_DEPTH: String(args.depth),
   };
   if (args.parentToolUseId !== undefined) {
-    env.SWARM_CODER_PARENT_TOOL_USE_ID = args.parentToolUseId;
+    env.SWARM_HARNESS_PARENT_TOOL_USE_ID = args.parentToolUseId;
   }
   if (args.permissionMode !== undefined) {
-    env.SWARM_CODER_PERMISSION_MODE = args.permissionMode;
+    env.SWARM_HARNESS_PERMISSION_MODE = args.permissionMode;
   }
   if (args.testScript !== undefined) {
-    env.SWARM_CODER_TEST_SCRIPT = args.testScript;
+    env.SWARM_HARNESS_TEST_SCRIPT = args.testScript;
   }
   if (args.role !== undefined) {
-    env.SWARM_CODER_ROLE = args.role;
+    env.SWARM_HARNESS_ROLE = args.role;
   }
   if (args.allowedTools !== undefined) {
-    env.SWARM_CODER_ALLOWED_TOOLS = JSON.stringify(args.allowedTools);
+    env.SWARM_HARNESS_ALLOWED_TOOLS = JSON.stringify(args.allowedTools);
   }
   if (args.framework !== undefined) {
-    env.SWARM_CODER_FRAMEWORK = args.framework;
+    env.SWARM_HARNESS_FRAMEWORK = args.framework;
   }
-  // Intentionally NOT setting SWARM_CODER_SESSION_ID — resume is out of M1.
+  // Intentionally NOT setting SWARM_HARNESS_SESSION_ID — resume is out of M1.
 
   return spawn(
     args.nodeExecPath ?? process.execPath,

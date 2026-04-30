@@ -48,13 +48,13 @@ describe("spawnWorker", () => {
     const [_exec, _argv, opts] = spawnMocked.mock.calls[0]!;
     const env = (opts as { env: NodeJS.ProcessEnv }).env;
 
-    expect(env.SWARM_CODER_AGENT_ID).toBe("agent-abc");
-    expect(env.SWARM_CODER_DEPTH).toBe("2");
-    expect(env.SWARM_CODER_PARENT_PID).toBe("1000");
-    expect(env.SWARM_CODER_ORCHESTRATOR_PID).toBe("1001");
+    expect(env.SWARM_HARNESS_AGENT_ID).toBe("agent-abc");
+    expect(env.SWARM_HARNESS_DEPTH).toBe("2");
+    expect(env.SWARM_HARNESS_PARENT_PID).toBe("1000");
+    expect(env.SWARM_HARNESS_ORCHESTRATOR_PID).toBe("1001");
   });
 
-  it("sets SWARM_CODER_PARENT_TOOL_USE_ID when provided", () => {
+  it("sets SWARM_HARNESS_PARENT_TOOL_USE_ID when provided", () => {
     spawnWorker({
       agentId: "agent-xyz",
       depth: 1,
@@ -65,10 +65,10 @@ describe("spawnWorker", () => {
 
     const [_exec, _argv, opts] = spawnMocked.mock.calls[0]!;
     const env = (opts as { env: NodeJS.ProcessEnv }).env;
-    expect(env.SWARM_CODER_PARENT_TOOL_USE_ID).toBe("tool-use-123");
+    expect(env.SWARM_HARNESS_PARENT_TOOL_USE_ID).toBe("tool-use-123");
   });
 
-  it("does NOT set SWARM_CODER_PARENT_TOOL_USE_ID when not provided", () => {
+  it("does NOT set SWARM_HARNESS_PARENT_TOOL_USE_ID when not provided", () => {
     spawnWorker({
       agentId: "agent-xyz",
       depth: 1,
@@ -78,7 +78,7 @@ describe("spawnWorker", () => {
 
     const [_exec, _argv, opts] = spawnMocked.mock.calls[0]!;
     const env = (opts as { env: NodeJS.ProcessEnv }).env;
-    expect(env.SWARM_CODER_PARENT_TOOL_USE_ID).toBeUndefined();
+    expect(env.SWARM_HARNESS_PARENT_TOOL_USE_ID).toBeUndefined();
   });
 
   it("passes --worker and --agent-id flags in argv", () => {
