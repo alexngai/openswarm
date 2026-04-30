@@ -108,6 +108,13 @@ describe("Input component", () => {
     expect(changes.length).toBe(0);
   });
 
+  // TODO: Alt+B / Alt+F word-motion bindings move the textarea's internal
+  // cursor but fire onCursorChange (not onContentChange), so the onChange
+  // callback isn't triggered. The KEY_BINDINGS entries for word motions are
+  // wired correctly — reducer-side behaviour is covered by state.test.ts
+  // (Ctrl+Y / Ctrl+W tests). A full bun test would require the component to
+  // also wire onCursorChange, which is a separate follow-up.
+
   it("forwards arrow key events to onKey", async () => {
     const keys: string[] = [];
 

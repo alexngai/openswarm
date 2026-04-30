@@ -13,6 +13,10 @@
  *   Ctrl+K           → delete-to-line-end
  *   Ctrl+U           → delete-to-line-start
  *   Ctrl+W           → delete-word-backward
+ *   Alt+B            → word-backward  (meta = Alt/Option modifier in OpenTUI)
+ *   Alt+F            → word-forward
+ *   Alt+D            → delete-word-forward
+ *   Alt+Backspace    → delete-word-backward
  *   Arrow keys       → forwarded to onKey() for cursor + history nav
  *   Backspace/Delete → forwarded to textarea native handler
  *   printable        → forwarded to textarea native handler
@@ -94,6 +98,11 @@ const KEY_BINDINGS: KeyBinding[] = [
   { name: "k", ctrl: true, action: "delete-to-line-end" },
   { name: "u", ctrl: true, action: "delete-to-line-start" },
   { name: "w", ctrl: true, action: "delete-word-backward" },
+  // Word motions (Alt = meta modifier).
+  { name: "b", meta: true, action: "word-backward" },
+  { name: "f", meta: true, action: "word-forward" },
+  { name: "d", meta: true, action: "delete-word-forward" },
+  { name: "backspace", meta: true, action: "delete-word-backward" },
 ];
 
 export const Input: Component<InputProps> = (props) => {

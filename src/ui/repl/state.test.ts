@@ -290,6 +290,44 @@ describe("reducer — emacs keybindings", () => {
     expect(s2.input.cursor).toBe(11);
   });
 
+  it("Ctrl+Y inserts killBuffer at cursor when killBuffer is non-empty", () => {
+    const s0 = seed("hello world", 5);
+    const s1 = reduce(s0, { type: "key", key: { ctrl: true, name: "k" } });
+    // killBuffer = " world", value = "hello", cursor = 5
+    const s2 = reduce(s1, { type: "key", key: { ctrl: true, name: "y" } });
+    expect(s2.input.value).toBe("hello world");
+    expect(s2.input.cursor).toBe(11);
+  });
+
+  it("Ctrl+Y is a no-op when killBuffer is empty", () => {
+    const s0 = seed("hello", 5);
+    // No kill — killBuffer starts empty.
+    const s1 = reduce(s0, { type: "key", key: { ctrl: true, name: "y" } });
+    expect(s1.input.value).toBe("hello");
+    expect(s1.input.cursor).toBe(5);
+    expect(s1).toBe(s0); // same reference — true no-op
+  });
+
+  it("Ctrl+Y leaves killBuffer intact (idempotent yank)", () => {
+    const s0 = seed("foo bar", 7);
+    const s1 = reduce(s0, { type: "key", key: { ctrl: true, name: "w" } });
+    // killBuffer = "bar"
+    const s2 = reduce(s1, { type: "key", key: { ctrl: true, name: "y" } });
+    // killBuffer must still be "bar" after yank
+    expect(s2.input.killBuffer).toBe(s1.input.killBuffer);
+    expect(s2.input.killBuffer).toBe("bar");
+  });
+
+  it("Ctrl+W kill then Ctrl+Y restores the killed text", () => {
+    const s0 = seed("foo bar baz", 11);
+    const s1 = reduce(s0, { type: "key", key: { ctrl: true, name: "w" } });
+    expect(s1.input.value).toBe("foo bar ");
+    expect(s1.input.killBuffer).toBe("baz");
+    const s2 = reduce(s1, { type: "key", key: { ctrl: true, name: "y" } });
+    expect(s2.input.value).toBe("foo bar baz");
+    expect(s2.input.cursor).toBe(11);
+  });
+
   it("Left arrow moves cursor left (clamped at 0)", () => {
     const s0 = seed("abc", 1);
     const s1 = reduce(s0, { type: "key", key: { leftArrow: true } });
