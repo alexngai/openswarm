@@ -9,7 +9,7 @@
  */
 import { describe, it, expect } from "bun:test";
 import { testRender } from "@opentui/solid";
-import { Input } from "./input.js";
+import { Input, normalizePasteBytes } from "./input.js";
 
 describe("Input component", () => {
   it("renders without crashing", async () => {
@@ -114,6 +114,15 @@ describe("Input component", () => {
   // wired correctly — reducer-side behaviour is covered by state.test.ts
   // (Ctrl+Y / Ctrl+W tests). A full bun test would require the component to
   // also wire onCursorChange, which is a separate follow-up.
+
+  it("normalizePasteBytes converts CRLF and bare CR to LF", () => {
+    const input = "line1\r\nline2\rline3\nline4";
+    const bytes = new TextEncoder().encode(input);
+    const result = normalizePasteBytes(bytes);
+    const text = new TextDecoder("utf-8").decode(result);
+    expect(text).toBe("line1\nline2\nline3\nline4");
+    expect(text).not.toContain("\r");
+  });
 
   it("forwards arrow key events to onKey", async () => {
     const keys: string[] = [];
