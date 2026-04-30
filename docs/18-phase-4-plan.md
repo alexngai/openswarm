@@ -2,7 +2,7 @@
 
 Companion to [16-parity-plan.md § Phase 4](16-parity-plan.md). This file is the execution plan + pre-implementation design lock for Phase 4 (gaps T1, T6, T7 from [15-parity-gaps.md](15-parity-gaps.md)). Written 2026-04-30, post-Phase-3 ship.
 
-**Status:** unstarted.
+**Status:** shipped 2026-04-30 (commits f4d35ad..1df9547 + Stage D — see git log).
 
 ---
 
@@ -308,3 +308,15 @@ From [docs/16-parity-plan.md:197-200](16-parity-plan.md), refined:
 3. Phase 4 acceptance criteria met (manual smoke: type → submit → exit → relaunch → Up-arrow).
 4. Doc 15 (parity gaps) updated to mark T1, T6, T7 as ✅.
 5. Doc 18 (this file) gets a "✅ shipped" header at the top with the commit hash range.
+
+---
+
+## Definition of done — final state
+
+Confirmed shipped 2026-04-30. Each criterion from the acceptance criteria section is met:
+
+- [x] **T6 — Persistent history (Stage A):** `src/ui/history.ts` ships `loadHistory` / `appendHistoryEntry`; app hydrates on mount, appends before dispatch. File at `~/.swarm-harness/history`, 10k-entry cap, consecutive-dedup, blank-skip, multi-line SOH encoding. Unit tests in `src/ui/history.test.ts` cover all edge cases. Commits in range f4d35ad..1df9547.
+- [x] **T7 — Word motions + yank (Stage B):** `src/ui/repl-solid/input.tsx` gains KEY_BINDINGS for Alt+B/F/D/Backspace; reducer gains Ctrl+Y yank from `killBuffer`. Tests extend `state.test.ts` and `input.test.tsx`. Same commit range.
+- [x] **T1 polish — CRLF normalization (Stage C):** `src/ui/repl-solid/input.tsx` wraps `handlePaste` to normalize `\r\n` and bare `\r` to `\n` before insertion. Bun-native test confirms no `\r` artifacts after Windows-style paste. Same commit range.
+- [x] **Docs + cleanup (Stage D):** `docs/15-parity-gaps.md` marks T1/T6/T7 ✅; `docs/16-parity-plan.md` § Phase 4 gains implementation note cross-referencing this file; `docs/18-phase-4-plan.md` status updated to shipped. Commit immediately follows 1df9547.
+- [x] **Test suites green:** `npm test` (vitest, 1171+ tests) and `bun test src/ui/repl-solid/` both pass with zero failures at Stage D commit.

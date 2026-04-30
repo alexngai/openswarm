@@ -26,13 +26,13 @@ swarm-harness uses Ink/React; claw-code uses crossterm + rustyline + syntect + p
 
 | # | Gap | Status | Priority | Effort | Notes |
 |---|---|---|---|---|---|
-| T1 | Multi-line input (Shift+Enter / Ctrl+J) | ❌ | P1 | M | [input.tsx](src/ui/repl/input.tsx) is hard-coded single-line; claw uses rustyline native support. Blocks pasting multi-line prompts. |
+| T1 | Multi-line input (Shift+Enter / Ctrl+J) | ✅ | P1 | M | Phase 4 stage A/C — TextareaRenderable mounted (shift+Enter/Ctrl+J wired in Phase 0) + Phase 4 stage C CRLF normalization on paste. |
 | T2 | Markdown rendering in transcript (headings, lists, bold/italic, block quotes) | ❌ | P1 | M | Removed after `ink-markdown` ESM breakage ([04d3129](https://github.com/)). Need ESM-safe alternative or hand-rolled renderer. |
 | T3 | Syntax-highlighted code blocks | ❌ | P1 | M | claw uses `syntect` with ANSI output. Options: `cli-highlight`, `shiki` (heavy), or ship without. |
 | T4 | Tables in markdown | ❌ | P2 | S | Follows T2. |
 | T5 | Inline approval prompts (y/N) instead of `/approve`/`/deny` | ❌ | P0 | S | Current slash-command approval is jarring. claw blocks stdin with tool info + y/N inline. See [status.tsx](src/ui/repl/status.tsx). |
-| T6 | Persistent command history across sessions | ❌ | P2 | S | Claw via rustyline. Write to `~/.swarm-harness/history` with size cap. |
-| T7 | Emacs keybindings (full set) | ⚠️ | P2 | S | Partial in [state.ts](src/ui/repl/state.ts); claw sets `EditMode::Emacs` explicitly. Ink defaults vary. |
+| T6 | Persistent command history across sessions | ✅ | P2 | S | Phase 4 stage A — `src/ui/history.ts` writes to `~/.swarm-harness/history` (10k-entry cap, dedup, multi-line escape). |
+| T7 | Emacs keybindings (full set) | ✅ | P2 | S | Phase 4 stage B — Alt+B/F/D/Backspace word motions + Ctrl+Y yank wired in `input.tsx` KEY_BINDINGS + reducer. |
 | T8 | Spinner that overwrites same line and transitions to ✔/✘ | ⚠️ | P3 | XS | [spinner.tsx](src/ui/repl/spinner.tsx) exists; claw's is more polished. |
 | T9 | Slash-command dropdown menu (swarm-harness has this) | 🟦 | — | — | Nice-to-keep; claw only has silent rustyline completion. Don't regress. |
 | T10 | Compaction lifecycle UI (swarm-harness has this) | 🟦 | — | — | Don't regress. |

@@ -186,6 +186,8 @@ Port each component one-for-one. All take store state as input; write bun tests 
 
 **Gaps closed:** T1, T6, T7
 
+> **Implementation note (2026-04-30):** the scope below predates implementation; the post-investigation calls live in the [Phase 4 plan + design lock](18-phase-4-plan.md). Most notably the audit in that doc confirmed that `TextareaRenderable` already handled multi-line and most Emacs motions — Phase 4 wired only the missing edges (persistent history, word motions, yank, CRLF normalization). When scope items below conflict with the design lock, the design lock wins.
+
 **Scope:**
 1. **Multi-line input keybinding map** (T1)
    - `TextareaRenderable` from Phase 0 already supports newlines. Wire keybindings: `input_newline` → Shift+Enter + Ctrl+J; `input_submit` → Enter. Match claw's scheme.
