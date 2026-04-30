@@ -18,10 +18,28 @@
  * (doc 17 P3.Q3). Construction is lazy: the first assistant entry mounts
  * the FFI-backed style; tests that never render assistant content never
  * touch the native layer.
+ *
+ * Tree-sitter wiring (Phase 3 follow-up, supersedes the design lock's
+ * "out of scope" item): OpenTUI ships a `TreeSitterClient` with bundled
+ * WASM grammars for typescript, javascript, markdown, markdown_inline,
+ * and zig under `node_modules/@opentui/core/assets/`. Passing the client
+ * to `<markdown>` enables language-aware highlighting inside fenced code
+ * blocks (the markdown grammar's `injectionMapping.infoStringMap` routes
+ * fenced info strings → filetype). The client is lazy-init'd, fire-and-
+ * forget on `.initialize()`; if init fails we drop back to the
+ * single-color `markup.raw.block` palette.
+ *
+ * Disable via `SWARM_HARNESS_DISABLE_TREE_SITTER=1` if the worker thread
+ * causes problems (test isolation, packaging, slow init under load).
  */
 
 import { For, Show } from "solid-js";
-import { SyntaxStyle, type ThemeTokenStyle } from "@opentui/core";
+import {
+  SyntaxStyle,
+  TreeSitterClient,
+  getTreeSitterClient,
+  type ThemeTokenStyle,
+} from "@opentui/core";
 import type { TranscriptEntry } from "../repl/state.js";
 import { entryColor, theme } from "./theme.js";
 
@@ -55,6 +73,28 @@ function markdownSyntaxStyle(): SyntaxStyle {
   return _markdownSyntaxStyle;
 }
 
+// `undefined` = not yet attempted; client instance = success or pending init;
+// `null` = attempted and failed terminally — don't retry.
+let _treeSitterClient: TreeSitterClient | null | undefined = undefined;
+function treeSitterClient(): TreeSitterClient | undefined {
+  if (process.env.SWARM_HARNESS_DISABLE_TREE_SITTER === "1") return undefined;
+  if (_treeSitterClient !== undefined) return _treeSitterClient ?? undefined;
+  try {
+    const client = getTreeSitterClient();
+    // Fire-and-forget: the renderer queues highlight requests against the
+    // client and they resolve once init completes. If init throws (worker
+    // unavailable, WASM load failure, init timeout), drop to no-highlighting.
+    void client.initialize().catch(() => {
+      _treeSitterClient = null;
+    });
+    _treeSitterClient = client;
+    return client;
+  } catch {
+    _treeSitterClient = null;
+    return undefined;
+  }
+}
+
 export interface TranscriptProps {
   readonly entries: readonly TranscriptEntry[];
   /**
@@ -77,6 +117,7 @@ function UserEntry(props: { text: string }) {
 }
 
 function AssistantEntry(props: { text: string; streaming: boolean }) {
+  const tsClient = treeSitterClient();
   return (
     <Show when={props.text.length > 0}>
       <box flexDirection="column">
@@ -84,6 +125,7 @@ function AssistantEntry(props: { text: string; streaming: boolean }) {
           content={props.text}
           streaming={props.streaming}
           syntaxStyle={markdownSyntaxStyle()}
+          {...(tsClient !== undefined ? { treeSitterClient: tsClient } : {})}
         />
       </box>
     </Show>

@@ -159,10 +159,12 @@ Port each component one-for-one. All take store state as input; write bun tests 
 
 **Gaps closed:** T2, T3, T4
 
+> **Implementation note (2026-04-30):** the scope below predates implementation; the post-investigation calls live in the [Phase 3 design lock](17-parity-design-questions.md#phase-3--design-lock-2026-04-30). Most notably P3.Q1 chose `<markdown>` (structured renderer) over `<code filetype="markdown">` (highlighted source) — when scope item #1 below conflicts with the design lock, the design lock wins.
+
 **Scope:**
-1. Replace the transcript's plain-text assistant rendering with `<code filetype="markdown" streaming={true}>` from `@opentui/core`. Evidence path: [references/opencode/packages/opencode/src/cli/cmd/tui/routes/session/index.tsx:1459-1497](references/opencode/packages/opencode/src/cli/cmd/tui/routes/session/index.tsx).
-2. For fenced code blocks inside assistant messages with an explicit filetype, prefer nested `<code filetype={lang}>` for proper syntax highlighting.
-3. Evaluate the experimental `<markdown>` renderable behind opencode's `OPENCODE_EXPERIMENTAL_MARKDOWN` flag — if it handles tables/links well enough, switch. Otherwise accept syntax-highlighted-code mode as the v0 bar.
+1. Replace the transcript's plain-text assistant rendering with `<code filetype="markdown" streaming={true}>` from `@opentui/core`. Evidence path: [references/opencode/packages/opencode/src/cli/cmd/tui/routes/session/index.tsx:1459-1497](references/opencode/packages/opencode/src/cli/cmd/tui/routes/session/index.tsx). _(Superseded — see design lock P3.Q1; we ship `<markdown>` instead.)_
+2. For fenced code blocks inside assistant messages with an explicit filetype, prefer nested `<code filetype={lang}>` for proper syntax highlighting. _(Superseded — see design lock P3.Q2; the `<markdown>` renderer creates a per-block CodeRenderable internally, and Tree-sitter highlighting comes via a shared `treeSitterClient` prop.)_
+3. Evaluate the experimental `<markdown>` renderable behind opencode's `OPENCODE_EXPERIMENTAL_MARKDOWN` flag — if it handles tables/links well enough, switch. Otherwise accept syntax-highlighted-code mode as the v0 bar. _(Resolved — `<markdown>` ships as a first-class renderable in `@opentui/core@0.1.99`, no flag.)_
 4. Theme: use our existing theme tokens; pass `syntaxStyle`, `fg` props on `<code>`.
 5. Tests: golden-output tests comparing rendered frames before/after for a fixed set of message inputs (headings, code, mixed).
 
