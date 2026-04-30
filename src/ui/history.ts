@@ -53,17 +53,11 @@ export function loadHistory(filePath?: string): string[] {
     lines.pop();
   }
 
-  const result: string[] = [];
-  for (const line of lines) {
-    try {
-      // Restore escaped control chars.
-      const entry = line.replace(/\x01/g, "\n").replace(/\x02/g, "\r");
-      result.push(entry);
-    } catch {
-      // Skip lines that fail to decode (shouldn't happen with UTF-8 readFileSync).
-    }
-  }
-  return result;
+  // Restore escaped control chars per entry. String.replace can't throw on
+  // a UTF-8-decoded readFileSync result, so no per-line guard is needed.
+  return lines.map((line) =>
+    line.replace(/\x01/g, "\n").replace(/\x02/g, "\r"),
+  );
 }
 
 /**

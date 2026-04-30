@@ -124,6 +124,25 @@ describe("Input component", () => {
     expect(text).not.toContain("\r");
   });
 
+  it("normalizePasteBytes round-trips an empty paste to an empty Uint8Array", () => {
+    const result = normalizePasteBytes(new Uint8Array(0));
+    expect(result).toBeInstanceOf(Uint8Array);
+    expect(result.length).toBe(0);
+  });
+
+  it("normalizePasteBytes substitutes (does not throw on) invalid UTF-8", () => {
+    // 0xC3 0x28 is an invalid UTF-8 sequence — fatal:false maps to U+FFFD.
+    // Pasting raw binary into a textarea is abnormal; we want lossy
+    // substitution rather than an unhandled throw.
+    const bytes = new Uint8Array([0xc3, 0x28, 0x0a, 0x68, 0x69]);
+    const result = normalizePasteBytes(bytes);
+    const text = new TextDecoder("utf-8").decode(result);
+    // The replacement char should be present, plus the literal "hi".
+    expect(text).toContain("hi");
+    expect(text).toContain("\n");
+    // Did not throw — getting here is the assertion.
+  });
+
   it("forwards arrow key events to onKey", async () => {
     const keys: string[] = [];
 

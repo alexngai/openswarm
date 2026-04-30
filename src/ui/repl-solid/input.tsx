@@ -54,10 +54,17 @@ export interface InputProps {
  * Normalize paste bytes by converting Windows-style line endings (\r\n) and
  * bare carriage returns (\r) to Unix newlines (\n).
  *
+ * Decoder is explicit `{ fatal: false }` (the default): invalid UTF-8 bytes
+ * are replaced with U+FFFD rather than throwing. Pasting raw binary into a
+ * textarea is already abnormal; lossy substitution is preferable to a
+ * thrown exception that would surface as an unhandled paste error.
+ *
+ * Empty-input round-trip returns an empty Uint8Array.
+ *
  * Exported for unit testing. Used by the handlePaste wrap in handleRef().
  */
 export function normalizePasteBytes(bytes: Uint8Array): Uint8Array {
-  const text = new TextDecoder("utf-8").decode(bytes);
+  const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
   const normalized = text.replace(/\r\n?/g, "\n");
   return new TextEncoder().encode(normalized);
 }

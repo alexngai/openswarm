@@ -50,6 +50,9 @@ export function App(props: AppProps) {
   // Guard against empty results: dispatching {history: []} into the initial
   // empty-state forces a no-op re-render that breaks downstream e2e tests
   // by shifting render timing. Skip the dispatch when there's nothing new.
+  // (Specific regression: e2e.test.tsx "assistant markdown renders" — Phase
+  // 3 markdown e2e dropped the assistant entry from the captured frame when
+  // an empty hydrate-history landed between submit and text_delta.)
   onMount(() => {
     try {
       const loaded = loadHistory();
