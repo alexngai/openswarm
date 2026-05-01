@@ -13,6 +13,8 @@
  *   - Block in read-only mode: rm -rf foo → {allow:false, reason starts with [read-only]}
  *   - Path block (/etc/passwd cat): {allow:false, reason starts with [path]}
  *   - Reason field always prefixed with [submodule]
+ *   - Phase 5.5 follow-up B: emitLaneEvent wiring (bash_validation_blocked /
+ *     bash_validation_warned payloads, missing/throwing emitter resilience)
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -21,6 +23,7 @@ import { PermissionBridge } from "./bridge.js";
 import type { BashGateDeps, BashGateInput } from "./bash-gate.js";
 import type { ToolImpl } from "../tools/types.js";
 import type { PermissionDecision } from "../engine/index.js";
+import type { LaneEvent, BashValidationBlockedPayload, BashValidationWarnedPayload } from "../swarm/events.js";
 
 // ---------------------------------------------------------------------------
 // Helpers — minimal ToolImpl fixtures
@@ -208,5 +211,121 @@ describe("bashValidationGate", () => {
 
     expect(capturedPending).toBeDefined();
     expect(capturedPending!.reason).toMatch(/^\[[a-z-]+\]/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 5.5 follow-up B — emitLaneEvent wiring
+// ---------------------------------------------------------------------------
+
+describe("bashValidationGate — emitLaneEvent wiring", () => {
+  // Helper: Block-path command (cat /etc/passwd is blocked by path submodule)
+  function blockInput(): BashGateInput {
+    return bashInput("cat /etc/passwd");
+  }
+
+  // Helper: Warn-path command (rm -rf /tmp/… triggers destructive warn)
+  function warnInput(): BashGateInput {
+    return bashInput("rm -rf /tmp/test-dir", "workspace-write");
+  }
+
+  // 1. bash_validation_blocked fires with typed payload on Block path
+  it("emitLaneEvent fires bash_validation_blocked with typed payload on Block path", async () => {
+    const emitter = vi.fn<(event: LaneEvent) => void>();
+
+    await bashValidationGate(blockInput(), makeDeps({ emitLaneEvent: emitter }));
+
+    expect(emitter).toHaveBeenCalledTimes(1);
+    const event = emitter.mock.calls[0]![0];
+    expect(event.type).toBe("bash_validation_blocked");
+    expect(event.agentId).toBe("bash-gate");
+    expect(typeof event.ts).toBe("number");
+    const payload = event.payload as BashValidationBlockedPayload;
+    expect(payload.command).toBe("cat /etc/passwd");
+    expect(typeof payload.submodule).toBe("string");
+    expect(payload.submodule.length).toBeGreaterThan(0);
+    expect(typeof payload.reason).toBe("string");
+    expect(typeof payload.intent).toBe("string");
+  });
+
+  // 2. bash_validation_warned fires with decision='approved' when bridge approves
+  it("emitLaneEvent fires bash_validation_warned with decision='approved' when bridge.request approves", async () => {
+    const emitter = vi.fn<(event: LaneEvent) => void>();
+    const bridge = new PermissionBridge();
+    vi.spyOn(bridge, "request").mockResolvedValue({ allow: true });
+
+    await bashValidationGate(warnInput(), makeDeps({ bridge, emitLaneEvent: emitter }));
+
+    expect(emitter).toHaveBeenCalledTimes(1);
+    const event = emitter.mock.calls[0]![0];
+    expect(event.type).toBe("bash_validation_warned");
+    const payload = event.payload as BashValidationWarnedPayload;
+    expect(payload.decision).toBe("approved");
+    expect(payload.command).toBe("rm -rf /tmp/test-dir");
+    expect(typeof payload.submodule).toBe("string");
+    expect(typeof payload.message).toBe("string");
+    expect(typeof payload.intent).toBe("string");
+  });
+
+  // 3. bash_validation_warned fires with decision='denied' when bridge denies
+  it("emitLaneEvent fires bash_validation_warned with decision='denied' when bridge.request denies", async () => {
+    const emitter = vi.fn<(event: LaneEvent) => void>();
+    const bridge = new PermissionBridge();
+    vi.spyOn(bridge, "request").mockResolvedValue({ allow: false, reason: "user denied" });
+
+    await bashValidationGate(warnInput(), makeDeps({ bridge, emitLaneEvent: emitter }));
+
+    expect(emitter).toHaveBeenCalledTimes(1);
+    const payload = emitter.mock.calls[0]![0].payload as BashValidationWarnedPayload;
+    expect(payload.decision).toBe("denied");
+  });
+
+  // 4. bash_validation_warned fires with decision='denied' when headless EOF
+  it("emitLaneEvent fires bash_validation_warned with decision='denied' when headless EOF", async () => {
+    const emitter = vi.fn<(event: LaneEvent) => void>();
+    const fakeHeadless = vi.fn<typeof import("./headless-prompt.js").readHeadlessApproval>()
+      .mockResolvedValue({ allow: false, reason: "user denied bash: stdin EOF" });
+
+    await bashValidationGate(
+      warnInput(),
+      makeDeps({ useHeadless: true, headlessApproval: fakeHeadless, emitLaneEvent: emitter }),
+    );
+
+    expect(emitter).toHaveBeenCalledTimes(1);
+    const payload = emitter.mock.calls[0]![0].payload as BashValidationWarnedPayload;
+    expect(payload.decision).toBe("denied");
+  });
+
+  // 5. missing emitLaneEvent (undefined) doesn't throw — falls through silently
+  it("missing emitLaneEvent (undefined) doesn't throw — falls through silently", async () => {
+    // No emitLaneEvent in deps — should still return the block decision cleanly.
+    const result = await bashValidationGate(blockInput(), makeDeps());
+    expect(result).not.toBeNull();
+    expect(result!.allow).toBe(false);
+  });
+
+  // 6. emitLaneEvent that throws doesn't break the gate result
+  it("emitLaneEvent that throws doesn't break the gate result", async () => {
+    const throwingEmitter = vi.fn<(event: LaneEvent) => void>().mockImplementation(() => {
+      throw new Error("emitter boom");
+    });
+
+    // Should not throw; gate result still returned.
+    const result = await bashValidationGate(blockInput(), makeDeps({ emitLaneEvent: throwingEmitter }));
+    expect(result).not.toBeNull();
+    expect(result!.allow).toBe(false);
+  });
+
+  // 7. intent field is correctly classified in the emitted payload
+  it("intent field is correctly classified in the emitted payload", async () => {
+    const emitter = vi.fn<(event: LaneEvent) => void>();
+
+    // cat /etc/passwd → classifyCommand should return a read-like intent
+    await bashValidationGate(blockInput(), makeDeps({ emitLaneEvent: emitter }));
+
+    const payload = emitter.mock.calls[0]![0].payload as BashValidationBlockedPayload;
+    // intent must be a non-empty string (CommandIntent is a string literal union)
+    expect(typeof payload.intent).toBe("string");
+    expect(payload.intent.length).toBeGreaterThan(0);
   });
 });

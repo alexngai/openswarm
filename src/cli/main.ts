@@ -491,7 +491,17 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     // P5.Q2, P5.Q12: this is the unified gate for both SDK and Native engines.
     const bashGateResult = await bashValidationGate(
       { toolName, toolImpl, input, currentMode: currentPermissionMode },
-      { bridge: permissionBridge, useHeadless, cwd: process.cwd() },
+      {
+        bridge: permissionBridge,
+        useHeadless,
+        cwd: process.cwd(),
+        // Single-agent path: no orchestrator to receive lane events. The slot is
+        // wired here so future swarm integration can replace this with a real emit
+        // (e.g. write to the worker's stdio lane) without touching this call site.
+        emitLaneEvent: (_event) => {
+          // no-op — single-agent paths have no swarm host to receive events.
+        },
+      },
     );
     if (bashGateResult !== null) return bashGateResult;
 
