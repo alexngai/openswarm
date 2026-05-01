@@ -176,3 +176,73 @@ describe("WorkerHost lifecycle state machine", () => {
     expect((transport.notify as ReturnType<typeof vi.fn>).mock.calls.length).toBe(notifyCallsBefore);
   });
 });
+
+describe("WorkerHost public lifecycle wrappers", () => {
+  function getLaneEvents(transport: ParentTransport): Array<{ from: string; to: string }> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (transport.notify as ReturnType<typeof vi.fn>).mock.calls
+      .filter((call: any[]) => call[0] === "lane_event")
+      .map((call: any[]) => ({
+        from: (call[1] as { payload: { from: string; to: string } }).payload.from,
+        to: (call[1] as { payload: { from: string; to: string } }).payload.to,
+      }));
+  }
+
+  it("markReadyForPrompt: state becomes ready_for_prompt and a lane event fires", () => {
+    const { transport } = makeFakeTransport();
+    const host = makeHost(transport);
+
+    host.markReadyForPrompt();
+
+    expect(host.getLifecycleState()).toBe("ready_for_prompt");
+    const events = getLaneEvents(transport);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual({ from: "spawning", to: "ready_for_prompt" });
+  });
+
+  it("markRunning: fires prompt_accepted then running as separate lane events", () => {
+    const { transport } = makeFakeTransport();
+    const host = makeHost(transport);
+
+    host.markReadyForPrompt();
+    host.markRunning();
+
+    expect(host.getLifecycleState()).toBe("running");
+    const events = getLaneEvents(transport);
+    expect(events).toHaveLength(3);
+    expect(events[1]).toEqual({ from: "ready_for_prompt", to: "prompt_accepted" });
+    expect(events[2]).toEqual({ from: "prompt_accepted", to: "running" });
+  });
+
+  it("markFinished: state becomes finished after running", () => {
+    const { transport } = makeFakeTransport();
+    const host = makeHost(transport);
+
+    host.markReadyForPrompt();
+    host.markRunning();
+    host.markFinished();
+
+    expect(host.getLifecycleState()).toBe("finished");
+    const events = getLaneEvents(transport);
+    expect(events[events.length - 1]).toEqual({ from: "running", to: "finished" });
+  });
+
+  it("markFailed: state becomes failed, lane event carries failureClass and reason", () => {
+    const { transport } = makeFakeTransport();
+    const host = makeHost(transport);
+
+    host.markReadyForPrompt();
+    host.markRunning();
+    host.markFailed("panic", "engine threw");
+
+    expect(host.getLifecycleState()).toBe("failed");
+    const notifyCalls = (transport.notify as ReturnType<typeof vi.fn>).mock.calls;
+    const lastCall = notifyCalls[notifyCalls.length - 1]!;
+    expect(lastCall[0]).toBe("lane_event");
+    const payload = (lastCall[1] as { payload: Record<string, unknown> }).payload;
+    expect(payload.from).toBe("running");
+    expect(payload.to).toBe("failed");
+    expect(payload.failureClass).toBe("panic");
+    expect(payload.reason).toBe("engine threw");
+  });
+});

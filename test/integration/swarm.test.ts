@@ -107,9 +107,11 @@ describe("Scenario 2: tool-use events relayed via lane_event in script order", (
 
     // Expect lane_events in script fixture order: tool_use_start, tool_use_input,
     // tool_use_end, tool_result, text_delta, message_stop.
-    const eventTypes = laneEvents.map(
-      (e) => (e as { payload?: { type?: string } }).payload?.type,
-    );
+    // Filter out worker_lifecycle_changed events (no payload.type) — they are
+    // wired in worker-entry and expected alongside engine events.
+    const eventTypes = laneEvents
+      .map((e) => (e as { payload?: { type?: string } }).payload?.type)
+      .filter((t): t is string => t !== undefined);
 
     expect(eventTypes).toEqual([
       "tool_use_start",

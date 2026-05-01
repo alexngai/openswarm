@@ -61,6 +61,7 @@ export async function runWorkerEntry(): Promise<number> {
     depth,
     pid: process.pid,
   });
+  host.markReadyForPrompt();
   transport.startHeartbeat();
 
   // Await the run request.
@@ -71,6 +72,7 @@ export async function runWorkerEntry(): Promise<number> {
 
   // Ack the run immediately.
   transport.respond(runReq.id, { accepted: true });
+  host.markRunning();
 
   // M3a Phase 6: role overlay + allowedTools filter.
   // `SWARM_HARNESS_ROLE` names a role; we look it up in a worker-local
@@ -231,6 +233,12 @@ export async function runWorkerEntry(): Promise<number> {
         usage: usage ?? { inputTokens: 0, outputTokens: 0 },
         wallClockMs,
       };
+
+  if (result.status === "success") {
+    host.markFinished();
+  } else {
+    host.markFailed("panic", errMsg!);
+  }
 
   await transport.notify("task_result", result);
   transport.stopHeartbeat();

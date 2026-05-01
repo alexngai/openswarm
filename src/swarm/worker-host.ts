@@ -117,6 +117,32 @@ export class WorkerHost implements SwarmHost {
     return this._lifecycleState;
   }
 
+  // --- Public lifecycle wrappers (internal API — called by worker-entry) ---
+
+  /** Called once the worker_ready handshake completes and the worker is idle. */
+  markReadyForPrompt(): void {
+    this._transitionTo("ready_for_prompt");
+  }
+
+  /**
+   * Called when a "run" request arrives. Immediately pairs prompt_accepted
+   * with running — the worker accepts the prompt and starts executing it.
+   */
+  markRunning(): void {
+    this._transitionTo("prompt_accepted");
+    this._transitionTo("running");
+  }
+
+  /** Called after task_result is emitted (successful run). */
+  markFinished(): void {
+    this._transitionTo("finished");
+  }
+
+  /** Called on uncaught error or transport closure before task_result. */
+  markFailed(failureClass: FailureClass, reason: string): void {
+    this._transitionTo("failed", { failureClass, reason });
+  }
+
   private _transitionTo(
     next: WorkerLifecycleState,
     opts?: { failureClass?: FailureClass; reason?: string },

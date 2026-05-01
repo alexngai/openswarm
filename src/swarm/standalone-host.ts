@@ -158,6 +158,7 @@ export class StandaloneHost implements SwarmHost {
     };
   }
 
+  // orchestrator's own lifecycle is process lifetime; transitions are not driven
   getLifecycleState(): WorkerLifecycleState {
     return this._lifecycleState;
   }
