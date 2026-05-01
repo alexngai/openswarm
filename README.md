@@ -4,14 +4,14 @@ A TypeScript coding agent built on Anthropic's Claude Agent SDK with first-class
 
 ## Status
 
-**v0.1-ready** as of 2026-04-30. Phases 0–5.5 of the [parity plan](docs/16-parity-plan.md) are complete; Phase 6 (OpenAI OAuth) is blocked on an external dependency. See [docs/20-v0.1-launch.md](docs/20-v0.1-launch.md) for the full ship checklist.
+**v0.2-ready** as of 2026-04-30. Phases 0–5.5 of the [parity plan](docs/16-parity-plan.md) are complete plus all v0.2 deferred-item closes (Stages 2A–2G). Phase 6 (OpenAI OAuth) is blocked on an external dependency and targeted for v0.3. See [docs/20-v0.1-launch.md](docs/20-v0.1-launch.md) for the v0.1 ship checklist and [docs/21-roadmap-v0.2-to-v0.4.md](docs/21-roadmap-v0.2-to-v0.4.md) for the v0.2 definition of done.
 
 **Runtime:** Bun ≥ 1.3.8 (the OpenTUI/Solid REPL uses `bun:ffi`). A standalone compiled binary is produced via `bun build --compile` so end users don't need to install Bun separately.
 
 **What ships:**
 
 - Single-agent CLI + interactive REPL with markdown rendering, syntax-highlighted fenced code blocks, native tables, and inline y/N permission prompts.
-- Swarm orchestration: `WorkerPool`, lane events, role overlays, ancestry tracking, message inbox, role-based addressing.
+- Swarm orchestration: `WorkerPool`, lane events, role overlays, ancestry tracking, message inbox, role-based addressing. Worker state written atomically to `~/.swarm-harness/workers/<agentId>.json` on every lifecycle transition; orchestrator detects orphaned workers on startup.
 - Multi-provider: Anthropic (SDK + direct), OpenAI, xAI (Grok), Google Generative AI, DashScope (Qwen / Kimi).
 - Plugins discovered from `~/.swarm-harness/plugins/` (owned namespace) + read-only discovery of `~/.claude/plugins/` (Claude Code's namespace).
 - MCP servers (first-class client + bridge for tier-2 tools).
@@ -229,12 +229,11 @@ Each tool:
 - Can be restricted via `--permission-mode`
 - Routes through `canUseTool` for unified Block / Warn / Allow gating
 
-## Known limitations / deferred to v0.2+
+## Known limitations / deferred to v0.3+
 
-- **OpenAI ChatGPT Plus / Pro OAuth** (P4) — blocked on an external Codex endpoint spike. Direct API works via `OPENAI_API_KEY`.
+- **OpenAI ChatGPT Plus / Pro OAuth** (P4) — blocked on an external Codex endpoint spike. Direct API works via `OPENAI_API_KEY`. Targeted for v0.3.
 - **Per-server MCP failure classification** (TO2) — basic MCP bridge ships; partial-success / degraded-mode reporting is partial.
-- **Server-side token preflight** (A8) — compaction triggers are local heuristics; no `count_tokens` API call yet.
-- **Branch-lock / stale-base detection** (A2) — partial git coordination; full claw-parity audit pending.
+- **Danger-mode bash validation** — v0.2 Stage 2A reversed the original `bypassPermissions` shortcut. Bash-validation (6 submodules: read-only / destructive / mode / sed / path / semantics) now fires in all three permission modes including `danger-full-access`. Warn-level commands still prompt; Block-level commands are hard-rejected regardless of mode.
 - **Recovery recipes** (A3), **policy engine** (A4), **sandbox abstraction** (A6), **green contract** (A7) — claw has them; we don't need them yet.
 - **Cron scheduler** (PS3) — `CronRegistry` is in-memory; scheduled tasks never fire. Defer until needed.
 - **Extended slash commands** (`/ultraplan`, `/teleport`, deeper `/plan`) — could ship as plugins later.

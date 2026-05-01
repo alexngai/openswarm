@@ -3,7 +3,7 @@
 Companion to [docs/20-v0.1-launch.md](20-v0.1-launch.md). After v0.1 ships, this is the planned order of releases. Three releases, sequenced for compounding value: v0.2 closes documented gaps, v0.3 unblocks the last roadmapped phase, v0.4 makes the vision tagline real.
 
 **Authoring date:** 2026-04-30.
-**Status:** v0.2 in active planning; v0.3 + v0.4 scoped.
+**Status:** v0.2 shipped 2026-04-30 (commits `deaf038..5ba50ff` + Stage 2G — see git log); v0.3 + v0.4 scoped.
 **Anchor:** [docs/00-vision.md](00-vision.md) — "One agent is a tool. N coordinated agents is the product."
 
 ---
@@ -189,6 +189,22 @@ Six stages, sequenced for independence. Each ends in a shippable state.
 - Budget enforcement aborts a run that exceeds `--max-tokens` (verified by smoke).
 - All test suites green.
 
+## Definition of done — final state
+
+| Criterion | How it was met |
+|---|---|
+| All 13 audit items closed | Shipped: #1 (2A), #2 (2B), #4 (2D), #5 (2E), #6 (2F), #7 (2F), #8 (2F), #9 (2F), #13 (2E). Audit-completed: #3 (2C — no code changes needed, 🟦 divergent). Re-deferred with rationale: #10 (blocked on OpenTUI), #11 (band-aid sufficient), #12 (user-driven design item). |
+| Bash-validation in all 3 modes | Stage 2A dropped `bypassPermissions`; integration test `bash-validation-danger.test.ts` verifies Block under `danger-full-access`. |
+| Worker state file | Stage 2B writes `~/.swarm-harness/workers/<agentId>.json` atomically on every lifecycle transition; orchestrator startup scans for orphans. |
+| Budget enforcement | Stage 2E: `--max-tokens` and `--max-cost-usd` flags on `prompt` and `swarm run`; per-turn accounting aborts with exit code 3 and `budget_exceeded` lane event. |
+| TypedLaneEvent migration | Stage 2F: 10 more variants typed (13 total). Rolling policy documented in design lock. |
+| A8 token preflight | Stage 2F: `serverCountTokens()` in `src/engine/token-preflight.ts`; gracefully falls back to local estimate for OAuth users. |
+| D2 smoke suite | Stage 2F: audited in `docs/23-d2-smoke-audit.md`; 8 scripts / 35+ trajectories documented; gaps listed with effort estimates. |
+| T8 spinner polish | Stage 2F: `spinner.tsx` transitions to ✔/✘ for `transitionMs` ms; unit tests in `spinner.test.tsx`. |
+| Doc 15 updated | Stage 2G: rows A2, A8, D2, T8 flipped ✅; decision-log entry with all 6 stage commits. |
+| Test suites green | `tsc --noEmit` clean; `npm test` 1453+ / 0 fail; `bun test src/ui/repl-solid/` 49 / 3 / 0. |
+| README updated | Stage 2G: status bumped to v0.2-ready; `--max-tokens` / `--max-cost-usd` flags documented; danger-mode validation + worker state file noted. |
+
 ---
 
 # Release v0.3 — Phase 6 OpenAI OAuth (Fork C)
@@ -337,6 +353,6 @@ Each release should preserve the green-baseline:
 
 Updated as each release ships:
 
-- **v0.2 — released:** _(pending)_
+- **v0.2 — released:** 2026-04-30 (commits `deaf038..5ba50ff` + Stage 2G)
 - **v0.3 — released:** _(pending — gated on operator SSE spike)_
 - **v0.4 — released:** _(pending)_

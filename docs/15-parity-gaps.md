@@ -110,20 +110,16 @@ M4b work is the bulk of this section. Most gaps are "written but not shipped" ra
 
 ## Prioritized next moves (draft — iterate)
 
-Reflects gap status as of v0.1 close-out (2026-04-30):
+Reflects gap status as of v0.2 close-out (2026-04-30):
 
-**Shipped (Phases 0–5.5):** PS1, PS2, T5, T1, T2, T3, T4, T6, T7, P1, P2, P3, TO1, A1, A5.
+**Shipped (Phases 0–5.5 + v0.2):** PS1, PS2, T5, T1, T2, T3, T4, T6, T7, P1, P2, P3, TO1, A1, A5, A2, A8, D2, T8.
 
-**v0.1 ship-gates remaining:**
-1. ⚠️ **A2** — branch lock / stale-base detection. Audit needed: read what `src/swarm/git/branch-lock.ts` actually covers vs claw's three modules. Decide port vs accept-as-is. ~0.5–1d.
-2. ⚠️ **A8** — server-side token preflight via Anthropic `count_tokens`. Tightens compaction-trigger accuracy. ~0.5d, low priority.
-3. ⚠️ **TO2** — MCP lifecycle hardening (per-server failure classification). Usage-driven; only if MCP failures bite users. M effort.
-4. ⚠️ **D2** — session trajectory smoke suite audit. ~0.5d.
-5. ⚠️ **T8** — spinner polish (cosmetic, XS).
-6. ⚠️ **P5** — Anthropic API-key path without Agent SDK (edge case; most users use subscription).
+**Remaining open / partial:**
+1. ⚠️ **TO2** — MCP lifecycle hardening (per-server failure classification). Usage-driven; only if MCP failures bite users. M effort.
+2. ⚠️ **P5** — Anthropic API-key path without Agent SDK (edge case; most users use subscription).
 
 **Blocked:**
-- ⛔ **P4** — OpenAI OAuth (Phase 6 in [16-parity-plan.md](16-parity-plan.md)). Operator Codex spike not yet done. v0.1 ships without; users with `OPENAI_API_KEY` already work via direct API.
+- ⛔ **P4** — OpenAI OAuth (Phase 6 in [16-parity-plan.md](16-parity-plan.md)). Operator Codex spike not yet done. v0.2 ships without; users with `OPENAI_API_KEY` already work via direct API. Targeted for v0.3.
 
 **Defer indefinitely (per [16-parity-plan.md § Deferred](16-parity-plan.md#deferred-not-in-this-plan)):** A3, A4, A6, A7, PS3, PS4–PS6, TO3–TO5, D1.
 
@@ -131,4 +127,5 @@ Reflects gap status as of v0.1 close-out (2026-04-30):
 
 ## Decision log
 
+- **2026-04-30** — v0.2 close-out. All 13 v0.2 audit items closed (shipped, audit-completed, or re-deferred with rationale). Six stage commits: `deaf038` Stage 2A (bash-validation in danger-full-access), `46bbf42` Stage 2B (worker state file), `5f25888` Stage 2C (A2 branch-lock audit), `bce2007` Stage 2D (SDK-version baking doc note), `c9478d2` Stage 2E (two-prompt collapse + budget enforcement), `5ba50ff` Stage 2F (typed events +10 / token preflight / smoke audit / spinner polish). Rows A2, A8, D2, T8 flipped from ⚠️ → ✅.
 - **2026-04-30** — v0.1 close-out hygiene pass. T2/T3/T4/T5 flipped from ❌ → ✅ (shipped in Phases 2 + 3); PS1/PS2/P1/P2/P3 flipped from ⚠️ → ✅ (shipped in Phase 1). Rows now cite the originating phase + commit hash. "TUI decision needed" block resolved by Phase 0 substrate migration + Phase 3 design lock.
