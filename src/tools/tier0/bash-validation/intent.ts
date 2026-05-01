@@ -15,6 +15,7 @@ import {
   SYSTEM_ADMIN_COMMANDS,
   GIT_READ_ONLY_SUBCOMMANDS,
 } from "./constants.js";
+import { extractFirstCommand } from "./utils.js";
 
 /**
  * Semantic classification of a bash command's intent.
@@ -31,40 +32,6 @@ export type CommandIntent =
   | "package-management"
   | "system-admin"
   | "unknown";
-
-/**
- * Extract the first bare command from a pipeline/chain, stripping leading
- * environment variable assignments (KEY=val cmd ...).
- */
-function extractFirstCommand(command: string): string {
-  let remaining = command.trimStart();
-
-  // Skip leading KEY=value assignments.
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    const eqPos = remaining.indexOf("=");
-    if (eqPos === -1) break;
-    const beforeEq = remaining.slice(0, eqPos);
-    // Valid env var name: alphanumeric + underscore, no spaces.
-    if (
-      beforeEq.length > 0 &&
-      /^[A-Za-z0-9_]+$/.test(beforeEq)
-    ) {
-      // Skip past the value token (find next whitespace).
-      const afterEq = remaining.slice(eqPos + 1);
-      const spaceIdx = afterEq.search(/\s/);
-      if (spaceIdx === -1) {
-        // Value goes to end — no actual command.
-        return "";
-      }
-      remaining = afterEq.slice(spaceIdx).trimStart();
-      continue;
-    }
-    break;
-  }
-
-  return remaining.split(/\s+/)[0] ?? "";
-}
 
 /**
  * Classify the git command's intent by its subcommand.

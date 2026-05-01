@@ -14,27 +14,9 @@ import {
   GIT_READ_ONLY_SUBCOMMANDS,
 } from "./constants.js";
 
-const SUBMODULE = "read-only";
+import { extractFirstCommand } from "./utils.js";
 
-/** Extract the first bare command token, skipping env-var prefixes. */
-function extractFirstCommand(command: string): string {
-  let remaining = command.trimStart();
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    const eqPos = remaining.indexOf("=");
-    if (eqPos === -1) break;
-    const beforeEq = remaining.slice(0, eqPos);
-    if (beforeEq.length > 0 && /^[A-Za-z0-9_]+$/.test(beforeEq)) {
-      const afterEq = remaining.slice(eqPos + 1);
-      const spaceIdx = afterEq.search(/\s/);
-      if (spaceIdx === -1) return "";
-      remaining = afterEq.slice(spaceIdx).trimStart();
-      continue;
-    }
-    break;
-  }
-  return remaining.split(/\s+/)[0] ?? "";
-}
+const SUBMODULE = "read-only";
 
 /** Extract the command following "sudo" (skip sudo flags). */
 function extractSudoInner(command: string): string {

@@ -10,27 +10,9 @@
 import type { ValidationResult } from "./types.js";
 import { DESTRUCTIVE_PATTERNS, ALWAYS_DESTRUCTIVE_COMMANDS } from "./constants.js";
 
-const SUBMODULE = "destructive";
+import { extractFirstCommand } from "./utils.js";
 
-/** Extract the first bare command token, skipping env-var prefixes. */
-function extractFirstCommand(command: string): string {
-  let remaining = command.trimStart();
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    const eqPos = remaining.indexOf("=");
-    if (eqPos === -1) break;
-    const beforeEq = remaining.slice(0, eqPos);
-    if (beforeEq.length > 0 && /^[A-Za-z0-9_]+$/.test(beforeEq)) {
-      const afterEq = remaining.slice(eqPos + 1);
-      const spaceIdx = afterEq.search(/\s/);
-      if (spaceIdx === -1) return "";
-      remaining = afterEq.slice(spaceIdx).trimStart();
-      continue;
-    }
-    break;
-  }
-  return remaining.split(/\s+/)[0] ?? "";
-}
+const SUBMODULE = "destructive";
 
 /**
  * Warn if a command looks destructive.
