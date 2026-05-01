@@ -1,12 +1,26 @@
 # swarm-harness
 
-A TypeScript coding agent built on Anthropic's Claude Agent SDK. M0 is the atomic-unit CLI; swarm orchestration lands in M1+.
+A TypeScript coding agent built on Anthropic's Claude Agent SDK with first-class swarm-orchestration support. Multi-provider, scriptable for `--headless` runs, and shipping a Bun-native interactive REPL.
 
 ## Status
 
-**M0 (current):** Single-agent CLI with Tier 0 tools (bash, file I/O, glob, grep). No swarm orchestration, plugins, or skill loaders yet.
+**v0.1-ready** as of 2026-04-30. Phases 0–5.5 of the [parity plan](docs/16-parity-plan.md) are complete; Phase 6 (OpenAI OAuth) is blocked on an external dependency. See [docs/20-v0.1-launch.md](docs/20-v0.1-launch.md) for the full ship checklist.
 
-**Node requirement:** ≥ 18
+**Runtime:** Bun ≥ 1.3.8 (the OpenTUI/Solid REPL uses `bun:ffi`). A standalone compiled binary is produced via `bun build --compile` so end users don't need to install Bun separately.
+
+**What ships:**
+
+- Single-agent CLI + interactive REPL with markdown rendering, syntax-highlighted fenced code blocks, native tables, and inline y/N permission prompts.
+- Swarm orchestration: `WorkerPool`, lane events, role overlays, ancestry tracking, message inbox, role-based addressing.
+- Multi-provider: Anthropic (SDK + direct), OpenAI, xAI (Grok), Google Generative AI, DashScope (Qwen / Kimi).
+- Plugins discovered from `~/.swarm-harness/plugins/` (owned namespace) + read-only discovery of `~/.claude/plugins/` (Claude Code's namespace).
+- MCP servers (first-class client + bridge for tier-2 tools).
+- Skills auto-loaded from `.claude/skills/`.
+- Hooks: PreToolUse / PostToolUse / SessionStart wired through the dispatcher.
+- Persistent prompt history at `~/.swarm-harness/history` (10k cap, dedup, multi-line escape).
+- Bash-command validation (6 submodules: read-only / destructive / mode / sed / path / semantics) with an inline approval prompt for warn-level cases.
+- Worker lifecycle state machine + typed lane-event discriminated union.
+- Headless mode (`--headless`) emits structured JSONL for orchestrators / CI.
 
 ## Install
 
@@ -15,31 +29,29 @@ Clone and build from source:
 ```bash
 git clone https://github.com/alexngai/swarm-harness.git
 cd swarm-harness
-npm install
-npm run build
+bun install
+bun run build
 ```
 
-The `swarm-harness` binary is now at `dist/cli.js`. Run via:
+Output: `dist/cli.js` (Bun bundle) + `dist/swarm-harness` (standalone binary, darwin-arm64). Run via:
 
 ```bash
-node dist/cli.js --help
+bun dist/cli.js --help
+# or
+./dist/swarm-harness --help
 ```
 
-(npm publish planned for post-M0 stable releases.)
+(npm publish + multi-platform binary releases planned for post-v0.1.)
 
 ## Authentication
 
-swarm-harness does NOT manage Claude credentials. It detects what's available from your environment and uses it.
-
-Three paths:
+swarm-harness does NOT manage Claude credentials. It detects what's available from your environment and uses it. Three paths for Anthropic; the other providers use plain env-var API keys.
 
 ### 1. API key (hits API billing)
 
-Set your Anthropic API key in the environment:
-
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-node dist/cli.js "explain this codebase"
+swarm-harness "explain this codebase"
 ```
 
 Get a key at [console.anthropic.com](https://console.anthropic.com).
@@ -54,25 +66,12 @@ claude auth login
 
 This persists credentials to your system keychain (macOS/Linux) or `~/.claude/.credentials.json`. swarm-harness inherits them automatically.
 
-Then:
-
-```bash
-node dist/cli.js "refactor src/foo.ts"
-```
-
 ### 3. CI / headless (long-lived token)
-
-For non-interactive environments, mint a long-lived token via:
 
 ```bash
 claude setup-token
-```
-
-Export it:
-
-```bash
 export CLAUDE_CODE_OAUTH_TOKEN=...
-node dist/cli.js "say hello"
+swarm-harness "say hello"
 ```
 
 **Important:** Per Anthropic's Terms of Service, swarm-harness owns zero auth code. Users authenticate via Anthropic's own tools. swarm-harness only reads what's already available in your environment or keychain.
@@ -82,112 +81,108 @@ node dist/cli.js "say hello"
 ### Prompt (interactive)
 
 ```bash
-# Bare positional shorthand
-node dist/cli.js "explain this codebase"
-
-# Explicit `prompt` subcommand
-node dist/cli.js prompt "refactor src/foo.ts"
+swarm-harness "explain this codebase"
+swarm-harness prompt "refactor src/foo.ts"
 ```
 
-The agent runs in an interactive TUI (powered by ink). It can read files, edit code, run commands, search with grep, and iterate until the task is done.
+The agent runs in an interactive TUI built on OpenTUI/Solid. Markdown is rendered with syntax-highlighted fenced code blocks (TypeScript, JavaScript, Markdown, Zig out of the box via Tree-sitter). It can read files, edit code, run commands, search with grep, and iterate until the task is done. Pressing the Up arrow recalls prior prompts across sessions.
 
 ### Doctor (health check)
 
 ```bash
-node dist/cli.js doctor
+swarm-harness doctor
+swarm-harness doctor --output-format json
 ```
 
-Checks:
-1. **Auth** — detects API key, keychain, or token
-2. **Config** — validates `.swarm-harness/` directory
-3. **Install** — confirms Tier 0 tools are available
-4. **Workspace** — tests file I/O in the current directory
-
-Output format:
-
-```bash
-node dist/cli.js doctor --output-format json
-```
+Checks auth, config, install, workspace.
 
 ### Init (scaffold)
 
 ```bash
-node dist/cli.js init
+swarm-harness init
 ```
 
-Creates:
-- `.swarm-harness/` directory for session state
-- `.gitignore` entry
-- Stack-detected `CLAUDE.md` with project context (if needed)
-
-Idempotent — safe to run multiple times.
+Creates `.swarm-harness/` for session state, adds a `.gitignore` entry, drops a stack-detected `CLAUDE.md` if needed. Idempotent.
 
 ### Help and version
 
 ```bash
-node dist/cli.js help
-node dist/cli.js --version
+swarm-harness help
+swarm-harness --version
 ```
+
+### Plugin management
+
+```bash
+swarm-harness plugin list
+swarm-harness plugin install <local-path-or-spec>
+swarm-harness plugin enable <name>
+swarm-harness plugin disable <name>
+```
+
+Plugins are persisted to `~/.swarm-harness/plugins/{settings,installed}.json`. Plugins installed via Claude Code (`~/.claude/plugins/`) are discovered read-only.
+
+### Swarm run
+
+```bash
+swarm-harness swarm run tasks.jsonl --concurrency 5 --output out.jsonl
+```
+
+Fans out tasks across a worker pool with role overlays, retry policies, dead-letter handling, and lane-event telemetry.
 
 ## Flags
 
 ```
---model <id>               Model id or alias (default: claude-sonnet-4-6)
-                           Examples: sonnet, opus, grok, gpt-5, kimi
-                           See "Models & aliases" below.
+--model <id>                   Model id or alias (default: claude-sonnet-4-6)
+                               Examples: sonnet, opus, grok, gpt-5, kimi
+                               See "Models & aliases" below.
 
---resume <session-id|latest>
-                           Resume a previous session. Use `latest` to
-                           continue from the most recent run.
+--resume <session-id|latest>   Resume a previous session.
 
---permission-mode <mode>   read-only | workspace-write | danger-full-access
-                           Default: workspace-write
-                           - read-only: agent can read files, run queries,
-                             but cannot write or execute shell commands
-                           - workspace-write: read + edit files + safe commands
-                           - danger-full-access: all tools enabled
+--permission-mode <mode>       read-only | workspace-write | danger-full-access
+                               Default: workspace-write
 
---output-format <fmt>      text | json (default: text)
-                           Use json for structured parsing or CI integration
+--output-format <fmt>          text | json (default: text)
 
---headless                 Force JSONL output to stdout (no TUI)
-                           One JSON object per line; useful for orchestrators
-                           and CI/CD pipelines
+--headless                     Force JSONL output to stdout (no TUI)
 
---help, -h                 Show usage
---version, -V              Print version
+--no-plugins                   Disable plugin discovery
+--no-skills                    Disable skill discovery
+--no-mcp                       Disable MCP server discovery
+--no-hooks                     Disable hook config discovery
+
+--help, -h                     Show usage
+--version, -V                  Print version
 ```
 
 ## Examples
 
 ```bash
 # Simple query
-node dist/cli.js "what does package.json describe?"
+swarm-harness "what does package.json describe?"
 
 # Model selection
-node dist/cli.js --model opus "refactor this codebase for performance"
+swarm-harness --model opus "refactor this codebase for performance"
 
 # Resume and continue
-node dist/cli.js --resume latest "and now add tests for the changes"
+swarm-harness --resume latest "and now add tests for the changes"
 
-# Read-only mode (safe exploration)
-node dist/cli.js --permission-mode read-only "find all TypeScript errors"
+# Read-only mode (safe exploration; bash validation blocks writes)
+swarm-harness --permission-mode read-only "find all TypeScript errors"
 
 # Headless (for orchestrators)
-node dist/cli.js --headless --output-format json "list all .ts files" \
+swarm-harness --headless --output-format json "list all .ts files" \
   | jq '.[] | select(.type == "message_stop")'
 
 # Init a new workspace
-node dist/cli.js init /path/to/project
+swarm-harness init /path/to/project
 cd /path/to/project
-node dist/cli.js "set up a test suite"
+swarm-harness "set up a test suite"
 ```
 
 ## Models & aliases
 
-swarm-harness routes `--model <id>` by prefix to the matching provider transport.
-Built-in aliases (in `src/providers/aliases.ts`) resolve short names to canonical
-model ids; users can override or extend via `~/.swarm-harness/settings.json`:
+swarm-harness routes `--model <id>` by prefix to the matching provider transport. Built-in aliases (in `src/providers/aliases.ts`) resolve short names to canonical model ids; users can override or extend via `~/.swarm-harness/settings.json`:
 
 ```json
 { "aliases": { "my-fast": "gpt-4o-mini" } }
@@ -201,21 +196,17 @@ model ids; users can override or extend via `~/.swarm-harness/settings.json`:
 | `gemini-*` | Google Generative AI | `GOOGLE_GENERATIVE_AI_API_KEY` | (pass-through — e.g. `gemini-2.0-flash`) |
 | `qwen*`, `qwen/*`, `kimi*`, `kimi/*` | DashScope (OpenAI-compatible) | `DASHSCOPE_API_KEY` | `kimi` → `kimi-k2.5` |
 
-Unknown prefixes fail with `unknown model prefix`. Identity aliases (e.g.
-`grok-2 → grok-2`) are rejected as cycles — pass unaliased canonical ids
-directly.
+Unknown prefixes fail with `unknown model prefix`. Identity aliases (e.g. `grok-2 → grok-2`) are rejected as cycles — pass unaliased canonical ids directly.
 
-Run `scripts/smoke-m4b.sh --live` to smoke-test each provider with a one-turn
-"say hi" prompt against whichever of `XAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`,
-`DASHSCOPE_API_KEY` are set.
+Run `scripts/smoke-m4b.sh --live` to smoke-test each provider with a one-turn "say hi" prompt against whichever of `XAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `DASHSCOPE_API_KEY` are set.
 
-## Tools (M0)
+## Tools
 
-swarm-harness ships with eight Tier 0 tools:
+swarm-harness ships eight Tier 0 tools, plus tier-1 (skills + plugins) and tier-2 (MCP) tools auto-discovered at startup:
 
 | Tool | Purpose |
 |------|---------|
-| `bash` | Run shell commands with timeout and output truncation (16 KiB) |
+| `bash` | Run shell commands with timeout, output truncation (16 KiB), and command-string validation (6 submodules — see [bash-validation/](src/tools/tier0/bash-validation/)) |
 | `read_file` | Read file contents (up to 10 MiB) with offset/limit support |
 | `write_file` | Write or create files atomically, respecting workspace boundaries |
 | `edit_file` | Replace text in existing files with mandatory uniqueness check |
@@ -229,28 +220,32 @@ Each tool:
 - Respects workspace boundaries (no symlink escape)
 - Reports clear error messages on failure
 - Can be restricted via `--permission-mode`
+- Routes through `canUseTool` for unified Block / Warn / Allow gating
 
-## Not in M0
+## Known limitations / deferred to v0.2+
 
-These features ship later:
+- **OpenAI ChatGPT Plus / Pro OAuth** (P4) — blocked on an external Codex endpoint spike. Direct API works via `OPENAI_API_KEY`.
+- **Per-server MCP failure classification** (TO2) — basic MCP bridge ships; partial-success / degraded-mode reporting is partial.
+- **Server-side token preflight** (A8) — compaction triggers are local heuristics; no `count_tokens` API call yet.
+- **Branch-lock / stale-base detection** (A2) — partial git coordination; full claw-parity audit pending.
+- **Recovery recipes** (A3), **policy engine** (A4), **sandbox abstraction** (A6), **green contract** (A7) — claw has them; we don't need them yet.
+- **Cron scheduler** (PS3) — `CronRegistry` is in-memory; scheduled tasks never fire. Defer until needed.
+- **Extended slash commands** (`/ultraplan`, `/teleport`, deeper `/plan`) — could ship as plugins later.
+- **Tier-3 tools** (`pdf_extract`, `repl`, `powerShell`) — low value or platform-specific.
+- **Mock parity harness** (D1) — preempts no current regression; build when one bites.
 
-- **Swarm orchestration** (M1) — multi-agent coordination, task fanout, message lanes
-- **Plugins & skills** (M2) — extend agent behavior via `.claude/plugins` and `.claude/skills`
-- **MCP servers** (M2) — first-class MCP client (M0 uses the Agent SDK's built-in)
-- **Interactive REPL** (M2) — slash commands, tab completion, history
-- ~~**Multi-provider** (M4) — OpenAI, xAI, Gemini, DashScope shipped. See "Models & aliases".~~
-- **Subscription auth for other platforms** (M4) — ChatGPT Plus, Codex, etc.
-- **Full permission rule grammar** (M2) — fine-grained tool/subject filtering
+See [docs/15-parity-gaps.md](docs/15-parity-gaps.md) for the full gap tracker and [docs/16-parity-plan.md](docs/16-parity-plan.md) for the phased roadmap.
 
 ## Design & architecture
-
-See the design docs:
 
 - [Vision](docs/00-vision.md) — One agent is a tool. N coordinated agents is the product.
 - [Architecture](docs/02-architecture.md) — Engine, tools, permissions, session store
 - [Tool tiers](docs/04-tool-tiers.md) — What ships when (Tier 0–3)
-- [M0 implementation plan](docs/08-m0-plan.md) — Acceptance criteria and phases
-- [Open questions](docs/06-open-questions.md) — Design decisions and tradeoffs (including Q16 on auth)
+- [Parity plan](docs/16-parity-plan.md) — Phased execution against [docs/15-parity-gaps.md](docs/15-parity-gaps.md)
+- [Phase design locks](docs/17-parity-design-questions.md) — Per-phase pre-implementation decisions (Q1–Q18, P2.Q1–10, P3.Q1–6)
+- [Phase 4 plan](docs/18-phase-4-plan.md) — TUI polish (T1, T6, T7)
+- [Phase 5 plan](docs/19-phase-5-plan.md) — Runtime hardening (TO1, A1, A5)
+- [v0.1 launch readiness](docs/20-v0.1-launch.md) — Ship checklist
 
 Research notes live in `docs/research/` (3,300+ lines informing the design).
 
