@@ -54,15 +54,24 @@ type SDKPermissionMode =
   | "plan"
   | "dontAsk";
 
-function mapPermissionMode(mode: PermissionMode): SDKPermissionMode {
-  switch (mode) {
-    case "danger-full-access":
-      return "bypassPermissions";
-    case "read-only":
-    case "workspace-write":
-    default:
-      return "default";
-  }
+/**
+ * Always returns SDK `default` mode so canUseTool fires for every tool call,
+ * regardless of swarm-harness PermissionMode. Our PermissionEngine returns
+ * Allow for everything in danger-full-access — the SDK mode would just gate
+ * a second time. Going through canUseTool in all modes lets bash-validation
+ * (Phase 5 stage A) act as the safety floor even in danger mode.
+ *
+ * v0.2 reverses Phase 2 P2.Q10 (which mapped danger-full-access to
+ * `bypassPermissions` + `allowDangerouslySkipPermissions: true`). Rationale:
+ * v0.1 smoke surfaced that bash-validation Block / Warn never fired in
+ * danger mode, leaving destructive commands unguarded. Always going through
+ * canUseTool restores the validation gate without changing user UX for safe
+ * paths (PermissionEngine returns Allow → no prompt fires).
+ *
+ * See docs/21-roadmap-v0.2-to-v0.4.md §v0.2.Q1 for the full rationale.
+ */
+function mapPermissionMode(_mode: PermissionMode): SDKPermissionMode {
+  return "default";
 }
 
 // ---------------------------------------------------------------------------
@@ -189,10 +198,12 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
       };
     }
 
-    // 4. Permission mode + bypassPermissions safety flag.
+    // 4. Permission mode. v0.2: always SDK `default` so canUseTool fires
+    //    for every tool — bash-validation can Block/Warn in any mode (see
+    //    mapPermissionMode docstring + docs/21-roadmap-v0.2-to-v0.4.md
+    //    §v0.2.Q1). The `allowDangerouslySkipPermissions` flag is dropped
+    //    here for the same reason.
     const sdkPermissionMode = mapPermissionMode(config.permissionMode);
-    const allowDangerouslySkipPermissions =
-      sdkPermissionMode === "bypassPermissions";
 
     // 5. System prompt shape.
     //    If the caller passed an array, respect it (user-supplied boundary wins).
@@ -274,9 +285,6 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
         mcpServers: { "swarm-harness": mcpServer },
         canUseTool: sdkCanUseTool,
         permissionMode: sdkPermissionMode,
-        ...(allowDangerouslySkipPermissions && {
-          allowDangerouslySkipPermissions: true,
-        }),
         maxTurns: config.maxTurns,
         resume: config.resumeFrom?.data != null
           ? (config.resumeFrom.data as { sessionId?: string }).sessionId
