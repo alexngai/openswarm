@@ -80,11 +80,21 @@ const MAX_LINE_BYTES = 10 * 1024 * 1024; // 10 MiB
  */
 class JsonLineReader {
   private buffer = "";
+  private overflowed = false;
 
-  push(chunk: string): string[] {
+  /**
+   * Push a chunk of text. Returns parsed lines, or throws on overflow.
+   * @param onOverflow - called when the buffer exceeds MAX_LINE_BYTES so the
+   *   provider can drain active turn queues before the caller propagates the
+   *   error (Defect 6).
+   */
+  push(chunk: string, onOverflow?: () => void): string[] {
+    if (this.overflowed) return [];
     this.buffer += chunk;
     if (this.buffer.length > MAX_LINE_BYTES) {
       this.buffer = "";
+      this.overflowed = true;
+      if (onOverflow !== undefined) onOverflow();
       throw new Error(`JsonLineReader: buffer exceeded ${MAX_LINE_BYTES} bytes`);
     }
     const parts = this.buffer.split("\n");
@@ -137,6 +147,17 @@ export class CodexAppServerProvider extends EventEmitter {
   private cumulativeOutputTokens = 0;
   private cumulativeCacheReadTokens = 0;
 
+  /**
+   * Set of enqueue functions for all active runTurn() calls. Used to inject
+   * fatal error + done items when the child crashes mid-stream (Defect 3).
+   */
+  private readonly activeTurnQueues = new Set<
+    (item: { kind: "event"; event: import("../core/types.js").NormalizedEvent } | { kind: "done" }) => void
+  >();
+
+  /** Whether dispose() has been intentionally called (suppresses crash injection). */
+  private disposing = false;
+
   constructor(options: CodexAppServerOptions = {}) {
     super();
     this.options = {
@@ -182,7 +203,11 @@ export class CodexAppServerProvider extends EventEmitter {
     child.stdout.on("data", (chunk: string) => {
       let lines: string[];
       try {
-        lines = this.reader.push(chunk);
+        lines = this.reader.push(chunk, () => {
+          // Overflow: drain active turn queues with a fatal error (Defect 6).
+          this.rejectAllPending(new Error("JsonLineReader: buffer exceeded — transport broken"));
+          this.drainActiveTurnQueuesWithError("JsonLineReader: line too long — transport broken");
+        });
       } catch (err) {
         this.emit("error", err);
         return;
@@ -192,10 +217,20 @@ export class CodexAppServerProvider extends EventEmitter {
       }
     });
 
-    // Propagate process errors.
+    // Propagate process errors and drain any active turn queues (Defect 3).
     child.on("error", (err) => {
       this.rejectAllPending(err);
+      if (!this.disposing) {
+        this.drainActiveTurnQueuesWithError(`transport error: ${err.message}`);
+      }
       this.emit("error", err);
+    });
+
+    // If the child exits unexpectedly (not via dispose()), unblock active turns.
+    child.on("close", (_code, _signal) => {
+      if (!this.disposing) {
+        this.drainActiveTurnQueuesWithError("codex child process exited unexpectedly");
+      }
     });
 
     // Send initialize request.
@@ -295,6 +330,12 @@ export class CodexAppServerProvider extends EventEmitter {
       return;
     }
 
+    // Snapshot cumulative usage at turn start for per-turn delta (Defect 5).
+    const turnStartUsage = {
+      inputTokens: this.cumulativeInputTokens,
+      outputTokens: this.cumulativeOutputTokens,
+    };
+
     // Build an async queue fed by the notification listener.
     type QueueItem =
       | { kind: "event"; event: NormalizedEvent }
@@ -302,6 +343,10 @@ export class CodexAppServerProvider extends EventEmitter {
 
     const queue: QueueItem[] = [];
     let resolveWaiter: (() => void) | null = null;
+
+    // aborted flag — set true when abort fires; prevents late notifications
+    // from enqueuing into a no-longer-drained queue (Defect 1).
+    let aborted = false;
 
     function enqueue(item: QueueItem): void {
       queue.push(item);
@@ -319,8 +364,15 @@ export class CodexAppServerProvider extends EventEmitter {
       });
     }
 
+    // Register this turn's enqueue in activeTurnQueues so child crashes
+    // can unblock us (Defect 3).
+    this.activeTurnQueues.add(enqueue);
+
     // Notification listener — translates Codex events to NormalizedEvent.
     const onNotification = (frame: JsonRpcNotification): void => {
+      // Guard: if this turn was aborted, discard all late notifications (Defect 1).
+      if (aborted) return;
+
       const method = frame.method;
       const params = frame.params as Record<string, unknown>;
 
@@ -389,6 +441,9 @@ export class CodexAppServerProvider extends EventEmitter {
       if (method === "turn/completed") {
         const p = params as unknown as TurnCompletedNotification;
         if (p.threadId !== threadId) return;
+        // Also guard by turnId: ignore completions for a different turn
+        // (e.g. a late notification from an aborted prior turn).
+        if (p.turn.id !== turnId) return;
 
         if (p.turn.status === "failed" && p.turn.error !== null) {
           enqueue({
@@ -405,18 +460,17 @@ export class CodexAppServerProvider extends EventEmitter {
         }
 
         const stopReason = p.turn.status === "completed" ? "end_turn" : "error";
-        // Cumulative session totals (matches claude-agent-sdk-engine convention).
-        // Diffing successive message_stop events gives the per-turn delta.
-        const cumulative = this.getCumulativeUsage();
+        // Per-turn delta — getCumulativeUsage() returns the session total.
+        const turnDelta = {
+          inputTokens: this.cumulativeInputTokens - turnStartUsage.inputTokens,
+          outputTokens: this.cumulativeOutputTokens - turnStartUsage.outputTokens,
+        };
         enqueue({
           kind: "event",
           event: {
             type: "message_stop",
             stopReason,
-            usage: {
-              inputTokens: cumulative.inputTokens,
-              outputTokens: cumulative.outputTokens,
-            },
+            usage: turnDelta,
           },
         });
         enqueue({ kind: "done" });
@@ -445,10 +499,18 @@ export class CodexAppServerProvider extends EventEmitter {
 
     this.on("notification", onNotification);
 
-    // Abort handler.
+    // Abort handler (Defect 1): set aborted and remove listener immediately
+    // so no microtask-late notifications can sneak through after abort.
+    // We do NOT reject unrelated pending entries — only the current turn's
+    // turn/interrupt request is fire-and-forget so it doesn't pollute the map
+    // (sendTurnInterrupt already wraps in try/catch and ignores rejections).
     let abortHandler: (() => void) | null = null;
     if (signal !== undefined) {
       abortHandler = () => {
+        aborted = true;
+        // Remove listener immediately — not just in finally — to prevent a
+        // microtask-queued turn/completed from firing after we're done.
+        this.off("notification", onNotification);
         void this.sendTurnInterrupt(threadId, turnId);
         enqueue({
           kind: "event",
@@ -473,6 +535,7 @@ export class CodexAppServerProvider extends EventEmitter {
         }
       }
     } finally {
+      this.activeTurnQueues.delete(enqueue);
       this.off("notification", onNotification);
       if (signal !== undefined && abortHandler !== null) {
         signal.removeEventListener("abort", abortHandler);
@@ -538,13 +601,12 @@ export class CodexAppServerProvider extends EventEmitter {
     const child = this.child;
     if (child === null) return;
     this.child = null;
+    this.disposing = true;
 
     // Reject any in-flight requests.
     this.rejectAllPending(new Error("CodexAppServerProvider: disposed"));
 
     return new Promise<void>((resolve) => {
-      child.once("close", () => resolve());
-
       // Close stdin to signal EOF to the server.
       if (child.stdin !== null) {
         child.stdin.end();
@@ -555,8 +617,10 @@ export class CodexAppServerProvider extends EventEmitter {
         child.kill("SIGKILL");
       }, 5_000);
 
+      // Single close listener: cancel the kill timer then resolve (Defect 2).
       child.once("close", () => {
         clearTimeout(killTimer);
+        resolve();
       });
     });
   }
@@ -632,5 +696,22 @@ export class CodexAppServerProvider extends EventEmitter {
       entry.reject(err);
     }
     this.pending.clear();
+  }
+
+  /**
+   * Inject a fatal error event + done sentinel into every active runTurn()
+   * queue. Used when the child crashes mid-stream (Defect 3) or when the
+   * line reader overflows (Defect 6).
+   */
+  private drainActiveTurnQueuesWithError(message: string): void {
+    const errorEvent: NormalizedEvent = {
+      type: "error",
+      error: { code: "transport", message, retryable: false },
+    };
+    for (const enqueue of this.activeTurnQueues) {
+      enqueue({ kind: "event", event: errorEvent });
+      enqueue({ kind: "done" });
+    }
+    this.activeTurnQueues.clear();
   }
 }

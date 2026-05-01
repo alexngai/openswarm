@@ -92,6 +92,8 @@ export class CodexFrameworkEngine implements AgentEngine {
   private started = false;
   private threadId: string | undefined;
   private cumulativeUsage: Usage = { inputTokens: 0, outputTokens: 0 };
+  /** Set to true when any error event is yielded. Subsequent run() calls fail fast (Defect 4). */
+  private dead = false;
 
   constructor(opts: CodexFrameworkEngineOptions = {}) {
     if (opts.providerFactory !== undefined) {
@@ -111,6 +113,21 @@ export class CodexFrameworkEngine implements AgentEngine {
   }
 
   async *run(config: RunConfig): AsyncIterable<NormalizedEvent> {
+    // Fail fast if a previous turn errored — the engine is in a failed state
+    // and the Codex thread may be unusable (Defect 4).
+    if (this.dead) {
+      yield {
+        type: "error",
+        error: {
+          code: "invalid_request",
+          message:
+            "engine is in a failed state — dispose and create a new CodexFrameworkEngine to continue",
+          retryable: false,
+        },
+      };
+      return;
+    }
+
     if (config.resumeFrom !== undefined) {
       yield {
         type: "error",
@@ -133,6 +150,7 @@ export class CodexFrameworkEngine implements AgentEngine {
         this.threadId = threadId;
         this.started = true;
       } catch (err) {
+        this.dead = true;
         yield {
           type: "error",
           error: {
@@ -155,9 +173,13 @@ export class CodexFrameworkEngine implements AgentEngine {
         // sticky default otherwise.
         ...(isCodexCompatibleModel(config.model) ? { model: config.model } : {}),
       })) {
+        if (event.type === "error") {
+          this.dead = true;
+        }
         yield event;
       }
     } catch (err) {
+      this.dead = true;
       yield {
         type: "error",
         error: {

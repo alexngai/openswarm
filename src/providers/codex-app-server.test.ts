@@ -621,6 +621,184 @@ describe("CodexAppServerProvider — Stage 3B", () => {
   });
 
   // -------------------------------------------------------------------------
+  // Test 3B-D1: abort mid-stream then immediately start second turn — no
+  // stale data from first turn corrupts the second (Defect 1).
+  // -------------------------------------------------------------------------
+
+  it("abort mid-stream: second runTurn is not corrupted by stale first-turn data", async () => {
+    const provider = await bootProvider(pair, spawnMock);
+
+    const controller = new AbortController();
+
+    // First turn — start it, then abort before turn/completed arrives.
+    const gen1 = provider.runTurn("t1", "first", { signal: controller.signal });
+    const events1: NormalizedEvent[] = [];
+    const drain1 = (async () => {
+      for await (const ev of gen1) events1.push(ev);
+    })();
+
+    await new Promise<void>((r) => setImmediate(r));
+    // Respond to turn/start (id:2).
+    pair.emitLine({ id: 2, result: { turn: { id: "turn1", items: [], status: "inProgress", error: null } } });
+    await new Promise<void>((r) => setImmediate(r));
+
+    // Abort the first turn.
+    controller.abort();
+    await new Promise<void>((r) => setImmediate(r));
+
+    // Respond to the turn/interrupt request (id:3) that abort sends, so its
+    // pending entry is resolved and doesn't linger in the map.
+    pair.emitLine({ id: 3, result: { ok: true } });
+    await new Promise<void>((r) => setImmediate(r));
+    await drain1;
+
+    const errorEvent1 = events1.find((e) => e.type === "error");
+    expect(errorEvent1).toBeDefined();
+
+    // Now immediately start a second turn on the same provider.
+    const gen2 = provider.runTurn("t1", "second");
+    const events2: NormalizedEvent[] = [];
+    const drain2 = (async () => {
+      for await (const ev of gen2) events2.push(ev);
+    })();
+
+    await new Promise<void>((r) => setImmediate(r));
+    // turn/interrupt consumed id:3, so turn/start for turn2 gets id:4.
+    pair.emitLine({ id: 4, result: { turn: { id: "turn2", items: [], status: "inProgress", error: null } } });
+    await new Promise<void>((r) => setImmediate(r));
+
+    // Emit a late turn/completed for the FIRST turn — should be ignored by turn2.
+    pair.emitLine({ method: "turn/completed", params: { threadId: "t1", turn: { id: "turn1", items: [], status: "completed", error: null } } });
+    await new Promise<void>((r) => setImmediate(r));
+
+    // Emit a delta for turn2 — should arrive normally.
+    pair.emitLine({ method: "item/agentMessage/delta", params: { threadId: "t1", turnId: "turn2", itemId: "i1", delta: "ok" } });
+    await new Promise<void>((r) => setImmediate(r));
+
+    // Complete turn2 properly.
+    pair.emitLine({ method: "turn/completed", params: { threadId: "t1", turn: { id: "turn2", items: [], status: "completed", error: null } } });
+    await new Promise<void>((r) => setImmediate(r));
+
+    await drain2;
+
+    // turn2 should have received the delta and message_stop, NOT a spurious done from turn1.
+    const deltas2 = events2.filter((e) => e.type === "text_delta") as Array<{ type: "text_delta"; text: string }>;
+    expect(deltas2).toHaveLength(1);
+    expect(deltas2[0]!.text).toBe("ok");
+    const stop2 = events2.find((e) => e.type === "message_stop");
+    expect(stop2).toBeDefined();
+
+    await provider.dispose();
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 3B-D3: child crash mid-stream — iterator yields error then ends
+  // (Defect 3).
+  // -------------------------------------------------------------------------
+
+  it("child crash mid-stream: runTurn yields transport error then ends", async () => {
+    const provider = await bootProvider(pair, spawnMock);
+
+    const gen = provider.runTurn("t1", "prompt");
+    const events: NormalizedEvent[] = [];
+    const drain = (async () => {
+      for await (const ev of gen) events.push(ev);
+    })();
+
+    await new Promise<void>((r) => setImmediate(r));
+    // turn/start response.
+    pair.emitLine({ id: 2, result: { turn: { id: "turn1", items: [], status: "inProgress", error: null } } });
+    await new Promise<void>((r) => setImmediate(r));
+
+    // Kill the child process unexpectedly (emit close without dispose).
+    pair.child.emit("close", 1, null);
+    await new Promise<void>((r) => setImmediate(r));
+
+    await drain;
+
+    const errorEvent = events.find((e) => e.type === "error");
+    expect(errorEvent).toBeDefined();
+    expect(
+      (errorEvent as { type: "error"; error: { message: string } }).error.message,
+    ).toContain("exited unexpectedly");
+    // Iterator must have ended (drain completed).
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 3B-D5: message_stop.usage is per-turn delta, not cumulative
+  // (Defect 5).
+  // -------------------------------------------------------------------------
+
+  it("message_stop.usage reports per-turn delta, not session cumulative", async () => {
+    const provider = await bootProvider(pair, spawnMock);
+
+    // Turn 1: 80 input, 20 output tokens.
+    const gen1 = provider.runTurn("t1", "prompt1");
+    const events1: NormalizedEvent[] = [];
+    const drain1 = (async () => { for await (const ev of gen1) events1.push(ev); })();
+    await new Promise<void>((r) => setImmediate(r));
+    pair.emitLine({ id: 2, result: { turn: { id: "turn1", items: [], status: "inProgress", error: null } } });
+    await new Promise<void>((r) => setImmediate(r));
+    pair.emitLine({
+      method: "thread/tokenUsage/updated",
+      params: {
+        threadId: "t1", turnId: "turn1",
+        tokenUsage: {
+          total: { totalTokens: 100, inputTokens: 80, cachedInputTokens: 0, outputTokens: 20, reasoningOutputTokens: 0 },
+          last: { totalTokens: 100, inputTokens: 80, cachedInputTokens: 0, outputTokens: 20, reasoningOutputTokens: 0 },
+          modelContextWindow: 258400,
+        },
+      },
+    });
+    await new Promise<void>((r) => setImmediate(r));
+    pair.emitLine({ method: "turn/completed", params: { threadId: "t1", turn: { id: "turn1", items: [], status: "completed", error: null } } });
+    await new Promise<void>((r) => setImmediate(r));
+    await drain1;
+
+    const stop1 = events1.find((e) => e.type === "message_stop") as { type: "message_stop"; usage: { inputTokens: number; outputTokens: number } } | undefined;
+    expect(stop1).toBeDefined();
+    // Per-turn delta for turn1: 80 in, 20 out.
+    expect(stop1!.usage.inputTokens).toBe(80);
+    expect(stop1!.usage.outputTokens).toBe(20);
+
+    // Turn 2: 40 more input, 10 more output tokens.
+    const gen2 = provider.runTurn("t1", "prompt2");
+    const events2: NormalizedEvent[] = [];
+    const drain2 = (async () => { for await (const ev of gen2) events2.push(ev); })();
+    await new Promise<void>((r) => setImmediate(r));
+    pair.emitLine({ id: 3, result: { turn: { id: "turn2", items: [], status: "inProgress", error: null } } });
+    await new Promise<void>((r) => setImmediate(r));
+    pair.emitLine({
+      method: "thread/tokenUsage/updated",
+      params: {
+        threadId: "t1", turnId: "turn2",
+        tokenUsage: {
+          total: { totalTokens: 50, inputTokens: 40, cachedInputTokens: 0, outputTokens: 10, reasoningOutputTokens: 0 },
+          last: { totalTokens: 50, inputTokens: 40, cachedInputTokens: 0, outputTokens: 10, reasoningOutputTokens: 0 },
+          modelContextWindow: 258400,
+        },
+      },
+    });
+    await new Promise<void>((r) => setImmediate(r));
+    pair.emitLine({ method: "turn/completed", params: { threadId: "t1", turn: { id: "turn2", items: [], status: "completed", error: null } } });
+    await new Promise<void>((r) => setImmediate(r));
+    await drain2;
+
+    const stop2 = events2.find((e) => e.type === "message_stop") as { type: "message_stop"; usage: { inputTokens: number; outputTokens: number } } | undefined;
+    expect(stop2).toBeDefined();
+    // Per-turn delta for turn2 only: 40 in, 10 out (not cumulative 120/30).
+    expect(stop2!.usage.inputTokens).toBe(40);
+    expect(stop2!.usage.outputTokens).toBe(10);
+
+    // Cumulative stays at 120 in, 30 out.
+    const cumulative = provider.getCumulativeUsage();
+    expect(cumulative.inputTokens).toBe(120);
+    expect(cumulative.outputTokens).toBe(30);
+
+    await provider.dispose();
+  });
+
+  // -------------------------------------------------------------------------
   // Test 3B-9: Fixture replay — handshake-and-turn.jsonl
   // -------------------------------------------------------------------------
 

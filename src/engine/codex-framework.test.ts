@@ -185,6 +185,43 @@ describe("CodexFrameworkEngine", () => {
     });
   });
 
+  describe("dead engine: run() after error yields dead-engine error without spawning (Defect 4)", () => {
+    it("yields dead-engine error on second run() after first turn errored", async () => {
+      const mock = makeMockProvider({
+        runTurn: vi.fn().mockReturnValue(
+          (async function* () {
+            yield { type: "error", error: { code: "transport", message: "connection refused", retryable: false } } as NormalizedEvent;
+            yield { type: "message_stop", stopReason: "error", usage: { inputTokens: 0, outputTokens: 0 } } as NormalizedEvent;
+          })(),
+        ),
+      });
+      const engine = new CodexFrameworkEngine({
+        providerFactory: () => mock as unknown as CodexAppServerProvider,
+      });
+
+      const events1: NormalizedEvent[] = [];
+      for await (const ev of engine.run(makeConfig({ prompt: "turn1" }))) {
+        events1.push(ev);
+      }
+      // First run yields the error event.
+      expect(events1.some((e) => e.type === "error")).toBe(true);
+
+      // Second run — engine is dead, no new spawn or runTurn call.
+      const events2: NormalizedEvent[] = [];
+      for await (const ev of engine.run(makeConfig({ prompt: "turn2" }))) {
+        events2.push(ev);
+      }
+      expect(events2).toHaveLength(1);
+      expect(events2[0]!.type).toBe("error");
+      const errEvent = events2[0] as { type: "error"; error: { code: string; message: string } };
+      expect(errEvent.error.code).toBe("invalid_request");
+      expect(errEvent.error.message).toContain("failed state");
+
+      // runTurn was only called once (for the first turn).
+      expect(mock.runTurn).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe("getCumulativeUsage delegates to the provider", () => {
     it("returns zeros before any run()", () => {
       const mock = makeMockProvider();

@@ -17,8 +17,11 @@ import * as fs from "node:fs/promises";
 import * as fsc from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { spawnSync } from "node:child_process";
+import { execFile as execFileCb } from "node:child_process";
+import { promisify } from "node:util";
 import { detectAuth } from "../auth/status.js";
+
+const execFile = promisify(execFileCb);
 
 // ---------------------------------------------------------------------------
 // Types
@@ -208,39 +211,40 @@ async function checkInstall(): Promise<CheckResult> {
   }
 }
 
-function checkCodexCli(): CheckResult {
+async function checkCodexCli(): Promise<CheckResult> {
   const warnResult: CheckResult = {
     name: "codex-cli",
     status: "warn",
     message:
       "Install via 'npm install -g @openai/codex' to enable --framework codex-chatgpt mode.",
   };
+
+  let version: string;
   try {
-    const result = spawnSync("codex", ["--version"], { stdio: "pipe", encoding: "utf8" });
-    if (
-      result === undefined
-      || result === null
-      || result.error !== undefined
-      || result.status !== 0
-    ) {
-      return warnResult;
-    }
-    const stdout = typeof result.stdout === "string" ? result.stdout : String(result.stdout ?? "");
-    const version = stdout.trim().split("\n")[0] ?? "";
-    const whichResult = spawnSync("which", ["codex"], { stdio: "pipe", encoding: "utf8" });
-    const whichStdout =
-      whichResult !== undefined && whichResult !== null && typeof whichResult.stdout === "string"
-        ? whichResult.stdout
-        : "";
-    const codexPath = whichStdout.trim();
-    return {
-      name: "codex-cli",
-      status: "pass",
-      message: `codex CLI ${version} found at ${codexPath}`,
-    };
+    const { stdout } = await execFile("codex", ["--version"], { timeout: 2000 });
+    version = stdout.trim().split("\n")[0] ?? "";
+    if (version === "") return warnResult;
   } catch {
     return warnResult;
   }
+
+  // Resolve path — use `where` on win32, `which` elsewhere (Defect 7).
+  const whichCmd = process.platform === "win32" ? "where" : "which";
+  let codexPath = "";
+  try {
+    const { stdout } = await execFile(whichCmd, ["codex"], { timeout: 2000 });
+    codexPath = stdout.trim();
+  } catch {
+    // Path resolution failure is non-fatal — still report the version.
+  }
+
+  return {
+    name: "codex-cli",
+    status: "pass",
+    message: codexPath !== ""
+      ? `codex CLI ${version} found at ${codexPath}`
+      : `codex CLI ${version} found`,
+  };
 }
 
 async function checkWorkspace(cwd: string): Promise<CheckResult> {
@@ -271,7 +275,7 @@ export async function runDoctor(
     checkConfig(cwd),
     checkInstall(),
     checkWorkspace(cwd),
-    Promise.resolve(checkCodexCli()),
+    checkCodexCli(),
   ]);
 
   const overall: "pass" | "fail" = checks.some((c) => c.status === "fail")

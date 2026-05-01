@@ -8,24 +8,26 @@ vi.mock("../auth/status.js", () => ({
   detectAuth: vi.fn(),
 }));
 
-// Mock spawnSync so codex-cli check can be exercised under controlled
-// conditions. Default returns ENOENT so existing tests (which don't care
-// about codex-cli) get a `warn` status that doesn't break overall checks.
-// Using vi.hoisted because vi.mock factories hoist above const declarations.
-const { spawnSyncMock } = vi.hoisted(() => ({
-  spawnSyncMock: vi.fn(() => ({
-    pid: -1,
-    status: null,
-    signal: null,
-    output: [],
-    stdout: "",
-    stderr: "",
-    error: Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
-  })),
+// Mock execFile so codex-cli check can be exercised under controlled
+// conditions. Default rejects with ENOENT so existing tests (which don't
+// care about codex-cli) get a `warn` status that doesn't break overall
+// checks. Using vi.hoisted because vi.mock factories hoist above const
+// declarations.
+const { execFileMock } = vi.hoisted(() => ({
+  execFileMock: vi.fn(
+    (
+      _cmd: string,
+      _args: string[],
+      _opts: object,
+      cb: (err: Error | null, result: { stdout: string; stderr: string }) => void,
+    ) => {
+      cb(Object.assign(new Error("ENOENT"), { code: "ENOENT" }), { stdout: "", stderr: "" });
+    },
+  ),
 }));
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
-  return { ...actual, spawnSync: spawnSyncMock };
+  return { ...actual, execFile: execFileMock };
 });
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -360,15 +362,16 @@ describe("runDoctor", () => {
   // ---------------------------------------------------------------------------
 
   it("codex-cli check: warn when codex binary is absent", async () => {
-    spawnSyncMock.mockReturnValue({
-      pid: -1,
-      status: null,
-      signal: null,
-      output: [],
-      stdout: "",
-      stderr: "",
-      error: Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
-    });
+    execFileMock.mockImplementation(
+      (
+        _cmd: string,
+        _args: string[],
+        _opts: object,
+        cb: (err: Error | null, result: { stdout: string; stderr: string }) => void,
+      ) => {
+        cb(Object.assign(new Error("ENOENT"), { code: "ENOENT" }), { stdout: "", stderr: "" });
+      },
+    );
     try {
       const detectAuth = await getDetectAuth();
       detectAuth.mockResolvedValue({ state: "env-api-key", source: "ANTHROPIC_API_KEY" });
@@ -393,34 +396,26 @@ describe("runDoctor", () => {
       expect(codexCheck.status).toBe("warn");
       expect(codexCheck.message).toContain("npm install -g @openai/codex");
     } finally {
-      spawnSyncMock.mockReset();
+      execFileMock.mockReset();
     }
   });
 
   it("codex-cli check: pass with version when codex binary is present", async () => {
-    spawnSyncMock.mockImplementation(((cmd: string) => {
-      if (cmd === "codex") {
-        return {
-          pid: 12345,
-          status: 0,
-          signal: null,
-          output: [],
-          stdout: "codex-cli 0.98.0\n",
-          stderr: "",
-          error: undefined,
-        };
-      }
-      // which codex
-      return {
-        pid: 12346,
-        status: 0,
-        signal: null,
-        output: [],
-        stdout: "/usr/local/bin/codex\n",
-        stderr: "",
-        error: undefined,
-      };
-    }) as never);
+    execFileMock.mockImplementation(
+      (
+        cmd: string,
+        _args: string[],
+        _opts: object,
+        cb: (err: Error | null, result: { stdout: string; stderr: string }) => void,
+      ) => {
+        if (cmd === "codex") {
+          cb(null, { stdout: "codex-cli 0.98.0\n", stderr: "" });
+        } else {
+          // which/where codex
+          cb(null, { stdout: "/usr/local/bin/codex\n", stderr: "" });
+        }
+      },
+    );
     try {
       const detectAuth = await getDetectAuth();
       detectAuth.mockResolvedValue({ state: "env-api-key", source: "ANTHROPIC_API_KEY" });
@@ -446,7 +441,7 @@ describe("runDoctor", () => {
       expect(codexCheck.message).toContain("codex-cli 0.98.0");
       expect(codexCheck.message).toContain("/usr/local/bin/codex");
     } finally {
-      spawnSyncMock.mockReset();
+      execFileMock.mockReset();
     }
   });
 });
