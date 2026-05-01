@@ -207,6 +207,27 @@ Unknown prefixes fail with `unknown model prefix`. Identity aliases (e.g. `grok-
 
 Run `scripts/smoke-m4b.sh --live` to smoke-test each provider with a one-turn "say hi" prompt against whichever of `XAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `DASHSCOPE_API_KEY` are set.
 
+### `--framework codex-chatgpt` mode
+
+Delegates the agent loop to the locally-installed Codex CLI binary via its App Server (JSON-RPC over stdio). Uses your ChatGPT Plus/Pro subscription quota rather than an API key.
+
+**Prerequisites:**
+
+```bash
+npm install -g @openai/codex
+codex login
+```
+
+**Example invocation:**
+
+```bash
+swarm-harness --framework codex-chatgpt --model gpt-4o "explain this codebase"
+```
+
+Swarm-harness spawns `codex app-server`, performs the JSON-RPC handshake, starts a thread, and streams `NormalizedEvent`s back through the standard pipeline (headless JSONL, TUI, etc.). Auth is owned entirely by `codex login`; swarm-harness holds zero OAuth credentials in this mode.
+
+For design detail see [docs/24-phase-6-codex-app-server-plan.md](docs/24-phase-6-codex-app-server-plan.md).
+
 ## Tools
 
 swarm-harness ships eight Tier 0 tools, plus tier-1 (skills + plugins) and tier-2 (MCP) tools auto-discovered at startup:

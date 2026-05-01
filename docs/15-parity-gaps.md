@@ -81,7 +81,7 @@ M4b work is the bulk of this section. Most gaps are "written but not shipped" ra
 | P1 | xAI (Grok) transport + routing | ✅ | P1 | S | Phase 1 stage 4 (`f1ce7f6`) — alias table (`grok` → `grok-3`, `grok-mini`). Provider live via `--model grok` against `XAI_API_KEY`. Documented in README §Models & aliases. |
 | P2 | Google Generative AI transport + routing | ✅ | P1 | S | Phase 1 — provider live via `--model gemini-*` against `GOOGLE_GENERATIVE_AI_API_KEY` (pass-through aliases). Documented in README §Models & aliases. |
 | P3 | DashScope / Qwen transport + 6 MiB preflight | ✅ | P2 | S | Phase 1 stage 4 — alias `kimi` → `kimi-k2.5`. Provider live via `--model qwen*`/`--model kimi*` against `DASHSCOPE_API_KEY`. Smoke via `scripts/smoke-m4b.sh --live`. |
-| P4 | OpenAI OAuth (ChatGPT Plus/Pro → Codex endpoint) | ⚠️ | P1 | M | M4b Phase 4 staged. Blocked on operator Codex spike. |
+| P4 | OpenAI OAuth (ChatGPT Plus/Pro → Codex endpoint) | ✅ | P1 | M | Phase 6 v0.3 — App Server JSON-RPC integration shipped ([docs/24-phase-6-codex-app-server-plan.md](24-phase-6-codex-app-server-plan.md)). |
 | P5 | Anthropic API-key path without Agent SDK | ⚠️ | P2 | S | Currently Max subscription → SDK; direct API key → Vercel. Confirm feature parity across paths. |
 
 ---

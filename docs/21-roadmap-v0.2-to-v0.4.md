@@ -226,14 +226,16 @@ Six stages, sequenced for independence. Each ends in a shippable state.
 
 ## Stage breakdown (rewritten — see doc 24 for full detail)
 
-| Stage | What | Estimate |
-|---|---|---|
-| **3.0** | Local Codex App Server JSON-RPC spike. Capture handshake + one-turn events to `test/fixtures/codex-app-server/`. | 0.25d |
-| **3A** | `CodexAppServerProvider` skeleton — spawn binary, JSON-RPC framing, lifecycle. | 0.5d |
-| **3B** | Agent thread + event translation. Map Codex JSON-RPC notifications → `NormalizedEvent` discriminated union. | 0.75d |
-| **3C** | CLI + routing wiring. Remove the "blocked" stub at `src/cli/main.ts:388`. Login subcommand redirects to `codex login`. | 0.25d |
-| **3D** | Tests + docs. 6+ tests against captured fixtures. Update doc 15 row P4 ✅, README, doc 16, doc 06 Q20, doc 14 § Phase 5 (mark superseded), this section. | 0.5d |
-| **3E** | Live smoke + tag. Operator-driven verification. Bump package.json to 0.3.0. Tag v0.3. | 0.25d |
+**Stages 3.0–3D shipped 2026-05-01.**
+
+| Stage | What | Estimate | Status |
+|---|---|---|---|
+| **3.0** | Local Codex App Server JSON-RPC spike. Capture handshake + one-turn events to `test/fixtures/codex-app-server/`. | 0.25d | ✅ |
+| **3A** | `CodexAppServerProvider` skeleton — spawn binary, JSON-RPC framing, lifecycle. | 0.5d | ✅ |
+| **3B** | Agent thread + event translation. Map Codex JSON-RPC notifications → `NormalizedEvent` discriminated union. | 0.75d | ✅ |
+| **3C** | CLI + routing wiring. Remove the "blocked" stub at `src/cli/main.ts:388`. Login subcommand redirects to `codex login`. | 0.25d | ✅ |
+| **3D** | Tests + docs. 6+ tests against captured fixtures. Update doc 15 row P4 ✅, README, doc 16, doc 06 Q20, doc 14 § Phase 5 (mark superseded), this section. | 0.5d | ✅ |
+| **3E** | Live smoke + tag. Operator-driven verification. Bump package.json to 0.3.0. Tag v0.3. | 0.25d | pending |
 
 ## What changed from the prior plan
 

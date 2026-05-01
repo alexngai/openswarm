@@ -1,4 +1,9 @@
 /**
+ * @deprecated since v0.3. The codex-chatgpt provider now delegates auth
+ * entirely to `codex login` via the Codex App Server (JSON-RPC over stdio).
+ * This module is retained for historical record; physical removal is targeted
+ * for v0.4. See docs/24-phase-6-codex-app-server-plan.md for the new design.
+ *
  * OpenAIOAuthAuth — OAuth 2.0 + PKCE login for ChatGPT Plus/Pro via the
  * Codex App Server endpoint.
  *

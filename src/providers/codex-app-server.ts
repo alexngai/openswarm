@@ -405,12 +405,18 @@ export class CodexAppServerProvider extends EventEmitter {
         }
 
         const stopReason = p.turn.status === "completed" ? "end_turn" : "error";
+        // Cumulative session totals (matches claude-agent-sdk-engine convention).
+        // Diffing successive message_stop events gives the per-turn delta.
+        const cumulative = this.getCumulativeUsage();
         enqueue({
           kind: "event",
           event: {
             type: "message_stop",
             stopReason,
-            usage: { inputTokens: 0, outputTokens: 0 },
+            usage: {
+              inputTokens: cumulative.inputTokens,
+              outputTokens: cumulative.outputTokens,
+            },
           },
         });
         enqueue({ kind: "done" });
