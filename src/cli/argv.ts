@@ -62,6 +62,18 @@ export interface CommonOpts {
    * and exit 0 before running any turn. For smoke tests only — not in --help.
    */
   readonly dumpEngine?: boolean;
+  /**
+   * Maximum total tokens (input + output + cache) for the entire run.
+   * On exceed, the engine is aborted and the process exits with code 3.
+   * Applies to single-agent prompt runs; swarm uses aggregate across workers.
+   */
+  readonly maxTokens?: number;
+  /**
+   * Maximum total cost in USD for the entire run, computed via model-pricing.
+   * On exceed, the engine is aborted and the process exits with code 3.
+   * Skipped for unknown models (only token limit applies).
+   */
+  readonly maxCostUsd?: number;
 }
 
 export type ParsedArgs =
@@ -127,6 +139,8 @@ export function parseArgv(args: string[]): ParsedArgs {
   let enableWebSearch = false;
   let framework: FrameworkChoice = "auto";
   let dumpEngine = false;
+  let maxTokens: number | undefined;
+  let maxCostUsd: number | undefined;
 
   // Defaults for swarm-run (consumed when subcommand === "swarm").
   let swarmConcurrency = 3;
@@ -423,6 +437,50 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
+    if (tok === "--max-tokens") {
+      const val = expanded[i + 1];
+      if (val === undefined || val.startsWith("-")) {
+        return {
+          kind: "error",
+          message: "--max-tokens requires a value",
+          showHelp: true,
+        };
+      }
+      const n = Number.parseInt(val, 10);
+      if (Number.isNaN(n) || n < 1) {
+        return {
+          kind: "error",
+          message: `--max-tokens must be a positive integer, got "${val}"`,
+          showHelp: true,
+        };
+      }
+      maxTokens = n;
+      i += 2;
+      continue;
+    }
+
+    if (tok === "--max-cost-usd") {
+      const val = expanded[i + 1];
+      if (val === undefined || val.startsWith("-")) {
+        return {
+          kind: "error",
+          message: "--max-cost-usd requires a value",
+          showHelp: true,
+        };
+      }
+      const n = Number.parseFloat(val);
+      if (Number.isNaN(n) || n <= 0) {
+        return {
+          kind: "error",
+          message: `--max-cost-usd must be a positive number, got "${val}"`,
+          showHelp: true,
+        };
+      }
+      maxCostUsd = n;
+      i += 2;
+      continue;
+    }
+
     // Unknown flag.
     if (tok.startsWith("-")) {
       return {
@@ -469,6 +527,8 @@ export function parseArgv(args: string[]): ParsedArgs {
     enableWebSearch,
     framework,
     dumpEngine,
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+    ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
   };
 
   switch (subcommand) {

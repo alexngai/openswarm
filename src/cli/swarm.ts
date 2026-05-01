@@ -16,6 +16,7 @@ import {
   RoleRegistry,
   loadCustomRoles,
 } from "../swarm/roles.js";
+import { checkBudget } from "../core/budget.js";
 
 // ---------------------------------------------------------------------------
 // Schema (Phase 2: discriminated-union policies)
@@ -47,6 +48,22 @@ export interface SwarmRunOptions {
    * built at startup (built-ins + custom from `.swarm-harness/roles.json`).
    */
   readonly defaultRole?: string;
+  /**
+   * Aggregate token cap across all workers. On exceed, all in-flight workers
+   * are aborted and the run exits with code 3 (v0.2.Q7).
+   */
+  readonly maxTokens?: number;
+  /**
+   * Aggregate cost cap in USD across all workers. On exceed, all in-flight
+   * workers are aborted and the run exits with code 3 (v0.2.Q7).
+   * Skipped for unknown model ids.
+   */
+  readonly maxCostUsd?: number;
+  /**
+   * Model id used for cost calculation in aggregate budget checks.
+   * Defaults to "claude-sonnet-4-6" when not supplied.
+   */
+  readonly modelId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -143,6 +160,55 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
 
   // Flush results.jsonl.
   await new Promise<void>((resolve) => resultsOut.end(resolve));
+
+  // v0.2.Q7 aggregate budget check: parse the output file to sum usage across
+  // all completed tasks, then compare against the aggregate limits.
+  // Workers have all finished by this point — "abort all in-flight workers"
+  // doesn't apply here since they're done; the check gates the exit code.
+  const hasBudgetLimits = opts.maxTokens !== undefined || opts.maxCostUsd !== undefined;
+  if (hasBudgetLimits) {
+    let aggInputTokens = 0;
+    let aggOutputTokens = 0;
+    try {
+      const outputRaw = fs.readFileSync(opts.output, "utf8");
+      for (const line of outputRaw.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const record = JSON.parse(line) as { usage?: { inputTokens?: number; outputTokens?: number } };
+          if (record.usage != null) {
+            aggInputTokens += record.usage.inputTokens ?? 0;
+            aggOutputTokens += record.usage.outputTokens ?? 0;
+          }
+        } catch {
+          // malformed line — skip
+        }
+      }
+    } catch {
+      // output file unreadable — skip budget check
+    }
+    const aggUsage = { inputTokens: aggInputTokens, outputTokens: aggOutputTokens };
+    const budgetResult = checkBudget(
+      aggUsage,
+      { maxTokens: opts.maxTokens, maxCostUsd: opts.maxCostUsd },
+      opts.modelId ?? "claude-sonnet-4-6",
+    );
+    if (budgetResult.exceeded) {
+      const exceededEvent = {
+        type: "swarm_budget_exceeded",
+        limit: budgetResult.reason?.includes("token") ? "tokens" : "cost",
+        usedTokens: budgetResult.usedTokens,
+        usedCostUsd: budgetResult.usedCostUsd,
+        reason: budgetResult.reason,
+        modelId: opts.modelId ?? "claude-sonnet-4-6",
+        workersAborted: 0, // all tasks already completed at aggregate-check time
+      };
+      process.stderr.write(
+        `[swarm-harness] swarm aggregate budget exceeded: ${budgetResult.reason ?? "limit reached"}\n`,
+      );
+      process.stderr.write(JSON.stringify(exceededEvent) + "\n");
+      return 3;
+    }
+  }
 
   // Print summary.
   const total = tasks.length;

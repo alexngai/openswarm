@@ -151,6 +151,13 @@ Fans out tasks across a worker pool with role overlays, retry policies, dead-let
 --no-mcp                       Disable MCP server discovery
 --no-hooks                     Disable hook config discovery
 
+--max-tokens <N>               Abort run when cumulative token usage (input +
+                               output + cache) exceeds N. Exits with code 3.
+--max-cost-usd <N>             Abort run when estimated cost exceeds $N USD.
+                               Uses built-in model pricing table; unknown models
+                               ignore cost limit (token limit still applies).
+                               Exits with code 3.
+
 --help, -h                     Show usage
 --version, -V                  Print version
 ```

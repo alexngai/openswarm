@@ -43,6 +43,7 @@ import { loadAliases, resolveAlias } from "../providers/aliases.js";
 import { resolveProvider } from "../providers/routing.js";
 import { OpenAIEnvAuth } from "../auth/openai-env.js";
 import { bashValidationGate } from "../permissions/bash-gate.js";
+import { checkBudget } from "../core/budget.js";
 // Note: the ink REPL (`src/ui/repl/`) is lazy-loaded inside runPrompt only
 // when the TTY path is taken. ink-markdown is CJS and requires() ink (which
 // has top-level await) — pulling it in eagerly crashes non-TTY paths like
@@ -501,6 +502,14 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     // surface a second prompt for the same tool call.
     if (bashGateResult !== null && !bashGateResult.allow) return bashGateResult;
 
+    // v0.2.Q5 two-prompt collapse: when bash validation showed a Warn prompt
+    // and the user approved it, skip the mode-deny prompt entirely. The user
+    // has already explicitly approved the destructive action — running the
+    // mode check would only produce a second prompt for the same call.
+    if (bashGateResult !== null && bashGateResult.allow && "validationApproved" in bashGateResult && bashGateResult.validationApproved) {
+      return { allow: true };
+    }
+
     const modeDecision = permEngine.check(toolImpl.spec, input);
     if (!modeDecision.allow) {
       const pending = {
@@ -540,11 +549,60 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
 
   // 9. Route to UI.
   // useHeadless was declared above (hoisted so canUseTool closes over it).
+
+  // Budget limits derived from CLI flags (v0.2.Q7).
+  const budgetLimits = {
+    maxTokens: opts.maxTokens,
+    maxCostUsd: opts.maxCostUsd,
+  };
+  const hasBudgetLimits =
+    budgetLimits.maxTokens !== undefined || budgetLimits.maxCostUsd !== undefined;
+
   if (useHeadless) {
     // Headless path: one-shot engine run → JSONL.
-    const rawEvents = engine.run(config);
+    // When budget limits are set, wrap the event stream so we can abort
+    // after each event and emit a budget_exceeded JSONL line before exit.
+    const headlessAbort = new AbortController();
+    const headlessConfig = hasBudgetLimits
+      ? { ...config, abort: headlessAbort.signal }
+      : config;
+    const rawEvents = engine.run(headlessConfig);
     const { events, hadError } = withErrorTracking(rawEvents);
-    await runHeadless(events);
+
+    if (hasBudgetLimits) {
+      // Wrap the event stream: after each event, check budget.
+      // On exceed: write budget_exceeded JSONL line, abort, then drain.
+      let budgetViolation = false;
+      async function* budgetWrapped(): AsyncGenerator<import("../core/types.js").NormalizedEvent> {
+        for await (const evt of events) {
+          yield evt;
+          const budgetResult = checkBudget(
+            engine.getCumulativeUsage(),
+            budgetLimits,
+            resolvedModelId,
+          );
+          if (budgetResult.exceeded && !budgetViolation) {
+            budgetViolation = true;
+            // Emit budget_exceeded as a JSONL line to stdout.
+            const budgetEvent = {
+              type: "budget_exceeded",
+              limit: budgetResult.reason?.includes("token") ? "tokens" : "cost",
+              usedTokens: budgetResult.usedTokens,
+              usedCostUsd: budgetResult.usedCostUsd,
+              reason: budgetResult.reason,
+              modelId: resolvedModelId,
+            };
+            process.stdout.write(JSON.stringify(budgetEvent) + "\n");
+            headlessAbort.abort();
+            break;
+          }
+        }
+      }
+      await runHeadless(budgetWrapped());
+      if (budgetViolation) return 3;
+    } else {
+      await runHeadless(events);
+    }
     return hadError() ? 1 : 0;
   }
 
@@ -604,9 +662,22 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     permissionBridge,
     getTokens: () => {
       const u = engine.getCumulativeUsage();
+      // v0.2.Q7: check budget on every token poll. When exceeded, abort the
+      // current turn so the REPL can surface the error and exit.
+      if (hasBudgetLimits) {
+        const budgetResult = checkBudget(u, budgetLimits, resolvedModelId);
+        if (budgetResult.exceeded && !turnAbort.signal.aborted) {
+          process.stderr.write(
+            `[swarm-harness] budget exceeded: ${budgetResult.reason ?? "limit reached"} — aborting\n`,
+          );
+          turnAbort.abort();
+        }
+      }
       return u.inputTokens + u.outputTokens;
     },
   });
+  // Exit code 3 if budget was exceeded (abort signal was fired by budget check).
+  if (hasBudgetLimits && turnAbort.signal.aborted) return 3;
   return 0;
 }
 

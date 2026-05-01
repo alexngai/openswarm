@@ -140,6 +140,11 @@ export type LaneEventType =
   // ---------------- Crash recovery (v0.2 Stage 2B) ----------------
   /** An orphaned worker state file was detected on startup (informational). */
   | "crash_detected"
+  // ---------------- Budget enforcement (v0.2.Q7) ----------------
+  /** Budget limit exceeded — engine aborted. */
+  | "budget_exceeded"
+  /** Swarm aggregate budget limit exceeded — all workers aborted. */
+  | "swarm_budget_exceeded"
   // ---------------- Error ----------------
   | "error";
 
@@ -302,6 +307,28 @@ export interface BashValidationWarnedPayload {
   readonly message: string;
   readonly decision: "approved" | "denied";
   readonly intent: CommandIntent;
+}
+
+// ---------------------------------------------------------------------------
+// v0.2.Q7 — budget enforcement payload interfaces
+// ---------------------------------------------------------------------------
+
+/** Payload for `budget_exceeded` events. */
+export interface BudgetExceededPayload {
+  readonly limit: "tokens" | "cost";
+  readonly limitValue: number;
+  readonly actualValue: number;
+  readonly modelId?: string;
+}
+
+/** Payload for `swarm_budget_exceeded` events. */
+export interface SwarmBudgetExceededPayload {
+  readonly limit: "tokens" | "cost";
+  readonly limitValue: number;
+  readonly actualValue: number;
+  readonly modelId?: string;
+  /** Number of in-flight workers aborted. */
+  readonly workersAborted: number;
 }
 
 // ---------------------------------------------------------------------------

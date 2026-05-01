@@ -57,13 +57,27 @@ export interface BashGateInput {
 // ---------------------------------------------------------------------------
 
 /**
+ * Extended allow result returned by bashValidationGate when a Warn path was
+ * approved by the user. The `validationApproved` flag lets canUseTool in
+ * main.ts skip the subsequent mode-deny prompt — one prompt per tool call
+ * instead of two (v0.2.Q5 two-prompt collapse).
+ *
+ * The `allow: true` shape is a strict superset of PermissionDecision's allow
+ * branch so it can safely stand in wherever PermissionDecision is expected.
+ */
+export type BashGateAllowResult =
+  | { readonly allow: true; readonly validationApproved: true }
+  | PermissionDecision;
+
+/**
  * Phase 5 Stage A — bash-specific validation gate.
  *
  * Returns:
  *   - `null`                        when toolName !== "bash" or command is empty
  *                                   (caller falls through to normal allow)
  *   - `{allow: false, reason}`      for Block results
- *   - bridge / headless decision    for Warn results (user decides)
+ *   - bridge / headless decision    for Warn results (user decides);
+ *     approved Warn sets `validationApproved: true` (v0.2.Q5)
  *   - `null`                        for Allow results (caller falls through)
  */
 // Sentinel agentId for the single-agent / canUseTool path. In a full swarm
@@ -74,7 +88,7 @@ const BASH_GATE_AGENT_ID = "bash-gate" as AgentId;
 export async function bashValidationGate(
   gateInput: BashGateInput,
   deps: BashGateDeps,
-): Promise<PermissionDecision | null> {
+): Promise<BashGateAllowResult | null> {
   const { toolName, toolImpl, input, currentMode } = gateInput;
   const { bridge, useHeadless, cwd, headlessApproval = readHeadlessApproval, emitLaneEvent } = deps;
 
@@ -144,6 +158,13 @@ export async function bashValidationGate(
       // Faulty emitter must not break the gate.
     }
 
+    // v0.2.Q5: when the Warn prompt was approved, tag the result so that
+    // canUseTool in main.ts can skip the subsequent mode-deny prompt.
+    // The user already approved the destructive action — a second prompt
+    // for the same tool call would be redundant and annoying.
+    if (result.allow) {
+      return { allow: true, validationApproved: true };
+    }
     return result;
   }
 
