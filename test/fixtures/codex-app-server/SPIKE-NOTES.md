@@ -18,7 +18,9 @@ Both v1 (legacy flat methods like `newConversation`) and v2 (slash-namespaced li
 
 ## Captured method vocabulary
 
-19 unique method names observed in a single happy-path session attempt:
+**Updated 2026-05-01:** captured a real successful turn after operator reactivated auth + we worked around the `gpt-5.2-codex` model limitation. The current fixture is a **happy path** with `gpt-5.4`. 23 unique method names total (4 more than the failure trace).
+
+**Important model finding:** `gpt-5.2-codex` is `isDefault: true` in the App Server's `model/list` response BUT returns HTTP 400 "not supported when using Codex with a ChatGPT account" when actually invoked. ChatGPT-account integrations must explicitly pass a supported model in `thread/start` — `gpt-5.4` works; the codex-prefixed variants do not. This is a Codex API limitation specific to subscription-quota auth (paid API keys can use the codex models).
 
 | Method | Direction | Purpose |
 |---|---|---|
@@ -59,13 +61,37 @@ Both v2 namespace (`thread/*`, `turn/*`, `item/*`) and v1 wrapper (`codex/event/
 
 For our doctor check: call `getAuthStatus` after `initialize`; if `authMethod` is null/missing or empty, message: "Run `codex login`."
 
-## Critical finding from this spike: workspace was 402 Payment Required
+## Successful happy-path turn (2026-05-01)
 
-The test prompt failed with HTTP 402 from `chatgpt.com` with body `{"detail":{"code":"deactivated_workspace"}}`. The App Server retried 5 times then surfaced the error cleanly through `turn/completed` with `status: "failed"` and a structured error envelope.
+After operator reactivated auth + we passed `model: "gpt-5.4"` (the default `gpt-5.2-codex` is rejected on ChatGPT accounts), the spike captured a complete agent run end-to-end:
 
-**This is not a bug in the spike or our design** — it's the operator's ChatGPT workspace that's deactivated. The protocol shape is fully captured; the swarm-harness implementation is unblocked. A successful happy-path agent turn (with text deltas + tool calls + completion) needs to be captured separately once the operator's ChatGPT account is reactivated for Codex API access.
+- `turn/started` fires immediately after `turn/start` request
+- `codex/event/task_started` carries `model_context_window: 258400` and `collaboration_mode_kind`
+- `codex/event/token_count` and `account/rateLimits/updated` fire EARLY (before any model output) — our integration can use these as quota / context-window observations without waiting for completion
+- A `reasoning` item is emitted (started + completed) with empty summary/content arrays — gpt-5.4 has reasoning capability; the `summary` was suppressed
+- `agentMessage` item is emitted as: `item/started` (with empty `text`) → repeated `item/agentMessage/delta` (incremental text) → `item/completed` (with full `text`)
+- Final `thread/tokenUsage/updated` carries `{totalTokens, inputTokens, cachedInputTokens, outputTokens, reasoningOutputTokens, modelContextWindow}` — the canonical accounting
+- `codex/event/task_complete` carries `last_agent_message: "DONE"` for convenience
+- `turn/completed` finalizes with `status: "completed"` (not "failed")
 
-The error envelope captured is itself useful — it shows our error-translation path is exercised cleanly and `turn/completed` always fires (even on failure), which means our implementation can simply listen for `turn/completed` and inspect `status` to know when the turn ended.
+Token cost for "Reply with the single word DONE.": **8141 total** (8121 input, 7040 cached, 20 output, 13 reasoning output). The cached input is the model's system prompt / Codex's tool surface, indicating the App Server does aggressive prompt caching.
+
+For our swarm-harness translation to NormalizedEvent:
+
+| Codex event | NormalizedEvent equivalent |
+|---|---|
+| `item/started` (type=`agentMessage`) | (synthesize) `text_delta` start signal |
+| `item/agentMessage/delta` | `text_delta` with the delta text |
+| `item/completed` (type=`agentMessage`) | (synthesize) end of message; do NOT re-emit text |
+| `item/started/completed` (type=`reasoning`) | optional: emit as `info` events; not in our base NormalizedEvent vocabulary |
+| `thread/tokenUsage/updated` | feed into `getCumulativeUsage()` |
+| `account/rateLimits/updated` | optional: emit as lane event for orchestrator visibility |
+| `turn/completed` | `message_stop` with `stopReason` derived from `turn.status` |
+| `error` | `error` with structured `failureClass: "provider"` + reason |
+
+## Earlier capture: 402 deactivated workspace (overwritten)
+
+Before re-auth, an earlier capture surfaced `HTTP 402: deactivated_workspace`. The error envelope path is well-exercised — `codex/event/stream_error` fires N retries (default 5), then `codex/event/error` + `turn/completed` with `status: "failed"` and an error object. Our integration treats this as `error` NormalizedEvent + early termination. The 402 fixture was overwritten by the success run; if needed for tests, the failure path is easy to re-capture (override `model` to a non-existent name).
 
 ## Default model + provider
 
@@ -111,10 +137,8 @@ The generated bindings are large (250+ files, 411 KB JSON schema). For the swarm
 - **Q (deferred):** Does App Server support cancellation via `turn/interrupt` mid-stream? The `TurnInterruptParams` exists; needs verification under load.
 - **Q (resolved):** Are server→client notifications interleaved with response IDs? **Yes** — the trace shows `id`-bearing responses and `method`-bearing notifications in the same line stream. Our reader must dispatch on presence of `method` vs `id`.
 
-## Operator follow-up
+## Operator follow-up — RESOLVED
 
-To unblock end-to-end testing, you'll need to either:
-1. Reactivate the ChatGPT workspace billing for Codex API access, OR
-2. Switch codex auth to an API key path: `codex login --api-key <OPENAI_API_KEY>` (charges API billing instead of subscription)
+ChatGPT auth was reactivated 2026-05-01 and the spike re-run (with the `gpt-5.4` model override) captured a successful streaming session. Fixture is the canonical reference for Stage 3A/3B.
 
-Once unblocked, re-run `node scripts/codex-app-server-spike.mjs` and the resulting fixture will contain a real text-streaming session to test `CodexStreamState` against.
+**Stage 3E live smoke** can now use the same script with default args; expected output is "DONE" via the user's ChatGPT subscription, with `turn/completed` status `completed`.

@@ -96,7 +96,11 @@ async function main() {
   process.stderr.write(`initialize OK — userAgent: ${initResult.userAgent}\n`);
 
   // 2. thread/start
+  // Note: codex's `isDefault: true` model gpt-5.2-codex is rejected by ChatGPT
+  // accounts ("not supported when using Codex with a ChatGPT account"). Pass a
+  // ChatGPT-supported model explicitly. gpt-5.4 is broad/everyday-coding tier.
   const threadResult = await send("thread/start", {
+    model: "gpt-5.4",
     cwd: REPO_ROOT,
     approvalPolicy: "never", // auto-approve everything for the spike
     sandbox: "danger-full-access",
