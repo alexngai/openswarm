@@ -27,10 +27,10 @@ swarm-harness uses Ink/React; claw-code uses crossterm + rustyline + syntect + p
 | # | Gap | Status | Priority | Effort | Notes |
 |---|---|---|---|---|---|
 | T1 | Multi-line input (Shift+Enter / Ctrl+J) | ✅ | P1 | M | Phase 4 stage A/C — TextareaRenderable mounted (shift+Enter/Ctrl+J wired in Phase 0) + Phase 4 stage C CRLF normalization on paste. |
-| T2 | Markdown rendering in transcript (headings, lists, bold/italic, block quotes) | ❌ | P1 | M | Removed after `ink-markdown` ESM breakage ([04d3129](https://github.com/)). Need ESM-safe alternative or hand-rolled renderer. |
-| T3 | Syntax-highlighted code blocks | ❌ | P1 | M | claw uses `syntect` with ANSI output. Options: `cli-highlight`, `shiki` (heavy), or ship without. |
-| T4 | Tables in markdown | ❌ | P2 | S | Follows T2. |
-| T5 | Inline approval prompts (y/N) instead of `/approve`/`/deny` | ❌ | P0 | S | Current slash-command approval is jarring. claw blocks stdin with tool info + y/N inline. See [status.tsx](src/ui/repl/status.tsx). |
+| T2 | Markdown rendering in transcript (headings, lists, bold/italic, block quotes) | ✅ | P1 | M | Phase 3 (`0120fe2`) — OpenTUI's `<markdown>` primitive in [transcript.tsx](src/ui/repl-solid/transcript.tsx) parses with `marked` and conceals syntax markers. Theme-tuned `SyntaxStyle.fromTheme(...)` against [theme.ts](src/ui/repl-solid/theme.ts). |
+| T3 | Syntax-highlighted code blocks | ✅ | P1 | M | Phase 3 follow-up — Tree-sitter wired via `getTreeSitterClient()` in [transcript.tsx](src/ui/repl-solid/transcript.tsx). Bundled OpenTUI WASM grammars for typescript, javascript, markdown, zig; fenced code blocks pick up language-aware highlighting via the markdown grammar's `infoStringMap`. |
+| T4 | Tables in markdown | ✅ | P2 | S | Phase 3 — free from OpenTUI's native table layout in `<markdown>` (Markdown.d.ts:11-50). Width-regression tests in [e2e.test.tsx](src/ui/repl-solid/e2e.test.tsx) assert table cells render at 80 + 120 col. |
+| T5 | Inline approval prompts (y/N) instead of `/approve`/`/deny` | ✅ | P0 | S | Phase 2 stages C–G (`eeb4293..6d27a94`) — `PermissionBridge` async coordinator + inline `PermissionPrompt` Solid component + headless JSONL `permission_required` + stdin reader. `/approve` and `/deny` slash commands removed (P2.Q5). |
 | T6 | Persistent command history across sessions | ✅ | P2 | S | Phase 4 stage A — `src/ui/history.ts` writes to `~/.swarm-harness/history` (10k-entry cap, dedup, multi-line escape). |
 | T7 | Emacs keybindings (full set) | ✅ | P2 | S | Phase 4 stage B — Alt+B/F/D/Backspace word motions + Ctrl+Y yank wired in `input.tsx` KEY_BINDINGS + reducer. |
 | T8 | Spinner that overwrites same line and transitions to ✔/✘ | ⚠️ | P3 | XS | [spinner.tsx](src/ui/repl/spinner.tsx) exists; claw's is more polished. |
@@ -38,10 +38,7 @@ swarm-harness uses Ink/React; claw-code uses crossterm + rustyline + syntect + p
 | T10 | Compaction lifecycle UI (swarm-harness has this) | 🟦 | — | — | Don't regress. |
 | T11 | Pending-permission display in status bar (swarm-harness has this) | 🟦 | — | — | Keep even after T5 lands — status bar shows *what* is pending. |
 
-**TUI decision needed:** commit to an approach for T2/T3 or accept a stripped-down TUI. Options:
-- (a) Hand-roll ANSI renderer in a dedicated module (full control, ~M+ effort)
-- (b) Find an ESM-compatible markdown-for-ink package (low control, XS effort)
-- (c) Accept plain text + T5 inline prompts as the v0 bar; defer markdown to v0.2
+**TUI decision** (resolved 2026-04-30 in Phase 3): T2/T3/T4 ship via OpenTUI's native `<markdown>` primitive + bundled Tree-sitter WASM grammars (typescript, javascript, markdown, zig). The Phase 0 substrate migration (Bun + OpenTUI/Solid) made the original "hand-roll vs library" choice moot. See [Phase 3 design lock](17-parity-design-questions.md#phase-3--design-lock-2026-04-30).
 
 ---
 
@@ -81,9 +78,9 @@ M4b work is the bulk of this section. Most gaps are "written but not shipped" ra
 
 | # | Gap | Status | Priority | Effort | Notes |
 |---|---|---|---|---|---|
-| P1 | xAI (Grok) transport + routing | ⚠️ | P1 | S | M4b Phase 2–3 staged. Ship. |
-| P2 | Google Generative AI transport + routing | ⚠️ | P1 | S | M4b Phase 2–3 staged. Ship. |
-| P3 | DashScope / Qwen transport + 6 MiB preflight | ⚠️ | P2 | S | M4b Phase 2–3 staged. |
+| P1 | xAI (Grok) transport + routing | ✅ | P1 | S | Phase 1 stage 4 (`f1ce7f6`) — alias table (`grok` → `grok-3`, `grok-mini`). Provider live via `--model grok` against `XAI_API_KEY`. Documented in README §Models & aliases. |
+| P2 | Google Generative AI transport + routing | ✅ | P1 | S | Phase 1 — provider live via `--model gemini-*` against `GOOGLE_GENERATIVE_AI_API_KEY` (pass-through aliases). Documented in README §Models & aliases. |
+| P3 | DashScope / Qwen transport + 6 MiB preflight | ✅ | P2 | S | Phase 1 stage 4 — alias `kimi` → `kimi-k2.5`. Provider live via `--model qwen*`/`--model kimi*` against `DASHSCOPE_API_KEY`. Smoke via `scripts/smoke-m4b.sh --live`. |
 | P4 | OpenAI OAuth (ChatGPT Plus/Pro → Codex endpoint) | ⚠️ | P1 | M | M4b Phase 4 staged. Blocked on operator Codex spike. |
 | P5 | Anthropic API-key path without Agent SDK | ⚠️ | P2 | S | Currently Max subscription → SDK; direct API key → Vercel. Confirm feature parity across paths. |
 
@@ -93,8 +90,8 @@ M4b work is the bulk of this section. Most gaps are "written but not shipped" ra
 
 | # | Gap | Status | Priority | Effort | Notes |
 |---|---|---|---|---|---|
-| PS1 | Plugin install/enable/disable/update/uninstall lifecycle | ⚠️ | P0 | XS | M4b Phase 3. Files staged under [src/plugins/](src/plugins/). ~0.2d remaining per [14-m4b-plan.md](docs/14-m4b-plan.md). |
-| PS2 | Plugin state persistence (`~/.claude/plugins/state.json`) | ⚠️ | P0 | XS | Part of PS1. |
+| PS1 | Plugin install/enable/disable/update/uninstall lifecycle | ✅ | P0 | XS | Phase 1 stage 5 (`82a8a50`) — `/plugin install`, `/plugin enable`, `/plugin disable`, `/plugin list` slash commands wired in [src/cli/slash/commands/plugin.ts](src/cli/slash/commands/plugin.ts). |
+| PS2 | Plugin state persistence | ✅ | P0 | XS | Phase 1 stage 2 (`c0a4ebc`) — two-file schema at `~/.swarm-harness/plugins/{settings,installed}.json` (Q1 design lock). Read-only discovery of `~/.claude/plugins/` for plugins installed via Claude Code. |
 | PS3 | Real cron scheduler (background worker pool) | ❌ | P2 | L | `CronRegistry` is in-memory only; scheduled tasks never fire. Defer until a user needs it. |
 | PS4 | Extended slash: `/ultraplan` | ❌ | P3 | M | Claw multi-turn planner. Could ship as a plugin. |
 | PS5 | Extended slash: `/teleport` (symbol jump) | ❌ | P3 | M | Claw LSP-backed. Requires LSP client maturity. |
@@ -113,22 +110,25 @@ M4b work is the bulk of this section. Most gaps are "written but not shipped" ra
 
 ## Prioritized next moves (draft — iterate)
 
-Ordered by impact × readiness. Revise as we debate:
+Reflects gap status as of v0.1 close-out (2026-04-30):
 
-1. **PS1/PS2** — ship M4b Phase 3 plugin lifecycle (XS, P0). Unblocks user customization. Nearest to done.
-2. **T5** — inline y/N approval prompts (S, P0). Biggest single UX wart in the current TUI.
-3. **P1/P2** — ship xAI + Google providers (S each, P1). Code exists; ship needs smoke test.
-4. **T2/T3** — pick a path for markdown + code highlighting. Decision first, then M effort.
-5. **T1** — multi-line input. Often-hit by anyone pasting a prompt.
-6. **TO1** — deepen bash validation. Matters before we promote `--headless` for unattended runs.
-7. **A1/A5** — worker boot state machine + typed lane events. Testability and telemetry. Do before adding more lanes.
-8. **P4** — OpenAI OAuth. Ship once operator Codex spike returns.
-9. Defer: A3, A4, A6, A7, PS3, PS4–PS6, TO3–TO5, D1.
+**Shipped (Phases 0–5.5):** PS1, PS2, T5, T1, T2, T3, T4, T6, T7, P1, P2, P3, TO1, A1, A5.
+
+**v0.1 ship-gates remaining:**
+1. ⚠️ **A2** — branch lock / stale-base detection. Audit needed: read what `src/swarm/git/branch-lock.ts` actually covers vs claw's three modules. Decide port vs accept-as-is. ~0.5–1d.
+2. ⚠️ **A8** — server-side token preflight via Anthropic `count_tokens`. Tightens compaction-trigger accuracy. ~0.5d, low priority.
+3. ⚠️ **TO2** — MCP lifecycle hardening (per-server failure classification). Usage-driven; only if MCP failures bite users. M effort.
+4. ⚠️ **D2** — session trajectory smoke suite audit. ~0.5d.
+5. ⚠️ **T8** — spinner polish (cosmetic, XS).
+6. ⚠️ **P5** — Anthropic API-key path without Agent SDK (edge case; most users use subscription).
+
+**Blocked:**
+- ⛔ **P4** — OpenAI OAuth (Phase 6 in [16-parity-plan.md](16-parity-plan.md)). Operator Codex spike not yet done. v0.1 ships without; users with `OPENAI_API_KEY` already work via direct API.
+
+**Defer indefinitely (per [16-parity-plan.md § Deferred](16-parity-plan.md#deferred-not-in-this-plan)):** A3, A4, A6, A7, PS3, PS4–PS6, TO3–TO5, D1.
 
 ---
 
 ## Decision log
 
-_(Add dated entries as we lock choices.)_
-
-- _YYYY-MM-DD_ — …
+- **2026-04-30** — v0.1 close-out hygiene pass. T2/T3/T4/T5 flipped from ❌ → ✅ (shipped in Phases 2 + 3); PS1/PS2/P1/P2/P3 flipped from ⚠️ → ✅ (shipped in Phase 1). Rows now cite the originating phase + commit hash. "TUI decision needed" block resolved by Phase 0 substrate migration + Phase 3 design lock.
