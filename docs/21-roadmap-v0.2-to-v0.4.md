@@ -94,6 +94,8 @@ If the audit finds <0.5d of work, ship in v0.2. If >1d, file a v0.3+ ticket and 
 
 Cosmetic-only fix; user value low but cheap.
 
+**Shipped — already in tree (commit `1b0c6eb`, Phase 0 follow-ups).** `scripts/build-binary.ts` reads the SDK version from package.json and injects it via `Bun.build({ define: { __SWARM_HARNESS_AGENT_SDK_VERSION__: ... } })`. `src/cli/doctor.ts` uses the injected constant with a runtime-fs-walk override for the Node path. The v0.1 smoke pass saw "vunknown" only because the smoke build invoked `bun build --compile` raw instead of going through `scripts/build-binary.ts`. Stage 2D's only deliverable is verifying the right path is documented — done.
+
 ### v0.2.Q5 — Two-prompt UX collapse (#5)
 
 **Decision: when validation Warn is approved AND mode would also deny, treat the validation approval as covering the mode-deny prompt for the same tool call.**
