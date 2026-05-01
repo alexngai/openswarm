@@ -15,6 +15,7 @@
 import { EventEmitter } from "node:events";
 import { spawn as nodeSpawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
+import type { NormalizedEvent } from "../core/types.js";
 import type {
   JsonRpcRequest,
   JsonRpcResponse,
@@ -25,6 +26,17 @@ import type {
   InitializeResult,
   GetAuthStatusParams,
   GetAuthStatusResult,
+  ThreadStartParams,
+  ThreadStartResult,
+  TurnStartParams,
+  TurnStartResult,
+  TurnInterruptParams,
+  ThreadArchiveParams,
+  TurnStartedNotification,
+  TurnCompletedNotification,
+  ItemStartedNotification,
+  ItemAgentMessageDeltaNotification,
+  ThreadTokenUsageNotification,
 } from "./codex-app-server-types.js";
 
 // ---------------------------------------------------------------------------
@@ -120,6 +132,11 @@ export class CodexAppServerProvider extends EventEmitter {
   >();
   private readonly reader = new JsonLineReader();
 
+  /** Cumulative token usage aggregated from thread/tokenUsage/updated events. */
+  private cumulativeInputTokens = 0;
+  private cumulativeOutputTokens = 0;
+  private cumulativeCacheReadTokens = 0;
+
   constructor(options: CodexAppServerOptions = {}) {
     super();
     this.options = {
@@ -213,6 +230,298 @@ export class CodexAppServerProvider extends EventEmitter {
       authMethod: result.authMethod ?? null,
       requiresOpenaiAuth: result.requiresOpenaiAuth ?? false,
     };
+  }
+
+  /**
+   * Send `thread/start` and return the new thread's id and selected model.
+   * Call after `start()`.
+   */
+  async startThread(opts: {
+    model?: string;
+    cwd?: string;
+    sandbox?: SandboxMode;
+    approvalPolicy?: AskForApproval;
+  } = {}): Promise<{ threadId: string; model: string }> {
+    const params: ThreadStartParams = {
+      experimentalRawEvents: false,
+      ...(opts.model !== undefined && { model: opts.model }),
+      ...(opts.cwd !== undefined && { cwd: opts.cwd }),
+      ...(opts.sandbox !== undefined && { sandbox: opts.sandbox }),
+      ...(opts.approvalPolicy !== undefined && { approvalPolicy: opts.approvalPolicy }),
+    };
+
+    const result = await this.request<ThreadStartResult>(
+      "thread/start",
+      params as unknown as Record<string, unknown>,
+    );
+
+    return { threadId: result.thread.id, model: result.model };
+  }
+
+  /**
+   * Send `turn/start` and stream `NormalizedEvent`s until the turn completes
+   * or is interrupted. Honors `signal.aborted` — sends `turn/interrupt` and
+   * emits an error event if the signal fires.
+   */
+  async *runTurn(
+    threadId: string,
+    prompt: string,
+    opts: { signal?: AbortSignal; model?: string } = {},
+  ): AsyncIterable<NormalizedEvent> {
+    const { signal, model } = opts;
+
+    // Build turn/start params.
+    const turnParams: TurnStartParams = {
+      threadId,
+      input: [{ type: "text", text: prompt }],
+      ...(model !== undefined && { model }),
+    };
+
+    // Send turn/start; capture the assigned turnId from the response.
+    const turnResult = await this.request<TurnStartResult>(
+      "turn/start",
+      turnParams as unknown as Record<string, unknown>,
+    );
+    const turnId = turnResult.turn.id;
+
+    // If already aborted before we even started streaming, bail out.
+    if (signal?.aborted) {
+      await this.sendTurnInterrupt(threadId, turnId);
+      const providerError: NormalizedEvent = {
+        type: "error",
+        error: { code: "transport", message: "Turn aborted before streaming", retryable: false },
+      };
+      yield providerError;
+      return;
+    }
+
+    // Build an async queue fed by the notification listener.
+    type QueueItem =
+      | { kind: "event"; event: NormalizedEvent }
+      | { kind: "done" };
+
+    const queue: QueueItem[] = [];
+    let resolveWaiter: (() => void) | null = null;
+
+    function enqueue(item: QueueItem): void {
+      queue.push(item);
+      if (resolveWaiter !== null) {
+        const r = resolveWaiter;
+        resolveWaiter = null;
+        r();
+      }
+    }
+
+    async function waitForItem(): Promise<void> {
+      if (queue.length > 0) return;
+      await new Promise<void>((resolve) => {
+        resolveWaiter = resolve;
+      });
+    }
+
+    // Notification listener — translates Codex events to NormalizedEvent.
+    const onNotification = (frame: JsonRpcNotification): void => {
+      const method = frame.method;
+      const params = frame.params as Record<string, unknown>;
+
+      // Skip v1 codex/event/* wrappers — use v2 events only.
+      if (method.startsWith("codex/event/")) return;
+
+      // Filter by threadId when present.
+      if (
+        "threadId" in params &&
+        typeof params["threadId"] === "string" &&
+        params["threadId"] !== threadId
+      ) {
+        return;
+      }
+
+      // Filter by turnId when present (after we know the turnId).
+      if (
+        "turnId" in params &&
+        typeof params["turnId"] === "string" &&
+        params["turnId"] !== turnId
+      ) {
+        return;
+      }
+
+      if (method === "turn/started") {
+        // Notification echo of our turn/start — no event emitted.
+        const p = params as unknown as TurnStartedNotification;
+        // turnId confirmation; already captured from response.
+        void p;
+        return;
+      }
+
+      if (method === "item/agentMessage/delta") {
+        const p = params as unknown as ItemAgentMessageDeltaNotification;
+        enqueue({ kind: "event", event: { type: "text_delta", text: p.delta } });
+        return;
+      }
+
+      if (method === "item/started") {
+        const p = params as unknown as ItemStartedNotification;
+        // Skip all item/started — reasoning, userMessage, agentMessage: no event emitted.
+        void p;
+        return;
+      }
+
+      if (method === "item/completed") {
+        // Skip — text already streamed via deltas; no re-emit.
+        return;
+      }
+
+      if (method === "thread/tokenUsage/updated") {
+        const p = params as unknown as ThreadTokenUsageNotification;
+        // Accumulate for getCumulativeUsage(); don't emit a NormalizedEvent.
+        const last = p.tokenUsage.last;
+        this.cumulativeInputTokens += last.inputTokens;
+        this.cumulativeOutputTokens += last.outputTokens;
+        this.cumulativeCacheReadTokens += last.cachedInputTokens;
+        return;
+      }
+
+      if (method === "account/rateLimits/updated") {
+        // Skip in v0.3.
+        return;
+      }
+
+      if (method === "turn/completed") {
+        const p = params as unknown as TurnCompletedNotification;
+        if (p.threadId !== threadId) return;
+
+        if (p.turn.status === "failed" && p.turn.error !== null) {
+          enqueue({
+            kind: "event",
+            event: {
+              type: "error",
+              error: {
+                code: "provider_unavailable",
+                message: p.turn.error.message,
+                retryable: false,
+              },
+            },
+          });
+        }
+
+        const stopReason = p.turn.status === "completed" ? "end_turn" : "error";
+        enqueue({
+          kind: "event",
+          event: {
+            type: "message_stop",
+            stopReason,
+            usage: { inputTokens: 0, outputTokens: 0 },
+          },
+        });
+        enqueue({ kind: "done" });
+        return;
+      }
+
+      if (method === "error") {
+        const p = params as { message?: string };
+        enqueue({
+          kind: "event",
+          event: {
+            type: "error",
+            error: {
+              code: "provider_unavailable",
+              message: p.message ?? "Unknown error",
+              retryable: false,
+            },
+          },
+        });
+        enqueue({ kind: "done" });
+        return;
+      }
+
+      // Anything else — skip silently.
+    };
+
+    this.on("notification", onNotification);
+
+    // Abort handler.
+    let abortHandler: (() => void) | null = null;
+    if (signal !== undefined) {
+      abortHandler = () => {
+        void this.sendTurnInterrupt(threadId, turnId);
+        enqueue({
+          kind: "event",
+          event: {
+            type: "error",
+            error: { code: "transport", message: "Turn aborted", retryable: false },
+          },
+        });
+        enqueue({ kind: "done" });
+      };
+      signal.addEventListener("abort", abortHandler, { once: true });
+    }
+
+    try {
+      // Drain the queue until we see a "done" sentinel.
+      while (true) {
+        await waitForItem();
+        while (queue.length > 0) {
+          const item = queue.shift()!;
+          if (item.kind === "done") return;
+          yield item.event;
+        }
+      }
+    } finally {
+      this.off("notification", onNotification);
+      if (signal !== undefined && abortHandler !== null) {
+        signal.removeEventListener("abort", abortHandler);
+      }
+    }
+  }
+
+  /**
+   * Send `thread/archive` to cleanly shut down the thread.
+   * Non-fatal on failure.
+   */
+  async archiveThread(threadId: string): Promise<void> {
+    try {
+      const params: ThreadArchiveParams = { threadId };
+      await this.request<unknown>(
+        "thread/archive",
+        params as unknown as Record<string, unknown>,
+      );
+    } catch {
+      // Non-fatal — best-effort cleanup.
+    }
+  }
+
+  /**
+   * Return cumulative token usage aggregated from all
+   * `thread/tokenUsage/updated` notifications received so far.
+   */
+  getCumulativeUsage(): {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadInputTokens: number;
+    cacheWriteInputTokens: number;
+  } {
+    return {
+      inputTokens: this.cumulativeInputTokens,
+      outputTokens: this.cumulativeOutputTokens,
+      cacheReadInputTokens: this.cumulativeCacheReadTokens,
+      cacheWriteInputTokens: 0,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // Private helpers
+  // -------------------------------------------------------------------------
+
+  private async sendTurnInterrupt(threadId: string, turnId: string): Promise<void> {
+    try {
+      const params: TurnInterruptParams = { threadId, turnId };
+      await this.request<unknown>(
+        "turn/interrupt",
+        params as unknown as Record<string, unknown>,
+      );
+    } catch {
+      // Non-fatal.
+    }
   }
 
   /**
