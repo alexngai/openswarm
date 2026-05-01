@@ -4,6 +4,7 @@ import {
   assertNeverEvent,
   type LaneEvent,
   type TypedLaneEvent,
+  type FailureClass,
 } from "./events.js";
 import type { CommandIntent } from "../tools/tier0/bash-validation/intent.js";
 
@@ -35,6 +36,24 @@ const lifecyclePayload = {
   to: "ready_for_prompt" as const,
 };
 
+// v0.2.Q6 — turn primitive fixtures
+const textDeltaPayload = { text: "hello world" };
+const toolUseStartPayload = { toolUseId: "tu-1", toolName: "bash", toolInput: { command: "ls" } };
+const toolUseInputPayload = { toolUseId: "tu-1", partialJson: '{"co' };
+const toolUseEndPayload = { toolUseId: "tu-1" };
+const toolResultPayload = { toolUseId: "tu-1", content: "file.txt\n", isError: false };
+const messageStopPayload = { stopReason: "end_turn", usage: { inputTokens: 10, outputTokens: 5 } };
+
+// v0.2.Q6 — task lifecycle fixtures
+const taskCreatedPayload = { taskId: "task-1", prompt: "do the thing" };
+const taskUpdatedPayload = { taskId: "task-1", patch: { status: "running" } };
+const taskCompletedPayload = { taskId: "task-1", output: "done", usage: { inputTokens: 10, outputTokens: 5 } };
+const taskFailedPayload: { taskId: string; error: string; failureClass: FailureClass } = {
+  taskId: "task-1",
+  error: "something went wrong",
+  failureClass: "timeout",
+};
+
 // ---------------------------------------------------------------------------
 // narrowLaneEvent
 // ---------------------------------------------------------------------------
@@ -64,9 +83,71 @@ describe("narrowLaneEvent", () => {
     expect(result!.payload).toEqual(lifecyclePayload);
   });
 
-  it("returns undefined for an untyped event (e.g. text_delta)", () => {
-    const event = makeBase("text_delta", { text: "hello" });
+  it("returns undefined for an untyped event (e.g. heartbeat)", () => {
+    const event = makeBase("heartbeat", {});
     expect(narrowLaneEvent(event)).toBeUndefined();
+  });
+
+  // v0.2.Q6 — turn primitives
+  it("returns typed shape for text_delta", () => {
+    const result = narrowLaneEvent(makeBase("text_delta", textDeltaPayload));
+    expect(result?.type).toBe("text_delta");
+    expect(result?.payload).toEqual(textDeltaPayload);
+  });
+
+  it("returns typed shape for tool_use_start", () => {
+    const result = narrowLaneEvent(makeBase("tool_use_start", toolUseStartPayload));
+    expect(result?.type).toBe("tool_use_start");
+    expect(result?.payload).toEqual(toolUseStartPayload);
+  });
+
+  it("returns typed shape for tool_use_input", () => {
+    const result = narrowLaneEvent(makeBase("tool_use_input", toolUseInputPayload));
+    expect(result?.type).toBe("tool_use_input");
+    expect(result?.payload).toEqual(toolUseInputPayload);
+  });
+
+  it("returns typed shape for tool_use_end", () => {
+    const result = narrowLaneEvent(makeBase("tool_use_end", toolUseEndPayload));
+    expect(result?.type).toBe("tool_use_end");
+    expect(result?.payload).toEqual(toolUseEndPayload);
+  });
+
+  it("returns typed shape for tool_result", () => {
+    const result = narrowLaneEvent(makeBase("tool_result", toolResultPayload));
+    expect(result?.type).toBe("tool_result");
+    expect(result?.payload).toEqual(toolResultPayload);
+  });
+
+  it("returns typed shape for message_stop", () => {
+    const result = narrowLaneEvent(makeBase("message_stop", messageStopPayload));
+    expect(result?.type).toBe("message_stop");
+    expect(result?.payload).toEqual(messageStopPayload);
+  });
+
+  // v0.2.Q6 — task lifecycle
+  it("returns typed shape for task_created", () => {
+    const result = narrowLaneEvent(makeBase("task_created", taskCreatedPayload));
+    expect(result?.type).toBe("task_created");
+    expect(result?.payload).toEqual(taskCreatedPayload);
+  });
+
+  it("returns typed shape for task_updated", () => {
+    const result = narrowLaneEvent(makeBase("task_updated", taskUpdatedPayload));
+    expect(result?.type).toBe("task_updated");
+    expect(result?.payload).toEqual(taskUpdatedPayload);
+  });
+
+  it("returns typed shape for task_completed", () => {
+    const result = narrowLaneEvent(makeBase("task_completed", taskCompletedPayload));
+    expect(result?.type).toBe("task_completed");
+    expect(result?.payload).toEqual(taskCompletedPayload);
+  });
+
+  it("returns typed shape for task_failed", () => {
+    const result = narrowLaneEvent(makeBase("task_failed", taskFailedPayload));
+    expect(result?.type).toBe("task_failed");
+    expect(result?.payload).toEqual(taskFailedPayload);
   });
 
   it("preserves the payload object reference", () => {
@@ -97,6 +178,28 @@ function describeTypedEvent(e: TypedLaneEvent): string {
       return `warned:${e.payload.command}`;
     case "worker_lifecycle_changed":
       return `lifecycle:${e.payload.from}->${e.payload.to}`;
+    // v0.2.Q6 — turn primitives
+    case "text_delta":
+      return `text_delta:${e.payload.text}`;
+    case "tool_use_start":
+      return `tool_use_start:${e.payload.toolName}`;
+    case "tool_use_input":
+      return `tool_use_input:${e.payload.toolUseId}`;
+    case "tool_use_end":
+      return `tool_use_end:${e.payload.toolUseId}`;
+    case "tool_result":
+      return `tool_result:${e.payload.toolUseId}`;
+    case "message_stop":
+      return `message_stop:${e.payload.stopReason ?? "none"}`;
+    // v0.2.Q6 — task lifecycle
+    case "task_created":
+      return `task_created:${e.payload.taskId}`;
+    case "task_updated":
+      return `task_updated:${e.payload.taskId}`;
+    case "task_completed":
+      return `task_completed:${e.payload.taskId}`;
+    case "task_failed":
+      return `task_failed:${e.payload.taskId}`;
     default:
       return assertNeverEvent(e);
   }
@@ -119,5 +222,57 @@ describe("exhaustiveness: switch on TypedLaneEvent covers all variants", () => {
     const event = makeBase("worker_lifecycle_changed", lifecyclePayload);
     const typed = narrowLaneEvent(event)!;
     expect(describeTypedEvent(typed)).toBe("lifecycle:spawning->ready_for_prompt");
+  });
+
+  // v0.2.Q6 — turn primitives
+  it("handles text_delta", () => {
+    const typed = narrowLaneEvent(makeBase("text_delta", textDeltaPayload))!;
+    expect(describeTypedEvent(typed)).toBe("text_delta:hello world");
+  });
+
+  it("handles tool_use_start", () => {
+    const typed = narrowLaneEvent(makeBase("tool_use_start", toolUseStartPayload))!;
+    expect(describeTypedEvent(typed)).toBe("tool_use_start:bash");
+  });
+
+  it("handles tool_use_input", () => {
+    const typed = narrowLaneEvent(makeBase("tool_use_input", toolUseInputPayload))!;
+    expect(describeTypedEvent(typed)).toBe("tool_use_input:tu-1");
+  });
+
+  it("handles tool_use_end", () => {
+    const typed = narrowLaneEvent(makeBase("tool_use_end", toolUseEndPayload))!;
+    expect(describeTypedEvent(typed)).toBe("tool_use_end:tu-1");
+  });
+
+  it("handles tool_result", () => {
+    const typed = narrowLaneEvent(makeBase("tool_result", toolResultPayload))!;
+    expect(describeTypedEvent(typed)).toBe("tool_result:tu-1");
+  });
+
+  it("handles message_stop", () => {
+    const typed = narrowLaneEvent(makeBase("message_stop", messageStopPayload))!;
+    expect(describeTypedEvent(typed)).toBe("message_stop:end_turn");
+  });
+
+  // v0.2.Q6 — task lifecycle
+  it("handles task_created", () => {
+    const typed = narrowLaneEvent(makeBase("task_created", taskCreatedPayload))!;
+    expect(describeTypedEvent(typed)).toBe("task_created:task-1");
+  });
+
+  it("handles task_updated", () => {
+    const typed = narrowLaneEvent(makeBase("task_updated", taskUpdatedPayload))!;
+    expect(describeTypedEvent(typed)).toBe("task_updated:task-1");
+  });
+
+  it("handles task_completed", () => {
+    const typed = narrowLaneEvent(makeBase("task_completed", taskCompletedPayload))!;
+    expect(describeTypedEvent(typed)).toBe("task_completed:task-1");
+  });
+
+  it("handles task_failed", () => {
+    const typed = narrowLaneEvent(makeBase("task_failed", taskFailedPayload))!;
+    expect(describeTypedEvent(typed)).toBe("task_failed:task-1");
   });
 });

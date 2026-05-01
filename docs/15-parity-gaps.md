@@ -33,7 +33,7 @@ swarm-harness uses Ink/React; claw-code uses crossterm + rustyline + syntect + p
 | T5 | Inline approval prompts (y/N) instead of `/approve`/`/deny` | ✅ | P0 | S | Phase 2 stages C–G (`eeb4293..6d27a94`) — `PermissionBridge` async coordinator + inline `PermissionPrompt` Solid component + headless JSONL `permission_required` + stdin reader. `/approve` and `/deny` slash commands removed (P2.Q5). |
 | T6 | Persistent command history across sessions | ✅ | P2 | S | Phase 4 stage A — `src/ui/history.ts` writes to `~/.swarm-harness/history` (10k-entry cap, dedup, multi-line escape). |
 | T7 | Emacs keybindings (full set) | ✅ | P2 | S | Phase 4 stage B — Alt+B/F/D/Backspace word motions + Ctrl+Y yank wired in `input.tsx` KEY_BINDINGS + reducer. |
-| T8 | Spinner that overwrites same line and transitions to ✔/✘ | ⚠️ | P3 | XS | [spinner.tsx](src/ui/repl/spinner.tsx) exists; claw's is more polished. |
+| T8 | Spinner that overwrites same line and transitions to ✔/✘ | ✅ | P3 | XS | v0.2 Stage 2F — [spinner.tsx](src/ui/repl-solid/spinner.tsx) now transitions to ✔ (success) or ✘ (failure) for `transitionMs` ms (default 500) when `active` goes false. `outcome` prop controls which glyph. Phase collapses to "done" (hidden) after transition. Tests in spinner.test.tsx cover success transition, failure transition, and post-transition hide. |
 | T9 | Slash-command dropdown menu (swarm-harness has this) | 🟦 | — | — | Nice-to-keep; claw only has silent rustyline completion. Don't regress. |
 | T10 | Compaction lifecycle UI (swarm-harness has this) | 🟦 | — | — | Don't regress. |
 | T11 | Pending-permission display in status bar (swarm-harness has this) | 🟦 | — | — | Keep even after T5 lands — status bar shows *what* is pending. |
@@ -50,10 +50,10 @@ swarm-harness uses Ink/React; claw-code uses crossterm + rustyline + syntect + p
 | A2 | Branch lock / stale-base / stale-branch detection | 🟦 | P1 | M | Audited in Stage 2C (doc 22). No correctness gaps vs claw's three modules. Deliberate divergences: cross-process file lock (claw uses in-process OnceLock, unsafe for subprocess workers), `.swarm-base` marker file, `resolveMainRef` fallback chain, silent `not-a-git-repo`. One observability gap (`StaleBranchEvent` envelope) deferred to v0.3+ telemetry pass. See `docs/22-a2-branch-lock-audit.md`. |
 | A3 | Recovery recipes | ❌ | P2 | L | claw: `runtime/recovery_recipes.rs`. Structured fallback for known failure modes. Lower priority until we have telemetry showing which failures repeat. |
 | A4 | Policy engine (merge/retry/rebase/escalation) | ❌ | P2 | L | claw: `runtime/policy_engine.rs`. Currently swarm handles retries inline in Orchestrator. |
-| A5 | Typed lane events (blockers, failure classification) | ✅ | P1 | M | Phase 5 stage C — `TypedLaneEvent` discriminated union + `assertNeverEvent` exhaustiveness gate (incremental migration; 3 new variants typed, 70+ existing stay unknown per P5.Q9). |
+| A5 | Typed lane events (blockers, failure classification) | ✅ | P1 | M | Phase 5 stage C — `TypedLaneEvent` discriminated union + `assertNeverEvent` exhaustiveness gate (incremental migration; 3 new variants typed, 70+ existing stay unknown per P5.Q9). v0.2.Q6 Stage 2F: 10 more variants typed (text_delta, tool_use_start, tool_use_input, tool_use_end, tool_result, message_stop, task_created, task_updated, task_completed, task_failed) — now 13 typed variants total. |
 | A6 | Sandbox abstraction (Linux `unshare`, macOS sandbox-exec) | ❌ | P3 | L | claw: `runtime/sandbox.rs`. Platform-specific; low user value for macOS-first. Defer. |
 | A7 | Green contract (declarative config validation) | ❌ | P3 | S | claw: `runtime/green_contract.rs`. Cosmetic until config becomes complex. |
-| A8 | Server-side token preflight | ⚠️ | P2 | S | swarm has CompactionConfig but no server-reported token counts before send. |
+| A8 | Server-side token preflight | ✅ | P2 | S | v0.2.Q6 Stage 2F — `serverCountTokens()` in `src/engine/token-preflight.ts` calls `@anthropic-ai/sdk` `client.messages.countTokens()` when `ANTHROPIC_API_KEY` is set; result propagates via `countTokens()` with `source: "server"`. **Nuance:** Claude Max subscription users authenticate via OAuth (not API key) — the `count_tokens` REST endpoint returns 401 for them. Those callers always fall through to `source: "local-estimate"`. If the Agent SDK ever exposes a native token-count method compatible with OAuth, prefer it in `token-preflight.ts`. |
 | A9 | Two-engine design (SDK + Native) | 🟦 | — | — | swarm-harness unique. Don't regress. |
 | A10 | Swarm orchestration (WorkerPool, lane events, role overlays) | 🟦 | — | — | swarm-harness unique. Core differentiator. |
 
@@ -104,7 +104,7 @@ M4b work is the bulk of this section. Most gaps are "written but not shipped" ra
 | # | Gap | Status | Priority | Effort | Notes |
 |---|---|---|---|---|---|
 | D1 | Mock parity harness (scripted scenarios vs captured requests) | ❌ | P2 | L | claw: `PARITY.md` references 10 scenarios / 19 captured requests. Would catch regressions across engines. |
-| D2 | Session trajectory smoke suite | ⚠️ | P2 | S | M4b Phase 8 added smoke scripts; audit what's covered. |
+| D2 | Session trajectory smoke suite | ✅ | P2 | S | v0.2 Stage 2F — audited in `docs/23-d2-smoke-audit.md`. 8 scripts covering 35+ trajectories. Only `smoke-opentui.sh` runs in CI; remaining 7 are developer-run. Gaps documented: budget-exceeded trajectory, server-preflight live scenario, inline permission-prompt smoke, SDK-vs-NativeEngine cross-comparison (D1), MCP e2e (TO2). Recommendations: add budget-exceeded offline scenario to smoke-m4a.sh (XS), promote M1/M3a offline scripts to CI (M). |
 
 ---
 

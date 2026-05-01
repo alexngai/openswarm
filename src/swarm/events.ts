@@ -341,6 +341,104 @@ export interface CrashDetectedPayload {
 }
 
 // ---------------------------------------------------------------------------
+// v0.2.Q6 — typed payload interfaces for high-traffic turn + task variants
+// ---------------------------------------------------------------------------
+
+/**
+ * Payload for `text_delta` events.
+ * Wire shape matches NormalizedEvent["text_delta"] in src/core/types.ts.
+ */
+export interface TextDeltaPayload {
+  readonly text: string;
+  /** Present when the delta is scoped to a specific tool-use block. */
+  readonly toolUseId?: string;
+}
+
+/**
+ * Payload for `tool_use_start` events.
+ * Wire shape matches NormalizedEvent["tool_use_start"]: id + name.
+ */
+export interface ToolUseStartPayload {
+  readonly toolUseId: string;
+  readonly toolName: string;
+  readonly toolInput?: unknown;
+}
+
+/**
+ * Payload for `tool_use_input` events (streaming JSON delta).
+ * Wire shape matches NormalizedEvent["tool_use_input"]: id + jsonDelta.
+ */
+export interface ToolUseInputPayload {
+  readonly toolUseId: string;
+  readonly partialJson: string;
+}
+
+/**
+ * Payload for `tool_use_end` events.
+ * Wire shape matches NormalizedEvent["tool_use_end"]: id only.
+ */
+export interface ToolUseEndPayload {
+  readonly toolUseId: string;
+}
+
+/**
+ * Payload for `tool_result` events.
+ * Wire shape matches NormalizedEvent["tool_result"]: toolUseId + content + isError.
+ */
+export interface ToolResultPayload {
+  readonly toolUseId: string;
+  readonly content: string;
+  readonly isError?: boolean;
+}
+
+/**
+ * Payload for `message_stop` events.
+ * Wire shape matches NormalizedEvent["message_stop"]: stopReason + usage.
+ */
+export interface MessageStopPayload {
+  readonly stopReason?: string;
+  readonly usage?: unknown;
+}
+
+/**
+ * Payload for `task_created` events.
+ * Reserved — not yet emitted; shape matches future task-dispatch flow.
+ */
+export interface TaskCreatedPayload {
+  readonly taskId: string;
+  readonly prompt: string;
+}
+
+/**
+ * Payload for `task_updated` events.
+ * Reserved — not yet emitted; shape matches future task-state-patch flow.
+ */
+export interface TaskUpdatedPayload {
+  readonly taskId: string;
+  readonly patch: Record<string, unknown>;
+}
+
+/**
+ * Payload for `task_completed` events.
+ * Reserved — not yet emitted; shape matches future task-completion flow.
+ */
+export interface TaskCompletedPayload {
+  readonly taskId: string;
+  readonly output?: string;
+  readonly usage?: unknown;
+}
+
+/**
+ * Payload for `task_failed` events.
+ * Reserved — not yet emitted; shape matches future task-failure flow.
+ */
+export interface TaskFailedPayload {
+  readonly taskId: string;
+  readonly error: string;
+  readonly failureClass?: FailureClass;
+}
+
+// ---------------------------------------------------------------------------
 // Phase 5 Stage C — TypedLaneEvent discriminated union (P5.Q9)
 // ---------------------------------------------------------------------------
 
@@ -356,11 +454,25 @@ export interface CrashDetectedPayload {
  * Adding a new TypedLaneEvent variant without updating the
  * `assertNeverEvent` consumer below is a compile error — that IS the
  * exhaustiveness gate doc 16's Phase 5 acceptance criterion #3 calls for.
+ *
+ * v0.2.Q6: 10 high-traffic variants added (turn primitives + task lifecycle).
  */
 export type TypedLaneEvent =
   | { readonly type: "bash_validation_blocked"; readonly payload: BashValidationBlockedPayload }
   | { readonly type: "bash_validation_warned"; readonly payload: BashValidationWarnedPayload }
-  | { readonly type: "worker_lifecycle_changed"; readonly payload: WorkerLifecycleChangedPayload };
+  | { readonly type: "worker_lifecycle_changed"; readonly payload: WorkerLifecycleChangedPayload }
+  // v0.2.Q6 — turn primitives
+  | { readonly type: "text_delta"; readonly payload: TextDeltaPayload }
+  | { readonly type: "tool_use_start"; readonly payload: ToolUseStartPayload }
+  | { readonly type: "tool_use_input"; readonly payload: ToolUseInputPayload }
+  | { readonly type: "tool_use_end"; readonly payload: ToolUseEndPayload }
+  | { readonly type: "tool_result"; readonly payload: ToolResultPayload }
+  | { readonly type: "message_stop"; readonly payload: MessageStopPayload }
+  // v0.2.Q6 — task lifecycle
+  | { readonly type: "task_created"; readonly payload: TaskCreatedPayload }
+  | { readonly type: "task_updated"; readonly payload: TaskUpdatedPayload }
+  | { readonly type: "task_completed"; readonly payload: TaskCompletedPayload }
+  | { readonly type: "task_failed"; readonly payload: TaskFailedPayload };
 
 /**
  * Narrow a generic LaneEvent to a TypedLaneEvent if its `type` is one of
@@ -381,6 +493,28 @@ export function narrowLaneEvent(event: LaneEvent): TypedLaneEvent | undefined {
       return { type: event.type, payload: event.payload as BashValidationWarnedPayload };
     case "worker_lifecycle_changed":
       return { type: event.type, payload: event.payload as WorkerLifecycleChangedPayload };
+    // v0.2.Q6 — turn primitives
+    case "text_delta":
+      return { type: event.type, payload: event.payload as TextDeltaPayload };
+    case "tool_use_start":
+      return { type: event.type, payload: event.payload as ToolUseStartPayload };
+    case "tool_use_input":
+      return { type: event.type, payload: event.payload as ToolUseInputPayload };
+    case "tool_use_end":
+      return { type: event.type, payload: event.payload as ToolUseEndPayload };
+    case "tool_result":
+      return { type: event.type, payload: event.payload as ToolResultPayload };
+    case "message_stop":
+      return { type: event.type, payload: event.payload as MessageStopPayload };
+    // v0.2.Q6 — task lifecycle
+    case "task_created":
+      return { type: event.type, payload: event.payload as TaskCreatedPayload };
+    case "task_updated":
+      return { type: event.type, payload: event.payload as TaskUpdatedPayload };
+    case "task_completed":
+      return { type: event.type, payload: event.payload as TaskCompletedPayload };
+    case "task_failed":
+      return { type: event.type, payload: event.payload as TaskFailedPayload };
     default:
       return undefined;
   }
