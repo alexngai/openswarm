@@ -10,10 +10,15 @@ import type {
   SendResult,
 } from "./host.js";
 import type { AgentId, PermissionMode, SessionId } from "../core/types.js";
-import type { LaneEvent } from "./events.js";
+import type { LaneEvent, FailureClass } from "./events.js";
 import type { ParentTransport } from "./ipc/parent-transport.js";
 import type { AgentResult } from "./host.js";
 import type { IpcNotification } from "./ipc/protocol.js";
+import {
+  isValidTransition,
+  INITIAL_LIFECYCLE_STATE,
+  type WorkerLifecycleState,
+} from "./worker-lifecycle.js";
 
 export class WorkerHost implements SwarmHost {
   readonly mode = "worker" as const;
@@ -26,6 +31,8 @@ export class WorkerHost implements SwarmHost {
    * so any queued-but-undelivered messages also get returned.
    */
   private readonly inboxBuffer: AgentMessage[] = [];
+
+  private _lifecycleState: WorkerLifecycleState = INITIAL_LIFECYCLE_STATE;
 
   constructor(
     readonly agentId: AgentId,
@@ -103,6 +110,35 @@ export class WorkerHost implements SwarmHost {
     return this.transport.send<boolean>("ancestry.is_ancestor_of", {
       ancestor,
       descendant,
+    });
+  }
+
+  getLifecycleState(): WorkerLifecycleState {
+    return this._lifecycleState;
+  }
+
+  private _transitionTo(
+    next: WorkerLifecycleState,
+    opts?: { failureClass?: FailureClass; reason?: string },
+  ): void {
+    const from = this._lifecycleState;
+    if (!isValidTransition(from, next)) {
+      process.stderr.write(
+        `[WorkerHost] invalid lifecycle transition: ${from} → ${next} (agentId=${this.agentId})\n`,
+      );
+      return;
+    }
+    this._lifecycleState = next;
+    this.emit({
+      type: "worker_lifecycle_changed",
+      payload: {
+        from,
+        to: next,
+        ...(opts?.failureClass !== undefined && {
+          failureClass: opts.failureClass,
+        }),
+        ...(opts?.reason !== undefined && { reason: opts.reason }),
+      },
     });
   }
 

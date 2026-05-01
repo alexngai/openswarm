@@ -14,7 +14,12 @@ import type {
   SendResult,
 } from "./host.js";
 import type { AgentId, PermissionMode, SessionId } from "../core/types.js";
-import type { LaneEvent } from "./events.js";
+import type { LaneEvent, FailureClass } from "./events.js";
+import {
+  isValidTransition,
+  INITIAL_LIFECYCLE_STATE,
+  type WorkerLifecycleState,
+} from "./worker-lifecycle.js";
 import { isAncestorOf as ancestorCheck } from "./ancestry.js";
 import { TaskRegistry } from "./task-registry.js";
 import { WorkerTransport } from "./ipc/worker-transport.js";
@@ -87,6 +92,8 @@ export class StandaloneHost implements SwarmHost {
   private readonly spawnFn: typeof spawnWorker;
   private readonly readlineFactory: ReadlineFactory;
 
+  private _lifecycleState: WorkerLifecycleState = INITIAL_LIFECYCLE_STATE;
+
   // M3a Phase 3 messaging state.
   private readonly messageInbox = new AgentInbox();
   private readonly roles = new RoleIndex();
@@ -149,6 +156,35 @@ export class StandaloneHost implements SwarmHost {
       },
       output: (id: string) => this.taskOutput(id),
     };
+  }
+
+  getLifecycleState(): WorkerLifecycleState {
+    return this._lifecycleState;
+  }
+
+  private _transitionTo(
+    next: WorkerLifecycleState,
+    opts?: { failureClass?: FailureClass; reason?: string },
+  ): void {
+    const from = this._lifecycleState;
+    if (!isValidTransition(from, next)) {
+      process.stderr.write(
+        `[StandaloneHost] invalid lifecycle transition: ${from} → ${next} (agentId=${this.agentId})\n`,
+      );
+      return;
+    }
+    this._lifecycleState = next;
+    this.emit({
+      type: "worker_lifecycle_changed",
+      payload: {
+        from,
+        to: next,
+        ...(opts?.failureClass !== undefined && {
+          failureClass: opts.failureClass,
+        }),
+        ...(opts?.reason !== undefined && { reason: opts.reason }),
+      },
+    });
   }
 
   emit(event: Omit<LaneEvent, "ts" | "agentId">): void {

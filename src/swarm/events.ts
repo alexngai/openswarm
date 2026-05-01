@@ -11,6 +11,9 @@
 
 import type { AgentId } from "../core/types.js";
 import type { CommandIntent } from "../tools/tier0/bash-validation/intent.js";
+import type { WorkerLifecycleChangedPayload } from "./worker-lifecycle.js";
+
+export type { WorkerLifecycleChangedPayload };
 
 export interface LaneEvent {
   /** Epoch milliseconds at emission. */
@@ -30,6 +33,7 @@ export type LaneEventType =
   | "worker_ready"
   | "worker_exited"
   | "worker_crashed"
+  | "worker_lifecycle_changed"
   // ---------------- Turn ----------------
   | "turn_start"
   | "turn_end"

@@ -1,5 +1,5 @@
 /**
- * Tests for WorkerHost — M3b Phase 6 (askUser IPC proxy).
+ * Tests for WorkerHost — M3b Phase 6 (askUser IPC proxy) + Phase 5 Stage B (lifecycle state machine).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -123,5 +123,56 @@ describe("WorkerHost.askUser", () => {
     if (result.status === "error") {
       expect(result.message).toMatch(/something else/);
     }
+  });
+});
+
+describe("WorkerHost lifecycle state machine", () => {
+  it("initial state is 'spawning'", () => {
+    const { transport } = makeFakeTransport();
+    const host = makeHost(transport);
+    expect(host.getLifecycleState()).toBe("spawning");
+  });
+
+  it("valid transition updates state and emits lane event", () => {
+    const { transport } = makeFakeTransport();
+    const host = makeHost(transport);
+
+    // Access private method via cast for testing.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (host as any)._transitionTo("ready_for_prompt");
+
+    expect(host.getLifecycleState()).toBe("ready_for_prompt");
+
+    // Verify the lane event was emitted via transport.notify.
+    expect(transport.notify).toHaveBeenCalledTimes(1);
+    const [method, params] = (transport.notify as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(method).toBe("lane_event");
+    const payload = (params as { payload: unknown }).payload as {
+      from: string;
+      to: string;
+    };
+    expect(payload.from).toBe("spawning");
+    expect(payload.to).toBe("ready_for_prompt");
+  });
+
+  it("invalid transition (ready_for_prompt → running) does not change state and logs a warning", () => {
+    const { transport } = makeFakeTransport();
+    const host = makeHost(transport);
+
+    // First do a valid transition to ready_for_prompt.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (host as any)._transitionTo("ready_for_prompt");
+    const notifyCallsBefore = (transport.notify as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    // Now attempt the invalid transition.
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (host as any)._transitionTo("running");
+    stderrSpy.mockRestore();
+
+    // State must not have changed.
+    expect(host.getLifecycleState()).toBe("ready_for_prompt");
+    // No additional lane event emitted.
+    expect((transport.notify as ReturnType<typeof vi.fn>).mock.calls.length).toBe(notifyCallsBefore);
   });
 });
