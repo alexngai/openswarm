@@ -17,13 +17,7 @@ describe("loginMain", () => {
     vi.restoreAllMocks();
   });
 
-  it("codex-chatgpt → calls auth.login() and exits 0", async () => {
-    const mockLogin = vi.fn().mockResolvedValue(undefined);
-    const { OpenAIOAuthAuth } = await import("../auth/openai-oauth.js");
-    (OpenAIOAuthAuth as ReturnType<typeof vi.fn>).mockImplementation(function () {
-      return { login: mockLogin };
-    });
-
+  it("codex-chatgpt → prints redirect message and exits 0", async () => {
     const outChunks: string[] = [];
     vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
       outChunks.push(String(chunk));
@@ -34,8 +28,7 @@ describe("loginMain", () => {
     const code = await loginMain(["--provider", "codex-chatgpt"]);
 
     expect(code).toBe(0);
-    expect(mockLogin).toHaveBeenCalledOnce();
-    expect(outChunks.join("")).toContain("codex-chatgpt");
+    expect(outChunks.join("")).toContain("codex login");
   });
 
   it("claude-agent-sdk → prints informational message, exit 0", async () => {
@@ -80,23 +73,17 @@ describe("loginMain", () => {
     expect(errChunks.join("")).toContain("unknown provider");
   });
 
-  it("codex-chatgpt login failure → exit 2 with error message", async () => {
-    const mockLogin = vi.fn().mockRejectedValue(new Error("network error"));
-    const { OpenAIOAuthAuth } = await import("../auth/openai-oauth.js");
-    (OpenAIOAuthAuth as ReturnType<typeof vi.fn>).mockImplementation(function () {
-      return { login: mockLogin };
-    });
-
-    const errChunks: string[] = [];
-    vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
-      errChunks.push(String(chunk));
+  it("codex-chatgpt → redirect message mentions @openai/codex install hint", async () => {
+    const outChunks: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+      outChunks.push(String(chunk));
       return true;
     });
 
     const { loginMain } = await import("./login.js");
     const code = await loginMain(["--provider", "codex-chatgpt"]);
 
-    expect(code).toBe(2);
-    expect(errChunks.join("")).toContain("network error");
+    expect(code).toBe(0);
+    expect(outChunks.join("")).toContain("@openai/codex");
   });
 });

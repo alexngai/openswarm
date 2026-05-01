@@ -26,6 +26,7 @@ import { readHeadlessApproval } from "../permissions/headless-prompt.js";
 import { ClaudeAgentSdkEngine } from "../engine/claude-agent-sdk.js";
 import { NativeEngine } from "../engine/native.js";
 import { ScriptedTestEngine } from "../engine/test-engine.js";
+import { CodexFrameworkEngine } from "../engine/codex-framework.js";
 import { SessionStore } from "../session/store.js";
 import { runHeadless } from "../ui/headless.js";
 import { PluginRegistry } from "../plugins/registry.js";
@@ -385,17 +386,11 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   let engine: AgentEngine;
   let providerId: string | undefined;
 
-  // codex-chatgpt framework: auth path works, but end-to-end provider is
-  // blocked pending Phase 5 (operator SSE trace capture). Error cleanly.
   if (opts.framework === "codex-chatgpt") {
-    process.stderr.write(
-      "error: --framework codex-chatgpt is not yet wired — Phase 5 Codex provider is blocked on an operator SSE trace capture.\n" +
-        "Login DOES work: `swarm-harness login --provider codex-chatgpt`. End-to-end turns require Phase 5 to ship.\n",
-    );
-    process.exit(2);
-  }
-
-  if (scriptedMode) {
+    engine = new CodexFrameworkEngine({
+      cwd: process.cwd(),
+    });
+  } else if (scriptedMode) {
     engine = new ScriptedTestEngine();
   } else {
     const resolved = resolveProvider(resolvedModelId);

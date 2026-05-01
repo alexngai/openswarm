@@ -8,6 +8,26 @@ vi.mock("../auth/status.js", () => ({
   detectAuth: vi.fn(),
 }));
 
+// Mock spawnSync so codex-cli check can be exercised under controlled
+// conditions. Default returns ENOENT so existing tests (which don't care
+// about codex-cli) get a `warn` status that doesn't break overall checks.
+// Using vi.hoisted because vi.mock factories hoist above const declarations.
+const { spawnSyncMock } = vi.hoisted(() => ({
+  spawnSyncMock: vi.fn(() => ({
+    pid: -1,
+    status: null,
+    signal: null,
+    output: [],
+    stdout: "",
+    stderr: "",
+    error: Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
+  })),
+}));
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return { ...actual, spawnSync: spawnSyncMock };
+});
+
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return { ...actual, access: vi.fn(), writeFile: vi.fn(), unlink: vi.fn() };
@@ -114,7 +134,7 @@ describe("runDoctor", () => {
     expect(parsed).toHaveProperty("checks");
     expect(parsed).toHaveProperty("overall");
     expect(Array.isArray(parsed.checks)).toBe(true);
-    expect(parsed.checks).toHaveLength(4);
+    expect(parsed.checks).toHaveLength(5);
     expect(["pass", "fail"]).toContain(parsed.overall);
   });
 
@@ -332,6 +352,101 @@ describe("runDoctor", () => {
       // Restore platform/arch.
       if (origPlatform) Object.defineProperty(process, "platform", origPlatform);
       if (origArch) Object.defineProperty(process, "arch", origArch);
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // codex-cli check (Stage 3C)
+  // ---------------------------------------------------------------------------
+
+  it("codex-cli check: warn when codex binary is absent", async () => {
+    spawnSyncMock.mockReturnValue({
+      pid: -1,
+      status: null,
+      signal: null,
+      output: [],
+      stdout: "",
+      stderr: "",
+      error: Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
+    });
+    try {
+      const detectAuth = await getDetectAuth();
+      detectAuth.mockResolvedValue({ state: "env-api-key", source: "ANTHROPIC_API_KEY" });
+      const fs = await getFsMock();
+      (fs.access as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("ENOENT"));
+      (fs.writeFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+      (fs.unlink as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+      const captured: string[] = [];
+      vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+        captured.push(String(chunk));
+        return true;
+      });
+
+      const { runDoctor } = await import("./doctor.js");
+      await runDoctor("json");
+      const parsed = JSON.parse(captured.join(""));
+      const codexCheck = parsed.checks.find(
+        (c: { name: string }) => c.name === "codex-cli",
+      );
+      expect(codexCheck).toBeDefined();
+      expect(codexCheck.status).toBe("warn");
+      expect(codexCheck.message).toContain("npm install -g @openai/codex");
+    } finally {
+      spawnSyncMock.mockReset();
+    }
+  });
+
+  it("codex-cli check: pass with version when codex binary is present", async () => {
+    spawnSyncMock.mockImplementation(((cmd: string) => {
+      if (cmd === "codex") {
+        return {
+          pid: 12345,
+          status: 0,
+          signal: null,
+          output: [],
+          stdout: "codex-cli 0.98.0\n",
+          stderr: "",
+          error: undefined,
+        };
+      }
+      // which codex
+      return {
+        pid: 12346,
+        status: 0,
+        signal: null,
+        output: [],
+        stdout: "/usr/local/bin/codex\n",
+        stderr: "",
+        error: undefined,
+      };
+    }) as never);
+    try {
+      const detectAuth = await getDetectAuth();
+      detectAuth.mockResolvedValue({ state: "env-api-key", source: "ANTHROPIC_API_KEY" });
+      const fs = await getFsMock();
+      (fs.access as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("ENOENT"));
+      (fs.writeFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+      (fs.unlink as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+      const captured: string[] = [];
+      vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+        captured.push(String(chunk));
+        return true;
+      });
+
+      const { runDoctor } = await import("./doctor.js");
+      await runDoctor("json");
+      const parsed = JSON.parse(captured.join(""));
+      const codexCheck = parsed.checks.find(
+        (c: { name: string }) => c.name === "codex-cli",
+      );
+      expect(codexCheck).toBeDefined();
+      expect(codexCheck.status).toBe("pass");
+      expect(codexCheck.message).toContain("codex-cli 0.98.0");
+      expect(codexCheck.message).toContain("/usr/local/bin/codex");
+    } finally {
+      spawnSyncMock.mockReset();
     }
   });
 });

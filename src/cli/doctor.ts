@@ -17,6 +17,7 @@ import * as fs from "node:fs/promises";
 import * as fsc from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
+import { spawnSync } from "node:child_process";
 import { detectAuth } from "../auth/status.js";
 
 // ---------------------------------------------------------------------------
@@ -207,6 +208,41 @@ async function checkInstall(): Promise<CheckResult> {
   }
 }
 
+function checkCodexCli(): CheckResult {
+  const warnResult: CheckResult = {
+    name: "codex-cli",
+    status: "warn",
+    message:
+      "Install via 'npm install -g @openai/codex' to enable --framework codex-chatgpt mode.",
+  };
+  try {
+    const result = spawnSync("codex", ["--version"], { stdio: "pipe", encoding: "utf8" });
+    if (
+      result === undefined
+      || result === null
+      || result.error !== undefined
+      || result.status !== 0
+    ) {
+      return warnResult;
+    }
+    const stdout = typeof result.stdout === "string" ? result.stdout : String(result.stdout ?? "");
+    const version = stdout.trim().split("\n")[0] ?? "";
+    const whichResult = spawnSync("which", ["codex"], { stdio: "pipe", encoding: "utf8" });
+    const whichStdout =
+      whichResult !== undefined && whichResult !== null && typeof whichResult.stdout === "string"
+        ? whichResult.stdout
+        : "";
+    const codexPath = whichStdout.trim();
+    return {
+      name: "codex-cli",
+      status: "pass",
+      message: `codex CLI ${version} found at ${codexPath}`,
+    };
+  } catch {
+    return warnResult;
+  }
+}
+
 async function checkWorkspace(cwd: string): Promise<CheckResult> {
   const probeFile = path.join(cwd, `.swarm-harness-doctor-probe-${process.pid}`);
   try {
@@ -235,6 +271,7 @@ export async function runDoctor(
     checkConfig(cwd),
     checkInstall(),
     checkWorkspace(cwd),
+    Promise.resolve(checkCodexCli()),
   ]);
 
   const overall: "pass" | "fail" = checks.some((c) => c.status === "fail")

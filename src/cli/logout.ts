@@ -7,8 +7,6 @@
  *   1 — user error (missing/unknown provider)
  */
 
-import { OpenAIOAuthAuth } from "../auth/openai-oauth.js";
-
 // ---------------------------------------------------------------------------
 // parseProvider
 // ---------------------------------------------------------------------------
@@ -33,11 +31,7 @@ export async function logoutMain(argv: string[]): Promise<number> {
 
   switch (provider) {
     case "codex-chatgpt": {
-      const auth = new OpenAIOAuthAuth();
-      await auth.logout();
-      process.stdout.write(
-        `logged out from ${provider}. Credentials removed from ~/.swarm-harness/auth.json.\n`,
-      );
+      process.stdout.write("Run: codex logout\n");
       return 0;
     }
 
