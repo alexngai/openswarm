@@ -10,6 +10,7 @@
  */
 
 import type { AgentId } from "../core/types.js";
+import type { CommandIntent } from "../tools/tier0/bash-validation/intent.js";
 
 export interface LaneEvent {
   /** Epoch milliseconds at emission. */
@@ -126,6 +127,11 @@ export type LaneEventType =
   // ---------------- Plugin lifecycle ----------------
   /** A plugin was skipped because it is disabled in PluginStateStore. */
   | "plugin_disabled"
+  // ---------------- Phase 5 — runtime hardening ----------------
+  /** Bash command blocked by the bash-validation pipeline. */
+  | "bash_validation_blocked"
+  /** Bash command flagged as potentially dangerous; user made a decision. */
+  | "bash_validation_warned"
   // ---------------- Error ----------------
   | "error";
 
@@ -267,4 +273,25 @@ export interface ErrorPayload {
   readonly retryable: boolean;
   /** Opaque cause chain — stringified, not structured, to survive JSONL. */
   readonly cause?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5 Stage A — bash-validation payload interfaces
+// ---------------------------------------------------------------------------
+
+/** Payload for `bash_validation_blocked` events. */
+export interface BashValidationBlockedPayload {
+  readonly command: string;
+  readonly submodule: string;
+  readonly reason: string;
+  readonly intent: CommandIntent;
+}
+
+/** Payload for `bash_validation_warned` events. */
+export interface BashValidationWarnedPayload {
+  readonly command: string;
+  readonly submodule: string;
+  readonly message: string;
+  readonly decision: "approved" | "denied";
+  readonly intent: CommandIntent;
 }

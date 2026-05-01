@@ -42,6 +42,7 @@ import { HookRuntime } from "../hooks/runtime.js";
 import { loadAliases, resolveAlias } from "../providers/aliases.js";
 import { resolveProvider } from "../providers/routing.js";
 import { OpenAIEnvAuth } from "../auth/openai-env.js";
+import { bashValidationGate } from "../permissions/bash-gate.js";
 // Note: the ink REPL (`src/ui/repl/`) is lazy-loaded inside runPrompt only
 // when the TTY path is taken. ink-markdown is CJS and requires() ink (which
 // has top-level await) — pulling it in eagerly crashes non-TTY paths like
@@ -469,20 +470,32 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
       return { allow: false, reason: `unknown tool: ${toolName}` };
     }
     const modeDecision = permEngine.check(toolImpl.spec, input);
-    if (modeDecision.allow) return modeDecision;
-    const pending = {
-      toolName: toolImpl.spec.name,
-      input,
-      currentMode: currentPermissionMode,
-      requiredPermission: toolImpl.spec.requiredPermission,
-      reason: modeDecision.reason,
-    };
-    // Headless: emit JSONL `permission_required`, block on stdin, EOF = deny.
-    // TTY: dispatch to REPL store via bridge, await keystroke (y/Enter/Ctrl-C).
-    if (useHeadless) {
-      return await readHeadlessApproval(pending);
+    if (!modeDecision.allow) {
+      const pending = {
+        toolName: toolImpl.spec.name,
+        input,
+        currentMode: currentPermissionMode,
+        requiredPermission: toolImpl.spec.requiredPermission,
+        reason: modeDecision.reason,
+      };
+      // Headless: emit JSONL `permission_required`, block on stdin, EOF = deny.
+      // TTY: dispatch to REPL store via bridge, await keystroke (y/Enter/Ctrl-C).
+      if (useHeadless) {
+        return await readHeadlessApproval(pending);
+      }
+      return await permissionBridge.request(pending);
     }
-    return await permissionBridge.request(pending);
+
+    // Phase 5 Stage A — bash command validation gate.
+    // Runs after PermissionEngine.check returns Allow, before returning to the engine.
+    // P5.Q2, P5.Q12: this is the unified gate for both SDK and Native engines.
+    const bashGateResult = await bashValidationGate(
+      { toolName, toolImpl, input, currentMode: currentPermissionMode },
+      { bridge: permissionBridge, useHeadless, cwd: process.cwd() },
+    );
+    if (bashGateResult !== null) return bashGateResult;
+
+    return modeDecision;
   };
 
   // 8. Build RunConfig.
