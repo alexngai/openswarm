@@ -313,12 +313,11 @@ describe("parseArgv", () => {
     expect(result.opts.framework).toBe("codex-chatgpt");
   });
 
-  it("--framework codex-chatgpt --model gpt-4o errors with specific message", () => {
-    const result = parseArgv(["--framework", "codex-chatgpt", "--model", "gpt-4o", "do work"]);
-    expect(result).toMatchObject({
-      kind: "error",
-      message: expect.stringContaining("--framework codex-chatgpt does not accept --model"),
-    });
+  it("--framework codex-chatgpt --model gpt-5.4 is accepted (forwarded to Codex App Server)", () => {
+    const result = parseArgv(["--framework", "codex-chatgpt", "--model", "gpt-5.4", "do work"]);
+    if (result.kind !== "prompt") throw new Error("expected prompt");
+    expect(result.opts.framework).toBe("codex-chatgpt");
+    expect(result.opts.model).toBe("gpt-5.4");
   });
 
   // ---- Phase 7: plugin subcommand ------------------------------------------

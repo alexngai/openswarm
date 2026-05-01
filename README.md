@@ -221,8 +221,10 @@ codex login
 **Example invocation:**
 
 ```bash
-swarm-harness --framework codex-chatgpt --model gpt-4o "explain this codebase"
+swarm-harness --framework codex-chatgpt --model gpt-5.4 "explain this codebase"
 ```
+
+Pass any Codex-compatible model id with `--model` (e.g. `gpt-5.4`, `o3-mini`). Omitting `--model` falls back to `gpt-5.4` (the codex CLI's own default `gpt-5.2-codex` is rejected on ChatGPT subscription accounts).
 
 Swarm-harness spawns `codex app-server`, performs the JSON-RPC handshake, starts a thread, and streams `NormalizedEvent`s back through the standard pipeline (headless JSONL, TUI, etc.). Auth is owned entirely by `codex login`; swarm-harness holds zero OAuth credentials in this mode.
 

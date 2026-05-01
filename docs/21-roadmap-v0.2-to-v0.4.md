@@ -226,7 +226,7 @@ Six stages, sequenced for independence. Each ends in a shippable state.
 
 ## Stage breakdown (rewritten — see doc 24 for full detail)
 
-**Stages 3.0–3D shipped 2026-05-01.**
+**Stages 3.0–3E shipped 2026-05-01.** Tag `v0.3` cut after operator approval.
 
 | Stage | What | Estimate | Status |
 |---|---|---|---|
@@ -235,7 +235,7 @@ Six stages, sequenced for independence. Each ends in a shippable state.
 | **3B** | Agent thread + event translation. Map Codex JSON-RPC notifications → `NormalizedEvent` discriminated union. | 0.75d | ✅ |
 | **3C** | CLI + routing wiring. Remove the "blocked" stub at `src/cli/main.ts:388`. Login subcommand redirects to `codex login`. | 0.25d | ✅ |
 | **3D** | Tests + docs. 6+ tests against captured fixtures. Update doc 15 row P4 ✅, README, doc 16, doc 06 Q20, doc 14 § Phase 5 (mark superseded), this section. | 0.5d | ✅ |
-| **3E** | Live smoke + tag. Operator-driven verification. Bump package.json to 0.3.0. Tag v0.3. | 0.25d | pending |
+| **3E** | Live smoke + tag. Bump package.json to 0.3.0. Live ChatGPT-subscription smokes (text + tool call) confirmed via `gpt-5.4`. Tag v0.3 cut by operator. | 0.25d | ✅ |
 
 ## What changed from the prior plan
 

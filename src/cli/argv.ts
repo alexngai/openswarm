@@ -503,16 +503,6 @@ export function parseArgv(args: string[]): ParsedArgs {
   // Dispatch on resolved subcommand.
   // ---------------------------------------------------------------------------
 
-  // Validate: --framework codex-chatgpt does not accept --model.
-  if (framework === "codex-chatgpt" && model !== undefined) {
-    return {
-      kind: "error",
-      message:
-        "--framework codex-chatgpt does not accept --model (uses ChatGPT Plus/Pro's default).",
-      showHelp: false,
-    };
-  }
-
   const opts: CommonOpts = {
     model,
     resume,
