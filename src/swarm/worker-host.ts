@@ -19,6 +19,7 @@ import {
   INITIAL_LIFECYCLE_STATE,
   type WorkerLifecycleState,
 } from "./worker-lifecycle.js";
+import { writeWorkerState } from "./worker-state-file.js";
 
 export class WorkerHost implements SwarmHost {
   readonly mode = "worker" as const;
@@ -33,6 +34,12 @@ export class WorkerHost implements SwarmHost {
   private readonly inboxBuffer: AgentMessage[] = [];
 
   private _lifecycleState: WorkerLifecycleState = INITIAL_LIFECYCLE_STATE;
+  /** taskId from the run-request; set by markRunning(taskId). */
+  private _taskId: string | undefined;
+  /** AgentId of the parent that spawned this worker; set at construction. */
+  private readonly _parentAgentId: AgentId | undefined;
+  /** Epoch ms when this WorkerHost was constructed (worker process start). */
+  private readonly _startedAt: number;
 
   constructor(
     readonly agentId: AgentId,
@@ -40,7 +47,10 @@ export class WorkerHost implements SwarmHost {
     readonly permissionMode: PermissionMode,
     private readonly transport: ParentTransport,
     private readonly parentToolUseId?: string,
+    parentAgentId?: AgentId,
   ) {
+    this._parentAgentId = parentAgentId;
+    this._startedAt = Date.now();
     // Subscribe to sub_agent_event notifications. This handler is installed
     // unconditionally so messages that arrive between turns (e.g. while the
     // worker is mid-response) are buffered and surface on the next
@@ -61,6 +71,25 @@ export class WorkerHost implements SwarmHost {
           if (msg !== undefined) this.inboxBuffer.push(msg);
         }
       });
+    }
+
+    // Write initial state file immediately so a crash during setup is recorded.
+    // Wrapped in try/catch so disk failures don't kill the worker before it
+    // can complete its worker_ready handshake (an unwrapped throw here would
+    // crash the constructor → parent times out at 10s waiting for ready).
+    try {
+      writeWorkerState({
+        agentId: this.agentId,
+        pid: process.pid,
+        startedAt: this._startedAt,
+        lifecycleState: this._lifecycleState,
+        lastTransitionAt: this._startedAt,
+        ...(this._parentAgentId !== undefined && { parentAgentId: this._parentAgentId }),
+      });
+    } catch (err) {
+      process.stderr.write(
+        `[WorkerHost] failed to write initial state file (agentId=${this.agentId}): ${err instanceof Error ? err.message : String(err)}\n`,
+      );
     }
   }
 
@@ -127,8 +156,12 @@ export class WorkerHost implements SwarmHost {
   /**
    * Called when a "run" request arrives. Immediately pairs prompt_accepted
    * with running — the worker accepts the prompt and starts executing it.
+   * @param taskId Optional task identifier to persist in the state file.
    */
-  markRunning(): void {
+  markRunning(taskId?: string): void {
+    if (taskId !== undefined) {
+      this._taskId = taskId;
+    }
     this._transitionTo("prompt_accepted");
     this._transitionTo("running");
   }
@@ -166,6 +199,34 @@ export class WorkerHost implements SwarmHost {
         ...(opts?.reason !== undefined && { reason: opts.reason }),
       },
     });
+    // Persist state file ONLY on terminal transitions (finished / failed).
+    // Per-transition writes were tried but caused ~4x slowdown in
+    // integration tests with concurrent subprocess workers (each did ~5
+    // sync fsync calls during its lifecycle). Constructor write captures
+    // "spawning"; terminal write captures the final outcome — those two
+    // are what crash recovery actually needs. Intermediate states
+    // (ready_for_prompt, prompt_accepted, running) are observable via the
+    // lane event stream, not the state file.
+    if (next === "finished" || next === "failed") {
+      const now = Date.now();
+      try {
+        writeWorkerState({
+          agentId: this.agentId,
+          pid: process.pid,
+          startedAt: this._startedAt,
+          lifecycleState: next,
+          lastTransitionAt: now,
+          ...(this._taskId !== undefined && { taskId: this._taskId }),
+          ...(this._parentAgentId !== undefined && { parentAgentId: this._parentAgentId }),
+          ...(opts?.failureClass !== undefined && { failureClass: opts.failureClass }),
+          ...(opts?.reason !== undefined && { reason: opts.reason }),
+        });
+      } catch (err) {
+        process.stderr.write(
+          `[WorkerHost] failed to persist terminal state file (agentId=${this.agentId}): ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+      }
+    }
   }
 
   emit(event: Omit<LaneEvent, "ts" | "agentId">): void {

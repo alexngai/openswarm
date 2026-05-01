@@ -18,3 +18,6 @@ const tmpDir = fs.mkdtempSync(
   path.join(os.tmpdir(), `swarm-harness-vitest-${crypto.randomUUID()}-`),
 );
 process.env["SWARM_HARNESS_HISTORY_PATH"] = path.join(tmpDir, "history");
+// Prevent vitest tests from writing to the user's real ~/.swarm-harness/workers/.
+// Mirror the SWARM_HARNESS_HISTORY_PATH pattern used above.
+process.env["SWARM_HARNESS_WORKERS_DIR"] = path.join(tmpDir, "workers");

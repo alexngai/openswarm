@@ -72,7 +72,7 @@ export async function runWorkerEntry(): Promise<number> {
 
   // Ack the run immediately.
   transport.respond(runReq.id, { accepted: true });
-  host.markRunning();
+  host.markRunning(task.id);
 
   // M3a Phase 6: role overlay + allowedTools filter.
   // `SWARM_HARNESS_ROLE` names a role; we look it up in a worker-local

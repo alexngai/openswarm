@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { PassThrough } from "node:stream";
 import { EventEmitter } from "node:events";
+import * as crypto from "node:crypto";
 import type { ChildProcess } from "node:child_process";
 import { StandaloneHost } from "./standalone-host.js";
 import { TaskRegistry } from "./task-registry.js";
@@ -8,6 +9,7 @@ import type { TaskPacket } from "./host.js";
 import type { AgentId } from "../core/types.js";
 import { encodeFrame } from "./ipc/framing.js";
 import type { SpawnWorkerArgs } from "./subprocess-spawner.js";
+import { writeWorkerState } from "./worker-state-file.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -439,5 +441,89 @@ describe("StandaloneHost.askUser", () => {
     } finally {
       restore();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// scanForOrphanWorkers (v0.2 Stage 2B)
+// SWARM_HARNESS_WORKERS_DIR is set to a tmp dir in vitest-setup.ts so these
+// writes never touch ~/.swarm-harness/workers/.
+// ---------------------------------------------------------------------------
+
+describe("StandaloneHost.scanForOrphanWorkers", () => {
+  it("returns empty list when no state files exist", () => {
+    const host = new StandaloneHost();
+    const orphans = host.scanForOrphanWorkers();
+    // May include entries from other tests in the same vitest worker; just
+    // assert none have our own pid as a dead pid (we ARE alive).
+    const ownPidEntries = orphans.filter((s) => s.pid === process.pid);
+    expect(ownPidEntries).toHaveLength(0);
+  });
+
+  it("returns non-terminal entries whose process is not alive", () => {
+    const deadPid = 999999; // almost certainly not a live process
+    const agentId = crypto.randomUUID() as AgentId;
+    writeWorkerState({
+      agentId,
+      pid: deadPid,
+      startedAt: Date.now(),
+      lifecycleState: "running",
+      lastTransitionAt: Date.now(),
+    });
+
+    const host = new StandaloneHost();
+    const orphans = host.scanForOrphanWorkers();
+    const match = orphans.find((s) => s.agentId === agentId);
+    expect(match).toBeDefined();
+    expect(match!.lifecycleState).toBe("running");
+  });
+
+  it("skips entries with terminal lifecycleState=finished even if process is dead", () => {
+    const deadPid = 999999;
+    const agentId = crypto.randomUUID() as AgentId;
+    writeWorkerState({
+      agentId,
+      pid: deadPid,
+      startedAt: Date.now(),
+      lifecycleState: "finished",
+      lastTransitionAt: Date.now(),
+    });
+
+    const host = new StandaloneHost();
+    const orphans = host.scanForOrphanWorkers();
+    expect(orphans.find((s) => s.agentId === agentId)).toBeUndefined();
+  });
+
+  it("skips entries with terminal lifecycleState=failed even if process is dead", () => {
+    const deadPid = 999999;
+    const agentId = crypto.randomUUID() as AgentId;
+    writeWorkerState({
+      agentId,
+      pid: deadPid,
+      startedAt: Date.now(),
+      lifecycleState: "failed",
+      lastTransitionAt: Date.now(),
+      failureClass: "panic",
+      reason: "engine blew up",
+    });
+
+    const host = new StandaloneHost();
+    const orphans = host.scanForOrphanWorkers();
+    expect(orphans.find((s) => s.agentId === agentId)).toBeUndefined();
+  });
+
+  it("skips non-terminal entries whose process IS alive", () => {
+    const agentId = crypto.randomUUID() as AgentId;
+    writeWorkerState({
+      agentId,
+      pid: process.pid, // this process is alive
+      startedAt: Date.now(),
+      lifecycleState: "running",
+      lastTransitionAt: Date.now(),
+    });
+
+    const host = new StandaloneHost();
+    const orphans = host.scanForOrphanWorkers();
+    expect(orphans.find((s) => s.agentId === agentId)).toBeUndefined();
   });
 });

@@ -357,10 +357,10 @@ describe("Scenario 9: orchestrator routes message.send between two depth-1 worke
 
     // Wait for workers to finish their scripts (text-only completes quickly).
     await Promise.all([handleA.wait(), handleB.wait()]);
-  }, 60_000); // bumped from 20s after v0.1 smoke pass: 3/3 isolated runs pass
-              // in ~10s, but the test flakes under full-suite parallel load
-              // (subprocess startup contention). Real fix is serial-pool the
-              // subprocess-spawning suites; v0.2 cleanup.
+  }, 120_000); // 120s — bumped from 60s after v0.2 stage 2B added worker
+               // state file writes, which compound under full-suite parallel
+               // load. 3/3 isolated runs pass in ~10s. Real fix is serial-pool
+               // the subprocess-spawning suites; v0.2 follow-up.
 });
 
 // ---------------------------------------------------------------------------
@@ -461,9 +461,11 @@ describe("Scenario 9b: real spawn chain — ancestry-based task_stop end-to-end"
         handleC.wait().catch(() => {}),
       ]);
     },
-    // 60s to accommodate 3 subprocess spawns + the task_stop protocol
-    // under CI load. Observed ~20-35s wall-clock locally; 30s was borderline.
-    60_000,
+    // 120s — bumped from 60s after v0.2 stage 2B. Observed ~20-35s
+    // wall-clock locally in isolation; full-suite parallel load with
+    // 3 subprocess spawns + state-file writes pushes past 60s. Real
+    // fix is serial-pool the subprocess-spawning suites; v0.2 follow-up.
+    120_000,
   );
 });
 

@@ -20,6 +20,11 @@ import {
   INITIAL_LIFECYCLE_STATE,
   type WorkerLifecycleState,
 } from "./worker-lifecycle.js";
+import {
+  listWorkerStates,
+  isWorkerProcessAlive,
+  type WorkerStateFile,
+} from "./worker-state-file.js";
 import { isAncestorOf as ancestorCheck } from "./ancestry.js";
 import { TaskRegistry } from "./task-registry.js";
 import { WorkerTransport } from "./ipc/worker-transport.js";
@@ -123,6 +128,15 @@ export class StandaloneHost implements SwarmHost {
         };
       });
     this.depths.set(this.agentId, 0);
+
+    // Orphan-scan + crash_detected emission is wired but DISABLED at
+    // construction time after v0.2 stage 2B integration tests showed it
+    // contributed to per-test slowdowns when stale state files accumulate
+    // and the scan + N emit loops run synchronously in the constructor.
+    // The `scanForOrphanWorkers()` method below is still public so
+    // orchestrators that want crash recovery can opt in explicitly.
+    // Auto-scan-on-construction belongs to a v0.2 follow-up that also
+    // makes the scan async + the write path async/batched.
 
     this.task = {
       create: async (packet) => this.registry.create(packet),
@@ -607,6 +621,25 @@ export class StandaloneHost implements SwarmHost {
   // -------------------------------------------------------------------------
   // Worker lifecycle + IPC plumbing (M3a Phase 3)
   // -------------------------------------------------------------------------
+
+  /**
+   * Scan the workers directory for state files that look like crashed workers.
+   *
+   * A worker is considered orphaned if its lifecycle state is not a terminal
+   * state ("finished" or "failed") AND its process is no longer alive.
+   *
+   * v0.2: purely informational — callers receive the list and may emit
+   * crash_detected events. No automatic file cleanup or restart logic.
+   */
+  scanForOrphanWorkers(): WorkerStateFile[] {
+    const states = listWorkerStates();
+    return states.filter(
+      (s) =>
+        s.lifecycleState !== "finished" &&
+        s.lifecycleState !== "failed" &&
+        !isWorkerProcessAlive(s.pid),
+    );
+  }
 
   private onWorkerExited(agentId: AgentId): void {
     this.roles.evict(agentId);

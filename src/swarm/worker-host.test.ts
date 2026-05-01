@@ -1,10 +1,12 @@
 /**
- * Tests for WorkerHost — M3b Phase 6 (askUser IPC proxy) + Phase 5 Stage B (lifecycle state machine).
+ * Tests for WorkerHost — M3b Phase 6 (askUser IPC proxy) + Phase 5 Stage B (lifecycle state machine)
+ * + v0.2 Stage 2B (state file writes on lifecycle transitions).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
 import { WorkerHost } from "./worker-host.js";
+import { readWorkerState } from "./worker-state-file.js";
 import type { ParentTransport } from "./ipc/parent-transport.js";
 import type { AgentId, PermissionMode } from "../core/types.js";
 
@@ -174,6 +176,72 @@ describe("WorkerHost lifecycle state machine", () => {
     expect(host.getLifecycleState()).toBe("ready_for_prompt");
     // No additional lane event emitted.
     expect((transport.notify as ReturnType<typeof vi.fn>).mock.calls.length).toBe(notifyCallsBefore);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// State-file writes (v0.2 Stage 2B)
+// SWARM_HARNESS_WORKERS_DIR is set to a tmp dir by vitest-setup.ts, so these
+// writes never touch ~/.swarm-harness/workers/.
+// ---------------------------------------------------------------------------
+
+describe("WorkerHost state file writes", () => {
+  it("writes state file on construction with lifecycleState=spawning", () => {
+    const { transport } = makeFakeTransport();
+    const agentId = "state-file-agent-1" as AgentId;
+    new WorkerHost(agentId, 1, "workspace-write" as PermissionMode, transport);
+
+    const state = readWorkerState(agentId);
+    expect(state).not.toBeNull();
+    expect(state!.agentId).toBe(agentId);
+    expect(state!.lifecycleState).toBe("spawning");
+    expect(state!.pid).toBe(process.pid);
+  });
+
+  it("writes terminal state (finished) with taskId after running", () => {
+    // Intermediate transitions (ready_for_prompt, running) do not write the
+    // state file — only construction (spawning) and terminal states do.
+    // This avoids ~4x slowdown from per-transition fsync in concurrent tests.
+    const { transport } = makeFakeTransport();
+    const agentId = "state-file-agent-2" as AgentId;
+    const host = new WorkerHost(agentId, 1, "workspace-write" as PermissionMode, transport);
+
+    // Intermediate transitions must not change the on-disk state.
+    host.markReadyForPrompt();
+    expect(readWorkerState(agentId)!.lifecycleState).toBe("spawning");
+
+    host.markRunning("task-xyz");
+    expect(readWorkerState(agentId)!.lifecycleState).toBe("spawning");
+
+    // Terminal transition writes with the accumulated taskId.
+    host.markFinished();
+    const finished = readWorkerState(agentId)!;
+    expect(finished.lifecycleState).toBe("finished");
+    expect(finished.taskId).toBe("task-xyz");
+  });
+
+  it("markFailed persists failureClass and reason", () => {
+    const { transport } = makeFakeTransport();
+    const agentId = "state-file-agent-3" as AgentId;
+    const host = new WorkerHost(agentId, 1, "workspace-write" as PermissionMode, transport);
+    host.markReadyForPrompt();
+    host.markRunning();
+    host.markFailed("panic", "engine blew up");
+
+    const state = readWorkerState(agentId)!;
+    expect(state.lifecycleState).toBe("failed");
+    expect(state.failureClass).toBe("panic");
+    expect(state.reason).toBe("engine blew up");
+  });
+
+  it("persists parentAgentId when provided at construction", () => {
+    const { transport } = makeFakeTransport();
+    const agentId = "state-file-agent-4" as AgentId;
+    const parentAgentId = "parent-agent" as AgentId;
+    new WorkerHost(agentId, 2, "workspace-write" as PermissionMode, transport, undefined, parentAgentId);
+
+    const state = readWorkerState(agentId)!;
+    expect(state.parentAgentId).toBe(parentAgentId);
   });
 });
 

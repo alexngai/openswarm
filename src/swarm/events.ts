@@ -12,6 +12,7 @@
 import type { AgentId } from "../core/types.js";
 import type { CommandIntent } from "../tools/tier0/bash-validation/intent.js";
 import type { WorkerLifecycleChangedPayload } from "./worker-lifecycle.js";
+import type { WorkerStateFile } from "./worker-state-file.js";
 
 export type { WorkerLifecycleChangedPayload };
 
@@ -136,6 +137,9 @@ export type LaneEventType =
   | "bash_validation_blocked"
   /** Bash command flagged as potentially dangerous; user made a decision. */
   | "bash_validation_warned"
+  // ---------------- Crash recovery (v0.2 Stage 2B) ----------------
+  /** An orphaned worker state file was detected on startup (informational). */
+  | "crash_detected"
   // ---------------- Error ----------------
   | "error";
 
@@ -298,6 +302,15 @@ export interface BashValidationWarnedPayload {
   readonly message: string;
   readonly decision: "approved" | "denied";
   readonly intent: CommandIntent;
+}
+
+// ---------------------------------------------------------------------------
+// v0.2 Stage 2B — crash recovery payload interfaces
+// ---------------------------------------------------------------------------
+
+/** Payload for `crash_detected` events emitted during orphan scan at startup. */
+export interface CrashDetectedPayload {
+  readonly orphan: WorkerStateFile;
 }
 
 // ---------------------------------------------------------------------------
