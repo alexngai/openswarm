@@ -357,7 +357,10 @@ describe("Scenario 9: orchestrator routes message.send between two depth-1 worke
 
     // Wait for workers to finish their scripts (text-only completes quickly).
     await Promise.all([handleA.wait(), handleB.wait()]);
-  }, 20_000);
+  }, 60_000); // bumped from 20s after v0.1 smoke pass: 3/3 isolated runs pass
+              // in ~10s, but the test flakes under full-suite parallel load
+              // (subprocess startup contention). Real fix is serial-pool the
+              // subprocess-spawning suites; v0.2 cleanup.
 });
 
 // ---------------------------------------------------------------------------
