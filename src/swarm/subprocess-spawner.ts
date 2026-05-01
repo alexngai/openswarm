@@ -1,7 +1,38 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { PermissionMode } from "../core/types.js";
 import type { FrameworkChoice } from "../cli/argv.js";
+
+/**
+ * Default worker entry path resolved by walking up from THIS module's
+ * location until we find `dist/cli.js`. Works for both:
+ *
+ *   - Compiled mode (`dist/swarm/subprocess-spawner.js`): walks
+ *     `dist/swarm` → `dist` → finds the install root → `dist/cli.js`.
+ *   - Source mode (`src/swarm/subprocess-spawner.ts` under vitest):
+ *     walks `src/swarm` → `src` → repo root → `dist/cli.js`.
+ *
+ * Pre-fix, `path.resolve(process.cwd(), "dist/cli.js")` only worked when
+ * the user invoked `swarm run` from the install dir; v0.1 smoke pass
+ * caught the regression when running from `/tmp`.
+ */
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+function findDefaultCliPath(): string {
+  let dir = SCRIPT_DIR;
+  for (let i = 0; i < 10; i++) {
+    const candidate = path.join(dir, "dist", "cli.js");
+    if (existsSync(candidate)) return candidate;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  // Last resort: fall back to the pre-fix behavior so callers in unusual
+  // setups still get a path (which they can override via `cliJsPath`).
+  return path.resolve(process.cwd(), "dist/cli.js");
+}
+const DEFAULT_CLI_PATH = findDefaultCliPath();
 
 export interface SpawnWorkerArgs {
   readonly agentId: string;
@@ -33,8 +64,7 @@ export interface SpawnWorkerArgs {
 }
 
 export function spawnWorker(args: SpawnWorkerArgs): ChildProcess {
-  const cliPath =
-    args.cliJsPath ?? path.resolve(process.cwd(), "dist/cli.js");
+  const cliPath = args.cliJsPath ?? DEFAULT_CLI_PATH;
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     SWARM_HARNESS_AGENT_ID: args.agentId,

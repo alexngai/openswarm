@@ -447,15 +447,25 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
 
   // 7. Build permission gate.
   //
-  // Phase 2 flow (doc 17 "Phase 2 — design lock"):
-  //   1. Unknown tool → hard deny (never prompt).
-  //   2. Mode allows → fast-path allow (matches claw `permissions.rs:234-264`).
-  //   3. Mode denies → dispatch a prompt via PermissionBridge.
+  // Phase 2 flow (doc 17 "Phase 2 — design lock") + Phase 5 stage A bash gate.
+  // Order (revised after v0.1 smoke pass surfaced that bash-validation never
+  // fired when bash was mode-denied first):
+  //   1. Unknown tool → hard deny.
+  //   2. **Bash-validation gate fires first.** Block → return deny immediately.
+  //      Warn → prompt; on deny → return deny; on approve → fall through to
+  //      mode check (which may itself deny and re-prompt). For non-bash tools
+  //      the gate returns null and we fall through.
+  //   3. Mode allows → fast-path allow (matches claw `permissions.rs:234-264`).
+  //   4. Mode denies → dispatch a prompt via PermissionBridge.
   //        - TTY path: REPL attaches its dispatch; inline y/N prompt.
   //        - Headless path: stdin reader attaches nothing to bridge; caller
   //          drives `respond()` from JSONL-piped stdin (stage F).
-  //   Elevation is the ONLY way to bypass a mode deny — there is no separate
-  //   "structural deny" tier. Matches claw's mode-comparison gate exactly.
+  //
+  // Two-prompt UX risk: if validation Warn is approved AND mode also denies,
+  // the user sees two prompts (validation, then mode-deny). Acceptable for
+  // v0.1 — collapsing the cases is a v0.2 polish item. Note danger-full-access
+  // mode bypasses canUseTool entirely (P2.Q10), so validation does NOT fire
+  // there in the SDK engine path; documented as a v0.2 follow-up.
   //
   // `currentPermissionMode` is the live mutable binding updated by /permissions
   // across turns. Reading it inside the closure picks up the latest value.
@@ -469,6 +479,28 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     if (toolImpl === undefined) {
       return { allow: false, reason: `unknown tool: ${toolName}` };
     }
+
+    // Phase 5 Stage A — bash command validation gate fires first.
+    // For non-bash tools, the gate returns null and we fall through to the
+    // mode check. For bash tools, Block / Warn / Allow control the flow.
+    const bashGateResult = await bashValidationGate(
+      { toolName, toolImpl, input, currentMode: currentPermissionMode },
+      {
+        bridge: permissionBridge,
+        useHeadless,
+        cwd: process.cwd(),
+        // Single-agent path: no orchestrator to receive lane events. The slot is
+        // wired here so future swarm integration can replace this with a real emit
+        // (e.g. write to the worker's stdio lane) without touching this call site.
+        emitLaneEvent: (_event) => {
+          // no-op — single-agent paths have no swarm host to receive events.
+        },
+      },
+    );
+    // Block or Warn-denied short-circuit: never run the mode check, never
+    // surface a second prompt for the same tool call.
+    if (bashGateResult !== null && !bashGateResult.allow) return bashGateResult;
+
     const modeDecision = permEngine.check(toolImpl.spec, input);
     if (!modeDecision.allow) {
       const pending = {
@@ -485,25 +517,6 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
       }
       return await permissionBridge.request(pending);
     }
-
-    // Phase 5 Stage A — bash command validation gate.
-    // Runs after PermissionEngine.check returns Allow, before returning to the engine.
-    // P5.Q2, P5.Q12: this is the unified gate for both SDK and Native engines.
-    const bashGateResult = await bashValidationGate(
-      { toolName, toolImpl, input, currentMode: currentPermissionMode },
-      {
-        bridge: permissionBridge,
-        useHeadless,
-        cwd: process.cwd(),
-        // Single-agent path: no orchestrator to receive lane events. The slot is
-        // wired here so future swarm integration can replace this with a real emit
-        // (e.g. write to the worker's stdio lane) without touching this call site.
-        emitLaneEvent: (_event) => {
-          // no-op — single-agent paths have no swarm host to receive events.
-        },
-      },
-    );
-    if (bashGateResult !== null) return bashGateResult;
 
     return modeDecision;
   };
