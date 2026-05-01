@@ -35,6 +35,8 @@ import type {
   TurnStartedNotification,
   TurnCompletedNotification,
   ItemStartedNotification,
+  ItemCompletedNotification,
+  CommandExecutionItem,
   ItemAgentMessageDeltaNotification,
   ThreadTokenUsageNotification,
 } from "./codex-app-server-types.js";
@@ -418,13 +420,71 @@ export class CodexAppServerProvider extends EventEmitter {
 
       if (method === "item/started") {
         const p = params as unknown as ItemStartedNotification;
-        // Skip all item/started — reasoning, userMessage, agentMessage: no event emitted.
-        void p;
+        if (p.item.type === "commandExecution") {
+          const item = p.item as unknown as CommandExecutionItem;
+          const id = item.id;
+          enqueue({ kind: "event", event: { type: "tool_use_start", id, name: "exec" } });
+          enqueue({
+            kind: "event",
+            event: {
+              type: "tool_use_input",
+              id,
+              jsonDelta: JSON.stringify({
+                command: item.command,
+                cwd: item.cwd,
+                commandActions: item.commandActions,
+              }),
+            },
+          });
+          enqueue({ kind: "event", event: { type: "tool_use_end", id } });
+          return;
+        }
+        // userMessage, agentMessage: text already streamed via deltas — drop.
+        // reasoning, plan, webSearch, contextCompaction: fall through to info.
+        if (p.item.type === "userMessage" || p.item.type === "agentMessage") {
+          return;
+        }
+        enqueue({
+          kind: "event",
+          event: {
+            type: "info",
+            source: "codex",
+            method,
+            payload: frame.params ?? null,
+          },
+        });
         return;
       }
 
       if (method === "item/completed") {
-        // Skip — text already streamed via deltas; no re-emit.
+        const p = params as unknown as ItemCompletedNotification;
+        if (p.item.type === "commandExecution") {
+          const item = p.item as unknown as CommandExecutionItem;
+          enqueue({
+            kind: "event",
+            event: {
+              type: "tool_result",
+              toolUseId: item.id,
+              content: item.aggregatedOutput ?? "",
+              isError: item.exitCode !== 0,
+            },
+          });
+          return;
+        }
+        // userMessage, agentMessage: text already streamed via deltas — drop.
+        if (p.item.type === "userMessage" || p.item.type === "agentMessage") {
+          return;
+        }
+        // Other types (reasoning, plan, etc.): emit as info.
+        enqueue({
+          kind: "event",
+          event: {
+            type: "info",
+            source: "codex",
+            method,
+            payload: frame.params ?? null,
+          },
+        });
         return;
       }
 
@@ -499,7 +559,16 @@ export class CodexAppServerProvider extends EventEmitter {
         return;
       }
 
-      // Anything else — skip silently.
+      // Anything else — emit as info so callers can inspect unknown notifications.
+      enqueue({
+        kind: "event",
+        event: {
+          type: "info",
+          source: "codex",
+          method,
+          payload: frame.params ?? null,
+        },
+      });
     };
 
     this.on("notification", onNotification);

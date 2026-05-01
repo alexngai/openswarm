@@ -518,9 +518,9 @@ describe("CodexAppServerProvider — Stage 3B", () => {
 
     await drainPromise;
 
-    // Only message_stop should be emitted; no hook from reasoning.
-    const nonStop = events.filter((e) => e.type !== "message_stop");
-    expect(nonStop).toHaveLength(0);
+    // reasoning items fall through to info events; only tool/text events should be absent.
+    const nonStopNonInfo = events.filter((e) => e.type !== "message_stop" && e.type !== "info");
+    expect(nonStopNonInfo).toHaveLength(0);
 
     await provider.dispose();
   });
@@ -866,6 +866,208 @@ describe("CodexAppServerProvider — Stage 3B", () => {
     const usage = provider.getCumulativeUsage();
     expect(usage.inputTokens).toBeGreaterThan(0);
     expect(usage.outputTokens).toBeGreaterThan(0);
+
+    await provider.dispose();
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 3B-N1: unknown notifications produce NormalizedEvent.info
+  // -------------------------------------------------------------------------
+
+  it("info event: unknown notifications produce a NormalizedEvent.info with payload preserved", async () => {
+    const provider = await bootProvider(pair, spawnMock);
+
+    const gen = provider.runTurn("t1", "prompt");
+    const events: NormalizedEvent[] = [];
+
+    const drainPromise = (async () => {
+      for await (const ev of gen) {
+        events.push(ev);
+      }
+    })();
+
+    await new Promise<void>((r) => setImmediate(r));
+    pair.emitLine({ id: 2, result: { turn: { id: "turn1", items: [], status: "inProgress", error: null } } });
+    await new Promise<void>((r) => setImmediate(r));
+
+    // Emit an unknown notification that has no dedicated handler.
+    pair.emitLine({
+      method: "thread/started",
+      params: { threadId: "t1", someExtra: "data" },
+    });
+    await new Promise<void>((r) => setImmediate(r));
+
+    pair.emitLine({ method: "turn/completed", params: { threadId: "t1", turn: { id: "turn1", items: [], status: "completed", error: null } } });
+    await new Promise<void>((r) => setImmediate(r));
+
+    await drainPromise;
+
+    const infoEvent = events.find((e) => e.type === "info") as
+      | { type: "info"; source: string; method: string; payload: unknown }
+      | undefined;
+    expect(infoEvent).toBeDefined();
+    expect(infoEvent!.source).toBe("codex");
+    expect(infoEvent!.method).toBe("thread/started");
+    expect((infoEvent!.payload as Record<string, unknown>)["someExtra"]).toBe("data");
+
+    await provider.dispose();
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 3B-N2: item/started + item/completed for commandExecution emits
+  //             tool_use_start + tool_use_input + tool_use_end + tool_result
+  // -------------------------------------------------------------------------
+
+  it("tool_use_*: item/started + item/completed for commandExecution produce tool_use_start + tool_use_input + tool_use_end + tool_result", async () => {
+    const provider = await bootProvider(pair, spawnMock);
+
+    const gen = provider.runTurn("t1", "prompt");
+    const events: NormalizedEvent[] = [];
+
+    const drainPromise = (async () => {
+      for await (const ev of gen) {
+        events.push(ev);
+      }
+    })();
+
+    await new Promise<void>((r) => setImmediate(r));
+    pair.emitLine({ id: 2, result: { turn: { id: "turn1", items: [], status: "inProgress", error: null } } });
+    await new Promise<void>((r) => setImmediate(r));
+
+    // Emit item/started for a commandExecution item.
+    pair.emitLine({
+      method: "item/started",
+      params: {
+        item: {
+          type: "commandExecution",
+          id: "call_PAE0TiLDxJLcFgyGvdqf16rT",
+          command: "/bin/zsh -lc 'ls -1 README.md package.json'",
+          cwd: "/Users/alexngai/GitHub/swarm-coder",
+          processId: "21323",
+          status: "inProgress",
+          commandActions: [{ type: "listFiles" }],
+          aggregatedOutput: null,
+          exitCode: null,
+          durationMs: null,
+        },
+        threadId: "t1",
+        turnId: "turn1",
+      },
+    });
+    await new Promise<void>((r) => setImmediate(r));
+
+    // Emit item/completed for the same commandExecution item.
+    pair.emitLine({
+      method: "item/completed",
+      params: {
+        item: {
+          type: "commandExecution",
+          id: "call_PAE0TiLDxJLcFgyGvdqf16rT",
+          command: "/bin/zsh -lc 'ls -1 README.md package.json'",
+          cwd: "/Users/alexngai/GitHub/swarm-coder",
+          status: "completed",
+          commandActions: [{ type: "listFiles" }],
+          aggregatedOutput: "README.md\npackage.json\n",
+          exitCode: 0,
+          durationMs: 51,
+        },
+        threadId: "t1",
+        turnId: "turn1",
+      },
+    });
+    await new Promise<void>((r) => setImmediate(r));
+
+    pair.emitLine({ method: "turn/completed", params: { threadId: "t1", turn: { id: "turn1", items: [], status: "completed", error: null } } });
+    await new Promise<void>((r) => setImmediate(r));
+
+    await drainPromise;
+
+    const toolStart = events.find((e) => e.type === "tool_use_start") as
+      | { type: "tool_use_start"; id: string; name: string }
+      | undefined;
+    expect(toolStart).toBeDefined();
+    expect(toolStart!.id).toBe("call_PAE0TiLDxJLcFgyGvdqf16rT");
+    expect(toolStart!.name).toBe("exec");
+
+    const toolInput = events.find((e) => e.type === "tool_use_input") as
+      | { type: "tool_use_input"; id: string; jsonDelta: string }
+      | undefined;
+    expect(toolInput).toBeDefined();
+    expect(toolInput!.id).toBe("call_PAE0TiLDxJLcFgyGvdqf16rT");
+    const parsed = JSON.parse(toolInput!.jsonDelta) as { command: string; cwd: string };
+    expect(parsed.command).toContain("ls -1");
+    expect(parsed.cwd).toContain("swarm-coder");
+
+    const toolEnd = events.find((e) => e.type === "tool_use_end") as
+      | { type: "tool_use_end"; id: string }
+      | undefined;
+    expect(toolEnd).toBeDefined();
+    expect(toolEnd!.id).toBe("call_PAE0TiLDxJLcFgyGvdqf16rT");
+
+    const toolResult = events.find((e) => e.type === "tool_result") as
+      | { type: "tool_result"; toolUseId: string; content: string; isError: boolean }
+      | undefined;
+    expect(toolResult).toBeDefined();
+    expect(toolResult!.toolUseId).toBe("call_PAE0TiLDxJLcFgyGvdqf16rT");
+    expect(toolResult!.content).toContain("README.md");
+    expect(toolResult!.isError).toBe(false);
+
+    await provider.dispose();
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 3B-N3: failed exec (exitCode !== 0) produces tool_result with isError: true
+  // -------------------------------------------------------------------------
+
+  it("tool_use_*: failed exec (exitCode !== 0) produces tool_result with isError: true", async () => {
+    const provider = await bootProvider(pair, spawnMock);
+
+    const gen = provider.runTurn("t1", "prompt");
+    const events: NormalizedEvent[] = [];
+
+    const drainPromise = (async () => {
+      for await (const ev of gen) {
+        events.push(ev);
+      }
+    })();
+
+    await new Promise<void>((r) => setImmediate(r));
+    pair.emitLine({ id: 2, result: { turn: { id: "turn1", items: [], status: "inProgress", error: null } } });
+    await new Promise<void>((r) => setImmediate(r));
+
+    // Emit item/completed for a failed commandExecution (exitCode: 1).
+    pair.emitLine({
+      method: "item/completed",
+      params: {
+        item: {
+          type: "commandExecution",
+          id: "call_FAIL",
+          command: "/bin/zsh -lc 'cat /nonexistent'",
+          cwd: "/tmp",
+          status: "completed",
+          commandActions: [],
+          aggregatedOutput: "cat: /nonexistent: No such file or directory",
+          exitCode: 1,
+          durationMs: 10,
+        },
+        threadId: "t1",
+        turnId: "turn1",
+      },
+    });
+    await new Promise<void>((r) => setImmediate(r));
+
+    pair.emitLine({ method: "turn/completed", params: { threadId: "t1", turn: { id: "turn1", items: [], status: "completed", error: null } } });
+    await new Promise<void>((r) => setImmediate(r));
+
+    await drainPromise;
+
+    const toolResult = events.find((e) => e.type === "tool_result") as
+      | { type: "tool_result"; toolUseId: string; content: string; isError: boolean }
+      | undefined;
+    expect(toolResult).toBeDefined();
+    expect(toolResult!.toolUseId).toBe("call_FAIL");
+    expect(toolResult!.isError).toBe(true);
+    expect(toolResult!.content).toContain("No such file");
 
     await provider.dispose();
   });

@@ -393,6 +393,9 @@ export function translateEngineEvent(evt: NormalizedEvent): ReplEvent[] {
     case "cache_hit":
     case "cache_miss":
       return [];
+    case "info":
+      // Unknown Codex notification — no UI action; log to dev console if desired.
+      return [];
   }
 }
 

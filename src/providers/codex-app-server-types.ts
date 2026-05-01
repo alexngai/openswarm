@@ -199,7 +199,20 @@ export interface ReasoningItem {
   readonly content: unknown[];
 }
 
-export type KnownItem = UserMessageItem | AgentMessageItem | ReasoningItem;
+export interface CommandExecutionItem {
+  readonly type: "commandExecution";
+  readonly id: string;
+  readonly command: string;
+  readonly cwd: string;
+  readonly processId?: string | null;
+  readonly status: "inProgress" | "completed" | "failed";
+  readonly commandActions: readonly unknown[];
+  readonly aggregatedOutput: string | null;
+  readonly exitCode: number | null;
+  readonly durationMs: number | null;
+}
+
+export type KnownItem = UserMessageItem | AgentMessageItem | ReasoningItem | CommandExecutionItem;
 
 export interface ItemStartedNotification {
   readonly item: KnownItem;
