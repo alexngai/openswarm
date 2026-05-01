@@ -434,6 +434,8 @@ export class OpenAIOAuthAuth implements InteractiveAuth {
 
 ### Phase 5 — Codex ChatGPT custom TransportProvider (~1.25 days + 0.25d spike)
 
+> **SUPERSEDED 2026-04-30 by [docs/24-phase-6-codex-app-server-plan.md](24-phase-6-codex-app-server-plan.md).** Web research found that OpenAI's official integration surface for third-party tools is the **Codex App Server (JSON-RPC over stdio)**, not the private browser-to-backend SSE channel this section targets. The pivot drops the SSE spike + custom Vercel AI SDK provider entirely and replaces them with a `FrameworkProvider` that delegates to the locally-installed `codex` binary. The categorization also changes (Codex hosts agent threads, so it's a `FrameworkProvider`, not a `TransportProvider`). The sections below remain for historical record; the implementation path is doc 24.
+
 #### 5.0. Codex Endpoint Spike (0.25d) — BLOCKS Phase 5.1+
 
 BEFORE any Phase 5 implementation work, an operator with ChatGPT Plus/Pro access runs one live Codex request and captures:

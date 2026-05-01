@@ -207,51 +207,48 @@ Six stages, sequenced for independence. Each ends in a shippable state.
 
 ---
 
-# Release v0.3 — Phase 6 OpenAI OAuth (Fork C)
+# Release v0.3 — Phase 6 Codex App Server FrameworkProvider (Fork C)
 
-**Goal:** Ship the last roadmapped phase from [docs/16-parity-plan.md § Phase 6](16-parity-plan.md). Closes gap P4.
+**Goal:** Ship ChatGPT Plus / Pro subscription support for swarm-harness users. Closes gap P4.
 
-**Estimate:** ~1 week of swarm-harness work + external operator dependency.
+**Estimate:** ~2.5 days. **No external operator spike required** under the new design (see below).
 
-## Pre-requisite — operator SSE spike
+> **REDESIGNED 2026-04-30:** the original plan targeted the HTTP SSE endpoint at `chatgpt.com/backend-api/codex/responses`. Web research surfaced that the **officially supported integration surface is the Codex App Server (JSON-RPC over stdio), not the private browser-to-backend SSE channel.** v0.3 now pivots to the App Server approach — same end-user feature, lower risk, no SSE spike. Full plan + design lock at [docs/24-phase-6-codex-app-server-plan.md](24-phase-6-codex-app-server-plan.md).
+>
+> **Supersedes:** [docs/14-m4b-plan.md § Phase 5](14-m4b-plan.md) and [docs/06-open-questions.md Q20](06-open-questions.md).
 
-Per [docs/06-open-questions.md Q20](06-open-questions.md):
-- `test/fixtures/codex/responses-sse.txt` — real SSE trace of at least one complete turn against `https://chatgpt.com/backend-api/codex/responses`
-- `test/fixtures/codex/required-headers.json` — header whitelist beyond `Authorization: Bearer <token>`
+## Headline
 
-Until the fixtures exist, no implementation work can proceed.
+- **Integration target:** spawn the locally-installed `codex` binary as a subprocess and speak JSON-RPC over stdio (officially documented at `developers.openai.com/codex/app-server`).
+- **Auth:** delegate entirely to `codex login`. swarm-harness owns zero OAuth code in this mode (deprecates `src/auth/openai-oauth.ts`).
+- **Categorization:** `FrameworkProvider`, not `TransportProvider` — the App Server hosts agent threads with their own tool surface; we delegate the loop.
+- **CLI:** `--framework codex-chatgpt` flag stays the same; underlying transport changes from "custom HTTP+SSE" → "App Server JSON-RPC". User-facing UX is identical.
 
-## Stage breakdown
+## Stage breakdown (rewritten — see doc 24 for full detail)
 
-### Stage 3A — Operator captures fixtures · external
+| Stage | What | Estimate |
+|---|---|---|
+| **3.0** | Local Codex App Server JSON-RPC spike. Capture handshake + one-turn events to `test/fixtures/codex-app-server/`. | 0.25d |
+| **3A** | `CodexAppServerProvider` skeleton — spawn binary, JSON-RPC framing, lifecycle. | 0.5d |
+| **3B** | Agent thread + event translation. Map Codex JSON-RPC notifications → `NormalizedEvent` discriminated union. | 0.75d |
+| **3C** | CLI + routing wiring. Remove the "blocked" stub at `src/cli/main.ts:388`. Login subcommand redirects to `codex login`. | 0.25d |
+| **3D** | Tests + docs. 6+ tests against captured fixtures. Update doc 15 row P4 ✅, README, doc 16, doc 06 Q20, doc 14 § Phase 5 (mark superseded), this section. | 0.5d |
+| **3E** | Live smoke + tag. Operator-driven verification. Bump package.json to 0.3.0. Tag v0.3. | 0.25d |
 
-Operator runs `swarm-harness login --provider codex-chatgpt` (already shipped in M4b Phase 4), authenticates against ChatGPT Plus / Pro, then runs a one-turn capture script against the Codex endpoint, saves the SSE trace + headers to the two fixture files. Lands as an isolated commit.
+## What changed from the prior plan
 
-### Stage 3B — `CodexChatGPTProvider` implementation · ~3–4d
+| Aspect | Old plan | New plan |
+|---|---|---|
+| Endpoint | `chatgpt.com/backend-api/codex/responses` (private browser channel, reverse-engineered) | Local `codex` binary subprocess (officially documented integration) |
+| Protocol | HTTP + SSE | JSON-RPC 2.0 over stdio |
+| Auth | swarm-harness owns OAuth + reverse-engineered client_id | Delegate to `codex login`; we own zero auth code |
+| Spike needed? | Yes — operator-captured SSE fixtures (BLOCKED v0.3 entirely) | No — local development verifies the documented JSON-RPC protocol |
+| Risk | Browser channel can change without notice; client_id sharing is ungoverned | Officially supported, versioned protocol with public changelog |
+| Estimate | 1.5d post-spike (spike was indefinite) | 2.5d total, no external dependency |
 
-- New: `src/providers/codex-chatgpt-transport.ts` — Vercel AI SDK custom provider targeting the Codex endpoint.
-- Custom stream translator: maps Codex SSE events → Vercel AI SDK's `LanguageModelV1` stream contract.
-- Header injection (per the captured whitelist).
-- Token refresh via the existing `OpenAIOAuthAuth` (already shipped).
-- Tests: replay the captured fixture against the translator, assert event ordering + payload shape.
+**Acceptance criteria for v0.3:** see doc 24 (8 criteria).
 
-### Stage 3C — End-to-end wiring · ~1d
-
-- Edit `src/providers/routing.ts`: route `--framework codex-chatgpt` to the new provider.
-- Edit `src/cli/main.ts`: remove the "blocked" stub at line ~388 ("error: --framework codex-chatgpt is not yet wired").
-- Smoke: `swarm-harness login --provider codex-chatgpt && swarm-harness --framework codex-chatgpt --model gpt-5 "say hi"`.
-- Update [docs/15-parity-gaps.md](15-parity-gaps.md): P4 → ✅ with stage citation.
-- Tag `v0.3`.
-
-**Acceptance criteria for v0.3:**
-- `swarm-harness --framework codex-chatgpt --model gpt-5 "..."` runs against ChatGPT Plus / Pro subscription.
-- Token refresh works across session boundaries.
-- All test suites green; new fixture-replay tests pass.
-
-**Risks:**
-- Codex endpoint is policy-tolerated, not contracted. Could change without notice.
-- Shared client ID (`app_EMoamEEZ73f0CkXaXp7hrann`) could be revoked — would require a new client ID negotiation with OpenAI.
-- SSE format may differ between captured fixture and a live session in subtle ways — fixture-replay tests catch the trained-against shape; production may surface variants. Mitigation: capture multiple traces of different turn shapes (text-only, single tool call, multi-tool, error path) before locking implementation.
+**Risks:** see doc 24 § Risks (codex protocol churn, binary install friction, JSON-RPC framing edges).
 
 ---
 

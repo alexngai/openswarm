@@ -127,19 +127,19 @@ Dynamic (mid-session) tool registration deferred to M5 — needed only if users 
 
 All open questions resolved as of 2026-04-20. New questions will be added at the bottom as they arise during M0+.
 
-## Q20. Codex ChatGPT endpoint SSE shape — DEFERRED pending operator capture
+## Q20. Codex ChatGPT endpoint SSE shape — RESOLVED 2026-04-30 (pivot to App Server)
 
-**Question:** What is the exact SSE event vocabulary emitted by `https://chatgpt.com/backend-api/codex/responses`? What headers does it require beyond the OAuth bearer token?
+**Original question:** What is the exact SSE event vocabulary emitted by `https://chatgpt.com/backend-api/codex/responses`? What headers does it require beyond the OAuth bearer token?
 
-**Status:** Deferred. This question blocks Phase 5 of M4b (`CodexChatGPTProvider` custom stream translator). Until a real SSE trace is captured via an operator spike, the event-name vocabulary cannot be locked down, and no speculative implementation is permitted.
+**Resolution:** Question is **moot** under the v0.3 redesign. Web research surfaced that the official OpenAI integration surface is the **Codex App Server (JSON-RPC over stdio)**, not the private browser-to-backend SSE channel. Phase 6 pivoted: spawn the locally-installed `codex` binary as a subprocess, speak JSON-RPC over stdio, delegate auth to `codex login`. No SSE capture needed; no reverse-engineered endpoint to chase.
 
-**What Phase 5 requires before starting:**
-1. `test/fixtures/codex/responses-sse.txt` — real SSE trace of at least one complete turn (text response + one tool call if feasible).
-2. `test/fixtures/codex/required-headers.json` — whitelist of headers the endpoint requires beyond `Authorization: Bearer <token>`.
+**Replacement design:** [docs/24-phase-6-codex-app-server-plan.md](24-phase-6-codex-app-server-plan.md). Categorization changes from `TransportProvider` (custom Vercel AI SDK) to `FrameworkProvider` (delegating the agent loop to Codex). Mirrors the Anthropic Agent SDK pattern for Claude Max subscription auth.
 
-**Current state:** `swarm-harness login --provider codex-chatgpt` works end-to-end (OAuth PKCE flow, token persistence, refresh). End-to-end model turns are blocked on this spike. See `docs/14-m4b-plan.md` §5.0 for spike procedure.
+**Decision log entry:**
 
-**Resolution path:** Operator captures a live session trace, commits the two fixture files, then Phase 5.1–5.4 can proceed to implement `CodexStreamState`, wire it into `NativeEngine`, and unlock `--framework codex-chatgpt` for actual turns.
+| Date | Question | Decision | Rationale |
+|---|---|---|---|
+| 2026-04-30 | Q20 Codex SSE shape | RESOLVED — pivot to App Server JSON-RPC; SSE spike no longer needed | Official integration path is the documented App Server protocol, not the private browser channel; lower risk + better architecture fit |
 
 ## Q19. NativeEngine concurrency — RESOLVED
 

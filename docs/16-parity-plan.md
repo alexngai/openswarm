@@ -256,19 +256,21 @@ Each submodule is independently tested. Output is a structured validation result
 
 **Gaps closed:** P4
 
-**Scope:**
-- Finish M4b Phase 4 OAuth wiring.
-- Codex App Server endpoint integration.
-- PKCE + browser callback flow.
+> **Implementation note (2026-04-30):** REDESIGNED to use the **Codex App Server (JSON-RPC over stdio)** instead of the originally-planned custom Vercel AI SDK provider hitting `chatgpt.com/backend-api/codex/responses`. Web research confirmed the App Server is OpenAI's officially documented integration surface for third-party tools. The pivot eliminates the operator SSE spike (no longer needed) and changes the categorization from `TransportProvider` to `FrameworkProvider`. Full plan + design lock at [docs/24-phase-6-codex-app-server-plan.md](24-phase-6-codex-app-server-plan.md). The scope/acceptance/estimate/blocker bullets below predate the pivot and are kept for historical record only.
 
-**Acceptance criteria:**
-- `swarm-harness login --provider openai` opens browser, completes OAuth, stores token.
-- Subsequent `swarm-harness --model gpt-<x>` uses the token via the Codex endpoint.
-- Token refresh works across session boundaries.
+**Scope (pre-pivot, see doc 24 for current):**
+- ~~Finish M4b Phase 4 OAuth wiring.~~ Auth delegated entirely to `codex login`; swarm-harness owns zero OAuth code in this mode.
+- ~~Codex App Server endpoint integration.~~ Replaced by `CodexAppServerProvider` spawning the `codex` binary as a subprocess.
+- ~~PKCE + browser callback flow.~~ Owned by `codex login`, not us.
 
-**Estimate:** 2–4 days of our work + external dependency.
+**Acceptance criteria (pre-pivot):**
+- ~~`swarm-harness login --provider openai`~~ → redirects to `codex login` instead.
+- `swarm-harness --framework codex-chatgpt --model gpt-5 "..."` runs against ChatGPT subscription quota via the App Server.
+- ~~Token refresh works across session boundaries.~~ Codex owns token lifecycle.
 
-**Blocker:** operator Codex spike for endpoint documentation (per M4b plan). Do not start until unblocked.
+**Estimate:** ~2.5 days. **No external operator dependency.**
+
+**Blocker (pre-pivot):** ~~Operator Codex SSE spike.~~ **Resolved by pivot — no SSE spike needed.** User just needs `codex` CLI installed locally.
 
 ---
 
