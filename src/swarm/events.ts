@@ -299,3 +299,58 @@ export interface BashValidationWarnedPayload {
   readonly decision: "approved" | "denied";
   readonly intent: CommandIntent;
 }
+
+// ---------------------------------------------------------------------------
+// Phase 5 Stage C — TypedLaneEvent discriminated union (P5.Q9)
+// ---------------------------------------------------------------------------
+
+/**
+ * Typed lane-event discriminated union — Phase 5 stage C (P5.Q9).
+ *
+ * Migration policy: NEW lane event variants get strictly-typed payloads
+ * via this union. The existing 70+ LaneEventType variants stay
+ * LaneEventPayload = unknown for now; tighten case-by-case as they're
+ * touched. Big-bang migration would be a multi-day diff with no
+ * acceptance-criterion benefit.
+ *
+ * Adding a new TypedLaneEvent variant without updating the
+ * `assertNeverEvent` consumer below is a compile error — that IS the
+ * exhaustiveness gate doc 16's Phase 5 acceptance criterion #3 calls for.
+ */
+export type TypedLaneEvent =
+  | { readonly type: "bash_validation_blocked"; readonly payload: BashValidationBlockedPayload }
+  | { readonly type: "bash_validation_warned"; readonly payload: BashValidationWarnedPayload }
+  | { readonly type: "worker_lifecycle_changed"; readonly payload: WorkerLifecycleChangedPayload };
+
+/**
+ * Narrow a generic LaneEvent to a TypedLaneEvent if its `type` is one of
+ * the new typed variants. Returns undefined otherwise — caller falls back
+ * to the loose `LaneEventPayload = unknown` interpretation.
+ *
+ * The `as Foo` casts below are safe because we control event emission for
+ * the typed variants. If a future stage adds runtime validation (e.g. Zod)
+ * on the payload, this is the place to plug it in.
+ * TODO(phase-5-future): add Zod parse here when runtime schema validation
+ * is introduced for typed lane events.
+ */
+export function narrowLaneEvent(event: LaneEvent): TypedLaneEvent | undefined {
+  switch (event.type) {
+    case "bash_validation_blocked":
+      return { type: event.type, payload: event.payload as BashValidationBlockedPayload };
+    case "bash_validation_warned":
+      return { type: event.type, payload: event.payload as BashValidationWarnedPayload };
+    case "worker_lifecycle_changed":
+      return { type: event.type, payload: event.payload as WorkerLifecycleChangedPayload };
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Compile-time exhaustiveness helper. Use in switch statements that
+ * branch on TypedLaneEvent.type — adding a new variant without a case
+ * here becomes a tsc error.
+ */
+export function assertNeverEvent(event: never): never {
+  throw new Error(`Unhandled TypedLaneEvent: ${JSON.stringify(event)}`);
+}
