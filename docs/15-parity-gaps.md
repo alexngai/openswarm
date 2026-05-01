@@ -47,7 +47,7 @@ swarm-harness uses Ink/React; claw-code uses crossterm + rustyline + syntect + p
 | # | Gap | Status | Priority | Effort | Notes |
 |---|---|---|---|---|---|
 | A1 | Worker boot state machine (spawning → trust_required → ready_for_prompt → …) | ✅ | P1 | M | Phase 5 stage B — `src/swarm/worker-lifecycle.ts` (8-state enum + transition table) + `WorkerHost.getLifecycleState()` + `worker_lifecycle_changed` lane event. |
-| A2 | Branch lock / stale-base / stale-branch detection | ⚠️ | P1 | M | claw: `runtime/branch_lock.rs`, `stale_base.rs`, `stale_branch.rs`. swarm has partial git coordination in M3a — verify what's actually ported vs stubbed. |
+| A2 | Branch lock / stale-base / stale-branch detection | 🟦 | P1 | M | Audited in Stage 2C (doc 22). No correctness gaps vs claw's three modules. Deliberate divergences: cross-process file lock (claw uses in-process OnceLock, unsafe for subprocess workers), `.swarm-base` marker file, `resolveMainRef` fallback chain, silent `not-a-git-repo`. One observability gap (`StaleBranchEvent` envelope) deferred to v0.3+ telemetry pass. See `docs/22-a2-branch-lock-audit.md`. |
 | A3 | Recovery recipes | ❌ | P2 | L | claw: `runtime/recovery_recipes.rs`. Structured fallback for known failure modes. Lower priority until we have telemetry showing which failures repeat. |
 | A4 | Policy engine (merge/retry/rebase/escalation) | ❌ | P2 | L | claw: `runtime/policy_engine.rs`. Currently swarm handles retries inline in Orchestrator. |
 | A5 | Typed lane events (blockers, failure classification) | ✅ | P1 | M | Phase 5 stage C — `TypedLaneEvent` discriminated union + `assertNeverEvent` exhaustiveness gate (incremental migration; 3 new variants typed, 70+ existing stay unknown per P5.Q9). |
