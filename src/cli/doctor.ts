@@ -233,7 +233,8 @@ async function checkCodexCli(): Promise<CheckResult> {
   let codexPath = "";
   try {
     const { stdout } = await execFile(whichCmd, ["codex"], { timeout: 2000 });
-    codexPath = stdout.trim();
+    // Windows `where` returns multiple matches separated by CRLF; take first.
+    codexPath = stdout.trim().split(/\r?\n/)[0] ?? "";
   } catch {
     // Path resolution failure is non-fatal — still report the version.
   }

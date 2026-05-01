@@ -155,7 +155,12 @@ export class CodexAppServerProvider extends EventEmitter {
     (item: { kind: "event"; event: import("../core/types.js").NormalizedEvent } | { kind: "done" }) => void
   >();
 
-  /** Whether dispose() has been intentionally called (suppresses crash injection). */
+  /**
+   * Whether dispose() has been intentionally called (suppresses crash injection
+   * in the child error/close handlers). One-shot — the provider is single-use;
+   * after dispose(), `start()` will throw on the `child !== null` guard. If a
+   * future caller adds a re-start path, this must reset to `false`.
+   */
   private disposing = false;
 
   constructor(options: CodexAppServerOptions = {}) {
@@ -602,6 +607,12 @@ export class CodexAppServerProvider extends EventEmitter {
     if (child === null) return;
     this.child = null;
     this.disposing = true;
+
+    // Drain any in-flight runTurn consumers so they receive error+done instead
+    // of hanging on waitForItem(). Covers the narrow race where a child
+    // error/close fires *after* dispose() flips `disposing=true` (the
+    // listener's `!this.disposing` guard would otherwise skip the drain).
+    this.drainActiveTurnQueuesWithError("provider disposed");
 
     // Reject any in-flight requests.
     this.rejectAllPending(new Error("CodexAppServerProvider: disposed"));
