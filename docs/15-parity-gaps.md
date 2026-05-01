@@ -49,11 +49,11 @@ swarm-harness uses Ink/React; claw-code uses crossterm + rustyline + syntect + p
 
 | # | Gap | Status | Priority | Effort | Notes |
 |---|---|---|---|---|---|
-| A1 | Worker boot state machine (spawning → trust_required → ready_for_prompt → …) | ❌ | P1 | M | claw: `runtime/worker_boot.rs`. swarm-harness's WorkerHost lifecycle is implicit. Makes trust prompts and ready handshakes testable. |
+| A1 | Worker boot state machine (spawning → trust_required → ready_for_prompt → …) | ✅ | P1 | M | Phase 5 stage B — `src/swarm/worker-lifecycle.ts` (8-state enum + transition table) + `WorkerHost.getLifecycleState()` + `worker_lifecycle_changed` lane event. |
 | A2 | Branch lock / stale-base / stale-branch detection | ⚠️ | P1 | M | claw: `runtime/branch_lock.rs`, `stale_base.rs`, `stale_branch.rs`. swarm has partial git coordination in M3a — verify what's actually ported vs stubbed. |
 | A3 | Recovery recipes | ❌ | P2 | L | claw: `runtime/recovery_recipes.rs`. Structured fallback for known failure modes. Lower priority until we have telemetry showing which failures repeat. |
 | A4 | Policy engine (merge/retry/rebase/escalation) | ❌ | P2 | L | claw: `runtime/policy_engine.rs`. Currently swarm handles retries inline in Orchestrator. |
-| A5 | Typed lane events (blockers, failure classification) | ⚠️ | P1 | M | claw: `runtime/lane_events.rs`. swarm has TaskPacket but no typed event enum. Affects telemetry and UI affordances. |
+| A5 | Typed lane events (blockers, failure classification) | ✅ | P1 | M | Phase 5 stage C — `TypedLaneEvent` discriminated union + `assertNeverEvent` exhaustiveness gate (incremental migration; 3 new variants typed, 70+ existing stay unknown per P5.Q9). |
 | A6 | Sandbox abstraction (Linux `unshare`, macOS sandbox-exec) | ❌ | P3 | L | claw: `runtime/sandbox.rs`. Platform-specific; low user value for macOS-first. Defer. |
 | A7 | Green contract (declarative config validation) | ❌ | P3 | S | claw: `runtime/green_contract.rs`. Cosmetic until config becomes complex. |
 | A8 | Server-side token preflight | ⚠️ | P2 | S | swarm has CompactionConfig but no server-reported token counts before send. |
@@ -66,7 +66,7 @@ swarm-harness uses Ink/React; claw-code uses crossterm + rustyline + syntect + p
 
 | # | Gap | Status | Priority | Effort | Notes |
 |---|---|---|---|---|---|
-| TO1 | Deep bash validation (6 submodules: read-only, destructive, mode, sed, path, semantics) | ⚠️ | P1 | M | claw: `runtime/bash_validation.rs` (branch-only). swarm has one-layer validation. Matters for trust in `--headless` runs. |
+| TO1 | Deep bash validation (6 submodules: read-only, destructive, mode, sed, path, semantics) | ✅ | P1 | M | Phase 5 stage A — `src/tools/tier0/bash-validation/` (6 submodules ported from claw) + bash-gate in `canUseTool`. |
 | TO2 | MCP lifecycle hardening (partial-success / degraded-mode reporting) | ⚠️ | P1 | M | claw: `runtime/mcp_lifecycle_hardened.rs`. swarm has basic MCP bridge; failures not classified per-server. |
 | TO3 | `pdf_extract` tool | ❌ | P3 | S | claw tier 3. Defer unless a user hits it. |
 | TO4 | `repl` tool (interactive REPL) | ❌ | P3 | M | claw tier 3. Unclear value relative to bash + write-to-file. |

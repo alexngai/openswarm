@@ -216,6 +216,8 @@ Port each component one-for-one. All take store state as input; write bun tests 
 
 **Gaps closed:** TO1, A1, A5
 
+> **Implementation note (2026-04-30):** the scope below predates implementation; the post-investigation calls live in the [Phase 5 plan + design lock](19-phase-5-plan.md). Most notably P5.Q2 gates bash validation inside `canUseTool` (not at the bash tool layer) so both SDK and Native engines share one gate, and P5.Q9 adopts incremental `TypedLaneEvent` migration rather than a big-bang conversion of all 70+ existing variants. When scope items below conflict with the design lock, the design lock wins.
+
 **Scope:**
 
 ### Phase 5a — Bash validation depth (TO1, M)

@@ -2,7 +2,7 @@
 
 Companion to [16-parity-plan.md § Phase 5](16-parity-plan.md). This file is the execution plan + pre-implementation design lock for Phase 5 (gaps TO1, A1, A5 from [15-parity-gaps.md](15-parity-gaps.md)). Written 2026-04-30, post-Phase-4 ship.
 
-**Status:** unstarted.
+**Status:** shipped 2026-04-30 (commits 6330d28..8f3ac44 + Stage D — see git log).
 
 ---
 
@@ -363,3 +363,15 @@ From [docs/16-parity-plan.md:240-244](16-parity-plan.md):
 3. Phase 5 acceptance criteria met (manual smoke: `--headless --permission-mode read-only` with `rm -rf /` returns structured block error; new lane events visible in JSONL).
 4. Doc 15 (parity gaps) updated to mark TO1, A1, A5 as ✅.
 5. Doc 19 (this file) gets a "shipped" status header at the top with the commit hash range.
+
+---
+
+## Definition of done — final state
+
+Confirmed shipped 2026-04-30. Each criterion from the acceptance criteria section is met:
+
+- [x] **TO1 — Bash validation depth (Stage A):** `src/tools/tier0/bash-validation/` ships 6 submodules (`constants.ts`, `intent.ts`, `read-only.ts`, `destructive.ts`, `mode.ts`, `sed.ts`, `path.ts`) + top-level `validateBashCommand` dispatcher; bash-gate wired in `canUseTool` after `PermissionEngine.check` returns Allow. Per-submodule unit tests + canUseTool integration test. Commits in range 6330d28..8f3ac44.
+- [x] **A1 — Worker lifecycle state machine (Stage B):** `src/swarm/worker-lifecycle.ts` exports `WorkerLifecycleState` (8-state type) + `TRANSITIONS` table + `isValidTransition`; `WorkerHost` gains `_lifecycleState` field, `getLifecycleState()` accessor, `_transitionTo()` emitter; `worker_lifecycle_changed` lane event added to `events.ts`. Transition validation tests in `src/swarm/worker-lifecycle.test.ts`. Same commit range.
+- [x] **A5 — Typed lane events (Stage C):** `TypedLaneEvent` discriminated union introduced in `events.ts` covering the 3 new variants (`bash_validation_blocked`, `bash_validation_warned`, `worker_lifecycle_changed`); `narrowLaneEvent` helper + `assertNeverEvent` exhaustiveness gate wired in smoke-test switch. Existing 70+ variants unchanged per P5.Q9. Same commit range.
+- [x] **Docs + parity-gap updates (Stage D):** `docs/15-parity-gaps.md` marks TO1/A1/A5 ✅; `docs/16-parity-plan.md` § Phase 5 gains implementation note cross-referencing this file; `docs/19-phase-5-plan.md` status updated to shipped. Stage D commit immediately follows 8f3ac44.
+- [x] **Test suites green:** `npm test` (vitest) and `bun test src/ui/repl-solid/` both pass with zero failures (pre-existing Scenario 9b flake excluded) at Stage D commit.
