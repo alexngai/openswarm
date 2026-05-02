@@ -130,9 +130,9 @@ Field mapping is locked by Stage 3.0 spike against the App Server's actual JSON-
 
 ### P6.Q9 — Backward-compat for the deprecated OAuth path
 
-**Decision: keep `src/auth/openai-oauth.ts` in the tree for v0.3; remove in v0.4. `swarm-harness login --provider codex-chatgpt` redirects to `codex login` instead of running the OAuth flow.**
+**Decision: removed in v0.3 (originally planned for v0.4). `swarm-harness login --provider codex-chatgpt` redirects to `codex login` instead of running the OAuth flow.**
 
-Why keep the file? The deprecation is observable (the login subcommand prints a redirect message) but we don't break anyone who's reading the OAuth code as reference. Clean removal happens in v0.4 alongside other end-of-cycle cleanup.
+Original plan kept `src/auth/openai-oauth.ts` in the tree for one release cycle so the deprecation was observable as code (jsdoc `@deprecated` tag) and behavior (login redirect message). After v0.3 ship-readiness review, the file + its 393-line test suite were removed in the same release — the redirect message in `login`/`logout` and the negative tests in those files are the only deprecation signal callers need; keeping 818 lines of dead OAuth code as "reference material" wasn't pulling its weight.
 
 ---
 

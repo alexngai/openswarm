@@ -74,8 +74,12 @@ export interface InteractiveAuth extends AuthSource {
 //   AnthropicApiKeyAuth   — M0
 //   AnthropicOAuthAuth    — M3 (framework-managed; delegates to Agent SDK)
 //   OpenAIApiKeyAuth      — M2
-//   OpenAIOAuthAuth       — M4 (Codex App Server OAuth)
 //   GoogleApiKeyAuth      — M4
 //   XaiApiKeyAuth         — M4
 //   OpenAICompatApiKeyAuth — M2 (Ollama / LM Studio / OpenRouter)
+//
+// Removed in v0.3 (was M4 Codex App Server OAuth):
+//   OpenAIOAuthAuth — Codex App Server now delegates auth to `codex login`
+//                    via the codex-chatgpt FrameworkProvider; swarm-harness
+//                    owns zero OAuth code for this provider.
 // ---------------------------------------------------------------------------
