@@ -9,6 +9,8 @@
  * fixtures.
  */
 
+import { z } from "zod";
+
 // ---------------------------------------------------------------------------
 // Standard JSON-RPC 2.0 shapes
 // ---------------------------------------------------------------------------
@@ -54,12 +56,21 @@ export type JsonRpcServerFrame =
 // initialize
 // ---------------------------------------------------------------------------
 
+/**
+ * Capabilities the host advertises during the initialize handshake.
+ * `experimentalApi: true` is required to opt into experimental features such
+ * as dynamicTools (Stage 4H).
+ */
+export interface InitializeCapabilities {
+  readonly experimentalApi?: boolean;
+}
+
 export interface InitializeParams {
   readonly clientInfo: {
     readonly name: string;
     readonly version: string;
   };
-  readonly capabilities: null;
+  readonly capabilities: InitializeCapabilities | null;
 }
 
 export interface InitializeResult {
@@ -92,6 +103,13 @@ export interface ThreadStartParams {
   readonly sandbox?: string;
   readonly approvalPolicy?: string;
   readonly experimentalRawEvents: boolean;
+  /**
+   * Host tools registered for this thread. Each entry becomes callable by
+   * the agent via `item/tool/call` requests. Requires
+   * `capabilities.experimentalApi: true` in the initialize handshake.
+   * (Stage 4H)
+   */
+  readonly dynamicTools?: readonly unknown[];
 }
 
 export interface ThreadStartResult {
@@ -263,4 +281,83 @@ export interface ErrorNotification {
   readonly message: string;
   readonly code?: number;
   readonly data?: unknown;
+}
+
+// ---------------------------------------------------------------------------
+// Stage 4H — DynamicTools (host tools registered at thread/start)
+// ---------------------------------------------------------------------------
+
+/**
+ * Tool descriptor passed into thread/start.dynamicTools. Each entry registers
+ * a host-side tool that the Codex agent can call via item/tool/call.
+ *
+ * Shape mirrors codex 0.98.0 ts-rs binding (test/fixtures/codex-app-server/Tool.ts).
+ * `inputSchema` / `outputSchema` are JSON Schema objects — passed through
+ * without parsing so callers can supply tool-defined shapes.
+ */
+export const ToolSchema = z.object({
+  name: z.string().min(1),
+  title: z.string().optional(),
+  description: z.string().optional(),
+  inputSchema: z.unknown(),
+  outputSchema: z.unknown().optional(),
+  annotations: z.unknown().optional(),
+  icons: z.array(z.unknown()).optional(),
+  _meta: z.unknown().optional(),
+});
+
+export type Tool = z.infer<typeof ToolSchema>;
+
+/**
+ * Params on the `item/tool/call` request the server sends when the agent
+ * calls a registered dynamic tool. Shape from
+ * test/fixtures/codex-app-server/DynamicToolCallParams.json.
+ */
+export const DynamicToolCallParamsSchema = z.object({
+  threadId: z.string(),
+  turnId: z.string(),
+  callId: z.string(),
+  tool: z.string().min(1),
+  arguments: z.unknown(),
+});
+
+export type DynamicToolCallParams = z.infer<typeof DynamicToolCallParamsSchema>;
+
+/**
+ * Discriminated union of content items the host returns to the server.
+ * Shape from test/fixtures/codex-app-server/DynamicToolCallResponse.json.
+ */
+export const DynamicToolCallOutputContentItemSchema = z.discriminatedUnion(
+  "type",
+  [
+    z.object({ type: z.literal("inputText"), text: z.string() }),
+    z.object({ type: z.literal("inputImage"), imageUrl: z.string() }),
+  ],
+);
+
+export type DynamicToolCallOutputContentItem = z.infer<
+  typeof DynamicToolCallOutputContentItemSchema
+>;
+
+/**
+ * Response shape the host returns for an item/tool/call request.
+ * Sent back as the `result` field of the JSON-RPC response.
+ */
+export const DynamicToolCallResponseSchema = z.object({
+  contentItems: z.array(DynamicToolCallOutputContentItemSchema),
+  success: z.boolean(),
+});
+
+export type DynamicToolCallResponse = z.infer<
+  typeof DynamicToolCallResponseSchema
+>;
+
+/**
+ * Context handed to the host's onDynamicToolCall handler so it knows which
+ * thread/turn/call this invocation belongs to.
+ */
+export interface DynamicToolCallContext {
+  readonly threadId: string;
+  readonly turnId: string;
+  readonly callId: string;
 }

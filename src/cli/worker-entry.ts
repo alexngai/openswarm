@@ -3,8 +3,10 @@ import type { AgentId } from "../core/types.js";
 import { ParentTransport } from "../swarm/ipc/parent-transport.js";
 import { WorkerHost } from "../swarm/worker-host.js";
 import { ClaudeAgentSdkEngine } from "../engine/claude-agent-sdk.js";
+import { CodexFrameworkEngine } from "../engine/codex-framework.js";
 import { NativeEngine } from "../engine/native.js";
 import { ScriptedTestEngine } from "../engine/test-engine.js";
+import { filterCodexPeerTools } from "../tools/codex-peer-tools.js";
 import { resolveProvider } from "../providers/routing.js";
 import { OpenAIEnvAuth } from "../auth/openai-env.js";
 import type { AgentEngine } from "../engine/index.js";
@@ -258,6 +260,17 @@ export async function runWorkerEntry(): Promise<number> {
     engine = new ScriptedTestEngine();
   } else if (frameworkEnv === "claude-agent-sdk") {
     engine = new ClaudeAgentSdkEngine();
+  } else if (frameworkEnv === "codex-chatgpt") {
+    // V0.4.Q11: register the 8-tool peer subset with the codex agent as
+    // host dynamicTools. Routed back through this worker's SwarmHost so
+    // calls into send_message / team_members / etc. observe the same
+    // team scope as a claude-agent-sdk worker would.
+    const tier2 = buildTier2Tools();
+    const codexPeerTools = filterCodexPeerTools(tier2);
+    engine = new CodexFrameworkEngine({
+      tools: codexPeerTools,
+      host,
+    });
   } else if (frameworkEnv === "native") {
     const resolved = resolveProvider(workerModel);
     if (resolved.kind === "native") {

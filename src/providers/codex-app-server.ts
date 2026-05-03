@@ -39,7 +39,11 @@ import type {
   CommandExecutionItem,
   ItemAgentMessageDeltaNotification,
   ThreadTokenUsageNotification,
+  Tool,
+  DynamicToolCallContext,
+  DynamicToolCallResponse,
 } from "./codex-app-server-types.js";
+import { DynamicToolCallParamsSchema } from "./codex-app-server-types.js";
 
 // ---------------------------------------------------------------------------
 // Public option types
@@ -50,6 +54,21 @@ export type SandboxMode = "danger-full-access" | "workspace-write" | "read-only"
 
 /** Approval policy accepted by Codex App Server thread/start. */
 export type AskForApproval = "never" | "on-failure" | "always";
+
+/**
+ * Handler invoked when the codex agent calls a dynamic tool registered at
+ * thread/start. Returns the structured response sent back as the JSON-RPC
+ * result for the `item/tool/call` request.
+ *
+ * Implementations should NOT throw — wrap errors and return
+ * `{ contentItems: [...error text...], success: false }`. The provider's
+ * dispatch loop additionally wraps the call in try/catch for safety.
+ */
+export type DynamicToolCallHandler = (
+  tool: string,
+  args: unknown,
+  context: DynamicToolCallContext,
+) => Promise<DynamicToolCallResponse>;
 
 export interface CodexAppServerOptions {
   /** Path to the codex binary. Defaults to `"codex"` (resolved via PATH). */
@@ -62,6 +81,21 @@ export interface CodexAppServerOptions {
   readonly sandbox?: SandboxMode;
   /** Approval policy. Defaults to `"never"`. */
   readonly approvalPolicy?: AskForApproval;
+  /**
+   * Tools to register at thread/start (sent as `dynamicTools`). Each entry
+   * becomes callable by the codex agent via `item/tool/call` requests, which
+   * are dispatched to `onDynamicToolCall`.
+   *
+   * When non-empty, the provider also sets `capabilities.experimentalApi: true`
+   * in the initialize handshake — the App Server requires it to honor
+   * dynamicTools.
+   */
+  readonly dynamicTools?: readonly Tool[];
+  /**
+   * Handler invoked when the codex agent calls a registered dynamic tool.
+   * Required when `dynamicTools` is non-empty.
+   */
+  readonly onDynamicToolCall?: DynamicToolCallHandler;
   /**
    * Injectable spawn function for testing. Defaults to Node's built-in
    * `child_process.spawn`. The signature must match `child_process.spawn`.
@@ -115,16 +149,37 @@ function isNotification(frame: unknown): frame is JsonRpcNotification {
   return typeof f["method"] === "string" && !("id" in f);
 }
 
+/**
+ * A JSON-RPC *request* sent by the server (has both `method` and `id`,
+ * unlike notifications which lack `id` and responses which lack `method`).
+ * Used for the `item/tool/call` dynamicTools dispatch path (Stage 4H).
+ */
+interface JsonRpcServerRequest {
+  readonly method: string;
+  readonly id: number;
+  readonly params: unknown;
+}
+
+function isServerRequest(frame: unknown): frame is JsonRpcServerRequest {
+  if (typeof frame !== "object" || frame === null) return false;
+  const f = frame as Record<string, unknown>;
+  return (
+    typeof f["method"] === "string" &&
+    "id" in f &&
+    typeof f["id"] === "number"
+  );
+}
+
 function isErrorResponse(frame: unknown): frame is JsonRpcError {
   if (typeof frame !== "object" || frame === null) return false;
   const f = frame as Record<string, unknown>;
-  return "id" in f && typeof f["id"] === "number" && "error" in f;
+  return "id" in f && typeof f["id"] === "number" && "error" in f && !("method" in f);
 }
 
 function isSuccessResponse(frame: unknown): frame is JsonRpcResponse {
   if (typeof frame !== "object" || frame === null) return false;
   const f = frame as Record<string, unknown>;
-  return "id" in f && typeof f["id"] === "number" && "result" in f;
+  return "id" in f && typeof f["id"] === "number" && "result" in f && !("method" in f);
 }
 
 // ---------------------------------------------------------------------------
@@ -132,8 +187,12 @@ function isSuccessResponse(frame: unknown): frame is JsonRpcResponse {
 // ---------------------------------------------------------------------------
 
 export class CodexAppServerProvider extends EventEmitter {
-  private readonly options: Required<Omit<CodexAppServerOptions, "model">> & {
+  private readonly options: Required<
+    Omit<CodexAppServerOptions, "model" | "dynamicTools" | "onDynamicToolCall">
+  > & {
     readonly model: string | undefined;
+    readonly dynamicTools: readonly Tool[];
+    readonly onDynamicToolCall: DynamicToolCallHandler | undefined;
   };
 
   private child: ChildProcess | null = null;
@@ -167,12 +226,23 @@ export class CodexAppServerProvider extends EventEmitter {
 
   constructor(options: CodexAppServerOptions = {}) {
     super();
+    if (
+      options.dynamicTools !== undefined &&
+      options.dynamicTools.length > 0 &&
+      options.onDynamicToolCall === undefined
+    ) {
+      throw new Error(
+        "CodexAppServerProvider: dynamicTools requires onDynamicToolCall",
+      );
+    }
     this.options = {
       codexBinary: options.codexBinary ?? "codex",
       cwd: options.cwd ?? process.cwd(),
       model: options.model,
       sandbox: options.sandbox ?? "danger-full-access",
       approvalPolicy: options.approvalPolicy ?? "never",
+      dynamicTools: options.dynamicTools ?? [],
+      onDynamicToolCall: options.onDynamicToolCall,
       spawn: options.spawn ?? nodeSpawn,
     };
   }
@@ -241,9 +311,12 @@ export class CodexAppServerProvider extends EventEmitter {
     });
 
     // Send initialize request.
+    // When dynamicTools are registered we must opt into experimentalApi so
+    // the App Server honors them and routes item/tool/call requests back.
+    const useExperimentalApi = this.options.dynamicTools.length > 0;
     const params: InitializeParams = {
       clientInfo: { name: "swarm-harness", version: "0.0.1" },
-      capabilities: null,
+      capabilities: useExperimentalApi ? { experimentalApi: true } : null,
     };
 
     const result = await this.request<InitializeResult>("initialize", params as unknown as Record<string, unknown>);
@@ -290,6 +363,9 @@ export class CodexAppServerProvider extends EventEmitter {
       ...(opts.cwd !== undefined && { cwd: opts.cwd }),
       ...(opts.sandbox !== undefined && { sandbox: opts.sandbox }),
       ...(opts.approvalPolicy !== undefined && { approvalPolicy: opts.approvalPolicy }),
+      ...(this.options.dynamicTools.length > 0 && {
+        dynamicTools: this.options.dynamicTools,
+      }),
     };
 
     const result = await this.request<ThreadStartResult>(
@@ -741,6 +817,14 @@ export class CodexAppServerProvider extends EventEmitter {
       return;
     }
 
+    // Server-originated request (has both method AND id) — dispatch
+    // before notification because the notification check is based on
+    // "method but no id". (Stage 4H — item/tool/call.)
+    if (isServerRequest(parsed)) {
+      void this.handleServerRequest(parsed);
+      return;
+    }
+
     const frame = parsed as JsonRpcServerFrame;
 
     if (isNotification(frame)) {
@@ -768,6 +852,100 @@ export class CodexAppServerProvider extends EventEmitter {
         entry.resolve(frame.result);
       }
       return;
+    }
+  }
+
+  /**
+   * Handle a server-originated JSON-RPC request. Currently only
+   * `item/tool/call` is supported (Stage 4H — dynamicTools dispatch).
+   * Always replies with a JSON-RPC result frame matching the incoming id.
+   * Errors are returned as `{success: false}` rather than thrown so the
+   * dispatch loop never crashes.
+   */
+  private async handleServerRequest(req: JsonRpcServerRequest): Promise<void> {
+    if (req.method === "item/tool/call") {
+      let response: DynamicToolCallResponse;
+      try {
+        const parsed = DynamicToolCallParamsSchema.safeParse(req.params);
+        if (!parsed.success) {
+          response = {
+            contentItems: [
+              { type: "inputText", text: `invalid params: ${parsed.error.message}` },
+            ],
+            success: false,
+          };
+        } else if (this.options.onDynamicToolCall === undefined) {
+          response = {
+            contentItems: [
+              {
+                type: "inputText",
+                text: "no dynamic tool handler registered",
+              },
+            ],
+            success: false,
+          };
+        } else {
+          response = await this.options.onDynamicToolCall(
+            parsed.data.tool,
+            parsed.data.arguments,
+            {
+              threadId: parsed.data.threadId,
+              turnId: parsed.data.turnId,
+              callId: parsed.data.callId,
+            },
+          );
+        }
+      } catch (err) {
+        response = {
+          contentItems: [
+            {
+              type: "inputText",
+              text: err instanceof Error ? err.message : String(err),
+            },
+          ],
+          success: false,
+        };
+      }
+      this.sendResultResponse(req.id, response);
+      return;
+    }
+
+    // Unknown server request — reply with a JSON-RPC error so the server
+    // doesn't hang waiting for a response.
+    this.sendErrorResponse(
+      req.id,
+      -32601,
+      `Method not found: ${req.method}`,
+    );
+  }
+
+  /**
+   * Send a JSON-RPC success response back to the server. Used for
+   * dynamicTools (`item/tool/call`) responses.
+   */
+  private sendResultResponse(id: number, result: unknown): void {
+    const child = this.child;
+    if (child === null || child.stdin === null) return;
+    const frame = { jsonrpc: "2.0", id, result };
+    try {
+      child.stdin.write(JSON.stringify(frame) + "\n");
+    } catch {
+      // Best-effort — transport may be torn down.
+    }
+  }
+
+  /**
+   * Send a JSON-RPC error response back to the server (for unknown server
+   * requests). Mirrors {@link sendResultResponse} on the failure path.
+   */
+  private sendErrorResponse(id: number, code: number, message: string): void {
+    const child = this.child;
+    if (child === null || child.stdin === null) return;
+    const frame = { jsonrpc: "2.0", id, error: { code, message } };
+    try {
+      child.stdin.write(JSON.stringify(frame) + "\n");
+    } catch {
+      // Best-effort.
     }
   }
 
