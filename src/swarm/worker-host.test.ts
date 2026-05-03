@@ -295,6 +295,49 @@ describe("WorkerHost public lifecycle wrappers", () => {
     expect(events[events.length - 1]).toEqual({ from: "running", to: "finished" });
   });
 
+  // v0.4 stage 4M.3 (M5): long-lived workers transition running → idle
+  // after each turn, then idle → prompt_accepted → running on the next
+  // run_more, then idle → drained on graceful drain.
+  it("markIdle: state becomes idle after running (long-lived path)", () => {
+    const { transport } = makeFakeTransport();
+    const host = makeHost(transport);
+
+    host.markReadyForPrompt();
+    host.markRunning();
+    host.markIdle();
+
+    expect(host.getLifecycleState()).toBe("idle");
+    const events = getLaneEvents(transport);
+    expect(events[events.length - 1]).toEqual({ from: "running", to: "idle" });
+  });
+
+  it("idle → prompt_accepted → running cycle: subsequent run_more re-enters running", () => {
+    const { transport } = makeFakeTransport();
+    const host = makeHost(transport);
+
+    host.markReadyForPrompt();
+    host.markRunning();        // turn 1
+    host.markIdle();           // turn 1 done
+    host.markRunning();        // turn 2 — idle → prompt_accepted → running
+    expect(host.getLifecycleState()).toBe("running");
+    host.markIdle();           // turn 2 done
+    expect(host.getLifecycleState()).toBe("idle");
+  });
+
+  it("markDrained: state becomes drained after idle (graceful long-lived exit)", () => {
+    const { transport } = makeFakeTransport();
+    const host = makeHost(transport);
+
+    host.markReadyForPrompt();
+    host.markRunning();
+    host.markIdle();
+    host.markDrained();
+
+    expect(host.getLifecycleState()).toBe("drained");
+    const events = getLaneEvents(transport);
+    expect(events[events.length - 1]).toEqual({ from: "idle", to: "drained" });
+  });
+
   it("markFailed: state becomes failed, lane event carries failureClass and reason", () => {
     const { transport } = makeFakeTransport();
     const host = makeHost(transport);

@@ -166,7 +166,7 @@ export class WorkerHost implements SwarmHost {
     this._transitionTo("running");
   }
 
-  /** Called after task_result is emitted (successful run). */
+  /** Called after task_result is emitted (successful run, non-long-lived). */
   markFinished(): void {
     this._transitionTo("finished");
   }
@@ -174,6 +174,25 @@ export class WorkerHost implements SwarmHost {
   /** Called on uncaught error or transport closure before task_result. */
   markFailed(failureClass: FailureClass, reason: string): void {
     this._transitionTo("failed", { failureClass, reason });
+  }
+
+  /**
+   * v0.4 stage 4M.3 (M5): long-lived worker transitions to idle after a turn
+   * completes (instead of `finished`/`failed`) so subsequent run_more
+   * requests can validly drive `idle → prompt_accepted → running` again.
+   */
+  markIdle(): void {
+    this._transitionTo("idle");
+  }
+
+  /**
+   * v0.4 stage 4M.3 (M5): drain requested while idle. Transitions
+   * `idle → drained` directly (the worker has nothing to finish).
+   * If currently running, callers should instead transition through
+   * `running → idle` then `idle → drained` after the turn completes.
+   */
+  markDrained(): void {
+    this._transitionTo("drained");
   }
 
   private _transitionTo(

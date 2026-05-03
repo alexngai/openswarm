@@ -302,14 +302,18 @@ export async function runWorkerEntry(): Promise<number> {
 
   // Run the initial task.
   const initialResult = await executeTurn(ctx, initialTask);
-  if (initialResult.status === "success") {
-    host.markFinished();
-  } else {
-    host.markFailed("panic", initialResult.status === "failure" ? initialResult.error : "non-success");
-  }
-  await transport.notify("task_result", initialResult);
-
   if (!longLived) {
+    // Default (non-long-lived): mark terminal; the FSM stays in finished/
+    // failed and the worker exits below.
+    if (initialResult.status === "success") {
+      host.markFinished();
+    } else {
+      host.markFailed(
+        "panic",
+        initialResult.status === "failure" ? initialResult.error : "non-success",
+      );
+    }
+    await transport.notify("task_result", initialResult);
     // Default behaviour (preserved): exit immediately after the initial task.
     transport.stopHeartbeat();
     transport.close();
@@ -317,15 +321,61 @@ export async function runWorkerEntry(): Promise<number> {
   }
 
   // -------------------------------------------------------------------------
-  // v0.4 stage 4D: long-lived loop — idle, await run_more or drain, repeat.
+  // v0.4 stages 4D + 4M.3: long-lived loop with proper FSM transitions and
+  // persistent request listener (no race window between worker_idle notify
+  // and listener re-attach).
   // -------------------------------------------------------------------------
 
-  // The lifecycle state machine doesn't allow finished → idle, so reset the
-  // host to a fresh state machine for each long-lived turn. Long-lived workers
-  // emit per-turn lifecycle events but the WORKER process state is implicit
-  // (idle ↔ running) — we don't try to model it through the state file.
-  // Future: a proper "post-finished restart" transition rather than reusing
-  // the per-turn machine.
+  // M5: long-lived workers transition `running → idle` after each turn,
+  // NOT `running → finished`. The FSM allows `idle → prompt_accepted →
+  // running` for re-entry on run_more. Pure-failure turns still keep the
+  // worker available for retry — the orchestrator decides whether to drain
+  // or retry; failure status surfaces via task_result + per-turn stderr.
+  if (initialResult.status === "success") {
+    host.markIdle();
+  } else {
+    // Per-turn failure in long-lived mode: still go idle (the orchestrator
+    // can decide retry vs drain). The state-file failureClass/reason fields
+    // would lie if we marked failed here; instead the failure is encoded
+    // in the task_result payload.
+    host.markIdle();
+    process.stderr.write(
+      `[swarm-harness] long-lived worker initial turn failed (agentId=${agentId}): ${
+        initialResult.status === "failure" ? initialResult.error : initialResult.status
+      }\n`,
+    );
+  }
+  await transport.notify("task_result", initialResult);
+
+  // M6: install the request listener ONCE at top-level. Frames arrive
+  // synchronously from ParentTransport.handleFrame; without a persistent
+  // listener, frames between iterations would be dropped on the floor.
+  // Buffer pending frames; each loop iteration drains the buffer first.
+  const pendingFrames: IpcRequest[] = [];
+  type Wakeup = { kind: "frame"; frame: IpcRequest } | { kind: "close" };
+  let pendingResolve: ((wakeup: Wakeup) => void) | undefined;
+  const onRequest = (frame: IpcRequest): void => {
+    if (frame.method !== "run_more" && frame.method !== "drain") return;
+    if (pendingResolve !== undefined) {
+      const resolver = pendingResolve;
+      pendingResolve = undefined;
+      resolver({ kind: "frame", frame });
+    } else {
+      pendingFrames.push(frame);
+    }
+  };
+  let closeFired = false;
+  const onClose = (): void => {
+    closeFired = true;
+    if (pendingResolve !== undefined) {
+      const resolver = pendingResolve;
+      pendingResolve = undefined;
+      resolver({ kind: "close" });
+    }
+  };
+  transport.on("request", onRequest);
+  transport.once("close", onClose);
+
   let exitCode = 0;
   while (true) {
     // Notify orchestrator we're idle.
@@ -335,39 +385,50 @@ export async function runWorkerEntry(): Promise<number> {
       readyForRunMoreAt: idleAt,
     });
 
-    // Wait for either run_more, drain, or the idle timeout.
+    // If the close listener already fired, exit cleanly.
+    if (closeFired) {
+      exitCode = 0;
+      break;
+    }
+
+    // Wait for either a buffered frame, the next request, the idle timeout,
+    // or close. The persistent listener guarantees no race window.
     const next = await new Promise<
       { kind: "run_more"; frame: IpcRequest }
       | { kind: "drain"; frame: IpcRequest }
       | { kind: "timeout" }
       | { kind: "close" }
     >((resolve) => {
-      const onRequest = (frame: IpcRequest): void => {
+      // Drain any buffered frame first (non-blocking).
+      if (pendingFrames.length > 0) {
+        const frame = pendingFrames.shift()!;
         if (frame.method === "run_more") {
-          cleanup();
           resolve({ kind: "run_more", frame });
         } else if (frame.method === "drain") {
-          cleanup();
           resolve({ kind: "drain", frame });
         }
-      };
-      const onClose = (): void => {
-        cleanup();
-        resolve({ kind: "close" });
-      };
+        return;
+      }
+      // Otherwise await the next frame OR the idle timeout OR close.
       const timer = setTimeout(() => {
         cleanup();
         resolve({ kind: "timeout" });
       }, idleTimeoutMs);
-      // Don't keep the event loop alive solely for this timer.
       if (typeof timer.unref === "function") timer.unref();
       const cleanup = (): void => {
         clearTimeout(timer);
-        transport.off("request", onRequest);
-        transport.off("close", onClose);
+        pendingResolve = undefined;
       };
-      transport.on("request", onRequest);
-      transport.once("close", onClose);
+      pendingResolve = (wakeup: Wakeup): void => {
+        cleanup();
+        if (wakeup.kind === "close") {
+          resolve({ kind: "close" });
+        } else if (wakeup.frame.method === "run_more") {
+          resolve({ kind: "run_more", frame: wakeup.frame });
+        } else if (wakeup.frame.method === "drain") {
+          resolve({ kind: "drain", frame: wakeup.frame });
+        }
+      };
     });
 
     if (next.kind === "close") {
@@ -378,20 +439,43 @@ export async function runWorkerEntry(): Promise<number> {
 
     if (next.kind === "drain" || next.kind === "timeout") {
       // Idle drain (parent requested OR auto-timeout) — graceful exit.
+      // M5: transition idle → drained for a proper FSM record.
       if (next.kind === "drain") {
         transport.respond(next.frame.id, { acknowledged: true });
+      }
+      try {
+        host.markDrained();
+      } catch {
+        // If we're not currently in idle (shouldn't happen given the loop
+        // structure), swallow — the FSM is best-effort for long-lived
+        // workers anyway.
       }
       await transport.notify("worker_drained", { agentId });
       break;
     }
 
-    // run_more: ack and execute the next turn.
+    // run_more: validate params, ack, execute the next turn.
     const params = RunMoreParamsSchema.safeParse(next.frame.params);
     if (!params.success) {
-      transport.respondError(next.frame.id, IPC_ERROR_CODES.INVALID_PARAMS, params.error.message);
+      transport.respondError(
+        next.frame.id,
+        IPC_ERROR_CODES.INVALID_PARAMS,
+        params.error.message,
+      );
+      // M5: re-emit worker_idle so the orchestrator knows we're still
+      // available after rejecting a malformed run_more (otherwise it
+      // could wait indefinitely for the next worker_idle notification
+      // because we already sent one before the request arrived).
+      await transport.notify("worker_idle", {
+        agentId,
+        readyForRunMoreAt: Date.now(),
+      });
       continue;
     }
     transport.respond(next.frame.id, { accepted: true });
+
+    // M5: transition idle → prompt_accepted → running for the new turn.
+    host.markRunning(params.data.taskId);
 
     const turnTask: TaskPacket = {
       id: params.data.taskId ?? `${initialTask.id}-${Date.now()}`,
@@ -401,18 +485,26 @@ export async function runWorkerEntry(): Promise<number> {
       escalationPolicy: { kind: "none" },
     };
     const result = await executeTurn(ctx, turnTask);
+
+    // M5: after each long-lived turn, transition running → idle (NOT
+    // finished/failed). Failures stay in the FSM as `idle` — the failure
+    // is encoded in the task_result payload; the orchestrator decides
+    // whether to retry via run_more or drain.
+    host.markIdle();
     await transport.notify("task_result", result);
     if (result.status !== "success") {
-      // Per-turn failure does not exit the worker — the orchestrator decides
-      // whether to drain or send another run_more. Note it for stderr.
       process.stderr.write(
         `[swarm-harness] long-lived worker turn failed (agentId=${agentId}): ${
           result.status === "failure" ? result.error : result.status
         }\n`,
       );
     }
-    // loop back to idle.
+    // Loop back to top; will re-emit worker_idle and await next request.
   }
+
+  // Clean up the persistent listener.
+  transport.off("request", onRequest);
+  transport.off("close", onClose);
 
   transport.stopHeartbeat();
   transport.close();
