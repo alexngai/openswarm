@@ -43,6 +43,16 @@ export interface MemberSpec {
   readonly model?: string;
   /** V0.4.Q9 — mixed-engine consultant flag (deferred; placeholder). */
   readonly framework?: "claude-agent-sdk" | "codex-chatgpt";
+  /**
+   * V0.4 stage 4E.4 — opt this member into long-lived worker mode.
+   *
+   * When true, TeamSession.spawnMember forwards
+   * `SpawnRequest.longLived: true` so the worker stays alive across
+   * multiple `task_result` boundaries. CoordinatorTopology uses this for
+   * its root member, which spawns peers via the `agent` tool across
+   * many turns. Default: false (worker exits after first task_result).
+   */
+  readonly longLived?: boolean;
 }
 
 /**
@@ -60,6 +70,7 @@ export const MemberSpecSchema = z.object({
   escalationPolicy: z.unknown().optional(),
   model: z.string().optional(),
   framework: z.enum(["claude-agent-sdk", "codex-chatgpt"]).optional(),
+  longLived: z.boolean().optional(),
 }) satisfies z.ZodType<unknown>;
 
 // ---------------------------------------------------------------------------

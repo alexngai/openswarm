@@ -103,6 +103,7 @@ export class TeamSession {
       role: spec.role,
       teamScope: this.scope,
       ...(spec.model !== undefined && { model: spec.model }),
+      ...(spec.longLived === true && { longLived: true }),
     };
 
     const handle = await this.host.spawn(spawnRequest);

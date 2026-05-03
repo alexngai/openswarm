@@ -58,6 +58,15 @@ describe("MemberSpecSchema", () => {
     });
     expect(r.success).toBe(false);
   });
+
+  it("accepts longLived: true (stage 4E.4 — coordinator root)", () => {
+    const r = MemberSpecSchema.safeParse({
+      role: "coordinator",
+      prompt: "lead the team",
+      longLived: true,
+    });
+    expect(r.success).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

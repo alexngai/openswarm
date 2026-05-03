@@ -40,6 +40,7 @@ import {
   FanoutTopology,
   PipelineTopology,
   PeerTeamTopology,
+  CoordinatorTopology,
 } from "./topologies/index.js";
 
 // Re-export AgentResult/Usage so legacy import sites keep working without
@@ -212,13 +213,14 @@ function pickTopology(kind: TopologyKind): Topology {
       return new PipelineTopology();
     case "peer-team":
       return new PeerTeamTopology();
-    // Remaining shapes land in 4E.4. Until then, throw a clear error so
-    // misuse surfaces immediately at runTeam() time.
     case "coordinator":
+      return new CoordinatorTopology();
+    // Remaining shapes land later in 4E. Until then, throw a clear error so
+    // misuse surfaces immediately at runTeam() time.
     case "committee":
     case "critic-loop":
       throw new Error(
-        `topology "${kind}" not supported in v0.4 stage 4E.3; lands in 4E.4`,
+        `topology "${kind}" not supported in v0.4 stage 4E.4; lands later`,
       );
   }
 }
