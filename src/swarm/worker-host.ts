@@ -95,17 +95,17 @@ export class WorkerHost implements SwarmHost {
 
   readonly task: TaskAPI = {
     create: async (packet) =>
-      (await this.transport.send<TaskRecord>("task.create", packet)),
+      (await this.transport.send<TaskRecord>("task.create", { packet })),
     get: async (id) =>
-      (await this.transport.send<TaskRecord | null>("task.get", { id })) ??
-      undefined,
+      (await this.transport.send<TaskRecord | null>("task.get", {
+        taskId: id,
+      })) ?? undefined,
     list: async (filter?: TaskFilter) =>
-      (await this.transport.send<readonly TaskRecord[]>(
-        "task.list",
-        filter ?? {},
-      )),
+      (await this.transport.send<readonly TaskRecord[]>("task.list", {
+        filter: filter ?? {},
+      })),
     update: async (id, patch) => {
-      await this.transport.send("task.update", { id, patch });
+      await this.transport.send("task.update", { taskId: id, patch });
     },
     stop: async (id: string, by?: import("../core/types.js").AgentId | "orchestrator") => {
       await this.transport.send("task.stop", { taskId: id, by });

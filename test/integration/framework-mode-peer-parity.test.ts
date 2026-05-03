@@ -463,19 +463,41 @@ describe("framework-mode peer parity (Layer A: pure tool dispatch via worker hos
   });
 
   describe("task_output", () => {
-    // Track A defect (docs/27 §V0.4.D8): task_output is BROKEN for sub-agent
-    // workers because StandaloneHost.handleWorkerRequest does not implement
-    // a "task.get" IPC method (only task.output / task.stop / task.owner_of).
-    // The tool's worker-side implementation calls host.task.get(taskId), which
-    // IPC-routes to UNKNOWN_METHOD on the orchestrator. Scheduled for fix in
-    // stage 4I along with the dispatcher try/catch and task_stop self-stop
-    // race. Until then the worker-side scenario stays skipped.
-    it.skip(
-      "BROKEN: tool calls host.task.get(...) which IPC-routes to UNKNOWN_METHOD on StandaloneHost (worker side) — fix scheduled stage 4I",
-      async () => {
-        // Intentionally empty; documents the pending defect.
-      },
-    );
+    // v0.4 stage 4I closes the previously-broken sub-agent path: StandaloneHost
+    // now implements `task.get` IPC handler, so the worker-side `task_output`
+    // tool resolves correctly through host.task.get(taskId).
+    it("dispatches via worker-side host.task.get IPC and returns task output", async () => {
+      const { orch, workerHost, taskId, cleanup } =
+        await makeOrchestratorAndWorker();
+
+      // Append output via the orchestrator's in-process registry — the worker
+      // would normally see this via streaming; for this test we just want the
+      // task.get IPC round-trip to surface the accumulated output.
+      orch.task.appendOutput(taskId, "worker-side first chunk\n");
+
+      const dispatcher = buildDispatcherWithHost(workerHost);
+      const result = await dispatcher.dispatch(
+        "task_output",
+        { taskId },
+        baseCtx,
+      );
+
+      expect(result.status).toBe("ok");
+      if (result.status === "ok") {
+        const parsed = JSON.parse(result.output) as {
+          status: string;
+          partialOutput?: string;
+          output?: string;
+        };
+        // The task may have transitioned to a terminal state during spawn;
+        // accept either partialOutput (running) or output (terminal) carrying
+        // the appended text.
+        const text = parsed.partialOutput ?? parsed.output ?? "";
+        expect(text).toContain("worker-side first chunk");
+      }
+
+      cleanup();
+    });
 
     it("WORKS when host is the StandaloneHost itself (root-mounted scenario)", async () => {
       // Direct usage: build a fresh StandaloneHost, mount Tier 2 tools with

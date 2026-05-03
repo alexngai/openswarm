@@ -39,6 +39,10 @@ import {
   TaskStopParamsSchema,
   TaskOutputParamsSchema,
   TaskOwnerOfParamsSchema,
+  TaskGetParamsSchema,
+  TaskListParamsSchema,
+  TaskCreateParamsSchema,
+  TaskUpdateParamsSchema,
   AncestryIsAncestorOfParamsSchema,
   AskUserQuestionParamsSchema,
   type IpcRequest,
@@ -843,10 +847,80 @@ export class StandaloneHost implements SwarmHost {
         transport.respondError(frame.id, IPC_ERROR_CODES.INVALID_PARAMS, parsed.error.message);
         return;
       }
+      // v0.4 stage 4I (Defect 3): respond BEFORE awaiting task.stop. When a
+      // worker calls task_stop on its OWN task, this.task.stop calls
+      // handle.kill() which closes the worker's transport synchronously —
+      // any response sent after that gets dropped (writeFrame short-circuits
+      // on `closed`). Sending the ack first lets the worker complete its
+      // request cleanly before its transport tears down.
+      transport.respond(frame.id, null);
       try {
         await this.task.stop(
           parsed.data.taskId,
           parsed.data.by as AgentId | "orchestrator" | undefined,
+        );
+      } catch (err) {
+        // The response is already sent — surface the failure as a lane event
+        // so observers see it. The original caller can't be notified
+        // (transport may be closed) but the error is not silently dropped.
+        this.emit({
+          type: "error",
+          payload: {
+            class: "transport",
+            message: `task.stop failed for ${parsed.data.taskId}: ${err instanceof Error ? err.message : String(err)}`,
+            retryable: false,
+          },
+        });
+      }
+      return;
+    }
+    if (frame.method === "task.get") {
+      const parsed = TaskGetParamsSchema.safeParse(frame.params);
+      if (!parsed.success) {
+        transport.respondError(frame.id, IPC_ERROR_CODES.INVALID_PARAMS, parsed.error.message);
+        return;
+      }
+      const record = this.registry.get(parsed.data.taskId);
+      transport.respond(frame.id, record ?? null);
+      return;
+    }
+    if (frame.method === "task.list") {
+      const parsed = TaskListParamsSchema.safeParse(frame.params);
+      if (!parsed.success) {
+        transport.respondError(frame.id, IPC_ERROR_CODES.INVALID_PARAMS, parsed.error.message);
+        return;
+      }
+      const records = this.registry.list(
+        parsed.data.filter as Parameters<typeof this.registry.list>[0],
+      );
+      transport.respond(frame.id, records);
+      return;
+    }
+    if (frame.method === "task.create") {
+      const parsed = TaskCreateParamsSchema.safeParse(frame.params);
+      if (!parsed.success) {
+        transport.respondError(frame.id, IPC_ERROR_CODES.INVALID_PARAMS, parsed.error.message);
+        return;
+      }
+      // Use caller's scope so the new task inherits the worker's team scope.
+      const callerScope = this.scopeOf(from);
+      const record = this.registry.create(
+        parsed.data.packet as Parameters<typeof this.registry.create>[0],
+        callerScope,
+      );
+      transport.respond(frame.id, record);
+      return;
+    }
+    if (frame.method === "task.update") {
+      const parsed = TaskUpdateParamsSchema.safeParse(frame.params);
+      if (!parsed.success) {
+        transport.respondError(frame.id, IPC_ERROR_CODES.INVALID_PARAMS, parsed.error.message);
+        return;
+      }
+      try {
+        this.registry.update(
+          parsed.data.taskId,
+          parsed.data.patch as Parameters<typeof this.registry.update>[1],
         );
         transport.respond(frame.id, null);
       } catch (err) {

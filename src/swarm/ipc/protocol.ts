@@ -179,6 +179,43 @@ export const TaskOutputParamsSchema = z.object({
 });
 export type TaskOutputParams = z.infer<typeof TaskOutputParamsSchema>;
 
+/** params for "task.get" request (worker → orchestrator). */
+export const TaskGetParamsSchema = z.object({
+  taskId: z.string(),
+});
+export type TaskGetParams = z.infer<typeof TaskGetParamsSchema>;
+
+/**
+ * params for "task.list" request (worker → orchestrator).
+ *
+ * `filter` is permissive (z.unknown()) for now; the orchestrator's
+ * TaskRegistry.list ignores unknown fields and the schema can be tightened
+ * once worker callers stabilise.
+ */
+export const TaskListParamsSchema = z.object({
+  filter: z.unknown().optional(),
+});
+export type TaskListParams = z.infer<typeof TaskListParamsSchema>;
+
+/**
+ * params for "task.create" request (worker → orchestrator).
+ *
+ * `packet` is `Omit<TaskPacket, "id">`. We accept the shape permissively here
+ * — the orchestrator's TaskRegistry.create constructs the record from the
+ * fields it knows about. A tighter schema can replace this later.
+ */
+export const TaskCreateParamsSchema = z.object({
+  packet: z.record(z.string(), z.unknown()),
+});
+export type TaskCreateParams = z.infer<typeof TaskCreateParamsSchema>;
+
+/** params for "task.update" request (worker → orchestrator). */
+export const TaskUpdateParamsSchema = z.object({
+  taskId: z.string(),
+  patch: z.record(z.string(), z.unknown()),
+});
+export type TaskUpdateParams = z.infer<typeof TaskUpdateParamsSchema>;
+
 /** params for "task_stop_signal" notification (orchestrator → worker). */
 export const TaskStopSignalParamsSchema = z.object({
   taskId: z.string(),

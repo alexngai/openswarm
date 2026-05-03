@@ -153,7 +153,19 @@ export class ToolDispatcher {
       }
     }
 
-    const result = await tool.execute(effectiveInput, ctx);
+    // v0.4 stage 4I (Defect 2): wrap tool.execute in try/catch so a thrown
+    // error becomes a structured ToolResult rather than an unhandled
+    // rejection. Tools that already return `{status: "error"}` are
+    // unaffected — this only catches the case where execute() throws.
+    let result: ToolResult;
+    try {
+      result = await tool.execute(effectiveInput, ctx);
+    } catch (err) {
+      result = {
+        status: "error",
+        message: err instanceof Error ? err.message : String(err),
+      };
+    }
 
     // PostToolUse hook — best-effort; errors don't alter the tool result.
     if (this.hooks !== undefined) {
