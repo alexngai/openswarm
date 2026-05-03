@@ -20,6 +20,7 @@ import { checkInboxTool } from "./check_inbox.js";
 import { taskStopTool } from "./task_stop.js";
 import { taskOutputTool } from "./task_output.js";
 import { askUserQuestionTool } from "./ask_user_question.js";
+import { teamMembersTool } from "./team_members.js";
 
 /** All Tier 2 tools in a stable order. */
 export function buildTier2Tools(): readonly ToolImpl[] {
@@ -34,6 +35,7 @@ export function buildTier2Tools(): readonly ToolImpl[] {
     taskStopTool,
     taskOutputTool,
     askUserQuestionTool,
+    teamMembersTool,
   ] as const;
 }
 
@@ -48,4 +50,5 @@ export {
   taskStopTool,
   taskOutputTool,
   askUserQuestionTool,
+  teamMembersTool,
 };

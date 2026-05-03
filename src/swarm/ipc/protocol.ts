@@ -26,6 +26,8 @@
  *   - "drain"         (orchestrator → worker; params: {}; result: { acknowledged: true })
  *     v0.4 stage 4D: long-lived worker drains gracefully. Worker exits after the
  *     current task completes (or immediately when idle).
+ *   - "team.members"  (worker → orchestrator; params: {}; result: TeamMembersResult)
+ *     v0.4 stage 4E.1: worker requests the list of members in its team scope.
  *
  * Notifications (one-way, no correlation id match needed):
  *   - "worker_ready"      (worker → orchestrator; params: { agentId, depth, pid })
@@ -71,7 +73,8 @@ export type IpcRequestMethod =
   | "ancestry.is_ancestor_of"
   | "ask_user_question"
   | "run_more"
-  | "drain";
+  | "drain"
+  | "team.members";
 
 export type IpcResponse = IpcOk | IpcErr;
 
@@ -257,3 +260,27 @@ export const WorkerDrainedParamsSchema = z.object({
   agentId: z.string(),
 });
 export type WorkerDrainedParams = z.infer<typeof WorkerDrainedParamsSchema>;
+
+// ---------------------------------------------------------------------------
+// v0.4 stage 4E.1 — team.members
+// ---------------------------------------------------------------------------
+
+/**
+ * params for "team.members" request (worker → orchestrator).
+ *
+ * Empty object — orchestrator resolves the caller's scope from `from` (the
+ * worker's agentId) and returns peers in that scope. Worker cannot specify
+ * an arbitrary scope.
+ */
+export const TeamMembersParamsSchema = z.object({}).strict();
+export type TeamMembersParams = z.infer<typeof TeamMembersParamsSchema>;
+
+/** result for "team.members" — array of `{memberId, role, agentId}` peers. */
+export const TeamMembersResultSchema = z.array(
+  z.object({
+    memberId: z.string(),
+    role: z.string(),
+    agentId: z.string(),
+  }),
+);
+export type TeamMembersResult = z.infer<typeof TeamMembersResultSchema>;

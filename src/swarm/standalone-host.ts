@@ -193,6 +193,29 @@ export class StandaloneHost implements SwarmHost {
     return this.agentToScope.get(agentId) ?? "swarm:default";
   }
 
+  /**
+   * List all members of a given team scope. Each entry carries `memberId`
+   * (currently same as agentId — TeamSession will surface stable ids in a
+   * later stage), `role`, and `agentId`. Agents without a registered role
+   * are omitted. Optionally excludes a specific agent (typically the caller).
+   *
+   * Used by the `team_members` Tier 2 tool (v0.4 stage 4E.1).
+   */
+  listMembersInScope(
+    scope: string,
+    excludeAgentId?: AgentId,
+  ): Array<{ memberId: string; role: string; agentId: AgentId }> {
+    const out: Array<{ memberId: string; role: string; agentId: AgentId }> = [];
+    for (const [agentId, agentScope] of this.agentToScope.entries()) {
+      if (agentScope !== scope) continue;
+      if (excludeAgentId !== undefined && agentId === excludeAgentId) continue;
+      const roleInfo = this.roles.roleOf(agentId);
+      if (roleInfo === undefined) continue;
+      out.push({ memberId: agentId, role: roleInfo.role, agentId });
+    }
+    return out;
+  }
+
   private _transitionTo(
     next: WorkerLifecycleState,
     opts?: { failureClass?: FailureClass; reason?: string },
@@ -874,6 +897,11 @@ export class StandaloneHost implements SwarmHost {
         parsed.data.descendant as AgentId,
       );
       transport.respond(frame.id, result);
+      return;
+    }
+    if (frame.method === "team.members") {
+      const members = this.listMembersInScope(this.scopeOf(from), from);
+      transport.respond(frame.id, members);
       return;
     }
     if (frame.method === "ask_user_question") {

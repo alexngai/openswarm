@@ -314,6 +314,26 @@ export class WorkerHost implements SwarmHost {
   }
 
   /**
+   * Request the list of team members from the orchestrator.
+   *
+   * v0.4 stage 4E.1: worker calls this to populate the `team_members` Tier 2
+   * tool result. Orchestrator resolves the worker's team scope and returns
+   * `[{memberId, role, agentId}]` for peers (excluding the caller).
+   */
+  async requestTeamMembers(): Promise<
+    Array<{ memberId: string; role: string; agentId: AgentId }>
+  > {
+    const result = await this.transport.send<
+      Array<{ memberId: string; role: string; agentId: string }>
+    >("team.members", {}, { timeoutMs: 5000 });
+    return result as Array<{
+      memberId: string;
+      role: string;
+      agentId: AgentId;
+    }>;
+  }
+
+  /**
    * Synchronously drain up to `max` messages from the local buffer.
    *
    * Note: `sub_agent_event` deliveries populate the buffer opportunistically.

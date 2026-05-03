@@ -14,6 +14,21 @@ const inputSchema = z.object({
     .optional(),
   maxTurns: z.number().int().positive().optional(),
   wait: z.boolean().optional().default(true),
+  // Added v0.4 stage 4E.1: team scope and framework selection.
+  team: z
+    .enum(["self", "child"])
+    .optional()
+    .describe(
+      'Team scope of the spawned agent. "self" = land in caller\'s team ' +
+        '(peer); "child" = sub-agent under caller (default). Omitted = "child".',
+    ),
+  framework: z
+    .enum(["claude-agent-sdk", "codex-chatgpt"])
+    .optional()
+    .describe(
+      "Framework provider for this spawn. Plumbs through to the spawn " +
+        "request; engine selection is handled by the framework provider.",
+    ),
 });
 
 type Input = z.infer<typeof inputSchema>;
@@ -27,7 +42,10 @@ const spec: ToolSpec = {
     "Spawn a sub-agent to work on a subtask. The sub-agent runs as an " +
     "isolated subprocess worker with its own engine. When `wait` is true " +
     "(default), this returns the sub-agent's final result. When false, " +
-    "returns the agentId and taskId so the caller can poll via task_get.",
+    "returns the agentId and taskId so the caller can poll via task_get. " +
+    'Use `team: "self"` to spawn into the caller\'s team scope (peer); ' +
+    "default is a child sub-agent. Use `framework` to opt into a specific " +
+    "framework provider.",
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   inputSchema: zodToJsonSchema(inputSchema as any) as JsonSchema,
   requiredPermission: "exec",
@@ -56,6 +74,19 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
     budget: input.maxTurns !== undefined ? { maxTurns: input.maxTurns } : undefined,
   });
 
+  // Resolve team scope. v0.4 stage 4E.1:
+  //   "self"  → spawn lands in caller's team scope (peer).
+  //   "child" / undefined → leave teamScope undefined; child gets default scope.
+  // host.scopeOf is implemented on StandaloneHost; WorkerHost callers fall
+  // through to undefined (peer-spawn from a worker is a future stage).
+  const hostWithScope = host as unknown as {
+    scopeOf?: (id: typeof host.agentId) => string;
+  };
+  const teamScope =
+    input.team === "self" && typeof hostWithScope.scopeOf === "function"
+      ? hostWithScope.scopeOf(host.agentId)
+      : undefined;
+
   // Build the SpawnRequest. Intentionally omit `depth` — the orchestrator
   // computes it authoritatively (see plan §0.4).
   const spawnReq: SpawnRequest = {
@@ -63,6 +94,8 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
     permissionMode,
     taskId: record.id,
     ...(input.model !== undefined && { model: input.model }),
+    ...(input.framework !== undefined && { framework: input.framework }),
+    ...(teamScope !== undefined && { teamScope }),
     ...(ctx.toolUseId !== undefined && { parentToolUseId: ctx.toolUseId }),
   };
 
