@@ -108,6 +108,20 @@ export class TeamSession {
 
     const handle = await this.host.spawn(spawnRequest);
 
+    // v0.4 stage 4M (M1): register stable memberId on the host so
+    // team_members() returns it instead of echoing agentId.
+    // Defensive call: production hosts (StandaloneHost) implement
+    // setMemberId; some test stubs implement only a subset of the
+    // SwarmHost surface and don't define it. Skip silently in that case
+    // — those stubs aren't wired through the team_members tool path
+    // either, so the gap is invisible to tests.
+    const hostWithSetMemberId = this.host as unknown as {
+      setMemberId?: (agentId: typeof handle.agentId, memberId: string) => void;
+    };
+    if (typeof hostWithSetMemberId.setMemberId === "function") {
+      hostWithSetMemberId.setMemberId(handle.agentId, memberId);
+    }
+
     const info: MemberInfo = {
       memberId,
       role: spec.role,
@@ -120,9 +134,29 @@ export class TeamSession {
     return handle;
   }
 
-  /** Spawn N members in parallel. */
+  /**
+   * Spawn N members in parallel. v0.4 stage 4M (M2): on partial failure
+   * (any spec rejecting), kill all successful partials before re-throwing
+   * so we don't leak orphan workers in the team scope.
+   */
   async spawnAll(specs: readonly MemberSpec[]): Promise<AgentHandle[]> {
-    return Promise.all(specs.map((s) => this.spawnMember(s)));
+    const results = await Promise.allSettled(
+      specs.map((s) => this.spawnMember(s)),
+    );
+    const handles: AgentHandle[] = [];
+    const errors: unknown[] = [];
+    for (const r of results) {
+      if (r.status === "fulfilled") handles.push(r.value);
+      else errors.push(r.reason);
+    }
+    if (errors.length > 0) {
+      // Kill any successful partials before re-throwing. Best-effort —
+      // host's onWorkerExited cascade cleans agentToScope/RoleIndex/
+      // agentToMemberId when each transport closes.
+      await Promise.all(handles.map((h) => h.kill().catch(() => {})));
+      throw errors[0];
+    }
+    return handles;
   }
 
   /**

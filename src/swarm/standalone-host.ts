@@ -114,6 +114,14 @@ export class StandaloneHost implements SwarmHost {
    * The orchestrator's own agentId always maps to `"swarm:default"`.
    */
   private readonly agentToScope = new Map<AgentId, string>();
+  /**
+   * agentId → stable memberId (when registered by TeamSession.spawnMember).
+   * v0.4 stage 4M (M1): allows team_members() to return TeamSession's stable
+   * memberId rather than echoing agentId. Optional — agents not registered
+   * via TeamSession (e.g. legacy fanout via swarm run) fall through to using
+   * agentId as the memberId.
+   */
+  private readonly agentToMemberId = new Map<AgentId, string>();
 
   // Expose the registry via the TaskAPI wrapper.
   readonly task: TaskAPI;
@@ -198,6 +206,23 @@ export class StandaloneHost implements SwarmHost {
   }
 
   /**
+   * Register a stable memberId for an agent (called by TeamSession.spawnMember
+   * after host.spawn returns). v0.4 stage 4M (M1).
+   */
+  setMemberId(agentId: AgentId, memberId: string): void {
+    this.agentToMemberId.set(agentId, memberId);
+  }
+
+  /**
+   * Stable memberId for an agent, or undefined if not registered via
+   * TeamSession. team_members() falls back to agentId when undefined so the
+   * non-team legacy path still produces a string identifier.
+   */
+  memberIdOf(agentId: AgentId): string | undefined {
+    return this.agentToMemberId.get(agentId);
+  }
+
+  /**
    * List all members of a given team scope. Each entry carries `memberId`
    * (currently same as agentId — TeamSession will surface stable ids in a
    * later stage), `role`, and `agentId`. Agents without a registered role
@@ -215,7 +240,8 @@ export class StandaloneHost implements SwarmHost {
       if (excludeAgentId !== undefined && agentId === excludeAgentId) continue;
       const roleInfo = this.roles.roleOf(agentId);
       if (roleInfo === undefined) continue;
-      out.push({ memberId: agentId, role: roleInfo.role, agentId });
+      const memberId = this.agentToMemberId.get(agentId) ?? agentId;
+      out.push({ memberId, role: roleInfo.role, agentId });
     }
     return out;
   }
@@ -458,7 +484,37 @@ export class StandaloneHost implements SwarmHost {
       } as LaneEvent);
     });
 
+    // v0.4 stage 4M (B3): emit worker_spawned now that the child is wired
+    // up. The spawn_requested event above announces intent; worker_spawned
+    // announces a live, observable child. MAP adapter forwards this as
+    // swarm.agent.spawned per docs/25 §10.1.
+    this.emit({
+      type: "worker_spawned",
+      payload: {
+        childAgentId,
+        parentAgentId: parentId,
+        ...(request.role !== undefined && { role: request.role }),
+        taskId: taskRecord.id,
+        teamScope: childScope,
+        depth: childDepth,
+      },
+    });
+
     transport.once("close", (exit: unknown) => {
+      // v0.4 stage 4M (B3): emit worker_exited for MAP adapter +
+      // observability. exitCode === 0 is success; null (signal-killed) and
+      // any non-zero are treated as failure by the adapter.
+      const exitObj = exit as { code: number | null; signal: NodeJS.Signals | null } | undefined;
+      const exitCode = exitObj?.code ?? null;
+      const signal = exitObj?.signal ?? null;
+      this.emit({
+        type: "worker_exited",
+        payload: {
+          agentId: childAgentId,
+          exitCode,
+          ...(signal !== null && { signal }),
+        },
+      });
       // Messaging cleanup on worker exit.
       this.onWorkerExited(childAgentId);
       // If close arrives while a run is still pending, synthesize a failure
@@ -790,6 +846,7 @@ export class StandaloneHost implements SwarmHost {
   private onWorkerExited(agentId: AgentId): void {
     this.roles.evict(agentId);
     this.agentToScope.delete(agentId);
+    this.agentToMemberId.delete(agentId);
     const discarded = this.messageInbox.discardAgent(agentId);
     if (discarded.length > 0) {
       this.emit({

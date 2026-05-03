@@ -126,11 +126,15 @@ export class MapAdapter {
       case "worker_spawned":
         return { method: "swarm.agent.spawned", params: event.payload };
       case "worker_exited": {
+        // v0.4 stage 4M (m1): only exitCode === 0 is success. Signal-killed
+        // workers (exitCode === null) and any non-zero exit are failures.
+        // Production now always populates exitCode in worker_exited (see
+        // standalone-host.ts close handler), so an absent exitCode is a
+        // malformed event and treated as failure.
         const payload = event.payload as
-          | { exitCode?: number; error?: unknown }
+          | { exitCode?: number | null; error?: unknown }
           | undefined;
-        const isSuccess =
-          payload?.exitCode === 0 || payload?.exitCode === undefined;
+        const isSuccess = payload?.exitCode === 0;
         return {
           method: isSuccess ? "swarm.agent.completed" : "swarm.agent.failed",
           params: event.payload,

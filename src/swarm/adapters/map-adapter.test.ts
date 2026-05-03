@@ -207,7 +207,11 @@ describe("MapAdapter", () => {
     await adapter.stop();
   });
 
-  it("worker_exited with no exitCode is treated as success", async () => {
+  it("worker_exited with no exitCode is treated as failure (malformed event)", async () => {
+    // v0.4 stage 4M (m1): only exitCode === 0 is success. Production
+    // standalone-host always populates exitCode; an absent exitCode is a
+    // malformed event and we conservatively treat it as failure rather than
+    // accidentally signaling completion.
     const { host, events } = makeStubHost();
     const adapter = new MapAdapter({
       url: "ws://t",
@@ -220,7 +224,28 @@ describe("MapAdapter", () => {
 
     const client = factory.clients[0]!;
     expect(client.notifications).toHaveLength(1);
-    expect(client.notifications[0]!.method).toBe("swarm.agent.completed");
+    expect(client.notifications[0]!.method).toBe("swarm.agent.failed");
+
+    await adapter.stop();
+  });
+
+  it("worker_exited with exitCode === null (signal-killed) → failure", async () => {
+    // Signal-killed workers have exitCode === null per Node's child_process
+    // close event semantics. Per V0.4.D7 / m1, these are failures, not
+    // accidental successes.
+    const { host, events } = makeStubHost();
+    const adapter = new MapAdapter({
+      url: "ws://t",
+      teamName: "t",
+      factory,
+    });
+    await adapter.start(host);
+
+    emit(events, makeEvent("worker_exited", { exitCode: null, signal: "SIGTERM" }));
+
+    const client = factory.clients[0]!;
+    expect(client.notifications).toHaveLength(1);
+    expect(client.notifications[0]!.method).toBe("swarm.agent.failed");
 
     await adapter.stop();
   });
