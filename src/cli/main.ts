@@ -12,6 +12,7 @@ import { runDoctor } from "./doctor.js";
 import { runInit } from "./init.js";
 import { runWorkerEntry } from "./worker-entry.js";
 import { runSwarm } from "./swarm.js";
+import { runTeamStart } from "./team.js";
 import { pluginMain } from "./plugin.js";
 import { logoutMain } from "./logout.js";
 import { loginMain } from "./login.js";
@@ -716,6 +717,13 @@ export async function main(argv: string[]): Promise<number> {
 
     case "plugin":
       return pluginMain(parsed.pluginArgv);
+
+    case "team-start":
+      return runTeamStart(parsed.template, {
+        permissionMode: parsed.permissionMode,
+        concurrency: parsed.concurrency,
+        output: parsed.output,
+      });
 
     case "login":
       return loginMain(["--provider", parsed.provider]);

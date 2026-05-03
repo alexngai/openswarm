@@ -190,6 +190,51 @@ describe("parseArgv", () => {
     expect(result.text).toBe("hello");
   });
 
+  // ---- team start (v0.4 stage 4F) ------------------------------------------
+
+  it("team start <template> returns team-start kind with the template name", () => {
+    const result = parseArgv(["team", "start", "gsd"]);
+    expect(result).toMatchObject({ kind: "team-start", template: "gsd" });
+  });
+
+  it("team start propagates --concurrency, --output, and --permission-mode", () => {
+    const result = parseArgv([
+      "team", "start", "gsd",
+      "--concurrency", "5",
+      "--output", "/tmp/team-results.jsonl",
+      "--permission-mode", "read-only",
+    ]);
+    if (result.kind !== "team-start") throw new Error("expected team-start");
+    expect(result.template).toBe("gsd");
+    expect(result.concurrency).toBe(5);
+    expect(result.output).toBe("/tmp/team-results.jsonl");
+    expect(result.permissionMode).toBe("read-only");
+  });
+
+  it("team without a sub-subcommand errors", () => {
+    const result = parseArgv(["team"]);
+    expect(result).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("team requires a sub-subcommand"),
+    });
+  });
+
+  it("team start without a template errors", () => {
+    const result = parseArgv(["team", "start"]);
+    expect(result).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("team start requires a template name"),
+    });
+  });
+
+  it("team <unknown> errors with a helpful message", () => {
+    const result = parseArgv(["team", "send", "msg"]);
+    expect(result).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("unknown team sub-subcommand"),
+    });
+  });
+
   // ---- swarm run + dead-letter flags ---------------------------------------
 
   it("swarm run with --dead-letter sets deadLetter path", () => {

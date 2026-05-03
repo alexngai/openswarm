@@ -96,13 +96,20 @@ export type ParsedArgs =
   | { kind: "plugin"; pluginArgv: string[] }
   | { kind: "login"; provider: string }
   | { kind: "logout"; provider: string }
+  | {
+      kind: "team-start";
+      template: string;
+      concurrency: number;
+      output: string;
+      permissionMode: PermissionMode;
+    }
   | { kind: "error"; message: string; showHelp: boolean };
 
 // ---------------------------------------------------------------------------
 // Known subcommands
 // ---------------------------------------------------------------------------
 
-const SUBCOMMANDS = new Set(["prompt", "doctor", "init", "help", "version", "swarm", "plugin", "login", "logout"]);
+const SUBCOMMANDS = new Set(["prompt", "doctor", "init", "help", "version", "swarm", "plugin", "login", "logout", "team"]);
 
 const VALID_PERMISSION_MODES = new Set<string>([
   "read-only",
@@ -599,6 +606,45 @@ export function parseArgv(args: string[]): ParsedArgs {
     case "plugin": {
       // Pass all remaining positionals (sub-subcommand + args) to pluginMain.
       return { kind: "plugin", pluginArgv: positionals };
+    }
+
+    case "team": {
+      // team start <template> [--concurrency N] [--output <path>] [--permission-mode <mode>]
+      // Stage 4F is minimal — only `start` is wired. Other subcommands
+      // (`send`, `list`, `stop`) land in v0.4 stage 4K.
+      const subSub = positionals[0];
+      if (subSub !== "start") {
+        return {
+          kind: "error",
+          message:
+            subSub === undefined
+              ? "team requires a sub-subcommand, e.g. team start <template>"
+              : `unknown team sub-subcommand: ${subSub} (only "start" is supported in v0.4 stage 4F)`,
+          showHelp: true,
+        };
+      }
+      const template = positionals[1];
+      if (template === undefined) {
+        return {
+          kind: "error",
+          message: "team start requires a template name",
+          showHelp: true,
+        };
+      }
+      if (positionals.length > 2) {
+        return {
+          kind: "error",
+          message: `unexpected extra positional for team start: ${positionals[2]}`,
+          showHelp: true,
+        };
+      }
+      return {
+        kind: "team-start",
+        template,
+        concurrency: swarmConcurrency,
+        output: swarmOutput,
+        permissionMode,
+      };
     }
 
     case "login": {
