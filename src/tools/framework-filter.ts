@@ -2,39 +2,28 @@
  * framework-filter.ts — remove tools that don't make sense in a given
  * framework mode.
  *
- * In swarm-harness's "native" and "auto" modes the SwarmHost-routed tools
+ * History: prior to v0.4 stage 4G this stripped 5 SwarmHost-routed tools
  * (send_message, check_inbox, task_stop, task_output, ask_user_question)
- * are available. In framework modes (codex-chatgpt, claude-agent-sdk) the
- * framework owns the turn loop and SwarmHost routing doesn't apply — so
- * those tools are REMOVED ENTIRELY from the surface the model sees. Not
- * degraded to no-op; absent.
+ * in framework modes on the assumption that they couldn't dispatch through
+ * the framework's tool surface. Track A (docs/26 §Track A) verified
+ * empirically that they work fine under --framework claude-agent-sdk —
+ * canUseTool routes the framework's call back to the swarm-harness
+ * implementation. The strip was conservative, not technically required.
  *
- * Orthogonal to ToolDispatcher.allowedTools (M3a role filter) which runs AT
- * DISPATCH time based on per-call role. This filter runs at factory time.
- * Composition: framework-filter → register in dispatcher → dispatcher applies
- * role allowlists per-call.
+ * v0.4 stage 4G: dropped the strip uniformly. Tier 2 tools are now
+ * available across all framework modes; outside a team scope they
+ * degrade gracefully (send_message returns delivered: 0; check_inbox
+ * returns []). The function is kept as a no-op for future
+ * framework-specific filtering needs.
  */
 
 import type { ToolImpl } from "./types.js";
 
-const SWARM_HOST_TOOLS = new Set([
-  "send_message",
-  "check_inbox",
-  "task_stop",
-  "task_output",
-  "ask_user_question",
-]);
-
-/**
- * Remove tools that don't make sense in the given framework mode.
- *
- * "native" and "auto" → return tools unchanged.
- * "claude-agent-sdk" and "codex-chatgpt" → strip SwarmHost-routed tools.
- */
 export function filterToolsForFramework(
   tools: readonly ToolImpl[],
   framework: "native" | "claude-agent-sdk" | "codex-chatgpt" | "auto",
 ): readonly ToolImpl[] {
-  if (framework === "native" || framework === "auto") return tools;
-  return tools.filter((t) => !SWARM_HOST_TOOLS.has(t.spec.name));
+  // No-op as of v0.4 stage 4G. See module-level jsdoc for rationale.
+  void framework; // signature preserved for callers; reserved for future use
+  return tools;
 }
