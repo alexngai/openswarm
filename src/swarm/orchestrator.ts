@@ -36,7 +36,11 @@ import type {
   TopologyContext,
   TeamResult,
 } from "./topologies-types.js";
-import { FanoutTopology, PipelineTopology } from "./topologies/index.js";
+import {
+  FanoutTopology,
+  PipelineTopology,
+  PeerTeamTopology,
+} from "./topologies/index.js";
 
 // Re-export AgentResult/Usage so legacy import sites keep working without
 // chasing module paths.
@@ -206,14 +210,15 @@ function pickTopology(kind: TopologyKind): Topology {
       return new FanoutTopology();
     case "pipeline":
       return new PipelineTopology();
-    // Remaining shapes land in 4E.3 / 4E.4. Until then, throw a clear error
-    // so misuse surfaces immediately at runTeam() time.
-    case "coordinator":
     case "peer-team":
+      return new PeerTeamTopology();
+    // Remaining shapes land in 4E.4. Until then, throw a clear error so
+    // misuse surfaces immediately at runTeam() time.
+    case "coordinator":
     case "committee":
     case "critic-loop":
       throw new Error(
-        `topology "${kind}" not supported in v0.4 stage 4E.2; lands in 4E.3+`,
+        `topology "${kind}" not supported in v0.4 stage 4E.3; lands in 4E.4`,
       );
   }
 }

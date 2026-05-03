@@ -1,0 +1,693 @@
+/**
+ * peer-team.test.ts — direct invocation of PeerTeamTopology.
+ *
+ * Mirrors the fake-spawn pattern from pipeline.test.ts. Each test stands up
+ * a fake StandaloneHost that resolves spawn() with a synthetic AgentHandle
+ * and a pre-canned AgentResult, then verifies peer-team-specific properties:
+ * parallel spawn, teammate-prompt augmentation, completion rules, aggregator
+ * modes, and failure semantics.
+ */
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { PeerTeamTopology } from "./peer-team.js";
+import { WorkerPool } from "../worker-pool.js";
+import { DeadLetterWriter } from "../dead-letter.js";
+import type { TeamSpec, MemberSpec } from "../team-spec.js";
+import type { TopologyContext } from "../topologies-types.js";
+import type { StandaloneHost } from "../standalone-host.js";
+import type { AgentHandle, AgentResult, SpawnRequest } from "../host.js";
+import type { LaneEvent } from "../events.js";
+import type { AgentId, SessionId } from "../../core/types.js";
+
+// ---------------------------------------------------------------------------
+// Fakes
+// ---------------------------------------------------------------------------
+
+interface MakeHandleOpts {
+  readonly result?: AgentResult;
+  readonly waitMs?: number;
+  readonly resultPromise?: Promise<AgentResult>;
+  readonly killable?: boolean;
+}
+
+interface FakeHandle extends AgentHandle {
+  readonly killed: { value: boolean };
+  readonly killSpy: ReturnType<typeof vi.fn>;
+}
+
+function makeHandle(
+  opts: MakeHandleOpts,
+  agentId: AgentId,
+  sessionId: SessionId,
+): FakeHandle {
+  const killed = { value: false };
+  let resolveKilled: ((r: AgentResult) => void) | undefined;
+  const killedPromise = new Promise<AgentResult>((resolve) => {
+    resolveKilled = resolve;
+  });
+
+  const baseResult: Promise<AgentResult> =
+    opts.resultPromise !== undefined
+      ? opts.resultPromise
+      : opts.waitMs !== undefined
+        ? new Promise<AgentResult>((resolve) =>
+            setTimeout(
+              () =>
+                resolve(
+                  opts.result ?? {
+                    status: "success",
+                    output: "ok",
+                    usage: { inputTokens: 1, outputTokens: 1 },
+                    wallClockMs: opts.waitMs ?? 0,
+                  },
+                ),
+              opts.waitMs,
+            ),
+          )
+        : Promise.resolve(
+            opts.result ?? {
+              status: "success",
+              output: "ok",
+              usage: { inputTokens: 1, outputTokens: 1 },
+              wallClockMs: 0,
+            },
+          );
+
+  // The handle's wait() races between the natural completion and a kill().
+  // When kill() is called, wait() resolves with status: "killed".
+  const wait = (): Promise<AgentResult> =>
+    Promise.race([baseResult, killedPromise]);
+
+  const killSpy = vi.fn(async () => {
+    if (killed.value) return;
+    killed.value = true;
+    resolveKilled?.({ status: "killed", wallClockMs: 0 });
+  });
+
+  return {
+    agentId,
+    sessionId,
+    wait,
+    kill: killSpy,
+    events: async function* () {
+      return;
+    },
+    runMore: () =>
+      Promise.reject(new Error("runMore not supported in peer-team test fake")),
+    drain: () => Promise.resolve(),
+    killed,
+    killSpy,
+  };
+}
+
+function successResult(output: string): AgentResult {
+  return {
+    status: "success",
+    output,
+    usage: { inputTokens: 1, outputTokens: 2 },
+    wallClockMs: 5,
+  };
+}
+
+function failureResult(error = "boom"): AgentResult {
+  return { status: "failure", error, wallClockMs: 5 };
+}
+
+interface SpawnLog {
+  readonly prompt: string;
+  readonly memberId: string | undefined;
+  readonly teamScope: string | undefined;
+  readonly role: string | undefined;
+  readonly spawnedAt: number;
+}
+
+interface FakeHostHarness {
+  readonly host: StandaloneHost;
+  readonly events: EventEmitter;
+  readonly spawns: SpawnLog[];
+  readonly handles: FakeHandle[];
+  emitLaneEvent(evt: Partial<LaneEvent> & Pick<LaneEvent, "type" | "payload">): void;
+}
+
+function fakeHost(handleOpts: readonly MakeHandleOpts[]): FakeHostHarness {
+  let i = 0;
+  const spawns: SpawnLog[] = [];
+  const handles: FakeHandle[] = [];
+  const events = new EventEmitter();
+  // Allow many subscribers without warnings (until_signal subscribes per-run).
+  events.setMaxListeners(50);
+
+  const spawn = async (req: SpawnRequest): Promise<AgentHandle> => {
+    spawns.push({
+      prompt: req.task.prompt,
+      memberId: req.task.id,
+      teamScope: req.teamScope,
+      role: req.role,
+      spawnedAt: Date.now(),
+    });
+    const opts = handleOpts[i] ?? { result: failureResult("no result configured") };
+    const handle = makeHandle(
+      opts,
+      `agent-${i + 1}` as AgentId,
+      `session-${i + 1}` as SessionId,
+    );
+    handles.push(handle);
+    i++;
+    return handle;
+  };
+
+  const host = {
+    mode: "standalone",
+    agentId: "topology-host" as AgentId,
+    depth: 0,
+    spawn,
+    emit: vi.fn(),
+    send: vi.fn(),
+    inbox: async function* () {
+      return;
+    },
+    task: {} as StandaloneHost["task"],
+    // PeerTeamTopology's `until_signal` path subscribes to host.events via a
+    // cast through `any`. Expose a real EventEmitter so tests can drive it.
+    events,
+  } as unknown as StandaloneHost;
+
+  return {
+    host,
+    events,
+    spawns,
+    handles,
+    emitLaneEvent: (evt) => {
+      const full: LaneEvent = {
+        ts: Date.now(),
+        agentId: ("agent-emitter" as AgentId),
+        ...evt,
+      } as LaneEvent;
+      events.emit("lane_event", full);
+    },
+  };
+}
+
+function peerSpec(
+  members: readonly MemberSpec[],
+  coordination: TeamSpec["coordination"] = { completion: { kind: "all" } },
+  name = "peer-test",
+): TeamSpec {
+  return { name, topology: "peer-team", members, coordination };
+}
+
+function member(id: string, prompt: string, role = "worker"): MemberSpec {
+  return {
+    id,
+    role,
+    prompt,
+    branchPolicy: { kind: "none" },
+    commitPolicy: { kind: "none" },
+    escalationPolicy: { kind: "none" },
+  };
+}
+
+interface RigOpts {
+  readonly handleOpts: readonly MakeHandleOpts[];
+  readonly abort?: AbortSignal;
+}
+
+async function makeCtx(opts: RigOpts): Promise<{
+  ctx: TopologyContext;
+  harness: FakeHostHarness;
+  cleanup: () => Promise<void>;
+}> {
+  const harness = fakeHost(opts.handleOpts);
+  const pool = new WorkerPool(8);
+  const tmp = await mkdtemp(join(tmpdir(), "peer-team-"));
+  const deadLetter = new DeadLetterWriter(join(tmp, "dl.jsonl"));
+  const resultsOut = new PassThrough();
+  resultsOut.resume();
+
+  const ctx: TopologyContext = {
+    host: harness.host,
+    pool,
+    resultsOut,
+    deadLetter,
+    permissionMode: "workspace-write",
+    ...(opts.abort !== undefined && { abort: opts.abort }),
+  };
+  return {
+    ctx,
+    harness,
+    cleanup: async () => {
+      await deadLetter.close();
+      await rm(tmp, { recursive: true, force: true });
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe("PeerTeamTopology (direct invocation)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("name is 'peer-team'", () => {
+    expect(new PeerTeamTopology().name).toBe("peer-team");
+  });
+
+  it("spawns all members in parallel into the team scope and concats outputs", async () => {
+    const { ctx, harness, cleanup } = await makeCtx({
+      handleOpts: [
+        { result: successResult("alpha") },
+        { result: successResult("beta") },
+        { result: successResult("gamma") },
+      ],
+    });
+    const spec = peerSpec([
+      member("m1", "first"),
+      member("m2", "second"),
+      member("m3", "third"),
+    ]);
+
+    const summary = await new PeerTeamTopology().run(spec, ctx);
+
+    expect(summary.succeeded).toBe(3);
+    expect(summary.failed).toBe(0);
+    expect(summary.aggregateOutput).toBe("alpha\n\nbeta\n\ngamma");
+    expect(harness.spawns).toHaveLength(3);
+    // All three members should land in the same team scope.
+    for (const s of harness.spawns) {
+      expect(s.teamScope).toBe("swarm:peer-test");
+    }
+    // Spawned roughly concurrently — start times within a small window
+    // (parallel spawnAll). Generous bound so CI hiccups don't flake.
+    const earliest = Math.min(...harness.spawns.map((s) => s.spawnedAt));
+    const latest = Math.max(...harness.spawns.map((s) => s.spawnedAt));
+    expect(latest - earliest).toBeLessThan(200);
+
+    // team_started + team_completed events should have fired.
+    const emit = ctx.host.emit as unknown as ReturnType<typeof vi.fn>;
+    const startedCalls = emit.mock.calls.filter(
+      (c) => (c[0] as { type: string }).type === "team_started",
+    );
+    const completedCalls = emit.mock.calls.filter(
+      (c) => (c[0] as { type: string }).type === "team_completed",
+    );
+    expect(startedCalls.length).toBe(1);
+    expect(completedCalls.length).toBe(1);
+    expect(
+      (startedCalls[0]![0] as { payload: { topology: string; memberCount: number } }).payload,
+    ).toMatchObject({ topology: "peer-team", memberCount: 3 });
+
+    await cleanup();
+  });
+
+  it("injects each member's prompt with a teammates list listing the others", async () => {
+    const { ctx, harness, cleanup } = await makeCtx({
+      handleOpts: [
+        { result: successResult("a") },
+        { result: successResult("b") },
+        { result: successResult("c") },
+      ],
+    });
+    const spec = peerSpec([
+      member("m1", "first", "writer"),
+      member("m2", "second", "reviewer"),
+      member("m3", "third", "judge"),
+    ]);
+
+    await new PeerTeamTopology().run(spec, ctx);
+
+    expect(harness.spawns).toHaveLength(3);
+    // m1 should know about m2 and m3, but not itself.
+    expect(harness.spawns[0]!.prompt).toContain("first");
+    expect(harness.spawns[0]!.prompt).toContain("## Your teammates");
+    expect(harness.spawns[0]!.prompt).toContain("reviewer");
+    expect(harness.spawns[0]!.prompt).toContain("judge");
+    // It mentions team_members() for runtime fresh state.
+    expect(harness.spawns[0]!.prompt).toContain("team_members()");
+    // m2 should reference m1 and m3 — including their ids.
+    expect(harness.spawns[1]!.prompt).toContain("m1");
+    expect(harness.spawns[1]!.prompt).toContain("m3");
+    // Self-role shouldn't appear in teammates list (would always trip on its
+    // own id but we just check the member's id isn't listed under teammates).
+    const m3Section = harness.spawns[2]!.prompt;
+    const teammatesPart = m3Section.split("## Your teammates")[1] ?? "";
+    expect(teammatesPart).not.toContain("(id: m3)");
+
+    await cleanup();
+  });
+
+  it("CompletionRule 'any': first finisher wins, others get killed", async () => {
+    let resolveSlow1: ((r: AgentResult) => void) | undefined;
+    let resolveSlow2: ((r: AgentResult) => void) | undefined;
+    const slow1 = new Promise<AgentResult>((r) => {
+      resolveSlow1 = r;
+    });
+    const slow2 = new Promise<AgentResult>((r) => {
+      resolveSlow2 = r;
+    });
+    void resolveSlow1;
+    void resolveSlow2;
+
+    const { ctx, harness, cleanup } = await makeCtx({
+      handleOpts: [
+        { result: successResult("fast-winner") },
+        { resultPromise: slow1 },
+        { resultPromise: slow2 },
+      ],
+    });
+    const spec = peerSpec(
+      [member("fast", "p"), member("slow1", "p"), member("slow2", "p")],
+      { completion: { kind: "any" } },
+    );
+
+    const summary = await new PeerTeamTopology().run(spec, ctx);
+
+    expect(summary.succeeded).toBe(1);
+    expect(summary.aggregateOutput).toBe("fast-winner");
+    // Slow members should have had .kill() called on them.
+    expect(harness.handles[1]!.killSpy).toHaveBeenCalled();
+    expect(harness.handles[2]!.killSpy).toHaveBeenCalled();
+    // Winner should not have been killed via the completion path. (dispose()
+    // in finally will kill any survivors, but the winner already returned —
+    // calling kill() on a finished handle is a no-op.)
+
+    await cleanup();
+  });
+
+  it("CompletionRule 'majority' kills survivors once M complete", async () => {
+    let resolveSlow1: ((r: AgentResult) => void) | undefined;
+    let resolveSlow2: ((r: AgentResult) => void) | undefined;
+    const slow1 = new Promise<AgentResult>((r) => {
+      resolveSlow1 = r;
+    });
+    const slow2 = new Promise<AgentResult>((r) => {
+      resolveSlow2 = r;
+    });
+    void resolveSlow1;
+    void resolveSlow2;
+
+    const { ctx, harness, cleanup } = await makeCtx({
+      handleOpts: [
+        { result: successResult("fast-1") },
+        { result: successResult("fast-2") },
+        { resultPromise: slow1 },
+        { resultPromise: slow2 },
+      ],
+    });
+    const spec = peerSpec(
+      [
+        member("a", "p"),
+        member("b", "p"),
+        member("c", "p"),
+        member("d", "p"),
+      ],
+      { completion: { kind: "majority", m: 2 } },
+    );
+
+    const summary = await new PeerTeamTopology().run(spec, ctx);
+    expect(summary.succeeded).toBe(2);
+    // Slow members get killed.
+    expect(harness.handles[2]!.killSpy).toHaveBeenCalled();
+    expect(harness.handles[3]!.killSpy).toHaveBeenCalled();
+
+    await cleanup();
+  });
+
+  it("CompletionRule 'majority' rejects m > N", async () => {
+    const { ctx, cleanup } = await makeCtx({
+      handleOpts: [
+        { result: successResult("a") },
+        { result: successResult("b") },
+      ],
+    });
+    const spec = peerSpec(
+      [member("a", "p"), member("b", "p")],
+      { completion: { kind: "majority", m: 5 } },
+    );
+    await expect(new PeerTeamTopology().run(spec, ctx)).rejects.toThrow(
+      /majority m=5 exceeds member count 2/,
+    );
+    await cleanup();
+  });
+
+  it("CompletionRule 'deadline': kills slow members when deadline elapses", async () => {
+    let resolveSlow: ((r: AgentResult) => void) | undefined;
+    const slow = new Promise<AgentResult>((r) => {
+      resolveSlow = r;
+    });
+    void resolveSlow;
+
+    const { ctx, harness, cleanup } = await makeCtx({
+      handleOpts: [
+        { result: successResult("fast-done") },
+        { resultPromise: slow },
+        { resultPromise: slow },
+      ],
+    });
+    const spec = peerSpec(
+      [member("a", "p"), member("b", "p"), member("c", "p")],
+      { completion: { kind: "deadline", ms: 30 } },
+    );
+
+    const summary = await new PeerTeamTopology().run(spec, ctx);
+    // The fast one succeeded; the two slow ones were killed by the deadline
+    // (their wait() resolves to status: "killed" after kill() ran).
+    expect(summary.succeeded).toBe(1);
+    expect(summary.cancelled).toBe(2);
+    expect(harness.handles[1]!.killSpy).toHaveBeenCalled();
+    expect(harness.handles[2]!.killSpy).toHaveBeenCalled();
+
+    await cleanup();
+  });
+
+  it("CompletionRule 'until_signal': drains team when signal seen", async () => {
+    let resolveSlow1: ((r: AgentResult) => void) | undefined;
+    let resolveSlow2: ((r: AgentResult) => void) | undefined;
+    const slow1 = new Promise<AgentResult>((r) => {
+      resolveSlow1 = r;
+    });
+    const slow2 = new Promise<AgentResult>((r) => {
+      resolveSlow2 = r;
+    });
+    void resolveSlow1;
+    void resolveSlow2;
+
+    const { ctx, harness, cleanup } = await makeCtx({
+      handleOpts: [
+        { resultPromise: slow1 },
+        { resultPromise: slow2 },
+      ],
+    });
+    const spec = peerSpec(
+      [member("a", "p"), member("b", "p")],
+      { completion: { kind: "until_signal", signal: "APPROVED" } },
+    );
+
+    // Schedule a message_sent event mid-run that should trigger drain.
+    setTimeout(() => {
+      harness.emitLaneEvent({
+        type: "message_sent",
+        payload: { content: "team consensus: APPROVED — ship it" },
+      });
+    }, 20);
+
+    const summary = await new PeerTeamTopology().run(spec, ctx);
+    expect(summary.cancelled).toBe(2);
+    expect(harness.handles[0]!.killSpy).toHaveBeenCalled();
+    expect(harness.handles[1]!.killSpy).toHaveBeenCalled();
+
+    await cleanup();
+  });
+
+  it("Aggregator 'last' returns last successful output", async () => {
+    const { ctx, cleanup } = await makeCtx({
+      handleOpts: [
+        { result: successResult("alpha") },
+        { result: successResult("beta") },
+      ],
+    });
+    const spec = peerSpec(
+      [member("a", "p"), member("b", "p")],
+      { completion: { kind: "all" }, aggregator: { kind: "last" } },
+    );
+    const summary = await new PeerTeamTopology().run(spec, ctx);
+    expect(summary.aggregateOutput).toBe("beta");
+    await cleanup();
+  });
+
+  it("Aggregator 'vote': majority output wins; tie → first occurrence", async () => {
+    // Three members; two return "yes", one returns "no" → "yes" wins.
+    const { ctx: ctx1, cleanup: cleanup1 } = await makeCtx({
+      handleOpts: [
+        { result: successResult("yes") },
+        { result: successResult("no") },
+        { result: successResult("yes") },
+      ],
+    });
+    const summary1 = await new PeerTeamTopology().run(
+      peerSpec(
+        [member("a", "p"), member("b", "p"), member("c", "p")],
+        { completion: { kind: "all" }, aggregator: { kind: "vote" } },
+      ),
+      ctx1,
+    );
+    expect(summary1.aggregateOutput).toBe("yes");
+    await cleanup1();
+
+    // Three different outputs → tie at count 1; first occurrence wins.
+    const { ctx: ctx2, cleanup: cleanup2 } = await makeCtx({
+      handleOpts: [
+        { result: successResult("first") },
+        { result: successResult("second") },
+        { result: successResult("third") },
+      ],
+    });
+    const summary2 = await new PeerTeamTopology().run(
+      peerSpec(
+        [member("a", "p"), member("b", "p"), member("c", "p")],
+        { completion: { kind: "all" }, aggregator: { kind: "vote" } },
+      ),
+      ctx2,
+    );
+    expect(summary2.aggregateOutput).toBe("first");
+    await cleanup2();
+  });
+
+  it("Aggregator 'judge' spawns an extra member with the judge role", async () => {
+    // Three candidate members + one judge member spawned afterward.
+    const { ctx, harness, cleanup } = await makeCtx({
+      handleOpts: [
+        { result: successResult("candidate-1") },
+        { result: successResult("candidate-2") },
+        { result: successResult("candidate-3") },
+        { result: successResult("judge-says-cand-2-wins") },
+      ],
+    });
+    const spec = peerSpec(
+      [member("a", "p"), member("b", "p"), member("c", "p")],
+      {
+        completion: { kind: "all" },
+        aggregator: { kind: "judge", role: "verdict" },
+      },
+    );
+
+    const summary = await new PeerTeamTopology().run(spec, ctx);
+    expect(summary.aggregateOutput).toBe("judge-says-cand-2-wins");
+    expect(harness.spawns).toHaveLength(4);
+    // The 4th spawn is the judge — its role should be "verdict".
+    expect(harness.spawns[3]!.role).toBe("verdict");
+    // The judge prompt should reference all candidate outputs.
+    expect(harness.spawns[3]!.prompt).toContain("candidate-1");
+    expect(harness.spawns[3]!.prompt).toContain("candidate-2");
+    expect(harness.spawns[3]!.prompt).toContain("candidate-3");
+    await cleanup();
+  });
+
+  it("Aggregator 'custom' (no fn) falls through to concat with team_note", async () => {
+    const { ctx, cleanup } = await makeCtx({
+      handleOpts: [
+        { result: successResult("x") },
+        { result: successResult("y") },
+      ],
+    });
+    const spec = peerSpec(
+      [member("a", "p"), member("b", "p")],
+      { completion: { kind: "all" }, aggregator: { kind: "custom" } },
+    );
+
+    const summary = await new PeerTeamTopology().run(spec, ctx);
+    expect(summary.aggregateOutput).toBe("x\n\ny");
+
+    const emit = ctx.host.emit as unknown as ReturnType<typeof vi.fn>;
+    const noteCalls = emit.mock.calls.filter(
+      (c) => (c[0] as { type: string }).type === "team_note",
+    );
+    expect(noteCalls.length).toBeGreaterThanOrEqual(1);
+
+    await cleanup();
+  });
+
+  it("failed member does NOT abort the team (peer-team semantics)", async () => {
+    const { ctx, cleanup } = await makeCtx({
+      handleOpts: [
+        { result: successResult("a") },
+        { result: failureResult("b-broke") },
+        { result: successResult("c") },
+      ],
+    });
+    const spec = peerSpec([
+      member("a", "p"),
+      member("b", "p"),
+      member("c", "p"),
+    ]);
+
+    const summary = await new PeerTeamTopology().run(spec, ctx);
+    expect(summary.succeeded).toBe(2);
+    expect(summary.failed).toBe(1);
+    // team_completed should still have fired (not team_aborted).
+    const emit = ctx.host.emit as unknown as ReturnType<typeof vi.fn>;
+    const completedCalls = emit.mock.calls.filter(
+      (c) => (c[0] as { type: string }).type === "team_completed",
+    );
+    const abortedCalls = emit.mock.calls.filter(
+      (c) => (c[0] as { type: string }).type === "team_aborted",
+    );
+    expect(completedCalls.length).toBe(1);
+    expect(abortedCalls.length).toBe(0);
+    // Aggregate over surviving outputs.
+    expect(summary.aggregateOutput).toBe("a\n\nc");
+
+    await cleanup();
+  });
+
+  it("rejects a spec with empty members array", async () => {
+    const { ctx, cleanup } = await makeCtx({ handleOpts: [] });
+    const spec = {
+      name: "empty",
+      topology: "peer-team" as const,
+      members: [] as const,
+      coordination: { completion: { kind: "all" as const } },
+    } as unknown as TeamSpec;
+
+    await expect(new PeerTeamTopology().run(spec, ctx)).rejects.toThrow(
+      /members is empty/,
+    );
+
+    await cleanup();
+  });
+
+  it("treats a pre-aborted signal as 'cancel everyone' without spawning", async () => {
+    const abortController = new AbortController();
+    abortController.abort();
+
+    const { ctx, harness, cleanup } = await makeCtx({
+      handleOpts: [
+        { result: successResult("nope-1") },
+        { result: successResult("nope-2") },
+      ],
+      abort: abortController.signal,
+    });
+    const spec = peerSpec([member("a", "p"), member("b", "p")]);
+
+    const summary = await new PeerTeamTopology().run(spec, ctx);
+    expect(harness.spawns).toHaveLength(0);
+    expect(summary.cancelled).toBe(2);
+    expect(summary.succeeded).toBe(0);
+
+    // team_aborted should have fired.
+    const emit = ctx.host.emit as unknown as ReturnType<typeof vi.fn>;
+    const abortedCalls = emit.mock.calls.filter(
+      (c) => (c[0] as { type: string }).type === "team_aborted",
+    );
+    expect(abortedCalls.length).toBe(1);
+
+    await cleanup();
+  });
+});
