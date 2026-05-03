@@ -640,6 +640,7 @@ export class StandaloneHost implements SwarmHost {
         payload: {
           from,
           to: r,
+          content: message.content,
           ...(message.correlationId !== undefined && {
             correlationId: message.correlationId,
           }),

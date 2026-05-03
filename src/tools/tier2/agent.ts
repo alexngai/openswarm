@@ -59,6 +59,24 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   if (!parsed.success) return { status: "error", message: parsed.error.message };
   const input: Input = parsed.data;
 
+  // v0.4 stage 4M (B2): worker-side `team: "self"` is unsupported in v0.4.
+  // The CoordinatorTopology root runs in the StandaloneHost context (root
+  // orchestrator), so peer-spawn from a worker would require IPC plumbing
+  // (frame.method === "spawn" handler in StandaloneHost.handleWorkerRequest)
+  // that hasn't been designed yet — see B3 / B2 review notes. Reject with a
+  // clear, structured error rather than silently dropping teamScope and
+  // crashing later with UNKNOWN_METHOD. Worker-side `agent({prompt: "..."})`
+  // (default child-spawn) continues to work via the existing tree-spawn path.
+  if (host.kind === "worker" && input.team === "self") {
+    return {
+      status: "error",
+      message:
+        "agent tool with team=\"self\" is not supported from worker context " +
+        "in v0.4; CoordinatorTopology root runs in standalone-host context " +
+        "only. (Worker-spawned peer support is deferred to v0.5+.)",
+    };
+  }
+
   // Permission clamping: sub-agent mode cannot exceed parent's mode.
   // The authoritative clamp also happens inside StandaloneHost.spawn() — this
   // pre-clamp in the tool just makes the intent visible in the SpawnRequest.

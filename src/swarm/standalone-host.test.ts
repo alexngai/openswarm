@@ -398,6 +398,144 @@ describe("StandaloneHost", () => {
     expect(result.ok).toBe(true);
     expect(result.delivered).toBe(0);
   });
+
+  // -------------------------------------------------------------------------
+  // Stage 4M (B1): message_sent payload includes content for until_signal listeners
+  // -------------------------------------------------------------------------
+
+  it("emits message_sent with content so peer-team until_signal can match", async () => {
+    const host = new StandaloneHost({ maxDepth: 5 });
+    (host as unknown as { spawnFn: (a: SpawnWorkerArgs) => unknown }).spawnFn = (
+      _args: SpawnWorkerArgs,
+    ) => {
+      const pair = fakeProcPair();
+      setImmediate(() => {
+        pair.emitFromWorker({
+          kind: "notification",
+          method: "worker_ready",
+          params: {},
+        });
+        setImmediate(() => {
+          pair.emitFromWorker({
+            kind: "notification",
+            method: "task_result",
+            params: {
+              status: "success",
+              output: "done",
+              usage: { inputTokens: 0, outputTokens: 0 },
+              wallClockMs: 0,
+            },
+          });
+        });
+      });
+      return pair.child;
+    };
+
+    const alphaHandle = await host.spawn({
+      task: samplePacket(),
+      permissionMode: "workspace-write",
+      teamScope: "swarm:team-a",
+    });
+    const bravoHandle = await host.spawn({
+      task: samplePacket(),
+      permissionMode: "workspace-write",
+      teamScope: "swarm:team-a",
+    });
+
+    const messageSentEvents: Array<{ type: string; payload: unknown }> = [];
+    host["events"].on("lane_event", (e: { type: string; payload: unknown }) => {
+      if (e.type === "message_sent") messageSentEvents.push(e);
+    });
+
+    const result = await host.send(bravoHandle.agentId, {
+      from: alphaHandle.agentId,
+      to: bravoHandle.agentId,
+      content: "team consensus: APPROVED — ship it",
+      timestamp: Date.now(),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.delivered).toBe(1);
+    expect(messageSentEvents).toHaveLength(1);
+    const payload = messageSentEvents[0]!.payload as {
+      content?: string;
+      from?: string;
+      to?: string;
+    };
+    expect(payload.content).toBe("team consensus: APPROVED — ship it");
+    expect(payload.from).toBe(alphaHandle.agentId);
+    expect(payload.to).toBe(bravoHandle.agentId);
+  });
+
+  it("end-to-end: peer-team until_signal matcher resolves via real host.send()", async () => {
+    // Drives the same listener pattern PeerTeamTopology installs for
+    // CompletionRule "until_signal", but against a real StandaloneHost.send()
+    // (B1 regression). If message_sent ever stops including content again,
+    // this test fails immediately.
+    const host = new StandaloneHost({ maxDepth: 5 });
+    (host as unknown as { spawnFn: (a: SpawnWorkerArgs) => unknown }).spawnFn = (
+      _args: SpawnWorkerArgs,
+    ) => {
+      const pair = fakeProcPair();
+      setImmediate(() => {
+        pair.emitFromWorker({
+          kind: "notification",
+          method: "worker_ready",
+          params: {},
+        });
+        setImmediate(() => {
+          pair.emitFromWorker({
+            kind: "notification",
+            method: "task_result",
+            params: {
+              status: "success",
+              output: "done",
+              usage: { inputTokens: 0, outputTokens: 0 },
+              wallClockMs: 0,
+            },
+          });
+        });
+      });
+      return pair.child;
+    };
+
+    const sender = await host.spawn({
+      task: samplePacket(),
+      permissionMode: "workspace-write",
+      teamScope: "swarm:team-x",
+    });
+    const receiver = await host.spawn({
+      task: samplePacket(),
+      permissionMode: "workspace-write",
+      teamScope: "swarm:team-x",
+    });
+
+    const signal = "APPROVED";
+    const signalP = new Promise<void>((resolve) => {
+      const handler = (event: { type: string; payload?: unknown }): void => {
+        if (event.type !== "message_sent") return;
+        const payload = event.payload as { content?: string } | undefined;
+        if (
+          payload !== undefined &&
+          typeof payload.content === "string" &&
+          payload.content.includes(signal)
+        ) {
+          host["events"].off("lane_event", handler);
+          resolve();
+        }
+      };
+      host["events"].on("lane_event", handler);
+    });
+
+    await host.send(receiver.agentId, {
+      from: sender.agentId,
+      to: receiver.agentId,
+      content: `team consensus: ${signal} — ship it`,
+      timestamp: Date.now(),
+    });
+
+    await expect(signalP).resolves.toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------

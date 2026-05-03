@@ -66,7 +66,7 @@ export class PeerTeamTopology implements Topology {
         payload: {
           teamName: spec.name,
           scope: team.scope,
-          stagesCompleted: 0,
+          memberResults: 0,
         },
       });
       await team.dispose();

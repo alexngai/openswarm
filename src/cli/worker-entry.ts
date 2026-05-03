@@ -23,7 +23,7 @@ import {
 } from "../swarm/roles.js";
 import type { AgentResult, TaskPacket } from "../swarm/host.js";
 import type { IpcRequest } from "../swarm/ipc/protocol.js";
-import { RunMoreParamsSchema } from "../swarm/ipc/protocol.js";
+import { RunMoreParamsSchema, IPC_ERROR_CODES } from "../swarm/ipc/protocol.js";
 import type { PermissionMode, Usage } from "../core/types.js";
 import type { ToolExecutionContext, ToolImpl } from "../tools/types.js";
 
@@ -388,7 +388,7 @@ export async function runWorkerEntry(): Promise<number> {
     // run_more: ack and execute the next turn.
     const params = RunMoreParamsSchema.safeParse(next.frame.params);
     if (!params.success) {
-      transport.respondError(next.frame.id, "invalid_params", params.error.message);
+      transport.respondError(next.frame.id, IPC_ERROR_CODES.INVALID_PARAMS, params.error.message);
       continue;
     }
     transport.respond(next.frame.id, { accepted: true });

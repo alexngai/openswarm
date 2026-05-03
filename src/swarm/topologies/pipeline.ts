@@ -163,7 +163,7 @@ export class PipelineTopology implements Topology {
         payload: {
           teamName: spec.name,
           scope: team.scope,
-          stagesCompleted: stageResults.length,
+          memberResults: stageResults.length,
         },
       });
       // Remaining stages that never spawned count as cancelled.

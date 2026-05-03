@@ -134,8 +134,13 @@ export async function loadTemplate(
     }
     return await loadFromFixture(tmpDir);
   } finally {
-    // Best-effort cleanup. Don't fail the load if rm fails.
-    fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    // Best-effort cleanup. Await so we don't leak the tmpdir on the next tick;
+    // swallow any error so cleanup failure doesn't mask a load failure.
+    try {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
   }
 }
 
