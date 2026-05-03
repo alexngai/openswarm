@@ -104,6 +104,12 @@ export class StandaloneHost implements SwarmHost {
   private readonly roles = new RoleIndex();
   /** Live worker transports keyed by child agentId for `sub_agent_event` delivery. */
   private readonly transports = new Map<AgentId, WorkerTransport>();
+  /**
+   * agentId → team scope. Populated at spawn() so send_message can resolve
+   * `*` and `role:<x>` against the sender's scope (v0.4 stage 4A.3).
+   * The orchestrator's own agentId always maps to `"swarm:default"`.
+   */
+  private readonly agentToScope = new Map<AgentId, string>();
 
   // Expose the registry via the TaskAPI wrapper.
   readonly task: TaskAPI;
@@ -128,6 +134,7 @@ export class StandaloneHost implements SwarmHost {
         };
       });
     this.depths.set(this.agentId, 0);
+    this.agentToScope.set(this.agentId, "swarm:default");
 
     // Orphan-scan + crash_detected emission is wired but DISABLED at
     // construction time after v0.2 stage 2B integration tests showed it
@@ -175,6 +182,15 @@ export class StandaloneHost implements SwarmHost {
   // orchestrator's own lifecycle is process lifetime; transitions are not driven
   getLifecycleState(): WorkerLifecycleState {
     return this._lifecycleState;
+  }
+
+  /**
+   * Look up an agent's team scope. Returns `"swarm:default"` when unknown
+   * (legacy single-team case and forward-compat for callers that haven't
+   * registered yet).
+   */
+  scopeOf(agentId: AgentId): string {
+    return this.agentToScope.get(agentId) ?? "swarm:default";
   }
 
   private _transitionTo(
@@ -234,10 +250,14 @@ export class StandaloneHost implements SwarmHost {
     const childAgentId = randomUUID() as AgentId;
     this.depths.set(childAgentId, childDepth);
     this.spawnParents.set(childAgentId, parentId);
+    // Track team scope (v0.4 stage 4A.3). Defaults to "swarm:default" when the
+    // spawn request omits teamScope — preserves single-team backward compat.
+    const childScope = request.teamScope ?? "swarm:default";
+    this.agentToScope.set(childAgentId, childScope);
     // Register role if the spawn request carries one (M3a Phase 3 — used by
     // `role:<name>` addressing in send_message; full role wiring lands in Phase 6).
     if (request.role !== undefined) {
-      this.roles.register("swarm:default", childAgentId, request.role);
+      this.roles.register(childScope, childAgentId, request.role);
     }
 
     // Task registration: reuse or create.
@@ -291,6 +311,7 @@ export class StandaloneHost implements SwarmHost {
       ...(request.allowedTools !== undefined && {
         allowedTools: request.allowedTools,
       }),
+      ...(request.teamScope !== undefined && { teamScope: request.teamScope }),
     });
     const transport = new WorkerTransport(child);
     this.transports.set(childAgentId, transport);
@@ -435,15 +456,22 @@ export class StandaloneHost implements SwarmHost {
     // depth-0 are still allowed — they route to drainInbox() on the root
     // StandaloneHost if the caller explicitly wants to push a message there.
     const from = message.from;
+    // Sender's team scope drives `*` and `role:<x>` resolution (v0.4 stage 4A.3).
+    // Direct agentId addressing is unchanged — cross-scope direct sends remain
+    // allowed so orchestrators can still pierce team boundaries deliberately.
+    const senderScope = this.scopeOf(from);
     let recipients: AgentId[];
     if (to === "*") {
       recipients = [...this.depths.keys()].filter(
-        (id) => id !== from && (this.depths.get(id) ?? 0) > 0,
+        (id) =>
+          id !== from &&
+          (this.depths.get(id) ?? 0) > 0 &&
+          this.scopeOf(id) === senderScope,
       );
     } else if (typeof to === "string" && to.startsWith("role:")) {
       const role = to.slice("role:".length);
       recipients = this.roles
-        .agentsInRole("swarm:default", role)
+        .agentsInRole(senderScope, role)
         .filter(
           (id) => id !== from && (this.depths.get(id) ?? 0) > 0,
         );
@@ -643,6 +671,7 @@ export class StandaloneHost implements SwarmHost {
 
   private onWorkerExited(agentId: AgentId): void {
     this.roles.evict(agentId);
+    this.agentToScope.delete(agentId);
     const discarded = this.messageInbox.discardAgent(agentId);
     if (discarded.length > 0) {
       this.emit({

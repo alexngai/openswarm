@@ -61,6 +61,12 @@ export interface SpawnWorkerArgs {
    * Written to `SWARM_HARNESS_FRAMEWORK`. Default: "auto".
    */
   readonly framework?: FrameworkChoice;
+  /**
+   * Team scope for this worker (v0.4 stage 4A.3). Propagated via
+   * `SWARM_HARNESS_TEAM_SCOPE` only when non-default; the worker side will
+   * consume this in stage 4D when long-lived workers ship.
+   */
+  readonly teamScope?: string;
 }
 
 export function spawnWorker(args: SpawnWorkerArgs): ChildProcess {
@@ -89,6 +95,11 @@ export function spawnWorker(args: SpawnWorkerArgs): ChildProcess {
   }
   if (args.framework !== undefined) {
     env.SWARM_HARNESS_FRAMEWORK = args.framework;
+  }
+  // Only emit the team scope env when the team is non-default — keeps the
+  // env footprint clean for legacy single-team runs (v0.4 stage 4A.3).
+  if (args.teamScope !== undefined && args.teamScope !== "swarm:default") {
+    env.SWARM_HARNESS_TEAM_SCOPE = args.teamScope;
   }
   // Intentionally NOT setting SWARM_HARNESS_SESSION_ID — resume is out of M1.
 

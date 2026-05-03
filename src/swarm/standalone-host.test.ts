@@ -270,6 +270,134 @@ describe("StandaloneHost", () => {
     void spawnFn2;
     void emit2;
   });
+
+  // -------------------------------------------------------------------------
+  // Stage 4A.3: scope-aware send_message
+  // -------------------------------------------------------------------------
+
+  it("scope-isolates broadcast: `*` from team A does not reach team B", async () => {
+    const host = new StandaloneHost({ maxDepth: 5 });
+    // Inject a permissive spawnFn that returns a fresh fake child each call,
+    // and pre-acks worker_ready so spawn() resolves quickly.
+    const children: ReturnType<typeof fakeProcPair>[] = [];
+    (host as unknown as { spawnFn: (a: SpawnWorkerArgs) => unknown }).spawnFn = (
+      _args: SpawnWorkerArgs,
+    ) => {
+      const pair = fakeProcPair();
+      children.push(pair);
+      // Drive worker_ready + a successful task_result on next ticks so the
+      // spawn() promise resolves cleanly.
+      setImmediate(() => {
+        pair.emitFromWorker({
+          kind: "notification",
+          method: "worker_ready",
+          params: {},
+        });
+        setImmediate(() => {
+          pair.emitFromWorker({
+            kind: "notification",
+            method: "task_result",
+            params: {
+              status: "success",
+              output: "done",
+              usage: { inputTokens: 0, outputTokens: 0 },
+              wallClockMs: 0,
+            },
+          });
+        });
+      });
+      return pair.child;
+    };
+
+    const alphaHandle = await host.spawn({
+      task: samplePacket(),
+      permissionMode: "workspace-write",
+      teamScope: "swarm:team-a",
+    });
+    const bravoHandle = await host.spawn({
+      task: samplePacket(),
+      permissionMode: "workspace-write",
+      teamScope: "swarm:team-a",
+    });
+    const charlieHandle = await host.spawn({
+      task: samplePacket(),
+      permissionMode: "workspace-write",
+      teamScope: "swarm:team-b",
+    });
+
+    // Sanity: scopeOf reports the right scope for each agent.
+    expect(host.scopeOf(alphaHandle.agentId)).toBe("swarm:team-a");
+    expect(host.scopeOf(bravoHandle.agentId)).toBe("swarm:team-a");
+    expect(host.scopeOf(charlieHandle.agentId)).toBe("swarm:team-b");
+
+    const result = await host.send("*", {
+      from: alphaHandle.agentId,
+      to: "*" as unknown as AgentId,
+      content: "broadcast within team-a",
+      timestamp: Date.now(),
+    });
+
+    // Only bravo should receive — charlie is in team-b.
+    expect(result.ok).toBe(true);
+    expect(result.delivered).toBe(1);
+  });
+
+  it("scope-isolates role addressing: role:reviewer from team A does not match reviewers in team B", async () => {
+    const host = new StandaloneHost({ maxDepth: 5 });
+    (host as unknown as { spawnFn: (a: SpawnWorkerArgs) => unknown }).spawnFn = (
+      _args: SpawnWorkerArgs,
+    ) => {
+      const pair = fakeProcPair();
+      setImmediate(() => {
+        pair.emitFromWorker({
+          kind: "notification",
+          method: "worker_ready",
+          params: {},
+        });
+        setImmediate(() => {
+          pair.emitFromWorker({
+            kind: "notification",
+            method: "task_result",
+            params: {
+              status: "success",
+              output: "done",
+              usage: { inputTokens: 0, outputTokens: 0 },
+              wallClockMs: 0,
+            },
+          });
+        });
+      });
+      return pair.child;
+    };
+
+    const alphaHandle = await host.spawn({
+      task: samplePacket(),
+      permissionMode: "workspace-write",
+      teamScope: "swarm:team-a",
+      role: "reviewer",
+    });
+    const bravoHandle = await host.spawn({
+      task: samplePacket(),
+      permissionMode: "workspace-write",
+      teamScope: "swarm:team-b",
+      role: "reviewer",
+    });
+
+    expect(host.scopeOf(alphaHandle.agentId)).toBe("swarm:team-a");
+    expect(host.scopeOf(bravoHandle.agentId)).toBe("swarm:team-b");
+
+    // alpha sends to role:reviewer — should resolve only to reviewers in team-a,
+    // and self is excluded so recipients = []. delivered must be 0.
+    const result = await host.send("role:reviewer", {
+      from: alphaHandle.agentId,
+      to: "role:reviewer" as unknown as AgentId,
+      content: "any other reviewers around?",
+      timestamp: Date.now(),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.delivered).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
