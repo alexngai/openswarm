@@ -228,7 +228,9 @@ describe("parseArgv", () => {
   });
 
   it("team <unknown> errors with a helpful message", () => {
-    const result = parseArgv(["team", "send", "msg"]);
+    // Stage 4K: send/list/stop/kill are real (stub) sub-subcommands now.
+    // Use a genuinely unknown one to exercise the unknown-subsubcommand path.
+    const result = parseArgv(["team", "frobnicate", "msg"]);
     expect(result).toMatchObject({
       kind: "error",
       message: expect.stringContaining("unknown team sub-subcommand"),

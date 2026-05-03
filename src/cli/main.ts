@@ -12,7 +12,14 @@ import { runDoctor } from "./doctor.js";
 import { runInit } from "./init.js";
 import { runWorkerEntry } from "./worker-entry.js";
 import { runSwarm } from "./swarm.js";
-import { runTeamStart } from "./team.js";
+import {
+  runTeamStart,
+  runTopology,
+  runTeamSend,
+  runTeamList,
+  runTeamStop,
+  runTeamKill,
+} from "./team.js";
 import { pluginMain } from "./plugin.js";
 import { logoutMain } from "./logout.js";
 import { loginMain } from "./login.js";
@@ -725,6 +732,30 @@ export async function main(argv: string[]): Promise<number> {
         output: parsed.output,
         ...(parsed.mapUrl !== undefined && { mapUrl: parsed.mapUrl }),
       });
+
+    case "topology":
+      return runTopology({
+        topologyKind: parsed.topologyKind,
+        specPath: parsed.specPath,
+        permissionMode: parsed.permissionMode,
+        concurrency: parsed.concurrency,
+        output: parsed.output,
+        ...(parsed.mapUrl !== undefined && { mapUrl: parsed.mapUrl }),
+        ...(parsed.maxTokens !== undefined && { maxTokens: parsed.maxTokens }),
+        ...(parsed.maxCostUsd !== undefined && { maxCostUsd: parsed.maxCostUsd }),
+      });
+
+    case "team-send":
+      return runTeamSend(parsed.name, parsed.prompt);
+
+    case "team-list":
+      return runTeamList();
+
+    case "team-stop":
+      return runTeamStop(parsed.name);
+
+    case "team-kill":
+      return runTeamKill(parsed.name);
 
     case "login":
       return loginMain(["--provider", parsed.provider]);

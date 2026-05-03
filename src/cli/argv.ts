@@ -20,6 +20,7 @@
  */
 
 import type { PermissionMode } from "../core/types.js";
+import type { TopologyKind } from "../swarm/team-spec.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -105,13 +106,51 @@ export type ParsedArgs =
       /** When set, the orchestrator wires a MapAdapter to this URL (v0.4 stage 4J). */
       mapUrl?: string;
     }
+  | {
+      kind: "topology";
+      topologyKind: TopologyKind;
+      specPath: string;
+      concurrency: number;
+      output: string;
+      permissionMode: PermissionMode;
+      /** When set, the orchestrator wires a MapAdapter to this URL (v0.4 stage 4J). */
+      mapUrl?: string;
+      maxTokens?: number;
+      maxCostUsd?: number;
+    }
+  | { kind: "team-send"; name: string; prompt: string }
+  | { kind: "team-list" }
+  | { kind: "team-stop"; name: string }
+  | { kind: "team-kill"; name: string }
   | { kind: "error"; message: string; showHelp: boolean };
 
 // ---------------------------------------------------------------------------
 // Known subcommands
 // ---------------------------------------------------------------------------
 
-const SUBCOMMANDS = new Set(["prompt", "doctor", "init", "help", "version", "swarm", "plugin", "login", "logout", "team"]);
+const SUBCOMMANDS = new Set([
+  "prompt",
+  "doctor",
+  "init",
+  "help",
+  "version",
+  "swarm",
+  "plugin",
+  "login",
+  "logout",
+  "team",
+  "topology",
+]);
+
+// v0.4 stage 4K — committee/critic-loop are reserved but unimplemented.
+const SUPPORTED_TOPOLOGY_KINDS = new Set<string>([
+  "fanout",
+  "pipeline",
+  "coordinator",
+  "peer-team",
+]);
+
+const DEFERRED_TOPOLOGY_KINDS = new Set<string>(["committee", "critic-loop"]);
 
 const VALID_PERMISSION_MODES = new Set<string>([
   "read-only",
@@ -165,6 +204,14 @@ export function parseArgv(args: string[]): ParsedArgs {
   // Optional value: `--map ws://host:port` or `--map` alone (uses MAP_URL env
   // var, falls back to ws://localhost:8080).
   let mapUrl: string | undefined;
+
+  // v0.4 stage 4K — topology subcommand state.
+  let specPath: string | undefined;
+  // v0.4 stage 4K — `--ecosystem` shorthand. For v0.4 only `--map` is wired;
+  // opentasks/agent-inbox/git-cascade land in v0.5+. We track the flag
+  // separately from `mapUrl` so an explicit `--map` still wins, and so the
+  // dispatch layer can print the v0.4 limitation note exactly once.
+  let ecosystem = false;
 
   // First pass: scan for early-exit flags (--help, -h, --version, -V) and
   // collect flags that precede the subcommand / positional.
@@ -439,6 +486,36 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
+    // v0.4 stage 4K: --ecosystem shorthand. Today only enables --map (when not
+    // already set). Forward-compatible for v0.5+ which will also enable
+    // opentasks/agent-inbox/git-cascade. Print a one-line note documenting
+    // the v0.4 limitation so operators don't quietly miss the partial wiring.
+    if (tok === "--ecosystem") {
+      ecosystem = true;
+      process.stderr.write(
+        "[swarm-harness] --ecosystem v0.4 enables MAP only; opentasks/agent-inbox/git-cascade land in v0.5+.\n",
+      );
+      i++;
+      continue;
+    }
+
+    // v0.4 stage 4K: --spec <path> for the `topology` subcommand. Required
+    // when topology is invoked; ignored otherwise (the topology dispatch is
+    // the only consumer).
+    if (tok === "--spec") {
+      const val = expanded[i + 1];
+      if (val === undefined || val.startsWith("-")) {
+        return {
+          kind: "error",
+          message: "--spec requires a value",
+          showHelp: true,
+        };
+      }
+      specPath = val;
+      i += 2;
+      continue;
+    }
+
     if (tok === "--role") {
       const val = expanded[i + 1];
       if (val === undefined || val.startsWith("-")) {
@@ -527,6 +604,15 @@ export function parseArgv(args: string[]): ParsedArgs {
       positionals.push(tok);
     }
     i++;
+  }
+
+  // ---------------------------------------------------------------------------
+  // --ecosystem post-processing. v0.4: only --map is wired. If the operator
+  // also passed an explicit --map URL we keep that; otherwise default the
+  // MAP url to MAP_URL env or ws://localhost:8080.
+  // ---------------------------------------------------------------------------
+  if (ecosystem && mapUrl === undefined) {
+    mapUrl = process.env.MAP_URL ?? "ws://localhost:8080";
   }
 
   // ---------------------------------------------------------------------------
@@ -633,41 +719,150 @@ export function parseArgv(args: string[]): ParsedArgs {
 
     case "team": {
       // team start <template> [--concurrency N] [--output <path>] [--permission-mode <mode>]
-      // Stage 4F is minimal — only `start` is wired. Other subcommands
-      // (`send`, `list`, `stop`) land in v0.4 stage 4K.
+      // v0.4 stage 4K adds stubs for `send/list/stop/kill` that surface a
+      // deferred-to-v0.5 message; long-running team daemons aren't shipped yet.
       const subSub = positionals[0];
-      if (subSub !== "start") {
+      if (subSub === undefined) {
         return {
           kind: "error",
           message:
-            subSub === undefined
-              ? "team requires a sub-subcommand, e.g. team start <template>"
-              : `unknown team sub-subcommand: ${subSub} (only "start" is supported in v0.4 stage 4F)`,
+            "team requires a sub-subcommand, e.g. team start <template>",
           showHelp: true,
         };
       }
-      const template = positionals[1];
-      if (template === undefined) {
+      if (subSub === "start") {
+        const template = positionals[1];
+        if (template === undefined) {
+          return {
+            kind: "error",
+            message: "team start requires a template name",
+            showHelp: true,
+          };
+        }
+        if (positionals.length > 2) {
+          return {
+            kind: "error",
+            message: `unexpected extra positional for team start: ${positionals[2]}`,
+            showHelp: true,
+          };
+        }
+        return {
+          kind: "team-start",
+          template,
+          concurrency: swarmConcurrency,
+          output: swarmOutput,
+          permissionMode,
+          ...(mapUrl !== undefined && { mapUrl }),
+        };
+      }
+      if (subSub === "send") {
+        const name = positionals[1];
+        if (name === undefined) {
+          return {
+            kind: "error",
+            message: "team send requires a team name",
+            showHelp: true,
+          };
+        }
+        // The remaining positionals form the prompt text.
+        const promptText = positionals.slice(2).join(" ").trim();
+        if (promptText.length === 0) {
+          return {
+            kind: "error",
+            message: "team send requires a prompt, e.g. team send <name> \"hi\"",
+            showHelp: true,
+          };
+        }
+        return { kind: "team-send", name, prompt: promptText };
+      }
+      if (subSub === "list") {
+        if (positionals.length > 1) {
+          return {
+            kind: "error",
+            message: `unexpected extra positional for team list: ${positionals[1]}`,
+            showHelp: true,
+          };
+        }
+        return { kind: "team-list" };
+      }
+      if (subSub === "stop") {
+        const name = positionals[1];
+        if (name === undefined) {
+          return {
+            kind: "error",
+            message: "team stop requires a team name",
+            showHelp: true,
+          };
+        }
+        return { kind: "team-stop", name };
+      }
+      if (subSub === "kill") {
+        const name = positionals[1];
+        if (name === undefined) {
+          return {
+            kind: "error",
+            message: "team kill requires a team name",
+            showHelp: true,
+          };
+        }
+        return { kind: "team-kill", name };
+      }
+      return {
+        kind: "error",
+        message: `unknown team sub-subcommand: ${subSub}`,
+        showHelp: true,
+      };
+    }
+
+    case "topology": {
+      // topology <kind> --spec <path-to-spec.json>
+      const kindStr = positionals[0];
+      if (kindStr === undefined) {
         return {
           kind: "error",
-          message: "team start requires a template name",
+          message:
+            "topology requires a kind, e.g. topology fanout --spec ./spec.json",
           showHelp: true,
         };
       }
-      if (positionals.length > 2) {
+      if (DEFERRED_TOPOLOGY_KINDS.has(kindStr)) {
         return {
           kind: "error",
-          message: `unexpected extra positional for team start: ${positionals[2]}`,
+          message: `topology "${kindStr}" is deferred to v0.5; v0.4 supports fanout, pipeline, coordinator, peer-team`,
+          showHelp: false,
+        };
+      }
+      if (!SUPPORTED_TOPOLOGY_KINDS.has(kindStr)) {
+        return {
+          kind: "error",
+          message: `unknown topology kind: ${kindStr}. Valid: fanout, pipeline, coordinator, peer-team`,
+          showHelp: true,
+        };
+      }
+      if (specPath === undefined) {
+        return {
+          kind: "error",
+          message: "topology requires --spec <path-to-spec.json>",
+          showHelp: true,
+        };
+      }
+      if (positionals.length > 1) {
+        return {
+          kind: "error",
+          message: `unexpected extra positional for topology: ${positionals[1]}`,
           showHelp: true,
         };
       }
       return {
-        kind: "team-start",
-        template,
+        kind: "topology",
+        topologyKind: kindStr as TopologyKind,
+        specPath,
         concurrency: swarmConcurrency,
         output: swarmOutput,
         permissionMode,
         ...(mapUrl !== undefined && { mapUrl }),
+        ...(maxTokens !== undefined && { maxTokens }),
+        ...(maxCostUsd !== undefined && { maxCostUsd }),
       };
     }
 
