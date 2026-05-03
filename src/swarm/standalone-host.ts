@@ -312,6 +312,10 @@ export class StandaloneHost implements SwarmHost {
         allowedTools: request.allowedTools,
       }),
       ...(request.teamScope !== undefined && { teamScope: request.teamScope }),
+      ...(request.longLived === true && { longLived: true }),
+      ...(request.idleTimeoutMs !== undefined && {
+        idleTimeoutMs: request.idleTimeoutMs,
+      }),
     });
     const transport = new WorkerTransport(child);
     this.transports.set(childAgentId, transport);
@@ -376,22 +380,65 @@ export class StandaloneHost implements SwarmHost {
     };
     transport.on("lane_event", laneListener);
 
-    // Promise that resolves with the final AgentResult.
+    // v0.4 stage 4D: a long-lived worker emits multiple `task_result`
+    // notifications across runs. We track each "current run" with its own
+    // resolver, so wait() and runMore() each get the matching result.
+    const isLongLived = request.longLived === true;
+
+    // Pending resolvers — populated when a run starts (initial spawn or
+    // runMore), drained when task_result / close arrives.
+    let pendingResolve: ((r: AgentResult) => void) | undefined;
+
+    const synthesizeCloseFailure = (exit: unknown): AgentResult => {
+      const exitCode = (exit as { code: number | null } | undefined)?.code ?? null;
+      return {
+        status: "failure",
+        error: `worker exited (code=${exitCode}) before emitting task_result`,
+        wallClockMs: 0,
+      };
+    };
+
+    // Initial run — first task_result resolves the wait() promise.
     const resultPromise = new Promise<AgentResult>((resolve) => {
-      transport.once("task_result", (params: unknown) => {
-        resolve(params as AgentResult);
-      });
-      transport.once("close", (exit: unknown) => {
-        // Messaging cleanup on worker exit.
-        this.onWorkerExited(childAgentId);
-        // If close arrives before task_result, synthesize a failure.
-        const exitCode = (exit as { code: number | null } | undefined)?.code ?? null;
-        resolve({
-          status: "failure",
-          error: `worker exited (code=${exitCode}) before emitting task_result`,
-          wallClockMs: 0,
-        });
-      });
+      pendingResolve = resolve;
+    });
+
+    transport.on("task_result", (params: unknown) => {
+      const r = params as AgentResult;
+      const resolver = pendingResolve;
+      pendingResolve = undefined;
+      if (resolver !== undefined) resolver(r);
+    });
+
+    // worker_idle + worker_drained notifications surface as lane events on
+    // the orchestrator's bus so observers (and the host's own bookkeeping)
+    // can react. The IPC notification arrives via the transport's typed
+    // event emitter; handlers are no-ops for non-long-lived workers.
+    transport.on("worker_idle", (params: unknown) => {
+      this.events.emit("lane_event", {
+        ts: Date.now(),
+        agentId: childAgentId,
+        type: "worker_idle",
+        payload: params,
+      } as LaneEvent);
+    });
+    transport.on("worker_drained", (params: unknown) => {
+      this.events.emit("lane_event", {
+        ts: Date.now(),
+        agentId: childAgentId,
+        type: "worker_drained",
+        payload: params,
+      } as LaneEvent);
+    });
+
+    transport.once("close", (exit: unknown) => {
+      // Messaging cleanup on worker exit.
+      this.onWorkerExited(childAgentId);
+      // If close arrives while a run is still pending, synthesize a failure
+      // so callers (wait / runMore) don't hang.
+      const resolver = pendingResolve;
+      pendingResolve = undefined;
+      if (resolver !== undefined) resolver(synthesizeCloseFailure(exit));
     });
 
     // Await run ack (don't block the final result — run() just confirms receipt).
@@ -411,6 +458,49 @@ export class StandaloneHost implements SwarmHost {
         for (const evt of laneBuffer) yield evt;
         // M1: don't stream live; return after buffer.
         return;
+      },
+      runMore: async (prompt: string, opts?: { taskId?: string }) => {
+        if (!isLongLived) {
+          throw new Error(
+            "AgentHandle.runMore() is only available on long-lived workers (set SpawnRequest.longLived=true)",
+          );
+        }
+        if (pendingResolve !== undefined) {
+          throw new Error(
+            "AgentHandle.runMore() called while a previous turn is still in flight",
+          );
+        }
+        const next = new Promise<AgentResult>((resolve) => {
+          pendingResolve = resolve;
+        });
+        await transport.send(
+          "run_more",
+          {
+            prompt,
+            ...(opts?.taskId !== undefined && { taskId: opts.taskId }),
+          },
+          { timeoutMs: 30_000 },
+        );
+        return next;
+      },
+      drain: async () => {
+        if (!isLongLived) {
+          throw new Error(
+            "AgentHandle.drain() is only available on long-lived workers (set SpawnRequest.longLived=true)",
+          );
+        }
+        // Send drain ack-only and wait for either worker_drained or close.
+        const drainedPromise = new Promise<void>((resolve) => {
+          transport.once("worker_drained", () => resolve());
+          transport.once("close", () => resolve());
+        });
+        try {
+          await transport.send("drain", {}, { timeoutMs: 30_000 });
+        } catch {
+          // If send fails (e.g. transport already closed), the close listener
+          // above still resolves — fall through.
+        }
+        await drainedPromise;
       },
     };
     // Register handle by taskId so task_stop can kill the worker.

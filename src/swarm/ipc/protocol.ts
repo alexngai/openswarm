@@ -20,12 +20,22 @@
  *     M3a Phase 4: worker requests task cancellation (ancestry-checked).
  *   - "task.output"   (worker → orchestrator; params: { taskId: string }; result: TaskOutputResult)
  *     M3a Phase 4: worker polls partial or final output of a task.
+ *   - "run_more"      (orchestrator → worker; params: { prompt, taskId? }; result: { accepted: boolean })
+ *     v0.4 stage 4D: long-lived worker accepts another prompt. Result is ack-only;
+ *     final result still arrives via the `task_result` notification.
+ *   - "drain"         (orchestrator → worker; params: {}; result: { acknowledged: true })
+ *     v0.4 stage 4D: long-lived worker drains gracefully. Worker exits after the
+ *     current task completes (or immediately when idle).
  *
  * Notifications (one-way, no correlation id match needed):
  *   - "worker_ready"      (worker → orchestrator; params: { agentId, depth, pid })
  *   - "lane_event"        (worker → orchestrator; params: LaneEvent)
  *   - "heartbeat"         (worker → orchestrator; params: { agentId, ts })
  *   - "task_result"       (worker → orchestrator; params: AgentResult)
+ *   - "worker_idle"       (worker → orchestrator; params: { agentId, readyForRunMoreAt })
+ *     v0.4 stage 4D: long-lived worker finished a task and is awaiting the next prompt.
+ *   - "worker_drained"    (worker → orchestrator; params: { agentId })
+ *     v0.4 stage 4D: long-lived worker has gracefully drained; subprocess exit follows.
  *   - "sub_agent_event"   (orchestrator → worker; params: SubAgentEventParams)
  *     NOW LOAD-BEARING for inbox delivery (M3a Phase 3). When params.eventKind === "inbox_delivery",
  *     params carries the AgentMessage payload. Backward-compat: eventKind discriminant extends
@@ -59,7 +69,9 @@ export type IpcRequestMethod =
   | "task.output"
   | "task.owner_of"
   | "ancestry.is_ancestor_of"
-  | "ask_user_question";
+  | "ask_user_question"
+  | "run_more"
+  | "drain";
 
 export type IpcResponse = IpcOk | IpcErr;
 
@@ -90,7 +102,9 @@ export type IpcNotificationMethod =
   | "task_result"
   | "sub_agent_event"
   | "sub_agent_result"
-  | "task_stop_signal";
+  | "task_stop_signal"
+  | "worker_idle"
+  | "worker_drained";
 
 /** Well-known error codes used in IpcErr.error.code. */
 export const IPC_ERROR_CODES = {
@@ -203,3 +217,43 @@ export const AskUserQuestionParamsSchema = z.object({
   timeoutMs: z.number().int().positive().optional(),
 });
 export type AskUserQuestionParams = z.infer<typeof AskUserQuestionParamsSchema>;
+
+// ---------------------------------------------------------------------------
+// v0.4 stage 4D — long-lived worker frames
+// ---------------------------------------------------------------------------
+
+/**
+ * params for "run_more" request (orchestrator → worker).
+ *
+ * Sent to a long-lived worker that's currently in `idle` to start the next
+ * turn without respawning. Response is ack-only; the final result still
+ * arrives asynchronously via the `task_result` notification.
+ */
+export const RunMoreParamsSchema = z.object({
+  prompt: z.string().min(1),
+  taskId: z.string().optional(),
+});
+export type RunMoreParams = z.infer<typeof RunMoreParamsSchema>;
+
+/**
+ * params for "drain" request (orchestrator → worker).
+ *
+ * Sent to a long-lived worker to request graceful exit. If the worker is
+ * idle it transitions straight to drained; if it's running it transitions
+ * to draining and exits after the current task completes.
+ */
+export const DrainParamsSchema = z.object({}).strict();
+export type DrainParams = z.infer<typeof DrainParamsSchema>;
+
+/** params for "worker_idle" notification (worker → orchestrator). */
+export const WorkerIdleParamsSchema = z.object({
+  agentId: z.string(),
+  readyForRunMoreAt: z.number(),
+});
+export type WorkerIdleParams = z.infer<typeof WorkerIdleParamsSchema>;
+
+/** params for "worker_drained" notification (worker → orchestrator). */
+export const WorkerDrainedParamsSchema = z.object({
+  agentId: z.string(),
+});
+export type WorkerDrainedParams = z.infer<typeof WorkerDrainedParamsSchema>;

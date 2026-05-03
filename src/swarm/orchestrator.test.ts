@@ -50,6 +50,8 @@ function makeHandle(
         : Promise.resolve(result),
     kill: vi.fn(() => Promise.resolve()),
     events: async function* () { return; },
+    runMore: () => Promise.reject(new Error("runMore not supported in test fake")),
+    drain: () => Promise.resolve(),
   };
 }
 
@@ -689,6 +691,8 @@ describe("Orchestrator — per-attempt wall-clock ceiling (C2 regression)", () =
       wait: () => new Promise<AgentResult>(() => {}), // never resolves
       kill: killSpy,
       events: async function* () { return; },
+      runMore: () => Promise.reject(new Error("runMore not supported in test fake")),
+      drain: () => Promise.resolve(),
     }));
 
     const resultsOut = new PassThrough();

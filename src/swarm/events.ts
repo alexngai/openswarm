@@ -35,6 +35,8 @@ export type LaneEventType =
   | "worker_exited"
   | "worker_crashed"
   | "worker_lifecycle_changed"
+  | "worker_idle"
+  | "worker_drained"
   // ---------------- Turn ----------------
   | "turn_start"
   | "turn_end"

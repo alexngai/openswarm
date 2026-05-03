@@ -43,6 +43,9 @@ function makeHandle(
     events: async function* () {
       return;
     },
+    runMore: () =>
+      Promise.reject(new Error("runMore not supported in fanout test fake")),
+    drain: () => Promise.resolve(),
   };
 }
 

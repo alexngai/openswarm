@@ -67,6 +67,17 @@ export interface SpawnWorkerArgs {
    * consume this in stage 4D when long-lived workers ship.
    */
   readonly teamScope?: string;
+  /**
+   * v0.4 stage 4D: opt the worker into long-lived mode. When set, the
+   * spawner exports `SWARM_HARNESS_LONG_LIVED=1` so the worker entry point
+   * loops on `run_more` / `drain` instead of exiting after the initial task.
+   */
+  readonly longLived?: boolean;
+  /**
+   * v0.4 stage 4D: idle timeout in ms for long-lived workers. Plumbed via
+   * `SWARM_HARNESS_IDLE_TIMEOUT_MS`. Ignored when `longLived` is unset.
+   */
+  readonly idleTimeoutMs?: number;
 }
 
 export function spawnWorker(args: SpawnWorkerArgs): ChildProcess {
@@ -100,6 +111,15 @@ export function spawnWorker(args: SpawnWorkerArgs): ChildProcess {
   // env footprint clean for legacy single-team runs (v0.4 stage 4A.3).
   if (args.teamScope !== undefined && args.teamScope !== "swarm:default") {
     env.SWARM_HARNESS_TEAM_SCOPE = args.teamScope;
+  }
+  // v0.4 stage 4D: opt-in long-lived worker mode. Worker entry checks
+  // SWARM_HARNESS_LONG_LIVED === "1" and loops on run_more/drain instead
+  // of exiting after the initial task.
+  if (args.longLived === true) {
+    env.SWARM_HARNESS_LONG_LIVED = "1";
+  }
+  if (args.idleTimeoutMs !== undefined) {
+    env.SWARM_HARNESS_IDLE_TIMEOUT_MS = String(args.idleTimeoutMs);
   }
   // Intentionally NOT setting SWARM_HARNESS_SESSION_ID — resume is out of M1.
 

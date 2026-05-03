@@ -276,6 +276,20 @@ export class WorkerHost implements SwarmHost {
       events: async function* () {
         return;
       },
+      // Worker-mode spawn proxies to the orchestrator and returns a finalized
+      // result — long-lived semantics (run_more/drain) are not supported across
+      // the IPC boundary in v0.4 stage 4D. Surface a clear error if a caller
+      // tries to use them on a worker-side child handle.
+      runMore: async () => {
+        throw new Error(
+          "AgentHandle.runMore() is not supported for sub-agents spawned via WorkerHost (v0.4 stage 4D limitation)",
+        );
+      },
+      drain: async () => {
+        throw new Error(
+          "AgentHandle.drain() is not supported for sub-agents spawned via WorkerHost (v0.4 stage 4D limitation)",
+        );
+      },
     };
   }
 

@@ -181,6 +181,30 @@ export interface SpawnRequest {
    * fanout leaves it undefined so all members default to the singleton scope.
    */
   readonly teamScope?: string;
+  /**
+   * v0.4 stage 4D: opt this worker into long-lived mode.
+   *
+   * When `true`, the worker stays alive after `task_result` and waits for
+   * either a `run_more` request (next prompt on the same subprocess) or a
+   * `drain` request (graceful exit). The returned `AgentHandle` exposes
+   * `runMore()` and `drain()` for the caller.
+   *
+   * Default: `false` — the worker exits immediately after `task_result`.
+   * Existing fanout topology callers do NOT opt in; future peer-team /
+   * coordinator topologies (stage 4E) will.
+   */
+  readonly longLived?: boolean;
+  /**
+   * v0.4 stage 4D: idle timeout for long-lived workers, in milliseconds.
+   *
+   * When the worker has been idle for this many ms with no `run_more` or
+   * `drain` request, it auto-drains itself (clean exit). Ignored when
+   * `longLived` is false.
+   *
+   * Default: 600_000 (10 min). Honoured worker-side via the
+   * `SWARM_HARNESS_IDLE_TIMEOUT_MS` env variable.
+   */
+  readonly idleTimeoutMs?: number;
 }
 
 export interface AgentHandle {
@@ -192,6 +216,23 @@ export interface AgentHandle {
   kill(): Promise<void>;
   /** Stream of lane events emitted by this agent (subset of the full bus). */
   events(): AsyncIterable<LaneEvent>;
+  /**
+   * v0.4 stage 4D — long-lived worker only.
+   *
+   * Send the worker its next prompt without respawning. Resolves with the
+   * AgentResult of the new turn. Throws when the worker was not spawned with
+   * `SpawnRequest.longLived === true` (default lifecycle exits after one task).
+   */
+  runMore(prompt: string, opts?: { taskId?: string }): Promise<AgentResult>;
+  /**
+   * v0.4 stage 4D — long-lived worker only.
+   *
+   * Request a graceful exit. If the worker is idle it exits immediately; if
+   * it's mid-task it finishes the current turn and exits. Resolves once the
+   * subprocess has acknowledged drain (`worker_drained` notification or close).
+   * Throws when the worker was not spawned with `longLived === true`.
+   */
+  drain(): Promise<void>;
 }
 
 export type AgentResult =

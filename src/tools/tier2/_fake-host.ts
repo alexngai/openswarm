@@ -151,6 +151,12 @@ export function makeFakeHost(opts: FakeHostOpts = {}): {
       async *events(): AsyncIterable<LaneEvent> {
         return;
       },
+      async runMore() {
+        throw new Error("runMore not supported in fake host");
+      },
+      async drain() {
+        return;
+      },
     };
     return handle;
   });
