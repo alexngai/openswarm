@@ -142,6 +142,15 @@ export type LaneEventType =
   // ---------------- Crash recovery (v0.2 Stage 2B) ----------------
   /** An orphaned worker state file was detected on startup (informational). */
   | "crash_detected"
+  // ---------------- Team orchestration (v0.4 stage 4E) ----------------
+  /** A team topology run has started. */
+  | "team_started"
+  /** A team topology run has completed (all stages/members terminal). */
+  | "team_completed"
+  /** A team topology run was aborted mid-flight (SIGINT or external signal). */
+  | "team_aborted"
+  /** Informational note from a topology executor (e.g. unsupported aggregator override). */
+  | "team_note"
   // ---------------- Budget enforcement (v0.2.Q7) ----------------
   /** Budget limit exceeded — engine aborted. */
   | "budget_exceeded"
