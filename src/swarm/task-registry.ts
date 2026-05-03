@@ -18,8 +18,12 @@ export class TaskRegistry {
   /**
    * Create a new TaskRecord. Auto-assigns `id` via `crypto.randomUUID()`.
    * Populates `createdAt` and `updatedAt` as `Date.now()`.
+   * `scope` defaults to "swarm:default" — set by callers in a team context.
    */
-  create(packet: Omit<TaskPacket, "id">): TaskRecord {
+  create(
+    packet: Omit<TaskPacket, "id">,
+    scope: string = "swarm:default",
+  ): TaskRecord {
     const id = randomUUID();
     const now = Date.now();
     const record: TaskRecord = {
@@ -28,6 +32,7 @@ export class TaskRegistry {
       status: "pending",
       createdAt: now,
       updatedAt: now,
+      scope,
     };
     this.records.set(id, record);
     return record;
@@ -52,6 +57,7 @@ export class TaskRegistry {
       if (filter.parentTaskId !== undefined) {
         if (r.context?.parentTaskId !== filter.parentTaskId) return false;
       }
+      if (filter.scope !== undefined && r.scope !== filter.scope) return false;
       return true;
     });
   }

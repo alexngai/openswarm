@@ -85,6 +85,7 @@ describe("/tasks", () => {
         status: "running",
         createdAt: now,
         updatedAt: now,
+        scope: "swarm:default",
       },
     ]);
     const ctx = buildSlashContext(

@@ -79,6 +79,31 @@ describe("TaskRegistry", () => {
     expect(reg.list({ parentTaskId: parent.id })).toHaveLength(2);
   });
 
+  it("create() defaults scope to 'swarm:default' when not provided", () => {
+    const reg = new TaskRegistry();
+    const rec = reg.create(samplePacket());
+    expect(rec.scope).toBe("swarm:default");
+  });
+
+  it("create() stamps the explicit scope onto the new record", () => {
+    const reg = new TaskRegistry();
+    const rec = reg.create(samplePacket(), "swarm:team-alpha");
+    expect(rec.scope).toBe("swarm:team-alpha");
+  });
+
+  it("list() filters by scope across multi-scope records", () => {
+    const reg = new TaskRegistry();
+    reg.create(samplePacket()); // default scope
+    reg.create(samplePacket(), "swarm:team-alpha");
+    reg.create(samplePacket(), "swarm:team-alpha");
+    reg.create(samplePacket(), "swarm:team-beta");
+
+    expect(reg.list({ scope: "swarm:default" })).toHaveLength(1);
+    expect(reg.list({ scope: "swarm:team-alpha" })).toHaveLength(2);
+    expect(reg.list({ scope: "swarm:team-beta" })).toHaveLength(1);
+    expect(reg.list()).toHaveLength(4); // omitted scope filter matches all
+  });
+
   it("emit() delivers to listeners in FIFO order; unsubscribe stops delivery", () => {
     const reg = new TaskRegistry();
     const received: LaneEvent[] = [];

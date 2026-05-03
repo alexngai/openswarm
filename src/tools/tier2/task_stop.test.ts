@@ -22,6 +22,7 @@ function makeRunningRecord(id: string, owner?: AgentId): TaskRecord {
     owner,
     createdAt: now,
     updatedAt: now,
+    scope: "swarm:default",
   };
 }
 

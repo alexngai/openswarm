@@ -23,6 +23,7 @@ function makeRecord(
     status: "running",
     createdAt: now,
     updatedAt: now,
+    scope: "swarm:default",
     ...overrides,
   };
 }

@@ -72,6 +72,7 @@ export function makeFakeHost(opts: FakeHostOpts = {}): {
         status: "pending",
         createdAt: now,
         updatedAt: now,
+        scope: "swarm:default",
       };
       records.set(id, record);
       return record;

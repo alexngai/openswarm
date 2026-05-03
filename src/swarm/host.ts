@@ -175,6 +175,12 @@ export interface SpawnRequest {
    * in the parent's transcript.
    */
   readonly parentToolUseId?: string;
+  /**
+   * Team scope this spawn joins. Defaults to "swarm:default" when omitted.
+   * Injected by `TeamSession.spawnMember` for team peers; legacy `swarm run`
+   * fanout leaves it undefined so all members default to the singleton scope.
+   */
+  readonly teamScope?: string;
 }
 
 export interface AgentHandle {
@@ -292,12 +298,21 @@ export interface TaskRecord extends TaskPacket {
    * "orchestrator" when the root StandaloneHost stopped the task.
    */
   readonly stoppedBy?: string;
+  /**
+   * Team scope. Defaults to "swarm:default" when not in a team.
+   * Set by TaskRegistry.create() based on the caller's scope context.
+   */
+  readonly scope: string;
 }
 
 export interface TaskFilter {
   readonly status?: TaskStatus;
   readonly owner?: AgentId;
   readonly parentTaskId?: string;
+  /**
+   * Filter by team scope. Omit to match all scopes (today's behavior).
+   */
+  readonly scope?: string;
 }
 
 export interface TaskAPI {
