@@ -26,6 +26,7 @@ import { StandaloneHost } from "./standalone-host.js";
 import { WorkerPool } from "./worker-pool.js";
 import { DeadLetterWriter } from "./dead-letter.js";
 import type { RoleRegistry } from "./roles.js";
+import type { MapAdapter } from "./adapters/map-adapter.js";
 import type {
   TeamSpec,
   TopologyKind,
@@ -76,6 +77,12 @@ export interface OrchestratorOptions {
    * field. Resolved against `roles` at dispatch.
    */
   readonly defaultRole?: string;
+  /**
+   * Optional MAP adapter for external observability (v0.4 stage 4J).
+   * Off by default — only constructed when `--map` is passed on the CLI.
+   * When present, runTeam() calls start()/stop() around the topology run.
+   */
+  readonly mapAdapter?: MapAdapter;
 }
 
 /**
@@ -171,6 +178,13 @@ export class Orchestrator extends EventEmitter {
     };
     process.once("SIGINT", this.sigintHandler);
 
+    // v0.4 stage 4J: start the optional MAP adapter before any topology
+    // events fire. The adapter subscribes to the host's lane event bus and
+    // forwards a curated subset to an external MAP-protocol observer.
+    if (this.opts.mapAdapter !== undefined) {
+      await this.opts.mapAdapter.start(this.host);
+    }
+
     try {
       const topology = pickTopology(spec.topology);
       const ctx: TopologyContext = {
@@ -195,6 +209,11 @@ export class Orchestrator extends EventEmitter {
       if (this.sigintHandler) {
         process.removeListener("SIGINT", this.sigintHandler);
         this.sigintHandler = undefined;
+      }
+      // v0.4 stage 4J: stop the MAP adapter. Errors are swallowed inside
+      // stop() so a hung MAP server can't fail the run.
+      if (this.opts.mapAdapter !== undefined) {
+        await this.opts.mapAdapter.stop();
       }
       await this.deadLetter.close();
     }

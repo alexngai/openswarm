@@ -723,6 +723,7 @@ export async function main(argv: string[]): Promise<number> {
         permissionMode: parsed.permissionMode,
         concurrency: parsed.concurrency,
         output: parsed.output,
+        ...(parsed.mapUrl !== undefined && { mapUrl: parsed.mapUrl }),
       });
 
     case "login":

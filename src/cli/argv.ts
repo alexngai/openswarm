@@ -102,6 +102,8 @@ export type ParsedArgs =
       concurrency: number;
       output: string;
       permissionMode: PermissionMode;
+      /** When set, the orchestrator wires a MapAdapter to this URL (v0.4 stage 4J). */
+      mapUrl?: string;
     }
   | { kind: "error"; message: string; showHelp: boolean };
 
@@ -158,6 +160,11 @@ export function parseArgv(args: string[]): ParsedArgs {
 
   // --provider flag (used by login / logout subcommands).
   let provider: string | undefined;
+
+  // --map flag (v0.4 stage 4J — team start observability).
+  // Optional value: `--map ws://host:port` or `--map` alone (uses MAP_URL env
+  // var, falls back to ws://localhost:8080).
+  let mapUrl: string | undefined;
 
   // First pass: scan for early-exit flags (--help, -h, --version, -V) and
   // collect flags that precede the subcommand / positional.
@@ -416,6 +423,22 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
+    // v0.4 stage 4J: --map [URL] enables the MAP adapter for `team start`.
+    // Value is optional — when omitted, falls back to MAP_URL env var, then
+    // ws://localhost:8080. A bare `--map` followed by a flag (or end-of-args)
+    // is treated as "no value supplied".
+    if (tok === "--map") {
+      const next = expanded[i + 1];
+      if (next === undefined || next.startsWith("-")) {
+        mapUrl = process.env.MAP_URL ?? "ws://localhost:8080";
+        i++;
+      } else {
+        mapUrl = next;
+        i += 2;
+      }
+      continue;
+    }
+
     if (tok === "--role") {
       const val = expanded[i + 1];
       if (val === undefined || val.startsWith("-")) {
@@ -644,6 +667,7 @@ export function parseArgv(args: string[]): ParsedArgs {
         concurrency: swarmConcurrency,
         output: swarmOutput,
         permissionMode,
+        ...(mapUrl !== undefined && { mapUrl }),
       };
     }
 

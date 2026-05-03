@@ -235,6 +235,48 @@ describe("parseArgv", () => {
     });
   });
 
+  // ---- team start --map (v0.4 stage 4J) ------------------------------------
+
+  it("team start --map <url> sets mapUrl", () => {
+    const result = parseArgv([
+      "team", "start", "gsd",
+      "--map", "ws://example:8080",
+    ]);
+    if (result.kind !== "team-start") throw new Error("expected team-start");
+    expect(result.mapUrl).toBe("ws://example:8080");
+  });
+
+  it("team start --map without value falls back to default ws URL", () => {
+    const prev = process.env.MAP_URL;
+    delete process.env.MAP_URL;
+    try {
+      const result = parseArgv(["team", "start", "gsd", "--map"]);
+      if (result.kind !== "team-start") throw new Error("expected team-start");
+      expect(result.mapUrl).toBe("ws://localhost:8080");
+    } finally {
+      if (prev !== undefined) process.env.MAP_URL = prev;
+    }
+  });
+
+  it("team start --map without value uses MAP_URL env var when set", () => {
+    const prev = process.env.MAP_URL;
+    process.env.MAP_URL = "ws://envhost:9999";
+    try {
+      const result = parseArgv(["team", "start", "gsd", "--map"]);
+      if (result.kind !== "team-start") throw new Error("expected team-start");
+      expect(result.mapUrl).toBe("ws://envhost:9999");
+    } finally {
+      if (prev !== undefined) process.env.MAP_URL = prev;
+      else delete process.env.MAP_URL;
+    }
+  });
+
+  it("team start without --map leaves mapUrl undefined", () => {
+    const result = parseArgv(["team", "start", "gsd"]);
+    if (result.kind !== "team-start") throw new Error("expected team-start");
+    expect(result.mapUrl).toBeUndefined();
+  });
+
   // ---- swarm run + dead-letter flags ---------------------------------------
 
   it("swarm run with --dead-letter sets deadLetter path", () => {
