@@ -4,7 +4,7 @@ A TypeScript coding agent built on Anthropic's Claude Agent SDK with first-class
 
 ## Status
 
-**v0.2-ready** as of 2026-04-30. Phases 0–5.5 of the [parity plan](docs/16-parity-plan.md) are complete plus all v0.2 deferred-item closes (Stages 2A–2G). Phase 6 (OpenAI OAuth) is blocked on an external dependency and targeted for v0.3. See [docs/20-v0.1-launch.md](docs/20-v0.1-launch.md) for the v0.1 ship checklist and [docs/21-roadmap-v0.2-to-v0.4.md](docs/21-roadmap-v0.2-to-v0.4.md) for the v0.2 definition of done.
+**v0.4-ready** as of 2026-05-02. Team orchestration shipped: peer-team, pipeline, coordinator, fanout topologies; multi-engine peer parity (transport / `--framework claude-agent-sdk` / `--framework codex-chatgpt`); openteams template loader; in-process MAP observability. Phases 0–5.5 of the [parity plan](docs/16-parity-plan.md) plus v0.2 (Stages 2A–2G) plus v0.3 (Codex App Server FrameworkProvider) plus v0.4 (Stages 4A–4L) all shipped. See [docs/21-roadmap-v0.2-to-v0.4.md](docs/21-roadmap-v0.2-to-v0.4.md) for release history, [docs/25-team-orchestration.md](docs/25-team-orchestration.md) for the team architecture, and [docs/27-v0.4-teams-implementation-plan.md](docs/27-v0.4-teams-implementation-plan.md) for the v0.4 execution plan.
 
 **Runtime:** Bun ≥ 1.3.8 (the OpenTUI/Solid REPL uses `bun:ffi`). A standalone compiled binary is produced via `bun build --compile` so end users don't need to install Bun separately.
 
@@ -12,6 +12,7 @@ A TypeScript coding agent built on Anthropic's Claude Agent SDK with first-class
 
 - Single-agent CLI + interactive REPL with markdown rendering, syntax-highlighted fenced code blocks, native tables, and inline y/N permission prompts.
 - Swarm orchestration: `WorkerPool`, lane events, role overlays, ancestry tracking, message inbox, role-based addressing. Worker state written atomically to `~/.swarm-harness/workers/<agentId>.json` on every lifecycle transition; orchestrator detects orphaned workers on startup.
+- **Team orchestration (v0.4):** `TeamSession` primitive with team-scoped messaging; four topology executors — `Fanout` (preserves `swarm run`), `Pipeline` (chained stages), `PeerTeam` (lateral peers + `send_message`), `Coordinator` (model-driven peer spawning). Multi-engine peer parity — peers can mix transport-mode workers with `--framework claude-agent-sdk` (Claude Max) and `--framework codex-chatgpt` (ChatGPT Plus/Pro). openteams YAML template loader. In-process MAP observability via `--map [URL]`. Long-lived workers (`runMore`/`drain` IPC frames + `idleTimeoutMs`).
 - Multi-provider: Anthropic (SDK + direct), OpenAI, xAI (Grok), Google Generative AI, DashScope (Qwen / Kimi).
 - Plugins discovered from `~/.swarm-harness/plugins/` (owned namespace) + read-only discovery of `~/.claude/plugins/` (Claude Code's namespace).
 - MCP servers (first-class client + bridge for tier-2 tools).
@@ -129,6 +130,30 @@ swarm-harness swarm run tasks.jsonl --concurrency 5 --output out.jsonl
 ```
 
 Fans out tasks across a worker pool with role overlays, retry policies, dead-letter handling, and lane-event telemetry.
+
+### Team orchestration (v0.4)
+
+Run multi-agent teams with named topologies (peer-team, pipeline, coordinator, fanout). Templates live as openteams YAML or inline JSON `TeamSpec` files.
+
+```bash
+# Run an openteams template by name (resolved via the openteams CLI)
+swarm-harness team start gsd
+
+# Run an ad-hoc topology directly from a TeamSpec JSON file
+swarm-harness topology peer-team --spec ./team.json
+swarm-harness topology pipeline --spec ./pipeline.json
+
+# Forward lane events to an external MAP observer
+swarm-harness topology peer-team --spec ./team.json --map ws://localhost:8080
+
+# `--ecosystem` is a shorthand: in v0.4 it enables `--map`; v0.5+ will also
+# enable opentasks / agent-inbox / git-cascade adapters.
+swarm-harness topology peer-team --spec ./team.json --ecosystem
+```
+
+`team list`, `team send <name> <prompt>`, `team stop <name>`, and `team kill <name>` are wired as CLI stubs in v0.4 — the long-lived team daemon that backs cross-process interaction ships in v0.5+. For now, teams run inline and exit when their topology completes.
+
+See [docs/25-team-orchestration.md](docs/25-team-orchestration.md) for the architecture (TeamSession, topology catalog, MAP scope semantics) and [docs/27-v0.4-teams-implementation-plan.md](docs/27-v0.4-teams-implementation-plan.md) for the v0.4 execution detail.
 
 ## Flags
 

@@ -55,7 +55,7 @@ swarm-harness uses Ink/React; claw-code uses crossterm + rustyline + syntect + p
 | A7 | Green contract (declarative config validation) | ❌ | P3 | S | claw: `runtime/green_contract.rs`. Cosmetic until config becomes complex. |
 | A8 | Server-side token preflight | ✅ | P2 | S | v0.2.Q6 Stage 2F — `serverCountTokens()` in `src/engine/token-preflight.ts` calls `@anthropic-ai/sdk` `client.messages.countTokens()` when `ANTHROPIC_API_KEY` is set; result propagates via `countTokens()` with `source: "server"`. **Nuance:** Claude Max subscription users authenticate via OAuth (not API key) — the `count_tokens` REST endpoint returns 401 for them. Those callers always fall through to `source: "local-estimate"`. If the Agent SDK ever exposes a native token-count method compatible with OAuth, prefer it in `token-preflight.ts`. |
 | A9 | Two-engine design (SDK + Native) | 🟦 | — | — | swarm-harness unique. Don't regress. |
-| A10 | Swarm orchestration (WorkerPool, lane events, role overlays) | 🟦 | — | — | swarm-harness unique. Core differentiator. |
+| A10 | Swarm orchestration (WorkerPool, lane events, role overlays) | ✅ | — | — | swarm-harness lead — full team primitives shipped via `TeamSession` + topology layer (v0.4, commits `0bd0f20..<close-out>`). Multi-engine peer parity (transport / `--framework claude-agent-sdk` / `--framework codex-chatgpt` via DynamicToolCall). See [docs/25](25-team-orchestration.md), [docs/27](27-v0.4-teams-implementation-plan.md). |
 
 ---
 
@@ -127,5 +127,6 @@ Reflects gap status as of v0.2 close-out (2026-04-30):
 
 ## Decision log
 
+- **2026-05-02** — v0.4 close-out. Team orchestration shipped: `TeamSession` primitive, 4 topology executors (Fanout / Pipeline / PeerTeam / Coordinator), long-lived workers, openteams YAML loader, multi-engine peer parity (drop framework-filter strip + Codex `DynamicToolCall`), in-process MAP adapter, broader CLI (`team start` / `topology` / `--ecosystem` flag + cross-process `team send/list/stop/kill` stubs deferred to v0.5+). 18 stage commits `0bd0f20..<close-out>`. A10 flipped 🟦 → ✅.
 - **2026-04-30** — v0.2 close-out. All 13 v0.2 audit items closed (shipped, audit-completed, or re-deferred with rationale). Six stage commits: `deaf038` Stage 2A (bash-validation in danger-full-access), `46bbf42` Stage 2B (worker state file), `5f25888` Stage 2C (A2 branch-lock audit), `bce2007` Stage 2D (SDK-version baking doc note), `c9478d2` Stage 2E (two-prompt collapse + budget enforcement), `5ba50ff` Stage 2F (typed events +10 / token preflight / smoke audit / spinner polish). Rows A2, A8, D2, T8 flipped from ⚠️ → ✅.
 - **2026-04-30** — v0.1 close-out hygiene pass. T2/T3/T4/T5 flipped from ❌ → ✅ (shipped in Phases 2 + 3); PS1/PS2/P1/P2/P3 flipped from ⚠️ → ✅ (shipped in Phase 1). Rows now cite the originating phase + commit hash. "TUI decision needed" block resolved by Phase 0 substrate migration + Phase 3 design lock.

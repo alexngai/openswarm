@@ -3,7 +3,7 @@
 Design doc for swarm-harness's team orchestration layer. Companion to [docs/00-vision.md](00-vision.md) — the layer that turns "one agent is a tool" into "N coordinated agents is the product."
 
 **Authoring date:** 2026-05-01.
-**Status:** draft. Not implemented. Targets `v0.4` (minimum scope + MAP) with a phased plan for the rest.
+**Status:** shipped 2026-05-02 (v0.4). Commits `0bd0f20..<close-out>`. See [§16 v0.4 close-out](#16-v04-close-out) for the per-stage breakdown. Phased plan beyond v0.4 (v0.5–v0.8) per [§13](#13-phased-delivery).
 **Anchor:** [docs/00-vision.md](00-vision.md), [docs/05-swarm-model.md](05-swarm-model.md), [docs/21-roadmap-v0.2-to-v0.4.md § Release v0.4](21-roadmap-v0.2-to-v0.4.md).
 **Reviewed against:** v0.3 (commits `b9a13b2..6bf317f`) — Codex App Server FrameworkProvider integration. See [§8a Engine-mode parity for team peers](#8a-engine-mode-parity-for-team-peers).
 **Spike-verified 2026-05-02:** Track A (claude-agent-sdk peers) + Track B (codex DynamicToolCall) both GREEN. Empirical evidence: [docs/26-team-orchestration-spikes.md](26-team-orchestration-spikes.md).
@@ -1062,6 +1062,58 @@ Originally proposed as the primary mechanism for using Codex from inside a team.
    - The new IPC handlers for `task.get`/`list`/`create`/`update` (Track A close-out).
 7. **Spike artifact retention.** The Track A worktree (`.claude/worktrees/agent-a835be9d41a404060`) holds a passing test suite (`test/spike-track-a.test.ts`, 8 cases) that proves the engine-mode parity claims. Keep the worktree until stage 4G ships and ports those tests into the main suite. The Track B trace fixture ([test/fixtures/codex-app-server/dynamic-tool-call-spike.jsonl](../test/fixtures/codex-app-server/dynamic-tool-call-spike.jsonl)) becomes a golden-trace integration test under stage 4H.
 8. **Tracking.** When v0.4 stages execute, mirror the doc 21 / doc 22 / doc 23 pattern: each stage gets a commit, this doc gets a "shipped" entry in §13, doc 15 gets the row update.
+
+---
+
+## 16. v0.4 close-out
+
+Shipped 2026-05-02. 18 stage commits in `0bd0f20..<close-out>`.
+
+Stage commits — see [docs/27 §13](27-v0.4-teams-implementation-plan.md#stage-breakdown) for the per-stage scope detail:
+
+- pre-work — `0bd0f20` — design + spike findings + implementation plan
+- 4A.1 — `929fae5` — data plumbing: scope on `SpawnRequest` + `TaskRecord`
+- 4A.2 — `36c714c` — `RoleIndex` scope migration
+- 4A.3 — `0393ab0` — `StandaloneHost` scope awareness
+- 4A.4 — `e1234b8` — `TeamSession` primitive
+- 4B   — `36a32a6` — `TeamSpec` / `MemberSpec` schema + zod validation
+- 4C   — `4d8ada4` — refactor `Orchestrator` to topology-pluggable shell
+- 4D   — `3ca2867` — long-lived worker mode (`runMore`, `drain`, idle/drained states)
+- 4E.1 — `4433568` — `agent.team` parameter + `team_members` tool
+- 4E.2 — `ae73212` — `PipelineTopology`
+- 4E.3 — `8ed5bb5` — `PeerTeamTopology`
+- 4E.4 — `9e4c3a7` — `CoordinatorTopology`
+- 4F   — `47ab087` — openteams YAML loader + minimal `team start` CLI
+- 4G   — `40d222b` — drop framework-filter strip + Track A close-out
+- 4H   — `2d7f1f6` — Codex `DynamicToolCall` wiring for codex peer parity
+- 4I   — `44b9390` — Track A defect fixes (task IPC handlers, dispatcher try/catch, self-stop race)
+- 4J   — `f8a4343` — in-process MAP adapter
+- 4K   — `a4defac` — broader CLI surface — topology subcommand + team stubs
+- 4L   — `<this commit>` — docs flipped to shipped
+
+Tests at v0.4: 149 files / 1692 passing, `tsc --noEmit` clean. Backward
+compat preserved end-to-end — `swarm run tasks.jsonl` produces byte-
+identical results.jsonl as v0.3; existing single-agent CLI paths
+unaffected; `--framework claude-agent-sdk` and `--framework codex-
+chatgpt` single-agent runs still work; v0.3 codex App Server
+integration unchanged.
+
+Multi-engine peer parity (the headline of v0.4): a peer-team can now
+mix members across all three engine modes — transport (default),
+`--framework claude-agent-sdk`, `--framework codex-chatgpt` — and
+they all converge on the same `SwarmHost` semantics. Track A
+defects closed; Track B's `DynamicToolCall` mechanism wired with the
+8-tool subset per V0.4.Q11.
+
+Deferred to later releases per [docs/27 §13](27-v0.4-teams-implementation-plan.md) phasing:
+
+- `Committee` + `CriticLoop` topologies → v0.5
+- opentasks adapter → v0.5
+- Pull-protocol for long-lived workers → v0.5
+- `swarm watch` multi-pane TUI → v0.5
+- agent-inbox MCP integration → v0.6
+- git-cascade `BranchPolicy` adapter → v0.7
+- Long-lived team daemon (`team send`/`list`/`stop`/`kill` cross-process) → v0.5+
 
 ---
 

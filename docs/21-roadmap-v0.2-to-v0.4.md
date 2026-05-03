@@ -3,7 +3,7 @@
 Companion to [docs/20-v0.1-launch.md](20-v0.1-launch.md). After v0.1 ships, this is the planned order of releases. Three releases, sequenced for compounding value: v0.2 closes documented gaps, v0.3 unblocks the last roadmapped phase, v0.4 makes the vision tagline real.
 
 **Authoring date:** 2026-04-30.
-**Status:** v0.2 shipped 2026-04-30 (commits `deaf038..5ba50ff` + Stage 2G — see git log); v0.3 + v0.4 scoped.
+**Status:** v0.2 shipped 2026-04-30 (commits `deaf038..5ba50ff` + Stage 2G); v0.3 shipped 2026-05-01; v0.4 shipped 2026-05-02 (commits `0bd0f20..<close-out>`). See [docs/27](27-v0.4-teams-implementation-plan.md) for the canonical v0.4 execution plan and stage-by-stage commit hashes.
 **Anchor:** [docs/00-vision.md](00-vision.md) — "One agent is a tool. N coordinated agents is the product."
 
 ---
@@ -256,6 +256,8 @@ Six stages, sequenced for independence. Each ends in a shippable state.
 
 # Release v0.4 — Swarm story (Fork B)
 
+**Status:** Shipped 2026-05-02 (commits `0bd0f20..<close-out>`). The original v0.4 sketch below is preserved for historical context; the actual scope and execution were redesigned and tracked in [docs/27-v0.4-teams-implementation-plan.md](27-v0.4-teams-implementation-plan.md). v0.4 ships the team orchestration layer (TeamSession primitive, 4 topology executors, long-lived workers, openteams loader, multi-engine peer parity, in-process MAP adapter, broader CLI surface). The "swarm watch multi-pane TUI" + "mock parity harness" items from the original sketch deferred to v0.5+.
+
 **Goal:** Make "Multi-agent swarm orchestration is the primary product surface" (the doc 0 vision) actually visible to users beyond `swarm run tasks.jsonl`.
 
 **Estimate:** ~2–3 weeks, 4 stages. Largest of the three releases.
@@ -353,5 +355,5 @@ Each release should preserve the green-baseline:
 Updated as each release ships:
 
 - **v0.2 — released:** 2026-04-30 (commits `deaf038..5ba50ff` + Stage 2G)
-- **v0.3 — released:** _(pending — gated on operator SSE spike)_
-- **v0.4 — released:** _(pending)_
+- **v0.3 — released:** 2026-05-01 (commits `b9a13b2..6bf317f`) — Codex App Server FrameworkProvider
+- **v0.4 — released:** 2026-05-02 (commits `0bd0f20..<close-out>`) — Team orchestration. See [docs/27](27-v0.4-teams-implementation-plan.md) for stage-by-stage commit hashes.
