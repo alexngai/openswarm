@@ -36,7 +36,7 @@ function registerPeer(
   if (role !== undefined) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const ri: RoleIndex = (host as any).roles;
-    ri.register(agentId, role);
+    ri.register("swarm:default", agentId, role);
   }
 }
 

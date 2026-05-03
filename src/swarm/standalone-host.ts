@@ -237,7 +237,7 @@ export class StandaloneHost implements SwarmHost {
     // Register role if the spawn request carries one (M3a Phase 3 — used by
     // `role:<name>` addressing in send_message; full role wiring lands in Phase 6).
     if (request.role !== undefined) {
-      this.roles.register(childAgentId, request.role);
+      this.roles.register("swarm:default", childAgentId, request.role);
     }
 
     // Task registration: reuse or create.
@@ -443,7 +443,7 @@ export class StandaloneHost implements SwarmHost {
     } else if (typeof to === "string" && to.startsWith("role:")) {
       const role = to.slice("role:".length);
       recipients = this.roles
-        .agentsInRole(role)
+        .agentsInRole("swarm:default", role)
         .filter(
           (id) => id !== from && (this.depths.get(id) ?? 0) > 0,
         );
