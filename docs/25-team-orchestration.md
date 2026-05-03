@@ -939,6 +939,7 @@ Per Q8: v0.4 = minimum + MAP. Adapters layered after.
 | 5B | `OpenTasksTaskRegistry` adapter (`--opentasks`) |
 | 5C | Pull-protocol for long-lived workers (opt-in) |
 | 5D | `swarm watch` multi-pane TUI (deferred from v0.4 plan) |
+| 5E | Long-lived team daemon (`team start --detach`, `team send`/`list`/`stop`/`kill`/`logs`) — see [docs/28-v0.5-daemon-plan.md](28-v0.5-daemon-plan.md) |
 
 ### v0.6 — agent-inbox + threading
 
@@ -1144,7 +1145,7 @@ User-facing flows that work end-to-end as of 4M.3:
 
 Things that exist but have known limitations:
 
-- **Cross-process team management** — `team send`, `team list`, `team stop`, `team kill` are CLI stubs in v0.4. `team start` runs synchronously and exits when the team finishes. The long-lived team daemon that backs cross-process interaction is v0.5+.
+- **Cross-process team management** — `team send`, `team list`, `team stop`, `team kill` are CLI stubs in v0.4. `team start` runs synchronously and exits when the team finishes. The long-lived team daemon that backs cross-process interaction is planned for v0.5 — design lock at [docs/28-v0.5-daemon-plan.md](28-v0.5-daemon-plan.md).
 - **Worker-side `agent({team: "self"})`** — REJECTED with a structured error pointing to v0.5+ (B2 fix). `CoordinatorTopology`'s root runs in `StandaloneHost` (the orchestrator process), where `agent({team: "self"})` works as designed. Worker-spawned peers (deeper coordinator recursion) require a spawn IPC handler that's deferred to v0.5+ per V0.4.Q1 follow-up.
 - **Mixed-engine consultant pattern** (V0.4.Q9) — `agent({framework: "..."})` schema is wired in 4E.1 but no end-to-end test exists in v0.4. The mechanism should work in principle; verify before relying on it in production.
 - **Codex 8/10 tool subset** — codex peers register 8 of the 10 Tier 2 tools per V0.4.Q11. Skipped: `agent`, `task_create`, `task_update` (semantic clash with Codex's own product concepts). The set is additive — register more in v0.5 if dogfooding shows demand.
@@ -1154,7 +1155,7 @@ Things that exist but have known limitations:
 
 Restated concisely from the §13 phasing roadmap:
 
-- **v0.5:** Committee + CriticLoop topologies; opentasks adapter; pull-protocol for long-lived workers; `swarm watch` multi-pane TUI; long-lived team daemon (unblocks `team send` / `team list` / `team stop` / `team kill` cross-process).
+- **v0.5:** Committee + CriticLoop topologies; opentasks adapter; pull-protocol for long-lived workers; `swarm watch` multi-pane TUI; long-lived team daemon ([docs/28](28-v0.5-daemon-plan.md), unblocks `team send` / `team list` / `team stop` / `team kill` cross-process).
 - **v0.6:** agent-inbox MCP integration (threaded persistent messaging, federation).
 - **v0.7:** git-cascade adapter (worktree-per-member, cascade rebase, branch streams).
 - **v0.8+:** Coordinator-of-coordinators (multi-team in one orchestrator); MAP federation across orchestrators.
