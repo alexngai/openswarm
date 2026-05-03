@@ -1117,6 +1117,66 @@ Deferred to later releases per [docs/27 §13](27-v0.4-teams-implementation-plan.
 
 ---
 
+## 17. Implementation status (post-4M review fixes)
+
+After v0.4 was tagged at `53d22e1` (stage 4L), a 3-reviewer code-review surfaced 3 BLOCKERs and 7 MAJORs. They were addressed across three sub-commits — `12f48ab` (4M.1), `21d0106` (4M.2), and `e2262fe` (4M.3). All 10 review-pass issues are closed. This section documents what's possible end-to-end, what's constrained, and what's deferred.
+
+Final test posture after 4M.3: 149 files / 1704 passing. `tsc --noEmit` clean.
+
+### 17.1 What's now possible
+
+User-facing flows that work end-to-end as of 4M.3:
+
+- **Run an openteams template** via `swarm-harness team start <template>` (resolves through the openteams CLI; template loader cleans up its tmpdir asynchronously per M7).
+- **Run a custom topology from a JSON spec** via `swarm-harness topology <kind> --spec <path>` for any of the 4 shipped topology kinds.
+- **Mixed-engine peer teams** across all 3 engine modes — a single team can mix transport peers (default), `--framework claude-agent-sdk` peers, and `--framework codex-chatgpt` peers, all converging on the same `SwarmHost` semantics.
+- **All 4 shipped topologies:**
+    - `Fanout` — broadcast a task list to a worker pool with role overlays, retry, dead-letter (extracted from the v0.3 orchestrator).
+    - `Pipeline` — sequential stages, each member's output feeds the next.
+    - `Coordinator` — root agent in StandaloneHost spawns and supervises peer agents.
+    - `PeerTeam` — N peers in a shared scope with lateral messaging and shared task graph.
+- **Live coordination primitives within a team:** `send_message`, `check_inbox`, `team_members`, `task_get` / `task_list` / `task_create` / `task_update` / `task_stop` / `task_output`, `ask_user_question` (Tier 2 set, all 10 tools registered for transport + claude-agent-sdk peers).
+- **Long-lived workers** via `SpawnRequest.longLived` — workers transition correctly through `running → idle → prompt_accepted → running` cycles and can be resumed with `runMore` or terminated with `drain` (FSM transitions hardened in 4M.3).
+- **External observability via MAP** — `--map [URL]` emits lane events to a remote observer; `--ecosystem` is a v0.4 shorthand for `--map`. MAP receives `worker_spawned` / `worker_exited` lifecycle events in production runs (B3 fix).
+- **Backward compat:** `swarm run tasks.jsonl` produces byte-identical results.jsonl to v0.3; single-agent CLI paths unchanged; both `--framework` modes still work for single-agent runs.
+
+### 17.2 Constrained / works with caveats
+
+Things that exist but have known limitations:
+
+- **Cross-process team management** — `team send`, `team list`, `team stop`, `team kill` are CLI stubs in v0.4. `team start` runs synchronously and exits when the team finishes. The long-lived team daemon that backs cross-process interaction is v0.5+.
+- **Worker-side `agent({team: "self"})`** — REJECTED with a structured error pointing to v0.5+ (B2 fix). `CoordinatorTopology`'s root runs in `StandaloneHost` (the orchestrator process), where `agent({team: "self"})` works as designed. Worker-spawned peers (deeper coordinator recursion) require a spawn IPC handler that's deferred to v0.5+ per V0.4.Q1 follow-up.
+- **Mixed-engine consultant pattern** (V0.4.Q9) — `agent({framework: "..."})` schema is wired in 4E.1 but no end-to-end test exists in v0.4. The mechanism should work in principle; verify before relying on it in production.
+- **Codex 8/10 tool subset** — codex peers register 8 of the 10 Tier 2 tools per V0.4.Q11. Skipped: `agent`, `task_create`, `task_update` (semantic clash with Codex's own product concepts). The set is additive — register more in v0.5 if dogfooding shows demand.
+- **Single team per orchestrator** — v0.4 runs one team at a time per orchestrator process. Multi-team-in-one-orchestrator (coordinator-of-coordinators) is deferred to v0.8+ per §6.4.
+
+### 17.3 Future work (not in v0.4)
+
+Restated concisely from the §13 phasing roadmap:
+
+- **v0.5:** Committee + CriticLoop topologies; opentasks adapter; pull-protocol for long-lived workers; `swarm watch` multi-pane TUI; long-lived team daemon (unblocks `team send` / `team list` / `team stop` / `team kill` cross-process).
+- **v0.6:** agent-inbox MCP integration (threaded persistent messaging, federation).
+- **v0.7:** git-cascade adapter (worktree-per-member, cascade rebase, branch streams).
+- **v0.8+:** Coordinator-of-coordinators (multi-team in one orchestrator); MAP federation across orchestrators.
+- **Deferred indefinitely:** Bridging Codex's native `Collab*` events; multi-thread Codex process pooling; worker-spawned peers via spawn IPC handler (V0.4.Q1 follow-up); `Codex TransportProvider` (only if a real user need surfaces).
+
+### 17.4 Review-fix index (4M.1–4M.3)
+
+| Issue | Type | Fixed in | What changed |
+|---|---|---|---|
+| B1 | BLOCKER | 4M.1 (`12f48ab`) | `message_sent` lane event payload now carries `content` (was `{from, to, correlationId?}` only); `until_signal` listener now sees real payloads. |
+| B2 | BLOCKER | 4M.1 (`12f48ab`) | Worker-side `agent({team: "self"})` returns structured error pointing to v0.5+. |
+| B3 | BLOCKER | 4M.2 (`21d0106`) | `StandaloneHost` emits `worker_spawned` / `worker_exited` lane events; MAP adapter receives lifecycle telemetry in production runs. |
+| M1 | MAJOR | 4M.2 (`21d0106`) | `TeamSession` registers stable `memberId` via new `setMemberId` / `memberIdOf` accessors; `team_members` returns it instead of echoing `agentId`. |
+| M2 | MAJOR | 4M.2 (`21d0106`) | `TeamSession.spawnAll` uses `Promise.allSettled` + cleanup on partial failure. |
+| M3 | MAJOR | 4M.1 (`12f48ab`) | `team_aborted` payload standardized on `memberResults` (was `stagesCompleted` in some emit sites). |
+| M4 | MAJOR | 4M.1 (`12f48ab`) | Long-lived worker uses `IPC_ERROR_CODES.INVALID_PARAMS` constant (was string literal). |
+| M5 | MAJOR | 4M.3 (`e2262fe`) | Long-lived worker FSM transitions correctly: `running → idle → prompt_accepted → running` cycle (was stuck in `finished` / `failed` after first turn). |
+| M6 | MAJOR | 4M.3 (`e2262fe`) | `run_more` listener attached once at top-level + frame buffer; no race window between `worker_idle` notify and listener re-attach. |
+| M7 | MAJOR | 4M.1 (`12f48ab`) | openteams loader `await fs.rm` in finally with try/catch (was fire-and-forget). |
+
+---
+
 ## Appendix A — File layout (target end-state)
 
 ```

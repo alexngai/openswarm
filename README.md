@@ -155,6 +155,16 @@ swarm-harness topology peer-team --spec ./team.json --ecosystem
 
 See [docs/25-team-orchestration.md](docs/25-team-orchestration.md) for the architecture (TeamSession, topology catalog, MAP scope semantics) and [docs/27-v0.4-teams-implementation-plan.md](docs/27-v0.4-teams-implementation-plan.md) for the v0.4 execution detail.
 
+### Known limitations in v0.4
+
+The team primitives shipped in v0.4 cover the headline use cases (mixed-engine peer teams, all 4 topologies, MAP observability). Some flows are constrained or deferred:
+
+- **Cross-process team commands** (`team send`, `team list`, `team stop`, `team kill`) are stubs in v0.4. They require a long-running team daemon, which lands in v0.5+. For now, `team start` runs synchronously and exits when the team finishes.
+- **Worker-side `agent({team: "self"})`** is rejected with a structured error. CoordinatorTopology's root runs in the orchestrator process where this works; deeper recursion is deferred.
+- **Codex peers** see 8 of 10 Tier 2 tools (skipped: `agent`, `task_create`, `task_update`).
+
+See [docs/25-team-orchestration.md §17](docs/25-team-orchestration.md#17-implementation-status-post-4m-review-fixes) for the full status / limitations breakdown.
+
 ## Flags
 
 ```
