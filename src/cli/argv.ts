@@ -98,6 +98,8 @@ export type ParsedArgs =
       opentasks: boolean;
       /** v0.5 stage 5B: explicit opentasks daemon socket path. */
       opentasksSocket?: string;
+      /** v0.6 stage 6A.2: enable agent-inbox library-backed InboxBackend. */
+      agentInbox: boolean;
     }
   | { kind: "plugin"; pluginArgv: string[] }
   | { kind: "login"; provider: string }
@@ -232,6 +234,9 @@ export function parseArgv(args: string[]): ParsedArgs {
   // v0.5 stage 5B — opentasks daemon mirror flags for `swarm run`.
   let opentasks = false;
   let opentasksSocket: string | undefined;
+
+  // v0.6 stage 6A.2 — agent-inbox library backend flag for `swarm run`.
+  let agentInbox = false;
 
   // First pass: scan for early-exit flags (--help, -h, --version, -V) and
   // collect flags that precede the subcommand / positional.
@@ -561,6 +566,13 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
+    // v0.6 stage 6A.2: --agent-inbox enables the library-backed InboxBackend.
+    if (tok === "--agent-inbox") {
+      agentInbox = true;
+      i++;
+      continue;
+    }
+
     // v0.4 stage 4K: --spec <path> for the `topology` subcommand. Required
     // when topology is invoked; ignored otherwise (the topology dispatch is
     // the only consumer).
@@ -773,6 +785,7 @@ export function parseArgv(args: string[]): ParsedArgs {
         ...(swarmRole !== undefined && { role: swarmRole }),
         opentasks,
         ...(opentasksSocket !== undefined && { opentasksSocket }),
+        agentInbox,
       };
     }
 

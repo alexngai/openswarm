@@ -23,6 +23,7 @@ import {
   findOpenTasksSocket,
 } from "../swarm/adapters/opentasks-client.js";
 import { OpenTasksTaskRegistry } from "../swarm/adapters/opentasks-task-registry.js";
+import { AgentInboxBackend } from "../swarm/adapters/agent-inbox-backend.js";
 
 // ---------------------------------------------------------------------------
 // Schema (Phase 2: discriminated-union policies)
@@ -66,6 +67,12 @@ export interface SwarmRunOptions {
    * walk-up (`.swarm/opentasks` → `.opentasks` → `.git/opentasks`).
    */
   readonly opentasksSocket?: string;
+  /**
+   * v0.6 stage 6A.2: when true, use the agent-inbox library as the
+   * StandaloneHost's InboxBackend. Adds threading + persistence over the
+   * default in-memory queue.
+   */
+  readonly agentInbox?: boolean;
   /**
    * Aggregate token cap across all workers. On exceed, all in-flight workers
    * are aborted and the run exits with code 3 (v0.2.Q7).
@@ -163,23 +170,39 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
   // v0.5 stage 5B — when --opentasks is set, build a StandaloneHost that
   // wraps its TaskAPI with the OpenTasksTaskRegistry adapter. The wrapper
   // is best-effort: opentasks daemon failures don't block the swarm run.
+  // v0.6 stage 6A.2 — when --agent-inbox is set, build the same host with
+  // an AgentInboxBackend (library-backed; threading + persistence).
   let host: StandaloneHost | undefined;
-  if (opts.opentasks === true) {
-    const sockPath =
-      opts.opentasksSocket ?? findOpenTasksSocket(process.cwd());
-    if (sockPath === null) {
-      process.stderr.write(
-        "error: --opentasks set but no daemon socket found. Start the daemon with `opentasks daemon start` " +
-          "or pass --opentasks-socket <path>.\n",
-      );
-      return 2;
+  const needsCustomHost = opts.opentasks === true || opts.agentInbox === true;
+  if (needsCustomHost) {
+    let taskWrapper: ((inner: import("../swarm/host.js").TaskAPI) => import("../swarm/host.js").TaskAPI) | undefined;
+
+    if (opts.opentasks === true) {
+      const sockPath =
+        opts.opentasksSocket ?? findOpenTasksSocket(process.cwd());
+      if (sockPath === null) {
+        process.stderr.write(
+          "error: --opentasks set but no daemon socket found. Start the daemon with `opentasks daemon start` " +
+            "or pass --opentasks-socket <path>.\n",
+        );
+        return 2;
+      }
+      const client = new OpenTasksClient(sockPath);
+      taskWrapper = (inner) => new OpenTasksTaskRegistry(inner, client);
+      process.stderr.write(`[swarm-harness] --opentasks enabled (socket: ${sockPath})\n`);
     }
-    const client = new OpenTasksClient(sockPath);
+
+    let inboxBackend: import("../swarm/inbox.js").InboxBackend | undefined;
+    if (opts.agentInbox === true) {
+      inboxBackend = new AgentInboxBackend();
+      process.stderr.write(`[swarm-harness] --agent-inbox enabled (in-memory storage)\n`);
+    }
+
     host = new StandaloneHost({
       permissionMode: opts.permissionMode,
-      taskWrapper: (inner) => new OpenTasksTaskRegistry(inner, client),
+      ...(taskWrapper !== undefined && { taskWrapper }),
+      ...(inboxBackend !== undefined && { inboxBackend }),
     });
-    process.stderr.write(`[swarm-harness] --opentasks enabled (socket: ${sockPath})\n`);
   }
 
   const orch = new Orchestrator({

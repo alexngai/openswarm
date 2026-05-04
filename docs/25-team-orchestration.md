@@ -946,6 +946,7 @@ Per Q8: v0.4 = minimum + MAP. Adapters layered after.
 | Stage | Scope |
 |---|---|
 | 5F | `send_prompt` against a live `peer-team` daemon — **shipped early** (closes V0.5.Q6 deferral). TopologyContext gains `persistent` + `onTeamCreated`; PeerTeamTopology honors them; daemon `send_prompt` handler spawns an ad-hoc member into the live TeamSession. |
+| 6A | agent-inbox library integration (`InboxBackend` interface + `AgentInboxBackend` adapter) — **shipped**. Refactored `AgentInbox` → pluggable `InboxBackend`, scope-keyed + async (6A.1). Wired `agent-inbox@^0.2.0` as a library backend with threading + persistence (6A.2). CLI flag `--agent-inbox` opts in. |
 
 | Stage | Scope |
 |---|---|
@@ -1117,7 +1118,8 @@ Deferred to later releases per [docs/27 §13](27-v0.4-teams-implementation-plan.
 - Pull-protocol for long-lived workers → **shipped in v0.5 (5C, `task_pull_next` Tier 2 tool)**
 - `swarm watch` multi-pane TUI → **MVP shipped as `team watch <name>` in v0.5 (5D); multi-pane TUI deferred to v0.6**
 - Long-lived team daemon (`team start --detach` / `send` / `list` / `stop` / `kill` / `logs`) → **shipped in v0.5 (5E.1–5E.7) + path-length follow-up; `send_prompt` for persistent peer-team daemons shipped in v0.6 stage 5F**
-- agent-inbox MCP integration → v0.6
+- agent-inbox library integration → **shipped in v0.6 (6A.1 + 6A.2)** — pluggable InboxBackend; agent-inbox library backend with threading + persistence
+- agent-inbox MCP integration (separate from the library wrap) → v0.7+ (depends on whether MCP integration becomes necessary; the library path covers most use cases)
 - git-cascade `BranchPolicy` adapter → v0.7
 
 ---

@@ -733,6 +733,7 @@ export async function main(argv: string[]): Promise<number> {
         ...(parsed.opentasksSocket !== undefined && {
           opentasksSocket: parsed.opentasksSocket,
         }),
+        agentInbox: parsed.agentInbox,
       });
 
     case "plugin":

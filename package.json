@@ -72,6 +72,7 @@
     "@opentui/core": "^0.1.99",
     "@opentui/solid": "^0.1.99",
     "@vscode/ripgrep": "^1.17.1",
+    "agent-inbox": "^0.2.0",
     "ai": "6.0.168",
     "fast-glob": "^3.3.3",
     "proper-lockfile": "4.1.2",

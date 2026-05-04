@@ -298,6 +298,20 @@ describe("parseArgv", () => {
     expect(result.kind).toBe("team-daemon-entry");
   });
 
+  // ---- v0.6 stage 6A.2 — --agent-inbox -----------------------------------
+
+  it("swarm run --agent-inbox sets agentInbox=true", () => {
+    const result = parseArgv(["swarm", "run", "tasks.json", "--agent-inbox"]);
+    if (result.kind !== "swarm-run") throw new Error("expected swarm-run");
+    expect(result.agentInbox).toBe(true);
+  });
+
+  it("swarm run without --agent-inbox leaves agentInbox=false (default behavior)", () => {
+    const result = parseArgv(["swarm", "run", "tasks.json"]);
+    if (result.kind !== "swarm-run") throw new Error("expected swarm-run");
+    expect(result.agentInbox).toBe(false);
+  });
+
   // ---- swarm run + dead-letter flags ---------------------------------------
 
   it("swarm run with --dead-letter sets deadLetter path", () => {
