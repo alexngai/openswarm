@@ -10,8 +10,6 @@ import * as child_process from "node:child_process";
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as net from "node:net";
-import * as os from "node:os";
-import * as path from "node:path";
 import type { PermissionMode } from "../core/types.js";
 import { Orchestrator } from "../swarm/orchestrator.js";
 import { loadTemplate } from "../swarm/openteams/loader.js";
@@ -19,6 +17,7 @@ import { openteamsToTeamSpec } from "../swarm/openteams/mapping.js";
 import { MapAdapter } from "../swarm/adapters/map-adapter.js";
 import type { MapClientFactory } from "../swarm/adapters/map-protocol.js";
 import { TeamSpecSchema, type TeamSpec, type TopologyKind } from "../swarm/team-spec.js";
+import { computeTeamPaths, teamsBaseDir } from "./team-paths.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -327,34 +326,9 @@ export async function runTopology(opts: TopologyRunOptions): Promise<number> {
 // dumped to stderr so the operator can see what went wrong.
 // ---------------------------------------------------------------------------
 
-interface DaemonPaths {
-  readonly dir: string;
-  readonly sockPath: string;
-  readonly pidPath: string;
-  readonly eventsPath: string;
-  readonly statePath: string;
-  readonly logPath: string;
-  readonly specPath: string;
-}
-
-function computeDaemonPaths(teamName: string): DaemonPaths {
-  // V0.5.Q3 — XDG_RUNTIME_DIR with TMPDIR fallback for darwin.
-  const baseDir =
-    process.env.XDG_RUNTIME_DIR !== undefined &&
-    process.env.XDG_RUNTIME_DIR !== ""
-      ? process.env.XDG_RUNTIME_DIR
-      : (process.env.TMPDIR ?? os.tmpdir());
-  const dir = path.join(baseDir, "swarm-harness", "teams", teamName);
-  return {
-    dir,
-    sockPath: path.join(dir, "daemon.sock"),
-    pidPath: path.join(dir, "daemon.pid"),
-    eventsPath: path.join(dir, "events.jsonl"),
-    statePath: path.join(dir, "state.json"),
-    logPath: path.join(dir, "daemon.log"),
-    specPath: path.join(dir, "spec.json"),
-  };
-}
+// Path computation moved to ./team-paths.ts (shared with team list/send/stop/
+// kill + team logs). The shared module owns the V0.5 stage 5E follow-up
+// fallback for darwin's 104-char Unix socket sun_path limit.
 
 async function tryConnect(sockPath: string): Promise<boolean> {
   return await new Promise((resolve) => {
@@ -367,7 +341,7 @@ async function tryConnect(sockPath: string): Promise<boolean> {
 }
 
 async function detachAndForkDaemon(spec: TeamSpec): Promise<number> {
-  const paths = computeDaemonPaths(spec.name);
+  const paths = computeTeamPaths(spec.name);
   await fsp.mkdir(paths.dir, { recursive: true });
 
   // Write the spec where the forked daemon will read it.
@@ -502,21 +476,13 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-function teamsBaseDir(): string {
-  const baseDir =
-    process.env.XDG_RUNTIME_DIR !== undefined &&
-    process.env.XDG_RUNTIME_DIR !== ""
-      ? process.env.XDG_RUNTIME_DIR
-      : (process.env.TMPDIR ?? os.tmpdir());
-  return path.join(baseDir, "swarm-harness", "teams");
-}
+// teamsBaseDir + teamPaths(name) → use the shared computeTeamPaths utility
+// from ./team-paths.ts so the CLI client and the daemon agree on the
+// (possibly hash-shortened) socket location.
 
 function teamPaths(name: string): { sockPath: string; pidPath: string } {
-  const dir = path.join(teamsBaseDir(), name);
-  return {
-    sockPath: path.join(dir, "daemon.sock"),
-    pidPath: path.join(dir, "daemon.pid"),
-  };
+  const p = computeTeamPaths(name);
+  return { sockPath: p.sockPath, pidPath: p.pidPath };
 }
 
 async function readDaemonPid(pidPath: string): Promise<number | null> {

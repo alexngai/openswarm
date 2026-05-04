@@ -12,20 +12,11 @@
 
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
-import * as os from "node:os";
 import * as path from "node:path";
-
-function teamsBaseDir(): string {
-  const baseDir =
-    process.env.XDG_RUNTIME_DIR !== undefined &&
-    process.env.XDG_RUNTIME_DIR !== ""
-      ? process.env.XDG_RUNTIME_DIR
-      : (process.env.TMPDIR ?? os.tmpdir());
-  return path.join(baseDir, "swarm-harness", "teams");
-}
+import { computeTeamPaths } from "./team-paths.js";
 
 function eventsPath(name: string): string {
-  return path.join(teamsBaseDir(), name, "events.jsonl");
+  return computeTeamPaths(name).eventsPath;
 }
 
 export interface TeamLogsOptions {

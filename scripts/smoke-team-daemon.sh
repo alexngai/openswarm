@@ -40,25 +40,31 @@ fi
 BIN="node $REPO_ROOT/dist/cli.js"
 
 # Isolated XDG_RUNTIME_DIR so this smoke doesn't see real running daemons.
-# Use /tmp directly rather than mktemp -d (which on macOS produces a
-# /var/folders/.../T/tmp.XXXX path that, combined with the team name +
-# "/swarm-harness/teams/" segment, exceeds the 104-char Unix socket limit
-# and silently truncates "daemon.sock" → "dae"). This is a real production
-# concern too — flagged for follow-up in docs/28.
-RUNTIME_DIR="/tmp/sm-$$"
-mkdir -p "$RUNTIME_DIR"
+# Uses mktemp -d which on macOS lands under /var/folders/.../T/ — a path
+# long enough that the natural socket location would exceed the 104-char
+# `sun_path` limit. The shared computeTeamPaths() utility (5E follow-up
+# fix) detects this and falls back to /tmp/swh-<hash>.sock, which the
+# smoke verifies works end-to-end.
+RUNTIME_DIR=$(mktemp -d)
 export XDG_RUNTIME_DIR="$RUNTIME_DIR"
 export TMPDIR="$RUNTIME_DIR"
-TEAM_NAME="t$$"
+TEAM_NAME="smoke-team-with-a-fairly-long-name-to-trigger-fallback-$$"
 TEAM_DIR="$RUNTIME_DIR/swarm-harness/teams/$TEAM_NAME"
 mkdir -p "$TEAM_DIR"
 
 SPEC="$TEAM_DIR/spec.json"
-SOCK="$TEAM_DIR/daemon.sock"
 PID_FILE="$TEAM_DIR/daemon.pid"
 EVENTS="$TEAM_DIR/events.jsonl"
 STATE="$TEAM_DIR/state.json"
 LOG="$TEAM_DIR/daemon.log"
+
+# Resolve the (possibly hash-shortened) socket path the same way
+# computeTeamPaths() does — node one-liner using the shared utility.
+SOCK=$(node -e "
+const { computeTeamPaths } = require('$REPO_ROOT/dist/cli/team-paths.js');
+process.stdout.write(computeTeamPaths('$TEAM_NAME').sockPath);
+")
+echo "→ resolved socket path: $SOCK ($(echo -n "$SOCK" | wc -c | tr -d ' ') chars)"
 
 cleanup() {
   if [[ -f "$PID_FILE" ]]; then
