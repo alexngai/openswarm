@@ -450,46 +450,68 @@ describe("runTopology", () => {
 // Stub functions
 // ---------------------------------------------------------------------------
 
-describe("team daemon stubs (v0.4 deferred to v0.5+)", () => {
+describe("team daemon RPC client (v0.5 stage 5E.4)", () => {
   let stderrSpy: ReturnType<typeof vi.spyOn>;
+  let stdoutSpy: ReturnType<typeof vi.spyOn>;
+  let tmpRoot: string;
+  let prevXdg: string | undefined;
+  let prevTmp: string | undefined;
 
-  beforeEach(() => {
-    stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(
-      () => true,
-    );
+  beforeEach(async () => {
+    stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    // Point the CLI at a fresh tmpdir so tests don't see real running daemons
+    // on the dev host. The CLI reads XDG_RUNTIME_DIR first, falling back to
+    // TMPDIR (V0.5.Q3); set both to be safe.
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const os = await import("node:os");
+    tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "team-cli-test-"));
+    prevXdg = process.env.XDG_RUNTIME_DIR;
+    prevTmp = process.env.TMPDIR;
+    process.env.XDG_RUNTIME_DIR = tmpRoot;
+    process.env.TMPDIR = tmpRoot;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     stderrSpy.mockRestore();
+    stdoutSpy.mockRestore();
+    if (prevXdg === undefined) delete process.env.XDG_RUNTIME_DIR;
+    else process.env.XDG_RUNTIME_DIR = prevXdg;
+    if (prevTmp === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = prevTmp;
+    const fs = await import("node:fs/promises");
+    await fs.rm(tmpRoot, { recursive: true, force: true });
   });
 
-  function lastMessage(): string {
+  function stderrText(): string {
     return (stderrSpy.mock.calls as readonly unknown[][])
       .map((c: readonly unknown[]) => String(c[0]))
       .join("");
   }
+  function stdoutText(): string {
+    return (stdoutSpy.mock.calls as readonly unknown[][])
+      .map((c: readonly unknown[]) => String(c[0]))
+      .join("");
+  }
 
-  it("runTeamSend exits 2 and prints the deferred message", () => {
-    expect(runTeamSend("my-team", "hi")).toBe(2);
-    expect(lastMessage()).toMatch(/team send/);
-    expect(lastMessage()).toMatch(/deferred to v0\.5/);
+  it("runTeamSend returns 2 + prints error when no daemon is running", async () => {
+    expect(await runTeamSend("nonexistent", "hi")).toBe(2);
+    expect(stderrText()).toMatch(/not running|unreachable/);
   });
 
-  it("runTeamList exits 2 and prints the deferred message", () => {
-    expect(runTeamList()).toBe(2);
-    expect(lastMessage()).toMatch(/team list/);
-    expect(lastMessage()).toMatch(/deferred to v0\.5/);
+  it("runTeamList returns 0 + prints '(no running teams)' when teams dir is empty", async () => {
+    expect(await runTeamList()).toBe(0);
+    expect(stdoutText()).toMatch(/no running teams/);
   });
 
-  it("runTeamStop exits 2 and prints the deferred message", () => {
-    expect(runTeamStop("my-team")).toBe(2);
-    expect(lastMessage()).toMatch(/team stop/);
-    expect(lastMessage()).toMatch(/deferred to v0\.5/);
+  it("runTeamStop returns 2 + prints error when no daemon is running", async () => {
+    expect(await runTeamStop("nonexistent")).toBe(2);
+    expect(stderrText()).toMatch(/not running|unreachable/);
   });
 
-  it("runTeamKill exits 2 and prints the deferred message", () => {
-    expect(runTeamKill("my-team")).toBe(2);
-    expect(lastMessage()).toMatch(/team kill/);
-    expect(lastMessage()).toMatch(/deferred to v0\.5/);
+  it("runTeamKill returns 0 with 'was not running' when no daemon is running", async () => {
+    expect(await runTeamKill("nonexistent")).toBe(0);
+    expect(stdoutText()).toMatch(/was not running/);
   });
 });

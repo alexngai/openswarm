@@ -60,6 +60,13 @@ export interface TeamDaemonOptions {
    * lane-event subscription surface is finalised.
    */
   readonly eventsOut?: Writable;
+  /**
+   * For tests: override the kill-handler's terminal `process.exit(0)`. The
+   * production daemon needs to hard-exit so the OS reaps in-flight workers
+   * (V0.5.Q5a); tests inject a no-op so the kill RPC behaviour can be
+   * verified without taking down the test runner.
+   */
+  readonly processExit?: (code: number) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -315,18 +322,68 @@ export class TeamDaemon {
         scope: `swarm:${this.opts.spec.name}`,
         topology: this.opts.spec.topology,
         startedAt: this.startedAt,
-        // 5E.4 will populate from TeamSession; 5E.2 reports an empty list.
+        // Members are populated when 5E.5 wires the orchestrator's TeamSession
+        // surface to the daemon. For 5E.4 the snapshot reports an empty list.
         members: [],
       });
       return;
     }
 
-    // send_prompt / stop / kill — implemented in 5E.4.
+    if (req.method === "stop") {
+      // V0.5 stage 5E.4: graceful stop. Reply ack first, then tear down so
+      // the caller sees the response before the socket goes away. The
+      // runTeam promise continues in the background; the daemon exits when
+      // the orchestrator finishes or process.exit is called by the entry.
+      this.sendOk(socket, req.id, { acknowledged: true });
+      // Defer stop() to next tick so the response flushes.
+      setImmediate(() => {
+        void this.stop().catch(() => {
+          /* swallow — daemon is exiting anyway */
+        });
+      });
+      return;
+    }
+
+    if (req.method === "kill") {
+      // V0.5 stage 5E.4: hard kill. Same response shape as stop, but the
+      // daemon process exits immediately so OS reaps in-flight workers.
+      this.sendOk(socket, req.id, { acknowledged: true });
+      setImmediate(() => {
+        void this.stop()
+          .catch(() => {
+            /* swallow */
+          })
+          .then(() => {
+            // Hard exit — workers' stdin EOF will reap them per V0.5.Q5a.
+            const exitFn = this.opts.processExit ?? process.exit.bind(process);
+            exitFn(0);
+          });
+      });
+      return;
+    }
+
+    if (req.method === "send_prompt") {
+      // V0.5 stage 5E.4: send_prompt requires the orchestrator to expose its
+      // active TeamSession so the daemon can route the prompt into the team's
+      // inbox per V0.4.Q4. Today's runTeam runs to completion without an idle
+      // wait state, so a "live team accepting prompts" requires persistent-
+      // team architecture work tracked for v0.6+. Reject cleanly with a hint.
+      this.sendErr(
+        socket,
+        req.id,
+        TEAM_DAEMON_ERROR_CODES.UNKNOWN_METHOD,
+        "send_prompt requires persistent-team support (orchestrator exposing " +
+          "live TeamSession.send). Tracked for v0.6+; see docs/28 V0.5.Q6.",
+      );
+      return;
+    }
+
+    // Any other method is unknown.
     this.sendErr(
       socket,
       req.id,
       TEAM_DAEMON_ERROR_CODES.UNKNOWN_METHOD,
-      `method not yet implemented in 5E.2: ${req.method} (lands in 5E.4)`,
+      `unknown method: ${req.method}`,
     );
   }
 

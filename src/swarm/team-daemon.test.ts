@@ -229,7 +229,7 @@ describe("TeamDaemon — RPC handlers (5E.2 stub set)", () => {
     socket.end();
   });
 
-  it("send_prompt / stop / kill return UNKNOWN_METHOD with a 5E.4 hint", async () => {
+  it("send_prompt returns UNKNOWN_METHOD with a v0.6+ persistent-team hint (5E.4)", async () => {
     daemon = new TeamDaemon({
       spec: fakeSpec(),
       paths,
@@ -237,26 +237,98 @@ describe("TeamDaemon — RPC handlers (5E.2 stub set)", () => {
     });
     await daemon.start();
 
-    for (const method of ["send_prompt", "stop", "kill"] as const) {
-      const socket = net.createConnection(paths.sockPath);
-      await new Promise<void>((resolve) => socket.once("connect", resolve));
-      socket.write(
-        JSON.stringify({
-          kind: "request",
-          id: `rpc-${method}`,
-          method,
-          params: { prompt: "x" },
-        }) + "\n",
-      );
-      const response = (await readResponse(socket)) as {
-        ok?: boolean;
-        error?: { code?: string; message?: string };
-      };
-      expect(response.ok).toBe(false);
-      expect(response.error?.code).toBe("unknown_method");
-      expect(response.error?.message).toMatch(/5E\.4/);
-      socket.end();
+    const socket = net.createConnection(paths.sockPath);
+    await new Promise<void>((resolve) => socket.once("connect", resolve));
+    socket.write(
+      JSON.stringify({
+        kind: "request",
+        id: "rpc-send",
+        method: "send_prompt",
+        params: { prompt: "hi" },
+      }) + "\n",
+    );
+    const response = (await readResponse(socket)) as {
+      ok?: boolean;
+      error?: { code?: string; message?: string };
+    };
+    expect(response.ok).toBe(false);
+    expect(response.error?.code).toBe("unknown_method");
+    expect(response.error?.message).toMatch(/v0\.6/);
+    socket.end();
+  });
+
+  it("stop returns acknowledged then tears down the daemon (5E.4)", async () => {
+    daemon = new TeamDaemon({
+      spec: fakeSpec(),
+      paths,
+      orchestrator: fakeOrch({ neverResolves: true }),
+    });
+    await daemon.start();
+
+    const socket = net.createConnection(paths.sockPath);
+    await new Promise<void>((resolve) => socket.once("connect", resolve));
+    socket.write(
+      JSON.stringify({
+        kind: "request",
+        id: "rpc-stop",
+        method: "stop",
+        params: {},
+      }) + "\n",
+    );
+    const response = (await readResponse(socket)) as {
+      ok?: boolean;
+      result?: { acknowledged?: boolean };
+    };
+    expect(response.ok).toBe(true);
+    expect(response.result?.acknowledged).toBe(true);
+    socket.end();
+
+    // The daemon stops asynchronously via setImmediate; wait briefly then
+    // assert the socket file is gone.
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      if (!(await fileExists(paths.sockPath))) break;
     }
+    expect(await fileExists(paths.sockPath)).toBe(false);
+    daemon = undefined;
+  });
+
+  it("kill returns acknowledged + invokes processExit (5E.4)", async () => {
+    let exitCode: number | undefined;
+    daemon = new TeamDaemon({
+      spec: fakeSpec(),
+      paths,
+      orchestrator: fakeOrch({ neverResolves: true }),
+      processExit: (code) => {
+        exitCode = code;
+      },
+    });
+    await daemon.start();
+
+    const socket = net.createConnection(paths.sockPath);
+    await new Promise<void>((resolve) => socket.once("connect", resolve));
+    socket.write(
+      JSON.stringify({
+        kind: "request",
+        id: "rpc-kill",
+        method: "kill",
+        params: {},
+      }) + "\n",
+    );
+    const response = (await readResponse(socket)) as {
+      ok?: boolean;
+      result?: { acknowledged?: boolean };
+    };
+    expect(response.ok).toBe(true);
+    expect(response.result?.acknowledged).toBe(true);
+    socket.end();
+
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      if (exitCode !== undefined) break;
+    }
+    expect(exitCode).toBe(0);
+    daemon = undefined;
   });
 
   it("malformed JSON returns MALFORMED_FRAME", async () => {

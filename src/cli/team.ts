@@ -441,48 +441,229 @@ async function detachAndForkDaemon(spec: TeamSpec): Promise<number> {
 }
 
 // ---------------------------------------------------------------------------
-// team send / list / stop / kill stubs (v0.4 stage 4K)
+// team send / list / stop / kill — v0.5 stage 5E.4
 //
-// These commands target a long-running orchestrator process for cross-process
-// operations. v0.4 doesn't ship a team daemon — see docs/27 stage roadmap.
-// Each stub prints a short, useful message pointing at the supported v0.4
-// path (`team start <template>` / `topology <kind>`) and exits 2.
+// Each command talks to a running per-team daemon (5E.2 / 5E.3) over its
+// Unix socket. `team list` walks the teams directory directly (no socket).
 // ---------------------------------------------------------------------------
 
-const DAEMON_DEFERRED_HINT =
-  "Long-lived team daemons are deferred to v0.5+. " +
-  "For v0.4 use 'team start <template>' or 'topology <kind> --spec <path>' " +
-  "which run synchronously and exit when the team completes. " +
-  "See docs/27-v0.4-teams-implementation-plan.md for the stage roadmap.";
-
-export function runTeamSend(name: string, prompt: string): number {
-  process.stderr.write(
-    `error: 'team send' requires a long-running team daemon (target team: "${name}", prompt length: ${prompt.length}). ` +
-      `${DAEMON_DEFERRED_HINT}\n`,
-  );
-  return 2;
+/**
+ * Connect to a team daemon's socket, send one RPC, await one response. Caller
+ * picks the request id; the function resolves with the parsed response or
+ * `null` on transport failure.
+ */
+async function rpcOnce(
+  sockPath: string,
+  request: { kind: "request"; id: string; method: string; params: unknown },
+  timeoutMs = 3000,
+): Promise<{ ok: true; result: unknown } | { ok: false; error: { code: string; message: string } } | null> {
+  return await new Promise((resolve) => {
+    const socket = net.createConnection(sockPath);
+    const timer = setTimeout(() => {
+      socket.destroy();
+      resolve(null);
+    }, timeoutMs);
+    socket.once("connect", () => {
+      socket.write(JSON.stringify(request) + "\n");
+    });
+    let buf = "";
+    socket.on("data", (chunk: Buffer) => {
+      buf += chunk.toString();
+      const idx = buf.indexOf("\n");
+      if (idx < 0) return;
+      clearTimeout(timer);
+      try {
+        const parsed = JSON.parse(buf.slice(0, idx)) as
+          | { kind: "response"; id: string; ok: true; result: unknown }
+          | { kind: "response"; id: string; ok: false; error: { code: string; message: string } };
+        socket.end();
+        if (parsed.kind === "response" && parsed.id === request.id) {
+          resolve(parsed.ok ? { ok: true, result: parsed.result } : { ok: false, error: parsed.error });
+        } else {
+          resolve(null);
+        }
+      } catch {
+        resolve(null);
+      }
+    });
+    socket.once("error", () => {
+      clearTimeout(timer);
+      resolve(null);
+    });
+  });
 }
 
-export function runTeamList(): number {
-  process.stderr.write(
-    `error: 'team list' requires a long-running team daemon to enumerate. ` +
-      `${DAEMON_DEFERRED_HINT}\n`,
-  );
-  return 2;
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-export function runTeamStop(name: string): number {
-  process.stderr.write(
-    `error: 'team stop' requires a long-running team daemon (target team: "${name}"). ` +
-      `${DAEMON_DEFERRED_HINT}\n`,
-  );
-  return 2;
+function teamsBaseDir(): string {
+  const baseDir =
+    process.env.XDG_RUNTIME_DIR !== undefined &&
+    process.env.XDG_RUNTIME_DIR !== ""
+      ? process.env.XDG_RUNTIME_DIR
+      : (process.env.TMPDIR ?? os.tmpdir());
+  return path.join(baseDir, "swarm-harness", "teams");
 }
 
-export function runTeamKill(name: string): number {
-  process.stderr.write(
-    `error: 'team kill' requires a long-running team daemon (target team: "${name}"). ` +
-      `${DAEMON_DEFERRED_HINT}\n`,
-  );
-  return 2;
+function teamPaths(name: string): { sockPath: string; pidPath: string } {
+  const dir = path.join(teamsBaseDir(), name);
+  return {
+    sockPath: path.join(dir, "daemon.sock"),
+    pidPath: path.join(dir, "daemon.pid"),
+  };
+}
+
+async function readDaemonPid(pidPath: string): Promise<number | null> {
+  try {
+    const raw = await fsp.readFile(pidPath, "utf8");
+    const pid = Number.parseInt(raw.trim(), 10);
+    return Number.isFinite(pid) ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function runTeamSend(name: string, prompt: string): Promise<number> {
+  const { sockPath } = teamPaths(name);
+  const resp = await rpcOnce(sockPath, {
+    kind: "request",
+    id: `cli-send-${Date.now()}`,
+    method: "send_prompt",
+    params: { prompt },
+  });
+  if (resp === null) {
+    process.stderr.write(
+      `error: team "${name}" not running, or daemon unreachable at ${sockPath}.\n`,
+    );
+    return 2;
+  }
+  if (!resp.ok) {
+    process.stderr.write(
+      `error: team send rejected (${resp.error.code}): ${resp.error.message}\n`,
+    );
+    return 2;
+  }
+  process.stdout.write(`team "${name}" send_prompt acknowledged.\n`);
+  return 0;
+}
+
+export async function runTeamList(): Promise<number> {
+  const base = teamsBaseDir();
+  let entries: string[];
+  try {
+    entries = await fsp.readdir(base);
+  } catch {
+    process.stdout.write("(no running teams)\n");
+    return 0;
+  }
+  const live: Array<{ name: string; pid: number }> = [];
+  for (const name of entries) {
+    const { pidPath } = teamPaths(name);
+    const pid = await readDaemonPid(pidPath);
+    if (pid !== null && isProcessAlive(pid)) {
+      live.push({ name, pid });
+    }
+  }
+  if (live.length === 0) {
+    process.stdout.write("(no running teams)\n");
+    return 0;
+  }
+  process.stdout.write("NAME\tPID\n");
+  for (const { name, pid } of live) {
+    process.stdout.write(`${name}\t${pid}\n`);
+  }
+  return 0;
+}
+
+export async function runTeamStop(name: string): Promise<number> {
+  const { sockPath, pidPath } = teamPaths(name);
+  const resp = await rpcOnce(sockPath, {
+    kind: "request",
+    id: `cli-stop-${Date.now()}`,
+    method: "stop",
+    params: {},
+  });
+  if (resp === null) {
+    process.stderr.write(
+      `error: team "${name}" not running, or daemon unreachable at ${sockPath}.\n`,
+    );
+    return 2;
+  }
+  if (!resp.ok) {
+    process.stderr.write(
+      `error: team stop rejected (${resp.error.code}): ${resp.error.message}\n`,
+    );
+    return 2;
+  }
+  // Wait up to ~30s for the daemon process to actually exit (graceful drain
+  // can take time if in-flight workers are still mid-task).
+  const pid = await readDaemonPid(pidPath);
+  if (pid !== null) {
+    for (let i = 0; i < 60; i++) {
+      if (!isProcessAlive(pid)) break;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+  process.stdout.write(`team "${name}" stopped.\n`);
+  return 0;
+}
+
+export async function runTeamKill(name: string): Promise<number> {
+  const { sockPath, pidPath } = teamPaths(name);
+  const resp = await rpcOnce(sockPath, {
+    kind: "request",
+    id: `cli-kill-${Date.now()}`,
+    method: "kill",
+    params: {},
+  });
+  // For kill we tolerate transport errors — fall back to SIGKILL via pid file.
+  const pid = await readDaemonPid(pidPath);
+
+  if (resp === null) {
+    if (pid === null || !isProcessAlive(pid)) {
+      process.stdout.write(`team "${name}" was not running.\n`);
+      return 0;
+    }
+    // Daemon unresponsive — SIGKILL directly.
+    try {
+      process.kill(pid, "SIGKILL");
+      process.stdout.write(`team "${name}" killed via SIGKILL (pid ${pid}, daemon was unresponsive).\n`);
+      return 0;
+    } catch (err) {
+      process.stderr.write(
+        `error: failed to SIGKILL pid ${pid}: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+      return 2;
+    }
+  }
+
+  if (!resp.ok) {
+    process.stderr.write(
+      `error: team kill rejected (${resp.error.code}): ${resp.error.message}\n`,
+    );
+    return 2;
+  }
+
+  // Wait up to 5s; if still alive, escalate to SIGKILL.
+  if (pid !== null) {
+    for (let i = 0; i < 10; i++) {
+      if (!isProcessAlive(pid)) break;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    if (isProcessAlive(pid)) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+  process.stdout.write(`team "${name}" killed.\n`);
+  return 0;
 }
