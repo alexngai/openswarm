@@ -11,6 +11,7 @@ import { parseArgv } from "./argv.js";
 import { runDoctor } from "./doctor.js";
 import { runInit } from "./init.js";
 import { runWorkerEntry } from "./worker-entry.js";
+import { runTeamDaemonEntry } from "./team-daemon-entry.js";
 import { runSwarm } from "./swarm.js";
 import {
   runTeamStart,
@@ -709,6 +710,12 @@ export async function main(argv: string[]): Promise<number> {
     case "worker":
       return runWorkerEntry();
 
+    case "team-daemon-entry":
+      // v0.5 stage 5E.3: forked per-team daemon entry. Reads its TeamSpec +
+      // socket/pid/events/state paths from SWARM_HARNESS_DAEMON_* env set by
+      // the parent forker (`team start --detach`).
+      return runTeamDaemonEntry();
+
     case "swarm-run":
       return runSwarm({
         tasksFile: parsed.tasksFile,
@@ -731,6 +738,7 @@ export async function main(argv: string[]): Promise<number> {
         concurrency: parsed.concurrency,
         output: parsed.output,
         ...(parsed.mapUrl !== undefined && { mapUrl: parsed.mapUrl }),
+        detach: parsed.detach,
       });
 
     case "topology":

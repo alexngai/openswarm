@@ -6,8 +6,12 @@
  * surface (`team send`, `team list`, `team stop`, `--map`) lands in 4K.
  */
 
+import * as child_process from "node:child_process";
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
+import * as net from "node:net";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { PermissionMode } from "../core/types.js";
 import { Orchestrator } from "../swarm/orchestrator.js";
 import { loadTemplate } from "../swarm/openteams/loader.js";
@@ -41,6 +45,11 @@ export interface TeamStartOptions {
    * the production factory is built via dynamic import.
    */
   readonly mapFactory?: MapClientFactory;
+  /**
+   * v0.5 stage 5E.3: when true, fork a per-team daemon and return 0 once the
+   * socket binds. Sync (default) behavior is byte-identical to v0.4.
+   */
+  readonly detach?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -76,6 +85,12 @@ export async function runTeamStart(
       `error: failed to map template "${templateName}" to TeamSpec: ${err instanceof Error ? err.message : String(err)}\n`,
     );
     return 2;
+  }
+
+  // 2a. v0.5 stage 5E.3: detach branch. Fork the per-team daemon and return
+  //     once the socket binds. Sync (default) flow continues below unchanged.
+  if (opts.detach === true) {
+    return await detachAndForkDaemon(spec);
   }
 
   // 3. Optional MAP adapter (v0.4 stage 4J — observability).
@@ -301,6 +316,128 @@ export async function runTopology(opts: TopologyRunOptions): Promise<number> {
   return result.failed > 0 || result.timeout > 0 || result.cancelled > 0
     ? 1
     : 0;
+}
+
+// ---------------------------------------------------------------------------
+// detachAndForkDaemon — v0.5 stage 5E.3
+//
+// Fork team-daemon-entry (re-exec ourselves with --team-daemon) so the team
+// outlives the parent shell. Wait up to 2s for the daemon's socket to bind
+// before returning success. On startup failure the daemon's stdio log is
+// dumped to stderr so the operator can see what went wrong.
+// ---------------------------------------------------------------------------
+
+interface DaemonPaths {
+  readonly dir: string;
+  readonly sockPath: string;
+  readonly pidPath: string;
+  readonly eventsPath: string;
+  readonly statePath: string;
+  readonly logPath: string;
+  readonly specPath: string;
+}
+
+function computeDaemonPaths(teamName: string): DaemonPaths {
+  // V0.5.Q3 — XDG_RUNTIME_DIR with TMPDIR fallback for darwin.
+  const baseDir =
+    process.env.XDG_RUNTIME_DIR !== undefined &&
+    process.env.XDG_RUNTIME_DIR !== ""
+      ? process.env.XDG_RUNTIME_DIR
+      : (process.env.TMPDIR ?? os.tmpdir());
+  const dir = path.join(baseDir, "swarm-harness", "teams", teamName);
+  return {
+    dir,
+    sockPath: path.join(dir, "daemon.sock"),
+    pidPath: path.join(dir, "daemon.pid"),
+    eventsPath: path.join(dir, "events.jsonl"),
+    statePath: path.join(dir, "state.json"),
+    logPath: path.join(dir, "daemon.log"),
+    specPath: path.join(dir, "spec.json"),
+  };
+}
+
+async function tryConnect(sockPath: string): Promise<boolean> {
+  return await new Promise((resolve) => {
+    const socket = net.createConnection(sockPath, () => {
+      socket.end();
+      resolve(true);
+    });
+    socket.on("error", () => resolve(false));
+  });
+}
+
+async function detachAndForkDaemon(spec: TeamSpec): Promise<number> {
+  const paths = computeDaemonPaths(spec.name);
+  await fsp.mkdir(paths.dir, { recursive: true });
+
+  // Write the spec where the forked daemon will read it.
+  await fsp.writeFile(paths.specPath, JSON.stringify(spec));
+
+  // Open log fd shared by stdout + stderr of the daemon. The daemon's own
+  // events.jsonl writer (5E.5) is independent of this — daemon.log captures
+  // startup errors and any stray writes the daemon does to its own stdio.
+  const logHandle = await fsp.open(paths.logPath, "a");
+
+  // Re-exec ourselves with --team-daemon. process.argv[1] is the path to the
+  // CLI bundle (dist/cli.js or similar). The daemon reads everything from env.
+  const cliPath = process.argv[1];
+  if (cliPath === undefined) {
+    process.stderr.write(
+      "error: --detach requires process.argv[1] to be the swarm-harness CLI path\n",
+    );
+    await logHandle.close();
+    return 2;
+  }
+
+  const child = child_process.spawn(
+    process.execPath,
+    [cliPath, "--team-daemon"],
+    {
+      detached: true,
+      stdio: ["ignore", logHandle.fd, logHandle.fd],
+      env: {
+        ...process.env,
+        SWARM_HARNESS_DAEMON_SPEC: paths.specPath,
+        SWARM_HARNESS_DAEMON_SOCK: paths.sockPath,
+        SWARM_HARNESS_DAEMON_PID: paths.pidPath,
+        SWARM_HARNESS_DAEMON_EVENTS: paths.eventsPath,
+        SWARM_HARNESS_DAEMON_STATE: paths.statePath,
+      },
+    },
+  );
+
+  // The child has its own copy of the fd; we can release the parent's handle.
+  await logHandle.close();
+  child.unref();
+
+  // Retry connect for up to 2s. Each iteration: 250ms sleep, then attempt.
+  for (let i = 0; i < 8; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    if (child.exitCode !== null && child.exitCode !== 0) {
+      // Daemon exited early — surface its log.
+      const log = await fsp.readFile(paths.logPath, "utf8").catch(() => "");
+      process.stderr.write(
+        `error: team daemon exited early (code ${child.exitCode})\n` +
+          (log.length > 0 ? `daemon log:\n${log}\n` : ""),
+      );
+      return 2;
+    }
+    if (await tryConnect(paths.sockPath)) {
+      process.stderr.write(
+        `[swarm-harness] team "${spec.name}" started (pid ${child.pid}, socket ${paths.sockPath})\n`,
+      );
+      return 0;
+    }
+  }
+
+  // Timeout — daemon didn't bind in 2s. Dump log + exit non-zero.
+  const log = await fsp.readFile(paths.logPath, "utf8").catch(() => "");
+  process.stderr.write(
+    `error: team daemon did not bind socket within 2s (pid ${child.pid})\n` +
+      `inspect: ${paths.logPath}\n` +
+      (log.length > 0 ? `\nlog tail:\n${log}\n` : ""),
+  );
+  return 2;
 }
 
 // ---------------------------------------------------------------------------

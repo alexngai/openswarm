@@ -84,6 +84,7 @@ export type ParsedArgs =
   | { kind: "help" }
   | { kind: "version" }
   | { kind: "worker" }
+  | { kind: "team-daemon-entry" }
   | {
       kind: "swarm-run";
       tasksFile: string;
@@ -105,6 +106,8 @@ export type ParsedArgs =
       permissionMode: PermissionMode;
       /** When set, the orchestrator wires a MapAdapter to this URL (v0.4 stage 4J). */
       mapUrl?: string;
+      /** v0.5 stage 5E.3: when true, fork the team daemon and return immediately. */
+      detach: boolean;
     }
   | {
       kind: "topology";
@@ -213,6 +216,10 @@ export function parseArgv(args: string[]): ParsedArgs {
   // dispatch layer can print the v0.4 limitation note exactly once.
   let ecosystem = false;
 
+  // v0.5 stage 5E.3 — --detach flag for `team start`. When set, the parent
+  // forks team-daemon-entry and returns 0 once the daemon's socket binds.
+  let detach = false;
+
   // First pass: scan for early-exit flags (--help, -h, --version, -V) and
   // collect flags that precede the subcommand / positional.
   // We do a single-pass left-to-right parse so flags can appear anywhere.
@@ -234,6 +241,12 @@ export function parseArgv(args: string[]): ParsedArgs {
     // Internal worker flags — not advertised in --help.
     if (tok === "--worker") {
       return { kind: "worker" };
+    }
+    if (tok === "--team-daemon") {
+      // v0.5 stage 5E.3: internal entry for the forked per-team daemon.
+      // Reads its spec + paths from SWARM_HARNESS_DAEMON_* env (set by the
+      // parent forker in `team start --detach`).
+      return { kind: "team-daemon-entry" };
     }
 
     if (tok === "--agent-id" || tok.startsWith("--agent-id=")) {
@@ -499,6 +512,13 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
+    // v0.5 stage 5E.3: --detach for `team start`. Boolean; no value.
+    if (tok === "--detach") {
+      detach = true;
+      i++;
+      continue;
+    }
+
     // v0.4 stage 4K: --spec <path> for the `topology` subcommand. Required
     // when topology is invoked; ignored otherwise (the topology dispatch is
     // the only consumer).
@@ -753,6 +773,7 @@ export function parseArgv(args: string[]): ParsedArgs {
           output: swarmOutput,
           permissionMode,
           ...(mapUrl !== undefined && { mapUrl }),
+          detach,
         };
       }
       if (subSub === "send") {

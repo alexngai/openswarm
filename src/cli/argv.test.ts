@@ -279,6 +279,25 @@ describe("parseArgv", () => {
     expect(result.mapUrl).toBeUndefined();
   });
 
+  // ---- v0.5 stage 5E.3 — --detach + --team-daemon -------------------------
+
+  it("team start --detach sets detach=true", () => {
+    const result = parseArgv(["team", "start", "gsd", "--detach"]);
+    if (result.kind !== "team-start") throw new Error("expected team-start");
+    expect(result.detach).toBe(true);
+  });
+
+  it("team start without --detach leaves detach=false (v0.4 behavior preserved)", () => {
+    const result = parseArgv(["team", "start", "gsd"]);
+    if (result.kind !== "team-start") throw new Error("expected team-start");
+    expect(result.detach).toBe(false);
+  });
+
+  it("--team-daemon at top level returns team-daemon-entry kind", () => {
+    const result = parseArgv(["--team-daemon"]);
+    expect(result.kind).toBe("team-daemon-entry");
+  });
+
   // ---- swarm run + dead-letter flags ---------------------------------------
 
   it("swarm run with --dead-letter sets deadLetter path", () => {
