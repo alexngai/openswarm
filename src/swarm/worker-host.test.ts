@@ -41,6 +41,47 @@ function makeHost(transport: ParentTransport): WorkerHost {
   );
 }
 
+describe("WorkerHost.scopeOf (v0.4 stage 4M.7)", () => {
+  it("returns env-derived teamScope for own agentId", () => {
+    const { transport } = makeFakeTransport();
+    const host = new WorkerHost(
+      "agent-1" as AgentId,
+      1,
+      "workspace-write" as PermissionMode,
+      transport,
+      undefined,
+      undefined,
+      "swarm:gsd",
+    );
+    expect(host.scopeOf("agent-1" as AgentId)).toBe("swarm:gsd");
+  });
+
+  it('defaults to "swarm:default" when no teamScope is provided', () => {
+    const { transport } = makeFakeTransport();
+    const host = new WorkerHost(
+      "agent-1" as AgentId,
+      1,
+      "workspace-write" as PermissionMode,
+      transport,
+    );
+    expect(host.scopeOf("agent-1" as AgentId)).toBe("swarm:default");
+  });
+
+  it("throws when asked about another agent's scope (worker only knows self)", () => {
+    const { transport } = makeFakeTransport();
+    const host = new WorkerHost(
+      "agent-1" as AgentId,
+      1,
+      "workspace-write" as PermissionMode,
+      transport,
+      undefined,
+      undefined,
+      "swarm:gsd",
+    );
+    expect(() => host.scopeOf("agent-2" as AgentId)).toThrow(/non-self/);
+  });
+});
+
 describe("WorkerHost.askUser", () => {
   const ORIGINAL_ENV = process.env.SWARM_HARNESS_ASK_TIMEOUT_MS;
   beforeEach(() => {

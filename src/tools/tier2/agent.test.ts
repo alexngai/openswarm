@@ -84,27 +84,27 @@ describe("agent tool — framework parameter", () => {
   });
 });
 
-describe("agent tool — worker-context guards (v0.4 stage 4M, B2)", () => {
-  it('rejects team: "self" cleanly when invoked from a worker host', async () => {
+describe("agent tool — worker-context team scope (v0.4 stage 4M.7)", () => {
+  it('worker-side team: "self" resolves teamScope via host.scopeOf', async () => {
+    // 4M.7 enables what 4M.1's B2 fix had to defer: worker-spawned peers
+    // in the caller's team scope. WorkerHost.scopeOf returns the
+    // env-derived scope; the agent tool plumbs it onto the SpawnRequest;
+    // the spawn IPC handler honors it on the orchestrator side.
     const { host, calls } = makeFakeHost();
-    // Flip the fake host's discriminator to "worker" to simulate a
-    // worker-side caller. Worker-spawned peer support is deferred to v0.5+.
     (host as unknown as { kind: string; mode: string }).kind = "worker";
     (host as unknown as { kind: string; mode: string }).mode = "worker";
+    const callerScope = "swarm:gsd";
+    (host as unknown as { scopeOf: (id: AgentId) => string }).scopeOf = () =>
+      callerScope;
 
     const result = await agentTool.execute(
       { prompt: "do work", team: "self", wait: false },
       { cwd: CTX_CWD, host },
     );
 
-    expect(result.status).toBe("error");
-    if (result.status === "error") {
-      expect(result.message).toMatch(/team="self"/);
-      expect(result.message).toMatch(/v0\.4/);
-    }
-    // Critical: no spawn was issued, no task was created.
-    expect(calls.spawn).toHaveLength(0);
-    expect(calls.taskCreate).toHaveLength(0);
+    expect(result.status).toBe("ok");
+    expect(calls.spawn).toHaveLength(1);
+    expect(calls.spawn[0]?.teamScope).toBe(callerScope);
   });
 
   it("worker-side default team (omitted) still spawns via tree-spawn path", async () => {

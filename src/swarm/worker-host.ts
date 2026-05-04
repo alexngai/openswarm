@@ -41,6 +41,13 @@ export class WorkerHost implements SwarmHost {
   /** Epoch ms when this WorkerHost was constructed (worker process start). */
   private readonly _startedAt: number;
 
+  /**
+   * Team scope this worker belongs to. Set by `worker-entry.ts` from
+   * `SWARM_HARNESS_TEAM_SCOPE` env (V0.4.Q1 propagation). Defaults to
+   * `"swarm:default"` for legacy single-team runs.
+   */
+  private readonly _teamScope: string;
+
   constructor(
     readonly agentId: AgentId,
     readonly depth: number,
@@ -48,8 +55,10 @@ export class WorkerHost implements SwarmHost {
     private readonly transport: ParentTransport,
     private readonly parentToolUseId?: string,
     parentAgentId?: AgentId,
+    teamScope?: string,
   ) {
     this._parentAgentId = parentAgentId;
+    this._teamScope = teamScope ?? "swarm:default";
     this._startedAt = Date.now();
     // Subscribe to sub_agent_event notifications. This handler is installed
     // unconditionally so messages that arrive between turns (e.g. while the
@@ -265,6 +274,21 @@ export class WorkerHost implements SwarmHost {
     void this.transport.notify("lane_event", { ...full, payload });
   }
 
+  /**
+   * Resolve the team scope for an agent id. WorkerHost only knows about its
+   * own scope (set at construction from env); callers asking about another
+   * agent's scope must go through the orchestrator. v0.4 stage 4M.7: enables
+   * the agent tool's `team: "self"` path on the worker side.
+   */
+  scopeOf(agentId: AgentId): string {
+    if (agentId !== this.agentId) {
+      throw new Error(
+        `WorkerHost.scopeOf: cannot resolve scope for non-self agent "${agentId}" (worker only knows its own scope)`,
+      );
+    }
+    return this._teamScope;
+  }
+
   async spawn(request: SpawnRequest): Promise<AgentHandle> {
     // Proxy to parent. Parent returns an AgentHandle-shaped object that's
     // actually a reference — for M1, we expose `wait` via a separate
@@ -281,6 +305,9 @@ export class WorkerHost implements SwarmHost {
       // v0.4 stage 4M.6: forward framework so worker-spawned children can opt
       // into FrameworkProvider mode. Parallel fix to 4M.5 in StandaloneHost.spawn.
       framework: request.framework,
+      // v0.4 stage 4M.7: forward teamScope so worker-side agent({team: "self"})
+      // peer-spawn lands in the caller's team scope (not "swarm:default").
+      teamScope: request.teamScope,
       parentAgentId: this.agentId,
       parentToolUseId: request.parentToolUseId ?? this.parentToolUseId,
       taskId: request.taskId,

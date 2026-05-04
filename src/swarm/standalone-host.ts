@@ -1063,6 +1063,10 @@ export class StandaloneHost implements SwarmHost {
         permissionMode: params.permissionMode,
         ...(params.model !== undefined && { model: params.model }),
         ...(params.framework !== undefined && { framework: params.framework }),
+        // v0.4 stage 4M.7: honor caller-supplied teamScope so worker-side
+        // agent({team: "self"}) lands the child as a peer in the caller's
+        // scope rather than the default scope.
+        ...(params.teamScope !== undefined && { teamScope: params.teamScope }),
         ...(params.taskId !== undefined && { taskId: params.taskId }),
         ...(params.parentToolUseId !== undefined && {
           parentToolUseId: params.parentToolUseId,

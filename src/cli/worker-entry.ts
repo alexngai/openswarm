@@ -164,7 +164,19 @@ export async function runWorkerEntry(): Promise<number> {
   const transport = new ParentTransport({ agentId, heartbeatIntervalMs });
   const permissionMode = (process.env.SWARM_HARNESS_PERMISSION_MODE ??
     "workspace-write") as PermissionMode;
-  const host = new WorkerHost(agentId, depth, permissionMode, transport, parentToolUseId);
+  // v0.4 stage 4M.7: WorkerHost reads team scope from env so its scopeOf()
+  // can resolve the worker's own scope when the agent tool spawns a peer
+  // via team: "self". Falls back to "swarm:default" when unset.
+  const teamScope = process.env.SWARM_HARNESS_TEAM_SCOPE;
+  const host = new WorkerHost(
+    agentId,
+    depth,
+    permissionMode,
+    transport,
+    parentToolUseId,
+    undefined,
+    teamScope,
+  );
 
   // v0.4 stage 4D: opt-in long-lived worker mode.
   const longLived = process.env.SWARM_HARNESS_LONG_LIVED === "1";

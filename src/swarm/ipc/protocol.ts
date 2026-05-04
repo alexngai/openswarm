@@ -323,6 +323,12 @@ export const SpawnRequestParamsSchema = z.object({
   model: z.string().optional(),
   /** v0.4 stage 4M.6: forwarded from SpawnRequest.framework. */
   framework: z.enum(["claude-agent-sdk", "codex-chatgpt"]).optional(),
+  /**
+   * v0.4 stage 4M.7: forwarded from SpawnRequest.teamScope. When set, the
+   * spawn handler injects this scope on the spawned child (peer-spawn). When
+   * undefined, child gets the orchestrator's default scope.
+   */
+  teamScope: z.string().optional(),
   parentAgentId: z.string(),
   parentToolUseId: z.string().optional(),
   taskId: z.string().optional(),
