@@ -352,6 +352,99 @@ describe("TeamDaemon — RPC handlers (5E.2 stub set)", () => {
   });
 });
 
+describe("TeamDaemon — events.jsonl writer (5E.5)", () => {
+  let paths: TeamDaemonPaths;
+  let daemon: TeamDaemon | undefined;
+
+  beforeEach(() => {
+    paths = tmpPaths();
+  });
+
+  afterEach(async () => {
+    if (daemon) {
+      await daemon.stop().catch(() => {});
+      daemon = undefined;
+    }
+  });
+
+  it("appends each subscribed event as a JSONL line to events.jsonl", async () => {
+    type AnyHandler = (event: unknown) => void;
+    let emit: AnyHandler | undefined;
+    const orchestrator: TeamDaemonOrchestrator = {
+      runTeam: async () => {
+        await new Promise(() => {});
+        return {
+          succeeded: 0,
+          failed: 0,
+          timeout: 0,
+          cancelled: 0,
+          resultWriteFailures: 0,
+          deadLetterViolation: false,
+          deadLetterWriteFailures: 0,
+        };
+      },
+      subscribeEvents: ((handler: AnyHandler) => {
+        emit = handler;
+        return () => {
+          emit = undefined;
+        };
+      }) as TeamDaemonOrchestrator["subscribeEvents"],
+    };
+    daemon = new TeamDaemon({ spec: fakeSpec(), paths, orchestrator });
+    await daemon.start();
+
+    expect(emit).toBeDefined();
+    emit!({ ts: 100, agentId: "a", type: "worker_spawned", payload: {} });
+    emit!({ ts: 200, agentId: "a", type: "worker_exited", payload: {} });
+
+    // Stop flushes the writer.
+    await daemon.stop();
+    daemon = undefined;
+
+    const raw = await fs.readFile(paths.eventsPath, "utf8");
+    const lines = raw.split("\n").filter((l) => l.length > 0);
+    expect(lines).toHaveLength(2);
+    expect(JSON.parse(lines[0]!)).toMatchObject({ ts: 100, type: "worker_spawned" });
+    expect(JSON.parse(lines[1]!)).toMatchObject({ ts: 200, type: "worker_exited" });
+  });
+
+  it("does not create events.jsonl when orchestrator omits subscribeEvents", async () => {
+    daemon = new TeamDaemon({
+      spec: fakeSpec(),
+      paths,
+      orchestrator: fakeOrch({ neverResolves: true }),
+    });
+    await daemon.start();
+    expect(await fileExists(paths.eventsPath)).toBe(false);
+  });
+
+  it("unsubscribes events on stop (cleanup)", async () => {
+    let unsubCalled = false;
+    const orchestrator: TeamDaemonOrchestrator = {
+      runTeam: async () => {
+        await new Promise(() => {});
+        return {
+          succeeded: 0,
+          failed: 0,
+          timeout: 0,
+          cancelled: 0,
+          resultWriteFailures: 0,
+          deadLetterViolation: false,
+          deadLetterWriteFailures: 0,
+        };
+      },
+      subscribeEvents: () => () => {
+        unsubCalled = true;
+      },
+    };
+    daemon = new TeamDaemon({ spec: fakeSpec(), paths, orchestrator });
+    await daemon.start();
+    await daemon.stop();
+    daemon = undefined;
+    expect(unsubCalled).toBe(true);
+  });
+});
+
 describe("TeamDaemon — stale-socket + duplicate-name (V0.5.Q5b + Q7)", () => {
   let paths: TeamDaemonPaths;
   let daemon: TeamDaemon | undefined;

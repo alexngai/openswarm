@@ -12,13 +12,16 @@
  */
 
 import { createServer, type Server, type Socket } from "node:net";
+import { EventEmitter } from "node:events";
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { Writable } from "node:stream";
 import type { TeamSpec } from "./team-spec.js";
 import type { TeamResult } from "./topologies-types.js";
+import type { LaneEvent } from "./events.js";
 import { Orchestrator } from "./orchestrator.js";
+import { StandaloneHost } from "./standalone-host.js";
 import {
   TEAM_DAEMON_ERROR_CODES,
   type TeamDaemonRequest,
@@ -47,6 +50,12 @@ export interface TeamDaemonPaths {
  */
 export interface TeamDaemonOrchestrator {
   runTeam(spec: TeamSpec): Promise<TeamResult>;
+  /**
+   * v0.5 stage 5E.5: optional lane-event subscription. When present the
+   * daemon attaches a handler that writes each event as a JSONL line to
+   * events.jsonl. Returns an unsubscribe function called at daemon stop.
+   */
+  subscribeEvents?(handler: (event: LaneEvent) => void): () => void;
 }
 
 export interface TeamDaemonOptions {
@@ -82,6 +91,8 @@ export class TeamDaemon {
   private signalCleanup: (() => void) | undefined;
   private runTeamPromise: Promise<TeamResult> | undefined;
   private stopped = false;
+  private eventsStream: fs.WriteStream | undefined;
+  private eventsUnsubscribe: (() => void) | undefined;
 
   constructor(opts: TeamDaemonOptions) {
     this.opts = opts;
@@ -135,8 +146,28 @@ export class TeamDaemon {
       process.off("SIGINT", onSig);
     };
 
-    // 7. Build orchestrator if not injected; kick off runTeam in background.
+    // 7. Build orchestrator if not injected.
     this.orchestrator = this.opts.orchestrator ?? this.buildOrchestrator();
+
+    // 8. v0.5 stage 5E.5 — open events.jsonl writer + subscribe lane events.
+    if (this.orchestrator.subscribeEvents !== undefined) {
+      this.eventsStream = fs.createWriteStream(this.opts.paths.eventsPath, {
+        flags: "a",
+      });
+      const stream = this.eventsStream;
+      this.eventsUnsubscribe = this.orchestrator.subscribeEvents((event) => {
+        // {ts, ...laneEvent} shape per docs/28 §V0.5.Q4. LaneEvent already
+        // carries its own ts; we keep it (rather than overwriting) so the
+        // emit-time clock is preserved.
+        try {
+          stream.write(JSON.stringify(event) + "\n");
+        } catch {
+          /* writer broken — drop the event silently */
+        }
+      });
+    }
+
+    // 9. Kick off runTeam in the background.
     this.runTeamPromise = this.orchestrator.runTeam(this.opts.spec);
   }
 
@@ -171,6 +202,17 @@ export class TeamDaemon {
       this.server = undefined;
     }
 
+    // v0.5 stage 5E.5 — detach event subscription + close events.jsonl writer.
+    if (this.eventsUnsubscribe !== undefined) {
+      this.eventsUnsubscribe();
+      this.eventsUnsubscribe = undefined;
+    }
+    if (this.eventsStream !== undefined) {
+      const stream = this.eventsStream;
+      await new Promise<void>((resolve) => stream.end(() => resolve()));
+      this.eventsStream = undefined;
+    }
+
     await this.unlinkIfExists(this.opts.paths.sockPath);
     await this.unlinkIfExists(this.opts.paths.pidPath);
 
@@ -190,13 +232,28 @@ export class TeamDaemon {
     const resultsOut = fs.createWriteStream(this.opts.paths.statePath, {
       flags: "a",
     });
+    // v0.5 stage 5E.5 — construct the host explicitly so the daemon can
+    // subscribe to its lane-event bus. Orchestrator.opts.host accepts a
+    // pre-built host; without it Orchestrator would build a private one we
+    // couldn't subscribe to.
+    const host = new StandaloneHost({ permissionMode: "workspace-write" });
     const orch = new Orchestrator({
       concurrency: 1,
       permissionMode: "workspace-write",
       resultsOut,
       eventsOut: this.opts.eventsOut ?? process.stderr,
+      host,
     });
-    return { runTeam: (spec) => orch.runTeam(spec) };
+    // The host has a private `events` EventEmitter (same duck-typed access
+    // pattern used by src/swarm/adapters/map-adapter.ts:84-86).
+    const bus = (host as unknown as { readonly events: EventEmitter }).events;
+    return {
+      runTeam: (spec) => orch.runTeam(spec),
+      subscribeEvents: (handler) => {
+        bus.on("lane_event", handler);
+        return () => bus.off("lane_event", handler);
+      },
+    };
   }
 
   private async writeState(): Promise<void> {

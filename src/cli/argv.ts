@@ -125,6 +125,7 @@ export type ParsedArgs =
   | { kind: "team-list" }
   | { kind: "team-stop"; name: string }
   | { kind: "team-kill"; name: string }
+  | { kind: "team-logs"; name: string; follow: boolean }
   | { kind: "error"; message: string; showHelp: boolean };
 
 // ---------------------------------------------------------------------------
@@ -219,6 +220,9 @@ export function parseArgv(args: string[]): ParsedArgs {
   // v0.5 stage 5E.3 — --detach flag for `team start`. When set, the parent
   // forks team-daemon-entry and returns 0 once the daemon's socket binds.
   let detach = false;
+
+  // v0.5 stage 5E.5 — --follow flag for `team logs`.
+  let follow = false;
 
   // First pass: scan for early-exit flags (--help, -h, --version, -V) and
   // collect flags that precede the subcommand / positional.
@@ -515,6 +519,13 @@ export function parseArgv(args: string[]): ParsedArgs {
     // v0.5 stage 5E.3: --detach for `team start`. Boolean; no value.
     if (tok === "--detach") {
       detach = true;
+      i++;
+      continue;
+    }
+
+    // v0.5 stage 5E.5: --follow for `team logs`. Boolean; no value.
+    if (tok === "--follow" || tok === "-f") {
+      follow = true;
       i++;
       continue;
     }
@@ -827,6 +838,17 @@ export function parseArgv(args: string[]): ParsedArgs {
           };
         }
         return { kind: "team-kill", name };
+      }
+      if (subSub === "logs") {
+        const name = positionals[1];
+        if (name === undefined) {
+          return {
+            kind: "error",
+            message: "team logs requires a team name",
+            showHelp: true,
+          };
+        }
+        return { kind: "team-logs", name, follow };
       }
       return {
         kind: "error",
