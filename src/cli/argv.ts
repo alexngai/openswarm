@@ -126,6 +126,7 @@ export type ParsedArgs =
   | { kind: "team-stop"; name: string }
   | { kind: "team-kill"; name: string }
   | { kind: "team-logs"; name: string; follow: boolean }
+  | { kind: "team-watch"; name: string }
   | { kind: "error"; message: string; showHelp: boolean };
 
 // ---------------------------------------------------------------------------
@@ -849,6 +850,17 @@ export function parseArgv(args: string[]): ParsedArgs {
           };
         }
         return { kind: "team-logs", name, follow };
+      }
+      if (subSub === "watch") {
+        const name = positionals[1];
+        if (name === undefined) {
+          return {
+            kind: "error",
+            message: "team watch requires a team name",
+            showHelp: true,
+          };
+        }
+        return { kind: "team-watch", name };
       }
       return {
         kind: "error",

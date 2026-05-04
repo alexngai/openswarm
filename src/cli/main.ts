@@ -13,6 +13,7 @@ import { runInit } from "./init.js";
 import { runWorkerEntry } from "./worker-entry.js";
 import { runTeamDaemonEntry } from "./team-daemon-entry.js";
 import { runTeamLogs } from "./team-logs.js";
+import { runTeamWatch } from "./team-watch.js";
 import { runSwarm } from "./swarm.js";
 import {
   runTeamStart,
@@ -756,6 +757,9 @@ export async function main(argv: string[]): Promise<number> {
 
     case "team-logs":
       return runTeamLogs(parsed.name, { follow: parsed.follow });
+
+    case "team-watch":
+      return runTeamWatch(parsed.name);
 
     case "team-send":
       return runTeamSend(parsed.name, parsed.prompt);
