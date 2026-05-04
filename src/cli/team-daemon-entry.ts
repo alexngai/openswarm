@@ -73,14 +73,23 @@ export async function runTeamDaemonEntry(): Promise<number> {
     return 2;
   }
 
-  // Wait for the team to finish naturally OR a signal to trigger stop().
-  // Errors from runTeam are surfaced on the underlying orchestrator's
-  // resultsOut stream; the daemon process exits cleanly in either case.
-  try {
-    await daemon.awaitTeamCompletion();
-  } catch {
-    /* runTeam errors are recorded; daemon still tears down cleanly */
-  }
-  await daemon.stop();
+  // v0.5 stage 5E.6: stay alive until an external `team stop`/`team kill`
+  // RPC (or SIGTERM/SIGINT) tears the daemon down. The runTeam promise
+  // resolves when the underlying topology completes; we observe the result
+  // for events.jsonl + state.json but do NOT exit on it. Rationale: the
+  // operator detached precisely so they can `team list`/`team logs` later;
+  // exiting at team-completion would race the operator's first poll. The
+  // daemon's signal handlers (installed in start()) own the actual exit.
+  daemon.awaitTeamCompletion().catch(() => {
+    /* errors are surfaced on the orchestrator's resultsOut stream */
+  });
+
+  // Block until signal handlers fire daemon.stop(). The promise here
+  // intentionally never resolves — daemon.stop() is called from process.on
+  // signal handlers OR the stop/kill RPC handlers, both of which take care
+  // of clean shutdown + (for kill) process.exit.
+  await new Promise<void>(() => {
+    /* never resolves; the signal/RPC path drives shutdown */
+  });
   return 0;
 }
