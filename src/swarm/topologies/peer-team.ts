@@ -47,6 +47,12 @@ export class PeerTeamTopology implements Topology {
       permissionMode: ctx.permissionMode,
     });
 
+    // v0.6 stage 5F: surface the live session so the Orchestrator (and
+    // through it the team daemon) can route subsequent send_prompt RPCs.
+    if (ctx.onTeamCreated !== undefined) {
+      ctx.onTeamCreated(team);
+    }
+
     ctx.host.emit({
       type: "team_started",
       payload: {
@@ -126,8 +132,13 @@ export class PeerTeamTopology implements Topology {
       });
       throw err;
     } finally {
-      // Cleanup: kill any survivors regardless of completion-rule outcome.
-      await team.dispose();
+      // v0.6 stage 5F: persistent teams skip dispose so the team daemon
+      // can spawn ad-hoc members via send_prompt after the initial spec
+      // members complete. Caller (typically the daemon) is responsible
+      // for disposing the team when the daemon exits.
+      if (ctx.persistent !== true) {
+        await team.dispose();
+      }
     }
 
     void aborted;

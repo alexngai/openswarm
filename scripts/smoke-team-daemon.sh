@@ -151,20 +151,23 @@ if [[ $LOGS_RC -ne 0 ]]; then
 fi
 echo "✓ team logs ran cleanly"
 
-# 4. team send — should return v0.6+ deferred error (5E.4 stub).
+# 4. team send — for fanout topology this fires the "no live TeamSession"
+# branch (5F: only peer-team supports persistent mode in v0.6). The smoke
+# verifies the error is structured + clear; the success path lives in the
+# unit test src/swarm/team-daemon.test.ts.
 SEND_OUT=$($BIN team send "$TEAM_NAME" "hi" 2>&1)
 SEND_RC=$?
 if [[ $SEND_RC -eq 0 ]]; then
-  echo "[fail] team send unexpectedly succeeded (should return v0.6+ error)"
+  echo "[fail] team send unexpectedly succeeded for a fanout topology"
   echo "$SEND_OUT"
   exit 1
 fi
-if ! echo "$SEND_OUT" | grep -q -i "v0.6\|persistent-team\|unknown_method"; then
-  echo "[fail] team send error did not match expected v0.6+ hint"
+if ! echo "$SEND_OUT" | grep -q -i "no live TeamSession\|unknown_method\|peer-team"; then
+  echo "[fail] team send error did not match expected 5F shape"
   echo "$SEND_OUT"
   exit 1
 fi
-echo "✓ team send returns v0.6+ deferred error"
+echo "✓ team send rejects fanout topology cleanly (no live TeamSession)"
 
 # 5. team stop — daemon should exit cleanly.
 STOP_OUT=$($BIN team stop "$TEAM_NAME" 2>&1)

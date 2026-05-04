@@ -17,12 +17,14 @@ import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { Writable } from "node:stream";
-import type { TeamSpec } from "./team-spec.js";
+import type { TeamSpec, MemberSpec } from "./team-spec.js";
 import type { TeamResult } from "./topologies-types.js";
 import type { LaneEvent } from "./events.js";
+import type { TeamSession } from "./team-session.js";
 import { Orchestrator } from "./orchestrator.js";
 import { StandaloneHost } from "./standalone-host.js";
 import {
+  SendPromptParamsSchema,
   TEAM_DAEMON_ERROR_CODES,
   type TeamDaemonRequest,
   type TeamDaemonResponse,
@@ -56,6 +58,13 @@ export interface TeamDaemonOrchestrator {
    * events.jsonl. Returns an unsubscribe function called at daemon stop.
    */
   subscribeEvents?(handler: (event: LaneEvent) => void): () => void;
+  /**
+   * v0.6 stage 5F: when present, returns the live TeamSession so the
+   * daemon's send_prompt handler can spawn ad-hoc members into the
+   * running team. Returns undefined when no team is active (yet, or for
+   * topologies that don't honor `persistent: true`).
+   */
+  getActiveTeam?(): TeamSession | undefined;
 }
 
 export interface TeamDaemonOptions {
@@ -237,12 +246,15 @@ export class TeamDaemon {
     // pre-built host; without it Orchestrator would build a private one we
     // couldn't subscribe to.
     const host = new StandaloneHost({ permissionMode: "workspace-write" });
+    // v0.6 stage 5F — persistent: true so the topology skips dispose() and
+    // the daemon can route send_prompt RPCs through the live TeamSession.
     const orch = new Orchestrator({
       concurrency: 1,
       permissionMode: "workspace-write",
       resultsOut,
       eventsOut: this.opts.eventsOut ?? process.stderr,
       host,
+      persistent: true,
     });
     // The host has a private `events` EventEmitter (same duck-typed access
     // pattern used by src/swarm/adapters/map-adapter.ts:84-86).
@@ -253,6 +265,7 @@ export class TeamDaemon {
         bus.on("lane_event", handler);
         return () => bus.off("lane_event", handler);
       },
+      getActiveTeam: () => orch.getActiveTeam(),
     };
   }
 
@@ -420,18 +433,18 @@ export class TeamDaemon {
     }
 
     if (req.method === "send_prompt") {
-      // V0.5 stage 5E.4: send_prompt requires the orchestrator to expose its
-      // active TeamSession so the daemon can route the prompt into the team's
-      // inbox per V0.4.Q4. Today's runTeam runs to completion without an idle
-      // wait state, so a "live team accepting prompts" requires persistent-
-      // team architecture work tracked for v0.6+. Reject cleanly with a hint.
-      this.sendErr(
-        socket,
-        req.id,
-        TEAM_DAEMON_ERROR_CODES.UNKNOWN_METHOD,
-        "send_prompt requires persistent-team support (orchestrator exposing " +
-          "live TeamSession.send). Tracked for v0.6+; see docs/28 V0.5.Q6.",
-      );
+      // v0.6 stage 5F: route the prompt through the live TeamSession by
+      // spawning an ad-hoc member with the prompt as its task. The new
+      // member inherits role + policies from the spec's first member so
+      // operators don't need to re-specify them per send.
+      void this.handleSendPrompt(socket, req).catch((err) => {
+        this.sendErr(
+          socket,
+          req.id,
+          TEAM_DAEMON_ERROR_CODES.INTERNAL_ERROR,
+          err instanceof Error ? err.message : String(err),
+        );
+      });
       return;
     }
 
@@ -442,6 +455,73 @@ export class TeamDaemon {
       TEAM_DAEMON_ERROR_CODES.UNKNOWN_METHOD,
       `unknown method: ${req.method}`,
     );
+  }
+
+  /**
+   * v0.6 stage 5F: spawn an ad-hoc member into the live TeamSession with
+   * the caller-supplied prompt. Inherits role + policies from the spec's
+   * first member so operators don't need to re-specify them every send.
+   *
+   * Returns SendPromptResult { delivered, recipients } per docs/28 §V0.5.Q6.
+   * Errors map to UNKNOWN_METHOD when the topology doesn't expose a live
+   * team, INTERNAL_ERROR on actual spawn failure.
+   */
+  private async handleSendPrompt(
+    socket: Socket,
+    req: TeamDaemonRequest,
+  ): Promise<void> {
+    const parsed = SendPromptParamsSchema.safeParse(req.params);
+    if (!parsed.success) {
+      this.sendErr(
+        socket,
+        req.id,
+        TEAM_DAEMON_ERROR_CODES.INVALID_PARAMS,
+        parsed.error.message,
+      );
+      return;
+    }
+    if (
+      this.orchestrator === undefined ||
+      this.orchestrator.getActiveTeam === undefined
+    ) {
+      this.sendErr(
+        socket,
+        req.id,
+        TEAM_DAEMON_ERROR_CODES.UNKNOWN_METHOD,
+        "send_prompt requires an orchestrator with getActiveTeam (only the " +
+          "production daemon path supports this; tests inject custom orchestrators)",
+      );
+      return;
+    }
+    const team = this.orchestrator.getActiveTeam();
+    if (team === undefined) {
+      this.sendErr(
+        socket,
+        req.id,
+        TEAM_DAEMON_ERROR_CODES.UNKNOWN_METHOD,
+        "no live TeamSession — only PeerTeamTopology supports persistent " +
+          "mode in v0.6 (other topologies dispose after their initial run)",
+      );
+      return;
+    }
+
+    // Inherit role + policies from the spec's first member; this matches the
+    // operator's mental model of "send the team another task in the same
+    // role they were already running".
+    const template: MemberSpec | undefined = this.opts.spec.members[0];
+    const adhocMember: MemberSpec = {
+      role: template?.role ?? "",
+      prompt: parsed.data.prompt,
+      branchPolicy: template?.branchPolicy ?? { kind: "none" },
+      commitPolicy: template?.commitPolicy ?? { kind: "none" },
+      escalationPolicy: template?.escalationPolicy ?? { kind: "none" },
+    };
+
+    const handle = await team.spawnMember(adhocMember);
+    this.sendOk(socket, req.id, {
+      delivered: 1,
+      recipients: [handle.agentId],
+    });
   }
 
   private sendOk(socket: Socket, id: string, result: unknown): void {

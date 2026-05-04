@@ -229,7 +229,7 @@ describe("TeamDaemon — RPC handlers (5E.2 stub set)", () => {
     socket.end();
   });
 
-  it("send_prompt returns UNKNOWN_METHOD with a v0.6+ persistent-team hint (5E.4)", async () => {
+  it("send_prompt returns UNKNOWN_METHOD when the orchestrator doesn't expose getActiveTeam (5F)", async () => {
     daemon = new TeamDaemon({
       spec: fakeSpec(),
       paths,
@@ -253,7 +253,120 @@ describe("TeamDaemon — RPC handlers (5E.2 stub set)", () => {
     };
     expect(response.ok).toBe(false);
     expect(response.error?.code).toBe("unknown_method");
-    expect(response.error?.message).toMatch(/v0\.6/);
+    expect(response.error?.message).toMatch(/getActiveTeam/);
+    socket.end();
+  });
+
+  it("send_prompt spawns an ad-hoc member into the live TeamSession (5F)", async () => {
+    // Stub orchestrator that exposes getActiveTeam returning a fake session
+    // with a recording spawnMember.
+    let spawnedSpec: { role?: string; prompt?: string } | undefined;
+    const fakeTeam = {
+      spawnMember: async (spec: { role?: string; prompt?: string }) => {
+        spawnedSpec = spec;
+        return {
+          agentId: "ad-hoc-agent-id",
+          sessionId: "ad-hoc-session",
+          wait: async () => ({ status: "success" as const, output: "" } as never),
+          kill: async () => {},
+          events: async function* () {},
+          runMore: async () => ({}) as never,
+          drain: async () => {},
+        };
+      },
+    } as unknown as import("./team-session.js").TeamSession;
+    const orchestrator: TeamDaemonOrchestrator = {
+      runTeam: async () => {
+        await new Promise(() => {});
+        return {
+          succeeded: 0,
+          failed: 0,
+          timeout: 0,
+          cancelled: 0,
+          resultWriteFailures: 0,
+          deadLetterViolation: false,
+          deadLetterWriteFailures: 0,
+        };
+      },
+      getActiveTeam: () => fakeTeam,
+    };
+    daemon = new TeamDaemon({
+      spec: fakeSpec({
+        members: [
+          {
+            id: "m1",
+            role: "executor",
+            prompt: "initial",
+            branchPolicy: { kind: "none" },
+            commitPolicy: { kind: "none" },
+            escalationPolicy: { kind: "none" },
+          },
+        ],
+      }),
+      paths,
+      orchestrator,
+    });
+    await daemon.start();
+
+    const socket = net.createConnection(paths.sockPath);
+    await new Promise<void>((resolve) => socket.once("connect", resolve));
+    socket.write(
+      JSON.stringify({
+        kind: "request",
+        id: "rpc-send-ok",
+        method: "send_prompt",
+        params: { prompt: "follow up task" },
+      }) + "\n",
+    );
+    const response = (await readResponse(socket)) as {
+      ok?: boolean;
+      result?: { delivered?: number; recipients?: string[] };
+    };
+    expect(response.ok).toBe(true);
+    expect(response.result?.delivered).toBe(1);
+    expect(response.result?.recipients).toEqual(["ad-hoc-agent-id"]);
+    // Ad-hoc member inherits role from spec[0]; prompt is the new payload.
+    expect(spawnedSpec?.role).toBe("executor");
+    expect(spawnedSpec?.prompt).toBe("follow up task");
+    socket.end();
+  });
+
+  it("send_prompt returns UNKNOWN_METHOD when getActiveTeam returns undefined (5F)", async () => {
+    const orchestrator: TeamDaemonOrchestrator = {
+      runTeam: async () => {
+        await new Promise(() => {});
+        return {
+          succeeded: 0,
+          failed: 0,
+          timeout: 0,
+          cancelled: 0,
+          resultWriteFailures: 0,
+          deadLetterViolation: false,
+          deadLetterWriteFailures: 0,
+        };
+      },
+      getActiveTeam: () => undefined, // e.g. fanout topology — disposes after run
+    };
+    daemon = new TeamDaemon({ spec: fakeSpec(), paths, orchestrator });
+    await daemon.start();
+
+    const socket = net.createConnection(paths.sockPath);
+    await new Promise<void>((resolve) => socket.once("connect", resolve));
+    socket.write(
+      JSON.stringify({
+        kind: "request",
+        id: "rpc-send-no-team",
+        method: "send_prompt",
+        params: { prompt: "x" },
+      }) + "\n",
+    );
+    const response = (await readResponse(socket)) as {
+      ok?: boolean;
+      error?: { code?: string; message?: string };
+    };
+    expect(response.ok).toBe(false);
+    expect(response.error?.code).toBe("unknown_method");
+    expect(response.error?.message).toMatch(/no live TeamSession/);
     socket.end();
   });
 

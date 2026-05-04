@@ -85,6 +85,15 @@ export interface OrchestratorOptions {
    * When present, runTeam() calls start()/stop() around the topology run.
    */
   readonly mapAdapter?: MapAdapter;
+  /**
+   * v0.6 stage 5F: when true, the topology context is built with
+   * `persistent: true` so topologies skip team.dispose() after their
+   * initial run. The active TeamSession is captured and exposed via
+   * `getActiveTeam()` so callers (the team daemon) can spawn ad-hoc
+   * members for `send_prompt` RPCs. Currently only PeerTeamTopology
+   * honors `persistent`; other topologies dispose regardless.
+   */
+  readonly persistent?: boolean;
 }
 
 /**
@@ -117,6 +126,12 @@ export class Orchestrator extends EventEmitter {
   private readonly deadLetter: DeadLetterWriter;
   private shuttingDown = false;
   private sigintHandler?: () => void;
+  /**
+   * v0.6 stage 5F: live TeamSession exposed for the team daemon's
+   * send_prompt path. Set by the topology via TopologyContext.onTeamCreated;
+   * stays set after the initial runTeam returns when `persistent: true`.
+   */
+  private activeTeam: import("./team-session.js").TeamSession | undefined;
 
   constructor(private readonly opts: OrchestratorOptions) {
     super();
@@ -154,6 +169,15 @@ export class Orchestrator extends EventEmitter {
       coordination: { completion: { kind: "all" } },
     };
     return await this.runTeam(spec);
+  }
+
+  /**
+   * v0.6 stage 5F: the live TeamSession when `persistent: true` and the
+   * topology has surfaced one via onTeamCreated. Used by the team daemon's
+   * send_prompt path to spawn ad-hoc members into the running team.
+   */
+  getActiveTeam(): import("./team-session.js").TeamSession | undefined {
+    return this.activeTeam;
   }
 
   /**
@@ -204,6 +228,10 @@ export class Orchestrator extends EventEmitter {
         ...(this.opts.defaultRole !== undefined && {
           defaultRole: this.opts.defaultRole,
         }),
+        ...(this.opts.persistent === true && { persistent: true }),
+        onTeamCreated: (team) => {
+          this.activeTeam = team;
+        },
       };
       return await topology.run(spec, ctx);
     } finally {

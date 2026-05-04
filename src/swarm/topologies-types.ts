@@ -17,6 +17,7 @@ import type { WorkerPool } from "./worker-pool.js";
 import type { DeadLetterWriter } from "./dead-letter.js";
 import type { TeamSpec, TopologyKind } from "./team-spec.js";
 import type { RoleRegistry } from "./roles.js";
+import type { TeamSession } from "./team-session.js";
 
 /**
  * Topology — a coordination shape for a team.
@@ -54,6 +55,21 @@ export interface TopologyContext {
   readonly abort?: AbortSignal;
   /** Permission mode forwarded to worker spawns. */
   readonly permissionMode: import("../core/types.js").PermissionMode;
+  /**
+   * v0.6 stage 5F: when true, the topology must NOT call `team.dispose()`
+   * after its initial run completes. Members stay alive so subsequent
+   * `team send` RPCs can spawn ad-hoc tasks into the same TeamSession.
+   * Currently honored by PeerTeamTopology only; other topologies dispose
+   * regardless until a real persistent-mode use case surfaces for them.
+   */
+  readonly persistent?: boolean;
+  /**
+   * v0.6 stage 5F: optional callback fired after the topology constructs
+   * its TeamSession. The Orchestrator captures the reference so external
+   * callers (e.g. the team daemon) can route `send_prompt` RPCs through
+   * the live session.
+   */
+  readonly onTeamCreated?: (team: TeamSession) => void;
 }
 
 /**
