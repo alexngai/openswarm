@@ -14,3 +14,5 @@ export { FanoutTopology } from "./fanout.js";
 export { PipelineTopology } from "./pipeline.js";
 export { PeerTeamTopology } from "./peer-team.js";
 export { CoordinatorTopology } from "./coordinator.js";
+export { CommitteeTopology } from "./committee.js";
+export { CriticLoopTopology } from "./critic-loop.js";

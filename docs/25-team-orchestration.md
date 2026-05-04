@@ -935,7 +935,7 @@ Per Q8: v0.4 = minimum + MAP. Adapters layered after.
 
 | Stage | Scope |
 |---|---|
-| 5A | `Committee` + `CriticLoop` topologies |
+| 5A | `Committee` + `CriticLoop` topologies — **shipped** |
 | 5B | `OpenTasksTaskRegistry` adapter (`--opentasks`) |
 | 5C | Pull-protocol for long-lived workers (opt-in) |
 | 5D | `swarm watch` multi-pane TUI (deferred from v0.4 plan) |

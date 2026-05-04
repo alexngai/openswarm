@@ -41,6 +41,8 @@ import {
   FanoutTopology,
   PipelineTopology,
   PeerTeamTopology,
+  CommitteeTopology,
+  CriticLoopTopology,
   CoordinatorTopology,
 } from "./topologies/index.js";
 
@@ -234,12 +236,9 @@ function pickTopology(kind: TopologyKind): Topology {
       return new PeerTeamTopology();
     case "coordinator":
       return new CoordinatorTopology();
-    // Remaining shapes land later in 4E. Until then, throw a clear error so
-    // misuse surfaces immediately at runTeam() time.
     case "committee":
+      return new CommitteeTopology();
     case "critic-loop":
-      throw new Error(
-        `topology "${kind}" not supported in v0.4 stage 4E.4; lands later`,
-      );
+      return new CriticLoopTopology();
   }
 }
