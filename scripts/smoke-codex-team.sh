@@ -92,7 +92,8 @@ BIN="node $REPO_ROOT/dist/cli.js"
 # 4. Construct a minimal 1-member peer-team spec with a codex member.
 SPEC=$(mktemp --suffix=.json 2>/dev/null || mktemp -t codex-team-spec.XXXXXX)
 RESULTS=$(mktemp)
-trap 'rm -f "$SPEC" "$RESULTS"' EXIT
+STDOUT_LOG=$(mktemp)
+trap 'rm -f "$SPEC" "$RESULTS" "$STDOUT_LOG"' EXIT
 
 cat > "$SPEC" <<'EOF'
 {
@@ -111,14 +112,20 @@ cat > "$SPEC" <<'EOF'
 EOF
 
 echo "→ running 1-member codex peer-team smoke..."
-if ! $BIN topology peer-team --spec "$SPEC" --output "$RESULTS" --concurrency 1 2>&1; then
+if ! $BIN topology peer-team --spec "$SPEC" --output "$RESULTS" --concurrency 1 > "$STDOUT_LOG" 2>&1; then
   echo
   echo "RESULT: FAIL (orchestrator exited non-zero)"
+  tail -20 "$STDOUT_LOG"
   exit 1
 fi
 
-# 5. Verify the codex peer's reply made it through.
-if grep -q "7" "$RESULTS"; then
+# 5. Verify the codex peer's reply made it through. The aggregate output
+# (which contains the "7") goes to stdout (team.ts:297-298); the structured
+# results.jsonl carries status. Pass when both are healthy:
+#  - orchestrator reports a successful task
+#  - the expected reply ("7") appears in stdout or results.jsonl
+if grep -q "1 succeeded" "$STDOUT_LOG" \
+   && (grep -q "7" "$RESULTS" || grep -q "7" "$STDOUT_LOG"); then
   echo
   echo "RESULT: PASS (live)"
   echo "  Stage 4H DynamicToolCall wiring verified end-to-end with a real"
@@ -127,7 +134,9 @@ if grep -q "7" "$RESULTS"; then
 fi
 
 echo
-echo "RESULT: FAIL (codex peer reply not detected in results)"
-echo "  Inspect: $RESULTS"
-cat "$RESULTS" 2>/dev/null | head -20
+echo "RESULT: FAIL (codex peer reply not detected)"
+echo "  -- results.jsonl --"
+cat "$RESULTS" 2>/dev/null | head -10
+echo "  -- stdout --"
+cat "$STDOUT_LOG" 2>/dev/null | tail -20
 exit 1

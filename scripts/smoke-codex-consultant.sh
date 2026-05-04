@@ -70,18 +70,27 @@ RESULTS=$(mktemp)
 trap 'rm -f "$TASKS" "$RESULTS"' EXIT
 
 cat > "$TASKS" <<'EOF'
-{"id":"q9-consultant","prompt":"Call the agent tool with these arguments: prompt=\"Reply with exactly the number 42 and nothing else.\", framework=\"codex-chatgpt\", wait=true. Then output the consultant's reply verbatim, prefixed with the literal text 'CONSULTANT-SAYS: '."}
+{"id":"q9-consultant","prompt":"Call the agent tool with these arguments: prompt=\"Reply with exactly the number 42 and nothing else.\", framework=\"codex-chatgpt\", wait=true. Then output the consultant's reply verbatim, prefixed with the literal text 'CONSULTANT-SAYS: '.","branchPolicy":{"kind":"none"},"commitPolicy":{"kind":"none"},"escalationPolicy":{"kind":"none"}}
 EOF
 
+STDOUT_LOG=$(mktemp)
+trap 'rm -f "$TASKS" "$RESULTS" "$STDOUT_LOG"' EXIT
+
 echo "→ running consultant smoke (transport=claude, consultant=codex-chatgpt)..."
-if ! $BIN swarm run "$TASKS" --output "$RESULTS" --concurrency 1 2>&1; then
+# --permission-mode danger-full-access required for the transport agent to
+# invoke the `agent` tool (requiredPermission: "exec"). Without it the model
+# politely declines and the consultant subprocess is never spawned.
+if ! $BIN --permission-mode danger-full-access swarm run "$TASKS" --output "$RESULTS" --concurrency 1 > "$STDOUT_LOG" 2>&1; then
   echo
   echo "RESULT: FAIL (orchestrator exited non-zero)"
+  cat "$STDOUT_LOG" | tail -20
   exit 1
 fi
 
-# 5. Verify the consultant's reply made it back.
-if grep -q "CONSULTANT-SAYS:.*42" "$RESULTS"; then
+# 5. Verify the consultant's reply made it back. Check both the results.jsonl
+# (structured) and the captured stdout/stderr (where agent transcripts also
+# surface) — the "CONSULTANT-SAYS: 42" marker should appear in at least one.
+if grep -q "CONSULTANT-SAYS:.*42" "$RESULTS" || grep -q "CONSULTANT-SAYS:.*42" "$STDOUT_LOG"; then
   echo
   echo "RESULT: PASS"
   echo "  Q9 consultant pattern verified end-to-end:"
@@ -91,6 +100,8 @@ fi
 
 echo
 echo "RESULT: FAIL (consultant reply not detected in results)"
-echo "  Inspect: $RESULTS"
-cat "$RESULTS" 2>/dev/null | head -20
+echo "  -- results.jsonl --"
+cat "$RESULTS" 2>/dev/null | head -10
+echo "  -- stdout --"
+cat "$STDOUT_LOG" 2>/dev/null | tail -20
 exit 1
