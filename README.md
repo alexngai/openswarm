@@ -151,7 +151,17 @@ swarm-harness topology peer-team --spec ./team.json --map ws://localhost:8080
 swarm-harness topology peer-team --spec ./team.json --ecosystem
 ```
 
-`team list`, `team send <name> <prompt>`, `team stop <name>`, and `team kill <name>` are wired as CLI stubs in v0.4 — the long-lived team daemon that backs cross-process interaction ships in v0.5+. For now, teams run inline and exit when their topology completes.
+Detach a team into a background daemon and manage it cross-process:
+
+```bash
+swarm-harness team start gsd --detach   # forks a per-team daemon, returns 0
+swarm-harness team list                 # NAME / PID of running daemons
+swarm-harness team logs gsd --follow    # tail events.jsonl
+swarm-harness team stop gsd             # graceful drain
+swarm-harness team kill gsd             # immediate (SIGKILL fallback)
+```
+
+Daemon files live under `${XDG_RUNTIME_DIR}/swarm-harness/teams/<name>/` (TMPDIR fallback on darwin). `team send <name> <prompt>` is wired but rejects with a v0.6+ deferred error — pushing prompts into an idle running team needs persistent-team architecture work beyond the daemon scaffold.
 
 See [docs/25-team-orchestration.md](docs/25-team-orchestration.md) for the architecture (TeamSession, topology catalog, MAP scope semantics) and [docs/27-v0.4-teams-implementation-plan.md](docs/27-v0.4-teams-implementation-plan.md) for the v0.4 execution detail.
 
@@ -159,9 +169,11 @@ See [docs/25-team-orchestration.md](docs/25-team-orchestration.md) for the archi
 
 The team primitives shipped in v0.4 cover the headline use cases (mixed-engine peer teams, all 4 topologies, MAP observability). Some flows are constrained or deferred:
 
-- **Cross-process team commands** (`team send`, `team list`, `team stop`, `team kill`) are stubs in v0.4. They require a long-running team daemon, which lands in v0.5+. For now, `team start` runs synchronously and exits when the team finishes.
-- **Worker-side `agent({team: "self"})`** is rejected with a structured error. CoordinatorTopology's root runs in the orchestrator process where this works; deeper recursion is deferred.
+- **Cross-process team commands** — `team start --detach`, `team list`, `team logs`, `team stop`, `team kill` shipped in v0.5 (stages 5E.1–5E.7). `team send` is wired but returns a v0.6+ deferred error: pushing prompts into a running team needs persistent-team support beyond the daemon scaffold.
+- **Worker-side `agent({team: "self"})`** — shipped in 4M.7. WorkerHost gained scope awareness; the spawn IPC handler (4M.6) honors a caller-supplied teamScope.
 - **Codex peers** see 8 of 10 Tier 2 tools (skipped: `agent`, `task_create`, `task_update`).
+- **Codex consultant pattern** (`agent({framework: "codex-chatgpt"})` from a worker) — IPC chain is wired and unit-tested but live smoke surfaces a downstream defect; tracked as 4M.9.
+- **Unix socket path-length** — on darwin, the daemon socket can exceed the 104-char `sun_path` limit when the natural `${TMPDIR}/swarm-harness/teams/<name>/daemon.sock` path is long. Workaround until length-aware path computation lands: keep team names short.
 
 See [docs/25-team-orchestration.md §17](docs/25-team-orchestration.md#17-implementation-status-post-4m-review-fixes) for the full status / limitations breakdown.
 
