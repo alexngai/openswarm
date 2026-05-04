@@ -383,6 +383,17 @@ export interface TaskAPI {
   appendOutput(id: string, chunk: string): void;
   /** Append-only output stream; iteration completes when task reaches a terminal status. */
   output(id: string): AsyncIterable<string>;
+  /**
+   * v0.5 stage 5C: atomically claim the next pending task in `scope` that has
+   * no owner. Sets `owner = claimerId` on the matched record and transitions
+   * status from "pending" → "running". Returns null when no claimable task
+   * is available.
+   *
+   * Used by the `task_pull_next` Tier 2 tool so long-lived workers can
+   * self-pull queued work — useful when an external producer (opentasks
+   * daemon, MAP federation, etc.) is feeding tasks into the team's scope.
+   */
+  pullNext(scope: string, claimerId: AgentId): Promise<TaskRecord | null>;
 }
 
 // ---------------------------------------------------------------------------

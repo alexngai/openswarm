@@ -132,6 +132,17 @@ export class WorkerHost implements SwarmHost {
       // the worker side to satisfy the interface.
     },
     output: (id: string) => this.taskOutput(id),
+    pullNext: async (
+      scope: string,
+      claimerId: import("../core/types.js").AgentId,
+    ) => {
+      // v0.5 stage 5C: proxy through to the orchestrator's TaskAPI.
+      const result = await this.transport.send<TaskRecord | null>(
+        "task.pull_next",
+        { scope, claimerId },
+      );
+      return result ?? null;
+    },
   };
 
   private async *taskOutput(id: string): AsyncIterable<string> {

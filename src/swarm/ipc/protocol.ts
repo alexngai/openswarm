@@ -74,7 +74,8 @@ export type IpcRequestMethod =
   | "ask_user_question"
   | "run_more"
   | "drain"
-  | "team.members";
+  | "team.members"
+  | "task.pull_next";
 
 export type IpcResponse = IpcOk | IpcErr;
 
@@ -362,6 +363,23 @@ export type SpawnResult = z.infer<typeof SpawnResultSchema>;
  */
 export const TeamMembersParamsSchema = z.object({}).strict();
 export type TeamMembersParams = z.infer<typeof TeamMembersParamsSchema>;
+
+// ---------------------------------------------------------------------------
+// v0.5 stage 5C — task.pull_next
+// ---------------------------------------------------------------------------
+
+/**
+ * params for "task.pull_next" request (worker → orchestrator).
+ *
+ * Atomically claims the next pending task in `scope` with no owner. Sets
+ * the requesting worker as the owner and transitions status pending →
+ * running. Returns null when no claimable task is available.
+ */
+export const TaskPullNextParamsSchema = z.object({
+  scope: z.string(),
+  claimerId: z.string(),
+});
+export type TaskPullNextParams = z.infer<typeof TaskPullNextParamsSchema>;
 
 /** result for "team.members" — array of `{memberId, role, agentId}` peers. */
 export const TeamMembersResultSchema = z.array(

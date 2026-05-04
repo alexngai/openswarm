@@ -21,6 +21,7 @@ import { taskStopTool } from "./task_stop.js";
 import { taskOutputTool } from "./task_output.js";
 import { askUserQuestionTool } from "./ask_user_question.js";
 import { teamMembersTool } from "./team_members.js";
+import { taskPullNextTool } from "./task_pull_next.js";
 
 /** All Tier 2 tools in a stable order. */
 export function buildTier2Tools(): readonly ToolImpl[] {
@@ -36,6 +37,7 @@ export function buildTier2Tools(): readonly ToolImpl[] {
     taskOutputTool,
     askUserQuestionTool,
     teamMembersTool,
+    taskPullNextTool,
   ] as const;
 }
 
@@ -51,4 +53,5 @@ export {
   taskOutputTool,
   askUserQuestionTool,
   teamMembersTool,
+  taskPullNextTool,
 };

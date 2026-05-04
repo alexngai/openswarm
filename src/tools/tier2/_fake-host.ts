@@ -126,6 +126,23 @@ export function makeFakeHost(opts: FakeHostOpts = {}): {
       const record = records.get(id);
       if (record?.output) yield record.output;
     },
+    async pullNext(scope, claimerId) {
+      // v0.5 stage 5C: minimal in-memory claim semantics for tests.
+      for (const r of records.values()) {
+        if (r.scope !== scope) continue;
+        if (r.status !== "pending") continue;
+        if (r.owner !== undefined) continue;
+        const claimed: TaskRecord = {
+          ...r,
+          owner: claimerId,
+          status: "running",
+          updatedAt: Date.now(),
+        };
+        records.set(r.id, claimed);
+        return claimed;
+      }
+      return null;
+    },
   };
 
   const waitResult: AgentResult =

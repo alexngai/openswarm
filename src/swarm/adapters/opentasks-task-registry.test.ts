@@ -101,6 +101,17 @@ function inMemoryTaskApi(defaultScope = "swarm:default"): TaskAPI {
     ownerOf: async (id: string) => records.get(id)?.owner,
     appendOutput: () => {},
     output: () => (async function* () {})(),
+    pullNext: async (scope: string, claimerId: AgentId) => {
+      for (const r of records.values()) {
+        if (r.scope !== scope) continue;
+        if (r.status !== "pending") continue;
+        if (r.owner !== undefined) continue;
+        const claimed = { ...r, owner: claimerId, status: "running" as const, updatedAt: Date.now() };
+        records.set(r.id, claimed);
+        return claimed;
+      }
+      return null;
+    },
   };
 }
 

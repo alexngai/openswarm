@@ -135,6 +135,27 @@ export class OpenTasksTaskRegistry implements TaskAPI {
     return this.inner.output(id);
   }
 
+  /**
+   * v0.5 stage 5C: pull-next delegates to the inner registry. The opentasks
+   * graph mirror is updated to reflect the claim (status → in_progress,
+   * assignee → claimerId) — same shape as the regular update() path.
+   */
+  async pullNext(
+    scope: string,
+    claimerId: AgentId,
+  ): Promise<TaskRecord | null> {
+    const claimed = await this.inner.pullNext(scope, claimerId);
+    if (claimed === null) return null;
+    const remoteId = this.idMap.get(claimed.id);
+    if (remoteId !== undefined) {
+      void this.client.update(remoteId, {
+        status: "in_progress",
+        assignee: claimerId,
+      });
+    }
+    return claimed;
+  }
+
   // ---- Public for tests ----
 
   /**

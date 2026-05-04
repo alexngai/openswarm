@@ -937,7 +937,7 @@ Per Q8: v0.4 = minimum + MAP. Adapters layered after.
 |---|---|
 | 5A | `Committee` + `CriticLoop` topologies — **shipped** |
 | 5B | `OpenTasksTaskRegistry` adapter (`--opentasks`) — **shipped** (live-verified against opentasks 0.1.3) |
-| 5C | Pull-protocol for long-lived workers (opt-in) — **deferred to v0.6** (downstream of 5B; standalone value limited because WorkerPool already self-balances) |
+| 5C | Pull-protocol for long-lived workers (opt-in) — **shipped** as `task_pull_next` Tier 2 tool + `task.pull_next` IPC + atomic `TaskRegistry.pullNext()`. Pairs with 5B's opentasks adapter for queue-fed workflows. |
 | 5D | `swarm watch` multi-pane TUI — **MVP shipped** as `team watch <name>` (single-pane formatted live tail of events.jsonl). Multi-pane TUI deferred to v0.6. |
 | 5E | Long-lived team daemon (`team start --detach`, `team send`/`list`/`stop`/`kill`/`logs`) — see [docs/28-v0.5-daemon-plan.md](28-v0.5-daemon-plan.md) |
 

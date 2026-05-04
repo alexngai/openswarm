@@ -39,6 +39,7 @@ function makeHost(records: readonly TaskRecord[]): SwarmHost {
       output: () => {
         throw new Error("not used");
       },
+      pullNext: () => Promise.resolve(null),
     },
   };
 }

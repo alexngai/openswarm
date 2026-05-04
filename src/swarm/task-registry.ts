@@ -9,6 +9,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { TaskPacket, TaskRecord, TaskFilter } from "./host.js";
+import type { AgentId } from "../core/types.js";
 import type { LaneEvent } from "./events.js";
 
 export class TaskRegistry {
@@ -41,6 +42,34 @@ export class TaskRegistry {
   /** Retrieve a TaskRecord by id. Returns `undefined` if not found. */
   get(id: string): TaskRecord | undefined {
     return this.records.get(id);
+  }
+
+  /**
+   * v0.5 stage 5C: atomically claim the first pending task in `scope` with
+   * no `owner`. Sets `owner = claimerId` and `status = "running"` in one
+   * step (single-threaded JS guarantees atomicity inside this method).
+   * Returns the claimed record, or null when nothing matches.
+   *
+   * Iteration order is insertion order so producers can rely on FIFO
+   * semantics (the first task created is the first task pulled). When a
+   * priority field is added to TaskRecord later, this method should sort
+   * by priority desc + insertion order.
+   */
+  pullNext(scope: string, claimerId: AgentId): TaskRecord | null {
+    for (const record of this.records.values()) {
+      if (record.scope !== scope) continue;
+      if (record.status !== "pending") continue;
+      if (record.owner !== undefined) continue;
+      const claimed: TaskRecord = {
+        ...record,
+        owner: claimerId,
+        status: "running",
+        updatedAt: Date.now(),
+      };
+      this.records.set(record.id, claimed);
+      return claimed;
+    }
+    return null;
   }
 
   /**

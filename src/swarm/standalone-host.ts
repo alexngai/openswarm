@@ -45,6 +45,7 @@ import {
   TaskUpdateParamsSchema,
   AncestryIsAncestorOfParamsSchema,
   SpawnRequestParamsSchema,
+  TaskPullNextParamsSchema,
   AskUserQuestionParamsSchema,
   type IpcRequest,
 } from "./ipc/protocol.js";
@@ -197,6 +198,8 @@ export class StandaloneHost implements SwarmHost {
         });
       },
       output: (id: string) => this.taskOutput(id),
+      pullNext: async (scope: string, claimerId: AgentId) =>
+        this.registry.pullNext(scope, claimerId),
     };
     // v0.5 stage 5B: optional wrapper (e.g. opentasks adapter) sits in front
     // of the in-memory implementation so it can mirror state to an external
@@ -1050,6 +1053,35 @@ export class StandaloneHost implements SwarmHost {
       transport.respond(frame.id, members);
       return;
     }
+    if (frame.method === "task.pull_next") {
+      // v0.5 stage 5C: worker self-pulls the next claimable task in its
+      // scope. Routes through the (possibly wrapped) TaskAPI so opentasks
+      // mirror updates fire alongside the in-memory claim.
+      const parsed = TaskPullNextParamsSchema.safeParse(frame.params);
+      if (!parsed.success) {
+        transport.respondError(
+          frame.id,
+          IPC_ERROR_CODES.INVALID_PARAMS,
+          parsed.error.message,
+        );
+        return;
+      }
+      try {
+        const claimed = await this.task.pullNext(
+          parsed.data.scope,
+          parsed.data.claimerId as AgentId,
+        );
+        transport.respond(frame.id, claimed);
+      } catch (err) {
+        transport.respondError(
+          frame.id,
+          IPC_ERROR_CODES.INTERNAL_ERROR,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+      return;
+    }
+
     if (frame.method === "spawn") {
       // v0.4 stage 4M.6: dispatch worker-side `agent` tool spawns. The
       // `spawn` request method has been listed in the protocol header since
