@@ -278,6 +278,9 @@ export class WorkerHost implements SwarmHost {
       task: request.task,
       permissionMode: request.permissionMode,
       model: request.model,
+      // v0.4 stage 4M.6: forward framework so worker-spawned children can opt
+      // into FrameworkProvider mode. Parallel fix to 4M.5 in StandaloneHost.spawn.
+      framework: request.framework,
       parentAgentId: this.agentId,
       parentToolUseId: request.parentToolUseId ?? this.parentToolUseId,
       taskId: request.taskId,

@@ -44,6 +44,7 @@ import {
   TaskCreateParamsSchema,
   TaskUpdateParamsSchema,
   AncestryIsAncestorOfParamsSchema,
+  SpawnRequestParamsSchema,
   AskUserQuestionParamsSchema,
   type IpcRequest,
 } from "./ipc/protocol.js";
@@ -1035,6 +1036,54 @@ export class StandaloneHost implements SwarmHost {
     if (frame.method === "team.members") {
       const members = this.listMembersInScope(this.scopeOf(from), from);
       transport.respond(frame.id, members);
+      return;
+    }
+    if (frame.method === "spawn") {
+      // v0.4 stage 4M.6: dispatch worker-side `agent` tool spawns. The
+      // `spawn` request method has been listed in the protocol header since
+      // M1 but the handler did not exist — any worker-side `agent({...})`
+      // call would have hit UNKNOWN_METHOD in production. Note: this commit
+      // covers default child-spawn only; the `team: "self"` peer-spawn path
+      // (V0.4.Q1 follow-up) lands in 4M.7, which adds scope-aware handling.
+      const parsed = SpawnRequestParamsSchema.safeParse(frame.params);
+      if (!parsed.success) {
+        transport.respondError(
+          frame.id,
+          IPC_ERROR_CODES.INVALID_PARAMS,
+          parsed.error.message,
+        );
+        return;
+      }
+      const params = parsed.data;
+      const spawnReq: SpawnRequest = {
+        // The schema is permissive on `task`; the worker-side caller
+        // (agent tool) constructs the TaskPacket via host.task.create
+        // first, so the shape is well-formed by the time it arrives here.
+        task: params.task as unknown as TaskPacket,
+        permissionMode: params.permissionMode,
+        ...(params.model !== undefined && { model: params.model }),
+        ...(params.framework !== undefined && { framework: params.framework }),
+        ...(params.taskId !== undefined && { taskId: params.taskId }),
+        ...(params.parentToolUseId !== undefined && {
+          parentToolUseId: params.parentToolUseId,
+        }),
+        parentAgentId: params.parentAgentId as AgentId,
+      };
+      try {
+        const handle = await this.spawn(spawnReq);
+        const result = await handle.wait();
+        transport.respond(frame.id, {
+          agentId: handle.agentId,
+          sessionId: handle.sessionId,
+          result,
+        });
+      } catch (err) {
+        transport.respondError(
+          frame.id,
+          IPC_ERROR_CODES.INTERNAL_ERROR,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
       return;
     }
     if (frame.method === "ask_user_question") {

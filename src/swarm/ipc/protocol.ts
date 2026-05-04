@@ -299,6 +299,51 @@ export const WorkerDrainedParamsSchema = z.object({
 export type WorkerDrainedParams = z.infer<typeof WorkerDrainedParamsSchema>;
 
 // ---------------------------------------------------------------------------
+// v0.4 stage 4M.6 — spawn (worker → orchestrator)
+// ---------------------------------------------------------------------------
+
+/**
+ * params for "spawn" request (worker → orchestrator).
+ *
+ * The protocol comment header has listed `spawn` since M1, but the
+ * StandaloneHost handler did not exist until 4M.6. This schema locks the
+ * params shape that WorkerHost.spawn sends.
+ *
+ * `task` is permissive (z.record) since TaskPacket has a deeper shape that
+ * is enforced upstream by the worker-side caller (the agent tool builds the
+ * record via host.task.create before calling spawn).
+ */
+export const SpawnRequestParamsSchema = z.object({
+  task: z.record(z.string(), z.unknown()),
+  permissionMode: z.enum([
+    "read-only",
+    "workspace-write",
+    "danger-full-access",
+  ]),
+  model: z.string().optional(),
+  /** v0.4 stage 4M.6: forwarded from SpawnRequest.framework. */
+  framework: z.enum(["claude-agent-sdk", "codex-chatgpt"]).optional(),
+  parentAgentId: z.string(),
+  parentToolUseId: z.string().optional(),
+  taskId: z.string().optional(),
+});
+export type SpawnRequestParams = z.infer<typeof SpawnRequestParamsSchema>;
+
+/**
+ * result for "spawn" — the spawned child's identity + final AgentResult.
+ *
+ * Shape mirrors what WorkerHost.spawn unpacks (lines 273-291): the IPC
+ * spawn handler awaits the child's terminal state before replying, so the
+ * worker-side proxy returns a synchronously-resolved AgentHandle.
+ */
+export const SpawnResultSchema = z.object({
+  agentId: z.string(),
+  sessionId: z.string(),
+  result: z.record(z.string(), z.unknown()),
+});
+export type SpawnResult = z.infer<typeof SpawnResultSchema>;
+
+// ---------------------------------------------------------------------------
 // v0.4 stage 4E.1 — team.members
 // ---------------------------------------------------------------------------
 

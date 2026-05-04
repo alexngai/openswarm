@@ -204,6 +204,193 @@ describe("StandaloneHost", () => {
     expect(callArgs.framework).toBeUndefined();
   });
 
+  it("handles worker 'spawn' IPC request: dispatches host.spawn, awaits, replies (4M.6)", async () => {
+    // The spawn IPC method has been listed in the protocol header since M1
+    // but the StandaloneHost handler did not exist — any worker-side
+    // agent({...}) call hit UNKNOWN_METHOD in production. Locking the wired
+    // path: parent worker → spawn IPC → orchestrator spawns child →
+    // child completes → orchestrator replies with AgentResult on parent.stdin.
+    const spawnFn = vi.fn();
+    const parent = fakeProcPair();
+    const child = fakeProcPair();
+    spawnFn.mockReturnValueOnce(parent.child).mockReturnValueOnce(child.child);
+
+    const host = new StandaloneHost({ maxDepth: 5, spawnWorker: spawnFn });
+
+    // Capture frames the orchestrator writes to the parent worker's stdin
+    // (these are RPC responses + sub_agent_event notifications).
+    const parentInbound: Array<Record<string, unknown>> = [];
+    parent.child.stdin?.on("data", (chunk: Buffer) => {
+      const lines = chunk.toString().split("\n").filter((s) => s.length > 0);
+      for (const line of lines) {
+        try {
+          parentInbound.push(JSON.parse(line) as Record<string, unknown>);
+        } catch {
+          /* ignore non-JSON */
+        }
+      }
+    });
+
+    // 1. Spawn the parent worker.
+    const parentSpawn = host.spawn({
+      task: samplePacket(),
+      permissionMode: "workspace-write",
+    });
+    await new Promise((r) => setImmediate(r));
+    parent.emitFromWorker({
+      kind: "notification",
+      method: "worker_ready",
+      params: {},
+    });
+    await new Promise((r) => setImmediate(r));
+
+    // Capture the real parent agentId — spawn handler needs it registered
+    // in this.depths to compute child depth (see standalone-host.ts:285).
+    const parentAgentId = (
+      spawnFn.mock.calls[0]![0] as { agentId: string }
+    ).agentId;
+
+    // 2. Parent emits a spawn IPC request — framework set so we can also
+    // verify the 4M.5/4M.6 forwarding chain (WorkerHost passes framework →
+    // SpawnRequestParamsSchema accepts it → handler builds a SpawnRequest →
+    // StandaloneHost.spawn forwards to spawnWorker).
+    parent.emitFromWorker({
+      kind: "request",
+      id: "rpc-spawn-1",
+      method: "spawn",
+      params: {
+        task: samplePacket(),
+        permissionMode: "workspace-write",
+        framework: "codex-chatgpt",
+        parentAgentId,
+      },
+    });
+
+    // 3. Wait for the second spawnFn invocation (the IPC-driven spawn).
+    for (let i = 0; i < 20 && spawnFn.mock.calls.length < 2; i++) {
+      await new Promise((r) => setImmediate(r));
+    }
+    expect(spawnFn).toHaveBeenCalledTimes(2);
+    const childCallArgs = spawnFn.mock.calls[1]![0] as { framework?: string };
+    expect(childCallArgs.framework).toBe("codex-chatgpt");
+
+    // 4. Drive the child to completion so the spawn handler can reply.
+    await new Promise((r) => setImmediate(r));
+    child.emitFromWorker({
+      kind: "notification",
+      method: "worker_ready",
+      params: {},
+    });
+    await new Promise((r) => setImmediate(r));
+    child.emitFromWorker({
+      kind: "notification",
+      method: "task_result",
+      params: {
+        status: "success",
+        output: "child-done",
+        usage: { inputTokens: 1, outputTokens: 2 },
+        wallClockMs: 100,
+      },
+    });
+
+    // 5. Wait for the response frame on parent.stdin.
+    for (let i = 0; i < 30; i++) {
+      if (parentInbound.some((f) => f.id === "rpc-spawn-1")) break;
+      await new Promise((r) => setImmediate(r));
+    }
+    const response = parentInbound.find((f) => f.id === "rpc-spawn-1") as
+      | {
+          kind?: string;
+          ok?: boolean;
+          result?: { result?: { status?: string; output?: string } };
+        }
+      | undefined;
+    expect(response).toBeDefined();
+    expect(response?.kind).toBe("response");
+    expect(response?.ok).toBe(true);
+    expect(response?.result?.result?.status).toBe("success");
+    expect(response?.result?.result?.output).toBe("child-done");
+
+    // Tidy: complete the parent so its spawn promise resolves.
+    parent.emitFromWorker({
+      kind: "notification",
+      method: "task_result",
+      params: {
+        status: "success",
+        output: "parent-done",
+        usage: { inputTokens: 1, outputTokens: 1 },
+        wallClockMs: 50,
+      },
+    });
+    await parentSpawn;
+  });
+
+  it("returns INVALID_PARAMS for malformed spawn IPC request", async () => {
+    const spawnFn = vi.fn();
+    const parent = fakeProcPair();
+    spawnFn.mockReturnValueOnce(parent.child);
+
+    const host = new StandaloneHost({ maxDepth: 5, spawnWorker: spawnFn });
+
+    const parentInbound: Array<Record<string, unknown>> = [];
+    parent.child.stdin?.on("data", (chunk: Buffer) => {
+      const lines = chunk.toString().split("\n").filter((s) => s.length > 0);
+      for (const line of lines) {
+        try {
+          parentInbound.push(JSON.parse(line) as Record<string, unknown>);
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+
+    const parentSpawn = host.spawn({
+      task: samplePacket(),
+      permissionMode: "workspace-write",
+    });
+    await new Promise((r) => setImmediate(r));
+    parent.emitFromWorker({
+      kind: "notification",
+      method: "worker_ready",
+      params: {},
+    });
+    await new Promise((r) => setImmediate(r));
+
+    // Missing required fields (no task, no permissionMode, no parentAgentId).
+    parent.emitFromWorker({
+      kind: "request",
+      id: "rpc-bad-1",
+      method: "spawn",
+      params: {},
+    });
+
+    for (let i = 0; i < 20; i++) {
+      if (parentInbound.some((f) => f.id === "rpc-bad-1")) break;
+      await new Promise((r) => setImmediate(r));
+    }
+    const response = parentInbound.find((f) => f.id === "rpc-bad-1") as
+      | { ok?: boolean; error?: { code?: string } }
+      | undefined;
+    expect(response).toBeDefined();
+    expect(response?.ok).toBe(false);
+    expect(response?.error?.code).toBe("invalid_params");
+
+    // No second spawnFn invocation should have happened.
+    expect(spawnFn).toHaveBeenCalledTimes(1);
+
+    parent.emitFromWorker({
+      kind: "notification",
+      method: "task_result",
+      params: {
+        status: "success",
+        output: "x",
+        usage: { inputTokens: 1, outputTokens: 1 },
+        wallClockMs: 1,
+      },
+    });
+    await parentSpawn;
+  });
+
   it("spawn ignores client-supplied SpawnRequest.depth field (orchestrator is authoritative)", async () => {
     const { spawnFn, emitFromWorker } = makeSpawnOverride();
     const host = new StandaloneHost({ maxDepth: 5, spawnWorker: spawnFn });
