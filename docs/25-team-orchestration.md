@@ -945,6 +945,10 @@ Per Q8: v0.4 = minimum + MAP. Adapters layered after.
 
 | Stage | Scope |
 |---|---|
+| 5F | `send_prompt` against a live `peer-team` daemon — **shipped early** (closes V0.5.Q6 deferral). TopologyContext gains `persistent` + `onTeamCreated`; PeerTeamTopology honors them; daemon `send_prompt` handler spawns an ad-hoc member into the live TeamSession. |
+
+| Stage | Scope |
+|---|---|
 | 6A | `AgentInbox` interface refactor; `InMemoryInboxBackend` + `AgentInboxBackend` |
 | 6B | Thread support in messaging (read_thread, send-with-thread-tag) |
 | 6C | Federation prep — agent registry view, `agent@system` syntax parse |
@@ -1108,13 +1112,13 @@ defects closed; Track B's `DynamicToolCall` mechanism wired with the
 
 Deferred to later releases per [docs/27 §13](27-v0.4-teams-implementation-plan.md) phasing:
 
-- `Committee` + `CriticLoop` topologies → v0.5
-- opentasks adapter → v0.5
-- Pull-protocol for long-lived workers → v0.5
-- `swarm watch` multi-pane TUI → v0.5
+- `Committee` + `CriticLoop` topologies → **shipped in v0.5 (5A)**
+- opentasks adapter → **shipped in v0.5 (5B, live-verified against opentasks 0.1.3)**
+- Pull-protocol for long-lived workers → **shipped in v0.5 (5C, `task_pull_next` Tier 2 tool)**
+- `swarm watch` multi-pane TUI → **MVP shipped as `team watch <name>` in v0.5 (5D); multi-pane TUI deferred to v0.6**
+- Long-lived team daemon (`team start --detach` / `send` / `list` / `stop` / `kill` / `logs`) → **shipped in v0.5 (5E.1–5E.7) + path-length follow-up; `send_prompt` for persistent peer-team daemons shipped in v0.6 stage 5F**
 - agent-inbox MCP integration → v0.6
 - git-cascade `BranchPolicy` adapter → v0.7
-- Long-lived team daemon (`team send`/`list`/`stop`/`kill` cross-process) → v0.5+
 
 ---
 
@@ -1145,7 +1149,7 @@ User-facing flows that work end-to-end as of 4M.3:
 
 Things that exist but have known limitations:
 
-- **Cross-process team management** — shipped in v0.5 (stages 5E.1–5E.7). `team start <template> --detach` forks a per-team daemon; `team list`, `team logs [--follow]`, `team stop <name>`, `team kill <name>` work against running daemons over a Unix socket under `${XDG_RUNTIME_DIR}/swarm-harness/teams/<name>/`. `team send` returns a structured "needs persistent-team support" error pointing at v0.6+ — pushing prompts into a long-running team requires the orchestrator to expose its active TeamSession.send surface (V0.5.Q6). See [docs/28-v0.5-daemon-plan.md](28-v0.5-daemon-plan.md) for the full design + signoff trail.
+- **Cross-process team management** — shipped in v0.5 (stages 5E.1–5E.7). `team start <template> --detach` forks a per-team daemon; `team list`, `team logs [--follow]`, `team stop <name>`, `team kill <name>` work against running daemons over a Unix socket under `${XDG_RUNTIME_DIR}/swarm-harness/teams/<name>/`. **`team send` shipped early in 5F** (see [§13 v0.6 row](#13-phased-delivery)): persistent `peer-team` daemons accept `send_prompt` RPCs that spawn an ad-hoc member with the prompt as its new task (role + policies inherited from the spec's first member). Non-peer-team topologies still dispose after their initial run; per-topology persistent opt-in lands when a real workflow surfaces. Closes V0.5.Q6 ahead of schedule. See [docs/28-v0.5-daemon-plan.md](28-v0.5-daemon-plan.md) for the v0.5 daemon design + signoff trail.
 - **Worker-side `agent({team: "self"})`** — SHIPPED in 4M.7. WorkerHost gained scope awareness (reads `SWARM_HARNESS_TEAM_SCOPE` env, exposes `scopeOf`); the spawn IPC handler (4M.6) honors a caller-supplied `teamScope`. Closes the V0.4.Q1 follow-up. The B2 rejection added in 4M.1 is replaced by the unified scopeOf path. Both worker-side `team: "child"` (default child-spawn) and `team: "self"` (peer-spawn into caller's team) now work end-to-end at the unit level.
 - **Mixed-engine consultant pattern** (V0.4.Q9) — **shipped end-to-end as of 4M.9** (2026-05-04). Live consultant smoke `scripts/smoke-codex-consultant.sh` PASS: Claude transport → agent tool → IPC spawn → Codex App Server → ChatGPT → reply round-trips correctly. Earlier 4M.8 live finding traced to a project-wide JSON Schema generation bug — every Tier 2 tool's `inputSchema` was effectively empty (`zod-to-json-schema` v3 silently emits `{$schema: "..."}` for zod v4 inputs), which OpenAI rejected at the first turn that registered Tier 2 tools as dynamicTools. 4M.9 switches all 25 callers to zod v4 native `z.toJSONSchema` and improves the codex-app-server error-notification fallback so missing-message errors expose the full payload instead of becoming "Unknown error".
 - **Codex 8/10 tool subset** — codex peers register 8 of the 10 Tier 2 tools per V0.4.Q11. Skipped: `agent`, `task_create`, `task_update` (semantic clash with Codex's own product concepts). The set is additive — register more in v0.5 if dogfooding shows demand.

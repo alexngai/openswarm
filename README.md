@@ -146,9 +146,12 @@ swarm-harness topology pipeline --spec ./pipeline.json
 # Forward lane events to an external MAP observer
 swarm-harness topology peer-team --spec ./team.json --map ws://localhost:8080
 
-# `--ecosystem` is a shorthand: in v0.4 it enables `--map`; v0.5+ will also
-# enable opentasks / agent-inbox / git-cascade adapters.
+# `--ecosystem` enables `--map` (v0.4). v0.5 added the opentasks adapter
+# behind `--opentasks`; agent-inbox and git-cascade adapters land in v0.6+.
 swarm-harness topology peer-team --spec ./team.json --ecosystem
+
+# v0.5: opentasks daemon mirror (live cross-system task graph)
+swarm-harness swarm run tasks.jsonl --opentasks
 ```
 
 Detach a team into a background daemon and manage it cross-process:
@@ -161,7 +164,7 @@ swarm-harness team stop gsd             # graceful drain
 swarm-harness team kill gsd             # immediate (SIGKILL fallback)
 ```
 
-Daemon files live under `${XDG_RUNTIME_DIR}/swarm-harness/teams/<name>/` (TMPDIR fallback on darwin). `team send <name> <prompt>` is wired but rejects with a v0.6+ deferred error — pushing prompts into an idle running team needs persistent-team architecture work beyond the daemon scaffold.
+Daemon files live under `${XDG_RUNTIME_DIR}/swarm-harness/teams/<name>/` (TMPDIR fallback on darwin). `team send <name> <prompt>` spawns an ad-hoc member into a live `peer-team` daemon (5F shipped early into v0.6) — it inherits role + policies from the spec's first member and runs the new prompt as its task. Other topologies (fanout, pipeline, coordinator, committee, critic-loop) dispose after their initial run, so `team send` against them returns a structured "no live TeamSession" error; persistent variants for those will land per-topology when a real workflow surfaces.
 
 See [docs/25-team-orchestration.md](docs/25-team-orchestration.md) for the architecture (TeamSession, topology catalog, MAP scope semantics) and [docs/27-v0.4-teams-implementation-plan.md](docs/27-v0.4-teams-implementation-plan.md) for the v0.4 execution detail.
 
@@ -169,7 +172,7 @@ See [docs/25-team-orchestration.md](docs/25-team-orchestration.md) for the archi
 
 The team primitives shipped in v0.4 cover the headline use cases (mixed-engine peer teams, all 4 topologies, MAP observability). Some flows are constrained or deferred:
 
-- **Cross-process team commands** — `team start --detach`, `team list`, `team logs`, `team stop`, `team kill` shipped in v0.5 (stages 5E.1–5E.7). `team send` is wired but returns a v0.6+ deferred error: pushing prompts into a running team needs persistent-team support beyond the daemon scaffold.
+- **Cross-process team commands** — `team start --detach`, `team list`, `team logs`, `team stop`, `team kill` shipped in v0.5 (stages 5E.1–5E.7). `team send` shipped in 5F: spawns an ad-hoc member into a persistent `peer-team` daemon. For non-peer-team topologies it returns "no live TeamSession" (each topology needs explicit persistent-mode opt-in).
 - **Worker-side `agent({team: "self"})`** — shipped in 4M.7. WorkerHost gained scope awareness; the spawn IPC handler (4M.6) honors a caller-supplied teamScope.
 - **Codex peers** see 8 of 10 Tier 2 tools (skipped: `agent`, `task_create`, `task_update`).
 - **Codex consultant pattern** (`agent({framework: "codex-chatgpt"})` from a worker) — IPC chain is wired and unit-tested but live smoke surfaces a downstream defect; tracked as 4M.9.
