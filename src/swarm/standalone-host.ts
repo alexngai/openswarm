@@ -365,6 +365,7 @@ export class StandaloneHost implements SwarmHost {
         allowedTools: request.allowedTools,
       }),
       ...(request.teamScope !== undefined && { teamScope: request.teamScope }),
+      ...(request.framework !== undefined && { framework: request.framework }),
       ...(request.longLived === true && { longLived: true }),
       ...(request.idleTimeoutMs !== undefined && {
         idleTimeoutMs: request.idleTimeoutMs,
