@@ -31,7 +31,7 @@ import { WorkerTransport } from "./ipc/worker-transport.js";
 import { spawnWorker } from "./subprocess-spawner.js";
 import { resolveMaxDepth } from "./depth-limit.js";
 import { clampPermissionMode } from "./permission-order.js";
-import { AgentInbox } from "./inbox.js";
+import { InMemoryInboxBackend, type InboxBackend } from "./inbox.js";
 import { RoleIndex } from "./role-index.js";
 import {
   IPC_ERROR_CODES,
@@ -80,6 +80,12 @@ export interface StandaloneHostOptions {
    * local in-memory registry authoritative for runtime ops.
    */
   readonly taskWrapper?: (inner: TaskAPI) => TaskAPI;
+  /**
+   * v0.6 stage 6A.1: pluggable inbox backend. Defaults to
+   * `new InMemoryInboxBackend()`. Production callers can pass an
+   * `AgentInboxBackend` (6A.2) for threading + persistence + federation.
+   */
+  readonly inboxBackend?: InboxBackend;
 }
 
 export class StandaloneHost implements SwarmHost {
@@ -114,7 +120,7 @@ export class StandaloneHost implements SwarmHost {
   private _lifecycleState: WorkerLifecycleState = INITIAL_LIFECYCLE_STATE;
 
   // M3a Phase 3 messaging state.
-  private readonly messageInbox = new AgentInbox();
+  private readonly messageInbox: InboxBackend;
   private readonly roles = new RoleIndex();
   /** Live worker transports keyed by child agentId for `sub_agent_event` delivery. */
   private readonly transports = new Map<AgentId, WorkerTransport>();
@@ -142,6 +148,7 @@ export class StandaloneHost implements SwarmHost {
     this.maxDepth = opts.maxDepth ?? resolveMaxDepth();
     this.permissionMode = opts.permissionMode ?? "workspace-write";
     this.spawnFn = opts.spawnWorker ?? spawnWorker;
+    this.messageInbox = opts.inboxBackend ?? new InMemoryInboxBackend();
     this.readlineFactory =
       opts.readlineFactory ??
       (async () => {
@@ -699,7 +706,12 @@ export class StandaloneHost implements SwarmHost {
     let dropped = 0;
     let delivered = 0;
     for (const r of recipients) {
-      const d = this.messageInbox.enqueue(r, message);
+      // v0.6 stage 6A.1: scope-keyed enqueue. Use the recipient's scope so
+      // the message lands in the right queue when the backend is multi-
+      // tenant (one in-memory backend per swarm-harness process serving
+      // multiple team scopes; or a shared sqlite-backed agent-inbox).
+      const recipientScope = this.scopeOf(r);
+      const d = await this.messageInbox.enqueue(recipientScope, r, message);
       if (d > 0) {
         dropped += d;
         this.emit({
@@ -743,8 +755,8 @@ export class StandaloneHost implements SwarmHost {
    * Used by the `check_inbox` tool when executing in the root orchestrator
    * (the only "standalone" case where this host answers a tool call directly).
    */
-  drainInbox(max: number): AgentMessage[] {
-    return this.messageInbox.drain(this.agentId, max);
+  async drainInbox(max: number): Promise<AgentMessage[]> {
+    return this.messageInbox.drain(this.scopeOf(this.agentId), this.agentId, max);
   }
 
   async *inbox(): AsyncIterable<InboxEvent> {
@@ -860,11 +872,14 @@ export class StandaloneHost implements SwarmHost {
     );
   }
 
-  private onWorkerExited(agentId: AgentId): void {
+  private async onWorkerExited(agentId: AgentId): Promise<void> {
+    // v0.6 stage 6A.1: capture scope BEFORE the agentToScope.delete below;
+    // discard() needs the scope to find the right queue.
+    const scope = this.scopeOf(agentId);
     this.roles.evict(agentId);
     this.agentToScope.delete(agentId);
     this.agentToMemberId.delete(agentId);
-    const discarded = this.messageInbox.discardAgent(agentId);
+    const discarded = await this.messageInbox.discard(scope, agentId);
     if (discarded.length > 0) {
       this.emit({
         type: "inbox_drained_on_exit",
@@ -912,7 +927,7 @@ export class StandaloneHost implements SwarmHost {
         typeof (frame.params as { max?: unknown })?.max === "number"
           ? Math.max(1, (frame.params as { max: number }).max)
           : 10;
-      const messages = this.messageInbox.drain(from, max);
+      const messages = await this.messageInbox.drain(this.scopeOf(from), from, max);
       transport.respond(frame.id, messages);
       return;
     }

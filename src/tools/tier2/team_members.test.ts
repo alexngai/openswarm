@@ -64,11 +64,12 @@ function hostAs(
     inbox: async function* () {
       return;
     },
-    drainInbox: (max: number) =>
+    drainInbox: async (max: number) =>
+      // v0.6 stage 6A.1: messageInbox.drain is now (scope, agent, max) → Promise.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ((root as any).messageInbox as {
-        drain: (id: AgentId, n: number) => AgentMessage[];
-      }).drain(agentId, max),
+        drain: (scope: string, id: AgentId, n: number) => Promise<AgentMessage[]>;
+      }).drain("swarm:default", agentId, max),
     askUser: (): never => {
       throw new Error("not used");
     },

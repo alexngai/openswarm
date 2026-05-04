@@ -404,7 +404,7 @@ export class WorkerHost implements SwarmHost {
    * miss a message is a dropped notification (see Decision context #2:
    * best-effort, in-memory delivery).
    */
-  drainInbox(max: number): AgentMessage[] {
+  async drainInbox(max: number): Promise<AgentMessage[]> {
     if (max <= 0) return [];
     const take = Math.min(max, this.inboxBuffer.length);
     return this.inboxBuffer.splice(0, take);

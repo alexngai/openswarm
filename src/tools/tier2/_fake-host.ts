@@ -196,7 +196,7 @@ export function makeFakeHost(opts: FakeHostOpts = {}): {
     async *inbox(): AsyncIterable<InboxEvent> {
       return;
     },
-    drainInbox(_max: number): AgentMessage[] {
+    async drainInbox(_max: number): Promise<AgentMessage[]> {
       return [];
     },
     askUser: vi.fn(

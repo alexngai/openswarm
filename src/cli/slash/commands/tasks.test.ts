@@ -22,7 +22,7 @@ function makeHost(records: readonly TaskRecord[]): SwarmHost {
     inbox: () => {
       throw new Error("not used");
     },
-    drainInbox: () => [],
+    drainInbox: async () => [],
     askUser: (): never => {
       throw new Error("M3b Phase 6 — not yet implemented");
     },

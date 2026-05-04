@@ -44,7 +44,8 @@ async function execute(
   }
   const input = parsed.data;
 
-  const messages = host.drainInbox(input.max);
+  // v0.6 stage 6A.1: drainInbox is async (InboxBackend may be library-backed).
+  const messages = await host.drainInbox(input.max);
   return {
     status: "ok",
     output: JSON.stringify(messages),

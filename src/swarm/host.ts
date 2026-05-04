@@ -114,11 +114,11 @@ export interface SwarmHost {
   inbox(): AsyncIterable<InboxEvent>;
 
   /**
-   * Synchronously drain up to `max` queued messages for this host's own agent.
-   * Used by the Tier 2 `check_inbox` tool — returns [] when nothing is queued,
-   * never blocks. Introduced in M3a Phase 3.
+   * Drain up to `max` queued messages for this host's own agent.
+   * Used by the Tier 2 `check_inbox` tool — returns [] when nothing is queued.
+   * v0.6 stage 6A.1: async to allow library/daemon-backed inbox impls.
    */
-  drainInbox(max: number): AgentMessage[];
+  drainInbox(max: number): Promise<AgentMessage[]>;
 
   /**
    * Ask the operator a question and wait for a response.

@@ -343,11 +343,12 @@ describe("Scenario 9: orchestrator routes message.send between two depth-1 worke
     // Drain from B's orchestrator-side queue via the same internal API the
     // "message.recv" IPC handler uses. (B is a real subprocess; its in-process
     // check_inbox would hit this queue via IPC.)
+    // v0.6 stage 6A.1: messageInbox.drain is now (scope, agent, max) → Promise.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const inbox = (root as any).messageInbox as {
-      drain: (id: AgentId, n: number) => AgentMessage[];
+      drain: (scope: string, id: AgentId, n: number) => Promise<AgentMessage[]>;
     };
-    const drained = inbox.drain(handleB.agentId, 10);
+    const drained = await inbox.drain("swarm:default", handleB.agentId, 10);
     expect(drained).toHaveLength(1);
     expect(drained[0]).toMatchObject({
       from: handleA.agentId,
