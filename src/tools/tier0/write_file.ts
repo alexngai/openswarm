@@ -2,7 +2,6 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { isUnderCwd } from "./internal.js";
@@ -24,7 +23,7 @@ const spec: ToolSpec = {
     "Symlinks that point outside the workspace are also rejected. " +
     "Content must not exceed 10 MiB. Parent directories are created if missing. " +
     "Writes are atomic (temp-file + rename).",
-  inputSchema: zodToJsonSchema(inputSchema as never) as JsonSchema,
+  inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
   requiredPermission: "write",
   tier: 0,
 };

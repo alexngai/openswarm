@@ -8,7 +8,6 @@
  */
 
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import type { AgentId } from "../../core/types.js";
@@ -30,7 +29,7 @@ const spec: ToolSpec = {
     "Orchestrators can stop any task unconditionally. " +
     "Worker agents can only stop tasks they (transitively) spawned — " +
     "attempting to stop an unrelated task returns a permission error.",
-  inputSchema: zodToJsonSchema(inputSchema as any) as JsonSchema,
+  inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
   requiredPermission: "exec",
   tier: 2,
   concurrencySafe: false,

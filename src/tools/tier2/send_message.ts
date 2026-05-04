@@ -12,7 +12,6 @@
  */
 
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema, AgentId } from "../../core/types.js";
 import type { AgentMessage } from "../../swarm/host.js";
@@ -38,7 +37,7 @@ const spec: ToolSpec = {
     'Use `to: "*"` to broadcast to all peers or `to: "role:<name>"` to reach a role. ' +
     "Returns a SendResult with delivered/dropped counts.",
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  inputSchema: zodToJsonSchema(inputSchema as any) as JsonSchema,
+  inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
   requiredPermission: "exec",
   tier: 2,
   concurrencySafe: false,

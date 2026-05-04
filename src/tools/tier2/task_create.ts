@@ -1,4 +1,3 @@
-import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { requireHost } from "./require-host.js";
@@ -40,7 +39,7 @@ const spec: ToolSpec = {
     "Create a new task in the swarm task registry. " +
     "Returns the task id and initial status. " +
     "The task is not immediately executed — use the `agent` tool to spawn a worker for it.",
-  inputSchema: zodToJsonSchema(inputSchema as any) as JsonSchema,
+  inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
   requiredPermission: "none",
   tier: 2,
   concurrencySafe: false,

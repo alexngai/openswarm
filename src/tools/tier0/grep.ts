@@ -9,7 +9,6 @@
 
 import { spawn } from "node:child_process";
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import { rgPath } from "@vscode/ripgrep";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
@@ -36,7 +35,7 @@ const spec: ToolSpec = {
     "output_mode: 'content' (default) shows matching lines as path:line: text; " +
     "'files_with_matches' lists file paths; 'count' shows match counts per file. " +
     "head_limit caps output lines (default 250).",
-  inputSchema: zodToJsonSchema(inputSchema as never) as JsonSchema,
+  inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
   requiredPermission: "read",
   tier: 0,
 };

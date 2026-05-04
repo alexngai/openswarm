@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import type { SpawnRequest } from "../../swarm/host.js";
@@ -47,7 +46,7 @@ const spec: ToolSpec = {
     "default is a child sub-agent. Use `framework` to opt into a specific " +
     "framework provider.",
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  inputSchema: zodToJsonSchema(inputSchema as any) as JsonSchema,
+  inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
   requiredPermission: "exec",
   tier: 2,
   concurrencySafe: false,

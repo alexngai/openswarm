@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { requireHost } from "./require-host.js";
@@ -20,7 +19,7 @@ const spec: ToolSpec = {
     "Returns the full TaskRecord as JSON, or the literal string \"null\" " +
     "when the id is unknown.",
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  inputSchema: zodToJsonSchema(inputSchema as any) as JsonSchema,
+  inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
   requiredPermission: "read",
   tier: 2,
   concurrencySafe: false,

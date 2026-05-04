@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ToolImpl } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 
@@ -11,7 +10,7 @@ const inputSchema = z.object({
 const spec: ToolSpec = {
   name: "web_search",
   description: "Search the web. Returns ranked results with titles, URLs, and snippets.",
-  inputSchema: zodToJsonSchema(inputSchema as never) as JsonSchema,
+  inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
   requiredPermission: "network",
   tier: 1,
 };

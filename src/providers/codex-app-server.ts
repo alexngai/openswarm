@@ -619,14 +619,24 @@ export class CodexAppServerProvider extends EventEmitter {
       }
 
       if (method === "error") {
+        // v0.4 stage 4M.9: when Codex sends a bare `error` notification
+        // without a `message` field, the previous fallback of "Unknown error"
+        // dropped the entire payload — making the consultant pattern's
+        // failures un-debuggable. Now we serialise the full params object so
+        // operators can see whatever Codex actually told us (status code,
+        // requestId, code, etc.).
         const p = params as { message?: string };
+        const msg =
+          p.message !== undefined && p.message !== ""
+            ? p.message
+            : `codex error notification with no message field; params=${JSON.stringify(params)}`;
         enqueue({
           kind: "event",
           event: {
             type: "error",
             error: {
               code: "provider_unavailable",
-              message: p.message ?? "Unknown error",
+              message: msg,
               retryable: false,
             },
           },

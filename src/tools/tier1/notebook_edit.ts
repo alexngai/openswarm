@@ -3,7 +3,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
-import { zodToJsonSchema } from "zod-to-json-schema";
 
 const inputSchema = z.object({
   notebook_path: z.string().endsWith(".ipynb"),
@@ -21,7 +20,7 @@ const spec: ToolSpec = {
     "Edit a Jupyter notebook (.ipynb) cell-by-cell. Supports replace, insert, and delete operations. " +
     "Use cell_id to target a specific cell. For insert without cell_id, the new cell is appended. " +
     "Requires write permission.",
-  inputSchema: zodToJsonSchema(inputSchema as never) as JsonSchema,
+  inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
   requiredPermission: "write",
   tier: 1,
 };

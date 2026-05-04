@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import TurndownService from "turndown";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
@@ -17,7 +16,7 @@ const spec: ToolSpec = {
     "Fetch a URL and return its content as text. HTML pages are converted to Markdown. " +
     "Plain text and JSON are returned as-is. Binary content (images, octet-stream) is rejected. " +
     "Responses are truncated at maxBytes (default 256 KiB). Requires network permission.",
-  inputSchema: zodToJsonSchema(inputSchema as never) as JsonSchema,
+  inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
   requiredPermission: "network",
   tier: 1,
 };

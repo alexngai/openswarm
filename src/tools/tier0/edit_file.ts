@@ -16,7 +16,6 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { isUnderCwd } from "./internal.js";
@@ -37,7 +36,7 @@ const spec: ToolSpec = {
     "If old_string appears more than once and replace_all is not true, the call fails — " +
     "narrow old_string to be unique or pass replace_all: true. " +
     "Uses atomic write (temp file + rename) so partial writes never corrupt the target.",
-  inputSchema: zodToJsonSchema(inputSchema as any) as JsonSchema,
+  inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
   requiredPermission: "write",
   tier: 0,
 };
