@@ -94,6 +94,10 @@ export type ParsedArgs =
       deadLetter: string;
       allowDeadLetter: boolean;
       role?: string;
+      /** v0.5 stage 5B: enable opentasks daemon mirror. */
+      opentasks: boolean;
+      /** v0.5 stage 5B: explicit opentasks daemon socket path. */
+      opentasksSocket?: string;
     }
   | { kind: "plugin"; pluginArgv: string[] }
   | { kind: "login"; provider: string }
@@ -224,6 +228,10 @@ export function parseArgv(args: string[]): ParsedArgs {
 
   // v0.5 stage 5E.5 — --follow flag for `team logs`.
   let follow = false;
+
+  // v0.5 stage 5B — opentasks daemon mirror flags for `swarm run`.
+  let opentasks = false;
+  let opentasksSocket: string | undefined;
 
   // First pass: scan for early-exit flags (--help, -h, --version, -V) and
   // collect flags that precede the subcommand / positional.
@@ -531,6 +539,28 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
+    // v0.5 stage 5B: --opentasks for `swarm run`. Boolean.
+    if (tok === "--opentasks") {
+      opentasks = true;
+      i++;
+      continue;
+    }
+    if (tok === "--opentasks-socket") {
+      const next = expanded[i + 1];
+      if (next === undefined || next.startsWith("-")) {
+        return {
+          kind: "error",
+          message: "--opentasks-socket requires a path argument",
+          showHelp: true,
+        };
+      }
+      opentasksSocket = next;
+      // Setting an explicit socket implies --opentasks.
+      opentasks = true;
+      i += 2;
+      continue;
+    }
+
     // v0.4 stage 4K: --spec <path> for the `topology` subcommand. Required
     // when topology is invoked; ignored otherwise (the topology dispatch is
     // the only consumer).
@@ -741,6 +771,8 @@ export function parseArgv(args: string[]): ParsedArgs {
         deadLetter: swarmDeadLetter,
         allowDeadLetter: swarmAllowDeadLetter,
         ...(swarmRole !== undefined && { role: swarmRole }),
+        opentasks,
+        ...(opentasksSocket !== undefined && { opentasksSocket }),
       };
     }
 

@@ -9,6 +9,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { PermissionMode } from "../core/types.js";
 import { Orchestrator } from "../swarm/orchestrator.js";
+import { StandaloneHost } from "../swarm/standalone-host.js";
 import type { TaskPacket } from "../swarm/host.js";
 import { TaskPacketSchema, isPolicyParseError } from "../swarm/policies.js";
 import {
@@ -17,6 +18,11 @@ import {
   loadCustomRoles,
 } from "../swarm/roles.js";
 import { checkBudget } from "../core/budget.js";
+import {
+  OpenTasksClient,
+  findOpenTasksSocket,
+} from "../swarm/adapters/opentasks-client.js";
+import { OpenTasksTaskRegistry } from "../swarm/adapters/opentasks-task-registry.js";
 
 // ---------------------------------------------------------------------------
 // Schema (Phase 2: discriminated-union policies)
@@ -48,6 +54,18 @@ export interface SwarmRunOptions {
    * built at startup (built-ins + custom from `.swarm-harness/roles.json`).
    */
   readonly defaultRole?: string;
+  /**
+   * v0.5 stage 5B: when true, mirror task create/update into the opentasks
+   * daemon for cross-system task graph visibility. Local TaskRegistry stays
+   * authoritative; opentasks is best-effort (errors don't block the run).
+   */
+  readonly opentasks?: boolean;
+  /**
+   * v0.5 stage 5B: explicit opentasks daemon socket path. When unset and
+   * `opentasks` is true, the socket is auto-discovered via the standard
+   * walk-up (`.swarm/opentasks` → `.opentasks` → `.git/opentasks`).
+   */
+  readonly opentasksSocket?: string;
   /**
    * Aggregate token cap across all workers. On exceed, all in-flight workers
    * are aborted and the run exits with code 3 (v0.2.Q7).
@@ -141,6 +159,29 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
 
   // Open results stream.
   const resultsOut = fs.createWriteStream(opts.output, { flags: "a" });
+
+  // v0.5 stage 5B — when --opentasks is set, build a StandaloneHost that
+  // wraps its TaskAPI with the OpenTasksTaskRegistry adapter. The wrapper
+  // is best-effort: opentasks daemon failures don't block the swarm run.
+  let host: StandaloneHost | undefined;
+  if (opts.opentasks === true) {
+    const sockPath =
+      opts.opentasksSocket ?? findOpenTasksSocket(process.cwd());
+    if (sockPath === null) {
+      process.stderr.write(
+        "error: --opentasks set but no daemon socket found. Start the daemon with `opentasks daemon start` " +
+          "or pass --opentasks-socket <path>.\n",
+      );
+      return 2;
+    }
+    const client = new OpenTasksClient(sockPath);
+    host = new StandaloneHost({
+      permissionMode: opts.permissionMode,
+      taskWrapper: (inner) => new OpenTasksTaskRegistry(inner, client),
+    });
+    process.stderr.write(`[swarm-harness] --opentasks enabled (socket: ${sockPath})\n`);
+  }
+
   const orch = new Orchestrator({
     concurrency: opts.concurrency,
     permissionMode: opts.permissionMode,
@@ -152,6 +193,7 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
     ...(opts.allowDeadLetter !== undefined
       ? { allowDeadLetter: opts.allowDeadLetter }
       : {}),
+    ...(host !== undefined && { host }),
   });
 
   const startedAt = Date.now();

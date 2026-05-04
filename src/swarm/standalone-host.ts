@@ -71,6 +71,14 @@ export interface StandaloneHostOptions {
    * When absent, askUser() lazy-imports node:readline/promises.
    */
   readonly readlineFactory?: ReadlineFactory;
+  /**
+   * v0.5 stage 5B: allow callers to wrap the constructed TaskAPI before it's
+   * exposed as `host.task`. Production use case: opentasks adapter
+   * (src/swarm/adapters/opentasks-task-registry.ts) mirrors create/update
+   * into the opentasks daemon for cross-system visibility while leaving the
+   * local in-memory registry authoritative for runtime ops.
+   */
+  readonly taskWrapper?: (inner: TaskAPI) => TaskAPI;
 }
 
 export class StandaloneHost implements SwarmHost {
@@ -158,7 +166,7 @@ export class StandaloneHost implements SwarmHost {
     // Auto-scan-on-construction belongs to a v0.2 follow-up that also
     // makes the scan async + the write path async/batched.
 
-    this.task = {
+    const innerTask: TaskAPI = {
       create: async (packet) => this.registry.create(packet),
       get: async (id) => this.registry.get(id),
       list: async (filter?: TaskFilter) => this.registry.list(filter),
@@ -190,6 +198,10 @@ export class StandaloneHost implements SwarmHost {
       },
       output: (id: string) => this.taskOutput(id),
     };
+    // v0.5 stage 5B: optional wrapper (e.g. opentasks adapter) sits in front
+    // of the in-memory implementation so it can mirror state to an external
+    // task graph daemon without disturbing local-runtime semantics.
+    this.task = opts.taskWrapper !== undefined ? opts.taskWrapper(innerTask) : innerTask;
   }
 
   // orchestrator's own lifecycle is process lifetime; transitions are not driven

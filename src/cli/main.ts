@@ -729,6 +729,10 @@ export async function main(argv: string[]): Promise<number> {
           ? { allowDeadLetter: parsed.allowDeadLetter }
           : {}),
         ...(parsed.role !== undefined ? { defaultRole: parsed.role } : {}),
+        opentasks: parsed.opentasks,
+        ...(parsed.opentasksSocket !== undefined && {
+          opentasksSocket: parsed.opentasksSocket,
+        }),
       });
 
     case "plugin":
