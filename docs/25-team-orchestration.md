@@ -763,6 +763,8 @@ The daemon does its own discovery walk; swarm-harness only needs to know `enable
 
 ### 10.4 git-cascade — `BranchPolicy` adapter (v0.7, Q7)
 
+**Status (v0.7 stage 7A — shipped 2026-05-04):** the worktree-per-member primitive ships as 7A.1–7A.5 (per [docs/29-v0.7-git-cascade-plan.md](29-v0.7-git-cascade-plan.md)). `--git-cascade` opts in. Members spec'd with `branchPolicy: { kind: "stream" | "fork" }` get a per-agent worktree under `${repoPath}/.swarm-harness/worktrees/<streamId>/` and the spawned worker runs with that cwd. Commit-integration (Change-Id trailers via `tracker.commitChanges`), merge + cascade rebase, and per-topology default branch policies remain deferred to 7B / 7C / 7D.
+
 git-cascade exposes `MultiAgentRepoTracker` with: `createStream`, `forkStream`, `mergeStream`, `syncWithParent`, `commitChanges`, `createWorktree`, `cascadeRebase`, plus MAP-compatible event emission already wired ([git-cascade/README.md:144](../references/git-cascade/README.md)).
 
 **Integration shape:**
@@ -958,10 +960,10 @@ Per Q8: v0.4 = minimum + MAP. Adapters layered after.
 
 | Stage | Scope |
 |---|---|
-| 7A | `BranchPolicy` variants `stream` + `fork` |
-| 7B | git-cascade adapter wires `createStream`/`createWorktree`/`commitChanges` into worker spawn + commit lifecycle |
-| 7C | Cascade rebase on pipeline topologies |
-| 7D | Default branch policies per topology (table in §10.4) |
+| 7A | `BranchPolicy` variants `stream` + `fork` + `GitCascadeBranchPolicyAdapter` + worktree-per-member at spawn — **shipped** ([docs/29](29-v0.7-git-cascade-plan.md)) |
+| 7B | Worker-side `tracker.commitChanges` wrap so commits get Change-Id trailers + audit log |
+| 7C | `tracker.mergeStream` at team completion + cascade rebase on pipeline topologies |
+| 7D | Default branch policies per topology (table in §10.4) + worktree cleanup CLI |
 
 ### v0.8+ — long tail
 

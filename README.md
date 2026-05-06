@@ -147,11 +147,21 @@ swarm-harness topology pipeline --spec ./pipeline.json
 swarm-harness topology peer-team --spec ./team.json --map ws://localhost:8080
 
 # `--ecosystem` enables `--map` (v0.4). v0.5 added the opentasks adapter
-# behind `--opentasks`; agent-inbox and git-cascade adapters land in v0.6+.
+# behind `--opentasks`; v0.6 added agent-inbox library backend behind
+# `--agent-inbox`; v0.7 added git-cascade worktree-per-member behind
+# `--git-cascade`.
 swarm-harness topology peer-team --spec ./team.json --ecosystem
 
 # v0.5: opentasks daemon mirror (live cross-system task graph)
 swarm-harness swarm run tasks.jsonl --opentasks
+
+# v0.6: agent-inbox library backend (threading + persistence path)
+swarm-harness swarm run tasks.jsonl --agent-inbox
+
+# v0.7: git-cascade worktree-per-member (filesystem isolation between
+# parallel members; opt-in via branchPolicy: { kind: "stream" | "fork" }
+# in the spec).
+swarm-harness swarm run tasks.jsonl --git-cascade
 ```
 
 Detach a team into a background daemon and manage it cross-process:
