@@ -23,6 +23,19 @@ export const BranchPolicySchema = z.discriminatedUnion("kind", [
     from: z.string().min(1),
     name: z.string().optional(),
   }),
+  // v0.7 stage 7A — git-cascade integration. baseStreamId is optional
+  // (omitted = fresh stream from current HEAD); name is the human-readable
+  // stream label forwarded to git-cascade's createStream.
+  z.object({
+    kind: z.literal("stream"),
+    baseStreamId: z.string().min(1).optional(),
+    name: z.string().min(1).optional(),
+  }),
+  z.object({
+    kind: z.literal("fork"),
+    parentStreamId: z.string().min(1),
+    name: z.string().min(1).optional(),
+  }),
 ]);
 
 export const CommitPolicySchema = z.discriminatedUnion("kind", [

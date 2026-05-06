@@ -285,7 +285,21 @@ export interface TaskPacket {
 export type BranchPolicy =
   | { readonly kind: "none" }
   | { readonly kind: "reuse"; readonly branch: string }
-  | { readonly kind: "create"; readonly from: string; readonly name?: string };
+  | { readonly kind: "create"; readonly from: string; readonly name?: string }
+  // v0.7 stage 7A — git-cascade integration. `stream` opens a fresh
+  // git-cascade stream (optionally based on `baseStreamId`); `fork`
+  // creates a child stream from `parentStreamId`. Both trigger
+  // worktree-per-member at spawn when --git-cascade is enabled.
+  | {
+      readonly kind: "stream";
+      readonly baseStreamId?: string;
+      readonly name?: string;
+    }
+  | {
+      readonly kind: "fork";
+      readonly parentStreamId: string;
+      readonly name?: string;
+    };
 
 export type CommitPolicy =
   | { readonly kind: "none" }

@@ -54,6 +54,42 @@ describe("BranchPolicySchema", () => {
     expect(r.success).toBe(false);
   });
 
+  // v0.7 stage 7A.1 — git-cascade variants
+  it("accepts kind=stream with no fields (fresh stream from HEAD)", () => {
+    const r = BranchPolicySchema.safeParse({ kind: "stream" });
+    expect(r.success).toBe(true);
+  });
+
+  it("accepts kind=stream with baseStreamId + name", () => {
+    const r = BranchPolicySchema.safeParse({
+      kind: "stream",
+      baseStreamId: "s-abc",
+      name: "feature/x",
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("rejects kind=stream with empty baseStreamId", () => {
+    const r = BranchPolicySchema.safeParse({
+      kind: "stream",
+      baseStreamId: "",
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("accepts kind=fork with parentStreamId", () => {
+    const r = BranchPolicySchema.safeParse({
+      kind: "fork",
+      parentStreamId: "s-parent",
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("rejects kind=fork without parentStreamId", () => {
+    const r = BranchPolicySchema.safeParse({ kind: "fork" });
+    expect(r.success).toBe(false);
+  });
+
   it("rejects legacy flat string 'main'", () => {
     const r = BranchPolicySchema.safeParse("main");
     expect(r.success).toBe(false);
