@@ -734,6 +734,7 @@ export async function main(argv: string[]): Promise<number> {
           opentasksSocket: parsed.opentasksSocket,
         }),
         agentInbox: parsed.agentInbox,
+        gitCascade: parsed.gitCascade,
       });
 
     case "plugin":

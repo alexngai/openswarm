@@ -312,6 +312,20 @@ describe("parseArgv", () => {
     expect(result.agentInbox).toBe(false);
   });
 
+  // ---- v0.7 stage 7A.4 — --git-cascade ----------------------------------
+
+  it("swarm run --git-cascade sets gitCascade=true", () => {
+    const result = parseArgv(["swarm", "run", "tasks.json", "--git-cascade"]);
+    if (result.kind !== "swarm-run") throw new Error("expected swarm-run");
+    expect(result.gitCascade).toBe(true);
+  });
+
+  it("swarm run without --git-cascade leaves gitCascade=false", () => {
+    const result = parseArgv(["swarm", "run", "tasks.json"]);
+    if (result.kind !== "swarm-run") throw new Error("expected swarm-run");
+    expect(result.gitCascade).toBe(false);
+  });
+
   // ---- swarm run + dead-letter flags ---------------------------------------
 
   it("swarm run with --dead-letter sets deadLetter path", () => {

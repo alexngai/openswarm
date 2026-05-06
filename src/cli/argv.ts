@@ -100,6 +100,8 @@ export type ParsedArgs =
       opentasksSocket?: string;
       /** v0.6 stage 6A.2: enable agent-inbox library-backed InboxBackend. */
       agentInbox: boolean;
+      /** v0.7 stage 7A.4: enable git-cascade BranchPolicy adapter. */
+      gitCascade: boolean;
     }
   | { kind: "plugin"; pluginArgv: string[] }
   | { kind: "login"; provider: string }
@@ -237,6 +239,9 @@ export function parseArgv(args: string[]): ParsedArgs {
 
   // v0.6 stage 6A.2 — agent-inbox library backend flag for `swarm run`.
   let agentInbox = false;
+
+  // v0.7 stage 7A.4 — git-cascade BranchPolicy adapter flag for `swarm run`.
+  let gitCascade = false;
 
   // First pass: scan for early-exit flags (--help, -h, --version, -V) and
   // collect flags that precede the subcommand / positional.
@@ -573,6 +578,13 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
+    // v0.7 stage 7A.4: --git-cascade enables the worktree-per-member adapter.
+    if (tok === "--git-cascade") {
+      gitCascade = true;
+      i++;
+      continue;
+    }
+
     // v0.4 stage 4K: --spec <path> for the `topology` subcommand. Required
     // when topology is invoked; ignored otherwise (the topology dispatch is
     // the only consumer).
@@ -786,6 +798,7 @@ export function parseArgv(args: string[]): ParsedArgs {
         opentasks,
         ...(opentasksSocket !== undefined && { opentasksSocket }),
         agentInbox,
+        gitCascade,
       };
     }
 

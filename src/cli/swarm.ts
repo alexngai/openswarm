@@ -24,6 +24,7 @@ import {
 } from "../swarm/adapters/opentasks-client.js";
 import { OpenTasksTaskRegistry } from "../swarm/adapters/opentasks-task-registry.js";
 import { AgentInboxBackend } from "../swarm/adapters/agent-inbox-backend.js";
+import { GitCascadeBranchPolicyAdapter } from "../swarm/adapters/git-cascade-branch-policy.js";
 
 // ---------------------------------------------------------------------------
 // Schema (Phase 2: discriminated-union policies)
@@ -73,6 +74,12 @@ export interface SwarmRunOptions {
    * default in-memory queue.
    */
   readonly agentInbox?: boolean;
+  /**
+   * v0.7 stage 7A.4: when true, wire a GitCascadeBranchPolicyAdapter so
+   * members spec'd with kind:"stream" / kind:"fork" land in per-agent
+   * worktrees under .swarm-harness/worktrees/<streamId>/.
+   */
+  readonly gitCascade?: boolean;
   /**
    * Aggregate token cap across all workers. On exceed, all in-flight workers
    * are aborted and the run exits with code 3 (v0.2.Q7).
@@ -173,7 +180,10 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
   // v0.6 stage 6A.2 — when --agent-inbox is set, build the same host with
   // an AgentInboxBackend (library-backed; threading + persistence).
   let host: StandaloneHost | undefined;
-  const needsCustomHost = opts.opentasks === true || opts.agentInbox === true;
+  const needsCustomHost =
+    opts.opentasks === true ||
+    opts.agentInbox === true ||
+    opts.gitCascade === true;
   if (needsCustomHost) {
     let taskWrapper: ((inner: import("../swarm/host.js").TaskAPI) => import("../swarm/host.js").TaskAPI) | undefined;
 
@@ -198,10 +208,23 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
       process.stderr.write(`[swarm-harness] --agent-inbox enabled (in-memory storage)\n`);
     }
 
+    let branchPolicyAdapter:
+      | import("../swarm/adapters/git-cascade-branch-policy.js").BranchPolicyAdapter
+      | undefined;
+    if (opts.gitCascade === true) {
+      branchPolicyAdapter = new GitCascadeBranchPolicyAdapter({
+        repoPath: process.cwd(),
+      });
+      process.stderr.write(
+        `[swarm-harness] --git-cascade enabled (worktrees under ${process.cwd()}/.swarm-harness/worktrees/)\n`,
+      );
+    }
+
     host = new StandaloneHost({
       permissionMode: opts.permissionMode,
       ...(taskWrapper !== undefined && { taskWrapper }),
       ...(inboxBackend !== undefined && { inboxBackend }),
+      ...(branchPolicyAdapter !== undefined && { branchPolicyAdapter }),
     });
   }
 
