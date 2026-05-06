@@ -104,6 +104,7 @@ export type ParsedArgs =
       gitCascade: boolean;
     }
   | { kind: "plugin"; pluginArgv: string[] }
+  | { kind: "worktree"; worktreeArgv: string[] }
   | { kind: "login"; provider: string }
   | { kind: "logout"; provider: string }
   | {
@@ -153,6 +154,7 @@ const SUBCOMMANDS = new Set([
   "logout",
   "team",
   "topology",
+  "worktree",
 ]);
 
 // v0.4 stage 4K — committee/critic-loop are reserved but unimplemented.
@@ -674,6 +676,20 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
+    // v0.7 stage 7D — pass-through subcommands (worktree, plugin) own their
+    // own flag parsing. Once we've identified one, capture all remaining
+    // tokens (including --flags) as positionals so the sub-CLI can interpret
+    // them. Without this, the global unknown-flag check below rejects things
+    // like `worktree clean --dry-run`.
+    if (
+      subcommand !== undefined &&
+      (subcommand === "worktree" || subcommand === "plugin")
+    ) {
+      positionals.push(tok);
+      i++;
+      continue;
+    }
+
     // Unknown flag.
     if (tok.startsWith("-")) {
       return {
@@ -805,6 +821,11 @@ export function parseArgv(args: string[]): ParsedArgs {
     case "plugin": {
       // Pass all remaining positionals (sub-subcommand + args) to pluginMain.
       return { kind: "plugin", pluginArgv: positionals };
+    }
+
+    case "worktree": {
+      // v0.7 stage 7D — `worktree list|clean` for git-cascade-managed worktrees.
+      return { kind: "worktree", worktreeArgv: positionals };
     }
 
     case "team": {

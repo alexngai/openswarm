@@ -27,6 +27,7 @@ import type {
   Aggregator,
 } from "../team-spec.js";
 import { TeamSession } from "../team-session.js";
+import { applyDefaultBranchPolicy } from "./branch-policy-defaults.js";
 import type {
   Topology,
   TopologyContext,
@@ -36,10 +37,15 @@ import type {
 export class PeerTeamTopology implements Topology {
   readonly name = "peer-team" as const;
 
-  async run(spec: TeamSpec, ctx: TopologyContext): Promise<TeamResult> {
-    if (spec.members.length === 0) {
+  async run(specIn: TeamSpec, ctx: TopologyContext): Promise<TeamResult> {
+    if (specIn.members.length === 0) {
       throw new Error("PeerTeamTopology: spec.members is empty");
     }
+    // v0.7 stage 7D — when the host has a stream-aware adapter, default each
+    // member to its own stream/worktree per docs/25 §10.4. Spec overrides win.
+    const spec = ctx.host.supportsStreams()
+      ? applyDefaultBranchPolicy(specIn, { kind: "stream" })
+      : specIn;
 
     const team = new TeamSession({
       name: spec.name,

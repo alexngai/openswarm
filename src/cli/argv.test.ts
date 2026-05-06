@@ -504,4 +504,22 @@ describe("parseArgv", () => {
       message: expect.stringContaining("logout requires --provider"),
     });
   });
+
+  // ---- v0.7 stage 7D: worktree subcommand ---------------------------------
+
+  it("worktree list is parsed as worktree subcommand pass-through", () => {
+    const result = parseArgv(["worktree", "list", "--json"]);
+    expect(result).toMatchObject({
+      kind: "worktree",
+      worktreeArgv: ["list", "--json"],
+    });
+  });
+
+  it("worktree clean --dry-run passes through positionals", () => {
+    const result = parseArgv(["worktree", "clean", "--dry-run"]);
+    expect(result).toMatchObject({
+      kind: "worktree",
+      worktreeArgv: ["clean", "--dry-run"],
+    });
+  });
 });

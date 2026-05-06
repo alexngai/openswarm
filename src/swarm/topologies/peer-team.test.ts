@@ -145,6 +145,8 @@ interface FakeHostExtras {
     | import("../adapters/git-cascade-branch-policy.js").MergeStreamResult
     | null
   >;
+  /** v0.7 stage 7D — stub the stream-aware-adapter check. */
+  readonly supportsStreams?: () => boolean;
 }
 
 function fakeHost(
@@ -195,6 +197,9 @@ function fakeHost(
     // existing tests are unaffected.
     streamIdFor: vi.fn(extras.streamIdFor ?? (() => undefined)),
     mergeStreamForAgent: vi.fn(extras.mergeStreamForAgent ?? (async () => null)),
+    // v0.7 stage 7D — default to false so existing tests don't get policies
+    // rewritten under them. Tests that exercise defaults override via extras.
+    supportsStreams: vi.fn(extras.supportsStreams ?? (() => false)),
   } as unknown as StandaloneHost;
 
   return {
@@ -837,6 +842,53 @@ describe("PeerTeamTopology — coordination.mergeStreams (v0.7 stage 7C)", () =>
     );
     expect(aborted).toHaveLength(1);
     await cleanup();
+  });
+
+  it("v0.7 stage 7D — applies default {kind:'stream'} when host supports streams and member has no policy", async () => {
+    const captured: SpawnRequest[] = [];
+    const harness = await makeCtx({
+      handleOpts: [{ result: successResult("ok") }],
+      hostExtras: { supportsStreams: () => true },
+    });
+    // Wrap the host's spawn to record the SpawnRequest's branchPolicy.
+    const origSpawn = harness.harness.host.spawn.bind(harness.harness.host);
+    (harness.harness.host as unknown as { spawn: typeof origSpawn }).spawn = (
+      req: SpawnRequest,
+    ) => {
+      captured.push(req);
+      return origSpawn(req);
+    };
+
+    // Member with NO branchPolicy at all (overrides the default `{kind: "none"}`
+    // applied by the local `member()` helper).
+    const m: MemberSpec = { id: "a", role: "worker", prompt: "p" };
+    const s = peerSpec([m], { completion: { kind: "all" } });
+
+    await new PeerTeamTopology().run(s, harness.ctx);
+    expect(captured[0]?.task.branchPolicy).toEqual({ kind: "stream" });
+    await harness.cleanup();
+  });
+
+  it("v0.7 stage 7D — does NOT rewrite when host doesn't support streams", async () => {
+    const captured: SpawnRequest[] = [];
+    const harness = await makeCtx({
+      handleOpts: [{ result: successResult("ok") }],
+      hostExtras: { supportsStreams: () => false },
+    });
+    const origSpawn = harness.harness.host.spawn.bind(harness.harness.host);
+    (harness.harness.host as unknown as { spawn: typeof origSpawn }).spawn = (
+      req: SpawnRequest,
+    ) => {
+      captured.push(req);
+      return origSpawn(req);
+    };
+    const m: MemberSpec = { id: "a", role: "worker", prompt: "p" };
+    const s = peerSpec([m], { completion: { kind: "all" } });
+    await new PeerTeamTopology().run(s, harness.ctx);
+    // member() helper applies {kind:"none"} — but here we used a bare m.
+    // TeamSession's own default kicks in: {kind:"none"}.
+    expect(captured[0]?.task.branchPolicy).toEqual({ kind: "none" });
+    await harness.cleanup();
   });
 
   it("forwards strategy when configured", async () => {

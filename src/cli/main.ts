@@ -740,6 +740,11 @@ export async function main(argv: string[]): Promise<number> {
     case "plugin":
       return pluginMain(parsed.pluginArgv);
 
+    case "worktree": {
+      const { worktreeMain } = await import("./worktree.js");
+      return worktreeMain(parsed.worktreeArgv);
+    }
+
     case "team-start":
       return runTeamStart(parsed.template, {
         permissionMode: parsed.permissionMode,

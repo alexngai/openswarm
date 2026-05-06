@@ -269,6 +269,16 @@ export class StandaloneHost implements SwarmHost {
   }
 
   /**
+   * v0.7 stage 7D: does the configured branch-policy adapter manage
+   * streams (i.e. is it git-cascade-backed, not the identity default)?
+   * Topology executors use this to decide whether to apply per-topology
+   * default branch policies (per docs/25 §10.4 table).
+   */
+  supportsStreams(): boolean {
+    return this.branchPolicyAdapter.streamIdFor !== undefined;
+  }
+
+  /**
    * v0.7 stage 7C: look up the stream id an agent is operating on. Returns
    * undefined when the adapter doesn't track streams (identity adapter)
    * or the agent isn't in a stream context.
