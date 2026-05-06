@@ -62,6 +62,24 @@ function makeTracker() {
           return { agentId: opts.agentId, path: opts.path };
         },
       ),
+      // v0.7 stage 7B: returns a fake commit + changeId per call.
+      commitChanges: vi.fn(
+        (opts: {
+          streamId: string;
+          agentId: string;
+          worktree: string;
+          message: string;
+          metadata?: Record<string, unknown>;
+        }) => {
+          counter++;
+          return {
+            commitSha: `sha-${counter}`,
+            changeId: `cid-${counter}`,
+            streamId: opts.streamId,
+            message: opts.message,
+          };
+        },
+      ),
       close: vi.fn(() => {
         closed = true;
       }),
@@ -221,6 +239,61 @@ describe("GitCascadeBranchPolicyAdapter — kind:'fork'", () => {
 // ---------------------------------------------------------------------------
 // dispose()
 // ---------------------------------------------------------------------------
+
+describe("GitCascadeBranchPolicyAdapter.commitChanges (v0.7 stage 7B)", () => {
+  it("returns null when the agent has no recorded stream", async () => {
+    const fake = makeTracker();
+    const adapter = new GitCascadeBranchPolicyAdapter({
+      repoPath: "/repo",
+      trackerForTest: fake.tracker,
+    });
+    const r = await adapter.commitChanges("agent-x" as AgentId, "msg");
+    expect(r).toBeNull();
+    expect(fake.tracker.commitChanges).not.toHaveBeenCalled();
+  });
+
+  it("routes through tracker.commitChanges using the agent's stream + worktree", async () => {
+    const fake = makeTracker();
+    const adapter = new GitCascadeBranchPolicyAdapter({
+      repoPath: "/repo",
+      trackerForTest: fake.tracker,
+    });
+    // Resolve a stream so the adapter records the agentId → {streamId, worktree} map.
+    await adapter.resolve({ kind: "stream" }, "agent-A" as AgentId);
+
+    const r = await adapter.commitChanges(
+      "agent-A" as AgentId,
+      "feat: add x",
+      { taskId: "t-99" },
+    );
+    expect(r).not.toBeNull();
+    expect(r?.streamId).toBe("s-1");
+    expect(r?.commitSha).toMatch(/^sha-/);
+    expect(r?.changeId).toMatch(/^cid-/);
+
+    expect(fake.tracker.commitChanges).toHaveBeenCalledOnce();
+    const callArgs = fake.tracker.commitChanges.mock.calls[0]![0];
+    expect(callArgs.streamId).toBe("s-1");
+    expect(callArgs.agentId).toBe("agent-A");
+    expect(callArgs.message).toBe("feat: add x");
+    expect(callArgs.metadata).toEqual({ taskId: "t-99" });
+  });
+
+  it("commitChanges works for fork-resolved agents too", async () => {
+    const fake = makeTracker();
+    const adapter = new GitCascadeBranchPolicyAdapter({
+      repoPath: "/repo",
+      trackerForTest: fake.tracker,
+    });
+    await adapter.resolve(
+      { kind: "fork", parentStreamId: "s-parent" },
+      "agent-C" as AgentId,
+    );
+    const r = await adapter.commitChanges("agent-C" as AgentId, "fix: y");
+    expect(r?.streamId).toBe("s-fork-1");
+    expect(r?.commitSha).toMatch(/^sha-/);
+  });
+});
 
 describe("GitCascadeBranchPolicyAdapter.dispose", () => {
   it("closes the tracker when one was constructed", async () => {

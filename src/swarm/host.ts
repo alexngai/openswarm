@@ -128,6 +128,18 @@ export interface SwarmHost {
 
   /** Task registry API — see below. */
   readonly task: TaskAPI;
+
+  /**
+   * v0.7 stage 7B: route a commit through git-cascade's tracker so it gets
+   * Change-Id trailers + audit log. Only works when the host is operating
+   * inside a stream/fork worktree (i.e. branchPolicy was kind:"stream" or
+   * kind:"fork" at spawn). Returns null when not in a stream context;
+   * caller can fall back to plain `git commit` via bash.
+   */
+  commitChanges(
+    message: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<import("./adapters/git-cascade-branch-policy.js").CommitChangesResult | null>;
 }
 
 // ---------------------------------------------------------------------------

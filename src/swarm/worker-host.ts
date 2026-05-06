@@ -286,6 +286,24 @@ export class WorkerHost implements SwarmHost {
   }
 
   /**
+   * v0.7 stage 7B: route a commit through git-cascade via the orchestrator's
+   * branch-policy adapter. Returns null when not in a stream context.
+   */
+  async commitChanges(
+    message: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<
+    | import("./adapters/git-cascade-branch-policy.js").CommitChangesResult
+    | null
+  > {
+    const result = await this.transport.send<
+      | import("./adapters/git-cascade-branch-policy.js").CommitChangesResult
+      | null
+    >("task.commit_changes", { message, ...(metadata !== undefined && { metadata }) });
+    return result ?? null;
+  }
+
+  /**
    * Resolve the team scope for an agent id. WorkerHost only knows about its
    * own scope (set at construction from env); callers asking about another
    * agent's scope must go through the orchestrator. v0.4 stage 4M.7: enables

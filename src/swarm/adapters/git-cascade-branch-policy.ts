@@ -32,12 +32,25 @@ export interface BranchPolicyResolution {
 }
 
 /**
+ * Result of a commitChanges call: which stream the commit landed on,
+ * the resulting commit sha, and the stable Change-Id trailer git-cascade
+ * embedded in the commit message.
+ */
+export interface CommitChangesResult {
+  readonly streamId: string;
+  readonly commitSha: string;
+  readonly changeId?: string;
+}
+
+/**
  * BranchPolicyAdapter — pluggable resolver for BranchPolicy at spawn.
  *
  * Default implementation is identity (returns `{}` for all kinds). The
  * GitCascadeBranchPolicyAdapter (7A.3) handles `kind: "stream"` + `kind:
  * "fork"` by creating a stream + worktree via git-cascade and returning
- * the worktree path as `cwd`.
+ * the worktree path as `cwd`. v0.7 stage 7B adds an optional
+ * `commitChanges` method so workers can route `git commit` through
+ * `tracker.commitChanges` for Change-Id trailers + audit log.
  */
 export interface BranchPolicyAdapter {
   /**
@@ -55,6 +68,23 @@ export interface BranchPolicyAdapter {
    * Called when the orchestrator shuts down.
    */
   dispose(): Promise<void>;
+
+  /**
+   * v0.7 stage 7B: commit on behalf of an agent. The adapter looks up the
+   * agent's stream + worktree (recorded during resolve) and routes the
+   * commit through `tracker.commitChanges` so Change-Id trailers + audit
+   * log kick in. Returns null when the agent isn't in a stream context
+   * (e.g. branchPolicy was none/reuse/create); caller should fall back
+   * to plain git for those.
+   *
+   * Optional — backends that don't manage streams (IdentityBranchPolicy
+   * Adapter) should omit the method; callers feature-detect.
+   */
+  commitChanges?(
+    agentId: AgentId,
+    message: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<CommitChangesResult | null>;
 }
 
 /**
@@ -96,6 +126,18 @@ type MultiAgentRepoTrackerLike = {
     path: string;
     branch?: string;
   }): unknown;
+  // v0.7 stage 7B
+  commitChanges(opts: {
+    streamId: string;
+    agentId: string;
+    worktree: string;
+    message: string;
+    metadata?: Record<string, unknown>;
+  }): {
+    commitSha: string;
+    changeId?: string;
+    [key: string]: unknown;
+  };
   close(): void;
 };
 
@@ -130,6 +172,14 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
   /** Pending lazy-load (so concurrent resolve calls don't double-init). */
   private trackerPromise: Promise<MultiAgentRepoTrackerLike> | undefined;
   private readonly testTracker: MultiAgentRepoTrackerLike | undefined;
+  /**
+   * v0.7 stage 7B: agentId → {streamId, worktree} captured on resolve so
+   * commitChanges can look them up without re-querying git-cascade.
+   */
+  private readonly agentStreams = new Map<
+    AgentId,
+    { streamId: string; worktree: string }
+  >();
 
   constructor(opts: GitCascadeBranchPolicyAdapterOptions) {
     this.repoPath = opts.repoPath;
@@ -176,7 +226,34 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
       branch,
     });
 
+    // v0.7 stage 7B: remember the agent's stream + worktree so a later
+    // commitChanges call can route through tracker.commitChanges without
+    // requiring the worker to know its own streamId.
+    this.agentStreams.set(agentId, { streamId, worktree: worktreePath });
+
     return { cwd: worktreePath, streamId, branch };
+  }
+
+  async commitChanges(
+    agentId: AgentId,
+    message: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<CommitChangesResult | null> {
+    const stream = this.agentStreams.get(agentId);
+    if (stream === undefined) return null;
+    const tracker = await this.ensureTracker();
+    const result = tracker.commitChanges({
+      streamId: stream.streamId,
+      agentId,
+      worktree: stream.worktree,
+      message,
+      ...(metadata !== undefined && { metadata }),
+    });
+    return {
+      streamId: stream.streamId,
+      commitSha: result.commitSha,
+      ...(result.changeId !== undefined && { changeId: result.changeId }),
+    };
   }
 
   async dispose(): Promise<void> {

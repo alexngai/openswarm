@@ -75,7 +75,8 @@ export type IpcRequestMethod =
   | "run_more"
   | "drain"
   | "team.members"
-  | "task.pull_next";
+  | "task.pull_next"
+  | "task.commit_changes";
 
 export type IpcResponse = IpcOk | IpcErr;
 
@@ -387,6 +388,30 @@ export const TaskPullNextParamsSchema = z.object({
   claimerId: z.string(),
 });
 export type TaskPullNextParams = z.infer<typeof TaskPullNextParamsSchema>;
+
+// ---------------------------------------------------------------------------
+// v0.7 stage 7B — task.commit_changes
+// ---------------------------------------------------------------------------
+
+/**
+ * params for "task.commit_changes" request (worker → orchestrator).
+ *
+ * Routes a git commit through the branch-policy adapter's commitChanges
+ * method (git-cascade tracker.commitChanges, which adds Change-Id trailers
+ * + audit log). Orchestrator looks up the worker's stream + worktree from
+ * the adapter map (recorded at spawn time) using the requester's agentId.
+ *
+ * Result: { streamId, commitSha, changeId? } | null. Null means the worker
+ * isn't in a stream context (no branchPolicyAdapter, or adapter doesn't
+ * expose commitChanges, or worker's branchPolicy was none/reuse/create).
+ */
+export const TaskCommitChangesParamsSchema = z.object({
+  message: z.string().min(1),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
+export type TaskCommitChangesParams = z.infer<
+  typeof TaskCommitChangesParamsSchema
+>;
 
 /** result for "team.members" — array of `{memberId, role, agentId}` peers. */
 export const TeamMembersResultSchema = z.array(

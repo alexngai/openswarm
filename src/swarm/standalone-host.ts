@@ -50,6 +50,7 @@ import {
   AncestryIsAncestorOfParamsSchema,
   SpawnRequestParamsSchema,
   TaskPullNextParamsSchema,
+  TaskCommitChangesParamsSchema,
   AskUserQuestionParamsSchema,
   type IpcRequest,
 } from "./ipc/protocol.js";
@@ -231,6 +232,40 @@ export class StandaloneHost implements SwarmHost {
   // orchestrator's own lifecycle is process lifetime; transitions are not driven
   getLifecycleState(): WorkerLifecycleState {
     return this._lifecycleState;
+  }
+
+  /**
+   * v0.7 stage 7B: route a commit through git-cascade's tracker.
+   * Delegates to the branch-policy adapter's commitChanges if available;
+   * returns null when no adapter or when this agent isn't in a stream
+   * (e.g. the orchestrator's own agentId, which has no worktree).
+   */
+  async commitChanges(
+    message: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<
+    | import("./adapters/git-cascade-branch-policy.js").CommitChangesResult
+    | null
+  > {
+    if (this.branchPolicyAdapter.commitChanges === undefined) return null;
+    return this.branchPolicyAdapter.commitChanges(this.agentId, message, metadata);
+  }
+
+  /**
+   * v0.7 stage 7B: orchestrator-side commit on behalf of a specific agent
+   * (typically a worker). Used by the IPC handler for `task.commit_changes`.
+   * Looks up the worker's stream via the branch-policy adapter.
+   */
+  async commitChangesForAgent(
+    agentId: AgentId,
+    message: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<
+    | import("./adapters/git-cascade-branch-policy.js").CommitChangesResult
+    | null
+  > {
+    if (this.branchPolicyAdapter.commitChanges === undefined) return null;
+    return this.branchPolicyAdapter.commitChanges(agentId, message, metadata);
   }
 
   /**
@@ -1098,6 +1133,37 @@ export class StandaloneHost implements SwarmHost {
       transport.respond(frame.id, members);
       return;
     }
+    if (frame.method === "task.commit_changes") {
+      // v0.7 stage 7B: route the worker's commit through the branch-policy
+      // adapter. Worker doesn't pass its own agentId — we use `from` (the
+      // requester) so the adapter looks up the worker's recorded
+      // {streamId, worktree} mapping.
+      const parsed = TaskCommitChangesParamsSchema.safeParse(frame.params);
+      if (!parsed.success) {
+        transport.respondError(
+          frame.id,
+          IPC_ERROR_CODES.INVALID_PARAMS,
+          parsed.error.message,
+        );
+        return;
+      }
+      try {
+        const result = await this.commitChangesForAgent(
+          from,
+          parsed.data.message,
+          parsed.data.metadata,
+        );
+        transport.respond(frame.id, result);
+      } catch (err) {
+        transport.respondError(
+          frame.id,
+          IPC_ERROR_CODES.INTERNAL_ERROR,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+      return;
+    }
+
     if (frame.method === "task.pull_next") {
       // v0.5 stage 5C: worker self-pulls the next claimable task in its
       // scope. Routes through the (possibly wrapped) TaskAPI so opentasks
