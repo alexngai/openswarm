@@ -393,6 +393,9 @@ export class StandaloneHost implements SwarmHost {
       ...(request.idleTimeoutMs !== undefined && {
         idleTimeoutMs: request.idleTimeoutMs,
       }),
+      // v0.7 stage 7A.2: thread cwd through to the spawner. Spawner already
+      // honors `args.cwd` (subprocess-spawner.ts:130, default process.cwd()).
+      ...(request.cwd !== undefined && { cwd: request.cwd }),
     });
     const transport = new WorkerTransport(child);
     this.transports.set(childAgentId, transport);
@@ -1126,6 +1129,8 @@ export class StandaloneHost implements SwarmHost {
         // agent({team: "self"}) lands the child as a peer in the caller's
         // scope rather than the default scope.
         ...(params.teamScope !== undefined && { teamScope: params.teamScope }),
+        // v0.7 stage 7A.2: forward cwd from worker-side spawn requests.
+        ...(params.cwd !== undefined && { cwd: params.cwd }),
         ...(params.taskId !== undefined && { taskId: params.taskId }),
         ...(params.parentToolUseId !== undefined && {
           parentToolUseId: params.parentToolUseId,

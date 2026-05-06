@@ -330,6 +330,13 @@ export const SpawnRequestParamsSchema = z.object({
    * undefined, child gets the orchestrator's default scope.
    */
   teamScope: z.string().optional(),
+  /**
+   * v0.7 stage 7A.2: forwarded from SpawnRequest.cwd. When set, the spawn
+   * handler passes this cwd through to the spawner so the spawned worker
+   * runs inside the requested working directory (typically a git-cascade
+   * worktree).
+   */
+  cwd: z.string().optional(),
   parentAgentId: z.string(),
   parentToolUseId: z.string().optional(),
   taskId: z.string().optional(),

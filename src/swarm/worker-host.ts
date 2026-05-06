@@ -319,6 +319,9 @@ export class WorkerHost implements SwarmHost {
       // v0.4 stage 4M.7: forward teamScope so worker-side agent({team: "self"})
       // peer-spawn lands in the caller's team scope (not "swarm:default").
       teamScope: request.teamScope,
+      // v0.7 stage 7A.2: forward cwd so worker-spawned children can land
+      // inside a git-cascade worktree per the BranchPolicy adapter.
+      cwd: request.cwd,
       parentAgentId: this.agentId,
       parentToolUseId: request.parentToolUseId ?? this.parentToolUseId,
       taskId: request.taskId,

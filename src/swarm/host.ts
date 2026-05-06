@@ -142,6 +142,13 @@ export interface SpawnRequest {
   /** Opt into a FrameworkProvider mode (subscription auth). */
   readonly framework?: "claude-agent-sdk" | "codex-chatgpt";
   /**
+   * v0.7 stage 7A.2: optional working directory for the spawned worker.
+   * When set, overrides the orchestrator's cwd. Used by the git-cascade
+   * BranchPolicy adapter to land each member inside its own worktree.
+   * When unset, the spawner falls back to `process.cwd()`.
+   */
+  readonly cwd?: string;
+  /**
    * Role overlay applied to the system prompt (M3+: architect/executor/reviewer).
    * M3a: wired end-to-end in Phase 6.
    */

@@ -153,6 +153,57 @@ describe("StandaloneHost", () => {
     ).rejects.toThrow(/recursion depth limit reached/);
   });
 
+  it("forwards request.cwd to spawnWorker when set (v0.7 stage 7A.2)", async () => {
+    const { spawnFn, emitFromWorker } = makeSpawnOverride();
+    const host = new StandaloneHost({ maxDepth: 5, spawnWorker: spawnFn });
+
+    const spawnPromise = host.spawn({
+      task: samplePacket(),
+      permissionMode: "workspace-write",
+      cwd: "/tmp/worktree-A",
+    });
+
+    await new Promise((r) => setImmediate(r));
+    emitFromWorker({ kind: "notification", method: "worker_ready", params: {} });
+    await new Promise((r) => setImmediate(r));
+    emitFromWorker({
+      kind: "notification",
+      method: "task_result",
+      params: { status: "success", output: "done", usage: { inputTokens: 1, outputTokens: 2 }, wallClockMs: 100 },
+    });
+
+    await spawnPromise;
+
+    expect(spawnFn).toHaveBeenCalledOnce();
+    const callArgs = spawnFn.mock.calls[0]![0];
+    expect(callArgs.cwd).toBe("/tmp/worktree-A");
+  });
+
+  it("omits cwd from spawnWorker args when SpawnRequest.cwd is undefined (default)", async () => {
+    const { spawnFn, emitFromWorker } = makeSpawnOverride();
+    const host = new StandaloneHost({ maxDepth: 5, spawnWorker: spawnFn });
+
+    const spawnPromise = host.spawn({
+      task: samplePacket(),
+      permissionMode: "workspace-write",
+    });
+
+    await new Promise((r) => setImmediate(r));
+    emitFromWorker({ kind: "notification", method: "worker_ready", params: {} });
+    await new Promise((r) => setImmediate(r));
+    emitFromWorker({
+      kind: "notification",
+      method: "task_result",
+      params: { status: "success", output: "done", usage: { inputTokens: 1, outputTokens: 2 }, wallClockMs: 100 },
+    });
+
+    await spawnPromise;
+
+    expect(spawnFn).toHaveBeenCalledOnce();
+    const callArgs = spawnFn.mock.calls[0]![0];
+    expect(callArgs.cwd).toBeUndefined();
+  });
+
   it("forwards request.framework to spawnWorker when set (v0.4 stage 4M.5, Q9 fix)", async () => {
     const { spawnFn, emitFromWorker } = makeSpawnOverride();
     const host = new StandaloneHost({ maxDepth: 5, spawnWorker: spawnFn });
