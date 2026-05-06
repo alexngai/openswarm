@@ -34,6 +34,10 @@ import { clampPermissionMode } from "./permission-order.js";
 import { InMemoryInboxBackend, type InboxBackend } from "./inbox.js";
 import { RoleIndex } from "./role-index.js";
 import {
+  IdentityBranchPolicyAdapter,
+  type BranchPolicyAdapter,
+} from "./adapters/git-cascade-branch-policy.js";
+import {
   IPC_ERROR_CODES,
   MessageSendParamsSchema,
   TaskStopParamsSchema,
@@ -86,6 +90,13 @@ export interface StandaloneHostOptions {
    * `AgentInboxBackend` (6A.2) for threading + persistence + federation.
    */
   readonly inboxBackend?: InboxBackend;
+  /**
+   * v0.7 stage 7A.3: pluggable BranchPolicy resolver. Defaults to
+   * `new IdentityBranchPolicyAdapter()` (returns `{}` for all kinds, so
+   * spawn cwd stays as `process.cwd()`). Production callers wanting
+   * worktree-per-member pass a `GitCascadeBranchPolicyAdapter`.
+   */
+  readonly branchPolicyAdapter?: BranchPolicyAdapter;
 }
 
 export class StandaloneHost implements SwarmHost {
@@ -121,6 +132,7 @@ export class StandaloneHost implements SwarmHost {
 
   // M3a Phase 3 messaging state.
   private readonly messageInbox: InboxBackend;
+  private readonly branchPolicyAdapter: BranchPolicyAdapter;
   private readonly roles = new RoleIndex();
   /** Live worker transports keyed by child agentId for `sub_agent_event` delivery. */
   private readonly transports = new Map<AgentId, WorkerTransport>();
@@ -149,6 +161,8 @@ export class StandaloneHost implements SwarmHost {
     this.permissionMode = opts.permissionMode ?? "workspace-write";
     this.spawnFn = opts.spawnWorker ?? spawnWorker;
     this.messageInbox = opts.inboxBackend ?? new InMemoryInboxBackend();
+    this.branchPolicyAdapter =
+      opts.branchPolicyAdapter ?? new IdentityBranchPolicyAdapter();
     this.readlineFactory =
       opts.readlineFactory ??
       (async () => {
@@ -376,6 +390,17 @@ export class StandaloneHost implements SwarmHost {
       this.permissionMode,
     );
 
+    // v0.7 stage 7A.3: resolve the BranchPolicy via the adapter (default
+    // identity → no-op; GitCascadeBranchPolicyAdapter → creates a
+    // stream + worktree and returns a cwd). Adapter resolution overrides
+    // an explicit `request.cwd` when set, since the worktree is the
+    // semantically-correct location for a stream/fork member.
+    const branchResolution = await this.branchPolicyAdapter.resolve(
+      request.task.branchPolicy,
+      childAgentId,
+    );
+    const resolvedCwd = branchResolution.cwd ?? request.cwd;
+
     const child = this.spawnFn({
       agentId: childAgentId,
       depth: childDepth,
@@ -393,9 +418,11 @@ export class StandaloneHost implements SwarmHost {
       ...(request.idleTimeoutMs !== undefined && {
         idleTimeoutMs: request.idleTimeoutMs,
       }),
-      // v0.7 stage 7A.2: thread cwd through to the spawner. Spawner already
-      // honors `args.cwd` (subprocess-spawner.ts:130, default process.cwd()).
-      ...(request.cwd !== undefined && { cwd: request.cwd }),
+      // v0.7 stage 7A.2 + 7A.3: thread cwd through to the spawner. Spawner
+      // already honors `args.cwd` (subprocess-spawner.ts:130, default
+      // process.cwd()). resolvedCwd merges the BranchPolicy adapter's
+      // worktree cwd (when set) with any explicit request.cwd.
+      ...(resolvedCwd !== undefined && { cwd: resolvedCwd }),
     });
     const transport = new WorkerTransport(child);
     this.transports.set(childAgentId, transport);

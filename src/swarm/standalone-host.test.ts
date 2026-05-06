@@ -153,6 +153,73 @@ describe("StandaloneHost", () => {
     ).rejects.toThrow(/recursion depth limit reached/);
   });
 
+  it("BranchPolicyAdapter.resolve cwd overrides explicit request.cwd (v0.7 stage 7A.3)", async () => {
+    const { spawnFn, emitFromWorker } = makeSpawnOverride();
+    // Stub adapter that always returns a fixed cwd.
+    const adapter = {
+      resolve: vi.fn(async () => ({ cwd: "/from/adapter" })),
+      dispose: vi.fn(async () => {}),
+    };
+    const host = new StandaloneHost({
+      maxDepth: 5,
+      spawnWorker: spawnFn,
+      branchPolicyAdapter: adapter,
+    });
+
+    const spawnPromise = host.spawn({
+      task: samplePacket(),
+      permissionMode: "workspace-write",
+      cwd: "/from/request",
+    });
+
+    await new Promise((r) => setImmediate(r));
+    emitFromWorker({ kind: "notification", method: "worker_ready", params: {} });
+    await new Promise((r) => setImmediate(r));
+    emitFromWorker({
+      kind: "notification",
+      method: "task_result",
+      params: { status: "success", output: "done", usage: { inputTokens: 1, outputTokens: 1 }, wallClockMs: 1 },
+    });
+    await spawnPromise;
+
+    // Adapter resolution wins over an explicit request.cwd.
+    expect(adapter.resolve).toHaveBeenCalledOnce();
+    const callArgs = spawnFn.mock.calls[0]![0];
+    expect(callArgs.cwd).toBe("/from/adapter");
+  });
+
+  it("BranchPolicyAdapter returning {} falls back to request.cwd (v0.7 stage 7A.3)", async () => {
+    const { spawnFn, emitFromWorker } = makeSpawnOverride();
+    const adapter = {
+      resolve: vi.fn(async () => ({})),
+      dispose: vi.fn(async () => {}),
+    };
+    const host = new StandaloneHost({
+      maxDepth: 5,
+      spawnWorker: spawnFn,
+      branchPolicyAdapter: adapter,
+    });
+
+    const spawnPromise = host.spawn({
+      task: samplePacket(),
+      permissionMode: "workspace-write",
+      cwd: "/from/request",
+    });
+
+    await new Promise((r) => setImmediate(r));
+    emitFromWorker({ kind: "notification", method: "worker_ready", params: {} });
+    await new Promise((r) => setImmediate(r));
+    emitFromWorker({
+      kind: "notification",
+      method: "task_result",
+      params: { status: "success", output: "done", usage: { inputTokens: 1, outputTokens: 1 }, wallClockMs: 1 },
+    });
+    await spawnPromise;
+
+    const callArgs = spawnFn.mock.calls[0]![0];
+    expect(callArgs.cwd).toBe("/from/request");
+  });
+
   it("forwards request.cwd to spawnWorker when set (v0.7 stage 7A.2)", async () => {
     const { spawnFn, emitFromWorker } = makeSpawnOverride();
     const host = new StandaloneHost({ maxDepth: 5, spawnWorker: spawnFn });
