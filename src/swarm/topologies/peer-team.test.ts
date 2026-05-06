@@ -134,7 +134,23 @@ interface FakeHostHarness {
   emitLaneEvent(evt: Partial<LaneEvent> & Pick<LaneEvent, "type" | "payload">): void;
 }
 
-function fakeHost(handleOpts: readonly MakeHandleOpts[]): FakeHostHarness {
+interface FakeHostExtras {
+  /** v0.7 stage 7C — stub the host's streamIdFor lookup. */
+  readonly streamIdFor?: (agentId: AgentId) => string | undefined;
+  /** v0.7 stage 7C — stub the host's mergeStreamForAgent. */
+  readonly mergeStreamForAgent?: (
+    agentId: AgentId,
+    opts: { readonly targetStream: string; readonly strategy?: string },
+  ) => Promise<
+    | import("../adapters/git-cascade-branch-policy.js").MergeStreamResult
+    | null
+  >;
+}
+
+function fakeHost(
+  handleOpts: readonly MakeHandleOpts[],
+  extras: FakeHostExtras = {},
+): FakeHostHarness {
   let i = 0;
   const spawns: SpawnLog[] = [];
   const handles: FakeHandle[] = [];
@@ -175,6 +191,10 @@ function fakeHost(handleOpts: readonly MakeHandleOpts[]): FakeHostHarness {
     // PeerTeamTopology's `until_signal` path subscribes to host.events via a
     // cast through `any`. Expose a real EventEmitter so tests can drive it.
     events,
+    // v0.7 stage 7C — auto-merge calls these. Default to "no streams" so
+    // existing tests are unaffected.
+    streamIdFor: vi.fn(extras.streamIdFor ?? (() => undefined)),
+    mergeStreamForAgent: vi.fn(extras.mergeStreamForAgent ?? (async () => null)),
   } as unknown as StandaloneHost;
 
   return {
@@ -215,6 +235,7 @@ function member(id: string, prompt: string, role = "worker"): MemberSpec {
 interface RigOpts {
   readonly handleOpts: readonly MakeHandleOpts[];
   readonly abort?: AbortSignal;
+  readonly hostExtras?: FakeHostExtras;
 }
 
 async function makeCtx(opts: RigOpts): Promise<{
@@ -222,7 +243,7 @@ async function makeCtx(opts: RigOpts): Promise<{
   harness: FakeHostHarness;
   cleanup: () => Promise<void>;
 }> {
-  const harness = fakeHost(opts.handleOpts);
+  const harness = fakeHost(opts.handleOpts, opts.hostExtras ?? {});
   const pool = new WorkerPool(8);
   const tmp = await mkdtemp(join(tmpdir(), "peer-team-"));
   const deadLetter = new DeadLetterWriter(join(tmp, "dl.jsonl"));
@@ -688,6 +709,157 @@ describe("PeerTeamTopology (direct invocation)", () => {
     );
     expect(abortedCalls.length).toBe(1);
 
+    await cleanup();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.7 stage 7C — auto-merge member streams
+// ---------------------------------------------------------------------------
+
+describe("PeerTeamTopology — coordination.mergeStreams (v0.7 stage 7C)", () => {
+  it("does nothing when spec.coordination.mergeStreams is unset (no calls)", async () => {
+    const { ctx, harness, cleanup } = await makeCtx({
+      handleOpts: [{ result: successResult("ok-a") }, { result: successResult("ok-b") }],
+    });
+    const spec = peerSpec([member("a", "p"), member("b", "p")]);
+    await new PeerTeamTopology().run(spec, ctx);
+    expect(harness.host.streamIdFor).not.toHaveBeenCalled();
+    expect(harness.host.mergeStreamForAgent).not.toHaveBeenCalled();
+    await cleanup();
+  });
+
+  it("calls mergeStreamForAgent for each member that has a stream", async () => {
+    const streams = new Map<string, string>([
+      ["agent-1", "s-1"],
+      ["agent-2", "s-2"],
+    ]);
+    const merges: Array<{ agentId: string; targetStream: string }> = [];
+    const { ctx, harness, cleanup } = await makeCtx({
+      handleOpts: [{ result: successResult("ok-a") }, { result: successResult("ok-b") }],
+      hostExtras: {
+        streamIdFor: (id) => streams.get(id),
+        mergeStreamForAgent: async (agentId, opts) => {
+          merges.push({ agentId, targetStream: opts.targetStream });
+          return { success: true, newHead: `merged-${agentId}` };
+        },
+      },
+    });
+    const spec = peerSpec(
+      [member("a", "p"), member("b", "p")],
+      {
+        completion: { kind: "all" },
+        mergeStreams: { targetStream: "main" },
+      },
+    );
+    await new PeerTeamTopology().run(spec, ctx);
+    expect(merges).toEqual([
+      { agentId: "agent-1", targetStream: "main" },
+      { agentId: "agent-2", targetStream: "main" },
+    ]);
+    void harness;
+    await cleanup();
+  });
+
+  it("skips members with no recorded stream (streamIdFor returns undefined)", async () => {
+    const merges: Array<string> = [];
+    const { ctx, cleanup } = await makeCtx({
+      handleOpts: [{ result: successResult("ok-a") }, { result: successResult("ok-b") }],
+      hostExtras: {
+        streamIdFor: (id) => (id === ("agent-1" as AgentId) ? "s-1" : undefined),
+        mergeStreamForAgent: async (id) => {
+          merges.push(id);
+          return { success: true };
+        },
+      },
+    });
+    const spec = peerSpec(
+      [member("a", "p"), member("b", "p")],
+      { completion: { kind: "all" }, mergeStreams: { targetStream: "main" } },
+    );
+    await new PeerTeamTopology().run(spec, ctx);
+    expect(merges).toEqual(["agent-1"]);
+    await cleanup();
+  });
+
+  it("emits team_note on merge failure but does not throw by default", async () => {
+    const { ctx, cleanup } = await makeCtx({
+      handleOpts: [{ result: successResult("ok-a") }],
+      hostExtras: {
+        streamIdFor: () => "s-x",
+        mergeStreamForAgent: async () => ({
+          success: false,
+          errorType: "conflict",
+          conflicts: ["src/foo.ts"],
+        }),
+      },
+    });
+    const spec = peerSpec(
+      [member("a", "p")],
+      { completion: { kind: "all" }, mergeStreams: { targetStream: "main" } },
+    );
+    const summary = await new PeerTeamTopology().run(spec, ctx);
+    const emit = ctx.host.emit as unknown as ReturnType<typeof vi.fn>;
+    const notes = emit.mock.calls
+      .map((c) => c[0] as { type: string; payload?: { note?: string } })
+      .filter((e) => e.type === "team_note");
+    expect(notes.length).toBeGreaterThanOrEqual(1);
+    expect(notes[0]?.payload?.note).toMatch(/conflict on src\/foo\.ts/);
+    expect(summary.succeeded).toBe(1); // topology still succeeded
+    await cleanup();
+  });
+
+  it("throws (team_aborted) when failOnConflict is true and merge fails", async () => {
+    const { ctx, cleanup } = await makeCtx({
+      handleOpts: [{ result: successResult("ok-a") }],
+      hostExtras: {
+        streamIdFor: () => "s-x",
+        mergeStreamForAgent: async () => ({
+          success: false,
+          errorType: "conflict",
+          conflicts: ["src/foo.ts"],
+        }),
+      },
+    });
+    const spec = peerSpec(
+      [member("a", "p")],
+      {
+        completion: { kind: "all" },
+        mergeStreams: { targetStream: "main", failOnConflict: true },
+      },
+    );
+    await expect(new PeerTeamTopology().run(spec, ctx)).rejects.toThrow(
+      /mergeStream failed/,
+    );
+    const emit = ctx.host.emit as unknown as ReturnType<typeof vi.fn>;
+    const aborted = emit.mock.calls.filter(
+      (c) => (c[0] as { type: string }).type === "team_aborted",
+    );
+    expect(aborted).toHaveLength(1);
+    await cleanup();
+  });
+
+  it("forwards strategy when configured", async () => {
+    const captured: Array<{ targetStream: string; strategy?: string }> = [];
+    const { ctx, cleanup } = await makeCtx({
+      handleOpts: [{ result: successResult("ok-a") }],
+      hostExtras: {
+        streamIdFor: () => "s-x",
+        mergeStreamForAgent: async (_id, opts) => {
+          captured.push({ ...opts });
+          return { success: true };
+        },
+      },
+    });
+    const spec = peerSpec(
+      [member("a", "p")],
+      {
+        completion: { kind: "all" },
+        mergeStreams: { targetStream: "main", strategy: "no-ff" },
+      },
+    );
+    await new PeerTeamTopology().run(spec, ctx);
+    expect(captured).toEqual([{ targetStream: "main", strategy: "no-ff" }]);
     await cleanup();
   });
 });

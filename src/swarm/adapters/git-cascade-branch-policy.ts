@@ -85,6 +85,43 @@ export interface BranchPolicyAdapter {
     message: string,
     metadata?: Record<string, unknown>,
   ): Promise<CommitChangesResult | null>;
+
+  /**
+   * v0.7 stage 7C: look up the streamId an agent is operating on. Topology
+   * code calls this after `await team.spawnAll(specs)` to find each
+   * member's stream so it can auto-merge on team completion. Returns
+   * undefined when no stream is recorded (e.g. branchPolicy was
+   * none/reuse/create).
+   */
+  streamIdFor?(agentId: AgentId): string | undefined;
+
+  /**
+   * v0.7 stage 7C: merge a source stream into a target via tracker.merge
+   * Stream. Returns the result (success / conflicts / error). Optional;
+   * caller feature-detects. Non-throwing — git-cascade returns
+   * `{success: false, errorType, ...}` rather than throwing on conflicts.
+   */
+  mergeStream?(opts: MergeStreamOptions): Promise<MergeStreamResult>;
+}
+
+/**
+ * v0.7 stage 7C: merge options exposed by the adapter. Maps directly to
+ * git-cascade's MergeStreamOptions but uses the adapter's sourceAgentId
+ * indirection so callers can supply an agentId instead of looking up the
+ * worktree themselves.
+ */
+export interface MergeStreamOptions {
+  readonly sourceAgentId: AgentId;
+  readonly targetStream: string;
+  readonly strategy?: string;
+}
+
+export interface MergeStreamResult {
+  readonly success: boolean;
+  readonly newHead?: string;
+  readonly conflicts?: readonly string[];
+  readonly error?: string;
+  readonly errorType?: string;
 }
 
 /**
@@ -137,6 +174,20 @@ type MultiAgentRepoTrackerLike = {
     commitSha: string;
     changeId?: string;
     [key: string]: unknown;
+  };
+  // v0.7 stage 7C
+  mergeStream(opts: {
+    sourceStream: string;
+    targetStream: string;
+    agentId: string;
+    worktree: string;
+    strategy?: string;
+  }): {
+    success: boolean;
+    newHead?: string;
+    conflicts?: string[];
+    error?: string;
+    errorType?: string;
   };
   close(): void;
 };
@@ -253,6 +304,38 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
       streamId: stream.streamId,
       commitSha: result.commitSha,
       ...(result.changeId !== undefined && { changeId: result.changeId }),
+    };
+  }
+
+  // ---- v0.7 stage 7C ---------------------------------------------------
+
+  streamIdFor(agentId: AgentId): string | undefined {
+    return this.agentStreams.get(agentId)?.streamId;
+  }
+
+  async mergeStream(opts: MergeStreamOptions): Promise<MergeStreamResult> {
+    const stream = this.agentStreams.get(opts.sourceAgentId);
+    if (stream === undefined) {
+      return {
+        success: false,
+        error: `no recorded stream for agent ${opts.sourceAgentId}`,
+        errorType: "invalid_state",
+      };
+    }
+    const tracker = await this.ensureTracker();
+    const result = tracker.mergeStream({
+      sourceStream: stream.streamId,
+      targetStream: opts.targetStream,
+      agentId: opts.sourceAgentId,
+      worktree: stream.worktree,
+      ...(opts.strategy !== undefined && { strategy: opts.strategy }),
+    });
+    return {
+      success: result.success,
+      ...(result.newHead !== undefined && { newHead: result.newHead }),
+      ...(result.conflicts !== undefined && { conflicts: result.conflicts }),
+      ...(result.error !== undefined && { error: result.error }),
+      ...(result.errorType !== undefined && { errorType: result.errorType }),
     };
   }
 

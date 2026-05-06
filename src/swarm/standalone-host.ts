@@ -269,6 +269,40 @@ export class StandaloneHost implements SwarmHost {
   }
 
   /**
+   * v0.7 stage 7C: look up the stream id an agent is operating on. Returns
+   * undefined when the adapter doesn't track streams (identity adapter)
+   * or the agent isn't in a stream context.
+   */
+  streamIdFor(agentId: AgentId): string | undefined {
+    if (this.branchPolicyAdapter.streamIdFor === undefined) return undefined;
+    return this.branchPolicyAdapter.streamIdFor(agentId);
+  }
+
+  /**
+   * v0.7 stage 7C: merge an agent's stream into a target. Used by topology
+   * auto-merge (see TeamCoordination.mergeStreams) and any future
+   * model-invokable merge tool. Returns null when the adapter doesn't
+   * support merges; otherwise returns the (possibly-failed) result.
+   */
+  async mergeStreamForAgent(
+    agentId: AgentId,
+    opts: {
+      readonly targetStream: string;
+      readonly strategy?: string;
+    },
+  ): Promise<
+    | import("./adapters/git-cascade-branch-policy.js").MergeStreamResult
+    | null
+  > {
+    if (this.branchPolicyAdapter.mergeStream === undefined) return null;
+    return this.branchPolicyAdapter.mergeStream({
+      sourceAgentId: agentId,
+      targetStream: opts.targetStream,
+      ...(opts.strategy !== undefined && { strategy: opts.strategy }),
+    });
+  }
+
+  /**
    * Look up an agent's team scope. Returns `"swarm:default"` when unknown
    * (legacy single-team case and forward-compat for callers that haven't
    * registered yet).

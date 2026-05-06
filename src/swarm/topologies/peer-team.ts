@@ -90,6 +90,7 @@ export class PeerTeamTopology implements Topology {
     let aborted = false;
     let results: AgentResult[] = [];
     let aggregateOutput: string | undefined;
+    let memberHandles: readonly AgentHandle[] = [];
 
     try {
       // Inject teammate awareness into each member's prompt (V0.4.Q2).
@@ -100,6 +101,7 @@ export class PeerTeamTopology implements Topology {
 
       // Spawn all members in parallel into the team scope.
       const handles = await team.spawnAll(augmented);
+      memberHandles = handles;
 
       // Wait per CompletionRule.
       const completionRule = spec.coordination.completion;
@@ -108,6 +110,12 @@ export class PeerTeamTopology implements Topology {
       // Aggregate per Aggregator (default concat for peer-team).
       const aggregator = spec.coordination.aggregator ?? { kind: "concat" as const };
       aggregateOutput = await this.aggregate(results, aggregator, team, ctx);
+
+      // v0.7 stage 7C — auto-merge each member's stream into the configured
+      // target. Only fires when (a) spec opted in and (b) the host's branch
+      // policy adapter actually tracks streams. Conflicts are non-fatal by
+      // default; opt into failOnConflict to surface them as topology errors.
+      await this.maybeMergeStreams(spec, memberHandles, ctx);
 
       ctx.host.emit({
         type: "team_completed",
@@ -396,6 +404,53 @@ export class PeerTeamTopology implements Topology {
         });
         if (successOutputs.length === 0) return undefined;
         return successOutputs.join("\n\n");
+      }
+    }
+  }
+
+  /**
+   * v0.7 stage 7C — when spec.coordination.mergeStreams is set, merge each
+   * member's stream into the target via the host's branch-policy adapter.
+   * Skipped silently when:
+   *   - spec didn't opt in, or
+   *   - host adapter doesn't track streams (identity adapter), or
+   *   - a member has no recorded streamId (branchPolicy was none/reuse/create).
+   * Conflicts emit a `team_note` lane event; with failOnConflict:true the
+   * first failure throws, surfacing as a `team_aborted` upstream.
+   */
+  private async maybeMergeStreams(
+    spec: TeamSpec,
+    handles: readonly AgentHandle[],
+    ctx: TopologyContext,
+  ): Promise<void> {
+    const cfg = spec.coordination.mergeStreams;
+    if (cfg === undefined) return;
+    for (const handle of handles) {
+      const streamId = ctx.host.streamIdFor(handle.agentId);
+      if (streamId === undefined) continue;
+      const result = await ctx.host.mergeStreamForAgent(handle.agentId, {
+        targetStream: cfg.targetStream,
+        ...(cfg.strategy !== undefined && { strategy: cfg.strategy }),
+      });
+      if (result === null) return; // adapter doesn't support merges — skip cohort.
+      if (!result.success) {
+        const reason =
+          result.errorType === "conflict"
+            ? `conflict on ${result.conflicts?.join(", ") ?? "<unknown>"}`
+            : (result.error ?? "unknown merge error");
+        ctx.host.emit({
+          type: "team_note",
+          payload: {
+            teamName: spec.name,
+            scope: `swarm:${spec.name}`,
+            note: `mergeStream(${streamId} → ${cfg.targetStream}) failed: ${reason}`,
+          },
+        });
+        if (cfg.failOnConflict === true) {
+          throw new Error(
+            `PeerTeamTopology: mergeStream failed for ${handle.agentId}: ${reason}`,
+          );
+        }
       }
     }
   }

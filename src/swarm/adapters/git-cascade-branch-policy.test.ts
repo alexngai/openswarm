@@ -80,6 +80,25 @@ function makeTracker() {
           };
         },
       ),
+      // v0.7 stage 7C: fake merge — succeeds by default; tests that want
+      // a conflict scenario reassign this mock per case.
+      mergeStream: vi.fn(
+        (opts: {
+          sourceStream: string;
+          targetStream: string;
+          agentId: string;
+          worktree: string;
+          strategy?: string;
+        }) => {
+          counter++;
+          return {
+            success: true,
+            newHead: `merge-sha-${counter}`,
+            sourceStream: opts.sourceStream,
+            targetStream: opts.targetStream,
+          };
+        },
+      ),
       close: vi.fn(() => {
         closed = true;
       }),
@@ -292,6 +311,97 @@ describe("GitCascadeBranchPolicyAdapter.commitChanges (v0.7 stage 7B)", () => {
     const r = await adapter.commitChanges("agent-C" as AgentId, "fix: y");
     expect(r?.streamId).toBe("s-fork-1");
     expect(r?.commitSha).toMatch(/^sha-/);
+  });
+});
+
+describe("GitCascadeBranchPolicyAdapter.streamIdFor + mergeStream (v0.7 stage 7C)", () => {
+  it("streamIdFor returns undefined before resolve()", () => {
+    const fake = makeTracker();
+    const adapter = new GitCascadeBranchPolicyAdapter({
+      repoPath: "/repo",
+      trackerForTest: fake.tracker,
+    });
+    expect(adapter.streamIdFor("agent-x" as AgentId)).toBeUndefined();
+  });
+
+  it("streamIdFor returns the recorded streamId after stream/fork resolve", async () => {
+    const fake = makeTracker();
+    const adapter = new GitCascadeBranchPolicyAdapter({
+      repoPath: "/repo",
+      trackerForTest: fake.tracker,
+    });
+    await adapter.resolve({ kind: "stream" }, "agent-A" as AgentId);
+    await adapter.resolve(
+      { kind: "fork", parentStreamId: "s-base" },
+      "agent-B" as AgentId,
+    );
+    expect(adapter.streamIdFor("agent-A" as AgentId)).toBe("s-1");
+    expect(adapter.streamIdFor("agent-B" as AgentId)).toBe("s-fork-2");
+  });
+
+  it("mergeStream returns invalid_state when agent has no recorded stream", async () => {
+    const fake = makeTracker();
+    const adapter = new GitCascadeBranchPolicyAdapter({
+      repoPath: "/repo",
+      trackerForTest: fake.tracker,
+    });
+    const r = await adapter.mergeStream({
+      sourceAgentId: "agent-x" as AgentId,
+      targetStream: "main",
+    });
+    expect(r.success).toBe(false);
+    expect(r.errorType).toBe("invalid_state");
+    expect(fake.tracker.mergeStream).not.toHaveBeenCalled();
+  });
+
+  it("mergeStream routes through tracker.mergeStream with the resolved stream + worktree", async () => {
+    const fake = makeTracker();
+    const adapter = new GitCascadeBranchPolicyAdapter({
+      repoPath: "/repo",
+      trackerForTest: fake.tracker,
+    });
+    await adapter.resolve({ kind: "stream" }, "agent-A" as AgentId);
+    const r = await adapter.mergeStream({
+      sourceAgentId: "agent-A" as AgentId,
+      targetStream: "main",
+      strategy: "no-ff",
+    });
+    expect(r.success).toBe(true);
+    expect(r.newHead).toMatch(/^merge-sha-/);
+    expect(fake.tracker.mergeStream).toHaveBeenCalledOnce();
+    const args = fake.tracker.mergeStream.mock.calls[0]![0];
+    expect(args.sourceStream).toBe("s-1");
+    expect(args.targetStream).toBe("main");
+    expect(args.agentId).toBe("agent-A");
+    expect(args.strategy).toBe("no-ff");
+    expect(args.worktree).toContain(".swarm-harness/worktrees/s-1");
+  });
+
+  it("mergeStream propagates conflict results without throwing", async () => {
+    const fake = makeTracker();
+    // Cast: override returns a conflict shape, narrower than the default
+    // success-shape declared on the fake — vitest's typed Mock won't widen.
+    fake.tracker.mergeStream = vi.fn(() => ({
+      success: false,
+      conflicts: ["src/a.ts", "src/b.ts"],
+      error: "merge conflict",
+      errorType: "conflict",
+      newHead: undefined as unknown as string,
+      sourceStream: "s-1",
+      targetStream: "main",
+    }));
+    const adapter = new GitCascadeBranchPolicyAdapter({
+      repoPath: "/repo",
+      trackerForTest: fake.tracker,
+    });
+    await adapter.resolve({ kind: "stream" }, "agent-A" as AgentId);
+    const r = await adapter.mergeStream({
+      sourceAgentId: "agent-A" as AgentId,
+      targetStream: "main",
+    });
+    expect(r.success).toBe(false);
+    expect(r.errorType).toBe("conflict");
+    expect(r.conflicts).toEqual(["src/a.ts", "src/b.ts"]);
   });
 });
 

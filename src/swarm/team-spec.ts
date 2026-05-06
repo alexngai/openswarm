@@ -182,6 +182,18 @@ export interface TeamCoordination {
   readonly mapScope?: string;
   /** V0.4.Q4 — `team send` routing entry point. */
   readonly entryPoint?: "root" | "broadcast" | { readonly role: string };
+  /**
+   * V0.7 stage 7C — auto-merge member streams into a target stream when
+   * the team completes successfully. Requires a stream-aware
+   * BranchPolicyAdapter (e.g. GitCascadeBranchPolicyAdapter); ignored
+   * with the identity adapter.
+   */
+  readonly mergeStreams?: {
+    readonly targetStream: string;
+    readonly strategy?: string;
+    /** When true, a merge conflict surfaces as a topology failure. Default false. */
+    readonly failOnConflict?: boolean;
+  };
 }
 
 export const TeamCoordinationSchema = z.object({
@@ -203,6 +215,13 @@ export const TeamCoordinationSchema = z.object({
       z.enum(["root", "broadcast"]),
       z.object({ role: z.string().min(1) }),
     ])
+    .optional(),
+  mergeStreams: z
+    .object({
+      targetStream: z.string().min(1),
+      strategy: z.string().optional(),
+      failOnConflict: z.boolean().optional(),
+    })
     .optional(),
 });
 
