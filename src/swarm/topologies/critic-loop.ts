@@ -34,7 +34,17 @@ export class CriticLoopTopology implements Topology {
         `CriticLoopTopology: requires exactly 2 members (executor + critic); got ${spec.members.length}`,
       );
     }
-    const executorSpec = spec.members[0]!;
+    // v0.7 stage 7J — default the executor (member 0) to {kind:"stream"} when
+    // the host has a stream-aware adapter. Critic stays on its own
+    // branchPolicy (default {kind:"none"} — read-only review). Spec
+    // overrides win.
+    const applyExecDefault =
+      (ctx.host.supportsStreams?.() ?? false) &&
+      spec.coordination.defaultBranchPolicy === undefined &&
+      spec.members[0]!.branchPolicy === undefined;
+    const executorSpec = applyExecDefault
+      ? { ...spec.members[0]!, branchPolicy: { kind: "stream" as const } }
+      : spec.members[0]!;
     const criticSpec = spec.members[1]!;
 
     const team = new TeamSession({

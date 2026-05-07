@@ -254,4 +254,62 @@ describe("CommitteeTopology", () => {
     expect(result.succeeded).toBe(0);
     expect(harness.spawns).toHaveLength(0);
   });
+
+  it("v0.7 stage 7J — defaults non-judge candidates to {kind:'stream'}; judge stays unset", async () => {
+    const captured: Array<{ role?: string; bp: unknown }> = [];
+    let i = 0;
+    const spawn = async (req: SpawnRequest): Promise<AgentHandle> => {
+      captured.push({ role: req.role, bp: req.task.branchPolicy });
+      i++;
+      return makeHandle(
+        { status: "success", output: `out-${i}`, usage: { inputTokens: 1, outputTokens: 1 }, wallClockMs: 1 },
+        `agent-${i}` as AgentId,
+        `session-${i}` as SessionId,
+      );
+    };
+    const host = {
+      mode: "standalone",
+      agentId: "topology-host" as AgentId,
+      depth: 0,
+      spawn,
+      emit: vi.fn(),
+      send: vi.fn(),
+      inbox: async function* () { return; },
+      task: {} as StandaloneHost["task"],
+      supportsStreams: () => true,
+    } as unknown as StandaloneHost;
+    const pool = new WorkerPool(4);
+    const tmp = await mkdtemp(join(tmpdir(), "committee-7j-"));
+    const deadLetter = new DeadLetterWriter(join(tmp, "dl.jsonl"));
+    const resultsOut = new PassThrough();
+    resultsOut.resume();
+    const ctx: TopologyContext = {
+      host,
+      pool,
+      resultsOut,
+      deadLetter,
+      permissionMode: "workspace-write",
+    };
+    // Two bare candidates + one judge — verify only candidates get the default.
+    const spec: TeamSpec = {
+      name: "c-7j",
+      topology: "committee",
+      members: [
+        { id: "c1", role: "candidate", prompt: "p1" },
+        { id: "c2", role: "candidate", prompt: "p2" },
+        { id: "j", role: "judge", prompt: "score them" },
+      ],
+      coordination: { completion: { kind: "all" } },
+    };
+    await new CommitteeTopology().run(spec, ctx);
+    const candidateBPs = captured
+      .filter((c) => c.role === "candidate")
+      .map((c) => c.bp);
+    const judgeBPs = captured.filter((c) => c.role === "judge").map((c) => c.bp);
+    expect(candidateBPs.every((b) => JSON.stringify(b) === JSON.stringify({ kind: "stream" }))).toBe(true);
+    // Judge wasn't defaulted — TeamSession's own fallback ({kind:"none"}) kicks in.
+    expect(judgeBPs[0]).toEqual({ kind: "none" });
+    await deadLetter.close();
+    await rm(tmp, { recursive: true, force: true });
+  });
 });

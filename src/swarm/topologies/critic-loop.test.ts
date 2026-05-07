@@ -285,4 +285,59 @@ describe("CriticLoopTopology", () => {
     expect(result.cancelled).toBe(2);
     expect(harness.spawns).toHaveLength(0);
   });
+
+  it("v0.7 stage 7J — defaults executor to {kind:'stream'}, critic stays unset", async () => {
+    const captured: Array<{ role?: string; bp: unknown }> = [];
+    let i = 0;
+    // Two iterations: exec (success), critic (approves), then loop exits.
+    const spawn = async (req: SpawnRequest): Promise<AgentHandle> => {
+      captured.push({ role: req.role, bp: req.task.branchPolicy });
+      i++;
+      const result: AgentResult = req.role === "critic"
+        ? { status: "success", output: "APPROVED", usage: { inputTokens: 1, outputTokens: 1 }, wallClockMs: 1 }
+        : { status: "success", output: "draft", usage: { inputTokens: 1, outputTokens: 1 }, wallClockMs: 1 };
+      return makeHandle(result, `agent-${i}` as AgentId, `session-${i}` as SessionId);
+    };
+    const host = {
+      mode: "standalone",
+      agentId: "topology-host" as AgentId,
+      depth: 0,
+      spawn,
+      emit: vi.fn(),
+      send: vi.fn(),
+      inbox: async function* () { return; },
+      task: {} as StandaloneHost["task"],
+      supportsStreams: () => true,
+    } as unknown as StandaloneHost;
+    const pool = new WorkerPool(2);
+    const tmp = await mkdtemp(join(tmpdir(), "critic-7j-"));
+    const deadLetter = new DeadLetterWriter(join(tmp, "dl.jsonl"));
+    const resultsOut = new PassThrough();
+    resultsOut.resume();
+    const ctx: TopologyContext = {
+      host,
+      pool,
+      resultsOut,
+      deadLetter,
+      permissionMode: "workspace-write",
+    };
+    // Bare exec/critic — no branchPolicy — defaults apply.
+    const spec: TeamSpec = {
+      name: "cl-7j",
+      topology: "critic-loop",
+      members: [
+        { id: "exec", role: "executor", prompt: "build" },
+        { id: "crit", role: "critic", prompt: "review" },
+      ],
+      coordination: { completion: { kind: "until_signal", signal: "APPROVED" } },
+    };
+    await new CriticLoopTopology().run(spec, ctx);
+    const exec = captured.find((c) => c.role === "executor");
+    const crit = captured.find((c) => c.role === "critic");
+    expect(exec?.bp).toEqual({ kind: "stream" });
+    // Critic wasn't defaulted — TeamSession's fallback ({kind:"none"}) applies.
+    expect(crit?.bp).toEqual({ kind: "none" });
+    await deadLetter.close();
+    await rm(tmp, { recursive: true, force: true });
+  });
 });

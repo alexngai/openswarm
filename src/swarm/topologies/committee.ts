@@ -32,10 +32,26 @@ import type {
 export class CommitteeTopology implements Topology {
   readonly name = "committee" as const;
 
-  async run(spec: TeamSpec, ctx: TopologyContext): Promise<TeamResult> {
-    if (spec.members.length === 0) {
+  async run(specIn: TeamSpec, ctx: TopologyContext): Promise<TeamResult> {
+    if (specIn.members.length === 0) {
       throw new Error("CommitteeTopology: spec.members is empty");
     }
+    // v0.7 stage 7J — default candidate members to {kind:"stream"} when the
+    // host has a stream-aware adapter. Judge members (role:"judge") aren't
+    // defaulted — they aggregate outputs and don't need a worktree. Spec
+    // overrides win.
+    const spec =
+      (ctx.host.supportsStreams?.() ?? false) &&
+      specIn.coordination.defaultBranchPolicy === undefined
+        ? {
+            ...specIn,
+            members: specIn.members.map((m) =>
+              m.branchPolicy !== undefined || m.role === "judge"
+                ? m
+                : { ...m, branchPolicy: { kind: "stream" as const } },
+            ),
+          }
+        : specIn;
 
     const team = new TeamSession({
       name: spec.name,
