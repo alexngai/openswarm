@@ -81,6 +81,20 @@ function makeTracker() {
           };
         },
       ),
+      // v0.7 stage 7F: fake trackExistingBranch — returns a deterministic
+      // streamId per branch so ensureIntegratorStream caching is testable.
+      trackExistingBranch: vi.fn(
+        (opts: { branch: string; agentId: string; name?: string }) => {
+          counter++;
+          const id = `s-int-${counter}-${opts.branch}`;
+          created.push({
+            method: "createStream",
+            args: { ...opts, _kind: "trackExistingBranch" },
+            streamId: id,
+          });
+          return id;
+        },
+      ),
       // v0.7 stage 7C: fake merge — succeeds by default; tests that want
       // a conflict scenario reassign this mock per case.
       mergeStream: vi.fn(

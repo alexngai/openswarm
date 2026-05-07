@@ -102,6 +102,35 @@ export interface BranchPolicyAdapter {
    * `{success: false, errorType, ...}` rather than throwing on conflicts.
    */
   mergeStream?(opts: MergeStreamOptions): Promise<MergeStreamResult>;
+
+  /**
+   * v0.7 stage 7F: look up or create an "integrator" stream that wraps
+   * an existing git branch (e.g. `main`). git-cascade's mergeStream
+   * needs targets to be streams; integrator streams have no worktree so
+   * the merge can `git checkout` them in the source's worktree without
+   * conflict. Idempotent — repeat calls with the same branch return the
+   * cached streamId. Optional; caller feature-detects.
+   *
+   * Note: git-cascade's mergeStream hardcodes `stream/<id>` branch names
+   * and won't accept an integrator stream as target. Use mergeStreamToBranch
+   * for the "merge into existing branch" use case instead — this method
+   * is exposed primarily for cascade rebase parent linkage.
+   */
+  ensureIntegratorStream?(branch: string): Promise<string>;
+
+  /**
+   * v0.7 stage 7F: merge a stream's changes into an existing git branch
+   * via plain git (`git checkout target && git merge --no-ff stream/<src>`).
+   * Used when the target is a real branch (e.g. `main`) rather than a
+   * synthetic stream — git-cascade's mergeStream can't handle this case.
+   * Performed in a temporary worktree so it doesn't disturb the source
+   * worktree's checkout state. Optional; caller feature-detects.
+   */
+  mergeStreamToBranch?(opts: {
+    sourceAgentId: AgentId;
+    targetBranch: string;
+    strategy?: string;
+  }): Promise<MergeStreamResult>;
 }
 
 /**
@@ -177,6 +206,15 @@ type MultiAgentRepoTrackerLike = {
     changeId: string;
     [key: string]: unknown;
   };
+  // v0.7 stage 7F — track an existing git branch (e.g. main) as a
+  // worktree-less stream so it can serve as a merge target. git-cascade's
+  // mergeStream requires the target stream to NOT have an active worktree
+  // (it does `git checkout target` in the source's worktree).
+  trackExistingBranch(opts: {
+    branch: string;
+    agentId: string;
+    name?: string;
+  }): string;
   // v0.7 stage 7C
   mergeStream(opts: {
     sourceStream: string;
@@ -319,6 +357,116 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
       commitSha: result.commit,
       ...(result.changeId !== undefined && { changeId: result.changeId }),
     };
+  }
+
+  // ---- v0.7 stage 7F — integrator streams + branch merge --------------
+
+  private readonly integratorStreams = new Map<string, string>();
+
+  async ensureIntegratorStream(branch: string): Promise<string> {
+    const cached = this.integratorStreams.get(branch);
+    if (cached !== undefined) return cached;
+    const tracker = await this.ensureTracker();
+    const streamId = tracker.trackExistingBranch({
+      branch,
+      agentId: `integrator-${branch}`,
+      name: `integrator-${branch}`,
+    });
+    this.integratorStreams.set(branch, streamId);
+    return streamId;
+  }
+
+  /**
+   * Merge a source stream's changes into an existing git branch via plain
+   * git in a temporary worktree. Bypasses git-cascade's mergeStream (which
+   * hardcodes `stream/<id>` branch names and can't handle integrator
+   * streams). Returns a MergeStreamResult shaped like git-cascade's so
+   * callers can treat both paths uniformly.
+   */
+  async mergeStreamToBranch(opts: {
+    sourceAgentId: AgentId;
+    targetBranch: string;
+    strategy?: string;
+  }): Promise<MergeStreamResult> {
+    const stream = this.agentStreams.get(opts.sourceAgentId);
+    if (stream === undefined) {
+      return {
+        success: false,
+        error: `no recorded stream for agent ${opts.sourceAgentId}`,
+        errorType: "invalid_state",
+      };
+    }
+    // Use a fresh tmp worktree so we don't disturb the source's checkout.
+    const cp = await import("node:child_process");
+    const fsp = await import("node:fs/promises");
+    const os = await import("node:os");
+    const tmpRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "swh-merge-"));
+    try {
+      // git worktree add --detach <tmp> <targetBranch>: detached at the
+      // target's HEAD so we can merge without colliding with an already-
+      // checked-out branch (typical: main is checked out in the repo cwd).
+      cp.execSync(
+        `git worktree add --detach ${JSON.stringify(tmpRoot)} ${JSON.stringify(opts.targetBranch)}`,
+        { cwd: this.repoPath, stdio: "pipe" },
+      );
+      try {
+        const sourceBranch = `stream/${stream.streamId}`;
+        const flag = opts.strategy === "fast-forward" ? "--ff-only" : "--no-ff";
+        // Capture old branch sha for the update-ref CAS so we don't clobber
+        // concurrent updates.
+        const oldSha = cp
+          .execSync(
+            `git rev-parse ${JSON.stringify(opts.targetBranch)}`,
+            { cwd: this.repoPath, stdio: "pipe" },
+          )
+          .toString()
+          .trim();
+        const out = cp.execSync(
+          `git merge ${flag} ${JSON.stringify(sourceBranch)} -m ${JSON.stringify(`Merge stream/${stream.streamId} into ${opts.targetBranch}`)}`,
+          { cwd: tmpRoot, stdio: "pipe" },
+        );
+        const newHead = cp
+          .execSync("git rev-parse HEAD", { cwd: tmpRoot, stdio: "pipe" })
+          .toString()
+          .trim();
+        // Atomically update the target branch ref to the new merge commit.
+        // Working trees of the target branch (e.g. the orchestrator's repo
+        // cwd) won't auto-refresh — they'll see the new ref on next `git
+        // pull` or `git status` but their working tree stays as-is.
+        cp.execSync(
+          `git update-ref refs/heads/${opts.targetBranch} ${newHead} ${oldSha}`,
+          { cwd: this.repoPath, stdio: "pipe" },
+        );
+        void out;
+        return { success: true, newHead };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const isConflict = msg.includes("CONFLICT") || msg.includes("conflict");
+        return {
+          success: false,
+          error: msg.slice(0, 500),
+          errorType: isConflict ? "conflict" : "git_error",
+        };
+      } finally {
+        // Always clean up the tmp worktree; git worktree remove --force
+        // removes both the dir and git's registry entry.
+        try {
+          cp.execSync(
+            `git worktree remove --force ${JSON.stringify(tmpRoot)}`,
+            { cwd: this.repoPath, stdio: "pipe" },
+          );
+        } catch {
+          // Best-effort; the tmp dir is in /tmp and will be cleaned by the OS.
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        success: false,
+        error: `failed to create tmp worktree: ${msg.slice(0, 200)}`,
+        errorType: "git_error",
+      };
+    }
   }
 
   // ---- v0.7 stage 7C ---------------------------------------------------

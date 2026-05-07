@@ -187,9 +187,15 @@ export interface TeamCoordination {
    * the team completes successfully. Requires a stream-aware
    * BranchPolicyAdapter (e.g. GitCascadeBranchPolicyAdapter); ignored
    * with the identity adapter.
+   *
+   * Specify exactly one of `targetStream` (existing streamId) or
+   * `targetBranch` (git branch name; v0.7 stage 7F — adapter auto-
+   * creates a worktree-less integrator stream tracking that branch).
+   * targetBranch is the typical "merge into main" path.
    */
   readonly mergeStreams?: {
-    readonly targetStream: string;
+    readonly targetStream?: string;
+    readonly targetBranch?: string;
     readonly strategy?: string;
     /** When true, a merge conflict surfaces as a topology failure. Default false. */
     readonly failOnConflict?: boolean;
@@ -218,10 +224,15 @@ export const TeamCoordinationSchema = z.object({
     .optional(),
   mergeStreams: z
     .object({
-      targetStream: z.string().min(1),
+      targetStream: z.string().min(1).optional(),
+      targetBranch: z.string().min(1).optional(),
       strategy: z.string().optional(),
       failOnConflict: z.boolean().optional(),
     })
+    .refine(
+      (v) => (v.targetStream !== undefined) !== (v.targetBranch !== undefined),
+      { message: "mergeStreams: exactly one of targetStream or targetBranch must be set" },
+    )
     .optional(),
 });
 

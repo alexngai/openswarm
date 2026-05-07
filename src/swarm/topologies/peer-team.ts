@@ -431,14 +431,40 @@ export class PeerTeamTopology implements Topology {
   ): Promise<void> {
     const cfg = spec.coordination.mergeStreams;
     if (cfg === undefined) return;
+    // v0.7 stage 7F — branch path uses adapter.mergeStreamToBranch (plain
+    // git in a tmp worktree) because git-cascade's mergeStream hardcodes
+    // synthetic stream/<id> branch names and can't merge into main.
+    const usingBranch = cfg.targetBranch !== undefined;
+    const targetStream = cfg.targetStream;
+    if (!usingBranch && targetStream === undefined) return;
     for (const handle of handles) {
       const streamId = ctx.host.streamIdFor(handle.agentId);
       if (streamId === undefined) continue;
-      const result = await ctx.host.mergeStreamForAgent(handle.agentId, {
-        targetStream: cfg.targetStream,
-        ...(cfg.strategy !== undefined && { strategy: cfg.strategy }),
-      });
-      if (result === null) return; // adapter doesn't support merges — skip cohort.
+      const result = usingBranch
+        ? await ctx.host.mergeStreamToBranchForAgent(handle.agentId, {
+            targetBranch: cfg.targetBranch!,
+            ...(cfg.strategy !== undefined && { strategy: cfg.strategy }),
+          })
+        : await ctx.host.mergeStreamForAgent(handle.agentId, {
+            targetStream: targetStream!,
+            ...(cfg.strategy !== undefined && { strategy: cfg.strategy }),
+          });
+      if (result === null) {
+        // Adapter doesn't support this merge path — emit a note so the
+        // operator knows the auto-merge silently skipped.
+        ctx.host.emit({
+          type: "team_note",
+          payload: {
+            teamName: spec.name,
+            scope: `swarm:${spec.name}`,
+            note: usingBranch
+              ? `mergeStreams.targetBranch=${cfg.targetBranch} requires an adapter that supports mergeStreamToBranch; skipping merge`
+              : `mergeStreams.targetStream=${targetStream} requires a stream-aware adapter; skipping merge`,
+          },
+        });
+        return;
+      }
+      const target = usingBranch ? cfg.targetBranch : targetStream;
       if (!result.success) {
         const reason =
           result.errorType === "conflict"
@@ -449,7 +475,7 @@ export class PeerTeamTopology implements Topology {
           payload: {
             teamName: spec.name,
             scope: `swarm:${spec.name}`,
-            note: `mergeStream(${streamId} → ${cfg.targetStream}) failed: ${reason}`,
+            note: `mergeStream(${streamId} → ${target}) failed: ${reason}`,
           },
         });
         if (cfg.failOnConflict === true) {

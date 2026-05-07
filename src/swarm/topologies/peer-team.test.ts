@@ -147,6 +147,16 @@ interface FakeHostExtras {
   >;
   /** v0.7 stage 7D — stub the stream-aware-adapter check. */
   readonly supportsStreams?: () => boolean;
+  /** v0.7 stage 7F — stub host.ensureIntegratorStream. */
+  readonly ensureIntegratorStream?: (branch: string) => Promise<string | null>;
+  /** v0.7 stage 7F — stub host.mergeStreamToBranchForAgent. */
+  readonly mergeStreamToBranchForAgent?: (
+    agentId: AgentId,
+    opts: { readonly targetBranch: string; readonly strategy?: string },
+  ) => Promise<
+    | import("../adapters/git-cascade-branch-policy.js").MergeStreamResult
+    | null
+  >;
 }
 
 function fakeHost(
@@ -200,6 +210,11 @@ function fakeHost(
     // v0.7 stage 7D — default to false so existing tests don't get policies
     // rewritten under them. Tests that exercise defaults override via extras.
     supportsStreams: vi.fn(extras.supportsStreams ?? (() => false)),
+    // v0.7 stage 7F — null by default (no integrator support).
+    ensureIntegratorStream: vi.fn(extras.ensureIntegratorStream ?? (async () => null)),
+    mergeStreamToBranchForAgent: vi.fn(
+      extras.mergeStreamToBranchForAgent ?? (async () => null),
+    ),
   } as unknown as StandaloneHost;
 
   return {
@@ -889,6 +904,52 @@ describe("PeerTeamTopology — coordination.mergeStreams (v0.7 stage 7C)", () =>
     // TeamSession's own default kicks in: {kind:"none"}.
     expect(captured[0]?.task.branchPolicy).toEqual({ kind: "none" });
     await harness.cleanup();
+  });
+
+  it("v0.7 stage 7F — targetBranch routes through mergeStreamToBranchForAgent", async () => {
+    const calls: Array<{ agentId: string; targetBranch: string }> = [];
+    const { ctx, cleanup } = await makeCtx({
+      handleOpts: [{ result: successResult("ok") }],
+      hostExtras: {
+        streamIdFor: () => "s-A",
+        mergeStreamToBranchForAgent: async (agentId, opts) => {
+          calls.push({ agentId, targetBranch: opts.targetBranch });
+          return { success: true };
+        },
+        // mergeStreamForAgent should NOT be called on this path
+        mergeStreamForAgent: async () => {
+          throw new Error("targetBranch path must not call mergeStreamForAgent");
+        },
+      },
+    });
+    const spec = peerSpec(
+      [member("a", "p")],
+      { completion: { kind: "all" }, mergeStreams: { targetBranch: "main" } },
+    );
+    await new PeerTeamTopology().run(spec, ctx);
+    expect(calls).toEqual([{ agentId: "agent-1", targetBranch: "main" }]);
+    await cleanup();
+  });
+
+  it("v0.7 stage 7F — emits team_note + skips merge when adapter has no targetBranch support", async () => {
+    const { ctx, cleanup } = await makeCtx({
+      handleOpts: [{ result: successResult("ok") }],
+      hostExtras: {
+        streamIdFor: () => "s-A",
+        // mergeStreamToBranchForAgent defaults to async () => null
+      },
+    });
+    const spec = peerSpec(
+      [member("a", "p")],
+      { completion: { kind: "all" }, mergeStreams: { targetBranch: "main" } },
+    );
+    await new PeerTeamTopology().run(spec, ctx);
+    const emit = ctx.host.emit as unknown as ReturnType<typeof vi.fn>;
+    const notes = emit.mock.calls
+      .map((c) => c[0] as { type: string; payload?: { note?: string } })
+      .filter((e) => e.type === "team_note");
+    expect(notes.some((n) => n.payload?.note?.includes("targetBranch=main"))).toBe(true);
+    await cleanup();
   });
 
   it("forwards strategy when configured", async () => {

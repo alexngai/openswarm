@@ -69,21 +69,25 @@ const adapter = new GitCascadeBranchPolicyAdapter({
   trackerForTest: tracker,
 });
 
-// ---- Setup: trunk stream as merge target (no worktree) ---------------------
-// git-cascade's mergeStream checks out the target branch in the source's
-// worktree to perform the merge. If the target has its own worktree, the
-// checkout fails ("already checked out"). So integration targets must be
-// stream-only — no worktree. Create trunk via the raw tracker.
-const trunkStreamId = tracker.createStream({
-  name: "trunk",
-  agentId: "smoke-driver",
-});
+// ---- Setup: validate ensureIntegratorStream idempotency (7F) --------------
+// (Integrator streams are exposed for cascade-rebase parent linkage; the
+// auto-merge path uses mergeStreamToBranch instead — git-cascade's
+// mergeStream can't accept integrator streams as targets.)
+const trunkStreamId = await adapter.ensureIntegratorStream("main");
 console.log("trunk:" + trunkStreamId);
+const trunkAgain = await adapter.ensureIntegratorStream("main");
+if (trunkAgain !== trunkStreamId) {
+  console.error("FAIL: ensureIntegratorStream not idempotent");
+  process.exit(2);
+}
 
 // ---- Flow A: worktree creation ---------------------------------------------
-// Spawn a feature stream forking from trunk.
+// Spawn a feature stream from current HEAD (which is main). Forking from
+// the integrator (which tracks an existing branch, not a synthetic
+// stream/<id> branch) doesn't work — git-cascade's forkStream expects
+// stream/<parentId> to exist as a ref.
 const r1 = await adapter.resolve(
-  { kind: "stream", baseStreamId: trunkStreamId, name: "feat-x" },
+  { kind: "stream", name: "feat-x" },
   "agent-A",
 );
 if (!r1.cwd || !existsSync(r1.cwd)) {
@@ -109,24 +113,24 @@ if (!msg.match(/Change-Id:/)) {
 }
 console.log("OK_C:" + JSON.stringify({ commitSha: c1.commitSha, changeId: c1.changeId, hasChangeId: true }));
 
-// ---- Flow D: merge feat → trunk --------------------------------------------
-const m1 = await adapter.mergeStream({
+// ---- Flow D: merge feat → main via mergeStreamToBranch ---------------------
+// v0.7 stage 7F path. Plain-git merge in a tmp worktree; lands changes
+// directly in main without disturbing the source's checkout.
+const m1 = await adapter.mergeStreamToBranch({
   sourceAgentId: "agent-A",
-  targetStream: trunkStreamId,
+  targetBranch: "main",
 });
 if (!m1.success) {
-  console.error("FAIL: mergeStream failed: " + JSON.stringify(m1));
+  console.error("FAIL: mergeStreamToBranch failed: " + JSON.stringify(m1));
   process.exit(4);
 }
-// Confirm feature.txt now exists in the trunk stream's branch.
-const trunkBranch = `stream/${trunkStreamId}`;
-const filesInTrunk = execSync(`git ls-tree -r --name-only ${trunkBranch}`, { cwd: repo }).toString();
-if (!filesInTrunk.includes("feature.txt")) {
-  console.error("FAIL: feature.txt did not land in " + trunkBranch);
-  console.error("files: " + filesInTrunk);
+const filesInMain = execSync(`git ls-tree -r --name-only main`, { cwd: repo }).toString();
+if (!filesInMain.includes("feature.txt")) {
+  console.error("FAIL: feature.txt did not land in main");
+  console.error("files: " + filesInMain);
   process.exit(4);
 }
-console.log("OK_D:" + JSON.stringify({ newHead: m1.newHead, trunkBranch }));
+console.log("OK_D:" + JSON.stringify({ newHead: m1.newHead, target: "main" }));
 
 await adapter.dispose();
 NODE

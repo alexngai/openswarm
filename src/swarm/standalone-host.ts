@@ -289,6 +289,39 @@ export class StandaloneHost implements SwarmHost {
   }
 
   /**
+   * v0.7 stage 7F: look up or create a worktree-less integrator stream
+   * wrapping an existing git branch. Exposed for cascade rebase parent
+   * linkage; the auto-merge path uses mergeStreamToBranchForAgent (which
+   * routes around git-cascade's branch-naming limitation). Returns null
+   * when the adapter isn't stream-aware.
+   */
+  async ensureIntegratorStream(branch: string): Promise<string | null> {
+    if (this.branchPolicyAdapter.ensureIntegratorStream === undefined) return null;
+    return this.branchPolicyAdapter.ensureIntegratorStream(branch);
+  }
+
+  /**
+   * v0.7 stage 7F: merge an agent's stream into an existing git branch
+   * via the adapter's plain-git path. Used by PeerTeamTopology when
+   * `coordination.mergeStreams.targetBranch` is set. Returns null when
+   * the adapter doesn't support the operation.
+   */
+  async mergeStreamToBranchForAgent(
+    agentId: AgentId,
+    opts: { readonly targetBranch: string; readonly strategy?: string },
+  ): Promise<
+    | import("./adapters/git-cascade-branch-policy.js").MergeStreamResult
+    | null
+  > {
+    if (this.branchPolicyAdapter.mergeStreamToBranch === undefined) return null;
+    return this.branchPolicyAdapter.mergeStreamToBranch({
+      sourceAgentId: agentId,
+      targetBranch: opts.targetBranch,
+      ...(opts.strategy !== undefined && { strategy: opts.strategy }),
+    });
+  }
+
+  /**
    * v0.7 stage 7C: merge an agent's stream into a target. Used by topology
    * auto-merge (see TeamCoordination.mergeStreams) and any future
    * model-invokable merge tool. Returns null when the adapter doesn't
