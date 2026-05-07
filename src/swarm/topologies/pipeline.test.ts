@@ -371,4 +371,119 @@ describe("PipelineTopology (direct invocation)", () => {
 
     await cleanup();
   });
+
+  // -----------------------------------------------------------------------
+  // v0.7 stage 7I — fork-from-prev defaults
+  // -----------------------------------------------------------------------
+
+  it("v0.7 stage 7I — stage 0 → kind:'stream', stage N>0 → kind:'fork' parent=prev streamId", async () => {
+    const captured: Array<unknown> = [];
+    // streamId table: agent-1 → s-1, agent-2 → s-2, ...
+    const streamFor = (agentId: AgentId) =>
+      agentId.startsWith("agent-")
+        ? `s-${agentId.slice("agent-".length)}`
+        : undefined;
+    let i = 0;
+    const spawn = async (req: SpawnRequest): Promise<AgentHandle> => {
+      captured.push(req.task.branchPolicy);
+      i++;
+      return makeHandle(
+        successResult(`out-${i}`),
+        `agent-${i}` as AgentId,
+        `session-${i}` as SessionId,
+      );
+    };
+    const host = {
+      mode: "standalone",
+      agentId: "topology-host" as AgentId,
+      depth: 0,
+      spawn,
+      emit: vi.fn(),
+      send: vi.fn(),
+      inbox: async function* () { return; },
+      task: {} as StandaloneHost["task"],
+      // 7I depends on these probes.
+      supportsStreams: () => true,
+      streamIdFor: streamFor,
+    } as unknown as StandaloneHost;
+    const pool = new WorkerPool(1);
+    const tmp = await mkdtemp(join(tmpdir(), "pipeline-7i-"));
+    const deadLetter = new DeadLetterWriter(join(tmp, "dl.jsonl"));
+    const resultsOut = new PassThrough();
+    resultsOut.resume();
+    const ctx: TopologyContext = {
+      host,
+      pool,
+      resultsOut,
+      deadLetter,
+      permissionMode: "workspace-write",
+    };
+    // Bare members — no branchPolicy — so defaults apply.
+    const spec: TeamSpec = {
+      name: "p-7i",
+      topology: "pipeline",
+      members: [
+        { id: "s0", role: "", prompt: "p0" },
+        { id: "s1", role: "", prompt: "p1" },
+        { id: "s2", role: "", prompt: "p2" },
+      ],
+      coordination: { completion: { kind: "all" } },
+    };
+    await new PipelineTopology().run(spec, ctx);
+    expect(captured).toEqual([
+      { kind: "stream" },
+      { kind: "fork", parentStreamId: "s-1" },
+      { kind: "fork", parentStreamId: "s-2" },
+    ]);
+    await deadLetter.close();
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  it("v0.7 stage 7I — explicit member.branchPolicy wins over defaults", async () => {
+    const captured: Array<unknown> = [];
+    let i = 0;
+    const spawn = async (req: SpawnRequest): Promise<AgentHandle> => {
+      captured.push(req.task.branchPolicy);
+      i++;
+      return makeHandle(successResult("ok"), `agent-${i}` as AgentId);
+    };
+    const host = {
+      mode: "standalone",
+      agentId: "topology-host" as AgentId,
+      depth: 0,
+      spawn,
+      emit: vi.fn(),
+      send: vi.fn(),
+      inbox: async function* () { return; },
+      task: {} as StandaloneHost["task"],
+      supportsStreams: () => true,
+      streamIdFor: () => "s-fixed",
+    } as unknown as StandaloneHost;
+    const pool = new WorkerPool(1);
+    const tmp = await mkdtemp(join(tmpdir(), "pipeline-7i-explicit-"));
+    const deadLetter = new DeadLetterWriter(join(tmp, "dl.jsonl"));
+    const resultsOut = new PassThrough();
+    resultsOut.resume();
+    const ctx: TopologyContext = {
+      host,
+      pool,
+      resultsOut,
+      deadLetter,
+      permissionMode: "workspace-write",
+    };
+    const spec: TeamSpec = {
+      name: "p-7i-explicit",
+      topology: "pipeline",
+      members: [
+        { id: "s0", role: "", prompt: "p0", branchPolicy: { kind: "none" } },
+        { id: "s1", role: "", prompt: "p1" }, // gets default
+      ],
+      coordination: { completion: { kind: "all" } },
+    };
+    await new PipelineTopology().run(spec, ctx);
+    expect(captured[0]).toEqual({ kind: "none" });
+    expect(captured[1]).toEqual({ kind: "fork", parentStreamId: "s-fixed" });
+    await deadLetter.close();
+    await rm(tmp, { recursive: true, force: true });
+  });
 });

@@ -60,6 +60,15 @@ export class PipelineTopology implements Topology {
     let prevOutput: string | undefined;
     let aborted = false;
     let halted = false;
+    // v0.7 stage 7I — per-stage default branch policy. Stage 0 gets a fresh
+    // stream; later stages fork from the previous stage's stream so they
+    // pick up its commits. Only applied when the host adapter is stream-
+    // aware AND neither member.branchPolicy nor coordination.defaultBranch
+    // Policy is set (spec wins).
+    const applyStageDefaults =
+      (ctx.host.supportsStreams?.() ?? false) &&
+      spec.coordination.defaultBranchPolicy === undefined;
+    let prevAgentId: import("../../core/types.js").AgentId | undefined;
 
     try {
       for (let i = 0; i < spec.members.length; i++) {
@@ -93,13 +102,32 @@ export class PipelineTopology implements Topology {
           prevOutput !== undefined
             ? `${member.prompt}\n\n${PREV_OUTPUT_HEADER}\n\n${prevOutput}`
             : member.prompt;
-        const stageSpec: MemberSpec = { ...member, prompt: augmentedPrompt };
+        let stageBranchPolicy = member.branchPolicy;
+        if (applyStageDefaults && stageBranchPolicy === undefined) {
+          const prevStreamId =
+            prevAgentId !== undefined
+              ? ctx.host.streamIdFor(prevAgentId)
+              : undefined;
+          stageBranchPolicy =
+            prevStreamId !== undefined
+              ? { kind: "fork", parentStreamId: prevStreamId }
+              : { kind: "stream" };
+        }
+        const stageSpec: MemberSpec = {
+          ...member,
+          prompt: augmentedPrompt,
+          ...(stageBranchPolicy !== undefined && {
+            branchPolicy: stageBranchPolicy,
+          }),
+        };
 
         let handle;
         let result: AgentResult;
         const startedAt = Date.now();
         try {
           handle = await team.spawnMember(stageSpec);
+          // Capture for the next stage's fork-from-prev resolution.
+          prevAgentId = handle.agentId;
           result = await handle.wait();
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
