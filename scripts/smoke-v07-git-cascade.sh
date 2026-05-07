@@ -132,6 +132,65 @@ if (!filesInMain.includes("feature.txt")) {
 }
 console.log("OK_D:" + JSON.stringify({ newHead: m1.newHead, target: "main" }));
 
+// ---- Flow G: cascade rebase propagates to dependents (7K) ------------------
+// Build a 3-stream chain: root → child → grandchild, all forked off each other.
+// Land a new commit on root, then call cascadeRebase(root) and verify both
+// child + grandchild contain the new file.
+const rootStreamId = await (async () => {
+  const r = await adapter.resolve(
+    { kind: "stream", name: "cascade-root" },
+    "agent-root",
+  );
+  return r.streamId;
+})();
+const childStreamId = await (async () => {
+  const r = await adapter.resolve(
+    { kind: "stream", baseStreamId: rootStreamId, name: "cascade-child" },
+    "agent-child",
+  );
+  return r.streamId;
+})();
+const grandStreamId = await (async () => {
+  const r = await adapter.resolve(
+    { kind: "stream", baseStreamId: childStreamId, name: "cascade-grand" },
+    "agent-grand",
+  );
+  return r.streamId;
+})();
+
+// Drop a new file in the root's worktree and commit it.
+const rootWorktree = path.join(repo, ".swarm-harness", "worktrees", rootStreamId);
+writeFileSync(path.join(rootWorktree, "cascade.txt"), "cascade payload\n");
+execSync("git add cascade.txt", { cwd: rootWorktree });
+const cRoot = await adapter.commitChanges("agent-root", "feat: cascade payload");
+if (!cRoot || !cRoot.commitSha) {
+  console.error("FAIL_G: root commitChanges returned null");
+  process.exit(7);
+}
+
+const cascadeR = await adapter.cascadeRebase({ rootStream: rootStreamId });
+if (!cascadeR.success) {
+  console.error("FAIL_G: cascadeRebase failed: " + JSON.stringify(cascadeR));
+  process.exit(7);
+}
+// Verify both dependents now contain cascade.txt.
+const childFiles = execSync(`git ls-tree -r --name-only stream/${childStreamId}`, { cwd: repo }).toString();
+const grandFiles = execSync(`git ls-tree -r --name-only stream/${grandStreamId}`, { cwd: repo }).toString();
+if (!childFiles.includes("cascade.txt")) {
+  console.error("FAIL_G: cascade.txt did not land in child stream");
+  process.exit(7);
+}
+if (!grandFiles.includes("cascade.txt")) {
+  console.error("FAIL_G: cascade.txt did not land in grandchild stream");
+  process.exit(7);
+}
+console.log("OK_G:" + JSON.stringify({
+  root: rootStreamId,
+  child: childStreamId,
+  grand: grandStreamId,
+  rebased: cascadeR.rebased?.length ?? 0,
+}));
+
 await adapter.dispose();
 
 // ---- Flow F: cleanupOnDispose removes worktrees automatically (7H) ---------
@@ -171,11 +230,13 @@ if [[ $DRIVER_RC -ne 0 ]]; then
   record FAIL FlowA "worktree creation"
   record FAIL FlowC "audited commit (commitChanges)"
   record FAIL FlowD "auto-merge (mergeStream)"
+  record FAIL FlowG "cascade rebase propagates to dependents"
   record FAIL FlowF "cleanupOnDispose removes worktrees"
 else
   echo "$DRIVER_OUT" | grep -q "^OK_A:" && record PASS FlowA "worktree created on disk" || record FAIL FlowA "worktree missing"
   echo "$DRIVER_OUT" | grep -q "^OK_C:" && record PASS FlowC "commitChanges adds Change-Id trailer" || record FAIL FlowC "commitChanges missing trailer"
   echo "$DRIVER_OUT" | grep -q "^OK_D:" && record PASS FlowD "mergeStream lands files in target" || record FAIL FlowD "mergeStream did not land changes"
+  echo "$DRIVER_OUT" | grep -q "^OK_G:" && record PASS FlowG "cascade rebase propagates to child + grandchild" || record FAIL FlowG "cascade rebase did not propagate"
   echo "$DRIVER_OUT" | grep -q "^OK_F:" && record PASS FlowF "cleanupOnDispose removes worktrees" || record FAIL FlowF "cleanupOnDispose did not remove worktree"
 fi
 

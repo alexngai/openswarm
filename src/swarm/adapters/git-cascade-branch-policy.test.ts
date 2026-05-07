@@ -95,6 +95,24 @@ function makeTracker() {
           return id;
         },
       ),
+      // v0.7 stage 7K: fake cascade rebase — succeeds by default with
+      // empty rebased[]; tests that exercise dependents reassign per case.
+      cascadeRebase: vi.fn(
+        (opts: {
+          rootStream: string;
+          agentId: string;
+          worktree: { mode: string; provider?: (s: string) => string };
+          strategy?: string;
+        }) => {
+          counter++;
+          return {
+            success: true,
+            rebased: [],
+            rootStream: opts.rootStream,
+            agentId: opts.agentId,
+          };
+        },
+      ),
       // v0.7 stage 7C: fake merge — succeeds by default; tests that want
       // a conflict scenario reassign this mock per case.
       mergeStream: vi.fn(
@@ -467,6 +485,57 @@ describe("GitCascadeBranchPolicyAdapter.dispose", () => {
     // false (default) skips the git call entirely.
     await adapter.dispose();
     expect(fake.tracker.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("v0.7 stage 7K — cascadeRebase wires rootStream + callback worktree provider through to tracker", async () => {
+    const fake = makeTracker();
+    const adapter = new GitCascadeBranchPolicyAdapter({
+      repoPath: "/repo",
+      trackerForTest: fake.tracker,
+    });
+    // Resolve a stream so the adapter has a recorded worktree to expose
+    // through the provider.
+    await adapter.resolve({ kind: "stream" }, "agent-A" as AgentId);
+    const r = await adapter.cascadeRebase({ rootStream: "s-1" });
+    expect(r.success).toBe(true);
+    expect(fake.tracker.cascadeRebase).toHaveBeenCalledOnce();
+    const args = fake.tracker.cascadeRebase.mock.calls[0]![0];
+    expect(args.rootStream).toBe("s-1");
+    expect(args.agentId).toBe("cascade-driver");
+    expect(args.worktree.mode).toBe("callback");
+    // The provider returns the recorded worktree for s-1.
+    const provided = args.worktree.provider!("s-1");
+    expect(provided).toContain(".swarm-harness/worktrees/s-1");
+  });
+
+  it("v0.7 stage 7K — cascadeRebase forwards strategy when set", async () => {
+    const fake = makeTracker();
+    const adapter = new GitCascadeBranchPolicyAdapter({
+      repoPath: "/repo",
+      trackerForTest: fake.tracker,
+    });
+    await adapter.cascadeRebase({
+      rootStream: "s-x",
+      agentId: "custom-driver",
+      strategy: "skip_conflicting",
+    });
+    const args = fake.tracker.cascadeRebase.mock.calls[0]![0];
+    expect(args.agentId).toBe("custom-driver");
+    expect(args.strategy).toBe("skip_conflicting");
+  });
+
+  it("v0.7 stage 7K — cascadeRebase returns success:false on tracker throw", async () => {
+    const fake = makeTracker();
+    fake.tracker.cascadeRebase = vi.fn(() => {
+      throw new Error("rebase blew up");
+    });
+    const adapter = new GitCascadeBranchPolicyAdapter({
+      repoPath: "/repo",
+      trackerForTest: fake.tracker,
+    });
+    const r = await adapter.cascadeRebase({ rootStream: "s-y" });
+    expect(r.success).toBe(false);
+    expect(r.error).toMatch(/rebase blew up/);
   });
 
   it("v0.7 stage 7H — cleanupOnDispose=true attempts git worktree remove (warns on failure)", async () => {

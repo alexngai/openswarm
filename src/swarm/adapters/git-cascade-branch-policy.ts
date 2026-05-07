@@ -131,6 +131,33 @@ export interface BranchPolicyAdapter {
     targetBranch: string;
     strategy?: string;
   }): Promise<MergeStreamResult>;
+
+  /**
+   * v0.7 stage 7K: propagate commits from a root stream to all dependent
+   * streams (forked off it). Wraps `tracker.cascadeRebase`. The adapter
+   * supplies a callback worktree provider that maps each stream to its
+   * recorded worktree, falling back to a fresh tmp worktree for streams
+   * the adapter didn't create (e.g. integrators). Optional; caller
+   * feature-detects.
+   */
+  cascadeRebase?(opts: CascadeRebaseOptions): Promise<CascadeRebaseResult>;
+}
+
+/** v0.7 stage 7K — adapter-facing options for cascade rebase. */
+export interface CascadeRebaseOptions {
+  /** The root stream that just received new commits. */
+  readonly rootStream: string;
+  /** Agent attribution for the cascade run; defaults to "cascade-driver". */
+  readonly agentId?: string;
+  /** Conflict strategy. Default: "stop_on_conflict". */
+  readonly strategy?: "stop_on_conflict" | "skip_conflicting" | "defer_conflicts";
+}
+
+export interface CascadeRebaseResult {
+  readonly success: boolean;
+  readonly rebased?: ReadonlyArray<{ streamId: string; newHead?: string }>;
+  readonly conflicts?: ReadonlyArray<{ streamId: string; reason?: string }>;
+  readonly error?: string;
 }
 
 /**
@@ -215,6 +242,26 @@ type MultiAgentRepoTrackerLike = {
     agentId: string;
     name?: string;
   }): string;
+  // v0.7 stage 7K — cascade rebase: propagate commits from a root stream
+  // to all dependent (forked) streams. Must accept an inline worktree
+  // provider so the adapter can map streamId → worktree path on the fly.
+  cascadeRebase(opts: {
+    rootStream: string;
+    agentId: string;
+    worktree: {
+      mode: "callback" | "sequential" | "temporary";
+      provider?: (streamId: string) => string;
+      worktreePath?: string;
+      tempDir?: string;
+    };
+    strategy?: string;
+  }): {
+    success: boolean;
+    rebased?: ReadonlyArray<{ streamId: string; newHead?: string }>;
+    conflicts?: ReadonlyArray<{ streamId: string; reason?: string }>;
+    error?: string;
+    [key: string]: unknown;
+  };
   // v0.7 stage 7C
   mergeStream(opts: {
     sourceStream: string;
@@ -367,6 +414,74 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
       commitSha: result.commit,
       ...(result.changeId !== undefined && { changeId: result.changeId }),
     };
+  }
+
+  // ---- v0.7 stage 7K — cascade rebase --------------------------------
+
+  async cascadeRebase(opts: CascadeRebaseOptions): Promise<CascadeRebaseResult> {
+    const tracker = await this.ensureTracker();
+    // Build a streamId → worktree map from agent worktrees so the callback
+    // provider can answer for any recorded stream. Falls back to a fresh
+    // tmp worktree for unknown streams (e.g. forks created by other
+    // adapters or by direct tracker calls).
+    const streamWorktrees = new Map<string, string>();
+    for (const { streamId, worktree } of this.agentStreams.values()) {
+      streamWorktrees.set(streamId, worktree);
+    }
+    const cp = await import("node:child_process");
+    const fsp = await import("node:fs/promises");
+    const os = await import("node:os");
+    const tmpWorktrees: string[] = [];
+    const provider = (streamId: string): string => {
+      const recorded = streamWorktrees.get(streamId);
+      if (recorded !== undefined) return recorded;
+      // Allocate a tmp worktree on the stream's branch.
+      const branch = `stream/${streamId}`;
+      const tmpDir = path.join(
+        os.tmpdir(),
+        `swh-cascade-${streamId}-${Date.now()}`,
+      );
+      cp.execSync(
+        `git worktree add --detach ${JSON.stringify(tmpDir)} ${JSON.stringify(branch)}`,
+        { cwd: this.repoPath, stdio: "pipe" },
+      );
+      tmpWorktrees.push(tmpDir);
+      return tmpDir;
+    };
+    try {
+      const result = tracker.cascadeRebase({
+        rootStream: opts.rootStream,
+        agentId: opts.agentId ?? "cascade-driver",
+        worktree: { mode: "callback", provider },
+        ...(opts.strategy !== undefined && { strategy: opts.strategy }),
+      });
+      return {
+        success: result.success,
+        ...(result.rebased !== undefined && { rebased: result.rebased }),
+        ...(result.conflicts !== undefined && { conflicts: result.conflicts }),
+        ...(result.error !== undefined && { error: result.error }),
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, error: msg.slice(0, 500) };
+    } finally {
+      // Clean up any tmp worktrees we allocated.
+      for (const tmp of tmpWorktrees) {
+        try {
+          cp.execSync(
+            `git worktree remove --force ${JSON.stringify(tmp)}`,
+            { cwd: this.repoPath, stdio: "pipe" },
+          );
+        } catch {
+          // Best-effort; tmp dirs in /tmp will be cleaned by the OS.
+        }
+        try {
+          await fsp.rm(tmp, { recursive: true, force: true });
+        } catch {
+          // Same.
+        }
+      }
+    }
   }
 
   // ---- v0.7 stage 7F — integrator streams + branch merge --------------
