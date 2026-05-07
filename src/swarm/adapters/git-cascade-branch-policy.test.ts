@@ -62,7 +62,8 @@ function makeTracker() {
           return { agentId: opts.agentId, path: opts.path };
         },
       ),
-      // v0.7 stage 7B: returns a fake commit + changeId per call.
+      // v0.7 stage 7B: returns a fake commit + changeId per call. Real
+      // git-cascade returns { commit, changeId } (not commitSha).
       commitChanges: vi.fn(
         (opts: {
           streamId: string;
@@ -73,7 +74,7 @@ function makeTracker() {
         }) => {
           counter++;
           return {
-            commitSha: `sha-${counter}`,
+            commit: `sha-${counter}`,
             changeId: `cid-${counter}`,
             streamId: opts.streamId,
             message: opts.message,
@@ -208,7 +209,7 @@ describe("GitCascadeBranchPolicyAdapter — kind:'stream'", () => {
     expect(passedName.startsWith("agent-bobby-")).toBe(true);
   });
 
-  it("forwards baseStreamId as `base` to git-cascade", async () => {
+  it("baseStreamId routes through forkStream (git-cascade's createStream({base}) expects a git ref, not a streamId)", async () => {
     const fake = makeTracker();
     const adapter = new GitCascadeBranchPolicyAdapter({
       repoPath: "/repo",
@@ -218,10 +219,11 @@ describe("GitCascadeBranchPolicyAdapter — kind:'stream'", () => {
       { kind: "stream", baseStreamId: "s-base", name: "child" },
       "a" as AgentId,
     );
-    expect(fake.tracker.createStream).toHaveBeenCalledWith({
+    expect(fake.tracker.createStream).not.toHaveBeenCalled();
+    expect(fake.tracker.forkStream).toHaveBeenCalledWith({
+      parentStreamId: "s-base",
       name: "child",
       agentId: "a",
-      base: "s-base",
     });
   });
 });

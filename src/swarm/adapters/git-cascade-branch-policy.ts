@@ -163,7 +163,9 @@ type MultiAgentRepoTrackerLike = {
     path: string;
     branch?: string;
   }): unknown;
-  // v0.7 stage 7B
+  // v0.7 stage 7B — note: git-cascade's tracker returns { commit, changeId },
+  // not { commitSha, changeId }. The adapter normalises this to commitSha
+  // on the way out so callers see a consistent name.
   commitChanges(opts: {
     streamId: string;
     agentId: string;
@@ -171,8 +173,8 @@ type MultiAgentRepoTrackerLike = {
     message: string;
     metadata?: Record<string, unknown>;
   }): {
-    commitSha: string;
-    changeId?: string;
+    commit: string;
+    changeId: string;
     [key: string]: unknown;
   };
   // v0.7 stage 7C
@@ -256,11 +258,23 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
 
     let streamId: string;
     if (policy.kind === "stream") {
-      streamId = tracker.createStream({
-        name: policy.name ?? `${agentId}-${Date.now()}`,
-        agentId,
-        ...(policy.baseStreamId !== undefined && { base: policy.baseStreamId }),
-      });
+      // baseStreamId, when set, means "fork from this stream" — route
+      // through forkStream so git-cascade can resolve the parent's branch
+      // internally. createStream({base}) expects a git ref/branch and
+      // would reject a raw streamId. (Bug surfaced via 7E smoke; was
+      // causing BranchNotFoundError on baseStreamId resolves.)
+      if (policy.baseStreamId !== undefined) {
+        streamId = tracker.forkStream({
+          parentStreamId: policy.baseStreamId,
+          name: policy.name ?? `${agentId}-${Date.now()}`,
+          agentId,
+        });
+      } else {
+        streamId = tracker.createStream({
+          name: policy.name ?? `${agentId}-${Date.now()}`,
+          agentId,
+        });
+      }
     } else {
       streamId = tracker.forkStream({
         parentStreamId: policy.parentStreamId,
@@ -302,7 +316,7 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
     });
     return {
       streamId: stream.streamId,
-      commitSha: result.commitSha,
+      commitSha: result.commit,
       ...(result.changeId !== undefined && { changeId: result.changeId }),
     };
   }
