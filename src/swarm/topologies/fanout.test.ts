@@ -64,6 +64,7 @@ function failureResult(error = "boom"): AgentResult {
 
 function fakeHost(
   spawnImpl: (req: Parameters<StandaloneHost["spawn"]>[0]) => Promise<AgentHandle>,
+  opts: { supportsStreams?: boolean } = {},
 ): StandaloneHost {
   return {
     mode: "standalone",
@@ -76,6 +77,9 @@ function fakeHost(
       return;
     },
     task: {} as StandaloneHost["task"],
+    // v0.7 stage 7G — fanout consults this before applying defaults; fake
+    // returns false by default so existing tests don't get policies rewritten.
+    supportsStreams: () => opts.supportsStreams ?? false,
   } as unknown as StandaloneHost;
 }
 
@@ -150,6 +154,41 @@ describe("FanoutTopology (direct invocation)", () => {
     expect(lines[0]!.id).toBe("m1");
     expect(lines[0]!.status).toBe("succeeded");
 
+    await deadLetter.close();
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  it("v0.7 stage 7G — defaults member.branchPolicy to {kind:'stream'} when host supports streams", async () => {
+    const captured: Array<unknown> = [];
+    const host = fakeHost(
+      async (req) => {
+        captured.push(req.task.branchPolicy);
+        return makeHandle(successResult("ok"));
+      },
+      { supportsStreams: true },
+    );
+    const pool = new WorkerPool(1);
+    const tmp = await mkdtemp(join(tmpdir(), "fanout-7g-"));
+    const deadLetter = new DeadLetterWriter(join(tmp, "dl.jsonl"));
+    const resultsOut = new PassThrough();
+    resultsOut.resume();
+
+    const ctx: TopologyContext = {
+      host,
+      pool,
+      resultsOut,
+      deadLetter,
+      permissionMode: "workspace-write",
+    };
+    // Member with no branchPolicy set — relies on the default.
+    const spec: TeamSpec = {
+      name: "7g",
+      topology: "fanout",
+      members: [{ id: "m1", role: "", prompt: "p" }],
+      coordination: { completion: { kind: "all" } },
+    };
+    await new FanoutTopology().run(spec, ctx);
+    expect(captured[0]).toEqual({ kind: "stream" });
     await deadLetter.close();
     await rm(tmp, { recursive: true, force: true });
   });

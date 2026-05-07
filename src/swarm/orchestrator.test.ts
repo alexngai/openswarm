@@ -78,6 +78,8 @@ function fakeHost(
     send: vi.fn(),
     inbox: async function* () { return; },
     task: {} as StandaloneHost["task"],
+    // v0.7 stage 7G — fanout topology consults this before applying defaults.
+    supportsStreams: () => false,
   } as unknown as StandaloneHost;
 }
 

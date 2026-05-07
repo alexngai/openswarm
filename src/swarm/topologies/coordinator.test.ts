@@ -133,7 +133,10 @@ interface FakeHostHarness {
   spawn(req: SpawnRequest): Promise<AgentHandle>;
 }
 
-function fakeHost(handleOpts: readonly MakeHandleOpts[]): FakeHostHarness {
+function fakeHost(
+  handleOpts: readonly MakeHandleOpts[],
+  hostOpts: { supportsStreams?: boolean } = {},
+): FakeHostHarness {
   let i = 0;
   const spawns: SpawnLog[] = [];
   const handles: FakeHandle[] = [];
@@ -171,6 +174,8 @@ function fakeHost(handleOpts: readonly MakeHandleOpts[]): FakeHostHarness {
     },
     task: {} as StandaloneHost["task"],
     events,
+    // v0.7 stage 7G — coordinator consults this before applying root defaults.
+    supportsStreams: () => hostOpts.supportsStreams ?? false,
   } as unknown as StandaloneHost;
 
   return { host, events, spawns, handles, spawn };
@@ -198,6 +203,7 @@ function member(id: string, prompt: string, role = "worker"): MemberSpec {
 interface RigOpts {
   readonly handleOpts: readonly MakeHandleOpts[];
   readonly abort?: AbortSignal;
+  readonly supportsStreams?: boolean;
 }
 
 async function makeCtx(opts: RigOpts): Promise<{
@@ -205,7 +211,11 @@ async function makeCtx(opts: RigOpts): Promise<{
   harness: FakeHostHarness;
   cleanup: () => Promise<void>;
 }> {
-  const harness = fakeHost(opts.handleOpts);
+  const harness = fakeHost(opts.handleOpts, {
+    ...(opts.supportsStreams !== undefined && {
+      supportsStreams: opts.supportsStreams,
+    }),
+  });
   const pool = new WorkerPool(8);
   const tmp = await mkdtemp(join(tmpdir(), "coordinator-"));
   const deadLetter = new DeadLetterWriter(join(tmp, "dl.jsonl"));
@@ -455,6 +465,27 @@ describe("CoordinatorTopology (direct invocation)", () => {
     );
     expect(abortedCalls.length).toBe(1);
 
+    await cleanup();
+  });
+
+  it("v0.7 stage 7G — defaults root member.branchPolicy to {kind:'stream'} when host supports streams", async () => {
+    const captured: Array<unknown> = [];
+    const { ctx, harness, cleanup } = await makeCtx({
+      handleOpts: [{ result: successResult("ok") }],
+      supportsStreams: true,
+    });
+    const origSpawn = harness.host.spawn.bind(harness.host);
+    (harness.host as unknown as { spawn: typeof origSpawn }).spawn = (
+      req: SpawnRequest,
+    ) => {
+      captured.push(req.task.branchPolicy);
+      return origSpawn(req);
+    };
+
+    const root: MemberSpec = { id: "root", role: "lead", prompt: "drive" };
+    const spec = coordSpec([root], { completion: { kind: "all" } });
+    await new CoordinatorTopology().run(spec, ctx);
+    expect(captured[0]).toEqual({ kind: "stream" });
     await cleanup();
   });
 });

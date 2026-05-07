@@ -26,6 +26,7 @@ import type { Role } from "../roles.js";
 import * as branchLock from "../git/branch-lock.js";
 import * as staleBase from "../git/stale-base.js";
 import type { TeamSpec, MemberSpec } from "../team-spec.js";
+import { applyDefaultBranchPolicy } from "./branch-policy-defaults.js";
 import type {
   Topology,
   TopologyContext,
@@ -36,7 +37,14 @@ import type { ResultLine } from "../orchestrator.js";
 export class FanoutTopology implements Topology {
   readonly name = "fanout" as const;
 
-  async run(spec: TeamSpec, ctx: TopologyContext): Promise<TeamResult> {
+  async run(specIn: TeamSpec, ctx: TopologyContext): Promise<TeamResult> {
+    // v0.7 stage 7G — when the host's branch-policy adapter is stream-aware,
+    // default each member to its own stream/worktree per docs/25 §10.4.
+    // Spec overrides win. The optional-chaining + ?? false handles fakes
+    // (and older host adapters) that don't implement supportsStreams yet.
+    const spec = ctx.host.supportsStreams?.() ?? false
+      ? applyDefaultBranchPolicy(specIn, { kind: "stream" })
+      : specIn;
     const counts = { succeeded: 0, failed: 0, timeout: 0, cancelled: 0 };
     let firstResultWriteError: unknown;
     let resultWriteFailures = 0;

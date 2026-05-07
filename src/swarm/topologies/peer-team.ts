@@ -43,7 +43,8 @@ export class PeerTeamTopology implements Topology {
     }
     // v0.7 stage 7D — when the host has a stream-aware adapter, default each
     // member to its own stream/worktree per docs/25 §10.4. Spec overrides win.
-    const spec = ctx.host.supportsStreams()
+    // Optional-chaining handles fakes that don't implement supportsStreams.
+    const spec = ctx.host.supportsStreams?.() ?? false
       ? applyDefaultBranchPolicy(specIn, { kind: "stream" })
       : specIn;
 

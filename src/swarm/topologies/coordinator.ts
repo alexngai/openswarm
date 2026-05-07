@@ -29,16 +29,24 @@
 
 import type { AgentResult } from "../host.js";
 import type { TeamSpec, MemberSpec } from "../team-spec.js";
+import { applyDefaultBranchPolicy } from "./branch-policy-defaults.js";
 import { TeamSession } from "../team-session.js";
 import type { Topology, TopologyContext, TeamResult } from "../topologies-types.js";
 
 export class CoordinatorTopology implements Topology {
   readonly name = "coordinator" as const;
 
-  async run(spec: TeamSpec, ctx: TopologyContext): Promise<TeamResult> {
-    if (spec.members.length === 0) {
+  async run(specIn: TeamSpec, ctx: TopologyContext): Promise<TeamResult> {
+    if (specIn.members.length === 0) {
       throw new Error("CoordinatorTopology: spec.members is empty");
     }
+    // v0.7 stage 7G — default the root member to its own stream when the
+    // host has a stream-aware adapter. Peers spawned dynamically via the
+    // agent tool inherit no default; they pass branchPolicy explicitly.
+    // Optional-chaining handles fakes that don't implement supportsStreams.
+    const spec = ctx.host.supportsStreams?.() ?? false
+      ? applyDefaultBranchPolicy(specIn, { kind: "stream" })
+      : specIn;
 
     const rootSpec = spec.members[0]!;
     const candidateRoles = spec.members.slice(1);
