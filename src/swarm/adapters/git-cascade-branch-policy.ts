@@ -247,6 +247,13 @@ export interface GitCascadeBranchPolicyAdapterOptions {
    * without a real repo + sqlite db.
    */
   readonly trackerForTest?: MultiAgentRepoTrackerLike;
+  /**
+   * v0.7 stage 7H: when true, dispose() removes every worktree the
+   * adapter created during the run via `git worktree remove --force`,
+   * then prunes git's worktree registry. Default false (matches the
+   * audit-trail philosophy — operators opt in to cleanup).
+   */
+  readonly cleanupOnDispose?: boolean;
 }
 
 /**
@@ -263,6 +270,8 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
   /** Pending lazy-load (so concurrent resolve calls don't double-init). */
   private trackerPromise: Promise<MultiAgentRepoTrackerLike> | undefined;
   private readonly testTracker: MultiAgentRepoTrackerLike | undefined;
+  /** v0.7 stage 7H: opt-in worktree cleanup at dispose() time. */
+  private readonly cleanupOnDispose: boolean;
   /**
    * v0.7 stage 7B: agentId → {streamId, worktree} captured on resolve so
    * commitChanges can look them up without re-querying git-cascade.
@@ -283,6 +292,7 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
       "worktrees",
     );
     this.testTracker = opts.trackerForTest;
+    this.cleanupOnDispose = opts.cleanupOnDispose ?? false;
   }
 
   async resolve(
@@ -502,6 +512,34 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
   }
 
   async dispose(): Promise<void> {
+    // v0.7 stage 7H: optional worktree cleanup BEFORE closing the tracker
+    // (close() also tears down git-cascade state we may need). Best-effort
+    // — failures are logged via console.warn but don't throw, so dispose
+    // remains idempotent and exit-safe.
+    if (this.cleanupOnDispose && this.agentStreams.size > 0) {
+      const cp = await import("node:child_process");
+      for (const { worktree } of this.agentStreams.values()) {
+        try {
+          cp.execSync(
+            `git worktree remove --force ${JSON.stringify(worktree)}`,
+            { cwd: this.repoPath, stdio: "pipe" },
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn(
+            `[git-cascade] cleanup-on-dispose: failed to remove ${worktree}: ${msg.slice(0, 200)}`,
+          );
+        }
+      }
+      try {
+        cp.execSync(`git worktree prune`, {
+          cwd: this.repoPath,
+          stdio: "pipe",
+        });
+      } catch {
+        // prune is best-effort; failures don't block tracker close.
+      }
+    }
     if (this.tracker !== undefined) {
       try {
         this.tracker.close();

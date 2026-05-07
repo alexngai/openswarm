@@ -81,6 +81,13 @@ export interface SwarmRunOptions {
    */
   readonly gitCascade?: boolean;
   /**
+   * v0.7 stage 7H: when true, the git-cascade adapter removes every
+   * worktree it created when the orchestrator exits (via `git worktree
+   * remove --force`, then `git worktree prune`). Default: keep worktrees
+   * for forensic inspection. Ignored when --git-cascade is off.
+   */
+  readonly cleanupWorktrees?: boolean;
+  /**
    * Aggregate token cap across all workers. On exceed, all in-flight workers
    * are aborted and the run exits with code 3 (v0.2.Q7).
    */
@@ -214,9 +221,10 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
     if (opts.gitCascade === true) {
       branchPolicyAdapter = new GitCascadeBranchPolicyAdapter({
         repoPath: process.cwd(),
+        ...(opts.cleanupWorktrees === true && { cleanupOnDispose: true }),
       });
       process.stderr.write(
-        `[swarm-harness] --git-cascade enabled (worktrees under ${process.cwd()}/.swarm-harness/worktrees/)\n`,
+        `[swarm-harness] --git-cascade enabled (worktrees under ${process.cwd()}/.swarm-harness/worktrees/${opts.cleanupWorktrees === true ? "; auto-cleanup on exit" : ""})\n`,
       );
     }
 

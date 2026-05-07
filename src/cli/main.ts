@@ -735,6 +735,7 @@ export async function main(argv: string[]): Promise<number> {
         }),
         agentInbox: parsed.agentInbox,
         gitCascade: parsed.gitCascade,
+        cleanupWorktrees: parsed.cleanupWorktrees,
       });
 
     case "plugin":

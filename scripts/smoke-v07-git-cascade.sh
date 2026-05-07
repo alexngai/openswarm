@@ -133,6 +133,30 @@ if (!filesInMain.includes("feature.txt")) {
 console.log("OK_D:" + JSON.stringify({ newHead: m1.newHead, target: "main" }));
 
 await adapter.dispose();
+
+// ---- Flow F: cleanupOnDispose removes worktrees automatically (7H) ---------
+// Use a fresh tracker + adapter so disposal cleanup is the only thing
+// removing worktrees in this section.
+const tracker2 = new MultiAgentRepoTracker({ repoPath: repo, dbPath });
+const cleanupAdapter = new GitCascadeBranchPolicyAdapter({
+  repoPath: repo,
+  trackerForTest: tracker2,
+  cleanupOnDispose: true,
+});
+const r2 = await cleanupAdapter.resolve(
+  { kind: "stream", name: "cleanup-test" },
+  "agent-cleanup",
+);
+if (!existsSync(r2.cwd)) {
+  console.error("FAIL_F: worktree was not created at " + r2.cwd);
+  process.exit(5);
+}
+await cleanupAdapter.dispose();
+if (existsSync(r2.cwd)) {
+  console.error("FAIL_F: worktree dir still exists after dispose: " + r2.cwd);
+  process.exit(5);
+}
+console.log("OK_F:" + JSON.stringify({ worktree: r2.cwd, removed: true }));
 NODE
 
 # Substitute REPO into driver.
@@ -147,10 +171,12 @@ if [[ $DRIVER_RC -ne 0 ]]; then
   record FAIL FlowA "worktree creation"
   record FAIL FlowC "audited commit (commitChanges)"
   record FAIL FlowD "auto-merge (mergeStream)"
+  record FAIL FlowF "cleanupOnDispose removes worktrees"
 else
   echo "$DRIVER_OUT" | grep -q "^OK_A:" && record PASS FlowA "worktree created on disk" || record FAIL FlowA "worktree missing"
   echo "$DRIVER_OUT" | grep -q "^OK_C:" && record PASS FlowC "commitChanges adds Change-Id trailer" || record FAIL FlowC "commitChanges missing trailer"
   echo "$DRIVER_OUT" | grep -q "^OK_D:" && record PASS FlowD "mergeStream lands files in target" || record FAIL FlowD "mergeStream did not land changes"
+  echo "$DRIVER_OUT" | grep -q "^OK_F:" && record PASS FlowF "cleanupOnDispose removes worktrees" || record FAIL FlowF "cleanupOnDispose did not remove worktree"
 fi
 
 # ---- Flow E: worktree CLI ---------------------------------------------------

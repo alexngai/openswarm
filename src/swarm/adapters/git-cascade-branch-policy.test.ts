@@ -454,4 +454,36 @@ describe("GitCascadeBranchPolicyAdapter.dispose", () => {
     await adapter.dispose();
     expect(fake.tracker.close).not.toHaveBeenCalled();
   });
+
+  it("v0.7 stage 7H — cleanupOnDispose=false (default) does not invoke git", async () => {
+    const fake = makeTracker();
+    const adapter = new GitCascadeBranchPolicyAdapter({
+      repoPath: "/repo",
+      trackerForTest: fake.tracker,
+    });
+    await adapter.resolve({ kind: "stream" }, "a" as AgentId);
+    // No git binary available at /repo (it's a fake path) — if cleanupOnDispose
+    // were true, the spawnSync call would log a warn but not throw. Setting
+    // false (default) skips the git call entirely.
+    await adapter.dispose();
+    expect(fake.tracker.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("v0.7 stage 7H — cleanupOnDispose=true attempts git worktree remove (warns on failure)", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fake = makeTracker();
+    const adapter = new GitCascadeBranchPolicyAdapter({
+      repoPath: "/repo-does-not-exist",
+      trackerForTest: fake.tracker,
+      cleanupOnDispose: true,
+    });
+    await adapter.resolve({ kind: "stream" }, "a" as AgentId);
+    // Worktree path is fake; git will fail. We expect a console.warn but
+    // the dispose itself must not throw (best-effort cleanup).
+    await expect(adapter.dispose()).resolves.toBeUndefined();
+    expect(warnSpy).toHaveBeenCalled();
+    expect(warnSpy.mock.calls[0]?.[0]).toMatch(/cleanup-on-dispose: failed/);
+    expect(fake.tracker.close).toHaveBeenCalledTimes(1);
+    warnSpy.mockRestore();
+  });
 });

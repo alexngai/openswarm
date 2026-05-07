@@ -102,6 +102,8 @@ export type ParsedArgs =
       agentInbox: boolean;
       /** v0.7 stage 7A.4: enable git-cascade BranchPolicy adapter. */
       gitCascade: boolean;
+      /** v0.7 stage 7H: auto-cleanup worktrees on exit (requires --git-cascade). */
+      cleanupWorktrees: boolean;
     }
   | { kind: "plugin"; pluginArgv: string[] }
   | { kind: "worktree"; worktreeArgv: string[] }
@@ -244,6 +246,8 @@ export function parseArgv(args: string[]): ParsedArgs {
 
   // v0.7 stage 7A.4 — git-cascade BranchPolicy adapter flag for `swarm run`.
   let gitCascade = false;
+  // v0.7 stage 7H — auto-cleanup worktrees on exit.
+  let cleanupWorktrees = false;
 
   // First pass: scan for early-exit flags (--help, -h, --version, -V) and
   // collect flags that precede the subcommand / positional.
@@ -587,6 +591,13 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
+    // v0.7 stage 7H: --cleanup-worktrees opts into worktree cleanup at exit.
+    if (tok === "--cleanup-worktrees") {
+      cleanupWorktrees = true;
+      i++;
+      continue;
+    }
+
     // v0.4 stage 4K: --spec <path> for the `topology` subcommand. Required
     // when topology is invoked; ignored otherwise (the topology dispatch is
     // the only consumer).
@@ -815,6 +826,7 @@ export function parseArgv(args: string[]): ParsedArgs {
         ...(opentasksSocket !== undefined && { opentasksSocket }),
         agentInbox,
         gitCascade,
+        cleanupWorktrees,
       };
     }
 

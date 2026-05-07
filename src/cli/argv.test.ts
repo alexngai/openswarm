@@ -522,4 +522,30 @@ describe("parseArgv", () => {
       worktreeArgv: ["clean", "--dry-run"],
     });
   });
+
+  // ---- v0.7 stage 7H: --cleanup-worktrees flag ----------------------------
+
+  it("swarm run --git-cascade --cleanup-worktrees sets both flags", () => {
+    const result = parseArgv([
+      "swarm",
+      "run",
+      "tasks.jsonl",
+      "--git-cascade",
+      "--cleanup-worktrees",
+    ]);
+    expect(result).toMatchObject({
+      kind: "swarm-run",
+      gitCascade: true,
+      cleanupWorktrees: true,
+    });
+  });
+
+  it("swarm run without --cleanup-worktrees defaults to false", () => {
+    const result = parseArgv(["swarm", "run", "tasks.jsonl", "--git-cascade"]);
+    expect(result).toMatchObject({
+      kind: "swarm-run",
+      gitCascade: true,
+      cleanupWorktrees: false,
+    });
+  });
 });
