@@ -13,9 +13,3 @@ dead-letter.jsonl
 # generates bun.lock locally on first run, but we don't want a parallel lockfile
 # committed.
 bun.lock
-# Third-party reference repos cloned locally for research / pattern lookup. The
-# existing references/claw-code/ stub stays; new clones (git-cascade, cc-swarm,
-# etc.) are local-only.
-references/git-cascade/
-references/claude-code-swarm/
-references/macro-agent/
