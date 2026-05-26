@@ -17,6 +17,7 @@ import { taskListTool } from "./task_list.js";
 import { taskUpdateTool } from "./task_update.js";
 import { sendMessageTool } from "./send_message.js";
 import { checkInboxTool } from "./check_inbox.js";
+import { readThreadTool } from "./read_thread.js";
 import { taskStopTool } from "./task_stop.js";
 import { taskOutputTool } from "./task_output.js";
 import { askUserQuestionTool } from "./ask_user_question.js";
@@ -33,6 +34,7 @@ export function buildTier2Tools(): readonly ToolImpl[] {
     agentTool,
     sendMessageTool,
     checkInboxTool,
+    readThreadTool,
     taskStopTool,
     taskOutputTool,
     askUserQuestionTool,
@@ -49,6 +51,7 @@ export {
   taskUpdateTool,
   sendMessageTool,
   checkInboxTool,
+  readThreadTool,
   taskStopTool,
   taskOutputTool,
   askUserQuestionTool,

@@ -67,6 +67,7 @@ export type IpcRequestMethod =
   | "shutdown"
   | "message.send"
   | "message.recv"
+  | "message.read_thread"
   | "task.stop"
   | "task.output"
   | "task.owner_of"
@@ -151,6 +152,7 @@ export const MessageSendParamsSchema = z.object({
   from: z.string(),
   timestamp: z.number(),
   correlationId: z.string().optional(),
+  threadTag: z.string().optional(),
 });
 export type MessageSendParams = z.infer<typeof MessageSendParamsSchema>;
 
@@ -159,6 +161,19 @@ export const MessageRecvParamsSchema = z.object({
   max: z.number().int().positive().optional().default(10),
 });
 export type MessageRecvParams = z.infer<typeof MessageRecvParamsSchema>;
+
+/**
+ * params for "message.read_thread" request (v0.6 stage 6B). Worker asks
+ * the orchestrator to return all messages tagged with `threadId` from the
+ * worker's own scope. Orchestrator's response is `AgentMessage[]` (empty
+ * when the backend has no record of the thread).
+ */
+export const MessageReadThreadParamsSchema = z.object({
+  threadId: z.string().min(1),
+});
+export type MessageReadThreadParams = z.infer<
+  typeof MessageReadThreadParamsSchema
+>;
 
 /**
  * params for "task.stop" request.

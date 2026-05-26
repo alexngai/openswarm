@@ -34,9 +34,9 @@ describe("AgentInboxBackend — optional methods", () => {
     const inbox = new AgentInboxBackend();
     const scope = "swarm:thread-test";
     const to = "b" as AgentId;
-    await inbox.enqueue(scope, to, msg("first", { correlationId: "T1" }));
-    await inbox.enqueue(scope, to, msg("second", { correlationId: "T1" }));
-    await inbox.enqueue(scope, to, msg("other", { correlationId: "T2" }));
+    await inbox.enqueue(scope, to, msg("first", { threadTag: "T1" }));
+    await inbox.enqueue(scope, to, msg("second", { threadTag: "T1" }));
+    await inbox.enqueue(scope, to, msg("other", { threadTag: "T2" }));
 
     const t1 = await inbox.readThread!(scope, "T1");
     expect(t1.map((m) => m.content)).toEqual(["first", "second"]);
@@ -51,13 +51,28 @@ describe("AgentInboxBackend — optional methods", () => {
     expect(typeof inbox.listAgents).toBe("function");
   });
 
-  it("correlationId roundtrips through enqueue → drain via thread_tag", async () => {
+  it("threadTag roundtrips through enqueue → drain", async () => {
     const inbox = new AgentInboxBackend();
-    const scope = "swarm:corr-test";
+    const scope = "swarm:tag-test";
     const to = "b" as AgentId;
-    await inbox.enqueue(scope, to, msg("hello", { correlationId: "X-42" }));
+    await inbox.enqueue(scope, to, msg("hello", { threadTag: "X-42" }));
     const drained = await inbox.drain(scope, to, 10);
     expect(drained).toHaveLength(1);
-    expect(drained[0]!.correlationId).toBe("X-42");
+    expect(drained[0]!.threadTag).toBe("X-42");
+    // v0.6 stage 6B: correlationId is no longer auto-mapped to thread_tag.
+    expect(drained[0]!.correlationId).toBeUndefined();
+  });
+
+  it("correlationId is NOT carried through agent-inbox storage", async () => {
+    // v0.6 stage 6B: agent-inbox v0.2 has no native field for correlationId,
+    // so it's dropped on the round-trip. Callers needing correlationId
+    // persistence must use the in-memory backend.
+    const inbox = new AgentInboxBackend();
+    const scope = "swarm:corr-drop";
+    const to = "b" as AgentId;
+    await inbox.enqueue(scope, to, msg("hello", { correlationId: "req-1" }));
+    const drained = await inbox.drain(scope, to, 10);
+    expect(drained).toHaveLength(1);
+    expect(drained[0]!.correlationId).toBeUndefined();
   });
 });

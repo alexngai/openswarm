@@ -947,6 +947,7 @@ Per Q8: v0.4 = minimum + MAP. Adapters layered after.
 |---|---|
 | 5F | `send_prompt` against a live `peer-team` daemon — **shipped early** (closes V0.5.Q6 deferral). TopologyContext gains `persistent` + `onTeamCreated`; PeerTeamTopology honors them; daemon `send_prompt` handler spawns an ad-hoc member into the live TeamSession. |
 | 6A | agent-inbox library integration (`InboxBackend` interface + `AgentInboxBackend` adapter) — **shipped**. Refactored `AgentInbox` → pluggable `InboxBackend`, scope-keyed + async (6A.1). Wired `agent-inbox@^0.2.0` as a library backend with threading + persistence (6A.2). CLI flag `--agent-inbox` opts in. |
+| 6B | Thread support in messaging — **shipped**. `AgentMessage.threadTag` is now distinct from `correlationId` (previously the agent-inbox backend silently aliased the two); `send_message` gains a `threadTag?: string` param; new `read_thread` Tier 2 tool returns all messages tagged with a given `threadId` from the caller's scope. Backends without threading (`InMemoryInboxBackend`) surface a structured error from `read_thread`; only the agent-inbox backend (`--agent-inbox`) implements it. New IPC method `message.read_thread` proxies the call from workers. |
 
 | Stage | Scope |
 |---|---|

@@ -121,6 +121,15 @@ export interface SwarmHost {
   drainInbox(max: number): Promise<AgentMessage[]>;
 
   /**
+   * Return the messages in a thread (identified by `threadTag` set on
+   * `send_message`). v0.6 stage 6B: implemented when the underlying
+   * `InboxBackend` exposes `readThread` (agent-inbox library backend);
+   * throws `Error("threading not supported by current inbox backend")`
+   * otherwise. Tools should surface that as a user-facing error.
+   */
+  readThread(threadId: string): Promise<AgentMessage[]>;
+
+  /**
    * Ask the operator a question and wait for a response.
    * M3b Phase 6 implements the real transport; Phase 0 stubs throw.
    */
@@ -407,6 +416,14 @@ export interface AgentMessage {
   readonly timestamp: number;
   /** Correlation id for request/response flows (e.g. ask_user_question). */
   readonly correlationId?: string;
+  /**
+   * Thread identifier for reply-chain grouping. v0.6 stage 6B: distinct from
+   * `correlationId` so a message can carry both (e.g. a request/response pair
+   * inside a longer conversation). Backends that support threading (agent-
+   * inbox library) persist this; in-memory backend stores but does not query
+   * by it. Resurfacing the thread is done via `SwarmHost.readThread`.
+   */
+  readonly threadTag?: string;
 }
 
 export type InboxEvent =

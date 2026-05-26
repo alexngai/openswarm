@@ -25,6 +25,12 @@ const inputSchema = z.object({
   correlationId: z.string().optional().describe(
     "Optional correlation id for request/response flows.",
   ),
+  threadTag: z.string().optional().describe(
+    "Optional thread tag for grouping a reply-chain. Use the same tag on " +
+      "follow-up messages to keep them in one thread; read the thread back " +
+      "with the `read_thread` tool. Only meaningful when the inbox backend " +
+      "supports threading (--agent-inbox).",
+  ),
 });
 
 // concurrencySafe: false — Tier 2 tools touch shared orchestrator state
@@ -61,6 +67,9 @@ async function execute(
     timestamp: Date.now(),
     ...(input.correlationId !== undefined && {
       correlationId: input.correlationId,
+    }),
+    ...(input.threadTag !== undefined && {
+      threadTag: input.threadTag,
     }),
   };
 

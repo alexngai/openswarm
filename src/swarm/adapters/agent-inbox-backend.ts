@@ -14,10 +14,14 @@
  *   - AgentMessage.content (string) ↔ Message.content
  *     ({type: "text", text: content})
  *   - AgentMessage.timestamp (ms epoch) ↔ Message.created_at (ISO)
- *   - AgentMessage.correlationId ↔ Message.thread_tag (loose mapping;
- *     correlationId in v0.4 is request/response pair tagging, agent-inbox
- *     thread_tag is reply-chain identifier — they collide cleanly enough
- *     for 6A.2 MVP)
+ *   - AgentMessage.threadTag ↔ Message.thread_tag (v0.6 stage 6B made this
+ *     explicit — previously AgentMessage.correlationId was auto-mapped, but
+ *     the two carry different semantics: correlationId tags request/response
+ *     pairs, threadTag tags reply-chains. Callers set threadTag via the
+ *     `send_message` tool's `threadTag` param.)
+ *   - AgentMessage.correlationId has no agent-inbox v0.2 field, so it does
+ *     NOT round-trip through this backend. Tools that need correlationId
+ *     persistence should keep the InMemoryInboxBackend.
  *
  * Drain semantics: agent-inbox keeps messages persistent + tracks read
  * state via Recipient.read_at. Our InboxBackend.drain contract is
@@ -84,8 +88,8 @@ export class AgentInboxBackend implements InboxBackend {
       to: [{ agent_id: to, kind: "to" }],
       payload: msg.content,
       scope,
-      ...(msg.correlationId !== undefined && {
-        threadTag: msg.correlationId,
+      ...(msg.threadTag !== undefined && {
+        threadTag: msg.threadTag,
       }),
     });
     // No overflow in agent-inbox storage; always 0.
@@ -168,6 +172,6 @@ function toAgentMessage(
     to: recipientId as AgentId,
     content: text,
     timestamp: new Date(m.created_at).getTime(),
-    ...(m.thread_tag !== undefined && { correlationId: m.thread_tag }),
+    ...(m.thread_tag !== undefined && { threadTag: m.thread_tag }),
   };
 }

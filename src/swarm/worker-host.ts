@@ -369,6 +369,9 @@ export class WorkerHost implements SwarmHost {
       ...(message.correlationId !== undefined && {
         correlationId: message.correlationId,
       }),
+      ...(message.threadTag !== undefined && {
+        threadTag: message.threadTag,
+      }),
     });
     return result;
   }
@@ -408,6 +411,22 @@ export class WorkerHost implements SwarmHost {
     if (max <= 0) return [];
     const take = Math.min(max, this.inboxBuffer.length);
     return this.inboxBuffer.splice(0, take);
+  }
+
+  /**
+   * v0.6 stage 6B — read all messages in a thread from the orchestrator.
+   * The orchestrator answers from its scope-keyed `InboxBackend.readThread`
+   * (agent-inbox backed; throws on the in-memory backend). When the
+   * orchestrator rejects with the "threading not supported" path, the IPC
+   * layer surfaces it as a thrown Error here; the calling tool catches and
+   * returns a structured error to the model.
+   */
+  async readThread(threadId: string): Promise<AgentMessage[]> {
+    const result = await this.transport.send<AgentMessage[]>(
+      "message.read_thread",
+      { threadId },
+    );
+    return result;
   }
 
   async *inbox(): AsyncIterable<InboxEvent> {

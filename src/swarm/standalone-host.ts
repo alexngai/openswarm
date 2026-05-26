@@ -36,6 +36,7 @@ import { RoleIndex } from "./role-index.js";
 import {
   IPC_ERROR_CODES,
   MessageSendParamsSchema,
+  MessageReadThreadParamsSchema,
   TaskStopParamsSchema,
   TaskOutputParamsSchema,
   TaskOwnerOfParamsSchema,
@@ -759,6 +760,19 @@ export class StandaloneHost implements SwarmHost {
     return this.messageInbox.drain(this.scopeOf(this.agentId), this.agentId, max);
   }
 
+  /**
+   * v0.6 stage 6B — return all messages tagged with `threadId` from this
+   * host's scope. Backends without threading support (InMemoryInboxBackend)
+   * lack the optional `readThread` method, in which case we throw — the
+   * Tier 2 tool converts that to a user-facing error.
+   */
+  async readThread(threadId: string): Promise<AgentMessage[]> {
+    if (typeof this.messageInbox.readThread !== "function") {
+      throw new Error("threading not supported by current inbox backend");
+    }
+    return this.messageInbox.readThread(this.scopeOf(this.agentId), threadId);
+  }
+
   async *inbox(): AsyncIterable<InboxEvent> {
     return; // M3b+: full inbox iterator. Phase 3 uses drainInbox + sub_agent_event.
   }
@@ -916,9 +930,37 @@ export class StandaloneHost implements SwarmHost {
           ...(p.correlationId !== undefined && {
             correlationId: p.correlationId,
           }),
+          ...(p.threadTag !== undefined && {
+            threadTag: p.threadTag,
+          }),
         },
       );
       transport.respond(frame.id, result);
+      return;
+    }
+    if (frame.method === "message.read_thread") {
+      const parsed = MessageReadThreadParamsSchema.safeParse(frame.params);
+      if (!parsed.success) {
+        transport.respondError(
+          frame.id,
+          IPC_ERROR_CODES.INVALID_PARAMS,
+          parsed.error.message,
+        );
+        return;
+      }
+      if (typeof this.messageInbox.readThread !== "function") {
+        transport.respondError(
+          frame.id,
+          IPC_ERROR_CODES.INTERNAL_ERROR,
+          "threading not supported by current inbox backend",
+        );
+        return;
+      }
+      const messages = await this.messageInbox.readThread(
+        this.scopeOf(from),
+        parsed.data.threadId,
+      );
+      transport.respond(frame.id, messages);
       return;
     }
     if (frame.method === "message.recv") {

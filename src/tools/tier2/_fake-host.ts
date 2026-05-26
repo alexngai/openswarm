@@ -199,6 +199,9 @@ export function makeFakeHost(opts: FakeHostOpts = {}): {
     async drainInbox(_max: number): Promise<AgentMessage[]> {
       return [];
     },
+    async readThread(_threadId: string): Promise<AgentMessage[]> {
+      return [];
+    },
     askUser: vi.fn(
       async (
         question: string,

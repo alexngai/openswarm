@@ -67,6 +67,7 @@ function hostAs(root: StandaloneHost, agentId: AgentId, depth: number): SwarmHos
       ((root as any).messageInbox as {
         drain: (scope: string, id: AgentId, n: number) => Promise<AgentMessage[]>;
       }).drain("swarm:default", agentId, max),
+    readThread: (threadId: string) => root.readThread(threadId),
     askUser: (): never => {
       throw new Error("M3b Phase 6 — not yet implemented");
     },
@@ -114,6 +115,27 @@ describe("send_message + check_inbox", () => {
       to: B,
       content: "hello",
     });
+  });
+
+  it("threadTag is forwarded and visible on the recipient's drained message (v0.6 stage 6B)", async () => {
+    const root = new StandaloneHost({ agentId: "R" as AgentId });
+    const A = "A" as AgentId;
+    const B = "B" as AgentId;
+    registerPeer(root, A, 1);
+    registerPeer(root, B, 1);
+
+    const hostA = hostAs(root, A, 1);
+    const send = await sendMessageTool.execute(
+      { to: B, content: "tagged", threadTag: "thr-1" },
+      { cwd: CTX_CWD, host: hostA },
+    );
+    expect(send.status).toBe("ok");
+
+    const drained = await hostAs(root, B, 1).drainInbox(10);
+    expect(drained).toHaveLength(1);
+    expect(drained[0]!.threadTag).toBe("thr-1");
+    // correlationId is independent now — unset on this send.
+    expect(drained[0]!.correlationId).toBeUndefined();
   });
 
   it('broadcast "*" fans out to depth-1 peers only (excludes root + sender) (M6 regression)', async () => {

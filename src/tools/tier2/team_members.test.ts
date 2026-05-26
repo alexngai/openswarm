@@ -70,6 +70,7 @@ function hostAs(
       ((root as any).messageInbox as {
         drain: (scope: string, id: AgentId, n: number) => Promise<AgentMessage[]>;
       }).drain("swarm:default", agentId, max),
+    readThread: (threadId: string) => root.readThread(threadId),
     askUser: (): never => {
       throw new Error("not used");
     },
