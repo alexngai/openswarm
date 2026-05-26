@@ -202,6 +202,9 @@ export function makeFakeHost(opts: FakeHostOpts = {}): {
     async readThread(_threadId: string): Promise<AgentMessage[]> {
       return [];
     },
+    async listAgents(): Promise<readonly AgentId[]> {
+      return [];
+    },
     askUser: vi.fn(
       async (
         question: string,

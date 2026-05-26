@@ -24,6 +24,7 @@ function makeHost(records: readonly TaskRecord[]): SwarmHost {
     },
     drainInbox: async () => [],
     readThread: async () => [],
+    listAgents: async () => [],
     askUser: (): never => {
       throw new Error("M3b Phase 6 — not yet implemented");
     },

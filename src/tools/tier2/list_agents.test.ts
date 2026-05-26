@@ -1,13 +1,13 @@
 /**
- * Tests for the `read_thread` Tier 2 tool (v0.6 stage 6B).
+ * Tests for the `list_agents` Tier 2 tool (v0.6 stage 6C).
  *
- * Covers the schema, the happy path (StandaloneHost wired to an
- * AgentInboxBackend), and the "threading not supported" error path
- * (default InMemoryInboxBackend).
+ * Covers schema/host-presence checks plus the two backend paths: a
+ * registry-capable backend (AgentInboxBackend) returns the agents seen in
+ * the scope; the default in-memory backend surfaces a structured error.
  */
 
 import { describe, it, expect } from "vitest";
-import { readThreadTool } from "./read_thread.js";
+import { listAgentsTool } from "./list_agents.js";
 import { sendMessageTool } from "./send_message.js";
 import { makeFakeHost } from "./_fake-host.js";
 import { StandaloneHost } from "../../swarm/standalone-host.js";
@@ -17,8 +17,6 @@ import type { AgentId } from "../../core/types.js";
 
 const CWD = process.cwd();
 
-// Reuse the pattern from send_message.test.ts: register peers directly in
-// the StandaloneHost's depths map and proxy a per-agent SwarmHost facade.
 function registerPeer(host: StandaloneHost, agentId: AgentId, depth: number): void {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const depths: Map<AgentId, number> = (host as any).depths;
@@ -59,90 +57,63 @@ function hostAs(
   };
 }
 
-describe("read_thread tool — schema + host presence", () => {
+describe("list_agents tool — schema + host presence", () => {
   it("throws when no host is present", async () => {
     await expect(
-      readThreadTool.execute({ threadId: "t1" }, { cwd: CWD }),
-    ).rejects.toThrow(/read_thread requires SwarmHost/);
+      listAgentsTool.execute({}, { cwd: CWD }),
+    ).rejects.toThrow(/list_agents requires SwarmHost/);
   });
 
-  it("rejects empty threadId", async () => {
+  it("returns [] from a fake host (no registry)", async () => {
     const { host } = makeFakeHost();
-    const res = await readThreadTool.execute(
-      { threadId: "" },
-      { cwd: CWD, host },
-    );
-    expect(res.status).toBe("error");
-  });
-
-  it("returns [] from a fake host that has no thread storage", async () => {
-    const { host } = makeFakeHost();
-    const res = await readThreadTool.execute(
-      { threadId: "t1" },
-      { cwd: CWD, host },
-    );
+    const res = await listAgentsTool.execute({}, { cwd: CWD, host });
     expect(res.status).toBe("ok");
     expect((res as { status: "ok"; output: string }).output).toBe("[]");
   });
 });
 
-describe("read_thread tool — backend integration", () => {
-  it("returns a structured error when the backend lacks threading (in-memory default)", async () => {
-    // Default StandaloneHost uses InMemoryInboxBackend, which has no
-    // readThread method. The tool should surface a clean error, not throw.
+describe("list_agents tool — backend integration", () => {
+  it("surfaces a structured error when the backend lacks a registry (in-memory default)", async () => {
     const root = new StandaloneHost({ agentId: "R" as AgentId });
     const A = "A" as AgentId;
     registerPeer(root, A, 1);
     const hostA = hostAs(root, A, 1);
 
-    const res = await readThreadTool.execute(
-      { threadId: "t1" },
-      { cwd: CWD, host: hostA },
-    );
+    const res = await listAgentsTool.execute({}, { cwd: CWD, host: hostA });
     expect(res.status).toBe("error");
     expect((res as { status: "error"; message: string }).message).toMatch(
-      /threading not supported/,
+      /agent registry not supported/,
     );
   });
 
-  it("returns messages from an agent-inbox backend by thread tag", async () => {
-    // Wire a StandaloneHost backed by AgentInboxBackend, send two messages
-    // tagged "t1" plus one "t2", then read_thread t1 from the recipient.
+  it("returns the agents seen by an agent-inbox-backed host in the caller's scope", async () => {
     const root = new StandaloneHost({
       agentId: "R" as AgentId,
       inboxBackend: new AgentInboxBackend(),
     });
     const A = "A" as AgentId;
     const B = "B" as AgentId;
+    const C = "C" as AgentId;
     registerPeer(root, A, 1);
     registerPeer(root, B, 1);
+    registerPeer(root, C, 1);
     const hostA = hostAs(root, A, 1);
-    const hostB = hostAs(root, B, 1);
 
-    // A sends two messages with thread "t1" + one with "t2" to B.
-    for (const [content, threadTag] of [
-      ["first", "t1"],
-      ["second", "t1"],
-      ["other", "t2"],
-    ] as const) {
-      const r = await sendMessageTool.execute(
-        { to: B, content, threadTag },
+    // A sends to B and C; agent-inbox records A (as sender) plus B, C
+    // (as recipients) in the scope.
+    for (const target of [B, C]) {
+      const sent = await sendMessageTool.execute(
+        { to: target, content: "hi" },
         { cwd: CWD, host: hostA },
       );
-      expect(r.status).toBe("ok");
+      expect(sent.status).toBe("ok");
     }
 
-    const res = await readThreadTool.execute(
-      { threadId: "t1" },
-      { cwd: CWD, host: hostB },
-    );
+    const res = await listAgentsTool.execute({}, { cwd: CWD, host: hostA });
     expect(res.status).toBe("ok");
-    const messages = JSON.parse(
+    const agents = JSON.parse(
       (res as { status: "ok"; output: string }).output,
-    ) as AgentMessage[];
-    expect(messages.map((m) => m.content)).toEqual(["first", "second"]);
-    for (const m of messages) {
-      expect(m.threadTag).toBe("t1");
-    }
+    ) as readonly AgentId[];
+    expect([...agents].sort()).toEqual([A, B, C].sort());
   });
 });

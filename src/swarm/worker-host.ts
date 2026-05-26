@@ -429,6 +429,20 @@ export class WorkerHost implements SwarmHost {
     return result;
   }
 
+  /**
+   * v0.6 stage 6C — return the inbox backend's agent registry for this
+   * worker's scope. Orchestrator answers from `InboxBackend.listAgents`
+   * (agent-inbox backed). Rejection ("agent registry not supported") flows
+   * back as a thrown Error; the calling tool catches it.
+   */
+  async listAgents(): Promise<readonly AgentId[]> {
+    const result = await this.transport.send<readonly AgentId[]>(
+      "message.list_agents",
+      {},
+    );
+    return result;
+  }
+
   async *inbox(): AsyncIterable<InboxEvent> {
     return;
   }

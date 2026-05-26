@@ -68,6 +68,7 @@ export type IpcRequestMethod =
   | "message.send"
   | "message.recv"
   | "message.read_thread"
+  | "message.list_agents"
   | "task.stop"
   | "task.output"
   | "task.owner_of"
@@ -173,6 +174,16 @@ export const MessageReadThreadParamsSchema = z.object({
 });
 export type MessageReadThreadParams = z.infer<
   typeof MessageReadThreadParamsSchema
+>;
+
+/**
+ * params for "message.list_agents" request (v0.6 stage 6C). No fields —
+ * scope is implicit from the caller. Orchestrator's response is the
+ * `AgentId[]` known to the inbox backend in the caller's scope.
+ */
+export const MessageListAgentsParamsSchema = z.object({});
+export type MessageListAgentsParams = z.infer<
+  typeof MessageListAgentsParamsSchema
 >;
 
 /**

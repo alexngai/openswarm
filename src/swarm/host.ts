@@ -130,6 +130,20 @@ export interface SwarmHost {
   readThread(threadId: string): Promise<AgentMessage[]>;
 
   /**
+   * Return the agent IDs known to the inbox backend in this host's scope.
+   * v0.6 stage 6C federation prep: the registry view is whatever the
+   * backend tracks — for the agent-inbox library this is every agent that
+   * has sent or received a message in `scope`. Throws
+   * `Error("agent registry not supported by current inbox backend")` when
+   * the backend's optional `listAgents` is absent (default in-memory).
+   *
+   * Distinct from `team_members` — that tool returns the LIVE peer roster
+   * from the orchestrator's depth map; this one returns the persistent
+   * registry, useful for resurrecting cross-restart federation handles.
+   */
+  listAgents(): Promise<readonly AgentId[]>;
+
+  /**
    * Ask the operator a question and wait for a response.
    * M3b Phase 6 implements the real transport; Phase 0 stubs throw.
    */

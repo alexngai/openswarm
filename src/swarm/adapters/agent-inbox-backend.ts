@@ -83,6 +83,13 @@ export class AgentInboxBackend implements InboxBackend {
     to: AgentId,
     msg: AgentMessage,
   ): Promise<number> {
+    // v0.6 stage 6C — populate the agent registry implicitly so
+    // `listAgents(scope)` returns everyone who has sent or received in
+    // this scope. routeMessage() doesn't auto-register; without these
+    // putAgent calls the registry would stay empty until callers wired
+    // their own bootstrap.
+    this.ensureRegistered(scope, msg.from);
+    this.ensureRegistered(scope, to);
     await this.router.routeMessage({
       from: msg.from,
       to: [{ agent_id: to, kind: "to" }],
@@ -94,6 +101,19 @@ export class AgentInboxBackend implements InboxBackend {
     });
     // No overflow in agent-inbox storage; always 0.
     return 0;
+  }
+
+  private ensureRegistered(scope: string, agentId: AgentId | string): void {
+    if (this.storage.getAgent(agentId) !== undefined) return;
+    const now = new Date().toISOString();
+    this.storage.putAgent({
+      agent_id: agentId,
+      scope,
+      status: "active",
+      metadata: {},
+      registered_at: now,
+      last_active_at: now,
+    });
   }
 
   async drain(

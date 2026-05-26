@@ -68,6 +68,7 @@ function hostAs(root: StandaloneHost, agentId: AgentId, depth: number): SwarmHos
         drain: (scope: string, id: AgentId, n: number) => Promise<AgentMessage[]>;
       }).drain("swarm:default", agentId, max),
     readThread: (threadId: string) => root.readThread(threadId),
+    listAgents: () => root.listAgents(),
     askUser: (): never => {
       throw new Error("M3b Phase 6 — not yet implemented");
     },
@@ -115,6 +116,26 @@ describe("send_message + check_inbox", () => {
       to: B,
       content: "hello",
     });
+  });
+
+  it("agent@system addresses are parsed but not routed (v0.6 stage 6C federation prep)", async () => {
+    const root = new StandaloneHost({ agentId: "R" as AgentId });
+    const A = "A" as AgentId;
+    const B = "B" as AgentId;
+    registerPeer(root, A, 1);
+    registerPeer(root, B, 1);
+
+    const hostA = hostAs(root, A, 1);
+    const res = await sendMessageTool.execute(
+      { to: "B@otherteam", content: "cross-system ping" },
+      { cwd: CTX_CWD, host: hostA },
+    );
+    expect(res.status).toBe("error");
+    expect((res as { status: "error"; message: string }).message).toMatch(
+      /cross-system address.*not yet routed/,
+    );
+    // The local B inbox must remain untouched — no leakage.
+    expect(await hostAs(root, B, 1).drainInbox(10)).toEqual([]);
   });
 
   it("threadTag is forwarded and visible on the recipient's drained message (v0.6 stage 6B)", async () => {

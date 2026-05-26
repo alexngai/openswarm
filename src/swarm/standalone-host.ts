@@ -37,6 +37,7 @@ import {
   IPC_ERROR_CODES,
   MessageSendParamsSchema,
   MessageReadThreadParamsSchema,
+  MessageListAgentsParamsSchema,
   TaskStopParamsSchema,
   TaskOutputParamsSchema,
   TaskOwnerOfParamsSchema,
@@ -773,6 +774,19 @@ export class StandaloneHost implements SwarmHost {
     return this.messageInbox.readThread(this.scopeOf(this.agentId), threadId);
   }
 
+  /**
+   * v0.6 stage 6C — return the inbox backend's agent registry for this
+   * host's scope. Throws when the backend doesn't track a registry (the
+   * in-memory backend); the Tier 2 tool turns that into a user-facing
+   * error.
+   */
+  async listAgents(): Promise<readonly AgentId[]> {
+    if (typeof this.messageInbox.listAgents !== "function") {
+      throw new Error("agent registry not supported by current inbox backend");
+    }
+    return this.messageInbox.listAgents(this.scopeOf(this.agentId));
+  }
+
   async *inbox(): AsyncIterable<InboxEvent> {
     return; // M3b+: full inbox iterator. Phase 3 uses drainInbox + sub_agent_event.
   }
@@ -961,6 +975,28 @@ export class StandaloneHost implements SwarmHost {
         parsed.data.threadId,
       );
       transport.respond(frame.id, messages);
+      return;
+    }
+    if (frame.method === "message.list_agents") {
+      const parsed = MessageListAgentsParamsSchema.safeParse(frame.params);
+      if (!parsed.success) {
+        transport.respondError(
+          frame.id,
+          IPC_ERROR_CODES.INVALID_PARAMS,
+          parsed.error.message,
+        );
+        return;
+      }
+      if (typeof this.messageInbox.listAgents !== "function") {
+        transport.respondError(
+          frame.id,
+          IPC_ERROR_CODES.INTERNAL_ERROR,
+          "agent registry not supported by current inbox backend",
+        );
+        return;
+      }
+      const agents = await this.messageInbox.listAgents(this.scopeOf(from));
+      transport.respond(frame.id, agents);
       return;
     }
     if (frame.method === "message.recv") {
