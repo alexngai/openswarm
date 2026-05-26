@@ -9,3 +9,7 @@ results.jsonl
 dead-letter.jsonl
 .claude/
 .omc/
+# Bun's lockfile — repo's canonical lockfile is package-lock.json; bun install
+# generates bun.lock locally on first run, but we don't want a parallel lockfile
+# committed.
+bun.lock
