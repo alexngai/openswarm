@@ -763,7 +763,7 @@ The daemon does its own discovery walk; swarm-harness only needs to know `enable
 
 ### 10.4 git-cascade — `BranchPolicy` adapter (v0.7, Q7)
 
-git-cascade exposes `MultiAgentRepoTracker` with: `createStream`, `forkStream`, `mergeStream`, `syncWithParent`, `commitChanges`, `createWorktree`, `cascadeRebase`, plus MAP-compatible event emission already wired ([git-cascade/README.md:144](../references/git-cascade/README.md)).
+git-cascade exposes `MultiAgentRepoTracker` with: `createStream`, `forkStream`, `mergeStream`, `syncWithParent`, `commitChanges`, `createWorktree`, `cascadeRebase`, plus MAP-compatible event emission already wired ([git-cascade README — Event Emission](https://github.com/alexngai/git-cascade#event-emission-map-compatible)).
 
 **Integration shape:**
 
