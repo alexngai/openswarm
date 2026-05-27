@@ -584,6 +584,62 @@ describe("TeamDaemon — events.jsonl writer (5E.5)", () => {
     expect(lines).toHaveLength(3); // metadata + 2 events across both daemons
   });
 
+  it("drops live-only LaneEvents from events.jsonl but keeps recorded ones", async () => {
+    type AnyHandler = (event: unknown) => void;
+    let emit: AnyHandler | undefined;
+    const orchestrator: TeamDaemonOrchestrator = {
+      runTeam: async () => {
+        await new Promise(() => {});
+        return {
+          succeeded: 0,
+          failed: 0,
+          timeout: 0,
+          cancelled: 0,
+          resultWriteFailures: 0,
+          deadLetterViolation: false,
+          deadLetterWriteFailures: 0,
+        };
+      },
+      subscribeEvents: ((handler: AnyHandler) => {
+        emit = handler;
+        return () => {
+          emit = undefined;
+        };
+      }) as TeamDaemonOrchestrator["subscribeEvents"],
+    };
+    daemon = new TeamDaemon({ spec: fakeSpec(), paths, orchestrator });
+    await daemon.start();
+
+    // Mix of live-only and recorded events.
+    emit!({ ts: 10, agentId: "a", type: "worker_spawned", payload: {} });
+    emit!({ ts: 11, agentId: "a", type: "text_delta", payload: {} }); // live-only — dropped
+    emit!({ ts: 12, agentId: "a", type: "heartbeat", payload: {} }); // live-only — dropped
+    emit!({ ts: 13, agentId: "a", type: "tool_use_input", payload: {} }); // live-only — dropped
+    emit!({
+      ts: 14,
+      agentId: "a",
+      type: "worker_lifecycle_changed",
+      payload: {},
+    }); // live-only — dropped
+    emit!({ ts: 15, agentId: "a", type: "tool_use_end", payload: {} }); // recorded
+    emit!({ ts: 16, agentId: "a", type: "worker_exited", payload: {} });
+
+    await daemon.stop();
+    daemon = undefined;
+
+    const raw = await fs.readFile(paths.eventsPath, "utf8");
+    const lines = raw.split("\n").filter((l) => l.length > 0);
+    const records = lines.map((l) => JSON.parse(l) as { type: string });
+    // Metadata + 3 recorded events; the 4 live-only events are dropped.
+    expect(records).toHaveLength(4);
+    expect(records[0]!.type).toBe("_metadata");
+    expect(records.slice(1).map((r) => r.type)).toEqual([
+      "worker_spawned",
+      "tool_use_end",
+      "worker_exited",
+    ]);
+  });
+
   it("does not create events.jsonl when orchestrator omits subscribeEvents", async () => {
     daemon = new TeamDaemon({
       spec: fakeSpec(),

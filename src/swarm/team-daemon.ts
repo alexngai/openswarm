@@ -23,7 +23,7 @@ import type { LaneEvent } from "./events.js";
 import type { TeamSession } from "./team-session.js";
 import { Orchestrator } from "./orchestrator.js";
 import { StandaloneHost } from "./standalone-host.js";
-import { buildMetadataEvent } from "./wire-protocol.js";
+import { buildMetadataEvent, isRecordedLaneEvent } from "./wire-protocol.js";
 import {
   SendPromptParamsSchema,
   TEAM_DAEMON_ERROR_CODES,
@@ -186,6 +186,12 @@ export class TeamDaemon {
         // {ts, ...laneEvent} shape per docs/28 §V0.5.Q4. LaneEvent already
         // carries its own ts; we keep it (rather than overwriting) so the
         // emit-time clock is preserved.
+        //
+        // Live-only events (text_delta / tool_use_input / heartbeat /
+        // worker_lifecycle_changed) are high-frequency deltas that
+        // don't earn their disk footprint — they still reach in-process
+        // subscribers, but the JSONL wire stays lean. See wire-protocol.ts.
+        if (!isRecordedLaneEvent(event)) return;
         try {
           stream.write(JSON.stringify(event) + "\n");
         } catch {
