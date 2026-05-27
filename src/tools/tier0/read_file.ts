@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
+import { ToolAccesses, type ToolAccesses as ToolAccessesType } from "../access.js";
 import { isUnderCwd } from "./internal.js";
 
 const inputSchema = z.object({
@@ -118,8 +119,15 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   return { status: "ok", output };
 }
 
+function accesses(raw: unknown, ctx: ToolExecutionContext): ToolAccessesType {
+  const parsed = inputSchema.safeParse(raw);
+  if (!parsed.success) return ToolAccesses.all();
+  return ToolAccesses.readFile(path.resolve(ctx.cwd, parsed.data.path));
+}
+
 export const readFileTool: ToolImpl = {
   spec,
   execute,
   zodSchema: inputSchema,
+  accesses,
 };

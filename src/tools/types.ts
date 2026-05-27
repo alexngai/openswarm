@@ -14,6 +14,7 @@
 import type { ZodTypeAny } from "zod";
 import type { ToolSpec } from "../core/types.js";
 import type { SwarmHost } from "../swarm/host.js";
+import type { ToolAccesses } from "./access.js";
 
 export interface ToolImpl {
   readonly spec: ToolSpec;
@@ -25,6 +26,18 @@ export interface ToolImpl {
    * Optional to allow test fixtures without full schema setup.
    */
   readonly zodSchema?: ZodTypeAny;
+  /**
+   * Declare the resources this call will touch so the dispatcher can schedule
+   * non-conflicting calls concurrently. Should be a pure, side-effect-free
+   * description derived from `input` (path resolution against `ctx.cwd` is
+   * fine). Throwing or returning malformed accesses is treated as
+   * `ToolAccesses.all()` (pessimistic — serializes against everything).
+   *
+   * When omitted, the dispatcher falls back to `spec.concurrencySafe`:
+   *   - `false` → `ToolAccesses.all()` (legacy serial-after-safe behavior)
+   *   - `true` or `undefined` → `ToolAccesses.none()` (parallel)
+   */
+  readonly accesses?: (input: unknown, ctx: ToolExecutionContext) => ToolAccesses;
 }
 
 /**

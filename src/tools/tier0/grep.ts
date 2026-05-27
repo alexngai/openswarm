@@ -10,8 +10,10 @@
 import { spawn } from "node:child_process";
 import { z } from "zod";
 import { rgPath } from "@vscode/ripgrep";
+import * as path from "node:path";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
+import { ToolAccesses, type ToolAccesses as ToolAccessesType } from "../access.js";
 
 const inputSchema = z.object({
   pattern: z.string(),
@@ -174,8 +176,16 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   });
 }
 
+function accesses(raw: unknown, ctx: ToolExecutionContext): ToolAccessesType {
+  const parsed = inputSchema.safeParse(raw);
+  if (!parsed.success) return ToolAccesses.all();
+  const root = path.resolve(ctx.cwd, parsed.data.path ?? ".");
+  return ToolAccesses.searchTree(root);
+}
+
 export const grepTool: ToolImpl = {
   spec,
   execute,
   zodSchema: inputSchema,
+  accesses,
 };
