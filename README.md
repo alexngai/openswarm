@@ -102,6 +102,10 @@ swarm-harness --headless --output-format json "list all .ts files"
 
 The agent runs in an interactive TUI built on OpenTUI/Solid. Markdown is rendered with syntax-highlighted fenced code blocks (TypeScript, JavaScript, Markdown, Zig via Tree-sitter). It reads files, edits code, runs commands, searches with grep, and iterates until the task is done.
 
+**Keybindings in the input line:** Enter submits, Shift+Enter / Ctrl+J insert a newline, standard Emacs motions (Ctrl+A/E/K/U/W, Alt+B/F/D) work as in `readline`. **Ctrl+S** is "steering" — while the model is mid-turn, type a follow-up and press Ctrl+S to queue it for the next turn boundary without aborting the current turn.
+
+**OpenAI prompt cache** is automatic for `gpt-4o*`, `gpt-5*`, and the `o1`/`o3`/`o4` reasoning models. Each session uses a stable `prompt_cache_key` (a `crypto.randomUUID()` for fresh sessions; the resumed id for `--resume`) so the server-side cache stays warm across turns. Each subprocess worker uses its own `agentId` as its key for the same reason.
+
 ### Swarm run (task fanout)
 
 ```bash
