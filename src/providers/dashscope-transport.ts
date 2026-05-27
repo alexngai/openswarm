@@ -24,6 +24,7 @@ import type { StopReason, ProviderError } from "../core/types.js";
 import { providerMessagesToVercel } from "./message-replay.js";
 import { toolSpecsToVercelTools } from "./tool-translation.js";
 import { dashscopePreflight } from "./dashscope-preflight.js";
+import { classifyProviderError } from "./error-classifier.js";
 
 const DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
 
@@ -222,12 +223,7 @@ export class DashScopeTransportProvider implements TransportProvider {
         }
 
         case "error":
-          yield {
-            type: "error",
-            code: "provider",
-            message: String(part.error),
-            retryable: false,
-          };
+          yield { type: "error", ...classifyProviderError(part.error) };
           break;
 
         case "start":

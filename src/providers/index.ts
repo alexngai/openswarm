@@ -107,6 +107,7 @@ export type ProviderEvent =
       readonly code: string;
       readonly message: string;
       readonly retryable: boolean;
+      readonly cause?: unknown;
     };
 
 /**

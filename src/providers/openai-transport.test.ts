@@ -332,9 +332,9 @@ describe("stream()", () => {
     expect(events[1]).toMatchObject({ type: "finish", stopReason: "tool_use" });
   });
 
-  it("maps error parts to ProviderEvent error", async () => {
+  it("classifies a network-like error as transport / retryable", async () => {
     const parts = [
-      { type: "error", error: new Error("network failure") },
+      { type: "error", error: new Error("fetch failed: ECONNRESET") },
     ];
 
     (streamText as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -350,10 +350,10 @@ describe("stream()", () => {
 
     expect(events[0]).toMatchObject({
       type: "error",
-      code: "provider",
-      retryable: false,
+      code: "transport",
+      retryable: true,
     });
-    expect((events[0] as { message: string }).message).toContain("network failure");
+    expect((events[0] as { message: string }).message).toContain("ECONNRESET");
   });
 
   it("finish event includes usage with inputTokens and outputTokens", async () => {

@@ -22,6 +22,7 @@ import type { StopReason } from "../core/types.js";
 import { isReasoningModel, isGpt5, normalizeProviderOptions } from "./openai-quirks.js";
 import { providerMessagesToVercel } from "./message-replay.js";
 import { toolSpecsToVercelTools } from "./tool-translation.js";
+import { classifyProviderError } from "./error-classifier.js";
 
 // ---------------------------------------------------------------------------
 // Capabilities helper
@@ -185,12 +186,7 @@ export class OpenAITransportProvider implements TransportProvider {
         }
 
         case "error":
-          yield {
-            type: "error",
-            code: "provider",
-            message: String(part.error),
-            retryable: false,
-          };
+          yield { type: "error", ...classifyProviderError(part.error) };
           break;
 
         // Lifecycle and other frames we don't consume in M4a

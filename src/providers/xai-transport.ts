@@ -21,6 +21,7 @@ import type {
 import type { StopReason } from "../core/types.js";
 import { providerMessagesToVercel } from "./message-replay.js";
 import { toolSpecsToVercelTools } from "./tool-translation.js";
+import { classifyProviderError } from "./error-classifier.js";
 
 // ---------------------------------------------------------------------------
 // Reasoning model detection
@@ -195,12 +196,7 @@ export class XaiTransportProvider implements TransportProvider {
         }
 
         case "error":
-          yield {
-            type: "error",
-            code: "provider",
-            message: String(part.error),
-            retryable: false,
-          };
+          yield { type: "error", ...classifyProviderError(part.error) };
           break;
 
         case "start":
