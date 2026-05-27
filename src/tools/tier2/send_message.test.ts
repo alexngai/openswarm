@@ -36,7 +36,7 @@ function registerPeer(
   if (role !== undefined) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const ri: RoleIndex = (host as any).roles;
-    ri.register(agentId, role);
+    ri.register("swarm:default", agentId, role);
   }
 }
 
@@ -61,11 +61,13 @@ function hostAs(root: StandaloneHost, agentId: AgentId, depth: number): SwarmHos
     inbox: async function* () {
       return;
     },
-    drainInbox: (max: number) =>
+    drainInbox: async (max: number) =>
+      // v0.6 stage 6A.1: messageInbox.drain is now (scope, agent, max) → Promise.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ((root as any).messageInbox as {
-        drain: (id: AgentId, n: number) => AgentMessage[];
-      }).drain(agentId, max),
+        drain: (scope: string, id: AgentId, n: number) => Promise<AgentMessage[]>;
+      }).drain("swarm:default", agentId, max),
+    commitChanges: async () => null,
     askUser: (): never => {
       throw new Error("M3b Phase 6 — not yet implemented");
     },
@@ -138,15 +140,15 @@ describe("send_message + check_inbox", () => {
     expect(parsed.delivered).toBe(2);
 
     // Sender A should NOT have received its own broadcast.
-    const aInbox = hostAs(root, A, 1).drainInbox(10);
+    const aInbox = await hostAs(root, A, 1).drainInbox(10);
     expect(aInbox).toEqual([]);
 
     // B and C each receive exactly one.
-    expect(hostAs(root, B, 1).drainInbox(10)).toHaveLength(1);
-    expect(hostAs(root, C, 1).drainInbox(10)).toHaveLength(1);
+    expect(await hostAs(root, B, 1).drainInbox(10)).toHaveLength(1);
+    expect(await hostAs(root, C, 1).drainInbox(10)).toHaveLength(1);
 
     // Root's own inbox stays empty — the core guarantee of the M6 fix.
-    expect(root.drainInbox(10)).toEqual([]);
+    expect(await root.drainInbox(10)).toEqual([]);
   });
 
   it("role broadcast only reaches agents registered under that role", async () => {
@@ -170,8 +172,8 @@ describe("send_message + check_inbox", () => {
     expect(parsed.delivered).toBe(1);
 
     // Only C receives.
-    expect(hostAs(root, B, 1).drainInbox(10)).toEqual([]);
-    const cMsgs = hostAs(root, C, 1).drainInbox(10);
+    expect(await hostAs(root, B, 1).drainInbox(10)).toEqual([]);
+    const cMsgs = await hostAs(root, C, 1).drainInbox(10);
     expect(cMsgs).toHaveLength(1);
     expect(cMsgs[0]!.content).toBe("review this");
   });
@@ -317,8 +319,8 @@ describe("send_message + check_inbox", () => {
     expect(parsed.delivered).toBe(1);
 
     // Sender A should not see its own message.
-    expect(hostAs(root, A, 1).drainInbox(10)).toEqual([]);
+    expect(await hostAs(root, A, 1).drainInbox(10)).toEqual([]);
     // B receives exactly one.
-    expect(hostAs(root, B, 1).drainInbox(10)).toHaveLength(1);
+    expect(await hostAs(root, B, 1).drainInbox(10)).toHaveLength(1);
   });
 });

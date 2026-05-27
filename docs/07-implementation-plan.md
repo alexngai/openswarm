@@ -20,8 +20,8 @@ Runnable single-agent CLI. No swarm yet.
 - Preflight handled by Agent SDK — we don't implement token estimation in M0.
 - `PermissionEngine`: three modes (`read-only`, `workspace-write`, `danger-full-access`); two-layer evaluation (deny → mode-required → allow). Bound to the engine's `canUseTool` callback. Hook layer deferred to M2 (research/03-runtime.md §4).
 - No `ConversationRuntime` / turn loop in M0 — Agent SDK owns it. Our turn loop arrives with `NativeEngine` in M4.
-- `SessionStore`: per-worktree isolation at `.swarm-coder/sessions/<fnv1a(cwd)>/` — non-negotiable. Append-on-push JSONL with atomic-rename snapshots (research/03-runtime.md §3; research/05-swarm.md §2). Stores the engine's opaque `SessionSnapshot` alongside our JSONL log so `--resume` works against whichever engine produced the session.
-- CLI: `swarm-coder login` + `swarm-coder logout` commands for OAuth (`AnthropicOAuthAuth.login()` → Max subscription flow). Tokens persist to `~/.swarm-coder/auth.json`.
+- `SessionStore`: per-worktree isolation at `.swarm-harness/sessions/<fnv1a(cwd)>/` — non-negotiable. Append-on-push JSONL with atomic-rename snapshots (research/03-runtime.md §3; research/05-swarm.md §2). Stores the engine's opaque `SessionSnapshot` alongside our JSONL log so `--resume` works against whichever engine produced the session.
+- CLI: `swarm-harness login` + `swarm-harness logout` commands for OAuth (`AnthropicOAuthAuth.login()` → Max subscription flow). Tokens persist to `~/.swarm-harness/auth.json`.
 - Tier 0 tools:
   - `bash` — timeout, 16 KiB stdout/stderr truncation on UTF-8 boundaries, background PID return (research/02-tools.md §2)
   - `read_file` — 10 MiB cap, NUL-in-first-8-KiB binary detection, offset/limit
@@ -33,17 +33,17 @@ Runnable single-agent CLI. No swarm yet.
   - `todo_write` — in-memory + session-persisted
 - CLI: bare-positional → `prompt` shorthand; `--model`, `--resume latest`, `--permission-mode`, `--output-format text|json`, `--headless`
 - `doctor` — four claw-parity checks: auth / config / install / workspace. `sandbox` and `system` checks slip to M5 (research/06-cli.md §5)
-- `init` — creates `.swarm-coder/`, `.gitignore` entries, stack-detected `CLAUDE.md` if missing
+- `init` — creates `.swarm-harness/`, `.gitignore` entries, stack-detected `CLAUDE.md` if missing
 - Headless mode: JSONL events on stdout; ink is bypassed when `!process.stdout.isTTY`
 
 **Out of scope for M0:**
 Our own MCP client (Agent SDK's is used), LSP, plugin loader, skill loader, hooks, our compactor (Agent SDK's is used), Tier 1+ tools, any swarm primitives, Vercel AI SDK / `NativeEngine` / `Provider` impls.
 
 **Exit criterion:** Two paths both work end-to-end:
-1. API-key path: `ANTHROPIC_API_KEY=... swarm-coder prompt "add a docstring to file.ts"` completes a real multi-turn tool-using session and writes the session log.
-2. Subscription path: `swarm-coder login` → OAuth flow → `swarm-coder prompt "..."` runs against the user's Claude Max subscription.
+1. API-key path: `ANTHROPIC_API_KEY=... swarm-harness prompt "add a docstring to file.ts"` completes a real multi-turn tool-using session and writes the session log.
+2. Subscription path: `swarm-harness login` → OAuth flow → `swarm-harness prompt "..."` runs against the user's Claude Max subscription.
 
-`swarm-coder --headless --task-file=t.json` produces a parseable event stream on stdout in both paths.
+`swarm-harness --headless --task-file=t.json` produces a parseable event stream on stdout in both paths.
 
 ## Milestone M1 — minimum viable swarm
 
@@ -54,19 +54,19 @@ The thesis proof. One orchestrator fans out N tasks to N atomic agents, collects
 - `SwarmHost` interface with two implementations:
   - `StandaloneHost` — in-process event bus; task registry scoped to this agent
   - `WorkerHost` — JSONL-over-stdio to parent
-- Subprocess spawn machinery: child inherits `ANTHROPIC_API_KEY`; gets fresh env `SWARM_CODER_AGENT_ID`, `SWARM_CODER_PARENT_PID`, `SWARM_CODER_SESSION_ID` (research/05-swarm.md §4)
+- Subprocess spawn machinery: child inherits `ANTHROPIC_API_KEY`; gets fresh env `SWARM_HARNESS_AGENT_ID`, `SWARM_HARNESS_PARENT_PID`, `SWARM_HARNESS_SESSION_ID` (research/05-swarm.md §4)
 - `TaskRegistry` — worktree-scoped, per claw's `task_registry.rs` lifecycle (states, output stream, dispatch) but ours lives at the orchestrator, not as a global `OnceLock` (research/05-swarm.md §2)
 - Tier 2 subset:
   - `agent` — spawn sub-agent via SwarmHost
   - `task_create` / `task_update` / `task_get` / `task_list`
 - Lane-event port — near-verbatim TS translation of claw's `lane_events.rs` catalog (event names, failure taxonomy, provenance tags, fingerprint dedup) (research/05-swarm.md §5)
-- Orchestrator CLI: `swarm-coder swarm run tasks.jsonl --concurrency N`
+- Orchestrator CLI: `swarm-harness swarm run tasks.jsonl --concurrency N`
 - Result aggregation: `results.jsonl` with status, output, usage, wall-clock per task
 
 **Out of scope for M1:**
 `send_message`, `check_inbox`, `task_stop`, `task_output` (M3); git coordination (M3); team roles / cron (M5+); retry policies (M3).
 
-**Exit criterion:** `swarm-coder swarm run tasks.jsonl --concurrency 3` spawns 3 subprocess workers on 10 tasks, each task runs to completion or failure with isolated session logs, and `results.jsonl` is machine-parseable.
+**Exit criterion:** `swarm-harness swarm run tasks.jsonl --concurrency 3` spawns 3 subprocess workers on 10 tasks, each task runs to completion or failure with isolated session logs, and `results.jsonl` is machine-parseable.
 
 ## Milestone M2 — UI depth and productivity tools
 
@@ -119,7 +119,7 @@ The swarm becomes a real coordination platform. Subscription auth arrives for An
 - CLI flag: `--framework claude-agent-sdk` opts in.
 - Event translation layer: map Agent SDK events into our `NormalizedEvent` / lane-event stream so session logs and orchestrator observability stay unified.
 - **Constrained swarm features:** in this mode, `send_message`, `check_inbox`, and other `SwarmHost`-routed tools either degrade to no-ops or are removed from the tool surface. Documented as tradeoff at CLI invocation time and in `--help`.
-- Login UX: `swarm-coder login` runs the Agent SDK's OAuth flow and persists tokens to `~/.swarm-coder/auth.json`.
+- Login UX: `swarm-harness login` runs the Agent SDK's OAuth flow and persists tokens to `~/.swarm-harness/auth.json`.
 
 **Exit criterion:** A config like "1 architect, 2 executors, 1 reviewer on this feature branch" produces a multi-agent run where `branch_lock` prevents concurrent writes, agents exchange messages, and escalation policies actually escalate.
 
@@ -132,7 +132,7 @@ Flexibility milestone. Additional `TransportProvider`s slot in behind the existi
 - **NativeEngine** — full turn loop: streaming, tool fan-out via `dispatchBatch`, compaction with tool-pair boundary guard, post-compaction probe, session snapshots, cross-engine resume rejection. See `docs/13-m4a-plan.md`.
 - **OpenAI TransportProvider** (`gpt-*`, `o1/o3/o4/*`) via `@ai-sdk/openai`. Reasoning-model quirks (strip temperature/top_p, use `max_completion_tokens`) handled at provider boundary.
 - **Model-prefix routing** (`claude*` / `grok*` / `openai/` / `gpt-` / `qwen*` / `gemini-*`) — `src/providers/routing.ts`.
-- **Model alias table** — built-in aliases + user-defined extension (`~/.swarm-coder/settings.json aliases`), cycle detection — `src/providers/aliases.ts`.
+- **Model alias table** — built-in aliases + user-defined extension (`~/.swarm-harness/settings.json aliases`), cycle detection — `src/providers/aliases.ts`.
 - **`--framework native` CLI flag** — routes to NativeEngine; `--model` selects provider via routing table.
 - **Vercel AI SDK spike** — findings captured in `docs/research/vercel-sdk-spike.md`.
 
@@ -157,7 +157,7 @@ Flexibility milestone. Additional `TransportProvider`s slot in behind the existi
 
 - `OpenAIOAuthAuth` — `kind: "oauth-bearer"` — implements Codex App Server OAuth against `auth.openai.com/oauth/` with PKCE. **SHIPPED in M4b Phase 4.** Uses client ID documented by OpenAI's Codex App Server (policy-tolerated, not contracted).
 - CLI flag: `--framework codex-chatgpt` opts in. **Login path works;** end-to-end model turns pending Phase 5.
-- `swarm-coder login --provider codex-chatgpt` runs the OAuth PKCE flow end-to-end.
+- `swarm-harness login --provider codex-chatgpt` runs the OAuth PKCE flow end-to-end.
 - **Constrained swarm features:** same tradeoff as Claude-Max FrameworkProvider.
 
 ### Explicitly NOT in M4
@@ -165,7 +165,7 @@ Flexibility milestone. Additional `TransportProvider`s slot in behind the existi
 - **GitHub Copilot subscription** — no supported third-party API; community proxies violate March 2026 Copilot terms. Decision Q18. Any future Copilot support requires an official API from GitHub.
 - **Direct OAuth to Anthropic Messages API** without the Agent SDK — technically works (claw-code does it) but requires impersonating `user-agent: claude-code/…` and conflicts with Anthropic's Feb 2026 OAuth-proxying policy. Rejected per Q16.
 
-**Exit criterion:** `swarm-coder --model gpt-4o` with API key, `--model gemini-2.0-flash`, `--model llama3.2` against local Ollama, and `swarm-coder login --provider codex-chatgpt && swarm-coder prompt "…"` all work without collapsing under provider-specific limits.
+**Exit criterion:** `swarm-harness --model gpt-4o` with API key, `--model gemini-2.0-flash`, `--model llama3.2` against local Ollama, and `swarm-harness login --provider codex-chatgpt && swarm-harness prompt "…"` all work without collapsing under provider-specific limits.
 
 ## Milestone M5+ — deferred tiers
 
@@ -216,7 +216,7 @@ To make M0 executable without further planning, here is the dependency order:
 11. `src/cli/argv.ts` — flag parsing (hand-rolled or `commander` — TBD)
 12. `src/cli/login.ts` / `src/cli/logout.ts` — OAuth entry commands
 13. `src/cli/doctor.ts` — four checks (auth / config / install / workspace)
-14. `src/cli/init.ts` — scaffolding (`.swarm-coder/`, `.gitignore`, `CLAUDE.md`)
+14. `src/cli/init.ts` — scaffolding (`.swarm-harness/`, `.gitignore`, `CLAUDE.md`)
 15. `src/ui/headless.ts` — JSONL event emitter
 16. `src/ui/ink/app.tsx` — minimal ink shell, TTY-gated; `ink-markdown` for streaming output
 17. `src/cli/main.ts` — entry wiring: argv → auth + engine → session → dispatcher → UI

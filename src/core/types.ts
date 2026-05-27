@@ -126,6 +126,20 @@ export type NormalizedEvent =
     }
   | { readonly type: "error"; readonly error: ProviderError }
   /**
+   * Fallback for Codex-specific notifications that don't map to a known event
+   * type. The original method name and params are preserved verbatim so callers
+   * can inspect or log them without the provider silently dropping them.
+   */
+  | {
+      readonly type: "info";
+      /** Identifies the producer, e.g. "codex". */
+      readonly source: string;
+      /** The original JSON-RPC method name, e.g. "thread/started". */
+      readonly method: string;
+      /** Raw params from the notification, preserved verbatim. */
+      readonly payload: unknown;
+    }
+  /**
    * Emitted when the SDK fires a hook lifecycle message (hook_started,
    * hook_progress, hook_response). Requires includeHookEvents: true on
    * the SDK query() options (set unconditionally in ClaudeAgentSdkEngine).

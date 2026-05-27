@@ -47,7 +47,7 @@ export interface ClaudeCodeSourceOptions {
   /**
    * Source id surfaced in PluginManifest.sourceId. Default: "claude-code".
    * Override when registering a second instance that scans
-   * `~/.swarm-coder/plugins/` so PluginRegistry can distinguish origins.
+   * `~/.swarm-harness/plugins/` so PluginRegistry can distinguish origins.
    */
   readonly id?: string;
 }
@@ -117,11 +117,11 @@ export class ClaudeCodeSource implements PluginSource {
   private _manifestArray: readonly PluginManifest[] | null = null;
 
   constructor(opts?: ClaudeCodeSourceOptions) {
-    // Priority: explicit opts.pluginsDir > SWARM_CODER_PLUGINS_DIR env > default.
+    // Priority: explicit opts.pluginsDir > SWARM_HARNESS_PLUGINS_DIR env > default.
     // The env override is for testing / smoke scripts only — not a production
     // config surface. It lets integration tests point at fixture plugin trees
     // without touching the user's real `~/.claude/plugins`.
-    const envDir = process.env.SWARM_CODER_PLUGINS_DIR;
+    const envDir = process.env.SWARM_HARNESS_PLUGINS_DIR;
     this.pluginsDir =
       opts?.pluginsDir ??
       (envDir !== undefined && envDir.length > 0
@@ -349,7 +349,7 @@ export class ClaudeCodeSource implements PluginSource {
       const normalizedDir = path.resolve(pluginDir) + path.sep;
       if (!resolved.startsWith(normalizedDir) && resolved !== path.resolve(pluginDir)) {
         const msg = `plugin '${manifest.id}' entryModule escapes plugin directory`;
-        process.stderr.write(`[swarm-coder] ${msg}\n`);
+        process.stderr.write(`[swarm-harness] ${msg}\n`);
         throw new Error(msg);
       }
     }
@@ -446,6 +446,6 @@ export class ClaudeCodeSource implements PluginSource {
   }
 
   private _warn(pluginId: string, msg: string): void {
-    process.stderr.write(`[swarm-coder] plugin ${pluginId}: ${msg}\n`);
+    process.stderr.write(`[swarm-harness] plugin ${pluginId}: ${msg}\n`);
   }
 }

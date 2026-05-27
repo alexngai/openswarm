@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import type { SkillRegistry } from "../../skills/index.js";
@@ -16,7 +15,7 @@ const spec: ToolSpec = {
     "Load a skill by id and return its prompt body. " +
     "The model reads the skill body as its next context injection. " +
     "Use `list_skills` (when available) to enumerate available skill ids.",
-  inputSchema: zodToJsonSchema(inputSchema as never) as JsonSchema,
+  inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
   requiredPermission: "none",
   tier: 1,
 };

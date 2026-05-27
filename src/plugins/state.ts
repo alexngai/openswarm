@@ -1,6 +1,6 @@
 /**
  * PluginStateStore — persists plugin enable/disable state, installed versions,
- * and install sources under a root directory (default: `~/.swarm-coder/plugins/`).
+ * and install sources under a root directory (default: `~/.swarm-harness/plugins/`).
  *
  * Phase 1 / doc 17 Q1: two-file schema matching claw's shape.
  *   - `settings.json`  — enable map `{ [pluginId]: boolean }`.
@@ -26,7 +26,7 @@ const SETTINGS_FILE = "settings.json";
 const INSTALLED_FILE = "installed.json";
 const LOCK_FILE = ".lock";
 
-const DEFAULT_ROOT = path.join(os.homedir(), ".swarm-coder", "plugins");
+const DEFAULT_ROOT = path.join(os.homedir(), ".swarm-harness", "plugins");
 
 // ---------------------------------------------------------------------------
 // Internal file shapes
@@ -35,7 +35,7 @@ const DEFAULT_ROOT = path.join(os.homedir(), ".swarm-coder", "plugins");
 /** settings.json shape — matches claw's `{plugin_id: true|false}` map. */
 type SettingsFileShape = Record<string, boolean>;
 
-/** installed.json shape — manifest registry owned by swarm-coder. */
+/** installed.json shape — manifest registry owned by swarm-harness. */
 interface InstalledFileShape {
   readonly schemaVersion: 1;
   readonly plugins: Readonly<
@@ -104,7 +104,7 @@ export class PluginStateStore {
 
   /**
    * @param rootDir Root directory for plugin state files. Defaults to
-   *                `~/.swarm-coder/plugins/`. Tests typically pass a tmpdir.
+   *                `~/.swarm-harness/plugins/`. Tests typically pass a tmpdir.
    */
   constructor(rootDir?: string) {
     this.rootDir = rootDir ?? DEFAULT_ROOT;

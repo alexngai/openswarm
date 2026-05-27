@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { truncateUtf8 } from "./internal.js";
@@ -24,7 +23,7 @@ const spec: ToolSpec = {
     "On timeout the process is killed and output includes a [interrupted: timeout] marker. " +
     "Non-zero exit codes are returned as [exit <code>] in the output — the model decides what to do. " +
     "Set `background: true` to spawn detached without waiting; returns [backgroundTaskId: <pid>] immediately.",
-  inputSchema: zodToJsonSchema(inputSchema as never) as JsonSchema,
+  inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
   requiredPermission: "exec",
   tier: 0,
 };

@@ -212,7 +212,7 @@ export class ParentTransport extends EventEmitter {
       const decoded = decodeFrame(line);
       if (!decoded.ok) {
         process.stderr.write(
-          `[swarm-coder/ParentTransport] malformed frame: ${decoded.error}\n`,
+          `[swarm-harness/ParentTransport] malformed frame: ${decoded.error}\n`,
         );
         continue;
       }
@@ -277,7 +277,7 @@ export class ParentTransport extends EventEmitter {
 
     if (this.outboundBufferedBytes + bytes > OUTBOUND_QUEUE_MAX_BYTES) {
       process.stderr.write(
-        `[swarm-coder] worker outbound queue full; dropping ${typeLabel}\n`,
+        `[swarm-harness] worker outbound queue full; dropping ${typeLabel}\n`,
       );
       return;
     }

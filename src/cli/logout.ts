@@ -1,13 +1,11 @@
 /**
- * logout.ts — `swarm-coder logout --provider <name>` subcommand.
+ * logout.ts — `swarm-harness logout --provider <name>` subcommand.
  *
  * Dispatches to the appropriate auth provider's logout() method.
  * Exit codes:
  *   0 — success (or no credentials to clear)
  *   1 — user error (missing/unknown provider)
  */
-
-import { OpenAIOAuthAuth } from "../auth/openai-oauth.js";
 
 // ---------------------------------------------------------------------------
 // parseProvider
@@ -33,18 +31,14 @@ export async function logoutMain(argv: string[]): Promise<number> {
 
   switch (provider) {
     case "codex-chatgpt": {
-      const auth = new OpenAIOAuthAuth();
-      await auth.logout();
-      process.stdout.write(
-        `logged out from ${provider}. Credentials removed from ~/.swarm-coder/auth.json.\n`,
-      );
+      process.stdout.write("Run: codex logout\n");
       return 0;
     }
 
     case "claude-agent-sdk": {
       process.stdout.write(
         "claude-agent-sdk manages auth via `claude login` (Anthropic SDK). " +
-          "swarm-coder has no per-provider token to clear for this provider.\n",
+          "swarm-harness has no per-provider token to clear for this provider.\n",
       );
       return 0;
     }

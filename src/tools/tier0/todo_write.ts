@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 
@@ -55,7 +54,7 @@ const spec: ToolSpec = {
     "Replace the current todo list with the provided array. " +
     "At most one item may have status 'in_progress' at a time. " +
     "Returns a formatted summary of the updated list.",
-  inputSchema: zodToJsonSchema(inputSchema as never) as JsonSchema,
+  inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
   requiredPermission: "none",
   tier: 0,
   // Module-level singleton races under parallel dispatch — must serialize.

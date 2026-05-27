@@ -10,10 +10,16 @@ import type {
   SendResult,
 } from "./host.js";
 import type { AgentId, PermissionMode, SessionId } from "../core/types.js";
-import type { LaneEvent } from "./events.js";
+import type { LaneEvent, FailureClass } from "./events.js";
 import type { ParentTransport } from "./ipc/parent-transport.js";
 import type { AgentResult } from "./host.js";
 import type { IpcNotification } from "./ipc/protocol.js";
+import {
+  isValidTransition,
+  INITIAL_LIFECYCLE_STATE,
+  type WorkerLifecycleState,
+} from "./worker-lifecycle.js";
+import { writeWorkerState } from "./worker-state-file.js";
 
 export class WorkerHost implements SwarmHost {
   readonly mode = "worker" as const;
@@ -27,13 +33,33 @@ export class WorkerHost implements SwarmHost {
    */
   private readonly inboxBuffer: AgentMessage[] = [];
 
+  private _lifecycleState: WorkerLifecycleState = INITIAL_LIFECYCLE_STATE;
+  /** taskId from the run-request; set by markRunning(taskId). */
+  private _taskId: string | undefined;
+  /** AgentId of the parent that spawned this worker; set at construction. */
+  private readonly _parentAgentId: AgentId | undefined;
+  /** Epoch ms when this WorkerHost was constructed (worker process start). */
+  private readonly _startedAt: number;
+
+  /**
+   * Team scope this worker belongs to. Set by `worker-entry.ts` from
+   * `SWARM_HARNESS_TEAM_SCOPE` env (V0.4.Q1 propagation). Defaults to
+   * `"swarm:default"` for legacy single-team runs.
+   */
+  private readonly _teamScope: string;
+
   constructor(
     readonly agentId: AgentId,
     readonly depth: number,
     readonly permissionMode: PermissionMode,
     private readonly transport: ParentTransport,
     private readonly parentToolUseId?: string,
+    parentAgentId?: AgentId,
+    teamScope?: string,
   ) {
+    this._parentAgentId = parentAgentId;
+    this._teamScope = teamScope ?? "swarm:default";
+    this._startedAt = Date.now();
     // Subscribe to sub_agent_event notifications. This handler is installed
     // unconditionally so messages that arrive between turns (e.g. while the
     // worker is mid-response) are buffered and surface on the next
@@ -55,21 +81,40 @@ export class WorkerHost implements SwarmHost {
         }
       });
     }
+
+    // Write initial state file immediately so a crash during setup is recorded.
+    // Wrapped in try/catch so disk failures don't kill the worker before it
+    // can complete its worker_ready handshake (an unwrapped throw here would
+    // crash the constructor → parent times out at 10s waiting for ready).
+    try {
+      writeWorkerState({
+        agentId: this.agentId,
+        pid: process.pid,
+        startedAt: this._startedAt,
+        lifecycleState: this._lifecycleState,
+        lastTransitionAt: this._startedAt,
+        ...(this._parentAgentId !== undefined && { parentAgentId: this._parentAgentId }),
+      });
+    } catch (err) {
+      process.stderr.write(
+        `[WorkerHost] failed to write initial state file (agentId=${this.agentId}): ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+    }
   }
 
   readonly task: TaskAPI = {
     create: async (packet) =>
-      (await this.transport.send<TaskRecord>("task.create", packet)),
+      (await this.transport.send<TaskRecord>("task.create", { packet })),
     get: async (id) =>
-      (await this.transport.send<TaskRecord | null>("task.get", { id })) ??
-      undefined,
+      (await this.transport.send<TaskRecord | null>("task.get", {
+        taskId: id,
+      })) ?? undefined,
     list: async (filter?: TaskFilter) =>
-      (await this.transport.send<readonly TaskRecord[]>(
-        "task.list",
-        filter ?? {},
-      )),
+      (await this.transport.send<readonly TaskRecord[]>("task.list", {
+        filter: filter ?? {},
+      })),
     update: async (id, patch) => {
-      await this.transport.send("task.update", { id, patch });
+      await this.transport.send("task.update", { taskId: id, patch });
     },
     stop: async (id: string, by?: import("../core/types.js").AgentId | "orchestrator") => {
       await this.transport.send("task.stop", { taskId: id, by });
@@ -87,6 +132,17 @@ export class WorkerHost implements SwarmHost {
       // the worker side to satisfy the interface.
     },
     output: (id: string) => this.taskOutput(id),
+    pullNext: async (
+      scope: string,
+      claimerId: import("../core/types.js").AgentId,
+    ) => {
+      // v0.5 stage 5C: proxy through to the orchestrator's TaskAPI.
+      const result = await this.transport.send<TaskRecord | null>(
+        "task.pull_next",
+        { scope, claimerId },
+      );
+      return result ?? null;
+    },
   };
 
   private async *taskOutput(id: string): AsyncIterable<string> {
@@ -106,6 +162,112 @@ export class WorkerHost implements SwarmHost {
     });
   }
 
+  getLifecycleState(): WorkerLifecycleState {
+    return this._lifecycleState;
+  }
+
+  // --- Public lifecycle wrappers (internal API — called by worker-entry) ---
+
+  /** Called once the worker_ready handshake completes and the worker is idle. */
+  markReadyForPrompt(): void {
+    this._transitionTo("ready_for_prompt");
+  }
+
+  /**
+   * Called when a "run" request arrives. Immediately pairs prompt_accepted
+   * with running — the worker accepts the prompt and starts executing it.
+   * @param taskId Optional task identifier to persist in the state file.
+   */
+  markRunning(taskId?: string): void {
+    if (taskId !== undefined) {
+      this._taskId = taskId;
+    }
+    this._transitionTo("prompt_accepted");
+    this._transitionTo("running");
+  }
+
+  /** Called after task_result is emitted (successful run, non-long-lived). */
+  markFinished(): void {
+    this._transitionTo("finished");
+  }
+
+  /** Called on uncaught error or transport closure before task_result. */
+  markFailed(failureClass: FailureClass, reason: string): void {
+    this._transitionTo("failed", { failureClass, reason });
+  }
+
+  /**
+   * v0.4 stage 4M.3 (M5): long-lived worker transitions to idle after a turn
+   * completes (instead of `finished`/`failed`) so subsequent run_more
+   * requests can validly drive `idle → prompt_accepted → running` again.
+   */
+  markIdle(): void {
+    this._transitionTo("idle");
+  }
+
+  /**
+   * v0.4 stage 4M.3 (M5): drain requested while idle. Transitions
+   * `idle → drained` directly (the worker has nothing to finish).
+   * If currently running, callers should instead transition through
+   * `running → idle` then `idle → drained` after the turn completes.
+   */
+  markDrained(): void {
+    this._transitionTo("drained");
+  }
+
+  private _transitionTo(
+    next: WorkerLifecycleState,
+    opts?: { failureClass?: FailureClass; reason?: string },
+  ): void {
+    const from = this._lifecycleState;
+    if (!isValidTransition(from, next)) {
+      process.stderr.write(
+        `[WorkerHost] invalid lifecycle transition: ${from} → ${next} (agentId=${this.agentId})\n`,
+      );
+      return;
+    }
+    this._lifecycleState = next;
+    this.emit({
+      type: "worker_lifecycle_changed",
+      payload: {
+        from,
+        to: next,
+        ...(opts?.failureClass !== undefined && {
+          failureClass: opts.failureClass,
+        }),
+        ...(opts?.reason !== undefined && { reason: opts.reason }),
+      },
+    });
+    // Persist state file ONLY on terminal transitions (finished / failed).
+    // Per-transition writes were tried but caused ~4x slowdown in
+    // integration tests with concurrent subprocess workers (each did ~5
+    // sync fsync calls during its lifecycle). Constructor write captures
+    // "spawning"; terminal write captures the final outcome — those two
+    // are what crash recovery actually needs. Intermediate states
+    // (ready_for_prompt, prompt_accepted, running) are observable via the
+    // lane event stream, not the state file.
+    if (next === "finished" || next === "failed") {
+      const now = Date.now();
+      try {
+        writeWorkerState({
+          agentId: this.agentId,
+          pid: process.pid,
+          startedAt: this._startedAt,
+          lifecycleState: next,
+          lastTransitionAt: now,
+          ...(this._taskId !== undefined && { taskId: this._taskId }),
+          ...(this._parentAgentId !== undefined && { parentAgentId: this._parentAgentId }),
+          ...(opts?.failureClass !== undefined && { failureClass: opts.failureClass }),
+          ...(opts?.reason !== undefined && { reason: opts.reason }),
+        });
+      } catch (err) {
+        process.stderr.write(
+          `[WorkerHost] failed to persist terminal state file (agentId=${this.agentId}): ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+      }
+    }
+  }
+
   emit(event: Omit<LaneEvent, "ts" | "agentId">): void {
     const full: LaneEvent = {
       ...event,
@@ -123,6 +285,39 @@ export class WorkerHost implements SwarmHost {
     void this.transport.notify("lane_event", { ...full, payload });
   }
 
+  /**
+   * v0.7 stage 7B: route a commit through git-cascade via the orchestrator's
+   * branch-policy adapter. Returns null when not in a stream context.
+   */
+  async commitChanges(
+    message: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<
+    | import("./adapters/git-cascade-branch-policy.js").CommitChangesResult
+    | null
+  > {
+    const result = await this.transport.send<
+      | import("./adapters/git-cascade-branch-policy.js").CommitChangesResult
+      | null
+    >("task.commit_changes", { message, ...(metadata !== undefined && { metadata }) });
+    return result ?? null;
+  }
+
+  /**
+   * Resolve the team scope for an agent id. WorkerHost only knows about its
+   * own scope (set at construction from env); callers asking about another
+   * agent's scope must go through the orchestrator. v0.4 stage 4M.7: enables
+   * the agent tool's `team: "self"` path on the worker side.
+   */
+  scopeOf(agentId: AgentId): string {
+    if (agentId !== this.agentId) {
+      throw new Error(
+        `WorkerHost.scopeOf: cannot resolve scope for non-self agent "${agentId}" (worker only knows its own scope)`,
+      );
+    }
+    return this._teamScope;
+  }
+
   async spawn(request: SpawnRequest): Promise<AgentHandle> {
     // Proxy to parent. Parent returns an AgentHandle-shaped object that's
     // actually a reference — for M1, we expose `wait` via a separate
@@ -136,6 +331,15 @@ export class WorkerHost implements SwarmHost {
       task: request.task,
       permissionMode: request.permissionMode,
       model: request.model,
+      // v0.4 stage 4M.6: forward framework so worker-spawned children can opt
+      // into FrameworkProvider mode. Parallel fix to 4M.5 in StandaloneHost.spawn.
+      framework: request.framework,
+      // v0.4 stage 4M.7: forward teamScope so worker-side agent({team: "self"})
+      // peer-spawn lands in the caller's team scope (not "swarm:default").
+      teamScope: request.teamScope,
+      // v0.7 stage 7A.2: forward cwd so worker-spawned children can land
+      // inside a git-cascade worktree per the BranchPolicy adapter.
+      cwd: request.cwd,
       parentAgentId: this.agentId,
       parentToolUseId: request.parentToolUseId ?? this.parentToolUseId,
       taskId: request.taskId,
@@ -152,6 +356,20 @@ export class WorkerHost implements SwarmHost {
       },
       events: async function* () {
         return;
+      },
+      // Worker-mode spawn proxies to the orchestrator and returns a finalized
+      // result — long-lived semantics (run_more/drain) are not supported across
+      // the IPC boundary in v0.4 stage 4D. Surface a clear error if a caller
+      // tries to use them on a worker-side child handle.
+      runMore: async () => {
+        throw new Error(
+          "AgentHandle.runMore() is not supported for sub-agents spawned via WorkerHost (v0.4 stage 4D limitation)",
+        );
+      },
+      drain: async () => {
+        throw new Error(
+          "AgentHandle.drain() is not supported for sub-agents spawned via WorkerHost (v0.4 stage 4D limitation)",
+        );
       },
     };
   }
@@ -177,6 +395,26 @@ export class WorkerHost implements SwarmHost {
   }
 
   /**
+   * Request the list of team members from the orchestrator.
+   *
+   * v0.4 stage 4E.1: worker calls this to populate the `team_members` Tier 2
+   * tool result. Orchestrator resolves the worker's team scope and returns
+   * `[{memberId, role, agentId}]` for peers (excluding the caller).
+   */
+  async requestTeamMembers(): Promise<
+    Array<{ memberId: string; role: string; agentId: AgentId }>
+  > {
+    const result = await this.transport.send<
+      Array<{ memberId: string; role: string; agentId: string }>
+    >("team.members", {}, { timeoutMs: 5000 });
+    return result as Array<{
+      memberId: string;
+      role: string;
+      agentId: AgentId;
+    }>;
+  }
+
+  /**
    * Synchronously drain up to `max` messages from the local buffer.
    *
    * Note: `sub_agent_event` deliveries populate the buffer opportunistically.
@@ -187,7 +425,7 @@ export class WorkerHost implements SwarmHost {
    * miss a message is a dropped notification (see Decision context #2:
    * best-effort, in-memory delivery).
    */
-  drainInbox(max: number): AgentMessage[] {
+  async drainInbox(max: number): Promise<AgentMessage[]> {
     if (max <= 0) return [];
     const take = Math.min(max, this.inboxBuffer.length);
     return this.inboxBuffer.splice(0, take);
@@ -200,7 +438,7 @@ export class WorkerHost implements SwarmHost {
   /**
    * Proxy ask_user_question through the orchestrator.
    *
-   * Timeout: controlled by `SWARM_CODER_ASK_TIMEOUT_MS` env var (default
+   * Timeout: controlled by `SWARM_HARNESS_ASK_TIMEOUT_MS` env var (default
    * 600_000 ms). On orchestrator-side timeout the IPC layer surfaces
    * `request_timeout`, which we translate to `{status: "timed-out"}`.
    * Transport close returns `{status: "error", message: "transport_closed: ..."}`.
@@ -209,7 +447,7 @@ export class WorkerHost implements SwarmHost {
     question: string,
     options?: readonly string[],
   ): Promise<import("./host.js").AskUserResponse> {
-    const rawTimeout = process.env.SWARM_CODER_ASK_TIMEOUT_MS ?? "600000";
+    const rawTimeout = process.env.SWARM_HARNESS_ASK_TIMEOUT_MS ?? "600000";
     const parsedTimeout = parseInt(rawTimeout, 10);
     const timeoutMs =
       Number.isFinite(parsedTimeout) && parsedTimeout > 0

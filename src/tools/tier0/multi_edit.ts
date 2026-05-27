@@ -12,7 +12,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { isUnderCwd } from "./internal.js";
@@ -39,7 +38,7 @@ const spec: ToolSpec = {
     "All edits are validated before any are written — if any edit fails " +
     "(old_string not found, or ambiguous without replace_all), no changes are applied. " +
     "Edits are applied in order; each subsequent edit operates on the output of the previous.",
-  inputSchema: zodToJsonSchema(inputSchema as any) as JsonSchema,
+  inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
   requiredPermission: "write",
   tier: 0,
 };

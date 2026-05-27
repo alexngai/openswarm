@@ -6,7 +6,7 @@ Research extract from `references/claw-code/rust/crates/runtime/src/`. Scope: th
 
 claw-code's runtime is a synchronous, trait-driven agent loop. `ConversationRuntime<C, T>` is parameterized on an `ApiClient` (provider-facing streaming contract) and a `ToolExecutor` (tool dispatcher). The loop itself is provider-agnostic: it consumes a flat list of `AssistantEvent`s, materializes them into `ConversationMessage` blocks, walks tool uses, runs pre/post hooks, consults a `PermissionPolicy` (optionally with an interactive `PermissionPrompter`), and writes everything back to a persisted `Session` (JSONL).
 
-Key architectural signals for swarm-coder:
+Key architectural signals for swarm-harness:
 
 - The runtime is **stateful and single-lane per Session** — there is no built-in concurrency inside `run_turn`. Parallelism is an outer-layer concern.
 - Session persistence is per-worktree (`.claw/sessions/<fingerprint>/`), explicitly motivated by ROADMAP item 41 ("phantom completions" — parallel `serve` instances writing to the wrong cwd). This is load-bearing for swarm usage.
@@ -61,7 +61,7 @@ pub enum AssistantEvent {
 }
 ```
 
-Notes: the Rust trait returns `Vec<AssistantEvent>` rather than an async stream. In TypeScript, the equivalent would be `AsyncIterable<StreamEvent>`, matching swarm-coder's `docs/03-interfaces.md`. `ToolUse.input` is carried as a JSON string, not a parsed value.
+Notes: the Rust trait returns `Vec<AssistantEvent>` rather than an async stream. In TypeScript, the equivalent would be `AsyncIterable<StreamEvent>`, matching swarm-harness's `docs/03-interfaces.md`. `ToolUse.input` is carried as a JSON string, not a parsed value.
 
 ### Turn algorithm (`run_turn`)
 
@@ -475,7 +475,7 @@ PromptCacheEvent {
 ```
 Accumulated into `TurnSummary.prompt_cache_events`. Useful for alerting on cache invalidation regressions but not acted on automatically.
 
-## 10. Requirements for swarm-coder
+## 10. Requirements for swarm-harness
 
 ### [v0] — must-haves for single-agent TS port
 
@@ -484,7 +484,7 @@ Accumulated into `TurnSummary.prompt_cache_events`. Useful for alerting on cache
 - **Tool dispatcher contract**: `execute(name, input: string) → Promise<string>` with a ToolError for failures. Keep tool I/O as opaque JSON strings at this seam, even though TS can do better — cross-provider compatibility depends on stringified inputs.
 - **Session persistence**: JSONL with a `session_meta` header record, then interleaved `message` / `compaction` / `prompt_history` records. Append-on-push, snapshot on bootstrap/rotation.
 - **Session IDs**: monotonic string generator; `Session.fork()` mints fresh IDs and records `fork.parent_session_id`.
-- **Per-worktree isolation**: `SessionStore` that namespaces by a deterministic 16-char hex fingerprint of the workspace root. This is the claw response to "phantom completions" in parallel lanes — directly relevant to swarm-coder where multiple workers share a parent process.
+- **Per-worktree isolation**: `SessionStore` that namespaces by a deterministic 16-char hex fingerprint of the workspace root. This is the claw response to "phantom completions" in parallel lanes — directly relevant to swarm-harness where multiple workers share a parent process.
 - **Resume aliases**: `latest`/`last`/`recent` → newest session by `updated_at_ms`.
 - **Permission model**: `PermissionMode` (ReadOnly/WorkspaceWrite/DangerFullAccess/Prompt/Allow) + per-tool required mode + allow/deny/ask rules with `tool(subject)` / `tool(subject:*)` grammar.
 - **Subject extraction key list**: `command, path, file_path, filePath, notebook_path, notebookPath, url, pattern, code, message`. Keep this list exactly — rules written against claw will be copy-pasted.
@@ -530,21 +530,21 @@ Accumulated into `TurnSummary.prompt_cache_events`. Useful for alerting on cache
 
 ## 11. Open questions
 
-- **Session tracer vs. event stream**: claw pipes runtime traces through a `SessionTracer` trait backed by a telemetry sink. swarm-coder already has an event stream as the primary observability surface — is a separate tracer abstraction warranted, or can we fold trace-worthy events into the existing stream?
+- **Session tracer vs. event stream**: claw pipes runtime traces through a `SessionTracer` trait backed by a telemetry sink. swarm-harness already has an event stream as the primary observability surface — is a separate tracer abstraction warranted, or can we fold trace-worthy events into the existing stream?
 - **Model persistence on Session**: claw persists `model` so a resumed session knows which model it started with. For swarm, do we want the atomic agent to be pinned to a model across resume, or always let the orchestrator rebind? Affects whether this moves from [skip] to [v1].
-- **Provider capabilities**: claw has no `ProviderCapabilities` concept — the loop assumes streaming + tool use + prompt cache events. Our `Provider` interface has `capabilities`, which the loop should actually check. This is a swarm-coder improvement over claw, not a port — flag it as a net-new thing to design.
+- **Provider capabilities**: claw has no `ProviderCapabilities` concept — the loop assumes streaming + tool use + prompt cache events. Our `Provider` interface has `capabilities`, which the loop should actually check. This is a swarm-harness improvement over claw, not a port — flag it as a net-new thing to design.
 - **Tool input types**: claw carries tool inputs as raw JSON strings end-to-end. TypeScript can validate against schemas at the dispatcher boundary. Should the ToolExecutor seam accept `unknown` / parsed JSON with per-tool schemas, or stay stringly typed to match claw's wire model? Recommend parsed-with-validation inside, string at the boundary.
-- **Ask rule vs hook-Allow precedence**: claw explicitly tests that hook `Allow` *still respects* ask rules (prompt is required). This is subtle — confirm the swarm-coder behavior spec matches before copying blindly.
+- **Ask rule vs hook-Allow precedence**: claw explicitly tests that hook `Allow` *still respects* ask rules (prompt is required). This is subtle — confirm the swarm-harness behavior spec matches before copying blindly.
 - **Bash read-only heuristic scope**: claw's allowlist includes `python`, `node`, `ruby`, `cargo`, `rustc`, `git`, `gh` — several of which can absolutely mutate state. The flag/redirection check catches `-i`/`--in-place`/`>`/`>>` but misses plenty (e.g., `git push`, `cargo publish`, `python -c 'open(...).write(...)'`). Decide whether to tighten the list or rely on explicit allow rules in practice.
 - **Workspace fingerprint collisions**: 64-bit FNV-1a gives ~1-in-2^32 collision prob by birthday bound at ~4B workspaces. Fine for single-user, worth a 128-bit hash if we ever share session stores across machines.
 - **Compaction is mechanical, not LLM-driven**: claw produces a deterministic summary via string pattern matching (pending-work detection by keyword scan, key-file extraction by extension). An LLM-summarization step would be much higher quality — is deferring to the model a v1 target, or do we keep mechanical compaction as a deterministic baseline with LLM compaction as a plugin?
 - **Hook failure propagation**: a hook exiting 1 (not 2) fails the *turn's current tool call* but does NOT abort the loop — the tool simply returns as an error and the model sees it. Is this the right default for swarm workers, where a silent hook failure could loop indefinitely?
-- **Session health probe tool name is hardcoded to `glob_search`**. swarm-coder's tool naming in `tools/tier0/` may differ; either standardize on `glob_search` or make the probe tool configurable.
-- **Load-bearing for multi-agent swarm**: The "phantom completions" pattern (ROADMAP #41) is the biggest design lesson here — multiple serve instances writing to shared session storage while reporting success against different worktrees. swarm-coder's orchestrator-spawns-workers model has the same failure mode. The SessionStore + workspace_root validation is the answer. **Treat this as non-negotiable for v0.**
+- **Session health probe tool name is hardcoded to `glob_search`**. swarm-harness's tool naming in `tools/tier0/` may differ; either standardize on `glob_search` or make the probe tool configurable.
+- **Load-bearing for multi-agent swarm**: The "phantom completions" pattern (ROADMAP #41) is the biggest design lesson here — multiple serve instances writing to shared session storage while reporting success against different worktrees. swarm-harness's orchestrator-spawns-workers model has the same failure mode. The SessionStore + workspace_root validation is the answer. **Treat this as non-negotiable for v0.**
 
 ## 12. File references
 
-All absolute paths under `/Users/alexngai/GitHub/swarm-coder/`:
+All absolute paths under `/Users/alexngai/GitHub/swarm-harness/`:
 
 - `references/claw-code/rust/crates/runtime/src/lib.rs` — module index, public re-exports
 - `references/claw-code/rust/crates/runtime/src/conversation.rs` — `ConversationRuntime`, `ApiClient`, `ToolExecutor`, `AssistantEvent`, `TurnSummary`, `run_turn`

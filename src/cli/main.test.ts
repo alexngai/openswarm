@@ -164,7 +164,7 @@ describe("main", () => {
     const code = await main(["help"]);
 
     expect(code).toBe(0);
-    expect(chunks.join("")).toContain("swarm-coder");
+    expect(chunks.join("")).toContain("swarm-harness");
   });
 
   it("version → returns 0 and prints version", async () => {
@@ -327,22 +327,19 @@ describe("main", () => {
     expect(loginMain).toHaveBeenCalledWith(["--provider", "codex-chatgpt"]);
   });
 
-  it("--framework codex-chatgpt → exit 2 with 'not yet wired' error text", async () => {
-    const errChunks: string[] = [];
-    vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
-      errChunks.push(String(chunk));
-      return true;
+  it("--framework codex-chatgpt → constructs CodexFrameworkEngine and runs", async () => {
+    // CodexFrameworkEngine is mocked (./doctor.js mock covers enough; engine/codex-framework
+    // needs its own mock so no subprocess spawns).
+    const { CodexFrameworkEngine } = await import("../engine/codex-framework.js");
+    vi.spyOn(CodexFrameworkEngine.prototype, "run").mockImplementation(async function* () {
+      yield { type: "message_stop", stopReason: "end_turn", usage: { inputTokens: 0, outputTokens: 0 } } as import("../core/types.js").NormalizedEvent;
     });
-    // process.exit will throw in tests — catch it.
-    vi.spyOn(process, "exit").mockImplementation((code?: number | string | null) => {
-      throw new Error(`process.exit(${code})`);
-    });
+    vi.spyOn(CodexFrameworkEngine.prototype, "getCumulativeUsage").mockReturnValue({ inputTokens: 0, outputTokens: 0 });
 
     const { main } = await import("./main.js");
-    await expect(main(["--framework", "codex-chatgpt", "--headless", "say hi"])).rejects.toThrow(
-      "process.exit(2)",
-    );
-    expect(errChunks.join("")).toContain("not yet wired");
+    const code = await main(["--framework", "codex-chatgpt", "--headless", "say hi"]);
+
+    expect(code).toBe(0);
   });
 
   it("--framework claude-agent-sdk → filterToolsForFramework called with 'claude-agent-sdk'", async () => {

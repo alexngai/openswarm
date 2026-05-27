@@ -20,12 +20,24 @@
  *     M3a Phase 4: worker requests task cancellation (ancestry-checked).
  *   - "task.output"   (worker → orchestrator; params: { taskId: string }; result: TaskOutputResult)
  *     M3a Phase 4: worker polls partial or final output of a task.
+ *   - "run_more"      (orchestrator → worker; params: { prompt, taskId? }; result: { accepted: boolean })
+ *     v0.4 stage 4D: long-lived worker accepts another prompt. Result is ack-only;
+ *     final result still arrives via the `task_result` notification.
+ *   - "drain"         (orchestrator → worker; params: {}; result: { acknowledged: true })
+ *     v0.4 stage 4D: long-lived worker drains gracefully. Worker exits after the
+ *     current task completes (or immediately when idle).
+ *   - "team.members"  (worker → orchestrator; params: {}; result: TeamMembersResult)
+ *     v0.4 stage 4E.1: worker requests the list of members in its team scope.
  *
  * Notifications (one-way, no correlation id match needed):
  *   - "worker_ready"      (worker → orchestrator; params: { agentId, depth, pid })
  *   - "lane_event"        (worker → orchestrator; params: LaneEvent)
  *   - "heartbeat"         (worker → orchestrator; params: { agentId, ts })
  *   - "task_result"       (worker → orchestrator; params: AgentResult)
+ *   - "worker_idle"       (worker → orchestrator; params: { agentId, readyForRunMoreAt })
+ *     v0.4 stage 4D: long-lived worker finished a task and is awaiting the next prompt.
+ *   - "worker_drained"    (worker → orchestrator; params: { agentId })
+ *     v0.4 stage 4D: long-lived worker has gracefully drained; subprocess exit follows.
  *   - "sub_agent_event"   (orchestrator → worker; params: SubAgentEventParams)
  *     NOW LOAD-BEARING for inbox delivery (M3a Phase 3). When params.eventKind === "inbox_delivery",
  *     params carries the AgentMessage payload. Backward-compat: eventKind discriminant extends
@@ -59,7 +71,12 @@ export type IpcRequestMethod =
   | "task.output"
   | "task.owner_of"
   | "ancestry.is_ancestor_of"
-  | "ask_user_question";
+  | "ask_user_question"
+  | "run_more"
+  | "drain"
+  | "team.members"
+  | "task.pull_next"
+  | "task.commit_changes";
 
 export type IpcResponse = IpcOk | IpcErr;
 
@@ -90,7 +107,9 @@ export type IpcNotificationMethod =
   | "task_result"
   | "sub_agent_event"
   | "sub_agent_result"
-  | "task_stop_signal";
+  | "task_stop_signal"
+  | "worker_idle"
+  | "worker_drained";
 
 /** Well-known error codes used in IpcErr.error.code. */
 export const IPC_ERROR_CODES = {
@@ -162,6 +181,43 @@ export const TaskOutputParamsSchema = z.object({
 });
 export type TaskOutputParams = z.infer<typeof TaskOutputParamsSchema>;
 
+/** params for "task.get" request (worker → orchestrator). */
+export const TaskGetParamsSchema = z.object({
+  taskId: z.string(),
+});
+export type TaskGetParams = z.infer<typeof TaskGetParamsSchema>;
+
+/**
+ * params for "task.list" request (worker → orchestrator).
+ *
+ * `filter` is permissive (z.unknown()) for now; the orchestrator's
+ * TaskRegistry.list ignores unknown fields and the schema can be tightened
+ * once worker callers stabilise.
+ */
+export const TaskListParamsSchema = z.object({
+  filter: z.unknown().optional(),
+});
+export type TaskListParams = z.infer<typeof TaskListParamsSchema>;
+
+/**
+ * params for "task.create" request (worker → orchestrator).
+ *
+ * `packet` is `Omit<TaskPacket, "id">`. We accept the shape permissively here
+ * — the orchestrator's TaskRegistry.create constructs the record from the
+ * fields it knows about. A tighter schema can replace this later.
+ */
+export const TaskCreateParamsSchema = z.object({
+  packet: z.record(z.string(), z.unknown()),
+});
+export type TaskCreateParams = z.infer<typeof TaskCreateParamsSchema>;
+
+/** params for "task.update" request (worker → orchestrator). */
+export const TaskUpdateParamsSchema = z.object({
+  taskId: z.string(),
+  patch: z.record(z.string(), z.unknown()),
+});
+export type TaskUpdateParams = z.infer<typeof TaskUpdateParamsSchema>;
+
 /** params for "task_stop_signal" notification (orchestrator → worker). */
 export const TaskStopSignalParamsSchema = z.object({
   taskId: z.string(),
@@ -203,3 +259,166 @@ export const AskUserQuestionParamsSchema = z.object({
   timeoutMs: z.number().int().positive().optional(),
 });
 export type AskUserQuestionParams = z.infer<typeof AskUserQuestionParamsSchema>;
+
+// ---------------------------------------------------------------------------
+// v0.4 stage 4D — long-lived worker frames
+// ---------------------------------------------------------------------------
+
+/**
+ * params for "run_more" request (orchestrator → worker).
+ *
+ * Sent to a long-lived worker that's currently in `idle` to start the next
+ * turn without respawning. Response is ack-only; the final result still
+ * arrives asynchronously via the `task_result` notification.
+ */
+export const RunMoreParamsSchema = z.object({
+  prompt: z.string().min(1),
+  taskId: z.string().optional(),
+});
+export type RunMoreParams = z.infer<typeof RunMoreParamsSchema>;
+
+/**
+ * params for "drain" request (orchestrator → worker).
+ *
+ * Sent to a long-lived worker to request graceful exit. If the worker is
+ * idle it transitions straight to drained; if it's running it transitions
+ * to draining and exits after the current task completes.
+ */
+export const DrainParamsSchema = z.object({}).strict();
+export type DrainParams = z.infer<typeof DrainParamsSchema>;
+
+/** params for "worker_idle" notification (worker → orchestrator). */
+export const WorkerIdleParamsSchema = z.object({
+  agentId: z.string(),
+  readyForRunMoreAt: z.number(),
+});
+export type WorkerIdleParams = z.infer<typeof WorkerIdleParamsSchema>;
+
+/** params for "worker_drained" notification (worker → orchestrator). */
+export const WorkerDrainedParamsSchema = z.object({
+  agentId: z.string(),
+});
+export type WorkerDrainedParams = z.infer<typeof WorkerDrainedParamsSchema>;
+
+// ---------------------------------------------------------------------------
+// v0.4 stage 4M.6 — spawn (worker → orchestrator)
+// ---------------------------------------------------------------------------
+
+/**
+ * params for "spawn" request (worker → orchestrator).
+ *
+ * The protocol comment header has listed `spawn` since M1, but the
+ * StandaloneHost handler did not exist until 4M.6. This schema locks the
+ * params shape that WorkerHost.spawn sends.
+ *
+ * `task` is permissive (z.record) since TaskPacket has a deeper shape that
+ * is enforced upstream by the worker-side caller (the agent tool builds the
+ * record via host.task.create before calling spawn).
+ */
+export const SpawnRequestParamsSchema = z.object({
+  task: z.record(z.string(), z.unknown()),
+  permissionMode: z.enum([
+    "read-only",
+    "workspace-write",
+    "danger-full-access",
+  ]),
+  model: z.string().optional(),
+  /** v0.4 stage 4M.6: forwarded from SpawnRequest.framework. */
+  framework: z.enum(["claude-agent-sdk", "codex-chatgpt"]).optional(),
+  /**
+   * v0.4 stage 4M.7: forwarded from SpawnRequest.teamScope. When set, the
+   * spawn handler injects this scope on the spawned child (peer-spawn). When
+   * undefined, child gets the orchestrator's default scope.
+   */
+  teamScope: z.string().optional(),
+  /**
+   * v0.7 stage 7A.2: forwarded from SpawnRequest.cwd. When set, the spawn
+   * handler passes this cwd through to the spawner so the spawned worker
+   * runs inside the requested working directory (typically a git-cascade
+   * worktree).
+   */
+  cwd: z.string().optional(),
+  parentAgentId: z.string(),
+  parentToolUseId: z.string().optional(),
+  taskId: z.string().optional(),
+});
+export type SpawnRequestParams = z.infer<typeof SpawnRequestParamsSchema>;
+
+/**
+ * result for "spawn" — the spawned child's identity + final AgentResult.
+ *
+ * Shape mirrors what WorkerHost.spawn unpacks (lines 273-291): the IPC
+ * spawn handler awaits the child's terminal state before replying, so the
+ * worker-side proxy returns a synchronously-resolved AgentHandle.
+ */
+export const SpawnResultSchema = z.object({
+  agentId: z.string(),
+  sessionId: z.string(),
+  result: z.record(z.string(), z.unknown()),
+});
+export type SpawnResult = z.infer<typeof SpawnResultSchema>;
+
+// ---------------------------------------------------------------------------
+// v0.4 stage 4E.1 — team.members
+// ---------------------------------------------------------------------------
+
+/**
+ * params for "team.members" request (worker → orchestrator).
+ *
+ * Empty object — orchestrator resolves the caller's scope from `from` (the
+ * worker's agentId) and returns peers in that scope. Worker cannot specify
+ * an arbitrary scope.
+ */
+export const TeamMembersParamsSchema = z.object({}).strict();
+export type TeamMembersParams = z.infer<typeof TeamMembersParamsSchema>;
+
+// ---------------------------------------------------------------------------
+// v0.5 stage 5C — task.pull_next
+// ---------------------------------------------------------------------------
+
+/**
+ * params for "task.pull_next" request (worker → orchestrator).
+ *
+ * Atomically claims the next pending task in `scope` with no owner. Sets
+ * the requesting worker as the owner and transitions status pending →
+ * running. Returns null when no claimable task is available.
+ */
+export const TaskPullNextParamsSchema = z.object({
+  scope: z.string(),
+  claimerId: z.string(),
+});
+export type TaskPullNextParams = z.infer<typeof TaskPullNextParamsSchema>;
+
+// ---------------------------------------------------------------------------
+// v0.7 stage 7B — task.commit_changes
+// ---------------------------------------------------------------------------
+
+/**
+ * params for "task.commit_changes" request (worker → orchestrator).
+ *
+ * Routes a git commit through the branch-policy adapter's commitChanges
+ * method (git-cascade tracker.commitChanges, which adds Change-Id trailers
+ * + audit log). Orchestrator looks up the worker's stream + worktree from
+ * the adapter map (recorded at spawn time) using the requester's agentId.
+ *
+ * Result: { streamId, commitSha, changeId? } | null. Null means the worker
+ * isn't in a stream context (no branchPolicyAdapter, or adapter doesn't
+ * expose commitChanges, or worker's branchPolicy was none/reuse/create).
+ */
+export const TaskCommitChangesParamsSchema = z.object({
+  message: z.string().min(1),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
+export type TaskCommitChangesParams = z.infer<
+  typeof TaskCommitChangesParamsSchema
+>;
+
+/** result for "team.members" — array of `{memberId, role, agentId}` peers. */
+export const TeamMembersResultSchema = z.array(
+  z.object({
+    memberId: z.string(),
+    role: z.string(),
+    agentId: z.string(),
+  }),
+);
+export type TeamMembersResult = z.infer<typeof TeamMembersResultSchema>;

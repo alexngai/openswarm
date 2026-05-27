@@ -3,7 +3,7 @@
  *
  * Four checks:
  *   auth      — detectAuth() presence check
- *   config    — .swarm-coder/ directory exists
+ *   config    — .swarm-harness/ directory exists
  *   install   — @anthropic-ai/claude-agent-sdk importable + version + CLI binary
  *   workspace — cwd is writable (probe file)
  *
@@ -17,7 +17,11 @@ import * as fs from "node:fs/promises";
 import * as fsc from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
+import { execFile as execFileCb } from "node:child_process";
+import { promisify } from "node:util";
 import { detectAuth } from "../auth/status.js";
+
+const execFile = promisify(execFileCb);
 
 // ---------------------------------------------------------------------------
 // Types
@@ -57,15 +61,15 @@ async function checkAuth(): Promise<CheckResult> {
 }
 
 async function checkConfig(cwd: string): Promise<CheckResult> {
-  const configDir = path.join(cwd, ".swarm-coder");
+  const configDir = path.join(cwd, ".swarm-harness");
   try {
     await fs.access(configDir);
-    return { name: "config", status: "pass", message: ".swarm-coder/ directory found" };
+    return { name: "config", status: "pass", message: ".swarm-harness/ directory found" };
   } catch {
     return {
       name: "config",
       status: "warn",
-      message: "no config found — run `swarm-coder init`",
+      message: "no config found — run `swarm-harness init`",
     };
   }
 }
@@ -136,7 +140,7 @@ async function findCliBinary(): Promise<
 // output, or `bun src/cli.ts`) this identifier is undefined and the runtime
 // resolve path below is used. In the compiled binary the identifier is
 // replaced with a string literal.
-declare const __SWARM_CODER_AGENT_SDK_VERSION__: string | undefined;
+declare const __SWARM_HARNESS_AGENT_SDK_VERSION__: string | undefined;
 
 async function checkInstall(): Promise<CheckResult> {
   try {
@@ -147,8 +151,8 @@ async function checkInstall(): Promise<CheckResult> {
     // "./package.json", so resolve the main entry and climb up to find its
     // package.json on disk.
     let version =
-      typeof __SWARM_CODER_AGENT_SDK_VERSION__ === "string"
-        ? __SWARM_CODER_AGENT_SDK_VERSION__
+      typeof __SWARM_HARNESS_AGENT_SDK_VERSION__ === "string"
+        ? __SWARM_HARNESS_AGENT_SDK_VERSION__
         : "unknown";
     try {
       const require = createRequire(import.meta.url);
@@ -207,8 +211,45 @@ async function checkInstall(): Promise<CheckResult> {
   }
 }
 
+async function checkCodexCli(): Promise<CheckResult> {
+  const warnResult: CheckResult = {
+    name: "codex-cli",
+    status: "warn",
+    message:
+      "Install via 'npm install -g @openai/codex' to enable --framework codex-chatgpt mode.",
+  };
+
+  let version: string;
+  try {
+    const { stdout } = await execFile("codex", ["--version"], { timeout: 2000 });
+    version = stdout.trim().split("\n")[0] ?? "";
+    if (version === "") return warnResult;
+  } catch {
+    return warnResult;
+  }
+
+  // Resolve path — use `where` on win32, `which` elsewhere (Defect 7).
+  const whichCmd = process.platform === "win32" ? "where" : "which";
+  let codexPath = "";
+  try {
+    const { stdout } = await execFile(whichCmd, ["codex"], { timeout: 2000 });
+    // Windows `where` returns multiple matches separated by CRLF; take first.
+    codexPath = stdout.trim().split(/\r?\n/)[0] ?? "";
+  } catch {
+    // Path resolution failure is non-fatal — still report the version.
+  }
+
+  return {
+    name: "codex-cli",
+    status: "pass",
+    message: codexPath !== ""
+      ? `codex CLI ${version} found at ${codexPath}`
+      : `codex CLI ${version} found`,
+  };
+}
+
 async function checkWorkspace(cwd: string): Promise<CheckResult> {
-  const probeFile = path.join(cwd, `.swarm-coder-doctor-probe-${process.pid}`);
+  const probeFile = path.join(cwd, `.swarm-harness-doctor-probe-${process.pid}`);
   try {
     await fs.writeFile(probeFile, "");
     await fs.unlink(probeFile);
@@ -235,6 +276,7 @@ export async function runDoctor(
     checkConfig(cwd),
     checkInstall(),
     checkWorkspace(cwd),
+    checkCodexCli(),
   ]);
 
   const overall: "pass" | "fail" = checks.some((c) => c.status === "fail")

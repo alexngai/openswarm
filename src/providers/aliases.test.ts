@@ -45,7 +45,7 @@ describe("loadAliases", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "swarm-coder-test-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "swarm-harness-test-"));
   });
 
   afterEach(async () => {

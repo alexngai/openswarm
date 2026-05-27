@@ -2,8 +2,8 @@
  * Hooks config loader (rev-2 Major M8 discovery hierarchy).
  *
  * First-match-wins:
- *   1. `$SWARM_CODER_CONFIG_DIR/hooks.json`
- *   2. `<cwd>/.swarm-coder/hooks.json`
+ *   1. `$SWARM_HARNESS_CONFIG_DIR/hooks.json`
+ *   2. `<cwd>/.swarm-harness/hooks.json`
  *   3. `<cwd>/.claude/settings.json`  (Claude Code compat — `.hooks` field)
  *   4. `$HOME/.claude/settings.json`  (Claude Code compat — `.hooks` field)
  *
@@ -93,7 +93,7 @@ function resolveCandidates(opts: LoadHooksConfigOptions): Candidate[] {
   const env = opts.envOverrides ?? process.env;
 
   const candidates: Candidate[] = [];
-  const envDir = env.SWARM_CODER_CONFIG_DIR;
+  const envDir = env.SWARM_HARNESS_CONFIG_DIR;
   if (envDir !== undefined && envDir.length > 0) {
     candidates.push({
       path: path.join(envDir, "hooks.json"),
@@ -101,7 +101,7 @@ function resolveCandidates(opts: LoadHooksConfigOptions): Candidate[] {
     });
   }
   candidates.push({
-    path: path.join(cwd, ".swarm-coder", "hooks.json"),
+    path: path.join(cwd, ".swarm-harness", "hooks.json"),
     isSettingsJson: false,
   });
   candidates.push({

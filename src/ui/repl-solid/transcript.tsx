@@ -4,30 +4,95 @@
  * Renders the transcript array from the REPL state. Each entry is rendered
  * as a <box> inside a <scrollbox> so overflow scrolls.
  *
- * Assistant entries use <markdown> from @opentui/core (Phase 3 stage B,
- * doc 17 P3.Q2): the dedicated markdown renderer supports native table
- * rendering, inline link/blockquote handling, and delegates fenced code
- * blocks to internal CodeRenderable instances. Plain `<code
- * filetype="markdown">` treats markdown as highlighted source; <markdown>
- * treats it as structured markup.
+ * Assistant entries use <markdown> from @opentui/core (doc 17 Phase 3
+ * design lock, P3.Q1): the dedicated markdown renderer parses with `marked`,
+ * conceals syntax markers, lays out tables natively, and delegates fenced
+ * code blocks to an internal CodeRenderable per block (P3.Q2). Plain
+ * `<code filetype="markdown">` would treat markdown as highlighted source
+ * and leak `#` / `**` / `` ``` `` markers — wrong primitive for our goal.
  *
- * Phase 3 stage A: `syntaxStyle` is a required OpenTUI prop on both <code>
- * and <markdown>. We lazy-initialise one shared default SyntaxStyle on first
- * access so test runs that never mount an assistant entry don't touch the
- * native FFI layer. Theme-tuned styles land in a later pass (doc 17 P3.Q3).
+ * `syntaxStyle` is a required OpenTUI prop ([Markdown.d.ts:53](
+ * node_modules/@opentui/core/renderables/Markdown.d.ts)). We resolve it via
+ * `SyntaxStyle.fromTheme(...)` against [theme.ts](./theme.ts) so headings /
+ * strong / em / inline-code colors stay coherent with the rest of the REPL
+ * (doc 17 P3.Q3). Construction is lazy: the first assistant entry mounts
+ * the FFI-backed style; tests that never render assistant content never
+ * touch the native layer.
+ *
+ * Tree-sitter wiring (Phase 3 follow-up, supersedes the design lock's
+ * "out of scope" item): OpenTUI ships a `TreeSitterClient` with bundled
+ * WASM grammars for typescript, javascript, markdown, markdown_inline,
+ * and zig under `node_modules/@opentui/core/assets/`. Passing the client
+ * to `<markdown>` enables language-aware highlighting inside fenced code
+ * blocks (the markdown grammar's `injectionMapping.infoStringMap` routes
+ * fenced info strings → filetype). The client is lazy-init'd, fire-and-
+ * forget on `.initialize()`; if init fails we drop back to the
+ * single-color `markup.raw.block` palette.
+ *
+ * Disable via `SWARM_HARNESS_DISABLE_TREE_SITTER=1` if the worker thread
+ * causes problems (test isolation, packaging, slow init under load).
  */
 
 import { For, Show } from "solid-js";
-import { SyntaxStyle } from "@opentui/core";
+import {
+  SyntaxStyle,
+  TreeSitterClient,
+  getTreeSitterClient,
+  type ThemeTokenStyle,
+} from "@opentui/core";
 import type { TranscriptEntry } from "../repl/state.js";
-import { entryColor } from "./theme.js";
+import { entryColor, theme } from "./theme.js";
 
-let _defaultSyntaxStyle: SyntaxStyle | null = null;
-function defaultSyntaxStyle(): SyntaxStyle {
-  if (_defaultSyntaxStyle === null) {
-    _defaultSyntaxStyle = SyntaxStyle.create();
+/**
+ * Markdown scope → palette mapping. Scope names are the ones OpenTUI's
+ * <markdown> emits internally for marked tokens (verified against
+ * `node_modules/@opentui/core/index-*.js`):
+ *   markup.heading, markup.strong, markup.italic, markup.strikethrough,
+ *   markup.raw (inline code), markup.raw.block (fenced code),
+ *   markup.link / markup.link.label / markup.link.url
+ *
+ * We register a small set so common markup gets palette-aligned colors.
+ * Unmapped scopes fall back to OpenTUI's default — fine for now (doc 17
+ * P3.Q3 explicitly defers a per-language Tree-sitter palette to later).
+ */
+const markdownTheme: ThemeTokenStyle[] = [
+  { scope: ["markup.heading"], style: { foreground: theme.accent, bold: true } },
+  { scope: ["markup.strong"], style: { foreground: theme.text, bold: true } },
+  { scope: ["markup.italic"], style: { foreground: theme.text, italic: true } },
+  { scope: ["markup.strikethrough"], style: { foreground: theme.muted, dim: true } },
+  { scope: ["markup.raw", "markup.raw.block"], style: { foreground: theme.success } },
+  { scope: ["markup.link", "markup.link.label"], style: { foreground: theme.accent, underline: true } },
+  { scope: ["markup.link.url"], style: { foreground: theme.muted, underline: true } },
+];
+
+let _markdownSyntaxStyle: SyntaxStyle | null = null;
+function markdownSyntaxStyle(): SyntaxStyle {
+  if (_markdownSyntaxStyle === null) {
+    _markdownSyntaxStyle = SyntaxStyle.fromTheme(markdownTheme);
   }
-  return _defaultSyntaxStyle;
+  return _markdownSyntaxStyle;
+}
+
+// `undefined` = not yet attempted; client instance = success or pending init;
+// `null` = attempted and failed terminally — don't retry.
+let _treeSitterClient: TreeSitterClient | null | undefined = undefined;
+function treeSitterClient(): TreeSitterClient | undefined {
+  if (process.env.SWARM_HARNESS_DISABLE_TREE_SITTER === "1") return undefined;
+  if (_treeSitterClient !== undefined) return _treeSitterClient ?? undefined;
+  try {
+    const client = getTreeSitterClient();
+    // Fire-and-forget: the renderer queues highlight requests against the
+    // client and they resolve once init completes. If init throws (worker
+    // unavailable, WASM load failure, init timeout), drop to no-highlighting.
+    void client.initialize().catch(() => {
+      _treeSitterClient = null;
+    });
+    _treeSitterClient = client;
+    return client;
+  } catch {
+    _treeSitterClient = null;
+    return undefined;
+  }
 }
 
 export interface TranscriptProps {
@@ -36,7 +101,9 @@ export interface TranscriptProps {
    * Id of the assistant entry currently being streamed into, or undefined
    * when no stream is active. Passed through to the matching entry's
    * `streaming` prop so OpenTUI can finalise trailing-block parsing once
-   * streaming completes (doc 17 P3.Q4 / Markdown.d.ts:67-72).
+   * streaming completes (doc 17 Phase 3 design lock P3.Q4 — relies on
+   * OpenTUI's contract at Markdown.d.ts:62-72; no port of claw's
+   * find_stream_safe_boundary needed unless that contract proves leaky).
    */
   readonly streamingEntryId?: string | undefined;
 }
@@ -50,13 +117,15 @@ function UserEntry(props: { text: string }) {
 }
 
 function AssistantEntry(props: { text: string; streaming: boolean }) {
+  const tsClient = treeSitterClient();
   return (
     <Show when={props.text.length > 0}>
       <box flexDirection="column">
         <markdown
           content={props.text}
           streaming={props.streaming}
-          syntaxStyle={defaultSyntaxStyle()}
+          syntaxStyle={markdownSyntaxStyle()}
+          {...(tsClient !== undefined ? { treeSitterClient: tsClient } : {})}
         />
       </box>
     </Show>

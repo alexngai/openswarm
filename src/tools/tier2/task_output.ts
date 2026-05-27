@@ -9,7 +9,6 @@
  */
 
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { requireHost } from "./require-host.js";
@@ -30,7 +29,7 @@ const spec: ToolSpec = {
     "If the task is still running, returns partial output accumulated so far. " +
     "If the task has completed, returns the full output, final status, usage, and wallClockMs. " +
     "Unknown taskId returns an error.",
-  inputSchema: zodToJsonSchema(inputSchema as any) as JsonSchema,
+  inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
   requiredPermission: "read",
   tier: 2,
   concurrencySafe: false,

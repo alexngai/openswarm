@@ -22,7 +22,8 @@ function makeHost(records: readonly TaskRecord[]): SwarmHost {
     inbox: () => {
       throw new Error("not used");
     },
-    drainInbox: () => [],
+    drainInbox: async () => [],
+    commitChanges: async () => null,
     askUser: (): never => {
       throw new Error("M3b Phase 6 — not yet implemented");
     },
@@ -39,6 +40,7 @@ function makeHost(records: readonly TaskRecord[]): SwarmHost {
       output: () => {
         throw new Error("not used");
       },
+      pullNext: () => Promise.resolve(null),
     },
   };
 }
@@ -85,6 +87,7 @@ describe("/tasks", () => {
         status: "running",
         createdAt: now,
         updatedAt: now,
+        scope: "swarm:default",
       },
     ]);
     const ctx = buildSlashContext(

@@ -1,7 +1,7 @@
 /**
- * M4a Phase 6 integration test — SWARM_CODER_FRAMEWORK env var propagation.
+ * M4a Phase 6 integration test — SWARM_HARNESS_FRAMEWORK env var propagation.
  *
- * Verifies that a worker subprocess launched with SWARM_CODER_FRAMEWORK=native
+ * Verifies that a worker subprocess launched with SWARM_HARNESS_FRAMEWORK=native
  * picks up the env var and uses the NativeEngine. Uses --dump-engine to avoid
  * any live API traffic.
  *
@@ -15,12 +15,12 @@ import * as path from "node:path";
 const REPO = process.cwd();
 const CLI = path.resolve(REPO, "dist/cli.js");
 
-describe("framework inheritance via SWARM_CODER_FRAMEWORK", () => {
-  it("SWARM_CODER_FRAMEWORK=native --dump-engine --model gpt-4o → engineId:native", () => {
+describe("framework inheritance via SWARM_HARNESS_FRAMEWORK", () => {
+  it("SWARM_HARNESS_FRAMEWORK=native --dump-engine --model gpt-4o → engineId:native", () => {
     const result = spawnSync(process.execPath, [CLI, "--model", "gpt-4o", "--dump-engine", "say hi"], {
       env: {
         ...process.env,
-        SWARM_CODER_FRAMEWORK: "native",
+        SWARM_HARNESS_FRAMEWORK: "native",
         // Dummy Anthropic key to pass detectAuth() check (engine exits before API call).
         ANTHROPIC_API_KEY: "test-key-anthropic",
         // Dummy OpenAI key so OpenAIEnvAuth passes isAuthenticated.
@@ -38,11 +38,11 @@ describe("framework inheritance via SWARM_CODER_FRAMEWORK", () => {
     expect(parsed.modelId).toBe("gpt-4o-2024-11-20");
   });
 
-  it("SWARM_CODER_FRAMEWORK=auto --dump-engine --model claude-sonnet-4-6 → engineId:claude-agent-sdk", () => {
+  it("SWARM_HARNESS_FRAMEWORK=auto --dump-engine --model claude-sonnet-4-6 → engineId:claude-agent-sdk", () => {
     const result = spawnSync(process.execPath, [CLI, "--model", "claude-sonnet-4-6", "--dump-engine", "say hi"], {
       env: {
         ...process.env,
-        SWARM_CODER_FRAMEWORK: "auto",
+        SWARM_HARNESS_FRAMEWORK: "auto",
         ANTHROPIC_API_KEY: "test-key",
       },
       encoding: "utf8",

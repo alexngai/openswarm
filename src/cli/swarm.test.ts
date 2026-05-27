@@ -141,7 +141,7 @@ describe("runSwarm migration hint", () => {
     expect(exitCode).toBe(2);
     const combined = stderrLines.join("");
     expect(combined).toContain(
-      "[swarm-coder] TaskPacket policies are now discriminated unions — see docs/11-m3a-plan.md §Policy migration",
+      "[swarm-harness] TaskPacket policies are now discriminated unions — see docs/11-m3a-plan.md §Policy migration",
     );
 
     stderrSpy.mockRestore();

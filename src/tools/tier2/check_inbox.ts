@@ -7,7 +7,6 @@
  */
 
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { requireHost } from "./require-host.js";
@@ -28,7 +27,7 @@ const spec: ToolSpec = {
     "Returns immediately — no blocking. " +
     "Call sparingly; an empty array means no messages are queued right now.",
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  inputSchema: zodToJsonSchema(inputSchema as any) as JsonSchema,
+  inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
   requiredPermission: "read",
   tier: 2,
   concurrencySafe: false,
@@ -45,7 +44,8 @@ async function execute(
   }
   const input = parsed.data;
 
-  const messages = host.drainInbox(input.max);
+  // v0.6 stage 6A.1: drainInbox is async (InboxBackend may be library-backed).
+  const messages = await host.drainInbox(input.max);
   return {
     status: "ok",
     output: JSON.stringify(messages),

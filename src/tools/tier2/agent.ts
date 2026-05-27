@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import type { SpawnRequest } from "../../swarm/host.js";
@@ -14,6 +13,21 @@ const inputSchema = z.object({
     .optional(),
   maxTurns: z.number().int().positive().optional(),
   wait: z.boolean().optional().default(true),
+  // Added v0.4 stage 4E.1: team scope and framework selection.
+  team: z
+    .enum(["self", "child"])
+    .optional()
+    .describe(
+      'Team scope of the spawned agent. "self" = land in caller\'s team ' +
+        '(peer); "child" = sub-agent under caller (default). Omitted = "child".',
+    ),
+  framework: z
+    .enum(["claude-agent-sdk", "codex-chatgpt"])
+    .optional()
+    .describe(
+      "Framework provider for this spawn. Plumbs through to the spawn " +
+        "request; engine selection is handled by the framework provider.",
+    ),
 });
 
 type Input = z.infer<typeof inputSchema>;
@@ -27,9 +41,12 @@ const spec: ToolSpec = {
     "Spawn a sub-agent to work on a subtask. The sub-agent runs as an " +
     "isolated subprocess worker with its own engine. When `wait` is true " +
     "(default), this returns the sub-agent's final result. When false, " +
-    "returns the agentId and taskId so the caller can poll via task_get.",
+    "returns the agentId and taskId so the caller can poll via task_get. " +
+    'Use `team: "self"` to spawn into the caller\'s team scope (peer); ' +
+    "default is a child sub-agent. Use `framework` to opt into a specific " +
+    "framework provider.",
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  inputSchema: zodToJsonSchema(inputSchema as any) as JsonSchema,
+  inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
   requiredPermission: "exec",
   tier: 2,
   concurrencySafe: false,
@@ -40,6 +57,11 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   const parsed = inputSchema.safeParse(raw);
   if (!parsed.success) return { status: "error", message: parsed.error.message };
   const input: Input = parsed.data;
+
+  // v0.4 stage 4M.7: worker-side `team: "self"` peer-spawn now works.
+  // WorkerHost exposes scopeOf() (env-derived); the spawn IPC handler
+  // forwards teamScope; the spawn handler injects it on the spawned child.
+  // Closes the V0.4.Q1 follow-up that the B2 fix in 4M.1 had to defer.
 
   // Permission clamping: sub-agent mode cannot exceed parent's mode.
   // The authoritative clamp also happens inside StandaloneHost.spawn() — this
@@ -56,6 +78,19 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
     budget: input.maxTurns !== undefined ? { maxTurns: input.maxTurns } : undefined,
   });
 
+  // Resolve team scope. v0.4 stage 4E.1:
+  //   "self"  → spawn lands in caller's team scope (peer).
+  //   "child" / undefined → leave teamScope undefined; child gets default scope.
+  // host.scopeOf is implemented on StandaloneHost; WorkerHost callers fall
+  // through to undefined (peer-spawn from a worker is a future stage).
+  const hostWithScope = host as unknown as {
+    scopeOf?: (id: typeof host.agentId) => string;
+  };
+  const teamScope =
+    input.team === "self" && typeof hostWithScope.scopeOf === "function"
+      ? hostWithScope.scopeOf(host.agentId)
+      : undefined;
+
   // Build the SpawnRequest. Intentionally omit `depth` — the orchestrator
   // computes it authoritatively (see plan §0.4).
   const spawnReq: SpawnRequest = {
@@ -63,6 +98,8 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
     permissionMode,
     taskId: record.id,
     ...(input.model !== undefined && { model: input.model }),
+    ...(input.framework !== undefined && { framework: input.framework }),
+    ...(teamScope !== undefined && { teamScope }),
     ...(ctx.toolUseId !== undefined && { parentToolUseId: ctx.toolUseId }),
   };
 

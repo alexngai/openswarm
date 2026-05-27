@@ -1,5 +1,5 @@
 /**
- * login.ts — `swarm-coder login --provider <name>` subcommand.
+ * login.ts — `swarm-harness login --provider <name>` subcommand.
  *
  * Dispatches to the appropriate auth provider's login() method.
  * Exit codes:
@@ -7,8 +7,6 @@
  *   1 — user error (unknown provider)
  *   2 — infra error (unexpected throws)
  */
-
-import { OpenAIOAuthAuth } from "../auth/openai-oauth.js";
 
 // ---------------------------------------------------------------------------
 // Main entry
@@ -23,19 +21,14 @@ export async function loginMain(argv: string[]): Promise<number> {
 
   switch (provider) {
     case "codex-chatgpt": {
-      const auth = new OpenAIOAuthAuth();
-      try {
-        await auth.login();
-        process.stdout.write(
-          "logged in to codex-chatgpt. Credentials stored in ~/.swarm-coder/auth.json.\n",
-        );
-        return 0;
-      } catch (err) {
-        process.stderr.write(
-          `error: login failed: ${err instanceof Error ? err.message : String(err)}\n`,
-        );
-        return 2;
-      }
+      process.stdout.write(
+        "swarm-harness now delegates ChatGPT auth to the official codex CLI.\n" +
+          "Run: codex login\n" +
+          "This is a one-time setup; swarm-harness will then use your subscription\n" +
+          "automatically when you pass --framework codex-chatgpt.\n" +
+          "If you don't have codex installed yet: npm install -g @openai/codex\n",
+      );
+      return 0;
     }
 
     case "claude-agent-sdk":

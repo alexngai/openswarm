@@ -31,7 +31,7 @@ M0–M3 runs every turn through `ClaudeAgentSdkEngine` — a thin wrapper over `
    - `openai/*` → strip prefix, then OpenAI as above (supports OpenRouter-style prefixed routing for M4b hand-off).
    - Unmatched → `{ kind: "error", message: "unknown model prefix — known: claude*, gpt*, o1*, o3*, o4* (M4a). xAI/Google/Qwen land in M4b." }`
    - Env-var sniffing fallback (from claw's `anthropic_missing_credentials_hint`) → M4b.
-6. **Model alias table** (`src/providers/aliases.ts`) — read from `~/.swarm-coder/settings.json` under `aliases: { [alias: string]: modelId }`. Built-in defaults ship in code:
+6. **Model alias table** (`src/providers/aliases.ts`) — read from `~/.swarm-harness/settings.json` under `aliases: { [alias: string]: modelId }`. Built-in defaults ship in code:
    - `sonnet` → `claude-sonnet-4-6`, `haiku` → `claude-haiku-4-5`, `opus` → `claude-opus-4-7` (Anthropic)
    - `gpt-4o` → `gpt-4o-2024-11-20`, `gpt-5` → `<pin at implementation time against OpenAI's actual model list; current value is illustrative>` (pin at implementation time against OpenAI's current published model ids)
    - `o3` → `o3-mini-2025-01-31`
@@ -47,7 +47,7 @@ M0–M3 runs every turn through `ClaudeAgentSdkEngine` — a thin wrapper over `
 10. **`ProviderRequest` / `ProviderEvent`** — defined once in `src/providers/index.ts`; shape:
     - `ProviderRequest { messages, tools, systemPrompt, model, maxOutputTokens?, temperature?, topP?, topK?, stop?, abort?, tool_choice?, promptCacheHint? }`
     - `ProviderEvent` union: `"text-delta" { text }` | `"tool-call-start" { id, name, input? }` | `"tool-call-delta" { id, inputDelta }` | `"tool-call-end" { id, name, input }` | `"finish" { stopReason, usage }` | `"error" { code, message, retryable }` | `"reasoning-delta" { text }` (for thinking models; surfaced verbatim).
-11. **Worker-entry + argv wiring** — `src/cli/worker-entry.ts` reads `--framework` + model; constructs the right engine. Swarm workers (M3a) propagate `SWARM_CODER_FRAMEWORK` so subprocess workers inherit the parent's choice.
+11. **Worker-entry + argv wiring** — `src/cli/worker-entry.ts` reads `--framework` + model; constructs the right engine. Swarm workers (M3a) propagate `SWARM_HARNESS_FRAMEWORK` so subprocess workers inherit the parent's choice.
 
 **Explicitly OUT of M4a (M4b or later):**
 
@@ -86,7 +86,7 @@ Rationale: the load-bearing correctness piece is the tool-use/tool-result bounda
 Rationale: our session store (M0 `src/session/store.ts`) is append-only JSONL — not a structured message array. The compactor operates on structured messages (role, blocks). NativeEngine materializes a working message array from the event stream in-memory; on `SessionSnapshot.save`, we serialize this buffer (plus turn count + cumulative usage) under `data: { messages, turnCount, usage, compactionCount }`. This is the native engine's snapshot; `engineId: "native"` blocks cross-engine resume per Q3.
 
 **F. `OPENAI_API_KEY` reading: minimal `OpenAIEnvAuth` in M4a; full `OpenAIApiKeyAuth` + login/logout polish in M4b.**
-Rationale: M4a proves the end-to-end path. `OpenAIEnvAuth` just reads `process.env.OPENAI_API_KEY` and implements `headers()` / `isAuthenticated()` — enough for the engine to work. Matches the pattern of M0's `AnthropicApiKeyAuth` in spirit (simplicity). M4b adds `swarm-coder login --provider openai` with token persistence. If `OPENAI_API_KEY` is missing at engine construction, NativeEngine returns a friendly error with the env var name mentioned.
+Rationale: M4a proves the end-to-end path. `OpenAIEnvAuth` just reads `process.env.OPENAI_API_KEY` and implements `headers()` / `isAuthenticated()` — enough for the engine to work. Matches the pattern of M0's `AnthropicApiKeyAuth` in spirit (simplicity). M4b adds `swarm-harness login --provider openai` with token persistence. If `OPENAI_API_KEY` is missing at engine construction, NativeEngine returns a friendly error with the env var name mentioned.
 
 **G. Parallel tool execution in NativeEngine: inherit M3b's `dispatchBatch`; `ProviderCapabilities.parallelToolUse: true` for OpenAI.**
 Rationale: M3b shipped `dispatchBatch` as infrastructure; SDK-mode parallelism was gated on SDK internals (ticket Phase 4 open item, resolved with caveat). NativeEngine has no such constraint — when OpenAI emits multiple tool_use blocks in one turn, we fan them out with `Promise.all` directly. This is the first real test of M3b's parallel infrastructure; we expect `concurrencySafe: false` serialization (e.g. `todo_write`) and HookRuntime reentrancy contracts (M3b §4.1) to just work. Add a smoke test case exercising 3 parallel reads on OpenAI to close M3b's Phase 4 caveat.
@@ -105,7 +105,7 @@ M3b shipped git coordination, prompt caching (Anthropic), `dispatchBatch` infras
 - `src/mcp/bridge.ts`, `src/mcp/client.ts` — no changes (consumed as-is).
 - `src/engine/index.ts` — `EngineCapabilities` unchanged; RunConfig unchanged; we add a new field `providerId?` under `RunConfig` only if NativeEngine needs it for observability (decide during Phase 0 — leaning no, since `engine.id` carries the info).
 - `src/cli/argv.ts` — new `--framework` flag (strictly additive).
-- `src/cli/worker-entry.ts` — reads `SWARM_CODER_FRAMEWORK` env for inherited choice (strictly additive).
+- `src/cli/worker-entry.ts` — reads `SWARM_HARNESS_FRAMEWORK` env for inherited choice (strictly additive).
 - `package.json` — new deps pinned.
 
 Concrete integration points:
@@ -139,8 +139,8 @@ Each executable with a one-line test harness or manual smoke step.
 17. Routing: `resolveProvider("gpt-4o")` → `{ kind: "native", provider: OpenAITransportProvider }`. `resolveProvider("claude-sonnet-4-6")` → `{ kind: "sdk", engineFactory: ClaudeAgentSdkEngine }`. `resolveProvider("grok-3")` → `{ kind: "error", message: "unknown model prefix — xAI lands in M4b" }`. `resolveProvider("unknown-model")` → `{ kind: "error" }` with the known-prefixes list.
 18. Alias resolution: `settings.json { aliases: { "my-fast": "gpt-4o-mini" } }` → `resolveProvider(resolveAlias("my-fast", settings))` → OpenAI provider with `gpt-4o-mini` model id. Built-in `sonnet` → `claude-sonnet-4-6` without user config. Cycle detection: `{ aliases: { a: "b", b: "a" } }` → `resolveAlias("a", settings)` throws with a clear message.
 19. Alias shadowing: user alias `sonnet` → `claude-sonnet-5-0` → `resolveAlias("sonnet", settings)` returns `claude-sonnet-5-0`; one-time `alias_shadowed` lane event emitted on engine construction.
-20. CLI `--framework auto` (default): `swarm-coder prompt --model gpt-4o "..."` selects NativeEngine + OpenAITransportProvider; `--model claude-sonnet-4-6` selects ClaudeAgentSdkEngine. Verified via `--dump-engine` debug flag (internal; not advertised in `--help`).
-21. `swarm-coder --framework native --model claude-sonnet-4-6` exits non-zero with the error message:
+20. CLI `--framework auto` (default): `swarm-harness prompt --model gpt-4o "..."` selects NativeEngine + OpenAITransportProvider; `--model claude-sonnet-4-6` selects ClaudeAgentSdkEngine. Verified via `--dump-engine` debug flag (internal; not advertised in `--help`).
+21. `swarm-harness --framework native --model claude-sonnet-4-6` exits non-zero with the error message:
     ```
     error: --framework native does not support Claude models in M4a.
     Use `--framework auto` (default) or `--framework claude-agent-sdk`.
@@ -149,11 +149,11 @@ Each executable with a one-line test harness or manual smoke step.
     Exit code 2.
 22. CLI `--framework claude-agent-sdk --model gpt-4o`: errors with `"--framework claude-agent-sdk requires an Anthropic model; received gpt-4o."` Exit code 2.
 23a. `OpenAITransportProvider.create(auth, modelId)` with missing `OPENAI_API_KEY` throws a clear error at construction time with the message `"error: OpenAITransportProvider requires OPENAI_API_KEY env var. Set it and retry."` — not at first stream.
-23. Worker inheritance: parent invokes `swarm-coder swarm run --framework native tasks.jsonl` → child workers see `SWARM_CODER_FRAMEWORK=native` → children instantiate NativeEngine (not SDK). Verified via subprocess integration test.
+23. Worker inheritance: parent invokes `swarm-harness swarm run --framework native tasks.jsonl` → child workers see `SWARM_HARNESS_FRAMEWORK=native` → children instantiate NativeEngine (not SDK). Verified via subprocess integration test.
 24. `npx tsc --noEmit` passes strict mode with no new `any` in public interfaces.
 25. `npm test` baseline 841 / 85 files (M3b complete) → target `841 + 40..60` tests for M4a; all passing.
 26. `scripts/smoke-m4a.sh --offline` covers: (O1) scripted provider text-only round-trip; (O2) scripted provider with 1 tool call; (O3) scripted provider with 3 parallel tool calls; (O4) compactor with tool-pair boundary walk-back; (O5) compactor post-probe; (O6) routing table completeness; (O7) alias resolution (including cycle detect); (O8) cross-engine resume rejection.
-27. `scripts/smoke-m4a.sh` (live) covers: (L1) `swarm-coder --model gpt-4o prompt "say hi"` succeeds; (L2) `swarm-coder --model gpt-4o prompt "read README.md and summarize"` produces a tool-use → tool_result → text turn; (L3) `swarm-coder --model o3-mini prompt "..."` succeeds without errors from unsupported params (reasoning model quirk test); (L4) parallel tool execution on `--model gpt-4o prompt "read a.txt, b.txt, c.txt in parallel"` — 3 `tool_use` starts within 50 ms.
+27. `scripts/smoke-m4a.sh` (live) covers: (L1) `swarm-harness --model gpt-4o prompt "say hi"` succeeds; (L2) `swarm-harness --model gpt-4o prompt "read README.md and summarize"` produces a tool-use → tool_result → text turn; (L3) `swarm-harness --model o3-mini prompt "..."` succeeds without errors from unsupported params (reasoning model quirk test); (L4) parallel tool execution on `--model gpt-4o prompt "read a.txt, b.txt, c.txt in parallel"` — 3 `tool_use` starts within 50 ms.
 28. `scripts/smoke.sh --all` invokes `smoke-m4a.sh` alongside all prior smoke scripts.
 29. **Existing SDK-path acceptance remains intact**: `scripts/smoke.sh` (M0–M3b) still passes unchanged — no regressions in the default ClaudeAgentSdkEngine path.
 
@@ -466,7 +466,7 @@ export function resolveProvider(modelId: string): ResolvedProvider {
 ```
 
 4.2. `src/providers/aliases.ts` (NEW, completes Phase 0.4 stubs):
-- `loadAliases(settingsPath?: string): Promise<AliasTable>` — read `~/.swarm-coder/settings.json`, extract `aliases` field; return `BUILTIN_ALIASES` merged with user aliases (user wins, emit `alias_shadowed` on collision).
+- `loadAliases(settingsPath?: string): Promise<AliasTable>` — read `~/.swarm-harness/settings.json`, extract `aliases` field; return `BUILTIN_ALIASES` merged with user aliases (user wins, emit `alias_shadowed` on collision).
 - `BUILTIN_ALIASES`: `{ sonnet: "claude-sonnet-4-6", haiku: "claude-haiku-4-5", opus: "claude-opus-4-7", "gpt-4o": "gpt-4o-2024-11-20", "gpt-5": "<pin at implementation time against OpenAI's actual model list; current value is illustrative>", o3: "o3-mini-2025-01-31" }` (verify all ids against live model lists at impl time; current values are illustrative placeholders only).
 - `resolveAlias`: one level of indirection; throw on cycle.
 
@@ -649,7 +649,7 @@ await fs.writeFile(tmpPath, JSON.stringify(makeSnapshot(this, messages, turn, co
 await fs.rename(tmpPath, snapshotPath);
 ```
 
-AC: engine writes `native-snapshot.json` after the first turn completes; a second `swarm-coder --resume <session-id> --framework native` invocation reads it and materializes the message buffer without replaying the full JSONL.
+AC: engine writes `native-snapshot.json` after the first turn completes; a second `swarm-harness --resume <session-id> --framework native` invocation reads it and materializes the message buffer without replaying the full JSONL.
 
 5.5. `NativeEngine.countTokens?` — optional local-estimate path matching M3b's approach (`bytes / 2.5`). Not wired to a server endpoint in M4a; may move to server via Vercel AI SDK's tokenizer in M4b.
 
@@ -686,10 +686,10 @@ AC: engine writes `native-snapshot.json` after the first turn completes; a secon
 - Add (unadvertised) `--dump-engine` to print `{ engineId, providerId, modelId }` as JSON and exit 0 — for smoke tests.
 
 6.3. `src/cli/worker-entry.ts` (MODIFY):
-- Read `SWARM_CODER_FRAMEWORK` env var; default to `auto`.
+- Read `SWARM_HARNESS_FRAMEWORK` env var; default to `auto`.
 - Thread through to engine construction identically to main.
 
-6.4. `src/swarm/spawner.ts` (or wherever subprocess env is built — find via grep on `SWARM_CODER_`): propagate `SWARM_CODER_FRAMEWORK` from orchestrator to workers.
+6.4. `src/swarm/spawner.ts` (or wherever subprocess env is built — find via grep on `SWARM_HARNESS_`): propagate `SWARM_HARNESS_FRAMEWORK` from orchestrator to workers.
 
 6.5. Tests:
 - `argv.test.ts` extension (≥ 4): `--framework native`, `--framework claude-agent-sdk`, `--framework auto`, cross-combo error paths.
@@ -709,10 +709,10 @@ AC: engine writes `native-snapshot.json` after the first turn completes; a secon
   - [O7] Alias resolution: built-in, user override, cycle detect.
   - [O8] Cross-engine resume rejection.
 - **Live** (requires `OPENAI_API_KEY`):
-  - [L1] `swarm-coder --framework native --model gpt-4o prompt "say hi"` succeeds.
-  - [L2] `swarm-coder --framework native --model gpt-4o prompt "read README.md and summarize"` runs a tool turn.
-  - [L3] `swarm-coder --framework native --model o3-mini prompt "..."` reasoning-model smoke (no param errors).
-  - [L4] `swarm-coder --framework native --model gpt-4o prompt "read a.txt, b.txt, c.txt in parallel"` 3-tool parallel timing.
+  - [L1] `swarm-harness --framework native --model gpt-4o prompt "say hi"` succeeds.
+  - [L2] `swarm-harness --framework native --model gpt-4o prompt "read README.md and summarize"` runs a tool turn.
+  - [L3] `swarm-harness --framework native --model o3-mini prompt "..."` reasoning-model smoke (no param errors).
+  - [L4] `swarm-harness --framework native --model gpt-4o prompt "read a.txt, b.txt, c.txt in parallel"` 3-tool parallel timing.
 
 7.2. `scripts/smoke.sh --all` — extend to invoke `smoke-m4a.sh` alongside existing smoke scripts.
 
@@ -768,7 +768,7 @@ src/
     argv.test.ts                         # MODIFIED — framework flag cases
     main.ts                              # MODIFIED — engine selection via resolveProvider
     main.test.ts                         # MODIFIED — engine selection cases
-    worker-entry.ts                      # MODIFIED — read SWARM_CODER_FRAMEWORK
+    worker-entry.ts                      # MODIFIED — read SWARM_HARNESS_FRAMEWORK
 scripts/
   smoke-m4a.sh                           # NEW
   smoke.sh                               # MODIFIED — --all invokes smoke-m4a.sh
@@ -843,7 +843,7 @@ If a phase slips, drop order: (a) `--dump-engine` internal debug flag in Phase 6
 - **OpenAI prompt caching.** If `@ai-sdk/openai` surfaces `prompt_cache_key`, wire `ProviderCapabilities.promptCache = true` and emit our existing `cache_hit` / `cache_miss` lane events (M3b Phase 3) from the NativeEngine path. Otherwise ship `false` and follow up in M4b.
 - **Reasoning delta surfacing.** If Vercel exposes reasoning as a distinct part (`reasoning-delta`), wire through. If not, reasoning is absorbed into text output for M4a.
 - **Tool `execute`-inside-Vercel-SDK vs external dispatch.** We opted for external dispatch (decision §C). If Vercel's streaming tool-call API requires `execute` callbacks inline, rework Phase 2.3's `toolSpecsToVercelTools` to accept a dispatcher and fire it from within; still route through `canUseTool` + ToolDispatcher for consistency. Decide during Phase 2 implementation.
-- **OpenAI model alias freshness.** Built-in aliases will go stale as OpenAI publishes new models. Document in README that users can override via `~/.swarm-coder/settings.json aliases`. Consider a `swarm-coder aliases list` CLI command — deferred to M4b.
+- **OpenAI model alias freshness.** Built-in aliases will go stale as OpenAI publishes new models. Document in README that users can override via `~/.swarm-harness/settings.json aliases`. Consider a `swarm-harness aliases list` CLI command — deferred to M4b.
 - **NativeEngine `countTokens` server path.** Vercel AI SDK may expose a tokenizer per provider. M4a ships local-estimate only (consistent with M3b). Wire server-native count in M4b if available.
 - **`NativeEngine` + Anthropic.** Decision §A defers this. If a driver emerges in M4b (e.g. parallel tool execution for Max subscription users hitting SDK serialization), add a `NativeEngine + @ai-sdk/anthropic + AnthropicApiKeyAuth` path. Claude Max users stay on ClaudeAgentSdkEngine regardless (Q16).
 - **Dependency size impact.** Measure transitive deps after Phase 1; if `@ai-sdk/openai` pulls > 5 MB of new graph, surface in rev-2 notes. Doesn't block M4a.

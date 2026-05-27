@@ -13,6 +13,10 @@
  *   Ctrl+K           → delete-to-line-end
  *   Ctrl+U           → delete-to-line-start
  *   Ctrl+W           → delete-word-backward
+ *   Alt+B            → word-backward  (meta = Alt/Option modifier in OpenTUI)
+ *   Alt+F            → word-forward
+ *   Alt+D            → delete-word-forward
+ *   Alt+Backspace    → delete-word-backward
  *   Arrow keys       → forwarded to onKey() for cursor + history nav
  *   Backspace/Delete → forwarded to textarea native handler
  *   printable        → forwarded to textarea native handler
@@ -23,11 +27,18 @@
  *   onSubmit  — called with the buffer string when the user presses Enter
  *   onKey     — called with a KeyEvent for arrow keys / history navigation
  *   disabled  — when true, all input is suppressed
+ *
+ * P4.Q5 — paste normalization:
+ *   OpenTUI's TextareaRenderable.handlePaste preserves all bytes verbatim and
+ *   strips only ANSI sequences. It does NOT normalize Windows-style line endings
+ *   (\r\n) or bare \r to \n. We wrap handlePaste on the ref so that pasted bytes
+ *   are decoded, normalized, and re-encoded before the original handler runs.
+ *   See normalizePasteBytes() below.
  */
 
 import type { Component } from "solid-js";
 import type { TextareaRenderable, KeyBinding } from "@opentui/core";
-import type { KeyEvent as CoreKeyEvent } from "@opentui/core/lib/KeyHandler";
+import type { KeyEvent as CoreKeyEvent, PasteEvent } from "@opentui/core/lib/KeyHandler";
 import type { KeyEvent } from "../repl/state.js";
 import { theme } from "./theme.js";
 
@@ -37,6 +48,25 @@ export interface InputProps {
   readonly onSubmit: (value: string) => void;
   readonly onKey: (key: KeyEvent) => void;
   readonly disabled: boolean;
+}
+
+/**
+ * Normalize paste bytes by converting Windows-style line endings (\r\n) and
+ * bare carriage returns (\r) to Unix newlines (\n).
+ *
+ * Decoder is explicit `{ fatal: false }` (the default): invalid UTF-8 bytes
+ * are replaced with U+FFFD rather than throwing. Pasting raw binary into a
+ * textarea is already abnormal; lossy substitution is preferable to a
+ * thrown exception that would surface as an unhandled paste error.
+ *
+ * Empty-input round-trip returns an empty Uint8Array.
+ *
+ * Exported for unit testing. Used by the handlePaste wrap in handleRef().
+ */
+export function normalizePasteBytes(bytes: Uint8Array): Uint8Array {
+  const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  const normalized = text.replace(/\r\n?/g, "\n");
+  return new TextEncoder().encode(normalized);
 }
 
 /**
@@ -94,6 +124,11 @@ const KEY_BINDINGS: KeyBinding[] = [
   { name: "k", ctrl: true, action: "delete-to-line-end" },
   { name: "u", ctrl: true, action: "delete-to-line-start" },
   { name: "w", ctrl: true, action: "delete-word-backward" },
+  // Word motions (Alt = meta modifier).
+  { name: "b", meta: true, action: "word-backward" },
+  { name: "f", meta: true, action: "word-forward" },
+  { name: "d", meta: true, action: "delete-word-forward" },
+  { name: "backspace", meta: true, action: "delete-word-backward" },
 ];
 
 export const Input: Component<InputProps> = (props) => {
@@ -103,6 +138,17 @@ export const Input: Component<InputProps> = (props) => {
     textareaRef = r;
     // Focus immediately on mount so key events are routed here.
     r.focus();
+    // Wrap handlePaste to normalize CRLF line endings before the default
+    // handler runs. OpenTUI preserves bytes verbatim (P4.Q5).
+    const originalHandlePaste = r.handlePaste.bind(r);
+    r.handlePaste = (event: PasteEvent) => {
+      const normalizedBytes = normalizePasteBytes(event.bytes);
+      const normalizedEvent = new (event.constructor as typeof PasteEvent)(
+        normalizedBytes,
+        event.metadata,
+      );
+      originalHandlePaste(normalizedEvent);
+    };
   }
 
   function handleContentChange() {

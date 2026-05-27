@@ -18,10 +18,10 @@ See [`07-implementation-plan.md`](./07-implementation-plan.md) for milestone-by-
   - `grep` — real ripgrep binary (not walkdir+regex)
   - `todo_write` — in-memory + session-persisted
 - Permission modes: `read-only`, `workspace-write`, `danger-full-access`. Two-layer evaluation (deny → mode-required → allow). Hook layer deferred to M2.
-- **Per-worktree session isolation** at `.swarm-coder/sessions/<fnv1a(cwd)>/` — non-negotiable. JSONL with `session_meta` header + append-on-push records + atomic-rename snapshots.
+- **Per-worktree session isolation** at `.swarm-harness/sessions/<fnv1a(cwd)>/` — non-negotiable. JSONL with `session_meta` header + append-on-push records + atomic-rename snapshots.
 - `--resume latest` and `--resume <session-id>`
 - `doctor` — auth / config / install / workspace checks with `--output-format json`
-- `init` — scaffolds `.swarm-coder/`, `.gitignore` entries, stack-detected `CLAUDE.md`
+- `init` — scaffolds `.swarm-harness/`, `.gitignore` entries, stack-detected `CLAUDE.md`
 - CLI: bare-positional → `prompt` shorthand, `--model`, `--permission-mode`, `--output-format text|json`, `--headless`
 - Headless mode emits JSONL events on stdout; ink bypassed when `!isTTY`
 - ink-based interactive REPL (minimal in M0; full affordances in M2)
@@ -30,9 +30,9 @@ See [`07-implementation-plan.md`](./07-implementation-plan.md) for milestone-by-
 
 - Tier 2 subset: `agent` (spawn sub-agent via SwarmHost), `task_create`, `task_update`, `task_get`, `task_list`
 - `SwarmHost` interface with `StandaloneHost` (in-process) and `WorkerHost` (JSONL-over-stdio to parent)
-- Subprocess spawn inherits `ANTHROPIC_API_KEY`; sets `SWARM_CODER_AGENT_ID`, `SWARM_CODER_PARENT_PID`, `SWARM_CODER_SESSION_ID`
+- Subprocess spawn inherits `ANTHROPIC_API_KEY`; sets `SWARM_HARNESS_AGENT_ID`, `SWARM_HARNESS_PARENT_PID`, `SWARM_HARNESS_SESSION_ID`
 - Lane event stream with event-name catalog + failure taxonomy + fingerprint dedup (ported from claw's `lane_events.rs`)
-- Orchestrator: `swarm-coder swarm run tasks.jsonl --concurrency N` → `results.jsonl`
+- Orchestrator: `swarm-harness swarm run tasks.jsonl --concurrency N` → `results.jsonl`
 
 ## Functional — v1 (M2 + M3)
 
@@ -60,7 +60,7 @@ See [`07-implementation-plan.md`](./07-implementation-plan.md) for milestone-by-
 - `ask_user_question` routed via SwarmHost lane events (not stdin)
 - Server-side `count_tokens` preflight with silent fallback
 - **`ClaudeAgentSDKProvider` (FrameworkProvider) for Claude Max subscription auth** — delegates loop + auth to Agent SDK; users opt in via `--framework claude-agent-sdk`; constrained swarm features in this mode
-- `swarm-coder login` command for OAuth flow; tokens persist to `~/.swarm-coder/auth.json`
+- `swarm-harness login` command for OAuth flow; tokens persist to `~/.swarm-harness/auth.json`
 
 ## Functional — later (M4+)
 
@@ -102,8 +102,8 @@ See [`07-implementation-plan.md`](./07-implementation-plan.md) for milestone-by-
 
 v0 is done when:
 
-1. `swarm-coder prompt "do X"` runs an atomic agent end to end with Tier 0 tools and exits cleanly
-2. `swarm-coder --headless --task-file=tasks.jsonl` runs one agent and emits a parseable event stream
+1. `swarm-harness prompt "do X"` runs an atomic agent end to end with Tier 0 tools and exits cleanly
+2. `swarm-harness --headless --task-file=tasks.jsonl` runs one agent and emits a parseable event stream
 3. The swarm orchestrator can spawn ≥ 3 atomic agents from a task list and collect their results
 4. `doctor` passes on a clean install with only `ANTHROPIC_API_KEY` set
 5. Sessions resume correctly via `--resume latest`

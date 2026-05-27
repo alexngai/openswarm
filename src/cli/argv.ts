@@ -1,5 +1,5 @@
 /**
- * argv.ts — hand-rolled CLI argument parser for swarm-coder.
+ * argv.ts — hand-rolled CLI argument parser for swarm-harness.
  *
  * Parses process.argv.slice(2). No external dependencies.
  *
@@ -20,6 +20,7 @@
  */
 
 import type { PermissionMode } from "../core/types.js";
+import type { TopologyKind } from "../swarm/team-spec.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -62,6 +63,18 @@ export interface CommonOpts {
    * and exit 0 before running any turn. For smoke tests only — not in --help.
    */
   readonly dumpEngine?: boolean;
+  /**
+   * Maximum total tokens (input + output + cache) for the entire run.
+   * On exceed, the engine is aborted and the process exits with code 3.
+   * Applies to single-agent prompt runs; swarm uses aggregate across workers.
+   */
+  readonly maxTokens?: number;
+  /**
+   * Maximum total cost in USD for the entire run, computed via model-pricing.
+   * On exceed, the engine is aborted and the process exits with code 3.
+   * Skipped for unknown models (only token limit applies).
+   */
+  readonly maxCostUsd?: number;
 }
 
 export type ParsedArgs =
@@ -71,6 +84,7 @@ export type ParsedArgs =
   | { kind: "help" }
   | { kind: "version" }
   | { kind: "worker" }
+  | { kind: "team-daemon-entry" }
   | {
       kind: "swarm-run";
       tasksFile: string;
@@ -80,17 +94,80 @@ export type ParsedArgs =
       deadLetter: string;
       allowDeadLetter: boolean;
       role?: string;
+      /** v0.5 stage 5B: enable opentasks daemon mirror. */
+      opentasks: boolean;
+      /** v0.5 stage 5B: explicit opentasks daemon socket path. */
+      opentasksSocket?: string;
+      /** v0.6 stage 6A.2: enable agent-inbox library-backed InboxBackend. */
+      agentInbox: boolean;
+      /** v0.7 stage 7A.4: enable git-cascade BranchPolicy adapter. */
+      gitCascade: boolean;
+      /** v0.7 stage 7H: auto-cleanup worktrees on exit (requires --git-cascade). */
+      cleanupWorktrees: boolean;
     }
   | { kind: "plugin"; pluginArgv: string[] }
+  | { kind: "worktree"; worktreeArgv: string[] }
   | { kind: "login"; provider: string }
   | { kind: "logout"; provider: string }
+  | {
+      kind: "team-start";
+      template: string;
+      concurrency: number;
+      output: string;
+      permissionMode: PermissionMode;
+      /** When set, the orchestrator wires a MapAdapter to this URL (v0.4 stage 4J). */
+      mapUrl?: string;
+      /** v0.5 stage 5E.3: when true, fork the team daemon and return immediately. */
+      detach: boolean;
+    }
+  | {
+      kind: "topology";
+      topologyKind: TopologyKind;
+      specPath: string;
+      concurrency: number;
+      output: string;
+      permissionMode: PermissionMode;
+      /** When set, the orchestrator wires a MapAdapter to this URL (v0.4 stage 4J). */
+      mapUrl?: string;
+      maxTokens?: number;
+      maxCostUsd?: number;
+    }
+  | { kind: "team-send"; name: string; prompt: string }
+  | { kind: "team-list" }
+  | { kind: "team-stop"; name: string }
+  | { kind: "team-kill"; name: string }
+  | { kind: "team-logs"; name: string; follow: boolean }
+  | { kind: "team-watch"; name: string }
   | { kind: "error"; message: string; showHelp: boolean };
 
 // ---------------------------------------------------------------------------
 // Known subcommands
 // ---------------------------------------------------------------------------
 
-const SUBCOMMANDS = new Set(["prompt", "doctor", "init", "help", "version", "swarm", "plugin", "login", "logout"]);
+const SUBCOMMANDS = new Set([
+  "prompt",
+  "doctor",
+  "init",
+  "help",
+  "version",
+  "swarm",
+  "plugin",
+  "login",
+  "logout",
+  "team",
+  "topology",
+  "worktree",
+]);
+
+// v0.4 stage 4K — committee/critic-loop are reserved but unimplemented.
+const SUPPORTED_TOPOLOGY_KINDS = new Set<string>([
+  "fanout",
+  "pipeline",
+  "coordinator",
+  "peer-team",
+]);
+
+const DEFERRED_TOPOLOGY_KINDS = new Set<string>(["committee", "critic-loop"]);
 
 const VALID_PERMISSION_MODES = new Set<string>([
   "read-only",
@@ -127,6 +204,8 @@ export function parseArgv(args: string[]): ParsedArgs {
   let enableWebSearch = false;
   let framework: FrameworkChoice = "auto";
   let dumpEngine = false;
+  let maxTokens: number | undefined;
+  let maxCostUsd: number | undefined;
 
   // Defaults for swarm-run (consumed when subcommand === "swarm").
   let swarmConcurrency = 3;
@@ -137,6 +216,38 @@ export function parseArgv(args: string[]): ParsedArgs {
 
   // --provider flag (used by login / logout subcommands).
   let provider: string | undefined;
+
+  // --map flag (v0.4 stage 4J — team start observability).
+  // Optional value: `--map ws://host:port` or `--map` alone (uses MAP_URL env
+  // var, falls back to ws://localhost:8080).
+  let mapUrl: string | undefined;
+
+  // v0.4 stage 4K — topology subcommand state.
+  let specPath: string | undefined;
+  // v0.4 stage 4K — `--ecosystem` shorthand. For v0.4 only `--map` is wired;
+  // opentasks/agent-inbox/git-cascade land in v0.5+. We track the flag
+  // separately from `mapUrl` so an explicit `--map` still wins, and so the
+  // dispatch layer can print the v0.4 limitation note exactly once.
+  let ecosystem = false;
+
+  // v0.5 stage 5E.3 — --detach flag for `team start`. When set, the parent
+  // forks team-daemon-entry and returns 0 once the daemon's socket binds.
+  let detach = false;
+
+  // v0.5 stage 5E.5 — --follow flag for `team logs`.
+  let follow = false;
+
+  // v0.5 stage 5B — opentasks daemon mirror flags for `swarm run`.
+  let opentasks = false;
+  let opentasksSocket: string | undefined;
+
+  // v0.6 stage 6A.2 — agent-inbox library backend flag for `swarm run`.
+  let agentInbox = false;
+
+  // v0.7 stage 7A.4 — git-cascade BranchPolicy adapter flag for `swarm run`.
+  let gitCascade = false;
+  // v0.7 stage 7H — auto-cleanup worktrees on exit.
+  let cleanupWorktrees = false;
 
   // First pass: scan for early-exit flags (--help, -h, --version, -V) and
   // collect flags that precede the subcommand / positional.
@@ -160,9 +271,15 @@ export function parseArgv(args: string[]): ParsedArgs {
     if (tok === "--worker") {
       return { kind: "worker" };
     }
+    if (tok === "--team-daemon") {
+      // v0.5 stage 5E.3: internal entry for the forked per-team daemon.
+      // Reads its spec + paths from SWARM_HARNESS_DAEMON_* env (set by the
+      // parent forker in `team start --detach`).
+      return { kind: "team-daemon-entry" };
+    }
 
     if (tok === "--agent-id" || tok.startsWith("--agent-id=")) {
-      // Accept and ignore — agentId is read from SWARM_CODER_AGENT_ID env var.
+      // Accept and ignore — agentId is read from SWARM_HARNESS_AGENT_ID env var.
       // The flag exists only for process-listing clarity.
       if (tok === "--agent-id") {
         i += 2; // skip the value token too
@@ -395,6 +512,109 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
+    // v0.4 stage 4J: --map [URL] enables the MAP adapter for `team start`.
+    // Value is optional — when omitted, falls back to MAP_URL env var, then
+    // ws://localhost:8080. A bare `--map` followed by a flag (or end-of-args)
+    // is treated as "no value supplied".
+    if (tok === "--map") {
+      const next = expanded[i + 1];
+      if (next === undefined || next.startsWith("-")) {
+        mapUrl = process.env.MAP_URL ?? "ws://localhost:8080";
+        i++;
+      } else {
+        mapUrl = next;
+        i += 2;
+      }
+      continue;
+    }
+
+    // v0.4 stage 4K: --ecosystem shorthand. Today only enables --map (when not
+    // already set). Forward-compatible for v0.5+ which will also enable
+    // opentasks/agent-inbox/git-cascade. Print a one-line note documenting
+    // the v0.4 limitation so operators don't quietly miss the partial wiring.
+    if (tok === "--ecosystem") {
+      ecosystem = true;
+      process.stderr.write(
+        "[swarm-harness] --ecosystem v0.4 enables MAP only; opentasks/agent-inbox/git-cascade land in v0.5+.\n",
+      );
+      i++;
+      continue;
+    }
+
+    // v0.5 stage 5E.3: --detach for `team start`. Boolean; no value.
+    if (tok === "--detach") {
+      detach = true;
+      i++;
+      continue;
+    }
+
+    // v0.5 stage 5E.5: --follow for `team logs`. Boolean; no value.
+    if (tok === "--follow" || tok === "-f") {
+      follow = true;
+      i++;
+      continue;
+    }
+
+    // v0.5 stage 5B: --opentasks for `swarm run`. Boolean.
+    if (tok === "--opentasks") {
+      opentasks = true;
+      i++;
+      continue;
+    }
+    if (tok === "--opentasks-socket") {
+      const next = expanded[i + 1];
+      if (next === undefined || next.startsWith("-")) {
+        return {
+          kind: "error",
+          message: "--opentasks-socket requires a path argument",
+          showHelp: true,
+        };
+      }
+      opentasksSocket = next;
+      // Setting an explicit socket implies --opentasks.
+      opentasks = true;
+      i += 2;
+      continue;
+    }
+
+    // v0.6 stage 6A.2: --agent-inbox enables the library-backed InboxBackend.
+    if (tok === "--agent-inbox") {
+      agentInbox = true;
+      i++;
+      continue;
+    }
+
+    // v0.7 stage 7A.4: --git-cascade enables the worktree-per-member adapter.
+    if (tok === "--git-cascade") {
+      gitCascade = true;
+      i++;
+      continue;
+    }
+
+    // v0.7 stage 7H: --cleanup-worktrees opts into worktree cleanup at exit.
+    if (tok === "--cleanup-worktrees") {
+      cleanupWorktrees = true;
+      i++;
+      continue;
+    }
+
+    // v0.4 stage 4K: --spec <path> for the `topology` subcommand. Required
+    // when topology is invoked; ignored otherwise (the topology dispatch is
+    // the only consumer).
+    if (tok === "--spec") {
+      const val = expanded[i + 1];
+      if (val === undefined || val.startsWith("-")) {
+        return {
+          kind: "error",
+          message: "--spec requires a value",
+          showHelp: true,
+        };
+      }
+      specPath = val;
+      i += 2;
+      continue;
+    }
+
     if (tok === "--role") {
       const val = expanded[i + 1];
       if (val === undefined || val.startsWith("-")) {
@@ -423,6 +643,64 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
+    if (tok === "--max-tokens") {
+      const val = expanded[i + 1];
+      if (val === undefined || val.startsWith("-")) {
+        return {
+          kind: "error",
+          message: "--max-tokens requires a value",
+          showHelp: true,
+        };
+      }
+      const n = Number.parseInt(val, 10);
+      if (Number.isNaN(n) || n < 1) {
+        return {
+          kind: "error",
+          message: `--max-tokens must be a positive integer, got "${val}"`,
+          showHelp: true,
+        };
+      }
+      maxTokens = n;
+      i += 2;
+      continue;
+    }
+
+    if (tok === "--max-cost-usd") {
+      const val = expanded[i + 1];
+      if (val === undefined || val.startsWith("-")) {
+        return {
+          kind: "error",
+          message: "--max-cost-usd requires a value",
+          showHelp: true,
+        };
+      }
+      const n = Number.parseFloat(val);
+      if (Number.isNaN(n) || n <= 0) {
+        return {
+          kind: "error",
+          message: `--max-cost-usd must be a positive number, got "${val}"`,
+          showHelp: true,
+        };
+      }
+      maxCostUsd = n;
+      i += 2;
+      continue;
+    }
+
+    // v0.7 stage 7D — pass-through subcommands (worktree, plugin) own their
+    // own flag parsing. Once we've identified one, capture all remaining
+    // tokens (including --flags) as positionals so the sub-CLI can interpret
+    // them. Without this, the global unknown-flag check below rejects things
+    // like `worktree clean --dry-run`.
+    if (
+      subcommand !== undefined &&
+      (subcommand === "worktree" || subcommand === "plugin")
+    ) {
+      positionals.push(tok);
+      i++;
+      continue;
+    }
+
     // Unknown flag.
     if (tok.startsWith("-")) {
       return {
@@ -442,18 +720,17 @@ export function parseArgv(args: string[]): ParsedArgs {
   }
 
   // ---------------------------------------------------------------------------
+  // --ecosystem post-processing. v0.4: only --map is wired. If the operator
+  // also passed an explicit --map URL we keep that; otherwise default the
+  // MAP url to MAP_URL env or ws://localhost:8080.
+  // ---------------------------------------------------------------------------
+  if (ecosystem && mapUrl === undefined) {
+    mapUrl = process.env.MAP_URL ?? "ws://localhost:8080";
+  }
+
+  // ---------------------------------------------------------------------------
   // Dispatch on resolved subcommand.
   // ---------------------------------------------------------------------------
-
-  // Validate: --framework codex-chatgpt does not accept --model.
-  if (framework === "codex-chatgpt" && model !== undefined) {
-    return {
-      kind: "error",
-      message:
-        "--framework codex-chatgpt does not accept --model (uses ChatGPT Plus/Pro's default).",
-      showHelp: false,
-    };
-  }
 
   const opts: CommonOpts = {
     model,
@@ -469,6 +746,8 @@ export function parseArgv(args: string[]): ParsedArgs {
     enableWebSearch,
     framework,
     dumpEngine,
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+    ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
   };
 
   switch (subcommand) {
@@ -492,7 +771,7 @@ export function parseArgv(args: string[]): ParsedArgs {
       if (text.length === 0) {
         return {
           kind: "error",
-          message: 'prompt requires text, e.g. swarm-coder prompt "say hi"',
+          message: 'prompt requires text, e.g. swarm-harness prompt "say hi"',
           showHelp: true,
         };
       }
@@ -543,12 +822,194 @@ export function parseArgv(args: string[]): ParsedArgs {
         deadLetter: swarmDeadLetter,
         allowDeadLetter: swarmAllowDeadLetter,
         ...(swarmRole !== undefined && { role: swarmRole }),
+        opentasks,
+        ...(opentasksSocket !== undefined && { opentasksSocket }),
+        agentInbox,
+        gitCascade,
+        cleanupWorktrees,
       };
     }
 
     case "plugin": {
       // Pass all remaining positionals (sub-subcommand + args) to pluginMain.
       return { kind: "plugin", pluginArgv: positionals };
+    }
+
+    case "worktree": {
+      // v0.7 stage 7D — `worktree list|clean` for git-cascade-managed worktrees.
+      return { kind: "worktree", worktreeArgv: positionals };
+    }
+
+    case "team": {
+      // team start <template> [--concurrency N] [--output <path>] [--permission-mode <mode>]
+      // v0.4 stage 4K adds stubs for `send/list/stop/kill` that surface a
+      // deferred-to-v0.5 message; long-running team daemons aren't shipped yet.
+      const subSub = positionals[0];
+      if (subSub === undefined) {
+        return {
+          kind: "error",
+          message:
+            "team requires a sub-subcommand, e.g. team start <template>",
+          showHelp: true,
+        };
+      }
+      if (subSub === "start") {
+        const template = positionals[1];
+        if (template === undefined) {
+          return {
+            kind: "error",
+            message: "team start requires a template name",
+            showHelp: true,
+          };
+        }
+        if (positionals.length > 2) {
+          return {
+            kind: "error",
+            message: `unexpected extra positional for team start: ${positionals[2]}`,
+            showHelp: true,
+          };
+        }
+        return {
+          kind: "team-start",
+          template,
+          concurrency: swarmConcurrency,
+          output: swarmOutput,
+          permissionMode,
+          ...(mapUrl !== undefined && { mapUrl }),
+          detach,
+        };
+      }
+      if (subSub === "send") {
+        const name = positionals[1];
+        if (name === undefined) {
+          return {
+            kind: "error",
+            message: "team send requires a team name",
+            showHelp: true,
+          };
+        }
+        // The remaining positionals form the prompt text.
+        const promptText = positionals.slice(2).join(" ").trim();
+        if (promptText.length === 0) {
+          return {
+            kind: "error",
+            message: "team send requires a prompt, e.g. team send <name> \"hi\"",
+            showHelp: true,
+          };
+        }
+        return { kind: "team-send", name, prompt: promptText };
+      }
+      if (subSub === "list") {
+        if (positionals.length > 1) {
+          return {
+            kind: "error",
+            message: `unexpected extra positional for team list: ${positionals[1]}`,
+            showHelp: true,
+          };
+        }
+        return { kind: "team-list" };
+      }
+      if (subSub === "stop") {
+        const name = positionals[1];
+        if (name === undefined) {
+          return {
+            kind: "error",
+            message: "team stop requires a team name",
+            showHelp: true,
+          };
+        }
+        return { kind: "team-stop", name };
+      }
+      if (subSub === "kill") {
+        const name = positionals[1];
+        if (name === undefined) {
+          return {
+            kind: "error",
+            message: "team kill requires a team name",
+            showHelp: true,
+          };
+        }
+        return { kind: "team-kill", name };
+      }
+      if (subSub === "logs") {
+        const name = positionals[1];
+        if (name === undefined) {
+          return {
+            kind: "error",
+            message: "team logs requires a team name",
+            showHelp: true,
+          };
+        }
+        return { kind: "team-logs", name, follow };
+      }
+      if (subSub === "watch") {
+        const name = positionals[1];
+        if (name === undefined) {
+          return {
+            kind: "error",
+            message: "team watch requires a team name",
+            showHelp: true,
+          };
+        }
+        return { kind: "team-watch", name };
+      }
+      return {
+        kind: "error",
+        message: `unknown team sub-subcommand: ${subSub}`,
+        showHelp: true,
+      };
+    }
+
+    case "topology": {
+      // topology <kind> --spec <path-to-spec.json>
+      const kindStr = positionals[0];
+      if (kindStr === undefined) {
+        return {
+          kind: "error",
+          message:
+            "topology requires a kind, e.g. topology fanout --spec ./spec.json",
+          showHelp: true,
+        };
+      }
+      if (DEFERRED_TOPOLOGY_KINDS.has(kindStr)) {
+        return {
+          kind: "error",
+          message: `topology "${kindStr}" is deferred to v0.5; v0.4 supports fanout, pipeline, coordinator, peer-team`,
+          showHelp: false,
+        };
+      }
+      if (!SUPPORTED_TOPOLOGY_KINDS.has(kindStr)) {
+        return {
+          kind: "error",
+          message: `unknown topology kind: ${kindStr}. Valid: fanout, pipeline, coordinator, peer-team`,
+          showHelp: true,
+        };
+      }
+      if (specPath === undefined) {
+        return {
+          kind: "error",
+          message: "topology requires --spec <path-to-spec.json>",
+          showHelp: true,
+        };
+      }
+      if (positionals.length > 1) {
+        return {
+          kind: "error",
+          message: `unexpected extra positional for topology: ${positionals[1]}`,
+          showHelp: true,
+        };
+      }
+      return {
+        kind: "topology",
+        topologyKind: kindStr as TopologyKind,
+        specPath,
+        concurrency: swarmConcurrency,
+        output: swarmOutput,
+        permissionMode,
+        ...(mapUrl !== undefined && { mapUrl }),
+        ...(maxTokens !== undefined && { maxTokens }),
+        ...(maxCostUsd !== undefined && { maxCostUsd }),
+      };
     }
 
     case "login": {

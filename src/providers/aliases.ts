@@ -3,7 +3,7 @@
  *
  * M4a Phase 0.4 + Phase 4.2 (full impl lands in Phase 4).
  *
- * Precedence: user aliases in `~/.swarm-coder/settings.json` (`aliases: {...}`)
+ * Precedence: user aliases in `~/.swarm-harness/settings.json` (`aliases: {...}`)
  * override built-in defaults. When a user alias shadows a built-in, consumers
  * emit a one-time `alias_shadowed` lane event.
  *
@@ -16,11 +16,11 @@ export interface AliasTable {
 }
 
 /**
- * Built-in aliases shipped with swarm-coder. Values are pinned to model ids
+ * Built-in aliases shipped with swarm-harness. Values are pinned to model ids
  * that the live API currently accepts. User aliases override these.
  *
  * NOTE: Phase 4.2 verifies these ids against live model lists at impl time.
- * Users can always override via `~/.swarm-coder/settings.json`.
+ * Users can always override via `~/.swarm-harness/settings.json`.
  */
 export const BUILTIN_ALIASES: AliasTable = {
   // Anthropic — canonical ids as of 2026-04-22.
@@ -50,7 +50,7 @@ import os from "node:os";
  * settings file is missing or has no `aliases` field.
  */
 export async function loadAliases(settingsPath?: string): Promise<AliasTable> {
-  const resolved = settingsPath ?? path.join(os.homedir(), ".swarm-coder", "settings.json");
+  const resolved = settingsPath ?? path.join(os.homedir(), ".swarm-harness", "settings.json");
   let userAliases: AliasTable = {};
   try {
     const raw = await fs.readFile(resolved, "utf8");

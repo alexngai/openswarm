@@ -78,12 +78,12 @@ export interface SwarmHost {
   /**
    * This agent's own depth in the recursion tree.
    * 0 for the orchestrator's StandaloneHost; set authoritatively by the
-   * orchestrator for WorkerHost instances (via `SWARM_CODER_DEPTH` env var).
+   * orchestrator for WorkerHost instances (via `SWARM_HARNESS_DEPTH` env var).
    */
   readonly depth: number;
   /**
    * This host's permission mode. Sub-agents cannot escalate beyond this.
-   * Set by the orchestrator; workers receive it via `SWARM_CODER_PERMISSION_MODE` env.
+   * Set by the orchestrator; workers receive it via `SWARM_HARNESS_PERMISSION_MODE` env.
    */
   readonly permissionMode: PermissionMode;
 
@@ -114,11 +114,11 @@ export interface SwarmHost {
   inbox(): AsyncIterable<InboxEvent>;
 
   /**
-   * Synchronously drain up to `max` queued messages for this host's own agent.
-   * Used by the Tier 2 `check_inbox` tool — returns [] when nothing is queued,
-   * never blocks. Introduced in M3a Phase 3.
+   * Drain up to `max` queued messages for this host's own agent.
+   * Used by the Tier 2 `check_inbox` tool — returns [] when nothing is queued.
+   * v0.6 stage 6A.1: async to allow library/daemon-backed inbox impls.
    */
-  drainInbox(max: number): AgentMessage[];
+  drainInbox(max: number): Promise<AgentMessage[]>;
 
   /**
    * Ask the operator a question and wait for a response.
@@ -128,6 +128,18 @@ export interface SwarmHost {
 
   /** Task registry API — see below. */
   readonly task: TaskAPI;
+
+  /**
+   * v0.7 stage 7B: route a commit through git-cascade's tracker so it gets
+   * Change-Id trailers + audit log. Only works when the host is operating
+   * inside a stream/fork worktree (i.e. branchPolicy was kind:"stream" or
+   * kind:"fork" at spawn). Returns null when not in a stream context;
+   * caller can fall back to plain `git commit` via bash.
+   */
+  commitChanges(
+    message: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<import("./adapters/git-cascade-branch-policy.js").CommitChangesResult | null>;
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +153,13 @@ export interface SpawnRequest {
   readonly model?: string;
   /** Opt into a FrameworkProvider mode (subscription auth). */
   readonly framework?: "claude-agent-sdk" | "codex-chatgpt";
+  /**
+   * v0.7 stage 7A.2: optional working directory for the spawned worker.
+   * When set, overrides the orchestrator's cwd. Used by the git-cascade
+   * BranchPolicy adapter to land each member inside its own worktree.
+   * When unset, the spawner falls back to `process.cwd()`.
+   */
+  readonly cwd?: string;
   /**
    * Role overlay applied to the system prompt (M3+: architect/executor/reviewer).
    * M3a: wired end-to-end in Phase 6.
@@ -169,12 +188,42 @@ export interface SpawnRequest {
   /**
    * When spawned via the `agent` tool, the tool_use_id from the parent's
    * transcript. Orchestrator propagates to child via
-   * `SWARM_CODER_PARENT_TOOL_USE_ID` env var. Child's event translator stamps
+   * `SWARM_HARNESS_PARENT_TOOL_USE_ID` env var. Child's event translator stamps
    * this id on every emitted NormalizedEvent / LaneEvent so the orchestrator's
    * merged stream can attribute sub-agent events back to the invoking tool_use
    * in the parent's transcript.
    */
   readonly parentToolUseId?: string;
+  /**
+   * Team scope this spawn joins. Defaults to "swarm:default" when omitted.
+   * Injected by `TeamSession.spawnMember` for team peers; legacy `swarm run`
+   * fanout leaves it undefined so all members default to the singleton scope.
+   */
+  readonly teamScope?: string;
+  /**
+   * v0.4 stage 4D: opt this worker into long-lived mode.
+   *
+   * When `true`, the worker stays alive after `task_result` and waits for
+   * either a `run_more` request (next prompt on the same subprocess) or a
+   * `drain` request (graceful exit). The returned `AgentHandle` exposes
+   * `runMore()` and `drain()` for the caller.
+   *
+   * Default: `false` — the worker exits immediately after `task_result`.
+   * Existing fanout topology callers do NOT opt in; future peer-team /
+   * coordinator topologies (stage 4E) will.
+   */
+  readonly longLived?: boolean;
+  /**
+   * v0.4 stage 4D: idle timeout for long-lived workers, in milliseconds.
+   *
+   * When the worker has been idle for this many ms with no `run_more` or
+   * `drain` request, it auto-drains itself (clean exit). Ignored when
+   * `longLived` is false.
+   *
+   * Default: 600_000 (10 min). Honoured worker-side via the
+   * `SWARM_HARNESS_IDLE_TIMEOUT_MS` env variable.
+   */
+  readonly idleTimeoutMs?: number;
 }
 
 export interface AgentHandle {
@@ -186,6 +235,23 @@ export interface AgentHandle {
   kill(): Promise<void>;
   /** Stream of lane events emitted by this agent (subset of the full bus). */
   events(): AsyncIterable<LaneEvent>;
+  /**
+   * v0.4 stage 4D — long-lived worker only.
+   *
+   * Send the worker its next prompt without respawning. Resolves with the
+   * AgentResult of the new turn. Throws when the worker was not spawned with
+   * `SpawnRequest.longLived === true` (default lifecycle exits after one task).
+   */
+  runMore(prompt: string, opts?: { taskId?: string }): Promise<AgentResult>;
+  /**
+   * v0.4 stage 4D — long-lived worker only.
+   *
+   * Request a graceful exit. If the worker is idle it exits immediately; if
+   * it's mid-task it finishes the current turn and exits. Resolves once the
+   * subprocess has acknowledged drain (`worker_drained` notification or close).
+   * Throws when the worker was not spawned with `longLived === true`.
+   */
+  drain(): Promise<void>;
 }
 
 export type AgentResult =
@@ -238,7 +304,21 @@ export interface TaskPacket {
 export type BranchPolicy =
   | { readonly kind: "none" }
   | { readonly kind: "reuse"; readonly branch: string }
-  | { readonly kind: "create"; readonly from: string; readonly name?: string };
+  | { readonly kind: "create"; readonly from: string; readonly name?: string }
+  // v0.7 stage 7A — git-cascade integration. `stream` opens a fresh
+  // git-cascade stream (optionally based on `baseStreamId`); `fork`
+  // creates a child stream from `parentStreamId`. Both trigger
+  // worktree-per-member at spawn when --git-cascade is enabled.
+  | {
+      readonly kind: "stream";
+      readonly baseStreamId?: string;
+      readonly name?: string;
+    }
+  | {
+      readonly kind: "fork";
+      readonly parentStreamId: string;
+      readonly name?: string;
+    };
 
 export type CommitPolicy =
   | { readonly kind: "none" }
@@ -292,12 +372,21 @@ export interface TaskRecord extends TaskPacket {
    * "orchestrator" when the root StandaloneHost stopped the task.
    */
   readonly stoppedBy?: string;
+  /**
+   * Team scope. Defaults to "swarm:default" when not in a team.
+   * Set by TaskRegistry.create() based on the caller's scope context.
+   */
+  readonly scope: string;
 }
 
 export interface TaskFilter {
   readonly status?: TaskStatus;
   readonly owner?: AgentId;
   readonly parentTaskId?: string;
+  /**
+   * Filter by team scope. Omit to match all scopes (today's behavior).
+   */
+  readonly scope?: string;
 }
 
 export interface TaskAPI {
@@ -327,6 +416,17 @@ export interface TaskAPI {
   appendOutput(id: string, chunk: string): void;
   /** Append-only output stream; iteration completes when task reaches a terminal status. */
   output(id: string): AsyncIterable<string>;
+  /**
+   * v0.5 stage 5C: atomically claim the next pending task in `scope` that has
+   * no owner. Sets `owner = claimerId` on the matched record and transitions
+   * status from "pending" → "running". Returns null when no claimable task
+   * is available.
+   *
+   * Used by the `task_pull_next` Tier 2 tool so long-lived workers can
+   * self-pull queued work — useful when an external producer (opentasks
+   * daemon, MAP federation, etc.) is feeding tasks into the team's scope.
+   */
+  pullNext(scope: string, claimerId: AgentId): Promise<TaskRecord | null>;
 }
 
 // ---------------------------------------------------------------------------

@@ -7,3 +7,5 @@ dist/
 # swarm-coder run artifacts (tests and smoke scripts emit these at repo root)
 results.jsonl
 dead-letter.jsonl
+.claude/
+.omc/

@@ -33,8 +33,8 @@ const target =
 
 const outfile =
   target === "bun-windows-x64"
-    ? "dist/swarm-coder.exe"
-    : "dist/swarm-coder";
+    ? "dist/swarm-harness.exe"
+    : "dist/swarm-harness";
 
 console.log(`Building ${outfile} for ${target}…`);
 
@@ -49,7 +49,7 @@ const result = await Bun.build({
   // the real version (runtime package.json lookup doesn't work in compiled
   // binaries — the node_modules path isn't in the embedded fs).
   define: {
-    __SWARM_CODER_AGENT_SDK_VERSION__: JSON.stringify(SDK_VERSION),
+    __SWARM_HARNESS_AGENT_SDK_VERSION__: JSON.stringify(SDK_VERSION),
   },
 });
 

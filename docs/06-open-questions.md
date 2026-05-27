@@ -24,7 +24,7 @@ Each question has a provisional **Lean**. Nothing is locked until we pick a v0 s
 
 ## 3. ~~Session format~~ — RESOLVED
 
-**Decision:** Match claw's JSONL format (`session_meta` header + interleaved `message` / `compaction` / `prompt_history` records, append-on-push, atomic-rename snapshots — research/03-runtime.md §3). **Add per-worktree isolation** at `.swarm-coder/sessions/<fnv1a(cwd)>/` — non-negotiable for multi-agent, prevents "phantom completions" where multiple workers stomp shared state. Swarm-coder extensions live under a `swarm:` namespace key.
+**Decision:** Match claw's JSONL format (`session_meta` header + interleaved `message` / `compaction` / `prompt_history` records, append-on-push, atomic-rename snapshots — research/03-runtime.md §3). **Add per-worktree isolation** at `.swarm-harness/sessions/<fnv1a(cwd)>/` — non-negotiable for multi-agent, prevents "phantom completions" where multiple workers stomp shared state. Swarm-coder extensions live under a `swarm:` namespace key.
 
 ## 4. ~~v0 swarm scope~~ — RESOLVED
 
@@ -32,11 +32,11 @@ Each question has a provisional **Lean**. Nothing is locked until we pick a v0 s
 
 ## 5. ~~Config file layout~~ — RESOLVED
 
-**Decision:** `~/.swarm-coder/` for our own state. Read-only discovery over Claude-Code-shaped paths (`~/.claude/plugins`, `~/.claude/skills`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `.claude`, `.codex`, `.claw`, `.omc`) via `PluginSource` / `SkillSource` impls (research/04-integrations.md §3). We never mutate Claude Code's installation.
+**Decision:** `~/.swarm-harness/` for our own state. Read-only discovery over Claude-Code-shaped paths (`~/.claude/plugins`, `~/.claude/skills`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `.claude`, `.codex`, `.claw`, `.omc`) via `PluginSource` / `SkillSource` impls (research/04-integrations.md §3). We never mutate Claude Code's installation.
 
 ## 6. ~~Name and framing~~ — RESOLVED
 
-**Decision:** Keep `swarm-coder`. Rename remains cheap pre-v0.1; no compelling pull toward an alternative surfaced during review.
+**Decision:** Keep `swarm-harness`. Rename remains cheap pre-v0.1; no compelling pull toward an alternative surfaced during review.
 
 ## 7. ~~Ink version and mount strategy~~ — RESOLVED
 
@@ -68,7 +68,7 @@ Dynamic (mid-session) tool registration deferred to M5 — needed only if users 
 
 ## 13. ~~WorkerRegistry-style tool family~~ — RESOLVED
 
-**Decision:** Skip entirely. Claw's 9-tool family exists to drive external Claude Code via tmux screen scraping — a workaround for not having an SDK. We have the SDK; our `agent` tool covers spawn, lane events cover observation. We lift the **atomic state-file pattern** (write `.swarm-coder/workers/<agentId>.json` on lifecycle transitions) per `05-swarm-model.md`; we do not port the tool surface.
+**Decision:** Skip entirely. Claw's 9-tool family exists to drive external Claude Code via tmux screen scraping — a workaround for not having an SDK. We have the SDK; our `agent` tool covers spawn, lane events cover observation. We lift the **atomic state-file pattern** (write `.swarm-harness/workers/<agentId>.json` on lifecycle transitions) per `05-swarm-model.md`; we do not port the tool surface.
 
 ## 14. ~~Compaction strategy~~ — RESOLVED
 
@@ -110,12 +110,12 @@ Dynamic (mid-session) tool registration deferred to M5 — needed only if users 
 | 2026-04-20 | Q2 Subprocess vs. in-process | Subprocess | Crash isolation + claw's thread model is what we're diverging from |
 | 2026-04-20 | Q3 Session format | claw JSONL + per-worktree isolation | Compat for `/resume` + prevents phantom completions |
 | 2026-04-20 | Q4 v0 swarm scope | Task fanout only | Proves the atomic-unit contract before adding coordination |
-| 2026-04-20 | Q5 Config layout | `~/.swarm-coder/` + read-only Claude Code sources | Keeps our state separate; user's existing plugins/skills light up free |
+| 2026-04-20 | Q5 Config layout | `~/.swarm-harness/` + read-only Claude Code sources | Keeps our state separate; user's existing plugins/skills light up free |
 | 2026-04-20 | Q8 Headless permission prompts | `permission_prompt` lane event, no blocking | Unblocks orchestrator; matches async swarm model |
 | 2026-04-20 | Q16 Claude Max auth path | Agent SDK FrameworkProvider (not direct OAuth) | Avoids impersonation + Feb 2026 Anthropic policy risk |
 | 2026-04-20 | Q17 ChatGPT Plus/Pro auth | Custom Vercel provider + Codex App Server OAuth, M4 | Partially documented; requires distinct endpoint |
 | 2026-04-20 | Q18 GitHub Copilot | Skip entirely | ToS violation risk |
-| 2026-04-20 | Q6 Name | Keep `swarm-coder` | Cheap to rename later; no alternative surfaced |
+| 2026-04-20 | Q6 Name | Keep `swarm-harness` | Cheap to rename later; no alternative surfaced |
 | 2026-04-20 | Q7 Ink strategy | Ink v5, TTY-gated at entry, no mid-run swap | Simplest correct behavior |
 | 2026-04-20 | Q9 multi_edit in Tier 0 | Yes | Single-turn beats N sequential edit calls |
 | 2026-04-20 | Q10 Markdown renderer | `ink-markdown` first, `marked` fallback; don't port claw pipeline | Ink-native libs exist; claw's 200-LOC pipeline not worth replicating |
@@ -127,19 +127,19 @@ Dynamic (mid-session) tool registration deferred to M5 — needed only if users 
 
 All open questions resolved as of 2026-04-20. New questions will be added at the bottom as they arise during M0+.
 
-## Q20. Codex ChatGPT endpoint SSE shape — DEFERRED pending operator capture
+## Q20. Codex ChatGPT endpoint SSE shape — RESOLVED 2026-04-30 (pivot to App Server)
 
-**Question:** What is the exact SSE event vocabulary emitted by `https://chatgpt.com/backend-api/codex/responses`? What headers does it require beyond the OAuth bearer token?
+**Original question:** What is the exact SSE event vocabulary emitted by `https://chatgpt.com/backend-api/codex/responses`? What headers does it require beyond the OAuth bearer token?
 
-**Status:** Deferred. This question blocks Phase 5 of M4b (`CodexChatGPTProvider` custom stream translator). Until a real SSE trace is captured via an operator spike, the event-name vocabulary cannot be locked down, and no speculative implementation is permitted.
+**Resolution:** Question is **moot** under the v0.3 redesign. Web research surfaced that the official OpenAI integration surface is the **Codex App Server (JSON-RPC over stdio)**, not the private browser-to-backend SSE channel. Phase 6 pivoted: spawn the locally-installed `codex` binary as a subprocess, speak JSON-RPC over stdio, delegate auth to `codex login`. No SSE capture needed; no reverse-engineered endpoint to chase.
 
-**What Phase 5 requires before starting:**
-1. `test/fixtures/codex/responses-sse.txt` — real SSE trace of at least one complete turn (text response + one tool call if feasible).
-2. `test/fixtures/codex/required-headers.json` — whitelist of headers the endpoint requires beyond `Authorization: Bearer <token>`.
+**Replacement design:** [docs/24-phase-6-codex-app-server-plan.md](24-phase-6-codex-app-server-plan.md). Categorization changes from `TransportProvider` (custom Vercel AI SDK) to `FrameworkProvider` (delegating the agent loop to Codex). Mirrors the Anthropic Agent SDK pattern for Claude Max subscription auth.
 
-**Current state:** `swarm-coder login --provider codex-chatgpt` works end-to-end (OAuth PKCE flow, token persistence, refresh). End-to-end model turns are blocked on this spike. See `docs/14-m4b-plan.md` §5.0 for spike procedure.
+**Decision log entry:**
 
-**Resolution path:** Operator captures a live session trace, commits the two fixture files, then Phase 5.1–5.4 can proceed to implement `CodexStreamState`, wire it into `NativeEngine`, and unlock `--framework codex-chatgpt` for actual turns.
+| Date | Question | Decision | Rationale |
+|---|---|---|---|
+| 2026-04-30 | Q20 Codex SSE shape | RESOLVED — pivot to App Server JSON-RPC; SSE spike no longer needed | Official integration path is the documented App Server protocol, not the private browser channel; lower risk + better architecture fit |
 
 ## Q19. NativeEngine concurrency — RESOLVED
 

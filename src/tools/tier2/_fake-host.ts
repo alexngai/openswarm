@@ -72,6 +72,7 @@ export function makeFakeHost(opts: FakeHostOpts = {}): {
         status: "pending",
         createdAt: now,
         updatedAt: now,
+        scope: "swarm:default",
       };
       records.set(id, record);
       return record;
@@ -125,6 +126,23 @@ export function makeFakeHost(opts: FakeHostOpts = {}): {
       const record = records.get(id);
       if (record?.output) yield record.output;
     },
+    async pullNext(scope, claimerId) {
+      // v0.5 stage 5C: minimal in-memory claim semantics for tests.
+      for (const r of records.values()) {
+        if (r.scope !== scope) continue;
+        if (r.status !== "pending") continue;
+        if (r.owner !== undefined) continue;
+        const claimed: TaskRecord = {
+          ...r,
+          owner: claimerId,
+          status: "running",
+          updatedAt: Date.now(),
+        };
+        records.set(r.id, claimed);
+        return claimed;
+      }
+      return null;
+    },
   };
 
   const waitResult: AgentResult =
@@ -150,6 +168,12 @@ export function makeFakeHost(opts: FakeHostOpts = {}): {
       async *events(): AsyncIterable<LaneEvent> {
         return;
       },
+      async runMore() {
+        throw new Error("runMore not supported in fake host");
+      },
+      async drain() {
+        return;
+      },
     };
     return handle;
   });
@@ -172,8 +196,11 @@ export function makeFakeHost(opts: FakeHostOpts = {}): {
     async *inbox(): AsyncIterable<InboxEvent> {
       return;
     },
-    drainInbox(_max: number): AgentMessage[] {
+    async drainInbox(_max: number): Promise<AgentMessage[]> {
       return [];
+    },
+    async commitChanges(_message: string) {
+      return null;
     },
     askUser: vi.fn(
       async (

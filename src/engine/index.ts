@@ -189,7 +189,7 @@ export interface RunConfig {
   };
 
   /**
-   * Hook configuration loaded from `.swarm-coder/hooks.json` (or Claude Code's
+   * Hook configuration loaded from `.swarm-harness/hooks.json` (or Claude Code's
    * `settings.json.hooks` field). The engine translates each HookConfig into
    * a JS async callback via `new HookRuntime(hooks).buildSdkHooks()` and
    * passes the result to `query({ options: { hooks } })`.

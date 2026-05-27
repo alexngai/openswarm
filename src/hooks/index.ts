@@ -15,7 +15,7 @@ export type HookEvent =
   | "UserPromptSubmit";
 
 /**
- * Hook config as declared by the user in .swarm-coder/hooks.json
+ * Hook config as declared by the user in .swarm-harness/hooks.json
  * (claude-code compatible format).
  */
 export interface HookConfig {

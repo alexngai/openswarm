@@ -8,6 +8,28 @@ vi.mock("../auth/status.js", () => ({
   detectAuth: vi.fn(),
 }));
 
+// Mock execFile so codex-cli check can be exercised under controlled
+// conditions. Default rejects with ENOENT so existing tests (which don't
+// care about codex-cli) get a `warn` status that doesn't break overall
+// checks. Using vi.hoisted because vi.mock factories hoist above const
+// declarations.
+const { execFileMock } = vi.hoisted(() => ({
+  execFileMock: vi.fn(
+    (
+      _cmd: string,
+      _args: string[],
+      _opts: object,
+      cb: (err: Error | null, result: { stdout: string; stderr: string }) => void,
+    ) => {
+      cb(Object.assign(new Error("ENOENT"), { code: "ENOENT" }), { stdout: "", stderr: "" });
+    },
+  ),
+}));
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return { ...actual, execFile: execFileMock };
+});
+
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return { ...actual, access: vi.fn(), writeFile: vi.fn(), unlink: vi.fn() };
@@ -42,7 +64,7 @@ describe("runDoctor", () => {
     const fs = await getFsMock();
     // config dir: not found; binary access: success
     (fs.access as ReturnType<typeof vi.fn>).mockImplementation((p: unknown) => {
-      if (String(p).includes(".swarm-coder")) return Promise.reject(new Error("ENOENT"));
+      if (String(p).includes(".swarm-harness")) return Promise.reject(new Error("ENOENT"));
       return Promise.resolve(undefined);
     });
     // workspace probe: success
@@ -114,7 +136,7 @@ describe("runDoctor", () => {
     expect(parsed).toHaveProperty("checks");
     expect(parsed).toHaveProperty("overall");
     expect(Array.isArray(parsed.checks)).toBe(true);
-    expect(parsed.checks).toHaveLength(4);
+    expect(parsed.checks).toHaveLength(5);
     expect(["pass", "fail"]).toContain(parsed.overall);
   });
 
@@ -142,14 +164,14 @@ describe("runDoctor", () => {
     expect(code).toBe(1);
   });
 
-  it("config check is warn (not fail) when .swarm-coder/ is absent", async () => {
+  it("config check is warn (not fail) when .swarm-harness/ is absent", async () => {
     const detectAuth = await getDetectAuth();
     detectAuth.mockResolvedValue({ state: "env-api-key", source: "ANTHROPIC_API_KEY" });
 
     const fs = await getFsMock();
     // config dir: not found; binary access: success
     (fs.access as ReturnType<typeof vi.fn>).mockImplementation((p: unknown) => {
-      if (String(p).includes(".swarm-coder")) return Promise.reject(new Error("ENOENT"));
+      if (String(p).includes(".swarm-harness")) return Promise.reject(new Error("ENOENT"));
       return Promise.resolve(undefined);
     });
     (fs.writeFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
@@ -211,7 +233,7 @@ describe("runDoctor", () => {
     const fs = await getFsMock();
     // config dir: not found; binary access: success
     (fs.access as ReturnType<typeof vi.fn>).mockImplementation((p: unknown) => {
-      if (String(p).includes(".swarm-coder")) return Promise.reject(new Error("ENOENT"));
+      if (String(p).includes(".swarm-harness")) return Promise.reject(new Error("ENOENT"));
       return Promise.resolve(undefined);
     });
     (fs.writeFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
@@ -241,9 +263,9 @@ describe("runDoctor", () => {
 
     const fs = await getFsMock();
     // Distinguish config-dir access from binary access by argument.
-    // Config dir contains ".swarm-coder"; binary path contains "claude".
+    // Config dir contains ".swarm-harness"; binary path contains "claude".
     (fs.access as ReturnType<typeof vi.fn>).mockImplementation((p: unknown) => {
-      if (String(p).includes(".swarm-coder")) return Promise.reject(new Error("ENOENT"));
+      if (String(p).includes(".swarm-harness")) return Promise.reject(new Error("ENOENT"));
       // binary access — success
       return Promise.resolve(undefined);
     });
@@ -332,6 +354,94 @@ describe("runDoctor", () => {
       // Restore platform/arch.
       if (origPlatform) Object.defineProperty(process, "platform", origPlatform);
       if (origArch) Object.defineProperty(process, "arch", origArch);
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // codex-cli check (Stage 3C)
+  // ---------------------------------------------------------------------------
+
+  it("codex-cli check: warn when codex binary is absent", async () => {
+    execFileMock.mockImplementation(
+      (
+        _cmd: string,
+        _args: string[],
+        _opts: object,
+        cb: (err: Error | null, result: { stdout: string; stderr: string }) => void,
+      ) => {
+        cb(Object.assign(new Error("ENOENT"), { code: "ENOENT" }), { stdout: "", stderr: "" });
+      },
+    );
+    try {
+      const detectAuth = await getDetectAuth();
+      detectAuth.mockResolvedValue({ state: "env-api-key", source: "ANTHROPIC_API_KEY" });
+      const fs = await getFsMock();
+      (fs.access as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("ENOENT"));
+      (fs.writeFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+      (fs.unlink as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+      const captured: string[] = [];
+      vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+        captured.push(String(chunk));
+        return true;
+      });
+
+      const { runDoctor } = await import("./doctor.js");
+      await runDoctor("json");
+      const parsed = JSON.parse(captured.join(""));
+      const codexCheck = parsed.checks.find(
+        (c: { name: string }) => c.name === "codex-cli",
+      );
+      expect(codexCheck).toBeDefined();
+      expect(codexCheck.status).toBe("warn");
+      expect(codexCheck.message).toContain("npm install -g @openai/codex");
+    } finally {
+      execFileMock.mockReset();
+    }
+  });
+
+  it("codex-cli check: pass with version when codex binary is present", async () => {
+    execFileMock.mockImplementation(
+      (
+        cmd: string,
+        _args: string[],
+        _opts: object,
+        cb: (err: Error | null, result: { stdout: string; stderr: string }) => void,
+      ) => {
+        if (cmd === "codex") {
+          cb(null, { stdout: "codex-cli 0.98.0\n", stderr: "" });
+        } else {
+          // which/where codex
+          cb(null, { stdout: "/usr/local/bin/codex\n", stderr: "" });
+        }
+      },
+    );
+    try {
+      const detectAuth = await getDetectAuth();
+      detectAuth.mockResolvedValue({ state: "env-api-key", source: "ANTHROPIC_API_KEY" });
+      const fs = await getFsMock();
+      (fs.access as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("ENOENT"));
+      (fs.writeFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+      (fs.unlink as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+      const captured: string[] = [];
+      vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+        captured.push(String(chunk));
+        return true;
+      });
+
+      const { runDoctor } = await import("./doctor.js");
+      await runDoctor("json");
+      const parsed = JSON.parse(captured.join(""));
+      const codexCheck = parsed.checks.find(
+        (c: { name: string }) => c.name === "codex-cli",
+      );
+      expect(codexCheck).toBeDefined();
+      expect(codexCheck.status).toBe("pass");
+      expect(codexCheck.message).toContain("codex-cli 0.98.0");
+      expect(codexCheck.message).toContain("/usr/local/bin/codex");
+    } finally {
+      execFileMock.mockReset();
     }
   });
 });

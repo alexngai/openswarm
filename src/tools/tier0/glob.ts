@@ -9,7 +9,6 @@
 import * as path from "node:path";
 import fg from "fast-glob";
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 
@@ -28,7 +27,7 @@ const spec: ToolSpec = {
     "Respects .gitignore. Excludes node_modules, .git, and dist by default. " +
     "Returns newline-separated absolute paths, capped at 1000 entries.",
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  inputSchema: zodToJsonSchema(inputSchema as any) as JsonSchema,
+  inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
   requiredPermission: "read",
   tier: 0,
 };

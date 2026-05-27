@@ -11,7 +11,18 @@ import { parseArgv } from "./argv.js";
 import { runDoctor } from "./doctor.js";
 import { runInit } from "./init.js";
 import { runWorkerEntry } from "./worker-entry.js";
+import { runTeamDaemonEntry } from "./team-daemon-entry.js";
+import { runTeamLogs } from "./team-logs.js";
+import { runTeamWatch } from "./team-watch.js";
 import { runSwarm } from "./swarm.js";
+import {
+  runTeamStart,
+  runTopology,
+  runTeamSend,
+  runTeamList,
+  runTeamStop,
+  runTeamKill,
+} from "./team.js";
 import { pluginMain } from "./plugin.js";
 import { logoutMain } from "./logout.js";
 import { loginMain } from "./login.js";
@@ -26,6 +37,7 @@ import { readHeadlessApproval } from "../permissions/headless-prompt.js";
 import { ClaudeAgentSdkEngine } from "../engine/claude-agent-sdk.js";
 import { NativeEngine } from "../engine/native.js";
 import { ScriptedTestEngine } from "../engine/test-engine.js";
+import { CodexFrameworkEngine } from "../engine/codex-framework.js";
 import { SessionStore } from "../session/store.js";
 import { runHeadless } from "../ui/headless.js";
 import { PluginRegistry } from "../plugins/registry.js";
@@ -42,6 +54,8 @@ import { HookRuntime } from "../hooks/runtime.js";
 import { loadAliases, resolveAlias } from "../providers/aliases.js";
 import { resolveProvider } from "../providers/routing.js";
 import { OpenAIEnvAuth } from "../auth/openai-env.js";
+import { bashValidationGate } from "../permissions/bash-gate.js";
+import { checkBudget } from "../core/budget.js";
 // Note: the ink REPL (`src/ui/repl/`) is lazy-loaded inside runPrompt only
 // when the TTY path is taken. ink-markdown is CJS and requires() ink (which
 // has top-level await) — pulling it in eagerly crashes non-TTY paths like
@@ -57,16 +71,16 @@ import { VERSION } from "../index.js";
 // ---------------------------------------------------------------------------
 
 const HELP_TEXT = `
-swarm-coder v${VERSION}
+swarm-harness v${VERSION}
 
 Usage:
-  swarm-coder [flags] <prompt-text>
-  swarm-coder prompt [flags] <prompt-text>
-  swarm-coder doctor [--output-format text|json]
-  swarm-coder init [<dir>]
-  swarm-coder swarm run <tasks-file> [--concurrency N] [--output <path>]
-  swarm-coder help
-  swarm-coder version
+  swarm-harness [flags] <prompt-text>
+  swarm-harness prompt [flags] <prompt-text>
+  swarm-harness doctor [--output-format text|json]
+  swarm-harness init [<dir>]
+  swarm-harness swarm run <tasks-file> [--concurrency N] [--output <path>]
+  swarm-harness help
+  swarm-harness version
 
 Flags:
   --model <id>                   Model id or alias (e.g. sonnet, claude-sonnet-4-6)
@@ -90,13 +104,13 @@ swarm run flags:
   --allow-dead-letter            Do not exit non-zero when this run appends to dead-letter
 
 Examples:
-  swarm-coder "explain this codebase"
-  swarm-coder prompt --model sonnet "refactor src/foo.ts"
-  swarm-coder --resume latest "continue where we left off"
-  swarm-coder --permission-mode read-only "what does this code do?"
-  swarm-coder doctor
-  swarm-coder init
-  swarm-coder swarm run tasks.jsonl --concurrency 5 --output out.jsonl
+  swarm-harness "explain this codebase"
+  swarm-harness prompt --model sonnet "refactor src/foo.ts"
+  swarm-harness --resume latest "continue where we left off"
+  swarm-harness --permission-mode read-only "what does this code do?"
+  swarm-harness doctor
+  swarm-harness init
+  swarm-harness swarm run tasks.jsonl --concurrency 5 --output out.jsonl
 `.trimStart();
 
 export function printHelp(): void {
@@ -152,9 +166,9 @@ async function buildAuthForProvider(modelId: string): Promise<AuthSource> {
 }
 
 async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
-  // 1. Validate auth. In scripted-test mode (SWARM_CODER_TEST_SCRIPT set) we
+  // 1. Validate auth. In scripted-test mode (SWARM_HARNESS_TEST_SCRIPT set) we
   // skip the auth check — the scripted engine never calls the API.
-  const scriptedMode = !!process.env.SWARM_CODER_TEST_SCRIPT;
+  const scriptedMode = !!process.env.SWARM_HARNESS_TEST_SCRIPT;
   if (!scriptedMode) {
     const authStatus = await detectAuth();
     if (authStatus.state === "none") {
@@ -174,13 +188,13 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
       hooksConfig = await loadHooksConfig({ cwd: process.cwd() });
     } catch (err) {
       process.stderr.write(
-        `[swarm-coder] hooks config error: ${err instanceof Error ? err.message : String(err)}\n`,
+        `[swarm-harness] hooks config error: ${err instanceof Error ? err.message : String(err)}\n`,
       );
     }
     const n = countMatchers(hooksConfig.config);
     if (n > 0 && hooksConfig.resolvedPath !== undefined) {
       process.stderr.write(
-        `[swarm-coder] hooks loaded from ${hooksConfig.resolvedPath} (${n} matchers across ${countEvents(hooksConfig.config)} events)\n`,
+        `[swarm-harness] hooks loaded from ${hooksConfig.resolvedPath} (${n} matchers across ${countEvents(hooksConfig.config)} events)\n`,
       );
     }
   }
@@ -197,23 +211,23 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
 
   // 2a. Discover and register plugin tools (opt-in via --plugins, default enabled).
   // Two sources per doc 17 Q1:
-  //   - "swarm-coder" at `~/.swarm-coder/plugins/` — owned namespace (install/update/uninstall).
+  //   - "swarm-harness" at `~/.swarm-harness/plugins/` — owned namespace (install/update/uninstall).
   //   - "claude-code" at `~/.claude/plugins/`    — read-only discovery for plugins
   //                                                installed via claw/Claude Code.
-  // The swarm-coder source is registered first so our own installs win on
+  // The swarm-harness source is registered first so our own installs win on
   // manifest.id collisions (PluginRegistry does first-wins dedup).
   const pluginTools: import("../tools/types.js").ToolImpl[] = [];
-  // SWARM_CODER_PLUGINS_DIR is the testing-only override respected by
+  // SWARM_HARNESS_PLUGINS_DIR is the testing-only override respected by
   // ClaudeCodeSource (see src/plugins/claude-code-source.ts). When set, the
   // state store must live alongside the fixture plugins — otherwise the
-  // enabled-set filter looks at the real ~/.swarm-coder state and (legitimately)
+  // enabled-set filter looks at the real ~/.swarm-harness state and (legitimately)
   // reports every fixture plugin as disabled. Production callers leave the
-  // env unset and get the default ~/.swarm-coder/plugins/ location.
-  const envPluginsDir = process.env.SWARM_CODER_PLUGINS_DIR;
+  // env unset and get the default ~/.swarm-harness/plugins/ location.
+  const envPluginsDir = process.env.SWARM_HARNESS_PLUGINS_DIR;
   const swarmPluginsDir =
     envPluginsDir && envPluginsDir.length > 0
       ? envPluginsDir
-      : path.join(os.homedir(), ".swarm-coder", "plugins");
+      : path.join(os.homedir(), ".swarm-harness", "plugins");
   // One shared store across plugin discovery (enabled-set filtering) and the
   // `/plugin` slash command. Backed by settings.json + installed.json under
   // swarmPluginsDir (doc 17 Q1).
@@ -221,10 +235,10 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   if (opts.plugins) {
     const pluginRegistry = new PluginRegistry(pluginStateStore);
     pluginRegistry.registerSource(
-      new ClaudeCodeSource({ id: "swarm-coder", pluginsDir: swarmPluginsDir }),
+      new ClaudeCodeSource({ id: "swarm-harness", pluginsDir: swarmPluginsDir }),
     );
     pluginRegistry.registerSource(new ClaudeCodeSource());
-    process.stderr.write("[swarm-coder] discovering plugins...\n");
+    process.stderr.write("[swarm-harness] discovering plugins...\n");
     try {
       const discovered = await pluginRegistry.buildPluginTools();
       for (const tool of discovered) {
@@ -238,7 +252,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
       }
     } catch (err) {
       process.stderr.write(
-        `[swarm-coder] plugin discovery error: ${err instanceof Error ? err.message : String(err)}\n`,
+        `[swarm-harness] plugin discovery error: ${err instanceof Error ? err.message : String(err)}\n`,
       );
     }
   }
@@ -270,13 +284,13 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
       loaded = await loadMcpConfig();
     } catch (err) {
       process.stderr.write(
-        `[swarm-coder] mcp config load error: ${err instanceof Error ? err.message : String(err)}\n`,
+        `[swarm-harness] mcp config load error: ${err instanceof Error ? err.message : String(err)}\n`,
       );
       loaded = { configs: [] };
     }
     if (loaded.resolvedPath !== undefined) {
       process.stderr.write(
-        `[swarm-coder] mcp config: ${loaded.resolvedPath}\n`,
+        `[swarm-harness] mcp config: ${loaded.resolvedPath}\n`,
       );
     }
     if (loaded.configs.length > 0) {
@@ -292,7 +306,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
         const cfg = loaded.configs[i]!;
         if (r.status === "rejected") {
           process.stderr.write(
-            `[swarm-coder] mcp server '${cfg.name}' failed to connect: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}\n`,
+            `[swarm-harness] mcp server '${cfg.name}' failed to connect: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}\n`,
           );
           continue;
         }
@@ -311,7 +325,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
           }
         } catch (err) {
           process.stderr.write(
-            `[swarm-coder] mcp server '${cfg.name}' listTools failed: ${err instanceof Error ? err.message : String(err)}\n`,
+            `[swarm-harness] mcp server '${cfg.name}' listTools failed: ${err instanceof Error ? err.message : String(err)}\n`,
           );
         }
       }
@@ -383,17 +397,11 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   let engine: AgentEngine;
   let providerId: string | undefined;
 
-  // codex-chatgpt framework: auth path works, but end-to-end provider is
-  // blocked pending Phase 5 (operator SSE trace capture). Error cleanly.
   if (opts.framework === "codex-chatgpt") {
-    process.stderr.write(
-      "error: --framework codex-chatgpt is not yet wired — Phase 5 Codex provider is blocked on an operator SSE trace capture.\n" +
-        "Login DOES work: `swarm-coder login --provider codex-chatgpt`. End-to-end turns require Phase 5 to ship.\n",
-    );
-    process.exit(2);
-  }
-
-  if (scriptedMode) {
+    engine = new CodexFrameworkEngine({
+      cwd: process.cwd(),
+    });
+  } else if (scriptedMode) {
     engine = new ScriptedTestEngine();
   } else {
     const resolved = resolveProvider(resolvedModelId);
@@ -446,15 +454,25 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
 
   // 7. Build permission gate.
   //
-  // Phase 2 flow (doc 17 "Phase 2 — design lock"):
-  //   1. Unknown tool → hard deny (never prompt).
-  //   2. Mode allows → fast-path allow (matches claw `permissions.rs:234-264`).
-  //   3. Mode denies → dispatch a prompt via PermissionBridge.
+  // Phase 2 flow (doc 17 "Phase 2 — design lock") + Phase 5 stage A bash gate.
+  // Order (revised after v0.1 smoke pass surfaced that bash-validation never
+  // fired when bash was mode-denied first):
+  //   1. Unknown tool → hard deny.
+  //   2. **Bash-validation gate fires first.** Block → return deny immediately.
+  //      Warn → prompt; on deny → return deny; on approve → fall through to
+  //      mode check (which may itself deny and re-prompt). For non-bash tools
+  //      the gate returns null and we fall through.
+  //   3. Mode allows → fast-path allow (matches claw `permissions.rs:234-264`).
+  //   4. Mode denies → dispatch a prompt via PermissionBridge.
   //        - TTY path: REPL attaches its dispatch; inline y/N prompt.
   //        - Headless path: stdin reader attaches nothing to bridge; caller
   //          drives `respond()` from JSONL-piped stdin (stage F).
-  //   Elevation is the ONLY way to bypass a mode deny — there is no separate
-  //   "structural deny" tier. Matches claw's mode-comparison gate exactly.
+  //
+  // Two-prompt UX risk: if validation Warn is approved AND mode also denies,
+  // the user sees two prompts (validation, then mode-deny). Acceptable for
+  // v0.1 — collapsing the cases is a v0.2 polish item. Note danger-full-access
+  // mode bypasses canUseTool entirely (P2.Q10), so validation does NOT fire
+  // there in the SDK engine path; documented as a v0.2 follow-up.
   //
   // `currentPermissionMode` is the live mutable binding updated by /permissions
   // across turns. Reading it inside the closure picks up the latest value.
@@ -468,21 +486,54 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     if (toolImpl === undefined) {
       return { allow: false, reason: `unknown tool: ${toolName}` };
     }
-    const modeDecision = permEngine.check(toolImpl.spec, input);
-    if (modeDecision.allow) return modeDecision;
-    const pending = {
-      toolName: toolImpl.spec.name,
-      input,
-      currentMode: currentPermissionMode,
-      requiredPermission: toolImpl.spec.requiredPermission,
-      reason: modeDecision.reason,
-    };
-    // Headless: emit JSONL `permission_required`, block on stdin, EOF = deny.
-    // TTY: dispatch to REPL store via bridge, await keystroke (y/Enter/Ctrl-C).
-    if (useHeadless) {
-      return await readHeadlessApproval(pending);
+
+    // Phase 5 Stage A — bash command validation gate fires first.
+    // For non-bash tools, the gate returns null and we fall through to the
+    // mode check. For bash tools, Block / Warn / Allow control the flow.
+    const bashGateResult = await bashValidationGate(
+      { toolName, toolImpl, input, currentMode: currentPermissionMode },
+      {
+        bridge: permissionBridge,
+        useHeadless,
+        cwd: process.cwd(),
+        // Single-agent path: no orchestrator to receive lane events. The slot is
+        // wired here so future swarm integration can replace this with a real emit
+        // (e.g. write to the worker's stdio lane) without touching this call site.
+        emitLaneEvent: (_event) => {
+          // no-op — single-agent paths have no swarm host to receive events.
+        },
+      },
+    );
+    // Block or Warn-denied short-circuit: never run the mode check, never
+    // surface a second prompt for the same tool call.
+    if (bashGateResult !== null && !bashGateResult.allow) return bashGateResult;
+
+    // v0.2.Q5 two-prompt collapse: when bash validation showed a Warn prompt
+    // and the user approved it, skip the mode-deny prompt entirely. The user
+    // has already explicitly approved the destructive action — running the
+    // mode check would only produce a second prompt for the same call.
+    if (bashGateResult !== null && bashGateResult.allow && "validationApproved" in bashGateResult && bashGateResult.validationApproved) {
+      return { allow: true };
     }
-    return await permissionBridge.request(pending);
+
+    const modeDecision = permEngine.check(toolImpl.spec, input);
+    if (!modeDecision.allow) {
+      const pending = {
+        toolName: toolImpl.spec.name,
+        input,
+        currentMode: currentPermissionMode,
+        requiredPermission: toolImpl.spec.requiredPermission,
+        reason: modeDecision.reason,
+      };
+      // Headless: emit JSONL `permission_required`, block on stdin, EOF = deny.
+      // TTY: dispatch to REPL store via bridge, await keystroke (y/Enter/Ctrl-C).
+      if (useHeadless) {
+        return await readHeadlessApproval(pending);
+      }
+      return await permissionBridge.request(pending);
+    }
+
+    return modeDecision;
   };
 
   // 8. Build RunConfig.
@@ -504,11 +555,60 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
 
   // 9. Route to UI.
   // useHeadless was declared above (hoisted so canUseTool closes over it).
+
+  // Budget limits derived from CLI flags (v0.2.Q7).
+  const budgetLimits = {
+    maxTokens: opts.maxTokens,
+    maxCostUsd: opts.maxCostUsd,
+  };
+  const hasBudgetLimits =
+    budgetLimits.maxTokens !== undefined || budgetLimits.maxCostUsd !== undefined;
+
   if (useHeadless) {
     // Headless path: one-shot engine run → JSONL.
-    const rawEvents = engine.run(config);
+    // When budget limits are set, wrap the event stream so we can abort
+    // after each event and emit a budget_exceeded JSONL line before exit.
+    const headlessAbort = new AbortController();
+    const headlessConfig = hasBudgetLimits
+      ? { ...config, abort: headlessAbort.signal }
+      : config;
+    const rawEvents = engine.run(headlessConfig);
     const { events, hadError } = withErrorTracking(rawEvents);
-    await runHeadless(events);
+
+    if (hasBudgetLimits) {
+      // Wrap the event stream: after each event, check budget.
+      // On exceed: write budget_exceeded JSONL line, abort, then drain.
+      let budgetViolation = false;
+      async function* budgetWrapped(): AsyncGenerator<import("../core/types.js").NormalizedEvent> {
+        for await (const evt of events) {
+          yield evt;
+          const budgetResult = checkBudget(
+            engine.getCumulativeUsage(),
+            budgetLimits,
+            resolvedModelId,
+          );
+          if (budgetResult.exceeded && !budgetViolation) {
+            budgetViolation = true;
+            // Emit budget_exceeded as a JSONL line to stdout.
+            const budgetEvent = {
+              type: "budget_exceeded",
+              limit: budgetResult.reason?.includes("token") ? "tokens" : "cost",
+              usedTokens: budgetResult.usedTokens,
+              usedCostUsd: budgetResult.usedCostUsd,
+              reason: budgetResult.reason,
+              modelId: resolvedModelId,
+            };
+            process.stdout.write(JSON.stringify(budgetEvent) + "\n");
+            headlessAbort.abort();
+            break;
+          }
+        }
+      }
+      await runHeadless(budgetWrapped());
+      if (budgetViolation) return 3;
+    } else {
+      await runHeadless(events);
+    }
     return hadError() ? 1 : 0;
   }
 
@@ -518,7 +618,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   // fields are read from locals so slash-commands can mutate them).
   // Lazy-loaded so OpenTUI deps don't get pulled into non-TTY paths.
   //
-  // Phase 0d: Ink removed. swarm-coder now runs exclusively on Bun with the
+  // Phase 0d: Ink removed. swarm-harness now runs exclusively on Bun with the
   // OpenTUI/Solid REPL. See docs/16-parity-plan.md.
   const { runRepl } = await import("../ui/repl-solid/index.js");
   const { clampPermissionMode } = await import("../swarm/permission-order.js");
@@ -562,15 +662,28 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
       },
       getUsage: () => engine.getCumulativeUsage(),
       abort: turnAbort,
-      sessionLogPath: ".swarm-coder/sessions.log",
+      sessionLogPath: ".swarm-harness/sessions.log",
       pluginStore: pluginStateStore,
     },
     permissionBridge,
     getTokens: () => {
       const u = engine.getCumulativeUsage();
+      // v0.2.Q7: check budget on every token poll. When exceeded, abort the
+      // current turn so the REPL can surface the error and exit.
+      if (hasBudgetLimits) {
+        const budgetResult = checkBudget(u, budgetLimits, resolvedModelId);
+        if (budgetResult.exceeded && !turnAbort.signal.aborted) {
+          process.stderr.write(
+            `[swarm-harness] budget exceeded: ${budgetResult.reason ?? "limit reached"} — aborting\n`,
+          );
+          turnAbort.abort();
+        }
+      }
       return u.inputTokens + u.outputTokens;
     },
   });
+  // Exit code 3 if budget was exceeded (abort signal was fired by budget check).
+  if (hasBudgetLimits && turnAbort.signal.aborted) return 3;
   return 0;
 }
 
@@ -599,6 +712,12 @@ export async function main(argv: string[]): Promise<number> {
     case "worker":
       return runWorkerEntry();
 
+    case "team-daemon-entry":
+      // v0.5 stage 5E.3: forked per-team daemon entry. Reads its TeamSpec +
+      // socket/pid/events/state paths from SWARM_HARNESS_DAEMON_* env set by
+      // the parent forker (`team start --detach`).
+      return runTeamDaemonEntry();
+
     case "swarm-run":
       return runSwarm({
         tasksFile: parsed.tasksFile,
@@ -610,10 +729,61 @@ export async function main(argv: string[]): Promise<number> {
           ? { allowDeadLetter: parsed.allowDeadLetter }
           : {}),
         ...(parsed.role !== undefined ? { defaultRole: parsed.role } : {}),
+        opentasks: parsed.opentasks,
+        ...(parsed.opentasksSocket !== undefined && {
+          opentasksSocket: parsed.opentasksSocket,
+        }),
+        agentInbox: parsed.agentInbox,
+        gitCascade: parsed.gitCascade,
+        cleanupWorktrees: parsed.cleanupWorktrees,
       });
 
     case "plugin":
       return pluginMain(parsed.pluginArgv);
+
+    case "worktree": {
+      const { worktreeMain } = await import("./worktree.js");
+      return worktreeMain(parsed.worktreeArgv);
+    }
+
+    case "team-start":
+      return runTeamStart(parsed.template, {
+        permissionMode: parsed.permissionMode,
+        concurrency: parsed.concurrency,
+        output: parsed.output,
+        ...(parsed.mapUrl !== undefined && { mapUrl: parsed.mapUrl }),
+        detach: parsed.detach,
+      });
+
+    case "topology":
+      return runTopology({
+        topologyKind: parsed.topologyKind,
+        specPath: parsed.specPath,
+        permissionMode: parsed.permissionMode,
+        concurrency: parsed.concurrency,
+        output: parsed.output,
+        ...(parsed.mapUrl !== undefined && { mapUrl: parsed.mapUrl }),
+        ...(parsed.maxTokens !== undefined && { maxTokens: parsed.maxTokens }),
+        ...(parsed.maxCostUsd !== undefined && { maxCostUsd: parsed.maxCostUsd }),
+      });
+
+    case "team-logs":
+      return runTeamLogs(parsed.name, { follow: parsed.follow });
+
+    case "team-watch":
+      return runTeamWatch(parsed.name);
+
+    case "team-send":
+      return runTeamSend(parsed.name, parsed.prompt);
+
+    case "team-list":
+      return runTeamList();
+
+    case "team-stop":
+      return runTeamStop(parsed.name);
+
+    case "team-kill":
+      return runTeamKill(parsed.name);
 
     case "login":
       return loginMain(["--provider", parsed.provider]);
@@ -624,7 +794,7 @@ export async function main(argv: string[]): Promise<number> {
     case "error":
       process.stderr.write(`error: ${parsed.message}\n`);
       if (parsed.showHelp) {
-        process.stderr.write('\nRun `swarm-coder help` for usage.\n');
+        process.stderr.write('\nRun `swarm-harness help` for usage.\n');
       }
       return 2;
 

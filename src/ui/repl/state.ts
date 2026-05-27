@@ -134,7 +134,10 @@ export type ReplEvent =
   // Misc controls
   | { readonly type: "clear" }
   | { readonly type: "shutdown" }
-  | { readonly type: "session-id"; readonly sessionId: string };
+  | { readonly type: "session-id"; readonly sessionId: string }
+  // Init — replaces state.history on mount from persistent storage.
+  // Only valid in `idle`; no-op otherwise.
+  | { readonly type: "hydrate-history"; readonly history: readonly string[] };
 
 /**
  * Key event shape — mirrors ink's `useInput` callback arguments so the
@@ -261,6 +264,11 @@ export function reduce(state: ReplState, event: ReplEvent): ReplState {
 
     case "session-id":
       return { ...state, sessionId: event.sessionId };
+
+    case "hydrate-history": {
+      if (state.name !== "idle") return state;
+      return { ...state, history: event.history };
+    }
 
     case "input-changed":
       return {
@@ -467,6 +475,13 @@ function applyKey(state: ReplState, key: KeyEvent): ReplState {
   }
   if (key.ctrl && key.name === "n") {
     return historyNext(state);
+  }
+  if (key.ctrl && key.name === "y" && buf.killBuffer.length > 0) {
+    return replaceInput(state, {
+      ...buf,
+      value: buf.value.slice(0, buf.cursor) + buf.killBuffer + buf.value.slice(buf.cursor),
+      cursor: buf.cursor + buf.killBuffer.length,
+    });
   }
 
   // ---- Arrow / navigation ---------------------------------------------

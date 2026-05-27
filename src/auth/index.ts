@@ -5,7 +5,7 @@
  * accept multiple AuthSource implementations. A TransportProvider calls
  * `headers()` before each request to merge auth headers into the outbound call.
  *
- * OAuth tokens live in `~/.swarm-coder/auth.json`, encrypted at rest where the
+ * OAuth tokens live in `~/.swarm-harness/auth.json`, encrypted at rest where the
  * platform supports it. Never write tokens to session logs or git.
  */
 
@@ -47,7 +47,7 @@ export interface AuthSource {
  * Interactive login flow — POST-M0 scope.
  *
  * M0 does not implement interactive auth. Users run `claude auth login` themselves
- * (Anthropic's CLI) and swarm-coder inherits credentials from env / keychain.
+ * (Anthropic's CLI) and swarm-harness inherits credentials from env / keychain.
  * See docs/06-open-questions.md Q16 for the decision rationale.
  *
  * This interface stays here for symmetry; implementations arrive with future
@@ -74,8 +74,12 @@ export interface InteractiveAuth extends AuthSource {
 //   AnthropicApiKeyAuth   — M0
 //   AnthropicOAuthAuth    — M3 (framework-managed; delegates to Agent SDK)
 //   OpenAIApiKeyAuth      — M2
-//   OpenAIOAuthAuth       — M4 (Codex App Server OAuth)
 //   GoogleApiKeyAuth      — M4
 //   XaiApiKeyAuth         — M4
 //   OpenAICompatApiKeyAuth — M2 (Ollama / LM Studio / OpenRouter)
+//
+// Removed in v0.3 (was M4 Codex App Server OAuth):
+//   OpenAIOAuthAuth — Codex App Server now delegates auth to `codex login`
+//                    via the codex-chatgpt FrameworkProvider; swarm-harness
+//                    owns zero OAuth code for this provider.
 // ---------------------------------------------------------------------------

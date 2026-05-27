@@ -1,7 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { isUnderCwd } from "./internal.js";
@@ -25,7 +24,7 @@ const spec: ToolSpec = {
     "Binary files (NUL byte in first 8 KiB) and files larger than 10 MiB are rejected. " +
     "Use `offset` (0-based line index) and `limit` (max lines) to page through large files. " +
     "Default limit is 2000 lines. Output is cat-n formatted: '  N\\t<line>'.",
-  inputSchema: zodToJsonSchema(inputSchema as never) as JsonSchema,
+  inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
   requiredPermission: "read",
   tier: 0,
 };

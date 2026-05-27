@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema, AgentId } from "../../core/types.js";
 import { requireHost } from "./require-host.js";
@@ -34,7 +33,7 @@ const spec: ToolSpec = {
     "Update an existing task in the swarm task registry. " +
     "At least one of status, owner, output, or error must be provided. " +
     "If the task id is unknown, the call will throw an error.",
-  inputSchema: zodToJsonSchema(inputSchema as any) as JsonSchema,
+  inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
   requiredPermission: "none",
   tier: 2,
   concurrencySafe: false,

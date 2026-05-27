@@ -4,7 +4,7 @@ Scope: `references/claw-code/rust/crates/api/**` + `crates/runtime/src/oauth.rs`
 
 ## 1. Summary
 
-claw-code ships a provider abstraction that is thin by design: an `enum ProviderClient { Anthropic, Xai, OpenAi }` dispatch wrapper over two real implementations — an Anthropic-native client and a shared OpenAI-compatible client (with `xai` / `openai` / `dashscope` configs). Routing is by model-name prefix with env-var sniffing as a fallback, and streaming is normalized through an Anthropic-shaped `StreamEvent` enum (OpenAI's chat-completion chunks are translated on the fly). Prompt caching, request preflight (context-window + body-size), retry-with-exponential-backoff+jitter, OAuth refresh, and a rich `ApiError` taxonomy are already productionized — those shape the requirements for swarm-coder's TypeScript port more than any specific data type does.
+claw-code ships a provider abstraction that is thin by design: an `enum ProviderClient { Anthropic, Xai, OpenAi }` dispatch wrapper over two real implementations — an Anthropic-native client and a shared OpenAI-compatible client (with `xai` / `openai` / `dashscope` configs). Routing is by model-name prefix with env-var sniffing as a fallback, and streaming is normalized through an Anthropic-shaped `StreamEvent` enum (OpenAI's chat-completion chunks are translated on the fly). Prompt caching, request preflight (context-window + body-size), retry-with-exponential-backoff+jitter, OAuth refresh, and a rich `ApiError` taxonomy are already productionized — those shape the requirements for swarm-harness's TypeScript port more than any specific data type does.
 
 ## 2. Provider abstraction — trait shape, types, lifecycle
 
@@ -153,7 +153,7 @@ Plugin override: `max_tokens_for_model_with_override(model, Option<u32>)` — le
 
 Overflow → `ApiError::RequestBodySizeExceeded { estimated_bytes, max_bytes, provider }` (non-retryable). Anthropic has no equivalent guard.
 
-## 9. Requirements for swarm-coder
+## 9. Requirements for swarm-harness
 
 Each bullet tagged by scope target.
 
@@ -172,7 +172,7 @@ Each bullet tagged by scope target.
 - [v0] Anthropic env vars: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`.
 - [v1] OAuth PKCE flow with on-disk `credentials.json`, auto-refresh with preserved-old-refresh-token-on-omission behavior. Key: cross-platform random (Node's `crypto.randomBytes` replaces `/dev/urandom`).
 - [later] Masked-header rendering for logs (`masked_authorization_header`).
-- [skip] `from_env_or_saved` that ignores saved OAuth when env is absent — surprising behavior; swarm-coder should make env-vs-saved precedence explicit at call sites.
+- [skip] `from_env_or_saved` that ignores saved OAuth when env is absent — surprising behavior; swarm-harness should make env-vs-saved precedence explicit at call sites.
 
 **Streaming**
 - [v0] SSE parser handling `\n\n` and `\r\n\r\n` frame separators, `:`-comments, `event: ping` drop, `data: [DONE]` terminator, multi-line `data:` joining with `\n`.
@@ -231,13 +231,13 @@ Each bullet tagged by scope target.
 2. **Beta header handling** — `anthropic-beta` is mentioned but not rendered in this slice. `with_beta` builder exists; actual wire emission is in telemetry.
 3. **Tool parallelism** — no explicit flag in `MessageRequest` for parallel tool use. Is that implied by model + client defaults, or is there a capability bit we need to discover?
 4. **Thinking/reasoning content blocks** — `OutputContentBlock::Thinking` / `RedactedThinking` exist and stream deltas are parsed, but the emit-side (how the request asks for them, what `extra_body` fields are involved) isn't in this slice.
-5. **OpenAI-compat stream usage for xAI/DashScope** — `should_request_stream_usage` only returns true for OpenAI. Does this mean streaming from xAI and DashScope never reports token usage? If so, swarm-coder should document that limitation explicitly for downstream cost accounting.
+5. **OpenAI-compat stream usage for xAI/DashScope** — `should_request_stream_usage` only returns true for OpenAI. Does this mean streaming from xAI and DashScope never reports token usage? If so, swarm-harness should document that limitation explicitly for downstream cost accounting.
 6. **OAuth login flow UX** — `oauth.rs` exposes the primitives but the orchestration (browser launch, local callback listener, scope negotiation, UX on refresh failure) is presumably in a higher crate. Worth a separate research slice.
 7. **OAuth random-token source** — `generate_random_token` reads `/dev/urandom` directly. Windows support is undefined. Swarm-coder must use `crypto.randomBytes` (cross-platform) unconditionally.
-8. **`CLAW_CONFIG_HOME` vs `CLAUDE_CONFIG_HOME`** — claw-code uses different env vars for OAuth credentials vs. prompt cache (`.claw/` vs `.claude/`). swarm-coder needs to pick one canonical root (proposed: `$XDG_CONFIG_HOME/swarm-coder/`).
+8. **`CLAW_CONFIG_HOME` vs `CLAUDE_CONFIG_HOME`** — claw-code uses different env vars for OAuth credentials vs. prompt cache (`.claw/` vs `.claude/`). swarm-harness needs to pick one canonical root (proposed: `$XDG_CONFIG_HOME/swarm-harness/`).
 9. **`preflight_message_request` token estimate accuracy** — `bytes/4+1` is a rough heuristic. Anthropic's `count_tokens` gives exact counts but is network-bound. Do we need a tiktoken-based offline estimator for OpenAI-compat providers, or is the heuristic good enough when body-size preflight catches the extreme cases?
-10. **`AuthSource::from_env_or_saved` ignoring saved OAuth** — the current behavior (test at `anthropic.rs:1157-1177`) feels buggy but is intentional. Confirm which precedence swarm-coder wants.
-11. **Model registry table** — claw-code hard-codes model IDs and limits in source. Should swarm-coder make this loadable from a config file, or keep it in code for lock-down-via-tests?
+10. **`AuthSource::from_env_or_saved` ignoring saved OAuth** — the current behavior (test at `anthropic.rs:1157-1177`) feels buggy but is intentional. Confirm which precedence swarm-harness wants.
+11. **Model registry table** — claw-code hard-codes model IDs and limits in source. Should swarm-harness make this loadable from a config file, or keep it in code for lock-down-via-tests?
 
 ## 11. File references
 

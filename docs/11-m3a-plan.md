@@ -19,8 +19,8 @@ M1 shipped the swarm (one-shot fan-out; `agent` + `task_create/update/get/list`)
 - TaskPacket policy upgrade from flat string enums to discriminated-union records — `BranchPolicy`, `CommitPolicy`, `EscalationPolicy` — validated at dispatch time (not just prompt hints)
 - Orchestrator retry policies: fixed count, exponential backoff (both driven by `TaskPacket.escalationPolicy`)
 - Dead-letter queue: tasks that exhaust retries go to `dead-letter.jsonl` alongside `results.jsonl`
-- Team roles (`src/swarm/roles.ts`): `Role = { name, systemPromptSuffix, allowedTools }`; built-ins `architect`, `executor`, `reviewer`; user-defined via `.swarm-coder/roles.json`
-- Per-worker role wiring: env var `SWARM_CODER_ROLE` → `RunConfig.systemPrompt` overlay + `RunConfig.allowedTools` filter
+- Team roles (`src/swarm/roles.ts`): `Role = { name, systemPromptSuffix, allowedTools }`; built-ins `architect`, `executor`, `reviewer`; user-defined via `.swarm-harness/roles.json`
+- Per-worker role wiring: env var `SWARM_HARNESS_ROLE` → `RunConfig.systemPrompt` overlay + `RunConfig.allowedTools` filter
 - CLI: `--role <name>` on `swarm run` (default role for all tasks) + per-task `TaskPacket.role` override
 - `scripts/smoke-swarm-m3a.sh` live + offline (mirrors `smoke-swarm.sh`)
 
@@ -51,7 +51,7 @@ Four scope/mechanism choices need locking before implementation starts. Default 
    - AC: broadcast to 5 recipients where 1 recipient is at capacity returns `{ ok: true, delivered: 5, dropped: 1, partial: true }` (the over-cap agent drops its oldest message to make room, so delivery count reflects the enqueue attempt succeeding after eviction).
 
 3. **`task_stop` permission model: orchestrator can stop any task; peer workers can stop only tasks they (transitively) spawned.**
-   Rationale: matches the authoritative depth map — the orchestrator already tracks `parentAgentId` for every spawn, so "is X a descendant of Y" is a cheap lookup. Prevents a peer from killing an unrelated task while preserving the natural "parent cancels child" flow. Explicit override via `SWARM_CODER_ALLOW_PEER_TASK_STOP=1` env flag for experimentation, off by default.
+   Rationale: matches the authoritative depth map — the orchestrator already tracks `parentAgentId` for every spawn, so "is X a descendant of Y" is a cheap lookup. Prevents a peer from killing an unrelated task while preserving the natural "parent cancels child" flow. Explicit override via `SWARM_HARNESS_ALLOW_PEER_TASK_STOP=1` env flag for experimentation, off by default.
 
 4. **Retry wall-clock accounting: separate per-attempt ceiling vs. absolute total ceiling.**
    `TaskBudget` gains a new field `maxWallClockMsPerAttempt?: number`. Default when not specified: `maxWallClockMs / 3` (matching the previous "3x cap" intuition without silent multiplication). `maxWallClockMs` remains the absolute ceiling across all attempts combined. This avoids the silent 3–5x multiplier of the old "per-attempt reset" design: M1/M2 `TaskBudget` users are unchanged (no retries, so the new field is irrelevant). Migration note: the old decision context's "3x hard cap" is now expressed explicitly via the default `maxWallClockMsPerAttempt = maxWallClockMs / 3`.
@@ -84,9 +84,9 @@ Each is executable with a one-line test harness or manual smoke step.
 13. Dead-letter file: `dead-letter.jsonl` contains one line per permanently-failed task with `{ id, lastError, attempts, totalWallClockMs, firstAttemptAt, lastAttemptAt }`; path overridable via `--dead-letter <path>`; orchestrator exits non-zero if dead-letter is non-empty unless `--allow-dead-letter` is passed.
 14. Role registry: built-ins `architect`, `executor`, `reviewer` are registered at startup with distinct `systemPromptSuffix` bodies and `allowedTools` allowlists that strictly subset the full tool surface (architect has no `write_file`; executor has full Tier 0; reviewer has read-only Tier 0 + `structured_output`).
 14a. Token budget is cumulative across retries: each retry attempt consumes from the same `TaskBudget.maxTokens` pool (not reset per-attempt). If cumulative usage across all attempts exceeds `maxTokens`, the task goes to dead-letter immediately with no further retries regardless of `EscalationPolicy.max`.
-15. Custom roles: `.swarm-coder/roles.json` declaring a `{ name: "docs", systemPromptSuffix: "...", allowedTools: [...] }` is loaded at startup; registry-lookup returns it; unknown role name in `TaskPacket.role` → task fails at dispatch with `"unknown role: <name>"`.
+15. Custom roles: `.swarm-harness/roles.json` declaring a `{ name: "docs", systemPromptSuffix: "...", allowedTools: [...] }` is loaded at startup; registry-lookup returns it; unknown role name in `TaskPacket.role` → task fails at dispatch with `"unknown role: <name>"`.
 16. CLI role default: `swarm run tasks.jsonl --role executor --concurrency 2` applies `executor` to every task that doesn't override via `TaskPacket.role`; override per-task honored.
-17. Per-worker role wiring: a worker spawned with `role=reviewer` sees `process.env.SWARM_CODER_ROLE === "reviewer"`; its `RunConfig.systemPrompt` contains the reviewer suffix; its `RunConfig.allowedTools` is exactly the reviewer allowlist; attempting `write_file` returns `permission: denied` (verified via hook fixture that logs `permission_denied` events).
+17. Per-worker role wiring: a worker spawned with `role=reviewer` sees `process.env.SWARM_HARNESS_ROLE === "reviewer"`; its `RunConfig.systemPrompt` contains the reviewer suffix; its `RunConfig.allowedTools` is exactly the reviewer allowlist; attempting `write_file` returns `permission: denied` (verified via hook fixture that logs `permission_denied` events).
 18. `npx tsc --noEmit` passes strict mode.
 19. `npm test` baseline 588 → target 620–648 (delta +32 to +60); all passing.
 20. `scripts/smoke-swarm-m3a.sh --offline` covers: send_message round-trip, broadcast, check_inbox drain, task_stop parent-kills-child, task_output partial + final, retry + dead-letter, role allowlist enforcement.
@@ -133,7 +133,7 @@ export type EscalationPolicy =
 
 0.2. `src/swarm/host.ts` — wire the EXISTING `SpawnRequest.role` and `SpawnRequest.allowedTools` fields end-to-end. These fields were pre-provisioned during M1 (`host.ts:86-89` already declares them); M3a makes them load-bearing:
 - Orchestrator dispatch (Phase 6.4) populates `role` and `allowedTools` from the resolved `Role` object.
-- Subprocess spawner (Phase 6.5) propagates them via `SWARM_CODER_ROLE` env var and an `allowedTools` env serialization.
+- Subprocess spawner (Phase 6.5) propagates them via `SWARM_HARNESS_ROLE` env var and an `allowedTools` env serialization.
 - Worker entry (Phase 6.6) consumes both to overlay `RunConfig.systemPrompt` and filter `RunConfig.allowedTools`.
 
 Also extend `SwarmHost` with the widen `send` signature (see M1 fix in Phase 0 preamble) and confirm task methods:
@@ -184,7 +184,7 @@ export const TaskPacketSchema = z.object({
 });
 ```
 
-2.2. `src/cli/swarm.ts` — replace the existing flat-string Zod schema with `TaskPacketSchema`. On parse failure, emit a migration hint to stderr: `"[swarm-coder] TaskPacket policies are now discriminated unions — see docs/11-m3a-plan.md §Policy migration"`.
+2.2. `src/cli/swarm.ts` — replace the existing flat-string Zod schema with `TaskPacketSchema`. On parse failure, emit a migration hint to stderr: `"[swarm-harness] TaskPacket policies are now discriminated unions — see docs/11-m3a-plan.md §Policy migration"`.
 
 2.3. `docs/11-m3a-plan.md` — add a "Policy migration" appendix with before/after examples. Users of existing `tasks.jsonl` files migrate:
 - `"branchPolicy": "main"` → `"branchPolicy": { "kind": "none" }` (or `{ kind: "reuse", branch: "main" }` if intent was "operate on main")
@@ -269,7 +269,7 @@ Execute: synchronously drain up to `max` messages from the agent's inbox. No tim
 4.3. `src/tools/tier2/task_stop.ts` — Tier 2 ToolImpl. Zod `{ taskId: z.string() }`. Execute:
 - `const host = requireHost(ctx, "task_stop")`.
 - If orchestrator-mode (standalone root) → unconditional stop.
-- If worker-mode → check `ancestry.isAncestorOf(host.agentId, taskOwnerAgentId)`; reject with error if not ancestor (unless `SWARM_CODER_ALLOW_PEER_TASK_STOP=1`).
+- If worker-mode → check `ancestry.isAncestorOf(host.agentId, taskOwnerAgentId)`; reject with error if not ancestor (unless `SWARM_HARNESS_ALLOW_PEER_TASK_STOP=1`).
 - Call `host.task.stop(taskId)`.
 
 4.4. `src/tools/tier2/task_output.ts` — Tier 2 ToolImpl. Zod `{ taskId: z.string() }`. Execute: look up task record; if terminal → return full output + status + usage; if running → return `{ status: "running", partialOutput, sizeBytes }`. Does NOT stream (callers poll). Streaming variant (via `host.task.output()`) arrives in M3b.
@@ -349,7 +349,7 @@ Built-ins:
 ```ts
 export async function loadCustomRoles(configPath: string): Promise<readonly Role[]>;
 ```
-Reads `.swarm-coder/roles.json` (Claude Code–style tiered discovery from M2 config-resolved). Validates via Zod schema mirroring `Role`. Unknown roles ignored with `degraded_role` lane event.
+Reads `.swarm-harness/roles.json` (Claude Code–style tiered discovery from M2 config-resolved). Validates via Zod schema mirroring `Role`. Unknown roles ignored with `degraded_role` lane event.
 
 6.3. `src/cli/main.ts` (orchestrator entry) — at startup:
 - Instantiate `RoleRegistry`; register built-ins; load custom roles.
@@ -360,10 +360,10 @@ Reads `.swarm-coder/roles.json` (Claude Code–style tiered discovery from M2 co
 - If role is non-null and unknown: task fails at dispatch (pre-spawn) with `"unknown role: <name>"`.
 - Otherwise pass role into `SpawnRequest.role` and `SpawnRequest.allowedTools = role.allowedTools`.
 
-6.5. `src/swarm/subprocess-spawner.ts` — include `SWARM_CODER_ROLE` env var in child spawn when set.
+6.5. `src/swarm/subprocess-spawner.ts` — include `SWARM_HARNESS_ROLE` env var in child spawn when set.
 
 6.6. `src/cli/worker-entry.ts` — at startup:
-- Read `process.env.SWARM_CODER_ROLE`.
+- Read `process.env.SWARM_HARNESS_ROLE`.
 - If set: look up role in registry (registry is re-instantiated per worker; built-ins are static, custom loaded fresh). Append `systemPromptSuffix` to `RunConfig.systemPrompt` (prepend the parent's base prompt; role suffix wins on conflicts). Set `RunConfig.allowedTools` to the role's allowlist.
 - If `RunConfig.allowedTools` is set, the tool dispatcher filters tool surface before passing to the engine.
 
@@ -424,7 +424,7 @@ src/
     standalone-host.ts         # MODIFIED — send/inbox impl; task.stop/task.output wired; role-index plumbing
     worker-host.ts             # MODIFIED — send/inbox + task.stop/task.output IPC proxies
     orchestrator.ts            # MODIFIED — policy pre-flight, retry loop, dead-letter, role dispatch
-    subprocess-spawner.ts      # MODIFIED — SWARM_CODER_ROLE env var
+    subprocess-spawner.ts      # MODIFIED — SWARM_HARNESS_ROLE env var
     ipc/
       protocol.ts              # MODIFIED — message.send/recv, task.stop, task.output, inbox_delivery notification
       worker-transport.ts      # MODIFIED — new request handlers
@@ -441,7 +441,7 @@ src/
   cli/
     argv.ts                    # MODIFIED — --role, --dead-letter, --allow-dead-letter flags
     swarm.ts                   # MODIFIED — thread flags into orchestrator; TaskPacketSchema
-    worker-entry.ts            # MODIFIED — read SWARM_CODER_ROLE → apply role to RunConfig
+    worker-entry.ts            # MODIFIED — read SWARM_HARNESS_ROLE → apply role to RunConfig
     main.ts                    # MODIFIED — instantiate RoleRegistry at startup
   engine/
     index.ts                   # MODIFIED (if needed) — RunConfig.allowedTools field
@@ -475,7 +475,7 @@ docs/
 | `check_inbox` busy-waits and wastes turns | Medium | Medium | 250ms timeout default; empty drain returns `[]` immediately. Model guidance in tool description: "call sparingly; inbox is push-delivered so you'll see tool_use_input interrupts for new messages." (Pure convention in M3a; push-interrupt is M4.) |
 | Worker handoff to missing target role stalls | Medium | Medium | Handoff to non-existent role → immediate dead-letter with clear error. No indefinite wait for a role that isn't there. Tested. |
 | `task_output` partial-stream mismatches engine chunking | Medium | Low | For M3a, `task_output` is snapshot-only (polling model). True streaming via `AsyncIterable` goes through `host.task.output()` in M3b, with explicit sync markers in the `text_delta` → registry pipeline. |
-| Env var `SWARM_CODER_ROLE` collides with user env | Low | Low | Prefix `SWARM_CODER_` is already reserved by M1. No collision risk in practice. |
+| Env var `SWARM_HARNESS_ROLE` collides with user env | Low | Low | Prefix `SWARM_HARNESS_` is already reserved by M1. No collision risk in practice. |
 | Test count jumps too far (>60 delta breaks CI time) | Low | Low | Estimate range +32 to +60; mostly pure unit tests (<10ms each). Full suite already at ~15s; +60 tests at 50ms/test is +3s, still well under 30s CI target. |
 
 ## Verification steps
@@ -515,9 +515,9 @@ Run after each phase:
 - **Role immutability.** M3a treats role as set-at-spawn, never-changed. If a use case for dynamic role switching surfaces (e.g., architect → executor mid-task), design a `swap_role` tool in M3b. Open.
 - **Broadcast scoping.** `*` currently means "every live peer." Should we add `*:depth=<n>` or `*:descendants-of=<agentId>`? Not needed now. Revisit if broadcast gets abused.
 - **Retry budget accounting precision.** Resolved in rev 2: `TaskBudget.maxWallClockMsPerAttempt` is now an explicit field (default `maxWallClockMs / 3`). Token budget is cumulative. No longer open.
-- **Dead-letter replay.** M3a writes dead-letter.jsonl but has no replay command. `swarm-coder swarm replay dead-letter.jsonl` is a one-liner we might add if operators ask; otherwise leave for M4.
-- **Role trust boundary.** `.swarm-coder/roles.json` is user-controlled — same trust boundary as M2 hooks. Signed role manifests are M5+. Document in the custom-role loader JSDoc.
-- **IPC additions require version tag.** Every new request method breaks backward compat between orchestrator and worker at different versions. Add a `SWARM_CODER_IPC_VERSION` handshake? Not for M3a (single repo, single version shipped together); revisit at M4.
+- **Dead-letter replay.** M3a writes dead-letter.jsonl but has no replay command. `swarm-harness swarm replay dead-letter.jsonl` is a one-liner we might add if operators ask; otherwise leave for M4.
+- **Role trust boundary.** `.swarm-harness/roles.json` is user-controlled — same trust boundary as M2 hooks. Signed role manifests are M5+. Document in the custom-role loader JSDoc.
+- **IPC additions require version tag.** Every new request method breaks backward compat between orchestrator and worker at different versions. Add a `SWARM_HARNESS_IPC_VERSION` handshake? Not for M3a (single repo, single version shipped together); revisit at M4.
 - **Handoff loop detection.** Role A handoffs to B; B handoffs to A. Currently no loop-detection. For M3a, lean on retry cap to stop the loop (each handoff counts as an attempt against the original task's EscalationPolicy). M3b: explicit handoff chain length cap.
 - **Is `check_inbox` permission `"read"` right?** Resolved in rev 2: synchronous drain, no timeout. Sticking with `"read"` — inbox is agent-local state. Closed.
 - **Depth ≥ 2 messaging.** Resolved in rev 2 as Option A (depth-1 only in M3a). Option B (forward via ParentTransport) deferred to M3a.1 or M3b. Closed for M3a.

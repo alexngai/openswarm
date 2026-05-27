@@ -1,6 +1,6 @@
 {
-  "name": "swarm-coder",
-  "version": "0.0.1",
+  "name": "swarm-harness",
+  "version": "0.3.0",
   "description": "swarm-compatible coding agent",
   "type": "module",
   "main": "dist/index.js",
@@ -12,7 +12,7 @@
     }
   },
   "bin": {
-    "swarm-coder": "dist/cli.js"
+    "swarm-harness": "dist/cli.js"
   },
   "files": [
     "dist",
@@ -49,12 +49,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/alexngai/swarm-coder.git"
+    "url": "git+https://github.com/alexngai/swarm-harness.git"
   },
   "bugs": {
-    "url": "https://github.com/alexngai/swarm-coder/issues"
+    "url": "https://github.com/alexngai/swarm-harness/issues"
   },
-  "homepage": "https://github.com/alexngai/swarm-coder",
+  "homepage": "https://github.com/alexngai/swarm-harness",
   "devDependencies": {
     "@types/node": "^25.6.0",
     "@types/proper-lockfile": "^4.1.4",
@@ -72,11 +72,14 @@
     "@opentui/core": "^0.1.99",
     "@opentui/solid": "^0.1.99",
     "@vscode/ripgrep": "^1.17.1",
+    "agent-inbox": "^0.2.0",
     "ai": "6.0.168",
     "fast-glob": "^3.3.3",
+    "git-cascade": "^0.0.7",
     "proper-lockfile": "4.1.2",
     "solid-js": "^1.9.11",
     "turndown": "^7.2.4",
+    "yaml": "^2.8.4",
     "zod": "^4.3.6",
     "zod-to-json-schema": "^3.25.2"
   }

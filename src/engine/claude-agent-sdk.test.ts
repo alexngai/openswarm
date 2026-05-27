@@ -35,7 +35,7 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => {
 
     createSdkMcpServer: vi.fn((_opts: unknown) => ({
       type: "sdk" as const,
-      instance: { name: "swarm-coder" },
+      instance: { name: "swarm-harness" },
     })),
 
     tool: vi.fn(
@@ -230,7 +230,7 @@ describe("Scenario 2: tool-use round trip", () => {
           content_block: {
             type: "tool_use",
             id: toolUseId,
-            name: "swarm-coder__read_file",
+            name: "swarm-harness__read_file",
             input: {},
           },
         },
@@ -270,7 +270,7 @@ describe("Scenario 2: tool-use round trip", () => {
             {
               type: "tool_result",
               tool_use_id: toolUseId,
-              content: '{"name":"swarm-coder"}',
+              content: '{"name":"swarm-harness"}',
               is_error: false,
             },
           ],
@@ -284,7 +284,7 @@ describe("Scenario 2: tool-use round trip", () => {
         type: "result",
         subtype: "success",
         stop_reason: "end_turn",
-        result: "The package is swarm-coder",
+        result: "The package is swarm-harness",
         usage: { input_tokens: 50, output_tokens: 15 },
         duration_ms: 400,
         duration_api_ms: 300,
@@ -306,7 +306,7 @@ describe("Scenario 2: tool-use round trip", () => {
     expect(events[0]).toEqual({
       type: "tool_use_start",
       id: toolUseId,
-      name: "swarm-coder__read_file",
+      name: "swarm-harness__read_file",
     });
     expect(events[1]).toEqual({
       type: "tool_use_input",
@@ -317,7 +317,7 @@ describe("Scenario 2: tool-use round trip", () => {
     expect(events[3]).toEqual({
       type: "tool_result",
       toolUseId,
-      content: '{"name":"swarm-coder"}',
+      content: '{"name":"swarm-harness"}',
       isError: false,
     });
     expect(events[4]).toMatchObject({ type: "message_stop", stopReason: "end_turn" });

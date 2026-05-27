@@ -12,7 +12,7 @@
  *   - `bun src/cli.ts prompt "..." --headless`   (live; skipped without
  *     CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY)
  *
- * Skipped unless auth is present; set SWARM_CODER_SKIP_LIVE=1 to force-skip.
+ * Skipped unless auth is present; set SWARM_HARNESS_SKIP_LIVE=1 to force-skip.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -25,7 +25,7 @@ const CLI_PATH = join(REPO_ROOT, "src", "cli.ts");
 const haveAuth = Boolean(
   process.env.CLAUDE_CODE_OAUTH_TOKEN ?? process.env.ANTHROPIC_API_KEY,
 );
-const skipLive = process.env.SWARM_CODER_SKIP_LIVE === "1";
+const skipLive = process.env.SWARM_HARNESS_SKIP_LIVE === "1";
 const runLive = haveAuth && !skipLive;
 
 interface RunResult {
@@ -66,7 +66,7 @@ describe("CLI under Bun runtime", () => {
   test("--help prints usage", async () => {
     const { exitCode, stdout } = await runCli(["--help"], { timeoutMs: 15_000 });
     expect(exitCode).toBe(0);
-    expect(stdout).toContain("swarm-coder");
+    expect(stdout).toContain("swarm-harness");
     expect(stdout).toContain("swarm run flags");
   });
 

@@ -8,12 +8,12 @@ Format: Question · Why it matters · Options · Lean · What'd clarify · **Cla
 
 ## Q1. Plugin state.json: share with Claude Code, or own namespace? (Phase 1)
 
-**Why it matters.** The plan currently says we write to `~/.claude/plugins/state.json` — the same file Claude Code writes. If we mutate it, we risk format drift, races with concurrent Claude Code processes, and breaking Claude Code's own plugin state. If we own our own file, users get a worse story ("why doesn't swarm-coder see the plugins I installed through Claude Code?").
+**Why it matters.** The plan currently says we write to `~/.claude/plugins/state.json` — the same file Claude Code writes. If we mutate it, we risk format drift, races with concurrent Claude Code processes, and breaking Claude Code's own plugin state. If we own our own file, users get a worse story ("why doesn't swarm-harness see the plugins I installed through Claude Code?").
 
 **Options:**
 - **(a) Write to `~/.claude/plugins/state.json`** — shared. Mirrors Claude Code exactly. Fragile to format changes we don't control; ownership ambiguity.
-- **(b) Read-only from `~/.claude/plugins/state.json`, write to `~/.swarm-coder/plugins/state.json`** — discover theirs, manage ours. Users who install via Claude Code get discovery for free; installs via swarm-coder live in our namespace.
-- **(c) Own namespace only (`~/.swarm-coder/plugins/`)** — clean separation, but users with an existing Claude Code plugin library re-install everything.
+- **(b) Read-only from `~/.claude/plugins/state.json`, write to `~/.swarm-harness/plugins/state.json`** — discover theirs, manage ours. Users who install via Claude Code get discovery for free; installs via swarm-harness live in our namespace.
+- **(c) Own namespace only (`~/.swarm-harness/plugins/`)** — clean separation, but users with an existing Claude Code plugin library re-install everything.
 
 **Lean: (b).** Aligns with the existing philosophy ("We never mutate Claude Code's installation" — `06-open-questions.md` Q5). Discovery of their plugins is already how we do skills/hooks.
 
@@ -21,7 +21,7 @@ Format: Question · Why it matters · Options · Lean · What'd clarify · **Cla
 
 **Claw-code reference.** Claw writes `{config_home}/settings.json` (not `state.json` — our assumption was off) with shape `{ "plugin_id": true|false, ... }` at `plugins/src/lib.rs:2251`. Registry manifest is a separate file at `{config_home}/plugins/installed.json` (`lib.rs:1057-1060`). Claw owns both files — not inherited from elsewhere. `SETTINGS_FILE_NAME = "settings.json"` at line 21.
 
-**Updated lean after comparison: still (b), but with claw's file split.** We should mirror claw's two-file schema (`settings.json` for enable/disable boolean map + `installed.json` for manifest registry) under `~/.swarm-coder/plugins/`. Reading claw's files at `~/.claude/plugins/` gives us free discovery of plugins installed via claw/Claude Code. **Action:** revise Phase 1 scope to write two files, not one; match claw's exact schema for forward compatibility.
+**Updated lean after comparison: still (b), but with claw's file split.** We should mirror claw's two-file schema (`settings.json` for enable/disable boolean map + `installed.json` for manifest registry) under `~/.swarm-harness/plugins/`. Reading claw's files at `~/.claude/plugins/` gives us free discovery of plugins installed via claw/Claude Code. **Action:** revise Phase 1 scope to write two files, not one; match claw's exact schema for forward compatibility.
 
 ---
 
@@ -191,15 +191,15 @@ Format: Question · Why it matters · Options · Lean · What'd clarify · **Cla
 **Why it matters.** Without a stopping criterion, this plan grows forever. Phase 1–5 close ~70% of the gaps in [15-parity-gaps.md](docs/15-parity-gaps.md). Do we stop there, or push to 90%+?
 
 **Options:**
-- **(a) Ship v0.1 after Phase 5.** Call it "parity for swarm-coder's core use cases." Document remaining gaps as v0.2 candidates.
+- **(a) Ship v0.1 after Phase 5.** Call it "parity for swarm-harness's core use cases." Document remaining gaps as v0.2 candidates.
 - **(b) Push through all P0–P1 gaps before v0.1.** Longer runway, cleaner story.
 - **(c) Feature-based stopping.** Ship when "daily driver" works — define "daily driver" first.
 
 **Lean: (a).** Phase 5 end-state is a usable product. Shipping is how we find out what's actually missing vs. what we guessed at.
 
-**What'd clarify this.** A dogfood sprint between Phase 4 and Phase 5 where we actually use swarm-coder for real work for a week and list what broke. That list becomes the revised v0.1 blocker set — and may change the plan.
+**What'd clarify this.** A dogfood sprint between Phase 4 and Phase 5 where we actually use swarm-harness for real work for a week and list what broke. That list becomes the revised v0.1 blocker set — and may change the plan.
 
-**Claw-code reference.** Not a claw-comparable question — this is swarm-coder's v0.1 scoping. Claw's analogous document is `PARITY.md` (honest list of what's merged on main vs. branch-only), which suggests their model is "ship honest partial parity, document the delta." That's essentially option (a).
+**Claw-code reference.** Not a claw-comparable question — this is swarm-harness's v0.1 scoping. Claw's analogous document is `PARITY.md` (honest list of what's merged on main vs. branch-only), which suggests their model is "ship honest partial parity, document the delta." That's essentially option (a).
 
 **Updated lean after comparison: (a) confirmed.** Claw's own `PARITY.md` ships with unfinished items explicitly documented. We can do the same: v0.1 ships after Phase 5 with a clear parity-gaps appendix. **Action:** no change to plan; add a v0.1 launch-readiness checklist in a future doc.
 
@@ -209,7 +209,7 @@ Format: Question · Why it matters · Options · Lean · What'd clarify · **Cla
 
 | Q | Change |
 |---|---|
-| Q1 | Revise Phase 1 to write two files (`settings.json` + `installed.json`) under `~/.swarm-coder/plugins/`, matching claw's schema. |
+| Q1 | Revise Phase 1 to write two files (`settings.json` + `installed.json`) under `~/.swarm-harness/plugins/`, matching claw's schema. |
 | Q2 | No change — claw validates our pipeline choice. |
 | Q3 | **New approach (e): boundary-detected incremental render.** Port `find_stream_safe_boundary` logic. +0.5d to Phase 3b. |
 | Q4 | Drop the "session memory" feature from Phase 2 scope. Match claw exactly. |
@@ -295,7 +295,7 @@ loop {
 
 **Headline:** we're ahead of claw on structural fit for a long-lived, reactive, multi-pane-capable TUI. We're behind on specific surface features (multi-line input, markdown rendering, inline approvals, code highlighting). Phase 2–4 of the plan closes surface-feature gaps without migrating to claw's structural model. Do not let "claw has it" become "we should structure like claw has it."
 
-**One thing we may want to borrow structurally:** an event-emitter layer between the runtime and the TUI. Right now both claw and swarm-coder wire these directly. If we add telemetry, a second UI, or log mirroring, a pub/sub layer pays off. Defer to v0.2+ unless a near-term need surfaces.
+**One thing we may want to borrow structurally:** an event-emitter layer between the runtime and the TUI. Right now both claw and swarm-harness wire these directly. If we add telemetry, a second UI, or log mirroring, a pub/sub layer pays off. Defer to v0.2+ unless a near-term need surfaces.
 
 ---
 
@@ -326,7 +326,7 @@ Resolves the pre-implementation ambiguities for Phase 2 (inline y/N approvals, T
 
 **P2.Q3. `toolUseId` in `PendingPermission`.** → **Drop.** Claw captures only `tool_name`, `input`, `current_mode`, `required_mode`, `reason` (no id — `permissions.rs:70-76`). The SDK's `CanUseTool` signature also has no tool_use_id. Claw's tool loop is **strictly serial** (`conversation.rs:400` for-loop); one prompt at a time. `PendingPermission` shrinks to `{toolName, input, currentMode, requiredMode, reason}`.
 
-**P2.Q4. Headless approval model.** → **Same `canUseTool` in TTY and headless.** Block on stdin read; `y` / `yes` → approve; EOF / anything else → deny (claw `main.rs:7394-7404`). In `--headless`, emit a JSONL `{"type":"permission_required", ...}` line **before** the read so orchestrators know what to feed — small deviation from claw's plain-text prompt, but a swarm-coder format convention, not a semantic change. `danger-full-access` → SDK `bypassPermissions` → no `canUseTool` fires at all; headless runs never block.
+**P2.Q4. Headless approval model.** → **Same `canUseTool` in TTY and headless.** Block on stdin read; `y` / `yes` → approve; EOF / anything else → deny (claw `main.rs:7394-7404`). In `--headless`, emit a JSONL `{"type":"permission_required", ...}` line **before** the read so orchestrators know what to feed — small deviation from claw's plain-text prompt, but a swarm-harness format convention, not a semantic change. `danger-full-access` → SDK `bypassPermissions` → no `canUseTool` fires at all; headless runs never block.
 
 **P2.Q5. Keep `/approve` + `/deny` slash commands?** → **Delete them.** Claw has neither (`main.rs:7388` is the only decision surface). Our current slash commands only flip the reducer — they don't resolve any real pending approval, because none exists in the real flow. Clean up: remove the commands from `buildDefaultRegistry`, delete the tests, update `dispatcher.test.ts` count. Adds a 15→16 … wait, Phase 1 brought us to 15; Phase 2 takes us to 13 after removing approve + deny.
 
@@ -342,9 +342,45 @@ Resolves the pre-implementation ambiguities for Phase 2 (inline y/N approvals, T
 - `danger-full-access` → SDK `bypassPermissions` + `allowDangerouslySkipPermissions: true` → SDK skips `canUseTool` entirely.
 - `read-only` / `workspace-write` → SDK `default` → SDK calls `canUseTool` for every tool use. Our callback IS the prompt surface; no SDK-internal prompt fires before or after.
 
+**REVISITED 2026-04-30 (v0.2 stage 2A).** The `danger-full-access → bypassPermissions` mapping above was reversed in v0.2. Reason: v0.1 smoke surfaced that bash-validation Block / Warn (Phase 5 Stage A) never fired when canUseTool was bypassed, leaving destructive commands unguarded in the very mode where users most expect a final safety check. Current behavior: **all three modes map to SDK `default` so canUseTool fires for every tool call.** PermissionEngine returns Allow for everything in danger-full-access, so non-bash tools and safe bash commands still produce zero prompts; only validation Warn / Block paths surface a prompt. Strict UX improvement. See [docs/21-roadmap-v0.2-to-v0.4.md §v0.2.Q1](21-roadmap-v0.2-to-v0.4.md) for the full reversal rationale.
+
 **One deferred concern surfaced by Q10:** `settingSources: ["project"]` may let SDK auto-allow tools from `~/.claude/settings.json`'s `permissions` block. See **Q18** in the discussion backlog. Deferred to v0.2.
 
 **Consequence for `PermissionEngine.check()`.** Today it returns terminal `{allow:false}` when mode denies. For Phase 2, the mode-deny case becomes **"prompt the user for elevation"**, not "fail immediately". Claw parity: `permissions.rs:234-264` — mode ≥ required → fast-path allow; otherwise prompt. No change to `PermissionEngine` itself; the new logic lives in `main.ts`'s `canUseTool` after the mode check.
+
+---
+
+## Phase 3 — design lock (2026-04-30)
+
+Resolves the pre-implementation ambiguities for Phase 3 (markdown + code rendering, T2/T3/T4). Phase 0 already replaced the substrate from Ink/React → OpenTUI/Solid, so the original Q2/Q3 leans (marked + cli-highlight pipeline) are obsolete — OpenTUI ships a native markdown renderer. These P3 questions are the OpenTUI-era refinements. Numbers are Phase-3-local (distinct from Q1–Q18 above and P2.Q1–10).
+
+**Headline.** Phase 3 is short because OpenTUI does most of the work. The dedicated `<markdown>` renderable parses with `marked`, conceals syntax markers, lays out tables natively, and delegates fenced code blocks to internal `CodeRenderable` instances ([Markdown.d.ts:104-181](node_modules/@opentui/core/renderables/Markdown.d.ts)). What remains is choosing between two OpenTUI primitives, wiring our theme palette into syntax highlighting, deciding whether to port claw's stream-boundary algorithm, and locking the test bar.
+
+**P3.Q1. `<markdown>` vs `<code filetype="markdown">` — which primitive?** → **`<markdown>`.** Both ship in `@opentui/core`. `<code filetype="markdown">` treats markdown as highlighted *source* — bold text shows the `**` markers, headings show the `#` markers; it's grammar coloring, not layout. `<markdown>` is the structured renderer: conceal syntax markers, render tables natively, delegate fenced blocks to `CodeRenderable`, support per-block linkification. Opencode uses `<code filetype="markdown" streaming={true}>` historically (referenced in doc 16 Phase 3 scope) but only because their `<markdown>` was experimental at that time; the v0.1.99 we pin ships `<markdown>` as a first-class renderable. Pick the one that matches the goal (rendered markup, not highlighted source).
+
+**P3.Q2. Fenced code blocks — explicit nested `<code filetype={lang}>` or rely on the renderer?** → **Rely on `<markdown>`.** [Markdown.d.ts:148-151](node_modules/@opentui/core/renderables/Markdown.d.ts) shows internal `createMarkdownCodeRenderable` / `createCodeRenderable` / `applyCodeBlockRenderable` — the renderer creates a `CodeRenderable` per fenced block automatically. Hand-wiring nested `<code>` would require us to walk the marked AST ourselves and lose the streaming-stable semantics. The doc 16 plan wording ("for fenced code blocks with an explicit filetype, prefer nested `<code filetype={lang}>`") was written assuming `<code filetype="markdown">` as the outer primitive — moot once we choose `<markdown>` per Q1. Tree-sitter highlighting requires a `treeSitterClient` prop; Phase 3 ships **without one** (highlighting falls back to the registered `code` style scope). A future pass can wire `TreeSitterClient` for real per-language colors.
+
+**P3.Q3. SyntaxStyle — default or theme-tuned?** → **Theme-tuned via `SyntaxStyle.fromTheme(...)`.** `<markdown>` requires a non-optional `syntaxStyle: SyntaxStyle` prop ([Markdown.d.ts:53](node_modules/@opentui/core/renderables/Markdown.d.ts)). Three options: (a) default `SyntaxStyle.create()` — Phase 3's stage-A placeholder; uninspired colors, no theme alignment. (b) `SyntaxStyle.fromTheme(theme)` with a `ThemeTokenStyle[]` mapped from our existing palette in [theme.ts](src/ui/repl-solid/theme.ts) — coherent with the rest of the REPL. (c) Full per-language palette — overkill for v0 and we'd be inventing colors with no Tree-sitter client to consume them yet. Lock **(b)** with a minimal scope mapping (heading/strong/em/code/link/blockquote → existing palette tokens). One shared `SyntaxStyle` instance per process, lazy-init on first assistant entry to avoid touching `bun:ffi` in tests that don't need it.
+
+**P3.Q4. Streaming boundaries — port claw's `find_stream_safe_boundary` or trust `streaming={true}`?** → **Trust `streaming={true}`.** [Markdown.d.ts:62-72](node_modules/@opentui/core/renderables/Markdown.d.ts) documents the contract: trailing block stays unstable while streaming is enabled; tables render all rows produced by the parser; incomplete table rows are normalized; setting streaming=false finalizes trailing-token parsing. This is functionally equivalent to claw's `find_stream_safe_boundary` (`render.rs:600-625`) but lives inside the renderer, not our store. The doc-16 fallback ("port boundary logic if streaming has bugs") stands as a contingency; first-pass Phase 3 ships without the port. We thread `streamingEntryId` from the store into the matching entry's `streaming` prop — flip to false the instant `stream-end` fires.
+
+**P3.Q5. Headless path — does it render markdown?** → **No, plain JSONL.** [src/ui/headless.ts](src/ui/headless.ts) writes events verbatim. Markdown rendering is a TTY-only concern; orchestrators consume raw JSONL and own their own rendering. No change needed. Acceptance criteria from doc 16 ("`--headless` still emits plain text") is already satisfied by construction.
+
+**P3.Q6. Test bar.** → **Width-regression + content-survives + syntax-concealed.** Bun-native (`bun:test` — vitest can't load OpenTUI's `bun:ffi`). Render an assistant entry containing a heading, bullet list, bold/italic, fenced TS code, and a small table at both 80-col and 120-col. Assert: content text appears in the captured frame; markdown markers (`#`, `**`, `` ``` ``, `|`) do *not* appear literally (proves we hit `<markdown>` not plain-text fallback); no test-time crash from FFI in either width. The existing [transcript.test.tsx](src/ui/repl-solid/transcript.test.tsx) covers the smoke path; Phase 3 adds the width-regression cases.
+
+**Consequence for `transcript.tsx`.** The "Phase 3 stage A" `SyntaxStyle.create()` placeholder is replaced by `SyntaxStyle.fromTheme(...)`; the lazy-init guard stays (FFI safety in tests). Inline `P3.Qn` cites resolve to anchors in this section.
+
+**Phase 3 follow-ups shipped (2026-04-30).** The original design lock listed several items as "out of scope" that turned out to be cheap once the substrate was understood. Resolved in the same Phase 3 work block:
+- **Tree-sitter highlighting wired.** OpenTUI ships `TreeSitterClient` + bundled WASM grammars (typescript, javascript, markdown, markdown_inline, zig) under `node_modules/@opentui/core/assets/`. The markdown grammar's `injectionMapping.infoStringMap` (parsers-config.d.ts:28-39) routes fenced info strings → filetype, so ` ```typescript ` blocks pick up TS-aware highlighting without any per-grammar plumbing. Wired via `getTreeSitterClient()` with the same lazy-init pattern as `markdownSyntaxStyle`; fire-and-forget `.initialize()` with try/catch fallback to no-highlighting on worker errors. Disable via `SWARM_HARNESS_DISABLE_TREE_SITTER=1` if needed.
+- **Streaming-smoothness verified empirically.** The "trust `streaming={true}`" decision in P3.Q4 was conditional on a contingency port of claw's `find_stream_safe_boundary`. A bun:test now pumps a 5-chunk markdown response with mid-fence pauses + a deferred close fence, asserts no marker leak after `message_stop`. Passes — contingency port retired.
+- **Width-regression coverage extended.** P3.Q6 sample now includes a markdown table; cell content asserted at both 80 and 120 col.
+- **Bare-Transcript flake skipped, not fixed.** Two `bun:test` cases (`transcript.test.tsx › renders all entry kinds`, `e2e.test.tsx › full turn`) couldn't capture the assistant `<markdown>` content via `captureCharFrame`. The same primitive renders correctly when driven through the App composition with at least one priming render — covered by 6 other tests. Skipped with TODO; non-blocking for v0.
+
+**Still out of scope.**
+- Custom node renderers via `MarkdownOptions.renderNode` (no current use case — would only matter if we wanted to inject swarm-specific tokens into assistant output, e.g. agent badges or task-id chips).
+- Theme override at runtime via slash commands (cosmetic, not a parity gap; if added, would belong with Phase 4 polish, not Phase 3).
+- Per-language Tree-sitter palette colors (currently every language uses the `markup.raw.block` palette token; ideal would be language-aware token scopes mapped from a TextMate-style theme. Out of scope until a real per-token palette is needed).
+- Investigation of the bare-Transcript bun:test capture race (skipped tests are documented; root cause is in OpenTUI's test-render pipeline interaction with `<markdown>`'s deferred markdown-stream init).
 
 ---
 
@@ -376,7 +412,7 @@ Resolves the pre-implementation ambiguities for Phase 2 (inline y/N approvals, T
 
 **What'd clarify this.** A short OpenTUI evaluation: does it have (1) a stable React reconciler, (2) native or easy markdown/code-block rendering, (3) reliable multi-line input support, (4) ESM cleanliness? That evaluation + the Phase 3a spike together resolve the question.
 
-**Claw-code reference.** N/A — claw doesn't use a React-style framework. This is a swarm-coder-specific question driven by our Ink dependency.
+**Claw-code reference.** N/A — claw doesn't use a React-style framework. This is a swarm-harness-specific question driven by our Ink dependency.
 
 **Opencode reference (evidence, April 2026).** [references/opencode/](references/opencode/) uses OpenTUI in production. Key findings:
 
@@ -393,7 +429,7 @@ Resolves the pre-implementation ambiguities for Phase 2 (inline y/N approvals, T
   - No native markdown layout — `<code filetype="markdown">` is syntax-highlighted code, not true markdown tables/links. Experimental `<markdown>` behind `OPENCODE_EXPERIMENTAL_MARKDOWN` flag.
   - Manual scroll tracking (`ScrollBoxRenderable` doesn't auto-scroll).
   - Every textarea keybinding must be mapped manually ([component/textarea-keybindings.ts](references/opencode/packages/opencode/src/cli/cmd/tui/component/textarea-keybindings.ts)).
-- Migration effort estimate for swarm-coder: **3–6 weeks** for a single dev (Ink rewrite ~1–2w, state model Solid store ~1w, input ~3–5d, markdown/code ~3–5d, dialogs ~1w, context system ~3–5d, testing ~1w).
+- Migration effort estimate for swarm-harness: **3–6 weeks** for a single dev (Ink rewrite ~1–2w, state model Solid store ~1w, input ~3–5d, markdown/code ~3–5d, dialogs ~1w, context system ~3–5d, testing ~1w).
 
 **Updated lean after comparison: (a) migrate now, sequenced as Phase 0.** Evidence shifts this from "maybe" to "defensible yes" — opencode proves the stack works in production, and every one of our biggest TUI gaps has a native OpenTUI answer. The Solid.js shift is real but unavoidable if we want those primitives. Sequencing: Phase 0 (OpenTUI migration, ~3–6w) runs in parallel with Phase 1 (non-TUI plugin + provider ship). Phase 2–5 happen on OpenTUI from the start, avoiding the rework cost. **Risk owned:** pre-1.0 API may churn. Mitigation: pin versions, mirror opencode's upgrade-opentui.ts script pattern for batch bumps.
 
@@ -401,7 +437,7 @@ Resolves the pre-implementation ambiguities for Phase 2 (inline y/N approvals, T
 
 **BLOCKER — 2026-04-22 (same day, post-spike):** `@opentui/core` depends on `bun:ffi` and loads a native Zig rendering library. Node cannot resolve `bun:` imports. This was missed in the initial evaluation. Every grep under `node_modules/@opentui/core/` for `from "bun:` returned multiple hits in both `.d.ts` and runtime `.js` files. README examples exclusively use `bun install` / `bun run`. OpenTUI is Bun-only by design.
 
-**EMPIRICAL PROBE — 2026-04-22 (same day, post-blocker):** Investigated whether migrating swarm-coder to Bun is viable. Results:
+**EMPIRICAL PROBE — 2026-04-22 (same day, post-blocker):** Investigated whether migrating swarm-harness to Bun is viable. Results:
 
 | Probe | Result | Notes |
 |---|---|---|
@@ -411,8 +447,8 @@ Resolves the pre-implementation ambiguities for Phase 2 (inline y/N approvals, T
 | `bun build src/cli.ts --target=bun` | ⚠️ | Fails on `react-devtools-core` (Ink's optional dep). Moot once Ink is removed. |
 | `bun x vitest run <non-TUI tests>` | ✅ | Existing vitest tests pass under Bun-launched vitest. |
 
-**Conclusion:** swarm-coder's existing TypeScript is **already Bun-compatible without code changes**. The migration is tooling + distribution, not a rewrite. Estimated migration effort drops from 3–6w to **2–3w**.
+**Conclusion:** swarm-harness's existing TypeScript is **already Bun-compatible without code changes**. The migration is tooling + distribution, not a rewrite. Estimated migration effort drops from 3–6w to **2–3w**.
 
-**DECISION — 2026-04-22 (resolved):** Migrate swarm-coder from Node → Bun runtime **and** Ink/React → OpenTUI/Solid as combined Phase 0. Distribution strategy: single compiled binary via `bun build --compile` so end users don't install Bun separately. Test strategy: mixed — keep vitest for the 1171 non-TUI tests; use `bun test` for OpenTUI-touching tests. Both coexist in the repo.
+**DECISION — 2026-04-22 (resolved):** Migrate swarm-harness from Node → Bun runtime **and** Ink/React → OpenTUI/Solid as combined Phase 0. Distribution strategy: single compiled binary via `bun build --compile` so end users don't install Bun separately. Test strategy: mixed — keep vitest for the 1171 non-TUI tests; use `bun test` for OpenTUI-touching tests. Both coexist in the repo.
 
 **Tradeoff owned:** Pinning to Bun 1.x as a first-class runtime. Bun 1.3.8 is production-mature; distribution via compiled binary removes the user-facing install requirement. We accept Bun's `bun:ffi` and plugin system as load-bearing infrastructure.
