@@ -1,48 +1,50 @@
 # swarm-harness
 
-A TypeScript coding agent built on Anthropic's Claude Agent SDK with first-class swarm-orchestration support. Multi-provider, scriptable for `--headless` runs, and shipping a Bun-native interactive REPL.
+A TypeScript coding agent where one agent is a tool and N coordinated agents is the product. Built on Anthropic's Claude Agent SDK with first-class multi-agent swarm orchestration, multi-provider support, and a Bun-native interactive REPL.
 
-## Status
+## Quickstart
 
-**v0.4-ready** as of 2026-05-02. Team orchestration shipped: peer-team, pipeline, coordinator, fanout topologies; multi-engine peer parity (transport / `--framework claude-agent-sdk` / `--framework codex-chatgpt`); openteams template loader; in-process MAP observability. Phases 0–5.5 of the [parity plan](docs/16-parity-plan.md) plus v0.2 (Stages 2A–2G) plus v0.3 (Codex App Server FrameworkProvider) plus v0.4 (Stages 4A–4L) all shipped. See [docs/21-roadmap-v0.2-to-v0.4.md](docs/21-roadmap-v0.2-to-v0.4.md) for release history, [docs/25-team-orchestration.md](docs/25-team-orchestration.md) for the team architecture, and [docs/27-v0.4-teams-implementation-plan.md](docs/27-v0.4-teams-implementation-plan.md) for the v0.4 execution plan.
+```bash
+# Download the standalone binary (no Bun/Node required)
+curl -fsSL https://github.com/alexngai/swarm-harness/releases/latest/download/swarm-harness-darwin-arm64 -o swarm-harness
+chmod +x swarm-harness
 
-**Runtime:** Bun ≥ 1.3.8 (the OpenTUI/Solid REPL uses `bun:ffi`). A standalone compiled binary is produced via `bun build --compile` so end users don't need to install Bun separately.
+# Authenticate (pick one)
+export ANTHROPIC_API_KEY=sk-ant-...        # API billing
+# or: claude auth login                    # Claude Max subscription
 
-**What ships:**
+# Run a single agent
+./swarm-harness "explain this codebase"
 
-- Single-agent CLI + interactive REPL with markdown rendering, syntax-highlighted fenced code blocks, native tables, and inline y/N permission prompts.
-- Swarm orchestration: `WorkerPool`, lane events, role overlays, ancestry tracking, message inbox, role-based addressing. Worker state written atomically to `~/.swarm-harness/workers/<agentId>.json` on every lifecycle transition; orchestrator detects orphaned workers on startup.
-- **Team orchestration (v0.4):** `TeamSession` primitive with team-scoped messaging; four topology executors — `Fanout` (preserves `swarm run`), `Pipeline` (chained stages), `PeerTeam` (lateral peers + `send_message`), `Coordinator` (model-driven peer spawning). Multi-engine peer parity — peers can mix transport-mode workers with `--framework claude-agent-sdk` (Claude Max) and `--framework codex-chatgpt` (ChatGPT Plus/Pro). openteams YAML template loader. In-process MAP observability via `--map [URL]`. Long-lived workers (`runMore`/`drain` IPC frames + `idleTimeoutMs`).
-- Multi-provider: Anthropic (SDK + direct), OpenAI, xAI (Grok), Google Generative AI, DashScope (Qwen / Kimi).
-- Plugins discovered from `~/.swarm-harness/plugins/` (owned namespace) + read-only discovery of `~/.claude/plugins/` (Claude Code's namespace).
-- MCP servers (first-class client + bridge for tier-2 tools).
-- Skills auto-loaded from `.claude/skills/`.
-- Hooks: PreToolUse / PostToolUse / SessionStart wired through the dispatcher.
-- Persistent prompt history at `~/.swarm-harness/history` (10k cap, dedup, multi-line escape).
-- Bash-command validation (6 submodules: read-only / destructive / mode / sed / path / semantics) with an inline approval prompt for warn-level cases.
-- Worker lifecycle state machine + typed lane-event discriminated union.
-- Headless mode (`--headless`) emits structured JSONL for orchestrators / CI.
+# Run a team of agents
+./swarm-harness team start my-team --spec team.yaml
+```
 
 ## Install
 
-Clone and build from source:
+### Standalone binary (recommended)
+
+Download a prebuilt binary from [GitHub Releases](https://github.com/alexngai/swarm-harness/releases):
+
+| Platform | Binary |
+|----------|--------|
+| macOS (Apple Silicon) | `swarm-harness-darwin-arm64` |
+| macOS (Intel) | `swarm-harness-darwin-x64` |
+| Linux (x64) | `swarm-harness-linux-x64` |
+
+No runtime dependencies required.
+
+### Build from source
+
+Requires [Bun](https://bun.sh) >= 1.3.8:
 
 ```bash
 git clone https://github.com/alexngai/swarm-harness.git
 cd swarm-harness
 bun install
-bun run build
+bun run build                  # dist/cli.js (Bun bundle)
+bun run build:compile          # dist/swarm-harness (standalone binary)
 ```
-
-Output: `dist/cli.js` (Bun bundle) + `dist/swarm-harness` (standalone binary, darwin-arm64). Run via:
-
-```bash
-bun dist/cli.js --help
-# or
-./dist/swarm-harness --help
-```
-
-(npm publish + multi-platform binary releases planned for post-v0.1.)
 
 ## Authentication
 
@@ -79,51 +81,28 @@ swarm-harness "say hello"
 
 ## Usage
 
-### Prompt (interactive)
+### Single-agent mode
 
 ```bash
+# Interactive TUI with markdown rendering, syntax highlighting, inline approvals
 swarm-harness "explain this codebase"
-swarm-harness prompt "refactor src/foo.ts"
+
+# Choose a model
+swarm-harness --model opus "refactor this codebase for performance"
+
+# Resume a previous session
+swarm-harness --resume latest "and now add tests for the changes"
+
+# Read-only mode (bash validation blocks writes)
+swarm-harness --permission-mode read-only "find all TypeScript errors"
+
+# Headless mode for CI / orchestrators (structured JSONL output)
+swarm-harness --headless --output-format json "list all .ts files"
 ```
 
-The agent runs in an interactive TUI built on OpenTUI/Solid. Markdown is rendered with syntax-highlighted fenced code blocks (TypeScript, JavaScript, Markdown, Zig out of the box via Tree-sitter). It can read files, edit code, run commands, search with grep, and iterate until the task is done. Pressing the Up arrow recalls prior prompts across sessions.
+The agent runs in an interactive TUI built on OpenTUI/Solid. Markdown is rendered with syntax-highlighted fenced code blocks (TypeScript, JavaScript, Markdown, Zig via Tree-sitter). It reads files, edits code, runs commands, searches with grep, and iterates until the task is done.
 
-### Doctor (health check)
-
-```bash
-swarm-harness doctor
-swarm-harness doctor --output-format json
-```
-
-Checks auth, config, install, workspace.
-
-### Init (scaffold)
-
-```bash
-swarm-harness init
-```
-
-Creates `.swarm-harness/` for session state, adds a `.gitignore` entry, drops a stack-detected `CLAUDE.md` if needed. Idempotent.
-
-### Help and version
-
-```bash
-swarm-harness help
-swarm-harness --version
-```
-
-### Plugin management
-
-```bash
-swarm-harness plugin list
-swarm-harness plugin install <local-path-or-spec>
-swarm-harness plugin enable <name>
-swarm-harness plugin disable <name>
-```
-
-Plugins are persisted to `~/.swarm-harness/plugins/{settings,installed}.json`. Plugins installed via Claude Code (`~/.claude/plugins/`) are discovered read-only.
-
-### Swarm run
+### Swarm run (task fanout)
 
 ```bash
 swarm-harness swarm run tasks.jsonl --concurrency 5 --output out.jsonl
@@ -131,64 +110,92 @@ swarm-harness swarm run tasks.jsonl --concurrency 5 --output out.jsonl
 
 Fans out tasks across a worker pool with role overlays, retry policies, dead-letter handling, and lane-event telemetry.
 
-### Team orchestration (v0.4)
+### Team orchestration
 
-Run multi-agent teams with named topologies (peer-team, pipeline, coordinator, fanout). Templates live as openteams YAML or inline JSON `TeamSpec` files.
+Run multi-agent teams using six topology patterns. Teams are defined as openteams YAML templates or inline JSON/YAML `TeamSpec` files.
+
+**Six topologies:**
+
+| Topology | Pattern | Use case |
+|----------|---------|----------|
+| `fanout` | Parallel independent tasks | Batch processing, map-style workloads |
+| `pipeline` | Sequential chained stages | Build → test → deploy, multi-pass refactors |
+| `peer-team` | Lateral peers with messaging | Collaborative coding, research teams |
+| `coordinator` | Model-driven dynamic spawning | Adaptive teams where the lead decides what's needed |
+| `committee` | Consensus from multiple candidates | Code review panels, multi-perspective analysis |
+| `critic-loop` | Executor + critic quality gate | Write → review → revise cycles |
+
+**Running a team:**
 
 ```bash
-# Run an openteams template by name (resolved via the openteams CLI)
+# From an openteams template
 swarm-harness team start gsd
 
-# Run an ad-hoc topology directly from a TeamSpec JSON file
-swarm-harness topology peer-team --spec ./team.json
-swarm-harness topology pipeline --spec ./pipeline.json
+# From a TeamSpec file
+swarm-harness topology peer-team --spec ./team.yaml
 
-# Forward lane events to an external MAP observer
-swarm-harness topology peer-team --spec ./team.json --map ws://localhost:8080
-
-# `--ecosystem` enables `--map` (v0.4). v0.5 added the opentasks adapter
-# behind `--opentasks`; v0.6 added agent-inbox library backend behind
-# `--agent-inbox`; v0.7 added git-cascade worktree-per-member behind
-# `--git-cascade`.
-swarm-harness topology peer-team --spec ./team.json --ecosystem
-
-# v0.5: opentasks daemon mirror (live cross-system task graph)
-swarm-harness swarm run tasks.jsonl --opentasks
-
-# v0.6: agent-inbox library backend (threading + persistence path)
-swarm-harness swarm run tasks.jsonl --agent-inbox
-
-# v0.7: git-cascade worktree-per-member (filesystem isolation between
-# parallel members; opt-in via branchPolicy: { kind: "stream" | "fork" }
-# in the spec).
-swarm-harness swarm run tasks.jsonl --git-cascade
+# With ecosystem adapters
+swarm-harness topology peer-team --spec ./team.yaml \
+  --git-cascade \          # worktree-per-member (filesystem isolation)
+  --agent-inbox \          # persistent threaded messaging
+  --map ws://localhost:8080  # forward events to MAP observer
 ```
 
-Detach a team into a background daemon and manage it cross-process:
+**Example TeamSpec** (`team.yaml`):
+
+```yaml
+name: refactor-team
+topology: peer-team
+members:
+  - name: architect
+    role: lead
+    prompt: "Design the refactoring plan for the auth module"
+  - name: implementer
+    role: worker
+    prompt: "Implement the changes from the architect's plan"
+  - name: reviewer
+    role: worker
+    prompt: "Review the implementation for correctness and style"
+coordination:
+  mergeStreams:
+    targetBranch: main    # auto-merge each member's work to main
+```
+
+**Background daemons:**
 
 ```bash
-swarm-harness team start gsd --detach   # forks a per-team daemon, returns 0
-swarm-harness team list                 # NAME / PID of running daemons
-swarm-harness team logs gsd --follow    # tail events.jsonl
+swarm-harness team start gsd --detach   # fork a background daemon
+swarm-harness team list                 # show running daemons
+swarm-harness team logs gsd --follow    # tail live events
+swarm-harness team send gsd "add error handling to the API routes"
 swarm-harness team stop gsd             # graceful drain
-swarm-harness team kill gsd             # immediate (SIGKILL fallback)
+swarm-harness team kill gsd             # immediate stop
 ```
 
-Daemon files live under `${XDG_RUNTIME_DIR}/swarm-harness/teams/<name>/` (TMPDIR fallback on darwin). `team send <name> <prompt>` spawns an ad-hoc member into a live `peer-team` daemon (5F shipped early into v0.6) — it inherits role + policies from the spec's first member and runs the new prompt as its task. Other topologies (fanout, pipeline, coordinator, committee, critic-loop) dispose after their initial run, so `team send` against them returns a structured "no live TeamSession" error; persistent variants for those will land per-topology when a real workflow surfaces.
+**Git-cascade worktree isolation** (`--git-cascade`): each team member runs in its own git worktree under `.swarm-harness/worktrees/`. Parallel members edit files without stomping each other. Members can commit with Change-Id trailers for audit trails, and streams auto-merge to a target branch on completion.
 
-See [docs/25-team-orchestration.md](docs/25-team-orchestration.md) for the architecture (TeamSession, topology catalog, MAP scope semantics) and [docs/27-v0.4-teams-implementation-plan.md](docs/27-v0.4-teams-implementation-plan.md) for the v0.4 execution detail.
+```bash
+# Pipeline with fork-from-prev: each stage picks up the previous stage's commits
+swarm-harness topology pipeline --spec ./pipeline.yaml --git-cascade
 
-### Known limitations in v0.4
+# Clean up worktrees after the run
+swarm-harness topology peer-team --spec ./team.yaml --git-cascade --cleanup-worktrees
 
-The team primitives shipped in v0.4 cover the headline use cases (mixed-engine peer teams, all 4 topologies, MAP observability). Some flows are constrained or deferred:
+# Manage worktrees manually
+swarm-harness worktree list
+swarm-harness worktree clean --dry-run
+```
 
-- **Cross-process team commands** — `team start --detach`, `team list`, `team logs`, `team stop`, `team kill` shipped in v0.5 (stages 5E.1–5E.7). `team send` shipped in 5F: spawns an ad-hoc member into a persistent `peer-team` daemon. For non-peer-team topologies it returns "no live TeamSession" (each topology needs explicit persistent-mode opt-in).
-- **Worker-side `agent({team: "self"})`** — shipped in 4M.7. WorkerHost gained scope awareness; the spawn IPC handler (4M.6) honors a caller-supplied teamScope.
-- **Codex peers** see 8 of 10 Tier 2 tools (skipped: `agent`, `task_create`, `task_update`).
-- **Codex consultant pattern** (`agent({framework: "codex-chatgpt"})` from a worker) — IPC chain is wired and unit-tested but live smoke surfaces a downstream defect; tracked as 4M.9.
-- **Unix socket path-length** — on darwin, the daemon socket can exceed the 104-char `sun_path` limit when the natural `${TMPDIR}/swarm-harness/teams/<name>/daemon.sock` path is long. Workaround until length-aware path computation lands: keep team names short.
+### Subcommands
 
-See [docs/25-team-orchestration.md §17](docs/25-team-orchestration.md#17-implementation-status-post-4m-review-fixes) for the full status / limitations breakdown.
+```bash
+swarm-harness doctor                 # health check (auth, config, install, workspace)
+swarm-harness init                   # scaffold .swarm-harness/ + .gitignore + CLAUDE.md
+swarm-harness plugin list            # list installed plugins
+swarm-harness plugin install <spec>  # install a plugin
+swarm-harness help                   # show usage
+swarm-harness --version              # print version
+```
 
 ## Flags
 
@@ -196,6 +203,9 @@ See [docs/25-team-orchestration.md §17](docs/25-team-orchestration.md#17-implem
 --model <id>                   Model id or alias (default: claude-sonnet-4-6)
                                Examples: sonnet, opus, grok, gpt-5, kimi
                                See "Models & aliases" below.
+
+--framework <name>             Engine framework: claude-agent-sdk (default),
+                               codex-chatgpt (ChatGPT Plus/Pro via Codex CLI)
 
 --resume <session-id|latest>   Resume a previous session.
 
@@ -206,50 +216,29 @@ See [docs/25-team-orchestration.md §17](docs/25-team-orchestration.md#17-implem
 
 --headless                     Force JSONL output to stdout (no TUI)
 
+--git-cascade                  Enable worktree-per-member isolation (teams)
+--cleanup-worktrees            Remove worktrees on team exit (with --git-cascade)
+--agent-inbox                  Enable persistent threaded messaging backend
+--opentasks                    Mirror tasks to an opentasks daemon
+--map <url>                    Forward lane events to a MAP observer
+
 --no-plugins                   Disable plugin discovery
 --no-skills                    Disable skill discovery
 --no-mcp                       Disable MCP server discovery
 --no-hooks                     Disable hook config discovery
 
---max-tokens <N>               Abort run when cumulative token usage (input +
-                               output + cache) exceeds N. Exits with code 3.
+--max-tokens <N>               Abort run when cumulative token usage exceeds N.
+                               Exits with code 3.
 --max-cost-usd <N>             Abort run when estimated cost exceeds $N USD.
-                               Uses built-in model pricing table; unknown models
-                               ignore cost limit (token limit still applies).
                                Exits with code 3.
 
 --help, -h                     Show usage
 --version, -V                  Print version
 ```
 
-## Examples
-
-```bash
-# Simple query
-swarm-harness "what does package.json describe?"
-
-# Model selection
-swarm-harness --model opus "refactor this codebase for performance"
-
-# Resume and continue
-swarm-harness --resume latest "and now add tests for the changes"
-
-# Read-only mode (safe exploration; bash validation blocks writes)
-swarm-harness --permission-mode read-only "find all TypeScript errors"
-
-# Headless (for orchestrators)
-swarm-harness --headless --output-format json "list all .ts files" \
-  | jq '.[] | select(.type == "message_stop")'
-
-# Init a new workspace
-swarm-harness init /path/to/project
-cd /path/to/project
-swarm-harness "set up a test suite"
-```
-
 ## Models & aliases
 
-swarm-harness routes `--model <id>` by prefix to the matching provider transport. Built-in aliases (in `src/providers/aliases.ts`) resolve short names to canonical model ids; users can override or extend via `~/.swarm-harness/settings.json`:
+swarm-harness routes `--model <id>` by prefix to the matching provider transport. Built-in aliases resolve short names to canonical model ids; users can override or extend via `~/.swarm-harness/settings.json`:
 
 ```json
 { "aliases": { "my-fast": "gpt-4o-mini" } }
@@ -260,44 +249,29 @@ swarm-harness routes `--model <id>` by prefix to the matching provider transport
 | `claude-*` | Anthropic (via Claude Agent SDK) | `ANTHROPIC_API_KEY`, `claude auth login`, or `CLAUDE_CODE_OAUTH_TOKEN` | `opus` → `claude-opus-4-7`, `sonnet` → `claude-sonnet-4-6`, `haiku` → `claude-haiku-4-5` |
 | `gpt-*`, `o[134]*`, `openai/*` | OpenAI | `OPENAI_API_KEY` | `gpt-4o` → `gpt-4o-2024-11-20`, `gpt-5` → `gpt-5-2025-08-07`, `o3` → `o3-mini-2025-01-31` |
 | `grok*` | xAI | `XAI_API_KEY` | `grok` → `grok-3`, `grok-mini` → `grok-3-mini` |
-| `gemini-*` | Google Generative AI | `GOOGLE_GENERATIVE_AI_API_KEY` | (pass-through — e.g. `gemini-2.0-flash`) |
-| `qwen*`, `qwen/*`, `kimi*`, `kimi/*` | DashScope (OpenAI-compatible) | `DASHSCOPE_API_KEY` | `kimi` → `kimi-k2.5` |
-
-Unknown prefixes fail with `unknown model prefix`. Identity aliases (e.g. `grok-2 → grok-2`) are rejected as cycles — pass unaliased canonical ids directly.
-
-Run `scripts/smoke-m4b.sh --live` to smoke-test each provider with a one-turn "say hi" prompt against whichever of `XAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `DASHSCOPE_API_KEY` are set.
+| `gemini-*` | Google Generative AI | `GOOGLE_GENERATIVE_AI_API_KEY` | (pass-through) |
+| `qwen*`, `kimi*` | DashScope (OpenAI-compatible) | `DASHSCOPE_API_KEY` | `kimi` → `kimi-k2.5` |
 
 ### `--framework codex-chatgpt` mode
 
 Delegates the agent loop to the locally-installed Codex CLI binary via its App Server (JSON-RPC over stdio). Uses your ChatGPT Plus/Pro subscription quota rather than an API key.
 
-**Prerequisites:**
-
 ```bash
 npm install -g @openai/codex
 codex login
-```
-
-**Example invocation:**
-
-```bash
 swarm-harness --framework codex-chatgpt --model gpt-5.4 "explain this codebase"
 ```
 
-Pass any Codex-compatible model id with `--model` (e.g. `gpt-5.4`, `o3-mini`). Omitting `--model` falls back to `gpt-5.4` (the codex CLI's own default `gpt-5.2-codex` is rejected on ChatGPT subscription accounts).
-
-Swarm-harness spawns `codex app-server`, performs the JSON-RPC handshake, starts a thread, and streams `NormalizedEvent`s back through the standard pipeline (headless JSONL, TUI, etc.). Auth is owned entirely by `codex login`; swarm-harness holds zero OAuth credentials in this mode.
-
-For design detail see [docs/24-phase-6-codex-app-server-plan.md](docs/24-phase-6-codex-app-server-plan.md).
+Teams can mix engine frameworks — peers on Claude Max, ChatGPT Plus, and direct API can collaborate in the same team.
 
 ## Tools
 
-swarm-harness ships eight Tier 0 tools, plus tier-1 (skills + plugins) and tier-2 (MCP) tools auto-discovered at startup:
+Eight Tier 0 tools ship built-in. Additional tools are auto-discovered from plugins, skills, and MCP servers at startup.
 
 | Tool | Purpose |
 |------|---------|
-| `bash` | Run shell commands with timeout, output truncation (16 KiB), and command-string validation (6 submodules — see [bash-validation/](src/tools/tier0/bash-validation/)) |
-| `read_file` | Read file contents (up to 10 MiB) with offset/limit support |
+| `bash` | Run shell commands with 6-submodule validation (read-only / destructive / mode / sed / path / semantics) |
+| `read_file` | Read file contents (up to 10 MiB) with offset/limit |
 | `write_file` | Write or create files atomically, respecting workspace boundaries |
 | `edit_file` | Replace text in existing files with mandatory uniqueness check |
 | `multi_edit` | Atomic batch edits — all succeed or all fail |
@@ -305,43 +279,70 @@ swarm-harness ships eight Tier 0 tools, plus tier-1 (skills + plugins) and tier-
 | `grep` | Search file contents (via bundled ripgrep binary) |
 | `todo_write` | Persistent task list scoped to the session |
 
-Each tool:
-- Has strict input validation (Zod schemas)
-- Respects workspace boundaries (no symlink escape)
-- Reports clear error messages on failure
-- Can be restricted via `--permission-mode`
-- Routes through `canUseTool` for unified Block / Warn / Allow gating
+**Swarm tools** (available to team members): `agent`, `send_message`, `check_inbox`, `task_create`, `task_update`, `task_list`, `task_get`, `task_pull_next`, `task_stop`, `task_output`, `commit_changes`.
 
-## Known limitations / deferred to v0.3+
+**Extension points:**
+- **Plugins** — `~/.swarm-harness/plugins/` (owned) + read-only discovery of `~/.claude/plugins/`
+- **MCP servers** — first-class stdio client; tools registered as `mcp__<server>__<tool>`
+- **Skills** — auto-loaded from `.claude/skills/`
+- **Hooks** — PreToolUse / PostToolUse / SessionStart
 
-- **OpenAI ChatGPT Plus / Pro OAuth** (P4) — blocked on an external Codex endpoint spike. Direct API works via `OPENAI_API_KEY`. Targeted for v0.3.
-- **Per-server MCP failure classification** (TO2) — basic MCP bridge ships; partial-success / degraded-mode reporting is partial.
-- **Danger-mode bash validation** — v0.2 Stage 2A reversed the original `bypassPermissions` shortcut. Bash-validation (6 submodules: read-only / destructive / mode / sed / path / semantics) now fires in all three permission modes including `danger-full-access`. Warn-level commands still prompt; Block-level commands are hard-rejected regardless of mode.
-- **Recovery recipes** (A3), **policy engine** (A4), **sandbox abstraction** (A6), **green contract** (A7) — claw has them; we don't need them yet.
-- **Cron scheduler** (PS3) — `CronRegistry` is in-memory; scheduled tasks never fire. Defer until needed.
-- **Extended slash commands** (`/ultraplan`, `/teleport`, deeper `/plan`) — could ship as plugins later.
-- **Tier-3 tools** (`pdf_extract`, `repl`, `powerShell`) — low value or platform-specific.
-- **Mock parity harness** (D1) — preempts no current regression; build when one bites.
+## Known limitations
 
-See [docs/15-parity-gaps.md](docs/15-parity-gaps.md) for the full gap tracker and [docs/16-parity-plan.md](docs/16-parity-plan.md) for the phased roadmap.
+- **Per-server MCP failure classification** — basic MCP bridge ships; per-server degraded-mode reporting is partial.
+- **Codex peers** see 8 of 10 swarm tools (missing: `agent`, `task_create`, `task_update`).
+- **Cron scheduler** — `CronRegistry` is in-memory; scheduled tasks don't persist across restarts.
+- **Auto-mode cascade rebase** — the primitive exists but Pipeline topology doesn't auto-invoke it yet.
+- **Merge conflict resolution** — conflicts during `mergeStreams` emit lane events but have no interactive resolution UX.
+- **Windows** — macOS-first; Linux works but is less tested. No Windows support.
 
-## Design & architecture
+## Architecture
 
-- [Vision](docs/00-vision.md) — One agent is a tool. N coordinated agents is the product.
-- [Architecture](docs/02-architecture.md) — Engine, tools, permissions, session store
-- [Tool tiers](docs/04-tool-tiers.md) — What ships when (Tier 0–3)
-- [Parity plan](docs/16-parity-plan.md) — Phased execution against [docs/15-parity-gaps.md](docs/15-parity-gaps.md)
-- [Phase design locks](docs/17-parity-design-questions.md) — Per-phase pre-implementation decisions (Q1–Q18, P2.Q1–10, P3.Q1–6)
-- [Phase 4 plan](docs/18-phase-4-plan.md) — TUI polish (T1, T6, T7)
-- [Phase 5 plan](docs/19-phase-5-plan.md) — Runtime hardening (TO1, A1, A5)
-- [v0.1 launch readiness](docs/20-v0.1-launch.md) — Ship checklist
+swarm-harness is structured around three stable abstraction seams:
 
-Research notes live in `docs/research/` (3,300+ lines informing the design).
+1. **AgentEngine** — pluggable conversation loop (Claude Agent SDK, NativeEngine via Vercel AI SDK, Codex ChatGPT framework)
+2. **ToolDispatcher** — tiered tool registry with unified permission gating
+3. **SwarmHost** — team orchestration layer (topologies, worker lifecycle, task graph, messaging)
+
+```
+src/
+  cli/         CLI entry points + slash commands
+  engine/      AgentEngine implementations + compaction
+  providers/   Multi-provider adapters (Anthropic, OpenAI, xAI, Google, DashScope)
+  tools/       Tier 0-2 tool implementations + bash validation
+  swarm/       Orchestrator, topologies, worker host, task registry, inbox, git adapters
+  mcp/         MCP client + tool bridge
+  plugins/     Plugin discovery + lifecycle
+  skills/      Skill auto-loading
+  hooks/       Hook config + dispatch
+  permissions/ Permission engine (mode-based gating)
+  session/     Session persistence (JSONL)
+  ui/          OpenTUI/Solid REPL + headless JSONL output
+  auth/        Auth detection (zero credentials stored)
+  core/        Shared type definitions
+```
+
+Design docs live in `docs/` (37 markdown files). Key references:
+
+- [Vision](docs/00-vision.md) — one agent is a tool, N coordinated agents is the product
+- [Architecture](docs/02-architecture.md) — engine, tools, permissions, session store
+- [Tool tiers](docs/04-tool-tiers.md) — what ships at each tier (0-5)
+- [Team orchestration](docs/25-team-orchestration.md) — topology catalog, TeamSession, MAP scope semantics
+- [git-cascade integration](docs/29-v0.7-git-cascade-plan.md) — worktree-per-member design
+
+Research notes live in `docs/research/` (7 files, 3,300+ lines).
 
 ## Contributing
 
+```bash
+bun install          # install dependencies
+bun run build        # type-check + bundle
+npm test             # vitest suite (1893 tests)
+bun test src/ui/     # OpenTUI/Solid component tests
+```
+
 - File issues at [github.com/alexngai/swarm-harness/issues](https://github.com/alexngai/swarm-harness/issues)
-- See [CLAUDE.md](CLAUDE.md) for local development setup
+- See [CLAUDE.md](CLAUDE.md) for local development conventions
 
 ## License
 
