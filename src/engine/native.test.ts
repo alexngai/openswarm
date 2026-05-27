@@ -997,3 +997,41 @@ describe("NativeEngine: atomic snapshot write", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// sessionId plumbing (#1)
+// ---------------------------------------------------------------------------
+
+describe("NativeEngine: sessionId plumbing", () => {
+  it("forwards opts.sessionId to ProviderRequest.sessionId on every turn", async () => {
+    const captured: Array<string | undefined> = [];
+    const provider = new MockProvider({
+      scripts: [
+        [
+          { type: "text-delta", text: "ok" },
+          { type: "finish", stopReason: "end_turn", usage: DEFAULT_USAGE },
+        ],
+      ],
+      onRequest: (req) => captured.push(req.sessionId),
+    });
+    const engine = new NativeEngine({ provider, sessionId: "sess-xyz" });
+    await collect(engine.run(baseConfig()));
+    expect(captured).toEqual(["sess-xyz"]);
+  });
+
+  it("omits sessionId from ProviderRequest when constructor option is absent", async () => {
+    const captured: Array<string | undefined> = [];
+    const provider = new MockProvider({
+      scripts: [
+        [
+          { type: "text-delta", text: "ok" },
+          { type: "finish", stopReason: "end_turn", usage: DEFAULT_USAGE },
+        ],
+      ],
+      onRequest: (req) => captured.push(req.sessionId),
+    });
+    const engine = new NativeEngine({ provider });
+    await collect(engine.run(baseConfig()));
+    expect(captured).toEqual([undefined]);
+  });
+});

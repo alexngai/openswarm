@@ -426,3 +426,75 @@ describe("stream()", () => {
     expect(events.map((e) => e.type)).toEqual(["text-delta", "finish"]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// prompt_cache_key plumbing
+// ---------------------------------------------------------------------------
+
+describe("stream() — prompt_cache_key plumbing", () => {
+  beforeEach(() => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-test");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+  });
+
+  const finishOnlyParts = [
+    {
+      type: "finish",
+      finishReason: "stop",
+      rawFinishReason: "stop",
+      totalUsage: { inputTokens: 1, outputTokens: 0, inputTokenDetails: {}, outputTokenDetails: {} },
+    },
+  ];
+
+  it("forwards req.sessionId as providerOptions.openai.promptCacheKey when capability supports caching", async () => {
+    (streamText as ReturnType<typeof vi.fn>).mockReturnValue({
+      fullStream: asyncIterOf(finishOnlyParts),
+    });
+
+    const auth = new OpenAIEnvAuth();
+    const provider = await OpenAITransportProvider.create(auth, "gpt-4o");
+    for await (const _ of provider.stream(makeReq({ sessionId: "abc-123" }))) {
+      void _;
+    }
+
+    const call = (streamText as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(call.providerOptions).toEqual({
+      openai: { promptCacheKey: "abc-123" },
+    });
+  });
+
+  it("omits providerOptions entirely when sessionId is not set", async () => {
+    (streamText as ReturnType<typeof vi.fn>).mockReturnValue({
+      fullStream: asyncIterOf(finishOnlyParts),
+    });
+
+    const auth = new OpenAIEnvAuth();
+    const provider = await OpenAITransportProvider.create(auth, "gpt-4o");
+    for await (const _ of provider.stream(makeReq())) {
+      void _;
+    }
+
+    const call = (streamText as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(call.providerOptions).toBeUndefined();
+  });
+
+  it("does NOT forward promptCacheKey for a model whose capability disables prompt caching", async () => {
+    (streamText as ReturnType<typeof vi.fn>).mockReturnValue({
+      fullStream: asyncIterOf(finishOnlyParts),
+    });
+
+    const auth = new OpenAIEnvAuth();
+    // "not-a-real-model" falls through to UNKNOWN_MODEL_CAPABILITY,
+    // which has promptCache=false.
+    const provider = await OpenAITransportProvider.create(auth, "not-a-real-model");
+    for await (const _ of provider.stream(makeReq({ sessionId: "abc-123" }))) {
+      void _;
+    }
+
+    const call = (streamText as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(call.providerOptions).toBeUndefined();
+  });
+});

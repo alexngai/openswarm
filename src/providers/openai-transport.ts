@@ -114,12 +114,21 @@ export class OpenAITransportProvider implements TransportProvider {
 
     const extraOptions = normalizeProviderOptions(req, this.modelId);
 
+    // OpenAI prompt-cache eviction hint: per-session stable key keeps cache
+    // entries warm across turns. Capability-gated so we don't send it to
+    // legacy models that ignore (or error on) the field.
+    const providerOptions =
+      req.sessionId !== undefined && this.capabilities.promptCache
+        ? { openai: { promptCacheKey: req.sessionId } }
+        : undefined;
+
     const result = streamText({
       model: this.model,
       messages: providerMessagesToVercel(req.messages),
       ...(systemPrompt !== undefined ? { system: systemPrompt } : {}),
       tools: toolSpecsToVercelTools(req.tools ?? []),
       ...(req.abort !== undefined ? { abortSignal: req.abort } : {}),
+      ...(providerOptions !== undefined ? { providerOptions } : {}),
       ...extraOptions,
     });
 

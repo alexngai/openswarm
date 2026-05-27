@@ -76,6 +76,14 @@ export interface ProviderRequest {
   readonly toolChoice?: "auto" | "required" | "none" | { name: string };
   /** Hint: prefer caching the prefix of systemPrompt. Provider may ignore. */
   readonly promptCacheHint?: boolean;
+  /**
+   * Stable per-session identifier. When set, OpenAI Chat Completions
+   * receives this as `prompt_cache_key` (routes to the same backend so
+   * cache hits stay warm across turns). Other transports may use it for
+   * similar eviction hints; transports that don't support it ignore the
+   * field. Should be opaque and stable for the lifetime of one session.
+   */
+  readonly sessionId?: string;
 }
 
 /**
