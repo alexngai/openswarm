@@ -121,7 +121,10 @@ export function spawnWorker(args: SpawnWorkerArgs): ChildProcess {
   if (args.idleTimeoutMs !== undefined) {
     env.SWARM_HARNESS_IDLE_TIMEOUT_MS = String(args.idleTimeoutMs);
   }
-  // Intentionally NOT setting SWARM_HARNESS_SESSION_ID — resume is out of M1.
+  // Per-worker prompt-cache routing key is derived inside worker-entry from
+  // SWARM_HARNESS_AGENT_ID. We don't propagate the parent's session id here:
+  // workers share a backend by virtue of routing, not by sharing keys, so
+  // each worker gets its own stable key from its own unique agentId.
 
   return spawn(
     args.nodeExecPath ?? process.execPath,

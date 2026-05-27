@@ -610,7 +610,10 @@ describe("TeamDaemon — events.jsonl writer (5E.5)", () => {
     daemon = new TeamDaemon({ spec: fakeSpec(), paths, orchestrator });
     await daemon.start();
 
-    // Mix of live-only and recorded events.
+    // Mix of live-only and recorded events. worker_lifecycle_changed is
+    // recorded (it's the canonical typed state-transition record, not a
+    // streaming delta) — only text_delta / tool_use_input / heartbeat are
+    // dropped from disk.
     emit!({ ts: 10, agentId: "a", type: "worker_spawned", payload: {} });
     emit!({ ts: 11, agentId: "a", type: "text_delta", payload: {} }); // live-only — dropped
     emit!({ ts: 12, agentId: "a", type: "heartbeat", payload: {} }); // live-only — dropped
@@ -620,7 +623,7 @@ describe("TeamDaemon — events.jsonl writer (5E.5)", () => {
       agentId: "a",
       type: "worker_lifecycle_changed",
       payload: {},
-    }); // live-only — dropped
+    }); // recorded — kept
     emit!({ ts: 15, agentId: "a", type: "tool_use_end", payload: {} }); // recorded
     emit!({ ts: 16, agentId: "a", type: "worker_exited", payload: {} });
 
@@ -630,11 +633,12 @@ describe("TeamDaemon — events.jsonl writer (5E.5)", () => {
     const raw = await fs.readFile(paths.eventsPath, "utf8");
     const lines = raw.split("\n").filter((l) => l.length > 0);
     const records = lines.map((l) => JSON.parse(l) as { type: string });
-    // Metadata + 3 recorded events; the 4 live-only events are dropped.
-    expect(records).toHaveLength(4);
+    // Metadata + 4 recorded events; the 3 live-only events are dropped.
+    expect(records).toHaveLength(5);
     expect(records[0]!.type).toBe("_metadata");
     expect(records.slice(1).map((r) => r.type)).toEqual([
       "worker_spawned",
+      "worker_lifecycle_changed",
       "tool_use_end",
       "worker_exited",
     ]);

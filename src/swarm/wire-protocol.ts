@@ -192,12 +192,16 @@ export function* iterateWireLines(
  * event split (`loop/events.ts`).
  *
  * Anything not in this set is considered "recorded" by default.
+ *
+ * Note on `worker_lifecycle_changed`: it carries WorkerLifecyclePayload
+ * (the canonical typed record of every state transition) and fires at
+ * human timescale, not token-streaming timescale — so it is *recorded*,
+ * not live-only. The three entries below are true high-rate signals.
  */
 const LIVE_ONLY_LANE_EVENT_TYPES = new Set<LaneEventType>([
   "text_delta",
   "tool_use_input",
   "heartbeat",
-  "worker_lifecycle_changed",
 ]);
 
 export function isLiveOnlyLaneEvent(type: LaneEventType): boolean {

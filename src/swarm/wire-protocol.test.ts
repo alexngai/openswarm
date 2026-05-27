@@ -115,7 +115,6 @@ describe("wire-protocol — live-only vs recorded LaneEvent split", () => {
     expect(isLiveOnlyLaneEvent("text_delta")).toBe(true);
     expect(isLiveOnlyLaneEvent("tool_use_input")).toBe(true);
     expect(isLiveOnlyLaneEvent("heartbeat")).toBe(true);
-    expect(isLiveOnlyLaneEvent("worker_lifecycle_changed")).toBe(true);
   });
 
   it("classifies semantic-step events as recorded (default)", () => {
@@ -124,6 +123,10 @@ describe("wire-protocol — live-only vs recorded LaneEvent split", () => {
     expect(isLiveOnlyLaneEvent("task_completed")).toBe(false);
     expect(isLiveOnlyLaneEvent("permission_granted")).toBe(false);
     expect(isLiveOnlyLaneEvent("dead_letter_written")).toBe(false);
+  });
+
+  it("classifies worker_lifecycle_changed as recorded — it's the canonical typed state-transition record, not a delta", () => {
+    expect(isLiveOnlyLaneEvent("worker_lifecycle_changed")).toBe(false);
   });
 
   it("isRecordedLaneEvent is the inverse predicate", () => {

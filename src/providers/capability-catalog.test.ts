@@ -45,6 +45,13 @@ describe("capability catalog — OpenAI", () => {
     expect(cap.imageIn).toBe(true);
   });
 
+  it("vision-row alternation is anchored — substring 'gpt-4v' inside a future id does not bleed in", () => {
+    // Defends against the unanchored-alternation footgun: /^a|b/ matches "b"
+    // anywhere. Each alternative in the vision pattern must be left-anchored.
+    const cap = getOpenAIModelCapability("future-gpt-4v-something");
+    expect(cap.imageIn).toBe(false);
+  });
+
   it("gpt-4 (non-vision) has no image input", () => {
     const cap = getOpenAIModelCapability("gpt-4-turbo");
     expect(cap.imageIn).toBe(false);
@@ -102,6 +109,13 @@ describe("capability catalog — xAI", () => {
     const cap = getXaiModelCapability("grok-3-mini");
     expect(cap.thinking).toBe(true);
     expect(cap.parallelToolUse).toBe(false);
+  });
+
+  it("grok-3-mini alternation is anchored — substring 'grok' in the wrong place does not bleed in", () => {
+    // The reasoning row's second alternative `grok.*reasoning` must be
+    // left-anchored to avoid matching arbitrary substrings.
+    const cap = getXaiModelCapability("future-grok-reasoning-thing");
+    expect(cap.thinking).toBe(false);
   });
 
   it("grok-4 has bigger context, no thinking", () => {

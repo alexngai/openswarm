@@ -111,7 +111,7 @@ const OPENAI_CATALOG: readonly CatalogRow[] = [
   },
   // gpt-4 with vision (legacy variants)
   {
-    match: /gpt-4-vision|gpt-4v/,
+    match: /^gpt-4-vision|^gpt-4v/,
     capability: {
       imageIn: true,
       videoIn: false,
@@ -219,7 +219,7 @@ export function getGoogleModelCapability(modelId: string): ModelCapability {
 const XAI_CATALOG: readonly CatalogRow[] = [
   // Reasoning grok variants. grok-3-mini is xAI's "reasoning" variant of grok-3.
   {
-    match: /^grok-3-mini|grok.*reasoning/,
+    match: /^grok-3-mini|^grok.*reasoning/,
     capability: {
       imageIn: false,
       videoIn: false,
