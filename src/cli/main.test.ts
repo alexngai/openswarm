@@ -79,8 +79,15 @@ vi.mock("../engine/claude-agent-sdk.js", () => ({
   },
 }));
 
+// Captures the args the CLI passes to NativeEngine so individual tests can
+// assert on plumbing (e.g. sessionId forwarding). Wrapped in vi.hoisted()
+// because vi.mock factories are hoisted above module-scope references.
+const nativeEngineMockState = vi.hoisted(() => ({
+  constructorCalls: [] as Array<Record<string, unknown>>,
+}));
 vi.mock("../engine/native.js", () => ({
-  NativeEngine: function NativeEngine() {
+  NativeEngine: function NativeEngine(opts: Record<string, unknown>) {
+    nativeEngineMockState.constructorCalls.push(opts);
     return {
       id: "native",
       capabilities: {},
@@ -280,6 +287,56 @@ describe("main", () => {
     expect(parsed.engineId).toBe("native");
     expect(parsed.providerId).toBe("openai");
     expect(parsed.modelId).toBe("gpt-4o");
+  });
+
+  // ---- sessionId forwarding to NativeEngine (prompt_cache_key follow-up) ---
+
+  it("forwards a freshly-generated UUID sessionId to NativeEngine when not resuming", async () => {
+    const { resolveProvider } = await import("../providers/routing.js");
+    (resolveProvider as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+      kind: "native",
+      providerFactory: async () => ({ id: "openai", model: {}, capabilities: {}, stream: async function* () {} }),
+      modelId: "gpt-4o",
+    });
+    nativeEngineMockState.constructorCalls.length = 0;
+
+    const { main } = await import("./main.js");
+    const code = await main(["--model", "gpt-4o", "--framework", "auto", "--headless", "say hi"]);
+
+    expect(code).toBe(0);
+    expect(nativeEngineMockState.constructorCalls).toHaveLength(1);
+    const sid = nativeEngineMockState.constructorCalls[0]!["sessionId"];
+    expect(typeof sid).toBe("string");
+    // crypto.randomUUID() yields 36 chars with hyphens at positions 8/13/18/23.
+    expect((sid as string)).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
+  });
+
+  it("forwards the resumed sessionId to NativeEngine when --resume is used", async () => {
+    const { resolveProvider } = await import("../providers/routing.js");
+    (resolveProvider as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+      kind: "native",
+      providerFactory: async () => ({ id: "openai", model: {}, capabilities: {}, stream: async function* () {} }),
+      modelId: "gpt-4o",
+    });
+    nativeEngineMockState.constructorCalls.length = 0;
+
+    const { main } = await import("./main.js");
+    const code = await main([
+      "--model",
+      "gpt-4o",
+      "--framework",
+      "auto",
+      "--resume",
+      "session-from-cli",
+      "--headless",
+      "say hi",
+    ]);
+
+    expect(code).toBe(0);
+    expect(nativeEngineMockState.constructorCalls).toHaveLength(1);
+    expect(nativeEngineMockState.constructorCalls[0]!["sessionId"]).toBe("session-from-cli");
   });
 
   // ---- Phase 7: plugin / login / logout routing ---------------------------
