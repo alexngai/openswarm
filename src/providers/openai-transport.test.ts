@@ -223,10 +223,13 @@ describe("capabilities", () => {
     expect(p.capabilities.vision).toBe(true);
   });
 
-  it("capabilities.promptCache is false (M4a)", async () => {
+  it("capabilities.promptCache reports the model's underlying support", async () => {
+    // OpenAI Chat Completions auto-caches prompt prefixes for messages
+    // >1024 tokens on supported models; the capability flag advertises
+    // model support, independent of whether downstream code opts in.
     const auth = new OpenAIEnvAuth();
     const p = await OpenAITransportProvider.create(auth, "gpt-4o");
-    expect(p.capabilities.promptCache).toBe(false);
+    expect(p.capabilities.promptCache).toBe(true);
   });
 });
 

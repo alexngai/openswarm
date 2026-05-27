@@ -25,6 +25,7 @@ import { providerMessagesToVercel } from "./message-replay.js";
 import { toolSpecsToVercelTools } from "./tool-translation.js";
 import { dashscopePreflight } from "./dashscope-preflight.js";
 import { classifyProviderError } from "./error-classifier.js";
+import { getDashScopeModelCapability } from "./capability-catalog.js";
 
 const DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
 
@@ -33,29 +34,15 @@ const DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
 // ---------------------------------------------------------------------------
 
 function computeCapabilities(modelId: string): ProviderCapabilities {
-  const id = modelId.toLowerCase();
-
-  if (id.startsWith("kimi")) {
-    return {
-      streaming: true,
-      promptCache: false,
-      parallelToolUse: false,
-      vision: false,
-      reasoning: false,
-      maxContextTokens: 131_072,
-      maxOutputTokens: 8_192,
-    };
-  }
-
-  // qwen-plus, qwen-max, etc.
+  const cap = getDashScopeModelCapability(modelId);
   return {
     streaming: true,
-    promptCache: false,
-    parallelToolUse: true,
-    vision: false,
-    reasoning: false,
-    maxContextTokens: 131_072,
-    maxOutputTokens: 8_192,
+    promptCache: cap.promptCache,
+    parallelToolUse: cap.parallelToolUse,
+    vision: cap.imageIn,
+    reasoning: cap.thinking,
+    maxContextTokens: cap.maxContextTokens,
+    maxOutputTokens: cap.maxOutputTokens,
   };
 }
 

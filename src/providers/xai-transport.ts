@@ -22,9 +22,11 @@ import type { StopReason } from "../core/types.js";
 import { providerMessagesToVercel } from "./message-replay.js";
 import { toolSpecsToVercelTools } from "./tool-translation.js";
 import { classifyProviderError } from "./error-classifier.js";
+import { getXaiModelCapability } from "./capability-catalog.js";
 
 // ---------------------------------------------------------------------------
-// Reasoning model detection
+// Reasoning model detection (used for request shaping; kept inline so the
+// quirks below don't need to import the catalog).
 // ---------------------------------------------------------------------------
 
 function isXaiReasoningModel(modelId: string): boolean {
@@ -36,21 +38,15 @@ function isXaiReasoningModel(modelId: string): boolean {
 // ---------------------------------------------------------------------------
 
 function computeCapabilities(modelId: string): ProviderCapabilities {
-  const isReasoning = isXaiReasoningModel(modelId);
-
-  let parallelToolUse = true;
-  if (isReasoning) {
-    parallelToolUse = false;
-  }
-
+  const cap = getXaiModelCapability(modelId);
   return {
     streaming: true,
-    promptCache: false,
-    parallelToolUse,
-    vision: false,
-    reasoning: isReasoning,
-    maxContextTokens: 131_072,
-    maxOutputTokens: 64_000,
+    promptCache: cap.promptCache,
+    parallelToolUse: cap.parallelToolUse,
+    vision: cap.imageIn,
+    reasoning: cap.thinking,
+    maxContextTokens: cap.maxContextTokens,
+    maxOutputTokens: cap.maxOutputTokens,
   };
 }
 
