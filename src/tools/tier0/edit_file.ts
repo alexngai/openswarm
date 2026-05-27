@@ -15,6 +15,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
+import * as crypto from "node:crypto";
 import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
@@ -60,7 +61,11 @@ function countOccurrences(haystack: string, needle: string): number {
  */
 async function atomicWrite(targetPath: string, content: string): Promise<void> {
   const dir = path.dirname(targetPath);
-  const tmp = path.join(dir, `.swarm-harness-tmp-${process.pid}-${Date.now()}`);
+  // Random suffix (not pid+ms) so concurrent batch writes can't collide on
+  // the temp name and lose to `fs.rename` after the writer has been
+  // unlinked by a sibling.
+  const rand = crypto.randomBytes(6).toString("hex");
+  const tmp = path.join(dir, `.swarm-harness-tmp-${process.pid}-${rand}`);
   try {
     await fs.writeFile(tmp, content, "utf8");
     await fs.rename(tmp, targetPath);
