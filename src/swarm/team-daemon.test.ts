@@ -516,9 +516,72 @@ describe("TeamDaemon — events.jsonl writer (5E.5)", () => {
 
     const raw = await fs.readFile(paths.eventsPath, "utf8");
     const lines = raw.split("\n").filter((l) => l.length > 0);
-    expect(lines).toHaveLength(2);
-    expect(JSON.parse(lines[0]!)).toMatchObject({ ts: 100, type: "worker_spawned" });
-    expect(JSON.parse(lines[1]!)).toMatchObject({ ts: 200, type: "worker_exited" });
+    // Line 0 is the wire-protocol metadata event stamped on first open;
+    // events follow.
+    expect(lines).toHaveLength(3);
+    expect(JSON.parse(lines[0]!)).toMatchObject({
+      type: "_metadata",
+      protocol_version: "1.0",
+      producer: "team-daemon",
+    });
+    expect(JSON.parse(lines[1]!)).toMatchObject({ ts: 100, type: "worker_spawned" });
+    expect(JSON.parse(lines[2]!)).toMatchObject({ ts: 200, type: "worker_exited" });
+  });
+
+  it("does NOT re-stamp the metadata header when restarting against an existing events.jsonl", async () => {
+    type AnyHandler = (event: unknown) => void;
+    const makeOrch = (): { orch: TeamDaemonOrchestrator; emitRef: { current?: AnyHandler } } => {
+      const emitRef: { current?: AnyHandler } = {};
+      const orch: TeamDaemonOrchestrator = {
+        runTeam: async () => {
+          await new Promise(() => {});
+          return {
+            succeeded: 0,
+            failed: 0,
+            timeout: 0,
+            cancelled: 0,
+            resultWriteFailures: 0,
+            deadLetterViolation: false,
+            deadLetterWriteFailures: 0,
+          };
+        },
+        subscribeEvents: ((handler: AnyHandler) => {
+          emitRef.current = handler;
+          return () => {
+            emitRef.current = undefined;
+          };
+        }) as TeamDaemonOrchestrator["subscribeEvents"],
+      };
+      return { orch, emitRef };
+    };
+
+    // First daemon — emits one event, then stops.
+    const first = makeOrch();
+    daemon = new TeamDaemon({ spec: fakeSpec(), paths, orchestrator: first.orch });
+    await daemon.start();
+    first.emitRef.current!({ ts: 100, agentId: "a", type: "worker_spawned", payload: {} });
+    await daemon.stop();
+
+    // Second daemon — same paths. Should append a second event without
+    // writing another metadata header on top of the existing file.
+    const second = makeOrch();
+    daemon = new TeamDaemon({ spec: fakeSpec(), paths, orchestrator: second.orch });
+    await daemon.start();
+    second.emitRef.current!({ ts: 200, agentId: "a", type: "worker_exited", payload: {} });
+    await daemon.stop();
+    daemon = undefined;
+
+    const raw = await fs.readFile(paths.eventsPath, "utf8");
+    const lines = raw.split("\n").filter((l) => l.length > 0);
+    const metadataLines = lines.filter((l) => {
+      try {
+        return (JSON.parse(l) as { type?: string }).type === "_metadata";
+      } catch {
+        return false;
+      }
+    });
+    expect(metadataLines).toHaveLength(1);
+    expect(lines).toHaveLength(3); // metadata + 2 events across both daemons
   });
 
   it("does not create events.jsonl when orchestrator omits subscribeEvents", async () => {

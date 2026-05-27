@@ -23,6 +23,7 @@ import type { LaneEvent } from "./events.js";
 import type { TeamSession } from "./team-session.js";
 import { Orchestrator } from "./orchestrator.js";
 import { StandaloneHost } from "./standalone-host.js";
+import { buildMetadataEvent } from "./wire-protocol.js";
 import {
   SendPromptParamsSchema,
   TEAM_DAEMON_ERROR_CODES,
@@ -160,10 +161,27 @@ export class TeamDaemon {
 
     // 8. v0.5 stage 5E.5 — open events.jsonl writer + subscribe lane events.
     if (this.orchestrator.subscribeEvents !== undefined) {
+      // Detect first-open so we can stamp a wire-protocol metadata header
+      // exactly once. On restart we append to the existing file and skip
+      // the header so readers see one metadata line per wire.
+      let needsHeader = false;
+      try {
+        const st = await fsp.stat(this.opts.paths.eventsPath);
+        needsHeader = st.size === 0;
+      } catch {
+        needsHeader = true;
+      }
       this.eventsStream = fs.createWriteStream(this.opts.paths.eventsPath, {
         flags: "a",
       });
       const stream = this.eventsStream;
+      if (needsHeader) {
+        try {
+          stream.write(JSON.stringify(buildMetadataEvent("team-daemon")) + "\n");
+        } catch {
+          /* writer broken — drop the header silently */
+        }
+      }
       this.eventsUnsubscribe = this.orchestrator.subscribeEvents((event) => {
         // {ts, ...laneEvent} shape per docs/28 §V0.5.Q4. LaneEvent already
         // carries its own ts; we keep it (rather than overwriting) so the
