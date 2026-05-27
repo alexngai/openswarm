@@ -108,6 +108,11 @@ export type ReplEvent =
   | { readonly type: "submit"; readonly text: string }
   | { readonly type: "stream-delta"; readonly text: string }
   | { readonly type: "stream-end" }
+  // Steering — user-typed message captured mid-turn while the model is
+  // streaming. Visually echoes a `(steered)` user entry; the actual send
+  // to the engine is the outer wrapper's job (it enqueues for the next
+  // turn boundary). Valid only when name === "streaming".
+  | { readonly type: "steer"; readonly text: string }
   // Permission
   | { readonly type: "permission-request"; readonly request: PendingPermission }
   | {
@@ -331,6 +336,24 @@ export function reduce(state: ReplState, event: ReplEvent): ReplState {
         ...state,
         name: "idle",
         streamingEntryId: undefined,
+      };
+    }
+
+    case "steer": {
+      // Steering is only meaningful while a turn is in flight. From idle the
+      // normal "submit" path applies; from awaiting-permission / compact the
+      // user must resolve the blocking prompt first.
+      if (state.name !== "streaming") return state;
+      const text = event.text;
+      if (text.length === 0) return state;
+      const entryId = `s-${state.transcript.length}`;
+      return {
+        ...state,
+        transcript: [
+          ...state.transcript,
+          { id: entryId, kind: "user", text: `(steered) ${text}` },
+        ],
+        input: { value: "", cursor: 0, killBuffer: state.input.killBuffer },
       };
     }
 
