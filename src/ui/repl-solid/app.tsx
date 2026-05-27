@@ -193,6 +193,23 @@ export function App(props: AppProps) {
   // keys fall through to the reducer (which handles Emacs bindings,
   // history, backspace, etc.).
   const handleKey = (key: import("../repl/state.js").KeyEvent): void => {
+    // Ctrl-S "steering": send the current input as a follow-up message
+    // without aborting the current turn. The wrapping runRepl loop queues
+    // it for the next turn boundary; the reducer adds a visible
+    // "(steered)" transcript entry now so the user sees their input was
+    // captured. Only meaningful while a turn is in flight.
+    if (
+      key.ctrl === true &&
+      key.name === "s" &&
+      state.name === "streaming"
+    ) {
+      const text = state.input.value;
+      if (text.length > 0) {
+        dispatch({ type: "steer", text });
+        props.onSubmit?.(text);
+      }
+      return;
+    }
     if (state.name === "awaiting-permission") {
       if (key.ctrl === true && key.name === "c") {
         respondPermission(false);

@@ -80,6 +80,13 @@ export interface NativeEngineOptions {
    * on demand.
    */
   readonly sessionDir?: string;
+  /**
+   * Stable per-session identifier. Forwarded to the provider via
+   * `ProviderRequest.sessionId`; OpenAI uses it as a prompt-cache
+   * eviction hint so cache entries stay warm across turns. Opaque,
+   * stable for the lifetime of the session.
+   */
+  readonly sessionId?: string;
 }
 
 export class NativeEngine implements AgentEngine {
@@ -89,12 +96,14 @@ export class NativeEngine implements AgentEngine {
   private readonly provider: Provider;
   private readonly compactionConfig: CompactionConfig;
   private readonly sessionDir?: string;
+  private readonly sessionId?: string;
   private cumulativeUsage: Usage = { inputTokens: 0, outputTokens: 0 };
 
   constructor(opts: NativeEngineOptions) {
     this.provider = opts.provider;
     this.compactionConfig = opts.compactionConfig ?? DEFAULT_COMPACTION;
     if (opts.sessionDir !== undefined) this.sessionDir = opts.sessionDir;
+    if (opts.sessionId !== undefined) this.sessionId = opts.sessionId;
 
     const pcap = opts.provider.capabilities;
     this.capabilities = {
@@ -224,6 +233,7 @@ export class NativeEngine implements AgentEngine {
         ...(config.maxOutputTokens !== undefined
           ? { maxOutputTokens: config.maxOutputTokens }
           : {}),
+        ...(this.sessionId !== undefined ? { sessionId: this.sessionId } : {}),
       };
 
       try {

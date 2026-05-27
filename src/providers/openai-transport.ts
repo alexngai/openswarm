@@ -19,43 +19,26 @@ import type {
   ProviderRequest,
 } from "./index.js";
 import type { StopReason } from "../core/types.js";
-import { isReasoningModel, isGpt5, normalizeProviderOptions } from "./openai-quirks.js";
+import { normalizeProviderOptions } from "./openai-quirks.js";
 import { providerMessagesToVercel } from "./message-replay.js";
 import { toolSpecsToVercelTools } from "./tool-translation.js";
+import { classifyProviderError } from "./error-classifier.js";
+import { getOpenAIModelCapability } from "./capability-catalog.js";
 
 // ---------------------------------------------------------------------------
 // Capabilities helper
 // ---------------------------------------------------------------------------
 
 function computeCapabilities(modelId: string): ProviderCapabilities {
-  const id = modelId.toLowerCase();
-  const isReasoning = isReasoningModel(modelId);
-  const isGpt5Model = isGpt5(modelId);
-
-  // Vision: gpt-4o family, gpt-5 family, gpt-4-vision; not o-series
-  const vision =
-    !isReasoning &&
-    (id.startsWith("gpt-4o") ||
-      id.startsWith("gpt-5") ||
-      id.includes("gpt-4-vision") ||
-      id.includes("gpt-4v"));
-
-  // maxContextTokens estimates per model family
-  let maxContextTokens = 128_000; // default (gpt-4o)
-  if (isGpt5Model || id.startsWith("gpt-5")) {
-    maxContextTokens = 400_000;
-  } else if (isReasoning) {
-    maxContextTokens = 200_000;
-  }
-
+  const cap = getOpenAIModelCapability(modelId);
   return {
     streaming: true,
-    promptCache: false, // M4a: disabled; wiring deferred to M4b
-    parallelToolUse: true,
-    vision,
-    reasoning: isReasoning,
-    maxContextTokens,
-    maxOutputTokens: 16_384,
+    promptCache: cap.promptCache,
+    parallelToolUse: cap.parallelToolUse,
+    vision: cap.imageIn,
+    reasoning: cap.thinking,
+    maxContextTokens: cap.maxContextTokens,
+    maxOutputTokens: cap.maxOutputTokens,
   };
 }
 
@@ -131,12 +114,21 @@ export class OpenAITransportProvider implements TransportProvider {
 
     const extraOptions = normalizeProviderOptions(req, this.modelId);
 
+    // OpenAI prompt-cache eviction hint: per-session stable key keeps cache
+    // entries warm across turns. Capability-gated so we don't send it to
+    // legacy models that ignore (or error on) the field.
+    const providerOptions =
+      req.sessionId !== undefined && this.capabilities.promptCache
+        ? { openai: { promptCacheKey: req.sessionId } }
+        : undefined;
+
     const result = streamText({
       model: this.model,
       messages: providerMessagesToVercel(req.messages),
       ...(systemPrompt !== undefined ? { system: systemPrompt } : {}),
       tools: toolSpecsToVercelTools(req.tools ?? []),
       ...(req.abort !== undefined ? { abortSignal: req.abort } : {}),
+      ...(providerOptions !== undefined ? { providerOptions } : {}),
       ...extraOptions,
     });
 
@@ -185,12 +177,7 @@ export class OpenAITransportProvider implements TransportProvider {
         }
 
         case "error":
-          yield {
-            type: "error",
-            code: "provider",
-            message: String(part.error),
-            retryable: false,
-          };
+          yield { type: "error", ...classifyProviderError(part.error) };
           break;
 
         // Lifecycle and other frames we don't consume in M4a

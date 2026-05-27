@@ -1,6 +1,8 @@
 import type { ToolSpec } from "../core/types.js";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "./types.js";
 import type { HookRuntime } from "../hooks/runtime.js";
+import { ToolAccesses, type ToolAccesses as ToolAccessesType } from "./access.js";
+import { ToolScheduler } from "./scheduler.js";
 
 // ---------------------------------------------------------------------------
 // M3b Phase 0.6 — batch dispatch types
@@ -189,50 +191,65 @@ export class ToolDispatcher {
   /**
    * Dispatch a batch of tool requests and return results in input order.
    *
-   * Phase 4: parallel fan-out for concurrencySafe tools, serial for unsafe.
+   * Each request declares the resources it touches via `tool.accesses(input,
+   * ctx)`. The scheduler runs requests whose accesses don't conflict
+   * concurrently and serializes the rest in input order. Result emission is
+   * always in input (provider) order regardless of completion order.
    *
-   * Partitions requests by `spec.concurrencySafe`:
-   *   - `undefined` or `true`  → safe, dispatched in parallel via Promise.all
-   *   - `false`                → unsafe, dispatched serially in input order
-   *     after all safe tools complete (preserves determinism, e.g. two
-   *     todo_write calls write in input order).
-   *
-   * Results are returned in the SAME order as input regardless of partition.
+   * Tools without an `accesses` callback fall back to `spec.concurrencySafe`:
+   *   - `false` → `ToolAccesses.all()` (global barrier, serializes in
+   *     input order against every other task — matches the legacy
+   *     "unsafe goes serial" guarantee for e.g. todo_write).
+   *   - `true` / `undefined` → `ToolAccesses.none()` (parallel — matches the
+   *     legacy "safe fans out" path).
    *
    * Note: parallel_tool_batch lane events are emitted by upstream callers
    * rather than here, to avoid emitter-plumbing complexity in the dispatcher.
    */
   async dispatchBatch(requests: readonly ToolRequest[]): Promise<readonly ToolResult[]> {
-    // Partition by concurrencySafe.
-    // Safe tools dispatch in parallel via Promise.all.
-    // Unsafe tools dispatch serially, in input-order after all safe tools complete
-    // (to preserve determinism).
-    //
-    // Results returned in the SAME order as input regardless of partition.
-
-    const results: ToolResult[] = new Array(requests.length);
-    const safeIndices: number[] = [];
-    const unsafeIndices: number[] = [];
+    const scheduler = new ToolScheduler<ToolResult>();
+    const pending: Array<Promise<ToolResult>> = new Array(requests.length);
 
     for (let i = 0; i < requests.length; i++) {
-      const spec = this.registry.get(requests[i]!.name)?.spec;
-      const isSafe = spec?.concurrencySafe !== false; // undefined / true = safe
-      if (isSafe) safeIndices.push(i);
-      else unsafeIndices.push(i);
+      const req = requests[i]!;
+      const accesses = this.computeAccesses(req);
+      pending[i] = scheduler.add({
+        accesses,
+        start: async () => ({
+          result: this.dispatch(req.name, req.input, req.ctx),
+        }),
+      });
     }
 
-    // Parallel dispatch of safe tools.
-    await Promise.all(
-      safeIndices.map(async (i) => {
-        results[i] = await this.dispatch(requests[i]!.name, requests[i]!.input, requests[i]!.ctx);
-      }),
-    );
-
-    // Serial dispatch of unsafe tools (input-order).
-    for (const i of unsafeIndices) {
-      results[i] = await this.dispatch(requests[i]!.name, requests[i]!.input, requests[i]!.ctx);
+    // Await in input order so the returned array preserves provider order
+    // even when scheduled tasks finish out of order.
+    const results: ToolResult[] = new Array(requests.length);
+    for (let i = 0; i < pending.length; i++) {
+      results[i] = await pending[i]!;
     }
-
     return results;
+  }
+
+  /**
+   * Resolve the access set for one request. Prefers the tool's declared
+   * `accesses(input, ctx)` when present; otherwise falls back to the legacy
+   * `concurrencySafe` flag. Unregistered tools are treated as conflict-free
+   * — `dispatch()` will return a structured `unknown tool` error in parallel.
+   */
+  private computeAccesses(req: ToolRequest): ToolAccessesType {
+    const tool = this.registry.get(req.name);
+    if (tool === undefined) return ToolAccesses.none();
+    if (tool.accesses !== undefined) {
+      try {
+        return tool.accesses(req.input, req.ctx);
+      } catch {
+        // A buggy access declaration must not stall the batch — fall back to
+        // the most pessimistic option so we never run conflicting work.
+        return ToolAccesses.all();
+      }
+    }
+    return tool.spec.concurrencySafe === false
+      ? ToolAccesses.all()
+      : ToolAccesses.none();
   }
 }

@@ -223,10 +223,13 @@ describe("capabilities", () => {
     expect(p.capabilities.vision).toBe(true);
   });
 
-  it("capabilities.promptCache is false (M4a)", async () => {
+  it("capabilities.promptCache reports the model's underlying support", async () => {
+    // OpenAI Chat Completions auto-caches prompt prefixes for messages
+    // >1024 tokens on supported models; the capability flag advertises
+    // model support, independent of whether downstream code opts in.
     const auth = new OpenAIEnvAuth();
     const p = await OpenAITransportProvider.create(auth, "gpt-4o");
-    expect(p.capabilities.promptCache).toBe(false);
+    expect(p.capabilities.promptCache).toBe(true);
   });
 });
 
@@ -332,9 +335,9 @@ describe("stream()", () => {
     expect(events[1]).toMatchObject({ type: "finish", stopReason: "tool_use" });
   });
 
-  it("maps error parts to ProviderEvent error", async () => {
+  it("classifies a network-like error as transport / retryable", async () => {
     const parts = [
-      { type: "error", error: new Error("network failure") },
+      { type: "error", error: new Error("fetch failed: ECONNRESET") },
     ];
 
     (streamText as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -350,10 +353,10 @@ describe("stream()", () => {
 
     expect(events[0]).toMatchObject({
       type: "error",
-      code: "provider",
-      retryable: false,
+      code: "transport",
+      retryable: true,
     });
-    expect((events[0] as { message: string }).message).toContain("network failure");
+    expect((events[0] as { message: string }).message).toContain("ECONNRESET");
   });
 
   it("finish event includes usage with inputTokens and outputTokens", async () => {
@@ -421,5 +424,77 @@ describe("stream()", () => {
 
     // Only text-delta and finish should be yielded
     expect(events.map((e) => e.type)).toEqual(["text-delta", "finish"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// prompt_cache_key plumbing
+// ---------------------------------------------------------------------------
+
+describe("stream() — prompt_cache_key plumbing", () => {
+  beforeEach(() => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-test");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+  });
+
+  const finishOnlyParts = [
+    {
+      type: "finish",
+      finishReason: "stop",
+      rawFinishReason: "stop",
+      totalUsage: { inputTokens: 1, outputTokens: 0, inputTokenDetails: {}, outputTokenDetails: {} },
+    },
+  ];
+
+  it("forwards req.sessionId as providerOptions.openai.promptCacheKey when capability supports caching", async () => {
+    (streamText as ReturnType<typeof vi.fn>).mockReturnValue({
+      fullStream: asyncIterOf(finishOnlyParts),
+    });
+
+    const auth = new OpenAIEnvAuth();
+    const provider = await OpenAITransportProvider.create(auth, "gpt-4o");
+    for await (const _ of provider.stream(makeReq({ sessionId: "abc-123" }))) {
+      void _;
+    }
+
+    const call = (streamText as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(call.providerOptions).toEqual({
+      openai: { promptCacheKey: "abc-123" },
+    });
+  });
+
+  it("omits providerOptions entirely when sessionId is not set", async () => {
+    (streamText as ReturnType<typeof vi.fn>).mockReturnValue({
+      fullStream: asyncIterOf(finishOnlyParts),
+    });
+
+    const auth = new OpenAIEnvAuth();
+    const provider = await OpenAITransportProvider.create(auth, "gpt-4o");
+    for await (const _ of provider.stream(makeReq())) {
+      void _;
+    }
+
+    const call = (streamText as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(call.providerOptions).toBeUndefined();
+  });
+
+  it("does NOT forward promptCacheKey for a model whose capability disables prompt caching", async () => {
+    (streamText as ReturnType<typeof vi.fn>).mockReturnValue({
+      fullStream: asyncIterOf(finishOnlyParts),
+    });
+
+    const auth = new OpenAIEnvAuth();
+    // "not-a-real-model" falls through to UNKNOWN_MODEL_CAPABILITY,
+    // which has promptCache=false.
+    const provider = await OpenAITransportProvider.create(auth, "not-a-real-model");
+    for await (const _ of provider.stream(makeReq({ sessionId: "abc-123" }))) {
+      void _;
+    }
+
+    const call = (streamText as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(call.providerOptions).toBeUndefined();
   });
 });

@@ -7,6 +7,7 @@
 
 import * as path from "node:path";
 import * as os from "node:os";
+import * as crypto from "node:crypto";
 import { parseArgv } from "./argv.js";
 import { runDoctor } from "./doctor.js";
 import { runInit } from "./init.js";
@@ -372,10 +373,14 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   const auth = new AnthropicEnvAuth();
 
   // 5. Resolve session if --resume was specified.
+  // `sessionId` is hoisted: it's also forwarded to NativeEngine so the
+  // OpenAI transport can pass it as `prompt_cache_key`, keeping the
+  // server-side prompt cache warm across turns. Resumed sessions inherit
+  // the previous id; new sessions get a fresh UUID.
   let resumeFrom: { engineId: string; data: unknown } | undefined;
+  let sessionId: string | undefined;
   if (opts.resume !== undefined) {
     const store = new SessionStore();
-    let sessionId: string | undefined;
     if (opts.resume === "latest") {
       sessionId = await store.resolveLatest(process.cwd());
       if (sessionId === undefined) {
@@ -387,6 +392,9 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     if (sessionId !== undefined) {
       resumeFrom = store.buildSnapshot(sessionId);
     }
+  }
+  if (sessionId === undefined) {
+    sessionId = crypto.randomUUID();
   }
 
   // 6. Resolve model alias + select engine based on --framework.
@@ -429,7 +437,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
       }
       const auth = await buildAuthForProvider(resolved.modelId!);
       const provider = await resolved.providerFactory!(auth, resolved.modelId!);
-      engine = new NativeEngine({ provider });
+      engine = new NativeEngine({ provider, sessionId });
       providerId = provider.id;
     } else {
       // auto
@@ -438,7 +446,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
       } else {
         const auth = await buildAuthForProvider(resolved.modelId!);
         const provider = await resolved.providerFactory!(auth, resolved.modelId!);
-        engine = new NativeEngine({ provider });
+        engine = new NativeEngine({ provider, sessionId });
         providerId = provider.id;
       }
     }

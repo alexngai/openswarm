@@ -21,27 +21,23 @@ import type {
 import type { StopReason } from "../core/types.js";
 import { providerMessagesToVercel } from "./message-replay.js";
 import { toolSpecsToVercelTools } from "./tool-translation.js";
+import { classifyProviderError } from "./error-classifier.js";
+import { getGoogleModelCapability } from "./capability-catalog.js";
 
 // ---------------------------------------------------------------------------
 // Capabilities helper
 // ---------------------------------------------------------------------------
 
 function computeCapabilities(modelId: string): ProviderCapabilities {
-  const id = modelId.toLowerCase();
-
-  // Vision: Gemini models support vision
-  const vision = id.startsWith("gemini-");
-
+  const cap = getGoogleModelCapability(modelId);
   return {
     streaming: true,
-    promptCache: false,
-    // Conservative: parallelToolUse false until live-verified with Gemini.
-    // TODO(M4b): upgrade to true after AC 23 live smoke confirms parallel tool support.
-    parallelToolUse: false,
-    vision,
-    reasoning: false,
-    maxContextTokens: 1_048_576,
-    maxOutputTokens: 8_192,
+    promptCache: cap.promptCache,
+    parallelToolUse: cap.parallelToolUse,
+    vision: cap.imageIn,
+    reasoning: cap.thinking,
+    maxContextTokens: cap.maxContextTokens,
+    maxOutputTokens: cap.maxOutputTokens,
   };
 }
 
@@ -173,12 +169,7 @@ export class GoogleTransportProvider implements TransportProvider {
         }
 
         case "error":
-          yield {
-            type: "error",
-            code: "provider",
-            message: String(part.error),
-            retryable: false,
-          };
+          yield { type: "error", ...classifyProviderError(part.error) };
           break;
 
         case "start":

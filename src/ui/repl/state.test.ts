@@ -185,6 +185,71 @@ describe("reducer — transitions", () => {
     expect(s1.name).toBe("streaming");
     expect(s1.transcript).toHaveLength(before);
   });
+
+  it("steer is a no-op from idle", () => {
+    const s = reduce(idle(), { type: "steer", text: "hello" });
+    expect(s.name).toBe("idle");
+    expect(s.transcript).toHaveLength(0);
+  });
+
+  it("streaming --(steer)--> streaming (adds (steered) entry, clears input)", () => {
+    const s0 = reduce(idle(), { type: "submit", text: "run my code" });
+    // Pretend the user has been typing into the buffer while the model
+    // streams; the input value isn't cleared by the dispatch in app.tsx
+    // before the reducer fires.
+    const sWithBuffer = reduce(s0, {
+      type: "input-changed",
+      value: "and also check the docs",
+      cursor: 23,
+    });
+    const s1 = reduce(sWithBuffer, {
+      type: "steer",
+      text: "and also check the docs",
+    });
+    expect(s1.name).toBe("streaming");
+    // Two user-kind entries: the original submission + the steered one.
+    const userEntries = s1.transcript.filter((e) => e.kind === "user");
+    expect(userEntries).toHaveLength(2);
+    expect(userEntries[1]!.text).toBe("(steered) and also check the docs");
+    // Buffer cleared so the user can keep typing fresh thoughts.
+    expect(s1.input.value).toBe("");
+    expect(s1.input.cursor).toBe(0);
+  });
+
+  it("steer with empty text is a no-op", () => {
+    const s0 = reduce(idle(), { type: "submit", text: "go" });
+    const s1 = reduce(s0, { type: "steer", text: "" });
+    expect(s1).toBe(s0);
+  });
+
+  it("steer from awaiting-permission is a no-op (user must resolve the prompt first)", () => {
+    const s0 = reduce(idle(), { type: "submit", text: "go" });
+    const s1 = reduce(s0, {
+      type: "permission-request",
+      request: {
+        toolName: "bash",
+        input: {},
+        currentMode: "workspace-write",
+        requiredPermission: "exec",
+      },
+    });
+    expect(s1.name).toBe("awaiting-permission");
+    const s2 = reduce(s1, { type: "steer", text: "hi" });
+    expect(s2).toBe(s1);
+  });
+
+  it("steer preserves transcript history (does not duplicate the submission)", () => {
+    const s0 = reduce(idle(), { type: "submit", text: "first" });
+    const s1 = reduce(s0, { type: "stream-delta", text: "ack" });
+    const s2 = reduce(s1, { type: "steer", text: "additional" });
+    // Expect three entries: user "first", assistant streaming "ack",
+    // user "(steered) additional".
+    expect(s2.transcript).toHaveLength(3);
+    expect(s2.transcript[0]!.kind).toBe("user");
+    expect(s2.transcript[1]!.kind).toBe("assistant");
+    expect(s2.transcript[2]!.kind).toBe("user");
+    expect(s2.transcript[2]!.text).toBe("(steered) additional");
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -146,6 +146,8 @@ Format: Question · Why it matters · Options · Lean · What'd clarify · **Cla
 
 **Updated lean after comparison: (a) confirmed.** Claw treats this the same way — no version field, rely on additive conventions, consumers ignore unknown variants. **Action:** no change. When we do Phase 5b, use TS discriminated unions with exhaustive checks internally, emit the same flat JSON shape externally, add variants freely, never reshape existing ones.
 
+**2026-05-27 supplement.** Q7's "additive at the event level" remains the rule. A *complementary* mechanism now exists at the WIRE level: `src/swarm/wire-protocol.ts` defines a `WireMetadataEvent` written as the first line of any persistent JSONL stream (`{type: "_metadata", protocol_version, created_at, producer}`), plus a `WireMigration` registry for chaining future shape transforms. This addresses the version-detection concern without contradicting (a) — events stay additive; wires gain a stamped version. See Q22 in `docs/06-open-questions.md`.
+
 ---
 
 ## Q8. Bash validation: block-by-default or warn-by-default? (Phase 5a)

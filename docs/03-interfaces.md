@@ -102,6 +102,8 @@ export interface ProviderCapabilities {
   readonly streaming: boolean;
   readonly parallelToolUse: boolean;
   readonly reasoning: boolean;        // true for o1/o3/o4/* and QwQ model families
+  readonly promptCache: boolean;      // true for gpt-4o*/gpt-5*/o-series, gates prompt_cache_key
+  readonly vision: boolean;
   readonly maxContextTokens: number;
   readonly maxOutputTokens: number;
 }
@@ -110,9 +112,18 @@ export interface ProviderRequest {
   readonly model: string;
   readonly messages: CoreMessage[];
   readonly tools?: ToolDefinition[];
-  readonly system?: string;
-  readonly maxTokens?: number;
+  readonly systemPrompt?: string | readonly string[];
+  readonly maxOutputTokens?: number;
   readonly temperature?: number;
+  readonly topP?: number;
+  readonly topK?: number;
+  readonly abort?: AbortSignal;
+  /**
+   * Opaque per-session id. Forwarded to OpenAI as `prompt_cache_key`
+   * (gated by `ProviderCapabilities.promptCache`) so the server-side
+   * cache stays warm across turns. Other transports ignore it.
+   */
+  readonly sessionId?: string;
 }
 
 export type ProviderEvent =
@@ -124,6 +135,10 @@ export type ProviderEvent =
 ```
 
 Shipped in M4a: `openai` (`@ai-sdk/openai`). Shipped in M4b: `google` (`@ai-sdk/google`), `xai` (`@ai-sdk/xai`), `dashscope` (OpenAI-compat via `DASHSCOPE_BASE_URL`). Planned (Phase 5, pending operator SSE spike): `codex-chatgpt`.
+
+**Per-model capability catalog.** `ProviderCapabilities` above is the engine-facing surface. Per-model truth lives in `src/providers/capability-catalog.ts` — a single regex-prefix-matched table keyed by provider, returning a `ModelCapability` (`promptCache`, `parallelToolUse`, `imageIn`, `videoIn`, `audioIn`, `thinking`, `maxContextTokens`, `maxOutputTokens`). Each transport's `computeCapabilities(modelId)` delegates here; today only `imageIn → vision` and `thinking → reasoning` are surfaced through `ProviderCapabilities`, with the other modality fields reserved.
+
+**Error classification.** When a transport's stream yields a fatal error, it routes the raw `APICallError` (or generic `Error`) through `classifyProviderError()` in `src/providers/error-classifier.ts`, which returns a typed `ProviderError` with `code` ∈ `{transport, auth, rate_limit, context_overflow, invalid_request, provider_unavailable, unknown}` plus a `retryable` flag. Anthropic / OpenAI / Google / Mistral all share this classifier so retry policy stays consistent across providers.
 
 ### Codex-ChatGPT provider (Phase 5 — pending)
 

@@ -15,9 +15,11 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
+import * as crypto from "node:crypto";
 import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
+import { ToolAccesses, type ToolAccesses as ToolAccessesType } from "../access.js";
 import { isUnderCwd } from "./internal.js";
 
 const inputSchema = z.object({
@@ -59,7 +61,11 @@ function countOccurrences(haystack: string, needle: string): number {
  */
 async function atomicWrite(targetPath: string, content: string): Promise<void> {
   const dir = path.dirname(targetPath);
-  const tmp = path.join(dir, `.swarm-harness-tmp-${process.pid}-${Date.now()}`);
+  // Random suffix (not pid+ms) so concurrent batch writes can't collide on
+  // the temp name and lose to `fs.rename` after the writer has been
+  // unlinked by a sibling.
+  const rand = crypto.randomBytes(6).toString("hex");
+  const tmp = path.join(dir, `.swarm-harness-tmp-${process.pid}-${rand}`);
   try {
     await fs.writeFile(tmp, content, "utf8");
     await fs.rename(tmp, targetPath);
@@ -147,10 +153,17 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   };
 }
 
+function accesses(raw: unknown, ctx: ToolExecutionContext): ToolAccessesType {
+  const parsed = inputSchema.safeParse(raw);
+  if (!parsed.success) return ToolAccesses.all();
+  return ToolAccesses.writeFile(path.resolve(ctx.cwd, parsed.data.path));
+}
+
 export const editFileTool: ToolImpl = {
   spec,
   execute,
   zodSchema: inputSchema,
+  accesses,
 };
 
 // Export atomicWrite for reuse by multi_edit.

@@ -516,9 +516,132 @@ describe("TeamDaemon — events.jsonl writer (5E.5)", () => {
 
     const raw = await fs.readFile(paths.eventsPath, "utf8");
     const lines = raw.split("\n").filter((l) => l.length > 0);
-    expect(lines).toHaveLength(2);
-    expect(JSON.parse(lines[0]!)).toMatchObject({ ts: 100, type: "worker_spawned" });
-    expect(JSON.parse(lines[1]!)).toMatchObject({ ts: 200, type: "worker_exited" });
+    // Line 0 is the wire-protocol metadata event stamped on first open;
+    // events follow.
+    expect(lines).toHaveLength(3);
+    expect(JSON.parse(lines[0]!)).toMatchObject({
+      type: "_metadata",
+      protocol_version: "1.0",
+      producer: "team-daemon",
+    });
+    expect(JSON.parse(lines[1]!)).toMatchObject({ ts: 100, type: "worker_spawned" });
+    expect(JSON.parse(lines[2]!)).toMatchObject({ ts: 200, type: "worker_exited" });
+  });
+
+  it("does NOT re-stamp the metadata header when restarting against an existing events.jsonl", async () => {
+    type AnyHandler = (event: unknown) => void;
+    const makeOrch = (): { orch: TeamDaemonOrchestrator; emitRef: { current?: AnyHandler } } => {
+      const emitRef: { current?: AnyHandler } = {};
+      const orch: TeamDaemonOrchestrator = {
+        runTeam: async () => {
+          await new Promise(() => {});
+          return {
+            succeeded: 0,
+            failed: 0,
+            timeout: 0,
+            cancelled: 0,
+            resultWriteFailures: 0,
+            deadLetterViolation: false,
+            deadLetterWriteFailures: 0,
+          };
+        },
+        subscribeEvents: ((handler: AnyHandler) => {
+          emitRef.current = handler;
+          return () => {
+            emitRef.current = undefined;
+          };
+        }) as TeamDaemonOrchestrator["subscribeEvents"],
+      };
+      return { orch, emitRef };
+    };
+
+    // First daemon — emits one event, then stops.
+    const first = makeOrch();
+    daemon = new TeamDaemon({ spec: fakeSpec(), paths, orchestrator: first.orch });
+    await daemon.start();
+    first.emitRef.current!({ ts: 100, agentId: "a", type: "worker_spawned", payload: {} });
+    await daemon.stop();
+
+    // Second daemon — same paths. Should append a second event without
+    // writing another metadata header on top of the existing file.
+    const second = makeOrch();
+    daemon = new TeamDaemon({ spec: fakeSpec(), paths, orchestrator: second.orch });
+    await daemon.start();
+    second.emitRef.current!({ ts: 200, agentId: "a", type: "worker_exited", payload: {} });
+    await daemon.stop();
+    daemon = undefined;
+
+    const raw = await fs.readFile(paths.eventsPath, "utf8");
+    const lines = raw.split("\n").filter((l) => l.length > 0);
+    const metadataLines = lines.filter((l) => {
+      try {
+        return (JSON.parse(l) as { type?: string }).type === "_metadata";
+      } catch {
+        return false;
+      }
+    });
+    expect(metadataLines).toHaveLength(1);
+    expect(lines).toHaveLength(3); // metadata + 2 events across both daemons
+  });
+
+  it("drops live-only LaneEvents from events.jsonl but keeps recorded ones", async () => {
+    type AnyHandler = (event: unknown) => void;
+    let emit: AnyHandler | undefined;
+    const orchestrator: TeamDaemonOrchestrator = {
+      runTeam: async () => {
+        await new Promise(() => {});
+        return {
+          succeeded: 0,
+          failed: 0,
+          timeout: 0,
+          cancelled: 0,
+          resultWriteFailures: 0,
+          deadLetterViolation: false,
+          deadLetterWriteFailures: 0,
+        };
+      },
+      subscribeEvents: ((handler: AnyHandler) => {
+        emit = handler;
+        return () => {
+          emit = undefined;
+        };
+      }) as TeamDaemonOrchestrator["subscribeEvents"],
+    };
+    daemon = new TeamDaemon({ spec: fakeSpec(), paths, orchestrator });
+    await daemon.start();
+
+    // Mix of live-only and recorded events. worker_lifecycle_changed is
+    // recorded (it's the canonical typed state-transition record, not a
+    // streaming delta) — only text_delta / tool_use_input / heartbeat are
+    // dropped from disk.
+    emit!({ ts: 10, agentId: "a", type: "worker_spawned", payload: {} });
+    emit!({ ts: 11, agentId: "a", type: "text_delta", payload: {} }); // live-only — dropped
+    emit!({ ts: 12, agentId: "a", type: "heartbeat", payload: {} }); // live-only — dropped
+    emit!({ ts: 13, agentId: "a", type: "tool_use_input", payload: {} }); // live-only — dropped
+    emit!({
+      ts: 14,
+      agentId: "a",
+      type: "worker_lifecycle_changed",
+      payload: {},
+    }); // recorded — kept
+    emit!({ ts: 15, agentId: "a", type: "tool_use_end", payload: {} }); // recorded
+    emit!({ ts: 16, agentId: "a", type: "worker_exited", payload: {} });
+
+    await daemon.stop();
+    daemon = undefined;
+
+    const raw = await fs.readFile(paths.eventsPath, "utf8");
+    const lines = raw.split("\n").filter((l) => l.length > 0);
+    const records = lines.map((l) => JSON.parse(l) as { type: string });
+    // Metadata + 4 recorded events; the 3 live-only events are dropped.
+    expect(records).toHaveLength(5);
+    expect(records[0]!.type).toBe("_metadata");
+    expect(records.slice(1).map((r) => r.type)).toEqual([
+      "worker_spawned",
+      "worker_lifecycle_changed",
+      "tool_use_end",
+      "worker_exited",
+    ]);
   });
 
   it("does not create events.jsonl when orchestrator omits subscribeEvents", async () => {
