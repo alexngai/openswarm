@@ -225,6 +225,14 @@ describe("AcpTeamAgent", () => {
     expect(runner.runTeam).toHaveBeenCalledTimes(2);
   });
 
+  it("rejects a second session (single shared team per connection, R1)", async () => {
+    const agent = new AcpTeamAgent(recordingConn([]), fakeRunner(), opts);
+    await agent.newSession({ cwd: "/tmp", mcpServers: [] });
+    await expect(
+      agent.newSession({ cwd: "/tmp", mcpServers: [] }),
+    ).rejects.toThrow(/single session/i);
+  });
+
   it("refuses a prompt on an unknown session", async () => {
     const agent = new AcpTeamAgent(recordingConn([]), fakeRunner(), opts);
     const res = await agent.prompt({ sessionId: "nope", prompt: [] });

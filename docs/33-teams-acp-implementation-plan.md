@@ -35,7 +35,7 @@ checkpoint rather than integrating all at once.
 | Coordinator lead | Spawns **one long-lived root**; root's prompt is augmented to spawn peers via the `agent` tool — [topologies/coordinator.ts](../src/swarm/topologies/coordinator.ts). Root runs as a worker; its events carry the root's agentId. |
 | Persistent + steering | `Orchestrator({persistent:true})` → `getActiveTeam(): TeamSession` — [orchestrator.ts:96,179](../src/swarm/orchestrator.ts). `TeamSession.spawnMember/send` ([team-session.ts:82,171](../src/swarm/team-session.ts)). Long-lived worker accepts more prompts via the `run_more` IPC method ([ipc/protocol.ts:23](../src/swarm/ipc/protocol.ts)). |
 | Member roster | `TeamSession.members: Map<AgentId,{memberId,role,state}>` — for agentId→role attribution. The lead is the root member's agentId. |
-| Quiescence | `runTeam` resolves when the topology's `CompletionRule` is met; per-prompt completion is the root's `task_result` + drained peers. |
+| Quiescence | `runTeam` resolves when the topology's `CompletionRule` is met; per-prompt completion is the root's `task_result` (`rootHandle.wait()`). **B0 is root-only** — it does not wait for the root's peers to drain (§3, §8). |
 | Permission today | Worker `canUseTool` is **mode-based only**, synchronous, no prompt, no IPC — [worker-entry.ts:110](../src/cli/worker-entry.ts). `permission_prompt/granted/denied` lane types are declared but unused. |
 | Permission precedent | `ask_user_question` is a fully-wired worker→orchestrator **synchronous request/response** with a correlation id — [worker-host.ts:459](../src/swarm/worker-host.ts), [standalone-host.ts:1327](../src/swarm/standalone-host.ts). The exact template for §4. Caveat: its headless handler currently errors ([standalone-host.ts:936](../src/swarm/standalone-host.ts)) — Stage B adds an injectable handler. |
 
@@ -76,7 +76,10 @@ Reuse from Stage A unchanged: `tool-kind.ts` (kind/title/locations/diff), `conte
 - **`session/prompt`** —
   - *first prompt*: build the coordinator `TeamSpec` with the root member's `prompt` = the user text;
     subscribe to the lane bus; `runTeam(spec)`; translate lane events (collapsed); resolve when the
-    root's turn completes + peers drain.
+    root's turn completes. **As built (B0): root-only.** The prompt resolves on the root's
+    `task_result` (`rootHandle.wait()`) — it does **not** wait for the peers the root spawned to drain.
+    A peer still running when the root returns keeps streaming onto the next prompt's translator (or is
+    torn down at session close). Subtree-drain quiescence is deferred (§7).
   - *subsequent prompts*: the root is long-lived (idle awaiting input) → deliver via `run_more`
     (or `team.send` to the root) → translate until that turn drains. This is steering.
 - **`session/cancel`** — trip the session `AbortController`; the orchestrator aborts the run; resolve
@@ -84,9 +87,10 @@ Reuse from Stage A unchanged: `tool-kind.ts` (kind/title/locations/diff), `conte
 - **`session/load`** — defer to B1 (team transcript replay is doc 31 Q4); B0 advertises it off in
   team mode.
 
-**Per-prompt quiescence (doc 31 Q1):** tag the root's per-prompt task with the ACP turn id; the turn
-resolves when that task is terminal and no peer it spawned is still running. Detected from
-`task_*`/`worker_idle` lane events. This boundary detection is a B0 risk (§7).
+**Per-prompt quiescence (doc 31 Q1):** the *intended* boundary tags the root's per-prompt task with
+the ACP turn id and resolves when that task is terminal **and** no peer it spawned is still running
+(detected from `task_*`/`worker_idle` lane events). **B0 ships the simpler root-only boundary** above;
+subtree-drain detection is the open item in §7.
 
 ---
 
@@ -156,13 +160,20 @@ Single emission chokepoint `send()` — B1 attaches `_meta.swarm.member` here. R
   *Checkpoint: e2e — a member escalation surfaces a titled `request_permission`; allow/deny honored.*
 - **B0.5 — Persistence + steering.** ✅ (`5c13b67` + `e7c3a86`) Coordinator honors `persistent` +
   `onTeamCreated`; first prompt `runTeam`, subsequent prompts steer the root via
-  `AgentHandle.runMore`; `session/cancel` kills the root. Long-lived workers now resume their session
-  across `run_more`, so **conversation context carries across steering turns** (the live "remember
-  42" smoke passes). *Originally a B1 follow-up; pulled forward here.*
+  `AgentHandle.runMore`; `session/cancel` tears down the team (B0-hardening R2 — was "kills the root").
+  Long-lived workers now resume their session across `run_more`, so **conversation context carries
+  across steering turns** (the live "remember 42" smoke passes). *Originally a B1 follow-up; pulled
+  forward here.*
 - **B0.6 — Default flip + docs + live.** ✅ `acp` defaults to team (`--single` for Stage A); README
   "team over ACP"; committed live e2e (`SWARM_ACP_LIVE`) for the coordinator turn, the permission
   round-trip, and two-prompt steering with context retention. *Note: workers spawn from `dist/cli.js`,
   so a live team run needs `npm run build` first (the test globalSetup rebuilds).*
+
+- **B0 hardening — post-review fixes.** ✅ Functional fixes from the Stage B review: plan board no
+  longer stuck `in_progress` (B1), `session/cancel` propagates via a threaded `AbortSignal` (B2),
+  resume-failure no longer bricks a long-lived root (B3), failed turns map to `refusal` not `end_turn`
+  (B4), cancel disposes the whole team (R2), a 2nd `session/new` is rejected (R1). Plus a deterministic
+  integration test of the real coordinator+worker+IPC permission round-trip (no model). See §8.
 
 **Acceptance (B0):** all met.
 - [x] A coordinator team is drivable over ACP end to end (in-process + subprocess e2e).
@@ -189,6 +200,34 @@ Single emission chokepoint `send()` — B1 attaches `_meta.swarm.member` here. R
   (natural follow-on, not B0-blocking).
 - **Stage A divergence.** Two prompt paths (single vs team) now exist; keep `send()`/permission
   shapes identical so B1 `_meta.swarm` and the client are uniform.
+
+---
+
+## 8. B0 hardening notes (as-built behaviors & accepted limits)
+
+Outcomes of the post-B0 review/hardening pass. These are **intentional B0 scope cuts**, recorded so
+they aren't mistaken for bugs.
+
+- **Single session per connection (R1, guarded).** `AcpTeamAgent` binds the whole connection to one
+  shared coordinator team (one active team, one permission router, one lead). A second `session/new`
+  is **rejected** ([team-agent.ts](../src/acp/team-agent.ts)) rather than silently colliding. A
+  separate team needs a separate `acp` connection. Multi-session-per-connection is post-B0.
+- **Session resume covers every long-lived worker (R4, intended).** Long-lived workers resume their
+  prior SDK session across `run_more` (`engine.getSessionId()` → `resumeFrom`,
+  [worker-entry.ts](../src/cli/worker-entry.ts)). In the coordinator this means the root retains
+  context turn-to-turn — the desired steering behavior — and any *other* long-lived worker gets the
+  same treatment. Non-long-lived peers are unaffected (fresh per task). A resume that fails before a
+  new session is established clears the stored id so the next turn starts fresh instead of re-resuming
+  a dead session ([claude-agent-sdk.ts](../src/engine/claude-agent-sdk.ts), B3).
+- **Root-only per-prompt quiescence.** See §3 — the prompt resolves on the root's `task_result`, not
+  on subtree drain. Accepted for B0; subtree-drain is the §7 open item.
+- **Cancel tears down the whole team (R2).** `session/cancel` disposes the active team (root + peers)
+  rather than killing only the lead, so a cancelled turn can't leak peers into the next prompt's fresh
+  run. The first-prompt branch also disposes any stale team before spawning.
+- **Failed turns surface as `refusal`.** ACP has no generic error stop reason, so a non-success turn
+  (first-turn `failed`/`timeout`, or a steered `run_more` failure/timeout/rejection) maps to
+  `refusal`; `killed` → `cancelled` (B4). A rejected `run_more` also drops the root so the next prompt
+  respawns a fresh team.
 
 ---
 

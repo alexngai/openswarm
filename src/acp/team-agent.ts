@@ -62,6 +62,17 @@ export class AcpTeamAgent implements Agent {
   }
 
   async newSession(req: NewSessionRequest): Promise<NewSessionResponse> {
+    // B0 binds the whole connection to ONE coordinator team: a single shared
+    // active team, one permission router, one lead. A second session would
+    // collide on all three (steering the same root, racing permission routing),
+    // so reject it rather than silently misbehave (R1). A separate team needs a
+    // separate connection.
+    if (this.sessions.size > 0) {
+      throw new Error(
+        "team mode supports a single session per connection (B0); " +
+          "the coordinator team is shared. Open a new connection for another team.",
+      );
+    }
     const sessionId = crypto.randomUUID();
     this.sessions.set(sessionId, {
       abort: new AbortController(),
