@@ -21,6 +21,7 @@ import type {
 import type { AgentId } from "../core/types.js";
 import type { MemberInfo } from "../swarm/team-session.js";
 import { toolKind, toolTitle } from "./tool-kind.js";
+import { swarmMemberMeta, withSwarmMeta } from "./swarm-meta.js";
 
 type Roster = ReadonlyMap<AgentId, MemberInfo> | undefined;
 
@@ -47,20 +48,26 @@ export class AcpPermissionRouter implements InteractionHandler {
     if (this.conn === undefined || this.sessionId === undefined) {
       return { outcome: "deny", reason: "no active ACP session" };
     }
-    const role =
+    const rosterMember =
       req.agentId !== undefined
-        ? this.rosterFn?.()?.get(req.agentId as AgentId)?.role
+        ? this.rosterFn?.()?.get(req.agentId as AgentId)
         : undefined;
+    const role = rosterMember?.role;
     const prefix = role !== undefined ? `[${role}] ` : "";
 
     const res = await this.conn.requestPermission({
       sessionId: this.sessionId,
-      toolCall: {
-        toolCallId: crypto.randomUUID(),
-        title: prefix + toolTitle(req.toolName, req.input),
-        kind: toolKind(req.toolName),
-        rawInput: req.input,
-      },
+      toolCall: withSwarmMeta(
+        {
+          toolCallId: crypto.randomUUID(),
+          title: prefix + toolTitle(req.toolName, req.input),
+          kind: toolKind(req.toolName),
+          rawInput: req.input,
+        },
+        rosterMember !== undefined
+          ? swarmMemberMeta(rosterMember, { topology: "coordinator" })
+          : undefined,
+      ),
       options: [
         {
           optionId: "allow_always",

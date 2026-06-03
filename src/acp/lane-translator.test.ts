@@ -87,10 +87,10 @@ describe("makeLaneTranslator", () => {
     await t.drain();
     const plans = updates.filter((u) => u.sessionUpdate === "plan");
     expect(plans).toHaveLength(1); // identical roster -> deduped
-    expect((plans[0] as { entries?: unknown }).entries).toEqual([
-      { content: "lead", priority: "medium", status: "in_progress" },
-      { content: "worker", priority: "medium", status: "in_progress" },
-    ]);
+    const entries = (plans[0] as { entries?: unknown[] }).entries ?? [];
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({ content: "lead", priority: "medium", status: "in_progress" });
+    expect(entries[1]).toMatchObject({ content: "worker", priority: "medium", status: "in_progress" });
   });
 
   it("ignores worker-engine events whose payload isn't a NormalizedEvent", async () => {
@@ -100,5 +100,57 @@ describe("makeLaneTranslator", () => {
     t.onLaneEvent({ ts: 2, agentId: L, type: "text_delta", payload: 42 });
     await t.drain();
     expect(updates).toEqual([]);
+  });
+
+  it("(B1.1) attaches _meta.swarm.member to member tool calls", async () => {
+    const { conn, updates } = recorder();
+    const t = makeLaneTranslator(conn, "s1", { getRoster: () => roster });
+    t.onLaneEvent({ ts: 1, agentId: W, type: "tool_use_start", payload: { type: "tool_use_start", id: "t1", name: "read_file" } });
+    t.onLaneEvent({ ts: 2, agentId: W, type: "tool_use_input", payload: { type: "tool_use_input", id: "t1", jsonDelta: '{}' } });
+    t.onLaneEvent({ ts: 3, agentId: W, type: "tool_use_end", payload: { type: "tool_use_end", id: "t1" } });
+    await t.drain();
+
+    const calls = updates.filter((u) => u.sessionUpdate === "tool_call" || u.sessionUpdate === "tool_call_update");
+    expect(calls.length).toBeGreaterThan(0);
+    for (const c of calls) {
+      const meta = (c as { _meta?: { swarm?: { member?: { id?: string; role?: string } } } })._meta?.swarm?.member;
+      expect(meta?.id).toBe("m-W");
+      expect(meta?.role).toBe("worker");
+    }
+    // Standard fields must be present (invariant §1: strip _meta → coherent session).
+    const call = updates.find((u) => u.sessionUpdate === "tool_call") as { title?: string; toolCallId?: string };
+    expect(call?.title).toBe("[worker] Read file");
+    expect(call?.toolCallId).toBe("W:t1");
+  });
+
+  it("(B1.1) attaches _meta.swarm to plan entries", async () => {
+    const { conn, updates } = recorder();
+    const t = makeLaneTranslator(conn, "s1", { getRoster: () => roster });
+    t.onLaneEvent({ ts: 1, agentId: L, type: "worker_spawned", payload: {} });
+    await t.drain();
+
+    const plan = updates.find((u) => u.sessionUpdate === "plan") as { entries?: unknown[] } | undefined;
+    expect(plan).toBeDefined();
+    const entries = plan!.entries ?? [];
+    expect(entries.length).toBeGreaterThan(0);
+    for (const e of entries) {
+      const meta = (e as { _meta?: { swarm?: { member?: { name?: string } } } })._meta?.swarm?.member;
+      expect(meta).toBeDefined();
+    }
+    // Standard fields still present without _meta.
+    const plain = (entries as Array<{ content?: string; priority?: string; status?: string }>)[0]!;
+    expect(plain.content).toBeDefined();
+    expect(plain.priority).toBe("medium");
+    expect(plain.status).toBeDefined();
+  });
+
+  it("(B1.1) no _meta on agent text from an unknown (unrostered) member", async () => {
+    const { conn, updates } = recorder();
+    const noRoster = makeLaneTranslator(conn, "s1", { getRoster: () => undefined });
+    noRoster.onLaneEvent({ ts: 1, agentId: L, type: "text_delta", payload: { type: "text_delta", text: "hello" } });
+    await noRoster.drain();
+    const chunk = updates.find((u) => u.sessionUpdate === "agent_message_chunk");
+    expect(chunk).toBeDefined();
+    expect((chunk as { _meta?: unknown })._meta).toBeUndefined();
   });
 });

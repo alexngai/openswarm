@@ -16,7 +16,7 @@ function member(role: string, agentId: string): MemberInfo {
 
 interface Captured {
   sessionId?: string;
-  toolCall?: { title?: string; kind?: string };
+  toolCall?: { title?: string; kind?: string; _meta?: { swarm?: { member?: { id?: string; role?: string } } } };
   options?: Array<{ optionId: string }>;
 }
 
@@ -81,6 +81,27 @@ describe("AcpPermissionRouter", () => {
   it("maps cancelled to deny", async () => {
     const { r } = router({ outcome: "cancelled" });
     expect((await r.requestPermission(req)).outcome).toBe("deny");
+  });
+
+  it("(B1.1) attaches _meta.swarm.member to toolCall; title still carries [role] (invariant §1)", async () => {
+    const { r, captured } = router({ outcome: "selected", optionId: "allow" });
+    await r.requestPermission(req);
+    const tc = captured().toolCall;
+    // _meta enrichment
+    expect(tc?._meta?.swarm?.member?.id).toBe("m-wkr-1");
+    expect(tc?._meta?.swarm?.member?.role).toBe("architect");
+    // Standard field title still present (invariant §1)
+    expect(tc?.title).toContain("[architect]");
+  });
+
+  it("(B1.1) no _meta on toolCall when agentId not in roster", async () => {
+    const { conn, captured } = connReturning({ outcome: "selected", optionId: "allow" });
+    const r = new AcpPermissionRouter();
+    r.setConn(conn as never);
+    r.setActiveSession("s1");
+    r.setRoster(() => new Map()); // empty roster
+    await r.requestPermission(req);
+    expect(captured().toolCall?._meta).toBeUndefined();
   });
 
   it("denies when no active session is set", async () => {

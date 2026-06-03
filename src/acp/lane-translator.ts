@@ -22,6 +22,7 @@ import type { AgentId, NormalizedEvent } from "../core/types.js";
 import type { LaneEvent } from "../swarm/events.js";
 import type { MemberInfo } from "../swarm/team-session.js";
 import { emitNormalizedEvent, type OpenTool } from "./normalized-translate.js";
+import { swarmMemberMeta, withSwarmMeta } from "./swarm-meta.js";
 
 const WORKER_ENGINE_TYPES = new Set<string>([
   "text_delta",
@@ -155,11 +156,16 @@ export function makeLaneTranslator(
   async function emitPlan(): Promise<void> {
     const roster = deps.getRoster();
     if (roster === undefined || roster.size === 0) return;
-    const entries: PlanEntry[] = [...roster.entries()].map(([agentId, m]) => ({
-      content: m.role,
-      priority: "medium" as const,
-      status: memberStatus.get(agentId) ?? mapMemberState(m.state),
-    }));
+    const entries: PlanEntry[] = [...roster.entries()].map(([agentId, m]) =>
+      withSwarmMeta(
+        {
+          content: m.role,
+          priority: "medium" as const,
+          status: memberStatus.get(agentId) ?? mapMemberState(m.state),
+        },
+        swarmMemberMeta(m, { topology: "coordinator" }),
+      ),
+    );
     const key = entries.map((e) => `${e.content}:${e.status}`).join("|");
     if (key === lastPlanKey) return; // dedupe identical plans
     lastPlanKey = key;
@@ -170,7 +176,8 @@ export function makeLaneTranslator(
     if (WORKER_ENGINE_TYPES.has(event.type)) {
       if (!isNormalizedEvent(event.payload)) return;
       if (firstSeen === undefined) firstSeen = event.agentId;
-      const role = deps.getRoster()?.get(event.agentId)?.role;
+      const rosterMember = deps.getRoster()?.get(event.agentId);
+      const role = rosterMember?.role;
       // Lead = roster role "lead" when known, else the first member to speak.
       const isLead =
         role !== undefined ? role === "lead" : event.agentId === firstSeen;
@@ -183,6 +190,10 @@ export function makeLaneTranslator(
         suppressText: !isLead,
         // The team plan comes from the roster, not member todo_write.
         planFromTodos: false,
+        // B1.1: enrich every member update with swarm meta.
+        ...(rosterMember !== undefined
+          ? { meta: swarmMemberMeta(rosterMember, { topology: "coordinator" }) }
+          : {}),
       });
       // Engine activity (anything but a turn-ending message_stop) means the
       // member is working — flip it back to in_progress (handles 2nd-turn

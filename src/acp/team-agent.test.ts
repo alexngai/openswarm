@@ -168,11 +168,21 @@ describe("AcpTeamAgent", () => {
     await agent.prompt({ sessionId, prompt: [{ type: "text", text: "go" }] });
 
     const plan = updates.find((u) => u.sessionUpdate === "plan") as
-      | { entries?: Array<{ content: string; status: string }> }
+      | { entries?: Array<Record<string, unknown>> }
       | undefined;
-    expect(plan?.entries).toEqual([
-      { content: "lead", priority: "medium", status: "in_progress" },
-    ]);
+    const entries = plan?.entries ?? [];
+    // Standard projection (strip _meta → coherent baseline plan).
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      content: "lead",
+      priority: "medium",
+      status: "in_progress",
+    });
+    // B1.1: each entry also carries _meta.swarm.member.
+    expect(
+      (entries[0] as { _meta?: { swarm?: { member?: { name?: string } } } })._meta
+        ?.swarm?.member?.name,
+    ).toBe("lead");
   });
 
   it("maps a cancelled team result to cancelled", async () => {
