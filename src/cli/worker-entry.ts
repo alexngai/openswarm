@@ -21,6 +21,7 @@ import {
   RoleRegistry,
   loadCustomRoles,
 } from "../swarm/roles.js";
+import { normalizedEventToLaneType } from "../swarm/events.js";
 import type { AgentResult, TaskPacket } from "../swarm/host.js";
 import type { IpcRequest } from "../swarm/ipc/protocol.js";
 import { RunMoreParamsSchema, IPC_ERROR_CODES } from "../swarm/ipc/protocol.js";
@@ -127,14 +128,20 @@ async function executeTurn(
       } else if (evt.type === "message_stop") {
         usage = evt.usage;
       }
-      // Forward every event as a lane_event (coarse).
-      await transport.notify("lane_event", {
-        ts: Date.now(),
-        agentId,
-        type: "text_delta",
-        payload: evt,
-        ...(parentToolUseId !== undefined && { parentToolUseId }),
-      });
+      // Forward each engine event as a lane_event, preserving its real type so
+      // events.jsonl records the semantic spine and the ACP layer can translate
+      // member activity (docs/33 B0.2). Events with no lane equivalent are
+      // dropped (they were never usefully consumed).
+      const laneType = normalizedEventToLaneType(evt.type);
+      if (laneType !== undefined) {
+        await transport.notify("lane_event", {
+          ts: Date.now(),
+          agentId,
+          type: laneType,
+          payload: evt,
+          ...(parentToolUseId !== undefined && { parentToolUseId }),
+        });
+      }
     }
   } catch (err) {
     errMsg = err instanceof Error ? err.message : String(err);

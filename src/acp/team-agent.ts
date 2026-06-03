@@ -27,6 +27,7 @@ import type { TeamRunner } from "./team-runner.js";
 import { initializeResponse } from "./capabilities.js";
 import { buildCoordinatorSpec } from "./team-config.js";
 import { promptToText } from "./content.js";
+import { makeLaneTranslator } from "./lane-translator.js";
 
 interface TeamSessionRecord {
   abort: AbortController;
@@ -70,25 +71,28 @@ export class AcpTeamAgent implements Agent {
     const abort = new AbortController();
     session.abort = abort;
 
-    const spec = buildCoordinatorSpec(promptToText(req.prompt));
-    const result = await this.runner.runTeam(spec);
+    // Stream the team's lane events to the client (collapsed): the lead
+    // narrates, member tool calls surface `[role]`-attributed, and the roster
+    // drives a live plan board.
+    const translator = makeLaneTranslator(this.conn, req.sessionId, {
+      getRoster: () => this.runner.getActiveTeam()?.members,
+    });
+    const unsubscribe = this.runner.subscribeEvents((e) =>
+      translator.onLaneEvent(e),
+    );
 
-    // B0.2 streams lane events as the team works; until then, surface any
-    // aggregate output as a single message chunk.
-    if (result.aggregateOutput) {
-      await this.conn.sessionUpdate({
-        sessionId: req.sessionId,
-        update: {
-          sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: result.aggregateOutput },
-        },
-      });
+    try {
+      const spec = buildCoordinatorSpec(promptToText(req.prompt));
+      const result = await this.runner.runTeam(spec);
+      // Flush any notifications still queued behind the async sessionUpdate.
+      await translator.drain();
+      if (abort.signal.aborted || result.cancelled > 0) {
+        return { stopReason: "cancelled" };
+      }
+      return { stopReason: "end_turn" };
+    } finally {
+      unsubscribe();
     }
-
-    if (abort.signal.aborted || result.cancelled > 0) {
-      return { stopReason: "cancelled" };
-    }
-    return { stopReason: "end_turn" };
   }
 
   async cancel(req: CancelNotification): Promise<void> {
