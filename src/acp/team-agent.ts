@@ -22,6 +22,7 @@ import type {
   NewSessionResponse,
   PromptRequest,
   PromptResponse,
+  StopReason,
 } from "@agentclientprotocol/sdk";
 import type { CommonOpts } from "../cli/argv.js";
 import type { AgentHandle } from "../swarm/host.js";
@@ -91,24 +92,40 @@ export class AcpTeamAgent implements Agent {
 
     const text = promptToText(req.prompt);
     try {
-      let cancelled: boolean;
+      let stop: StopReason;
       if (session.leadHandle === undefined) {
-        // First prompt: run the coordinator team (spawns the persistent root).
-        const result = await this.runner.runTeam(buildCoordinatorSpec(text));
+        // First prompt (or a fresh start after cancel/failure): run the
+        // coordinator team. Tear down any prior team first so a cancelled turn
+        // can't leak its old root + peers into the new run (R2).
+        await this.disposeActiveTeam();
+        const result = await this.runner.runTeam(buildCoordinatorSpec(text), {
+          signal: abort.signal,
+        });
         // Capture the long-lived root so the next prompt can steer it.
         session.leadHandle = this.findLead();
-        cancelled = result.cancelled > 0;
+        stop = teamResultStop(result);
       } else {
         // Subsequent prompt: steer the same root with the new message.
-        const result = await session.leadHandle.runMore(text);
-        // A cancel mid-turn kills the root -> "killed" status.
-        cancelled = result.status === "killed";
+        let result: Awaited<ReturnType<AgentHandle["runMore"]>>;
+        try {
+          result = await session.leadHandle.runMore(text);
+        } catch {
+          // A rejected runMore means the root is likely dead — drop it so the
+          // next prompt respawns a fresh team, and report non-success rather
+          // than erroring the whole prompt request (B4).
+          session.leadHandle = undefined;
+          await translator.drain().catch(() => {});
+          return { stopReason: abort.signal.aborted ? "cancelled" : "refusal" };
+        }
+        stop = runMoreStop(result);
+        // killed = cancel killed the root; it won't accept the next runMore.
+        if (result.status === "killed") session.leadHandle = undefined;
       }
       await translator.drain();
-      if (abort.signal.aborted || cancelled) {
+      if (abort.signal.aborted) {
         return { stopReason: "cancelled" };
       }
-      return { stopReason: "end_turn" };
+      return { stopReason: stop };
     } catch (err) {
       await translator.drain().catch(() => {});
       if (abort.signal.aborted) {
@@ -125,10 +142,20 @@ export class AcpTeamAgent implements Agent {
     const session = this.sessions.get(req.sessionId);
     if (session === undefined) return;
     session.abort.abort();
-    // Kill the root so the in-flight turn stops. Look it up live (it may not be
-    // captured yet during the first turn). The next prompt starts a fresh team.
+    // Tear down the whole team, not just the root: killing only the lead would
+    // leak the peers it spawned, and the next prompt would run a fresh root
+    // alongside the orphans (R2). The next prompt starts a clean team.
     session.leadHandle = undefined;
-    await this.findLead()?.kill().catch(() => {});
+    await this.disposeActiveTeam();
+  }
+
+  /** Dispose the live team (idempotent, best-effort). */
+  private async disposeActiveTeam(): Promise<void> {
+    try {
+      await this.runner.getActiveTeam()?.dispose();
+    } catch {
+      // best effort — a half-formed team may already be gone
+    }
   }
 
   /** The coordinator root's handle (role "lead", else the first member). */
@@ -139,5 +166,32 @@ export class AcpTeamAgent implements Agent {
       if (m.role === "lead") return m.handle;
     }
     return [...members.values()][0]?.handle;
+  }
+}
+
+/**
+ * Map a first-turn TeamResult to an ACP stop reason. ACP has no generic
+ * "error" reason, so a non-success turn degrades to "refusal" — the session
+ * stays usable and the client sees the turn didn't complete normally.
+ */
+function teamResultStop(result: {
+  readonly cancelled: number;
+  readonly failed: number;
+  readonly timeout: number;
+}): StopReason {
+  if (result.cancelled > 0) return "cancelled";
+  if (result.failed > 0 || result.timeout > 0) return "refusal";
+  return "end_turn";
+}
+
+/** Map a steered runMore AgentResult status to an ACP stop reason. */
+function runMoreStop(result: { readonly status: string }): StopReason {
+  switch (result.status) {
+    case "success":
+      return "end_turn";
+    case "killed":
+      return "cancelled";
+    default:
+      return "refusal"; // failure | timeout
   }
 }

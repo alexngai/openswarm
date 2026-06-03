@@ -73,7 +73,9 @@ describe("makeLaneTranslator", () => {
       t.onLaneEvent({ ts: i, agentId: L, type: "text_delta", payload: { type: "text_delta", text: String(i) } });
     }
     await t.drain();
-    const texts = updates.map((u) => (u as { content?: { text?: string } }).content?.text);
+    const texts = updates
+      .filter((u) => u.sessionUpdate === "agent_message_chunk")
+      .map((u) => (u as { content?: { text?: string } }).content?.text);
     expect(texts).toEqual(["0", "1", "2", "3", "4"]);
   });
 

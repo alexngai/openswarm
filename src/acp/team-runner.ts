@@ -22,7 +22,7 @@ import type { InteractionHandler } from "../swarm/host.js";
 import type { PermissionMode } from "../core/types.js";
 
 export interface TeamRunner {
-  runTeam(spec: TeamSpec): Promise<TeamResult>;
+  runTeam(spec: TeamSpec, opts?: { readonly signal?: AbortSignal }): Promise<TeamResult>;
   /** Subscribe to the team's lane-event stream; returns an unsubscribe fn. */
   subscribeEvents(handler: (event: LaneEvent) => void): () => void;
   /** The live TeamSession (persistent mode) for steering; undefined until a run. */
@@ -65,7 +65,7 @@ export function createOrchestratorRunner(
   });
   const bus = (host as unknown as { readonly events: EventEmitter }).events;
   return {
-    runTeam: (spec) => orch.runTeam(spec),
+    runTeam: (spec, opts) => orch.runTeam(spec, opts),
     subscribeEvents: (handler) => {
       bus.on("lane_event", handler);
       return () => {

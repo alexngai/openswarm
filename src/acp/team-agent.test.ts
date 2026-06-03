@@ -34,6 +34,9 @@ interface FakeRunnerOpts {
 
 function fakeRunner(o: FakeRunnerOpts = {}): TeamRunner {
   let handler: ((e: LaneEvent) => void) | undefined;
+  const team = o.roster
+    ? ({ members: o.roster, dispose: vi.fn(async () => {}) } as unknown as TeamSession)
+    : undefined;
   return {
     subscribeEvents: (h) => {
       handler = h;
@@ -45,8 +48,7 @@ function fakeRunner(o: FakeRunnerOpts = {}): TeamRunner {
       for (const e of o.events ?? []) handler?.(e);
       return { ...BASE_RESULT, ...o.result };
     }),
-    getActiveTeam: () =>
-      o.roster ? ({ members: o.roster } as unknown as TeamSession) : undefined,
+    getActiveTeam: () => team,
   };
 }
 
@@ -138,16 +140,19 @@ describe("AcpTeamAgent", () => {
     expect(handle.runMore).toHaveBeenCalledWith("and now this");
   });
 
-  it("cancel kills the long-lived root", async () => {
+  it("cancel tears down the whole team (root + peers)", async () => {
     const lead = "L" as AgentId;
     const roster = new Map<AgentId, MemberInfo>([[lead, member("lead", lead)]]);
-    const agent = new AcpTeamAgent(recordingConn([]), fakeRunner({ roster }), opts);
+    const runner = fakeRunner({ roster });
+    const agent = new AcpTeamAgent(recordingConn([]), runner, opts);
     const { sessionId } = await agent.newSession({ cwd: "/tmp", mcpServers: [] });
     await agent.cancel({ sessionId });
-    const handle = roster.get(lead)!.handle as unknown as {
-      kill: ReturnType<typeof vi.fn>;
+    // R2: cancel disposes the team rather than killing only the lead, so the
+    // peers it spawned can't leak into the next prompt's fresh run.
+    const team = runner.getActiveTeam() as unknown as {
+      dispose: ReturnType<typeof vi.fn>;
     };
-    expect(handle.kill).toHaveBeenCalled();
+    expect(team.dispose).toHaveBeenCalled();
   });
 
   it("emits a roster-derived plan on lifecycle events", async () => {
@@ -178,6 +183,46 @@ describe("AcpTeamAgent", () => {
     const { sessionId } = await agent.newSession({ cwd: "/tmp", mcpServers: [] });
     const res = await agent.prompt({ sessionId, prompt: [{ type: "text", text: "go" }] });
     expect(res.stopReason).toBe("cancelled");
+  });
+
+  it("maps a failed steered turn to refusal but keeps the root", async () => {
+    const lead = "L" as AgentId;
+    const m = member("lead", lead);
+    const runMore = m.handle.runMore as unknown as ReturnType<typeof vi.fn>;
+    // First prompt uses runTeam; the first runMore call is the second prompt.
+    runMore.mockResolvedValueOnce({
+      status: "failure",
+      error: "boom",
+      usage: { inputTokens: 0, outputTokens: 0 },
+      wallClockMs: 1,
+    } as AgentResult);
+    const roster = new Map<AgentId, MemberInfo>([[lead, m]]);
+    const runner = fakeRunner({ roster });
+    const agent = new AcpTeamAgent(recordingConn([]), runner, opts);
+    const { sessionId } = await agent.newSession({ cwd: "/tmp", mcpServers: [] });
+    await agent.prompt({ sessionId, prompt: [{ type: "text", text: "first" }] });
+    const res = await agent.prompt({ sessionId, prompt: [{ type: "text", text: "again" }] });
+    expect(res.stopReason).toBe("refusal");
+    // A failed (not killed) turn leaves the long-lived root alive — still steered.
+    expect(runner.runTeam).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops the root and refuses when runMore rejects, respawning next turn", async () => {
+    const lead = "L" as AgentId;
+    const m = member("lead", lead);
+    const runMore = m.handle.runMore as unknown as ReturnType<typeof vi.fn>;
+    // First prompt uses runTeam; make the first runMore (second prompt) reject.
+    runMore.mockRejectedValueOnce(new Error("root died"));
+    const roster = new Map<AgentId, MemberInfo>([[lead, m]]);
+    const runner = fakeRunner({ roster });
+    const agent = new AcpTeamAgent(recordingConn([]), runner, opts);
+    const { sessionId } = await agent.newSession({ cwd: "/tmp", mcpServers: [] });
+    await agent.prompt({ sessionId, prompt: [{ type: "text", text: "first" }] });
+    const res = await agent.prompt({ sessionId, prompt: [{ type: "text", text: "again" }] });
+    expect(res.stopReason).toBe("refusal");
+    // The dropped handle forces the next prompt back through runTeam.
+    await agent.prompt({ sessionId, prompt: [{ type: "text", text: "third" }] });
+    expect(runner.runTeam).toHaveBeenCalledTimes(2);
   });
 
   it("refuses a prompt on an unknown session", async () => {

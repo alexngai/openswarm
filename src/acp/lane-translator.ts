@@ -60,9 +60,9 @@ export interface LaneTranslator {
   drain(): Promise<void>;
 }
 
-function mapMemberState(
-  s: MemberInfo["state"],
-): "pending" | "in_progress" | "completed" {
+type PlanStatus = "pending" | "in_progress" | "completed";
+
+function mapMemberState(s: MemberInfo["state"]): PlanStatus {
   switch (s) {
     case "spawning":
       return "pending";
@@ -70,6 +70,48 @@ function mapMemberState(
       return "in_progress";
     default:
       return "completed"; // idle | finished | failed
+  }
+}
+
+/**
+ * The worker's agentId carried by a lifecycle lane event. `worker_spawned` and
+ * `worker_exited` are host-emitted (LaneEvent.agentId = orchestrator), so the
+ * child id lives in the payload; `worker_idle`/`worker_drained` already carry
+ * the child as LaneEvent.agentId.
+ */
+function lifecycleChildId(event: LaneEvent): AgentId | undefined {
+  const p = event.payload as Record<string, unknown> | undefined;
+  switch (event.type) {
+    case "worker_spawned":
+      return (p?.childAgentId as AgentId | undefined) ?? undefined;
+    case "worker_exited":
+      return (p?.agentId as AgentId | undefined) ?? undefined;
+    default:
+      return event.agentId;
+  }
+}
+
+/** Map a worker lifecycle lane event to a plan status, or undefined to ignore. */
+function lifecycleStatus(event: LaneEvent): PlanStatus | undefined {
+  switch (event.type) {
+    case "worker_spawned":
+    case "worker_ready":
+      return "in_progress";
+    case "worker_idle":
+    case "worker_drained":
+    case "worker_exited":
+    case "worker_crashed":
+      return "completed";
+    case "worker_lifecycle_changed": {
+      const to = (event.payload as { to?: string } | undefined)?.to;
+      if (to === "prompt_accepted" || to === "running" || to === "blocked")
+        return "in_progress";
+      if (to === "idle" || to === "drained" || to === "finished" || to === "failed")
+        return "completed";
+      return undefined;
+    }
+    default:
+      return undefined;
   }
 }
 
@@ -92,17 +134,31 @@ export function makeLaneTranslator(
   // The coordinator's root emits first; treat the first member seen as the lead
   // when the roster isn't yet available (role lookup wins when it is).
   let firstSeen: AgentId | undefined;
+  // Per-member plan status, driven by worker lifecycle + engine activity.
+  // MemberInfo.state is fixed at "running" by the orchestrator (never updated),
+  // so the board would otherwise be stuck at in_progress forever (B1). This map
+  // is the source of truth; roster state is only the fallback for members we
+  // haven't observed yet.
+  const memberStatus = new Map<AgentId, PlanStatus>();
 
   const send = (update: SessionUpdate): Promise<void> =>
     conn.sessionUpdate({ sessionId, update });
 
+  /** Set a member's status; returns true if it changed. */
+  function applyStatus(id: AgentId | undefined, status: PlanStatus): boolean {
+    if (id === undefined) return false;
+    if (memberStatus.get(id) === status) return false;
+    memberStatus.set(id, status);
+    return true;
+  }
+
   async function emitPlan(): Promise<void> {
     const roster = deps.getRoster();
     if (roster === undefined || roster.size === 0) return;
-    const entries: PlanEntry[] = [...roster.values()].map((m) => ({
+    const entries: PlanEntry[] = [...roster.entries()].map(([agentId, m]) => ({
       content: m.role,
       priority: "medium" as const,
-      status: mapMemberState(m.state),
+      status: memberStatus.get(agentId) ?? mapMemberState(m.state),
     }));
     const key = entries.map((e) => `${e.content}:${e.status}`).join("|");
     if (key === lastPlanKey) return; // dedupe identical plans
@@ -128,9 +184,17 @@ export function makeLaneTranslator(
         // The team plan comes from the roster, not member todo_write.
         planFromTodos: false,
       });
+      // Engine activity (anything but a turn-ending message_stop) means the
+      // member is working — flip it back to in_progress (handles 2nd-turn
+      // reactivation after a member went idle). Re-emit the board if changed.
+      if (event.type !== "message_stop") {
+        if (applyStatus(event.agentId, "in_progress")) await emitPlan();
+      }
       return;
     }
     if (PLAN_TRIGGER_TYPES.has(event.type)) {
+      const status = lifecycleStatus(event);
+      if (status !== undefined) applyStatus(lifecycleChildId(event), status);
       await emitPlan();
     }
   }
