@@ -190,9 +190,35 @@ swarm-harness worktree list
 swarm-harness worktree clean --dry-run
 ```
 
+### Editor integration (ACP)
+
+swarm-harness speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP), so it runs as an external agent inside ACP-aware editors like [Zed](https://zed.dev). It serves JSON-RPC over stdio:
+
+```bash
+swarm-harness acp
+```
+
+You won't usually run this by hand — the editor spawns it. In Zed, add to `settings.json`:
+
+```json
+{
+  "agent_servers": {
+    "swarm-harness": {
+      "command": "swarm-harness",
+      "args": ["acp"]
+    }
+  }
+}
+```
+
+Then pick **swarm-harness** in the Agent Panel. The agent streams assistant text, tool calls (with file locations and inline diffs for edits), `todo_write` as a live plan, and routes tool-permission prompts to the editor. The shared flags apply — e.g. `"args": ["acp", "--model", "opus", "--permission-mode", "workspace-write"]`. `session/load` replays prior transcript text and resumes context.
+
+**Stage A scope / known limits:** single-agent — one ACP session is one agent; team/swarm orchestration over ACP is on the roadmap (see [docs/31](docs/31-teams-acp-design.md)). `bash` output is delivered when the command finishes (not streamed live), reasoning isn't streamed, and file reads/writes run locally (the editor's unsaved buffers aren't consulted). See [docs/30](docs/30-acp-compatibility-plan.md) for the full design.
+
 ### Subcommands
 
 ```bash
+swarm-harness acp                    # serve over the Agent Client Protocol (stdio)
 swarm-harness doctor                 # health check (auth, config, install, workspace)
 swarm-harness init                   # scaffold .swarm-harness/ + .gitignore + CLAUDE.md
 swarm-harness plugin list            # list installed plugins

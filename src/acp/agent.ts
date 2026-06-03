@@ -19,6 +19,8 @@ import type {
   CancelNotification,
   InitializeRequest,
   InitializeResponse,
+  LoadSessionRequest,
+  LoadSessionResponse,
   NewSessionRequest,
   NewSessionResponse,
   PromptRequest,
@@ -26,18 +28,26 @@ import type {
 } from "@agentclientprotocol/sdk";
 import type { AgentRuntime } from "../cli/runtime.js";
 import type { CommonOpts } from "../cli/argv.js";
-import type { AgentEngine, RunConfig } from "../engine/index.js";
+import type {
+  AgentEngine,
+  RunConfig,
+  SessionSnapshot,
+} from "../engine/index.js";
 import { makeCanUseTool } from "../permissions/gate.js";
+import { SessionStore } from "../session/store.js";
 import { initializeResponse } from "./capabilities.js";
 import { makeAcpTranslator } from "./translator.js";
 import { AcpPermissionBridge } from "./permission.js";
 import { promptToText } from "./content.js";
+import { historyChunks } from "./history.js";
 
 interface AcpSession {
   readonly engine: AgentEngine;
   /** Reset to a fresh controller at the start of each prompt turn. */
   abort: AbortController;
   readonly cwd: string;
+  /** Set by session/load; applied once on the next prompt, then cleared. */
+  resumeFrom?: SessionSnapshot;
 }
 
 export class AcpAgent implements Agent {
@@ -72,6 +82,28 @@ export class AcpAgent implements Agent {
     return { sessionId };
   }
 
+  async loadSession(req: LoadSessionRequest): Promise<LoadSessionResponse> {
+    // Replay prior conversation (best-effort) before the session is usable.
+    // SDK-engine history lives in the Claude Agent SDK's transcript store;
+    // text is streamed back in chronological order (docs/31 Q4).
+    const store = new SessionStore();
+    const history = await store.readMessages(req.sessionId, req.cwd);
+    for (const note of historyChunks(history, req.sessionId)) {
+      await this.conn.sessionUpdate(note);
+    }
+
+    // Bind the engine and arrange a resume on the next prompt so the
+    // conversation continues with its prior context.
+    const { engine } = await this.rt.makeEngine(req.sessionId);
+    this.sessions.set(req.sessionId, {
+      engine,
+      abort: new AbortController(),
+      cwd: req.cwd,
+      resumeFrom: store.buildSnapshot(req.sessionId),
+    });
+    return {};
+  }
+
   async prompt(req: PromptRequest): Promise<PromptResponse> {
     const session = this.sessions.get(req.sessionId);
     if (session === undefined) {
@@ -104,7 +136,12 @@ export class AcpAgent implements Agent {
       permissionMode: this.opts.permissionMode,
       hooks: this.rt.hooksConfig,
       abort: abort.signal,
+      // Resume applies once (set by session/load); clear after consuming.
+      ...(session.resumeFrom !== undefined
+        ? { resumeFrom: session.resumeFrom }
+        : {}),
     };
+    session.resumeFrom = undefined;
 
     try {
       for await (const ev of session.engine.run(config)) {

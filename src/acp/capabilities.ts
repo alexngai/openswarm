@@ -29,8 +29,8 @@ export function initializeResponse(req: InitializeRequest): InitializeResponse {
     protocolVersion,
     agentInfo: { name: "swarm-harness", version: VERSION },
     agentCapabilities: {
-      // session/load lands in a later Stage A step; advertise honestly.
-      loadSession: false,
+      // session/load replays prior transcript text and resumes context.
+      loadSession: true,
     },
     authMethods: [],
   };

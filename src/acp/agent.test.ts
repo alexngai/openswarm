@@ -124,6 +124,37 @@ describe("AcpAgent", () => {
       | undefined;
     expect(toolCall?.kind).toBe("read");
   });
+
+  it("loadSession binds a resumable session; a later prompt runs", async () => {
+    const events: NormalizedEvent[] = [
+      {
+        type: "message_stop",
+        stopReason: "end_turn",
+        usage: { inputTokens: 0, outputTokens: 0 },
+      },
+    ];
+    const updates: SessionUpdate[] = [];
+    const recordingConn = {
+      sessionUpdate: async (n: { update: SessionUpdate }) => {
+        updates.push(n.update);
+      },
+    } as never;
+    const agent = new AcpAgent(recordingConn, scriptedRuntime(events), opts);
+
+    // Unknown/empty history in the test env → readMessages returns [] (caught).
+    const res = await agent.loadSession({
+      sessionId: "prior-session",
+      cwd: "/tmp",
+      mcpServers: [],
+    });
+    expect(res).toEqual({});
+
+    const p = await agent.prompt({
+      sessionId: "prior-session",
+      prompt: [{ type: "text", text: "continue" }],
+    });
+    expect(p.stopReason).toBe("end_turn");
+  });
 });
 
 describe("parseArgv — acp subcommand", () => {

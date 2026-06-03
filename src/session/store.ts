@@ -19,8 +19,39 @@
 import {
   listSessions as sdkListSessions,
   deleteSession as sdkDeleteSession,
+  getSessionMessages as sdkGetSessionMessages,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { SessionSnapshot } from "../engine/index.js";
+
+/** A replayable history message: a role plus its flattened text. */
+export interface HistoryMessage {
+  readonly role: "user" | "assistant";
+  readonly text: string;
+}
+
+/**
+ * Flatten an SDK transcript message's content to plain text. Handles both the
+ * string and content-block-array forms; non-text blocks (tool_use/tool_result)
+ * are skipped. Exported for testing.
+ */
+export function extractMessageText(message: unknown): string {
+  if (message == null || typeof message !== "object") return "";
+  const content = (message as { content?: unknown }).content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  const parts: string[] = [];
+  for (const block of content) {
+    if (
+      block != null &&
+      typeof block === "object" &&
+      (block as { type?: unknown }).type === "text" &&
+      typeof (block as { text?: unknown }).text === "string"
+    ) {
+      parts.push((block as { text: string }).text);
+    }
+  }
+  return parts.join("");
+}
 
 // ---------------------------------------------------------------------------
 // Public shape — SDK types do not leak through this boundary.
@@ -95,5 +126,27 @@ export class SessionStore {
    */
   async deleteSession(sessionId: string): Promise<void> {
     await sdkDeleteSession(sessionId);
+  }
+
+  /**
+   * Reads a session's user/assistant messages as flattened text, in
+   * chronological order, for history replay (ACP session/load). System
+   * messages and non-text content blocks are dropped. Returns [] on any error
+   * (e.g. the session file doesn't exist), so callers can replay best-effort.
+   */
+  async readMessages(sessionId: string, cwd: string): Promise<HistoryMessage[]> {
+    try {
+      const msgs = await sdkGetSessionMessages(sessionId, { dir: cwd });
+      const out: HistoryMessage[] = [];
+      for (const m of msgs) {
+        if (m.type !== "user" && m.type !== "assistant") continue;
+        const text = extractMessageText(m.message);
+        if (text.length === 0) continue;
+        out.push({ role: m.type, text });
+      }
+      return out;
+    } catch {
+      return [];
+    }
   }
 }
