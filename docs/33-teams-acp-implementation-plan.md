@@ -7,8 +7,8 @@ shipped). Stage A serves one agent over ACP; Stage B makes the ACP session a **t
 **Authoring date:** 2026-06-02.
 **Status:** B0 implemented (B0.0–B0.6 shipped + live-verified). See §6 for the per-step status.
 **Scope:** the B0 cut of Stage B per the product decisions below, sequenced to keep the
-deterministic e2e suite green throughout. `_meta.swarm` rich-mode enrichment (B1) and the
-swarm-aware client (B2) follow.
+deterministic e2e suite green throughout. `_meta.swarm` rich-mode enrichment + team `session/load`
+(B1, scoped in [docs/34](34-acp-b1-meta-swarm-plan.md)) and the swarm-aware client (B2) follow.
 
 ---
 
@@ -246,6 +246,46 @@ A second hardening round closed the robustness/doc gaps the review flagged:
   to the coordinator root via `MemberSpec.cwd` → `SpawnRequest.cwd` → the spawner, so file tools
   operate where the client expects instead of in the orchestrator's `process.cwd()`. Peers the root
   spawns via the `agent` tool still default to the orchestrator cwd unless they pass their own.
+
+---
+
+## 9. Follow-on backlog (tracked)
+
+B0 is complete and shipped; nothing below is a known bug. These are the non-blocking
+robustness/UX/verification items carried out of §7 and the review, plus the planned rich-mode
+sub-stages. Checkboxes track status so they don't get lost.
+
+**Robustness / verification (no design change needed):**
+- [ ] **Subtree-drain quiescence.** Today a prompt resolves on the root's `task_result` (root-only,
+      §3/§8). A peer the root spawned can still be running when the prompt returns; its later output
+      streams onto the next prompt's translator. Implement per-prompt subtree-drain (tag the root's
+      per-prompt task with the ACP turn id; resolve when that subtree is all-terminal and no member
+      is executing on it — docs/31 Q1). Touches [team-agent.ts](../src/acp/team-agent.ts) +
+      coordinator wait semantics.
+- [ ] **Headless `ask_user_question` over ACP.** `ask_user_question` still errors headless
+      ([standalone-host.ts](../src/swarm/standalone-host.ts)); only *permission* escalation is routed
+      today. Back `ask_user_question` with the same injectable `interactionHandler` so a member can
+      ask the ACP user (route to `session/update` narration + park; the next prompt answers — Q1
+      blocked-on-human path). Natural follow-on to B0.3/B0.4.
+- [ ] **Permission IPC under concurrent escalations.** Verify the transport correlates a *second*
+      outstanding `permission.request` while one is pending (it serializes `ask_user_question` —
+      confirm the same holds), and add the Q2 adapter queue (one outstanding, coalesce by tool) so N
+      parallel members don't stack raw modals. [worker-host.ts](../src/swarm/worker-host.ts) +
+      [standalone-host.ts](../src/swarm/standalone-host.ts).
+- [ ] **`allow_always` semantics.** The router advertises an `allow_always` option but maps it to a
+      one-shot allow; persist it (team-wide in baseline, per-member in rich — Q2).
+      [team-permission.ts](../src/acp/team-permission.ts).
+- [ ] **Subprocess first-token latency.** Team-by-default routes even trivial prompts through a
+      spawned root worker. Measure first-token latency vs `--single`; document the trade and whether a
+      warm-root or in-process fast path is worth it.
+- [ ] **Stage A / team parity guard.** Two prompt paths (single vs team) share `send()`/permission
+      shapes; add a test asserting they stay identical so B1 `_meta.swarm` and the client are uniform.
+
+**Rich-mode sub-stages (planned — see docs/34 for the B1 scope):**
+- [ ] **B1 — `_meta.swarm` enrichment + capability negotiation + team `session/load`.** Scoped in
+      [docs/34-acp-b1-meta-swarm-plan.md](34-acp-b1-meta-swarm-plan.md).
+- [ ] **B2 — `session/steer` ext + swarm-aware rich client.** docs/31 §10.
+- [x] **B3 — upstream the convention.** Explicitly **skipped** (Q5); `_meta.swarm` stays private.
 
 ---
 
