@@ -1,11 +1,12 @@
 /**
  * AcpTeamAgent — a team-mode ACP session bound to a coordinator team (docs/33).
  *
- * B0.1 scope: session lifecycle + a prompt that runs the coordinator team to
- * completion under mode-based permissions. The collapsed LaneEvent translator
- * (B0.2), per-member permission routing (B0.3/4), and persistent steering
- * (B0.5) land in later steps; for now the prompt resolves a real team run and
- * surfaces any aggregate output.
+ * The first prompt runs the coordinator team, spawning a long-lived root that
+ * persists (B0.5: the coordinator honors `persistent`). Subsequent prompts steer
+ * that same root via `runMore`, so the conversation continues with context
+ * rather than respawning a fresh team each turn. `cancel` kills the root (the
+ * next prompt then starts a fresh team). Member work streams through the
+ * collapsed lane translator; member permission escalations route to the client.
  */
 
 import * as crypto from "node:crypto";
@@ -23,6 +24,7 @@ import type {
   PromptResponse,
 } from "@agentclientprotocol/sdk";
 import type { CommonOpts } from "../cli/argv.js";
+import type { AgentHandle } from "../swarm/host.js";
 import type { TeamRunner } from "./team-runner.js";
 import { initializeResponse } from "./capabilities.js";
 import { buildCoordinatorSpec } from "./team-config.js";
@@ -33,6 +35,8 @@ import type { AcpPermissionRouter } from "./team-permission.js";
 interface TeamSessionRecord {
   abort: AbortController;
   readonly cwd: string;
+  /** The long-lived coordinator root, captured after the first turn. */
+  leadHandle?: AgentHandle;
 }
 
 export class AcpTeamAgent implements Agent {
@@ -85,15 +89,32 @@ export class AcpTeamAgent implements Agent {
     // Route this turn's member permission escalations to this session.
     this.router?.setActiveSession(req.sessionId);
 
+    const text = promptToText(req.prompt);
     try {
-      const spec = buildCoordinatorSpec(promptToText(req.prompt));
-      const result = await this.runner.runTeam(spec);
-      // Flush any notifications still queued behind the async sessionUpdate.
+      let cancelled: boolean;
+      if (session.leadHandle === undefined) {
+        // First prompt: run the coordinator team (spawns the persistent root).
+        const result = await this.runner.runTeam(buildCoordinatorSpec(text));
+        // Capture the long-lived root so the next prompt can steer it.
+        session.leadHandle = this.findLead();
+        cancelled = result.cancelled > 0;
+      } else {
+        // Subsequent prompt: steer the same root with the new message.
+        const result = await session.leadHandle.runMore(text);
+        // A cancel mid-turn kills the root -> "killed" status.
+        cancelled = result.status === "killed";
+      }
       await translator.drain();
-      if (abort.signal.aborted || result.cancelled > 0) {
+      if (abort.signal.aborted || cancelled) {
         return { stopReason: "cancelled" };
       }
       return { stopReason: "end_turn" };
+    } catch (err) {
+      await translator.drain().catch(() => {});
+      if (abort.signal.aborted) {
+        return { stopReason: "cancelled" };
+      }
+      throw err;
     } finally {
       unsubscribe();
       this.router?.setActiveSession(undefined);
@@ -101,8 +122,22 @@ export class AcpTeamAgent implements Agent {
   }
 
   async cancel(req: CancelNotification): Promise<void> {
-    // B0.5 wires real run cancellation into the orchestrator; for now mark the
-    // session aborted so the prompt resolves as cancelled.
-    this.sessions.get(req.sessionId)?.abort.abort();
+    const session = this.sessions.get(req.sessionId);
+    if (session === undefined) return;
+    session.abort.abort();
+    // Kill the root so the in-flight turn stops. Look it up live (it may not be
+    // captured yet during the first turn). The next prompt starts a fresh team.
+    session.leadHandle = undefined;
+    await this.findLead()?.kill().catch(() => {});
+  }
+
+  /** The coordinator root's handle (role "lead", else the first member). */
+  private findLead(): AgentHandle | undefined {
+    const members = this.runner.getActiveTeam()?.members;
+    if (members === undefined) return undefined;
+    for (const m of members.values()) {
+      if (m.role === "lead") return m.handle;
+    }
+    return [...members.values()][0]?.handle;
   }
 }

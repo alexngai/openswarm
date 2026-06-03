@@ -104,5 +104,12 @@ async function runAcpTeam(opts: CommonOpts): Promise<number> {
     return new AcpTeamAgent(conn, runner, opts, router);
   }, stdioStream());
   await connection.closed;
+
+  // Tear down the persistent root the team kept alive across prompts (B0.5).
+  try {
+    await runner.getActiveTeam()?.dispose();
+  } catch {
+    // best effort
+  }
   return 0;
 }

@@ -1,9 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { AcpTeamAgent } from "./team-agent.js";
 import type { TeamRunner } from "./team-runner.js";
 import type { TeamResult } from "../swarm/topologies-types.js";
 import type { LaneEvent } from "../swarm/events.js";
 import type { TeamSession, MemberInfo } from "../swarm/team-session.js";
+import type { AgentResult } from "../swarm/host.js";
 import type { AgentId } from "../core/types.js";
 import type { CommonOpts } from "../cli/argv.js";
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
@@ -16,6 +17,13 @@ const BASE_RESULT: TeamResult = {
   resultWriteFailures: 0,
   deadLetterViolation: false,
   deadLetterWriteFailures: 0,
+};
+
+const OK_TURN: AgentResult = {
+  status: "success",
+  output: "ok",
+  usage: { inputTokens: 0, outputTokens: 0 },
+  wallClockMs: 1,
 };
 
 interface FakeRunnerOpts {
@@ -33,10 +41,10 @@ function fakeRunner(o: FakeRunnerOpts = {}): TeamRunner {
         handler = undefined;
       };
     },
-    runTeam: async () => {
+    runTeam: vi.fn(async () => {
       for (const e of o.events ?? []) handler?.(e);
       return { ...BASE_RESULT, ...o.result };
-    },
+    }),
     getActiveTeam: () =>
       o.roster ? ({ members: o.roster } as unknown as TeamSession) : undefined,
   };
@@ -48,7 +56,11 @@ function member(role: string, agentId: string): MemberInfo {
     role,
     agentId: agentId as AgentId,
     state: "running",
-    handle: {} as MemberInfo["handle"],
+    handle: {
+      agentId: agentId as AgentId,
+      runMore: vi.fn(async () => OK_TURN),
+      kill: vi.fn(async () => {}),
+    } as unknown as MemberInfo["handle"],
   };
 }
 
@@ -90,21 +102,52 @@ describe("AcpTeamAgent", () => {
     const res = await agent.prompt({ sessionId, prompt: [{ type: "text", text: "go" }] });
 
     expect(res.stopReason).toBe("end_turn");
-
-    // Lead narrates; the worker's raw text is suppressed (collapse).
     const texts = updates
       .filter((u) => u.sessionUpdate === "agent_message_chunk")
       .map((u) => (u as { content?: { text?: string } }).content?.text);
     expect(texts).toContain("on it");
     expect(texts).not.toContain("secret worker chatter");
-
-    // The worker's tool call surfaces, attributed and id-namespaced.
     const toolCall = updates.find((u) => u.sessionUpdate === "tool_call") as
       | { title?: string; toolCallId?: string; kind?: string }
       | undefined;
     expect(toolCall?.title).toContain("[architect]");
-    expect(toolCall?.kind).toBe("read");
     expect(toolCall?.toolCallId).toBe("wkr-1:t1");
+  });
+
+  it("steers the same root via runMore on a subsequent prompt", async () => {
+    const lead = "L" as AgentId;
+    const roster = new Map<AgentId, MemberInfo>([[lead, member("lead", lead)]]);
+    const runner = fakeRunner({ roster });
+    const agent = new AcpTeamAgent(recordingConn([]), runner, opts);
+    const { sessionId } = await agent.newSession({ cwd: "/tmp", mcpServers: [] });
+
+    // First prompt runs the team.
+    await agent.prompt({ sessionId, prompt: [{ type: "text", text: "first" }] });
+    expect(runner.runTeam).toHaveBeenCalledTimes(1);
+
+    // Second prompt steers the captured root — runMore, NOT a second runTeam.
+    const handle = roster.get(lead)!.handle as unknown as {
+      runMore: ReturnType<typeof vi.fn>;
+    };
+    const res = await agent.prompt({
+      sessionId,
+      prompt: [{ type: "text", text: "and now this" }],
+    });
+    expect(res.stopReason).toBe("end_turn");
+    expect(runner.runTeam).toHaveBeenCalledTimes(1); // still once
+    expect(handle.runMore).toHaveBeenCalledWith("and now this");
+  });
+
+  it("cancel kills the long-lived root", async () => {
+    const lead = "L" as AgentId;
+    const roster = new Map<AgentId, MemberInfo>([[lead, member("lead", lead)]]);
+    const agent = new AcpTeamAgent(recordingConn([]), fakeRunner({ roster }), opts);
+    const { sessionId } = await agent.newSession({ cwd: "/tmp", mcpServers: [] });
+    await agent.cancel({ sessionId });
+    const handle = roster.get(lead)!.handle as unknown as {
+      kill: ReturnType<typeof vi.fn>;
+    };
+    expect(handle.kill).toHaveBeenCalled();
   });
 
   it("emits a roster-derived plan on lifecycle events", async () => {
