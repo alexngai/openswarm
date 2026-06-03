@@ -230,6 +230,11 @@ export class AcpTeamAgent implements Agent {
         // killed = cancel killed the root; it won't accept the next runMore.
         if (result.status === "killed") session.leadHandle = undefined;
       }
+      // Per-prompt subtree quiescence (Q1): the agent tool blocks by default, so
+      // the root already awaited its peers — but a detached `agent({wait:false})`
+      // spawn can still be running. Drain those before resolving so their work
+      // completes within this prompt instead of leaking into the next one.
+      if (!abort.signal.aborted) await this.drainPeers();
       await translator.drain();
       if (abort.signal.aborted) {
         return { stopReason: "cancelled" };
@@ -264,6 +269,21 @@ export class AcpTeamAgent implements Agent {
     } catch {
       // best effort — a half-formed team may already be gone
     }
+  }
+
+  /**
+   * Await any non-lead members still running (e.g. detached `agent({wait:false})`
+   * peers) so the prompt's induced subtree drains before the turn resolves (Q1).
+   * The lead is long-lived (its wait() resolved at the first task_result), so we
+   * skip it. `wait()` is cached/re-callable and resolves on crash, so already-
+   * finished peers return instantly and a dead peer can't hang the drain.
+   */
+  private async drainPeers(): Promise<void> {
+    const members = this.runner.getActiveTeam()?.members;
+    if (members === undefined) return;
+    const peers = [...members.values()].filter((m) => m.role !== "lead");
+    if (peers.length === 0) return;
+    await Promise.allSettled(peers.map((p) => p.handle.wait()));
   }
 
   /** The coordinator root's handle (role "lead", else the first member). */

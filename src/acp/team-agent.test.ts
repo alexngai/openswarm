@@ -67,6 +67,7 @@ function member(role: string, agentId: string): MemberInfo {
       agentId: agentId as AgentId,
       runMore: vi.fn(async () => OK_TURN),
       kill: vi.fn(async () => {}),
+      wait: vi.fn(async () => OK_TURN),
     } as unknown as MemberInfo["handle"],
   };
 }
@@ -270,6 +271,24 @@ describe("AcpTeamAgent", () => {
     await agent.prompt({ sessionId, prompt: [{ type: "text", text: "go" }] });
     const spec = (runner.runTeam as ReturnType<typeof vi.fn>).mock.calls[0]![0];
     expect(spec.members[0].cwd).toBe("/work/project");
+  });
+
+  it("drains non-lead peers before resolving a prompt (subtree quiescence, Q1)", async () => {
+    const lead = "L" as AgentId;
+    const peer = "P" as AgentId;
+    const roster = new Map<AgentId, MemberInfo>([
+      [lead, member("lead", lead)],
+      [peer, member("worker", peer)],
+    ]);
+    const runner = fakeRunner({ roster });
+    const agent = new AcpTeamAgent(recordingConn([]), runner, opts);
+    const { sessionId } = await agent.newSession({ cwd: "/tmp", mcpServers: [] });
+    await agent.prompt({ sessionId, prompt: [{ type: "text", text: "go" }] });
+    // The peer's wait() was awaited; the lead's (long-lived) was not.
+    const peerWait = roster.get(peer)!.handle.wait as ReturnType<typeof vi.fn>;
+    const leadWait = roster.get(lead)!.handle.wait as ReturnType<typeof vi.fn>;
+    expect(peerWait).toHaveBeenCalled();
+    expect(leadWait).not.toHaveBeenCalled();
   });
 
   it("rejects a second session (single shared team per connection, R1)", async () => {
