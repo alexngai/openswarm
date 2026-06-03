@@ -53,11 +53,13 @@ describe("RichRenderer", () => {
         ],
       }),
     );
-    const { board } = r.view();
-    expect(board).toEqual([
+    const view = r.view();
+    expect(view.board).toEqual([
       { content: "lead", priority: "medium", status: "in_progress", memberId: "m-L" },
       { content: "architect", priority: "medium", status: "completed", memberId: "m-A" },
     ]);
+    // A plan is a board-only update — it must not spawn an (empty) lane.
+    expect(view.lanes).toHaveLength(0);
   });
 
   it("strips to a single lane when _meta is absent (baseline degradation)", () => {

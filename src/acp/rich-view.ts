@@ -75,11 +75,10 @@ export class RichRenderer {
 
   apply(update: SessionUpdate): void {
     const member = swarmMember(update);
-    const lane = this.lane(member?.id ?? "", member);
 
     switch (update.sessionUpdate) {
       case "agent_message_chunk":
-        lane.text += chunkText(update);
+        this.lane(member?.id ?? "", member).text += chunkText(update);
         return;
 
       case "tool_call": {
@@ -97,7 +96,7 @@ export class RichRenderer {
           status: u.status ?? "pending",
         };
         this.tools.set(tool.toolCallId, tool);
-        lane.tools.push(tool);
+        this.lane(member?.id ?? "", member).tools.push(tool);
         return;
       }
 
@@ -123,12 +122,13 @@ export class RichRenderer {
             status: u.status ?? "in_progress",
           };
           this.tools.set(tool.toolCallId, tool);
-          lane.tools.push(tool);
+          this.lane(member?.id ?? "", member).tools.push(tool);
         }
         return;
       }
 
       case "plan": {
+        // A board update only — does not create a lane.
         const entries = (update as { entries?: unknown[] }).entries ?? [];
         this.board = entries.map((e) => {
           const entry = e as {
