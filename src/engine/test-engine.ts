@@ -10,7 +10,16 @@ import type { NormalizedEvent, Usage } from "../core/types.js";
 export interface ScriptedEvent {
   /** Optional delay in ms before emitting this event (default 0). */
   readonly delayMs?: number;
-  readonly event: NormalizedEvent;
+  /** Emit a normalized event. Mutually exclusive with `canUseTool`. */
+  readonly event?: NormalizedEvent;
+  /**
+   * Before continuing, invoke `config.canUseTool(name, input)`. This lets a
+   * scripted worker deterministically drive the permission gate — and, on the
+   * ACP team path where the worker's gate escalates over IPC, the full
+   * orchestrator round-trip — without a live model. The decision is emitted as
+   * a `text_delta` ("ALLOWED" or "DENIED:<reason>") so it's observable.
+   */
+  readonly canUseTool?: { readonly name: string; readonly input?: unknown };
 }
 
 export interface ScriptedTestEngineOptions {
@@ -59,12 +68,27 @@ export class ScriptedTestEngine implements AgentEngine {
     return this._cumulativeUsage;
   }
 
-  async *run(_config: RunConfig): AsyncIterable<NormalizedEvent> {
+  async *run(config: RunConfig): AsyncIterable<NormalizedEvent> {
     for (const entry of this.script) {
       if (entry.delayMs && entry.delayMs > 0) {
         await new Promise((r) => setTimeout(r, entry.delayMs));
       }
+      // A canUseTool directive drives the permission gate and surfaces the
+      // decision as text (real engines feed denials back to the model; here we
+      // just make the outcome observable to the test).
+      if (entry.canUseTool !== undefined) {
+        const decision = await config.canUseTool(
+          entry.canUseTool.name,
+          entry.canUseTool.input ?? {},
+        );
+        const text = decision.allow
+          ? "ALLOWED"
+          : `DENIED:${decision.reason ?? ""}`;
+        yield { type: "text_delta", text };
+        continue;
+      }
       const event = entry.event;
+      if (event === undefined) continue;
       // Accumulate usage from message_stop events.
       if (event.type === "message_stop") {
         const u = event.usage;

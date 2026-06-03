@@ -1,0 +1,4 @@
+[
+  { "canUseTool": { "name": "write_file", "input": { "path": "acp-probe.txt", "content": "HI" } } },
+  { "event": { "type": "message_stop", "stopReason": "end_turn", "usage": { "inputTokens": 1, "outputTokens": 1 } } }
+]
