@@ -26,12 +26,17 @@ import type {
 } from "@agentclientprotocol/sdk";
 import type { AgentRuntime } from "../cli/runtime.js";
 import type { CommonOpts } from "../cli/argv.js";
-import type { AgentEngine } from "../engine/index.js";
+import type { AgentEngine, RunConfig } from "../engine/index.js";
+import { makeCanUseTool } from "../permissions/gate.js";
 import { initializeResponse } from "./capabilities.js";
+import { makeAcpTranslator } from "./translator.js";
+import { AcpPermissionBridge } from "./permission.js";
+import { promptToText } from "./content.js";
 
 interface AcpSession {
   readonly engine: AgentEngine;
-  readonly abort: AbortController;
+  /** Reset to a fresh controller at the start of each prompt turn. */
+  abort: AbortController;
   readonly cwd: string;
 }
 
@@ -72,11 +77,46 @@ export class AcpAgent implements Agent {
     if (session === undefined) {
       return { stopReason: "refusal" };
     }
-    // TODO(Step 3): build a RunConfig from `req.prompt`, drive
-    // `session.engine.run(config)`, and translate each NormalizedEvent into a
-    // `conn.sessionUpdate(...)` notification; resolve the mapped stopReason.
-    // For Steps 1–2 the turn ends cleanly without producing output.
-    return { stopReason: "end_turn" };
+
+    // Fresh abort controller per turn so a prior cancel doesn't poison this one.
+    const abort = new AbortController();
+    session.abort = abort;
+
+    const bridge = new AcpPermissionBridge(this.conn, req.sessionId);
+    const canUseTool = makeCanUseTool({
+      dispatcher: this.rt.dispatcher,
+      permEngine: this.rt.permEngine,
+      bridge,
+      // Route mode-deny + bash-Warn prompts through the ACP client, not stdin.
+      useHeadless: false,
+      getCurrentMode: () => this.opts.permissionMode,
+      cwd: session.cwd,
+    });
+
+    const translator = makeAcpTranslator(this.conn, req.sessionId);
+    const config: RunConfig = {
+      systemPrompt: "",
+      prompt: promptToText(req.prompt),
+      model: this.rt.resolvedModelId,
+      auth: this.rt.auth,
+      tools: this.rt.tools,
+      canUseTool,
+      permissionMode: this.opts.permissionMode,
+      hooks: this.rt.hooksConfig,
+      abort: abort.signal,
+    };
+
+    try {
+      for await (const ev of session.engine.run(config)) {
+        await translator.emit(ev);
+      }
+    } catch (err) {
+      if (abort.signal.aborted) return { stopReason: "cancelled" };
+      throw err;
+    }
+
+    if (abort.signal.aborted) return { stopReason: "cancelled" };
+    return { stopReason: translator.stopReason() };
   }
 
   async cancel(req: CancelNotification): Promise<void> {
