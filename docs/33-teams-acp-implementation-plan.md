@@ -281,11 +281,11 @@ sub-stages. Checkboxes track status so they don't get lost.
 - [ ] **Stage A / team parity guard.** Two prompt paths (single vs team) share `send()`/permission
       shapes; add a test asserting they stay identical so B1 `_meta.swarm` and the client are uniform.
 
-- [ ] **Team `session/load` prose replay.** Live context-resume is **done** (lead session sidecar) —
-      a loaded session's next prompt resumes the prior engine context. Replay itself still re-projects
-      the orchestration spine (tool calls + plan board), not the lead's narration prose. With the lead
-      session id now persisted, prose replay can read the lead's session JSONL and interleave it with
-      the spine in wall-clock order. Scoped in [docs/34 §8](34-acp-b1-meta-swarm-plan.md).
+- [x] **Team `session/load` prose replay.** Done — the lead's prior narration is recovered from its
+      session JSONL and woven into the spine (`mergeLeadProse`), so replay shows the lead's prose +
+      `[role]` tool calls + plan board in wall-clock order. Residual: replayed tool calls omit
+      arguments (live-only `tool_use_input`, not persisted) — low value, not planned ([docs/34
+      §8](34-acp-b1-meta-swarm-plan.md)).
 
 **Rich-mode sub-stages (planned — see docs/34 for the B1 scope):**
 - [x] **B1 — `_meta.swarm` enrichment + capability negotiation + team `session/load`.** Shipped
