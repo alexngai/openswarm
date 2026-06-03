@@ -15,6 +15,7 @@ import { buildAgentRuntime } from "../cli/runtime.js";
 import { AcpAgent } from "./agent.js";
 import { AcpTeamAgent } from "./team-agent.js";
 import { createOrchestratorRunner } from "./team-runner.js";
+import { AcpPermissionRouter } from "./team-permission.js";
 import type { CommonOpts } from "../cli/argv.js";
 
 /**
@@ -87,11 +88,21 @@ async function runAcpSingle(opts: CommonOpts): Promise<number> {
 
 /** Stage B: serve a coordinator team over ACP (docs/33). */
 async function runAcpTeam(opts: CommonOpts): Promise<number> {
-  const runner = createOrchestratorRunner({ permissionMode: opts.permissionMode });
-  const connection = new AgentSideConnection(
-    (conn) => new AcpTeamAgent(conn, runner, opts),
-    stdioStream(),
-  );
+  const router = new AcpPermissionRouter();
+  const runner = createOrchestratorRunner({
+    permissionMode: opts.permissionMode,
+    interactionHandler: router,
+  });
+  router.setRoster(() => runner.getActiveTeam()?.members);
+  // Spawned workers inherit the orchestrator's process.env (subprocess-spawner
+  // spreads ...process.env), so enabling escalation here routes members'
+  // mode-denied tool calls to the ACP client (docs/33 B0.4).
+  process.env.SWARM_HARNESS_PERMISSION_ESCALATION = "1";
+
+  const connection = new AgentSideConnection((conn) => {
+    router.setConn(conn);
+    return new AcpTeamAgent(conn, runner, opts, router);
+  }, stdioStream());
   await connection.closed;
   return 0;
 }

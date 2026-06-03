@@ -18,6 +18,7 @@ import type { TeamSpec } from "../swarm/team-spec.js";
 import type { TeamResult } from "../swarm/topologies-types.js";
 import type { LaneEvent } from "../swarm/events.js";
 import type { TeamSession } from "../swarm/team-session.js";
+import type { InteractionHandler } from "../swarm/host.js";
 import type { PermissionMode } from "../core/types.js";
 
 export interface TeamRunner {
@@ -42,12 +43,19 @@ class NullWritable extends Writable {
 export interface OrchestratorRunnerOptions {
   readonly permissionMode: PermissionMode;
   readonly concurrency?: number;
+  /** Routes worker permission escalations to an operator (the ACP client). */
+  readonly interactionHandler?: InteractionHandler;
 }
 
 export function createOrchestratorRunner(
   opts: OrchestratorRunnerOptions,
 ): TeamRunner {
-  const host = new StandaloneHost({ permissionMode: opts.permissionMode });
+  const host = new StandaloneHost({
+    permissionMode: opts.permissionMode,
+    ...(opts.interactionHandler !== undefined && {
+      interactionHandler: opts.interactionHandler,
+    }),
+  });
   const orch = new Orchestrator({
     concurrency: opts.concurrency ?? 4,
     permissionMode: opts.permissionMode,

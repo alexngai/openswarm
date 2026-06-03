@@ -28,6 +28,7 @@ import { initializeResponse } from "./capabilities.js";
 import { buildCoordinatorSpec } from "./team-config.js";
 import { promptToText } from "./content.js";
 import { makeLaneTranslator } from "./lane-translator.js";
+import type { AcpPermissionRouter } from "./team-permission.js";
 
 interface TeamSessionRecord {
   abort: AbortController;
@@ -41,6 +42,7 @@ export class AcpTeamAgent implements Agent {
     private readonly conn: AgentSideConnection,
     private readonly runner: TeamRunner,
     private readonly opts: CommonOpts,
+    private readonly router?: AcpPermissionRouter,
   ) {}
 
   async initialize(req: InitializeRequest): Promise<InitializeResponse> {
@@ -80,6 +82,8 @@ export class AcpTeamAgent implements Agent {
     const unsubscribe = this.runner.subscribeEvents((e) =>
       translator.onLaneEvent(e),
     );
+    // Route this turn's member permission escalations to this session.
+    this.router?.setActiveSession(req.sessionId);
 
     try {
       const spec = buildCoordinatorSpec(promptToText(req.prompt));
@@ -92,6 +96,7 @@ export class AcpTeamAgent implements Agent {
       return { stopReason: "end_turn" };
     } finally {
       unsubscribe();
+      this.router?.setActiveSession(undefined);
     }
   }
 

@@ -1387,6 +1387,7 @@ export class StandaloneHost implements SwarmHost {
           input: parsed.data.input,
           requiredPermission: parsed.data.requiredPermission,
           currentMode: parsed.data.currentMode,
+          ...(parsed.data.agentId !== undefined && { agentId: parsed.data.agentId }),
         });
         transport.respond(frame.id, {
           outcome: decision.outcome,

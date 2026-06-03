@@ -279,6 +279,7 @@ export const PermissionRequestParamsSchema = z.object({
   input: z.unknown().optional(),
   requiredPermission: z.string(),
   currentMode: z.string(),
+  agentId: z.string().optional(),
   timeoutMs: z.number().int().positive().optional(),
 });
 export type PermissionRequestParams = z.infer<

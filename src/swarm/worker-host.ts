@@ -496,7 +496,11 @@ export class WorkerHost implements SwarmHost {
       const result = await this.transport.send<{
         outcome: "allow" | "deny";
         reason?: string;
-      }>("permission.request", { ...req, timeoutMs }, { timeoutMs });
+      }>(
+        "permission.request",
+        { ...req, agentId: this.agentId, timeoutMs },
+        { timeoutMs },
+      );
       return result;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

@@ -53,6 +53,8 @@ export interface PermissionRequest {
   readonly input: unknown;
   readonly requiredPermission: string;
   readonly currentMode: string;
+  /** The requesting member's agentId, for operator-side attribution. */
+  readonly agentId?: string;
 }
 
 export interface PermissionDecisionResponse {
