@@ -109,6 +109,7 @@ export type ParsedArgs =
   | { kind: "worktree"; worktreeArgv: string[] }
   | { kind: "login"; provider: string }
   | { kind: "logout"; provider: string }
+  | { kind: "acp"; opts: CommonOpts }
   | {
       kind: "team-start";
       template: string;
@@ -157,6 +158,7 @@ const SUBCOMMANDS = new Set([
   "team",
   "topology",
   "worktree",
+  "acp",
 ]);
 
 // v0.4 stage 4K — committee/critic-loop are reserved but unimplemented.
@@ -1010,6 +1012,13 @@ export function parseArgv(args: string[]): ParsedArgs {
         ...(maxTokens !== undefined && { maxTokens }),
         ...(maxCostUsd !== undefined && { maxCostUsd }),
       };
+    }
+
+    case "acp": {
+      // `acp` serves over the Agent Client Protocol on stdio. It reads the
+      // shared CommonOpts (model, permission-mode, --no-mcp, …); any positional
+      // is ignored (the editor/client drives prompts over the wire).
+      return { kind: "acp", opts };
     }
 
     case "login": {

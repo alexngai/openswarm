@@ -30,6 +30,7 @@ import {
 import { pluginMain } from "./plugin.js";
 import { logoutMain } from "./logout.js";
 import { loginMain } from "./login.js";
+import { runAcp } from "./acp.js";
 import { buildAgentRuntime } from "./runtime.js";
 import { makeCanUseTool } from "../permissions/gate.js";
 import { PermissionBridge } from "../permissions/bridge.js";
@@ -57,6 +58,7 @@ Usage:
   swarm-harness doctor [--output-format text|json]
   swarm-harness init [<dir>]
   swarm-harness swarm run <tasks-file> [--concurrency N] [--output <path>]
+  swarm-harness acp                              Serve over the Agent Client Protocol (stdio)
   swarm-harness help
   swarm-harness version
 
@@ -443,6 +445,9 @@ export async function main(argv: string[]): Promise<number> {
 
     case "logout":
       return logoutMain(["--provider", parsed.provider]);
+
+    case "acp":
+      return runAcp(parsed.opts);
 
     case "error":
       process.stderr.write(`error: ${parsed.message}\n`);

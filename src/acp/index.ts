@@ -1,0 +1,66 @@
+/**
+ * runAcp — serve swarm-harness over the Agent Client Protocol on stdio.
+ *
+ * Builds the shared agent runtime (docs/32 §3), wraps stdin/stdout as an
+ * ndjson JSON-RPC stream, and hands an AcpAgent to the SDK's
+ * AgentSideConnection. stdout is reserved exclusively for protocol frames —
+ * `redirectConsoleToStderr()` keeps stray logging off the wire.
+ *
+ * See docs/32-acp-implementation-plan.md §5.
+ */
+
+import { Readable, Writable } from "node:stream";
+import { AgentSideConnection, ndJsonStream } from "@agentclientprotocol/sdk";
+import { buildAgentRuntime } from "../cli/runtime.js";
+import { AcpAgent } from "./agent.js";
+import type { CommonOpts } from "../cli/argv.js";
+
+/**
+ * Reserve stdout for JSON-RPC: route all console.* to stderr. The runtime's
+ * own progress lines already write to stderr; this guards library code that
+ * might `console.log`.
+ */
+function redirectConsoleToStderr(): void {
+  /* eslint-disable no-console */
+  console.log = console.error;
+  console.info = console.error;
+  console.warn = console.error;
+  console.debug = console.error;
+  /* eslint-enable no-console */
+}
+
+export async function runAcp(opts: CommonOpts): Promise<number> {
+  redirectConsoleToStderr();
+
+  // ACP is a non-TTY JSONL-style surface: force headless so the runtime never
+  // mounts the REPL or writes UI chrome to stdout.
+  const built = await buildAgentRuntime({ ...opts, headless: true });
+  if (built.kind === "exit") return built.code;
+  const rt = built.runtime;
+
+  const output = Writable.toWeb(
+    process.stdout,
+  ) as unknown as WritableStream<Uint8Array>;
+  const input = Readable.toWeb(
+    process.stdin,
+  ) as unknown as ReadableStream<Uint8Array>;
+  const stream = ndJsonStream(output, input);
+
+  const connection = new AgentSideConnection(
+    (conn) => new AcpAgent(conn, rt, opts),
+    stream,
+  );
+
+  // Block until the client disconnects (stdin EOF or stream error).
+  await connection.closed;
+
+  // Best-effort MCP shutdown (the runtime also registers a process exit hook).
+  for (const c of rt.mcpClients) {
+    try {
+      await c.close();
+    } catch {
+      // best effort
+    }
+  }
+  return 0;
+}
