@@ -89,6 +89,9 @@ export function makeLaneTranslator(
   const open = new Map<string, OpenTool>();
   let chain = Promise.resolve();
   let lastPlanKey = "";
+  // The coordinator's root emits first; treat the first member seen as the lead
+  // when the roster isn't yet available (role lookup wins when it is).
+  let firstSeen: AgentId | undefined;
 
   const send = (update: SessionUpdate): Promise<void> =>
     conn.sessionUpdate({ sessionId, update });
@@ -110,14 +113,18 @@ export function makeLaneTranslator(
   async function handle(event: LaneEvent): Promise<void> {
     if (WORKER_ENGINE_TYPES.has(event.type)) {
       if (!isNormalizedEvent(event.payload)) return;
+      if (firstSeen === undefined) firstSeen = event.agentId;
       const role = deps.getRoster()?.get(event.agentId)?.role;
+      // Lead = roster role "lead" when known, else the first member to speak.
+      const isLead =
+        role !== undefined ? role === "lead" : event.agentId === firstSeen;
       await emitNormalizedEvent(event.payload, {
         send,
         open,
         idPrefix: `${event.agentId}:`,
         ...(role !== undefined ? { titlePrefix: `[${role}] ` } : {}),
         // Collapse: only the lead narrates; other members' text is suppressed.
-        suppressText: role !== "lead",
+        suppressText: !isLead,
         // The team plan comes from the roster, not member todo_write.
         planFromTodos: false,
       });
