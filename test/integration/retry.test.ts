@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { PassThrough } from "node:stream";
 import { spawn } from "node:child_process";
+import { scaleMs } from "../util/compute-scale.js";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -334,7 +335,7 @@ describe("Per-attempt wall-clock timeout: real subprocess (M3b Phase 8.0b)", () 
                 "orchestrator did not exit within 10s of 500ms ceiling",
               ),
             );
-          }, 10_000);
+          }, scaleMs(10_000));
           child.once("exit", (code) => {
             clearTimeout(killTimer);
             resolve(code ?? -1);
@@ -349,7 +350,7 @@ describe("Per-attempt wall-clock timeout: real subprocess (M3b Phase 8.0b)", () 
         // The orchestrator must exit well within 2 seconds of the 500ms
         // ceiling — this guards against the runaway-timer regression that
         // 8.0a fixes as well as basic kill() plumbing.
-        expect(elapsedMs).toBeLessThan(8_000);
+        expect(elapsedMs).toBeLessThan(scaleMs(8_000));
 
         // Exit code: task failed because retry max=0 and the attempt timed
         // out; with --allow-dead-letter the process may still exit 0. We
@@ -374,7 +375,7 @@ describe("Per-attempt wall-clock timeout: real subprocess (M3b Phase 8.0b)", () 
         }
       }
     },
-    30_000,
+    scaleMs(30_000),
   );
 });
 

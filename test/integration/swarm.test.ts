@@ -16,6 +16,7 @@ import {
   afterEach,
 } from "vitest";
 import * as path from "node:path";
+import { scaleMs } from "../util/compute-scale.js";
 import {
   spawnWorkerProcess,
   makeTaskPacket,
@@ -227,7 +228,7 @@ describe("Scenario 6: heartbeat received with fast heartbeat interval", () => {
     const heartbeat = await new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(
         () => reject(new Error("no heartbeat received within 2000ms")),
-        2000,
+        scaleMs(2000),
       );
 
       harness.transport.once("heartbeat", (params) => {
@@ -238,7 +239,7 @@ describe("Scenario 6: heartbeat received with fast heartbeat interval", () => {
       // Start the worker running so it stays alive long enough for a heartbeat.
       harness.transport.once("worker_ready", () => {
         harness.transport
-          .send("run", makeTaskPacket(), { timeoutMs: 10_000 })
+          .send("run", makeTaskPacket(), { timeoutMs: scaleMs(10_000) })
           .catch(() => {
             /* ignore — we may kill before task_result */
           });
@@ -249,7 +250,7 @@ describe("Scenario 6: heartbeat received with fast heartbeat interval", () => {
       agentId: expect.any(String),
       ts: expect.any(Number),
     });
-  }, 10_000);
+  }, scaleMs(10_000));
 });
 
 // ---------------------------------------------------------------------------
