@@ -543,6 +543,10 @@ export class StandaloneHost implements SwarmHost {
       ...(request.idleTimeoutMs !== undefined && {
         idleTimeoutMs: request.idleTimeoutMs,
       }),
+      // When the host can route escalations to an operator (the ACP team path
+      // sets interactionHandler), enable the worker's permission escalation via
+      // its env — scoped to the child, not the orchestrator's process.env.
+      ...(this.interactionHandler !== undefined && { permissionEscalation: true }),
       // v0.7 stage 7A.2 + 7A.3: thread cwd through to the spawner. Spawner
       // already honors `args.cwd` (subprocess-spawner.ts:130, default
       // process.cwd()). resolvedCwd merges the BranchPolicy adapter's

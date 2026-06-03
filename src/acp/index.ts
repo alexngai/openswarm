@@ -94,10 +94,9 @@ async function runAcpTeam(opts: CommonOpts): Promise<number> {
     interactionHandler: router,
   });
   router.setRoster(() => runner.getActiveTeam()?.members);
-  // Spawned workers inherit the orchestrator's process.env (subprocess-spawner
-  // spreads ...process.env), so enabling escalation here routes members'
-  // mode-denied tool calls to the ACP client (docs/33 B0.4).
-  process.env.SWARM_HARNESS_PERMISSION_ESCALATION = "1";
+  // Permission escalation for spawned workers is enabled by the host because it
+  // holds an interactionHandler (the router) — scoped to each worker's env, no
+  // process.env mutation here (docs/33 B0.4 + §8). See StandaloneHost.spawn.
 
   const connection = new AgentSideConnection((conn) => {
     router.setConn(conn);

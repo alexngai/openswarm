@@ -271,6 +271,53 @@ describe("StandaloneHost", () => {
     expect(callArgs.cwd).toBeUndefined();
   });
 
+  it("enables worker permission escalation when an interactionHandler is present", async () => {
+    const { spawnFn, emitFromWorker } = makeSpawnOverride();
+    const host = new StandaloneHost({
+      maxDepth: 5,
+      spawnWorker: spawnFn,
+      interactionHandler: { requestPermission: async () => ({ outcome: "deny" }) },
+    });
+
+    const spawnPromise = host.spawn({
+      task: samplePacket(),
+      permissionMode: "read-only",
+    });
+    await new Promise((r) => setImmediate(r));
+    emitFromWorker({ kind: "notification", method: "worker_ready", params: {} });
+    await new Promise((r) => setImmediate(r));
+    emitFromWorker({
+      kind: "notification",
+      method: "task_result",
+      params: { status: "success", output: "done", usage: { inputTokens: 1, outputTokens: 2 }, wallClockMs: 100 },
+    });
+    await spawnPromise;
+
+    // Scoped to the worker's env — no orchestrator process.env mutation (R-a).
+    expect(spawnFn.mock.calls[0]![0].permissionEscalation).toBe(true);
+  });
+
+  it("leaves worker permission escalation off without an interactionHandler", async () => {
+    const { spawnFn, emitFromWorker } = makeSpawnOverride();
+    const host = new StandaloneHost({ maxDepth: 5, spawnWorker: spawnFn });
+
+    const spawnPromise = host.spawn({
+      task: samplePacket(),
+      permissionMode: "read-only",
+    });
+    await new Promise((r) => setImmediate(r));
+    emitFromWorker({ kind: "notification", method: "worker_ready", params: {} });
+    await new Promise((r) => setImmediate(r));
+    emitFromWorker({
+      kind: "notification",
+      method: "task_result",
+      params: { status: "success", output: "done", usage: { inputTokens: 1, outputTokens: 2 }, wallClockMs: 100 },
+    });
+    await spawnPromise;
+
+    expect(spawnFn.mock.calls[0]![0].permissionEscalation).toBeUndefined();
+  });
+
   it("forwards request.framework to spawnWorker when set (v0.4 stage 4M.5, Q9 fix)", async () => {
     const { spawnFn, emitFromWorker } = makeSpawnOverride();
     const host = new StandaloneHost({ maxDepth: 5, spawnWorker: spawnFn });

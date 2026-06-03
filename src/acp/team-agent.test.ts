@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { AcpTeamAgent } from "./team-agent.js";
+import { AcpPermissionRouter } from "./team-permission.js";
 import type { TeamRunner } from "./team-runner.js";
 import type { TeamResult } from "../swarm/topologies-types.js";
 import type { LaneEvent } from "../swarm/events.js";
@@ -223,6 +224,38 @@ describe("AcpTeamAgent", () => {
     // The dropped handle forces the next prompt back through runTeam.
     await agent.prompt({ sessionId, prompt: [{ type: "text", text: "third" }] });
     expect(runner.runTeam).toHaveBeenCalledTimes(2);
+  });
+
+  it("binds the permission router to the session for the connection lifetime", async () => {
+    const router = new AcpPermissionRouter();
+    const spy = vi.spyOn(router, "setActiveSession");
+    const lead = "L" as AgentId;
+    const roster = new Map<AgentId, MemberInfo>([[lead, member("lead", lead)]]);
+    const agent = new AcpTeamAgent(
+      recordingConn([]),
+      fakeRunner({ roster }),
+      opts,
+      router,
+    );
+    const { sessionId } = await agent.newSession({ cwd: "/tmp", mcpServers: [] });
+    // Bound once at newSession (not per-prompt)...
+    expect(spy).toHaveBeenCalledWith(sessionId);
+    await agent.prompt({ sessionId, prompt: [{ type: "text", text: "go" }] });
+    // ...and never cleared after a prompt — peers can outlive the turn and must
+    // still be able to escalate (root-only quiescence, R-b).
+    expect(spy).not.toHaveBeenCalledWith(undefined);
+  });
+
+  it("threads the ACP session cwd into the coordinator spec", async () => {
+    const runner = fakeRunner();
+    const agent = new AcpTeamAgent(recordingConn([]), runner, opts);
+    const { sessionId } = await agent.newSession({
+      cwd: "/work/project",
+      mcpServers: [],
+    });
+    await agent.prompt({ sessionId, prompt: [{ type: "text", text: "go" }] });
+    const spec = (runner.runTeam as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(spec.members[0].cwd).toBe("/work/project");
   });
 
   it("rejects a second session (single shared team per connection, R1)", async () => {

@@ -229,6 +229,24 @@ they aren't mistaken for bugs.
   `refusal`; `killed` → `cancelled` (B4). A rejected `run_more` also drops the root so the next prompt
   respawns a fresh team.
 
+A second hardening round closed the robustness/doc gaps the review flagged:
+
+- **Permission escalation is host-derived, not a process.env mutation (R-a).** Enabling worker
+  escalation no longer mutates the orchestrator's `process.env`. `StandaloneHost.spawn` sets
+  `SpawnWorkerArgs.permissionEscalation` (→ `SWARM_HARNESS_PERMISSION_ESCALATION=1` in *the child's*
+  env) iff the host holds an `interactionHandler`. Only the ACP team path sets one, so non-ACP
+  orchestrators are unaffected. [standalone-host.ts](../src/swarm/standalone-host.ts),
+  [subprocess-spawner.ts](../src/swarm/subprocess-spawner.ts).
+- **Permission router bound for the connection's lifetime (R-b).** The router's active session is set
+  once at `session/new`, not per-prompt. Because quiescence is root-only, a peer can still be running
+  after the prompt that spawned it resolved; clearing the session each turn would auto-deny that
+  peer's escalations with "no active ACP session". Binding for the connection (safe given R1's
+  single-session guarantee) lets those escalations reach the client.
+- **Client `cwd` honored (R-c).** The ACP `session/new` `cwd` (the editor's project root) is threaded
+  to the coordinator root via `MemberSpec.cwd` → `SpawnRequest.cwd` → the spawner, so file tools
+  operate where the client expects instead of in the orchestrator's `process.cwd()`. Peers the root
+  spawns via the `agent` tool still default to the orchestrator cwd unless they pass their own.
+
 ---
 
 ## Key references

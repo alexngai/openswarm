@@ -78,6 +78,11 @@ export class AcpTeamAgent implements Agent {
       abort: new AbortController(),
       cwd: req.cwd,
     });
+    // Bind the permission router to this (single) session for the connection's
+    // lifetime. Binding once — rather than per-prompt — means a peer that
+    // outlives the prompt that spawned it (root-only quiescence) can still
+    // escalate to the client instead of being auto-denied between turns.
+    this.router?.setActiveSession(sessionId);
     return { sessionId };
   }
 
@@ -98,8 +103,8 @@ export class AcpTeamAgent implements Agent {
     const unsubscribe = this.runner.subscribeEvents((e) =>
       translator.onLaneEvent(e),
     );
-    // Route this turn's member permission escalations to this session.
-    this.router?.setActiveSession(req.sessionId);
+    // The router is bound to this session at newSession (connection lifetime),
+    // so member permission escalations route to the client across turns.
 
     const text = promptToText(req.prompt);
     try {
@@ -109,9 +114,10 @@ export class AcpTeamAgent implements Agent {
         // coordinator team. Tear down any prior team first so a cancelled turn
         // can't leak its old root + peers into the new run (R2).
         await this.disposeActiveTeam();
-        const result = await this.runner.runTeam(buildCoordinatorSpec(text), {
-          signal: abort.signal,
-        });
+        const result = await this.runner.runTeam(
+          buildCoordinatorSpec(text, session.cwd),
+          { signal: abort.signal },
+        );
         // Capture the long-lived root so the next prompt can steer it.
         session.leadHandle = this.findLead();
         stop = teamResultStop(result);
@@ -145,7 +151,6 @@ export class AcpTeamAgent implements Agent {
       throw err;
     } finally {
       unsubscribe();
-      this.router?.setActiveSession(undefined);
     }
   }
 

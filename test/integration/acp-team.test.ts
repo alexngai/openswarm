@@ -59,9 +59,11 @@ describe("ACP team — real coordinator+worker+IPC permission escalation", () =>
   it(
     "routes a member's mode-denied write to the InteractionHandler",
     async () => {
-      // Spawned workers inherit these via subprocess-spawner's ...process.env.
+      // The worker inherits the fixture path via subprocess-spawner's
+      // ...process.env. Escalation is NOT set here: the host enables it because
+      // it holds an interactionHandler (scoped to the worker's env), so this
+      // also exercises that wiring (no process.env mutation).
       const restoreScript = withEnv("SWARM_HARNESS_TEST_SCRIPT", ESCALATE_FIXTURE);
-      const restoreEsc = withEnv("SWARM_HARNESS_PERMISSION_ESCALATION", "1");
 
       const captured: PermissionRequest[] = [];
       const handler: InteractionHandler = {
@@ -96,7 +98,6 @@ describe("ACP team — real coordinator+worker+IPC permission escalation", () =>
           ?.dispose()
           .catch(() => {});
         runner = undefined;
-        restoreEsc();
         restoreScript();
       }
     },

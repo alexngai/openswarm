@@ -104,6 +104,7 @@ export class TeamSession {
       teamScope: this.scope,
       ...(spec.model !== undefined && { model: spec.model }),
       ...(spec.longLived === true && { longLived: true }),
+      ...(spec.cwd !== undefined && { cwd: spec.cwd }),
     };
 
     const handle = await this.host.spawn(spawnRequest);
