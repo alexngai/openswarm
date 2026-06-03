@@ -281,11 +281,16 @@ sub-stages. Checkboxes track status so they don't get lost.
 - [ ] **Stage A / team parity guard.** Two prompt paths (single vs team) share `send()`/permission
       shapes; add a test asserting they stay identical so B1 `_meta.swarm` and the client are uniform.
 
+- [ ] **Team `session/load` live context-resume.** B1.4 replays the transcript (spine), but a loaded
+      session's next prompt starts a fresh root. True engine context-resume (and lead prose replay)
+      needs the lead worker's SDK session id surfaced over IPC + persisted, then `resumeFrom` on
+      respawn. Scoped in [docs/34 §8](34-acp-b1-meta-swarm-plan.md).
+
 **Rich-mode sub-stages (planned — see docs/34 for the B1 scope):**
-- [ ] **B1 — `_meta.swarm` enrichment + capability negotiation + team `session/load`.** Scoped in
-      [docs/34-acp-b1-meta-swarm-plan.md](34-acp-b1-meta-swarm-plan.md). **B1.0–B1.3 shipped**
-      (enrichment on updates/plan/permissions, capability negotiation + `acp.memberText`, persisted
-      spine); **B1.4 (team `session/load`) remaining.**
+- [x] **B1 — `_meta.swarm` enrichment + capability negotiation + team `session/load`.** Shipped
+      (B1.0–B1.4) — see [docs/34-acp-b1-meta-swarm-plan.md](34-acp-b1-meta-swarm-plan.md). Enrichment
+      on updates/plan/permissions, capability negotiation + `acp.memberText`, persisted spine, and
+      `session/load` transcript replay. One fidelity follow-on (live context-resume) tracked above.
 - [ ] **B2 — `session/steer` ext + swarm-aware rich client.** docs/31 §10.
 - [x] **B3 — upstream the convention.** Explicitly **skipped** (Q5); `_meta.swarm` stays private.
 

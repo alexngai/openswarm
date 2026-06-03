@@ -10,7 +10,9 @@ agent-side emission surface rich enough that a swarm-aware client *could* re-exp
 Zed is byte-for-byte unchanged (it ignores `_meta`).
 
 **Authoring date:** 2026-06-03.
-**Status:** B1.0–B1.3 shipped; B1.4 (`session/load`) remaining. See §6.
+**Status:** B1.0–B1.4 shipped. One fidelity follow-on remains (lead SDK session-id
+persistence → prose replay + live engine context-resume); see §8. B2 (rich client + `session/steer`)
+is the next sub-stage.
 **Prerequisite:** B0 shipped (B0.0–B0.6 + two hardening rounds).
 
 ---
@@ -164,9 +166,13 @@ on the next prompt. Flip the advertised capability to `loadSession: true` for te
 - **B1.3 — Persist the team spine.** ✅ `spine.ts` subscribes the lane bus and writes a per-session
   `events.jsonl` (keyed by sessionId; metadata header; recorded events only). *Checkpoint met:
   integration test writes an attributed spine (ts + agentId per event) from a real team run.*
-- **B1.4 — Team `session/load` replay.** ☐ Implement wall-clock baseline projection from the spine +
-  lead log; advertise `loadSession: true` for team. *Checkpoint: e2e — load replays a prior team
-  session as a collapsed wall-clock stream; resume carries context on the next prompt.*
+- **B1.4 — Team `session/load` replay.** ✅ `team-history.ts` re-projects the spine (B1.3) through the
+  collapsed translator in wall-clock order; `AcpTeamAgent.loadSession` replays then registers the
+  session; team advertises `loadSession: true`. *Checkpoint met for transcript replay (tool calls +
+  results + plan board, `[role]`-attributed, `_meta`-enriched), verified against a real persisted
+  spine.* **Fidelity follow-on (§8):** prose + tool args aren't on the spine, and a loaded session's
+  next prompt starts a fresh root — full prose replay + live engine context-resume need the lead SDK
+  session id persisted.
 
 Sequence keeps the deterministic suite green throughout; B1.0–B1.2 are additive (stock Zed unchanged),
 B1.3–B1.4 add the replay path.
@@ -182,16 +188,28 @@ B1.3–B1.4 add the replay path.
       `request_permission`, independent of `_meta` (team-permission + strip-meta tests).
 - [x] **Capability negotiation.** `initialize` advertises `_meta.swarm`; `acp.memberText` toggles
       interleave vs collapse; default collapse equals B0 (capabilities + lane-translator tests).
-- [ ] **Team `session/load`.** A prior team session replays in wall-clock order (baseline collapsed);
-      context resumes on the next prompt; team mode advertises `loadSession: true`. *(B1.4 — remaining;
-      the spine it replays is now persisted, B1.3.)*
+- [x] **Team `session/load` (transcript replay).** A prior team session replays in wall-clock order
+      (baseline collapsed: tool calls + results + plan board, `[role]`-attributed); team mode
+      advertises `loadSession: true`. Verified against a real persisted spine.
+- [ ] **Team `session/load` (live context-resume).** The next prompt after a load resumes the prior
+      conversation's engine context (not just the transcript). Needs the lead SDK session id persisted
+      (§8) — deferred.
 
 ---
 
 ## 8. Risks & open items
 
-- **`_meta` placement.** Pin update-level vs notification-level `_meta` against the SDK in B1.0; route
-  it through the single `wrapMeta` helper so a wrong guess is a one-line fix.
+- **`session/load` fidelity — lead SDK session id (the one B1 follow-on).** B1.4 replays the
+  *orchestration spine*: tool calls/results + the plan board, in wall-clock order. It does **not**
+  replay the lead's prose or tool arguments (live-only, not on the spine), and a loaded session's next
+  prompt starts a **fresh** coordinator root rather than resuming the prior engine context. Both gaps
+  close the same way: persist the lead worker's SDK session id (surface it from the worker — e.g. on
+  `task_result` — capture it host-side, write a sidecar beside the spine). Then `loadSession` can (a)
+  read the lead's session JSONL for prose replay and (b) respawn the root with `resumeFrom` for live
+  context-resume. New worker→host IPC + persistence + respawn-with-resume — a self-contained slice,
+  deferred from B1.4.
+- **`_meta` placement.** Pinned to the inner update object (ContentChunk / ToolCall / ToolCallUpdate /
+  PlanEntry all expose `_meta`); routed through the single `withSwarmMeta` helper.
 - **Spine completeness for rich prose.** Baseline replay needs only the spine + lead log; rich
   per-member prose needs each member's session JSONL — confirm those persist for ACP-spawned workers
   (they run from `dist/cli.js`; verify the session store path is reachable from the orchestrator).
