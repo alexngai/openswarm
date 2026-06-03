@@ -283,7 +283,9 @@ sub-stages. Checkboxes track status so they don't get lost.
 
 **Rich-mode sub-stages (planned — see docs/34 for the B1 scope):**
 - [ ] **B1 — `_meta.swarm` enrichment + capability negotiation + team `session/load`.** Scoped in
-      [docs/34-acp-b1-meta-swarm-plan.md](34-acp-b1-meta-swarm-plan.md).
+      [docs/34-acp-b1-meta-swarm-plan.md](34-acp-b1-meta-swarm-plan.md). **B1.0–B1.3 shipped**
+      (enrichment on updates/plan/permissions, capability negotiation + `acp.memberText`, persisted
+      spine); **B1.4 (team `session/load`) remaining.**
 - [ ] **B2 — `session/steer` ext + swarm-aware rich client.** docs/31 §10.
 - [x] **B3 — upstream the convention.** Explicitly **skipped** (Q5); `_meta.swarm` stays private.
 

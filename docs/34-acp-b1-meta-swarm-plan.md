@@ -10,7 +10,7 @@ agent-side emission surface rich enough that a swarm-aware client *could* re-exp
 Zed is byte-for-byte unchanged (it ignores `_meta`).
 
 **Authoring date:** 2026-06-03.
-**Status:** scoped, not started.
+**Status:** B1.0–B1.3 shipped; B1.4 (`session/load`) remaining. See §6.
 **Prerequisite:** B0 shipped (B0.0–B0.6 + two hardening rounds).
 
 ---
@@ -149,20 +149,22 @@ on the next prompt. Flip the advertised capability to `loadSession: true` for te
 
 ## 6. Build sequence (each behind a green checkpoint)
 
-- **B1.0 — Schema + meta builder + seam plumbing.** Add `swarm-meta.ts` (`SwarmMeta`,
-  `swarmMemberMeta`, `wrapMeta`); add `EmitOptions.meta`; confirm `_meta` placement against the SDK.
-  *Checkpoint: unit test — `emitNormalizedEvent` with `meta` attaches `_meta.swarm` to each update;
-  without it, output is byte-identical to B0.*
-- **B1.1 — Tag updates + plan + permissions.** Lane translator builds per-member meta; `emitPlan`
-  adds `entry._meta`; the permission router adds `toolCall._meta`. *Checkpoint: e2e — every
-  member-work update carries both a coherent standard projection and a correct `_meta.swarm`; the
-  strip-`_meta` invariant test (§1) passes.*
-- **B1.2 — Capability negotiation + `acp.memberText`.** Advertise/sniff `_meta.swarm`; implement the
-  collapse/interleave setting (default collapse). *Checkpoint: e2e — interleave streams `[role]`-
-  prefixed member text; collapse matches B0 exactly; capability echoed at `initialize`.*
-- **B1.3 — Persist the team spine.** Wire per-session `eventsOut` in the ACP runner. *Checkpoint:
-  integration — a team prompt writes an attributed `events.jsonl` (ts + agentId per event).*
-- **B1.4 — Team `session/load` replay.** Implement wall-clock baseline projection from the spine +
+- **B1.0 — Schema + meta builder + seam plumbing.** ✅ `swarm-meta.ts` (`SwarmMeta`,
+  `swarmMemberMeta`, `withSwarmMeta`); `EmitOptions.meta`; `_meta` rides the inner update object.
+  *Checkpoint met: `emitNormalizedEvent` with `meta` attaches `_meta.swarm` to each update; without
+  it, byte-identical to B0.*
+- **B1.1 — Tag updates + plan + permissions.** ✅ Lane translator passes per-member meta into the
+  funnel; `emitPlan` wraps each `entry._meta`; the permission router adds `toolCall._meta`.
+  *Checkpoint met: the strip-`_meta` invariant test (§1, `strip-meta.test.ts`) passes — member
+  identity stays in standard `toolCall.title`.*
+- **B1.2 — Capability negotiation + `acp.memberText`.** ✅ `initialize` advertises
+  `agentCapabilities._meta.swarm` and reads the client's `memberText`; the translator implements
+  collapse (default, == B0) vs interleave (non-lead text streams, one `**[role]**:` prefix per run).
+  *Checkpoint met.*
+- **B1.3 — Persist the team spine.** ✅ `spine.ts` subscribes the lane bus and writes a per-session
+  `events.jsonl` (keyed by sessionId; metadata header; recorded events only). *Checkpoint met:
+  integration test writes an attributed spine (ts + agentId per event) from a real team run.*
+- **B1.4 — Team `session/load` replay.** ☐ Implement wall-clock baseline projection from the spine +
   lead log; advertise `loadSession: true` for team. *Checkpoint: e2e — load replays a prior team
   session as a collapsed wall-clock stream; resume carries context on the next prompt.*
 
@@ -173,15 +175,16 @@ B1.3–B1.4 add the replay path.
 
 ## 7. Acceptance gates (from docs/31 §10)
 
-- [ ] **Strip-`_meta` coherence.** A harness test asserts every `session/update` carrying member work
-      has both (a) a coherent standard-field projection — strip `_meta` ⇒ valid single-agent session —
-      and (b) a correct `_meta.swarm`. Stripping `_meta` never changes trust-relevant meaning (§1).
-- [ ] **Permission identity invariant.** Member identity present in `toolCall.title` for every
-      `request_permission`, independent of `_meta`.
-- [ ] **Capability negotiation.** `initialize` advertises `_meta.swarm`; `acp.memberText` toggles
-      interleave vs collapse; default collapse equals B0 byte-for-byte.
+- [x] **Strip-`_meta` coherence.** `strip-meta.test.ts` asserts every member-work `session/update`
+      has both a coherent standard-field projection (strip `_meta` ⇒ valid single-agent session) and a
+      correct `_meta.swarm`; no swarm info survives the strip.
+- [x] **Permission identity invariant.** Member identity present in `toolCall.title` for every
+      `request_permission`, independent of `_meta` (team-permission + strip-meta tests).
+- [x] **Capability negotiation.** `initialize` advertises `_meta.swarm`; `acp.memberText` toggles
+      interleave vs collapse; default collapse equals B0 (capabilities + lane-translator tests).
 - [ ] **Team `session/load`.** A prior team session replays in wall-clock order (baseline collapsed);
-      context resumes on the next prompt; team mode advertises `loadSession: true`.
+      context resumes on the next prompt; team mode advertises `loadSession: true`. *(B1.4 — remaining;
+      the spine it replays is now persisted, B1.3.)*
 
 ---
 
