@@ -54,6 +54,10 @@ function fakeRunner(o: FakeRunnerOpts = {}): TeamRunner {
       return { ...BASE_RESULT, ...o.result };
     }),
     getActiveTeam: () => team,
+    steer: vi.fn(async (_message: string, target?: string) => ({
+      delivered: team !== undefined,
+      to: target === undefined || target === "lead" ? "role:lead" : `role:${target}`,
+    })),
   };
 }
 
@@ -372,6 +376,31 @@ describe("AcpTeamAgent", () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("extMethod swarm/steer routes to runner.steer and returns the ack (B2.0)", async () => {
+    const roster = new Map<AgentId, MemberInfo>([["L" as AgentId, member("lead", "L")]]);
+    const runner = fakeRunner({ roster });
+    const agent = new AcpTeamAgent(recordingConn([]), runner, opts);
+    const res = await agent.extMethod("swarm/steer", {
+      message: "focus on auth",
+      target: "architect",
+    });
+    expect(res).toEqual({ delivered: true, to: "role:architect" });
+    expect(runner.steer).toHaveBeenCalledWith("focus on auth", "architect");
+  });
+
+  it("extMethod swarm/steer rejects an empty message", async () => {
+    const runner = fakeRunner();
+    const agent = new AcpTeamAgent(recordingConn([]), runner, opts);
+    const res = await agent.extMethod("swarm/steer", { message: "" });
+    expect(res.delivered).toBe(false);
+    expect(runner.steer).not.toHaveBeenCalled();
+  });
+
+  it("extMethod throws on an unknown method", async () => {
+    const agent = new AcpTeamAgent(recordingConn([]), fakeRunner(), opts);
+    await expect(agent.extMethod("swarm/bogus", {})).rejects.toThrow(/unknown ext method/i);
   });
 
   it("refuses a prompt on an unknown session", async () => {

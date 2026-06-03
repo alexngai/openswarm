@@ -251,6 +251,30 @@ export class AcpTeamAgent implements Agent {
     }
   }
 
+  /**
+   * Custom ACP ext method (B2.0). `swarm/steer` injects a message into the
+   * running team's inbox (the lead by default, or a `target` role/member) — the
+   * member sees it on its next `check_inbox`, mid-turn, no turn boundary. A
+   * baseline client never calls this; rich clients use it instead of
+   * cancel+reprompt (docs/31 §7). Returns `{ delivered, to }`.
+   */
+  async extMethod(
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    if (method === "swarm/steer") {
+      const message = typeof params.message === "string" ? params.message : "";
+      const target =
+        typeof params.target === "string" ? params.target : undefined;
+      if (message.length === 0) {
+        return { delivered: false, error: "steer requires a non-empty message" };
+      }
+      const res = await this.runner.steer(message, target);
+      return { delivered: res.delivered, to: res.to };
+    }
+    throw new Error(`unknown ext method: ${method}`);
+  }
+
   async cancel(req: CancelNotification): Promise<void> {
     const session = this.sessions.get(req.sessionId);
     if (session === undefined) return;

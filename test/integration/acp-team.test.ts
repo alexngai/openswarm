@@ -46,6 +46,10 @@ const ESCALATE_FIXTURE = path.resolve(
   process.cwd(),
   "test/fixtures/worker-scripts/escalate-write.json",
 );
+const TEXT_FIXTURE = path.resolve(
+  process.cwd(),
+  "test/fixtures/worker-scripts/text-only.json",
+);
 
 let runner: TeamRunner | undefined;
 
@@ -117,6 +121,30 @@ describe("ACP team — real coordinator+worker+IPC permission escalation", () =>
   );
 
   it(
+    "steers a live team: swarm/steer delivers to the real root's inbox (B2.0)",
+    async () => {
+      const restoreScript = withEnv("SWARM_HARNESS_TEST_SCRIPT", TEXT_FIXTURE);
+      const r = createOrchestratorRunner({ permissionMode: "workspace-write" });
+      runner = r;
+      try {
+        await r.runTeam(buildCoordinatorSpec("hi"));
+        // The long-lived root is registered under role "lead"; steering it
+        // resolves to its inbox.
+        const res = await r.steer("focus on auth", "lead");
+        expect(res).toEqual({ delivered: true, to: "role:lead" });
+        // A bogus role has no recipient -> not delivered.
+        const miss = await r.steer("nobody home", "ghost");
+        expect(miss.delivered).toBe(false);
+      } finally {
+        await r.getActiveTeam()?.dispose().catch(() => {});
+        runner = undefined;
+        restoreScript();
+      }
+    },
+    scaleMs(30_000),
+  );
+
+  it(
     "persists an attributed orchestration spine from the real lane bus (B1.3)",
     async () => {
       const restoreScript = withEnv("SWARM_HARNESS_TEST_SCRIPT", ESCALATE_FIXTURE);
@@ -179,10 +207,6 @@ describe("ACP team — real coordinator+worker+IPC permission escalation", () =>
   it(
     "persists then resumes the lead engine session across processes (B1.4 live resume)",
     async () => {
-      const TEXT_FIXTURE = path.resolve(
-        process.cwd(),
-        "test/fixtures/worker-scripts/text-only.json",
-      );
       const sessionId = randomUUID();
       const dir = acpSessionDir(sessionId);
       const sidecarPath = acpSidecarPath(sessionId);
