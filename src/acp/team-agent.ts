@@ -27,7 +27,7 @@ import type {
 import type { CommonOpts } from "../cli/argv.js";
 import type { AgentHandle } from "../swarm/host.js";
 import type { TeamRunner } from "./team-runner.js";
-import { initializeResponse } from "./capabilities.js";
+import { initializeResponse, readClientSwarmCapability } from "./capabilities.js";
 import { buildCoordinatorSpec } from "./team-config.js";
 import { promptToText } from "./content.js";
 import { makeLaneTranslator } from "./lane-translator.js";
@@ -53,9 +53,16 @@ export class AcpTeamAgent implements Agent {
     private readonly onSessionStart?: (sessionId: string) => void,
   ) {}
 
+  /** Baseline member-text policy (Q3), from the client's _meta.swarm cap. */
+  private memberText: "collapse" | "interleave" = "collapse";
+
   async initialize(req: InitializeRequest): Promise<InitializeResponse> {
-    // Team transcript replay (session/load) lands in B1; advertise it off.
-    return initializeResponse(req, { loadSession: false });
+    // Honor the client's requested member-text mode (default collapse), B1.2.
+    const cap = readClientSwarmCapability(req);
+    if (cap?.memberText === "interleave") this.memberText = "interleave";
+    // Advertise _meta.swarm support (B1.2). Team transcript replay (session/load)
+    // lands in B1.4; advertise it off for now.
+    return initializeResponse(req, { loadSession: false, swarmMeta: true });
   }
 
   async authenticate(
@@ -105,6 +112,7 @@ export class AcpTeamAgent implements Agent {
     // drives a live plan board.
     const translator = makeLaneTranslator(this.conn, req.sessionId, {
       getRoster: () => this.runner.getActiveTeam()?.members,
+      memberText: this.memberText,
     });
     const unsubscribe = this.runner.subscribeEvents((e) =>
       translator.onLaneEvent(e),

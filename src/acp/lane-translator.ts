@@ -52,6 +52,14 @@ const PLAN_TRIGGER_TYPES = new Set<string>([
 export interface LaneTranslatorDeps {
   /** Current team roster (agentId -> member); undefined before the team forms. */
   getRoster(): ReadonlyMap<AgentId, MemberInfo> | undefined;
+  /**
+   * Baseline member-text policy (Q3, B1.2). "collapse" (default) suppresses
+   * non-lead text — only the lead narrates. "interleave" streams non-lead text
+   * too, prefixing each member's contiguous run with `**[role]**:` so the
+   * single stream reads as speaker-labeled chat. Rich clients lane by `_meta`
+   * regardless; this only governs the baseline text stream.
+   */
+  memberText?: "collapse" | "interleave";
 }
 
 export interface LaneTranslator {
@@ -135,6 +143,9 @@ export function makeLaneTranslator(
   // The coordinator's root emits first; treat the first member seen as the lead
   // when the roster isn't yet available (role lookup wins when it is).
   let firstSeen: AgentId | undefined;
+  // Interleave mode: the member whose text run is currently streaming, so we
+  // emit the `**[role]**:` prefix once per run rather than per delta.
+  let lastTextSpeaker: AgentId | undefined;
   // Per-member plan status, driven by worker lifecycle + engine activity.
   // MemberInfo.state is fixed at "running" by the orchestrator (never updated),
   // so the board would otherwise be stuck at in_progress forever (B1). This map
@@ -181,20 +192,53 @@ export function makeLaneTranslator(
       // Lead = roster role "lead" when known, else the first member to speak.
       const isLead =
         role !== undefined ? role === "lead" : event.agentId === firstSeen;
-      await emitNormalizedEvent(event.payload, {
+      const interleave = deps.memberText === "interleave";
+      const meta =
+        rosterMember !== undefined
+          ? swarmMemberMeta(rosterMember, { topology: "coordinator" })
+          : undefined;
+      const payload = event.payload;
+
+      // Interleave: prefix a non-lead member's contiguous text run with
+      // `**[role]**:` (once, on speaker change) so the collapsed stream reads as
+      // speaker-labeled chat (Q3). The lead stays the unprefixed primary voice.
+      if (
+        interleave &&
+        !isLead &&
+        role !== undefined &&
+        payload.type === "text_delta" &&
+        lastTextSpeaker !== event.agentId
+      ) {
+        await send(
+          withSwarmMeta(
+            {
+              sessionUpdate: "agent_message_chunk" as const,
+              content: { type: "text" as const, text: `\n**[${role}]**: ` },
+            },
+            meta,
+          ),
+        );
+      }
+      if (payload.type === "text_delta") lastTextSpeaker = event.agentId;
+
+      await emitNormalizedEvent(payload, {
         send,
         open,
         idPrefix: `${event.agentId}:`,
         ...(role !== undefined ? { titlePrefix: `[${role}] ` } : {}),
-        // Collapse: only the lead narrates; other members' text is suppressed.
-        suppressText: !isLead,
+        // Collapse (default): only the lead narrates. Interleave: all members'
+        // text streams (prefixed above).
+        suppressText: !isLead && !interleave,
         // The team plan comes from the roster, not member todo_write.
         planFromTodos: false,
         // B1.1: enrich every member update with swarm meta.
-        ...(rosterMember !== undefined
-          ? { meta: swarmMemberMeta(rosterMember, { topology: "coordinator" }) }
-          : {}),
+        ...(meta !== undefined ? { meta } : {}),
       });
+
+      // A turn-ending message_stop closes the current text run so the next run
+      // re-prefixes its speaker.
+      if (payload.type === "message_stop") lastTextSpeaker = undefined;
+
       // Engine activity (anything but a turn-ending message_stop) means the
       // member is working — flip it back to in_progress (handles 2nd-turn
       // reactivation after a member went idle). Re-emit the board if changed.

@@ -153,4 +153,39 @@ describe("makeLaneTranslator", () => {
     expect(chunk).toBeDefined();
     expect((chunk as { _meta?: unknown })._meta).toBeUndefined();
   });
+
+  it("(B1.2) interleave streams non-lead text, prefixed once per run", async () => {
+    const { conn, updates } = recorder();
+    const t = makeLaneTranslator(conn, "s1", {
+      getRoster: () => roster,
+      memberText: "interleave",
+    });
+    // Lead speaks (unprefixed), then a worker streams two deltas (one prefix).
+    t.onLaneEvent({ ts: 1, agentId: L, type: "text_delta", payload: { type: "text_delta", text: "lead voice" } });
+    t.onLaneEvent({ ts: 2, agentId: W, type: "text_delta", payload: { type: "text_delta", text: "frag-1 " } });
+    t.onLaneEvent({ ts: 3, agentId: W, type: "text_delta", payload: { type: "text_delta", text: "frag-2" } });
+    await t.drain();
+
+    const texts = updates
+      .filter((u) => u.sessionUpdate === "agent_message_chunk")
+      .map((u) => (u as { content?: { text?: string } }).content?.text);
+    // Lead text present and NOT prefixed; worker text present (not suppressed).
+    expect(texts).toContain("lead voice");
+    expect(texts).toContain("frag-1 ");
+    expect(texts).toContain("frag-2");
+    // Exactly one role prefix for the worker's contiguous run.
+    expect(texts.filter((x) => x === "\n**[worker]**: ")).toHaveLength(1);
+  });
+
+  it("(B1.2) collapse (default) still suppresses non-lead text", async () => {
+    const { conn, updates } = recorder();
+    const t = makeLaneTranslator(conn, "s1", { getRoster: () => roster });
+    t.onLaneEvent({ ts: 1, agentId: W, type: "text_delta", payload: { type: "text_delta", text: "worker says" } });
+    await t.drain();
+    const texts = updates
+      .filter((u) => u.sessionUpdate === "agent_message_chunk")
+      .map((u) => (u as { content?: { text?: string } }).content?.text);
+    expect(texts).not.toContain("worker says");
+    expect(texts.some((x) => x?.includes("[worker]"))).toBe(false);
+  });
 });
