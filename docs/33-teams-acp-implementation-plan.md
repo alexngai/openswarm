@@ -35,7 +35,7 @@ checkpoint rather than integrating all at once.
 | Coordinator lead | Spawns **one long-lived root**; root's prompt is augmented to spawn peers via the `agent` tool — [topologies/coordinator.ts](../src/swarm/topologies/coordinator.ts). Root runs as a worker; its events carry the root's agentId. |
 | Persistent + steering | `Orchestrator({persistent:true})` → `getActiveTeam(): TeamSession` — [orchestrator.ts:96,179](../src/swarm/orchestrator.ts). `TeamSession.spawnMember/send` ([team-session.ts:82,171](../src/swarm/team-session.ts)). Long-lived worker accepts more prompts via the `run_more` IPC method ([ipc/protocol.ts:23](../src/swarm/ipc/protocol.ts)). |
 | Member roster | `TeamSession.members: Map<AgentId,{memberId,role,state}>` — for agentId→role attribution. The lead is the root member's agentId. |
-| Quiescence | `runTeam` resolves when the topology's `CompletionRule` is met; per-prompt completion is the root's `task_result` (`rootHandle.wait()`). **B0 is root-only** — it does not wait for the root's peers to drain (§3, §8). |
+| Quiescence | `runTeam` resolves when the topology's `CompletionRule` is met; per-prompt completion is the root's `task_result` (`rootHandle.wait()`) plus a `drainPeers` await over non-lead members, so detached `agent({wait:false})` peers drain within the prompt (§3, §8). |
 | Permission today | Worker `canUseTool` is **mode-based only**, synchronous, no prompt, no IPC — [worker-entry.ts:110](../src/cli/worker-entry.ts). `permission_prompt/granted/denied` lane types are declared but unused. |
 | Permission precedent | `ask_user_question` is a fully-wired worker→orchestrator **synchronous request/response** with a correlation id — [worker-host.ts:459](../src/swarm/worker-host.ts), [standalone-host.ts:1327](../src/swarm/standalone-host.ts). The exact template for §4. Caveat: its headless handler currently errors ([standalone-host.ts:936](../src/swarm/standalone-host.ts)) — Stage B adds an injectable handler. |
 
@@ -76,10 +76,10 @@ Reuse from Stage A unchanged: `tool-kind.ts` (kind/title/locations/diff), `conte
 - **`session/prompt`** —
   - *first prompt*: build the coordinator `TeamSpec` with the root member's `prompt` = the user text;
     subscribe to the lane bus; `runTeam(spec)`; translate lane events (collapsed); resolve when the
-    root's turn completes. **As built (B0): root-only.** The prompt resolves on the root's
-    `task_result` (`rootHandle.wait()`) — it does **not** wait for the peers the root spawned to drain.
-    A peer still running when the root returns keeps streaming onto the next prompt's translator (or is
-    torn down at session close). Subtree-drain quiescence is deferred (§7).
+    root's turn completes. The prompt resolves on the root's `task_result` (`rootHandle.wait()`) **and**
+    after draining any still-running non-lead peers (`drainPeers`). The `agent` tool blocks by default
+    (`wait:true`), so the root already awaited its peers; the drain covers the residual detached
+    `agent({wait:false})` case so the prompt's induced subtree is quiescent before it resolves (Q1).
   - *subsequent prompts*: the root is long-lived (idle awaiting input) → deliver via `run_more`
     (or `team.send` to the root) → translate until that turn drains. This is steering.
 - **`session/cancel`** — trip the session `AbortController`; the orchestrator aborts the run; resolve
@@ -87,10 +87,10 @@ Reuse from Stage A unchanged: `tool-kind.ts` (kind/title/locations/diff), `conte
 - **`session/load`** — defer to B1 (team transcript replay is doc 31 Q4); B0 advertises it off in
   team mode.
 
-**Per-prompt quiescence (doc 31 Q1):** the *intended* boundary tags the root's per-prompt task with
-the ACP turn id and resolves when that task is terminal **and** no peer it spawned is still running
-(detected from `task_*`/`worker_idle` lane events). **B0 ships the simpler root-only boundary** above;
-subtree-drain detection is the open item in §7.
+**Per-prompt quiescence (doc 31 Q1):** the boundary resolves when the root's per-prompt task is
+terminal **and** no peer it spawned is still running. As built, that's the root's `task_result` plus a
+`drainPeers` await over non-lead members — the practical equivalent for the coordinator, where the
+root is the only spawner and peers are depth-1.
 
 ---
 
@@ -186,19 +186,18 @@ Single emission chokepoint `send()` — B1 attaches `_meta.swarm.member` here. R
 
 ## 7. Risks & open verification items
 
-- **Permission IPC (long pole).** New method across worker/host/transport; must be cancellation-safe
-  and serialized. Verify the transport's request/response correlation handles a second outstanding
-  request (it serializes `ask_user_question` — confirm the same holds).
-- **Per-prompt quiescence boundary.** Detecting "this prompt's induced subtree drained" for a
-  long-lived root that spawned peers is non-trivial. Prototype with task-id tagging; fall back to
-  "root idle + no running peers in scope" if tagging is unavailable.
-- **Subprocess cost.** Team-by-default routes even trivial prompts through a spawned root worker
-  (heavier than Stage A's in-process engine). `--single` is the escape hatch; measure first-token
-  latency.
-- **Headless `ask_user_question`.** Today it errors headless ([standalone-host.ts:936](../src/swarm/standalone-host.ts));
-  the new injectable handler should also back `ask_user_question` so members can ask the ACP user
-  (natural follow-on, not B0-blocking).
-- **Stage A divergence.** Two prompt paths (single vs team) now exist; keep `send()`/permission
+> Most of these were resolved in the §9 robustness pass — see §9 for status. Retained here for the
+> original framing.
+
+- **Permission IPC (long pole).** ✅ Resolved (§9): concurrent `permission.request` frames correlate by
+  unique id (regression-tested); router serializes prompts so they don't stack.
+- **Per-prompt quiescence boundary.** ✅ Resolved (§9): `drainPeers` awaits non-lead members after the
+  root's turn — the `agent` tool blocks by default, so this only covers the detached `wait:false` case.
+- **Subprocess cost.** ⏳ Open (§9): measure first-token latency vs `--single`. `--single` is the escape
+  hatch.
+- **Headless `ask_user_question`.** ⏳ Open (§9): the injectable handler should also back
+  `ask_user_question` so members can ask the ACP user (natural follow-on, not B0-blocking).
+- **Stage A divergence.** ✅ Resolved (§9 parity guard): two prompt paths (single vs team) exist; keep `send()`/permission
   shapes identical so B1 `_meta.swarm` and the client are uniform.
 
 ---
@@ -219,8 +218,10 @@ they aren't mistaken for bugs.
   same treatment. Non-long-lived peers are unaffected (fresh per task). A resume that fails before a
   new session is established clears the stored id so the next turn starts fresh instead of re-resuming
   a dead session ([claude-agent-sdk.ts](../src/engine/claude-agent-sdk.ts), B3).
-- **Root-only per-prompt quiescence.** See §3 — the prompt resolves on the root's `task_result`, not
-  on subtree drain. Accepted for B0; subtree-drain is the §7 open item.
+- **Per-prompt subtree quiescence.** See §3 — the prompt resolves on the root's `task_result` plus a
+  `drainPeers` await over non-lead members, so detached `agent({wait:false})` peers drain within the
+  prompt. (The `agent` tool blocks by default, so the root already awaits its peers; the drain covers
+  the detached case.)
 - **Cancel tears down the whole team (R2).** `session/cancel` disposes the active team (root + peers)
   rather than killing only the lead, so a cancelled turn can't leak peers into the next prompt's fresh
   run. The first-prompt branch also disposes any stale team before spawning.
@@ -238,8 +239,8 @@ A second hardening round closed the robustness/doc gaps the review flagged:
   orchestrators are unaffected. [standalone-host.ts](../src/swarm/standalone-host.ts),
   [subprocess-spawner.ts](../src/swarm/subprocess-spawner.ts).
 - **Permission router bound for the connection's lifetime (R-b).** The router's active session is set
-  once at `session/new`, not per-prompt. Because quiescence is root-only, a peer can still be running
-  after the prompt that spawned it resolved; clearing the session each turn would auto-deny that
+  once at `session/new`, not per-prompt. A peer can still be running between prompts (long-lived team,
+  or work observed after the turn resolves); clearing the session each turn would auto-deny that
   peer's escalations with "no active ACP session". Binding for the connection (safe given R1's
   single-session guarantee) lets those escalations reach the client.
 - **Client `cwd` honored (R-c).** The ACP `session/new` `cwd` (the editor's project root) is threaded
@@ -256,30 +257,31 @@ robustness/UX/verification items carried out of §7 and the review, plus the pla
 sub-stages. Checkboxes track status so they don't get lost.
 
 **Robustness / verification (no design change needed):**
-- [ ] **Subtree-drain quiescence.** Today a prompt resolves on the root's `task_result` (root-only,
-      §3/§8). A peer the root spawned can still be running when the prompt returns; its later output
-      streams onto the next prompt's translator. Implement per-prompt subtree-drain (tag the root's
-      per-prompt task with the ACP turn id; resolve when that subtree is all-terminal and no member
-      is executing on it — docs/31 Q1). Touches [team-agent.ts](../src/acp/team-agent.ts) +
-      coordinator wait semantics.
+- [x] **Per-prompt subtree quiescence.** `prompt()` awaits the root's `task_result` **and** drains
+      non-lead members (`drainPeers`), so a detached `agent({wait:false})` peer completes within the
+      prompt instead of streaming into the next one (§3/§8). The `agent` tool blocks by default, so the
+      root already awaits its peers — the drain covers the residual detached case.
+      [team-agent.ts](../src/acp/team-agent.ts).
+- [x] **Permission IPC under concurrent escalations.** The transport correlates concurrent
+      `permission.request` frames by unique id (a pending map — generic, not special-cased); guarded by
+      an explicit out-of-order regression test. Prompts are **serialized** at the router (one
+      outstanding to the client) so N members don't stack modals; a same-tool burst coalesces once one
+      is answered `allow_always`. [team-permission.ts](../src/acp/team-permission.ts),
+      [parent-transport.test.ts](../src/swarm/ipc/parent-transport.test.ts).
+- [x] **`allow_always` semantics.** Persisted team-wide for the connection: a later request for an
+      always-allowed tool is auto-allowed with no second prompt (was a one-shot allow). Per-member
+      persistence is a rich-mode (B2) refinement. [team-permission.ts](../src/acp/team-permission.ts).
+- [x] **Stage A / team parity guard.** A test asserts the single-agent and team translators emit
+      identical standard-field `session/update`s for the same engine events (modulo the team's
+      `[role]`/`agentId:`/`_meta` enrichment + plan board). [parity.test.ts](../src/acp/parity.test.ts).
 - [ ] **Headless `ask_user_question` over ACP.** `ask_user_question` still errors headless
       ([standalone-host.ts](../src/swarm/standalone-host.ts)); only *permission* escalation is routed
       today. Back `ask_user_question` with the same injectable `interactionHandler` so a member can
       ask the ACP user (route to `session/update` narration + park; the next prompt answers — Q1
       blocked-on-human path). Natural follow-on to B0.3/B0.4.
-- [ ] **Permission IPC under concurrent escalations.** Verify the transport correlates a *second*
-      outstanding `permission.request` while one is pending (it serializes `ask_user_question` —
-      confirm the same holds), and add the Q2 adapter queue (one outstanding, coalesce by tool) so N
-      parallel members don't stack raw modals. [worker-host.ts](../src/swarm/worker-host.ts) +
-      [standalone-host.ts](../src/swarm/standalone-host.ts).
-- [ ] **`allow_always` semantics.** The router advertises an `allow_always` option but maps it to a
-      one-shot allow; persist it (team-wide in baseline, per-member in rich — Q2).
-      [team-permission.ts](../src/acp/team-permission.ts).
 - [ ] **Subprocess first-token latency.** Team-by-default routes even trivial prompts through a
       spawned root worker. Measure first-token latency vs `--single`; document the trade and whether a
       warm-root or in-process fast path is worth it.
-- [ ] **Stage A / team parity guard.** Two prompt paths (single vs team) share `send()`/permission
-      shapes; add a test asserting they stay identical so B1 `_meta.swarm` and the client are uniform.
 
 - [x] **Team `session/load` prose replay.** Done — the lead's prior narration is recovered from its
       session JSONL and woven into the spine (`mergeLeadProse`), so replay shows the lead's prose +
