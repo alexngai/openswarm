@@ -23,6 +23,7 @@ import type {
   InteractionHandler,
   PermissionRequest,
   PermissionDecisionResponse,
+  AskUserResponse,
 } from "../swarm/host.js";
 import type { AgentId } from "../core/types.js";
 import type { MemberInfo } from "../swarm/team-session.js";
@@ -61,9 +62,69 @@ export class AcpPermissionRouter implements InteractionHandler {
       return { outcome: "allow" };
     }
     // Otherwise serialize: chain behind any in-flight prompt so concurrent
-    // escalations don't stack modals on the client (Q2). Failures don't break
-    // the chain.
-    const run = this.queue.then(() => this.promptOnce(req));
+    // escalations don't stack modals on the client (Q2).
+    return this.enqueue(() => this.promptOnce(req));
+  }
+
+  /**
+   * Route a member's `ask_user_question` to the client (docs/33 §9). Mapped to a
+   * requestPermission prompt whose options are the answer choices (the selected
+   * option's text is the answer). Multiple-choice only — ACP has no free-form
+   * text input, so an open-ended question (no options) returns an error.
+   * Serialized through the same queue as permissions so prompts don't stack.
+   */
+  async askUserQuestion(
+    question: string,
+    options?: readonly string[],
+  ): Promise<AskUserResponse> {
+    return this.enqueue(() => this.askOnce(question, options));
+  }
+
+  private async askOnce(
+    question: string,
+    options?: readonly string[],
+  ): Promise<AskUserResponse> {
+    if (this.conn === undefined || this.sessionId === undefined) {
+      return { status: "error", message: "no active ACP session" };
+    }
+    const opts = options ?? [];
+    if (opts.length === 0) {
+      return {
+        status: "error",
+        message:
+          "open-ended questions aren't supported over ACP (no free-form input); provide options",
+      };
+    }
+    const res = await this.conn.requestPermission({
+      sessionId: this.sessionId,
+      // kind omitted: this is a question, not a tool action.
+      toolCall: { toolCallId: crypto.randomUUID(), title: question },
+      options: [
+        ...opts.map((name, i) => ({
+          optionId: `opt:${i}`,
+          name,
+          kind: "allow_once" as const,
+        })),
+        { optionId: "__cancel", name: "Cancel", kind: "reject_once" as const },
+      ],
+    });
+    const outcome = res.outcome;
+    if (outcome.outcome === "cancelled" || outcome.optionId === "__cancel") {
+      return { status: "cancelled" };
+    }
+    const m = /^opt:(\d+)$/.exec(outcome.optionId);
+    if (m !== null) {
+      const idx = Number.parseInt(m[1]!, 10);
+      if (idx >= 0 && idx < opts.length) {
+        return { status: "answered", answer: opts[idx]! };
+      }
+    }
+    return { status: "cancelled" };
+  }
+
+  /** Serialize a client prompt behind any in-flight one. Failures don't break the chain. */
+  private enqueue<T>(thunk: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(thunk);
     this.queue = run.then(
       () => undefined,
       () => undefined,

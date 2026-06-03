@@ -71,6 +71,15 @@ export interface InteractionHandler {
   requestPermission(
     req: PermissionRequest,
   ): Promise<PermissionDecisionResponse>;
+  /**
+   * Optional (docs/33 §9): route a member's `ask_user_question` to the operator
+   * (the ACP client) instead of erroring headless. Multiple-choice only — ACP
+   * has no free-form text input, so an option list is required.
+   */
+  askUserQuestion?(
+    question: string,
+    options?: readonly string[],
+  ): Promise<AskUserResponse>;
 }
 
 // ---------------------------------------------------------------------------

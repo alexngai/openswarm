@@ -1028,6 +1028,27 @@ describe("StandaloneHost.askUser", () => {
     }
   });
 
+  it("headless: routes to interactionHandler.askUserQuestion when present (docs/33 §9)", async () => {
+    const restore = withIsTTY(false);
+    try {
+      const seen: Array<{ q: string; options?: readonly string[] }> = [];
+      const host = new StandaloneHost({
+        interactionHandler: {
+          requestPermission: async () => ({ outcome: "deny" }),
+          askUserQuestion: async (q, options) => {
+            seen.push({ q, options });
+            return { status: "answered", answer: "routed" };
+          },
+        },
+      });
+      const result = await host.askUser("pick?", ["a", "b"]);
+      expect(result).toEqual({ status: "answered", answer: "routed" });
+      expect(seen).toEqual([{ q: "pick?", options: ["a", "b"] }]);
+    } finally {
+      restore();
+    }
+  });
+
   it("TTY + options: numeric answer maps to the option at that index", async () => {
     const restore = withIsTTY(true);
     try {

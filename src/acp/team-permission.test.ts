@@ -181,6 +181,42 @@ describe("AcpPermissionRouter", () => {
     expect(stats().peak).toBe(1); // never two outstanding at once
   });
 
+  it("askUserQuestion maps options to a prompt and returns the selected answer", async () => {
+    const { conn, captured } = connReturning({ outcome: "selected", optionId: "opt:1" });
+    const r = mkRouter(conn);
+    const res = await r.askUserQuestion("Pick one", ["alpha", "beta", "gamma"]);
+    expect(res).toEqual({ status: "answered", answer: "beta" });
+    const c = captured();
+    expect(c.toolCall?.title).toBe("Pick one");
+    expect(c.options?.map((o) => o.optionId)).toEqual([
+      "opt:0",
+      "opt:1",
+      "opt:2",
+      "__cancel",
+    ]);
+  });
+
+  it("askUserQuestion returns cancelled on reject/cancel", async () => {
+    const r1 = mkRouter(connReturning({ outcome: "selected", optionId: "__cancel" }).conn);
+    expect((await r1.askUserQuestion("Q", ["a"])).status).toBe("cancelled");
+    const r2 = mkRouter(connReturning({ outcome: "cancelled" }).conn);
+    expect((await r2.askUserQuestion("Q", ["a"])).status).toBe("cancelled");
+  });
+
+  it("askUserQuestion errors on an open-ended question (no options) — no free-form input in ACP", async () => {
+    const r = mkRouter(connReturning({ outcome: "selected", optionId: "opt:0" }).conn);
+    const res = await r.askUserQuestion("What is your name?");
+    expect(res.status).toBe("error");
+    expect((res as { message: string }).message).toMatch(/open-ended/i);
+  });
+
+  it("askUserQuestion errors when no active session is set", async () => {
+    const r = new AcpPermissionRouter();
+    r.setConn({ requestPermission: async () => ({ outcome: { outcome: "selected", optionId: "opt:0" } }) } as never);
+    const res = await r.askUserQuestion("Q", ["a"]);
+    expect(res.status).toBe("error");
+  });
+
   it("coalesces a same-tool burst: one allow_always answer auto-allows the rest", async () => {
     const { conn, stats } = instrumentedConn(async () => {
       await new Promise((res) => setTimeout(res, 10));
