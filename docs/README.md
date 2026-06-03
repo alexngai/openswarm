@@ -18,6 +18,15 @@ Early design capture for swarm-harness — a TypeScript agent harness built arou
 - [13-m4a-plan.md](./13-m4a-plan.md) — M4a NativeEngine: Vercel AI SDK integration, OpenAI provider, routing, aliases, compaction, parallel tool fan-out
 - [14-m4b-plan.md](./14-m4b-plan.md) — M4b provider breadth + OAuth: xAI/Google/DashScope providers, plugin lifecycle, OpenAI PKCE OAuth, quirks, framework-filter, CLI plumbing. Phase 5 (Codex ChatGPT custom provider) deferred pending operator SSE spike.
 
+> **Index gap:** docs 11–29 (m3 plans, parity, teams, daemon, git-cascade, etc.) exist on disk but
+> are not yet listed here. Backfill pending; browse the `docs/` directory directly meanwhile.
+
+### ACP compatibility (Agent Client Protocol — Zed/editor integration)
+
+- [30-acp-compatibility-plan.md](./30-acp-compatibility-plan.md) — **Stage A: single-agent ACP parity.** Expose one swarm-harness agent over ACP (JSON-RPC/ndjson on stdio) by reusing the `AgentEngine.run()` stream + `PermissionGate` seams. Event mapping, tool-kind/diff tables, staged plan A.1–A.7 with acceptance.
+- [31-teams-acp-design.md](./31-teams-acp-design.md) — **Stage B: driving a *team* from an editor.** Projecting N concurrent members onto one ACP session with graceful degradation: additive `_meta.swarm` enrichment, capability-negotiated baseline-vs-rich emission, per-topology mapping. §11 decisions locked (quiescence, permissions, member-text, session/load, build-our-own-client).
+- [32-acp-implementation-plan.md](./32-acp-implementation-plan.md) — **Build-ready task breakdown for Stage A.** The shared `buildAgentRuntime` refactor, `src/acp/` module layout, `AcpAgent` + translator + permission-driver signatures, test strategy, and a 7-step checkpointed build sequence (~2.5–3d). Grounded in the current `src/cli/main.ts` run-assembly seams.
+
 ## Research
 
 Feature extraction from the claw-code reference implementation lives in [`research/`](./research/):
