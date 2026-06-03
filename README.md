@@ -195,7 +195,8 @@ swarm-harness worktree clean --dry-run
 swarm-harness speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP), so it runs as an external agent inside ACP-aware editors like [Zed](https://zed.dev). It serves JSON-RPC over stdio:
 
 ```bash
-swarm-harness acp
+swarm-harness acp            # a coordinator team (default)
+swarm-harness acp --single   # one agent (the Stage A surface)
 ```
 
 You won't usually run this by hand — the editor spawns it. In Zed, add to `settings.json`:
@@ -211,9 +212,13 @@ You won't usually run this by hand — the editor spawns it. In Zed, add to `set
 }
 ```
 
-Then pick **swarm-harness** in the Agent Panel. The agent streams assistant text, tool calls (with file locations and inline diffs for edits), `todo_write` as a live plan, and routes tool-permission prompts to the editor. The shared flags apply — e.g. `"args": ["acp", "--model", "opus", "--permission-mode", "workspace-write"]`. `session/load` replays prior transcript text and resumes context.
+Then pick **swarm-harness** in the Agent Panel.
 
-**Stage A scope / known limits:** single-agent — one ACP session is one agent; team/swarm orchestration over ACP is on the roadmap (see [docs/31](docs/31-teams-acp-design.md)). `bash` output is delivered when the command finishes (not streamed live), reasoning isn't streamed, and file reads/writes run locally (the editor's unsaved buffers aren't consulted). See [docs/30](docs/30-acp-compatibility-plan.md) for the full design.
+**Team mode (default).** Each ACP session is a coordinator team: you converse with a long-lived **lead** that can spawn peers via the `agent` tool. The lead narrates; every member's tool calls surface `[role]`-attributed (with file locations and inline diffs for edits); the team roster drives a live plan; a member's permission escalation is routed to the editor's approval UI. Follow-up prompts **steer the same root** — the conversation continues with context — and `session/cancel` stops the turn. Shared flags apply, e.g. `"args": ["acp", "--model", "opus", "--permission-mode", "workspace-write"]`.
+
+**Single mode (`--single`).** One agent per session: streamed text, tool calls, `todo_write` as a plan, permission prompts, and `session/load` transcript replay + resume.
+
+**Known limits.** `bash` output is delivered when the command finishes (not streamed live), reasoning isn't streamed, and file reads/writes run locally (the editor's unsaved buffers aren't consulted). Team mode is *collapsed* — the lead is the single narrating voice and raw member chatter is suppressed; per-member lanes plus a richer swarm-aware client are the next stage ([docs/31](docs/31-teams-acp-design.md)). See [docs/30](docs/30-acp-compatibility-plan.md) / [docs/33](docs/33-teams-acp-implementation-plan.md) for the design.
 
 ### Subcommands
 

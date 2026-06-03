@@ -561,4 +561,70 @@ describe("ACP e2e (subprocess)", () => {
     },
     90_000,
   );
+
+  // Steering: two prompts to one team session. The second steers the same
+  // long-lived root, which resumes the first turn's session -> retains context.
+  (BUN && LIVE ? it : it.skip)(
+    "two-prompt steering retains context on the persistent root (team)",
+    async () => {
+      const child = spawn(
+        BUN!,
+        [
+          "src/cli.ts",
+          "acp",
+          "--team",
+          "--permission-mode",
+          "workspace-write",
+          "--no-plugins",
+          "--no-skills",
+          "--no-mcp",
+          "--no-hooks",
+        ],
+        { cwd: process.cwd(), env: { ...process.env }, stdio: ["pipe", "pipe", "ignore"] },
+      );
+      child.on("error", () => {});
+      const harness = new ClientHarness();
+      connectSubprocess(child, harness);
+      const conn = harness.conn!;
+      try {
+        await conn.initialize({ protocolVersion: 1, clientCapabilities: {} });
+        const { sessionId } = await conn.newSession({
+          cwd: process.cwd(),
+          mcpServers: [],
+        });
+        const r1 = await conn.prompt({
+          sessionId,
+          prompt: [
+            { type: "text", text: "Remember this number for later: 42. Acknowledge briefly." },
+          ],
+        });
+        expect(r1.stopReason).toBe("end_turn");
+
+        // Only inspect text produced by the SECOND prompt.
+        const before = harness.updates.length;
+        const r2 = await conn.prompt({
+          sessionId,
+          prompt: [
+            {
+              type: "text",
+              text: "What number did I ask you to remember? Reply with just the number.",
+            },
+          ],
+        });
+        expect(r2.stopReason).toBe("end_turn");
+        const p2text = harness.updates
+          .slice(before)
+          .filter((u) => u.sessionUpdate === "agent_message_chunk")
+          .map((u) => {
+            const c = (u as { content?: { type?: string; text?: string } }).content;
+            return c?.type === "text" ? (c.text ?? "") : "";
+          })
+          .join("");
+        expect(p2text).toMatch(/\b42\b/);
+      } finally {
+        await stopChild(child);
+      }
+    },
+    120_000,
+  );
 });

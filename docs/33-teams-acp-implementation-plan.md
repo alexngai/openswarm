@@ -5,7 +5,7 @@ locked decisions) and [docs/32-acp-implementation-plan.md](32-acp-implementation
 shipped). Stage A serves one agent over ACP; Stage B makes the ACP session a **team**.
 
 **Authoring date:** 2026-06-02.
-**Status:** implementation plan (pre-build).
+**Status:** B0 implemented (B0.0–B0.6 shipped + live-verified). See §6 for the per-step status.
 **Scope:** the B0 cut of Stage B per the product decisions below, sequenced to keep the
 deterministic e2e suite green throughout. `_meta.swarm` rich-mode enrichment (B1) and the
 swarm-aware client (B2) follow.
@@ -154,19 +154,22 @@ Single emission chokepoint `send()` — B1 attaches `_meta.swarm.member` here. R
   (no ACP). *Checkpoint: a worker mode-deny round-trips to a handler and the decision is honored.*
 - **B0.4 — Wire permissions to ACP.** `interactionHandler.requestPermission` → `conn.requestPermission`.
   *Checkpoint: e2e — a member escalation surfaces a titled `request_permission`; allow/deny honored.*
-- **B0.5 — Persistence + steering.** Long-lived root; subsequent prompts via `run_more`; per-prompt
-  quiescence boundary; `session/cancel`. *Checkpoint: e2e — two sequential prompts to one session;
-  the second steers the same root; cancel returns `cancelled`.*
-- **B0.6 — Default flip + docs + live.** Make team the default (single behind `--single`); README
-  "team over ACP"; live e2e (`SWARM_ACP_LIVE`) drives a real coordinator turn. *Checkpoint: doc 31
-  §10 B0 acceptance; live subprocess coordinator turn passes.*
+- **B0.5 — Persistence + steering.** ✅ (`5c13b67` + `e7c3a86`) Coordinator honors `persistent` +
+  `onTeamCreated`; first prompt `runTeam`, subsequent prompts steer the root via
+  `AgentHandle.runMore`; `session/cancel` kills the root. Long-lived workers now resume their session
+  across `run_more`, so **conversation context carries across steering turns** (the live "remember
+  42" smoke passes). *Originally a B1 follow-up; pulled forward here.*
+- **B0.6 — Default flip + docs + live.** ✅ `acp` defaults to team (`--single` for Stage A); README
+  "team over ACP"; committed live e2e (`SWARM_ACP_LIVE`) for the coordinator turn, the permission
+  round-trip, and two-prompt steering with context retention. *Note: workers spawn from `dist/cli.js`,
+  so a live team run needs `npm run build` first (the test globalSetup rebuilds).*
 
-**Acceptance (B0):**
-- [ ] A coordinator team is drivable over ACP end to end (in-process + subprocess e2e).
-- [ ] Member work surfaces as `[role]`-attributed tool calls + a live plan; the lead narrates.
-- [ ] A member escalation routes to the client and the decision is honored both ways.
-- [ ] Two prompts to one session; the second steers the long-lived root; cancel works.
-- [ ] Nothing but JSON-RPC on stdout; tsc clean; full suite green; `--single` preserves Stage A.
+**Acceptance (B0):** all met.
+- [x] A coordinator team is drivable over ACP end to end (in-process + subprocess e2e).
+- [x] Member work surfaces as `[role]`-attributed tool calls + a live plan; the lead narrates.
+- [x] A member escalation routes to the client and the decision is honored both ways.
+- [x] Two prompts to one session; the second steers the long-lived root (with context); cancel works.
+- [x] Nothing but JSON-RPC on stdout; tsc clean; full suite green; `--single` preserves Stage A.
 
 ---
 

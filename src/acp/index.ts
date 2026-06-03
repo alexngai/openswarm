@@ -19,10 +19,10 @@ import { AcpPermissionRouter } from "./team-permission.js";
 import type { CommonOpts } from "../cli/argv.js";
 
 /**
- * Default ACP mode. Flips to team at B0.6 (docs/33); until then `acp` serves a
- * single agent by default and `--team` opts into the coordinator team.
+ * Default ACP mode (B0.6): `acp` serves a coordinator team. `--single` opts
+ * back into the Stage A single agent; `--team` is the explicit opposite.
  */
-const TEAM_DEFAULT = false;
+const TEAM_DEFAULT = true;
 
 function wantsTeam(opts: CommonOpts): boolean {
   if (opts.single) return false;
