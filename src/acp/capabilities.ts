@@ -14,7 +14,15 @@ import type {
 } from "@agentclientprotocol/sdk";
 import { VERSION } from "../index.js";
 
-export function initializeResponse(req: InitializeRequest): InitializeResponse {
+export interface InitializeOptions {
+  /** Whether to advertise session/load. Default true (single-agent). */
+  readonly loadSession?: boolean;
+}
+
+export function initializeResponse(
+  req: InitializeRequest,
+  opts: InitializeOptions = {},
+): InitializeResponse {
   // Echo the client's version when we support it, else the highest we support.
   const requested =
     typeof req.protocolVersion === "number"
@@ -29,8 +37,9 @@ export function initializeResponse(req: InitializeRequest): InitializeResponse {
     protocolVersion,
     agentInfo: { name: "swarm-harness", version: VERSION },
     agentCapabilities: {
-      // session/load replays prior transcript text and resumes context.
-      loadSession: true,
+      // Single-agent: session/load replays transcript text and resumes context.
+      // Team mode advertises false until team transcript replay lands (B1).
+      loadSession: opts.loadSession ?? true,
     },
     authMethods: [],
   };

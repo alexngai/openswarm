@@ -410,7 +410,15 @@ describe("ACP e2e (subprocess)", () => {
       fs.writeFileSync(fixture, SCRIPTED_TURN);
       const child = spawn(
         BUN!,
-        ["src/cli.ts", "acp", "--no-plugins", "--no-skills", "--no-mcp", "--no-hooks"],
+        [
+          "src/cli.ts",
+          "acp",
+          "--single",
+          "--no-plugins",
+          "--no-skills",
+          "--no-mcp",
+          "--no-hooks",
+        ],
         {
           cwd: process.cwd(),
           env: { ...process.env, SWARM_HARNESS_TEST_SCRIPT: fixture },
@@ -459,6 +467,7 @@ describe("ACP e2e (subprocess)", () => {
         [
           "src/cli.ts",
           "acp",
+          "--single",
           "--permission-mode",
           "read-only",
           "--no-plugins",

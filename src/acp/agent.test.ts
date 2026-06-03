@@ -171,6 +171,15 @@ describe("parseArgv — acp subcommand", () => {
     expect(parsed.kind).toBe("acp");
     if (parsed.kind === "acp") {
       expect(parsed.opts.permissionMode).toBe("workspace-write");
+      expect(parsed.opts.single).toBeUndefined();
+      expect(parsed.opts.team).toBeUndefined();
     }
+  });
+
+  it("parses --single and --team mode selectors", () => {
+    const s = parseArgv(["acp", "--single"]);
+    expect(s.kind === "acp" && s.opts.single).toBe(true);
+    const t = parseArgv(["acp", "--team"]);
+    expect(t.kind === "acp" && t.opts.team).toBe(true);
   });
 });

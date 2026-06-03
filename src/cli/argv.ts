@@ -54,6 +54,14 @@ export interface CommonOpts {
    */
   enableWebSearch: boolean;
   /**
+   * acp subcommand: force single-agent mode (Stage A). docs/33.
+   */
+  readonly single?: boolean;
+  /**
+   * acp subcommand: force team mode (coordinator). docs/33.
+   */
+  readonly team?: boolean;
+  /**
    * Engine/framework selection. Default: "auto" (claude* → claude-agent-sdk,
    * everything else → native). Not advertised prominently in --help.
    */
@@ -204,6 +212,9 @@ export function parseArgv(args: string[]): ParsedArgs {
   let hooks = true;
   let dumpTools = false;
   let enableWebSearch = false;
+  // acp subcommand mode selectors (docs/33). Default resolves in runAcp.
+  let acpSingle = false;
+  let acpTeam = false;
   let framework: FrameworkChoice = "auto";
   let dumpEngine = false;
   let maxTokens: number | undefined;
@@ -353,6 +364,19 @@ export function parseArgv(args: string[]): ParsedArgs {
 
     if (tok === "--enable-web-search") {
       enableWebSearch = true;
+      i++;
+      continue;
+    }
+
+    // acp mode selectors (docs/33): --single forces Stage A single-agent;
+    // --team forces team mode. Default is resolved in runAcp.
+    if (tok === "--single") {
+      acpSingle = true;
+      i++;
+      continue;
+    }
+    if (tok === "--team") {
+      acpTeam = true;
       i++;
       continue;
     }
@@ -748,6 +772,8 @@ export function parseArgv(args: string[]): ParsedArgs {
     enableWebSearch,
     framework,
     dumpEngine,
+    ...(acpSingle ? { single: true } : {}),
+    ...(acpTeam ? { team: true } : {}),
     ...(maxTokens !== undefined ? { maxTokens } : {}),
     ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
   };

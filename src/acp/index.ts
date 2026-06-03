@@ -13,7 +13,31 @@ import { Readable, Writable } from "node:stream";
 import { AgentSideConnection, ndJsonStream } from "@agentclientprotocol/sdk";
 import { buildAgentRuntime } from "../cli/runtime.js";
 import { AcpAgent } from "./agent.js";
+import { AcpTeamAgent } from "./team-agent.js";
+import { createOrchestratorRunner } from "./team-runner.js";
 import type { CommonOpts } from "../cli/argv.js";
+
+/**
+ * Default ACP mode. Flips to team at B0.6 (docs/33); until then `acp` serves a
+ * single agent by default and `--team` opts into the coordinator team.
+ */
+const TEAM_DEFAULT = false;
+
+function wantsTeam(opts: CommonOpts): boolean {
+  if (opts.single) return false;
+  if (opts.team) return true;
+  return TEAM_DEFAULT;
+}
+
+function stdioStream(): ReturnType<typeof ndJsonStream> {
+  const output = Writable.toWeb(
+    process.stdout,
+  ) as unknown as WritableStream<Uint8Array>;
+  const input = Readable.toWeb(
+    process.stdin,
+  ) as unknown as ReadableStream<Uint8Array>;
+  return ndJsonStream(output, input);
+}
 
 /**
  * Reserve stdout for JSON-RPC: route all console.* to stderr. The runtime's
@@ -31,24 +55,20 @@ function redirectConsoleToStderr(): void {
 
 export async function runAcp(opts: CommonOpts): Promise<number> {
   redirectConsoleToStderr();
+  return wantsTeam(opts) ? runAcpTeam(opts) : runAcpSingle(opts);
+}
 
+/** Stage A: serve one agent over ACP. */
+async function runAcpSingle(opts: CommonOpts): Promise<number> {
   // ACP is a non-TTY JSONL-style surface: force headless so the runtime never
   // mounts the REPL or writes UI chrome to stdout.
   const built = await buildAgentRuntime({ ...opts, headless: true });
   if (built.kind === "exit") return built.code;
   const rt = built.runtime;
 
-  const output = Writable.toWeb(
-    process.stdout,
-  ) as unknown as WritableStream<Uint8Array>;
-  const input = Readable.toWeb(
-    process.stdin,
-  ) as unknown as ReadableStream<Uint8Array>;
-  const stream = ndJsonStream(output, input);
-
   const connection = new AgentSideConnection(
     (conn) => new AcpAgent(conn, rt, opts),
-    stream,
+    stdioStream(),
   );
 
   // Block until the client disconnects (stdin EOF or stream error).
@@ -62,5 +82,16 @@ export async function runAcp(opts: CommonOpts): Promise<number> {
       // best effort
     }
   }
+  return 0;
+}
+
+/** Stage B: serve a coordinator team over ACP (docs/33). */
+async function runAcpTeam(opts: CommonOpts): Promise<number> {
+  const runner = createOrchestratorRunner({ permissionMode: opts.permissionMode });
+  const connection = new AgentSideConnection(
+    (conn) => new AcpTeamAgent(conn, runner, opts),
+    stdioStream(),
+  );
+  await connection.closed;
   return 0;
 }
