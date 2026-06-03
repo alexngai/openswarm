@@ -44,6 +44,34 @@ export type AskUserResponse =
   | { readonly status: "error"; readonly message: string };
 
 // ---------------------------------------------------------------------------
+// Permission escalation (Stage B B0.3)
+// ---------------------------------------------------------------------------
+
+/** A worker's request to escalate a mode-denied tool call to an operator. */
+export interface PermissionRequest {
+  readonly toolName: string;
+  readonly input: unknown;
+  readonly requiredPermission: string;
+  readonly currentMode: string;
+}
+
+export interface PermissionDecisionResponse {
+  readonly outcome: "allow" | "deny";
+  readonly reason?: string;
+}
+
+/**
+ * Orchestrator-side handler for worker escalations (ask_user_question and
+ * permission requests). The ACP layer injects one that routes to the client;
+ * absent, the orchestrator denies. See docs/33 §4.
+ */
+export interface InteractionHandler {
+  requestPermission(
+    req: PermissionRequest,
+  ): Promise<PermissionDecisionResponse>;
+}
+
+// ---------------------------------------------------------------------------
 // SendResult
 // ---------------------------------------------------------------------------
 

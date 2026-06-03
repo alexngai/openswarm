@@ -9,7 +9,7 @@ import { ScriptedTestEngine } from "../engine/test-engine.js";
 import { filterCodexPeerTools } from "../tools/codex-peer-tools.js";
 import { resolveProvider } from "../providers/routing.js";
 import { OpenAIEnvAuth } from "../auth/openai-env.js";
-import type { AgentEngine } from "../engine/index.js";
+import type { AgentEngine, PermissionDecision } from "../engine/index.js";
 import type { FrameworkChoice } from "./argv.js";
 import { ToolDispatcher } from "../tools/dispatcher.js";
 import { buildTier0Tools } from "../tools/tier0/index.js";
@@ -22,7 +22,12 @@ import {
   loadCustomRoles,
 } from "../swarm/roles.js";
 import { normalizedEventToLaneType } from "../swarm/events.js";
-import type { AgentResult, TaskPacket } from "../swarm/host.js";
+import type {
+  AgentResult,
+  TaskPacket,
+  PermissionRequest,
+  PermissionDecisionResponse,
+} from "../swarm/host.js";
 import type { IpcRequest } from "../swarm/ipc/protocol.js";
 import { RunMoreParamsSchema, IPC_ERROR_CODES } from "../swarm/ipc/protocol.js";
 import type { PermissionMode, Usage } from "../core/types.js";
@@ -62,6 +67,40 @@ interface TurnContext {
   readonly roleSuffix: string;
   readonly resolvedAllowedTools: readonly string[] | undefined;
   readonly parentToolUseId: string | undefined;
+}
+
+/**
+ * Build a worker's `canUseTool` gate. Mode-based first; when a tool is denied
+ * under the current mode AND escalation is enabled (an `escalate` callback is
+ * provided — the ACP team path), the denied call is routed to the orchestrator
+ * (which forwards it to the ACP client). Without `escalate`, a mode denial is
+ * returned directly — identical to the prior behavior. Exported for testing.
+ */
+export function buildWorkerCanUseTool(deps: {
+  dispatcher: ToolDispatcher;
+  permissionEngine: PermissionEngine;
+  permissionMode: PermissionMode;
+  escalate?: (req: PermissionRequest) => Promise<PermissionDecisionResponse>;
+}): (toolName: string, input: unknown) => Promise<PermissionDecision> {
+  return async (toolName, input) => {
+    const tool = deps.dispatcher.get(toolName);
+    if (tool === undefined) {
+      return { allow: false, reason: `unknown tool: ${toolName}` };
+    }
+    const decision = deps.permissionEngine.check(tool.spec);
+    if (decision.allow || deps.escalate === undefined) {
+      return decision;
+    }
+    const res = await deps.escalate({
+      toolName,
+      input,
+      requiredPermission: tool.spec.requiredPermission,
+      currentMode: deps.permissionMode,
+    });
+    return res.outcome === "allow"
+      ? { allow: true }
+      : { allow: false, reason: res.reason ?? "denied by operator" };
+  };
 }
 
 /**
@@ -108,13 +147,16 @@ async function executeTurn(
       auth,
       tools: allTools,
       permissionMode,
-      canUseTool: async (toolName: string, _input: unknown) => {
-        const tool = dispatcher.get(toolName);
-        if (!tool) {
-          return { allow: false as const, reason: `unknown tool: ${toolName}` };
-        }
-        return permissionEngine.check(tool.spec);
-      },
+      canUseTool: buildWorkerCanUseTool({
+        dispatcher,
+        permissionEngine,
+        permissionMode,
+        // Escalate denied calls to the orchestrator only when the ACP team path
+        // enabled it (env flag set on the spawned worker); else deny directly.
+        ...(process.env.SWARM_HARNESS_PERMISSION_ESCALATION === "1"
+          ? { escalate: (req: PermissionRequest) => ctx.host.requestPermission(req) }
+          : {}),
+      }),
       ...(resolvedAllowedTools !== undefined && {
         allowedTools: resolvedAllowedTools,
       }),
