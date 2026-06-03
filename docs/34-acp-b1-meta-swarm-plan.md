@@ -10,9 +10,9 @@ agent-side emission surface rich enough that a swarm-aware client *could* re-exp
 Zed is byte-for-byte unchanged (it ignores `_meta`).
 
 **Authoring date:** 2026-06-03.
-**Status:** B1.0–B1.4 shipped. One fidelity follow-on remains (lead SDK session-id
-persistence → prose replay + live engine context-resume); see §8. B2 (rich client + `session/steer`)
-is the next sub-stage.
+**Status:** B1 complete (B1.0–B1.4 + live context-resume). One *prose*-fidelity follow-on remains
+(replay the lead's narration text, not just the tool/plan timeline); see §8. B2 (rich client +
+`session/steer`) is the next sub-stage.
 **Prerequisite:** B0 shipped (B0.0–B0.6 + two hardening rounds).
 
 ---
@@ -191,23 +191,24 @@ B1.3–B1.4 add the replay path.
 - [x] **Team `session/load` (transcript replay).** A prior team session replays in wall-clock order
       (baseline collapsed: tool calls + results + plan board, `[role]`-attributed); team mode
       advertises `loadSession: true`. Verified against a real persisted spine.
-- [ ] **Team `session/load` (live context-resume).** The next prompt after a load resumes the prior
-      conversation's engine context (not just the transcript). Needs the lead SDK session id persisted
-      (§8) — deferred.
+- [x] **Team `session/load` (live context-resume).** The next prompt after a load resumes the prior
+      conversation's engine context (not just the transcript), via the lead session sidecar (§8).
+      Verified by a real two-process integration test (persist `sess-1` → fresh process resumes it).
 
 ---
 
 ## 8. Risks & open items
 
-- **`session/load` fidelity — lead SDK session id (the one B1 follow-on).** B1.4 replays the
-  *orchestration spine*: tool calls/results + the plan board, in wall-clock order. It does **not**
-  replay the lead's prose or tool arguments (live-only, not on the spine), and a loaded session's next
-  prompt starts a **fresh** coordinator root rather than resuming the prior engine context. Both gaps
-  close the same way: persist the lead worker's SDK session id (surface it from the worker — e.g. on
-  `task_result` — capture it host-side, write a sidecar beside the spine). Then `loadSession` can (a)
-  read the lead's session JSONL for prose replay and (b) respawn the root with `resumeFrom` for live
-  context-resume. New worker→host IPC + persistence + respawn-with-resume — a self-contained slice,
-  deferred from B1.4.
+- **`session/load` live context-resume — DONE.** A loaded session's next prompt resumes the prior
+  engine context via the **lead session sidecar** (`src/cli/session-sidecar.ts`): the root worker
+  writes its SDK session id to a per-session sidecar after each turn and reads it on its first turn,
+  so a fresh process resumes the prior conversation. No worker→host IPC was needed — the sidecar path
+  is threaded per-spawn to the root, and the worker persists/reads it autonomously. Verified by a real
+  two-process integration test.
+- **`session/load` prose replay (remaining follow-on).** Replay still re-projects the orchestration
+  spine (tool calls/results + plan board), not the lead's narration prose or tool arguments (live-only,
+  not on the spine). With the lead session id now persisted (sidecar), prose replay can read the lead's
+  session JSONL and interleave it with the spine in wall-clock order — the last fidelity slice.
 - **`_meta` placement.** Pinned to the inner update object (ContentChunk / ToolCall / ToolCallUpdate /
   PlanEntry all expose `_meta`); routed through the single `withSwarmMeta` helper.
 - **Spine completeness for rich prose.** Baseline replay needs only the spine + lead log; rich
