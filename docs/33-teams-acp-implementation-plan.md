@@ -193,10 +193,10 @@ Single emission chokepoint `send()` — B1 attaches `_meta.swarm.member` here. R
   unique id (regression-tested); router serializes prompts so they don't stack.
 - **Per-prompt quiescence boundary.** ✅ Resolved (§9): `drainPeers` awaits non-lead members after the
   root's turn — the `agent` tool blocks by default, so this only covers the detached `wait:false` case.
-- **Subprocess cost.** ⏳ Open (§9): measure first-token latency vs `--single`. `--single` is the escape
-  hatch.
-- **Headless `ask_user_question`.** ⏳ Open (§9): the injectable handler should also back
-  `ask_user_question` so members can ask the ACP user (natural follow-on, not B0-blocking).
+- **Subprocess cost.** ✅ Measured (§9): team adds ~190 ms p50 to first token vs in-process `--single`;
+  acceptable for interactive use, `--single` is the escape hatch.
+- **Headless `ask_user_question`.** ✅ Resolved (§9): routed to the client (multiple-choice); open-ended
+  needs Q1 park-and-resume (B2-era).
 - **Stage A divergence.** ✅ Resolved (§9 parity guard): two prompt paths (single vs team) exist; keep `send()`/permission
   shapes identical so B1 `_meta.swarm` and the client are uniform.
 
@@ -252,11 +252,12 @@ A second hardening round closed the robustness/doc gaps the review flagged:
 
 ## 9. Follow-on backlog (tracked)
 
-B0 is complete and shipped; nothing below is a known bug. These are the non-blocking
+B0 is complete and shipped; nothing below is a known bug. These were the non-blocking
 robustness/UX/verification items carried out of §7 and the review, plus the planned rich-mode
-sub-stages. Checkboxes track status so they don't get lost.
+sub-stages. **The robustness/verification pass is now complete** — all six items below are done; only
+the rich-mode sub-stages (B2) remain.
 
-**Robustness / verification (no design change needed):**
+**Robustness / verification (done):**
 - [x] **Per-prompt subtree quiescence.** `prompt()` awaits the root's `task_result` **and** drains
       non-lead members (`drainPeers`), so a detached `agent({wait:false})` peer completes within the
       prompt instead of streaming into the next one (§3/§8). The `agent` tool blocks by default, so the
@@ -274,14 +275,18 @@ sub-stages. Checkboxes track status so they don't get lost.
 - [x] **Stage A / team parity guard.** A test asserts the single-agent and team translators emit
       identical standard-field `session/update`s for the same engine events (modulo the team's
       `[role]`/`agentId:`/`_meta` enrichment + plan board). [parity.test.ts](../src/acp/parity.test.ts).
-- [ ] **Headless `ask_user_question` over ACP.** `ask_user_question` still errors headless
-      ([standalone-host.ts](../src/swarm/standalone-host.ts)); only *permission* escalation is routed
-      today. Back `ask_user_question` with the same injectable `interactionHandler` so a member can
-      ask the ACP user (route to `session/update` narration + park; the next prompt answers — Q1
-      blocked-on-human path). Natural follow-on to B0.3/B0.4.
-- [ ] **Subprocess first-token latency.** Team-by-default routes even trivial prompts through a
-      spawned root worker. Measure first-token latency vs `--single`; document the trade and whether a
-      warm-root or in-process fast path is worth it.
+- [x] **Headless `ask_user_question` over ACP.** Routed to the client (multiple-choice): a member's
+      `ask_user_question` maps to a `requestPermission` prompt whose options are the answer choices,
+      serialized with permission prompts. Open-ended (no options) returns a clear error — ACP has no
+      free-form text input; full free-form needs the Q1 park-and-resume flow (a B2-era follow-on).
+      [team-permission.ts](../src/acp/team-permission.ts), [standalone-host.ts](../src/swarm/standalone-host.ts).
+- [x] **Subprocess first-token latency.** Measured (deterministic bench,
+      [acp-latency.bench.test.ts](../test/integration/acp-latency.bench.test.ts), `SWARM_ACP_BENCH=1`):
+      team-by-default adds **~190 ms p50 / ~200 ms mean** to first token (spawn `dist/cli.js` root +
+      `worker_ready` handshake + engine init) on a loaded shared box; `--single` runs in-process
+      (sub-ms). Conclusion: ~200 ms before first token is acceptable for interactive editor use and not
+      worth a warm-root/in-process fast path now; `--single` stays the escape hatch for latency-
+      sensitive runs.
 
 - [x] **Team `session/load` prose replay.** Done — the lead's prior narration is recovered from its
       session JSONL and woven into the spine (`mergeLeadProse`), so replay shows the lead's prose +
