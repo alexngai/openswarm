@@ -8,8 +8,9 @@ that re-expands `_meta.swarm` into per-member lanes. There is one agent-side emi
 Zed renders it collapsed; our client renders it richly (Q5).
 
 **Authoring date:** 2026-06-03.
-**Status:** scoped. B2.0 (steer ext) + B2.1 (rich renderer) target this cut; B2.2 (interactive client
-app) follows.
+**Status:** B2 shipped — B2.0 (steer ext), B2.1 (rich renderer), B2.2 (formatter + RichClient +
+reference binary). Verified by unit tests + a live smoke (real team → per-member lanes + board +
+steer). Remaining polish (a full TUI, sub-turn diff rendering) is optional.
 **Prerequisite:** B1 complete (`_meta.swarm`, capability negotiation, `session/load`).
 
 ---
@@ -82,25 +83,27 @@ front-end.
 
 ## 3. Build sequence (each behind a green checkpoint)
 
-- **B2.0 — `swarm/steer` ext.** `TeamRunner.steer` (+ orchestrator-runner impl over `host.send`);
-  `AcpTeamAgent.extMethod` dispatch. *Checkpoint: unit — steer routes to the inbox with the resolved
-  target + returns a delivery ack; no live team ⇒ not delivered.*
-- **B2.1 — Rich renderer.** `rich-view.ts` — fold `session/update`s into lanes + board; strip-`_meta`
-  degrades to one lane. *Checkpoint: unit — two members' updates land in two lanes with correct
-  text/tool/role; a `plan` populates the board; `_meta`-stripped input ⇒ single lane.*
-- **B2.2 — Reference client.** A thin binary: spawn/connect `acp`, drive the renderer to the terminal,
-  read operator input → `swarm/steer` (and `/cancel`, `/load`). *Checkpoint: e2e (live-gated) — drive a
-  real team, see ≥2 lanes, steer mid-turn.*
+- **B2.0 — `swarm/steer` ext.** ✅ `TeamRunner.steer` (direct sends to roster-resolved member
+  agentIds — `role:`/`*` won't resolve from the out-of-scope orchestrator); `AcpTeamAgent.extMethod`
+  dispatch. *Checkpoint met: steer delivers to the real root's inbox; no live team ⇒ not delivered.*
+- **B2.1 — Rich renderer.** ✅ `rich-view.ts` — `RichRenderer` folds `session/update`s into lanes +
+  board; `plan` is board-only; strip-`_meta` ⇒ one lane. *Checkpoint met, incl. a round-trip from the
+  real lane translator into 2 lanes.*
+- **B2.2 — Reference client.** ✅ `rich-format.ts` (lanes → terminal lines), `rich-client.ts`
+  (`RichClient implements Client`), and `scripts/acp-rich-client.ts` (spawn `acp`, repaint lanes per
+  update, operator input → prompt / `/steer [@role]` / `/quit`). *Checkpoint met: live smoke shows the
+  `[lead]` lane + board + a delivered steer.*
 
 ---
 
 ## 4. Acceptance gates (docs/31 §10)
 
-- [ ] **Rich client renders ≥2 concurrent member lanes** from one session (renderer asserts this
-      deterministically; the client demonstrates it live).
-- [ ] **`swarm/steer` injects mid-turn** without a turn boundary (delivery to the inbox, acked).
-- [ ] **One emission surface, two fidelities:** strip `_meta` ⇒ the renderer collapses to the baseline
-      single-lane view (no trust-relevant change).
+- [x] **Rich client renders ≥2 concurrent member lanes** from one session (renderer round-trip test:
+      the real translator's output folds into 2 lanes; the binary demonstrates it live).
+- [x] **`swarm/steer` injects mid-turn** without a turn boundary (delivery to the inbox, acked —
+      integration test + live smoke).
+- [x] **One emission surface, two fidelities:** strip `_meta` ⇒ the renderer collapses to the baseline
+      single-lane view (unit test).
 
 ---
 

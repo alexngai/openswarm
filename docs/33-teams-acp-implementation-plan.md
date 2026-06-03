@@ -8,7 +8,8 @@ shipped). Stage A serves one agent over ACP; Stage B makes the ACP session a **t
 **Status:** B0 implemented (B0.0–B0.6 shipped + live-verified). See §6 for the per-step status.
 **Scope:** the B0 cut of Stage B per the product decisions below, sequenced to keep the
 deterministic e2e suite green throughout. `_meta.swarm` rich-mode enrichment + team `session/load`
-(B1, scoped in [docs/34](34-acp-b1-meta-swarm-plan.md)) and the swarm-aware client (B2) follow.
+(B1, [docs/34](34-acp-b1-meta-swarm-plan.md)) and the swarm-aware client (B2,
+[docs/35](35-acp-b2-rich-client-plan.md)) followed — both shipped.
 
 ---
 
@@ -299,7 +300,11 @@ the rich-mode sub-stages (B2) remain.
       (B1.0–B1.4) — see [docs/34-acp-b1-meta-swarm-plan.md](34-acp-b1-meta-swarm-plan.md). Enrichment
       on updates/plan/permissions, capability negotiation + `acp.memberText`, persisted spine, and
       `session/load` transcript replay. One fidelity follow-on (live context-resume) tracked above.
-- [ ] **B2 — `session/steer` ext + swarm-aware rich client.** docs/31 §10.
+- [x] **B2 — `swarm/steer` ext + swarm-aware rich client.** Shipped — see
+      [docs/35-acp-b2-rich-client-plan.md](35-acp-b2-rich-client-plan.md). `swarm/steer` ext injects a
+      mid-turn message to the team's inbox; `RichRenderer` + formatter fold `_meta.swarm` into
+      per-member lanes + a board; `scripts/acp-rich-client.ts` is the reference client (verified by a
+      live smoke).
 - [x] **B3 — upstream the convention.** Explicitly **skipped** (Q5); `_meta.swarm` stays private.
 
 ---
