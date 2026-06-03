@@ -292,6 +292,7 @@ team replay is Stage B).
 | Unit | capabilities/version negotiation | `src/acp/capabilities.test.ts` |
 | Integration | `AcpAgent` methods driven directly against a scripted engine | `src/acp/agent.test.ts` |
 | **E2E (in-process)** | the SDK's real **`ClientSideConnection`** linked to `AgentSideConnection(AcpAgent)` over a cross-wired `TransformStream` pair; drives initialize→new→prompt and a full `requestPermission` round-trip (allow + reject) | `src/acp/e2e.test.ts` |
+| **E2E (subprocess)** | spawns the real `acp` **process**, drives it via `ClientSideConnection` over stdio + `ndJsonStream` (prompt turn; live variant gated by `SWARM_ACP_LIVE`); the truest harness — exercises `runAcp`, stdout discipline, byte framing. Skipped if `bun` is absent | `src/acp/e2e.test.ts` |
 | **E2E (live model)** | same harness, real runtime via `buildAgentRuntime`, a real Claude turn ("reply READY"); **gated by `SWARM_ACP_LIVE=1`**, skipped in CI | `src/acp/e2e.test.ts` |
 | Smoke | `scripts/smoke-acp.sh`: vitest `src/acp` + a wire run of initialize+session/new asserting pure-JSON-RPC stdout | `scripts/smoke-acp.sh` |
 | E2E (editor) | real Zed `agent_servers` entry → manual checklist (doc 30 §7 acceptance) | manual |

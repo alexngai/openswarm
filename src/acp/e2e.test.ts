@@ -12,9 +12,17 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { Readable, Writable } from "node:stream";
+import { once } from "node:events";
+import { existsSync } from "node:fs";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import {
   AgentSideConnection,
   ClientSideConnection,
+  ndJsonStream,
 } from "@agentclientprotocol/sdk";
 import type {
   Client,
@@ -38,6 +46,8 @@ import type { NormalizedEvent } from "../core/types.js";
 
 class ClientHarness implements Client {
   readonly updates: SessionUpdate[] = [];
+  /** Set by the subprocess harness so tests can call agent methods. */
+  conn?: ClientSideConnection;
   constructor(
     private readonly onPermission: (
       r: RequestPermissionRequest,
@@ -317,6 +327,170 @@ describe("ACP e2e (live model)", () => {
         for (const c of rt.mcpClients) {
           await c.close().catch(() => {});
         }
+      }
+    },
+    60_000,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Subprocess e2e — drive the real `acp` process over stdio pipes. This is the
+// truest harness: it exercises the actual entry (runAcp), stdout discipline,
+// and ndjson byte framing — everything a real editor hits except the editor's
+// own client quirks. Requires `bun` on PATH (skipped otherwise).
+// ---------------------------------------------------------------------------
+
+function findBun(): string | null {
+  try {
+    if (spawnSync("bun", ["--version"], { stdio: "ignore" }).status === 0) {
+      return "bun";
+    }
+  } catch {
+    // not on PATH
+  }
+  const home = process.env.HOME;
+  if (home && existsSync(`${home}/.bun/bin/bun`)) return `${home}/.bun/bin/bun`;
+  return null;
+}
+
+const BUN = findBun();
+
+/** Connect a ClientSideConnection to a spawned agent process over stdio. */
+function connectSubprocess(child: ChildProcess, harness: ClientHarness): void {
+  const output = Writable.toWeb(
+    child.stdin!,
+  ) as unknown as WritableStream<Uint8Array>;
+  const input = Readable.toWeb(
+    child.stdout!,
+  ) as unknown as ReadableStream<Uint8Array>;
+  // The connection is created for its side effects (it begins reading stdout);
+  // callers drive it through the returned-by-reference harness + the child.
+  const conn = new ClientSideConnection(() => harness, ndJsonStream(output, input));
+  // Stash the connection on the harness so the test can call agent methods.
+  harness.conn = conn;
+}
+
+async function stopChild(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.kill("SIGTERM");
+  const closed = once(child, "close");
+  const timer = setTimeout(() => child.kill("SIGKILL"), 2000);
+  try {
+    await closed;
+  } catch {
+    // ignore
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const SCRIPTED_TURN = JSON.stringify([
+  { event: { type: "text_delta", text: "working " } },
+  { event: { type: "tool_use_start", id: "t1", name: "read_file" } },
+  { event: { type: "tool_use_input", id: "t1", jsonDelta: '{"path":"a.ts"}' } },
+  { event: { type: "tool_use_end", id: "t1" } },
+  { event: { type: "tool_result", toolUseId: "t1", content: "body", isError: false } },
+  {
+    event: {
+      type: "message_stop",
+      stopReason: "end_turn",
+      usage: { inputTokens: 1, outputTokens: 1 },
+    },
+  },
+]);
+
+describe("ACP e2e (subprocess)", () => {
+  (BUN ? it : it.skip)(
+    "drives the real `acp` process end to end over stdio",
+    async () => {
+      const fixture = path.join(
+        os.tmpdir(),
+        `acp-e2e-${process.pid}-subprocess.json`,
+      );
+      fs.writeFileSync(fixture, SCRIPTED_TURN);
+      const child = spawn(
+        BUN!,
+        ["src/cli.ts", "acp", "--no-plugins", "--no-skills", "--no-mcp", "--no-hooks"],
+        {
+          cwd: process.cwd(),
+          env: { ...process.env, SWARM_HARNESS_TEST_SCRIPT: fixture },
+          stdio: ["pipe", "pipe", "ignore"],
+        },
+      );
+      child.on("error", () => {});
+      const harness = new ClientHarness();
+      connectSubprocess(child, harness);
+      const conn = harness.conn!;
+      try {
+        const init = await conn.initialize({
+          protocolVersion: 1,
+          clientCapabilities: {},
+        });
+        expect(init.agentInfo?.name).toBe("swarm-harness");
+        expect(init.agentCapabilities?.loadSession).toBe(true);
+
+        const { sessionId } = await conn.newSession({
+          cwd: process.cwd(),
+          mcpServers: [],
+        });
+        const res = await conn.prompt({
+          sessionId,
+          prompt: [{ type: "text", text: "read a.ts" }],
+        });
+        expect(res.stopReason).toBe("end_turn");
+
+        const kinds = harness.updates.map((u) => u.sessionUpdate);
+        expect(kinds).toContain("agent_message_chunk");
+        expect(kinds).toContain("tool_call");
+        expect(harness.text()).toContain("working");
+      } finally {
+        await stopChild(child);
+        fs.rmSync(fixture, { force: true });
+      }
+    },
+    30_000,
+  );
+
+  (BUN && LIVE ? it : it.skip)(
+    "drives the real `acp` process against a live model",
+    async () => {
+      const child = spawn(
+        BUN!,
+        [
+          "src/cli.ts",
+          "acp",
+          "--permission-mode",
+          "read-only",
+          "--no-plugins",
+          "--no-skills",
+          "--no-mcp",
+          "--no-hooks",
+        ],
+        { cwd: process.cwd(), env: { ...process.env }, stdio: ["pipe", "pipe", "ignore"] },
+      );
+      child.on("error", () => {});
+      const harness = new ClientHarness();
+      connectSubprocess(child, harness);
+      const conn = harness.conn!;
+      try {
+        await conn.initialize({ protocolVersion: 1, clientCapabilities: {} });
+        const { sessionId } = await conn.newSession({
+          cwd: process.cwd(),
+          mcpServers: [],
+        });
+        const res = await conn.prompt({
+          sessionId,
+          prompt: [
+            {
+              type: "text",
+              text: "Reply with exactly the word READY and nothing else.",
+            },
+          ],
+        });
+        expect(res.stopReason).toBe("end_turn");
+        expect(harness.text().toUpperCase()).toContain("READY");
+      } finally {
+        await stopChild(child);
       }
     },
     60_000,
