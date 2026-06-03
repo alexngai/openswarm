@@ -504,4 +504,61 @@ describe("ACP e2e (subprocess)", () => {
     },
     60_000,
   );
+
+  // True end-to-end permission round-trip: a real team member's mode-denied
+  // tool call (write under read-only) escalates over IPC to the ACP client.
+  (BUN && LIVE ? it : it.skip)(
+    "routes a member permission escalation to the client (team, read-only)",
+    async () => {
+      const child = spawn(
+        BUN!,
+        [
+          "src/cli.ts",
+          "acp",
+          "--team",
+          "--permission-mode",
+          "read-only",
+          "--no-plugins",
+          "--no-skills",
+          "--no-mcp",
+          "--no-hooks",
+        ],
+        { cwd: process.cwd(), env: { ...process.env }, stdio: ["pipe", "pipe", "ignore"] },
+      );
+      child.on("error", () => {});
+      const permRequests: RequestPermissionRequest[] = [];
+      const harness = new ClientHarness((req) => {
+        permRequests.push(req);
+        // Reject so nothing is actually written — we only verify the round-trip.
+        return { outcome: { outcome: "selected", optionId: "reject" } };
+      });
+      connectSubprocess(child, harness);
+      const conn = harness.conn!;
+      try {
+        await conn.initialize({ protocolVersion: 1, clientCapabilities: {} });
+        const { sessionId } = await conn.newSession({
+          cwd: process.cwd(),
+          mcpServers: [],
+        });
+        const res = await conn.prompt({
+          sessionId,
+          prompt: [
+            {
+              type: "text",
+              text:
+                "Use your file-writing tool to create a file named acp-perm-probe.txt " +
+                "with the text HI. Actually invoke the write tool — do not just describe it.",
+            },
+          ],
+        });
+        expect(res.stopReason).toBe("end_turn");
+        // The member attempted a write under read-only -> escalation arrived here.
+        expect(permRequests.length).toBeGreaterThan(0);
+        expect(permRequests[0]!.toolCall.title).toBeTruthy();
+      } finally {
+        await stopChild(child);
+      }
+    },
+    90_000,
+  );
 });
