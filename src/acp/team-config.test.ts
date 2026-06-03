@@ -19,4 +19,21 @@ describe("buildCoordinatorSpec", () => {
     const spec = buildCoordinatorSpec("go");
     expect(spec.members[0]).not.toHaveProperty("cwd");
   });
+
+  it("threads the session sidecar path onto the lead member (B1.4)", () => {
+    const spec = buildCoordinatorSpec("go", undefined, "/tmp/s/lead-session.json");
+    expect(spec.members[0]).toMatchObject({
+      role: "lead",
+      sessionSidecarPath: "/tmp/s/lead-session.json",
+    });
+  });
+
+  it("omits the sidecar path when not provided", () => {
+    expect(buildCoordinatorSpec("go", "/cwd")).toMatchObject({
+      members: [{ role: "lead" }],
+    });
+    expect(buildCoordinatorSpec("go", "/cwd").members[0]).not.toHaveProperty(
+      "sessionSidecarPath",
+    );
+  });
 });

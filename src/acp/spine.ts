@@ -41,6 +41,15 @@ export function acpEventsPath(sessionId: string): string {
 }
 
 /**
+ * The lead worker's session-sidecar path for an ACP session. Persists the
+ * coordinator root's latest engine session id so `session/load` can resume the
+ * conversation in a fresh process (the worker reads it on its first turn).
+ */
+export function acpSidecarPath(sessionId: string): string {
+  return path.join(acpSessionDir(sessionId), "lead-session.json");
+}
+
+/**
  * Read a session's persisted spine, in wall-clock (`ts`) order. Skips the
  * `_metadata` header and any malformed line; returns `[]` when no spine exists.
  * Used by `session/load` (B1.4) to re-project a prior team session.

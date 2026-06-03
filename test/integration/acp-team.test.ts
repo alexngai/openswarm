@@ -32,8 +32,10 @@ import {
   readSpine,
   acpEventsPath,
   acpSessionDir,
+  acpSidecarPath,
 } from "../../src/acp/spine.js";
 import { replayTeamSpine } from "../../src/acp/team-history.js";
+import { readSessionSidecar } from "../../src/cli/session-sidecar.js";
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import type {
   InteractionHandler,
@@ -172,5 +174,56 @@ describe("ACP team — real coordinator+worker+IPC permission escalation", () =>
       }
     },
     scaleMs(30_000),
+  );
+
+  it(
+    "persists then resumes the lead engine session across processes (B1.4 live resume)",
+    async () => {
+      const TEXT_FIXTURE = path.resolve(
+        process.cwd(),
+        "test/fixtures/worker-scripts/text-only.json",
+      );
+      const sessionId = randomUUID();
+      const dir = acpSessionDir(sessionId);
+      const sidecarPath = acpSidecarPath(sessionId);
+      const restoreScript = withEnv("SWARM_HARNESS_TEST_SCRIPT", TEXT_FIXTURE);
+      const restoreSid = withEnv("SWARM_HARNESS_TEST_SESSION_ID", "sess-1");
+      try {
+        // Process 1: the root persists its engine session id to the sidecar.
+        const r1 = createOrchestratorRunner({ permissionMode: "workspace-write" });
+        runner = r1;
+        await r1.runTeam(buildCoordinatorSpec("hello", undefined, sidecarPath));
+        await r1.getActiveTeam()?.dispose().catch(() => {});
+        expect(readSessionSidecar(sidecarPath)).toBe("sess-1");
+
+        // Process 2: a fresh team reads the sidecar and resumes that session on
+        // its first turn (the scripted engine echoes the resumed id).
+        const restoreEcho = withEnv("SWARM_HARNESS_TEST_ECHO_RESUME", "1");
+        try {
+          const r2 = createOrchestratorRunner({ permissionMode: "workspace-write" });
+          runner = r2;
+          const texts: string[] = [];
+          const unsub = r2.subscribeEvents((e) => {
+            if (e.type === "text_delta") {
+              const t = (e.payload as { text?: string }).text;
+              if (t !== undefined) texts.push(t);
+            }
+          });
+          await r2.runTeam(buildCoordinatorSpec("again", undefined, sidecarPath));
+          unsub();
+          await r2.getActiveTeam()?.dispose().catch(() => {});
+          // The fresh root resumed sess-1 from the sidecar — cross-process.
+          expect(texts.join("")).toContain("RESUMED:sess-1");
+        } finally {
+          restoreEcho();
+        }
+      } finally {
+        runner = undefined;
+        fs.rmSync(dir, { recursive: true, force: true });
+        restoreSid();
+        restoreScript();
+      }
+    },
+    scaleMs(45_000),
   );
 });

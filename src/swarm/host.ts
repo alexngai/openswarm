@@ -191,6 +191,12 @@ export interface SpawnRequest {
    */
   readonly cwd?: string;
   /**
+   * Stage B1.4: path to a session sidecar the worker persists its engine session
+   * id to (and reads on its first turn to resume across processes). Threaded
+   * only for the coordinator root by the ACP layer.
+   */
+  readonly sessionSidecarPath?: string;
+  /**
    * Role overlay applied to the system prompt (M3+: architect/executor/reviewer).
    * M3a: wired end-to-end in Phase 6.
    */

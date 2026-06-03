@@ -271,6 +271,28 @@ describe("StandaloneHost", () => {
     expect(callArgs.cwd).toBeUndefined();
   });
 
+  it("forwards request.sessionSidecarPath to spawnWorker when set (B1.4)", async () => {
+    const { spawnFn, emitFromWorker } = makeSpawnOverride();
+    const host = new StandaloneHost({ maxDepth: 5, spawnWorker: spawnFn });
+
+    const spawnPromise = host.spawn({
+      task: samplePacket(),
+      permissionMode: "workspace-write",
+      sessionSidecarPath: "/tmp/s/lead-session.json",
+    });
+    await new Promise((r) => setImmediate(r));
+    emitFromWorker({ kind: "notification", method: "worker_ready", params: {} });
+    await new Promise((r) => setImmediate(r));
+    emitFromWorker({
+      kind: "notification",
+      method: "task_result",
+      params: { status: "success", output: "done", usage: { inputTokens: 1, outputTokens: 2 }, wallClockMs: 100 },
+    });
+    await spawnPromise;
+
+    expect(spawnFn.mock.calls[0]![0].sessionSidecarPath).toBe("/tmp/s/lead-session.json");
+  });
+
   it("enables worker permission escalation when an interactionHandler is present", async () => {
     const { spawnFn, emitFromWorker } = makeSpawnOverride();
     const host = new StandaloneHost({

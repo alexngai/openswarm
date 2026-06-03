@@ -33,13 +33,15 @@ import { initializeResponse, readClientSwarmCapability } from "./capabilities.js
 import { buildCoordinatorSpec } from "./team-config.js";
 import { promptToText } from "./content.js";
 import { makeLaneTranslator } from "./lane-translator.js";
-import { readSpine } from "./spine.js";
+import { readSpine, acpSidecarPath } from "./spine.js";
 import { replayTeamSpine } from "./team-history.js";
 import type { AcpPermissionRouter } from "./team-permission.js";
 
 interface TeamSessionRecord {
   abort: AbortController;
   readonly cwd: string;
+  /** Where the root persists its engine session id (B1.4 cross-process resume). */
+  readonly sidecarPath: string;
   /** The long-lived coordinator root, captured after the first turn. */
   leadHandle?: AgentHandle;
 }
@@ -90,6 +92,7 @@ export class AcpTeamAgent implements Agent {
     this.sessions.set(sessionId, {
       abort: new AbortController(),
       cwd: req.cwd,
+      sidecarPath: acpSidecarPath(sessionId),
     });
     // Bind the permission router to this (single) session for the connection's
     // lifetime. Binding once — rather than per-prompt — means a peer that
@@ -128,10 +131,14 @@ export class AcpTeamAgent implements Agent {
       readSpine(req.sessionId),
       this.memberText,
     );
-    // Register the session so subsequent prompts continue it (fresh root).
+    // Register the session so subsequent prompts continue it. The root spawns
+    // with the same sidecar path; since it already holds the prior session's id
+    // (persisted in the earlier process), the worker resumes that engine session
+    // on its first turn — live context-resume across processes (B1.4).
     this.sessions.set(req.sessionId, {
       abort: new AbortController(),
       cwd: req.cwd,
+      sidecarPath: acpSidecarPath(req.sessionId),
     });
     this.router?.setActiveSession(req.sessionId);
     // Resume appending to the same spine for the continued session.
@@ -169,7 +176,7 @@ export class AcpTeamAgent implements Agent {
         // can't leak its old root + peers into the new run (R2).
         await this.disposeActiveTeam();
         const result = await this.runner.runTeam(
-          buildCoordinatorSpec(text, session.cwd),
+          buildCoordinatorSpec(text, session.cwd, session.sidecarPath),
           { signal: abort.signal },
         );
         // Capture the long-lived root so the next prompt can steer it.

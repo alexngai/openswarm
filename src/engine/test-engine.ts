@@ -48,6 +48,10 @@ export class ScriptedTestEngine implements AgentEngine {
 
   private readonly script: readonly ScriptedEvent[];
   private _cumulativeUsage: Usage = { inputTokens: 0, outputTokens: 0 };
+  // Mirrors a real engine: a session id becomes available only once a turn has
+  // run. Lets long-lived/cross-process resume paths be exercised deterministically
+  // (the worker reads getSessionId() BEFORE each run — undefined on the first).
+  private _sessionId: string | undefined;
 
   constructor(opts: ScriptedTestEngineOptions = {}) {
     if (opts.script) {
@@ -68,7 +72,26 @@ export class ScriptedTestEngine implements AgentEngine {
     return this._cumulativeUsage;
   }
 
+  /** Undefined until the first `run`, then a stable id (env-overridable). */
+  getSessionId(): string | undefined {
+    return this._sessionId;
+  }
+
   async *run(config: RunConfig): AsyncIterable<NormalizedEvent> {
+    // A turn establishes the session id (as a real SDK turn would).
+    this._sessionId =
+      process.env.SWARM_HARNESS_TEST_SESSION_ID ?? "scripted-session";
+    // Opt-in resume echo: surface the resumed session id so cross-process
+    // resume (B1.4) can be asserted end-to-end. Off by default so normal
+    // run_more turns (which carry resumeFrom) keep byte-identical output.
+    if (process.env.SWARM_HARNESS_TEST_ECHO_RESUME === "1") {
+      const resumed = (
+        config.resumeFrom?.data as { sessionId?: string } | undefined
+      )?.sessionId;
+      if (resumed !== undefined) {
+        yield { type: "text_delta", text: `RESUMED:${resumed}` };
+      }
+    }
     for (const entry of this.script) {
       if (entry.delayMs && entry.delayMs > 0) {
         await new Promise((r) => setTimeout(r, entry.delayMs));

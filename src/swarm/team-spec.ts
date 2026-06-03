@@ -60,6 +60,12 @@ export interface MemberSpec {
    * spawner falls back to `process.cwd()`.
    */
   readonly cwd?: string;
+  /**
+   * Stage B1.4: path to a session sidecar the member's worker persists its
+   * engine session id to (and reads on first turn to resume across processes).
+   * The ACP team path sets this on the coordinator root for `session/load`.
+   */
+  readonly sessionSidecarPath?: string;
 }
 
 /**
@@ -79,6 +85,7 @@ export const MemberSpecSchema = z.object({
   framework: z.enum(["claude-agent-sdk", "codex-chatgpt"]).optional(),
   longLived: z.boolean().optional(),
   cwd: z.string().optional(),
+  sessionSidecarPath: z.string().optional(),
 }) satisfies z.ZodType<unknown>;
 
 // ---------------------------------------------------------------------------

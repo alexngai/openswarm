@@ -86,6 +86,13 @@ export interface SpawnWorkerArgs {
    * the worker's env rather than mutating the orchestrator's process.env.
    */
   readonly permissionEscalation?: boolean;
+  /**
+   * Stage B1.4: path to a session sidecar this worker writes its engine session
+   * id to (and reads on its first turn to resume across processes). Only the
+   * coordinator root gets one (threaded from the ACP layer). Exported via
+   * `SWARM_HARNESS_SESSION_SIDECAR`.
+   */
+  readonly sessionSidecarPath?: string;
 }
 
 export function spawnWorker(args: SpawnWorkerArgs): ChildProcess {
@@ -131,6 +138,9 @@ export function spawnWorker(args: SpawnWorkerArgs): ChildProcess {
   }
   if (args.permissionEscalation === true) {
     env.SWARM_HARNESS_PERMISSION_ESCALATION = "1";
+  }
+  if (args.sessionSidecarPath !== undefined) {
+    env.SWARM_HARNESS_SESSION_SIDECAR = args.sessionSidecarPath;
   }
   // Per-worker prompt-cache routing key is derived inside worker-entry from
   // SWARM_HARNESS_AGENT_ID. We don't propagate the parent's session id here:

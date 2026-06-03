@@ -105,6 +105,9 @@ export class TeamSession {
       ...(spec.model !== undefined && { model: spec.model }),
       ...(spec.longLived === true && { longLived: true }),
       ...(spec.cwd !== undefined && { cwd: spec.cwd }),
+      ...(spec.sessionSidecarPath !== undefined && {
+        sessionSidecarPath: spec.sessionSidecarPath,
+      }),
     };
 
     const handle = await this.host.spawn(spawnRequest);

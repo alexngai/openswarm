@@ -81,6 +81,23 @@ describe("spawnWorker", () => {
     expect(env.SWARM_HARNESS_PARENT_TOOL_USE_ID).toBeUndefined();
   });
 
+  it("sets SWARM_HARNESS_SESSION_SIDECAR only when sessionSidecarPath is provided (B1.4)", () => {
+    spawnWorker({ agentId: "a", depth: 1, parentPid: 1, orchestratorPid: 1 });
+    let env = (spawnMocked.mock.calls[0]![2] as { env: NodeJS.ProcessEnv }).env;
+    expect(env.SWARM_HARNESS_SESSION_SIDECAR).toBeUndefined();
+
+    spawnMocked.mockClear();
+    spawnWorker({
+      agentId: "a",
+      depth: 1,
+      parentPid: 1,
+      orchestratorPid: 1,
+      sessionSidecarPath: "/tmp/s/lead-session.json",
+    });
+    env = (spawnMocked.mock.calls[0]![2] as { env: NodeJS.ProcessEnv }).env;
+    expect(env.SWARM_HARNESS_SESSION_SIDECAR).toBe("/tmp/s/lead-session.json");
+  });
+
   it("passes --worker and --agent-id flags in argv", () => {
     spawnWorker({
       agentId: "agent-def",

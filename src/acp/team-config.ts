@@ -14,12 +14,26 @@ import type { TeamSpec } from "../swarm/team-spec.js";
  * @param cwd    the ACP session's working directory (the editor's project
  *               root). Threaded to the root worker so file tools operate where
  *               the client expects. Omit to fall back to the orchestrator cwd.
+ * @param sessionSidecarPath where the root persists its engine session id so a
+ *               fresh process can resume it via `session/load` (B1.4). Omit to
+ *               disable cross-process resume.
  */
-export function buildCoordinatorSpec(prompt: string, cwd?: string): TeamSpec {
+export function buildCoordinatorSpec(
+  prompt: string,
+  cwd?: string,
+  sessionSidecarPath?: string,
+): TeamSpec {
   return {
     name: "acp",
     topology: "coordinator",
-    members: [{ role: "lead", prompt, ...(cwd !== undefined && { cwd }) }],
+    members: [
+      {
+        role: "lead",
+        prompt,
+        ...(cwd !== undefined && { cwd }),
+        ...(sessionSidecarPath !== undefined && { sessionSidecarPath }),
+      },
+    ],
     coordination: { completion: { kind: "all" } },
   };
 }

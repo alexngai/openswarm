@@ -32,6 +32,7 @@ import type { IpcRequest } from "../swarm/ipc/protocol.js";
 import { RunMoreParamsSchema, IPC_ERROR_CODES } from "../swarm/ipc/protocol.js";
 import type { PermissionMode, Usage } from "../core/types.js";
 import type { ToolExecutionContext, ToolImpl } from "../tools/types.js";
+import { readSessionSidecar, writeSessionSidecar } from "./session-sidecar.js";
 
 /**
  * Combine the parent's base system prompt with the role's system-prompt
@@ -143,7 +144,14 @@ async function executeTurn(
     // Long-lived workers resume the prior turn's session so conversation
     // context carries across run_more (the engine tracks its latest session id).
     // undefined on the first turn -> a fresh conversation (docs/33 B0.5).
-    const priorSessionId = engine.getSessionId?.();
+    // B1.4: on the first turn (no in-memory id) fall back to the session sidecar
+    // so a freshly-spawned root resumes the prior conversation across processes
+    // (ACP session/load live resume).
+    const sidecarPath = process.env.SWARM_HARNESS_SESSION_SIDECAR;
+    let priorSessionId = engine.getSessionId?.();
+    if (priorSessionId === undefined && sidecarPath !== undefined) {
+      priorSessionId = readSessionSidecar(sidecarPath);
+    }
 
     const runConfig = {
       systemPrompt,
@@ -195,6 +203,12 @@ async function executeTurn(
           ...(parentToolUseId !== undefined && { parentToolUseId }),
         });
       }
+    }
+    // B1.4: persist this turn's engine session id so a fresh process can resume
+    // the conversation from the sidecar on its first turn.
+    if (sidecarPath !== undefined) {
+      const sid = engine.getSessionId?.();
+      if (sid !== undefined) writeSessionSidecar(sidecarPath, sid);
     }
   } catch (err) {
     errMsg = err instanceof Error ? err.message : String(err);

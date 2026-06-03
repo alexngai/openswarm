@@ -547,6 +547,11 @@ export class StandaloneHost implements SwarmHost {
       // sets interactionHandler), enable the worker's permission escalation via
       // its env — scoped to the child, not the orchestrator's process.env.
       ...(this.interactionHandler !== undefined && { permissionEscalation: true }),
+      // B1.4: thread the session sidecar (coordinator root only) so the worker
+      // can persist + resume its engine session across processes.
+      ...(request.sessionSidecarPath !== undefined && {
+        sessionSidecarPath: request.sessionSidecarPath,
+      }),
       // v0.7 stage 7A.2 + 7A.3: thread cwd through to the spawner. Spawner
       // already honors `args.cwd` (subprocess-spawner.ts:130, default
       // process.cwd()). resolvedCwd merges the BranchPolicy adapter's
