@@ -140,6 +140,11 @@ async function executeTurn(
     const basePrompt = process.env.SWARM_HARNESS_BASE_SYSTEM_PROMPT ?? "";
     const systemPrompt = composeSystemPrompt(basePrompt, roleSuffix);
 
+    // Long-lived workers resume the prior turn's session so conversation
+    // context carries across run_more (the engine tracks its latest session id).
+    // undefined on the first turn -> a fresh conversation (docs/33 B0.5).
+    const priorSessionId = engine.getSessionId?.();
+
     const runConfig = {
       systemPrompt,
       prompt: task.prompt,
@@ -147,6 +152,12 @@ async function executeTurn(
       auth,
       tools: allTools,
       permissionMode,
+      ...(priorSessionId !== undefined && {
+        resumeFrom: {
+          engineId: engine.id,
+          data: { sessionId: priorSessionId },
+        },
+      }),
       canUseTool: buildWorkerCanUseTool({
         dispatcher,
         permissionEngine,

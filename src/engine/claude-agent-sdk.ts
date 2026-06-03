@@ -97,8 +97,15 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
     outputTokens: 0,
   };
 
+  /** Latest SDK session id, captured from the message stream (see run()). */
+  private _sessionId: string | undefined;
+
   getCumulativeUsage(): import("../core/types.js").Usage {
     return this._cumulativeUsage;
+  }
+
+  getSessionId(): string | undefined {
+    return this._sessionId;
   }
 
   async *run(config: RunConfig): AsyncIterable<NormalizedEvent> {
@@ -313,6 +320,12 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
 
     try {
       for await (const msg of response) {
+        // Capture the SDK session id (present on init/assistant/result
+        // messages) so long-lived workers can resume context across turns.
+        const sid = (msg as { session_id?: unknown }).session_id;
+        if (typeof sid === "string" && sid.length > 0) {
+          this._sessionId = sid;
+        }
         const result = translateSdkMessage(msg, state);
         if (result == null) continue;
 
