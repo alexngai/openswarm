@@ -34,8 +34,23 @@ import { buildCoordinatorSpec } from "./team-config.js";
 import { promptToText } from "./content.js";
 import { makeLaneTranslator } from "./lane-translator.js";
 import { readSpine, acpSidecarPath } from "./spine.js";
-import { replayTeamSpine } from "./team-history.js";
+import { replayTeamSpine, findLeadAgentId, mergeLeadProse } from "./team-history.js";
+import { readSessionSidecar } from "../cli/session-sidecar.js";
+import { SessionStore } from "../session/store.js";
+import type { LaneEvent } from "../swarm/events.js";
 import type { AcpPermissionRouter } from "./team-permission.js";
+
+/** Reads a prior lead session's assistant narration, in order, for prose replay. */
+export type LeadProseReader = (
+  leadSessionId: string,
+  cwd: string,
+) => Promise<readonly string[]>;
+
+/** Default prose reader: the lead worker's SDK session JSONL (assistant text). */
+const defaultReadLeadProse: LeadProseReader = async (leadSessionId, cwd) => {
+  const msgs = await new SessionStore().readMessages(leadSessionId, cwd);
+  return msgs.filter((m) => m.role === "assistant").map((m) => m.text);
+};
 
 interface TeamSessionRecord {
   abort: AbortController;
@@ -57,6 +72,8 @@ export class AcpTeamAgent implements Agent {
     /** Called once the (single) session is created, with its id. Used to start
      *  the orchestration-spine recorder (B1.3); the caller owns its lifecycle. */
     private readonly onSessionStart?: (sessionId: string) => void,
+    /** Reads the lead's prior narration for prose replay (default: SDK JSONL). */
+    private readonly readLeadProse: LeadProseReader = defaultReadLeadProse,
   ) {}
 
   /** Baseline member-text policy (Q3), from the client's _meta.swarm cap. */
@@ -106,15 +123,15 @@ export class AcpTeamAgent implements Agent {
   }
 
   /**
-   * session/load (B1.4) — replay a prior team session's persisted spine in
-   * wall-clock order, then register the session so the client can continue it.
+   * session/load (B1.4) — replay a prior team session in wall-clock order, then
+   * register the session so the client can continue it (with live engine
+   * context-resume via the lead sidecar).
    *
-   * Fidelity: the replay re-projects the orchestration spine (B1.3) — tool
-   * calls/results + the plan board, `[role]`-attributed. Live-only deltas
-   * (prose, tool args) aren't persisted, so the lead's narration isn't replayed;
-   * and a loaded session's next prompt starts a fresh coordinator root (live
-   * engine context-resume needs the lead SDK session id persisted — a follow-on,
-   * docs/34). The replay still restores the visual transcript + board.
+   * The replay re-projects the orchestration spine (B1.3) — `[role]`-attributed
+   * tool calls/results + the plan board — and weaves the lead's prior narration
+   * back in from its SDK session JSONL (prose replay). Remaining coarseness: tool
+   * *arguments* (live-only `tool_use_input`) aren't persisted, so replayed tool
+   * calls show names/results without args.
    */
   async loadSession(req: LoadSessionRequest): Promise<LoadSessionResponse> {
     // Same single-session binding as newSession (R1).
@@ -124,13 +141,9 @@ export class AcpTeamAgent implements Agent {
           "the coordinator team is shared. Open a new connection for another team.",
       );
     }
-    // Re-project the persisted spine onto session/update notifications.
-    await replayTeamSpine(
-      this.conn,
-      req.sessionId,
-      readSpine(req.sessionId),
-      this.memberText,
-    );
+    // Re-project the persisted spine (+ woven prose) onto session/update.
+    const events = await this.buildReplayEvents(req.sessionId, req.cwd);
+    await replayTeamSpine(this.conn, req.sessionId, events, this.memberText);
     // Register the session so subsequent prompts continue it. The root spawns
     // with the same sidecar path; since it already holds the prior session's id
     // (persisted in the earlier process), the worker resumes that engine session
@@ -144,6 +157,24 @@ export class AcpTeamAgent implements Agent {
     // Resume appending to the same spine for the continued session.
     this.onSessionStart?.(req.sessionId);
     return {};
+  }
+
+  /** The spine for a session, with the lead's prior narration woven in (B1.4). */
+  private async buildReplayEvents(
+    sessionId: string,
+    cwd: string,
+  ): Promise<readonly LaneEvent[]> {
+    const spine = readSpine(sessionId);
+    const leadId = findLeadAgentId(spine);
+    const leadSessionId = readSessionSidecar(acpSidecarPath(sessionId));
+    if (leadId === undefined || leadSessionId === undefined) return spine;
+    let prose: readonly string[] = [];
+    try {
+      prose = await this.readLeadProse(leadSessionId, cwd);
+    } catch {
+      prose = []; // best-effort — fall back to spine-only replay
+    }
+    return prose.length > 0 ? mergeLeadProse(spine, leadId, prose) : spine;
   }
 
   async prompt(req: PromptRequest): Promise<PromptResponse> {

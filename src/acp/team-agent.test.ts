@@ -3,7 +3,8 @@ import * as fs from "node:fs";
 import { randomUUID } from "node:crypto";
 import { AcpTeamAgent } from "./team-agent.js";
 import { AcpPermissionRouter } from "./team-permission.js";
-import { acpEventsPath, acpSessionDir } from "./spine.js";
+import { acpEventsPath, acpSessionDir, acpSidecarPath } from "./spine.js";
+import { writeSessionSidecar } from "../cli/session-sidecar.js";
 import type { TeamRunner } from "./team-runner.js";
 import type { TeamResult } from "../swarm/topologies-types.js";
 import type { LaneEvent } from "../swarm/events.js";
@@ -315,6 +316,43 @@ describe("AcpTeamAgent", () => {
     await expect(
       agent.loadSession({ sessionId: randomUUID(), cwd: "/tmp", mcpServers: [] }),
     ).rejects.toThrow(/single session/i);
+  });
+
+  it("loadSession weaves the lead's prior narration into the replay (B1.4 prose)", async () => {
+    const sessionId = randomUUID();
+    const dir = acpSessionDir(sessionId);
+    fs.mkdirSync(dir, { recursive: true });
+    const lead = "lead-1";
+    // Spine: a lead with one turn boundary.
+    fs.writeFileSync(
+      acpEventsPath(sessionId),
+      [
+        JSON.stringify({ type: "_metadata", protocol_version: "1.0", created_at: 1 }),
+        JSON.stringify({ ts: 1, agentId: lead, type: "worker_spawned", payload: { childAgentId: lead, role: "lead" } }),
+        JSON.stringify({ ts: 10, agentId: lead, type: "message_stop", payload: { type: "message_stop", stopReason: "end_turn", usage: { inputTokens: 0, outputTokens: 0 } } }),
+      ].join("\n") + "\n",
+    );
+    // The sidecar makes the lead session id available for prose lookup.
+    writeSessionSidecar(acpSidecarPath(sessionId), "lead-sess");
+    try {
+      const updates: SessionUpdate[] = [];
+      // Inject the prose reader so no real SDK transcript is needed.
+      const agent = new AcpTeamAgent(
+        recordingConn(updates),
+        fakeRunner(),
+        opts,
+        undefined,
+        undefined,
+        async () => ["hello from the lead"],
+      );
+      await agent.loadSession({ sessionId, cwd: "/tmp", mcpServers: [] });
+      const chunk = updates.find(
+        (u) => u.sessionUpdate === "agent_message_chunk",
+      ) as { content?: { text?: string } } | undefined;
+      expect(chunk?.content?.text).toBe("hello from the lead");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("refuses a prompt on an unknown session", async () => {
