@@ -16,6 +16,7 @@ import { AcpAgent } from "./agent.js";
 import { AcpTeamAgent } from "./team-agent.js";
 import { createOrchestratorRunner } from "./team-runner.js";
 import { AcpPermissionRouter } from "./team-permission.js";
+import { startSpineRecorder } from "./spine.js";
 import type { CommonOpts } from "../cli/argv.js";
 
 /**
@@ -98,12 +99,23 @@ async function runAcpTeam(opts: CommonOpts): Promise<number> {
   // holds an interactionHandler (the router) — scoped to each worker's env, no
   // process.env mutation here (docs/33 B0.4 + §8). See StandaloneHost.spawn.
 
+  // Persist the orchestration spine per session for session/load replay (B1.3).
+  const spine = startSpineRecorder(runner);
+
   const connection = new AgentSideConnection((conn) => {
     router.setConn(conn);
-    return new AcpTeamAgent(conn, runner, opts, router);
+    return new AcpTeamAgent(conn, runner, opts, router, (sessionId) =>
+      spine.start(sessionId),
+    );
   }, stdioStream());
   await connection.closed;
 
+  // Flush the spine before tearing down the team.
+  try {
+    await spine.stop();
+  } catch {
+    // best effort
+  }
   // Tear down the persistent root the team kept alive across prompts (B0.5).
   try {
     await runner.getActiveTeam()?.dispose();

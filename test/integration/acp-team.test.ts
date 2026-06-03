@@ -21,10 +21,17 @@
 
 import { describe, it, expect, afterEach } from "vitest";
 import * as path from "node:path";
+import * as fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import { scaleMs } from "../util/compute-scale.js";
 import { createOrchestratorRunner } from "../../src/acp/team-runner.js";
 import type { TeamRunner } from "../../src/acp/team-runner.js";
 import { buildCoordinatorSpec } from "../../src/acp/team-config.js";
+import {
+  startSpineRecorder,
+  acpEventsPath,
+  acpSessionDir,
+} from "../../src/acp/spine.js";
 import type {
   InteractionHandler,
   PermissionRequest,
@@ -98,6 +105,56 @@ describe("ACP team — real coordinator+worker+IPC permission escalation", () =>
           ?.dispose()
           .catch(() => {});
         runner = undefined;
+        restoreScript();
+      }
+    },
+    scaleMs(30_000),
+  );
+
+  it(
+    "persists an attributed orchestration spine from the real lane bus (B1.3)",
+    async () => {
+      const restoreScript = withEnv("SWARM_HARNESS_TEST_SCRIPT", ESCALATE_FIXTURE);
+      const handler: InteractionHandler = {
+        requestPermission: async () => ({ outcome: "deny", reason: "test-policy" }),
+      };
+      const r = createOrchestratorRunner({
+        permissionMode: "read-only",
+        interactionHandler: handler,
+      });
+      runner = r;
+
+      const sessionId = randomUUID();
+      const dir = acpSessionDir(sessionId);
+      const spine = startSpineRecorder(r);
+      try {
+        spine.start(sessionId);
+        await r.runTeam(buildCoordinatorSpec("probe a write"));
+        await spine.stop();
+
+        const lines = fs
+          .readFileSync(acpEventsPath(sessionId), "utf8")
+          .split("\n")
+          .filter((l) => l.length > 0)
+          .map((l) => JSON.parse(l) as Record<string, unknown>);
+
+        // Header, then real recorded lane events — each ts + agentId attributed.
+        expect(lines[0]!.type).toBe("_metadata");
+        const events = lines.slice(1);
+        expect(events.length).toBeGreaterThan(0);
+        for (const e of events) {
+          expect(typeof e.ts).toBe("number");
+          expect(typeof e.agentId).toBe("string");
+        }
+        // The root worker's lifecycle is on the spine; live-only text_delta is not.
+        const types = new Set(events.map((e) => e.type));
+        expect(types.has("worker_spawned")).toBe(true);
+        expect(types.has("text_delta")).toBe(false);
+      } finally {
+        await spine.stop().catch(() => {});
+        await r.getActiveTeam()?.dispose().catch(() => {});
+        runner = undefined;
+        fs.rmSync(dir, { recursive: true, force: true });
         restoreScript();
       }
     },

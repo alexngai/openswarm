@@ -48,6 +48,9 @@ export class AcpTeamAgent implements Agent {
     private readonly runner: TeamRunner,
     private readonly opts: CommonOpts,
     private readonly router?: AcpPermissionRouter,
+    /** Called once the (single) session is created, with its id. Used to start
+     *  the orchestration-spine recorder (B1.3); the caller owns its lifecycle. */
+    private readonly onSessionStart?: (sessionId: string) => void,
   ) {}
 
   async initialize(req: InitializeRequest): Promise<InitializeResponse> {
@@ -83,6 +86,9 @@ export class AcpTeamAgent implements Agent {
     // outlives the prompt that spawned it (root-only quiescence) can still
     // escalate to the client instead of being auto-denied between turns.
     this.router?.setActiveSession(sessionId);
+    // Start persisting the orchestration spine for this session (B1.3) so it can
+    // be replayed via session/load (B1.4).
+    this.onSessionStart?.(sessionId);
     return { sessionId };
   }
 
