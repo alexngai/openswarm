@@ -9,6 +9,12 @@
  * The router is mutable because the orchestrator (and thus the host that holds
  * it) is built before the ACP connection exists: runAcpTeam sets the conn and
  * roster source; AcpTeamAgent sets the active session id per prompt.
+ *
+ * Parallelism (doc 31 Q2): N members can hit gated tools at once. To avoid
+ * stacking N modals on the client, prompts are **serialized** (one outstanding
+ * at a time) and an `allow_always` decision **persists team-wide** for the
+ * connection — so a later request for the same tool is auto-allowed without a
+ * second prompt (de-facto coalescing for the common "allow always" case).
  */
 
 import * as crypto from "node:crypto";
@@ -29,6 +35,10 @@ export class AcpPermissionRouter implements InteractionHandler {
   private conn?: Pick<AgentSideConnection, "requestPermission">;
   private sessionId?: string;
   private rosterFn?: () => Roster;
+  /** Tools the user chose "always allow" for — team-wide, connection lifetime. */
+  private readonly alwaysAllowed = new Set<string>();
+  /** Serialization chain: only one prompt is outstanding to the client at a time. */
+  private queue: Promise<unknown> = Promise.resolve();
 
   setConn(conn: Pick<AgentSideConnection, "requestPermission">): void {
     this.conn = conn;
@@ -45,6 +55,31 @@ export class AcpPermissionRouter implements InteractionHandler {
   async requestPermission(
     req: PermissionRequest,
   ): Promise<PermissionDecisionResponse> {
+    // Fast path: a tool the user already chose to always allow needs no prompt
+    // (and no serialization) — this is what keeps parallel members flowing.
+    if (this.alwaysAllowed.has(req.toolName)) {
+      return { outcome: "allow" };
+    }
+    // Otherwise serialize: chain behind any in-flight prompt so concurrent
+    // escalations don't stack modals on the client (Q2). Failures don't break
+    // the chain.
+    const run = this.queue.then(() => this.promptOnce(req));
+    this.queue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  /** One serialized prompt to the client; updates the always-allow set. */
+  private async promptOnce(
+    req: PermissionRequest,
+  ): Promise<PermissionDecisionResponse> {
+    // Re-check: an earlier queued prompt may have just set always-allow for this
+    // tool (coalesces a burst of same-tool requests into a single prompt).
+    if (this.alwaysAllowed.has(req.toolName)) {
+      return { outcome: "allow" };
+    }
     if (this.conn === undefined || this.sessionId === undefined) {
       return { outcome: "deny", reason: "no active ACP session" };
     }
@@ -85,6 +120,10 @@ export class AcpPermissionRouter implements InteractionHandler {
     }
     if (outcome.optionId === "reject") {
       return { outcome: "deny", reason: "denied by user" };
+    }
+    // Persist team-wide so later same-tool requests skip the prompt (Q2).
+    if (outcome.optionId === "allow_always") {
+      this.alwaysAllowed.add(req.toolName);
     }
     return { outcome: "allow" };
   }

@@ -111,4 +111,89 @@ describe("AcpPermissionRouter", () => {
     expect(res.outcome).toBe("deny");
     expect(res.reason).toContain("no active");
   });
+
+  // A conn that records call count + peak concurrency, with controllable timing.
+  function instrumentedConn(
+    handler: (r: Captured) => Promise<{ outcome: unknown }>,
+  ) {
+    let inFlight = 0;
+    let peak = 0;
+    let calls = 0;
+    const conn = {
+      requestPermission: async (r: Captured) => {
+        calls += 1;
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        try {
+          return await handler(r);
+        } finally {
+          inFlight -= 1;
+        }
+      },
+    };
+    return { conn, stats: () => ({ calls, peak }) };
+  }
+
+  function mkRouter(conn: unknown) {
+    const r = new AcpPermissionRouter();
+    r.setConn(conn as never);
+    r.setActiveSession("s1");
+    r.setRoster(() => roster);
+    return r;
+  }
+
+  it("persists allow_always team-wide: a later same-tool request skips the prompt (Q2)", async () => {
+    const { conn, stats } = instrumentedConn(async () => ({
+      outcome: { outcome: "selected", optionId: "allow_always" },
+    }));
+    const r = mkRouter(conn);
+    expect((await r.requestPermission(req)).outcome).toBe("allow");
+    expect((await r.requestPermission(req)).outcome).toBe("allow");
+    // Only the first request prompted; the second was auto-allowed.
+    expect(stats().calls).toBe(1);
+  });
+
+  it("allow_always is scoped per tool (bash being allowed doesn't allow write_file)", async () => {
+    const { conn, stats } = instrumentedConn(async () => ({
+      outcome: { outcome: "selected", optionId: "allow_always" },
+    }));
+    const r = mkRouter(conn);
+    await r.requestPermission(req); // bash -> prompt (call 1), now always-allowed
+    await r.requestPermission(req); // bash -> auto-allowed, no prompt
+    const other = { ...req, toolName: "write_file" };
+    await r.requestPermission(other); // write_file -> prompt (call 2)
+    await r.requestPermission(other); // write_file -> auto-allowed
+    expect(stats().calls).toBe(2); // each distinct tool prompted exactly once
+  });
+
+  it("serializes prompts so concurrent escalations never stack modals (Q2)", async () => {
+    const { conn, stats } = instrumentedConn(async () => {
+      await new Promise((res) => setTimeout(res, 10));
+      return { outcome: { outcome: "selected", optionId: "allow" } };
+    });
+    const r = mkRouter(conn);
+    await Promise.all([
+      r.requestPermission({ ...req, toolName: "bash" }),
+      r.requestPermission({ ...req, toolName: "write_file" }),
+      r.requestPermission({ ...req, toolName: "edit_file" }),
+    ]);
+    expect(stats().calls).toBe(3);
+    expect(stats().peak).toBe(1); // never two outstanding at once
+  });
+
+  it("coalesces a same-tool burst: one allow_always answer auto-allows the rest", async () => {
+    const { conn, stats } = instrumentedConn(async () => {
+      await new Promise((res) => setTimeout(res, 10));
+      return { outcome: { outcome: "selected", optionId: "allow_always" } };
+    });
+    const r = mkRouter(conn);
+    const results = await Promise.all([
+      r.requestPermission(req),
+      r.requestPermission(req),
+      r.requestPermission(req),
+    ]);
+    expect(results.every((x) => x.outcome === "allow")).toBe(true);
+    // Only the first prompted; the queued two saw allow_always and skipped.
+    expect(stats().calls).toBe(1);
+  });
 });
