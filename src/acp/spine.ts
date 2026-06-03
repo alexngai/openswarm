@@ -40,6 +40,45 @@ export function acpEventsPath(sessionId: string): string {
   return path.join(acpSessionDir(sessionId), "events.jsonl");
 }
 
+/**
+ * Read a session's persisted spine, in wall-clock (`ts`) order. Skips the
+ * `_metadata` header and any malformed line; returns `[]` when no spine exists.
+ * Used by `session/load` (B1.4) to re-project a prior team session.
+ */
+export function readSpine(sessionId: string): LaneEvent[] {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(acpEventsPath(sessionId), "utf8");
+  } catch {
+    return [];
+  }
+  const events: LaneEvent[] = [];
+  for (const line of raw.split("\n")) {
+    if (line.length === 0) continue;
+    let obj: unknown;
+    try {
+      obj = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const e = obj as { ts?: unknown; agentId?: unknown; type?: unknown };
+    if (e.type === "_metadata") continue;
+    if (
+      typeof e.ts === "number" &&
+      typeof e.agentId === "string" &&
+      typeof e.type === "string"
+    ) {
+      events.push(obj as LaneEvent);
+    }
+  }
+  // Stable sort by emit-time; the writer appends in arrival order but a defensive
+  // sort keeps replay wall-clock-correct regardless.
+  return events
+    .map((e, i) => ({ e, i }))
+    .sort((a, b) => a.e.ts - b.e.ts || a.i - b.i)
+    .map(({ e }) => e);
+}
+
 export interface SpineRecorder {
   /** Begin recording the lane bus to the given session's events.jsonl. */
   start(sessionId: string): void;

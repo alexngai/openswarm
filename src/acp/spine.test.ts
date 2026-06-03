@@ -1,7 +1,12 @@
 import { describe, it, expect, afterEach } from "vitest";
 import * as fs from "node:fs";
 import { randomUUID } from "node:crypto";
-import { startSpineRecorder, acpEventsPath, acpSessionDir } from "./spine.js";
+import {
+  startSpineRecorder,
+  readSpine,
+  acpEventsPath,
+  acpSessionDir,
+} from "./spine.js";
 import type { LaneEvent } from "../swarm/events.js";
 import type { AgentId } from "../core/types.js";
 
@@ -84,5 +89,35 @@ describe("startSpineRecorder", () => {
     await rec.stop();
     expect(fs.existsSync(acpEventsPath(first))).toBe(true);
     expect(fs.existsSync(acpEventsPath(second))).toBe(false);
+  });
+});
+
+describe("readSpine", () => {
+  it("returns [] for a session with no persisted spine", () => {
+    expect(readSpine(randomUUID())).toEqual([]);
+  });
+
+  it("reads recorded events in ts order, skipping the metadata header", async () => {
+    const sessionId = randomUUID();
+    created.push(acpSessionDir(sessionId));
+    const runner = fakeRunner();
+    const rec = startSpineRecorder(runner);
+    rec.start(sessionId);
+    const A = "A" as AgentId;
+    // Emit out of ts order — readSpine must sort by ts.
+    runner.emit({ ts: 30, agentId: A, type: "message_stop", payload: { type: "message_stop", stopReason: "end_turn", usage: { inputTokens: 0, outputTokens: 0 } } });
+    runner.emit({ ts: 10, agentId: A, type: "worker_spawned", payload: { childAgentId: A, role: "lead" } });
+    runner.emit({ ts: 20, agentId: A, type: "tool_result", payload: { type: "tool_result", toolUseId: "t1", content: "x", isError: false } });
+    await rec.stop();
+
+    const events = readSpine(sessionId);
+    expect(events.map((e) => e.type)).toEqual([
+      "worker_spawned",
+      "tool_result",
+      "message_stop",
+    ]);
+    // No metadata leaks through, and attribution is intact.
+    expect(events.every((e) => (e as { type: string }).type !== "_metadata")).toBe(true);
+    expect(events[0]!.agentId).toBe("A");
   });
 });

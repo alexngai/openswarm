@@ -18,6 +18,8 @@ import type {
   CancelNotification,
   InitializeRequest,
   InitializeResponse,
+  LoadSessionRequest,
+  LoadSessionResponse,
   NewSessionRequest,
   NewSessionResponse,
   PromptRequest,
@@ -31,6 +33,8 @@ import { initializeResponse, readClientSwarmCapability } from "./capabilities.js
 import { buildCoordinatorSpec } from "./team-config.js";
 import { promptToText } from "./content.js";
 import { makeLaneTranslator } from "./lane-translator.js";
+import { readSpine } from "./spine.js";
+import { replayTeamSpine } from "./team-history.js";
 import type { AcpPermissionRouter } from "./team-permission.js";
 
 interface TeamSessionRecord {
@@ -60,9 +64,8 @@ export class AcpTeamAgent implements Agent {
     // Honor the client's requested member-text mode (default collapse), B1.2.
     const cap = readClientSwarmCapability(req);
     if (cap?.memberText === "interleave") this.memberText = "interleave";
-    // Advertise _meta.swarm support (B1.2). Team transcript replay (session/load)
-    // lands in B1.4; advertise it off for now.
-    return initializeResponse(req, { loadSession: false, swarmMeta: true });
+    // Advertise _meta.swarm support (B1.2) + team transcript replay (B1.4).
+    return initializeResponse(req, { loadSession: true, swarmMeta: true });
   }
 
   async authenticate(
@@ -97,6 +100,43 @@ export class AcpTeamAgent implements Agent {
     // be replayed via session/load (B1.4).
     this.onSessionStart?.(sessionId);
     return { sessionId };
+  }
+
+  /**
+   * session/load (B1.4) — replay a prior team session's persisted spine in
+   * wall-clock order, then register the session so the client can continue it.
+   *
+   * Fidelity: the replay re-projects the orchestration spine (B1.3) — tool
+   * calls/results + the plan board, `[role]`-attributed. Live-only deltas
+   * (prose, tool args) aren't persisted, so the lead's narration isn't replayed;
+   * and a loaded session's next prompt starts a fresh coordinator root (live
+   * engine context-resume needs the lead SDK session id persisted — a follow-on,
+   * docs/34). The replay still restores the visual transcript + board.
+   */
+  async loadSession(req: LoadSessionRequest): Promise<LoadSessionResponse> {
+    // Same single-session binding as newSession (R1).
+    if (this.sessions.size > 0) {
+      throw new Error(
+        "team mode supports a single session per connection (B0); " +
+          "the coordinator team is shared. Open a new connection for another team.",
+      );
+    }
+    // Re-project the persisted spine onto session/update notifications.
+    await replayTeamSpine(
+      this.conn,
+      req.sessionId,
+      readSpine(req.sessionId),
+      this.memberText,
+    );
+    // Register the session so subsequent prompts continue it (fresh root).
+    this.sessions.set(req.sessionId, {
+      abort: new AbortController(),
+      cwd: req.cwd,
+    });
+    this.router?.setActiveSession(req.sessionId);
+    // Resume appending to the same spine for the continued session.
+    this.onSessionStart?.(req.sessionId);
+    return {};
   }
 
   async prompt(req: PromptRequest): Promise<PromptResponse> {

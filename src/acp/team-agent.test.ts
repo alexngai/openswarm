@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
+import * as fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import { AcpTeamAgent } from "./team-agent.js";
 import { AcpPermissionRouter } from "./team-permission.js";
+import { acpEventsPath, acpSessionDir } from "./spine.js";
 import type { TeamRunner } from "./team-runner.js";
 import type { TeamResult } from "../swarm/topologies-types.js";
 import type { LaneEvent } from "../swarm/events.js";
@@ -78,11 +81,11 @@ function recordingConn(updates: SessionUpdate[]) {
 const opts = { permissionMode: "workspace-write" } as CommonOpts;
 
 describe("AcpTeamAgent", () => {
-  it("initialize advertises loadSession off in team mode", async () => {
+  it("initialize advertises loadSession on (team transcript replay, B1.4)", async () => {
     const agent = new AcpTeamAgent(recordingConn([]), fakeRunner(), opts);
     const res = await agent.initialize({ protocolVersion: 1 });
     expect(res.agentInfo?.name).toBe("swarm-harness");
-    expect(res.agentCapabilities?.loadSession).toBe(false);
+    expect(res.agentCapabilities?.loadSession).toBe(true);
   });
 
   it("streams lead text and member-attributed tool calls from the lane bus", async () => {
@@ -273,6 +276,44 @@ describe("AcpTeamAgent", () => {
     await agent.newSession({ cwd: "/tmp", mcpServers: [] });
     await expect(
       agent.newSession({ cwd: "/tmp", mcpServers: [] }),
+    ).rejects.toThrow(/single session/i);
+  });
+
+  it("loadSession replays the persisted spine and registers the session (B1.4)", async () => {
+    const sessionId = randomUUID();
+    const dir = acpSessionDir(sessionId);
+    fs.mkdirSync(dir, { recursive: true });
+    const w = "wkr" as AgentId;
+    const lines = [
+      JSON.stringify({ type: "_metadata", protocol_version: "1.0", created_at: 1 }),
+      JSON.stringify({ ts: 1, agentId: w, type: "worker_spawned", payload: { childAgentId: w, role: "architect" } }),
+      JSON.stringify({ ts: 2, agentId: w, type: "tool_use_start", payload: { type: "tool_use_start", id: "t1", name: "read_file" } }),
+      JSON.stringify({ ts: 3, agentId: w, type: "tool_use_end", payload: { type: "tool_use_end", id: "t1" } }),
+    ];
+    fs.writeFileSync(acpEventsPath(sessionId), lines.join("\n") + "\n");
+    try {
+      const updates: SessionUpdate[] = [];
+      const agent = new AcpTeamAgent(recordingConn(updates), fakeRunner(), opts);
+      const res = await agent.loadSession({ sessionId, cwd: "/tmp", mcpServers: [] });
+      expect(res).toEqual({});
+      // The spine's tool call was re-projected, attributed from the roster.
+      const call = updates.find((u) => u.sessionUpdate === "tool_call") as
+        | { title?: string }
+        | undefined;
+      expect(call?.title).toBe("[architect] Read file");
+      // The session is registered -> a continuing prompt isn't refused.
+      const pr = await agent.prompt({ sessionId, prompt: [{ type: "text", text: "continue" }] });
+      expect(pr.stopReason).not.toBe("refusal");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("loadSession also enforces the single-session binding (R1)", async () => {
+    const agent = new AcpTeamAgent(recordingConn([]), fakeRunner(), opts);
+    await agent.newSession({ cwd: "/tmp", mcpServers: [] });
+    await expect(
+      agent.loadSession({ sessionId: randomUUID(), cwd: "/tmp", mcpServers: [] }),
     ).rejects.toThrow(/single session/i);
   });
 

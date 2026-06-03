@@ -29,9 +29,12 @@ import type { TeamRunner } from "../../src/acp/team-runner.js";
 import { buildCoordinatorSpec } from "../../src/acp/team-config.js";
 import {
   startSpineRecorder,
+  readSpine,
   acpEventsPath,
   acpSessionDir,
 } from "../../src/acp/spine.js";
+import { replayTeamSpine } from "../../src/acp/team-history.js";
+import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import type {
   InteractionHandler,
   PermissionRequest,
@@ -150,6 +153,16 @@ describe("ACP team — real coordinator+worker+IPC permission escalation", () =>
         const types = new Set(events.map((e) => e.type));
         expect(types.has("worker_spawned")).toBe(true);
         expect(types.has("text_delta")).toBe(false);
+
+        // B1.4: the persisted spine re-projects via session/load replay.
+        const replayed: SessionUpdate[] = [];
+        await replayTeamSpine(
+          { sessionUpdate: async (n) => { replayed.push(n.update); } },
+          sessionId,
+          readSpine(sessionId),
+        );
+        // Replay reconstructs a roster from worker_spawned -> a plan board.
+        expect(replayed.some((u) => u.sessionUpdate === "plan")).toBe(true);
       } finally {
         await spine.stop().catch(() => {});
         await r.getActiveTeam()?.dispose().catch(() => {});
