@@ -21,6 +21,7 @@ import {
   diffContent,
   isEditTool,
 } from "./tool-kind.js";
+import { withSwarmMeta, type SwarmMeta } from "./swarm-meta.js";
 
 export interface OpenTool {
   readonly name: string;
@@ -41,6 +42,13 @@ export interface EmitOptions {
   suppressText?: boolean;
   /** Map todo_write to a plan update (single-agent). Team plan comes from the roster. */
   planFromTodos?: boolean;
+  /**
+   * `_meta.swarm` enrichment (B1). When set, attached to every update this call
+   * emits (agent_message_chunk / tool_call / tool_call_update). Undefined ⇒ the
+   * baseline path, byte-identical to B0. Plan-entry and permission `_meta` are
+   * attached at their own call sites (lane-translator / team-permission).
+   */
+  meta?: SwarmMeta;
 }
 
 export function parseJson(raw: string): unknown {
@@ -71,7 +79,13 @@ export async function emitNormalizedEvent(
   ne: NormalizedEvent,
   opts: EmitOptions,
 ): Promise<void> {
-  const { send, open } = opts;
+  const { open } = opts;
+  // Attach `_meta.swarm` to every update this call emits (B1). A no-op when
+  // opts.meta is undefined, so the baseline stays byte-identical.
+  const send: (u: SessionUpdate) => Promise<void> =
+    opts.meta !== undefined
+      ? (u) => opts.send(withSwarmMeta(u, opts.meta))
+      : opts.send;
   const idPrefix = opts.idPrefix ?? "";
   const titlePrefix = opts.titlePrefix ?? "";
   const planFromTodos = opts.planFromTodos ?? true;
