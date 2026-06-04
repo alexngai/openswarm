@@ -255,8 +255,10 @@ A second hardening round closed the robustness/doc gaps the review flagged:
 
 B0 is complete and shipped; nothing below is a known bug. These were the non-blocking
 robustness/UX/verification items carried out of §7 and the review, plus the planned rich-mode
-sub-stages. **The robustness/verification pass is now complete** — all six items below are done; only
-the rich-mode sub-stages (B2) remain.
+sub-stages. **All of it is now done** — the robustness/verification pass, the rich-mode sub-stages
+(B1 + B2), and the post-review caveats (test-timeout scaling, `_meta.swarm` published as an open
+convention, tool-arg replay, open-ended `ask_user_question` park-and-resume, per-member
+`allow_always`). B3 (standardization) is intentionally skipped (Q5).
 
 **Robustness / verification (done):**
 - [x] **Per-prompt subtree quiescence.** `prompt()` awaits the root's `task_result` **and** drains
