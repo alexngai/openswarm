@@ -10,9 +10,9 @@ agent-side emission surface rich enough that a swarm-aware client *could* re-exp
 Zed is byte-for-byte unchanged (it ignores `_meta`).
 
 **Authoring date:** 2026-06-03.
-**Status:** B1 complete — B1.0–B1.4 + live context-resume + prose replay. The only residual `session/load`
-coarseness is tool *arguments* (live-only `tool_use_input`, never persisted to the spine); see §8.
-B2 (rich client + `session/steer`) is the next sub-stage.
+**Status:** B1 complete — B1.0–B1.4 + live context-resume + prose replay + tool-arg replay. `session/load`
+now reproduces the full session (lead prose + `[role]` tool calls *with arguments* + results + board).
+B2 (rich client + `session/steer`) shipped on top.
 **Prerequisite:** B0 shipped (B0.0–B0.6 + two hardening rounds).
 
 ---
@@ -212,10 +212,10 @@ B1.3–B1.4 add the replay path.
   boundary, then replayed through the collapsed translator (`mergeLeadProse`). Approximate by design —
   the SDK transcript API exposes no per-message timestamps, so prose is anchored at turn granularity,
   not sub-turn.
-- **`session/load` tool arguments (residual coarseness).** Replayed tool calls show names + results
-  but not arguments: `tool_use_input` is live-only and not on the spine. Recovering args would mean
-  either persisting them (spine bloat) or reading them from the per-member session JSONLs. Low value,
-  not planned.
+- **`session/load` tool arguments — DONE.** The ACP spine now persists `tool_use_input` (a few small
+  jsonDelta fragments per call — `isAcpSpineEvent` keeps it while still dropping the voluminous
+  `text_delta`), so the replay translator reconstructs full tool *arguments* exactly as live (title
+  with args + `rawInput` + locations/diff). No correlation or per-member JSONL reads needed.
 - **`_meta` placement.** Pinned to the inner update object (ContentChunk / ToolCall / ToolCallUpdate /
   PlanEntry all expose `_meta`); routed through the single `withSwarmMeta` helper.
 - **Spine completeness for rich prose.** Baseline replay needs only the spine + lead log; rich

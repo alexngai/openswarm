@@ -67,6 +67,24 @@ describe("startSpineRecorder", () => {
     expect((lines[1] as { ts?: number }).ts).toBe(2);
   });
 
+  it("keeps tool_use_input (for arg replay) but still drops text_delta", async () => {
+    const sessionId = randomUUID();
+    created.push(acpSessionDir(sessionId));
+    const runner = fakeRunner();
+    const rec = startSpineRecorder(runner);
+    rec.start(sessionId);
+    const L = "L" as AgentId;
+    runner.emit({ ts: 1, agentId: L, type: "text_delta", payload: { type: "text_delta", text: "narration" } });
+    runner.emit({ ts: 2, agentId: L, type: "tool_use_start", payload: { type: "tool_use_start", id: "t1", name: "read_file" } });
+    runner.emit({ ts: 3, agentId: L, type: "tool_use_input", payload: { type: "tool_use_input", id: "t1", jsonDelta: '{"path":"a.ts"}' } });
+    runner.emit({ ts: 4, agentId: L, type: "tool_use_end", payload: { type: "tool_use_end", id: "t1" } });
+    await rec.stop();
+
+    const types = readSpine(sessionId).map((e) => e.type);
+    expect(types).toEqual(["tool_use_start", "tool_use_input", "tool_use_end"]);
+    expect(types).not.toContain("text_delta"); // voluminous delta still dropped
+  });
+
   it("stop() detaches the lane subscription", async () => {
     const sessionId = randomUUID();
     created.push(acpSessionDir(sessionId));

@@ -21,6 +21,18 @@ import { buildMetadataEvent, isRecordedLaneEvent } from "../swarm/wire-protocol.
 import type { LaneEvent } from "../swarm/events.js";
 import type { TeamRunner } from "./team-runner.js";
 
+/**
+ * Which lane events the ACP spine persists. The shared recorded/live partition
+ * drops `tool_use_input` as a high-frequency delta — but for `session/load`
+ * replay we keep it (a few small jsonDelta fragments per tool call) so the
+ * translator reconstructs full tool *arguments* on replay, exactly as live. The
+ * voluminous delta — `text_delta` — stays dropped; the lead's prose is recovered
+ * from its session JSONL instead (mergeLeadProse).
+ */
+function isAcpSpineEvent(event: LaneEvent): boolean {
+  return isRecordedLaneEvent(event) || event.type === "tool_use_input";
+}
+
 /** Base runtime dir, matching team-paths' XDG_RUNTIME_DIR → TMPDIR fallback. */
 function baseDir(): string {
   const xdg = process.env.XDG_RUNTIME_DIR;
@@ -131,7 +143,7 @@ export function startSpineRecorder(
       unsubscribe = runner.subscribeEvents((event: LaneEvent) => {
         // Keep the recorded, attributed spine; drop live-only deltas. LaneEvent
         // already carries its own ts + agentId — preserve them.
-        if (!isRecordedLaneEvent(event)) return;
+        if (!isAcpSpineEvent(event)) return;
         try {
           s.write(JSON.stringify(event) + "\n");
         } catch {

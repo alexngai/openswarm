@@ -60,6 +60,23 @@ describe("replayTeamSpine", () => {
         ?.member?.role,
     ).toBe("architect");
   });
+
+  it("reconstructs tool arguments from spine tool_use_input (#4)", async () => {
+    const { conn, updates } = recorder();
+    const events: LaneEvent[] = [
+      { ts: 1, agentId: W, type: "worker_spawned", payload: { childAgentId: W, role: "architect" } },
+      { ts: 2, agentId: W, type: "tool_use_start", payload: { type: "tool_use_start", id: "t1", name: "read_file" } },
+      // tool_use_input is now persisted on the ACP spine -> args replay.
+      { ts: 3, agentId: W, type: "tool_use_input", payload: { type: "tool_use_input", id: "t1", jsonDelta: '{"path":"a.ts"}' } },
+      { ts: 4, agentId: W, type: "tool_use_end", payload: { type: "tool_use_end", id: "t1" } },
+    ];
+    await replayTeamSpine(conn, "s1", events);
+
+    const upd = updates.find(
+      (u) => u.sessionUpdate === "tool_call_update",
+    ) as { rawInput?: { path?: string } } | undefined;
+    expect(upd?.rawInput?.path).toBe("a.ts");
+  });
 });
 
 describe("findLeadAgentId", () => {
