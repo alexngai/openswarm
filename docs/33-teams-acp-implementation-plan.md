@@ -305,7 +305,10 @@ the rich-mode sub-stages (B2) remain.
       mid-turn message to the team's inbox; `RichRenderer` + formatter fold `_meta.swarm` into
       per-member lanes + a board; `scripts/acp-rich-client.ts` is the reference client (verified by a
       live smoke).
-- [x] **B3 — upstream the convention.** Explicitly **skipped** (Q5); `_meta.swarm` stays private.
+- [x] **B3 — publish the convention (not upstream).** Standardization skipped (Q5), but the
+      `_meta.swarm` + `swarm/steer` convention is **published** as a self-contained versioned spec
+      ([docs/36](36-meta-swarm-convention.md)) so a third-party ACP client can adopt it without us —
+      no committee, no protocol change.
 
 ---
 

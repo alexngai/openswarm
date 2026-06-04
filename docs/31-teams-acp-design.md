@@ -260,9 +260,13 @@ Builds on doc 30 Stage A. Each layer is independently shippable; earlier layers 
   rich multi-lane experience. The client speaks **ACP-with-`_meta.swarm`** — *not* a second native
   protocol — so there is one agent-side emission surface: stock Zed renders it collapsed, our client
   renders it richly. Our client is the reference rich ACP client by construction.
-- **B3 — upstream the convention (demoted; optional).** *Q5 decision: skip upstream.* We do **not**
-  pursue Zed adoption of `_meta.swarm`; it stays our private enrichment convention (versioned as
-  hygiene, since agent + our client version together). Revisit only if a concrete partner asks.
+- **B3 — publish the convention (not upstream).** *Q5 decision: skip standardization.* We do **not**
+  pursue Zed/spec adoption of `_meta.swarm`. **Middle ground (shipped):** rather than keep it fully
+  private, the convention is **published as a self-contained, versioned spec**
+  ([docs/36](36-meta-swarm-convention.md)) so a motivated third-party ACP client can adopt it without
+  coordinating with us — "open convention, no committee." `_meta` is ACP's reserved extensibility
+  slot, so this needs no protocol change; the `v` field hedges future evolution. Formalize only if a
+  concrete partner commits to swarm-aware rendering.
 
 **Acceptance gates:**
 - [ ] B0: stock-Zed drive-through of a peer-team; nothing but JSON-RPC on stdout; member-attributed
