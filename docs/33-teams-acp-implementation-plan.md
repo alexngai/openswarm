@@ -196,8 +196,8 @@ Single emission chokepoint `send()` — B1 attaches `_meta.swarm.member` here. R
   root's turn — the `agent` tool blocks by default, so this only covers the detached `wait:false` case.
 - **Subprocess cost.** ✅ Measured (§9): team adds ~190 ms p50 to first token vs in-process `--single`;
   acceptable for interactive use, `--single` is the escape hatch.
-- **Headless `ask_user_question`.** ✅ Resolved (§9): routed to the client (multiple-choice); open-ended
-  needs Q1 park-and-resume (B2-era).
+- **Headless `ask_user_question`.** ✅ Resolved (§9): multiple-choice routes to the client; open-ended
+  parks and resumes on the next prompt (Q1).
 - **Stage A divergence.** ✅ Resolved (§9 parity guard): two prompt paths (single vs team) exist; keep `send()`/permission
   shapes identical so B1 `_meta.swarm` and the client are uniform.
 
@@ -276,10 +276,12 @@ the rich-mode sub-stages (B2) remain.
 - [x] **Stage A / team parity guard.** A test asserts the single-agent and team translators emit
       identical standard-field `session/update`s for the same engine events (modulo the team's
       `[role]`/`agentId:`/`_meta` enrichment + plan board). [parity.test.ts](../src/acp/parity.test.ts).
-- [x] **Headless `ask_user_question` over ACP.** Routed to the client (multiple-choice): a member's
-      `ask_user_question` maps to a `requestPermission` prompt whose options are the answer choices,
-      serialized with permission prompts. Open-ended (no options) returns a clear error — ACP has no
-      free-form text input; full free-form needs the Q1 park-and-resume flow (a B2-era follow-on).
+- [x] **Headless `ask_user_question` over ACP.** Both kinds route to the client now. Multiple-choice
+      maps to a `requestPermission` prompt whose options are the answer choices (serialized with
+      permission prompts). **Open-ended parks (Q1 blocked-on-human):** the question is narrated, the
+      turn ends `end_turn`, and the next prompt's text answers it and resumes the same run — multi-round
+      Q&A works; the worker IPC timeout is the backstop. [team-permission.ts](../src/acp/team-permission.ts),
+      [team-agent.ts](../src/acp/team-agent.ts).
       [team-permission.ts](../src/acp/team-permission.ts), [standalone-host.ts](../src/swarm/standalone-host.ts).
 - [x] **Subprocess first-token latency.** Measured (deterministic bench,
       [acp-latency.bench.test.ts](../test/integration/acp-latency.bench.test.ts), `SWARM_ACP_BENCH=1`):
