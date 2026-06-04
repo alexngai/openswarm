@@ -57,6 +57,10 @@ export class CoordinatorTopology implements Topology {
       permissionMode: ctx.permissionMode,
     });
 
+    // v0.6 stage 5F / Stage B B0.5: surface the live team so persistent callers
+    // (the ACP team agent) can steer the long-lived root via runMore().
+    ctx.onTeamCreated?.(team);
+
     ctx.host.emit({
       type: "team_started",
       payload: {
@@ -132,7 +136,11 @@ export class CoordinatorTopology implements Topology {
       // dispose() kills any peer members the root spawned (they're tracked
       // by TeamSession because `agent({team: "self"})` → host.spawn with
       // teamScope set → standalone-host registers them under team.scope).
-      await team.dispose();
+      // Persistent callers (Stage B B0.5) keep the long-lived root alive to
+      // steer it via runMore; they dispose the team when the session closes.
+      if (ctx.persistent !== true) {
+        await team.dispose();
+      }
     }
 
     if (rootResult === undefined) {

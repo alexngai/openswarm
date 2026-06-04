@@ -271,6 +271,75 @@ describe("StandaloneHost", () => {
     expect(callArgs.cwd).toBeUndefined();
   });
 
+  it("forwards request.sessionSidecarPath to spawnWorker when set (B1.4)", async () => {
+    const { spawnFn, emitFromWorker } = makeSpawnOverride();
+    const host = new StandaloneHost({ maxDepth: 5, spawnWorker: spawnFn });
+
+    const spawnPromise = host.spawn({
+      task: samplePacket(),
+      permissionMode: "workspace-write",
+      sessionSidecarPath: "/tmp/s/lead-session.json",
+    });
+    await new Promise((r) => setImmediate(r));
+    emitFromWorker({ kind: "notification", method: "worker_ready", params: {} });
+    await new Promise((r) => setImmediate(r));
+    emitFromWorker({
+      kind: "notification",
+      method: "task_result",
+      params: { status: "success", output: "done", usage: { inputTokens: 1, outputTokens: 2 }, wallClockMs: 100 },
+    });
+    await spawnPromise;
+
+    expect(spawnFn.mock.calls[0]![0].sessionSidecarPath).toBe("/tmp/s/lead-session.json");
+  });
+
+  it("enables worker permission escalation when an interactionHandler is present", async () => {
+    const { spawnFn, emitFromWorker } = makeSpawnOverride();
+    const host = new StandaloneHost({
+      maxDepth: 5,
+      spawnWorker: spawnFn,
+      interactionHandler: { requestPermission: async () => ({ outcome: "deny" }) },
+    });
+
+    const spawnPromise = host.spawn({
+      task: samplePacket(),
+      permissionMode: "read-only",
+    });
+    await new Promise((r) => setImmediate(r));
+    emitFromWorker({ kind: "notification", method: "worker_ready", params: {} });
+    await new Promise((r) => setImmediate(r));
+    emitFromWorker({
+      kind: "notification",
+      method: "task_result",
+      params: { status: "success", output: "done", usage: { inputTokens: 1, outputTokens: 2 }, wallClockMs: 100 },
+    });
+    await spawnPromise;
+
+    // Scoped to the worker's env — no orchestrator process.env mutation (R-a).
+    expect(spawnFn.mock.calls[0]![0].permissionEscalation).toBe(true);
+  });
+
+  it("leaves worker permission escalation off without an interactionHandler", async () => {
+    const { spawnFn, emitFromWorker } = makeSpawnOverride();
+    const host = new StandaloneHost({ maxDepth: 5, spawnWorker: spawnFn });
+
+    const spawnPromise = host.spawn({
+      task: samplePacket(),
+      permissionMode: "read-only",
+    });
+    await new Promise((r) => setImmediate(r));
+    emitFromWorker({ kind: "notification", method: "worker_ready", params: {} });
+    await new Promise((r) => setImmediate(r));
+    emitFromWorker({
+      kind: "notification",
+      method: "task_result",
+      params: { status: "success", output: "done", usage: { inputTokens: 1, outputTokens: 2 }, wallClockMs: 100 },
+    });
+    await spawnPromise;
+
+    expect(spawnFn.mock.calls[0]![0].permissionEscalation).toBeUndefined();
+  });
+
   it("forwards request.framework to spawnWorker when set (v0.4 stage 4M.5, Q9 fix)", async () => {
     const { spawnFn, emitFromWorker } = makeSpawnOverride();
     const host = new StandaloneHost({ maxDepth: 5, spawnWorker: spawnFn });
@@ -954,6 +1023,27 @@ describe("StandaloneHost.askUser", () => {
       if (result.status === "error") {
         expect(result.message).toMatch(/TTY/);
       }
+    } finally {
+      restore();
+    }
+  });
+
+  it("headless: routes to interactionHandler.askUserQuestion when present (docs/33 §9)", async () => {
+    const restore = withIsTTY(false);
+    try {
+      const seen: Array<{ q: string; options?: readonly string[] }> = [];
+      const host = new StandaloneHost({
+        interactionHandler: {
+          requestPermission: async () => ({ outcome: "deny" }),
+          askUserQuestion: async (q, options) => {
+            seen.push({ q, options });
+            return { status: "answered", answer: "routed" };
+          },
+        },
+      });
+      const result = await host.askUser("pick?", ["a", "b"]);
+      expect(result).toEqual({ status: "answered", answer: "routed" });
+      expect(seen).toEqual([{ q: "pick?", options: ["a", "b"] }]);
     } finally {
       restore();
     }

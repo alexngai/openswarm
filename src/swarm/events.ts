@@ -13,6 +13,7 @@ import type { AgentId } from "../core/types.js";
 import type { CommandIntent } from "../tools/tier0/bash-validation/intent.js";
 import type { WorkerLifecycleChangedPayload } from "./worker-lifecycle.js";
 import type { WorkerStateFile } from "./worker-state-file.js";
+import type { NormalizedEvent } from "../core/types.js";
 
 export type { WorkerLifecycleChangedPayload };
 
@@ -164,6 +165,42 @@ export type LaneEventType =
  * Payloads are unknown at this layer; concrete shapes live in feature modules.
  */
 export type LaneEventPayload = unknown;
+
+/**
+ * Map an engine `NormalizedEvent` type to its lane-event type for worker→
+ * orchestrator forwarding (src/cli/worker-entry.ts). Previously every worker
+ * engine event was forwarded coarsely as `text_delta`, which defeated the
+ * recorded/live split (commit b71c322) for worker tool boundaries and hid the
+ * real type from consumers. Returning the real type lets events.jsonl record
+ * the semantic spine (tool_use_start/end, tool_result, message_stop) and lets
+ * the ACP layer translate member activity (docs/33 B0.2).
+ *
+ * Returns `undefined` for engine events with no lane equivalent
+ * (info/hook_event/compaction/cache_*) — those were never usefully consumed and
+ * are dropped rather than mislabeled.
+ */
+export function normalizedEventToLaneType(
+  type: NormalizedEvent["type"],
+): LaneEventType | undefined {
+  switch (type) {
+    case "text_delta":
+      return "text_delta";
+    case "tool_use_start":
+      return "tool_use_start";
+    case "tool_use_input":
+      return "tool_use_input";
+    case "tool_use_end":
+      return "tool_use_end";
+    case "tool_result":
+      return "tool_result";
+    case "message_stop":
+      return "message_stop";
+    case "error":
+      return "error";
+    default:
+      return undefined;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // M3b Phase 0.2 — payload interfaces for new event types

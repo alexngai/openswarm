@@ -9,7 +9,7 @@ import { ScriptedTestEngine } from "../engine/test-engine.js";
 import { filterCodexPeerTools } from "../tools/codex-peer-tools.js";
 import { resolveProvider } from "../providers/routing.js";
 import { OpenAIEnvAuth } from "../auth/openai-env.js";
-import type { AgentEngine } from "../engine/index.js";
+import type { AgentEngine, PermissionDecision } from "../engine/index.js";
 import type { FrameworkChoice } from "./argv.js";
 import { ToolDispatcher } from "../tools/dispatcher.js";
 import { buildTier0Tools } from "../tools/tier0/index.js";
@@ -21,11 +21,18 @@ import {
   RoleRegistry,
   loadCustomRoles,
 } from "../swarm/roles.js";
-import type { AgentResult, TaskPacket } from "../swarm/host.js";
+import { normalizedEventToLaneType } from "../swarm/events.js";
+import type {
+  AgentResult,
+  TaskPacket,
+  PermissionRequest,
+  PermissionDecisionResponse,
+} from "../swarm/host.js";
 import type { IpcRequest } from "../swarm/ipc/protocol.js";
 import { RunMoreParamsSchema, IPC_ERROR_CODES } from "../swarm/ipc/protocol.js";
 import type { PermissionMode, Usage } from "../core/types.js";
 import type { ToolExecutionContext, ToolImpl } from "../tools/types.js";
+import { readSessionSidecar, writeSessionSidecar } from "./session-sidecar.js";
 
 /**
  * Combine the parent's base system prompt with the role's system-prompt
@@ -61,6 +68,40 @@ interface TurnContext {
   readonly roleSuffix: string;
   readonly resolvedAllowedTools: readonly string[] | undefined;
   readonly parentToolUseId: string | undefined;
+}
+
+/**
+ * Build a worker's `canUseTool` gate. Mode-based first; when a tool is denied
+ * under the current mode AND escalation is enabled (an `escalate` callback is
+ * provided — the ACP team path), the denied call is routed to the orchestrator
+ * (which forwards it to the ACP client). Without `escalate`, a mode denial is
+ * returned directly — identical to the prior behavior. Exported for testing.
+ */
+export function buildWorkerCanUseTool(deps: {
+  dispatcher: ToolDispatcher;
+  permissionEngine: PermissionEngine;
+  permissionMode: PermissionMode;
+  escalate?: (req: PermissionRequest) => Promise<PermissionDecisionResponse>;
+}): (toolName: string, input: unknown) => Promise<PermissionDecision> {
+  return async (toolName, input) => {
+    const tool = deps.dispatcher.get(toolName);
+    if (tool === undefined) {
+      return { allow: false, reason: `unknown tool: ${toolName}` };
+    }
+    const decision = deps.permissionEngine.check(tool.spec);
+    if (decision.allow || deps.escalate === undefined) {
+      return decision;
+    }
+    const res = await deps.escalate({
+      toolName,
+      input,
+      requiredPermission: tool.spec.requiredPermission,
+      currentMode: deps.permissionMode,
+    });
+    return res.outcome === "allow"
+      ? { allow: true }
+      : { allow: false, reason: res.reason ?? "denied by operator" };
+  };
 }
 
 /**
@@ -100,6 +141,18 @@ async function executeTurn(
     const basePrompt = process.env.SWARM_HARNESS_BASE_SYSTEM_PROMPT ?? "";
     const systemPrompt = composeSystemPrompt(basePrompt, roleSuffix);
 
+    // Long-lived workers resume the prior turn's session so conversation
+    // context carries across run_more (the engine tracks its latest session id).
+    // undefined on the first turn -> a fresh conversation (docs/33 B0.5).
+    // B1.4: on the first turn (no in-memory id) fall back to the session sidecar
+    // so a freshly-spawned root resumes the prior conversation across processes
+    // (ACP session/load live resume).
+    const sidecarPath = process.env.SWARM_HARNESS_SESSION_SIDECAR;
+    let priorSessionId = engine.getSessionId?.();
+    if (priorSessionId === undefined && sidecarPath !== undefined) {
+      priorSessionId = readSessionSidecar(sidecarPath);
+    }
+
     const runConfig = {
       systemPrompt,
       prompt: task.prompt,
@@ -107,13 +160,22 @@ async function executeTurn(
       auth,
       tools: allTools,
       permissionMode,
-      canUseTool: async (toolName: string, _input: unknown) => {
-        const tool = dispatcher.get(toolName);
-        if (!tool) {
-          return { allow: false as const, reason: `unknown tool: ${toolName}` };
-        }
-        return permissionEngine.check(tool.spec);
-      },
+      ...(priorSessionId !== undefined && {
+        resumeFrom: {
+          engineId: engine.id,
+          data: { sessionId: priorSessionId },
+        },
+      }),
+      canUseTool: buildWorkerCanUseTool({
+        dispatcher,
+        permissionEngine,
+        permissionMode,
+        // Escalate denied calls to the orchestrator only when the ACP team path
+        // enabled it (env flag set on the spawned worker); else deny directly.
+        ...(process.env.SWARM_HARNESS_PERMISSION_ESCALATION === "1"
+          ? { escalate: (req: PermissionRequest) => ctx.host.requestPermission(req) }
+          : {}),
+      }),
       ...(resolvedAllowedTools !== undefined && {
         allowedTools: resolvedAllowedTools,
       }),
@@ -127,14 +189,26 @@ async function executeTurn(
       } else if (evt.type === "message_stop") {
         usage = evt.usage;
       }
-      // Forward every event as a lane_event (coarse).
-      await transport.notify("lane_event", {
-        ts: Date.now(),
-        agentId,
-        type: "text_delta",
-        payload: evt,
-        ...(parentToolUseId !== undefined && { parentToolUseId }),
-      });
+      // Forward each engine event as a lane_event, preserving its real type so
+      // events.jsonl records the semantic spine and the ACP layer can translate
+      // member activity (docs/33 B0.2). Events with no lane equivalent are
+      // dropped (they were never usefully consumed).
+      const laneType = normalizedEventToLaneType(evt.type);
+      if (laneType !== undefined) {
+        await transport.notify("lane_event", {
+          ts: Date.now(),
+          agentId,
+          type: laneType,
+          payload: evt,
+          ...(parentToolUseId !== undefined && { parentToolUseId }),
+        });
+      }
+    }
+    // B1.4: persist this turn's engine session id so a fresh process can resume
+    // the conversation from the sidecar on its first turn.
+    if (sidecarPath !== undefined) {
+      const sid = engine.getSessionId?.();
+      if (sid !== undefined) writeSessionSidecar(sidecarPath, sid);
     }
   } catch (err) {
     errMsg = err instanceof Error ? err.message : String(err);

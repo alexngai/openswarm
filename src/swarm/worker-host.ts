@@ -476,4 +476,35 @@ export class WorkerHost implements SwarmHost {
       return { status: "error", message: msg };
     }
   }
+
+  /**
+   * Escalate a mode-denied tool call to the orchestrator (Stage B B0.3),
+   * which routes it to an injected interaction handler (e.g. the ACP client).
+   * Mirrors askUser(). Denies on timeout / transport error — the safe default,
+   * matching what a non-escalating worker would have returned.
+   */
+  async requestPermission(
+    req: import("./host.js").PermissionRequest,
+  ): Promise<import("./host.js").PermissionDecisionResponse> {
+    const rawTimeout = process.env.SWARM_HARNESS_ASK_TIMEOUT_MS ?? "600000";
+    const parsedTimeout = parseInt(rawTimeout, 10);
+    const timeoutMs =
+      Number.isFinite(parsedTimeout) && parsedTimeout > 0
+        ? parsedTimeout
+        : 600_000;
+    try {
+      const result = await this.transport.send<{
+        outcome: "allow" | "deny";
+        reason?: string;
+      }>(
+        "permission.request",
+        { ...req, agentId: this.agentId, timeoutMs },
+        { timeoutMs },
+      );
+      return result;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { outcome: "deny", reason: `permission escalation failed: ${msg}` };
+    }
+  }
 }

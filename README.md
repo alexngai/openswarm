@@ -190,9 +190,40 @@ swarm-harness worktree list
 swarm-harness worktree clean --dry-run
 ```
 
+### Editor integration (ACP)
+
+swarm-harness speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP), so it runs as an external agent inside ACP-aware editors like [Zed](https://zed.dev). It serves JSON-RPC over stdio:
+
+```bash
+swarm-harness acp            # a coordinator team (default)
+swarm-harness acp --single   # one agent (the Stage A surface)
+```
+
+You won't usually run this by hand — the editor spawns it. In Zed, add to `settings.json`:
+
+```json
+{
+  "agent_servers": {
+    "swarm-harness": {
+      "command": "swarm-harness",
+      "args": ["acp"]
+    }
+  }
+}
+```
+
+Then pick **swarm-harness** in the Agent Panel.
+
+**Team mode (default).** Each ACP session is a coordinator team: you converse with a long-lived **lead** that can spawn peers via the `agent` tool. The lead narrates; every member's tool calls surface `[role]`-attributed (with file locations and inline diffs for edits); the team roster drives a live plan; a member's permission escalation — or a question — is routed to the editor's approval UI. Member work is also tagged with versioned `_meta.swarm` so a swarm-aware client can re-expand per-member lanes (stock clients ignore it). Follow-up prompts **steer the same root** — the conversation continues with context — and `session/cancel` stops the turn. `session/load` replays a prior team session's transcript (the lead's narration + `[role]` tool calls *with arguments* + plan board, wall-clock order) and resumes its engine context. Shared flags apply, e.g. `"args": ["acp", "--model", "opus", "--permission-mode", "workspace-write"]`.
+
+**Single mode (`--single`).** One agent per session: streamed text, tool calls, `todo_write` as a plan, permission prompts, and `session/load` transcript replay + resume.
+
+**Known limits.** `bash` output is delivered when the command finishes (not streamed live), reasoning isn't streamed, and file reads/writes run locally (the editor's unsaved buffers aren't consulted). Team mode is *collapsed* by default — the lead is the single narrating voice and raw member chatter is suppressed (opt into `memberText: "interleave"` for speaker-labeled member text). The agent emits `_meta.swarm` enrichment + a `swarm/steer` ext, so a swarm-aware client re-expands per-member lanes and steers mid-turn; `scripts/acp-rich-client.ts` is the reference one ([docs/35](docs/35-acp-b2-rich-client-plan.md), B2 shipped). Stock clients ignore `_meta` and render collapsed. The convention is a published, versioned spec — [docs/36](docs/36-meta-swarm-convention.md) — so any ACP client can adopt it. Team mode also binds one coordinator team per connection: a second `session/new` on the same connection is rejected — open a new connection for a separate team. The full design lives in [docs/30–36](docs/31-teams-acp-design.md): Stage A ([32](docs/32-acp-implementation-plan.md)), the team stages B0–B2 ([33](docs/33-teams-acp-implementation-plan.md)/[34](docs/34-acp-b1-meta-swarm-plan.md)/[35](docs/35-acp-b2-rich-client-plan.md)), and the published `_meta.swarm` convention ([36](docs/36-meta-swarm-convention.md)).
+
 ### Subcommands
 
 ```bash
+swarm-harness acp                    # serve over the Agent Client Protocol (stdio)
 swarm-harness doctor                 # health check (auth, config, install, workspace)
 swarm-harness init                   # scaffold .swarm-harness/ + .gitignore + CLAUDE.md
 swarm-harness plugin list            # list installed plugins
@@ -326,7 +357,7 @@ src/
   core/        Shared type definitions
 ```
 
-Design docs live in `docs/` (37 markdown files). Key references:
+Design docs live in `docs/` (39 markdown files; see [`docs/README.md`](docs/README.md) for the index). Key references:
 
 - [Vision](docs/00-vision.md) — one agent is a tool, N coordinated agents is the product
 - [Architecture](docs/02-architecture.md) — engine, tools, permissions, session store

@@ -54,6 +54,14 @@ export interface CommonOpts {
    */
   enableWebSearch: boolean;
   /**
+   * acp subcommand: force single-agent mode (Stage A). docs/33.
+   */
+  readonly single?: boolean;
+  /**
+   * acp subcommand: force team mode (coordinator). docs/33.
+   */
+  readonly team?: boolean;
+  /**
    * Engine/framework selection. Default: "auto" (claude* → claude-agent-sdk,
    * everything else → native). Not advertised prominently in --help.
    */
@@ -109,6 +117,7 @@ export type ParsedArgs =
   | { kind: "worktree"; worktreeArgv: string[] }
   | { kind: "login"; provider: string }
   | { kind: "logout"; provider: string }
+  | { kind: "acp"; opts: CommonOpts }
   | {
       kind: "team-start";
       template: string;
@@ -157,6 +166,7 @@ const SUBCOMMANDS = new Set([
   "team",
   "topology",
   "worktree",
+  "acp",
 ]);
 
 // v0.4 stage 4K — committee/critic-loop are reserved but unimplemented.
@@ -202,6 +212,9 @@ export function parseArgv(args: string[]): ParsedArgs {
   let hooks = true;
   let dumpTools = false;
   let enableWebSearch = false;
+  // acp subcommand mode selectors (docs/33). Default resolves in runAcp.
+  let acpSingle = false;
+  let acpTeam = false;
   let framework: FrameworkChoice = "auto";
   let dumpEngine = false;
   let maxTokens: number | undefined;
@@ -351,6 +364,19 @@ export function parseArgv(args: string[]): ParsedArgs {
 
     if (tok === "--enable-web-search") {
       enableWebSearch = true;
+      i++;
+      continue;
+    }
+
+    // acp mode selectors (docs/33): --single forces Stage A single-agent;
+    // --team forces team mode. Default is resolved in runAcp.
+    if (tok === "--single") {
+      acpSingle = true;
+      i++;
+      continue;
+    }
+    if (tok === "--team") {
+      acpTeam = true;
       i++;
       continue;
     }
@@ -746,6 +772,8 @@ export function parseArgv(args: string[]): ParsedArgs {
     enableWebSearch,
     framework,
     dumpEngine,
+    ...(acpSingle ? { single: true } : {}),
+    ...(acpTeam ? { team: true } : {}),
     ...(maxTokens !== undefined ? { maxTokens } : {}),
     ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
   };
@@ -1010,6 +1038,13 @@ export function parseArgv(args: string[]): ParsedArgs {
         ...(maxTokens !== undefined && { maxTokens }),
         ...(maxCostUsd !== undefined && { maxCostUsd }),
       };
+    }
+
+    case "acp": {
+      // `acp` serves over the Agent Client Protocol on stdio. It reads the
+      // shared CommonOpts (model, permission-mode, --no-mcp, …); any positional
+      // is ignored (the editor/client drives prompts over the wire).
+      return { kind: "acp", opts };
     }
 
     case "login": {

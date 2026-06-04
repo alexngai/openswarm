@@ -97,8 +97,15 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
     outputTokens: 0,
   };
 
+  /** Latest SDK session id, captured from the message stream (see run()). */
+  private _sessionId: string | undefined;
+
   getCumulativeUsage(): import("../core/types.js").Usage {
     return this._cumulativeUsage;
+  }
+
+  getSessionId(): string | undefined {
+    return this._sessionId;
   }
 
   async *run(config: RunConfig): AsyncIterable<NormalizedEvent> {
@@ -310,9 +317,23 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
     const state = makeTranslatorState(MCP_PREFIX, fingerprint);
     let textBuffer = "";
     const bufferingEnabled = config.structuredOutput != null;
+    // Track whether this run resumed a prior session and whether the SDK handed
+    // back a session id before failing. If a resume of a stale/missing session
+    // errors out before establishing anything, we must clear _sessionId so the
+    // next turn starts fresh — otherwise a long-lived root would re-resume the
+    // dead session forever (B3).
+    const resumedThisRun = config.resumeFrom?.data != null;
+    let capturedThisRun = false;
 
     try {
       for await (const msg of response) {
+        // Capture the SDK session id (present on init/assistant/result
+        // messages) so long-lived workers can resume context across turns.
+        const sid = (msg as { session_id?: unknown }).session_id;
+        if (typeof sid === "string" && sid.length > 0) {
+          this._sessionId = sid;
+          capturedThisRun = true;
+        }
         const result = translateSdkMessage(msg, state);
         if (result == null) continue;
 
@@ -394,6 +415,12 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
         }
       }
     } catch (err: unknown) {
+      // A resume that fails before the SDK establishes a new session leaves
+      // _sessionId pointing at the dead session. Clear it so the next turn
+      // degrades to a fresh conversation rather than re-resuming the corpse.
+      if (resumedThisRun && !capturedThisRun) {
+        this._sessionId = undefined;
+      }
       yield {
         type: "error",
         error: {

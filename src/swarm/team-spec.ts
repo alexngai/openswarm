@@ -53,6 +53,19 @@ export interface MemberSpec {
    * many turns. Default: false (worker exits after first task_result).
    */
   readonly longLived?: boolean;
+  /**
+   * Working directory for the member's worker. Overrides the orchestrator's
+   * cwd; threaded to `SpawnRequest.cwd`. The ACP team path uses this to honor
+   * the client's `session/new` cwd (the editor's project root). When unset, the
+   * spawner falls back to `process.cwd()`.
+   */
+  readonly cwd?: string;
+  /**
+   * Stage B1.4: path to a session sidecar the member's worker persists its
+   * engine session id to (and reads on first turn to resume across processes).
+   * The ACP team path sets this on the coordinator root for `session/load`.
+   */
+  readonly sessionSidecarPath?: string;
 }
 
 /**
@@ -71,6 +84,8 @@ export const MemberSpecSchema = z.object({
   model: z.string().optional(),
   framework: z.enum(["claude-agent-sdk", "codex-chatgpt"]).optional(),
   longLived: z.boolean().optional(),
+  cwd: z.string().optional(),
+  sessionSidecarPath: z.string().optional(),
 }) satisfies z.ZodType<unknown>;
 
 // ---------------------------------------------------------------------------

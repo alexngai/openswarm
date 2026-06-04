@@ -78,6 +78,21 @@ export interface SpawnWorkerArgs {
    * `SWARM_HARNESS_IDLE_TIMEOUT_MS`. Ignored when `longLived` is unset.
    */
   readonly idleTimeoutMs?: number;
+  /**
+   * Stage B (ACP teams): route this worker's mode-denied tool calls back to the
+   * orchestrator (which forwards them to an operator) instead of denying them
+   * outright. Exported via `SWARM_HARNESS_PERMISSION_ESCALATION=1`. The host
+   * sets this when it holds an `interactionHandler`, so escalation is scoped to
+   * the worker's env rather than mutating the orchestrator's process.env.
+   */
+  readonly permissionEscalation?: boolean;
+  /**
+   * Stage B1.4: path to a session sidecar this worker writes its engine session
+   * id to (and reads on its first turn to resume across processes). Only the
+   * coordinator root gets one (threaded from the ACP layer). Exported via
+   * `SWARM_HARNESS_SESSION_SIDECAR`.
+   */
+  readonly sessionSidecarPath?: string;
 }
 
 export function spawnWorker(args: SpawnWorkerArgs): ChildProcess {
@@ -120,6 +135,12 @@ export function spawnWorker(args: SpawnWorkerArgs): ChildProcess {
   }
   if (args.idleTimeoutMs !== undefined) {
     env.SWARM_HARNESS_IDLE_TIMEOUT_MS = String(args.idleTimeoutMs);
+  }
+  if (args.permissionEscalation === true) {
+    env.SWARM_HARNESS_PERMISSION_ESCALATION = "1";
+  }
+  if (args.sessionSidecarPath !== undefined) {
+    env.SWARM_HARNESS_SESSION_SIDECAR = args.sessionSidecarPath;
   }
   // Per-worker prompt-cache routing key is derived inside worker-entry from
   // SWARM_HARNESS_AGENT_ID. We don't propagate the parent's session id here:

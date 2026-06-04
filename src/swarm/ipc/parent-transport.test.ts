@@ -82,6 +82,33 @@ describe("ParentTransport", () => {
     expect(result).toEqual({ done: true });
   });
 
+  // 1b. Two concurrent requests correlate independently (docs/33 §9): a worker
+  // with parallel tool use can have a second permission.request outstanding
+  // while the first is pending. Responses may arrive out of order.
+  it("correlates two concurrent outstanding requests by id, even out of order", async () => {
+    const { transport, stdin, stdout } = makeTransport();
+
+    const p1 = transport.send<{ outcome: string }>("permission.request", { toolName: "bash" });
+    const p2 = transport.send<{ outcome: string }>("permission.request", { toolName: "write_file" });
+    await new Promise<void>((r) => setImmediate(r));
+
+    const frames = drain(stdout)
+      .split("\n")
+      .filter((l) => l.trim().length > 0)
+      .map((l) => JSON.parse(l) as IpcRequest);
+    expect(frames).toHaveLength(2);
+    const bash = frames.find((f) => (f.params as { toolName?: string }).toolName === "bash")!;
+    const write = frames.find((f) => (f.params as { toolName?: string }).toolName === "write_file")!;
+    expect(bash.id).not.toBe(write.id);
+
+    // Respond to the SECOND request first, then the first.
+    stdin.push(encodeFrame({ kind: "response", id: write.id, ok: true, result: { outcome: "deny" } }));
+    stdin.push(encodeFrame({ kind: "response", id: bash.id, ok: true, result: { outcome: "allow" } }));
+
+    expect(await p1).toEqual({ outcome: "allow" });
+    expect(await p2).toEqual({ outcome: "deny" });
+  });
+
   // 2. notify("lane_event") writes a notification frame to stdout
   it("notify writes a notification frame to stdout", async () => {
     const { transport, stdout } = makeTransport();

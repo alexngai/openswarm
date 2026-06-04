@@ -184,11 +184,28 @@ export class Orchestrator extends EventEmitter {
    * v0.4 entry point: run a TeamSpec through its declared topology.
    * Stage 4C only supports `topology: "fanout"`; others land in 4E.
    */
-  async runTeam(spec: TeamSpec): Promise<TeamResult> {
+  async runTeam(
+    spec: TeamSpec,
+    opts?: { readonly signal?: AbortSignal },
+  ): Promise<TeamResult> {
     // Install SIGINT handler for graceful shutdown. The handler aborts the
     // shared AbortSignal so every topology's per-task loops can short-circuit
     // pending work, then closes the pool so queued acquires reject.
     const abortController = new AbortController();
+    // Link any caller-supplied signal (e.g. an ACP session/cancel) into the
+    // shared controller so external cancellation drains the team the same way
+    // SIGINT does.
+    const external = opts?.signal;
+    let unlinkExternal: (() => void) | undefined;
+    if (external !== undefined) {
+      if (external.aborted) {
+        abortController.abort();
+      } else {
+        const onAbort = (): void => abortController.abort();
+        external.addEventListener("abort", onAbort, { once: true });
+        unlinkExternal = () => external.removeEventListener("abort", onAbort);
+      }
+    }
     this.sigintHandler = () => {
       if (this.shuttingDown) {
         // Second Ctrl-C — force exit.
@@ -240,6 +257,9 @@ export class Orchestrator extends EventEmitter {
         process.removeListener("SIGINT", this.sigintHandler);
         this.sigintHandler = undefined;
       }
+      // Detach the external-signal listener so a long-lived caller signal
+      // doesn't accumulate listeners across runs.
+      unlinkExternal?.();
       // v0.4 stage 4J: stop the MAP adapter. Errors are swallowed inside
       // stop() so a hung MAP server can't fail the run.
       if (this.opts.mapAdapter !== undefined) {

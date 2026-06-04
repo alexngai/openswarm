@@ -72,6 +72,7 @@ export type IpcRequestMethod =
   | "task.owner_of"
   | "ancestry.is_ancestor_of"
   | "ask_user_question"
+  | "permission.request"
   | "run_more"
   | "drain"
   | "team.members"
@@ -259,6 +260,31 @@ export const AskUserQuestionParamsSchema = z.object({
   timeoutMs: z.number().int().positive().optional(),
 });
 export type AskUserQuestionParams = z.infer<typeof AskUserQuestionParamsSchema>;
+
+// ---------------------------------------------------------------------------
+// Stage B B0.3 — permission.request (worker → orchestrator)
+// ---------------------------------------------------------------------------
+
+/**
+ * params for "permission.request" request (worker → orchestrator).
+ *
+ * Sent when a worker's canUseTool denies a tool under the current mode and
+ * permission escalation is enabled (the ACP team path). The orchestrator routes
+ * it to an injected interaction handler (e.g. the ACP client) and replies with
+ * `{ outcome: "allow" | "deny", reason? }`. With no handler the orchestrator
+ * denies — the same outcome a non-escalating worker would have produced.
+ */
+export const PermissionRequestParamsSchema = z.object({
+  toolName: z.string().min(1),
+  input: z.unknown().optional(),
+  requiredPermission: z.string(),
+  currentMode: z.string(),
+  agentId: z.string().optional(),
+  timeoutMs: z.number().int().positive().optional(),
+});
+export type PermissionRequestParams = z.infer<
+  typeof PermissionRequestParamsSchema
+>;
 
 // ---------------------------------------------------------------------------
 // v0.4 stage 4D — long-lived worker frames

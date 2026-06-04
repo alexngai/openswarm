@@ -44,6 +44,45 @@ export type AskUserResponse =
   | { readonly status: "error"; readonly message: string };
 
 // ---------------------------------------------------------------------------
+// Permission escalation (Stage B B0.3)
+// ---------------------------------------------------------------------------
+
+/** A worker's request to escalate a mode-denied tool call to an operator. */
+export interface PermissionRequest {
+  readonly toolName: string;
+  readonly input: unknown;
+  readonly requiredPermission: string;
+  readonly currentMode: string;
+  /** The requesting member's agentId, for operator-side attribution. */
+  readonly agentId?: string;
+}
+
+export interface PermissionDecisionResponse {
+  readonly outcome: "allow" | "deny";
+  readonly reason?: string;
+}
+
+/**
+ * Orchestrator-side handler for worker escalations (ask_user_question and
+ * permission requests). The ACP layer injects one that routes to the client;
+ * absent, the orchestrator denies. See docs/33 §4.
+ */
+export interface InteractionHandler {
+  requestPermission(
+    req: PermissionRequest,
+  ): Promise<PermissionDecisionResponse>;
+  /**
+   * Optional (docs/33 §9): route a member's `ask_user_question` to the operator
+   * (the ACP client) instead of erroring headless. Multiple-choice only — ACP
+   * has no free-form text input, so an option list is required.
+   */
+  askUserQuestion?(
+    question: string,
+    options?: readonly string[],
+  ): Promise<AskUserResponse>;
+}
+
+// ---------------------------------------------------------------------------
 // SendResult
 // ---------------------------------------------------------------------------
 
@@ -160,6 +199,12 @@ export interface SpawnRequest {
    * When unset, the spawner falls back to `process.cwd()`.
    */
   readonly cwd?: string;
+  /**
+   * Stage B1.4: path to a session sidecar the worker persists its engine session
+   * id to (and reads on its first turn to resume across processes). Threaded
+   * only for the coordinator root by the ACP layer.
+   */
+  readonly sessionSidecarPath?: string;
   /**
    * Role overlay applied to the system prompt (M3+: architect/executor/reviewer).
    * M3a: wired end-to-end in Phase 6.

@@ -71,6 +71,14 @@ export interface AgentEngine {
   getCumulativeUsage(): Usage;
 
   /**
+   * The engine's current conversation/session id, if it tracks one. Long-lived
+   * swarm workers read this after a turn and resume from it on the next turn so
+   * conversation context carries across `run_more` (docs/33 B0.5 follow-up).
+   * Engines without a session concept omit this.
+   */
+  getSessionId?(): string | undefined;
+
+  /**
    * Optional server-side token preflight. Implementations that can't reach a
    * counting endpoint (e.g. OAuth-only auth) should NOT implement this —
    * callers fall back to a local estimate.

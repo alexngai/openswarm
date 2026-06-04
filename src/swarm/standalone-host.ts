@@ -12,6 +12,9 @@ import type {
   TaskPacket,
   TaskFilter,
   SendResult,
+  InteractionHandler,
+  PermissionRequest,
+  PermissionDecisionResponse,
 } from "./host.js";
 import type { AgentId, PermissionMode, SessionId } from "../core/types.js";
 import type { LaneEvent, FailureClass } from "./events.js";
@@ -52,6 +55,7 @@ import {
   TaskPullNextParamsSchema,
   TaskCommitChangesParamsSchema,
   AskUserQuestionParamsSchema,
+  PermissionRequestParamsSchema,
   type IpcRequest,
 } from "./ipc/protocol.js";
 
@@ -77,6 +81,13 @@ export interface StandaloneHostOptions {
    * When absent, askUser() lazy-imports node:readline/promises.
    */
   readonly readlineFactory?: ReadlineFactory;
+  /**
+   * Stage B B0.3: orchestrator-side handler for worker permission escalations.
+   * The ACP team path injects one that routes to the client's
+   * requestPermission. Absent, the host denies escalated tool calls (the same
+   * outcome a non-escalating worker would have produced).
+   */
+  readonly interactionHandler?: InteractionHandler;
   /**
    * v0.5 stage 5B: allow callers to wrap the constructed TaskAPI before it's
    * exposed as `host.task`. Production use case: opentasks adapter
@@ -128,6 +139,7 @@ export class StandaloneHost implements SwarmHost {
   private readonly events = new EventEmitter();
   private readonly spawnFn: typeof spawnWorker;
   private readonly readlineFactory: ReadlineFactory;
+  private readonly interactionHandler?: InteractionHandler;
 
   private _lifecycleState: WorkerLifecycleState = INITIAL_LIFECYCLE_STATE;
 
@@ -161,6 +173,7 @@ export class StandaloneHost implements SwarmHost {
     this.maxDepth = opts.maxDepth ?? resolveMaxDepth();
     this.permissionMode = opts.permissionMode ?? "workspace-write";
     this.spawnFn = opts.spawnWorker ?? spawnWorker;
+    this.interactionHandler = opts.interactionHandler;
     this.messageInbox = opts.inboxBackend ?? new InMemoryInboxBackend();
     this.branchPolicyAdapter =
       opts.branchPolicyAdapter ?? new IdentityBranchPolicyAdapter();
@@ -529,6 +542,15 @@ export class StandaloneHost implements SwarmHost {
       ...(request.longLived === true && { longLived: true }),
       ...(request.idleTimeoutMs !== undefined && {
         idleTimeoutMs: request.idleTimeoutMs,
+      }),
+      // When the host can route escalations to an operator (the ACP team path
+      // sets interactionHandler), enable the worker's permission escalation via
+      // its env — scoped to the child, not the orchestrator's process.env.
+      ...(this.interactionHandler !== undefined && { permissionEscalation: true }),
+      // B1.4: thread the session sidecar (coordinator root only) so the worker
+      // can persist + resume its engine session across processes.
+      ...(request.sessionSidecarPath !== undefined && {
+        sessionSidecarPath: request.sessionSidecarPath,
       }),
       // v0.7 stage 7A.2 + 7A.3: thread cwd through to the spawner. Spawner
       // already honors `args.cwd` (subprocess-spawner.ts:130, default
@@ -919,6 +941,40 @@ export class StandaloneHost implements SwarmHost {
    * The ink-modal integration noted in the plan is deferred; readline is the
    * M3b TTY fallback.
    */
+  /**
+   * Resolve a worker permission escalation (Stage B B0.3). Emits a
+   * `permission_prompt` lane event, delegates to the injected interaction
+   * handler (the ACP client routes to the user), and emits the granted/denied
+   * outcome. Denies when no handler is attached — matching what a
+   * non-escalating worker would have returned.
+   */
+  async resolvePermission(
+    req: PermissionRequest,
+  ): Promise<PermissionDecisionResponse> {
+    this.emit({
+      type: "permission_prompt",
+      payload: {
+        toolName: req.toolName,
+        requiredPermission: req.requiredPermission,
+        currentMode: req.currentMode,
+      },
+    });
+    const decision: PermissionDecisionResponse = this.interactionHandler
+      ? await this.interactionHandler.requestPermission(req)
+      : { outcome: "deny", reason: "no operator attached" };
+    this.emit({
+      type:
+        decision.outcome === "allow"
+          ? "permission_granted"
+          : "permission_denied",
+      payload: {
+        toolName: req.toolName,
+        ...(decision.reason !== undefined && { reason: decision.reason }),
+      },
+    });
+    return decision;
+  }
+
   async askUser(
     question: string,
     options?: readonly string[],
@@ -928,6 +984,12 @@ export class StandaloneHost implements SwarmHost {
       type: "ask_user_question_sent",
       payload: { question, optionsCount: options?.length ?? 0 },
     });
+
+    // Route to the operator (the ACP client) when a handler is present — the ACP
+    // team path has no TTY but can prompt the editor (docs/33 §9).
+    if (this.interactionHandler?.askUserQuestion !== undefined) {
+      return this.interactionHandler.askUserQuestion(question, options);
+    }
 
     if (!process.stdout.isTTY || !process.stdin.isTTY) {
       return {
@@ -1314,6 +1376,37 @@ export class StandaloneHost implements SwarmHost {
           agentId: handle.agentId,
           sessionId: handle.sessionId,
           result,
+        });
+      } catch (err) {
+        transport.respondError(
+          frame.id,
+          IPC_ERROR_CODES.INTERNAL_ERROR,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+      return;
+    }
+    if (frame.method === "permission.request") {
+      const parsed = PermissionRequestParamsSchema.safeParse(frame.params);
+      if (!parsed.success) {
+        transport.respondError(
+          frame.id,
+          IPC_ERROR_CODES.INVALID_PARAMS,
+          parsed.error.message,
+        );
+        return;
+      }
+      try {
+        const decision = await this.resolvePermission({
+          toolName: parsed.data.toolName,
+          input: parsed.data.input,
+          requiredPermission: parsed.data.requiredPermission,
+          currentMode: parsed.data.currentMode,
+          ...(parsed.data.agentId !== undefined && { agentId: parsed.data.agentId }),
+        });
+        transport.respond(frame.id, {
+          outcome: decision.outcome,
+          ...(decision.reason !== undefined && { reason: decision.reason }),
         });
       } catch (err) {
         transport.respondError(
