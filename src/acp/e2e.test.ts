@@ -33,6 +33,8 @@ import type {
   SessionUpdate,
 } from "@agentclientprotocol/sdk";
 import { AcpAgent } from "./agent.js";
+import { RichRenderer } from "./rich-view.js";
+import { acpSessionDir } from "./spine.js";
 import { buildAgentRuntime } from "../cli/runtime.js";
 import { PermissionEngine } from "../permissions/index.js";
 import type { AgentRuntime } from "../cli/runtime.js";
@@ -626,5 +628,129 @@ describe("ACP e2e (subprocess)", () => {
       }
     },
     120_000,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Subprocess e2e — TEAM, deterministic (scripted engine, no model). Closes the
+// gap where the team's full ACP-protocol path (AcpTeamAgent over a real client
+// connection) was only LIVE-gated. Drives a real `acp --team` process via the
+// wire and asserts the B1/B2 surface: _meta.swarm enrichment, the RichRenderer
+// consuming it into lanes, and the swarm/steer ext.
+// ---------------------------------------------------------------------------
+
+describe("ACP e2e (subprocess, team — deterministic)", () => {
+  (BUN ? it : it.skip)(
+    "drives a real acp team: _meta.swarm on the wire + rich render + swarm/steer",
+    async () => {
+      const fixture = path.join(os.tmpdir(), `acp-e2e-${process.pid}-team.json`);
+      fs.writeFileSync(fixture, SCRIPTED_TURN);
+      const child = spawn(
+        BUN!,
+        ["src/cli.ts", "acp", "--team", "--no-plugins", "--no-skills", "--no-mcp", "--no-hooks"],
+        {
+          cwd: process.cwd(),
+          env: { ...process.env, SWARM_HARNESS_TEST_SCRIPT: fixture },
+          stdio: ["pipe", "pipe", "ignore"],
+        },
+      );
+      child.on("error", () => {});
+      const harness = new ClientHarness();
+      connectSubprocess(child, harness);
+      const conn = harness.conn!;
+      try {
+        const init = await conn.initialize({ protocolVersion: 1, clientCapabilities: {} });
+        // B1.2: team advertises _meta.swarm + session/load.
+        expect((init.agentCapabilities as { _meta?: { swarm?: { v?: number } } })._meta?.swarm?.v).toBe(1);
+        expect(init.agentCapabilities?.loadSession).toBe(true);
+
+        const { sessionId } = await conn.newSession({ cwd: process.cwd(), mcpServers: [] });
+        const res = await conn.prompt({ sessionId, prompt: [{ type: "text", text: "go" }] });
+        expect(res.stopReason).toBe("end_turn");
+
+        // B1.1: member updates arrived _meta.swarm-tagged over the real wire.
+        const tagged = harness.updates.filter(
+          (u) => (u as { _meta?: { swarm?: { member?: unknown } } })._meta?.swarm?.member,
+        );
+        expect(tagged.length).toBeGreaterThan(0);
+        expect(
+          (tagged[0] as unknown as { _meta: { swarm: { member: { role?: string } } } })
+            ._meta.swarm.member.role,
+        ).toBe("lead");
+
+        // B2.1: the RichRenderer folds the REAL wire output into a lead lane.
+        const r = new RichRenderer();
+        for (const u of harness.updates) r.apply(u);
+        expect(r.view().lanes.some((l) => l.role === "lead")).toBe(true);
+
+        // B2.0: swarm/steer over the wire delivers to the live root.
+        const steer = (await conn.extMethod("swarm/steer", { message: "focus on auth" })) as {
+          delivered?: boolean;
+          to?: string;
+        };
+        expect(steer.delivered).toBe(true);
+        expect(steer.to).toBe("role:lead");
+      } finally {
+        await stopChild(child);
+        fs.rmSync(fixture, { force: true });
+      }
+    },
+    60_000,
+  );
+
+  (BUN ? it : it.skip)(
+    "session/load replays a prior team session over the wire (two processes)",
+    async () => {
+      const fixture = path.join(os.tmpdir(), `acp-e2e-${process.pid}-load.json`);
+      fs.writeFileSync(fixture, SCRIPTED_TURN);
+      const teamArgs = ["src/cli.ts", "acp", "--team", "--no-plugins", "--no-skills", "--no-mcp", "--no-hooks"];
+      let sessionId = "";
+
+      // Process 1: run a turn — persists the orchestration spine for the session.
+      {
+        const child = spawn(BUN!, teamArgs, {
+          cwd: process.cwd(),
+          env: { ...process.env, SWARM_HARNESS_TEST_SCRIPT: fixture },
+          stdio: ["pipe", "pipe", "ignore"],
+        });
+        child.on("error", () => {});
+        const harness = new ClientHarness();
+        connectSubprocess(child, harness);
+        const conn = harness.conn!;
+        try {
+          await conn.initialize({ protocolVersion: 1, clientCapabilities: {} });
+          ({ sessionId } = await conn.newSession({ cwd: process.cwd(), mcpServers: [] }));
+          const res = await conn.prompt({ sessionId, prompt: [{ type: "text", text: "go" }] });
+          expect(res.stopReason).toBe("end_turn");
+        } finally {
+          await stopChild(child);
+        }
+      }
+
+      // Process 2 (fresh): load that session — replays the spine over the wire.
+      try {
+        const child = spawn(BUN!, teamArgs, {
+          cwd: process.cwd(),
+          env: { ...process.env },
+          stdio: ["pipe", "pipe", "ignore"],
+        });
+        child.on("error", () => {});
+        const harness = new ClientHarness();
+        connectSubprocess(child, harness);
+        const conn = harness.conn!;
+        try {
+          await conn.initialize({ protocolVersion: 1, clientCapabilities: {} });
+          await conn.loadSession({ sessionId, cwd: process.cwd(), mcpServers: [] });
+          // The prior turn's tool call was re-projected during load.
+          expect(harness.updates.map((u) => u.sessionUpdate)).toContain("tool_call");
+        } finally {
+          await stopChild(child);
+        }
+      } finally {
+        fs.rmSync(acpSessionDir(sessionId), { recursive: true, force: true });
+        fs.rmSync(fixture, { force: true });
+      }
+    },
+    90_000,
   );
 });
