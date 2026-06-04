@@ -23,10 +23,16 @@ Early design capture for swarm-harness — a TypeScript agent harness built arou
 
 ### ACP compatibility (Agent Client Protocol — Zed/editor integration)
 
+*All stages below are **shipped** (Stage A + team stages B0–B2, the §9 robustness pass, and the
+published convention). B3 (standardization) is intentionally skipped (Q5).*
+
 - [30-acp-compatibility-plan.md](./30-acp-compatibility-plan.md) — **Stage A: single-agent ACP parity.** Expose one swarm-harness agent over ACP (JSON-RPC/ndjson on stdio) by reusing the `AgentEngine.run()` stream + `PermissionGate` seams. Event mapping, tool-kind/diff tables, staged plan A.1–A.7 with acceptance.
 - [31-teams-acp-design.md](./31-teams-acp-design.md) — **Stage B: driving a *team* from an editor.** Projecting N concurrent members onto one ACP session with graceful degradation: additive `_meta.swarm` enrichment, capability-negotiated baseline-vs-rich emission, per-topology mapping. §11 decisions locked (quiescence, permissions, member-text, session/load, build-our-own-client).
 - [32-acp-implementation-plan.md](./32-acp-implementation-plan.md) — **Build-ready task breakdown for Stage A.** The shared `buildAgentRuntime` refactor, `src/acp/` module layout, `AcpAgent` + translator + permission-driver signatures, test strategy, and a 7-step checkpointed build sequence (~2.5–3d). Grounded in the current `src/cli/main.ts` run-assembly seams.
-- [33-teams-acp-implementation-plan.md](./33-teams-acp-implementation-plan.md) — **Stage B build plan: drive a team from an ACP session.** Decisions: team-by-default, coordinator topology, persistent+steering, route-per-member-permissions. Verified swarm seam (Orchestrator.runTeam + the LaneEvent bus + ask_user_question as the permission template), the new `permission.request` IPC long pole, the collapsed lane translator, and a 7-step (B0.0–B0.6) sequence that keeps the e2e suite green.
+- [33-teams-acp-implementation-plan.md](./33-teams-acp-implementation-plan.md) — **Stage B build plan + live status board.** B0 (team-by-default coordinator) build sequence, then §6 status and **§9 — the live board** tracking everything since: B1/B2, the robustness pass (subtree quiescence, permission-IPC serialization, `allow_always`, parity, headless `ask_user_question` park-and-resume, latency), and the post-review caveats.
+- [34-acp-b1-meta-swarm-plan.md](./34-acp-b1-meta-swarm-plan.md) — **Stage B1: `_meta.swarm` enrichment + team `session/load`.** Versioned per-member meta on updates/plan/permissions, capability negotiation + `acp.memberText`, the persisted orchestration spine, and `session/load` replay (lead prose + `[role]` tool calls *with arguments* + board) with live engine context-resume.
+- [35-acp-b2-rich-client-plan.md](./35-acp-b2-rich-client-plan.md) — **Stage B2: `swarm/steer` ext + swarm-aware rich client.** The mid-turn steering channel, the `RichRenderer` (folds `_meta.swarm` into per-member lanes + a board), and the reference client `scripts/acp-rich-client.ts`.
+- [36-meta-swarm-convention.md](./36-meta-swarm-convention.md) — **The `_meta.swarm` convention (v1).** A self-contained, versioned spec for rich multi-agent rendering over ACP — the schema, where it rides, capability negotiation, `swarm/steer`, and the strip-`_meta` trust invariant. Published so any third-party ACP client can adopt it.
 
 ## Research
 

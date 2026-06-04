@@ -6,10 +6,12 @@ making swarm-harness drivable from ACP clients (Zed, Neovim's CodeCompanion/avan
 future editor that speaks the protocol).
 
 **Authoring date:** 2026-06-02.
-**Status:** design proposal (not yet locked).
+**Status:** **realized.** The single-agent ACP parity this plan describes shipped (Stage A); the
+teams×ACP design it defers was then built end to end ([docs/31](31-teams-acp-design.md)–[36](36-meta-swarm-convention.md)).
+Retained as the originating compatibility analysis.
 **Anchor:** [docs/00-vision.md](00-vision.md) — "one agent is a tool, N coordinated agents is the product."
-**Out of scope (deferred to a follow-up doc):** the deep teams×ACP design — exposing an
-orchestrator/team as a single ACP session. This plan ships **single-agent ACP parity** first;
+**Out of scope (its own docs, now written):** the deep teams×ACP design — exposing an
+orchestrator/team as a single ACP session ([docs/31](31-teams-acp-design.md)+). This plan ships **single-agent ACP parity** first;
 §9 records the open question and why it's split out.
 
 ---

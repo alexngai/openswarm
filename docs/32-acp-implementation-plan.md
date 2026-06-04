@@ -6,8 +6,9 @@ single-agent ACP parity ships; this doc says *how* — concrete files, signature
 test strategy, and a checkpointed build sequence grounded in the current `src/cli/main.ts` assembly.
 
 **Authoring date:** 2026-06-02.
-**Status:** implementation plan (pre-build).
-**Scope:** Stage A (single-agent ACP). Stage B touchpoints noted in §10, not built here.
+**Status:** **Stage A shipped** (the `acp --single` surface). This plan is retained as the build record.
+**Scope:** Stage A (single-agent ACP). Stage B was subsequently built — see
+[docs/33](33-teams-acp-implementation-plan.md)–[36](36-meta-swarm-convention.md).
 
 ---
 

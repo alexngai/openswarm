@@ -5,11 +5,12 @@ locked decisions) and [docs/32-acp-implementation-plan.md](32-acp-implementation
 shipped). Stage A serves one agent over ACP; Stage B makes the ACP session a **team**.
 
 **Authoring date:** 2026-06-02.
-**Status:** B0 implemented (B0.0–B0.6 shipped + live-verified). See §6 for the per-step status.
-**Scope:** the B0 cut of Stage B per the product decisions below, sequenced to keep the
-deterministic e2e suite green throughout. `_meta.swarm` rich-mode enrichment + team `session/load`
-(B1, [docs/34](34-acp-b1-meta-swarm-plan.md)) and the swarm-aware client (B2,
-[docs/35](35-acp-b2-rich-client-plan.md)) followed — both shipped.
+**Status:** **Stage B complete.** B0 (this doc, §6) shipped + hardened; B1 (`_meta.swarm` + team
+`session/load`, [docs/34](34-acp-b1-meta-swarm-plan.md)) and B2 (swarm-aware client + `swarm/steer`,
+[docs/35](35-acp-b2-rich-client-plan.md)) shipped on top; the §9 robustness pass + post-review caveats
+are all done. The `_meta.swarm` convention is published as a versioned spec
+([docs/36](36-meta-swarm-convention.md)). B3 (standardization) is intentionally skipped (Q5).
+**Scope:** this doc is the B0 cut; §9 is the live status board for everything since.
 
 ---
 

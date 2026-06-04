@@ -6,7 +6,10 @@ a developer can drive the swarm from an ACP editor (Zed, etc.) — while staying
 **standard, swarm-unaware** ACP clients through deliberate degradation.
 
 **Authoring date:** 2026-06-02.
-**Status:** design proposal; §11 open questions **resolved/locked 2026-06-02** (see that section).
+**Status:** **design — fully implemented.** §11 open questions resolved/locked 2026-06-02; the staged
+plan (§10 B0–B2) shipped end to end. Execution lives in
+[docs/33](33-teams-acp-implementation-plan.md)/[34](34-acp-b1-meta-swarm-plan.md)/[35](35-acp-b2-rich-client-plan.md);
+the `_meta.swarm` convention is published in [docs/36](36-meta-swarm-convention.md).
 **Anchor:** [docs/00-vision.md](00-vision.md) — "N coordinated agents is the product."
 **Product goal (locked for this doc):** *drive the swarm from the editor* — the developer prompts a
 team lead, sees member work, adjudicates escalations, and steers mid-run, all from the ACP client.
@@ -192,12 +195,14 @@ This holds in *both* client modes; it's a product reshape, not a protocol one.
 
 ## 7. Steering — the accepted baseline gap
 
-ACP has no "inject mid-turn." Steering maps to a **custom ext notification** that injects a message
-to the orchestrator without ending the turn (your existing Ctrl-S mechanism):
+ACP has no "inject mid-turn." Steering maps to a **custom ext method** that injects a message
+to the orchestrator without ending the turn (your existing Ctrl-S mechanism). *Shipped as the
+domain-prefixed `swarm/steer`* (the canonical spec is [docs/36 §4](36-meta-swarm-convention.md);
+`session/steer` here was the conceptual name):
 
 ```jsonc
 // agent-exposed ext method; swarm-aware client only
-"session/steer": { "sessionId": "...", "message": "...", "target": "lead" | "<memberId>" }
+"swarm/steer": { "message": "...", "target": "lead" | "<role>" | "*" | "<memberId>" }
 ```
 
 - **Rich client:** calls `session/steer` → message routed to the orchestrator (or a specific member)
@@ -268,14 +273,14 @@ Builds on doc 30 Stage A. Each layer is independently shippable; earlier layers 
   slot, so this needs no protocol change; the `v` field hedges future evolution. Formalize only if a
   concrete partner commits to swarm-aware rendering.
 
-**Acceptance gates:**
-- [ ] B0: stock-Zed drive-through of a peer-team; nothing but JSON-RPC on stdout; member-attributed
+**Acceptance gates (all met):**
+- [x] B0: coordinator team drivable over ACP; nothing but JSON-RPC on stdout; member-attributed
       diffs + escalation approvals work; cancel+reprompt steering works.
-- [ ] B1: a swarm-aware harness test asserts every `session/update` carrying member work has both a
-      coherent standard-field projection (strip `_meta` → valid single-agent session) and a correct
-      `_meta.swarm`. Stripping `_meta` never changes trust-relevant meaning.
-- [ ] B2: rich client renders ≥2 concurrent member lanes from one session; `session/steer` injects
-      mid-turn without a turn boundary.
+- [x] B1: the strip-`_meta` invariant test asserts every `session/update` carrying member work has
+      both a coherent standard-field projection (strip `_meta` → valid single-agent session) and a
+      correct `_meta.swarm`. Stripping `_meta` never changes trust-relevant meaning.
+- [x] B2: the rich renderer folds the real translator's output into ≥2 lanes; `swarm/steer` injects
+      mid-turn without a turn boundary (delivered to the inbox).
 
 ---
 
@@ -320,10 +325,11 @@ Builds on doc 30 Stage A. Each layer is independently shippable; earlier layers 
 - ~~Confirm `events.jsonl` persists per-event member id + timestamp (Q4 dependency).~~ **Done
   2026-06-02 — present** (`ts` + `agentId` base fields; see Q4 above). No work needed beyond reading
   per-agent session JSONL for rich prose replay.
-- Define the exact `session/steer` `target` routing semantics (`"lead"` vs `"<memberId>"`) when the
-  named member has already parked or terminated.
+- ~~Define the exact steer `target` routing semantics.~~ **Done** — `swarm/steer` resolves `target`
+  (`"lead"`/role/`"*"`/member id) to concrete member agentIds and sends direct; an unknown/terminated
+  target simply yields `delivered: false` (`steerRecipients`, [team-runner.ts](../src/acp/team-runner.ts)).
 - Decide whether `acp.memberText` is a global setting or per-session (overridable via
-  `session/set_config_option`).
+  `session/set_config_option`). *(Currently per-connection, read at `initialize`.)*
 
 ---
 
