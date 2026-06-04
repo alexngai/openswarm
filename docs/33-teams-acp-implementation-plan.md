@@ -270,9 +270,10 @@ the rich-mode sub-stages (B2) remain.
       outstanding to the client) so N members don't stack modals; a same-tool burst coalesces once one
       is answered `allow_always`. [team-permission.ts](../src/acp/team-permission.ts),
       [parent-transport.test.ts](../src/swarm/ipc/parent-transport.test.ts).
-- [x] **`allow_always` semantics.** Persisted team-wide for the connection: a later request for an
-      always-allowed tool is auto-allowed with no second prompt (was a one-shot allow). Per-member
-      persistence is a rich-mode (B2) refinement. [team-permission.ts](../src/acp/team-permission.ts).
+- [x] **`allow_always` semantics.** Persisted for the connection (was a one-shot allow): a later
+      matching request is auto-allowed with no second prompt. The prompt offers **both scopes** —
+      team-wide ("all members") and, when the request is attributed, **per-member** (Q2) — and the
+      chosen scope is what persists. [team-permission.ts](../src/acp/team-permission.ts).
 - [x] **Stage A / team parity guard.** A test asserts the single-agent and team translators emit
       identical standard-field `session/update`s for the same engine events (modulo the team's
       `[role]`/`agentId:`/`_meta` enrichment + plan board). [parity.test.ts](../src/acp/parity.test.ts).

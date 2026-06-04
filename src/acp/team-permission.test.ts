@@ -76,7 +76,9 @@ describe("AcpPermissionRouter", () => {
     expect(c.sessionId).toBe("s1");
     expect(c.toolCall?.title).toContain("[architect]");
     expect(c.toolCall?.kind).toBe("execute");
+    // Attributed request -> a per-member always option precedes the team-wide one.
     expect(c.options?.map((o) => o.optionId)).toEqual([
+      "allow_always_member",
       "allow_always",
       "allow",
       "reject",
@@ -161,6 +163,20 @@ describe("AcpPermissionRouter", () => {
     expect((await r.requestPermission(req)).outcome).toBe("allow");
     // Only the first request prompted; the second was auto-allowed.
     expect(stats().calls).toBe(1);
+  });
+
+  it("allow_always_member persists per member: another member still prompts (Q2)", async () => {
+    const { conn, stats } = instrumentedConn(async () => ({
+      outcome: { outcome: "selected", optionId: "allow_always_member" },
+    }));
+    const r = mkRouter(conn);
+    const a = { ...req, agentId: "wkr-1" };
+    const b = { ...req, agentId: "wkr-2" }; // same tool, different member
+    expect((await r.requestPermission(a)).outcome).toBe("allow"); // prompt 1
+    expect((await r.requestPermission(a)).outcome).toBe("allow"); // auto (member a)
+    expect((await r.requestPermission(b)).outcome).toBe("allow"); // prompt 2 (member b)
+    expect((await r.requestPermission(b)).outcome).toBe("allow"); // auto (member b)
+    expect(stats().calls).toBe(2); // each member prompted once; not team-wide
   });
 
   it("allow_always is scoped per tool (bash being allowed doesn't allow write_file)", async () => {
