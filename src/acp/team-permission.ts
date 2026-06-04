@@ -32,16 +32,27 @@ import { swarmMemberMeta, withSwarmMeta } from "./swarm-meta.js";
 
 type Roster = ReadonlyMap<AgentId, MemberInfo> | undefined;
 
+type RouterConn = Pick<AgentSideConnection, "requestPermission" | "sessionUpdate">;
+
 export class AcpPermissionRouter implements InteractionHandler {
-  private conn?: Pick<AgentSideConnection, "requestPermission">;
+  private conn?: RouterConn;
   private sessionId?: string;
   private rosterFn?: () => Roster;
   /** Tools the user chose "always allow" for — team-wide, connection lifetime. */
   private readonly alwaysAllowed = new Set<string>();
   /** Serialization chain: only one prompt is outstanding to the client at a time. */
   private queue: Promise<unknown> = Promise.resolve();
+  /**
+   * A member's open-ended `ask_user_question` parks here: its IPC call blocks on
+   * `resolve` until the next ACP prompt answers it (Q1 blocked-on-human). The
+   * worker's IPC has its own timeout backstop, so this can't hang forever.
+   */
+  private parked?: { resolve: (r: AskUserResponse) => void };
+  /** Resolves once when a question parks; recreated after each park. */
+  private parkPromise?: Promise<void>;
+  private parkNotify?: () => void;
 
-  setConn(conn: Pick<AgentSideConnection, "requestPermission">): void {
+  setConn(conn: RouterConn): void {
     this.conn = conn;
   }
 
@@ -77,7 +88,77 @@ export class AcpPermissionRouter implements InteractionHandler {
     question: string,
     options?: readonly string[],
   ): Promise<AskUserResponse> {
+    // Open-ended (no options): park it — the answer arrives on the next prompt
+    // (Q1). Parking is long-lived, so it must NOT go through the serialization
+    // queue (it would block every other prompt).
+    if ((options ?? []).length === 0) return this.parkQuestion(question);
     return this.enqueue(() => this.askOnce(question, options));
+  }
+
+  /** True while an open-ended question is awaiting an answer. */
+  hasParkedQuestion(): boolean {
+    return this.parked !== undefined;
+  }
+
+  /** Resolves the parked question with `answer`; returns whether there was one. */
+  answerParkedQuestion(answer: string): boolean {
+    const p = this.parked;
+    if (p === undefined) return false;
+    this.parked = undefined;
+    p.resolve({ status: "answered", answer });
+    return true;
+  }
+
+  /** Resolve any parked question as cancelled (e.g. on session/cancel). */
+  cancelParkedQuestion(): void {
+    const p = this.parked;
+    if (p === undefined) return;
+    this.parked = undefined;
+    p.resolve({ status: "cancelled" });
+  }
+
+  /** A promise that resolves the next time a question parks (shared, one-shot). */
+  whenParked(): Promise<void> {
+    if (this.parked !== undefined) return Promise.resolve();
+    if (this.parkPromise === undefined) {
+      this.parkPromise = new Promise<void>((resolve) => {
+        this.parkNotify = resolve;
+      });
+    }
+    return this.parkPromise;
+  }
+
+  private parkQuestion(question: string): Promise<AskUserResponse> {
+    if (this.conn === undefined || this.sessionId === undefined) {
+      return Promise.resolve({ status: "error", message: "no active ACP session" });
+    }
+    if (this.parked !== undefined) {
+      return Promise.resolve({
+        status: "error",
+        message: "another question is already awaiting an answer",
+      });
+    }
+    // Narrate the question so the user sees what to answer.
+    void this.conn
+      .sessionUpdate({
+        sessionId: this.sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "text",
+            text: `\n❓ ${question}\n(reply with your answer in the next prompt)\n`,
+          },
+        },
+      })
+      .catch(() => {});
+    return new Promise<AskUserResponse>((resolve) => {
+      this.parked = { resolve };
+      // Wake any prompt racing on whenParked().
+      const notify = this.parkNotify;
+      this.parkPromise = undefined;
+      this.parkNotify = undefined;
+      notify?.();
+    });
   }
 
   private async askOnce(

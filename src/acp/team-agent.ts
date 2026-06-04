@@ -59,6 +59,11 @@ interface TeamSessionRecord {
   readonly sidecarPath: string;
   /** The long-lived coordinator root, captured after the first turn. */
   leadHandle?: AgentHandle;
+  /**
+   * A turn that parked on a member's open-ended question (Q1). The team is still
+   * blocked on the ask; the next prompt answers it and awaits this same run.
+   */
+  pendingRun?: Promise<StopReason>;
 }
 
 export class AcpTeamAgent implements Agent {
@@ -199,8 +204,10 @@ export class AcpTeamAgent implements Agent {
     // so member permission escalations route to the client across turns.
 
     const text = promptToText(req.prompt);
-    try {
-      let stop: StopReason;
+
+    // One turn's work, normalized to a StopReason. Side effects (dispose,
+    // leadHandle capture, killed→drop) happen as the run progresses.
+    const runTurn = async (): Promise<StopReason> => {
       if (session.leadHandle === undefined) {
         // First prompt (or a fresh start after cancel/failure): run the
         // coordinator team. Tear down any prior team first so a cancelled turn
@@ -210,36 +217,61 @@ export class AcpTeamAgent implements Agent {
           buildCoordinatorSpec(text, session.cwd, session.sidecarPath),
           { signal: abort.signal },
         );
-        // Capture the long-lived root so the next prompt can steer it.
         session.leadHandle = this.findLead();
-        stop = teamResultStop(result);
-      } else {
-        // Subsequent prompt: steer the same root with the new message.
-        let result: Awaited<ReturnType<AgentHandle["runMore"]>>;
-        try {
-          result = await session.leadHandle.runMore(text);
-        } catch {
-          // A rejected runMore means the root is likely dead — drop it so the
-          // next prompt respawns a fresh team, and report non-success rather
-          // than erroring the whole prompt request (B4).
-          session.leadHandle = undefined;
-          await translator.drain().catch(() => {});
-          return { stopReason: abort.signal.aborted ? "cancelled" : "refusal" };
-        }
-        stop = runMoreStop(result);
-        // killed = cancel killed the root; it won't accept the next runMore.
-        if (result.status === "killed") session.leadHandle = undefined;
+        return teamResultStop(result);
       }
+      // Subsequent prompt: steer the same root with the new message.
+      let result: Awaited<ReturnType<AgentHandle["runMore"]>>;
+      try {
+        result = await session.leadHandle.runMore(text);
+      } catch {
+        // A rejected runMore means the root is likely dead — drop it so the next
+        // prompt respawns; report non-success rather than erroring (B4).
+        session.leadHandle = undefined;
+        return abort.signal.aborted ? "cancelled" : "refusal";
+      }
+      if (result.status === "killed") session.leadHandle = undefined;
+      return runMoreStop(result);
+    };
+
+    try {
+      // If a prior turn parked on a member's question, this prompt's text is the
+      // answer: resolve the ask and resume the SAME run (Q1). Otherwise start a
+      // fresh turn.
+      let runPromise: Promise<StopReason>;
+      if (session.pendingRun !== undefined) {
+        this.router?.answerParkedQuestion(text);
+        runPromise = session.pendingRun;
+        session.pendingRun = undefined;
+      } else {
+        runPromise = runTurn();
+      }
+
+      // Race the turn against a member parking an open-ended question. When a
+      // question parks, the team is blocked on the synchronous ask — end this
+      // turn coherently (the question was narrated) and stash the run for the
+      // next prompt to answer.
+      const parkSignal = this.router?.whenParked() ?? new Promise<void>(() => {});
+      const outcome = await Promise.race([
+        runPromise.then((stop) => ({ parked: false as const, stop })),
+        parkSignal.then(() => ({ parked: true as const })),
+      ]);
+
+      if (outcome.parked) {
+        session.pendingRun = runPromise;
+        await translator.drain();
+        return { stopReason: "end_turn" };
+      }
+
       // Per-prompt subtree quiescence (Q1): the agent tool blocks by default, so
       // the root already awaited its peers — but a detached `agent({wait:false})`
-      // spawn can still be running. Drain those before resolving so their work
-      // completes within this prompt instead of leaking into the next one.
+      // spawn can still be running. Drain those before resolving.
       if (!abort.signal.aborted) await this.drainPeers();
       await translator.drain();
       if (abort.signal.aborted) {
         return { stopReason: "cancelled" };
       }
-      return { stopReason: stop };
+      return { stopReason: outcome.stop };
     } catch (err) {
       await translator.drain().catch(() => {});
       if (abort.signal.aborted) {
@@ -279,6 +311,10 @@ export class AcpTeamAgent implements Agent {
     const session = this.sessions.get(req.sessionId);
     if (session === undefined) return;
     session.abort.abort();
+    // Release any parked question (Q1) and drop the stashed run so a cancelled
+    // turn doesn't leave the team blocked on an ask.
+    this.router?.cancelParkedQuestion();
+    session.pendingRun = undefined;
     // Tear down the whole team, not just the root: killing only the lead would
     // leak the peers it spawned, and the next prompt would run a fresh root
     // alongside the orphans (R2). The next prompt starts a clean team.

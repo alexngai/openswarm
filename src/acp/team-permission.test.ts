@@ -21,18 +21,28 @@ interface Captured {
 }
 
 function connReturning(outcome: unknown): {
-  conn: { requestPermission: (r: Captured) => Promise<{ outcome: unknown }> };
+  conn: {
+    requestPermission: (r: Captured) => Promise<{ outcome: unknown }>;
+    sessionUpdate: (n: unknown) => Promise<void>;
+  };
   captured: () => Captured;
+  narrations: () => unknown[];
 } {
   let captured: Captured = {};
+  const narrations: unknown[] = [];
   return {
     conn: {
       requestPermission: async (r) => {
         captured = r;
         return { outcome };
       },
+      // Parking narrates the question via sessionUpdate.
+      sessionUpdate: async (n) => {
+        narrations.push(n);
+      },
     },
     captured: () => captured,
+    narrations: () => narrations,
   };
 }
 
@@ -203,11 +213,38 @@ describe("AcpPermissionRouter", () => {
     expect((await r2.askUserQuestion("Q", ["a"])).status).toBe("cancelled");
   });
 
-  it("askUserQuestion errors on an open-ended question (no options) — no free-form input in ACP", async () => {
-    const r = mkRouter(connReturning({ outcome: "selected", optionId: "opt:0" }).conn);
-    const res = await r.askUserQuestion("What is your name?");
-    expect(res.status).toBe("error");
-    expect((res as { message: string }).message).toMatch(/open-ended/i);
+  it("parks an open-ended question (no options); answer resolves it (Q1)", async () => {
+    const { conn, narrations } = connReturning({});
+    const r = mkRouter(conn);
+    const p = r.askUserQuestion("What is your name?"); // parks (pending)
+    await new Promise((res) => setImmediate(res));
+    expect(r.hasParkedQuestion()).toBe(true);
+    // The question was narrated to the client.
+    expect(JSON.stringify(narrations())).toContain("What is your name?");
+    // whenParked resolves now that one is parked.
+    await r.whenParked();
+    expect(r.answerParkedQuestion("Ada")).toBe(true);
+    expect(await p).toEqual({ status: "answered", answer: "Ada" });
+    expect(r.hasParkedQuestion()).toBe(false);
+  });
+
+  it("rejects a second open-ended question while one is parked", async () => {
+    const { conn } = connReturning({});
+    const r = mkRouter(conn);
+    void r.askUserQuestion("first?");
+    await new Promise((res) => setImmediate(res));
+    const second = await r.askUserQuestion("second?");
+    expect(second.status).toBe("error");
+  });
+
+  it("cancelParkedQuestion resolves a parked ask as cancelled", async () => {
+    const { conn } = connReturning({});
+    const r = mkRouter(conn);
+    const p = r.askUserQuestion("hold on?");
+    await new Promise((res) => setImmediate(res));
+    r.cancelParkedQuestion();
+    expect(await p).toEqual({ status: "cancelled" });
+    expect(r.hasParkedQuestion()).toBe(false);
   });
 
   it("askUserQuestion errors when no active session is set", async () => {

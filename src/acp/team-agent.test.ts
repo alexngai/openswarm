@@ -398,6 +398,50 @@ describe("AcpTeamAgent", () => {
     expect(runner.steer).not.toHaveBeenCalled();
   });
 
+  it("parks a member's open-ended question, answers it on the next prompt (Q1)", async () => {
+    const lead = "L" as AgentId;
+    const roster = new Map<AgentId, MemberInfo>([[lead, member("lead", lead)]]);
+    const router = new AcpPermissionRouter();
+    router.setConn({
+      requestPermission: async () => ({ outcome: { outcome: "selected", optionId: "allow" } }),
+      sessionUpdate: async () => {},
+    } as never);
+    router.setRoster(() => roster);
+
+    let resolveRun: (r: TeamResult) => void = () => {};
+    const team = { members: roster, dispose: vi.fn(async () => {}) } as unknown as TeamSession;
+    const runner: TeamRunner = {
+      subscribeEvents: () => () => {},
+      runTeam: vi.fn(() => {
+        // The root asks an open-ended question mid-run (parks synchronously).
+        void router.askUserQuestion("what should I focus on?");
+        return new Promise<TeamResult>((res) => {
+          resolveRun = res;
+        });
+      }) as never,
+      getActiveTeam: () => team,
+      steer: vi.fn(async () => ({ delivered: true, to: "role:lead" })),
+    };
+
+    const agent = new AcpTeamAgent(recordingConn([]), runner, opts, router);
+    const { sessionId } = await agent.newSession({ cwd: "/tmp", mcpServers: [] });
+
+    // Prompt 1: the run parks a question -> the turn ends (end_turn), team blocked.
+    const r1 = await agent.prompt({ sessionId, prompt: [{ type: "text", text: "go" }] });
+    expect(r1.stopReason).toBe("end_turn");
+    expect(router.hasParkedQuestion()).toBe(true);
+    expect(runner.runTeam).toHaveBeenCalledTimes(1);
+
+    // Prompt 2: the text answers the parked question; the same run resumes.
+    const p2 = agent.prompt({ sessionId, prompt: [{ type: "text", text: "the auth module" }] });
+    await new Promise((res) => setImmediate(res));
+    expect(router.hasParkedQuestion()).toBe(false); // answered
+    resolveRun({ ...BASE_RESULT }); // root finishes after getting the answer
+    const r2 = await p2;
+    expect(r2.stopReason).toBe("end_turn");
+    expect(runner.runTeam).toHaveBeenCalledTimes(1); // no second team run
+  });
+
   it("extMethod throws on an unknown method", async () => {
     const agent = new AcpTeamAgent(recordingConn([]), fakeRunner(), opts);
     await expect(agent.extMethod("swarm/bogus", {})).rejects.toThrow(/unknown ext method/i);
