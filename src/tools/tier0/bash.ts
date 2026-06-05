@@ -4,6 +4,9 @@ import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { headTailTruncate } from "./internal.js";
 import { getHardenedEnv } from "./process-hardening.js";
+import { spawnSandboxed, type SandboxPolicy } from "./sandbox.js";
+
+let _sandboxPolicy: SandboxPolicy = "prefer";
 
 const inputSchema = z.object({
   command: z.string(),
@@ -40,30 +43,38 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   const cwd = ctx.cwd;
   const timeoutMs = input.timeout ?? DEFAULT_TIMEOUT_MS;
 
+  const sandboxConfig = {
+    writableRoots: [] as string[],
+    cwd,
+    env: getHardenedEnv(),
+    policy: _sandboxPolicy,
+  };
+
   // Background mode: spawn detached, don't wait.
   if (input.background) {
-    const child = spawn("/bin/bash", ["-c", input.command], {
-      cwd,
-      detached: true,
-      stdio: "ignore",
-      env: getHardenedEnv(),
-    });
+    const child = await spawnSandboxed(
+      "/bin/bash",
+      ["-c", input.command],
+      { cwd, detached: true, stdio: "ignore" },
+      sandboxConfig,
+    );
     child.unref();
     return { status: "ok", output: `[backgroundTaskId: ${child.pid}]` };
   }
 
-  return new Promise<ToolResult>((resolve) => {
+  return new Promise<ToolResult>(async (resolve) => {
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
 
-    const child = spawn("/bin/bash", ["-c", input.command], {
-      cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: getHardenedEnv(),
-    });
+    const child = await spawnSandboxed(
+      "/bin/bash",
+      ["-c", input.command],
+      { cwd, stdio: ["ignore", "pipe", "pipe"] },
+      sandboxConfig,
+    );
 
-    child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+    child.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+    child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
 
     let timedOut = false;
 
@@ -116,6 +127,10 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
       resolve({ status: "error", message: err.message });
     });
   });
+}
+
+export function setBashSandboxPolicy(policy: SandboxPolicy): void {
+  _sandboxPolicy = policy;
 }
 
 export const bashTool: ToolImpl = {

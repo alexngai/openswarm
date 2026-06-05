@@ -10,6 +10,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { headTailTruncate, type HeadTailOptions } from "./internal.js";
 import { getHardenedEnv } from "./process-hardening.js";
+import { spawnSandboxedSync, type SandboxPolicy } from "./sandbox.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -46,6 +47,7 @@ export interface ShellSessionManagerOptions {
   readonly maxSessions?: number;
   readonly headTail?: HeadTailOptions;
   readonly captureState?: boolean;
+  readonly sandboxPolicy?: SandboxPolicy;
 }
 
 // ---------------------------------------------------------------------------
@@ -93,12 +95,14 @@ export class ShellSessionManager {
   private readonly maxSessions: number;
   private readonly headTailOpts: HeadTailOptions;
   private readonly captureState: boolean;
+  private readonly sandboxPolicy: SandboxPolicy;
   private nextId = 1;
 
   constructor(opts: ShellSessionManagerOptions = {}) {
     this.maxSessions = opts.maxSessions ?? DEFAULT_MAX_SESSIONS;
     this.headTailOpts = opts.headTail ?? {};
     this.captureState = opts.captureState ?? true;
+    this.sandboxPolicy = opts.sandboxPolicy ?? "prefer";
   }
 
   /**
@@ -109,11 +113,13 @@ export class ShellSessionManager {
     this.evictIfNeeded();
 
     const id = `sh_${this.nextId++}`;
-    const child = spawn("/bin/bash", ["--norc", "--noprofile", "-i"], {
-      cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-      env: { ...getHardenedEnv(), TERM: "dumb", PS1: "" },
-    });
+    const env = { ...getHardenedEnv(), TERM: "dumb", PS1: "" };
+    const child = spawnSandboxedSync(
+      "/bin/bash",
+      ["--norc", "--noprofile", "-i"],
+      { cwd, stdio: ["pipe", "pipe", "pipe"] },
+      { writableRoots: [], cwd, env, policy: this.sandboxPolicy },
+    );
 
     const session: LiveSession = {
       id,
