@@ -35,6 +35,10 @@ import {
   type CompactionConfig,
 } from "./compactor.js";
 import {
+  compactSessionRemote,
+  isRemoteCompactionConfig,
+} from "./compact-remote.js";
+import {
   makeSnapshot,
   extractNativeSnapshot,
 } from "./native-snapshot.js";
@@ -179,7 +183,13 @@ export class NativeEngine implements AgentEngine {
           type: "compaction",
           payload: { phase: "begin", trigger: "auto" },
         };
-        const result = compactSession({ messages }, this.compactionConfig);
+        const result = isRemoteCompactionConfig(this.compactionConfig)
+            ? await compactSessionRemote(
+                { messages },
+                this.compactionConfig,
+                config.abort,
+              )
+            : compactSession({ messages }, this.compactionConfig);
         messages = result.compactedSession.messages.slice();
         yield {
           type: "compaction",

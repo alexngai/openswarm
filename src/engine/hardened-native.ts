@@ -36,7 +36,13 @@ import {
   compactSession,
   DEFAULT_COMPACTION,
   type CompactionConfig,
+  type Session,
+  type CompactionResult,
 } from "./compactor.js";
+import {
+  compactSessionRemote,
+  isRemoteCompactionConfig,
+} from "./compact-remote.js";
 import {
   makeHardenedSnapshot,
   extractHardenedNativeSnapshot,
@@ -152,6 +158,17 @@ export class HardenedNativeEngine implements AgentEngine {
     return this.cumulativeUsage;
   }
 
+  private doCompact(
+    session: Session,
+    compactionConfig: CompactionConfig,
+    abort?: AbortSignal,
+  ): CompactionResult | Promise<CompactionResult> {
+    if (isRemoteCompactionConfig(compactionConfig)) {
+      return compactSessionRemote(session, compactionConfig, abort);
+    }
+    return compactSession(session, compactionConfig);
+  }
+
   async *run(config: RunConfig): AsyncIterable<NormalizedEvent> {
     // -----------------------------------------------------------------
     // 1. Resume handling
@@ -217,7 +234,9 @@ export class HardenedNativeEngine implements AgentEngine {
           type: "compaction",
           payload: { phase: "begin", trigger: "auto" },
         };
-        const result = compactSession({ messages }, this.compactionConfig);
+        const result = await this.doCompact(
+          { messages }, this.compactionConfig, config.abort,
+        );
         messages = result.compactedSession.messages.slice();
         yield {
           type: "compaction",
@@ -738,7 +757,7 @@ export class HardenedNativeEngine implements AgentEngine {
             payload: { phase: "begin", trigger: "auto" as const,
               compact_metadata: { midTurn: true } },
           };
-          const result = compactSession({ messages }, this.compactionConfig);
+          const result = await this.doCompact({ messages }, this.compactionConfig, config.abort);
           messages = result.compactedSession.messages.slice();
           yield {
             type: "compaction",
