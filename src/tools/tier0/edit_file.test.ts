@@ -123,4 +123,39 @@ describe("edit_file", () => {
     expect(result.status).toBe("ok");
     expect(await fs.readFile(file, "utf8")).toBe("only 1 here");
   });
+
+  it("detects TOCTTOU: file modified between read and write", async () => {
+    const file = path.join(tmpDir, "tocttou.txt");
+    await fs.writeFile(file, "original content");
+
+    // Start the edit — it will read "original content" and compute a hash.
+    // Concurrently modify the file after a short delay to simulate a race.
+    const editPromise = editFileTool.execute(
+      { path: "tocttou.txt", old_string: "original", new_string: "replaced" },
+      ctx(tmpDir),
+    );
+
+    // The atomicWrite TOCTTOU check re-reads the file right before rename.
+    // Since we can't intercept rename, we test the underlying protection
+    // by verifying that if the file content doesn't match the expected hash,
+    // the error propagates correctly.
+    // We do this by importing and testing atomicWrite directly.
+    const { atomicWrite, TocttouError } = await import("./edit_file.js");
+    const crypto = await import("node:crypto");
+
+    // Wait for the edit to complete (it should succeed since no actual race)
+    const result = await editPromise;
+    expect(result.status).toBe("ok");
+
+    // Now test atomicWrite with a wrong expectedHash
+    const wrongHash = crypto.createHash("sha256").update("different content").digest("hex");
+    await fs.writeFile(file, "current content");
+    try {
+      await atomicWrite(file, "new content", wrongHash);
+      expect.fail("should have thrown TocttouError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(TocttouError);
+      expect((err as Error).message).toMatch(/modified between read and write/);
+    }
+  });
 });
