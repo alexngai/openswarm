@@ -39,7 +39,10 @@ src/
     index.ts         # AgentEngine, RunConfig, SessionSnapshot
     claude-agent-sdk.ts  # M0 — default engine, wraps @anthropic-ai/claude-agent-sdk
     native.ts        # M4 — composes Provider + our loop + Compactor + MCP
-  providers/         # inner layer — used ONLY by NativeEngine (M4+)
+    hardened-native.ts  # Production-hardened NativeEngine variant (retry, eager dispatch, mid-turn compaction)
+    retry-policy.ts     # RetryPolicy + error classification for hardened engine
+    hardened-native-snapshot.ts  # Snapshot with retry stats for hardened engine
+  providers/         # inner layer — used ONLY by NativeEngine/HardenedNativeEngine (M4+)
     index.ts         # Provider stub; finalized in M4
     anthropic.ts     # M4 — wraps @ai-sdk/anthropic
     openai.ts        # M4

@@ -314,7 +314,12 @@ export async function buildAgentRuntime(
         const providerAuth = await buildAuthForProvider(providerModelId);
         const provider = await providerFactory(providerAuth, providerModelId);
         const engine = useHardened
-          ? new HardenedNativeEngine({ provider, sessionId })
+          ? new HardenedNativeEngine({
+              provider,
+              sessionId,
+              eagerToolDispatch: opts.eagerToolDispatch,
+              midTurnCompaction: opts.midTurnCompaction,
+            })
           : new NativeEngine({ provider, sessionId });
         return { engine, providerId: provider.id };
       };

@@ -859,6 +859,18 @@ If a phase slips, drop order: (a) `--dump-engine` internal debug flag in Phase 6
 - Anti-patterns refused: `docs/07-implementation-plan.md` "What we explicitly refuse to copy from claw" items #1 (thread-based sub-agents — subprocess model preserved), #9 (MCP as generic tool — we keep M2's first-class registration).
 - Upstream claw reference: `references/claw-code/rust/crates/runtime/src/compact.rs` L1–L553 (port target — entire file excluding `#[cfg(test)]` module; claw test suite at L562–L824 maps to TS equivalents in `src/engine/compactor.test.ts`), `references/claw-code/rust/crates/api/src/providers/openai_compat.rs` L779–L927 (quirk inspiration, but we let Vercel AI SDK do most of it).
 
+## Hardened engine extension
+
+`HardenedNativeEngine` (`src/engine/hardened-native.ts`) extends NativeEngine with Codex-grade resilience:
+- Retry with exponential backoff and abort-aware sleep (maps to Codex `responses_retry.rs`)
+- Eager tool dispatch during streaming with ToolScheduler conflict serialization (maps to Codex `turn.rs:1830-2214`, `parallel.rs:81-178`)
+- Mid-turn compaction when tool results push context above threshold (maps to Codex `turn.rs:268-321`)
+- Context overflow emergency compaction — compact and retry without backoff (maps to Codex `turn.rs:862-917`)
+- `RetryingProvider` wrapper with fallback switching (maps to Codex `client.rs:1636-1646`)
+
+Selectable via `--framework hardened-native --eager-tool-dispatch --mid-turn-compaction`.
+Design: `docs/37-hardened-engine-design.md`. Implementation plan: `docs/38-hardened-engine-implementation-plan.md`.
+
 ## Revision history
 
 - **rev 1 (2026-04-20):** initial draft. Eight scope/mechanism decisions locked: (A) `claude*` routing stays on ClaudeAgentSdkEngine in M4a; NativeEngine-via-Anthropic deferred to M4b; (B) `ProviderEvent` mirrors Vercel part-stream shape; (C) tool plumbing via Vercel `tools` param + external dispatch (not MCP-through-SDK); (D) compactor ports claw compact.rs L1–L183 literally with tool-pair boundary walk-back; (E) NativeEngine maintains an in-memory message buffer alongside JSONL session store; (F) minimal `OpenAIEnvAuth` in M4a, polished `OpenAIApiKeyAuth` login/logout in M4b; (G) parallel tool execution inherits M3b dispatchBatch; M4a's 3-parallel-tool AC closes M3b Phase 4's caveat; (H) user aliases override built-ins with `alias_shadowed` warning. Total effort 7.15d, inside 5–8d target. Biggest risks: Vercel AI SDK v5 API-surface surprises (highest), compactor boundary walk-back correctness (highest-impact). No hard dependency on anything M4b needs — but M4b inherits: (i) `TransportProvider` marker + `ProviderEvent` union (strictly additive when xAI/Google/DashScope land), (ii) routing table (M4b extends with grok*/gemini*/qwen*/kimi* branches — pure addition), (iii) aliases (no schema change), (iv) `--framework` flag (adds `codex-chatgpt` variant), (v) `FrameworkProvider` for Codex-ChatGPT (M4b) will need a sibling interface to `TransportProvider` — M4a's stubs reserve the name. **M4b does NOT need anything from M4a that isn't in scope here**; all M4a deliverables are final at merge.

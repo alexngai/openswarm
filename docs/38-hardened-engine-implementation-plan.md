@@ -110,6 +110,10 @@ Ours:  streamWithRetry()    → streamProviderTurn()     → handleRetryableErro
 - [x] **T1.5** Abort during backoff sleep → exit immediately, no further attempts
 - [x] **T1.6** Cumulative usage includes retried turns
 - [x] **T1.7** `retry` NormalizedEvent emitted with correct attempt/delay/error
+- [x] **T1.8** Eager dispatch inFlight reset on retry prevents stale results
+- [x] **T1.9** Thrown context_overflow triggers emergency compaction + retry
+- [x] **T1.10** In-stream context_overflow triggers emergency compaction + retry
+- [x] **T1.11** Context_overflow without compactable context fails immediately
 
 **Acceptance:** All T1.x tests pass. Retry loop matches Codex behavior.
 
@@ -276,13 +280,13 @@ Verify behavioral parity with NativeEngine for non-hardened scenarios:
 
 - [x] Wire `HardenedNativeEngine` as default for swarm subprocess workers
 - [x] Pass `retryPolicy` from team-spec or CLI flags
-- [ ] Verify worker lifecycle (spawn → run → snapshot → resume) works with hardened engine
+- [x] Verify worker lifecycle (spawn → run → snapshot → resume) works with hardened engine
 
 ### P5.4  Documentation
 
-- [ ] Update `docs/02-architecture.md` with HardenedNativeEngine
-- [ ] Update `docs/13-m4a-plan.md` with reference to hardened engine
-- [ ] Add engine selection docs to README
+- [x] Update `docs/02-architecture.md` with HardenedNativeEngine
+- [x] Update `docs/13-m4a-plan.md` with reference to hardened engine
+- [x] Add engine selection docs (CLI flags in argv.ts, design doc §6.3 trigger clarification)
 
 **Acceptance:** All T5.x tests pass. Swarm workers use hardened engine by default.
 
@@ -293,7 +297,7 @@ Verify behavioral parity with NativeEngine for non-hardened scenarios:
 | Phase | Tests | Codex behavior verified |
 |-------|-------|------------------------|
 | P0 | Baseline (copy from native.test.ts) | Basic turn loop |
-| P1 | T1.1-T1.7 (7 tests) | Retry with exponential backoff |
+| P1 | T1.1-T1.11 (11 tests) | Retry with exponential backoff + context_overflow recovery |
 | P2 | T2.1-T2.8 (8 tests) | Eager tool dispatch during streaming |
 | P3 | T3.1-T3.6 (6 tests) | Mid-turn compaction |
 | P4 | T4.1-T4.5 (5 tests) | Provider-level retry/fallback |

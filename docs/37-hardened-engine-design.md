@@ -300,12 +300,17 @@ the next provider call. Maps to Codex's mid-turn compaction check
 ```
 // After tool results appended, before continuing turn loop:
 if midTurnCompaction && shouldCompact({ messages }, compactionConfig):
-  yield compaction(phase: "begin", trigger: "mid-turn")
+  yield compaction(phase: "begin", trigger: "auto", compact_metadata: { midTurn: true })
   result = compactSession({ messages }, compactionConfig)
   messages = result.compactedSession.messages.slice()
-  yield compaction(phase: "end", trigger: "mid-turn")
+  yield compaction(phase: "end", trigger: "auto", compact_metadata: { midTurn: true })
   compactionCount++
 ```
+
+**Note**: Mid-turn compaction uses `trigger: "auto"` with `compact_metadata.midTurn: true`
+rather than a separate `trigger: "mid-turn"` value. This keeps the trigger enum stable
+across engines (NativeEngine, ClaudeAgentSdkEngine) since the SDK only knows
+`"auto" | "manual"`. Consumers distinguish mid-turn from pre-turn via metadata.
 
 Uses the existing mechanical compactor. No new compactor interface needed.
 LLM-based compaction (like Codex's remote compact) is a future enhancement.

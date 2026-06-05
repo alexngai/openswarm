@@ -72,6 +72,16 @@ export interface CommonOpts {
    */
   readonly dumpEngine?: boolean;
   /**
+   * HardenedNativeEngine: dispatch tool calls during streaming instead of
+   * waiting for the full response. Requires --framework hardened-native.
+   */
+  readonly eagerToolDispatch?: boolean;
+  /**
+   * HardenedNativeEngine: compact context mid-turn when tool results push
+   * token count above threshold. Requires --framework hardened-native.
+   */
+  readonly midTurnCompaction?: boolean;
+  /**
    * Maximum total tokens (input + output + cache) for the entire run.
    * On exceed, the engine is aborted and the process exits with code 3.
    * Applies to single-agent prompt runs; swarm uses aggregate across workers.
@@ -217,6 +227,8 @@ export function parseArgv(args: string[]): ParsedArgs {
   let acpTeam = false;
   let framework: FrameworkChoice = "auto";
   let dumpEngine = false;
+  let eagerToolDispatch = false;
+  let midTurnCompaction = false;
   let maxTokens: number | undefined;
   let maxCostUsd: number | undefined;
 
@@ -405,6 +417,18 @@ export function parseArgv(args: string[]): ParsedArgs {
     // Internal debug flag — not advertised in --help.
     if (tok === "--dump-engine") {
       dumpEngine = true;
+      i++;
+      continue;
+    }
+
+    if (tok === "--eager-tool-dispatch") {
+      eagerToolDispatch = true;
+      i++;
+      continue;
+    }
+
+    if (tok === "--mid-turn-compaction") {
+      midTurnCompaction = true;
       i++;
       continue;
     }
@@ -774,6 +798,8 @@ export function parseArgv(args: string[]): ParsedArgs {
     dumpEngine,
     ...(acpSingle ? { single: true } : {}),
     ...(acpTeam ? { team: true } : {}),
+    ...(eagerToolDispatch ? { eagerToolDispatch: true } : {}),
+    ...(midTurnCompaction ? { midTurnCompaction: true } : {}),
     ...(maxTokens !== undefined ? { maxTokens } : {}),
     ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
   };
