@@ -51,7 +51,7 @@ rule system.
 | E1 | **Declarative execution policy engine (.rules files)** | ✅ | P1 | L | `exec-policy.ts`: Layered rules.json files (system → project → user → env). Prefix matching with alternative tokens (`["npm", ["install", "ci"]]`). Allow/Prompt/Forbidden decisions (strictest wins). Shell `-c` unwrapping (E4 lite). Basename fallback for paths. Config validation. Integrates alongside existing 6 bash-validation submodules. |
 | E2 | **Auto-amendment of policy rules** | ✅ | P2 | M | `exec-policy.ts`: `deriveAmendment()` extracts up-to-3-token prefix from approved commands (with shell -c unwrapping). `persistAmendment()` writes to `~/.swarm-harness/rules.json`, deduplicates, resets cached policy. |
 | E3 | **Banned prefix suggestions** | ✅ | P2 | S | `banned-prefixes.ts`: 55+ banned commands (shells, interpreters, package managers, privilege escalation, remote exec, containers, git, system-level, eval wrappers, compilers). Detects bare commands AND shell -c / interpreter -e patterns. `checkBannedPrefix()`, `checkBannedPrefixes()`, `getBannedPrefixList()` API. |
-| E4 | **Command canonicalization** | ⚠️ | P2 | M | `exec-policy.ts` includes shell `-c`/`-lc` unwrapping for bash/sh/zsh/dash/ksh. Codex also handles PowerShell wrappers and heredocs — those are not yet covered. |
+| E4 | **Command canonicalization** | ✅ | P2 | M | `exec-policy.ts`: `canonicalizeCommand()` pipeline — strips env var prefixes (`VAR=val`), command prefixes (sudo/env/nohup/nice/ionice/timeout/strace/ltrace/time/command/builtin/exec), unwraps shell `-c`/`-lc` (bash/sh/zsh/dash/ksh), unwraps interpreter `-c`/`-e` (python/ruby/perl/node), strips heredoc markers (`<<`). Exported and used by `evaluate()`. |
 | E5 | **Granular approval modes** | ✅ | P2 | M | `approval-policy.ts`: 5 approval modes (never, always, unless-allowed, on-failure, on-request) layered on top of existing 3 PermissionModes. `unless-allowed` integrates with ExecPolicy for rule-driven auto-approval. Separate from PermissionMode (WHAT vs WHEN). |
 
 ---
@@ -80,13 +80,13 @@ rule system.
 | # | Gap | Status | Priority | Effort | Notes |
 |---|---|---|---|---|---|
 | F1 | **apply_patch tool (unified diff editing)** | 🟦 | — | — | Codex: `core/src/apply_patch.rs`. Unified diff format with add/delete/update/move. swarm-harness: edit_file with exact-string replacement + multi_edit for atomic batches. Different approach; swarm's is arguably safer (no ambiguous hunks). |
-| F2 | **View image tool** | ❌ | P3 | S | Codex: `core/src/tools/handlers/view_image.rs`. Dedicated tool for agent to view/analyze images. swarm-harness: provider-level vision (imageIn capability) but no agent-facing tool. |
-| F3 | **Tool search (dynamic tool discovery)** | ❌ | P3 | S | Codex: `core/src/tools/handlers/tool_search.rs`. Agent can search for available tools. swarm-harness: tools are statically declared per run. |
+| F2 | **View image tool** | ✅ | P3 | S | `tools/tier1/view_image.ts`: Reads image files (PNG/JPEG/GIF/WebP/SVG/BMP/ICO), returns base64 data URI. 20 MiB max file size. Resolves relative paths against cwd. Registered in tier1 tool builder. |
+| F3 | **Tool search (dynamic tool discovery)** | ✅ | P3 | S | `tools/tier1/tool_search.ts`: `setToolRegistry()` for registration, `scoreMatch()` for ranking by name/description keyword match. Returns formatted tool specs with metadata (tier, permission). Registered in tier1 tool builder. |
 | F4 | **Code mode (sandboxed V8 tool orchestration)** | ❌ | P3 | L | Codex: `core/src/tools/code_mode/`. Sandboxed V8 JavaScript runtime exposed as `exec`/`wait` tools. Model writes JS that calls other tools via `await tools.some_tool(args)`. NOT for running user code — meta-tool for tool orchestration. Execute/yield/wait lifecycle with background execution. swarm-harness: no equivalent; multi-agent orchestration fills a similar niche differently. |
 | F5 | **Request permissions tool** | ✅ | P2 | S | `request_permissions.ts`: Tier 0 tool for mid-session permission elevation. Module-level callback pattern (no SwarmHost dep). Modes: read-only < workspace-write < danger-full-access. Handler: `getCurrentMode()` + `requestElevation()`. Commit `071772e`. |
 | F6 | **Request user input tool** | ✅ | — | — | Codex: `core/src/tools/handlers/request_user_input.rs`. swarm-harness: `ask_user_question` (Tier 2). Parity. |
 | F7 | **Multi-agent v2 (spawn/send/wait/close/followup)** | 🟦 | — | — | Codex: `core/src/tools/handlers/multi_agents_v2/`. swarm-harness: richer model with task queue, pull protocol, topologies, team daemon. swarm-harness leads. |
-| F8 | **Mention syntax (@plugin, @tool)** | ❌ | P3 | S | Codex: `core/src/mention_syntax.rs`. Text-level references to plugins/tools. swarm-harness: no equivalent. |
+| F8 | **Mention syntax (@plugin, @tool)** | ✅ | P3 | S | `tools/tier1/mention-syntax.ts`: `parseMentions()` extracts @tool and @plugin:tool references with lookbehind regex. `resolveMentions()` classifies against known tools/agents. `stripMentions()` removes mentions from text. Handles punctuation, email exclusion, index tracking. |
 | F9 | **File watcher (skills hot-reload)** | ❌ | P3 | M | Codex: `file-watcher/`. Uses `notify` crate (inotify/FSEvents). NOT in agent loop — serves UI via `fs/watch` JSON-RPC + skills hot-reload. Multi-subscriber ref-counted model with RAII cleanup. swarm-harness: no filesystem change notification; skills are static per session. |
 | F10 | **Web search (multi-action)** | ⚠️ | P3 | M | Codex: `web-search/`. 4 action types (Search, OpenPage, FindInPage, Other). swarm-harness: web_search is a placeholder (intercepted by SDK); web_fetch works. |
 | F11 | **Persistent shell sessions (unified_exec)** | ✅ | P1 | L | `shell_exec` tool: persistent /bin/bash sessions surviving across tool calls. `ShellSessionManager` with LRU eviction (max 64). Create or reuse sessions by ID. `shell_list` for lifecycle mgmt. Commit `8dd4d64`. |
@@ -103,7 +103,7 @@ rule system.
 |---|---|---|---|---|---|
 | H1 | **Extended hook events (10 vs 5)** | ✅ | P2 | M | 11 events matching Codex: SessionStart, SessionEnd, UserPromptSubmit, PreToolUse, PostToolUse, Stop, PermissionRequest, SubagentStart, SubagentStop, PreCompact, PostCompact. Payload types for each. Config schema and runtime dispatch updated. |
 | H4 | **Hook context injection (additionalContext)** | ✅ | P2 | S | `additionalContext` field in HookResult parsed from hook stdout JSON. Propagated through invoke(), toSdkOutput(), and invokeStop(). Available for both allow and deny results. Commit `071772e`. |
-| H5 | **Hook trust model (hash verification)** | ❌ | P3 | M | Codex: TOML hook config with content-hash verification. Hooks must be explicitly trusted per-hash before execution. Plugin-provided hooks supported. swarm-harness: JSON hook config with no trust/hash verification; hooks execute unconditionally if configured. |
+| H5 | **Hook trust model (hash verification)** | ✅ | P3 | M | `hooks/config.ts`: `contentHash` field on HookConfig. `computeHookHash()` returns SHA-256 of script file content. `verifyHookTrust()` checks hash match (trusted if no hash configured, hash matches, or inline command). `verifyAllHooks()` verifies all hooks in a config file. |
 | H6 | **Stop hook (force continuation)** | ✅ | P2 | S | "Stop" HookEvent added. `invokeStop()` convenience method returns `{ forceContinue, additionalContext }`. Deny/fail results force agent to continue. Hook config via `Stop` key in hooks.json. Commit `071772e`. |
 | H2 | **OpenTelemetry / distributed tracing** | ❌ | P3 | L | Codex: `otel/`, `core/src/otel_init.rs`. OTLP-based tracing + analytics. swarm-harness: lane events only (no structured telemetry export). |
 | H3 | **Feature flags / rollout system** | ❌ | P3 | L | Codex: `features/`, `rollout/`, `core/src/config/managed_features.rs`. Managed feature gating. swarm-harness: capabilities static per engine/provider. |
@@ -115,7 +115,7 @@ rule system.
 | # | Gap | Status | Priority | Effort | Notes |
 |---|---|---|---|---|---|
 | R1 | **Realtime / voice mode** | ❌ | P3 | XL | Codex: `realtime-webrtc/`, `core/src/realtime_context.rs`, `realtime_conversation.rs`. WebRTC transport for voice sessions. swarm-harness: request/response streaming only. |
-| R2 | **Image generation instructions** | ❌ | P3 | S | Codex: `core/src/context/image_generation_instructions.rs`. Output directory/path instructions for generated images. swarm-harness: none. |
+| R2 | **Image generation instructions** | ✅ | P3 | S | `tools/tier1/image-gen-instructions.ts`: `buildImageGenContext()` generates context string with output dir, supported formats, max dimensions. `resolveImagePath()` generates timestamped, sanitized file paths with configurable output dir. |
 
 ---
 
@@ -215,11 +215,8 @@ long-running processes, REPLs, debuggers, and dev servers.
 - R1 (Realtime/voice) — different product category
 - H2 (OpenTelemetry) — observability enhancement, not blocking
 - H3 (Feature flags) — operational maturity, not blocking
-- H5 (Hook trust model) — security hardening, not blocking
-- F2/F3/F8/F9 (View image, tool search, mentions, file watcher/skills hot-reload)
+- F9 (File watcher/skills hot-reload)
 - F4 (Code mode) — V8 tool orchestration; swarm multi-agent fills similar niche
-- E2/E3/E4 (Auto-amendment, banned prefixes, canonicalization)
-- S6 (Secrets detection)
 
 ---
 
@@ -244,3 +241,4 @@ and commit hash.
 - **2026-06-05** — S2: Network policy + proxy implemented. Domain-level allow/deny engine with Codex-compatible glob syntax (exact, `*.`, `**.`, `*`). SSRF protection: DNS resolution + private IP blocking (RFC 1918, loopback, link-local, IPv4-mapped IPv6). Local HTTP/CONNECT proxy server. Config from `.swarm-harness/network.json` (layered discovery: env var, project, home). Proxy env vars injected into all sandbox modes. `web_fetch` enforces policy directly. 52 new tests passing.
 - **2026-06-05** — S3+E1: Guardian reviewer + execution policy engine. Guardian: LLM sub-agent with fail-closed design (90s timeout), circuit breaker (3 consecutive or 10/50), risk classification, callback-based review for provider independence. ExecPolicy: layered rules.json (system/project/user/env), prefix matching with alternatives, Allow/Prompt/Forbidden (strictest wins), shell -c unwrapping. 51 new tests passing.
 - **2026-06-05** — E2+E5+H1: Auto-amendment (deriveAmendment + persistAmendment for learning from approvals). Granular approval modes (5 modes: never/always/unless-allowed/on-failure/on-request layered on PermissionMode). Extended hook events (11 events matching Codex: added PermissionRequest, SubagentStart/Stop, PreCompact/PostCompact with payload types, config schema, runtime dispatch). 24 new tests.
+- **2026-06-05** — E4+H5+F2+F3+F8+R2: Command canonicalization (full pipeline: env vars, command prefixes, shell/interpreter unwrapping, heredoc stripping). Hook trust model (SHA-256 content hash verification). View image tool (base64 data URI, 7 formats, 20 MiB limit). Tool search (keyword matching with scoring). Mention syntax (@tool/@plugin:tool parsing with email exclusion). Image generation instructions (context builder + path resolver). 98 tests passing.

@@ -156,14 +156,10 @@ export class ExecPolicy {
   }
 
   evaluate(command: string): PolicyEvaluation {
-    const tokens = tokenizeCommand(command);
-    if (tokens.length === 0) {
+    const effectiveTokens = canonicalizeCommand(command);
+    if (effectiveTokens.length === 0) {
       return { decision: "allow", matchedRule: null };
     }
-
-    // Unwrap shell -c wrappers: bash -c "...", sh -c "..."
-    const unwrapped = unwrapShellCommand(tokens);
-    const effectiveTokens = unwrapped ?? tokens;
 
     let strictest: PrefixRule | null = null;
     let strictestSeverity = -1;
@@ -199,10 +195,37 @@ export class ExecPolicy {
 }
 
 // ---------------------------------------------------------------------------
-// Shell -c unwrapping (E4 lite)
+// Command canonicalization (E4)
 // ---------------------------------------------------------------------------
 
 const SHELL_COMMANDS = new Set(["bash", "sh", "zsh", "dash", "ksh"]);
+
+/**
+ * Canonicalize a command by stripping wrappers that obscure the real command.
+ * Exported for direct use and testing.
+ *
+ * Handles:
+ *   - Shell -c/-lc wrappers (bash -c "...", sh -lc "...")
+ *   - env/sudo/nohup/nice prefixes
+ *   - Interpreter -e wrappers (python -c, ruby -e, perl -e, node -e)
+ *   - Heredoc removal (<<EOF...EOF)
+ *   - Leading VAR=value assignments
+ */
+export function canonicalizeCommand(command: string): string[] {
+  let tokens = tokenizeCommand(command);
+  if (tokens.length === 0) return tokens;
+
+  tokens = stripEnvVarPrefixes(tokens);
+  tokens = stripCommandPrefixes(tokens);
+
+  const unwrapped = unwrapShellCommand(tokens);
+  if (unwrapped) return unwrapped;
+
+  const interpreterUnwrap = unwrapInterpreter(tokens);
+  if (interpreterUnwrap) return interpreterUnwrap;
+
+  return stripHeredoc(tokens);
+}
 
 function unwrapShellCommand(tokens: readonly string[]): string[] | null {
   if (tokens.length < 3) return null;
@@ -222,6 +245,70 @@ function unwrapShellCommand(tokens: readonly string[]): string[] | null {
 
   const inner = tokens.slice(flagIdx + 1).join(" ");
   return tokenizeCommand(inner);
+}
+
+const ENV_VAR_PREFIX_RE = /^[A-Za-z_][A-Za-z0-9_]*=.*/;
+
+function stripEnvVarPrefixes(tokens: string[]): string[] {
+  let i = 0;
+  while (i < tokens.length && ENV_VAR_PREFIX_RE.test(tokens[i]!)) {
+    i++;
+  }
+  return i > 0 ? tokens.slice(i) : tokens;
+}
+
+const COMMAND_PREFIXES = new Set([
+  "env", "sudo", "nohup", "nice", "ionice", "timeout",
+  "strace", "ltrace", "time", "command", "builtin", "exec",
+]);
+
+function stripCommandPrefixes(tokens: string[]): string[] {
+  let i = 0;
+  while (i < tokens.length) {
+    const cmd = basenameOf(tokens[i]!);
+    if (!COMMAND_PREFIXES.has(cmd)) break;
+    i++;
+    // Skip flags for these commands (e.g., sudo -u root, env -i)
+    while (i < tokens.length && tokens[i]!.startsWith("-")) {
+      i++;
+      // Some flags take a value (sudo -u root)
+      if (i < tokens.length && !tokens[i]!.startsWith("-") &&
+          !COMMAND_PREFIXES.has(basenameOf(tokens[i]!))) {
+        // Peek: if next token looks like a flag value, skip it
+        const prev = tokens[i - 1];
+        if (prev === "-u" || prev === "-g" || prev === "-C" || prev === "-D") {
+          i++;
+        }
+      }
+    }
+  }
+  return i > 0 ? tokens.slice(i) : tokens;
+}
+
+const INTERPRETER_COMMANDS = new Map<string, string>([
+  ["python", "-c"], ["python3", "-c"], ["python2", "-c"],
+  ["ruby", "-e"], ["perl", "-e"], ["node", "-e"],
+]);
+
+function unwrapInterpreter(tokens: readonly string[]): string[] | null {
+  if (tokens.length < 3) return null;
+
+  const cmd = basenameOf(tokens[0]!);
+  const expectedFlag = INTERPRETER_COMMANDS.get(cmd);
+  if (!expectedFlag) return null;
+
+  for (let i = 1; i < tokens.length; i++) {
+    if (tokens[i] === expectedFlag && i + 1 < tokens.length) {
+      return [cmd, expectedFlag, tokens.slice(i + 1).join(" ")];
+    }
+  }
+  return null;
+}
+
+function stripHeredoc(tokens: string[]): string[] {
+  const heredocIdx = tokens.findIndex((t) => /^<<-?'?[A-Za-z_]+/.test(t));
+  if (heredocIdx < 0) return tokens;
+  return tokens.slice(0, heredocIdx);
 }
 
 // ---------------------------------------------------------------------------
@@ -339,11 +426,8 @@ export interface AmendmentSuggestion {
 }
 
 export function deriveAmendment(command: string): AmendmentSuggestion | null {
-  const tokens = tokenizeCommand(command);
-  if (tokens.length === 0) return null;
-
-  const unwrapped = unwrapShellCommand(tokens);
-  const effective = unwrapped ?? tokens;
+  const effective = canonicalizeCommand(command);
+  if (effective.length === 0) return null;
 
   const prefixLen = Math.min(effective.length, 3);
   const pattern = effective.slice(0, prefixLen);

@@ -31,6 +31,8 @@ export interface HookConfig {
   readonly command: string;
   /** Optional timeout in ms. Defaults to 30_000. */
   readonly timeoutMs?: number;
+  /** SHA-256 hash of the hook script content. When set, the hook is only executed if the script's hash matches. */
+  readonly contentHash?: string;
 }
 
 /**

@@ -19,6 +19,8 @@ import { webFetchTool } from "./web_fetch.js";
 import { webSearchTool } from "./web_search.js";
 import { buildSkillTool } from "./skill.js";
 import { notebookEditTool } from "./notebook_edit.js";
+import { viewImageTool } from "./view_image.js";
+import { toolSearchTool } from "./tool_search.js";
 
 export interface Tier1Deps {
   skillRegistry?: SkillRegistry;
@@ -26,8 +28,15 @@ export interface Tier1Deps {
 
 /** Build all Tier 1 tools. Pass `skillRegistry` once Phase 7 is wired. */
 export function buildTier1Tools(deps: Tier1Deps): ToolImpl[] {
-  return [webFetchTool, webSearchTool, buildSkillTool(deps.skillRegistry), notebookEditTool];
+  return [
+    webFetchTool,
+    webSearchTool,
+    buildSkillTool(deps.skillRegistry),
+    notebookEditTool,
+    viewImageTool,
+    toolSearchTool,
+  ];
 }
 
 // Named re-exports for direct access.
-export { webFetchTool, webSearchTool, buildSkillTool, notebookEditTool };
+export { webFetchTool, webSearchTool, buildSkillTool, notebookEditTool, viewImageTool, toolSearchTool };

@@ -5,6 +5,7 @@ import * as os from "node:os";
 import {
   tokenizeCommand,
   matchesRule,
+  canonicalizeCommand,
   ExecPolicy,
   loadExecPolicyConfig,
   resetExecPolicy,
@@ -63,6 +64,78 @@ describe("tokenizeCommand", () => {
     expect(tokenizeCommand(`echo "it's" 'a "test"'`)).toEqual([
       "echo", "it's", 'a "test"',
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// canonicalizeCommand (E4)
+// ---------------------------------------------------------------------------
+
+describe("canonicalizeCommand", () => {
+  it("unwraps bash -c", () => {
+    expect(canonicalizeCommand('bash -c "git push origin"')).toEqual([
+      "git", "push", "origin",
+    ]);
+  });
+
+  it("unwraps sh -lc", () => {
+    expect(canonicalizeCommand("sh -lc 'npm install'")).toEqual([
+      "npm", "install",
+    ]);
+  });
+
+  it("strips env var prefixes", () => {
+    expect(canonicalizeCommand("NODE_ENV=production npm start")).toEqual([
+      "npm", "start",
+    ]);
+  });
+
+  it("strips multiple env vars", () => {
+    expect(canonicalizeCommand("A=1 B=2 C=3 make build")).toEqual([
+      "make", "build",
+    ]);
+  });
+
+  it("strips sudo prefix", () => {
+    expect(canonicalizeCommand("sudo apt install git")).toEqual([
+      "apt", "install", "git",
+    ]);
+  });
+
+  it("strips env prefix", () => {
+    expect(canonicalizeCommand("env npm test")).toEqual(["npm", "test"]);
+  });
+
+  it("strips nohup prefix", () => {
+    expect(canonicalizeCommand("nohup node server.js")).toEqual([
+      "node", "server.js",
+    ]);
+  });
+
+  it("strips chained prefixes", () => {
+    expect(canonicalizeCommand("sudo env nohup node app.js")).toEqual([
+      "node", "app.js",
+    ]);
+  });
+
+  it("unwraps python -c", () => {
+    expect(canonicalizeCommand('python3 -c "print(1)"')).toEqual([
+      "python3", "-c", "print(1)",
+    ]);
+  });
+
+  it("strips heredoc markers", () => {
+    expect(canonicalizeCommand("cat <<EOF")).toEqual(["cat"]);
+  });
+
+  it("handles combined: env var + sudo + shell -c", () => {
+    expect(canonicalizeCommand('HOME=/tmp sudo bash -c "rm -rf /"')).toEqual([
+      "rm", "-rf", "/",
+    ]);
+  });
+
+  it("passes through simple commands", () => {
+    expect(canonicalizeCommand("ls -la")).toEqual(["ls", "-la"]);
   });
 });
 
