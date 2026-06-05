@@ -9,39 +9,39 @@ Design rationale in `docs/37-hardened-engine-design.md`.
 
 **File:** `src/engine/hardened-native.ts`
 
-- [ ] Copy NativeEngine as starting point
-- [ ] Change `id` to `"hardened-native"`
-- [ ] Add `RetryPolicy` to constructor options
-- [ ] Add `eagerToolDispatch` and `midTurnCompaction` boolean options
-- [ ] Wire into CLI via `--engine hardened-native` flag in `src/cli/argv.ts`
-- [ ] Wire into `src/cli/runtime.ts` engine selection
+- [x] Copy NativeEngine as starting point
+- [x] Change `id` to `"hardened-native"`
+- [x] Add `RetryPolicy` to constructor options
+- [x] Add `eagerToolDispatch` and `midTurnCompaction` boolean options
+- [x] Wire into CLI via `--engine hardened-native` flag in `src/cli/argv.ts`
+- [x] Wire into `src/cli/runtime.ts` engine selection
 
 ### P0.2  Add new types
 
 **File:** `src/engine/retry-policy.ts`
 
-- [ ] `RetryPolicy` interface
-- [ ] `DEFAULT_RETRY_POLICY` constant
-- [ ] `isRetryableError(error: ProviderError): boolean` default classifier
+- [x] `RetryPolicy` interface
+- [x] `DEFAULT_RETRY_POLICY` constant
+- [x] `isRetryableError(error: ProviderError): boolean` default classifier
 
 **File:** `src/core/types.ts`
 
-- [ ] Add `"retry"` variant to `NormalizedEvent` union
-- [ ] Add `retry?: boolean` and `eagerToolDispatch?: boolean` to `EngineCapabilities`
+- [x] Add `"retry"` variant to `NormalizedEvent` union
+- [x] Add `retry?: boolean` and `eagerToolDispatch?: boolean` to `EngineCapabilities`
 
 **File:** `src/engine/index.ts`
 
-- [ ] Add `retryPolicy?: RetryPolicy` to `RunConfig`
-- [ ] Add `eagerToolDispatch?: boolean` to `RunConfig`
-- [ ] Add `midTurnCompaction?: boolean` to `RunConfig`
+- [x] Add `retryPolicy?: RetryPolicy` to `RunConfig`
+- [x] Add `eagerToolDispatch?: boolean` to `RunConfig`
+- [x] Add `midTurnCompaction?: boolean` to `RunConfig`
 
 ### P0.3  Add snapshot type
 
 **File:** `src/engine/hardened-native-snapshot.ts`
 
-- [ ] `HardenedNativeSnapshot` interface (extends NativeSnapshot with retryStats)
-- [ ] `makeHardenedSnapshot()` factory
-- [ ] `extractHardenedSnapshot()` extractor
+- [x] `HardenedNativeSnapshot` interface (extends NativeSnapshot with retryStats)
+- [x] `makeHardenedSnapshot()` factory
+- [x] `extractHardenedSnapshot()` extractor
 
 **Codex mapping:** `SamplingRequestResult` (turn.rs:1202-1206)
 
@@ -49,8 +49,8 @@ Design rationale in `docs/37-hardened-engine-design.md`.
 
 **File:** `src/engine/hardened-native.test.ts`
 
-- [ ] Import mock provider pattern from existing `native.test.ts`
-- [ ] Verify skeleton passes same tests as NativeEngine (copy baseline suite)
+- [x] Import mock provider pattern from existing `native.test.ts`
+- [x] Verify skeleton passes same tests as NativeEngine (copy baseline suite)
 
 **Acceptance:** `npm test -- hardened-native` passes, all NativeEngine baseline tests pass.
 
@@ -64,12 +64,12 @@ Design rationale in `docs/37-hardened-engine-design.md`.
 
 **Codex mapping:** `run_sampling_request` (turn.rs:1025-1087)
 
-- [ ] Extract streaming into `streamProviderTurn()` private method
-- [ ] Wrap in retry loop with `RetryPolicy`
-- [ ] On retryable error: compute delay (`backoffBaseMs * 2^attempt`), yield `retry` event, sleep
-- [ ] On non-retryable error: yield `error` event, return
-- [ ] On abort during sleep: return immediately
-- [ ] On success: break retry loop
+- [x] Extract streaming into `streamProviderTurn()` private method
+- [x] Wrap in retry loop with `RetryPolicy`
+- [x] On retryable error: compute delay (`backoffBaseMs * 2^attempt`), yield `retry` event, sleep
+- [x] On non-retryable error: yield `error` event, return
+- [x] On abort during sleep: return immediately
+- [x] On success: break retry loop
 
 **Control flow (maps 1:1 to Codex):**
 ```
@@ -83,9 +83,9 @@ Ours:  streamWithRetry()    → streamProviderTurn()     → handleRetryableErro
 
 **Codex mapping:** `CodexErr` hierarchy + `is_retryable()` method
 
-- [ ] `classifyProviderError(err: unknown): ProviderError` — normalize caught exceptions
-- [ ] Default `isRetryable`: transport, rate_limit, provider_unavailable → true; rest → false
-- [ ] Allow override via `RetryPolicy.isRetryable`
+- [x] `classifyProviderError(err: unknown): ProviderError` — normalize caught exceptions
+- [x] Default `isRetryable`: transport, rate_limit, provider_unavailable → true; rest → false
+- [x] Allow override via `RetryPolicy.isRetryable`
 
 ### P1.3  Abort-aware sleep
 
@@ -93,9 +93,9 @@ Ours:  streamWithRetry()    → streamProviderTurn()     → handleRetryableErro
 
 **Codex mapping:** Backoff sleep with interrupt checking (responses_retry.rs:58-72)
 
-- [ ] `abortableSleep(ms: number, signal?: AbortSignal): Promise<boolean>`
-- [ ] Returns `true` if slept full duration, `false` if aborted
-- [ ] On abort: resolve immediately (do not throw)
+- [x] `abortableSleep(ms: number, signal?: AbortSignal): Promise<boolean>`
+- [x] Returns `true` if slept full duration, `false` if aborted
+- [x] On abort: resolve immediately (do not throw)
 
 ### P1.4  Retry tests
 
@@ -103,13 +103,13 @@ Ours:  streamWithRetry()    → streamProviderTurn()     → handleRetryableErro
 
 **Codex test mapping:** Integration tests for retry paths
 
-- [ ] **T1.1** Provider fails once with `transport` error, succeeds on retry → turn completes
-- [ ] **T1.2** Provider fails with `context_overflow` → no retry, error event emitted
-- [ ] **T1.3** Provider fails `maxRetries+1` times → final error event emitted
-- [ ] **T1.4** Exponential backoff timing: 100ms, 200ms, 400ms verified
-- [ ] **T1.5** Abort during backoff sleep → exit immediately, no further attempts
-- [ ] **T1.6** Cumulative usage includes retried turns
-- [ ] **T1.7** `retry` NormalizedEvent emitted with correct attempt/delay/error
+- [x] **T1.1** Provider fails once with `transport` error, succeeds on retry → turn completes
+- [x] **T1.2** Provider fails with `context_overflow` → no retry, error event emitted
+- [x] **T1.3** Provider fails `maxRetries+1` times → final error event emitted
+- [x] **T1.4** Exponential backoff timing: 100ms, 200ms, 400ms verified
+- [x] **T1.5** Abort during backoff sleep → exit immediately, no further attempts
+- [x] **T1.6** Cumulative usage includes retried turns
+- [x] **T1.7** `retry` NormalizedEvent emitted with correct attempt/delay/error
 
 **Acceptance:** All T1.x tests pass. Retry loop matches Codex behavior.
 
@@ -123,15 +123,15 @@ Ours:  streamWithRetry()    → streamProviderTurn()     → handleRetryableErro
 
 **Codex mapping:** `try_run_sampling_request` (turn.rs:1830-2214) streaming loop
 
-- [ ] Replace `toolUseBuffer: PendingToolUse[]` with `inFlight: Map<string, Promise<ToolResult>>`
-- [ ] On `tool-call` event:
+- [x] Replace `toolUseBuffer: PendingToolUse[]` with `inFlight: Map<string, Promise<ToolResult>>`
+- [x] On `tool-call` event:
   - Call `config.canUseTool()` immediately
   - If allowed: `dispatcher.dispatch()` → store promise in `inFlight`
   - If denied: store `Promise.resolve({ status: "error", message: reason })` in `inFlight`
   - Yield `tool_use_end` event
-- [ ] On `finish` event: capture usage, break stream loop
-- [ ] After stream: drain `inFlight` in insertion order (Map preserves order)
-- [ ] Yield `tool_result` events in original order
+- [x] On `finish` event: capture usage, break stream loop
+- [x] After stream: drain `inFlight` in insertion order (Map preserves order)
+- [x] Yield `tool_result` events in original order
 
 **Key difference from Codex:** Codex uses `FuturesOrdered` (preserves push order).
 We use `Map<string, Promise>` iterated in insertion order (ES2015 guarantee).
@@ -140,10 +140,10 @@ We use `Map<string, Promise>` iterated in insertion order (ES2015 guarantee).
 
 **Codex mapping:** `ToolCallRuntime.handle_tool_call_with_source` (parallel.rs:81-178)
 
-- [ ] Each eager `dispatcher.dispatch()` goes through `ToolScheduler` internally
-- [ ] Conflicting tools queue automatically (existing scheduler behavior)
-- [ ] Non-conflicting tools run concurrently (existing scheduler behavior)
-- [ ] No changes to `ToolScheduler` or `ToolAccesses` interfaces
+- [x] Each eager `dispatcher.dispatch()` goes through `ToolScheduler` internally
+- [x] Conflicting tools queue automatically (existing scheduler behavior)
+- [x] Non-conflicting tools run concurrently (existing scheduler behavior)
+- [x] No changes to `ToolScheduler` or `ToolAccesses` interfaces
 
 **Key difference from Codex:** Codex uses binary RwLock (parallel vs serial).
 Our ToolScheduler is strictly more granular (per-resource conflict graph).
@@ -152,16 +152,16 @@ Our ToolScheduler is strictly more granular (per-resource conflict graph).
 
 **Codex mapping:** Cancellation handling in `handle_tool_call_with_source` (parallel.rs:115-178)
 
-- [ ] Pass child abort signal to each `dispatch()` call via `ToolExecutionContext.abort`
-- [ ] On abort during drain: settle pending promises as error results
-- [ ] Yield error tool_results for aborted tools
-- [ ] Do not re-invoke permission gate on abort
+- [x] Pass child abort signal to each `dispatch()` call via `ToolExecutionContext.abort`
+- [x] On abort during drain: settle pending promises as error results
+- [x] Yield error tool_results for aborted tools
+- [x] Do not re-invoke permission gate on abort
 
 ### P2.4  Fallback to batch mode
 
-- [ ] When `config.eagerToolDispatch === false` (default): preserve current batch behavior
-- [ ] Conditional: `if (eagerDispatch) { eagerPath() } else { batchPath() }`
-- [ ] Both paths yield identical NormalizedEvent sequences for same inputs
+- [x] When `config.eagerToolDispatch === false` (default): preserve current batch behavior
+- [x] Conditional: `if (eagerDispatch) { eagerPath() } else { batchPath() }`
+- [x] Both paths yield identical NormalizedEvent sequences for same inputs
 
 ### P2.5  Eager dispatch tests
 
@@ -169,14 +169,14 @@ Our ToolScheduler is strictly more granular (per-resource conflict graph).
 
 **Codex test mapping:** `parallel.rs` tests + session integration tests
 
-- [ ] **T2.1** Single tool call dispatched during streaming, result available at finish
-- [ ] **T2.2** Three non-conflicting tools: all start during streaming (verify timing < 200ms apart)
+- [x] **T2.1** Single tool call dispatched during streaming, result available at finish
+- [x] **T2.2** Three non-conflicting tools: all start during streaming (verify timing < 200ms apart)
 - [ ] **T2.3** Two conflicting tools (same file write): second waits for first to complete
-- [ ] **T2.4** Permission denied during streaming: error result yielded in correct position
-- [ ] **T2.5** Abort during tool execution: pending tools receive error results
-- [ ] **T2.6** Eager vs batch mode: same final event sequence for same inputs
-- [ ] **T2.7** Tool result order matches tool_use emission order (not completion order)
-- [ ] **T2.8** `updatedInput` from permission gate flows to dispatch (not original input)
+- [x] **T2.4** Permission denied during streaming: error result yielded in correct position
+- [x] **T2.5** Abort during tool execution: pending tools receive error results
+- [x] **T2.6** Eager vs batch mode: same final event sequence for same inputs
+- [x] **T2.7** Tool result order matches tool_use emission order (not completion order)
+- [x] **T2.8** `updatedInput` from permission gate flows to dispatch (not original input)
 
 **Acceptance:** All T2.x tests pass. Eager dispatch matches Codex wall-clock behavior.
 
@@ -190,7 +190,7 @@ Our ToolScheduler is strictly more granular (per-resource conflict graph).
 
 **Codex mapping:** Mid-turn compaction in `run_turn` (turn.rs:268-321)
 
-- [ ] After tool results appended to `messages`, before `continue`:
+- [x] After tool results appended to `messages`, before `continue`:
   ```
   if (midTurnCompaction && shouldCompact({ messages }, compactionConfig)) {
     yield compaction(begin, trigger: "mid-turn")
@@ -201,8 +201,8 @@ Our ToolScheduler is strictly more granular (per-resource conflict graph).
     // post-compaction health probe (same as pre-turn)
   }
   ```
-- [ ] Trigger value: `"mid-turn"` (distinct from `"auto"` for pre-turn)
-- [ ] Uses same `compactSession()` — no new compaction logic
+- [x] Trigger value: `"mid-turn"` (distinct from `"auto"` for pre-turn)
+- [x] Uses same `compactSession()` — no new compaction logic
 
 ### P3.2  Mid-turn compaction tests
 
@@ -210,11 +210,11 @@ Our ToolScheduler is strictly more granular (per-resource conflict graph).
 
 **Codex test mapping:** Compaction integration in turn loop
 
-- [ ] **T3.1** Tool results push tokens above threshold → mid-turn compaction fires
-- [ ] **T3.2** Compaction events emitted with `trigger: "mid-turn"`
-- [ ] **T3.3** Turn continues after mid-turn compaction (model sees compacted context)
+- [x] **T3.1** Tool results push tokens above threshold → mid-turn compaction fires
+- [x] **T3.2** Compaction events emitted with `trigger: "mid-turn"`
+- [x] **T3.3** Turn continues after mid-turn compaction (model sees compacted context)
 - [ ] **T3.4** Boundary walk-back preserved during mid-turn compaction
-- [ ] **T3.5** `midTurnCompaction: false` (default) → no mid-turn compaction
+- [x] **T3.5** `midTurnCompaction: false` (default) → no mid-turn compaction
 - [ ] **T3.6** Pre-turn + mid-turn compaction in same turn (both fire)
 
 **Acceptance:** All T3.x tests pass. Context overflow during long turns is recoverable.
@@ -229,21 +229,21 @@ Our ToolScheduler is strictly more granular (per-resource conflict graph).
 
 **Codex mapping:** Transport fallback in `try_switch_fallback_transport` (client.rs:1636-1646)
 
-- [ ] `class RetryingProvider implements Provider`
-- [ ] Constructor: `primary: Provider`, `fallback?: Provider`, `policy?: RetryPolicy`
-- [ ] `stream()`: try primary, on transport error after threshold → switch to fallback
-- [ ] Capabilities: union of primary and fallback
-- [ ] `id`: `"retrying(" + primary.id + ")"`
+- [x] `class RetryingProvider implements Provider`
+- [x] Constructor: `primary: Provider`, `fallback?: Provider`, `policy?: RetryPolicy`
+- [x] `stream()`: try primary, on transport error after threshold → switch to fallback
+- [x] Capabilities: union of primary and fallback
+- [x] `id`: `"retrying(" + primary.id + ")"`
 
 ### P4.2  RetryingProvider tests
 
 **File:** `src/providers/retrying-provider.test.ts`
 
-- [ ] **T4.1** Primary succeeds → fallback never called
-- [ ] **T4.2** Primary fails all retries → fallback used
-- [ ] **T4.3** Primary fails once → retried on primary (not immediately fallback)
-- [ ] **T4.4** No fallback configured → error after max retries
-- [ ] **T4.5** Fallback also fails → error propagated
+- [x] **T4.1** Primary succeeds → fallback never called
+- [x] **T4.2** Primary fails all retries → fallback used
+- [x] **T4.3** Primary fails once → retried on primary (not immediately fallback)
+- [x] **T4.4** No fallback configured → error after max retries
+- [x] **T4.5** Fallback also fails → error propagated
 
 **Acceptance:** All T4.x tests pass.
 
@@ -255,26 +255,26 @@ Our ToolScheduler is strictly more granular (per-resource conflict graph).
 
 **File:** `src/engine/hardened-native.integration.test.ts`
 
-- [ ] **T5.1** Flaky provider (random failures) → engine recovers, turn completes
-- [ ] **T5.2** Multi-tool turn with eager dispatch + retry → correct results
-- [ ] **T5.3** Context overflow mid-turn → compaction + continuation
-- [ ] **T5.4** Snapshot persist → resume → continue with compacted context
-- [ ] **T5.5** All features combined: retry + eager + mid-turn compaction in one turn
-- [ ] **T5.6** Abort at every phase: during stream, during retry sleep, during eager dispatch, during drain
+- [x] **T5.1** Flaky provider (random failures) → engine recovers, turn completes
+- [x] **T5.2** Multi-tool turn with eager dispatch + retry → correct results
+- [x] **T5.3** Context overflow mid-turn → compaction + continuation
+- [x] **T5.4** Snapshot persist → resume → continue with compacted context
+- [x] **T5.5** All features combined: retry + eager + mid-turn compaction in one turn
+- [x] **T5.6** Abort at every phase: during stream, during retry sleep, during eager dispatch, during drain
 
 ### P5.2  Parity matrix validation
 
 Verify behavioral parity with NativeEngine for non-hardened scenarios:
 
-- [ ] **T5.7** With retry disabled + batch dispatch + no mid-turn compaction: identical event sequence to NativeEngine
-- [ ] **T5.8** Same tool_result ordering for batch vs eager (content identical, timing differs)
-- [ ] **T5.9** Same compaction output for pre-turn vs mid-turn (same compactor, same algorithm)
+- [x] **T5.7** With retry disabled + batch dispatch + no mid-turn compaction: identical event sequence to NativeEngine
+- [x] **T5.8** Same tool_result ordering for batch vs eager (content identical, timing differs)
+- [x] **T5.9** Same compaction output for pre-turn vs mid-turn (same compactor, same algorithm)
 
 ### P5.3  Swarm worker integration
 
 **File:** `src/cli/worker-entry.ts`
 
-- [ ] Wire `HardenedNativeEngine` as default for swarm subprocess workers
+- [x] Wire `HardenedNativeEngine` as default for swarm subprocess workers
 - [ ] Pass `retryPolicy` from team-spec or CLI flags
 - [ ] Verify worker lifecycle (spawn → run → snapshot → resume) works with hardened engine
 

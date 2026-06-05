@@ -5,6 +5,7 @@ import { WorkerHost } from "../swarm/worker-host.js";
 import { ClaudeAgentSdkEngine } from "../engine/claude-agent-sdk.js";
 import { CodexFrameworkEngine } from "../engine/codex-framework.js";
 import { NativeEngine } from "../engine/native.js";
+import { HardenedNativeEngine } from "../engine/hardened-native.js";
 import { ScriptedTestEngine } from "../engine/test-engine.js";
 import { filterCodexPeerTools } from "../tools/codex-peer-tools.js";
 import { resolveProvider } from "../providers/routing.js";
@@ -357,18 +358,22 @@ export async function runWorkerEntry(): Promise<number> {
       tools: codexPeerTools,
       host,
     });
+  } else if (frameworkEnv === "hardened-native") {
+    const resolved = resolveProvider(workerModel);
+    if (resolved.kind === "native") {
+      const nativeAuth = new OpenAIEnvAuth();
+      const provider = await resolved.providerFactory!(nativeAuth, resolved.modelId!);
+      engine = new HardenedNativeEngine({ provider, sessionId: agentId });
+    } else {
+      engine = new ClaudeAgentSdkEngine();
+    }
   } else if (frameworkEnv === "native") {
     const resolved = resolveProvider(workerModel);
     if (resolved.kind === "native") {
       const nativeAuth = new OpenAIEnvAuth();
       const provider = await resolved.providerFactory!(nativeAuth, resolved.modelId!);
-      // Use agentId as the per-worker cache routing key. Each worker gets a
-      // unique randomUUID-based agentId from the host; reusing it as the
-      // OpenAI prompt_cache_key keeps THIS worker's cache warm across its
-      // turns without coupling sibling workers to the same backend.
       engine = new NativeEngine({ provider, sessionId: agentId });
     } else {
-      // Fallback: native requested but model resolves to sdk — use sdk.
       engine = new ClaudeAgentSdkEngine();
     }
   } else {
