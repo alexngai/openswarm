@@ -11,6 +11,7 @@ import { filterCodexPeerTools } from "../tools/codex-peer-tools.js";
 import { resolveProvider } from "../providers/routing.js";
 import { OpenAIEnvAuth } from "../auth/openai-env.js";
 import type { AgentEngine, PermissionDecision } from "../engine/index.js";
+import type { RetryPolicy } from "../engine/retry-policy.js";
 import type { FrameworkChoice } from "./argv.js";
 import { ToolDispatcher } from "../tools/dispatcher.js";
 import { buildTier0Tools } from "../tools/tier0/index.js";
@@ -34,6 +35,12 @@ import { RunMoreParamsSchema, IPC_ERROR_CODES } from "../swarm/ipc/protocol.js";
 import type { PermissionMode, Usage } from "../core/types.js";
 import type { ToolExecutionContext, ToolImpl } from "../tools/types.js";
 import { readSessionSidecar, writeSessionSidecar } from "./session-sidecar.js";
+
+function parseIntEnv(key: string, fallback: number): number {
+  const raw = process.env[key];
+  if (raw === undefined || !/^\d+$/.test(raw)) return fallback;
+  return Number.parseInt(raw, 10);
+}
 
 /**
  * Combine the parent's base system prompt with the role's system-prompt
@@ -363,7 +370,17 @@ export async function runWorkerEntry(): Promise<number> {
     if (resolved.kind === "native") {
       const nativeAuth = new OpenAIEnvAuth();
       const provider = await resolved.providerFactory!(nativeAuth, resolved.modelId!);
-      engine = new HardenedNativeEngine({ provider, sessionId: agentId });
+      const retryPolicy: RetryPolicy = {
+        maxRetries: parseIntEnv("SWARM_HARNESS_RETRY_MAX_RETRIES", 3),
+        backoffBaseMs: parseIntEnv("SWARM_HARNESS_RETRY_BACKOFF_BASE_MS", 100),
+      };
+      engine = new HardenedNativeEngine({
+        provider,
+        sessionId: agentId,
+        retryPolicy,
+        eagerToolDispatch: process.env.SWARM_HARNESS_EAGER_TOOL_DISPATCH === "1",
+        midTurnCompaction: process.env.SWARM_HARNESS_MID_TURN_COMPACTION === "1",
+      });
     } else {
       engine = new ClaudeAgentSdkEngine();
     }

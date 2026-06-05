@@ -171,7 +171,7 @@ Our ToolScheduler is strictly more granular (per-resource conflict graph).
 
 - [x] **T2.1** Single tool call dispatched during streaming, result available at finish
 - [x] **T2.2** Three non-conflicting tools: all start during streaming (verify timing < 200ms apart)
-- [ ] **T2.3** Two conflicting tools (same file write): second waits for first to complete
+- [x] **T2.3** Two conflicting tools (same file write): second waits for first to complete
 - [x] **T2.4** Permission denied during streaming: error result yielded in correct position
 - [x] **T2.5** Abort during tool execution: pending tools receive error results
 - [x] **T2.6** Eager vs batch mode: same final event sequence for same inputs
@@ -213,9 +213,9 @@ Our ToolScheduler is strictly more granular (per-resource conflict graph).
 - [x] **T3.1** Tool results push tokens above threshold → mid-turn compaction fires
 - [x] **T3.2** Compaction events emitted with `trigger: "mid-turn"`
 - [x] **T3.3** Turn continues after mid-turn compaction (model sees compacted context)
-- [ ] **T3.4** Boundary walk-back preserved during mid-turn compaction
+- [x] **T3.4** Boundary walk-back preserved during mid-turn compaction
 - [x] **T3.5** `midTurnCompaction: false` (default) → no mid-turn compaction
-- [ ] **T3.6** Pre-turn + mid-turn compaction in same turn (both fire)
+- [x] **T3.6** Pre-turn + mid-turn compaction in same turn (both fire)
 
 **Acceptance:** All T3.x tests pass. Context overflow during long turns is recoverable.
 
@@ -275,7 +275,7 @@ Verify behavioral parity with NativeEngine for non-hardened scenarios:
 **File:** `src/cli/worker-entry.ts`
 
 - [x] Wire `HardenedNativeEngine` as default for swarm subprocess workers
-- [ ] Pass `retryPolicy` from team-spec or CLI flags
+- [x] Pass `retryPolicy` from team-spec or CLI flags
 - [ ] Verify worker lifecycle (spawn → run → snapshot → resume) works with hardened engine
 
 ### P5.4  Documentation

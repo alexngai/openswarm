@@ -46,6 +46,11 @@ import {
   isRetryableError,
   classifyProviderError,
 } from "./retry-policy.js";
+import { ToolScheduler } from "../tools/scheduler.js";
+import {
+  ToolAccesses,
+  type ToolAccesses as ToolAccessesType,
+} from "../tools/access.js";
 import type { ToolRequest } from "../tools/dispatcher.js";
 import type { ToolResult } from "../tools/types.js";
 
@@ -261,6 +266,11 @@ export class HardenedNativeEngine implements AgentEngine {
         (config.eagerToolDispatch ?? this.eagerToolDispatch) &&
         config.dispatcher !== undefined;
       const inFlight = new Map<string, Promise<ToolResult>>();
+      // ToolScheduler for eager path — serializes conflicting tools
+      // (maps to Codex handle_tool_call_with_source, parallel.rs:81-178).
+      const eagerScheduler = eagerDispatch
+        ? new ToolScheduler<ToolResult>()
+        : undefined;
 
       const request: ProviderRequest = {
         messages,
@@ -337,16 +347,41 @@ export class HardenedNativeEngine implements AgentEngine {
                       decision.updatedInput !== undefined
                         ? decision.updatedInput
                         : ev.input;
+                    const ctx = {
+                      cwd: process.cwd(),
+                      abort: config.abort,
+                    };
+
+                    // Compute accesses for ToolScheduler conflict detection.
+                    let accesses: ToolAccessesType = ToolAccesses.none();
+                    const toolImpl =
+                      typeof config.dispatcher!.get === "function"
+                        ? config.dispatcher!.get(ev.name)
+                        : undefined;
+                    if (toolImpl !== undefined) {
+                      if (toolImpl.accesses !== undefined) {
+                        try {
+                          accesses = toolImpl.accesses(dispatchInput, ctx);
+                        } catch {
+                          accesses = ToolAccesses.all();
+                        }
+                      } else if (toolImpl.spec.concurrencySafe === false) {
+                        accesses = ToolAccesses.all();
+                      }
+                    }
+
                     inFlight.set(
                       ev.id,
-                      config.dispatcher!.dispatch(
-                        ev.name,
-                        dispatchInput,
-                        {
-                          cwd: process.cwd(),
-                          abort: config.abort,
-                        },
-                      ),
+                      eagerScheduler!.add({
+                        accesses,
+                        start: async () => ({
+                          result: config.dispatcher!.dispatch(
+                            ev.name,
+                            dispatchInput,
+                            ctx,
+                          ),
+                        }),
+                      }),
                     );
                   } else {
                     inFlight.set(

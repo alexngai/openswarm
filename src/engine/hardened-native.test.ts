@@ -27,7 +27,11 @@ import type {
   ToolDispatcher,
   ToolRequest,
 } from "../tools/dispatcher.js";
-import type { ToolResult } from "../tools/types.js";
+import type { ToolImpl, ToolResult } from "../tools/types.js";
+import {
+  ToolAccesses,
+  type ToolAccesses as ToolAccessesType,
+} from "../tools/access.js";
 
 // ---------------------------------------------------------------------------
 // MockProvider — scripts ProviderEvents per stream() call.
@@ -116,6 +120,7 @@ interface MockDispatcherOpts {
   readonly dispatchThrows?: boolean;
   readonly executionTimestamps?: number[];
   readonly execDelayMs?: number;
+  readonly toolRegistry?: ReadonlyMap<string, ToolImpl>;
 }
 
 class MockDispatcher {
@@ -128,6 +133,10 @@ class MockDispatcher {
   private scriptIdx = 0;
 
   constructor(private readonly opts: MockDispatcherOpts = {}) {}
+
+  get(name: string): ToolImpl | undefined {
+    return this.opts.toolRegistry?.get(name);
+  }
 
   async dispatch(
     name: string,
@@ -889,6 +898,139 @@ describe("HardenedNativeEngine: mid-turn compaction", () => {
     );
     expect(midTurn).toHaveLength(0);
   });
+
+  // T3.4 — Boundary walk-back preserved during mid-turn compaction.
+  // After a tool turn, messages are [user("hi"), assistant(tool_use),
+  // user(tool_result)]. With preserveRecentMessages: 1, the boundary falls
+  // on the tool_result message, forcing walk-back to include the preceding
+  // assistant(tool_use).
+  it("T3.4: boundary walk-back preserved during mid-turn compaction", async () => {
+    const bigOutput = "y".repeat(5_000);
+    const provider = new MockProvider({
+      scripts: [
+        [
+          { type: "tool-call", id: "t1", name: "read", input: {} },
+          { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
+        ],
+        [
+          { type: "text-delta", text: "continued" },
+          { type: "finish", stopReason: "end_turn", usage: DEFAULT_USAGE },
+        ],
+      ],
+    });
+    const dispatcher = new MockDispatcher({
+      scriptedResults: [{ status: "ok", output: bigOutput }],
+    });
+
+    const engine = new HardenedNativeEngine({
+      provider,
+      midTurnCompaction: true,
+      compactionConfig: { preserveRecentMessages: 1, maxEstimatedTokens: 500 },
+    });
+    const events = await collect(
+      engine.run(
+        baseConfig({ dispatcher: dispatcher as unknown as ToolDispatcher }),
+      ),
+    );
+
+    // Mid-turn compaction should fire (big tool output exceeds threshold).
+    const midTurnEnd = events.find(
+      (e) =>
+        e.type === "compaction" &&
+        (e as { payload: { phase: string; compact_metadata?: { midTurn?: boolean } } })
+          .payload.compact_metadata?.midTurn === true &&
+        (e as { payload: { phase: string } }).payload.phase === "end",
+    );
+    expect(midTurnEnd).toBeDefined();
+
+    // The compaction result should report boundaryWalkedBack: true because
+    // the boundary fell on user(tool_result) and walked back to include
+    // the preceding assistant(tool_use).
+    const metadata = (midTurnEnd as {
+      payload: { compact_metadata: { boundaryWalkedBack: boolean } };
+    }).payload.compact_metadata;
+    expect(metadata.boundaryWalkedBack).toBe(true);
+
+    // Turn should continue after compaction.
+    expect(events.some((e) => e.type === "message_stop")).toBe(true);
+  });
+
+  // T3.6 — Pre-turn + mid-turn compaction in same turn (both fire).
+  it("T3.6: pre-turn and mid-turn compaction both fire in same turn", async () => {
+    const bigText = "x".repeat(2_000);
+    const bigOutput = "z".repeat(5_000);
+
+    // Seed with enough messages to trigger pre-turn compaction.
+    const preloaded: ProviderMessage[] = Array.from({ length: 6 }, (_, i) => ({
+      role: (i % 2 === 0 ? "user" : "assistant") as "user" | "assistant",
+      content: [{ type: "text", text: bigText }],
+    }));
+    const snap = makeHardenedSnapshot(
+      preloaded, 0, 0,
+      { inputTokens: 0, outputTokens: 0 },
+      { totalRetries: 0, retriesThisTurn: 0 },
+    );
+
+    const provider = new MockProvider({
+      scripts: [
+        // Turn 1: tool call. After pre-turn compaction, the tool result's
+        // big output pushes context above threshold again.
+        [
+          { type: "tool-call", id: "t1", name: "read", input: {} },
+          { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
+        ],
+        // Turn 2: final response.
+        [
+          { type: "text-delta", text: "done" },
+          { type: "finish", stopReason: "end_turn", usage: DEFAULT_USAGE },
+        ],
+      ],
+    });
+    const dispatcher = new MockDispatcher({
+      // First result consumed by post-compaction probe (dispatcher.dispatch("glob")),
+      // second consumed by the actual tool call (dispatchBatch).
+      scriptedResults: [
+        { status: "ok", output: "probe-ok" },
+        { status: "ok", output: bigOutput },
+      ],
+    });
+
+    const engine = new HardenedNativeEngine({
+      provider,
+      midTurnCompaction: true,
+      compactionConfig: { preserveRecentMessages: 2, maxEstimatedTokens: 500 },
+    });
+    const events = await collect(
+      engine.run(
+        baseConfig({
+          resumeFrom: snap,
+          dispatcher: dispatcher as unknown as ToolDispatcher,
+        }),
+      ),
+    );
+
+    // Find pre-turn compaction events (no midTurn metadata).
+    const preTurnCompactions = events.filter(
+      (e) =>
+        e.type === "compaction" &&
+        (e as { payload: { compact_metadata?: { midTurn?: boolean } } })
+          .payload.compact_metadata?.midTurn !== true,
+    );
+    // Find mid-turn compaction events.
+    const midTurnCompactions = events.filter(
+      (e) =>
+        e.type === "compaction" &&
+        (e as { payload: { compact_metadata?: { midTurn?: boolean } } })
+          .payload.compact_metadata?.midTurn === true,
+    );
+
+    // Both should have fired (begin+end pairs).
+    expect(preTurnCompactions.length).toBeGreaterThanOrEqual(2);
+    expect(midTurnCompactions.length).toBeGreaterThanOrEqual(2);
+
+    // Turn should complete.
+    expect(events.some((e) => e.type === "message_stop")).toBe(true);
+  });
 });
 
 // ===========================================================================
@@ -973,6 +1115,80 @@ describe("HardenedNativeEngine: eager tool dispatch", () => {
     // With eager dispatch, each tool is dispatched via dispatch() not
     // dispatchBatch(), so we check dispatchCalls.
     expect(dispatcher.dispatchCalls.length).toBe(3);
+  });
+
+  // T2.3 — Two conflicting tools (same file write): second waits for first.
+  it("T2.3: conflicting tools serialize via ToolScheduler", async () => {
+    const executionLog: Array<{ name: string; phase: "start" | "end"; time: number }> = [];
+    const provider = new MockProvider({
+      scripts: [
+        [
+          { type: "tool-call", id: "w1", name: "write", input: { path: "/tmp/f.txt", content: "a" } },
+          { type: "tool-call", id: "w2", name: "write", input: { path: "/tmp/f.txt", content: "b" } },
+          { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
+        ],
+        [{ type: "finish", stopReason: "end_turn", usage: DEFAULT_USAGE }],
+      ],
+    });
+
+    const writeToolImpl: ToolImpl = {
+      spec: {
+        name: "write",
+        description: "write file",
+        inputSchema: { type: "object" },
+        requiredPermission: "write",
+        tier: 0,
+      },
+      execute: async () => ({ status: "ok" as const, output: "written" }),
+      accesses: (input: unknown) => {
+        const p = (input as { path: string }).path;
+        return ToolAccesses.writeFile(p);
+      },
+    };
+    const toolRegistry = new Map<string, ToolImpl>([["write", writeToolImpl]]);
+
+    const dispatcher = new MockDispatcher({
+      execDelayMs: 80,
+      scriptedResults: [
+        { status: "ok", output: "written-a" },
+        { status: "ok", output: "written-b" },
+      ],
+      toolRegistry,
+    });
+
+    // Monkey-patch dispatch to log timing
+    const origDispatch = dispatcher.dispatch.bind(dispatcher);
+    dispatcher.dispatch = async (name: string, input: unknown, ctx: { cwd: string }) => {
+      const id = (input as { content: string }).content;
+      executionLog.push({ name: `write-${id}`, phase: "start", time: Date.now() });
+      const result = await origDispatch(name, input, ctx);
+      executionLog.push({ name: `write-${id}`, phase: "end", time: Date.now() });
+      return result;
+    };
+
+    const engine = new HardenedNativeEngine({
+      provider,
+      eagerToolDispatch: true,
+    });
+    const events = await collect(
+      engine.run(
+        baseConfig({ dispatcher: dispatcher as unknown as ToolDispatcher }),
+      ),
+    );
+
+    const results = events.filter((e) => e.type === "tool_result") as Array<
+      Extract<NormalizedEvent, { type: "tool_result" }>
+    >;
+    expect(results).toHaveLength(2);
+    expect(results[0]!.toolUseId).toBe("w1");
+    expect(results[1]!.toolUseId).toBe("w2");
+
+    // Verify serialization: second write starts after first write ends.
+    const w1End = executionLog.find((e) => e.name === "write-a" && e.phase === "end");
+    const w2Start = executionLog.find((e) => e.name === "write-b" && e.phase === "start");
+    expect(w1End).toBeDefined();
+    expect(w2Start).toBeDefined();
+    expect(w2Start!.time).toBeGreaterThanOrEqual(w1End!.time);
   });
 
   // T2.4 — Permission denied during streaming.

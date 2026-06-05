@@ -122,6 +122,10 @@ class MockDispatcher {
 
   constructor(private readonly opts: MockDispatcherOpts = {}) {}
 
+  get(_name: string): undefined {
+    return undefined;
+  }
+
   async dispatch(
     name: string,
     input: unknown,
