@@ -46,7 +46,7 @@ describe("default-system-prompt", () => {
       extensions: "EXT",
       roleSuffix: "ROLE",
     });
-    const baseIdx = result.indexOf("You are a coding assistant");
+    const baseIdx = result.indexOf("You are a coding agent");
     const cwdIdx = result.indexOf("Current working directory: /tmp");
     const extIdx = result.indexOf("EXT");
     const roleIdx = result.indexOf("ROLE");
@@ -73,10 +73,26 @@ describe("default-system-prompt", () => {
     expect(result).toContain(BASE_SYSTEM_PROMPT + "\n\nEXT\n\nROLE");
   });
 
-  it("base prompt contains key sections", () => {
-    expect(BASE_SYSTEM_PROMPT).toContain("# Guidelines");
-    expect(BASE_SYSTEM_PROMPT).toContain("# Safety");
-    expect(BASE_SYSTEM_PROMPT).toContain("# Tool use");
-    expect(BASE_SYSTEM_PROMPT).toContain("# Working directory");
+  it("base prompt contains key Codex-parity sections", () => {
+    expect(BASE_SYSTEM_PROMPT).toContain("## How you work");
+    expect(BASE_SYSTEM_PROMPT).toContain("### Personality");
+    expect(BASE_SYSTEM_PROMPT).toContain("### AGENTS.md spec");
+    expect(BASE_SYSTEM_PROMPT).toContain("### Responsiveness");
+    expect(BASE_SYSTEM_PROMPT).toContain("#### Task execution");
+    expect(BASE_SYSTEM_PROMPT).toContain("### Validating your work");
+    expect(BASE_SYSTEM_PROMPT).toContain("### Ambition vs. precision");
+    expect(BASE_SYSTEM_PROMPT).toContain("### Sharing progress updates");
+    expect(BASE_SYSTEM_PROMPT).toContain("### Presenting your work and final message");
+    expect(BASE_SYSTEM_PROMPT).toContain("#### Final answer structure and style guidelines");
+    expect(BASE_SYSTEM_PROMPT).toContain("## Tool guidelines");
+    expect(BASE_SYSTEM_PROMPT).toContain("## Safety");
+  });
+
+  it("does not contain Codex product references", () => {
+    const lower = BASE_SYSTEM_PROMPT.toLowerCase();
+    expect(lower).not.toContain("codex cli");
+    expect(lower).not.toContain("codex is");
+    expect(lower).not.toContain("apply_patch");
+    expect(lower).not.toContain("update_plan");
   });
 });
