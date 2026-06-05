@@ -47,6 +47,7 @@ import {
   classifyProviderError,
 } from "./retry-policy.js";
 import type { ToolRequest } from "../tools/dispatcher.js";
+import type { ToolResult } from "../tools/types.js";
 
 // ---------------------------------------------------------------------------
 // Internal buffers
@@ -254,6 +255,13 @@ export class HardenedNativeEngine implements AgentEngine {
       let streamErrored = false;
       let fatalError = false;
 
+      // Eager dispatch state — maps to Codex FuturesOrdered pattern
+      // (turn.rs:1830-2214). Map preserves insertion order (ES2015).
+      const eagerDispatch =
+        (config.eagerToolDispatch ?? this.eagerToolDispatch) &&
+        config.dispatcher !== undefined;
+      const inFlight = new Map<string, Promise<ToolResult>>();
+
       const request: ProviderRequest = {
         messages,
         tools: config.tools.map((t) => t.spec),
@@ -303,7 +311,7 @@ export class HardenedNativeEngine implements AgentEngine {
                 };
                 break;
 
-              case "tool-call":
+              case "tool-call": {
                 yield { type: "tool_use_end", id: ev.id };
                 assistantContent.push({
                   type: "tool_use",
@@ -316,7 +324,42 @@ export class HardenedNativeEngine implements AgentEngine {
                   name: ev.name,
                   input: ev.input,
                 });
+
+                // Eager dispatch — start tool execution during streaming.
+                // Maps to Codex handle_tool_call_with_source (parallel.rs:81-178).
+                if (eagerDispatch) {
+                  const decision = await config.canUseTool(
+                    ev.name,
+                    ev.input,
+                  );
+                  if (decision.allow) {
+                    const dispatchInput =
+                      decision.updatedInput !== undefined
+                        ? decision.updatedInput
+                        : ev.input;
+                    inFlight.set(
+                      ev.id,
+                      config.dispatcher!.dispatch(
+                        ev.name,
+                        dispatchInput,
+                        {
+                          cwd: process.cwd(),
+                          abort: config.abort,
+                        },
+                      ),
+                    );
+                  } else {
+                    inFlight.set(
+                      ev.id,
+                      Promise.resolve({
+                        status: "error" as const,
+                        message: decision.reason,
+                      }),
+                    );
+                  }
+                }
                 break;
+              }
 
               case "finish":
                 stopReason = ev.stopReason;
@@ -420,75 +463,105 @@ export class HardenedNativeEngine implements AgentEngine {
 
       messages.push({ role: "assistant", content: mergedContent });
 
-      // 3d. Tool dispatch.
+      // 3d. Tool dispatch — eager or batch path.
       if (toolUseBuffer.length > 0) {
-        const allowedRequests: ToolRequest[] = [];
-        const allowedIds: string[] = [];
-        const decisions = new Map<string, PermissionDecision>();
+        // Resolve all tool results into an ordered array for unified
+        // event emission below.
+        const resolvedResults: Array<{
+          id: string;
+          content: string;
+          isError: boolean;
+        }> = [];
 
-        for (const req of toolUseBuffer) {
-          const decision = await config.canUseTool(req.name, req.input);
-          decisions.set(req.id, decision);
-          if (decision.allow) {
-            allowedRequests.push({
-              name: req.name,
-              input:
-                decision.updatedInput !== undefined
-                  ? decision.updatedInput
-                  : req.input,
-              ctx: { cwd: process.cwd() },
+        if (
+          eagerDispatch &&
+          config.dispatcher !== undefined &&
+          inFlight.size > 0
+        ) {
+          // ── Eager path: drain in-flight promises ──
+          // Maps to Codex drain_in_flight (turn.rs:1739-1763).
+          // inFlight is insertion-ordered (ES2015 Map guarantee) so results
+          // are emitted in the order the model produced tool_use blocks,
+          // regardless of completion order.
+          for (const [id, promise] of inFlight) {
+            let r: ToolResult;
+            try {
+              r = await promise;
+            } catch {
+              r = { status: "error", message: "tool execution aborted" };
+            }
+            const content =
+              r.status === "ok" ? r.output : r.message;
+            resolvedResults.push({
+              id,
+              content,
+              isError: r.status !== "ok",
             });
-            allowedIds.push(req.id);
+          }
+        } else {
+          // ── Batch path: gate + dispatch after stream ──
+          const allowedRequests: ToolRequest[] = [];
+          const allowedIds: string[] = [];
+          const decisions = new Map<string, PermissionDecision>();
+
+          for (const req of toolUseBuffer) {
+            const decision = await config.canUseTool(req.name, req.input);
+            decisions.set(req.id, decision);
+            if (decision.allow) {
+              allowedRequests.push({
+                name: req.name,
+                input:
+                  decision.updatedInput !== undefined
+                    ? decision.updatedInput
+                    : req.input,
+                ctx: { cwd: process.cwd() },
+              });
+              allowedIds.push(req.id);
+            }
+          }
+
+          const batchResults =
+            allowedRequests.length > 0 && config.dispatcher !== undefined
+              ? await config.dispatcher.dispatchBatch(allowedRequests)
+              : [];
+
+          const resultById = new Map<string, (typeof batchResults)[number]>();
+          for (let i = 0; i < allowedIds.length; i++) {
+            const id = allowedIds[i]!;
+            const res = batchResults[i];
+            if (res !== undefined) resultById.set(id, res);
+          }
+
+          for (const req of toolUseBuffer) {
+            const decision = decisions.get(req.id)!;
+            if (!decision.allow) {
+              resolvedResults.push({
+                id: req.id,
+                content: decision.reason,
+                isError: true,
+              });
+              continue;
+            }
+            const r = resultById.get(req.id);
+            const content =
+              r !== undefined
+                ? r.status === "ok"
+                  ? r.output
+                  : r.message
+                : "tool failed";
+            resolvedResults.push({
+              id: req.id,
+              content,
+              isError: r === undefined || r.status !== "ok",
+            });
           }
         }
 
-        const results =
-          allowedRequests.length > 0 && config.dispatcher !== undefined
-            ? await config.dispatcher.dispatchBatch(allowedRequests)
-            : [];
-
-        const resultById = new Map<string, (typeof results)[number]>();
-        for (let i = 0; i < allowedIds.length; i++) {
-          const id = allowedIds[i]!;
-          const res = results[i];
-          if (res !== undefined) resultById.set(id, res);
-        }
-
-        for (const req of toolUseBuffer) {
-          const decision = decisions.get(req.id)!;
-          if (!decision.allow) {
-            yield {
-              type: "tool_result",
-              toolUseId: req.id,
-              content: decision.reason,
-              isError: true,
-            };
-            messages.push({
-              role: "user",
-              content: [
-                {
-                  type: "tool_result",
-                  tool_use_id: req.id,
-                  content: decision.reason,
-                  is_error: true,
-                },
-              ],
-            });
-            continue;
-          }
-
-          const r = resultById.get(req.id);
-          const content =
-            r !== undefined
-              ? r.status === "ok"
-                ? r.output
-                : r.message
-              : "tool failed";
-          const isError = r === undefined || r.status !== "ok";
-
+        // Emit tool_result events + append to messages (unified for both paths).
+        for (const { id, content, isError } of resolvedResults) {
           yield {
             type: "tool_result",
-            toolUseId: req.id,
+            toolUseId: id,
             content,
             isError,
           };
@@ -497,7 +570,7 @@ export class HardenedNativeEngine implements AgentEngine {
             content: [
               {
                 type: "tool_result",
-                tool_use_id: req.id,
+                tool_use_id: id,
                 content,
                 is_error: isError,
               },

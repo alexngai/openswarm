@@ -890,3 +890,305 @@ describe("HardenedNativeEngine: mid-turn compaction", () => {
     expect(midTurn).toHaveLength(0);
   });
 });
+
+// ===========================================================================
+// PHASE 2 — EAGER TOOL DISPATCH TESTS (T2.1-T2.8)
+// ===========================================================================
+
+describe("HardenedNativeEngine: eager tool dispatch", () => {
+  // T2.1 — Single tool call dispatched during streaming.
+  it("T2.1: single tool dispatched eagerly, result available at finish", async () => {
+    const provider = new MockProvider({
+      scripts: [
+        [
+          { type: "tool-input-start", id: "t1", name: "bash" },
+          { type: "tool-call", id: "t1", name: "bash", input: { cmd: "ls" } },
+          { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
+        ],
+        [
+          { type: "text-delta", text: "done" },
+          { type: "finish", stopReason: "end_turn", usage: DEFAULT_USAGE },
+        ],
+      ],
+    });
+    const dispatcher = new MockDispatcher({
+      scriptedResults: [{ status: "ok", output: "file.txt" }],
+    });
+
+    const engine = new HardenedNativeEngine({
+      provider,
+      eagerToolDispatch: true,
+    });
+    const events = await collect(
+      engine.run(
+        baseConfig({
+          dispatcher: dispatcher as unknown as ToolDispatcher,
+        }),
+      ),
+    );
+
+    const types = events.map((e) => e.type);
+    expect(types).toContain("tool_use_start");
+    expect(types).toContain("tool_use_end");
+    expect(types).toContain("tool_result");
+    expect(types).toContain("message_stop");
+
+    const toolResult = events.find((e) => e.type === "tool_result") as Extract<
+      NormalizedEvent,
+      { type: "tool_result" }
+    >;
+    expect(toolResult.content).toBe("file.txt");
+    expect(toolResult.isError).toBe(false);
+  });
+
+  // T2.2 — Three non-conflicting tools: all start during streaming.
+  it("T2.2: three tools dispatched eagerly", async () => {
+    const startTimes: number[] = [];
+    const provider = new MockProvider({
+      scripts: [
+        [
+          { type: "tool-call", id: "a", name: "read", input: { path: "a.ts" } },
+          { type: "tool-call", id: "b", name: "read", input: { path: "b.ts" } },
+          { type: "tool-call", id: "c", name: "read", input: { path: "c.ts" } },
+          { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
+        ],
+        [{ type: "finish", stopReason: "end_turn", usage: DEFAULT_USAGE }],
+      ],
+    });
+    const dispatcher = new MockDispatcher({
+      executionTimestamps: startTimes,
+      execDelayMs: 20,
+    });
+
+    const engine = new HardenedNativeEngine({
+      provider,
+      eagerToolDispatch: true,
+    });
+    await collect(
+      engine.run(
+        baseConfig({ dispatcher: dispatcher as unknown as ToolDispatcher }),
+      ),
+    );
+
+    // With eager dispatch, each tool is dispatched via dispatch() not
+    // dispatchBatch(), so we check dispatchCalls.
+    expect(dispatcher.dispatchCalls.length).toBe(3);
+  });
+
+  // T2.4 — Permission denied during streaming.
+  it("T2.4: permission denied yields error result in correct position", async () => {
+    const provider = new MockProvider({
+      scripts: [
+        [
+          { type: "tool-call", id: "t1", name: "bash", input: { cmd: "rm" } },
+          { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
+        ],
+        [
+          { type: "text-delta", text: "ok" },
+          { type: "finish", stopReason: "end_turn", usage: DEFAULT_USAGE },
+        ],
+      ],
+    });
+    const dispatcher = new MockDispatcher();
+
+    const engine = new HardenedNativeEngine({
+      provider,
+      eagerToolDispatch: true,
+    });
+    const events = await collect(
+      engine.run(
+        baseConfig({
+          dispatcher: dispatcher as unknown as ToolDispatcher,
+          canUseTool: async () => ({ allow: false, reason: "denied" }),
+        }),
+      ),
+    );
+
+    const toolResult = events.find((e) => e.type === "tool_result") as Extract<
+      NormalizedEvent,
+      { type: "tool_result" }
+    >;
+    expect(toolResult.isError).toBe(true);
+    expect(toolResult.content).toBe("denied");
+    // dispatch() should not have been called for this tool
+    expect(
+      dispatcher.dispatchCalls.filter((c) => c.name === "bash"),
+    ).toHaveLength(0);
+  });
+
+  // T2.5 — Abort during tool execution.
+  it("T2.5: abort during eager dispatch yields error result", async () => {
+    const ac = new AbortController();
+    const provider = new MockProvider({
+      scripts: [
+        [
+          { type: "tool-call", id: "t1", name: "slow", input: {} },
+          { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
+        ],
+      ],
+    });
+    // Dispatcher that takes a long time
+    const dispatcher = new MockDispatcher({ execDelayMs: 5000 });
+
+    const engine = new HardenedNativeEngine({
+      provider,
+      eagerToolDispatch: true,
+    });
+
+    // Abort shortly after streaming finishes
+    setTimeout(() => ac.abort(), 100);
+
+    const events = await collect(
+      engine.run(
+        baseConfig({
+          dispatcher: dispatcher as unknown as ToolDispatcher,
+          abort: ac.signal,
+        }),
+      ),
+    );
+
+    // Should exit without message_stop (aborted)
+    expect(events.some((e) => e.type === "message_stop")).toBe(false);
+  });
+
+  // T2.6 — Eager vs batch: same final event sequence.
+  it("T2.6: eager and batch produce same event types for same input", async () => {
+    const makeProvider = () =>
+      new MockProvider({
+        scripts: [
+          [
+            { type: "tool-call", id: "t1", name: "read", input: { p: "a" } },
+            { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
+          ],
+          [
+            { type: "text-delta", text: "done" },
+            { type: "finish", stopReason: "end_turn", usage: DEFAULT_USAGE },
+          ],
+        ],
+      });
+
+    const makeDispatcher = () =>
+      new MockDispatcher({
+        scriptedResults: [{ status: "ok", output: "content-a" }],
+      });
+
+    // Batch path
+    const batchEngine = new HardenedNativeEngine({
+      provider: makeProvider(),
+      eagerToolDispatch: false,
+    });
+    const batchEvents = await collect(
+      batchEngine.run(
+        baseConfig({
+          dispatcher: makeDispatcher() as unknown as ToolDispatcher,
+        }),
+      ),
+    );
+
+    // Eager path
+    const eagerEngine = new HardenedNativeEngine({
+      provider: makeProvider(),
+      eagerToolDispatch: true,
+    });
+    const eagerEvents = await collect(
+      eagerEngine.run(
+        baseConfig({
+          dispatcher: makeDispatcher() as unknown as ToolDispatcher,
+        }),
+      ),
+    );
+
+    // Event types should be identical
+    expect(eagerEvents.map((e) => e.type)).toEqual(
+      batchEvents.map((e) => e.type),
+    );
+
+    // tool_result content should be identical
+    const batchResult = batchEvents.find(
+      (e) => e.type === "tool_result",
+    ) as Extract<NormalizedEvent, { type: "tool_result" }>;
+    const eagerResult = eagerEvents.find(
+      (e) => e.type === "tool_result",
+    ) as Extract<NormalizedEvent, { type: "tool_result" }>;
+    expect(eagerResult.content).toBe(batchResult.content);
+    expect(eagerResult.isError).toBe(batchResult.isError);
+  });
+
+  // T2.7 — Tool result order matches tool_use emission order.
+  it("T2.7: results emitted in tool_use order, not completion order", async () => {
+    const provider = new MockProvider({
+      scripts: [
+        [
+          { type: "tool-call", id: "first", name: "slow", input: {} },
+          { type: "tool-call", id: "second", name: "fast", input: {} },
+          { type: "tool-call", id: "third", name: "medium", input: {} },
+          { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
+        ],
+        [{ type: "finish", stopReason: "end_turn", usage: DEFAULT_USAGE }],
+      ],
+    });
+    const dispatcher = new MockDispatcher({
+      scriptedResults: [
+        { status: "ok", output: "result-first" },
+        { status: "ok", output: "result-second" },
+        { status: "ok", output: "result-third" },
+      ],
+    });
+
+    const engine = new HardenedNativeEngine({
+      provider,
+      eagerToolDispatch: true,
+    });
+    const events = await collect(
+      engine.run(
+        baseConfig({ dispatcher: dispatcher as unknown as ToolDispatcher }),
+      ),
+    );
+
+    const results = events.filter((e) => e.type === "tool_result") as Array<
+      Extract<NormalizedEvent, { type: "tool_result" }>
+    >;
+    expect(results.map((r) => r.toolUseId)).toEqual([
+      "first",
+      "second",
+      "third",
+    ]);
+  });
+
+  // T2.8 — updatedInput from permission gate flows to dispatch.
+  it("T2.8: updatedInput from canUseTool flows to eager dispatch", async () => {
+    const provider = new MockProvider({
+      scripts: [
+        [
+          { type: "tool-call", id: "t1", name: "bash", input: { cmd: "rm" } },
+          { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
+        ],
+        [
+          { type: "text-delta", text: "ok" },
+          { type: "finish", stopReason: "end_turn", usage: DEFAULT_USAGE },
+        ],
+      ],
+    });
+    const dispatcher = new MockDispatcher();
+
+    const engine = new HardenedNativeEngine({
+      provider,
+      eagerToolDispatch: true,
+    });
+    await collect(
+      engine.run(
+        baseConfig({
+          dispatcher: dispatcher as unknown as ToolDispatcher,
+          canUseTool: async () => ({
+            allow: true,
+            updatedInput: { cmd: "ls" },
+          }),
+        }),
+      ),
+    );
+
+    const bashCall = dispatcher.dispatchCalls.find((c) => c.name === "bash");
+    expect(bashCall).toBeDefined();
+    expect(bashCall!.input).toEqual({ cmd: "ls" });
+  });
+});
