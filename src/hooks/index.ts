@@ -12,7 +12,8 @@ export type HookEvent =
   | "PostToolUse"
   | "SessionStart"
   | "SessionEnd"
-  | "UserPromptSubmit";
+  | "UserPromptSubmit"
+  | "Stop";
 
 /**
  * Hook config as declared by the user in .swarm-harness/hooks.json
@@ -38,6 +39,12 @@ export interface HookResult {
   readonly updatedInput?: ToolInput;
   /** System message to inject into the conversation. */
   readonly systemMessage?: string;
+  /**
+   * Context to inject into the model's conversation as a system message (H4).
+   * Unlike systemMessage (which is for display), this is injected into the
+   * actual message array so the model sees it.
+   */
+  readonly additionalContext?: string;
   /** Explicit permission override (takes precedence over decision when present). */
   readonly permissionDecision?: "allow" | "deny";
   /** Raw stdout from the hook command, for debugging. */
@@ -46,6 +53,18 @@ export interface HookResult {
   readonly stderr?: string;
   /** Error message when decision === "fail". */
   readonly error?: string;
+}
+
+/**
+ * Payload for Stop hooks (H6). Fired when the agent wants to end its turn.
+ * If the hook returns a non-zero exit (deny/fail), the engine forces continuation.
+ */
+export interface StopHookPayload {
+  readonly event: "Stop";
+  readonly stopReason: string;
+  readonly turnIndex: number;
+  readonly sessionId?: string;
+  readonly agentId?: string;
 }
 
 /**

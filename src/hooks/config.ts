@@ -64,6 +64,7 @@ export interface HooksConfigFile {
   readonly SessionStart?: readonly HookConfig[];
   readonly SessionEnd?: readonly HookConfig[];
   readonly UserPromptSubmit?: readonly HookConfig[];
+  readonly Stop?: readonly HookConfig[];
 }
 
 export interface LoadHooksConfigOptions {

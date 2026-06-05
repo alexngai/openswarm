@@ -15,6 +15,7 @@ import { globTool } from "./glob.js";
 import { grepTool } from "./grep.js";
 import { multiEditTool } from "./multi_edit.js";
 import { readFileTool } from "./read_file.js";
+import { requestPermissionsTool } from "./request_permissions.js";
 import { shellExecTool, shellWriteTool, shellListTool } from "./shell.js";
 import { todoWriteTool } from "./todo_write.js";
 import { writeFileTool } from "./write_file.js";
@@ -33,6 +34,7 @@ export function buildTier0Tools(): readonly ToolImpl[] {
     shellExecTool,
     shellWriteTool,
     shellListTool,
+    requestPermissionsTool,
   ] as const;
 }
 
@@ -44,6 +46,7 @@ export {
   grepTool,
   multiEditTool,
   readFileTool,
+  requestPermissionsTool,
   shellExecTool,
   shellListTool,
   shellWriteTool,

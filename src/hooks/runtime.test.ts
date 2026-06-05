@@ -12,6 +12,8 @@ const denyHook = path.join(FIXTURES, "deny-hook.sh");
 const failHook = path.join(FIXTURES, "fail-hook.sh");
 const mutateHook = path.join(FIXTURES, "mutate-hook.sh");
 const timeoutHook = path.join(FIXTURES, "timeout-hook.sh");
+const contextHook = path.join(FIXTURES, "context-hook.sh");
+const stopDenyHook = path.join(FIXTURES, "stop-deny-hook.sh");
 
 describe("HookRuntime.invoke — PreToolUse shell hooks", () => {
   it("allow-hook returns decision: allow", async () => {
@@ -235,5 +237,139 @@ describe("HookRuntime.invoke — empty / no-match paths", () => {
       toolResult: { status: "ok", output: "hi\n" },
     });
     expect(result.decision).toBe("allow");
+  });
+});
+
+describe("HookRuntime — H4: additionalContext injection", () => {
+  it("context-hook returns additionalContext in the result", async () => {
+    const rt = new HookRuntime({
+      PreToolUse: [{ matcher: "*", command: contextHook }],
+    });
+    const result = await rt.invoke("PreToolUse", {
+      event: "PreToolUse",
+      toolName: "bash",
+      toolInput: { command: "ls" },
+    });
+    expect(result.decision).toBe("allow");
+    expect(result.additionalContext).toBe("injected context from hook");
+  });
+
+  it("additionalContext is merged across chained allow hooks", async () => {
+    const rt = new HookRuntime({
+      PreToolUse: [
+        { matcher: "*", command: allowHook },
+        { matcher: "*", command: contextHook },
+      ],
+    });
+    const result = await rt.invoke("PreToolUse", {
+      event: "PreToolUse",
+      toolName: "bash",
+      toolInput: {},
+    });
+    expect(result.decision).toBe("allow");
+    expect(result.additionalContext).toBe("injected context from hook");
+  });
+
+  it("additionalContext from earlier hook survives if later hook omits it", async () => {
+    const rt = new HookRuntime({
+      PreToolUse: [
+        { matcher: "*", command: contextHook },
+        { matcher: "*", command: allowHook },
+      ],
+    });
+    const result = await rt.invoke("PreToolUse", {
+      event: "PreToolUse",
+      toolName: "bash",
+      toolInput: {},
+    });
+    expect(result.decision).toBe("allow");
+    expect(result.additionalContext).toBe("injected context from hook");
+  });
+
+  it("SDK callback forwards additionalContext in output", async () => {
+    const rt = new HookRuntime({
+      PreToolUse: [{ matcher: "*", command: contextHook }],
+    });
+    const sdk = rt.buildSdkHooks();
+    const callback = sdk.PreToolUse![0]!.hooks[0]!;
+    const out = (await callback(
+      {
+        hook_event_name: "PreToolUse",
+        session_id: "s",
+        transcript_path: "/tmp/x",
+        cwd: "/",
+        tool_name: "bash",
+        tool_input: {},
+        tool_use_id: "tu",
+      } as never,
+      "tu",
+      { signal: new AbortController().signal },
+    )) as { additionalContext?: string };
+    expect(out.additionalContext).toBe("injected context from hook");
+  });
+});
+
+describe("HookRuntime — H6: Stop hooks", () => {
+  it("Stop hook with allow lets the stop proceed", async () => {
+    const rt = new HookRuntime({
+      Stop: [{ matcher: "*", command: allowHook }],
+    });
+    const result = await rt.invokeStop({
+      stopReason: "end_turn",
+      turnIndex: 3,
+    });
+    expect(result.forceContinue).toBe(false);
+  });
+
+  it("Stop hook with deny forces continuation", async () => {
+    const rt = new HookRuntime({
+      Stop: [{ matcher: "*", command: stopDenyHook }],
+    });
+    const result = await rt.invokeStop({
+      stopReason: "end_turn",
+      turnIndex: 3,
+    });
+    expect(result.forceContinue).toBe(true);
+    expect(result.additionalContext).toBe("keep going");
+  });
+
+  it("Stop hook with fail also forces continuation", async () => {
+    const rt = new HookRuntime({
+      Stop: [{ matcher: "*", command: failHook }],
+    });
+    const result = await rt.invokeStop({
+      stopReason: "end_turn",
+      turnIndex: 1,
+    });
+    expect(result.forceContinue).toBe(true);
+  });
+
+  it("no Stop hooks means forceContinue: false", async () => {
+    const rt = new HookRuntime({});
+    const result = await rt.invokeStop({
+      stopReason: "end_turn",
+      turnIndex: 0,
+    });
+    expect(result.forceContinue).toBe(false);
+  });
+
+  it("Stop hooks appear in buildSdkHooks output", () => {
+    const rt = new HookRuntime({
+      Stop: [{ matcher: "*", command: allowHook }],
+    });
+    const sdk = rt.buildSdkHooks();
+    expect(sdk.Stop).toHaveLength(1);
+  });
+
+  it("Stop hook with additionalContext from allow propagates", async () => {
+    const rt = new HookRuntime({
+      Stop: [{ matcher: "*", command: contextHook }],
+    });
+    const result = await rt.invokeStop({
+      stopReason: "end_turn",
+      turnIndex: 5,
+    });
+    expect(result.forceContinue).toBe(false);
+    expect(result.additionalContext).toBe("injected context from hook");
   });
 });

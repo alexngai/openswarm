@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { headTailTruncate } from "./internal.js";
+import { getHardenedEnv } from "./process-hardening.js";
 
 const inputSchema = z.object({
   command: z.string(),
@@ -45,6 +46,7 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
       cwd,
       detached: true,
       stdio: "ignore",
+      env: getHardenedEnv(),
     });
     child.unref();
     return { status: "ok", output: `[backgroundTaskId: ${child.pid}]` };
@@ -57,6 +59,7 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
     const child = spawn("/bin/bash", ["-c", input.command], {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
+      env: getHardenedEnv(),
     });
 
     child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));

@@ -9,6 +9,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { headTailTruncate, type HeadTailOptions } from "./internal.js";
+import { getHardenedEnv } from "./process-hardening.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -111,7 +112,7 @@ export class ShellSessionManager {
     const child = spawn("/bin/bash", ["--norc", "--noprofile", "-i"], {
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, TERM: "dumb", PS1: "" },
+      env: { ...getHardenedEnv(), TERM: "dumb", PS1: "" },
     });
 
     const session: LiveSession = {
