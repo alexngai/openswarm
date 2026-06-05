@@ -1,5 +1,6 @@
 /**
- * Persistent shell sessions (F11) with interactive stdin (F12).
+ * Persistent shell sessions (F11) with interactive stdin (F12),
+ * state snapshots (F14), and lifecycle management (F15).
  *
  * Manages long-lived /bin/bash processes that survive across tool calls.
  * Each session is a PTY-like process with stdin/stdout/stderr pipes.
@@ -13,11 +14,22 @@ import { headTailTruncate, type HeadTailOptions } from "./internal.js";
 // Types
 // ---------------------------------------------------------------------------
 
+export interface ShellState {
+  readonly cwd: string;
+  readonly env: Readonly<Record<string, string>>;
+  readonly shellOpts: string;
+}
+
 export interface ShellSession {
   readonly id: string;
   readonly pid: number;
   readonly cwd: string;
   readonly startedAt: number;
+  readonly lastAccessedAt: number;
+  readonly totalStdoutBytes: number;
+  readonly totalStderrBytes: number;
+  readonly lastCommand: string | null;
+  readonly state: ShellState | null;
   exitCode: number | null;
   exited: boolean;
 }
@@ -32,6 +44,7 @@ export interface SessionOutput {
 export interface ShellSessionManagerOptions {
   readonly maxSessions?: number;
   readonly headTail?: HeadTailOptions;
+  readonly captureState?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -48,6 +61,10 @@ interface LiveSession {
   stderrChunks: Buffer[];
   stdoutCursor: number;
   stderrCursor: number;
+  totalStdoutBytes: number;
+  totalStderrBytes: number;
+  lastCommand: string | null;
+  state: ShellState | null;
   exitCode: number | null;
   exited: boolean;
 }
@@ -58,15 +75,29 @@ interface LiveSession {
 
 const DEFAULT_MAX_SESSIONS = 64;
 
+const STATE_PROBE_DELIMITER = "__SWARM_STATE_PROBE__";
+const STATE_PROBE_CMD =
+  `echo "${STATE_PROBE_DELIMITER}";` +
+  `echo "CWD=$(pwd)";` +
+  `echo "SHLVL=$SHLVL";` +
+  `echo "PATH=$PATH";` +
+  `echo "HOME=$HOME";` +
+  `echo "USER=$USER";` +
+  `echo "SHELL=$SHELL";` +
+  `echo "OPTS=$(set +o 2>/dev/null | tr '\\n' ';')";` +
+  `echo "${STATE_PROBE_DELIMITER}_END";\n`;
+
 export class ShellSessionManager {
   private readonly sessions = new Map<string, LiveSession>();
   private readonly maxSessions: number;
   private readonly headTailOpts: HeadTailOptions;
+  private readonly captureState: boolean;
   private nextId = 1;
 
   constructor(opts: ShellSessionManagerOptions = {}) {
     this.maxSessions = opts.maxSessions ?? DEFAULT_MAX_SESSIONS;
     this.headTailOpts = opts.headTail ?? {};
+    this.captureState = opts.captureState ?? true;
   }
 
   /**
@@ -93,16 +124,22 @@ export class ShellSessionManager {
       stderrChunks: [],
       stdoutCursor: 0,
       stderrCursor: 0,
+      totalStdoutBytes: 0,
+      totalStderrBytes: 0,
+      lastCommand: initialCommand ?? null,
+      state: null,
       exitCode: null,
       exited: false,
     };
 
     child.stdout!.on("data", (chunk: Buffer) => {
       session.stdoutChunks.push(chunk);
+      session.totalStdoutBytes += chunk.length;
     });
 
     child.stderr!.on("data", (chunk: Buffer) => {
       session.stderrChunks.push(chunk);
+      session.totalStderrBytes += chunk.length;
     });
 
     child.on("close", (code) => {
@@ -176,6 +213,111 @@ export class ShellSessionManager {
 
     const stdout = headTailTruncate(newStdout, this.headTailOpts);
     const stderr = headTailTruncate(newStderr, this.headTailOpts);
+
+    return {
+      stdout,
+      stderr,
+      exited: session.exited,
+      exitCode: session.exitCode,
+    };
+  }
+
+  /**
+   * Inject the state probe command into a session. Called after the user's
+   * command output has settled. The probe output will be captured on next
+   * readOutput and parsed by extractState().
+   */
+  injectStateProbe(sessionId: string): boolean {
+    if (!this.captureState) return false;
+    return this.writeStdin(sessionId, STATE_PROBE_CMD);
+  }
+
+  /**
+   * Parse state probe output from raw stdout. Returns the extracted state
+   * and the stdout with probe output stripped. If no probe output is found,
+   * returns null state and the original string.
+   */
+  extractState(stdout: string): { cleaned: string; state: ShellState | null } {
+    const startIdx = stdout.indexOf(STATE_PROBE_DELIMITER);
+    const endMarker = `${STATE_PROBE_DELIMITER}_END`;
+    const endIdx = stdout.indexOf(endMarker);
+
+    if (startIdx === -1 || endIdx === -1) {
+      return { cleaned: stdout, state: null };
+    }
+
+    const probeBlock = stdout.slice(startIdx, endIdx + endMarker.length);
+    const cleaned = (
+      stdout.slice(0, startIdx) + stdout.slice(endIdx + endMarker.length)
+    ).trim();
+
+    const env: Record<string, string> = {};
+    let cwd = "";
+    let shellOpts = "";
+
+    for (const line of probeBlock.split("\n")) {
+      const eq = line.indexOf("=");
+      if (eq === -1) continue;
+      const key = line.slice(0, eq).trim();
+      const val = line.slice(eq + 1).trim();
+
+      switch (key) {
+        case "CWD":
+          cwd = val;
+          break;
+        case "OPTS":
+          shellOpts = val;
+          break;
+        default:
+          if (key && val) env[key] = val;
+          break;
+      }
+    }
+
+    return {
+      cleaned,
+      state: { cwd: cwd || "/", env, shellOpts },
+    };
+  }
+
+  /**
+   * Update the session's stored state snapshot.
+   */
+  updateState(sessionId: string, state: ShellState): void {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      session.state = state;
+      if (state.cwd) session.cwd = state.cwd;
+    }
+  }
+
+  /**
+   * Update the last command for a session.
+   */
+  setLastCommand(sessionId: string, command: string): void {
+    const session = this.sessions.get(sessionId);
+    if (session) session.lastCommand = command;
+  }
+
+  /**
+   * Read ALL buffered output (ignoring cursor — reads from the beginning).
+   * Used for reattach: see everything the session has produced.
+   */
+  readAllOutput(sessionId: string): SessionOutput | null {
+    const session = this.sessions.get(sessionId);
+    if (!session) return null;
+
+    session.lastAccessedAt = Date.now();
+
+    const allStdout = Buffer.concat(session.stdoutChunks);
+    const allStderr = Buffer.concat(session.stderrChunks);
+
+    // Advance cursor past everything.
+    session.stdoutCursor = session.stdoutChunks.length;
+    session.stderrCursor = session.stderrChunks.length;
+
+    const stdout = headTailTruncate(allStdout, this.headTailOpts);
+    const stderr = headTailTruncate(allStderr, this.headTailOpts);
 
     return {
       stdout,
@@ -264,6 +406,11 @@ export class ShellSessionManager {
       pid: s.process.pid!,
       cwd: s.cwd,
       startedAt: s.startedAt,
+      lastAccessedAt: s.lastAccessedAt,
+      totalStdoutBytes: s.totalStdoutBytes,
+      totalStderrBytes: s.totalStderrBytes,
+      lastCommand: s.lastCommand,
+      state: s.state,
       exitCode: s.exitCode,
       exited: s.exited,
     };

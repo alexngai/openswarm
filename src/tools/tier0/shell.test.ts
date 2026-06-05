@@ -48,6 +48,40 @@ describe("shell_exec", () => {
     }
   });
 
+  it("captures shell state after command (F14)", async () => {
+    const result = await shellExecTool.execute(
+      { command: "cd /var && echo done" },
+      ctx(),
+    );
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.output).toContain("done");
+      // State probe should capture cwd change.
+      expect(result.output).toContain("[shell state]");
+      expect(result.output).toMatch(/cwd: \/var/);
+    }
+  });
+
+  it("shows state diff on subsequent commands (F14)", async () => {
+    const r1 = await shellExecTool.execute(
+      { command: "echo first" },
+      ctx(),
+    );
+    const sessionId = (r1 as { output: string }).output
+      .match(/\[session: (sh_\d+)\]/)![1]!;
+
+    const r2 = await shellExecTool.execute(
+      { command: "cd /var", session_id: sessionId },
+      ctx(),
+    );
+    expect(r2.status).toBe("ok");
+    if (r2.status === "ok") {
+      // Should show the cwd change.
+      expect(r2.output).toContain("[shell state]");
+      expect(r2.output).toMatch(/cwd: \/var/);
+    }
+  });
+
   it("returns error for nonexistent session", async () => {
     const result = await shellExecTool.execute(
       { command: "echo x", session_id: "sh_999" },
@@ -114,7 +148,7 @@ describe("shell_list", () => {
     resetSessionManager();
   });
 
-  it("lists all active sessions", async () => {
+  it("lists all active sessions with rich metadata (F15)", async () => {
     await shellExecTool.execute({ command: "echo a" }, ctx());
     await shellExecTool.execute({ command: "echo b" }, ctx());
 
@@ -124,6 +158,9 @@ describe("shell_list", () => {
       expect(result.output).toContain("sh_1");
       expect(result.output).toContain("sh_2");
       expect(result.output).toContain("pid=");
+      expect(result.output).toContain("idle=");
+      expect(result.output).toContain("output=");
+      expect(result.output).toContain('cmd="');
     }
   });
 
@@ -143,7 +180,7 @@ describe("shell_list", () => {
     }
   });
 
-  it("inspects a session", async () => {
+  it("inspects a session with state (F14/F15)", async () => {
     const r1 = await shellExecTool.execute(
       { command: "echo inspect-me" },
       ctx(),
@@ -160,12 +197,60 @@ describe("shell_list", () => {
       expect(result.output).toContain(`id: ${sessionId}`);
       expect(result.output).toContain("pid:");
       expect(result.output).toContain("cwd:");
+      expect(result.output).toContain("idle:");
+      expect(result.output).toContain("total_output:");
+      expect(result.output).toContain("last_command:");
+      // Should have shell state from the probe.
+      expect(result.output).toContain("shell state");
     }
   });
 
   it("inspect returns error without session_id", async () => {
     const result = await shellListTool.execute(
       { action: "inspect" },
+      ctx(),
+    );
+    expect(result.status).toBe("error");
+  });
+
+  it("reattaches and reads all buffered output (F15)", async () => {
+    const r1 = await shellExecTool.execute(
+      { command: "echo reattach-first" },
+      ctx(),
+    );
+    const sessionId = (r1 as { output: string }).output
+      .match(/\[session: (sh_\d+)\]/)![1]!;
+
+    // Run another command so there's more buffered output.
+    await shellExecTool.execute(
+      { command: "echo reattach-second", session_id: sessionId },
+      ctx(),
+    );
+
+    const result = await shellListTool.execute(
+      { action: "reattach", session_id: sessionId },
+      ctx(),
+    );
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.output).toContain("[reattach:");
+      // Should contain output from both commands since it reads from the beginning.
+      expect(result.output).toContain("reattach-first");
+      expect(result.output).toContain("reattach-second");
+    }
+  });
+
+  it("reattach returns error without session_id", async () => {
+    const result = await shellListTool.execute(
+      { action: "reattach" },
+      ctx(),
+    );
+    expect(result.status).toBe("error");
+  });
+
+  it("reattach returns error for nonexistent session", async () => {
+    const result = await shellListTool.execute(
+      { action: "reattach", session_id: "sh_999" },
       ctx(),
     );
     expect(result.status).toBe("error");
@@ -188,7 +273,6 @@ describe("shell_list", () => {
       expect(result.output).toContain("closed");
     }
 
-    // Verify it's gone.
     const list = await shellListTool.execute({ action: "list" }, ctx());
     if (list.status === "ok") {
       expect(list.output).toContain("No active sessions");
@@ -201,5 +285,30 @@ describe("shell_list", () => {
       ctx(),
     );
     expect(result.status).toBe("error");
+  });
+
+  it("close_all removes all sessions (F15)", async () => {
+    await shellExecTool.execute({ command: "echo a" }, ctx());
+    await shellExecTool.execute({ command: "echo b" }, ctx());
+    await shellExecTool.execute({ command: "echo c" }, ctx());
+
+    const result = await shellListTool.execute({ action: "close_all" }, ctx());
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.output).toContain("closed 3 session(s)");
+    }
+
+    const list = await shellListTool.execute({ action: "list" }, ctx());
+    if (list.status === "ok") {
+      expect(list.output).toContain("No active sessions");
+    }
+  });
+
+  it("close_all returns message when no sessions", async () => {
+    const result = await shellListTool.execute({ action: "close_all" }, ctx());
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.output).toContain("No sessions to close");
+    }
   });
 });
