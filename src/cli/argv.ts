@@ -26,7 +26,7 @@ import type { TopologyKind } from "../swarm/team-spec.js";
 // Public types
 // ---------------------------------------------------------------------------
 
-export type FrameworkChoice = "native" | "claude-agent-sdk" | "codex-chatgpt" | "auto";
+export type FrameworkChoice = "native" | "hardened-native" | "claude-agent-sdk" | "codex-chatgpt" | "auto";
 
 export interface CommonOpts {
   model?: string;
@@ -390,10 +390,10 @@ export function parseArgv(args: string[]): ParsedArgs {
           showHelp: true,
         };
       }
-      if (val !== "native" && val !== "claude-agent-sdk" && val !== "codex-chatgpt" && val !== "auto") {
+      if (val !== "native" && val !== "hardened-native" && val !== "claude-agent-sdk" && val !== "codex-chatgpt" && val !== "auto") {
         return {
           kind: "error",
-          message: `invalid --framework "${val}". Valid values: native, claude-agent-sdk, codex-chatgpt, auto`,
+          message: `invalid --framework "${val}". Valid values: native, hardened-native, claude-agent-sdk, codex-chatgpt, auto`,
           showHelp: true,
         };
       }

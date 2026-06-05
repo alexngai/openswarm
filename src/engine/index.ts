@@ -38,6 +38,7 @@ import type {
 import type { ToolImpl } from "../tools/types.js";
 import type { ToolDispatcher } from "../tools/dispatcher.js";
 import type { HooksConfigFile } from "../hooks/config.js";
+import type { RetryPolicy } from "./retry-policy.js";
 import type { ToolSpec } from "../core/types.js";
 
 // ---------------------------------------------------------------------------
@@ -121,6 +122,10 @@ export interface EngineCapabilities {
   readonly resume: boolean;
   readonly maxContextTokens: number;
   readonly maxOutputTokens: number;
+  /** Engine supports retry on transient stream errors. */
+  readonly retry?: boolean;
+  /** Engine dispatches tools eagerly during streaming. */
+  readonly eagerToolDispatch?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -216,6 +221,17 @@ export interface RunConfig {
    * Role-driven tool filtering writes to this field (M3a Phase 6).
    */
   readonly allowedTools?: readonly string[];
+
+  /** Retry policy for provider stream errors. When absent, no retry. */
+  readonly retryPolicy?: RetryPolicy;
+
+  /** When true, tool calls are dispatched during streaming (eager).
+   *  When false, dispatched after stream completes (batch). Default: false. */
+  readonly eagerToolDispatch?: boolean;
+
+  /** When true, compaction is checked after tool results mid-turn.
+   *  Default: false (pre-turn compaction only). */
+  readonly midTurnCompaction?: boolean;
 }
 
 // ---------------------------------------------------------------------------

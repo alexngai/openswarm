@@ -193,4 +193,16 @@ export type NormalizedEvent =
         readonly tokens: number;
         readonly fingerprint?: string;
       };
+    }
+  /**
+   * Emitted by HardenedNativeEngine when a retryable stream error occurs and
+   * the engine will retry after a backoff delay. Maps to Codex's
+   * `handle_retryable_response_stream_error` (responses_retry.rs:22-79).
+   */
+  | {
+      readonly type: "retry";
+      readonly attempt: number;
+      readonly maxRetries: number;
+      readonly error: ProviderError;
+      readonly delayMs: number;
     };
