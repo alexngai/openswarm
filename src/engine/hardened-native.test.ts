@@ -46,6 +46,8 @@ interface MockProviderOpts {
   readonly delayMs?: number;
   /** When set, throw on these stream() call indices instead of yielding script. */
   readonly throwOnCalls?: ReadonlyMap<number, Error>;
+  /** When set, throw AFTER yielding all events for these stream() call indices. */
+  readonly throwAfterScript?: ReadonlyMap<number, Error>;
 }
 
 class MockProvider implements Provider {
@@ -57,6 +59,7 @@ class MockProvider implements Provider {
   private readonly onRequest?: (req: ProviderRequest) => void;
   private readonly delayMs: number;
   private readonly throwOnCalls: ReadonlyMap<number, Error>;
+  private readonly throwAfterScript: ReadonlyMap<number, Error>;
   private streamIdx = 0;
 
   constructor(opts: MockProviderOpts) {
@@ -64,6 +67,7 @@ class MockProvider implements Provider {
     if (opts.onRequest !== undefined) this.onRequest = opts.onRequest;
     this.delayMs = opts.delayMs ?? 0;
     this.throwOnCalls = opts.throwOnCalls ?? new Map();
+    this.throwAfterScript = opts.throwAfterScript ?? new Map();
     this.capabilities = {
       streaming: true,
       promptCache: false,
@@ -107,6 +111,11 @@ class MockProvider implements Provider {
         await new Promise((r) => setTimeout(r, this.delayMs));
       }
       yield ev;
+    }
+
+    const throwAfter = this.throwAfterScript.get(callIdx);
+    if (throwAfter !== undefined) {
+      throw throwAfter;
     }
   }
 }
@@ -812,6 +821,205 @@ describe("HardenedNativeEngine: retry", () => {
     expect(retryEvent.delayMs).toBe(50);
     expect(retryEvent.error.code).toBe("transport");
     expect(retryEvent.error.message).toBe("conn refused");
+  });
+  // T1.8 — Eager dispatch state cleared on retry: stale promises not drained.
+  it("T1.8: eager dispatch inFlight reset on retry prevents stale results", async () => {
+    const throwAfterMap = new Map<number, Error>();
+    throwAfterMap.set(0, new Error("stream error after tool dispatch"));
+    const provider = new MockProvider({
+      scripts: [
+        // Attempt 0: dispatches tool eagerly, then provider throws AFTER events.
+        [
+          { type: "tool-call", id: "t1", name: "read", input: { path: "a" } },
+        ],
+        // Attempt 1: fresh stream, same tool, succeeds.
+        [
+          { type: "tool-call", id: "t1", name: "read", input: { path: "a" } },
+          { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
+        ],
+        [
+          { type: "text-delta", text: "done" },
+          { type: "finish", stopReason: "end_turn", usage: DEFAULT_USAGE },
+        ],
+      ],
+      throwAfterScript: throwAfterMap,
+    });
+
+    let callCount = 0;
+    const dispatcher = new MockDispatcher({
+      scriptedResults: [
+        { status: "ok", output: "stale-result" },  // attempt 0 (should be discarded)
+        { status: "ok", output: "fresh-result" },  // attempt 1 (should be used)
+      ],
+    });
+
+    const engine = new HardenedNativeEngine({
+      provider,
+      eagerToolDispatch: true,
+      retryPolicy: { maxRetries: 3, backoffBaseMs: 10 },
+    });
+    const events = await collect(
+      engine.run(
+        baseConfig({ dispatcher: dispatcher as unknown as ToolDispatcher }),
+      ),
+    );
+
+    // Verify the tool result uses the fresh result, not the stale one.
+    const results = events.filter((e) => e.type === "tool_result") as Array<
+      Extract<NormalizedEvent, { type: "tool_result" }>
+    >;
+    expect(results).toHaveLength(1);
+    expect(results[0]!.content).toBe("fresh-result");
+    expect(events.some((e) => e.type === "message_stop")).toBe(true);
+  });
+
+  // T1.9 — Context overflow recovery via emergency compaction (thrown).
+  it("T1.9: thrown context_overflow triggers compaction + retry", async () => {
+    // Seed with enough history to allow compaction (>preserveRecentMessages).
+    // Use high maxEstimatedTokens so pre-turn compaction doesn't fire —
+    // only the emergency compaction path (maxEstimatedTokens: 0) triggers.
+    const preloaded: ProviderMessage[] = Array.from({ length: 6 }, (_, i) => ({
+      role: (i % 2 === 0 ? "user" : "assistant") as "user" | "assistant",
+      content: [{ type: "text", text: `message-${i}` }],
+    }));
+    const snap = makeHardenedSnapshot(
+      preloaded, 0, 0,
+      { inputTokens: 0, outputTokens: 0 },
+      { totalRetries: 0, retriesThisTurn: 0 },
+    );
+
+    const ctxOverflow = Object.assign(new Error("context too long"), {
+      code: "context_overflow",
+      retryable: false,
+    });
+    const throwMap = new Map<number, Error>();
+    throwMap.set(0, ctxOverflow);
+    const provider = new MockProvider({
+      scripts: [
+        [],
+        [
+          { type: "text-delta", text: "recovered" },
+          { type: "finish", stopReason: "end_turn", usage: DEFAULT_USAGE },
+        ],
+      ],
+      throwOnCalls: throwMap,
+    });
+
+    const engine = new HardenedNativeEngine({
+      provider,
+      retryPolicy: { maxRetries: 3, backoffBaseMs: 10 },
+      compactionConfig: { preserveRecentMessages: 2, maxEstimatedTokens: 999_999 },
+    });
+    const events = await collect(
+      engine.run(baseConfig({ resumeFrom: snap })),
+    );
+
+    // Should have compaction events with contextOverflowRecovery metadata.
+    const compaction = events.filter((e) => e.type === "compaction");
+    expect(compaction.length).toBeGreaterThanOrEqual(2);
+    const recoveryCompaction = compaction.find(
+      (e) =>
+        (e as { payload: { compact_metadata?: { contextOverflowRecovery?: boolean } } })
+          .payload.compact_metadata?.contextOverflowRecovery === true,
+    );
+    expect(recoveryCompaction).toBeDefined();
+
+    // Should have a retry event.
+    const retryEvents = events.filter((e) => e.type === "retry");
+    expect(retryEvents.length).toBeGreaterThanOrEqual(1);
+
+    // Should complete successfully.
+    expect(events.some((e) => e.type === "message_stop")).toBe(true);
+  });
+
+  // T1.10 — In-stream context_overflow triggers compaction + retry.
+  it("T1.10: in-stream context_overflow triggers compaction + retry", async () => {
+    // Same setup as T1.9 but error comes in-stream rather than thrown.
+    const preloaded: ProviderMessage[] = Array.from({ length: 6 }, (_, i) => ({
+      role: (i % 2 === 0 ? "user" : "assistant") as "user" | "assistant",
+      content: [{ type: "text", text: `message-${i}` }],
+    }));
+    const snap = makeHardenedSnapshot(
+      preloaded, 0, 0,
+      { inputTokens: 0, outputTokens: 0 },
+      { totalRetries: 0, retriesThisTurn: 0 },
+    );
+
+    const provider = new MockProvider({
+      scripts: [
+        // Attempt 0: in-stream context_overflow error.
+        [
+          {
+            type: "error",
+            code: "context_overflow",
+            message: "context too long",
+            retryable: false,
+          },
+        ],
+        // Attempt 1: success after compaction.
+        [
+          { type: "text-delta", text: "recovered" },
+          { type: "finish", stopReason: "end_turn", usage: DEFAULT_USAGE },
+        ],
+      ],
+    });
+
+    const engine = new HardenedNativeEngine({
+      provider,
+      retryPolicy: { maxRetries: 3, backoffBaseMs: 10 },
+      compactionConfig: { preserveRecentMessages: 2, maxEstimatedTokens: 999_999 },
+    });
+    const events = await collect(
+      engine.run(baseConfig({ resumeFrom: snap })),
+    );
+
+    // Context overflow error should NOT appear in events (deferred + recovered).
+    const errorEvents = events.filter(
+      (e) =>
+        e.type === "error" &&
+        (e as { error: { code: string } }).error.code === "context_overflow",
+    );
+    expect(errorEvents).toHaveLength(0);
+
+    // Should have compaction + retry events.
+    const compaction = events.filter((e) => e.type === "compaction");
+    expect(compaction.length).toBeGreaterThanOrEqual(2);
+    const retryEvents = events.filter((e) => e.type === "retry");
+    expect(retryEvents.length).toBeGreaterThanOrEqual(1);
+
+    // Should complete successfully.
+    expect(events.some((e) => e.type === "message_stop")).toBe(true);
+  });
+
+  // T1.11 — Context overflow without compactable context → fatal.
+  it("T1.11: context_overflow without compactable context fails immediately", async () => {
+    const err = Object.assign(new Error("context too long"), {
+      code: "context_overflow",
+      retryable: false,
+    });
+    const throwMap = new Map<number, Error>();
+    throwMap.set(0, err);
+    const provider = new MockProvider({
+      scripts: [[]],
+      throwOnCalls: throwMap,
+    });
+
+    const engine = new HardenedNativeEngine({
+      provider,
+      retryPolicy: { maxRetries: 3, backoffBaseMs: 10 },
+      // Very high threshold so shouldCompact returns false.
+      compactionConfig: { preserveRecentMessages: 2, maxEstimatedTokens: 999_999 },
+    });
+    const events = await collect(engine.run(baseConfig()));
+
+    // Should fail immediately with context_overflow error.
+    expect(events.filter((e) => e.type === "retry")).toHaveLength(0);
+    expect(events.some((e) => e.type === "error")).toBe(true);
+    const errEvent = events.find((e) => e.type === "error") as Extract<
+      NormalizedEvent,
+      { type: "error" }
+    >;
+    expect(errEvent.error.code).toBe("context_overflow");
   });
 });
 

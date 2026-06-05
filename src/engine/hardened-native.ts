@@ -21,6 +21,7 @@ import type {
 } from "../providers/index.js";
 import type {
   NormalizedEvent,
+  ProviderError,
   StopReason,
   Usage,
 } from "../core/types.js";
@@ -265,14 +266,16 @@ export class HardenedNativeEngine implements AgentEngine {
       const eagerDispatch =
         (config.eagerToolDispatch ?? this.eagerToolDispatch) &&
         config.dispatcher !== undefined;
-      const inFlight = new Map<string, Promise<ToolResult>>();
+      let inFlight = new Map<string, Promise<ToolResult>>();
       // ToolScheduler for eager path — serializes conflicting tools
       // (maps to Codex handle_tool_call_with_source, parallel.rs:81-178).
-      const eagerScheduler = eagerDispatch
+      // Recreated per retry attempt so stale active-task state doesn't
+      // block new tool calls.
+      let eagerScheduler = eagerDispatch
         ? new ToolScheduler<ToolResult>()
         : undefined;
 
-      const request: ProviderRequest = {
+      const buildRequest = (): ProviderRequest => ({
         messages,
         tools: config.tools.map((t) => t.spec),
         systemPrompt: config.systemPrompt,
@@ -282,7 +285,7 @@ export class HardenedNativeEngine implements AgentEngine {
           ? { maxOutputTokens: config.maxOutputTokens }
           : {}),
         ...(this.sessionId !== undefined ? { sessionId: this.sessionId } : {}),
-      };
+      });
 
       // Retry loop — maps to Codex streamWithRetry
       for (
@@ -291,13 +294,20 @@ export class HardenedNativeEngine implements AgentEngine {
         attempt++
       ) {
         streamErrored = false;
+        let deferredStreamError: ProviderError | undefined;
         toolUseBuffer.length = 0;
         assistantContent.length = 0;
         turnUsage = { inputTokens: 0, outputTokens: 0 };
         stopReason = "end_turn";
+        // Reset eager dispatch state so stale promises from a failed
+        // attempt are not drained after a successful retry.
+        inFlight = new Map<string, Promise<ToolResult>>();
+        if (eagerDispatch) {
+          eagerScheduler = new ToolScheduler<ToolResult>();
+        }
 
         try {
-          for await (const ev of this.provider.stream(request)) {
+          for await (const ev of this.provider.stream(buildRequest())) {
             if (config.abort !== undefined && config.abort.aborted) return;
 
             switch (ev.type) {
@@ -416,7 +426,12 @@ export class HardenedNativeEngine implements AgentEngine {
                   message: ev.message,
                   retryable: ev.retryable,
                 };
-                yield { type: "error", error: providerError };
+                // Defer context_overflow errors — recovery via compaction
+                // is attempted after the stream ends.
+                if (providerError.code !== "context_overflow") {
+                  yield { type: "error", error: providerError };
+                }
+                deferredStreamError = providerError;
                 streamErrored = true;
                 break;
               }
@@ -428,13 +443,113 @@ export class HardenedNativeEngine implements AgentEngine {
           // Stream completed without throw — break retry loop.
           if (!streamErrored) break;
 
-          // In-stream error events are not retried (provider signaled the
-          // error through the event protocol, not a thrown exception).
+          // In-stream context_overflow recovery — same path as thrown
+          // context_overflow (compact + retry without backoff).
+          // Emergency config ignores token threshold — the server has
+          // already told us the context is too large.
+          if (
+            deferredStreamError !== undefined &&
+            deferredStreamError.code === "context_overflow"
+          ) {
+            const emergencyConfig = {
+              ...this.compactionConfig,
+              maxEstimatedTokens: 0,
+            };
+            if (shouldCompact({ messages }, emergencyConfig)) {
+              yield {
+                type: "compaction",
+                payload: {
+                  phase: "begin",
+                  trigger: "auto" as const,
+                  compact_metadata: { contextOverflowRecovery: true },
+                },
+              };
+              const compResult = compactSession(
+                { messages },
+                emergencyConfig,
+              );
+              messages = compResult.compactedSession.messages.slice();
+              yield {
+                type: "compaction",
+                payload: {
+                  phase: "end",
+                  trigger: "auto" as const,
+                  compact_metadata: {
+                    contextOverflowRecovery: true,
+                    removedMessageCount: compResult.removedMessageCount,
+                    boundaryWalkedBack: compResult.boundaryWalkedBack,
+                  },
+                },
+              };
+              compactionCount++;
+              this.retryStats.totalRetries++;
+              this.retryStats.retriesThisTurn++;
+              yield {
+                type: "retry",
+                attempt: attempt + 1,
+                maxRetries: retryPolicy.maxRetries,
+                error: deferredStreamError,
+                delayMs: 0,
+              };
+              continue;
+            }
+            // Can't compact — yield deferred error.
+            yield { type: "error", error: deferredStreamError };
+          }
+
           fatalError = true;
           break;
         } catch (err) {
           const providerError = classifyProviderError(err);
           const classifier = retryPolicy.isRetryable ?? isRetryableError;
+
+          // Context overflow recovery — maps to Codex's emergency
+          // compaction path (turn.rs:862-917). Compact and retry once
+          // without backoff instead of failing immediately.
+          // Emergency config ignores token threshold — the server has
+          // already told us the context is too large.
+          if (providerError.code === "context_overflow") {
+            const emergencyConfig = { ...this.compactionConfig, maxEstimatedTokens: 0 };
+            if (shouldCompact({ messages }, emergencyConfig)) {
+              yield {
+                type: "compaction",
+                payload: {
+                  phase: "begin",
+                  trigger: "auto" as const,
+                  compact_metadata: { contextOverflowRecovery: true },
+                },
+              };
+              const result = compactSession(
+                { messages },
+                emergencyConfig,
+              );
+              messages = result.compactedSession.messages.slice();
+              yield {
+                type: "compaction",
+                payload: {
+                  phase: "end",
+                  trigger: "auto" as const,
+                  compact_metadata: {
+                    contextOverflowRecovery: true,
+                    removedMessageCount: result.removedMessageCount,
+                    boundaryWalkedBack: result.boundaryWalkedBack,
+                  },
+                },
+              };
+              compactionCount++;
+              this.retryStats.totalRetries++;
+              this.retryStats.retriesThisTurn++;
+              yield {
+                type: "retry",
+                attempt: attempt + 1,
+                maxRetries: retryPolicy.maxRetries,
+                error: providerError,
+                delayMs: 0,
+              };
+              continue;
+            }
+            // Can't compact — fall through to fatal error.
+          }
 
           if (!classifier(providerError) || attempt >= retryPolicy.maxRetries) {
             yield {
