@@ -82,13 +82,18 @@ rule system.
 | F1 | **apply_patch tool (unified diff editing)** | 🟦 | — | — | Codex: `core/src/apply_patch.rs`. Unified diff format with add/delete/update/move. swarm-harness: edit_file with exact-string replacement + multi_edit for atomic batches. Different approach; swarm's is arguably safer (no ambiguous hunks). |
 | F2 | **View image tool** | ❌ | P3 | S | Codex: `core/src/tools/handlers/view_image.rs`. Dedicated tool for agent to view/analyze images. swarm-harness: provider-level vision (imageIn capability) but no agent-facing tool. |
 | F3 | **Tool search (dynamic tool discovery)** | ❌ | P3 | S | Codex: `core/src/tools/handlers/tool_search.rs`. Agent can search for available tools. swarm-harness: tools are statically declared per run. |
-| F4 | **Code mode (execute/wait lifecycle)** | ❌ | P3 | L | Codex: `core/src/tools/code_mode/`. Specialized code execution with execute/wait. swarm-harness: bash tool only. |
+| F4 | **Code mode (sandboxed V8 tool orchestration)** | ❌ | P3 | L | Codex: `core/src/tools/code_mode/`. Sandboxed V8 JavaScript runtime exposed as `exec`/`wait` tools. Model writes JS that calls other tools via `await tools.some_tool(args)`. NOT for running user code — meta-tool for tool orchestration. Execute/yield/wait lifecycle with background execution. swarm-harness: no equivalent; multi-agent orchestration fills a similar niche differently. |
 | F5 | **Request permissions tool** | ❌ | P2 | S | Codex: `core/src/tools/handlers/request_permissions.rs`. Agent can request elevated permissions mid-session. swarm-harness: permission mode is fixed for the session. |
 | F6 | **Request user input tool** | ✅ | — | — | Codex: `core/src/tools/handlers/request_user_input.rs`. swarm-harness: `ask_user_question` (Tier 2). Parity. |
 | F7 | **Multi-agent v2 (spawn/send/wait/close/followup)** | 🟦 | — | — | Codex: `core/src/tools/handlers/multi_agents_v2/`. swarm-harness: richer model with task queue, pull protocol, topologies, team daemon. swarm-harness leads. |
 | F8 | **Mention syntax (@plugin, @tool)** | ❌ | P3 | S | Codex: `core/src/mention_syntax.rs`. Text-level references to plugins/tools. swarm-harness: no equivalent. |
-| F9 | **File watcher** | ❌ | P3 | M | Codex: `file-watcher/`. Watches filesystem for changes. swarm-harness: none. |
+| F9 | **File watcher (skills hot-reload)** | ❌ | P3 | M | Codex: `file-watcher/`. Uses `notify` crate (inotify/FSEvents). NOT in agent loop — serves UI via `fs/watch` JSON-RPC + skills hot-reload. Multi-subscriber ref-counted model with RAII cleanup. swarm-harness: no filesystem change notification; skills are static per session. |
 | F10 | **Web search (multi-action)** | ⚠️ | P3 | M | Codex: `web-search/`. 4 action types (Search, OpenPage, FindInPage, Other). swarm-harness: web_search is a placeholder (intercepted by SDK); web_fetch works. |
+| F11 | **Persistent shell sessions (unified_exec)** | ❌ | P1 | L | Codex: `core/src/unified_exec.rs`. Persistent PTY sessions that survive across tool calls. `exec_command` spawns or reuses a shell; `write_stdin` sends input to running processes. Process persists until explicit close or LRU eviction. Up to 64 concurrent processes. swarm-harness: fire-and-forget bash with 30s timeout — no session persistence, no stdin interaction, no process reuse. |
+| F12 | **Interactive stdin / process polling** | ❌ | P1 | M | Codex: `write_stdin` tool sends keystrokes/input to running processes. Agent can poll for output, send Ctrl-C, interact with REPLs, debuggers, and long-running servers. swarm-harness: bash tool has no stdin support; background mode returns immediately with no interaction channel. |
+| F13 | **HeadTailBuffer (smart output truncation)** | ❌ | P1 | S | Codex: `core/src/headtailbuffer.rs`. Preserves first N + last N bytes of long command output (configurable, default ~20KB each). Agent sees beginning (errors, headers) and end (final status, results) without losing context. swarm-harness: hard 16 KiB stdout/stderr cap with simple truncation — loses either beginning or end. |
+| F14 | **Shell state snapshots** | ❌ | P2 | M | Codex: captures `env`, `pwd`, `set -o` after each command. Injects shell state into context so model tracks cwd changes, env mutations, and shell option toggles across commands. swarm-harness: no state tracking between bash invocations; each invocation is stateless. |
+| F15 | **Process lifecycle management** | ❌ | P2 | M | Codex: `list_processes` shows all active sessions with PID, status, runtime. Agent can inspect, kill, or reattach. LRU eviction with configurable max (64). swarm-harness: no process inventory; background bash PIDs are opaque and unmanaged. |
 
 ---
 
@@ -96,7 +101,10 @@ rule system.
 
 | # | Gap | Status | Priority | Effort | Notes |
 |---|---|---|---|---|---|
-| H1 | **Extended hook events** | ⚠️ | P2 | M | Codex: 10 events (SessionStart, UserPromptSubmit, PreToolUse, PermissionRequest, PostToolUse, Stop, SubagentStart, SubagentStop, PreCompact, PostCompact). swarm-harness: 5 events (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, SessionEnd). Missing: PermissionRequest, SubagentStart/Stop, PreCompact/PostCompact. |
+| H1 | **Extended hook events (10 vs 5)** | ⚠️ | P2 | M | Codex: 10 events — SessionStart, UserPromptSubmit, PreToolUse, PermissionRequest, PostToolUse, Stop, SubagentStart, SubagentStop, PreCompact, PostCompact. swarm-harness: 5 events — SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, SessionEnd. **Missing events:** (1) `PermissionRequest` — fires before user approval prompt, hooks can auto-approve/deny; (2) `Stop` — fires when agent wants to end turn, hook can force continuation; (3) `SubagentStart`/`SubagentStop` — track spawned sub-agents; (4) `PreCompact`/`PostCompact` — inject context before/after summarization. |
+| H4 | **Hook context injection (additionalContext)** | ❌ | P2 | S | Codex: hook output can include `additionalContext` field that gets injected as a system message into the conversation. swarm-harness: hooks return stdout/stderr but cannot inject context into the model's conversation. |
+| H5 | **Hook trust model (hash verification)** | ❌ | P3 | M | Codex: TOML hook config with content-hash verification. Hooks must be explicitly trusted per-hash before execution. Plugin-provided hooks supported. swarm-harness: JSON hook config with no trust/hash verification; hooks execute unconditionally if configured. |
+| H6 | **Stop hook (force continuation)** | ❌ | P2 | S | Codex: `Stop` event fires when agent wants to end turn. Hook can return non-zero exit code to force the agent to continue working (e.g., "tests still failing, keep going"). swarm-harness: no equivalent — agent turn termination is not hookable. |
 | H2 | **OpenTelemetry / distributed tracing** | ❌ | P3 | L | Codex: `otel/`, `core/src/otel_init.rs`. OTLP-based tracing + analytics. swarm-harness: lane events only (no structured telemetry export). |
 | H3 | **Feature flags / rollout system** | ❌ | P3 | L | Codex: `features/`, `rollout/`, `core/src/config/managed_features.rs`. Managed feature gating. swarm-harness: capabilities static per engine/provider. |
 
@@ -154,28 +162,52 @@ Layer configurable policy on top of existing bash validation.
    bash-validation submodules.
 4. **S4: Process hardening** — strip dangerous env vars, disable core dumps.
 
-### Phase C — Guardian & Patch Safety (P1, ~2 weeks)
+### Phase C — Interactive Sessions & Process Management (P1, ~3 weeks)
 
-5. **S3: Guardian** — lightweight LLM reviewer for dangerous actions. Fail-closed
+Close the interactive session gap that prevents agents from working with
+long-running processes, REPLs, debuggers, and dev servers.
+
+5. **F11: Persistent shell sessions** — PTY-based shell sessions that persist
+   across tool calls. Session registry with ID-based reuse. Configurable max
+   concurrent sessions with LRU eviction.
+6. **F12: Interactive stdin** — `write_stdin` capability for sending input to
+   running processes (keystrokes, Ctrl-C, REPL commands). Polling for new output.
+7. **F13: HeadTailBuffer** — smart output truncation preserving first N + last N
+   bytes. Replace current 16 KiB hard cap with configurable head+tail windows
+   (default ~20 KiB each).
+
+### Phase D — Guardian & Patch Safety (P1, ~2 weeks)
+
+8. **S3: Guardian** — lightweight LLM reviewer for dangerous actions. Fail-closed
    with timeout. Circuit breaker for repeated denials. Runs in read-only
    context.
-6. **S5: Patch safety** — hardlink/TOCTTOU checks in write_file/edit_file
+9. **S5: Patch safety** — hardlink/TOCTTOU checks in write_file/edit_file
    when sandbox is available.
 
-### Phase D — Context & Policy (P2, ~3 weeks)
+### Phase E — Hooks & Context (P2, ~3 weeks)
 
-7. **C2: Context fragments** — extensible context injection system. Start
-   with environment context, permission instructions, approved commands.
-8. **E5: Granular approval modes** — add OnFailure and UnlessTrusted to
-   existing 3 modes.
-9. **F5: Request permissions tool** — agent can request elevated permissions.
+10. **H1: Extended hook events** — add PermissionRequest, Stop, SubagentStart/
+    SubagentStop, PreCompact/PostCompact events.
+11. **H4: Hook context injection** — implement `additionalContext` field in hook
+    output that gets injected as a system message into the conversation.
+12. **H6: Stop hook** — allow hooks to force agent continuation on stop event
+    (non-zero exit code → keep working).
+13. **C2: Context fragments** — extensible context injection system. Start
+    with environment context, permission instructions, approved commands.
+14. **E5: Granular approval modes** — add OnFailure and UnlessTrusted to
+    existing 3 modes.
+15. **F5: Request permissions tool** — agent can request elevated permissions.
 
-### Phase E — Persistence & Intelligence (P2, ~4 weeks)
+### Phase F — Persistence & Intelligence (P2, ~4 weeks)
 
-10. **C3: State database** — SQLite backend for session state, goals, memory.
-11. **G1: Goals engine** — persistent thread goals with budget tracking.
-12. **C1: Remote compaction** — model-based summarization for better context
+16. **C3: State database** — SQLite backend for session state, goals, memory.
+17. **G1: Goals engine** — persistent thread goals with budget tracking.
+18. **C1: Remote compaction** — model-based summarization for better context
     preservation.
+19. **F14: Shell state snapshots** — capture env/cwd/shell-options after each
+    command for cross-invocation state tracking.
+20. **F15: Process lifecycle management** — process inventory with list/kill/
+    reattach, LRU eviction.
 
 ### Deferred (P3)
 
@@ -183,7 +215,9 @@ Layer configurable policy on top of existing bash validation.
 - R1 (Realtime/voice) — different product category
 - H2 (OpenTelemetry) — observability enhancement, not blocking
 - H3 (Feature flags) — operational maturity, not blocking
-- F2/F3/F4/F8/F9 (View image, tool search, code mode, mentions, file watcher)
+- H5 (Hook trust model) — security hardening, not blocking
+- F2/F3/F8/F9 (View image, tool search, mentions, file watcher/skills hot-reload)
+- F4 (Code mode) — V8 tool orchestration; swarm multi-agent fills similar niche
 - E2/E3/E4 (Auto-amendment, banned prefixes, canonicalization)
 - S6 (Secrets detection)
 
@@ -201,3 +235,4 @@ and commit hash.
 ### Decision log
 
 - **2026-06-05** — Document created from deep-research audit of Codex (130+ crates) vs swarm-harness. Codex system prompt ported to swarm-harness default-system-prompt.ts (commits `bf33eee`, `74d6166`, `59813fd`). HardenedNativeEngine shipped (commits `bed3ac5`–`2240667`): retry, eager dispatch, mid-turn compaction, context_overflow recovery.
+- **2026-06-05** — Deep-dive updates: added F11–F15 (interactive sessions / process management, P1), expanded F4 (code mode: V8 tool orchestration), F9 (file watcher: skills hot-reload), H1 (10 vs 5 hook events detail), H4–H6 (hook context injection, trust model, stop hook). Reorganized phased plan: new Phase C (interactive sessions), Phase E (hooks), Phase F (persistence). Process management elevated to P1.
