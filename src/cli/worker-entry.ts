@@ -35,6 +35,7 @@ import { RunMoreParamsSchema, IPC_ERROR_CODES } from "../swarm/ipc/protocol.js";
 import type { PermissionMode, Usage } from "../core/types.js";
 import type { ToolExecutionContext, ToolImpl } from "../tools/types.js";
 import { readSessionSidecar, writeSessionSidecar } from "./session-sidecar.js";
+import { buildSystemPrompt } from "../engine/default-system-prompt.js";
 
 function parseIntEnv(key: string, fallback: number): number {
   const raw = process.env[key];
@@ -146,7 +147,12 @@ async function executeTurn(
       },
     }));
 
-    const basePrompt = process.env.SWARM_HARNESS_BASE_SYSTEM_PROMPT ?? "";
+    const envBasePrompt = process.env.SWARM_HARNESS_BASE_SYSTEM_PROMPT;
+    const useNativePrompt =
+      engine.id === "native" || engine.id === "hardened-native";
+    const basePrompt = useNativePrompt
+      ? buildSystemPrompt({ cwd: process.cwd(), extensions: envBasePrompt ?? undefined })
+      : (envBasePrompt ?? "");
     const systemPrompt = composeSystemPrompt(basePrompt, roleSuffix);
 
     // Long-lived workers resume the prior turn's session so conversation
