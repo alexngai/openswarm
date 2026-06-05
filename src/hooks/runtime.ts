@@ -204,6 +204,16 @@ export class HookRuntime {
         return this.config.UserPromptSubmit ?? [];
       case "Stop":
         return this.config.Stop ?? [];
+      case "PermissionRequest":
+        return this.config.PermissionRequest ?? [];
+      case "SubagentStart":
+        return this.config.SubagentStart ?? [];
+      case "SubagentStop":
+        return this.config.SubagentStop ?? [];
+      case "PreCompact":
+        return this.config.PreCompact ?? [];
+      case "PostCompact":
+        return this.config.PostCompact ?? [];
     }
   }
 

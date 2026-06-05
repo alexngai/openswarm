@@ -10,6 +10,8 @@ import {
   resetExecPolicy,
   getExecPolicy,
   setExecPolicy,
+  deriveAmendment,
+  persistAmendment,
   type PrefixRule,
   type ExecPolicyConfig,
 } from "./exec-policy.js";
@@ -354,5 +356,89 @@ describe("singleton management", () => {
     resetExecPolicy();
     const p2 = getExecPolicy();
     expect(p1).not.toBe(p2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Auto-amendment (E2)
+// ---------------------------------------------------------------------------
+
+describe("deriveAmendment", () => {
+  it("derives a prefix rule from a command", () => {
+    const amendment = deriveAmendment("git push origin main");
+    expect(amendment).not.toBeNull();
+    expect(amendment!.rule.pattern).toEqual(["git", "push", "origin"]);
+    expect(amendment!.rule.decision).toBe("allow");
+  });
+
+  it("limits prefix to 3 tokens", () => {
+    const amendment = deriveAmendment("npm run test -- --verbose --coverage");
+    expect(amendment!.rule.pattern).toEqual(["npm", "run", "test"]);
+  });
+
+  it("handles short commands", () => {
+    const amendment = deriveAmendment("ls");
+    expect(amendment!.rule.pattern).toEqual(["ls"]);
+  });
+
+  it("unwraps shell -c before deriving", () => {
+    const amendment = deriveAmendment('bash -c "git push origin"');
+    expect(amendment!.rule.pattern).toEqual(["git", "push", "origin"]);
+  });
+
+  it("returns null for empty command", () => {
+    expect(deriveAmendment("")).toBeNull();
+  });
+});
+
+describe("persistAmendment", () => {
+  let tmpDir: string;
+
+  afterEach(() => {
+    if (tmpDir) {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("creates rules.json if it doesn't exist", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "amend-"));
+    const amendment = deriveAmendment("git push origin main")!;
+    persistAmendment(amendment, { homedir: tmpDir });
+
+    const filePath = path.join(tmpDir, ".swarm-harness", "rules.json");
+    expect(fs.existsSync(filePath)).toBe(true);
+
+    const content = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    expect(content.rules.length).toBe(1);
+    expect(content.rules[0].pattern).toEqual(["git", "push", "origin"]);
+  });
+
+  it("appends to existing rules", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "amend-"));
+    const dir = path.join(tmpDir, ".swarm-harness");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "rules.json"),
+      JSON.stringify({ rules: [{ pattern: ["ls"], decision: "allow" }] }),
+    );
+
+    const amendment = deriveAmendment("git push origin main")!;
+    persistAmendment(amendment, { homedir: tmpDir });
+
+    const content = JSON.parse(
+      fs.readFileSync(path.join(dir, "rules.json"), "utf8"),
+    );
+    expect(content.rules.length).toBe(2);
+  });
+
+  it("skips duplicate rules", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "amend-"));
+    const amendment = deriveAmendment("git push origin")!;
+    persistAmendment(amendment, { homedir: tmpDir });
+    persistAmendment(amendment, { homedir: tmpDir });
+
+    const filePath = path.join(tmpDir, ".swarm-harness", "rules.json");
+    const content = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    expect(content.rules.length).toBe(1);
   });
 });

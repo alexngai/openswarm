@@ -13,7 +13,12 @@ export type HookEvent =
   | "SessionStart"
   | "SessionEnd"
   | "UserPromptSubmit"
-  | "Stop";
+  | "Stop"
+  | "PermissionRequest"
+  | "SubagentStart"
+  | "SubagentStop"
+  | "PreCompact"
+  | "PostCompact";
 
 /**
  * Hook config as declared by the user in .swarm-harness/hooks.json
@@ -77,6 +82,45 @@ export interface ToolHookPayload {
   readonly toolInput: ToolInput;
   /** PostToolUse only. */
   readonly toolResult?: ToolResult;
+  readonly sessionId?: string;
+  readonly agentId?: string;
+}
+
+/**
+ * Payload for PermissionRequest hooks (H1). Fires before user approval
+ * prompt. Hooks can auto-approve (exit 0 with permissionDecision: "allow")
+ * or auto-deny (exit 0 with permissionDecision: "deny").
+ */
+export interface PermissionRequestPayload {
+  readonly event: "PermissionRequest";
+  readonly toolName: string;
+  readonly toolInput: ToolInput;
+  readonly requiredPermission: string;
+  readonly currentMode: string;
+  readonly sessionId?: string;
+  readonly agentId?: string;
+}
+
+/**
+ * Payload for SubagentStart/SubagentStop hooks (H1). Track sub-agent lifecycle.
+ */
+export interface SubagentPayload {
+  readonly event: "SubagentStart" | "SubagentStop";
+  readonly subagentId: string;
+  readonly parentAgentId?: string;
+  readonly role?: string;
+  readonly exitCode?: number;
+  readonly sessionId?: string;
+}
+
+/**
+ * Payload for PreCompact/PostCompact hooks (H1). Inject context before/after
+ * conversation summarization.
+ */
+export interface CompactPayload {
+  readonly event: "PreCompact" | "PostCompact";
+  readonly messageCount: number;
+  readonly tokenCount?: number;
   readonly sessionId?: string;
   readonly agentId?: string;
 }

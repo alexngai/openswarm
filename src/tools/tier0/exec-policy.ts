@@ -328,3 +328,64 @@ export function setExecPolicy(policy: ExecPolicy): void {
 export function resetExecPolicy(): void {
   _policy = undefined;
 }
+
+// ---------------------------------------------------------------------------
+// Auto-amendment (E2)
+// ---------------------------------------------------------------------------
+
+export interface AmendmentSuggestion {
+  readonly rule: PrefixRule;
+  readonly source: string;
+}
+
+export function deriveAmendment(command: string): AmendmentSuggestion | null {
+  const tokens = tokenizeCommand(command);
+  if (tokens.length === 0) return null;
+
+  const unwrapped = unwrapShellCommand(tokens);
+  const effective = unwrapped ?? tokens;
+
+  const prefixLen = Math.min(effective.length, 3);
+  const pattern = effective.slice(0, prefixLen);
+
+  return {
+    rule: { pattern, decision: "allow", justification: "auto-approved by user" },
+    source: command,
+  };
+}
+
+export function persistAmendment(
+  amendment: AmendmentSuggestion,
+  opts: LoadExecPolicyOptions = {},
+): void {
+  const home = opts.homedir ?? os.homedir();
+  const filePath = path.join(home, ".swarm-harness", "rules.json");
+
+  let existing: { rules: PrefixRule[] } = { rules: [] };
+  try {
+    if (fs.existsSync(filePath)) {
+      const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      if (raw && Array.isArray(raw.rules)) {
+        existing.rules = raw.rules;
+      }
+    }
+  } catch {
+    // start fresh
+  }
+
+  const isDuplicate = existing.rules.some(
+    (r) => JSON.stringify(r.pattern) === JSON.stringify(amendment.rule.pattern) &&
+      r.decision === amendment.rule.decision,
+  );
+  if (isDuplicate) return;
+
+  existing.rules.push(amendment.rule);
+
+  const dir = path.dirname(filePath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  fs.writeFileSync(filePath, JSON.stringify(existing, null, 2) + "\n", "utf8");
+
+  resetExecPolicy();
+}

@@ -45,6 +45,12 @@ const HooksMapSchema = z.object({
   SessionStart: z.array(HookConfigSchema).optional(),
   SessionEnd: z.array(HookConfigSchema).optional(),
   UserPromptSubmit: z.array(HookConfigSchema).optional(),
+  Stop: z.array(HookConfigSchema).optional(),
+  PermissionRequest: z.array(HookConfigSchema).optional(),
+  SubagentStart: z.array(HookConfigSchema).optional(),
+  SubagentStop: z.array(HookConfigSchema).optional(),
+  PreCompact: z.array(HookConfigSchema).optional(),
+  PostCompact: z.array(HookConfigSchema).optional(),
 });
 
 // Claude Code `settings.json` — passthrough other keys, pluck `.hooks`.
@@ -65,6 +71,11 @@ export interface HooksConfigFile {
   readonly SessionEnd?: readonly HookConfig[];
   readonly UserPromptSubmit?: readonly HookConfig[];
   readonly Stop?: readonly HookConfig[];
+  readonly PermissionRequest?: readonly HookConfig[];
+  readonly SubagentStart?: readonly HookConfig[];
+  readonly SubagentStop?: readonly HookConfig[];
+  readonly PreCompact?: readonly HookConfig[];
+  readonly PostCompact?: readonly HookConfig[];
 }
 
 export interface LoadHooksConfigOptions {
