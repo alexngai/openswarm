@@ -2,6 +2,7 @@ import { z } from "zod";
 import TurndownService from "turndown";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
+import { getNetworkPolicy } from "../tier0/network-policy.js";
 
 const inputSchema = z.object({
   url: z.string().url(),
@@ -29,6 +30,20 @@ async function execute(raw: unknown, _ctx: ToolExecutionContext): Promise<ToolRe
     return { status: "error", message: parsed.error.message };
   }
   const input: Input = parsed.data;
+
+  // Network policy check
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(input.url);
+  } catch {
+    return { status: "error", message: "invalid URL" };
+  }
+
+  const policy = getNetworkPolicy();
+  const decision = await policy.checkHostname(parsedUrl.hostname);
+  if (!decision.allowed) {
+    return { status: "error", message: `blocked by network policy: ${decision.reason}` };
+  }
 
   let resp: Response;
   try {

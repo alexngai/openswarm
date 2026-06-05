@@ -33,6 +33,7 @@ export interface SandboxConfig {
   readonly env?: NodeJS.ProcessEnv;
   readonly networkAccess?: boolean;
   readonly policy?: SandboxPolicy;
+  readonly proxyUrl?: string;
 }
 
 export interface SandboxCapabilities {
@@ -230,6 +231,16 @@ export function buildBwrapArgs(
   args.push("--unshare-all");
   if (config.networkAccess !== false) {
     args.push("--share-net");
+  }
+
+  // Proxy env vars (inject into sandbox environment)
+  if (config.proxyUrl) {
+    args.push("--setenv", "HTTP_PROXY", config.proxyUrl);
+    args.push("--setenv", "HTTPS_PROXY", config.proxyUrl);
+    args.push("--setenv", "http_proxy", config.proxyUrl);
+    args.push("--setenv", "https_proxy", config.proxyUrl);
+    args.push("--setenv", "NO_PROXY", "localhost,127.0.0.1");
+    args.push("--setenv", "no_proxy", "localhost,127.0.0.1");
   }
 
   // Safety flags
@@ -550,7 +561,10 @@ export async function spawnSandboxed(
   const policy = sandboxConfig.policy ?? "prefer";
 
   if (policy === "off") {
-    return spawn(command, [...args], spawnOpts);
+    return spawn(command, [...args], {
+      ...spawnOpts,
+      env: envWithProxy(spawnOpts.env, sandboxConfig),
+    });
   }
 
   const caps = await detectSandboxMode();
@@ -572,7 +586,10 @@ export async function spawnSandboxed(
   }
 
   // policy === "prefer" — fall through with warning
-  return spawn(command, [...args], spawnOpts);
+  return spawn(command, [...args], {
+    ...spawnOpts,
+    env: envWithProxy(spawnOpts.env, sandboxConfig),
+  });
 }
 
 /**
@@ -589,7 +606,10 @@ export function spawnSandboxedSync(
   const policy = sandboxConfig.policy ?? "prefer";
 
   if (policy === "off" || _detectedMode === undefined) {
-    return spawn(command, [...args], spawnOpts);
+    return spawn(command, [...args], {
+      ...spawnOpts,
+      env: envWithProxy(spawnOpts.env, sandboxConfig),
+    });
   }
 
   if (_detectedMode === "bwrap" && _detectedBwrapPath) {
@@ -604,7 +624,10 @@ export function spawnSandboxedSync(
     throw new Error("Sandbox required but not available");
   }
 
-  return spawn(command, [...args], spawnOpts);
+  return spawn(command, [...args], {
+    ...spawnOpts,
+    env: envWithProxy(spawnOpts.env, sandboxConfig),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -656,6 +679,23 @@ function spawnWithBwrap(
   return child;
 }
 
+function envWithProxy(
+  base: NodeJS.ProcessEnv | undefined,
+  config: SandboxConfig,
+): NodeJS.ProcessEnv | undefined {
+  const env = config.env ?? base;
+  if (!config.proxyUrl) return env;
+  return {
+    ...env,
+    HTTP_PROXY: config.proxyUrl,
+    HTTPS_PROXY: config.proxyUrl,
+    http_proxy: config.proxyUrl,
+    https_proxy: config.proxyUrl,
+    NO_PROXY: "localhost,127.0.0.1",
+    no_proxy: "localhost,127.0.0.1",
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Landlock spawn
 // ---------------------------------------------------------------------------
@@ -671,6 +711,6 @@ function spawnWithLandlock(
 
   return spawn(llArgs[0]!, llArgs.slice(1), {
     ...spawnOpts,
-    env: config.env ?? spawnOpts.env,
+    env: envWithProxy(spawnOpts.env, config),
   });
 }
