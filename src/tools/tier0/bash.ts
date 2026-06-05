@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
-import { truncateUtf8 } from "./internal.js";
+import { headTailTruncate } from "./internal.js";
 
 const inputSchema = z.object({
   command: z.string(),
@@ -17,12 +17,13 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const spec: ToolSpec = {
   name: "bash",
   description:
-    "Run a shell command via /bin/bash. " +
-    "stdout and stderr are captured separately and each truncated to 16 KiB. " +
+    "Run a one-shot shell command via /bin/bash. " +
+    "Long output is smart-truncated: first 20 KiB + last 20 KiB are preserved. " +
     "Default timeout is 30000 ms; override with `timeout` (ms). " +
     "On timeout the process is killed and output includes a [interrupted: timeout] marker. " +
     "Non-zero exit codes are returned as [exit <code>] in the output — the model decides what to do. " +
-    "Set `background: true` to spawn detached without waiting; returns [backgroundTaskId: <pid>] immediately.",
+    "Set `background: true` to spawn detached without waiting; returns [backgroundTaskId: <pid>] immediately. " +
+    "For interactive workflows (REPLs, servers, debuggers), use `shell_exec` instead.",
   inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
   requiredPermission: "exec",
   tier: 0,
@@ -79,8 +80,8 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
       clearTimeout(timer);
       ctx.abort?.removeEventListener("abort", onAbort);
 
-      const stdout = truncateUtf8(Buffer.concat(stdoutChunks));
-      const stderr = truncateUtf8(Buffer.concat(stderrChunks));
+      const stdout = headTailTruncate(Buffer.concat(stdoutChunks));
+      const stderr = headTailTruncate(Buffer.concat(stderrChunks));
 
       let output = stdout;
       if (stderr) {

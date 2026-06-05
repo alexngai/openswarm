@@ -97,6 +97,9 @@ describe("default-system-prompt", () => {
     expect(BASE_SYSTEM_PROMPT).toContain("glob");
     expect(BASE_SYSTEM_PROMPT).toContain("grep");
     expect(BASE_SYSTEM_PROMPT).toContain("bash");
+    expect(BASE_SYSTEM_PROMPT).toContain("shell_exec");
+    expect(BASE_SYSTEM_PROMPT).toContain("shell_write");
+    expect(BASE_SYSTEM_PROMPT).toContain("shell_list");
   });
 
   it("base prompt contains planning guidance", () => {

@@ -15,10 +15,11 @@ import { globTool } from "./glob.js";
 import { grepTool } from "./grep.js";
 import { multiEditTool } from "./multi_edit.js";
 import { readFileTool } from "./read_file.js";
+import { shellExecTool, shellWriteTool, shellListTool } from "./shell.js";
 import { todoWriteTool } from "./todo_write.js";
 import { writeFileTool } from "./write_file.js";
 
-/** All eight Tier 0 tools in a stable order. */
+/** All Tier 0 tools in a stable order. */
 export function buildTier0Tools(): readonly ToolImpl[] {
   return [
     bashTool,
@@ -29,6 +30,9 @@ export function buildTier0Tools(): readonly ToolImpl[] {
     globTool,
     grepTool,
     todoWriteTool,
+    shellExecTool,
+    shellWriteTool,
+    shellListTool,
   ] as const;
 }
 
@@ -40,6 +44,9 @@ export {
   grepTool,
   multiEditTool,
   readFileTool,
+  shellExecTool,
+  shellListTool,
+  shellWriteTool,
   todoWriteTool,
   writeFileTool,
 };

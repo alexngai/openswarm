@@ -158,8 +158,16 @@ When referencing files in your response, include the relevant start line:
 ### Shell commands
 
 - Prefer \`rg\` or \`rg --files\` for searching; it is much faster than alternatives like \`find\` or \`grep -r\`.
-- Use \`bash\` for shell operations, build commands, and running tests.
+- Use \`bash\` for one-shot shell operations, build commands, and running tests.
 - Prefer dedicated tools over bash when one fits (\`read_file\`, \`edit_file\`, \`glob\`, \`grep\`).
+
+### Persistent shell sessions
+
+- Use \`shell_exec\` for interactive workflows: dev servers, REPLs, debuggers, long-running builds, or any process you need to interact with across multiple turns.
+- Omit \`session_id\` to create a new session; provide it to reuse an existing one.
+- Use \`shell_write\` to send input (stdin text, signals like SIGINT) to a running session and read new output.
+- Use \`shell_list\` to see all active sessions, inspect one, or close sessions you no longer need.
+- Sessions persist until explicitly closed or evicted (LRU, max 64). Prefer \`bash\` for simple one-shot commands.
 
 ### File editing
 

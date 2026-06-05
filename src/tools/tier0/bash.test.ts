@@ -60,13 +60,11 @@ describe("bashTool", () => {
     }
   });
 
-  it("16 KiB truncation preserves UTF-8 boundaries", async () => {
-    // '€' is 3 bytes (e2 82 ac). Generate enough to push past 16 KiB.
-    // 16384 / 3 = 5461.33, so 5462 '€' = 16386 bytes — just over the cap.
+  it("head+tail truncation preserves UTF-8 boundaries", async () => {
+    // '€' is 3 bytes (e2 82 ac). Generate enough to exceed head+tail budget (40 KiB default).
     const euro = "€"; // 3 bytes
-    const count = Math.ceil((16 * 1024 + 2) / 3);
+    const count = Math.ceil((50 * 1024) / 3); // ~50 KiB
     const bigStr = euro.repeat(count);
-    // Write to a temp file and cat it so bash produces the output.
     const tmpFile = path.join(os.tmpdir(), `trunctest-${Date.now()}.txt`);
     const { writeFileSync } = await import("node:fs");
     writeFileSync(tmpFile, bigStr, "utf8");
@@ -74,11 +72,9 @@ describe("bashTool", () => {
     const result = await bashTool.execute({ command: `cat "${tmpFile}"` }, ctx());
     expect(result.status).toBe("ok");
     if (result.status === "ok") {
-      // Should be truncated and not contain a broken multi-byte sequence.
-      expect(result.output).toContain("[truncated]");
-      // The string before [truncated] should be valid UTF-8 (no replacement chars from bad decode).
-      const before = result.output.split("[truncated]")[0]!;
-      expect(before).not.toContain("\uFFFD");
+      expect(result.output).toContain("[... truncated");
+      expect(result.output).toContain("bytes ...]");
+      expect(result.output).not.toContain("�");
     }
 
     const { unlinkSync } = await import("node:fs");
