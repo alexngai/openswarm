@@ -73,7 +73,7 @@ describe("default-system-prompt", () => {
     expect(result).toContain(BASE_SYSTEM_PROMPT + "\n\nEXT\n\nROLE");
   });
 
-  it("base prompt contains key Codex-parity sections", () => {
+  it("base prompt contains Codex-parity behavioral sections", () => {
     expect(BASE_SYSTEM_PROMPT).toContain("## How you work");
     expect(BASE_SYSTEM_PROMPT).toContain("### Personality");
     expect(BASE_SYSTEM_PROMPT).toContain("### AGENTS.md spec");
@@ -88,7 +88,25 @@ describe("default-system-prompt", () => {
     expect(BASE_SYSTEM_PROMPT).toContain("## Safety");
   });
 
-  it("does not contain Codex product references", () => {
+  it("base prompt contains swarm-harness tool references", () => {
+    expect(BASE_SYSTEM_PROMPT).toContain("edit_file");
+    expect(BASE_SYSTEM_PROMPT).toContain("multi_edit");
+    expect(BASE_SYSTEM_PROMPT).toContain("write_file");
+    expect(BASE_SYSTEM_PROMPT).toContain("read_file");
+    expect(BASE_SYSTEM_PROMPT).toContain("todo_write");
+    expect(BASE_SYSTEM_PROMPT).toContain("glob");
+    expect(BASE_SYSTEM_PROMPT).toContain("grep");
+    expect(BASE_SYSTEM_PROMPT).toContain("bash");
+  });
+
+  it("base prompt contains planning guidance", () => {
+    expect(BASE_SYSTEM_PROMPT).toContain("#### Planning");
+    expect(BASE_SYSTEM_PROMPT).toContain("todo_write");
+    expect(BASE_SYSTEM_PROMPT).toContain("in_progress");
+    expect(BASE_SYSTEM_PROMPT).toContain("completed");
+  });
+
+  it("does not contain Codex-specific product references", () => {
     const lower = BASE_SYSTEM_PROMPT.toLowerCase();
     expect(lower).not.toContain("codex cli");
     expect(lower).not.toContain("codex is");
