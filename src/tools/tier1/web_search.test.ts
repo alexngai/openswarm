@@ -466,6 +466,116 @@ describe("DuckDuckGoBackend domain filtering", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Batch queries
+// ---------------------------------------------------------------------------
+
+describe("webSearchTool batch queries", () => {
+  it("executes multiple queries and returns combined results", async () => {
+    const queryResults: Record<string, SearchHit[]> = {
+      typescript: [SAMPLE_HITS[0]!],
+      javascript: [
+        {
+          title: "JavaScript MDN",
+          url: "https://developer.mozilla.org/en-US/docs/Web/JavaScript",
+          snippet: "JavaScript is a programming language.",
+        },
+      ],
+    };
+
+    const backend: SearchBackend = {
+      name: "multi-mock",
+      search: async (query: string, options: SearchOptions) => {
+        return (queryResults[query] ?? []).slice(0, options.maxResults);
+      },
+    };
+    setSearchBackend(backend);
+
+    const result = await webSearchTool.execute(
+      { queries: ["typescript", "javascript"] },
+      ctx(),
+    );
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.output).toContain("Search results for: typescript");
+      expect(result.output).toContain("TypeScript Handbook");
+      expect(result.output).toContain("Search results for: javascript");
+      expect(result.output).toContain("JavaScript MDN");
+      expect(result.output).toContain("---");
+    }
+  });
+
+  it("deduplicates across batch queries", async () => {
+    const sharedHit: SearchHit = {
+      title: "Shared Result",
+      url: "https://shared.example.com/page",
+      snippet: "Appears in both queries",
+    };
+
+    const backend: SearchBackend = {
+      name: "dedup-mock",
+      search: async () => [sharedHit],
+    };
+    setSearchBackend(backend);
+
+    const result = await webSearchTool.execute(
+      { queries: ["query1", "query2"] },
+      ctx(),
+    );
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.output).toContain("Search results for: query1");
+      expect(result.output).toContain("Shared Result");
+      expect(result.output).toContain("No results found for: query2");
+    }
+  });
+
+  it("handles errors in individual queries gracefully", async () => {
+    let callCount = 0;
+    const backend: SearchBackend = {
+      name: "partial-error",
+      search: async (query: string) => {
+        callCount++;
+        if (query === "bad") throw new Error("search engine down");
+        return [SAMPLE_HITS[0]!];
+      },
+    };
+    setSearchBackend(backend);
+
+    const result = await webSearchTool.execute(
+      { queries: ["good", "bad"] },
+      ctx(),
+    );
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.output).toContain("TypeScript Handbook");
+      expect(result.output).toContain("Error: search engine down");
+    }
+  });
+
+  it("returns error when neither query nor queries provided", async () => {
+    setSearchBackend(mockBackend(SAMPLE_HITS));
+    const result = await webSearchTool.execute(
+      { num_results: 5 },
+      ctx(),
+    );
+    expect(result.status).toBe("error");
+  });
+
+  it("uses single query path when queries has one element", async () => {
+    setSearchBackend(mockBackend(SAMPLE_HITS));
+    const result = await webSearchTool.execute(
+      { queries: ["typescript"] },
+      ctx(),
+    );
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.output).toContain("Search results for: typescript");
+      expect(result.output).not.toContain("---");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tool spec
 // ---------------------------------------------------------------------------
 
@@ -476,10 +586,11 @@ describe("webSearchTool spec", () => {
     expect(webSearchTool.spec.requiredPermission).toBe("network");
   });
 
-  it("has inputSchema with required query field", () => {
+  it("has inputSchema with query and queries fields", () => {
     const schema = webSearchTool.spec.inputSchema as Record<string, unknown>;
     const props = schema.properties as Record<string, unknown>;
     expect(props).toHaveProperty("query");
+    expect(props).toHaveProperty("queries");
     expect(props).toHaveProperty("num_results");
     expect(props).toHaveProperty("allowed_domains");
     expect(props).toHaveProperty("blocked_domains");

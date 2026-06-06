@@ -200,7 +200,19 @@ export function resetSearchBackend(): void {
 // ---------------------------------------------------------------------------
 
 const inputSchema = z.object({
-  query: z.string().min(1).describe("The search query string."),
+  query: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("A single search query string. Use either query or queries, not both."),
+  queries: z
+    .array(z.string().min(1))
+    .min(1)
+    .max(5)
+    .optional()
+    .describe(
+      "Multiple search queries to execute in batch. Results are merged and deduplicated. Max 5 queries.",
+    ),
   num_results: z
     .number()
     .int()
@@ -208,7 +220,7 @@ const inputSchema = z.object({
     .max(8)
     .optional()
     .default(5)
-    .describe("Maximum number of results to return (1-8, default 5)."),
+    .describe("Maximum number of results to return per query (1-8, default 5)."),
   allowed_domains: z
     .array(z.string())
     .optional()
@@ -221,6 +233,8 @@ const inputSchema = z.object({
     .describe(
       "Exclude results from these domains. Supports subdomain matching.",
     ),
+}).refine((data) => data.query || data.queries, {
+  message: "Either query or queries must be provided",
 });
 
 type Input = z.infer<typeof inputSchema>;
@@ -229,6 +243,7 @@ const spec: ToolSpec = {
   name: "web_search",
   description:
     "Search the web for information. Returns ranked results with titles, URLs, and snippets. " +
+    "Supports single query or batch queries (up to 5). Results are deduplicated across batch queries. " +
     "Use allowed_domains/blocked_domains to filter results by domain. " +
     "For reading full page content, use web_fetch with a result URL.",
   inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
@@ -236,12 +251,12 @@ const spec: ToolSpec = {
   tier: 1,
 };
 
-function formatResults(hits: SearchHit[], query: string): string {
+function formatResults(hits: SearchHit[], queryLabel: string): string {
   if (hits.length === 0) {
-    return `No results found for: ${query}`;
+    return `No results found for: ${queryLabel}`;
   }
 
-  const lines: string[] = [`Search results for: ${query}`, ""];
+  const lines: string[] = [`Search results for: ${queryLabel}`, ""];
   for (let i = 0; i < hits.length; i++) {
     const hit = hits[i]!;
     lines.push(`${i + 1}. ${hit.title}`);
@@ -254,6 +269,20 @@ function formatResults(hits: SearchHit[], query: string): string {
   return lines.join("\n").trimEnd();
 }
 
+async function executeQuery(
+  query: string,
+  input: Input,
+  backend: SearchBackend,
+  signal?: AbortSignal,
+): Promise<SearchHit[]> {
+  return backend.search(query, {
+    maxResults: input.num_results,
+    allowedDomains: input.allowed_domains,
+    blockedDomains: input.blocked_domains,
+    signal,
+  });
+}
+
 async function execute(
   raw: unknown,
   ctx: ToolExecutionContext,
@@ -263,6 +292,8 @@ async function execute(
     return { status: "error", message: parsed.error.message };
   }
   const input: Input = parsed.data;
+
+  const queries: string[] = input.queries ?? [input.query!];
 
   const policy = getNetworkPolicy();
   const backend = getSearchBackend();
@@ -285,21 +316,41 @@ async function execute(
     }
   }
 
-  let hits: SearchHit[];
-  try {
-    hits = await backend.search(input.query, {
-      maxResults: input.num_results,
-      allowedDomains: input.allowed_domains,
-      blockedDomains: input.blocked_domains,
-      signal: ctx.abort,
-    });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return { status: "error", message: `search failed: ${msg}` };
+  if (queries.length === 1) {
+    let hits: SearchHit[];
+    try {
+      hits = await executeQuery(queries[0]!, input, backend, ctx.abort);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { status: "error", message: `search failed: ${msg}` };
+    }
+
+    return { status: "ok", output: formatResults(hits, queries[0]!) };
   }
 
-  const output = formatResults(hits, input.query);
-  return { status: "ok", output };
+  const sections: string[] = [];
+  const seenUrls = new Set<string>();
+
+  for (const query of queries) {
+    let hits: SearchHit[];
+    try {
+      hits = await executeQuery(query, input, backend, ctx.abort);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      sections.push(`Search results for: ${query}\n\nError: ${msg}`);
+      continue;
+    }
+
+    const deduped = hits.filter((hit) => {
+      if (seenUrls.has(hit.url)) return false;
+      seenUrls.add(hit.url);
+      return true;
+    });
+
+    sections.push(formatResults(deduped, query));
+  }
+
+  return { status: "ok", output: sections.join("\n\n---\n\n") };
 }
 
 export const webSearchTool: ToolImpl = {
