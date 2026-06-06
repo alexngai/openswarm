@@ -59,6 +59,7 @@ export {
 export { StateDBCuratedStore, StateDBArchiveStore } from "./state-store.js";
 
 export { FileMemoryProvider } from "./providers/file-provider.js";
+export { MinimemProvider, type MinimemProviderConfig } from "./providers/minimem-provider.js";
 
 export {
   onSessionStart,

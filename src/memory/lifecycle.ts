@@ -13,6 +13,7 @@
 import type { MemoryFragment, TurnContext, CompressionSummary } from "./types.js";
 import { getMemoryCoordinator } from "./coordinator.js";
 import { FileMemoryProvider } from "./providers/file-provider.js";
+import { MinimemProvider } from "./providers/minimem-provider.js";
 import { archiveSession } from "./archive.js";
 
 // ---------------------------------------------------------------------------
@@ -32,6 +33,22 @@ export async function onSessionStart(opts?: SessionStartOptions): Promise<void> 
   // Register the built-in FileMemoryProvider if not already present
   if (!coordinator.providerNames.includes("file")) {
     await coordinator.register(new FileMemoryProvider());
+  }
+
+  // Register MinimemProvider if not already present and not disabled
+  if (
+    !coordinator.providerNames.includes("minimem") &&
+    process.env.SWARM_MEMORY_PROVIDERS !== "file"
+  ) {
+    const minimemProvider = new MinimemProvider();
+    try {
+      await coordinator.register(minimemProvider);
+      if (!(await minimemProvider.isAvailable())) {
+        await coordinator.unregister("minimem");
+      }
+    } catch {
+      // minimem not available — no-op, file provider handles basics
+    }
   }
 }
 
