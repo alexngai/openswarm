@@ -67,6 +67,20 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   const dir = path.dirname(resolved);
   await fs.mkdir(dir, { recursive: true });
 
+  // S5: Re-validate parent directory after mkdir to prevent TOCTTOU
+  // (directory could be replaced with a symlink between mkdir and write).
+  try {
+    const parentReal = await fs.realpath(dir);
+    if (!isUnderCwd(parentReal, ctx.cwd)) {
+      return {
+        status: "error",
+        message: `parent directory was replaced outside workspace after mkdir`,
+      };
+    }
+  } catch {
+    // realpath failed — directory doesn't exist anymore, write below will fail naturally
+  }
+
   // Atomic write: write to a temp file then rename.
   const rand = crypto.randomBytes(6).toString("hex");
   const basename = path.basename(resolved);

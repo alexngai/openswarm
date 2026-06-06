@@ -22,8 +22,9 @@
                 │  ├────────────────────────┤  │
                 │  │ provider (anthropic)   │  │  interface — swappable
                 │  └────────────────────────┘  │
+                │  memory coordinator          │  pluggable providers
                 │  plugins · skills · mcp      │
-                │  session                     │
+                │  state (SQLite) · session    │
                 └──────────────────────────────┘
 ```
 
@@ -39,7 +40,10 @@ src/
     index.ts         # AgentEngine, RunConfig, SessionSnapshot
     claude-agent-sdk.ts  # M0 — default engine, wraps @anthropic-ai/claude-agent-sdk
     native.ts        # M4 — composes Provider + our loop + Compactor + MCP
-  providers/         # inner layer — used ONLY by NativeEngine (M4+)
+    hardened-native.ts  # Production-hardened NativeEngine variant (retry, eager dispatch, mid-turn compaction)
+    retry-policy.ts     # RetryPolicy + error classification for hardened engine
+    hardened-native-snapshot.ts  # Snapshot with retry stats for hardened engine
+  providers/         # inner layer — used ONLY by NativeEngine/HardenedNativeEngine (M4+)
     index.ts         # Provider stub; finalized in M4
     anthropic.ts     # M4 — wraps @ai-sdk/anthropic
     openai.ts        # M4
@@ -56,6 +60,21 @@ src/
     google-api-key.ts      # M4
     xai-api-key.ts         # M4
   permissions/       # our permission engine, bound to AgentEngine.canUseTool
+  memory/            # 4-layer memory system
+    types.ts         # shared memory types (MemoryProvider, MemoryFragment, TurnContext, ...)
+    curated.ts       # L1 — bounded curated memory (project/user scopes)
+    skills.ts        # L2 — procedural memory as Markdown files with YAML frontmatter
+    archive.ts       # L3 — session archive with FTS5 search
+    coordinator.ts   # L4 — MemoryCoordinator (provider fan-out, deduplication)
+    lifecycle.ts     # engine lifecycle hooks (onSessionStart → onSessionEnd)
+    fragment.ts      # ContextFragment for injecting curated memory into system prompt
+    agent-scope.ts   # per-agent memory isolation + shared memory bus
+    state-store.ts   # StateDB adapters (CuratedStore, ArchiveStore)
+    providers/
+      file-provider.ts    # built-in provider wrapping L1 curated memory
+      minimem-provider.ts # optional hybrid vector + BM25 search (graceful degradation)
+  state/             # SQLite-backed state database (sessions, goals, memory, audit log)
+  context/           # composable system prompt fragments with priority ordering
   session/           # per-worktree JSONL + engine SessionSnapshot
   tools/
     tier0/           # bash, file_ops, search, todo

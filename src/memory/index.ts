@@ -1,0 +1,96 @@
+/**
+ * Memory system — 4-layer architecture with pluggable providers.
+ *
+ * See docs/40-memory-system-design.md for the full design.
+ */
+
+export type {
+  CuratedScope,
+  CuratedMemoryRecord,
+  MemoryCapabilities,
+  ProviderConfig,
+  MemoryFragment,
+  TurnContext,
+  MemoryEntry,
+  CompletedTurn,
+  CompressionSummary,
+  MemoryProvider,
+} from "./types.js";
+
+export {
+  getCuratedMemoryStore,
+  setCuratedMemoryStore,
+  resetCuratedMemoryStore,
+  getCuratedMemoryLimits,
+  setCuratedMemoryLimits,
+  resetCuratedMemoryLimits,
+  scopeKey,
+  parseEntries,
+  formatEntries,
+  executeCuratedAction,
+  getCuratedMemory,
+  type CuratedMemoryStore,
+  type CuratedMemoryLimits,
+  type CuratedMemoryAction,
+  type CuratedMemoryResult,
+} from "./curated.js";
+
+export {
+  MemoryCoordinator,
+  getMemoryCoordinator,
+  setMemoryCoordinator,
+  resetMemoryCoordinator,
+} from "./coordinator.js";
+
+export { curatedMemoryFragment } from "./fragment.js";
+
+export {
+  getArchiveStore,
+  setArchiveStore,
+  resetArchiveStore,
+  archiveSession,
+  searchArchive,
+  listArchive,
+  type ArchiveStore,
+  type ArchiveSessionInput,
+  type ArchiveSearchResult,
+} from "./archive.js";
+
+export { StateDBCuratedStore, StateDBArchiveStore } from "./state-store.js";
+
+export {
+  getSkillStore,
+  setSkillStore,
+  resetSkillStore,
+  FileSkillStore,
+  parseSkillContent,
+  formatSkill,
+  formatSkillList,
+  MAX_SKILL_CONTENT_SIZE,
+  type Skill,
+  type SkillStore,
+} from "./skills.js";
+
+export {
+  agentScopeKey,
+  publishSharedMemory,
+  getSharedMemory,
+  resetSharedMemory,
+  formatSharedMemory,
+  type SharedMemoryEntry,
+} from "./agent-scope.js";
+
+export { FileMemoryProvider } from "./providers/file-provider.js";
+export { MinimemProvider, type MinimemProviderConfig } from "./providers/minimem-provider.js";
+
+export {
+  onSessionStart,
+  onBeforeTurn,
+  onAfterTurn,
+  onCompaction,
+  onSessionEnd,
+  formatMemoryFragments,
+  type SessionStartOptions,
+  type TurnCompleteInfo,
+  type SessionEndInfo,
+} from "./lifecycle.js";

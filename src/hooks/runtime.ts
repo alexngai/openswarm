@@ -15,6 +15,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { getHardenedEnv } from "../tools/tier0/process-hardening.js";
 import type {
   HookCallback,
   HookCallbackMatcher,
@@ -39,6 +40,7 @@ import type { HooksConfigFile } from "./config.js";
 interface HookStdoutPayload {
   readonly updatedInput?: unknown;
   readonly systemMessage?: string;
+  readonly additionalContext?: string;
   readonly permissionDecision?: "allow" | "deny";
 }
 
@@ -150,7 +152,7 @@ export class HookRuntime {
    * hook whose matcher matches, in declaration order. First deny/fail short-
    * circuits; otherwise merges `updatedInput` from the last allow.
    */
-  async invoke(event: HookEvent, payload: ToolHookPayload): Promise<HookResult> {
+  async invoke(event: HookEvent, payload: ToolHookPayload | { toolName: string; [k: string]: unknown }): Promise<HookResult> {
     const configs = this.configsForEvent(event);
     if (configs.length === 0) {
       return { decision: "allow" };
@@ -175,6 +177,11 @@ export class HookRuntime {
         ...(result.systemMessage !== undefined
           ? { systemMessage: result.systemMessage }
           : {}),
+        ...(result.additionalContext !== undefined
+          ? { additionalContext: result.additionalContext }
+          : last.additionalContext !== undefined
+            ? { additionalContext: last.additionalContext }
+            : {}),
         ...(result.permissionDecision !== undefined
           ? { permissionDecision: result.permissionDecision }
           : {}),
@@ -195,6 +202,18 @@ export class HookRuntime {
         return this.config.SessionEnd ?? [];
       case "UserPromptSubmit":
         return this.config.UserPromptSubmit ?? [];
+      case "Stop":
+        return this.config.Stop ?? [];
+      case "PermissionRequest":
+        return this.config.PermissionRequest ?? [];
+      case "SubagentStart":
+        return this.config.SubagentStart ?? [];
+      case "SubagentStop":
+        return this.config.SubagentStop ?? [];
+      case "PreCompact":
+        return this.config.PreCompact ?? [];
+      case "PostCompact":
+        return this.config.PostCompact ?? [];
     }
   }
 
@@ -240,10 +259,48 @@ export class HookRuntime {
       case "SessionStart":
       case "SessionEnd":
       case "UserPromptSubmit":
+      case "Stop":
         return name;
       default:
         return "PreToolUse";
     }
+  }
+
+  /**
+   * Invoke Stop hooks (H6). Returns true if the agent should continue
+   * (hook denied the stop), false if the stop is allowed to proceed.
+   */
+  async invokeStop(payload: {
+    stopReason: string;
+    turnIndex: number;
+    sessionId?: string;
+    agentId?: string;
+  }): Promise<{ forceContinue: boolean; additionalContext?: string }> {
+    const configs = this.configsForEvent("Stop");
+    if (configs.length === 0) {
+      return { forceContinue: false };
+    }
+
+    const hookPayload = {
+      event: "Stop" as const,
+      toolName: "",
+      toolInput: payload,
+      ...payload,
+    };
+
+    const result = await this.invoke("Stop", hookPayload);
+
+    if (result.decision === "deny" || result.decision === "fail") {
+      return {
+        forceContinue: true,
+        additionalContext: result.additionalContext ?? result.systemMessage,
+      };
+    }
+
+    return {
+      forceContinue: false,
+      additionalContext: result.additionalContext,
+    };
   }
 }
 
@@ -257,6 +314,7 @@ const HOOK_EVENTS: readonly HookEvent[] = [
   "SessionStart",
   "SessionEnd",
   "UserPromptSubmit",
+  "Stop",
 ];
 
 /**
@@ -289,7 +347,7 @@ function runShellHook(
       child = spawn("bash", ["-c", cfg.command], {
         signal: ac.signal,
         stdio: ["pipe", "pipe", "pipe"],
-        env: { ...process.env },
+        env: { ...getHardenedEnv() },
       });
     } catch (err) {
       settle({
@@ -373,6 +431,10 @@ function runShellHook(
           (out as { permissionDecision?: "allow" | "deny" }).permissionDecision =
             parsed.permissionDecision;
         }
+        if (parsed.additionalContext !== undefined) {
+          (out as { additionalContext?: string }).additionalContext =
+            parsed.additionalContext;
+        }
         settle(out);
       } else if (code === 2) {
         const out: HookResult = {
@@ -384,6 +446,10 @@ function runShellHook(
         if (parsed.systemMessage !== undefined) {
           (out as { systemMessage?: string }).systemMessage =
             parsed.systemMessage;
+        }
+        if (parsed.additionalContext !== undefined) {
+          (out as { additionalContext?: string }).additionalContext =
+            parsed.additionalContext;
         }
         settle(out);
       } else {
@@ -407,6 +473,10 @@ function toSdkOutput(result: HookResult, event: HookEvent): HookJSONOutput {
     const out: HookJSONOutput = {};
     if (result.systemMessage !== undefined) {
       (out as { systemMessage?: string }).systemMessage = result.systemMessage;
+    }
+    if (result.additionalContext !== undefined) {
+      (out as { additionalContext?: string }).additionalContext =
+        result.additionalContext;
     }
     if (event === "PreToolUse" && result.updatedInput !== undefined) {
       (out as {

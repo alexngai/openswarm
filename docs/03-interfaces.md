@@ -7,6 +7,7 @@ outer (consumed by CLI / UI / SwarmHost / tools / orchestrator)
   ┌─ AgentEngine ──── run a conversation, stream events
   ├─ AuthSource  ──── credentials, orthogonal to engine
   ├─ SwarmHost   ──── atomic agent ↔ orchestrator bridge
+  ├─ MemoryCoordinator ── cross-session memory, pluggable providers
   └─ PluginSource / SkillSource ── where plugins and skills come from
 
 ──────────────── stable boundary ────────────────
@@ -243,6 +244,35 @@ When `mode === "standalone"`, Tier-2 tools degrade gracefully, but the **tool su
 
 Each subprocess worker runs its own `AgentEngine` instance. SwarmHost sits one layer above the engine, so the choice of `ClaudeAgentSdkEngine` vs `NativeEngine` is transparent to coordination.
 
+## 6. MemoryCoordinator
+
+Cross-session memory with pluggable providers. The coordinator manages provider lifecycle and fans out hooks to all registered providers in parallel.
+
+```ts
+export class MemoryCoordinator {
+  register(provider: MemoryProvider, config?: ProviderConfig): Promise<void>;
+  unregister(name: string): Promise<void>;
+  enrichTurn(context: TurnContext): Promise<MemoryFragment[]>;
+  onMemoryWrite(entry: MemoryEntry): Promise<void>;
+  onTurnComplete(turn: CompletedTurn): Promise<void>;
+  onCompress(summary: CompressionSummary): Promise<void>;
+  shutdown(): Promise<void>;
+}
+```
+
+Providers implement the `MemoryProvider` interface with four lifecycle hooks (`enrichTurn`, `onMemoryWrite`, `onTurnComplete`, `onCompress`) and a capabilities declaration (`enrichment`, `persistence`, `search`, `graph`).
+
+Two built-in providers:
+
+| Provider | Capabilities | Notes |
+|---|---|---|
+| `FileMemoryProvider` | enrichment | Wraps L1 curated memory; returns user + project fragments |
+| `MinimemProvider` | enrichment, persistence, search, graph | Optional; graceful degradation (embeddings → BM25-only → unavailable) |
+
+The coordinator sits alongside the engine — lifecycle hooks (`onSessionStart`, `onBeforeTurn`, `onAfterTurn`, `onCompaction`, `onSessionEnd`) are called at specific points in the engine turn loop. See `docs/40-memory-system-design.md` for the full 4-layer architecture.
+
+Per-agent isolation: each agent in a swarm gets its own memory scope via `agentScopeKey()`. A shared memory bus allows agents to publish/subscribe cross-agent facts with tag-based filtering.
+
 ## Interface stability policy
 
 - Adding optional fields: allowed any time.
@@ -254,7 +284,7 @@ v0 through v0.x may break outer-layer interfaces freely; they become stable at v
 
 ## Recap
 
-**Outer interfaces (consumed by everything):** `AgentEngine`, `AuthSource`, `PluginSource`, `SkillSource`, `SwarmHost`.
+**Outer interfaces (consumed by everything):** `AgentEngine`, `AuthSource`, `PluginSource`, `SkillSource`, `SwarmHost`, `MemoryCoordinator`.
 
 **Inner interface (used only inside a NativeEngine impl, M4+):** `Provider`.
 

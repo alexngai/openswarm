@@ -301,7 +301,7 @@ Teams can mix engine frameworks — peers on Claude Max, ChatGPT Plus, and direc
 
 ## Tools
 
-Eight Tier 0 tools ship built-in. Additional tools are auto-discovered from plugins, skills, and MCP servers at startup.
+Fifteen Tier 0 tools ship built-in. Additional tools are auto-discovered from plugins, skills, and MCP servers at startup.
 
 | Tool | Purpose |
 |------|---------|
@@ -313,6 +313,13 @@ Eight Tier 0 tools ship built-in. Additional tools are auto-discovered from plug
 | `glob` | Find files by pattern (respects `.gitignore`) |
 | `grep` | Search file contents (via bundled ripgrep binary) |
 | `todo_write` | Persistent task list scoped to the session |
+| `shell_exec` | Persistent shell sessions surviving across tool calls |
+| `shell_write` | Send input / signals to a running shell session |
+| `shell_list` | List, inspect, reattach, or close shell sessions |
+| `request_permissions` | Request elevated permissions mid-session |
+| `memory_manage` | Manage curated memory entries that persist across sessions |
+| `memory_search` | Search past session archives and memories |
+| `skill_save` | Save, list, get, or remove reusable procedural skills |
 
 **Swarm tools** (available to team members): `agent`, `send_message`, `check_inbox`, `task_create`, `task_update`, `task_list`, `task_get`, `task_pull_next`, `task_stop`, `task_output`, `commit_changes`.
 
@@ -320,7 +327,7 @@ Eight Tier 0 tools ship built-in. Additional tools are auto-discovered from plug
 - **Plugins** — `~/.swarm-harness/plugins/` (owned) + read-only discovery of `~/.claude/plugins/`
 - **MCP servers** — first-class stdio client; tools registered as `mcp__<server>__<tool>`
 - **Skills** — auto-loaded from `.claude/skills/`
-- **Hooks** — PreToolUse / PostToolUse / SessionStart
+- **Hooks** — PreToolUse / PostToolUse / SessionStart / SessionEnd / Stop / PermissionRequest / SubagentStart / SubagentStop / PreCompact / PostCompact / UserPromptSubmit
 
 ## Known limitations
 
@@ -338,6 +345,7 @@ swarm-harness is structured around three stable abstraction seams:
 1. **AgentEngine** — pluggable conversation loop (Claude Agent SDK, NativeEngine via Vercel AI SDK, Codex ChatGPT framework)
 2. **ToolDispatcher** — tiered tool registry with unified permission gating
 3. **SwarmHost** — team orchestration layer (topologies, worker lifecycle, task graph, messaging)
+4. **MemoryCoordinator** — cross-session memory with pluggable providers (curated memory, skills, session archive)
 
 ```
 src/
@@ -346,6 +354,9 @@ src/
   providers/   Multi-provider adapters (Anthropic, OpenAI, xAI, Google, DashScope)
   tools/       Tier 0-2 tool implementations + bash validation
   swarm/       Orchestrator, topologies, worker host, task registry, inbox, git adapters
+  memory/      4-layer memory system (curated, skills, archive, providers)
+  state/       SQLite-backed state database (sessions, goals, memory, audit log)
+  context/     Composable system prompt fragments with priority ordering
   mcp/         MCP client + tool bridge
   plugins/     Plugin discovery + lifecycle
   skills/      Skill auto-loading
@@ -357,13 +368,15 @@ src/
   core/        Shared type definitions
 ```
 
-Design docs live in `docs/` (39 markdown files; see [`docs/README.md`](docs/README.md) for the index). Key references:
+Design docs live in `docs/` (40 markdown files; see [`docs/README.md`](docs/README.md) for the index). Key references:
 
 - [Vision](docs/00-vision.md) — one agent is a tool, N coordinated agents is the product
 - [Architecture](docs/02-architecture.md) — engine, tools, permissions, session store
 - [Tool tiers](docs/04-tool-tiers.md) — what ships at each tier (0-5)
+- [Memory system](docs/40-memory-system-design.md) — 4-layer memory architecture (curated, skills, archive, providers)
 - [Team orchestration](docs/25-team-orchestration.md) — topology catalog, TeamSession, MAP scope semantics
 - [git-cascade integration](docs/29-v0.7-git-cascade-plan.md) — worktree-per-member design
+- [Codex parity](docs/39-codex-parity-gap-analysis.md) — gap analysis vs OpenAI Codex CLI
 
 Research notes live in `docs/research/` (7 files, 3,300+ lines).
 
@@ -372,7 +385,7 @@ Research notes live in `docs/research/` (7 files, 3,300+ lines).
 ```bash
 bun install          # install dependencies
 bun run build        # type-check + bundle
-npm test             # vitest suite (1893 tests)
+npm test             # vitest suite (2800+ tests)
 bun test src/ui/     # OpenTUI/Solid component tests
 ```
 

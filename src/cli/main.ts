@@ -43,6 +43,7 @@ import { checkBudget } from "../core/budget.js";
 import type { CommonOpts } from "./argv.js";
 import type { NormalizedEvent } from "../core/types.js";
 import type { RunConfig } from "../engine/index.js";
+import { buildSystemPrompt } from "../engine/default-system-prompt.js";
 import { VERSION } from "../index.js";
 
 // ---------------------------------------------------------------------------
@@ -199,8 +200,14 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   });
 
   // 10. Build RunConfig.
+  // SDK engine: empty string → falls back to the `claude_code` preset internally.
+  // Native/hardened-native: use our default system prompt (Codex-parity baseline).
+  const systemPrompt =
+    engine.id === "native" || engine.id === "hardened-native"
+      ? buildSystemPrompt({ cwd: process.cwd() })
+      : "";
   const config: RunConfig = {
-    systemPrompt: "",
+    systemPrompt,
     prompt: text,
     model: rt.resolvedModelId,
     auth: rt.auth,

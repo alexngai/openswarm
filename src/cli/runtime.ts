@@ -22,6 +22,7 @@ import { ToolDispatcher } from "../tools/dispatcher.js";
 import { buildTier0Tools } from "../tools/tier0/index.js";
 import { PermissionEngine } from "../permissions/index.js";
 import { NativeEngine } from "../engine/native.js";
+import { HardenedNativeEngine } from "../engine/hardened-native.js";
 import { ScriptedTestEngine } from "../engine/test-engine.js";
 import { CodexFrameworkEngine } from "../engine/codex-framework.js";
 import { PluginRegistry } from "../plugins/registry.js";
@@ -297,10 +298,10 @@ export async function buildAgentRuntime(
       }
       const factory = resolved.engineFactory!;
       makeEngine = async () => ({ engine: factory() });
-    } else if (opts.framework === "native") {
+    } else if (opts.framework === "native" || opts.framework === "hardened-native") {
       if (resolved.kind !== "native") {
         process.stderr.write(
-          "error: --framework native does not support Claude models in M4a.\n" +
+          `error: --framework ${opts.framework} does not support Claude models in M4a.\n` +
             "Use `--framework auto` (default) or `--framework claude-agent-sdk`.\n" +
             "Native-via-@ai-sdk/anthropic is scheduled for M4b.\n",
         );
@@ -308,13 +309,19 @@ export async function buildAgentRuntime(
       }
       const providerFactory = resolved.providerFactory!;
       const providerModelId = resolved.modelId!;
+      const useHardened = opts.framework === "hardened-native";
       makeEngine = async (sessionId: string) => {
         const providerAuth = await buildAuthForProvider(providerModelId);
         const provider = await providerFactory(providerAuth, providerModelId);
-        return {
-          engine: new NativeEngine({ provider, sessionId }),
-          providerId: provider.id,
-        };
+        const engine = useHardened
+          ? new HardenedNativeEngine({
+              provider,
+              sessionId,
+              eagerToolDispatch: opts.eagerToolDispatch,
+              midTurnCompaction: opts.midTurnCompaction,
+            })
+          : new NativeEngine({ provider, sessionId });
+        return { engine, providerId: provider.id };
       };
     } else {
       // auto

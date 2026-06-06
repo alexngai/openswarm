@@ -11,12 +11,13 @@
 
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import * as crypto from "node:crypto";
 import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { ToolAccesses, type ToolAccesses as ToolAccessesType } from "../access.js";
 import { isUnderCwd } from "./internal.js";
-import { atomicWrite } from "./edit_file.js";
+import { atomicWrite, TocttouError } from "./edit_file.js";
 
 const editSchema = z.object({
   old_string: z.string(),
@@ -133,9 +134,18 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
 
   // Phase 2: apply all edits in order to produce the final content.
   // simulatedContent already holds the result after all valid edits.
+  // S5: compute hash of original content for TOCTTOU check.
+  const contentHash = crypto.createHash("sha256").update(originalContent).digest("hex");
+
   try {
-    await atomicWrite(resolved, simulatedContent);
+    await atomicWrite(resolved, simulatedContent, contentHash);
   } catch (err) {
+    if (err instanceof TocttouError) {
+      return {
+        status: "error",
+        message: `TOCTTOU: ${err.message}. Re-read the file and retry.`,
+      };
+    }
     const msg = err instanceof Error ? err.message : String(err);
     return { status: "error", message: `failed to write "${input.path}": ${msg}` };
   }

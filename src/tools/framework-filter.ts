@@ -18,10 +18,11 @@
  */
 
 import type { ToolImpl } from "./types.js";
+import type { FrameworkChoice } from "../cli/argv.js";
 
 export function filterToolsForFramework(
   tools: readonly ToolImpl[],
-  framework: "native" | "claude-agent-sdk" | "codex-chatgpt" | "auto",
+  framework: FrameworkChoice,
 ): readonly ToolImpl[] {
   // No-op as of v0.4 stage 4G. See module-level jsdoc for rationale.
   void framework; // signature preserved for callers; reserved for future use

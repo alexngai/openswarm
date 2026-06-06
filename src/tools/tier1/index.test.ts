@@ -11,23 +11,27 @@ const mockRegistry: SkillRegistry = {
 };
 
 describe("buildTier1Tools", () => {
-  it("returns exactly 4 tools when no registry is provided", () => {
+  it("returns exactly 6 tools when no registry is provided", () => {
     const tools = buildTier1Tools({});
-    expect(tools).toHaveLength(4);
+    expect(tools).toHaveLength(6);
     const names = tools.map((t) => t.spec.name);
     expect(names).toContain("web_fetch");
     expect(names).toContain("web_search");
     expect(names).toContain("skill");
     expect(names).toContain("notebook_edit");
+    expect(names).toContain("view_image");
+    expect(names).toContain("tool_search");
   });
 
-  it("returns exactly 4 tools when skillRegistry is provided", () => {
+  it("returns exactly 6 tools when skillRegistry is provided", () => {
     const tools = buildTier1Tools({ skillRegistry: mockRegistry });
-    expect(tools).toHaveLength(4);
+    expect(tools).toHaveLength(6);
     const names = tools.map((t) => t.spec.name);
     expect(names).toContain("web_fetch");
     expect(names).toContain("web_search");
     expect(names).toContain("skill");
     expect(names).toContain("notebook_edit");
+    expect(names).toContain("view_image");
+    expect(names).toContain("tool_search");
   });
 });

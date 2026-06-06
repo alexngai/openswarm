@@ -26,6 +26,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import * as crypto from "node:crypto";
 import { z } from "zod";
 import type { HookConfig } from "./index.js";
 
@@ -37,6 +38,7 @@ const HookConfigSchema = z.object({
   matcher: z.string(),
   command: z.string(),
   timeoutMs: z.number().int().positive().optional(),
+  contentHash: z.string().optional(),
 });
 
 const HooksMapSchema = z.object({
@@ -45,6 +47,12 @@ const HooksMapSchema = z.object({
   SessionStart: z.array(HookConfigSchema).optional(),
   SessionEnd: z.array(HookConfigSchema).optional(),
   UserPromptSubmit: z.array(HookConfigSchema).optional(),
+  Stop: z.array(HookConfigSchema).optional(),
+  PermissionRequest: z.array(HookConfigSchema).optional(),
+  SubagentStart: z.array(HookConfigSchema).optional(),
+  SubagentStop: z.array(HookConfigSchema).optional(),
+  PreCompact: z.array(HookConfigSchema).optional(),
+  PostCompact: z.array(HookConfigSchema).optional(),
 });
 
 // Claude Code `settings.json` — passthrough other keys, pluck `.hooks`.
@@ -64,6 +72,12 @@ export interface HooksConfigFile {
   readonly SessionStart?: readonly HookConfig[];
   readonly SessionEnd?: readonly HookConfig[];
   readonly UserPromptSubmit?: readonly HookConfig[];
+  readonly Stop?: readonly HookConfig[];
+  readonly PermissionRequest?: readonly HookConfig[];
+  readonly SubagentStart?: readonly HookConfig[];
+  readonly SubagentStop?: readonly HookConfig[];
+  readonly PreCompact?: readonly HookConfig[];
+  readonly PostCompact?: readonly HookConfig[];
 }
 
 export interface LoadHooksConfigOptions {
@@ -202,4 +216,63 @@ export function countEvents(config: HooksConfigFile): number {
   if ((config.SessionEnd?.length ?? 0) > 0) n++;
   if ((config.UserPromptSubmit?.length ?? 0) > 0) n++;
   return n;
+}
+
+// ---------------------------------------------------------------------------
+// Hook trust model — content hash verification (H5)
+// ---------------------------------------------------------------------------
+
+export function computeHookHash(scriptPath: string): string | null {
+  try {
+    const content = fs.readFileSync(scriptPath, "utf8");
+    return crypto.createHash("sha256").update(content).digest("hex");
+  } catch {
+    return null;
+  }
+}
+
+export interface HookVerificationResult {
+  readonly trusted: boolean;
+  readonly reason: string;
+}
+
+export function verifyHookTrust(hook: HookConfig): HookVerificationResult {
+  if (!hook.contentHash) {
+    return { trusted: true, reason: "no hash configured — trust by default" };
+  }
+
+  const command = hook.command.trim();
+  const scriptPath = command.split(/\s+/)[0];
+  if (!scriptPath) {
+    return { trusted: false, reason: "empty command" };
+  }
+
+  const actualHash = computeHookHash(scriptPath);
+  if (actualHash === null) {
+    return { trusted: false, reason: `cannot read script: ${scriptPath}` };
+  }
+
+  if (actualHash === hook.contentHash) {
+    return { trusted: true, reason: "hash matches" };
+  }
+
+  return {
+    trusted: false,
+    reason: `hash mismatch: expected ${hook.contentHash.slice(0, 12)}…, got ${actualHash.slice(0, 12)}…`,
+  };
+}
+
+export function verifyAllHooks(
+  config: HooksConfigFile,
+): Map<string, HookVerificationResult[]> {
+  const results = new Map<string, HookVerificationResult[]>();
+  const events = Object.keys(config) as (keyof HooksConfigFile)[];
+
+  for (const event of events) {
+    const hooks = config[event];
+    if (!hooks || hooks.length === 0) continue;
+    results.set(event, hooks.map(verifyHookTrust));
+  }
+
+  return results;
 }

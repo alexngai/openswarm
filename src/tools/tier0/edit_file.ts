@@ -58,8 +58,17 @@ function countOccurrences(haystack: string, needle: string): number {
 /**
  * Atomic write: write to a temp file in the same directory, then rename.
  * Ensures the target is never left in a partial state.
+ *
+ * When `expectedHash` is provided (S5 TOCTTOU protection), re-reads the
+ * target file just before rename and verifies the content hash matches
+ * what was read earlier. If the file changed between the initial read
+ * and the write, the operation is aborted with an error.
  */
-async function atomicWrite(targetPath: string, content: string): Promise<void> {
+async function atomicWrite(
+  targetPath: string,
+  content: string,
+  expectedHash?: string,
+): Promise<void> {
   const dir = path.dirname(targetPath);
   // Random suffix (not pid+ms) so concurrent batch writes can't collide on
   // the temp name and lose to `fs.rename` after the writer has been
@@ -68,11 +77,41 @@ async function atomicWrite(targetPath: string, content: string): Promise<void> {
   const tmp = path.join(dir, `.swarm-harness-tmp-${process.pid}-${rand}`);
   try {
     await fs.writeFile(tmp, content, "utf8");
+
+    // S5: TOCTTOU guard — if we know the expected content hash, verify
+    // the target hasn't been modified since we read it.
+    if (expectedHash !== undefined) {
+      try {
+        const currentContent = await fs.readFile(targetPath, "utf8");
+        const currentHash = crypto
+          .createHash("sha256")
+          .update(currentContent)
+          .digest("hex");
+        if (currentHash !== expectedHash) {
+          throw new TocttouError(
+            `file "${targetPath}" was modified between read and write ` +
+              `(expected hash ${expectedHash.slice(0, 12)}…, got ${currentHash.slice(0, 12)}…)`,
+          );
+        }
+      } catch (err) {
+        if (err instanceof TocttouError) throw err;
+        // File was deleted between our read and write — unusual but not TOCTTOU
+      }
+    }
+
     await fs.rename(tmp, targetPath);
   } catch (err) {
     // Best-effort cleanup of temp file on failure.
     await fs.unlink(tmp).catch(() => undefined);
     throw err;
+  }
+}
+
+/** Sentinel error for TOCTTOU detection (S5). */
+export class TocttouError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TocttouError";
   }
 }
 
@@ -140,9 +179,18 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   // Apply replacement(s).
   const newContent = content.split(input.old_string).join(input.new_string);
 
+  // S5: compute hash of original content for TOCTTOU check.
+  const contentHash = crypto.createHash("sha256").update(content).digest("hex");
+
   try {
-    await atomicWrite(resolved, newContent);
+    await atomicWrite(resolved, newContent, contentHash);
   } catch (err) {
+    if (err instanceof TocttouError) {
+      return {
+        status: "error",
+        message: `TOCTTOU: ${err.message}. Re-read the file and retry.`,
+      };
+    }
     const msg = err instanceof Error ? err.message : String(err);
     return { status: "error", message: `failed to write "${input.path}": ${msg}` };
   }

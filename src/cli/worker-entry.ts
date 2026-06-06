@@ -5,11 +5,13 @@ import { WorkerHost } from "../swarm/worker-host.js";
 import { ClaudeAgentSdkEngine } from "../engine/claude-agent-sdk.js";
 import { CodexFrameworkEngine } from "../engine/codex-framework.js";
 import { NativeEngine } from "../engine/native.js";
+import { HardenedNativeEngine } from "../engine/hardened-native.js";
 import { ScriptedTestEngine } from "../engine/test-engine.js";
 import { filterCodexPeerTools } from "../tools/codex-peer-tools.js";
 import { resolveProvider } from "../providers/routing.js";
 import { OpenAIEnvAuth } from "../auth/openai-env.js";
 import type { AgentEngine, PermissionDecision } from "../engine/index.js";
+import type { RetryPolicy } from "../engine/retry-policy.js";
 import type { FrameworkChoice } from "./argv.js";
 import { ToolDispatcher } from "../tools/dispatcher.js";
 import { buildTier0Tools } from "../tools/tier0/index.js";
@@ -33,6 +35,13 @@ import { RunMoreParamsSchema, IPC_ERROR_CODES } from "../swarm/ipc/protocol.js";
 import type { PermissionMode, Usage } from "../core/types.js";
 import type { ToolExecutionContext, ToolImpl } from "../tools/types.js";
 import { readSessionSidecar, writeSessionSidecar } from "./session-sidecar.js";
+import { buildSystemPrompt } from "../engine/default-system-prompt.js";
+
+function parseIntEnv(key: string, fallback: number): number {
+  const raw = process.env[key];
+  if (raw === undefined || !/^\d+$/.test(raw)) return fallback;
+  return Number.parseInt(raw, 10);
+}
 
 /**
  * Combine the parent's base system prompt with the role's system-prompt
@@ -138,7 +147,12 @@ async function executeTurn(
       },
     }));
 
-    const basePrompt = process.env.SWARM_HARNESS_BASE_SYSTEM_PROMPT ?? "";
+    const envBasePrompt = process.env.SWARM_HARNESS_BASE_SYSTEM_PROMPT;
+    const useNativePrompt =
+      engine.id === "native" || engine.id === "hardened-native";
+    const basePrompt = useNativePrompt
+      ? buildSystemPrompt({ cwd: process.cwd(), extensions: envBasePrompt ?? undefined })
+      : (envBasePrompt ?? "");
     const systemPrompt = composeSystemPrompt(basePrompt, roleSuffix);
 
     // Long-lived workers resume the prior turn's session so conversation
@@ -357,18 +371,32 @@ export async function runWorkerEntry(): Promise<number> {
       tools: codexPeerTools,
       host,
     });
+  } else if (frameworkEnv === "hardened-native") {
+    const resolved = resolveProvider(workerModel);
+    if (resolved.kind === "native") {
+      const nativeAuth = new OpenAIEnvAuth();
+      const provider = await resolved.providerFactory!(nativeAuth, resolved.modelId!);
+      const retryPolicy: RetryPolicy = {
+        maxRetries: parseIntEnv("SWARM_HARNESS_RETRY_MAX_RETRIES", 3),
+        backoffBaseMs: parseIntEnv("SWARM_HARNESS_RETRY_BACKOFF_BASE_MS", 100),
+      };
+      engine = new HardenedNativeEngine({
+        provider,
+        sessionId: agentId,
+        retryPolicy,
+        eagerToolDispatch: process.env.SWARM_HARNESS_EAGER_TOOL_DISPATCH === "1",
+        midTurnCompaction: process.env.SWARM_HARNESS_MID_TURN_COMPACTION === "1",
+      });
+    } else {
+      engine = new ClaudeAgentSdkEngine();
+    }
   } else if (frameworkEnv === "native") {
     const resolved = resolveProvider(workerModel);
     if (resolved.kind === "native") {
       const nativeAuth = new OpenAIEnvAuth();
       const provider = await resolved.providerFactory!(nativeAuth, resolved.modelId!);
-      // Use agentId as the per-worker cache routing key. Each worker gets a
-      // unique randomUUID-based agentId from the host; reusing it as the
-      // OpenAI prompt_cache_key keeps THIS worker's cache warm across its
-      // turns without coupling sibling workers to the same backend.
       engine = new NativeEngine({ provider, sessionId: agentId });
     } else {
-      // Fallback: native requested but model resolves to sdk — use sdk.
       engine = new ClaudeAgentSdkEngine();
     }
   } else {

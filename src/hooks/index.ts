@@ -12,7 +12,13 @@ export type HookEvent =
   | "PostToolUse"
   | "SessionStart"
   | "SessionEnd"
-  | "UserPromptSubmit";
+  | "UserPromptSubmit"
+  | "Stop"
+  | "PermissionRequest"
+  | "SubagentStart"
+  | "SubagentStop"
+  | "PreCompact"
+  | "PostCompact";
 
 /**
  * Hook config as declared by the user in .swarm-harness/hooks.json
@@ -25,6 +31,8 @@ export interface HookConfig {
   readonly command: string;
   /** Optional timeout in ms. Defaults to 30_000. */
   readonly timeoutMs?: number;
+  /** SHA-256 hash of the hook script content. When set, the hook is only executed if the script's hash matches. */
+  readonly contentHash?: string;
 }
 
 /**
@@ -38,6 +46,12 @@ export interface HookResult {
   readonly updatedInput?: ToolInput;
   /** System message to inject into the conversation. */
   readonly systemMessage?: string;
+  /**
+   * Context to inject into the model's conversation as a system message (H4).
+   * Unlike systemMessage (which is for display), this is injected into the
+   * actual message array so the model sees it.
+   */
+  readonly additionalContext?: string;
   /** Explicit permission override (takes precedence over decision when present). */
   readonly permissionDecision?: "allow" | "deny";
   /** Raw stdout from the hook command, for debugging. */
@@ -46,6 +60,18 @@ export interface HookResult {
   readonly stderr?: string;
   /** Error message when decision === "fail". */
   readonly error?: string;
+}
+
+/**
+ * Payload for Stop hooks (H6). Fired when the agent wants to end its turn.
+ * If the hook returns a non-zero exit (deny/fail), the engine forces continuation.
+ */
+export interface StopHookPayload {
+  readonly event: "Stop";
+  readonly stopReason: string;
+  readonly turnIndex: number;
+  readonly sessionId?: string;
+  readonly agentId?: string;
 }
 
 /**
@@ -58,6 +84,45 @@ export interface ToolHookPayload {
   readonly toolInput: ToolInput;
   /** PostToolUse only. */
   readonly toolResult?: ToolResult;
+  readonly sessionId?: string;
+  readonly agentId?: string;
+}
+
+/**
+ * Payload for PermissionRequest hooks (H1). Fires before user approval
+ * prompt. Hooks can auto-approve (exit 0 with permissionDecision: "allow")
+ * or auto-deny (exit 0 with permissionDecision: "deny").
+ */
+export interface PermissionRequestPayload {
+  readonly event: "PermissionRequest";
+  readonly toolName: string;
+  readonly toolInput: ToolInput;
+  readonly requiredPermission: string;
+  readonly currentMode: string;
+  readonly sessionId?: string;
+  readonly agentId?: string;
+}
+
+/**
+ * Payload for SubagentStart/SubagentStop hooks (H1). Track sub-agent lifecycle.
+ */
+export interface SubagentPayload {
+  readonly event: "SubagentStart" | "SubagentStop";
+  readonly subagentId: string;
+  readonly parentAgentId?: string;
+  readonly role?: string;
+  readonly exitCode?: number;
+  readonly sessionId?: string;
+}
+
+/**
+ * Payload for PreCompact/PostCompact hooks (H1). Inject context before/after
+ * conversation summarization.
+ */
+export interface CompactPayload {
+  readonly event: "PreCompact" | "PostCompact";
+  readonly messageCount: number;
+  readonly tokenCount?: number;
   readonly sessionId?: string;
   readonly agentId?: string;
 }
