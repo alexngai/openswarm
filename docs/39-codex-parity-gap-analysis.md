@@ -141,6 +141,22 @@ advantages to preserve.
 
 ---
 
+## 9. Configuration & UX
+
+Codex has a comprehensive TOML-based configuration system with 200+ fields,
+layered profiles, and JSON schema validation. swarm-harness has hooks config
+and CLI flags but lacks a unified declarative config surface.
+
+| # | Gap | Status | Priority | Effort | Notes |
+|---|---|---|---|---|---|
+| U1 | **Declarative config system (TOML/JSON, schema-validated)** | ❌ | P3 | L | Codex: `config.schema.json`, 200+ fields, per-profile model settings, per-app/per-tool overrides, permission profiles with `extends` inheritance. swarm-harness: hooks config in `hooks.json`, exec policy in `rules.json`, network in `network.json`, but no unified config file or schema. Config surface is fragmented across env vars, separate JSON files, and CLI flags. |
+| U2 | **Shell environment policy (inherit modes + regex filter)** | ❌ | P3 | S | Codex: `inherit` modes (`core`/`all`/`none`), regex include/exclude filters, explicit variable overrides for child processes. swarm-harness: `process-hardening.ts` strips 33 dangerous env vars (deny-list) but has no positive-list model, no regex filtering, and no user-configurable env inheritance policy. |
+| U3 | **Credentials management (pluggable storage)** | ❌ | P3 | M | Codex: pluggable credential storage with `file`, `keyring`, `auto`, `ephemeral` backends. swarm-harness: relies entirely on env vars for API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc.). No keyring integration or credential lifecycle management. |
+| U4 | **Rich TUI (alternate screen, Vim bindings, syntax highlighting)** | 🟦 | — | — | Codex: Ratatui-based terminal UI with alternate screen modes, Vim keybindings, customizable status line, syntax highlighting themes, animations, session picker, notification system (OSC9/BEL). swarm-harness: headless/CLI-first, designed for programmatic use via ACP. Intentionally divergent — swarm-harness targets agent-to-agent and API integration, not interactive terminal use. |
+| U5 | **Configurable reasoning effort / personality** | ❌ | P3 | S | Codex: exposes `reasoning_effort`, `reasoning_summaries` (`auto`/`concise`/`detailed`/`none`), and `personality` (`none`/`friendly`/`pragmatic`) as top-level config. swarm-harness: passes provider-specific params through but doesn't abstract these as first-class config knobs. |
+
+---
+
 ## Prioritized Plan (draft)
 
 ### Phase A — Safety Foundation (P0, ~3 weeks)
@@ -246,3 +262,4 @@ and commit hash.
 - **2026-06-06** — C2+C3+G1: Context fragments (9 built-in types with composable ContextBuilder, priority sorting, register/unregister, singleton). State database (SQLite-backed via better-sqlite3, WAL mode, 4 tables with migrations, full CRUD, memory search). Goals engine (6-state machine, token+cost budget tracking, checkpoint system, GoalRegistry, StateDB serialization). 67 new tests passing.
 - **2026-06-06** — F10: Web search + full browsing parity. `web_search.ts`: pluggable `SearchBackend` interface, DuckDuckGo HTML scraping default, batch `queries` support (up to 5, cross-query dedup), domain filtering, 8-hit cap, `SWARM_WEB_SEARCH_BASE_URL` env override. `web_fetch.ts`: HTTP→HTTPS auto-upgrade (exempts localhost/127.0.0.1/::1), prompt-driven extraction (`"title"` → `<title>` tag, `"summary"` → 900-char preview, custom prompt → labeled content), `find` param for in-page substring search with context lines and match markers. Closes all Codex web-search gaps (Search, OpenPage, FindInPage). 69 tier1 web tests passing.
 - **2026-06-06** — G2: Memory system (cross-session learning). 4-layer architecture: L1 curated bounded memory (project/user scopes, 2500/1500 char caps, add/replace/remove), L2 skills (Markdown + YAML frontmatter, FileSkillStore for disk, tag/keyword search), L3 session archive (FTS5 + LIKE fallback, auto-sync triggers), L4 provider protocol (MemoryCoordinator, FileMemoryProvider, MinimemProvider with graceful degradation). 3 Tier 0 tools: `memory_manage`, `memory_search`, `skill_save`. Per-agent isolation via `agentScopeKey()` + shared memory bus (500-entry cap). StateDB: `curated_memory` + `session_summaries` tables. Lifecycle hooks wired to engine. Context injection via `curatedMemoryFragment` at priority 5. Hardened from 4-agent code review: fragment cap (50), YAML injection protection, store-level size enforcement, `concurrencySafe` on mutating tools. 220+ memory tests passing. Commits `5dedee7`–`790233c`.
+- **2026-06-06** — Added §9 "Configuration & UX" with 5 newly identified gaps from deep Codex architecture research: U1 (declarative config system with schema validation, P3/L), U2 (shell environment policy with inherit modes + regex filtering, P3/S), U3 (credentials management with pluggable storage backends, P3/M), U4 (rich TUI — classified 🟦 divergent, swarm-harness is headless/ACP-first by design), U5 (configurable reasoning effort/personality as first-class knobs, P3/S). All P3 — no P0/P1/P2 gaps remain open.
