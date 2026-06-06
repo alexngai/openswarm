@@ -223,6 +223,23 @@ export class NetworkPolicy {
     return domainDecision;
   }
 
+  summarize(): string | null {
+    if (this.mode === "full" && this.allowPatterns.length === 1 && this.allowPatterns[0] === "*" && this.denyPatterns.length === 0) {
+      return null;
+    }
+    const lines: string[] = [`Mode: ${this.mode}`];
+    if (this.allowPatterns.length > 0) {
+      lines.push(`Allow: ${this.allowPatterns.join(", ")}`);
+    }
+    if (this.denyPatterns.length > 0) {
+      lines.push(`Deny: ${this.denyPatterns.join(", ")}`);
+    }
+    if (this.blockPrivate) {
+      lines.push("Private/local addresses are blocked (SSRF protection).");
+    }
+    return lines.join("\n");
+  }
+
   static fullAccess(): NetworkPolicy {
     return new NetworkPolicy({
       mode: "full",
