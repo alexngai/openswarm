@@ -1,12 +1,13 @@
 /**
- * StateDB-backed curated memory store.
+ * StateDB-backed stores for the memory system.
  *
- * Bridges the curated memory module (Layer 1) to the StateDB persistence
- * layer, so curated memories survive across process restarts.
+ * Bridges curated memory (Layer 1) and session archive (Layer 3) to the
+ * StateDB persistence layer.
  */
 
-import type { StateDB, CuratedMemoryRow } from "../state/index.js";
+import type { StateDB, CuratedMemoryRow, SessionSummaryRow } from "../state/index.js";
 import type { CuratedMemoryStore } from "./curated.js";
+import type { ArchiveStore } from "./archive.js";
 import type { CuratedMemoryRecord } from "./types.js";
 
 export class StateDBCuratedStore implements CuratedMemoryStore {
@@ -24,5 +25,25 @@ export class StateDBCuratedStore implements CuratedMemoryStore {
 
   set(scopeKey: string, content: string): void {
     this.db.setCuratedMemory(scopeKey, content);
+  }
+}
+
+export class StateDBArchiveStore implements ArchiveStore {
+  constructor(private db: StateDB) {}
+
+  save(record: SessionSummaryRow): void {
+    this.db.createSessionSummary(record);
+  }
+
+  get(sessionId: string): SessionSummaryRow | null {
+    return this.db.getSessionSummary(sessionId);
+  }
+
+  search(query: string, limit = 10): SessionSummaryRow[] {
+    return this.db.searchSessionSummaries(query, limit);
+  }
+
+  list(limit = 20): SessionSummaryRow[] {
+    return this.db.listSessionSummaries(limit);
   }
 }

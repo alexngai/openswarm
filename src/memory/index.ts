@@ -44,4 +44,16 @@ export {
 
 export { curatedMemoryFragment } from "./fragment.js";
 
-export { StateDBCuratedStore } from "./state-store.js";
+export {
+  getArchiveStore,
+  setArchiveStore,
+  resetArchiveStore,
+  archiveSession,
+  searchArchive,
+  listArchive,
+  type ArchiveStore,
+  type ArchiveSessionInput,
+  type ArchiveSearchResult,
+} from "./archive.js";
+
+export { StateDBCuratedStore, StateDBArchiveStore } from "./state-store.js";

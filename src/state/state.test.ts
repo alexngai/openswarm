@@ -27,7 +27,7 @@ describe("StateDB lifecycle", () => {
   it("creates database and applies migrations", () => {
     db = freshDB();
     expect(db.isOpen).toBe(true);
-    expect(db.getSchemaVersion()).toBe(2);
+    expect(db.getSchemaVersion()).toBe(3);
   });
 
   it("creates parent directory if needed", () => {
@@ -373,6 +373,92 @@ describe("Memories CRUD", () => {
 // ---------------------------------------------------------------------------
 // Audit log
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Session summaries
+// ---------------------------------------------------------------------------
+
+describe("Session summaries CRUD", () => {
+  it("creates and retrieves a session summary", () => {
+    db = freshDB();
+    db.createSessionSummary({
+      sessionId: "sum1",
+      summary: "Implemented web search with DuckDuckGo backend",
+      tags: '["web","search"]',
+      toolsUsed: '["bash","edit_file"]',
+      createdAt: "2026-06-05T00:00:00Z",
+    });
+
+    const row = db.getSessionSummary("sum1");
+    expect(row).not.toBeNull();
+    expect(row!.summary).toContain("web search");
+    expect(row!.tags).toBe('["web","search"]');
+    expect(row!.toolsUsed).toBe('["bash","edit_file"]');
+  });
+
+  it("returns null for missing session summary", () => {
+    db = freshDB();
+    expect(db.getSessionSummary("nonexistent")).toBeNull();
+  });
+
+  it("upserts on conflict", () => {
+    db = freshDB();
+    db.createSessionSummary({
+      sessionId: "sum1",
+      summary: "Version 1",
+      tags: "[]",
+      toolsUsed: "[]",
+      createdAt: "2026-06-05T00:00:00Z",
+    });
+    db.createSessionSummary({
+      sessionId: "sum1",
+      summary: "Version 2",
+      tags: "[]",
+      toolsUsed: "[]",
+      createdAt: "2026-06-05T01:00:00Z",
+    });
+    expect(db.getSessionSummary("sum1")!.summary).toBe("Version 2");
+  });
+
+  it("searches summaries via FTS5", () => {
+    db = freshDB();
+    db.createSessionSummary({
+      sessionId: "sum1",
+      summary: "Implemented memory system with curated entries",
+      tags: '["memory"]',
+      toolsUsed: "[]",
+      createdAt: "2026-06-05T00:00:00Z",
+    });
+    db.createSessionSummary({
+      sessionId: "sum2",
+      summary: "Fixed bug in web search backend",
+      tags: '["bugfix"]',
+      toolsUsed: "[]",
+      createdAt: "2026-06-05T01:00:00Z",
+    });
+
+    const results = db.searchSessionSummaries("memory");
+    expect(results.length).toBeGreaterThanOrEqual(1);
+    expect(results[0]!.sessionId).toBe("sum1");
+  });
+
+  it("lists summaries in reverse chronological order", () => {
+    db = freshDB();
+    for (let i = 0; i < 5; i++) {
+      db.createSessionSummary({
+        sessionId: `sum${i}`,
+        summary: `Session ${i}`,
+        tags: "[]",
+        toolsUsed: "[]",
+        createdAt: `2026-06-0${i + 1}T00:00:00Z`,
+      });
+    }
+
+    const results = db.listSessionSummaries(3);
+    expect(results).toHaveLength(3);
+    expect(results[0]!.sessionId).toBe("sum4");
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Curated memory

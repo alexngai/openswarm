@@ -88,6 +88,14 @@ export interface CuratedMemoryRow {
   updatedAt: string;
 }
 
+export interface SessionSummaryRow {
+  sessionId: string;
+  summary: string;
+  tags: string;
+  toolsUsed: string;
+  createdAt: string;
+}
+
 // ---------------------------------------------------------------------------
 // Migration system
 // ---------------------------------------------------------------------------
@@ -169,6 +177,37 @@ const MIGRATIONS: Migration[] = [
         content    TEXT NOT NULL,
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
+    `,
+  },
+  {
+    version: 3,
+    sql: `
+      CREATE TABLE IF NOT EXISTS session_summaries (
+        session_id TEXT PRIMARY KEY,
+        summary    TEXT NOT NULL,
+        tags       TEXT NOT NULL DEFAULT '[]',
+        tools_used TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE VIRTUAL TABLE IF NOT EXISTS session_summaries_fts USING fts5(
+        summary, tags,
+        content=session_summaries,
+        content_rowid=rowid
+      );
+
+      CREATE TRIGGER IF NOT EXISTS session_summaries_ai AFTER INSERT ON session_summaries BEGIN
+        INSERT INTO session_summaries_fts(rowid, summary, tags) VALUES (new.rowid, new.summary, new.tags);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS session_summaries_ad AFTER DELETE ON session_summaries BEGIN
+        INSERT INTO session_summaries_fts(session_summaries_fts, rowid, summary, tags) VALUES ('delete', old.rowid, old.summary, old.tags);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS session_summaries_au AFTER UPDATE ON session_summaries BEGIN
+        INSERT INTO session_summaries_fts(session_summaries_fts, rowid, summary, tags) VALUES ('delete', old.rowid, old.summary, old.tags);
+        INSERT INTO session_summaries_fts(rowid, summary, tags) VALUES (new.rowid, new.summary, new.tags);
+      END;
     `,
   },
 ];
@@ -460,6 +499,62 @@ export class StateDB {
   }
 
   // -------------------------------------------------------------------------
+  // Session summaries
+  // -------------------------------------------------------------------------
+
+  createSessionSummary(record: SessionSummaryRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO session_summaries (session_id, summary, tags, tools_used, created_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(session_id) DO UPDATE SET summary = excluded.summary, tags = excluded.tags, tools_used = excluded.tools_used, created_at = excluded.created_at`,
+      )
+      .run(
+        record.sessionId,
+        record.summary,
+        record.tags,
+        record.toolsUsed,
+        record.createdAt,
+      );
+  }
+
+  getSessionSummary(sessionId: string): SessionSummaryRow | null {
+    const row = this.db
+      .prepare("SELECT * FROM session_summaries WHERE session_id = ?")
+      .get(sessionId) as any;
+    return row ? mapSessionSummaryRow(row) : null;
+  }
+
+  searchSessionSummaries(query: string, limit = 10): SessionSummaryRow[] {
+    try {
+      const rows = this.db
+        .prepare(
+          `SELECT s.* FROM session_summaries s
+           JOIN session_summaries_fts f ON s.rowid = f.rowid
+           WHERE session_summaries_fts MATCH ?
+           ORDER BY rank
+           LIMIT ?`,
+        )
+        .all(query, limit) as any[];
+      return rows.map(mapSessionSummaryRow);
+    } catch {
+      const rows = this.db
+        .prepare(
+          "SELECT * FROM session_summaries WHERE summary LIKE ? ORDER BY created_at DESC LIMIT ?",
+        )
+        .all(`%${query}%`, limit) as any[];
+      return rows.map(mapSessionSummaryRow);
+    }
+  }
+
+  listSessionSummaries(limit = 20): SessionSummaryRow[] {
+    const rows = this.db
+      .prepare("SELECT * FROM session_summaries ORDER BY created_at DESC LIMIT ?")
+      .all(limit) as any[];
+    return rows.map(mapSessionSummaryRow);
+  }
+
+  // -------------------------------------------------------------------------
   // Curated memory
   // -------------------------------------------------------------------------
 
@@ -590,6 +685,16 @@ function mapCuratedMemoryRow(row: any): CuratedMemoryRow {
     scopeKey: row.scope_key,
     content: row.content,
     updatedAt: row.updated_at,
+  };
+}
+
+function mapSessionSummaryRow(row: any): SessionSummaryRow {
+  return {
+    sessionId: row.session_id,
+    summary: row.summary,
+    tags: row.tags,
+    toolsUsed: row.tools_used,
+    createdAt: row.created_at,
   };
 }
 

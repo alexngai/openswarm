@@ -20,6 +20,7 @@ import { shellExecTool, shellWriteTool, shellListTool } from "./shell.js";
 import { todoWriteTool } from "./todo_write.js";
 import { writeFileTool } from "./write_file.js";
 import { memoryManageTool } from "./memory_manage.js";
+import { memorySearchTool } from "./memory_search.js";
 
 /** All Tier 0 tools in a stable order. */
 export function buildTier0Tools(): readonly ToolImpl[] {
@@ -37,6 +38,7 @@ export function buildTier0Tools(): readonly ToolImpl[] {
     shellListTool,
     requestPermissionsTool,
     memoryManageTool,
+    memorySearchTool,
   ] as const;
 }
 
@@ -47,6 +49,7 @@ export {
   globTool,
   grepTool,
   memoryManageTool,
+  memorySearchTool,
   multiEditTool,
   readFileTool,
   requestPermissionsTool,
