@@ -22,8 +22,8 @@ import {
 } from "./archive.js";
 import type { MemoryFragment } from "./types.js";
 
-afterEach(() => {
-  resetMemoryCoordinator();
+afterEach(async () => {
+  await resetMemoryCoordinator();
   resetCuratedMemoryStore();
   resetCuratedMemoryLimits();
   resetArchiveStore();

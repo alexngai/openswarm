@@ -100,6 +100,26 @@ describe("searchArchive", () => {
 // listArchive
 // ---------------------------------------------------------------------------
 
+describe("archiveSession overwrite", () => {
+  it("overwrites session with same sessionId", () => {
+    archiveSession({
+      sessionId: "s1",
+      summary: "Original summary",
+      tags: ["v1"],
+    });
+    archiveSession({
+      sessionId: "s1",
+      summary: "Updated summary",
+      tags: ["v2"],
+    });
+
+    const results = listArchive();
+    expect(results).toHaveLength(1);
+    expect(results[0]!.summary).toBe("Updated summary");
+    expect(results[0]!.tags).toEqual(["v2"]);
+  });
+});
+
 describe("listArchive", () => {
   it("lists all archived sessions", () => {
     archiveSession({ sessionId: "s1", summary: "First" });

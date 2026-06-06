@@ -40,6 +40,11 @@ class InMemorySkillStore implements SkillStore {
   private data = new Map<string, Skill>();
 
   save(skill: Skill): void {
+    if (skill.content.length > MAX_SKILL_CONTENT_SIZE) {
+      throw new Error(
+        `skill content exceeds ${MAX_SKILL_CONTENT_SIZE} character limit (${skill.content.length} chars)`,
+      );
+    }
     this.data.set(skill.name, skill);
   }
 
@@ -80,6 +85,25 @@ class InMemorySkillStore implements SkillStore {
 // File-based store
 // ---------------------------------------------------------------------------
 
+export const MAX_SKILL_CONTENT_SIZE = 1000;
+
+function stripYamlQuotes(value: string): string {
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    return value.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+  }
+  return value;
+}
+
+function yamlEscape(value: string): string {
+  if (/[:\[\]{}&*?|>!%#@`,\n]/.test(value)) {
+    return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  }
+  return value;
+}
+
 export class FileSkillStore implements SkillStore {
   constructor(private directory: string) {
     if (!fs.existsSync(directory)) {
@@ -88,11 +112,17 @@ export class FileSkillStore implements SkillStore {
   }
 
   save(skill: Skill): void {
+    if (skill.content.length > MAX_SKILL_CONTENT_SIZE) {
+      throw new Error(
+        `skill content exceeds ${MAX_SKILL_CONTENT_SIZE} character limit (${skill.content.length} chars)`,
+      );
+    }
     const filePath = this.skillPath(skill.name);
+    const escapedTags = skill.tags.map((t) => yamlEscape(t)).join(", ");
     const header = [
       "---",
-      `name: ${skill.name}`,
-      `tags: [${skill.tags.join(", ")}]`,
+      `name: ${yamlEscape(skill.name)}`,
+      `tags: [${escapedTags}]`,
       `created: ${skill.createdAt ?? new Date().toISOString().split("T")[0]}`,
       "---",
     ].join("\n");
@@ -180,14 +210,14 @@ export function parseSkillContent(raw: string, fallbackName: string): Skill {
       for (let i = 1; i < endIdx; i++) {
         const line = lines[i]!.trim();
         if (line.startsWith("name:")) {
-          name = line.slice(5).trim();
+          name = stripYamlQuotes(line.slice(5).trim());
         } else if (line.startsWith("tags:")) {
           const tagStr = line.slice(5).trim();
           const match = tagStr.match(/\[([^\]]*)\]/);
           if (match) {
             tags = match[1]!
               .split(",")
-              .map((t) => t.trim())
+              .map((t) => stripYamlQuotes(t.trim()))
               .filter((t) => t.length > 0);
           }
         } else if (line.startsWith("created:")) {

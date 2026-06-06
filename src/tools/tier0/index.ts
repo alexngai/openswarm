@@ -1,8 +1,7 @@
 /**
  * Tier 0 tool factory.
  *
- * Exposes the eight tools the M0 atomic agent ships with. Build the full set
- * via `buildTier0Tools()` and register them on a `ToolDispatcher`.
+ * Build the full set via `buildTier0Tools()` and register them on a `ToolDispatcher`.
  *
  * See docs/04-tool-tiers.md §"Tier 0" and docs/08-m0-plan.md §"Phase 2".
  */

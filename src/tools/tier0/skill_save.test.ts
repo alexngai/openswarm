@@ -145,6 +145,32 @@ describe("skillSaveTool", () => {
     }
   });
 
+  it("overwrites existing skill on save", async () => {
+    await skillSaveTool.execute(
+      { action: "save", name: "my-skill", tags: ["v1"], content: "Version 1" },
+      ctx(),
+    );
+    const result = await skillSaveTool.execute(
+      { action: "save", name: "my-skill", tags: ["v2"], content: "Version 2" },
+      ctx(),
+    );
+    expect(result.status).toBe("ok");
+
+    const getResult = await skillSaveTool.execute(
+      { action: "get", name: "my-skill" },
+      ctx(),
+    );
+    expect(getResult.status).toBe("ok");
+    if (getResult.status === "ok") {
+      expect(getResult.output).toContain("Version 2");
+      expect(getResult.output).not.toContain("Version 1");
+    }
+  });
+
+  it("has concurrencySafe set to false", () => {
+    expect(skillSaveTool.spec.concurrencySafe).toBe(false);
+  });
+
   it("rejects invalid name format", async () => {
     const result = await skillSaveTool.execute(
       { action: "save", name: "invalid name!", content: "test" },

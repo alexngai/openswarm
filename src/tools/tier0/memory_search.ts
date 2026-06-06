@@ -3,7 +3,6 @@ import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import {
   searchArchive,
-  listArchive,
   type ArchiveSearchResult,
 } from "../../memory/archive.js";
 
@@ -12,10 +11,6 @@ const inputSchema = z.object({
     .string()
     .min(1)
     .describe("Search query to find relevant past sessions."),
-  scope: z
-    .enum(["sessions", "all"])
-    .optional()
-    .describe("What to search. 'sessions' searches archived session summaries. 'all' searches everything (default: 'all')."),
   limit: z
     .number()
     .int()

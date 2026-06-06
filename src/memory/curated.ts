@@ -210,7 +210,7 @@ export function executeCuratedAction(action: CuratedMemoryAction): CuratedMemory
     }
 
     default:
-      return { ok: false, error: `unknown action: ${(action as any).action}` };
+      return { ok: false, error: `unknown action: ${(action as never satisfies never)}` };
   }
 }
 

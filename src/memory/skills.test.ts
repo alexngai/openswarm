@@ -20,6 +20,13 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("SkillStore (in-memory)", () => {
+  it("rejects content exceeding size limit", () => {
+    const store = getSkillStore();
+    expect(() =>
+      store.save({ name: "big", tags: [], content: "x".repeat(1001) }),
+    ).toThrow("1000");
+  });
+
   it("saves and retrieves a skill", () => {
     const store = getSkillStore();
     store.save({
@@ -162,6 +169,37 @@ describe("FileSkillStore", () => {
     expect(store.remove("temp")).toBe(true);
     expect(store.get("temp")).toBeNull();
     expect(fs.existsSync(path.join(tmpDir, "temp.md"))).toBe(false);
+  });
+
+  it("sanitizes path traversal in names", () => {
+    tmpDir = path.join(os.tmpdir(), `skills-test-${Date.now()}`);
+    const store = new FileSkillStore(tmpDir);
+
+    store.save({ name: "../../etc/passwd", tags: [], content: "should be safe" });
+    const files = fs.readdirSync(tmpDir);
+    expect(files).toHaveLength(1);
+    expect(files[0]).not.toContain("..");
+    expect(files[0]).toBe("------etc-passwd.md");
+  });
+
+  it("rejects content exceeding size limit", () => {
+    tmpDir = path.join(os.tmpdir(), `skills-test-${Date.now()}`);
+    const store = new FileSkillStore(tmpDir);
+
+    expect(() =>
+      store.save({ name: "big", tags: [], content: "x".repeat(1001) }),
+    ).toThrow("1000");
+  });
+
+  it("escapes YAML special characters in frontmatter", () => {
+    tmpDir = path.join(os.tmpdir(), `skills-test-${Date.now()}`);
+    const store = new FileSkillStore(tmpDir);
+
+    store.save({ name: "safe-yaml", tags: ["tag: with colon", "normal"], content: "content" });
+    const skill = store.get("safe-yaml");
+    expect(skill).not.toBeNull();
+    expect(skill!.tags).toContain("tag: with colon");
+    expect(skill!.tags).toContain("normal");
   });
 
   it("searches across files", () => {

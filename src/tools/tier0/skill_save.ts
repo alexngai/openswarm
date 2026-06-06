@@ -44,6 +44,7 @@ const spec: ToolSpec = {
   inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
   requiredPermission: "none",
   tier: 0,
+  concurrencySafe: false,
 };
 
 async function execute(

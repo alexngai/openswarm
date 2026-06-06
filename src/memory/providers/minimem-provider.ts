@@ -109,9 +109,11 @@ export class MinimemProvider implements MemoryProvider {
       fs.mkdirSync(memoryDir, { recursive: true });
     }
 
+    const envProvider = process.env.MINIMEM_EMBEDDING_PROVIDER;
+    const validProviders = new Set(["openai", "local", "gemini", "auto", "none"]);
     const embeddingProvider =
       this.config.embeddingProvider ??
-      (process.env.MINIMEM_EMBEDDING_PROVIDER as any) ??
+      (envProvider && validProviders.has(envProvider) ? envProvider as MinimemProviderConfig["embeddingProvider"] : undefined) ??
       "none";
 
     try {

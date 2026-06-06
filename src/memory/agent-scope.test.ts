@@ -102,6 +102,21 @@ describe("shared memory bus", () => {
     expect(getSharedMemory()).toEqual([]);
   });
 
+  it("evicts oldest entries when exceeding capacity", () => {
+    for (let i = 0; i < 510; i++) {
+      publishSharedMemory({
+        publishedBy: "agent" as AgentId,
+        content: `Entry ${i}`,
+        tags: [],
+        timestamp: new Date(Date.now() + i * 100).toISOString(),
+      });
+    }
+
+    const entries = getSharedMemory();
+    expect(entries.length).toBeLessThanOrEqual(500);
+    expect(entries[entries.length - 1]!.content).not.toBe("Entry 0");
+  });
+
   it("tag filtering is case-insensitive", () => {
     publishSharedMemory({
       publishedBy: "a" as AgentId,

@@ -10,6 +10,7 @@
  * - onSessionEnd: archive session and shut down providers
  */
 
+import type { AgentId } from "../core/types.js";
 import type { MemoryFragment, TurnContext, CompressionSummary } from "./types.js";
 import { getMemoryCoordinator } from "./coordinator.js";
 import { FileMemoryProvider } from "./providers/file-provider.js";
@@ -75,7 +76,7 @@ export function formatMemoryFragments(fragments: MemoryFragment[]): string | nul
 
 export interface TurnCompleteInfo {
   readonly sessionId: string;
-  readonly agentId?: string;
+  readonly agentId?: AgentId;
   readonly turnIndex: number;
   readonly toolsUsed: readonly string[];
   readonly summary?: string;
@@ -85,7 +86,7 @@ export async function onAfterTurn(info: TurnCompleteInfo): Promise<void> {
   const coordinator = getMemoryCoordinator();
   await coordinator.onTurnComplete({
     sessionId: info.sessionId,
-    agentId: info.agentId as any,
+    agentId: info.agentId,
     turnIndex: info.turnIndex,
     toolsUsed: info.toolsUsed,
     summary: info.summary,

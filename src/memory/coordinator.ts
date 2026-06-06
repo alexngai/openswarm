@@ -15,6 +15,8 @@ import type {
   ProviderConfig,
 } from "./types.js";
 
+const MAX_ENRICHMENT_FRAGMENTS = 50;
+
 export class MemoryCoordinator {
   private providers: MemoryProvider[] = [];
 
@@ -33,8 +35,8 @@ export class MemoryCoordinator {
     this.providers.splice(idx, 1);
     try {
       await provider.shutdown();
-    } catch {
-      // best-effort shutdown
+    } catch (err) {
+      console.warn(`memory provider "${name}" shutdown failed:`, err);
     }
   }
 
@@ -61,6 +63,7 @@ export class MemoryCoordinator {
     for (const result of results) {
       if (result.status === "fulfilled") {
         for (const fragment of result.value) {
+          if (fragments.length >= MAX_ENRICHMENT_FRAGMENTS) break;
           const hash = fragment.content;
           if (!seen.has(hash)) {
             seen.add(hash);
@@ -68,6 +71,7 @@ export class MemoryCoordinator {
           }
         }
       }
+      if (fragments.length >= MAX_ENRICHMENT_FRAGMENTS) break;
     }
 
     return fragments;
@@ -124,6 +128,9 @@ export function setMemoryCoordinator(coordinator: MemoryCoordinator): void {
   _coordinator = coordinator;
 }
 
-export function resetMemoryCoordinator(): void {
+export async function resetMemoryCoordinator(): Promise<void> {
+  if (_coordinator) {
+    await _coordinator.shutdown();
+  }
   _coordinator = null;
 }

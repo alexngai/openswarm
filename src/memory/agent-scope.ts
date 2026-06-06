@@ -31,10 +31,15 @@ export interface SharedMemoryEntry {
   readonly timestamp: string;
 }
 
+const MAX_SHARED_ENTRIES = 500;
+
 let _sharedEntries: SharedMemoryEntry[] = [];
 
 export function publishSharedMemory(entry: SharedMemoryEntry): void {
   _sharedEntries.push(entry);
+  if (_sharedEntries.length > MAX_SHARED_ENTRIES) {
+    _sharedEntries = _sharedEntries.slice(-MAX_SHARED_ENTRIES);
+  }
 }
 
 export function getSharedMemory(opts?: {

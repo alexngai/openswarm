@@ -66,6 +66,7 @@ export {
   parseSkillContent,
   formatSkill,
   formatSkillList,
+  MAX_SKILL_CONTENT_SIZE,
   type Skill,
   type SkillStore,
 } from "./skills.js";

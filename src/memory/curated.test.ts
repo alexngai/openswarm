@@ -322,6 +322,31 @@ describe("getCuratedMemory", () => {
 // Limits
 // ---------------------------------------------------------------------------
 
+describe("executeCuratedAction — replace exceeding size limit", () => {
+  it("rolls back replacement when it would exceed limit", () => {
+    setCuratedMemoryLimits({ projectMaxChars: 50 });
+    executeCuratedAction({
+      action: "add",
+      scope: "project",
+      scopeIdentifier: "/test",
+      entry: "Short",
+    });
+    const result = executeCuratedAction({
+      action: "replace",
+      scope: "project",
+      scopeIdentifier: "/test",
+      index: 1,
+      replacement: "This replacement is way too long and will definitely exceed the character limit set above",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("exceed");
+    }
+    const memory = getCuratedMemory(scopeKey("project", "/test"));
+    expect(memory).toContain("Short");
+  });
+});
+
 describe("limits", () => {
   it("respects user scope limits separately", () => {
     setCuratedMemoryLimits({ userMaxChars: 30 });

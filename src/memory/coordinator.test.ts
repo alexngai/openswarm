@@ -13,8 +13,8 @@ import type {
   CompressionSummary,
 } from "./types.js";
 
-afterEach(() => {
-  resetMemoryCoordinator();
+afterEach(async () => {
+  await resetMemoryCoordinator();
 });
 
 function makeProvider(
@@ -257,6 +257,35 @@ describe("MemoryCoordinator shutdown", () => {
 // Singleton
 // ---------------------------------------------------------------------------
 
+describe("MemoryCoordinator enrichTurn fragment cap", () => {
+  it("caps fragments at MAX_ENRICHMENT_FRAGMENTS", async () => {
+    const coord = new MemoryCoordinator();
+    const manyFragments = Array.from({ length: 100 }, (_, i) => ({
+      source: "p1",
+      content: `fact-${i}`,
+    }));
+    const p = makeProvider("many", {
+      enrichTurn: vi.fn().mockResolvedValue(manyFragments),
+    });
+    await coord.register(p);
+
+    const result = await coord.enrichTurn({ query: "test" });
+    expect(result.length).toBeLessThanOrEqual(50);
+    expect(result).toHaveLength(50);
+  });
+});
+
+describe("MemoryCoordinator registration edge cases", () => {
+  it("registers a provider whose initialize throws", async () => {
+    const coord = new MemoryCoordinator();
+    const p = makeProvider("bad-init", {
+      initialize: vi.fn().mockRejectedValue(new Error("init failed")),
+    });
+    await expect(coord.register(p)).rejects.toThrow("init failed");
+    expect(coord.providerCount).toBe(0);
+  });
+});
+
 describe("coordinator singleton", () => {
   it("returns consistent instance", () => {
     const c1 = getMemoryCoordinator();
@@ -264,10 +293,18 @@ describe("coordinator singleton", () => {
     expect(c1).toBe(c2);
   });
 
-  it("resets cleanly", () => {
+  it("resets cleanly", async () => {
     const c1 = getMemoryCoordinator();
-    resetMemoryCoordinator();
+    await resetMemoryCoordinator();
     const c2 = getMemoryCoordinator();
     expect(c1).not.toBe(c2);
+  });
+
+  it("resetMemoryCoordinator calls shutdown on existing coordinator", async () => {
+    const coord = getMemoryCoordinator();
+    const p = makeProvider("tracked");
+    await coord.register(p);
+    await resetMemoryCoordinator();
+    expect(p.shutdown).toHaveBeenCalled();
   });
 });

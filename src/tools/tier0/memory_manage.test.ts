@@ -134,6 +134,20 @@ describe("memoryManageTool", () => {
     }
   });
 
+  it("returns error when add exceeds character limit", async () => {
+    const { setCuratedMemoryLimits } = await import("../../memory/curated.js");
+    setCuratedMemoryLimits({ projectMaxChars: 30 });
+
+    const result = await memoryManageTool.execute(
+      { action: "add", scope: "project", entry: "This entry is way too long for the tiny limit we set" },
+      ctx(),
+    );
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.message).toContain("exceed");
+    }
+  });
+
   it("shows character usage in output", async () => {
     const result = await memoryManageTool.execute(
       { action: "add", scope: "project", entry: "Test" },
