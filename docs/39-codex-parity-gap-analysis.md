@@ -71,7 +71,7 @@ rule system.
 | # | Gap | Status | Priority | Effort | Notes |
 |---|---|---|---|---|---|
 | G1 | **Goals engine (persistent thread goals)** | ✅ | P2 | L | `core/goal.ts`: 6-state machine (active/paused/blocked/usage_limited/budget_limited/complete) with validated transitions. Token + cost budget tracking with per-turn usage recording. Automatic state transitions on budget exhaustion (`enforcebudget()`). Checkpointing with snapshot data. `GoalRegistry` for in-memory CRUD. Serialization via `toRecord()`/`fromRecord()` for StateDB persistence. |
-| G2 | **Memory system (cross-session learning)** | ❌ | P2 | XL | Codex: `memories/read/`, `memories/write/`. Two-phase pipeline: Phase 1 (rollout extraction from session transcripts) and Phase 2 (global consolidation). Memories injected into subsequent sessions. swarm-harness: no long-term memory across sessions. |
+| G2 | **Memory system (cross-session learning)** | ✅ | P2 | XL | 4-layer architecture in `src/memory/`: L1 curated bounded memory (agent-managed numbered entries, project/user scopes, 2500/1500 char caps), L2 skills (procedural memory as Markdown files with YAML frontmatter, tag/keyword search), L3 session archive (FTS5 full-text search with LIKE fallback, auto-sync triggers), L4 provider protocol (MemoryCoordinator with parallel fan-out, FileMemoryProvider built-in, MinimemProvider optional with graceful degradation). 3 Tier 0 tools: `memory_manage`, `memory_search`, `skill_save`. Per-agent isolation via `agentScopeKey()` + shared memory bus. StateDB persistence (`curated_memory` + `session_summaries` tables). Lifecycle hooks: `onSessionStart`/`onBeforeTurn`/`onAfterTurn`/`onCompaction`/`onSessionEnd`. Context injection via `curatedMemoryFragment` at priority 5. |
 
 ---
 
@@ -211,12 +211,12 @@ long-running processes, REPLs, debuggers, and dev servers.
 
 ### Deferred (P3)
 
-- G2 (Memory system) — large scope, deferred until state database exists
+- ~~G2 (Memory system)~~ — ✅ implemented (4-layer architecture, 3 tools, StateDB persistence)
 - R1 (Realtime/voice) — different product category
 - H2 (OpenTelemetry) — observability enhancement, not blocking
 - H3 (Feature flags) — operational maturity, not blocking
-- F9 (File watcher/skills hot-reload)
-- F4 (Code mode) — V8 tool orchestration; swarm multi-agent fills similar niche
+- F9 (File watcher/skills hot-reload) — most practical remaining gap
+- F4 (Code mode) — V8 tool orchestration; swarm multi-agent fills similar niche (🟦 divergent)
 
 ---
 
@@ -245,3 +245,4 @@ and commit hash.
 - **2026-06-05** — C1: Remote compaction (model-based summarization). LLM-based session compaction modeled on Codex `compact_remote_v2.rs`. Structured 9-section summary prompt with analysis/summary tags. `RemoteCompactionConfig` extends `CompactionConfig`. Fail-safe fallback to mechanical on error/timeout. Type guard dispatch integrated into NativeEngine and HardenedNativeEngine. Emergency context_overflow paths stay mechanical for speed. 17 new tests, 28 existing compactor + 56 engine tests still passing.
 - **2026-06-06** — C2+C3+G1: Context fragments (9 built-in types with composable ContextBuilder, priority sorting, register/unregister, singleton). State database (SQLite-backed via better-sqlite3, WAL mode, 4 tables with migrations, full CRUD, memory search). Goals engine (6-state machine, token+cost budget tracking, checkpoint system, GoalRegistry, StateDB serialization). 67 new tests passing.
 - **2026-06-06** — F10: Web search + full browsing parity. `web_search.ts`: pluggable `SearchBackend` interface, DuckDuckGo HTML scraping default, batch `queries` support (up to 5, cross-query dedup), domain filtering, 8-hit cap, `SWARM_WEB_SEARCH_BASE_URL` env override. `web_fetch.ts`: HTTP→HTTPS auto-upgrade (exempts localhost/127.0.0.1/::1), prompt-driven extraction (`"title"` → `<title>` tag, `"summary"` → 900-char preview, custom prompt → labeled content), `find` param for in-page substring search with context lines and match markers. Closes all Codex web-search gaps (Search, OpenPage, FindInPage). 69 tier1 web tests passing.
+- **2026-06-06** — G2: Memory system (cross-session learning). 4-layer architecture: L1 curated bounded memory (project/user scopes, 2500/1500 char caps, add/replace/remove), L2 skills (Markdown + YAML frontmatter, FileSkillStore for disk, tag/keyword search), L3 session archive (FTS5 + LIKE fallback, auto-sync triggers), L4 provider protocol (MemoryCoordinator, FileMemoryProvider, MinimemProvider with graceful degradation). 3 Tier 0 tools: `memory_manage`, `memory_search`, `skill_save`. Per-agent isolation via `agentScopeKey()` + shared memory bus (500-entry cap). StateDB: `curated_memory` + `session_summaries` tables. Lifecycle hooks wired to engine. Context injection via `curatedMemoryFragment` at priority 5. Hardened from 4-agent code review: fragment cap (50), YAML injection protection, store-level size enforcement, `concurrencySafe` on mutating tools. 220+ memory tests passing. Commits `5dedee7`–`790233c`.
