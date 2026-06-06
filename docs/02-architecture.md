@@ -22,8 +22,9 @@
                 │  ├────────────────────────┤  │
                 │  │ provider (anthropic)   │  │  interface — swappable
                 │  └────────────────────────┘  │
+                │  memory coordinator          │  pluggable providers
                 │  plugins · skills · mcp      │
-                │  session                     │
+                │  state (SQLite) · session    │
                 └──────────────────────────────┘
 ```
 
@@ -59,6 +60,21 @@ src/
     google-api-key.ts      # M4
     xai-api-key.ts         # M4
   permissions/       # our permission engine, bound to AgentEngine.canUseTool
+  memory/            # 4-layer memory system
+    types.ts         # shared memory types (MemoryProvider, MemoryFragment, TurnContext, ...)
+    curated.ts       # L1 — bounded curated memory (project/user scopes)
+    skills.ts        # L2 — procedural memory as Markdown files with YAML frontmatter
+    archive.ts       # L3 — session archive with FTS5 search
+    coordinator.ts   # L4 — MemoryCoordinator (provider fan-out, deduplication)
+    lifecycle.ts     # engine lifecycle hooks (onSessionStart → onSessionEnd)
+    fragment.ts      # ContextFragment for injecting curated memory into system prompt
+    agent-scope.ts   # per-agent memory isolation + shared memory bus
+    state-store.ts   # StateDB adapters (CuratedStore, ArchiveStore)
+    providers/
+      file-provider.ts    # built-in provider wrapping L1 curated memory
+      minimem-provider.ts # optional hybrid vector + BM25 search (graceful degradation)
+  state/             # SQLite-backed state database (sessions, goals, memory, audit log)
+  context/           # composable system prompt fragments with priority ordering
   session/           # per-worktree JSONL + engine SessionSnapshot
   tools/
     tier0/           # bash, file_ops, search, todo

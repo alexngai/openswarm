@@ -16,16 +16,25 @@ The minimum viable coding agent. An atomic unit must have exactly these to be us
 | `glob` | File pattern matching |
 | `grep` | Content search (bundled `@vscode/ripgrep` binary) |
 | `todo_write` | Persistent todo list for multi-step tasks |
+| `shell_exec` | Persistent shell sessions surviving across tool calls |
+| `shell_write` | Send text input / signals to running shell sessions |
+| `shell_list` | List, inspect, reattach, or close shell sessions |
+| `request_permissions` | Request elevated permissions mid-session |
+| `memory_manage` | Manage curated memory entries (add/replace/remove) that persist across sessions |
+| `memory_search` | Search past session archives and memories |
+| `skill_save` | Save, list, get, or remove reusable procedural skills |
 
 ## Tier 1 — Productivity
 
 | Tool | Purpose |
 |---|---|
 | `web_fetch` | GET a URL, return markdown |
-| `web_search` | Query the web |
+| `web_search` | Query the web (pluggable backends, batch queries, domain filtering) |
 | `notebook_edit` | Jupyter notebook cell operations | **shipped M3b** |
 | `structured_output` | Force JSON-shaped final answer |
 | `skill` | Invoke a loaded skill |
+| `view_image` | Read image files (PNG/JPEG/GIF/WebP/SVG/BMP/ICO), return base64 |
+| `tool_search` | Dynamic tool discovery by keyword matching |
 
 ## Tier 2 — Swarm primitives
 

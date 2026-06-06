@@ -21,6 +21,16 @@ Early design capture for swarm-harness — a TypeScript agent harness built arou
 > **Index gap:** docs 11–29 (m3 plans, parity, teams, daemon, git-cascade, etc.) exist on disk but
 > are not yet listed here. Backfill pending; browse the `docs/` directory directly meanwhile.
 
+### Hardening & Parity
+
+- [37-hardened-engine-design.md](./37-hardened-engine-design.md) — production-hardened NativeEngine (retry, eager dispatch, mid-turn compaction)
+- [38-hardened-engine-implementation-plan.md](./38-hardened-engine-implementation-plan.md) — implementation plan for hardened engine
+- [39-codex-parity-gap-analysis.md](./39-codex-parity-gap-analysis.md) — gap analysis vs OpenAI Codex CLI (all P0/P1/P2 gaps closed)
+
+### Memory System
+
+- [40-memory-system-design.md](./40-memory-system-design.md) — 4-layer memory architecture: curated bounded memory (L1), skills/procedural memory (L2), session archive (L3), provider protocol (L4). Implemented — all 5 phases complete.
+
 ### ACP compatibility (Agent Client Protocol — Zed/editor integration)
 
 *All stages below are **shipped** (Stage A + team stages B0–B2, the §9 robustness pass, and the

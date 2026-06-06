@@ -8,7 +8,9 @@ An atomic agent:
 - Runs a conversation loop with access to Tier 0 tools at minimum
 - Emits a final result: text, structured output, or a task-completion signal
 - Persists a session so it can resume or be inspected
+- Maintains curated memory (project/user scoped) that persists across sessions
 - In worker mode: emits JSONL events on stdout during the run
+- In swarm mode: gets its own memory scope via `agentScopeKey()` and can publish/subscribe shared facts via the shared memory bus
 
 The atomic agent is the product. It must stand alone — runnable from a terminal with no orchestrator required.
 
