@@ -82,6 +82,12 @@ export interface AuditRecord {
   detail?: string;
 }
 
+export interface CuratedMemoryRow {
+  scopeKey: string;
+  content: string;
+  updatedAt: string;
+}
+
 // ---------------------------------------------------------------------------
 // Migration system
 // ---------------------------------------------------------------------------
@@ -153,6 +159,16 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category);
       CREATE INDEX IF NOT EXISTS idx_audit_session ON audit_log(session_id);
       CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);
+    `,
+  },
+  {
+    version: 2,
+    sql: `
+      CREATE TABLE IF NOT EXISTS curated_memory (
+        scope_key  TEXT PRIMARY KEY,
+        content    TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
     `,
   },
 ];
@@ -444,6 +460,40 @@ export class StateDB {
   }
 
   // -------------------------------------------------------------------------
+  // Curated memory
+  // -------------------------------------------------------------------------
+
+  getCuratedMemory(scopeKey: string): CuratedMemoryRow | null {
+    const row = this.db
+      .prepare("SELECT * FROM curated_memory WHERE scope_key = ?")
+      .get(scopeKey) as any;
+    return row ? mapCuratedMemoryRow(row) : null;
+  }
+
+  setCuratedMemory(scopeKey: string, content: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO curated_memory (scope_key, content, updated_at)
+         VALUES (?, ?, datetime('now'))
+         ON CONFLICT(scope_key) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`,
+      )
+      .run(scopeKey, content);
+  }
+
+  deleteCuratedMemory(scopeKey: string): void {
+    this.db
+      .prepare("DELETE FROM curated_memory WHERE scope_key = ?")
+      .run(scopeKey);
+  }
+
+  listCuratedMemories(): CuratedMemoryRow[] {
+    const rows = this.db
+      .prepare("SELECT * FROM curated_memory ORDER BY updated_at DESC")
+      .all() as any[];
+    return rows.map(mapCuratedMemoryRow);
+  }
+
+  // -------------------------------------------------------------------------
   // Schema version
   // -------------------------------------------------------------------------
 
@@ -532,6 +582,14 @@ function mapAuditRow(row: any): AuditRecord {
     action: row.action,
     toolName: row.tool_name ?? undefined,
     detail: row.detail ?? undefined,
+  };
+}
+
+function mapCuratedMemoryRow(row: any): CuratedMemoryRow {
+  return {
+    scopeKey: row.scope_key,
+    content: row.content,
+    updatedAt: row.updated_at,
   };
 }
 

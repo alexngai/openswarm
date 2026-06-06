@@ -206,7 +206,7 @@ describe("ContextBuilder", () => {
   });
 
   it("fragmentCount returns count", () => {
-    expect(ContextBuilder.withDefaults().fragmentCount).toBe(9);
+    expect(ContextBuilder.withDefaults().fragmentCount).toBe(10);
     expect(ContextBuilder.empty().fragmentCount).toBe(0);
   });
 

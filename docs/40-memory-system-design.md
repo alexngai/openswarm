@@ -628,26 +628,30 @@ Environment variable overrides:
 
 ---
 
-## Open Questions
+## Resolved Questions
 
-1. **Embedding provider default** — Should minimem default to OpenAI embeddings
-   (best quality, requires API key) or local llama.cpp (no dependencies, lower
-   quality)? Recommendation: default to local, document OpenAI as upgrade path.
+1. **Embedding provider default** — **Local by default** (llama.cpp / ONNX).
+   OpenAI opt-in via `MINIMEM_EMBEDDING_PROVIDER=openai`. If no embedding
+   model is configured at all, the system degrades gracefully — falls back to
+   BM25-only search (no vectors), then to SQLite FTS5, then to substring
+   matching. Memory never fails because embeddings are unavailable.
 
-2. **Self-improvement trigger** — Every N turns vs. on session end vs. both?
-   Hermes uses ~15 tasks. Recommendation: session end + every 15 turns,
-   whichever comes first.
+2. **Self-improvement trigger** — **Session end only** for the initial
+   implementation. Mid-session triggers (every N turns) can be added later
+   once we see how session-end-only works in practice. Mid-session reflection
+   interrupts the user's task flow.
 
-3. **Shared memory visibility** — Should all agents see all shared entries, or
-   should the orchestrator curate what's shared? Recommendation: all agents
-   see all entries; the orchestrator can tag entries as high/low priority.
+3. **Shared memory visibility** — **All agents see all entries** with
+   tag-based filtering. No orchestrator bottleneck. Agents publish with tags
+   (e.g., `["schema-change", "backend"]`); each agent's `enrichTurn` filters
+   by relevance. Orchestrator can use `["broadcast"]` tag for high-priority
+   entries.
 
-4. **Memory tools tier** — Should memory tools be Tier 0 (always available) or
-   Tier 1 (requires explicit enablement)? Recommendation: Tier 0 for
-   `memory_manage`, Tier 1 for `memory_search` (since it may involve network
-   calls to embedding APIs).
+4. **Memory tools tier** — **All Tier 0** (`memory_manage`, `memory_search`,
+   `skill_save`). Memory is a core agent capability, not optional. Network
+   permission for cloud embeddings is checked inside the provider, not at the
+   tool tier level.
 
-5. **ContextBuilder integration timing** — The ContextBuilder exists but isn't
-   wired into any engine. Should we wire it in as part of Phase 1, or keep it
-   as a separate prerequisite task? Recommendation: wire it in during Phase 1
-   since memory injection depends on it.
+5. **ContextBuilder integration timing** — **Wire in during Phase 1**. It's a
+   hard dependency for memory injection, not a "nice to have" prerequisite.
+   The ContextBuilder is fully implemented but not connected to any engine.

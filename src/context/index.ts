@@ -10,6 +10,9 @@
 import { getExecPolicy } from "../tools/tier0/exec-policy.js";
 import { getNetworkPolicy } from "../tools/tier0/network-policy.js";
 import type { PermissionMode } from "../core/types.js";
+import { curatedMemoryFragment } from "../memory/fragment.js";
+
+export { curatedMemoryFragment };
 
 // ---------------------------------------------------------------------------
 // Fragment interface
@@ -34,6 +37,8 @@ export interface ContextState {
   readonly customInstructions?: string;
   readonly agentRole?: string;
   readonly enabledTools?: readonly string[];
+  readonly projectRoot?: string;
+  readonly userId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -181,6 +186,7 @@ export const agentRoleFragment: ContextFragment = {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_FRAGMENTS: ContextFragment[] = [
+  curatedMemoryFragment,
   environmentFragment,
   permissionsFragment,
   approvedCommandsFragment,

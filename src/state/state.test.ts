@@ -27,7 +27,7 @@ describe("StateDB lifecycle", () => {
   it("creates database and applies migrations", () => {
     db = freshDB();
     expect(db.isOpen).toBe(true);
-    expect(db.getSchemaVersion()).toBe(1);
+    expect(db.getSchemaVersion()).toBe(2);
   });
 
   it("creates parent directory if needed", () => {
@@ -367,6 +367,54 @@ describe("Memories CRUD", () => {
     expect(db.listMemories({ category: "preference" })).toHaveLength(1);
     expect(db.listMemories({ category: "fact" })).toHaveLength(1);
     expect(db.listMemories({ sessionId: "s1" })).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Audit log
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Curated memory
+// ---------------------------------------------------------------------------
+
+describe("Curated memory CRUD", () => {
+  it("sets and retrieves curated memory", () => {
+    db = freshDB();
+    db.setCuratedMemory("project:/test", "Entry one\nEntry two");
+    const record = db.getCuratedMemory("project:/test");
+    expect(record).not.toBeNull();
+    expect(record!.scopeKey).toBe("project:/test");
+    expect(record!.content).toBe("Entry one\nEntry two");
+    expect(record!.updatedAt).toBeTruthy();
+  });
+
+  it("returns null for missing scope key", () => {
+    db = freshDB();
+    expect(db.getCuratedMemory("project:/nope")).toBeNull();
+  });
+
+  it("upserts on conflict", () => {
+    db = freshDB();
+    db.setCuratedMemory("user:alice", "First");
+    db.setCuratedMemory("user:alice", "Updated");
+    const record = db.getCuratedMemory("user:alice");
+    expect(record!.content).toBe("Updated");
+  });
+
+  it("deletes curated memory", () => {
+    db = freshDB();
+    db.setCuratedMemory("project:/test", "content");
+    db.deleteCuratedMemory("project:/test");
+    expect(db.getCuratedMemory("project:/test")).toBeNull();
+  });
+
+  it("lists all curated memories", () => {
+    db = freshDB();
+    db.setCuratedMemory("project:/a", "A");
+    db.setCuratedMemory("user:bob", "B");
+    const all = db.listCuratedMemories();
+    expect(all).toHaveLength(2);
   });
 });
 
