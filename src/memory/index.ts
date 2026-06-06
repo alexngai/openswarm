@@ -57,3 +57,17 @@ export {
 } from "./archive.js";
 
 export { StateDBCuratedStore, StateDBArchiveStore } from "./state-store.js";
+
+export { FileMemoryProvider } from "./providers/file-provider.js";
+
+export {
+  onSessionStart,
+  onBeforeTurn,
+  onAfterTurn,
+  onCompaction,
+  onSessionEnd,
+  formatMemoryFragments,
+  type SessionStartOptions,
+  type TurnCompleteInfo,
+  type SessionEndInfo,
+} from "./lifecycle.js";
