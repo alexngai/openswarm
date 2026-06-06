@@ -1,6 +1,6 @@
 # G2 Memory System Design
 
-## Status: Draft — awaiting design review
+## Status: Implemented — all 5 phases complete
 
 ## Overview
 

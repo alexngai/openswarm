@@ -58,6 +58,27 @@ export {
 
 export { StateDBCuratedStore, StateDBArchiveStore } from "./state-store.js";
 
+export {
+  getSkillStore,
+  setSkillStore,
+  resetSkillStore,
+  FileSkillStore,
+  parseSkillContent,
+  formatSkill,
+  formatSkillList,
+  type Skill,
+  type SkillStore,
+} from "./skills.js";
+
+export {
+  agentScopeKey,
+  publishSharedMemory,
+  getSharedMemory,
+  resetSharedMemory,
+  formatSharedMemory,
+  type SharedMemoryEntry,
+} from "./agent-scope.js";
+
 export { FileMemoryProvider } from "./providers/file-provider.js";
 export { MinimemProvider, type MinimemProviderConfig } from "./providers/minimem-provider.js";
 

@@ -21,6 +21,7 @@ import { todoWriteTool } from "./todo_write.js";
 import { writeFileTool } from "./write_file.js";
 import { memoryManageTool } from "./memory_manage.js";
 import { memorySearchTool } from "./memory_search.js";
+import { skillSaveTool } from "./skill_save.js";
 
 /** All Tier 0 tools in a stable order. */
 export function buildTier0Tools(): readonly ToolImpl[] {
@@ -39,6 +40,7 @@ export function buildTier0Tools(): readonly ToolImpl[] {
     requestPermissionsTool,
     memoryManageTool,
     memorySearchTool,
+    skillSaveTool,
   ] as const;
 }
 
@@ -50,6 +52,7 @@ export {
   grepTool,
   memoryManageTool,
   memorySearchTool,
+  skillSaveTool,
   multiEditTool,
   readFileTool,
   requestPermissionsTool,
