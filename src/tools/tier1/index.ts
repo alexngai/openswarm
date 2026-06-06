@@ -1,15 +1,13 @@
 /**
  * Tier 1 tool factory.
  *
- * Returns the three Tier 1 ToolImpls owned by Worker A:
- *   - web_fetch  (HTML → Markdown, plaintext passthrough)
- *   - web_search (SDK built-in placeholder for registry symmetry)
- *   - skill      (loads a skill body from SkillRegistry)
- *
- * Note: structured_output is a RunConfig option (Worker B), not a ToolImpl,
- * and is intentionally absent from this list.
- *
- * See docs/10-m2-plan.md Phase 4.
+ * Returns the Tier 1 ToolImpls:
+ *   - web_fetch     (HTML → Markdown, plaintext passthrough)
+ *   - web_search    (configurable search backend, default DuckDuckGo)
+ *   - skill         (loads a skill body from SkillRegistry)
+ *   - notebook_edit (Jupyter .ipynb cell operations)
+ *   - view_image    (base64 data URI for image files)
+ *   - tool_search   (dynamic tool discovery)
  */
 
 import type { ToolImpl } from "../types.js";
