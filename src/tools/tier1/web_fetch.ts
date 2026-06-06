@@ -4,6 +4,8 @@ import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { getNetworkPolicy } from "../tier0/network-policy.js";
 
+const MAX_BYTES_DEFAULT = 262144;
+
 const inputSchema = z.object({
   url: z.string().url(),
   prompt: z
@@ -20,7 +22,12 @@ const inputSchema = z.object({
       "Search within the fetched page content for this pattern (case-insensitive substring match). " +
         "Returns matching lines with surrounding context. Useful for finding specific information in long pages.",
     ),
-  maxBytes: z.number().int().positive().optional().default(262144),
+  maxBytes: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Maximum response size in bytes (default 262144 / 256 KiB)."),
 });
 
 type Input = z.infer<typeof inputSchema>;
@@ -116,6 +123,7 @@ async function execute(raw: unknown, _ctx: ToolExecutionContext): Promise<ToolRe
     return { status: "error", message: parsed.error.message };
   }
   const input: Input = parsed.data;
+  const maxBytes = input.maxBytes ?? MAX_BYTES_DEFAULT;
 
   let parsedUrl: URL;
   try {
@@ -155,8 +163,8 @@ async function execute(raw: unknown, _ctx: ToolExecutionContext): Promise<ToolRe
 
   let truncated = false;
   let content = bytes;
-  if (content.length > input.maxBytes) {
-    content = content.slice(0, input.maxBytes);
+  if (content.length > maxBytes) {
+    content = content.slice(0, maxBytes);
     truncated = true;
   }
 
@@ -176,7 +184,7 @@ async function execute(raw: unknown, _ctx: ToolExecutionContext): Promise<ToolRe
 
   const rawText =
     Buffer.from(content).toString("utf8") +
-    (truncated ? ` [truncated at ${input.maxBytes} bytes]` : "");
+    (truncated ? ` [truncated at ${maxBytes} bytes]` : "");
 
   if (mime === "text/html") {
     const markdown = turndown.turndown(rawText);

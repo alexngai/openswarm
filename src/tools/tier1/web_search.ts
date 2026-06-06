@@ -199,19 +199,20 @@ export function resetSearchBackend(): void {
 // Tool definition
 // ---------------------------------------------------------------------------
 
+const NUM_RESULTS_DEFAULT = 5;
+
 const inputSchema = z.object({
   query: z
     .string()
     .min(1)
-    .optional()
-    .describe("A single search query string. Use either query or queries, not both."),
+    .describe("The search query string."),
   queries: z
     .array(z.string().min(1))
     .min(1)
     .max(5)
     .optional()
     .describe(
-      "Multiple search queries to execute in batch. Results are merged and deduplicated. Max 5 queries.",
+      "Additional search queries to execute in batch. Results are merged and deduplicated across all queries (including query). Max 5.",
     ),
   num_results: z
     .number()
@@ -219,7 +220,6 @@ const inputSchema = z.object({
     .min(1)
     .max(8)
     .optional()
-    .default(5)
     .describe("Maximum number of results to return per query (1-8, default 5)."),
   allowed_domains: z
     .array(z.string())
@@ -233,8 +233,6 @@ const inputSchema = z.object({
     .describe(
       "Exclude results from these domains. Supports subdomain matching.",
     ),
-}).refine((data) => data.query || data.queries, {
-  message: "Either query or queries must be provided",
 });
 
 type Input = z.infer<typeof inputSchema>;
@@ -271,14 +269,14 @@ function formatResults(hits: SearchHit[], queryLabel: string): string {
 
 async function executeQuery(
   query: string,
-  input: Input,
+  opts: { numResults: number; allowedDomains?: readonly string[]; blockedDomains?: readonly string[] },
   backend: SearchBackend,
   signal?: AbortSignal,
 ): Promise<SearchHit[]> {
   return backend.search(query, {
-    maxResults: input.num_results,
-    allowedDomains: input.allowed_domains,
-    blockedDomains: input.blocked_domains,
+    maxResults: opts.numResults,
+    allowedDomains: opts.allowedDomains,
+    blockedDomains: opts.blockedDomains,
     signal,
   });
 }
@@ -292,8 +290,11 @@ async function execute(
     return { status: "error", message: parsed.error.message };
   }
   const input: Input = parsed.data;
+  const numResults = input.num_results ?? NUM_RESULTS_DEFAULT;
 
-  const queries: string[] = input.queries ?? [input.query!];
+  const queries: string[] = input.queries
+    ? [input.query, ...input.queries]
+    : [input.query];
 
   const policy = getNetworkPolicy();
   const backend = getSearchBackend();
@@ -316,10 +317,16 @@ async function execute(
     }
   }
 
+  const searchOpts = {
+    numResults,
+    allowedDomains: input.allowed_domains,
+    blockedDomains: input.blocked_domains,
+  };
+
   if (queries.length === 1) {
     let hits: SearchHit[];
     try {
-      hits = await executeQuery(queries[0]!, input, backend, ctx.abort);
+      hits = await executeQuery(queries[0]!, searchOpts, backend, ctx.abort);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       return { status: "error", message: `search failed: ${msg}` };
@@ -334,7 +341,7 @@ async function execute(
   for (const query of queries) {
     let hits: SearchHit[];
     try {
-      hits = await executeQuery(query, input, backend, ctx.abort);
+      hits = await executeQuery(query, searchOpts, backend, ctx.abort);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       sections.push(`Search results for: ${query}\n\nError: ${msg}`);
