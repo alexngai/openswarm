@@ -16,10 +16,10 @@ import { Show, onMount, onCleanup, createEffect, createMemo, untrack } from "sol
 import { createReplStore } from "./store.js";
 import { Transcript } from "./transcript.js";
 import { Input } from "./input.js";
-import { Status } from "./status.js";
+import { Footer } from "./footer.js";
 import { Spinner } from "./spinner.js";
 import { Dropdown } from "./dropdown.js";
-import { PermissionPrompt } from "./permission-prompt.js";
+import { ApprovalPanel } from "./approval-panel.js";
 import { dispatchSlashLine } from "../../cli/slash/dispatcher.js";
 import { loadHistory, appendHistoryEntry } from "../history.js";
 import type {
@@ -282,7 +282,7 @@ export function App(props: AppProps) {
           state.pendingPermission !== undefined
         }
       >
-        <PermissionPrompt pending={state.pendingPermission!} />
+        <ApprovalPanel pending={state.pendingPermission!} />
       </Show>
       <Show when={state.name !== "shutdown"}>
         <Input
@@ -303,7 +303,7 @@ export function App(props: AppProps) {
           selectedIndex={dropdownSelectedIndex()}
         />
       </Show>
-      <Status state={state} model={props.model} getTokens={getTokens} />
+      <Footer state={state} model={props.model} getTokens={getTokens} />
     </box>
   );
 }

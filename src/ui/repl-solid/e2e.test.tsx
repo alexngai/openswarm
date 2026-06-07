@@ -157,7 +157,7 @@ describe("App — end-to-end interactive flow", () => {
     close();
   });
 
-  it("status line reflects model and permission mode", async () => {
+  it("footer reflects model, permission mode, and context percentage", async () => {
     const { events, close } = makeEventChannel();
 
     const { captureCharFrame, renderOnce } = await testRender(
@@ -169,12 +169,13 @@ describe("App — end-to-end interactive flow", () => {
           getTokens={() => 42}
         />
       ),
-      { width: 80, height: 20 },
+      { width: 120, height: 20 },
     );
     await renderOnce();
     const frame = captureCharFrame();
     expect(frame).toContain("claude-sonnet-4-6");
     expect(frame).toContain("read-only");
+    expect(frame).toContain("context:");
 
     close();
   });

@@ -30,11 +30,11 @@ describe("App — Solid root composition", () => {
           getTokens={() => 0}
         />
       ),
-      { width: 80, height: 20 },
+      { width: 120, height: 20 },
     );
     await renderOnce();
     const frame = captureCharFrame();
-    // Status line should contain the model name.
+    // Footer should contain the model name.
     expect(frame).toContain("claude-opus-4-6");
   });
 
