@@ -11,6 +11,7 @@
  * Pure + synchronous → fully unit-testable without network.
  */
 
+import { createHash } from "node:crypto";
 import type {
   ProviderRequest,
   ProviderMessage,
@@ -38,6 +39,18 @@ function joinSystemPrompt(sp: string | readonly string[] | undefined): string {
   return Array.isArray(sp) ? sp.join("") : (sp as string);
 }
 
+/**
+ * Derive the Responses `fc_*` item id for a replayed function_call. The backend
+ * requires a function_call input item to carry an `id` starting with `fc_`; our
+ * single id slot holds the `call_id` (what tool_results reference), so we
+ * synthesize a deterministic item id from it. With store:false the server keeps
+ * no item state, so a synthesized id is accepted (mirrors openclaw).
+ */
+function foreignFunctionCallId(callId: string): string {
+  if (callId.startsWith("fc_")) return callId.slice(0, 64);
+  return `fc_${createHash("sha256").update(callId).digest("hex").slice(0, 32)}`;
+}
+
 function toolToCodex(tool: ToolSpec): CodexTool {
   return {
     type: "function",
@@ -62,9 +75,9 @@ function toolChoiceToCodex(
  *
  * - system messages are folded into `instructions` upstream and skipped here.
  * - assistant tool_use → function_call (call_id = our single id slot, which is
- *   what the matching tool_result references). We do not carry the Responses
- *   `fc_*` item id — Phase 1 omits it; the live smoke test validates that the
- *   backend accepts function_call input without it (docs/42).
+ *   what the matching tool_result references). The Responses `fc_*` item id is
+ *   synthesized deterministically from call_id (see foreignFunctionCallId) so
+ *   multi-turn tool loops are accepted (docs/42).
  * - user tool_result → function_call_output keyed by tool_use_id.
  */
 function messageToInput(msg: ProviderMessage): CodexInputItem[] {
@@ -107,6 +120,7 @@ function messageToInput(msg: ProviderMessage): CodexInputItem[] {
     } else {
       items.push({
         type: "function_call",
+        id: foreignFunctionCallId(block.id),
         call_id: block.id,
         name: block.name,
         arguments: JSON.stringify(block.input ?? {}),

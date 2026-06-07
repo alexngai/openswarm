@@ -75,9 +75,26 @@ describe("buildCodexRequest", () => {
     ];
     const body = buildCodexRequest(req({ messages }));
     expect(body.input).toEqual([
-      { type: "function_call", call_id: "call_1", name: "get_weather", arguments: '{"city":"Paris"}' },
+      {
+        type: "function_call",
+        id: expect.stringMatching(/^fc_[0-9a-f]{32}$/),
+        call_id: "call_1",
+        name: "get_weather",
+        arguments: '{"city":"Paris"}',
+      },
       { type: "function_call_output", call_id: "call_1", output: "18C" },
     ]);
+  });
+
+  it("synthesizes a deterministic fc_* item id for replayed function_call items", () => {
+    const msg: ProviderMessage = {
+      role: "assistant",
+      content: [{ type: "tool_use", id: "call_ABC", name: "t", input: {} }],
+    };
+    const a = buildCodexRequest(req({ messages: [msg] })).input[0];
+    const b = buildCodexRequest(req({ messages: [msg] })).input[0];
+    expect(a).toMatchObject({ type: "function_call", id: expect.stringMatching(/^fc_[0-9a-f]{32}$/) });
+    expect(a).toEqual(b); // deterministic
   });
 
   it("prefixes error tool_results so the model sees the failure", () => {

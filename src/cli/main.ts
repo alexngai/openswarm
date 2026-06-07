@@ -448,7 +448,11 @@ export async function main(argv: string[]): Promise<number> {
       return runTeamKill(parsed.name);
 
     case "login":
-      return loginMain(["--provider", parsed.provider]);
+      return loginMain([
+        "--provider",
+        parsed.provider,
+        ...(parsed.device ? ["--device"] : []),
+      ]);
 
     case "logout":
       return logoutMain(["--provider", parsed.provider]);

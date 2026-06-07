@@ -35,6 +35,8 @@ export type CodexInputItem =
     }
   | {
       readonly type: "function_call";
+      /** Responses item id (must start with `fc_`); required on replay. */
+      readonly id: string;
       readonly call_id: string;
       readonly name: string;
       readonly arguments: string; // JSON-encoded

@@ -137,7 +137,10 @@ export function runBrowserOAuth(opts: BrowserOAuthOptions = {}): Promise<TokenRe
       cleanup();
       reject(err);
     });
-    server.listen(CODEX_REDIRECT_PORT, () => {
+    // Bind loopback only — never expose the OAuth callback to the LAN. The
+    // redirect_uri uses `localhost`, which resolves to 127.0.0.1 on the systems
+    // the codex flow targets.
+    server.listen(CODEX_REDIRECT_PORT, "127.0.0.1", () => {
       print(
         `\nOpening your browser to authorize swarm-harness with ChatGPT...\n` +
           `If it doesn't open, paste this URL:\n\n${authorizeUrl}\n\n`,

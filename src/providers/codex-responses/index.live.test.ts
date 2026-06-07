@@ -83,4 +83,44 @@ describe.runIf(live)("CodexResponsesTransportProvider (live)", () => {
     expect(call).toMatchObject({ type: "tool-call", name: "get_weather" });
     expect(out.at(-1)).toMatchObject({ type: "finish", stopReason: "tool_use" });
   }, 60_000);
+
+  it("completes a multi-turn tool loop (replayed function_call is accepted)", async () => {
+    // This is the C5 de-risk: turn 2 replays the assistant function_call (with a
+    // synthesized fc_* id) + its function_call_output. The single-turn smoke
+    // never exercised this path.
+    const tool: ToolSpec = {
+      name: "get_weather",
+      description: "Get the current weather for a city.",
+      inputSchema: {
+        type: "object",
+        properties: { city: { type: "string" } },
+        required: ["city"],
+        additionalProperties: false,
+      },
+      requiredPermission: "none",
+      tier: 1,
+    };
+    const session = "swarm-harness-live-multiturn";
+    const userTurn = { role: "user" as const, content: [{ type: "text" as const, text: "Use get_weather to check Paris, then tell me the temperature." }] };
+
+    const out1 = await collect(provider.stream({ messages: [userTurn], tools: [tool], model: "gpt-5.5", sessionId: session }));
+    const call = out1.find((e) => e.type === "tool-call") as { id: string; name: string; input: unknown } | undefined;
+    expect(call).toBeDefined();
+
+    const req2: ProviderRequest = {
+      messages: [
+        userTurn,
+        { role: "assistant", content: [{ type: "tool_use", id: call!.id, name: call!.name, input: call!.input }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: call!.id, content: JSON.stringify({ tempC: 18, sky: "clear" }) }] },
+      ],
+      tools: [tool],
+      model: "gpt-5.5",
+      sessionId: session,
+    };
+    const out2 = await collect(provider.stream(req2));
+    expect(out2.some((e) => e.type === "error")).toBe(false); // would be a 400 if fc id were rejected
+    const text2 = out2.filter((e) => e.type === "text-delta").map((e) => (e as { text: string }).text).join("");
+    expect(text2.length).toBeGreaterThan(0);
+    expect(out2.at(-1)).toMatchObject({ type: "finish" });
+  }, 90_000);
 });

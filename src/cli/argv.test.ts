@@ -44,6 +44,22 @@ describe("parseArgv", () => {
     expect(parseArgv(["version"])).toEqual({ kind: "version" });
   });
 
+  it("login parses --provider and defaults device to false", () => {
+    expect(parseArgv(["login", "--provider", "openai-codex"])).toEqual({
+      kind: "login",
+      provider: "openai-codex",
+      device: false,
+    });
+  });
+
+  it("login --device selects the headless flow", () => {
+    expect(parseArgv(["login", "--provider", "openai-codex", "--device"])).toEqual({
+      kind: "login",
+      provider: "openai-codex",
+      device: true,
+    });
+  });
+
   // ---- Flags ---------------------------------------------------------------
 
   it("--model flag sets model in opts", () => {

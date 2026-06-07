@@ -130,11 +130,13 @@ export class CodexResponsesTransportProvider implements TransportProvider {
 
     if (!res.ok) {
       const raw = await res.text().catch(() => "");
-      const { error } = classifyCodexHttpError(res.status, raw);
+      const { error, friendlyMessage } = classifyCodexHttpError(res.status, raw);
       yield {
         type: "error",
         code: error.code,
-        message: error.message,
+        // Prefer the actionable, user-facing message (e.g. "run login",
+        // "retry in ~N min") over the raw backend string when available.
+        message: friendlyMessage ?? error.message,
         retryable: error.retryable,
         ...(error.cause !== undefined ? { cause: error.cause } : {}),
       };

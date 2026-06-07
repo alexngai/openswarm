@@ -125,7 +125,7 @@ export type ParsedArgs =
     }
   | { kind: "plugin"; pluginArgv: string[] }
   | { kind: "worktree"; worktreeArgv: string[] }
-  | { kind: "login"; provider: string }
+  | { kind: "login"; provider: string; device: boolean }
   | { kind: "logout"; provider: string }
   | { kind: "acp"; opts: CommonOpts }
   | {
@@ -227,6 +227,8 @@ export function parseArgv(args: string[]): ParsedArgs {
   let acpTeam = false;
   let framework: FrameworkChoice = "auto";
   let dumpEngine = false;
+  // `--device` selects the headless device-code login flow (login subcommand only).
+  let device = false;
   let eagerToolDispatch = false;
   let midTurnCompaction = false;
   let maxTokens: number | undefined;
@@ -417,6 +419,13 @@ export function parseArgv(args: string[]): ParsedArgs {
     // Internal debug flag — not advertised in --help.
     if (tok === "--dump-engine") {
       dumpEngine = true;
+      i++;
+      continue;
+    }
+
+    // Headless device-code login (login subcommand).
+    if (tok === "--device") {
+      device = true;
       i++;
       continue;
     }
@@ -1076,7 +1085,7 @@ export function parseArgv(args: string[]): ParsedArgs {
     case "login": {
       // --provider was consumed by the main flag loop.
       // Default to claude-agent-sdk when omitted.
-      return { kind: "login", provider: provider ?? "claude-agent-sdk" };
+      return { kind: "login", provider: provider ?? "claude-agent-sdk", device };
     }
 
     case "logout": {

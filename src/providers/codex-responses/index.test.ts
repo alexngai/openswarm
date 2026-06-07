@@ -88,6 +88,19 @@ describe("CodexResponsesTransportProvider", () => {
     expect((out[0] as { message: string }).message).toContain("not supported");
   });
 
+  it("surfaces the friendly rate-limit message (not the raw backend string)", async () => {
+    const fetchImpl = vi.fn(async () =>
+      sseResponse([JSON.stringify({ error: { code: "usage_limit_reached", message: "limit", plan_type: "Plus" } })], {
+        ok: false,
+        status: 429,
+      }),
+    );
+    const p = new CodexResponsesTransportProvider({ modelId: "gpt-5.5", credentials: creds, fetchImpl });
+    const out = await collect(p.stream(req));
+    expect(out[0]).toMatchObject({ type: "error", code: "rate_limit", retryable: true });
+    expect((out[0] as { message: string }).message).toContain("hit your ChatGPT usage limit");
+  });
+
   it("emits an auth error when credentials are unavailable", async () => {
     const failing: CodexCredentialSource = {
       getCredentials: async () => {
