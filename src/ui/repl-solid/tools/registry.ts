@@ -10,6 +10,7 @@
  */
 
 import type { ToolCallState } from "../../repl/state.js";
+import { computeDiff, compactDiff } from "../diff/compute.js";
 
 export interface ToolRenderer {
   /** Numeric/status suffix for the chip header line. */
@@ -149,11 +150,17 @@ const editRenderer: ToolRenderer = {
     const oldStr = getArg(tc, "old_string") ?? getArg(tc, "old_str") ?? "";
     const newStr = getArg(tc, "new_string") ?? getArg(tc, "new_str") ?? "";
     if (oldStr || newStr) {
-      for (const line of oldStr.split("\n")) {
-        lines.push(`- ${line}`);
+      const diff = computeDiff(oldStr, newStr, { isIncomplete: tc.pending });
+      const { lines: compacted, hiddenChanges } = compactDiff(diff, {
+        contextLines: 3,
+        maxChanges: 10,
+      });
+      for (const dl of compacted) {
+        const prefix = dl.kind === "add" ? "+ " : dl.kind === "delete" ? "- " : "  ";
+        lines.push(`${prefix}${dl.text}`);
       }
-      for (const line of newStr.split("\n")) {
-        lines.push(`+ ${line}`);
+      if (hiddenChanges > 0) {
+        lines.push(`  … ${hiddenChanges} more changes (ctrl+o to expand)`);
       }
     }
     if (tc.result !== undefined && tc.isError) {
