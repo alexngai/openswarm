@@ -286,6 +286,42 @@ describe("createReplStore — Solid binding over reduce", () => {
   });
 
   // -------------------------------------------------------------------
+  // Phase 6 — input enhancements
+  // -------------------------------------------------------------------
+
+  it("toggle-plan-mode flips planMode", () => {
+    const { state, dispatch } = createReplStore();
+    expect(state.planMode).toBe(false);
+    dispatch({ type: "toggle-plan-mode" });
+    expect(state.planMode).toBe(true);
+    dispatch({ type: "toggle-plan-mode" });
+    expect(state.planMode).toBe(false);
+  });
+
+  it("add-mentioned-file tracks file and deduplicates", () => {
+    const { state, dispatch } = createReplStore();
+    dispatch({ type: "add-mentioned-file", filePath: "src/main.ts" });
+    dispatch({ type: "add-mentioned-file", filePath: "src/index.ts" });
+    dispatch({ type: "add-mentioned-file", filePath: "src/main.ts" }); // duplicate
+    expect(state.mentionedFiles).toEqual(["src/main.ts", "src/index.ts"]);
+  });
+
+  it("clear-mentioned-files empties the list", () => {
+    const { state, dispatch } = createReplStore();
+    dispatch({ type: "add-mentioned-file", filePath: "a.ts" });
+    dispatch({ type: "add-mentioned-file", filePath: "b.ts" });
+    dispatch({ type: "clear-mentioned-files" });
+    expect(state.mentionedFiles).toHaveLength(0);
+  });
+
+  it("submit clears mentioned files", () => {
+    const { state, dispatch } = createReplStore();
+    dispatch({ type: "add-mentioned-file", filePath: "a.ts" });
+    dispatch({ type: "submit", text: "use the files" });
+    expect(state.mentionedFiles).toHaveLength(0);
+  });
+
+  // -------------------------------------------------------------------
   // Original tests
   // -------------------------------------------------------------------
 

@@ -29,6 +29,8 @@ function makeState(overrides: Partial<ReplState>): ReplState {
     agents: {},
     tasks: {},
     activeView: "transcript" as const,
+    planMode: false,
+    mentionedFiles: [],
     ...overrides,
   };
 }

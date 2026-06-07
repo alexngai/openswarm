@@ -23,6 +23,7 @@ import { ApprovalPanel } from "./approval-panel.js";
 import { MessageQueue } from "./message-queue.js";
 import { AgentTree } from "./views/agent-tree.js";
 import { TaskBoard } from "./views/task-board.js";
+import { extractMentionPrefix, getFileCandidates, applyMention } from "./file-mention.js";
 import { dispatchSlashLine } from "../../cli/slash/dispatcher.js";
 import { loadHistory, appendHistoryEntry } from "../history.js";
 import type {
@@ -152,32 +153,39 @@ export function App(props: AppProps) {
 
   const getTokens = (): number => props.getTokens?.() ?? 0;
 
-  // Dropdown candidates — visible only when input starts with "/" and a
-  // registry is available. Filter by the prefix after "/".
+  // Dropdown mode: "slash" for /commands, "mention" for @file mentions, "none" otherwise.
+  const dropdownMode = createMemo<"slash" | "mention" | "none">(() => {
+    const value = state.input.value;
+    if (value.startsWith("/") && props.registry !== undefined) return "slash";
+    const mentionPrefix = extractMentionPrefix(value, state.input.cursor);
+    if (mentionPrefix !== undefined) return "mention";
+    return "none";
+  });
+
   const dropdownCandidates = createMemo<
     ReadonlyArray<{ name: string; description: string }>
   >(() => {
-    const registry = props.registry;
-    if (registry === undefined) return [];
-    const value = state.input.value;
-    if (!value.startsWith("/")) return [];
-    const prefix = value.slice(1).toLowerCase();
-    return registry
-      .list()
-      .filter((c) => c.name.toLowerCase().startsWith(prefix));
+    const mode = dropdownMode();
+    if (mode === "slash") {
+      const registry = props.registry!;
+      const prefix = state.input.value.slice(1).toLowerCase();
+      return registry
+        .list()
+        .filter((c) => c.name.toLowerCase().startsWith(prefix));
+    }
+    if (mode === "mention") {
+      const prefix = extractMentionPrefix(state.input.value, state.input.cursor) ?? "";
+      return getFileCandidates(prefix);
+    }
+    return [];
   });
 
-  // Effective dropdown selection: store index, clamped to the current
-  // candidates length. If candidates shrink past the store index, we clamp
-  // here so the render is consistent; the next arrow key will catch up.
   const dropdownSelectedIndex = createMemo(() => {
     const len = dropdownCandidates().length;
     if (len === 0) return 0;
     return Math.min(state.dropdownIndex, len - 1);
   });
 
-  // When the dropdown becomes inactive (no "/" prefix or no matches), reset
-  // the store index so the next activation starts at 0.
   createEffect(() => {
     if (dropdownCandidates().length === 0) {
       untrack(() => {
@@ -236,7 +244,12 @@ export function App(props: AppProps) {
       dispatch({ type: "toggle-expand" });
       return;
     }
-    // Phase 5 view switching: Ctrl+A → agents, Ctrl+T → tasks, Esc → transcript.
+    // Shift+Tab: toggle plan mode.
+    if (key.shift === true && (key.name === "tab" || key.printable === "\t")) {
+      dispatch({ type: "toggle-plan-mode" });
+      return;
+    }
+    // Phase 5 view switching: Esc → transcript.
     if (key.name === "escape" && state.activeView !== "transcript") {
       dispatch({ type: "set-view", view: "transcript" });
       return;
@@ -278,12 +291,19 @@ export function App(props: AppProps) {
         }
         return;
       }
-      // Tab → accept current selection. Lookup via the clamped index.
+      // Tab → accept current selection.
       if (key.name === "tab" || key.printable === "\t") {
         const idx = dropdownSelectedIndex();
         const chosen = candidates[idx];
         if (chosen !== undefined) {
-          dispatch({ type: "dropdown-accept", value: `/${chosen.name}` });
+          const mode = dropdownMode();
+          if (mode === "mention") {
+            const result = applyMention(state.input.value, state.input.cursor, chosen.name);
+            dispatch({ type: "input-changed", value: result.value, cursor: result.cursor });
+            dispatch({ type: "add-mentioned-file", filePath: chosen.name });
+          } else {
+            dispatch({ type: "dropdown-accept", value: `/${chosen.name}` });
+          }
         }
         return;
       }

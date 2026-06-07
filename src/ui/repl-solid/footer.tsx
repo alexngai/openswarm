@@ -73,7 +73,8 @@ export function Footer(props: FooterProps) {
   };
 
   const line1 = createMemo(() => {
-    const base = `[${props.state.name}] ${props.model} · ${props.state.permissionMode} · session ${shortSession(props.state.sessionId)}`;
+    const planTag = props.state.planMode ? " [plan]" : "";
+    const base = `[${props.state.name}] ${props.model} · ${props.state.permissionMode}${planTag} · session ${shortSession(props.state.sessionId)}`;
     const tip = weightedTips[tipIndex()] ?? "";
     return `${base}  ${tip}`;
   });

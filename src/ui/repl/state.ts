@@ -146,6 +146,10 @@ export interface ReplState {
   readonly tasks: Readonly<Record<string, TaskState>>;
   /** Which view is currently active (Phase 5). */
   readonly activeView: ActiveView;
+  /** When true, agent generates a plan before executing (Phase 6). */
+  readonly planMode: boolean;
+  /** Files mentioned via @ in the input, attached as context (Phase 6). */
+  readonly mentionedFiles: readonly string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -195,6 +199,10 @@ export type ReplEvent =
   | { readonly type: "agent-status"; readonly id: string; readonly phase: AgentPhase; readonly toolCount?: number; readonly tokenUsage?: number }
   | { readonly type: "task-update"; readonly id: string; readonly title: string; readonly status: TaskStatus; readonly assignee?: string }
   | { readonly type: "set-view"; readonly view: ActiveView }
+  // Input enhancements (Phase 6)
+  | { readonly type: "toggle-plan-mode" }
+  | { readonly type: "add-mentioned-file"; readonly filePath: string }
+  | { readonly type: "clear-mentioned-files" }
   // System / hook message
   | { readonly type: "system-entry"; readonly id: string; readonly text: string }
   // Dropdown navigation (slash-command autocomplete)
@@ -259,6 +267,8 @@ export function createInitialState(opts?: InitialStateOptions): ReplState {
     agents: {},
     tasks: {},
     activeView: "transcript",
+    planMode: false,
+    mentionedFiles: [],
   };
 }
 
@@ -376,6 +386,7 @@ export function reduce(state: ReplState, event: ReplEvent): ReplState {
         historyIndex: -1,
         historyDraft: "",
         streamingEntryId: assistantId,
+        mentionedFiles: [],
       };
     }
 
@@ -610,6 +621,23 @@ export function reduce(state: ReplState, event: ReplEvent): ReplState {
 
     case "set-view": {
       return { ...state, activeView: event.view };
+    }
+
+    case "toggle-plan-mode": {
+      return { ...state, planMode: !state.planMode };
+    }
+
+    case "add-mentioned-file": {
+      if (state.mentionedFiles.includes(event.filePath)) return state;
+      return {
+        ...state,
+        mentionedFiles: [...state.mentionedFiles, event.filePath],
+      };
+    }
+
+    case "clear-mentioned-files": {
+      if (state.mentionedFiles.length === 0) return state;
+      return { ...state, mentionedFiles: [] };
     }
 
     case "system-entry": {
