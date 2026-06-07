@@ -20,6 +20,7 @@ import { Footer } from "./footer.js";
 import { Spinner } from "./spinner.js";
 import { Dropdown } from "./dropdown.js";
 import { ApprovalPanel } from "./approval-panel.js";
+import { MessageQueue } from "./message-queue.js";
 import { dispatchSlashLine } from "../../cli/slash/dispatcher.js";
 import { loadHistory, appendHistoryEntry } from "../history.js";
 import type {
@@ -104,8 +105,26 @@ export function App(props: AppProps) {
     }
   });
 
+  // Phase 3 — auto-dequeue: when state returns to idle with queued messages,
+  // pop the first message and submit it as the next turn.
+  createEffect(() => {
+    if (state.name === "idle" && state.messageQueue.length > 0) {
+      const next = state.messageQueue[0];
+      untrack(() => {
+        dispatch({ type: "dequeue-message" });
+        dispatch({ type: "submit", text: next });
+        props.onSubmit?.(next);
+      });
+    }
+  });
+
   const handleSubmit = (line: string): void => {
     if (line.length === 0) return;
+    // Phase 3: if still streaming, queue instead of submitting now.
+    if (state.name === "streaming") {
+      dispatch({ type: "queue-message", text: line });
+      return;
+    }
     if (line.startsWith("/") && props.registry !== undefined) {
       const registry = props.registry;
       void (async () => {
@@ -296,6 +315,9 @@ export function App(props: AppProps) {
             state.name === "compact" || state.name === "awaiting-permission"
           }
         />
+      </Show>
+      <Show when={state.messageQueue.length > 0}>
+        <MessageQueue messages={state.messageQueue} />
       </Show>
       <Show when={dropdownCandidates().length > 1}>
         <Dropdown

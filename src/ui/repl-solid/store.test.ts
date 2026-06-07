@@ -172,6 +172,59 @@ describe("createReplStore — Solid binding over reduce", () => {
   });
 
   // -------------------------------------------------------------------
+  // Phase 3 — message queue
+  // -------------------------------------------------------------------
+
+  it("queue-message appends to messageQueue during streaming", () => {
+    const { state, dispatch } = createReplStore();
+    dispatch({ type: "submit", text: "go" });
+    expect(state.name).toBe("streaming");
+    dispatch({ type: "queue-message", text: "follow up 1" });
+    dispatch({ type: "queue-message", text: "follow up 2" });
+    expect(state.messageQueue).toEqual(["follow up 1", "follow up 2"]);
+  });
+
+  it("queue-message is no-op when not streaming", () => {
+    const { state, dispatch } = createReplStore();
+    expect(state.name).toBe("idle");
+    dispatch({ type: "queue-message", text: "should not queue" });
+    expect(state.messageQueue).toHaveLength(0);
+  });
+
+  it("queue-message clears input buffer", () => {
+    const { state, dispatch } = createReplStore();
+    dispatch({ type: "submit", text: "go" });
+    dispatch({ type: "input-changed", value: "next question", cursor: 13 });
+    dispatch({ type: "queue-message", text: "next question" });
+    expect(state.input.value).toBe("");
+    expect(state.input.cursor).toBe(0);
+  });
+
+  it("queue-message rejects empty text", () => {
+    const { state, dispatch } = createReplStore();
+    dispatch({ type: "submit", text: "go" });
+    dispatch({ type: "queue-message", text: "" });
+    expect(state.messageQueue).toHaveLength(0);
+  });
+
+  it("dequeue-message removes first from messageQueue", () => {
+    const { state, dispatch } = createReplStore();
+    dispatch({ type: "submit", text: "go" });
+    dispatch({ type: "queue-message", text: "a" });
+    dispatch({ type: "queue-message", text: "b" });
+    dispatch({ type: "stream-end" });
+    // After stream-end state is idle; dequeue manually for unit test.
+    dispatch({ type: "dequeue-message" });
+    expect(state.messageQueue).toEqual(["b"]);
+  });
+
+  it("dequeue-message on empty queue is no-op", () => {
+    const { state, dispatch } = createReplStore();
+    dispatch({ type: "dequeue-message" });
+    expect(state.messageQueue).toHaveLength(0);
+  });
+
+  // -------------------------------------------------------------------
   // Original tests
   // -------------------------------------------------------------------
 

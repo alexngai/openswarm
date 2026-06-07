@@ -33,7 +33,7 @@
  * causes problems (test isolation, packaging, slow init under load).
  */
 
-import { For, Show } from "solid-js";
+import { For, Show, createMemo } from "solid-js";
 import {
   SyntaxStyle,
   TreeSitterClient,
@@ -43,6 +43,8 @@ import {
 import type { TranscriptEntry, ToolCallState } from "../repl/state.js";
 import { entryColor, theme } from "./theme.js";
 import { ToolChip } from "./entries/tool-chip.js";
+import { ToolGroup } from "./entries/tool-group.js";
+import { groupTranscriptEntries, type TranscriptItem } from "./entries/group.js";
 
 /**
  * Markdown scope → palette mapping. Scope names are the ones OpenTUI's
@@ -158,10 +160,37 @@ function SystemEntry(props: { text: string }) {
 }
 
 export function Transcript(props: TranscriptProps) {
+  const items = createMemo((): TranscriptItem[] =>
+    groupTranscriptEntries(props.entries, props.toolCalls ?? {}),
+  );
+
+  const entryMap = createMemo(() => {
+    const m = new Map<string, TranscriptEntry>();
+    for (const e of props.entries) m.set(e.id, e);
+    return m;
+  });
+
   return (
     <scrollbox flexGrow={1}>
-      <For each={props.entries as TranscriptEntry[]}>
-        {(entry) => {
+      <For each={items()}>
+        {(item) => {
+          if (item.type === "group") {
+            const tcs = item.entryIds
+              .map((id) => {
+                const entry = entryMap().get(id);
+                return entry?.toolCallId !== undefined
+                  ? props.toolCalls?.[entry.toolCallId]
+                  : undefined;
+              })
+              .filter((tc): tc is ToolCallState => tc !== undefined);
+            return (
+              <ToolGroup
+                toolCalls={tcs}
+                expanded={props.globalExpand ?? false}
+              />
+            );
+          }
+          const entry = item.entry;
           switch (entry.kind) {
             case "user":
               return <UserEntry text={entry.text} />;

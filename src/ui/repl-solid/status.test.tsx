@@ -25,6 +25,7 @@ function makeState(overrides: Partial<ReplState>): ReplState {
     dropdownIndex: 0,
     toolCalls: {},
     globalExpand: false,
+    messageQueue: [],
     ...overrides,
   };
 }

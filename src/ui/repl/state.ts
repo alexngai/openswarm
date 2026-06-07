@@ -119,6 +119,8 @@ export interface ReplState {
   readonly toolCalls: Readonly<Record<string, ToolCallState>>;
   /** When true, all tool chips show expanded body. Toggled by Ctrl+O. */
   readonly globalExpand: boolean;
+  /** Messages queued during streaming, auto-submitted when the turn ends (Phase 3). */
+  readonly messageQueue: readonly string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -160,6 +162,9 @@ export type ReplEvent =
   | { readonly type: "tool-result"; readonly id: string; readonly content: string; readonly isError: boolean }
   // Expand/collapse tool output (Phase 1a)
   | { readonly type: "toggle-expand" }
+  // Message queue — messages typed during streaming, auto-submitted on turn end (Phase 3)
+  | { readonly type: "queue-message"; readonly text: string }
+  | { readonly type: "dequeue-message" }
   // System / hook message
   | { readonly type: "system-entry"; readonly id: string; readonly text: string }
   // Dropdown navigation (slash-command autocomplete)
@@ -220,6 +225,7 @@ export function createInitialState(opts?: InitialStateOptions): ReplState {
     dropdownIndex: 0,
     toolCalls: {},
     globalExpand: false,
+    messageQueue: [],
   };
 }
 
@@ -502,6 +508,24 @@ export function reduce(state: ReplState, event: ReplEvent): ReplState {
 
     case "toggle-expand": {
       return { ...state, globalExpand: !state.globalExpand };
+    }
+
+    case "queue-message": {
+      if (state.name !== "streaming") return state;
+      if (event.text.length === 0) return state;
+      return {
+        ...state,
+        messageQueue: [...state.messageQueue, event.text],
+        input: { value: "", cursor: 0, killBuffer: state.input.killBuffer },
+      };
+    }
+
+    case "dequeue-message": {
+      if (state.messageQueue.length === 0) return state;
+      return {
+        ...state,
+        messageQueue: state.messageQueue.slice(1),
+      };
     }
 
     case "system-entry": {
