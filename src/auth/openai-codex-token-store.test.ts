@@ -61,4 +61,33 @@ describe("codex token store", () => {
     fs.writeFileSync(path.join(dir, "auth.json"), JSON.stringify({ "openai-codex": { access: "only" } }));
     expect(readCodexTokens(dir)).toBeNull();
   });
+
+  it("re-reads under the lock so an externally-added entry survives a later write", () => {
+    writeCodexTokens(sample, dir);
+    // Simulate another writer adding its own provider entry between our writes.
+    const all = JSON.parse(fs.readFileSync(path.join(dir, "auth.json"), "utf8"));
+    all.other = { key: "z" };
+    fs.writeFileSync(path.join(dir, "auth.json"), JSON.stringify(all));
+    writeCodexTokens({ ...sample, access: "rotated" }, dir);
+    const after = JSON.parse(fs.readFileSync(path.join(dir, "auth.json"), "utf8"));
+    expect(after.other).toEqual({ key: "z" });
+    expect(after["openai-codex"].access).toBe("rotated");
+  });
+
+  it("clear on a store with no file is a no-op", () => {
+    expect(() => clearCodexTokens(dir)).not.toThrow();
+    expect(readCodexTokens(dir)).toBeNull();
+  });
+
+  it("re-asserts 0600 even when auth.json pre-existed with loose perms", () => {
+    const file = path.join(dir, "auth.json");
+    fs.writeFileSync(file, JSON.stringify({ other: 1 }), { mode: 0o644 });
+    writeCodexTokens(sample, dir);
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+  });
+
+  it("keeps the secrets dir private (0700)", () => {
+    writeCodexTokens(sample, dir);
+    expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+  });
 });

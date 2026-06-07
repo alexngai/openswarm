@@ -445,3 +445,28 @@ describe("runDoctor", () => {
     }
   });
 });
+
+describe("codexAuthCheck (pure, hermetic)", () => {
+  const NOW = Date.parse("2026-06-07T00:00:00Z");
+
+  it("warns when not logged in", async () => {
+    const { codexAuthCheck } = await import("./doctor.js");
+    const r = codexAuthCheck(null, NOW);
+    expect(r.status).toBe("warn");
+    expect(r.message).toContain("login --provider openai-codex");
+  });
+
+  it("passes with remaining validity when the token is fresh", async () => {
+    const { codexAuthCheck } = await import("./doctor.js");
+    const r = codexAuthCheck({ access: "a", refresh: "r", accountId: "x", expiresAt: NOW + 30 * 60_000 }, NOW);
+    expect(r.status).toBe("pass");
+    expect(r.message).toContain("valid ~30 min");
+  });
+
+  it("passes but reports expiry when the token is past due", async () => {
+    const { codexAuthCheck } = await import("./doctor.js");
+    const r = codexAuthCheck({ access: "a", refresh: "r", accountId: "x", expiresAt: NOW - 60_000 }, NOW);
+    expect(r.status).toBe("pass");
+    expect(r.message).toContain("expired");
+  });
+});

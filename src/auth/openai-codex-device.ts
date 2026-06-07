@@ -79,6 +79,17 @@ export async function runDeviceOAuth(opts: DeviceOAuthOptions = {}): Promise<Tok
     if (res.status !== 403 && res.status !== 404) {
       throw new Error(`device authorization failed: ${res.status}`);
     }
-    await sleep(intervalMs + POLL_SAFETY_MS);
+    // Even while "pending", an explicit denial/expiry should stop us early
+    // rather than burn the full deadline. Parse defensively — body may be empty.
+    const errCode = await res
+      .json()
+      .then((b: unknown) => (b && typeof b === "object" ? String((b as { error?: unknown }).error ?? "") : ""))
+      .catch(() => "");
+    if (/access_denied|expired_token|expired/i.test(errCode)) {
+      throw new Error(`device authorization ${errCode}`);
+    }
+    // Honor slow_down by backing off an extra interval.
+    const backoff = /slow_down/i.test(errCode) ? intervalMs : 0;
+    await sleep(intervalMs + POLL_SAFETY_MS + backoff);
   }
 }

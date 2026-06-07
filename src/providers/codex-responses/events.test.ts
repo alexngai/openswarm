@@ -99,10 +99,69 @@ describe("CodexEventTranslator", () => {
     expect((out.at(-1) as { stopReason: string }).stopReason).toBe("max_tokens");
   });
 
-  it("emits an error event on response.failed", () => {
+  it("handles two sequential tool calls in one turn without cross-talk", () => {
     const out = run([
-      { type: "response.failed", response: { error: { code: "server_error", message: "boom" } } },
+      { type: "response.output_item.added", item: { id: "fc_1", type: "function_call", call_id: "call_a", name: "x" } },
+      { type: "response.function_call_arguments.done", item_id: "fc_1", arguments: '{"a":1}' },
+      { type: "response.output_item.added", item: { id: "fc_2", type: "function_call", call_id: "call_b", name: "y" } },
+      { type: "response.function_call_arguments.done", item_id: "fc_2", arguments: '{"b":2}' },
+      { type: "response.completed", response: { usage: {} } },
     ]);
-    expect(out).toEqual([{ type: "error", code: "server_error", message: "boom", retryable: false }]);
+    const calls = out.filter((e) => e.type === "tool-call");
+    expect(calls).toEqual([
+      { type: "tool-call", id: "call_a", name: "x", input: { a: 1 } },
+      { type: "tool-call", id: "call_b", name: "y", input: { b: 2 } },
+    ]);
+    expect(out.at(-1)).toMatchObject({ stopReason: "tool_use" });
+  });
+
+  it("interleaves reasoning then a tool call in order", () => {
+    const out = run([
+      { type: "response.reasoning_text.delta", delta: "hmm" },
+      { type: "response.output_item.added", item: { id: "fc_1", type: "function_call", call_id: "c", name: "t" } },
+      { type: "response.function_call_arguments.done", item_id: "fc_1", arguments: "{}" },
+      { type: "response.completed", response: {} },
+    ]);
+    expect(out.map((e) => e.type)).toEqual(["reasoning-delta", "tool-input-start", "tool-call", "finish"]);
+  });
+
+  it("falls back to output_item.done when function_call_arguments.done is dropped (C3)", () => {
+    const out = run([
+      { type: "response.output_item.added", item: { id: "fc_1", type: "function_call", call_id: "c1", name: "t" } },
+      // no function_call_arguments.done — only the item.done arrives
+      { type: "response.output_item.done", item: { id: "fc_1", type: "function_call", call_id: "c1", name: "t", arguments: '{"k":1}' } },
+      { type: "response.completed", response: {} },
+    ]);
+    expect(out).toContainEqual({ type: "tool-call", id: "c1", name: "t", input: { k: 1 } });
+    expect(out.at(-1)).toMatchObject({ stopReason: "tool_use" });
+  });
+
+  it("does not double-emit when both args.done and item.done arrive", () => {
+    const out = run([
+      { type: "response.output_item.added", item: { id: "fc_1", type: "function_call", call_id: "c1", name: "t" } },
+      { type: "response.function_call_arguments.done", item_id: "fc_1", arguments: "{}" },
+      { type: "response.output_item.done", item: { id: "fc_1", type: "function_call", call_id: "c1", name: "t", arguments: "{}" } },
+    ]);
+    expect(out.filter((e) => e.type === "tool-call")).toHaveLength(1);
+  });
+
+  it("maps the top-level error event variant", () => {
+    const out = run([{ type: "error", error: { code: "rate_limit", message: "slow" } }]);
+    expect(out).toEqual([{ type: "error", code: "provider_unavailable", message: "slow", retryable: true }]);
+  });
+
+  it("completed with no usage yields zeroed usage and no cache key", () => {
+    const out = run([{ type: "response.completed", response: {} }]);
+    expect(out.at(-1)).toEqual({ type: "finish", stopReason: "end_turn", usage: { inputTokens: 0, outputTokens: 0 } });
+  });
+
+  it("maps response.failed to a known engine code; transient codes stay retryable", () => {
+    expect(run([{ type: "response.failed", response: { error: { code: "server_error", message: "boom" } } }])).toEqual([
+      { type: "error", code: "provider_unavailable", message: "boom", retryable: true },
+    ]);
+    // Non-transient failure → not retryable, still a known code.
+    expect(run([{ type: "response.failed", response: { error: { code: "invalid", message: "nope" } } }])).toEqual([
+      { type: "error", code: "provider_unavailable", message: "nope", retryable: false },
+    ]);
   });
 });

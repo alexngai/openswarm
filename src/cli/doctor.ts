@@ -20,7 +20,7 @@ import { createRequire } from "node:module";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 import { detectAuth } from "../auth/status.js";
-import { readCodexTokens } from "../auth/openai-codex-token-store.js";
+import { readCodexTokens, type CodexTokens } from "../auth/openai-codex-token-store.js";
 
 const execFile = promisify(execFileCb);
 
@@ -249,8 +249,8 @@ async function checkCodexCli(): Promise<CheckResult> {
   };
 }
 
-async function checkCodexAuth(): Promise<CheckResult> {
-  const tokens = readCodexTokens();
+/** Pure check logic — separated from I/O so it is hermetically testable. */
+export function codexAuthCheck(tokens: CodexTokens | null, now: number): CheckResult {
   if (tokens === null) {
     return {
       name: "codex-auth",
@@ -259,7 +259,7 @@ async function checkCodexAuth(): Promise<CheckResult> {
         "Not logged in to ChatGPT — run `swarm-harness login --provider openai-codex` to use --framework codex-native.",
     };
   }
-  const mins = Math.round((tokens.expiresAt - Date.now()) / 60_000);
+  const mins = Math.round((tokens.expiresAt - now) / 60_000);
   const expiry =
     mins > 0 ? `access token valid ~${mins} min` : "access token expired (refreshes on next use)";
   return {
@@ -267,6 +267,10 @@ async function checkCodexAuth(): Promise<CheckResult> {
     status: "pass",
     message: `ChatGPT (codex) authenticated; ${expiry}.`,
   };
+}
+
+async function checkCodexAuth(): Promise<CheckResult> {
+  return codexAuthCheck(readCodexTokens(), Date.now());
 }
 
 async function checkWorkspace(cwd: string): Promise<CheckResult> {

@@ -47,4 +47,29 @@ describe("parseCodexSse", () => {
     const out = await collect(parseCodexSse(bytes('data: {"type":"tail"}')));
     expect(out).toEqual([{ type: "tail" }]);
   });
+
+  it("handles CRLF line endings and frame boundaries", async () => {
+    const out = await collect(
+      parseCodexSse(bytes('event: x\r\ndata: {"type":"a"}\r\n\r\ndata: {"type":"b"}\r\n\r\n')),
+    );
+    expect(out.map((e) => e.type)).toEqual(["a", "b"]);
+  });
+
+  it("concatenates a payload split across multiple data: lines", async () => {
+    const out = await collect(parseCodexSse(bytes('data: {"type":"big",\ndata: "x":1}\n\n')));
+    expect(out).toEqual([{ type: "big", x: 1 }]);
+  });
+
+  it("reassembles a multibyte char split across chunk boundaries", async () => {
+    const enc = new TextEncoder();
+    const full = enc.encode('data: {"type":"t","e":"😀"}\n\n');
+    // Split inside the emoji's 4-byte sequence.
+    const cut = full.indexOf(0xf0); // first byte of 😀
+    async function* split(): AsyncGenerator<Uint8Array> {
+      yield full.slice(0, cut + 2);
+      yield full.slice(cut + 2);
+    }
+    const out = await collect(parseCodexSse(split()));
+    expect(out).toEqual([{ type: "t", e: "😀" }]);
+  });
 });

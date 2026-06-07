@@ -1,8 +1,30 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 
+const { logoutSpy } = vi.hoisted(() => ({ logoutSpy: vi.fn() }));
+vi.mock("../auth/openai-codex-oauth.js", () => ({
+  OpenAICodexAuth: class {
+    logout = logoutSpy;
+  },
+}));
+
 describe("logoutMain", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    logoutSpy.mockReset();
+  });
+
+  it("openai-codex → clears codex tokens, exit 0", async () => {
+    logoutSpy.mockResolvedValue(undefined);
+    const outChunks: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((c: unknown) => {
+      outChunks.push(String(c));
+      return true;
+    });
+    const { logoutMain } = await import("./logout.js");
+    const code = await logoutMain(["--provider", "openai-codex"]);
+    expect(code).toBe(0);
+    expect(logoutSpy).toHaveBeenCalled();
+    expect(outChunks.join("")).toContain("Cleared ChatGPT");
   });
 
   it("missing --provider → exit 1 with error message", async () => {

@@ -45,4 +45,24 @@ describe("classifyCodexHttpError", () => {
     expect(c.error.code).toBe("invalid_request");
     expect(c.error.message).toContain("nope");
   });
+
+  it("classifies a usage-limit code even without a 429 status", () => {
+    const c = classifyCodexHttpError(403, JSON.stringify({ error: { code: "usage_limit_reached", message: "no" } }));
+    expect(c.error.code).toBe("rate_limit");
+    expect(c.error.retryable).toBe(true);
+  });
+
+  it("clamps a past resets_at to ~0 min (no negative ETA)", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-07T00:00:00Z"));
+    const pastReset = Math.floor(Date.parse("2026-06-06T23:00:00Z") / 1000);
+    const c = classifyCodexHttpError(429, JSON.stringify({ error: { code: "rate_limit_exceeded", resets_at: pastReset } }));
+    expect(c.friendlyMessage).toContain("~0 min");
+    expect(c.friendlyMessage).not.toContain("-");
+  });
+
+  it("omits plan and ETA when absent", () => {
+    const c = classifyCodexHttpError(429, JSON.stringify({ error: { code: "rate_limit_exceeded" } }));
+    expect(c.friendlyMessage).toBe("You have hit your ChatGPT usage limit.");
+  });
 });

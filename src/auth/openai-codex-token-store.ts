@@ -27,6 +27,54 @@ function authFilePath(baseDir?: string): string {
   return path.join(baseDir ?? path.join(os.homedir(), ".swarm-harness"), "auth.json");
 }
 
+/** Sync sleep without busy-spinning the CPU (token writes are sync). */
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Serialize read-modify-write of the shared auth.json across processes via an
+ * O_EXCL lockfile. The swarm orchestrator runs many processes that may refresh
+ * concurrently; without this, last-writer-wins can drop a rotated refresh token
+ * or another provider's entry. Bounded wait with stale-lock recovery.
+ */
+function withLock<T>(file: string, fn: () => T): T {
+  const lock = `${file}.lock`;
+  const deadline = Date.now() + 5000;
+  let fd: number | undefined;
+  for (;;) {
+    try {
+      fd = fs.openSync(lock, "wx");
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      if (Date.now() > deadline) {
+        // Assume a crashed holder; reclaim and try once more.
+        try {
+          fs.unlinkSync(lock);
+        } catch {
+          /* raced — loop */
+        }
+      }
+      sleepSync(25);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    try {
+      fs.closeSync(fd);
+    } catch {
+      /* ignore */
+    }
+    try {
+      fs.unlinkSync(lock);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 function readAll(baseDir?: string): Record<string, unknown> {
   try {
     const raw = fs.readFileSync(authFilePath(baseDir), "utf8");
@@ -52,31 +100,50 @@ export function readCodexTokens(baseDir?: string): CodexTokens | null {
   return null;
 }
 
-export function writeCodexTokens(tokens: CodexTokens, baseDir?: string): void {
-  const file = authFilePath(baseDir);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const all = readAll(baseDir);
-  all[PROVIDER_KEY] = tokens;
-  // Atomic write: temp + rename so a crash never leaves a half-written file.
+/** Atomically persist `all` to `file` as a 0600 file (temp + rename). */
+function writeAllAtomic(file: string, all: Record<string, unknown>): void {
+  // Dir holds secrets — keep it private (0700), even if it pre-existed.
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  try {
+    fs.chmodSync(path.dirname(file), 0o700);
+  } catch {
+    /* best effort */
+  }
   const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(all, null, 2), { mode: 0o600 });
+  // Clear any leftover temp from a crashed same-PID run; the dir is 0700 (ours),
+  // so this can't remove an attacker-planted file.
+  try {
+    fs.unlinkSync(tmp);
+  } catch {
+    /* not present */
+  }
+  // flag "wx" → O_EXCL: never follow/overwrite a pre-planted symlink at tmp.
+  fs.writeFileSync(tmp, JSON.stringify(all, null, 2), { mode: 0o600, flag: "wx" });
   fs.renameSync(tmp, file);
-  // Re-assert perms in case the file pre-existed with looser bits.
   try {
     fs.chmodSync(file, 0o600);
   } catch {
-    // best effort (e.g. unsupported FS)
+    /* best effort (e.g. unsupported FS) */
   }
 }
 
-export function clearCodexTokens(baseDir?: string): void {
-  const all = readAll(baseDir);
-  if (!(PROVIDER_KEY in all)) return;
-  delete all[PROVIDER_KEY];
+export function writeCodexTokens(tokens: CodexTokens, baseDir?: string): void {
   const file = authFilePath(baseDir);
-  try {
-    fs.writeFileSync(file, JSON.stringify(all, null, 2), { mode: 0o600 });
-  } catch {
-    // file may not exist — nothing to clear
-  }
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  withLock(file, () => {
+    const all = readAll(baseDir); // re-read inside the lock to avoid lost updates
+    all[PROVIDER_KEY] = tokens;
+    writeAllAtomic(file, all);
+  });
+}
+
+export function clearCodexTokens(baseDir?: string): void {
+  const file = authFilePath(baseDir);
+  if (!fs.existsSync(path.dirname(file))) return;
+  withLock(file, () => {
+    const all = readAll(baseDir);
+    if (!(PROVIDER_KEY in all)) return;
+    delete all[PROVIDER_KEY];
+    writeAllAtomic(file, all);
+  });
 }

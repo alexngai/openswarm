@@ -260,14 +260,23 @@ Protocol already validated by the spike (§6). Reasoning replay and the
 WebSocket transport are both deferred — neither is needed for a correct,
 resource-efficient v1.
 
-> **Status: Phase 1 COMPLETE** (verified). Protocol core, auth (JWT, token
-> store, PKCE + device OAuth, `OpenAICodexAuth` with silent refresh), the
+> **Status: Phase 1 COMPLETE — reviewed & hardened.** Protocol core, auth (JWT,
+> token store, PKCE + device OAuth, `OpenAICodexAuth` with silent refresh), the
 > `CodexResponsesTransportProvider`, the `Provider.model`-optional change, and
 > the CLI wiring (`--framework codex-native`, `login`/`logout --provider
-> openai-codex`, `doctor` codex-auth check) are all in. ~64 new unit tests +
-> 3 gated live tests pass; full provider/cli/engine suite green (795); type-
-> clean apart from the pre-existing `minimem` build break. Live-proven
-> end-to-end: `OpenAICodexAuth` → provider → real backend.
+> openai-codex` incl. `--device`, `doctor` codex-auth check) are all in and
+> exercised by the built binary.
+>
+> A four-agent review (protocol, security, integration, tests) drove two fix
+> passes: **Pass 1** — wiring blockers (`--device` plumbing, friendly error
+> surfacing, effective-model id for budget/cost, framework-aware auth gate,
+> context-sized compaction, synthesized `fc_*` id for multi-turn tool loops),
+> plus loopback bound to localhost. **Pass 2** — provider robustness (multi-line/
+> CRLF SSE, mid-stream + missing-terminal error handling, dropped-tool-call
+> fallback), token-store concurrency/permission hardening, OAuth error-body
+> redaction, and broad test coverage (multi-turn tool loop, abort, refresh
+> failure, device flow, PKCE/CSRF, runtime branch). The build is fully clean
+> (`minimem` installed). Live-proven end-to-end incl. a multi-turn tool loop.
 
 **Phase 1** (working path): JWT/PKCE/device auth + token store →
 request-builder/sse/events/errors/headers → provider → `Provider.model`

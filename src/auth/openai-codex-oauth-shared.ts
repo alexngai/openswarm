@@ -36,10 +36,23 @@ async function postForm(
     body: new URLSearchParams(form).toString(),
   });
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`codex token request failed: ${res.status} ${body.slice(0, 200)}`);
+    // Surface only the structured OAuth error fields — never the raw body, which
+    // on the refresh path travels with the refresh token and could be echoed.
+    const raw = await res.text().catch(() => "");
+    let detail = "";
+    try {
+      const j = JSON.parse(raw) as { error?: unknown; error_description?: unknown };
+      detail = [j.error, j.error_description].filter((v): v is string => typeof v === "string").join(": ");
+    } catch {
+      /* non-JSON body — omit entirely */
+    }
+    throw new Error(`codex token request failed: ${res.status}${detail ? ` (${detail})` : ""}`);
   }
-  return (await res.json()) as TokenResponse;
+  const json = (await res.json()) as TokenResponse;
+  if (!json || typeof json.access_token !== "string") {
+    throw new Error("codex token response missing access_token");
+  }
+  return json;
 }
 
 export function exchangeCodeForTokens(

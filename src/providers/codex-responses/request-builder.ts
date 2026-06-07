@@ -98,7 +98,12 @@ function messageToInput(msg: ProviderMessage): CodexInputItem[] {
         items.push({
           type: "function_call_output",
           call_id: block.tool_use_id,
-          output: block.is_error ? `ERROR: ${block.content}` : block.content,
+          // Mark errors for the model, but don't re-prefix an already-marked
+          // result on replay (avoids "ERROR: ERROR: ..." across turns).
+          output:
+            block.is_error && !block.content.startsWith("ERROR: ")
+              ? `ERROR: ${block.content}`
+              : block.content,
         });
       }
     }

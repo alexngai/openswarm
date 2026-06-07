@@ -34,6 +34,8 @@ export class CodexEventTranslator {
         return this.onArgsDelta(ev);
       case "response.function_call_arguments.done":
         return this.onArgsDone(ev);
+      case "response.output_item.done":
+        return this.onItemDone(ev);
       case "response.output_text.delta": {
         const d = strField(ev, "delta");
         return d ? [{ type: "text-delta", text: d }] : [];
@@ -90,6 +92,32 @@ export class CodexEventTranslator {
     return [{ type: "tool-call", id: call.callId, name: call.name, input }];
   }
 
+  /**
+   * Fallback emit for a function_call whose `function_call_arguments.done`
+   * frame never arrived (e.g. dropped/truncated). `output_item.done` carries
+   * the finalized item, so synthesize the tool-call from it. The `emittedDone`
+   * guard prevents a double-emit when both frames are present.
+   */
+  private onItemDone(ev: CodexSseEvent): ProviderEvent[] {
+    const item = ev.item as Record<string, unknown> | undefined;
+    if (!item || item.type !== "function_call") return [];
+    const itemId = String(item.id ?? "");
+    if (this.emittedDone.has(itemId)) return [];
+    const call = this.calls.get(itemId);
+    const callId = call?.callId ?? String(item.call_id ?? itemId);
+    const name = call?.name ?? String(item.name ?? "");
+    this.emittedDone.add(itemId);
+    this.sawToolCall = true;
+    const raw = (typeof item.arguments === "string" && item.arguments) || call?.args || "{}";
+    let input: unknown;
+    try {
+      input = JSON.parse(raw);
+    } catch {
+      input = {};
+    }
+    return [{ type: "tool-call", id: callId, name, input }];
+  }
+
   private onCompleted(ev: CodexSseEvent): ProviderEvent {
     const response = (ev.response as Record<string, unknown> | undefined) ?? {};
     const usage = mapUsage(response.usage as CodexUsage | undefined);
@@ -113,11 +141,16 @@ export class CodexEventTranslator {
     const err = (response?.error ?? ev.error) as
       | { code?: string; message?: string }
       | undefined;
+    // Map to a code the engine's retry classifier understands (provider_error
+    // is not in its union and would degrade to "unknown"). Transient failures
+    // stay retryable for parity with classifyCodexHttpError.
+    const code = (err?.code ?? "").toLowerCase();
+    const retryable = /server_error|rate_limit|overloaded|unavailable|timeout/.test(code);
     return {
       type: "error",
-      code: err?.code ?? "provider_error",
+      code: "provider_unavailable",
       message: err?.message ?? "codex response failed",
-      retryable: false,
+      retryable,
     };
   }
 }

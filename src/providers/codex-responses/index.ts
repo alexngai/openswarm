@@ -152,10 +152,29 @@ export class CodexResponsesTransportProvider implements TransportProvider {
     // Node's fetch Response.body is async-iterable at runtime (Node 20+); the
     // DOM type doesn't advertise it, hence the cast.
     const bytes = res.body as unknown as AsyncIterable<Uint8Array>;
-    for await (const ev of parseCodexSse(bytes)) {
-      for (const out of translator.translate(ev)) {
-        yield out;
+    let sawTerminal = false;
+    try {
+      for await (const ev of parseCodexSse(bytes)) {
+        for (const out of translator.translate(ev)) {
+          if (out.type === "finish" || out.type === "error") sawTerminal = true;
+          yield out;
+        }
       }
+    } catch (err) {
+      // A mid-stream read/connection failure: surface as a retryable error event
+      // (contract parity with openai-transport — never throw out of stream()).
+      yield { type: "error", code: "transport", message: errMsg(err), retryable: true, cause: err };
+      return;
+    }
+    if (!sawTerminal) {
+      // Stream closed cleanly but no response.completed/failed arrived (truncation)
+      // — retry rather than silently accept a truncated turn as end_turn.
+      yield {
+        type: "error",
+        code: "transport",
+        message: "codex stream ended without a terminal event",
+        retryable: true,
+      };
     }
   }
 }

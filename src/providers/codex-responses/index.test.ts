@@ -122,4 +122,41 @@ describe("CodexResponsesTransportProvider", () => {
     const out = await collect(p.stream(req));
     expect(out[0]).toMatchObject({ type: "error", code: "transport", retryable: true });
   });
+
+  it("converts a mid-stream body failure into a retryable error event (not a throw)", async () => {
+    function bodyThatThrows(): Response {
+      async function* body(): AsyncGenerator<Uint8Array> {
+        yield new TextEncoder().encode('data: {"type":"response.output_text.delta","delta":"hi"}\n\n');
+        throw new Error("ECONNRESET mid-stream");
+      }
+      return { ok: true, status: 200, text: async () => "", body: body() } as unknown as Response;
+    }
+    const fetchImpl = vi.fn(async () => bodyThatThrows()) as unknown as typeof fetch;
+    const p = new CodexResponsesTransportProvider({ modelId: "gpt-5.5", credentials: creds, fetchImpl });
+    const out = await collect(p.stream(req)); // must not throw
+    expect(out[0]).toEqual({ type: "text-delta", text: "hi" });
+    expect(out.at(-1)).toMatchObject({ type: "error", code: "transport", retryable: true });
+  });
+
+  it("emits a retryable error when the stream ends without a terminal event", async () => {
+    const fetchImpl = vi.fn(async () =>
+      sseResponse(['data: {"type":"response.output_text.delta","delta":"hi"}\n\n']),
+    ); // no response.completed
+    const p = new CodexResponsesTransportProvider({ modelId: "gpt-5.5", credentials: creds, fetchImpl });
+    const out = await collect(p.stream(req));
+    expect(out.at(-1)).toMatchObject({ type: "error", code: "transport", retryable: true });
+    expect((out.at(-1) as { message: string }).message).toContain("without a terminal event");
+  });
+
+  it("forwards the abort signal to fetch", async () => {
+    const ctrl = new AbortController();
+    ctrl.abort();
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      if (init.signal?.aborted) throw new Error("AbortError");
+      return sseResponse(['data: {"type":"response.completed","response":{}}\n\n']);
+    }) as unknown as typeof fetch;
+    const p = new CodexResponsesTransportProvider({ modelId: "gpt-5.5", credentials: creds, fetchImpl });
+    const out = await collect(p.stream({ ...req, abort: ctrl.signal }));
+    expect(out[0]).toMatchObject({ type: "error", code: "transport" });
+  });
 });

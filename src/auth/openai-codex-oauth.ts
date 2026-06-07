@@ -105,7 +105,17 @@ export class OpenAICodexAuth implements InteractiveAuth, CodexCredentialSource {
     if (stored.refresh === "") {
       throw new Error("codex session expired and no refresh token is available — log in again");
     }
-    const tr = await refreshAccessToken(stored.refresh, this.fetchImpl);
+    let tr;
+    try {
+      tr = await refreshAccessToken(stored.refresh, this.fetchImpl);
+    } catch (err) {
+      // A rotated/revoked refresh token is unrecoverable — clear the dead
+      // credentials so the next run prompts a clean login instead of looping.
+      if (/invalid_grant/i.test(err instanceof Error ? err.message : "")) {
+        clearCodexTokens(this.baseDir);
+      }
+      throw err;
+    }
     const next = tokensToStored(tr, this.now(), stored.refresh);
     // Preserve the prior account id if the refreshed JWT omits it.
     const merged: CodexTokens =

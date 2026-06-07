@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { generatePkce, buildAuthorizeUrl } from "./openai-codex-pkce.js";
+import { generatePkce, buildAuthorizeUrl, runBrowserOAuth } from "./openai-codex-pkce.js";
 import { CODEX_CLIENT_ID, CODEX_REDIRECT_URI } from "./openai-codex-oauth-shared.js";
 
 function b64url(buf: Buffer): string {
@@ -31,5 +31,56 @@ describe("buildAuthorizeUrl", () => {
     expect(p.get("code_challenge_method")).toBe("S256");
     expect(p.get("state")).toBe("state-xyz");
     expect(p.get("originator")).toBe("swarm-harness");
+  });
+});
+
+describe("runBrowserOAuth (loopback)", () => {
+  // Drive the real loopback server: openBrowser captures the authorize URL and
+  // fires the callback; fetchImpl stubs only the token exchange.
+  const tokenExchange = vi.fn(async () =>
+    ({ ok: true, status: 200, json: async () => ({ access_token: "at", refresh_token: "rt" }), text: async () => "" }) as unknown as Response,
+  ) as unknown as typeof fetch;
+
+  function hitCallback(query: (state: string) => string) {
+    return (url: string) => {
+      const state = new URL(url).searchParams.get("state") ?? "";
+      void fetch(`http://127.0.0.1:1455/auth/callback?${query(state)}`).catch(() => {});
+    };
+  }
+
+  it("resolves with exchanged tokens on a valid callback", async () => {
+    const tr = await runBrowserOAuth({
+      fetchImpl: tokenExchange,
+      openBrowser: hitCallback((state) => `code=abc&state=${state}`),
+      print: () => {},
+      timeoutMs: 5000,
+    });
+    expect(tr.access_token).toBe("at");
+  });
+
+  it("rejects on a state mismatch (CSRF guard)", async () => {
+    await expect(
+      runBrowserOAuth({
+        openBrowser: hitCallback(() => `code=abc&state=WRONG`),
+        print: () => {},
+        timeoutMs: 5000,
+      }),
+    ).rejects.toThrow(/state mismatch/);
+  });
+
+  it("rejects when the provider returns an error param", async () => {
+    await expect(
+      runBrowserOAuth({
+        openBrowser: hitCallback((state) => `error=access_denied&state=${state}`),
+        print: () => {},
+        timeoutMs: 5000,
+      }),
+    ).rejects.toThrow(/access_denied/);
+  });
+
+  it("times out if no callback arrives, tearing down the server", async () => {
+    await expect(
+      runBrowserOAuth({ openBrowser: () => {}, print: () => {}, timeoutMs: 50 }),
+    ).rejects.toThrow(/timed out/);
   });
 });

@@ -15,7 +15,10 @@ export async function* parseCodexSse(
   const decoder = new TextDecoder();
   let buf = "";
   for await (const chunk of body) {
-    buf += decoder.decode(chunk, { stream: true });
+    // Normalize CRLF → LF so frame-boundary (`\n\n`) detection and per-line
+    // parsing work regardless of the server's line endings. Raw `\r` is only a
+    // line-ending here (JSON escapes any literal CR as `\r`), so this is safe.
+    buf += decoder.decode(chunk, { stream: true }).replace(/\r/g, "");
     let idx: number;
     while ((idx = buf.indexOf("\n\n")) !== -1) {
       const frame = buf.slice(0, idx);
@@ -30,9 +33,15 @@ export async function* parseCodexSse(
 }
 
 function parseFrame(frame: string): CodexSseEvent | undefined {
-  const dataLine = frame.split("\n").find((l) => l.startsWith("data:"));
-  if (dataLine === undefined) return undefined;
-  const data = dataLine.slice(5).trim();
+  // Per the SSE spec a single event's payload may span multiple `data:` lines,
+  // which the client concatenates with `\n`. Collect them all rather than only
+  // the first (large payloads can be split this way).
+  const dataLines = frame.split("\n").filter((l) => l.startsWith("data:"));
+  if (dataLines.length === 0) return undefined;
+  const data = dataLines
+    .map((l) => (l.startsWith("data: ") ? l.slice(6) : l.slice(5)))
+    .join("\n")
+    .trim();
   if (data === "" || data === "[DONE]") return undefined;
   try {
     const parsed = JSON.parse(data) as unknown;
