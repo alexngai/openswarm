@@ -249,9 +249,17 @@ export function App(props: AppProps) {
       dispatch({ type: "toggle-plan-mode" });
       return;
     }
-    // Phase 5 view switching: Esc → transcript.
+    // Phase 5 view switching: Ctrl+A → agents, Ctrl+T → tasks, Esc → transcript.
     if (key.name === "escape" && state.activeView !== "transcript") {
       dispatch({ type: "set-view", view: "transcript" });
+      return;
+    }
+    if (key.ctrl === true && key.name === "a") {
+      dispatch({ type: "set-view", view: "agents" });
+      return;
+    }
+    if (key.ctrl === true && key.name === "t") {
+      dispatch({ type: "set-view", view: "tasks" });
       return;
     }
     if (state.name === "awaiting-permission") {

@@ -647,7 +647,7 @@ describe("App — end-to-end interactive flow", () => {
   it("task_update events create task records", async () => {
     const { events, push, close } = makeEventChannel();
 
-    const { renderOnce } = await testRender(
+    const { captureCharFrame, renderOnce } = await testRender(
       () => (
         <App
           events={events}
@@ -659,10 +659,6 @@ describe("App — end-to-end interactive flow", () => {
       { width: 100, height: 20 },
     );
     await renderOnce();
-
-    // Need to be in streaming state for events to flow.
-    // Push a text_delta first to move things along.
-    // Actually, the event pump runs regardless of state - it just dispatches.
     push({
       type: "task_update",
       taskId: "task-1",
@@ -680,9 +676,10 @@ describe("App — end-to-end interactive flow", () => {
     await flush(50);
     await renderOnce();
 
-    // Verify no crash and frame renders.
-    // (Full view switching tested via reducer unit tests.)
-    expect(true).toBe(true);
+    // Frame renders without crash — task events didn't break the transcript view.
+    const frame = captureCharFrame();
+    expect(typeof frame).toBe("string");
+    expect(frame.length).toBeGreaterThan(0);
 
     close();
   });

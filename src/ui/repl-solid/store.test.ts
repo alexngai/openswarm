@@ -225,6 +225,52 @@ describe("createReplStore — Solid binding over reduce", () => {
   });
 
   // -------------------------------------------------------------------
+  // Steer event
+  // -------------------------------------------------------------------
+
+  it("steer during streaming adds (steered) user entry and clears input", () => {
+    const { state, dispatch } = createReplStore();
+    dispatch({ type: "submit", text: "go" });
+    dispatch({ type: "input-changed", value: "follow up", cursor: 9 });
+    dispatch({ type: "steer", text: "follow up" });
+    const steered = state.transcript.find((t) => t.text.includes("(steered)"));
+    expect(steered).toBeDefined();
+    expect(steered!.text).toBe("(steered) follow up");
+    expect(steered!.kind).toBe("user");
+    expect(state.input.value).toBe("");
+  });
+
+  it("steer is no-op when not streaming", () => {
+    const { state, dispatch } = createReplStore();
+    dispatch({ type: "steer", text: "hello" });
+    expect(state.transcript).toHaveLength(0);
+  });
+
+  it("steer rejects empty text", () => {
+    const { state, dispatch } = createReplStore();
+    dispatch({ type: "submit", text: "go" });
+    const lenBefore = state.transcript.length;
+    dispatch({ type: "steer", text: "" });
+    expect(state.transcript.length).toBe(lenBefore);
+  });
+
+  // -------------------------------------------------------------------
+  // Clear resets toolCalls
+  // -------------------------------------------------------------------
+
+  it("clear resets both transcript and toolCalls", () => {
+    const { state, dispatch } = createReplStore();
+    dispatch({ type: "submit", text: "go" });
+    dispatch({ type: "tool-start", id: "tc-1", name: "bash" });
+    dispatch({ type: "tool-result", id: "tc-1", content: "ok", isError: false });
+    dispatch({ type: "stream-end" });
+    expect(state.toolCalls["tc-1"]).toBeDefined();
+    dispatch({ type: "clear" });
+    expect(state.transcript).toHaveLength(0);
+    expect(state.toolCalls).toEqual({});
+  });
+
+  // -------------------------------------------------------------------
   // Phase 5 — multi-agent state
   // -------------------------------------------------------------------
 

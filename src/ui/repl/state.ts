@@ -655,6 +655,7 @@ export function reduce(state: ReplState, event: ReplEvent): ReplState {
       return {
         ...state,
         transcript: [],
+        toolCalls: {},
       };
     }
 
