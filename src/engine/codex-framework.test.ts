@@ -19,7 +19,7 @@ function makeConfig(overrides: Partial<RunConfig> = {}): RunConfig {
   return {
     systemPrompt: "",
     prompt: "hello",
-    model: "gpt-5.4",
+    model: "gpt-5.5",
     auth: {} as RunConfig["auth"],
     tools: [],
     canUseTool: async () => ({ allow: true }),
@@ -44,7 +44,7 @@ interface MockProvider {
 function makeMockProvider(overrides: Partial<MockProvider> = {}): MockProvider {
   return {
     start: vi.fn().mockResolvedValue({ userAgent: "codex/test" }),
-    startThread: vi.fn().mockResolvedValue({ threadId: "thread-abc", model: "gpt-5.4" }),
+    startThread: vi.fn().mockResolvedValue({ threadId: "thread-abc", model: "gpt-5.5" }),
     runTurn: vi.fn().mockReturnValue(
       (async function* () {
         yield { type: "text_delta", text: "Hello" } as NormalizedEvent;
@@ -108,6 +108,33 @@ describe("CodexFrameworkEngine", () => {
 
       expect(mock.start).toHaveBeenCalledTimes(1);
       expect(mock.startThread).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("default model substitution (ChatGPT-account allowlist drift)", () => {
+    it("substitutes gpt-5.5 when the caller's model is not Codex-compatible", async () => {
+      // A non-codex model (the CLI default is a Claude id) must be replaced —
+      // the backend rejects claude*, and as of docs/42 it also rejects gpt-5.4
+      // and all -codex variants on ChatGPT accounts. gpt-5.5 is the working default.
+      const mock = makeMockProvider();
+      const engine = new CodexFrameworkEngine({
+        providerFactory: () => mock as unknown as CodexAppServerProvider,
+      });
+
+      for await (const _ of engine.run(makeConfig({ model: "claude-sonnet-4-6" }))) { /* drain */ }
+
+      expect(mock.startThread).toHaveBeenCalledWith({ model: "gpt-5.5" });
+    });
+
+    it("passes a Codex-compatible model through unchanged", async () => {
+      const mock = makeMockProvider();
+      const engine = new CodexFrameworkEngine({
+        providerFactory: () => mock as unknown as CodexAppServerProvider,
+      });
+
+      for await (const _ of engine.run(makeConfig({ model: "gpt-5.5" }))) { /* drain */ }
+
+      expect(mock.startThread).toHaveBeenCalledWith({ model: "gpt-5.5" });
     });
   });
 
