@@ -40,8 +40,9 @@ import {
   getTreeSitterClient,
   type ThemeTokenStyle,
 } from "@opentui/core";
-import type { TranscriptEntry } from "../repl/state.js";
+import type { TranscriptEntry, ToolCallState } from "../repl/state.js";
 import { entryColor, theme } from "./theme.js";
+import { ToolChip } from "./entries/tool-chip.js";
 
 /**
  * Markdown scope → palette mapping. Scope names are the ones OpenTUI's
@@ -106,6 +107,10 @@ export interface TranscriptProps {
    * find_stream_safe_boundary needed unless that contract proves leaky).
    */
   readonly streamingEntryId?: string | undefined;
+  /** Rich tool call states for ToolChip rendering (Phase 1a). */
+  readonly toolCalls?: Readonly<Record<string, ToolCallState>>;
+  /** Global expand flag for tool chips (Phase 1a). */
+  readonly globalExpand?: boolean;
 }
 
 function UserEntry(props: { text: string }) {
@@ -167,13 +172,25 @@ export function Transcript(props: TranscriptProps) {
                   streaming={entry.id === props.streamingEntryId}
                 />
               );
-            case "tool":
+            case "tool": {
+              const tc = entry.toolCallId !== undefined
+                ? props.toolCalls?.[entry.toolCallId]
+                : undefined;
+              if (tc !== undefined) {
+                return (
+                  <ToolChip
+                    tc={tc}
+                    expanded={props.globalExpand ?? false}
+                  />
+                );
+              }
               return (
                 <ToolEntry
                   name={entry.tool?.name ?? "tool"}
                   summary={entry.tool?.summary ?? entry.text}
                 />
               );
+            }
             case "system":
               return <SystemEntry text={entry.text} />;
           }

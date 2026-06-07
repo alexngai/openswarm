@@ -557,3 +557,192 @@ The bulk of the implementation is new code following Kimi Code patterns, not Ope
 - **Multi-panel layout** — OpenSwarm's sidebar + main + details layout adds complexity without proportional value for the common case. If a user needs persistent agent visibility, the agent tree view (Ctrl+A) covers it.
 - **Plugin system** — OpenSwarm's 10-extension-point plugin architecture is over-engineered for swarm-harness. Swarm-harness already has its own plugin and MCP systems.
 - **View tabs** — OpenSwarm's 11 views (tasks, teams, topology, timeline, streams, environments, federation, settings, etc.) are macro-agent-specific. We add only 2 views (agents, tasks) that map to swarm-harness concepts.
+
+## 10. Implementation & Test Plan
+
+### Testing strategy
+
+Three test layers, matching existing patterns in the repo:
+
+| Layer | Framework | What it tests | Pattern |
+|-------|-----------|---------------|---------|
+| **Reducer unit** | `vitest` (`store.test.ts`) | State transitions — pure `reduce(state, event) → state` | State-in/state-out, no rendering |
+| **Component render** | `bun:test` + `testRender()` from `@opentui/solid` | Visual output — `captureCharFrame()` contains expected text | Mount component, `renderOnce()`, assert frame |
+| **E2E integration** | `bun:test` + `makeEventChannel()` | Full loop — synthetic events pump through App → store → transcript | Push `NormalizedEvent`s, flush, assert frames |
+
+The `testRender()` API provides `captureCharFrame()` (text buffer as string), `renderOnce()` (async render cycle), and `mockInput` (typeText, pressEnter, pressArrow). Tests use `bun:test` because vitest's Node worker cannot resolve `@opentui/core`'s `bun:ffi` imports. Pure logic tests (reducer, diff algorithm, chip functions) use `vitest`.
+
+### NormalizedEvent extensions (for Phase 5)
+
+New event types added to `src/core/types.ts` for multi-agent awareness:
+
+```typescript
+| {
+    readonly type: "agent_spawned";
+    readonly agentId: AgentId;
+    readonly name: string;
+    readonly role?: string;
+    readonly parentId?: AgentId;
+  }
+| {
+    readonly type: "agent_status";
+    readonly agentId: AgentId;
+    readonly phase: "spawning" | "running" | "idle" | "done" | "failed";
+    readonly toolCount?: number;
+    readonly tokenUsage?: Usage;
+  }
+| {
+    readonly type: "task_update";
+    readonly taskId: string;
+    readonly title: string;
+    readonly status: "pending" | "active" | "done" | "failed";
+    readonly assignee?: string;
+  }
+```
+
+These are emitted by the orchestrator/SwarmHost and consumed by the TUI event translator. Headless mode passes them through as JSONL.
+
+### Phase 1a: Reducer Extensions + Tool Chip Shell
+
+**Goal:** Get the expand/collapse mechanics working with all tools rendering as generic chips.
+
+**Implementation:**
+1. Extend `ReplEvent` with `tool-start`, `tool-args-delta`, `tool-result`, `toggle-expand`
+2. Add `ToolCallState` interface and `toolCalls` record to `ReplState`
+3. Add `globalExpand` boolean to `ReplState`
+4. Update reducer: `tool-start` creates entry in `toolCalls` + appends transcript entry with `toolCallId`; `tool-args-delta` accumulates `streamingArgs`; `tool-result` finalizes; `toggle-expand` flips state
+5. Update `translateEngineEvent()` to emit new events instead of flat `tool-entry`/`system-entry`
+6. Create `src/ui/repl-solid/entries/tool-chip.tsx` — chip header + conditional expanded body
+7. Create `src/ui/repl-solid/tools/registry.ts` with `generic.tsx` fallback
+8. Refactor `transcript.tsx` to delegate `tool` entries to `ToolChip` when `toolCallId` is present
+9. Wire Ctrl+O in `app.tsx` to dispatch `toggle-expand`
+10. Extend `theme.ts` with bullet colors
+
+**Tests:**
+- **store.test.ts** (vitest): `tool-start` creates entry in `toolCalls`; `tool-args-delta` accumulates; `tool-result` sets content + isError; `toggle-expand` flips `globalExpand`; existing tests pass unchanged
+- **tool-chip.test.tsx** (bun:test): mount ToolChip with mock ToolCallState, assert collapsed frame shows chip header (`●` bullet + tool name), expanded shows body content
+- **e2e.test.tsx** (bun:test): push `tool_use_start` → `tool_use_input` → `tool_use_end` → `tool_result` → `message_stop` through event channel, assert frame contains chip header text; verify old `[tool] — summary` format no longer appears
+
+### Phase 1b: Per-Tool Renderers + Diff Algorithm
+
+**Goal:** Each tool gets its specialized chip summary and expanded body.
+
+**Implementation:**
+1. Create `src/ui/repl-solid/diff/compute.ts` — LCS-based line diff, pure function
+2. Create `src/ui/repl-solid/diff/render.tsx` — color-coded unified diff component
+3. Create tool renderers: `bash.tsx`, `edit.tsx`, `write.tsx`, `read.tsx`, `grep.tsx`, `glob.tsx`
+4. Each exports `{ chip, glance, body }` conforming to `ToolRenderer` interface
+5. Register in `tools/registry.ts`
+
+**Tests:**
+- **diff/compute.test.ts** (vitest): pure function tests — old/new text pairs → expected diff lines. Cases: additions only; deletions only; mixed changes; empty files; single-line edits; no changes; large files; Unicode content
+- **tools/chips.test.ts** (vitest): each tool's `chip()` function tested independently. E.g. bash chip with exit 0 → `"exit:0"`; edit chip → `"+5 -3"`; read chip → `"42 lines"`; grep chip → `"3 files"`
+- **diff/render.test.tsx** (bun:test): mount DiffView with computed diff lines, assert frame contains green added lines and red deleted lines
+- **tools/edit.test.tsx** (bun:test): mount edit renderer with mock edit_file args/result, assert compact diff appears in collapsed mode, full diff in expanded
+- **e2e.test.tsx**: push edit_file tool cycle, assert frame shows `● Edit +N -M path` chip header
+
+### Phase 2: Approval Panel + Footer
+
+**Goal:** Replace raw-JSON permission prompt with contextual approval UI. Replace status bar with informative footer.
+
+**Implementation:**
+1. Create `src/ui/repl-solid/approval-panel.tsx` — renders display blocks per tool type (diff for edit_file, `$ command` for bash, key arg for others)
+2. Wire to permission bridge (same y/N key flow, app.tsx routing unchanged)
+3. Add Ctrl+E keybind for full-screen diff preview (sets state flag, transcript replaced by full diff, Esc returns)
+4. Create `src/ui/repl-solid/footer.tsx` — two-line layout with context %, cost, tip rotation
+5. Extend `theme.ts` with `approvalBorder` color
+6. Replace `<Status>` with `<Footer>` and `<PermissionPrompt>` with `<ApprovalPanel>` in app.tsx
+7. Delete `status.tsx` and `permission-prompt.tsx`
+
+**Tests:**
+- **approval-panel.test.tsx** (bun:test): mount with edit_file `PendingPermission`, assert frame shows diff preview not raw JSON; mount with bash, assert frame shows `$ command`; mount with unknown tool, assert shows tool name + key arg
+- **footer.test.tsx** (bun:test): mount with mock token getter + model context window size, assert `context:` percentage line appears; test tip rotation with fake timers (advance 10s, assert tip text changes)
+- **e2e.test.tsx**: push `permission_request` event for edit_file during streaming, assert frame shows diff in approval box not raw JSON; simulate `y` keypress, assert state returns to streaming
+- **Regression**: all existing permission e2e tests (y/N flow) must still pass — only the display changes, not the interaction model
+
+### Phase 3: Tool Grouping + Message Queue
+
+**Goal:** Reduce transcript noise for multi-tool turns. Support message queuing during streaming.
+
+**Implementation:**
+1. Add `ToolGroup` type and grouping logic to reducer: consecutive `tool-start` events with the same tool name and adjacent transcript positions get a `groupId`; `TranscriptEntry` gains optional `groupId` field
+2. Create `src/ui/repl-solid/entries/tool-group.tsx` — ReadGroup and AgentGroup renderers with tree-line formatting (├─ / └─)
+3. Add `messageQueue: string[]` to `ReplState`
+4. Add `queue-message` and `dequeue-message` events to `ReplEvent`
+5. Create `src/ui/repl-solid/message-queue.tsx` — renders queued messages with `❯` prefix above input
+6. Wire Ctrl+S during streaming to `queue-message` (replaces current `steer` event); wire Enter-during-streaming to `queue-message`
+7. On `stream-end`, auto-dispatch `dequeue-message` which pops first item and fires `submit`
+8. Refactor transcript.tsx: when rendering consecutive tool entries sharing a `groupId`, render a single `ToolGroup` component wrapping them
+
+**Tests:**
+- **store.test.ts** (vitest): dispatch 3 consecutive `tool-start` for `read_file` → assert `groupId` is set and shared; dispatch `queue-message` → assert `messageQueue` grows; dispatch `stream-end` → assert auto-dequeue pops first message
+- **tool-group.test.tsx** (bun:test): mount ReadGroup with 3 read tool call states, assert `Read 3 files · N lines` header; mount AgentGroup with 2 agents, assert grouped header with phase badges
+- **message-queue.test.tsx** (bun:test): mount with 2 queued messages, assert `❯` prefix and hint text visible
+- **e2e.test.tsx**: push 3 read_file tool cycles in same turn, assert frame shows grouped header instead of 3 separate chips; type during streaming + Enter, assert queue pane appears above input
+
+### Phase 4: Streaming Args Preview
+
+**Goal:** Show live tool call arguments as they stream in before result arrives.
+
+**Implementation:**
+1. In reducer, accumulate `tool-args-delta` jsonDelta into `toolCalls[id].streamingArgs` string
+2. Create `src/ui/repl-solid/tools/streaming.ts` — `extractPartialJsonField(buffer, fieldName)` parser that extracts string values from incomplete JSON
+3. In `ToolChip`, when tool call has `streamingArgs` but no `result`, render live chip header with extracted key arg (e.g., file path appears as `tool_use_input` streams `{"file_path": "src/main.ts"`)
+4. For edit tools: compute partial diff from extracted `old_string`/`new_string` with trailing-delete suppression (`isIncomplete: true` flag to `computeDiff`)
+5. Show streaming indicator (braille spinner from existing `Spinner`) on chip while args are arriving
+
+**Tests:**
+- **tools/streaming.test.ts** (vitest): `extractPartialJsonField('{"file_path": "src/main.ts", "old_str', "file_path")` → `"src/main.ts"`; incomplete field → `undefined`; nested JSON → extracts top-level only; escaped quotes in values handled correctly
+- **diff/compute.test.ts** (vitest): add cases with `isIncomplete: true` — trailing delete lines suppressed; same input with `isIncomplete: false` shows them
+- **e2e.test.tsx**: push `tool_use_start` for edit_file, then push `tool_use_input` deltas with partial JSON incrementally, assert chip header updates with file path before `tool_result` arrives; after `tool_result`, assert final diff replaces streaming preview
+
+### Phase 5: Multi-Agent Views + NormalizedEvent Extensions
+
+**Goal:** Add opt-in agent tree and task board for swarm runs. Add new NormalizedEvent types.
+
+**Implementation:**
+1. Add `agent_spawned`, `agent_status`, `task_update` to `NormalizedEvent` union in `src/core/types.ts`
+2. Add `AgentState` record and `TaskState` record to `ReplState`; add `activeView` field
+3. Add `agent-spawned`, `agent-status`, `task-update`, `set-view` events to `ReplEvent`
+4. Update `translateEngineEvent()` to map new NormalizedEvents to ReplEvents
+5. Create `src/ui/repl-solid/views/agent-tree.tsx` — hierarchical agent display with phase badges and tree lines; j/k navigation with `selectedAgentIndex` state
+6. Create `src/ui/repl-solid/views/task-board.tsx` — task list with status icons, assignee, timestamps
+7. Create `src/ui/repl-solid/tools/agent.tsx` — subagent tool chip renderer with phase tracking
+8. Wire `/agents` slash command and Ctrl+A to dispatch `set-view: "agents"`; `/tasks` and Ctrl+T to `set-view: "tasks"`; Esc to `set-view: "transcript"`
+9. In app.tsx, render active view: `<Show>` switches between Transcript, AgentTree, TaskBoard based on `state.activeView`
+10. Bridge SwarmHost events: orchestrator emits `agent_spawned`/`agent_status` NormalizedEvents when workers spawn/transition; `task_update` when task graph changes
+
+**Tests:**
+- **store.test.ts** (vitest): dispatch `agent-spawned` → assert agent record created; dispatch `agent-status` with phase change → assert updated; dispatch `task-update` → assert task record; dispatch `set-view` → assert `activeView` changes; Esc dispatches `set-view: "transcript"`
+- **views/agent-tree.test.tsx** (bun:test): mount with mock agent hierarchy (parent → 3 children), assert tree structure renders with correct phase badges (✓/↻/◌); test j/k navigation updates selected index
+- **views/task-board.test.tsx** (bun:test): mount with mock tasks in various states, assert status icons (✓/↻/◌) and assignee names render correctly
+- **tools/agent.test.tsx** (bun:test): mount agent tool chip, assert phase transitions render (spawning → running → done with elapsed time)
+- **e2e.test.tsx**: push `agent_spawned` + `agent_status` events, dispatch Ctrl+A, assert agent tree view renders; Esc returns to transcript
+
+### Phase 6: Input Enhancements
+
+**Goal:** File mentions and plan mode.
+
+**Implementation:**
+1. Create `src/ui/repl-solid/file-mention.ts` — `getFileCandidates(prefix)` backed by `git ls-files` (cached, debounced); returns `{path, relativePath}[]`
+2. Extend dropdown.tsx to support `mode: "slash" | "mention"` — slash mode filters by `/` prefix, mention mode filters by `@` prefix
+3. In app.tsx, detect `@` trigger in input value and switch dropdown to mention mode with file candidates
+4. On mention accept, insert file path into input buffer and track mentioned files in state for prompt attachment
+5. Add `planMode` boolean to `ReplState`; `Shift+Tab` toggles it
+6. When `planMode` is true, prepend plan-mode instruction to system prompt via engine config
+7. Create plan display component: bordered box in transcript showing agent's plan with approve/reject keybinds
+
+**Tests:**
+- **file-mention.test.ts** (vitest): mock `git ls-files` output, assert `getFileCandidates("src/m")` returns matching files; empty prefix returns all; no git repo returns empty
+- **input.test.tsx** (bun:test): extend existing tests — type `@`, assert dropdown appears with file candidates; type `/`, assert slash commands; test mode switching between the two
+- **store.test.ts** (vitest): dispatch `toggle-plan-mode` → assert `planMode` flips; mentioned files tracked in state
+- **e2e.test.tsx**: type `@src/m` in input, assert file completion dropdown appears with matching files; select one, assert path inserted
+
+### Verification protocol
+
+After each phase:
+1. Run `bun test src/ui/repl-solid/` — all component and e2e tests pass
+2. Run `vitest run src/ui/repl-solid/store.test.ts` — reducer tests pass
+3. Run any new phase-specific test files
+4. Run `bun run typecheck:ui` — no type errors introduced
+5. Commit with descriptive message referencing the phase

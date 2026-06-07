@@ -38,11 +38,7 @@ describe("App — Solid root composition", () => {
     expect(frame).toContain("claude-opus-4-6");
   });
 
-  it("surfaces tool_use_start as a tool-entry in the transcript", async () => {
-    // Note: text_delta requires state=streaming, which is only entered via a
-    // user submit. That integration test needs mockInput to simulate typing
-    // — deferred. This test verifies the engine→reducer→render pipeline via
-    // an event that doesn't gate on state.
+  it("surfaces tool_use_start as a tool chip in the transcript", async () => {
     const events = (async function* (): AsyncGenerator<NormalizedEvent> {
       yield { type: "tool_use_start", id: "tu-42", name: "bash" };
     })();
@@ -61,11 +57,15 @@ describe("App — Solid root composition", () => {
     await flushAsyncPump(100);
     await renderOnce();
     const frame = captureCharFrame();
+    // Tool chip should show pending bullet and tool name.
     expect(frame).toContain("bash");
+    expect(frame).toContain("●");
+    expect(frame).toContain("Using");
   });
 
-  it("surfaces system-entry on tool_result error event", async () => {
+  it("surfaces tool-result error in tool chip", async () => {
     const events = (async function* (): AsyncGenerator<NormalizedEvent> {
+      yield { type: "tool_use_start", id: "tu-1", name: "bash" };
       yield {
         type: "tool_result",
         toolUseId: "tu-1",
@@ -88,6 +88,8 @@ describe("App — Solid root composition", () => {
     await flushAsyncPump(100);
     await renderOnce();
     const frame = captureCharFrame();
-    expect(frame).toContain("permission denied");
+    // Tool chip should show error bullet and bash tool name.
+    expect(frame).toContain("bash");
+    expect(frame).toContain("✗");
   });
 });

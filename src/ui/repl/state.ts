@@ -46,6 +46,27 @@ export interface TranscriptEntry {
   readonly text: string;
   /** Optional tool descriptor for kind === "tool". */
   readonly tool?: { readonly name: string; readonly summary?: string };
+  /** Links to toolCalls record for rich rendering (Phase 1a). */
+  readonly toolCallId?: string;
+}
+
+/**
+ * Rich tool call state, tracked separately from transcript entries so the
+ * chip renderer can access structured data (args, result, streaming state)
+ * without parsing text.
+ */
+export interface ToolCallState {
+  readonly id: string;
+  readonly name: string;
+  /** Accumulated JSON argument deltas — concatenated raw fragments. */
+  readonly streamingArgs: string;
+  /** Parsed args (set when tool_use_end arrives or from result context). */
+  readonly args: unknown;
+  /** Tool result content (set on tool-result event). */
+  readonly result: string | undefined;
+  readonly isError: boolean;
+  /** Whether the tool call is still in flight (no result yet). */
+  readonly pending: boolean;
 }
 
 /**
@@ -94,6 +115,10 @@ export interface ReplState {
    * candidates count, not this value.
    */
   readonly dropdownIndex: number;
+  /** Rich tool call state keyed by tool use ID (Phase 1a). */
+  readonly toolCalls: Readonly<Record<string, ToolCallState>>;
+  /** When true, all tool chips show expanded body. Toggled by Ctrl+O. */
+  readonly globalExpand: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -122,13 +147,19 @@ export type ReplEvent =
   // Compaction
   | { readonly type: "compact-begin" }
   | { readonly type: "compact-end" }
-  // Tool use (added to transcript)
+  // Tool use (legacy flat entry — kept for backward compat, no longer emitted by translateEngineEvent)
   | {
       readonly type: "tool-entry";
       readonly id: string;
       readonly name: string;
       readonly summary?: string;
     }
+  // Rich tool call lifecycle (Phase 1a — replaces tool-entry in translateEngineEvent)
+  | { readonly type: "tool-start"; readonly id: string; readonly name: string }
+  | { readonly type: "tool-args-delta"; readonly id: string; readonly jsonDelta: string }
+  | { readonly type: "tool-result"; readonly id: string; readonly content: string; readonly isError: boolean }
+  // Expand/collapse tool output (Phase 1a)
+  | { readonly type: "toggle-expand" }
   // System / hook message
   | { readonly type: "system-entry"; readonly id: string; readonly text: string }
   // Dropdown navigation (slash-command autocomplete)
@@ -187,6 +218,8 @@ export function createInitialState(opts?: InitialStateOptions): ReplState {
     pendingPermission: undefined,
     streamingEntryId: undefined,
     dropdownIndex: 0,
+    toolCalls: {},
+    globalExpand: false,
   };
 }
 
@@ -398,6 +431,77 @@ export function reduce(state: ReplState, event: ReplEvent): ReplState {
           },
         ],
       };
+    }
+
+    case "tool-start": {
+      const tc: ToolCallState = {
+        id: event.id,
+        name: event.name,
+        streamingArgs: "",
+        args: undefined,
+        result: undefined,
+        isError: false,
+        pending: true,
+      };
+      return {
+        ...state,
+        toolCalls: { ...state.toolCalls, [event.id]: tc },
+        transcript: [
+          ...state.transcript,
+          {
+            id: event.id,
+            kind: "tool" as const,
+            text: "",
+            tool: { name: event.name },
+            toolCallId: event.id,
+          },
+        ],
+      };
+    }
+
+    case "tool-args-delta": {
+      const existing = state.toolCalls[event.id];
+      if (existing === undefined) return state;
+      return {
+        ...state,
+        toolCalls: {
+          ...state.toolCalls,
+          [event.id]: {
+            ...existing,
+            streamingArgs: existing.streamingArgs + event.jsonDelta,
+          },
+        },
+      };
+    }
+
+    case "tool-result": {
+      const existing = state.toolCalls[event.id];
+      if (existing === undefined) return state;
+      let args = existing.args;
+      if (args === undefined && existing.streamingArgs.length > 0) {
+        try {
+          args = JSON.parse(existing.streamingArgs);
+        } catch {
+          args = undefined;
+        }
+      }
+      return {
+        ...state,
+        toolCalls: {
+          ...state.toolCalls,
+          [event.id]: {
+            ...existing,
+            result: event.content,
+            isError: event.isError,
+            pending: false,
+            args,
+          },
+        },
+      };
+    }
+
+    case "toggle-expand": {
+      return { ...state, globalExpand: !state.globalExpand };
     }
 
     case "system-entry": {

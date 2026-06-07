@@ -210,6 +210,11 @@ export function App(props: AppProps) {
       }
       return;
     }
+    // Ctrl+O: toggle tool output expand/collapse.
+    if (key.ctrl === true && key.name === "o") {
+      dispatch({ type: "toggle-expand" });
+      return;
+    }
     if (state.name === "awaiting-permission") {
       if (key.ctrl === true && key.name === "c") {
         respondPermission(false);
@@ -265,6 +270,8 @@ export function App(props: AppProps) {
       <Transcript
         entries={state.transcript}
         streamingEntryId={state.streamingEntryId}
+        toolCalls={state.toolCalls}
+        globalExpand={state.globalExpand}
       />
       <Show when={state.name === "streaming"}>
         <Spinner />
@@ -360,18 +367,18 @@ export function translateEngineEvent(evt: NormalizedEvent): ReplEvent[] {
     case "text_delta":
       return [{ type: "stream-delta", text: evt.text }];
     case "tool_use_start":
-      return [{ type: "tool-entry", id: evt.id, name: evt.name }];
+      return [{ type: "tool-start", id: evt.id, name: evt.name }];
     case "tool_use_input":
+      return [{ type: "tool-args-delta", id: evt.id, jsonDelta: evt.jsonDelta }];
     case "tool_use_end":
       return [];
     case "tool_result":
       return [
         {
-          type: "system-entry",
-          id: `tr-${evt.toolUseId}`,
-          text: evt.isError
-            ? `tool error: ${evt.content.slice(0, 120)}`
-            : `tool ok: ${evt.content.slice(0, 120).split("\n")[0] ?? ""}`,
+          type: "tool-result",
+          id: evt.toolUseId,
+          content: evt.content,
+          isError: evt.isError,
         },
       ];
     case "message_stop":
