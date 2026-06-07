@@ -20,6 +20,16 @@ export const theme = {
   warning: "#fbbf24",
   error: "#f87171",
   streamingIndicator: "#a78bfa",
+
+  // Tool chip bullets (Phase 1a)
+  bulletPending: "#a78bfa",
+  bulletSuccess: "#4ade80",
+  bulletError: "#f87171",
+
+  // Diff colors (Phase 1b)
+  diffAdd: "#4ade80",
+  diffRemove: "#f87171",
+  diffGutter: "#6b7280",
   // Background is terminal default; components should generally not set bg.
 } as const;
 

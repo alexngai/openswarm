@@ -26,7 +26,7 @@
  *   shutdown            : none
  */
 
-import type { PermissionMode, RequiredPermission } from "../../core/types.js";
+import type { PermissionMode, RequiredPermission, AgentPhase, TaskStatus } from "../../core/types.js";
 
 // ---------------------------------------------------------------------------
 // State types
@@ -46,6 +46,27 @@ export interface TranscriptEntry {
   readonly text: string;
   /** Optional tool descriptor for kind === "tool". */
   readonly tool?: { readonly name: string; readonly summary?: string };
+  /** Links to toolCalls record for rich rendering (Phase 1a). */
+  readonly toolCallId?: string;
+}
+
+/**
+ * Rich tool call state, tracked separately from transcript entries so the
+ * chip renderer can access structured data (args, result, streaming state)
+ * without parsing text.
+ */
+export interface ToolCallState {
+  readonly id: string;
+  readonly name: string;
+  /** Accumulated JSON argument deltas — concatenated raw fragments. */
+  readonly streamingArgs: string;
+  /** Parsed args (set when tool_use_end arrives or from result context). */
+  readonly args: unknown;
+  /** Tool result content (set on tool-result event). */
+  readonly result: string | undefined;
+  readonly isError: boolean;
+  /** Whether the tool call is still in flight (no result yet). */
+  readonly pending: boolean;
 }
 
 /**
@@ -64,6 +85,25 @@ export interface PendingPermission {
   /** Reason surfaced by PermissionEngine.check when mode denied (optional). */
   readonly reason?: string;
 }
+
+export interface AgentState {
+  readonly id: string;
+  readonly name: string;
+  readonly role: string;
+  readonly parentId?: string;
+  readonly phase: AgentPhase;
+  readonly toolCount: number;
+  readonly tokenUsage: number;
+}
+
+export interface TaskState {
+  readonly id: string;
+  readonly title: string;
+  readonly status: TaskStatus;
+  readonly assignee?: string;
+}
+
+export type ActiveView = "transcript" | "agents" | "tasks";
 
 export interface InputBuffer {
   readonly value: string;
@@ -94,6 +134,22 @@ export interface ReplState {
    * candidates count, not this value.
    */
   readonly dropdownIndex: number;
+  /** Rich tool call state keyed by tool use ID (Phase 1a). */
+  readonly toolCalls: Readonly<Record<string, ToolCallState>>;
+  /** When true, all tool chips show expanded body. Toggled by Ctrl+O. */
+  readonly globalExpand: boolean;
+  /** Messages queued during streaming, auto-submitted when the turn ends (Phase 3). */
+  readonly messageQueue: readonly string[];
+  /** Multi-agent state keyed by agent id (Phase 5). */
+  readonly agents: Readonly<Record<string, AgentState>>;
+  /** Task board state keyed by task id (Phase 5). */
+  readonly tasks: Readonly<Record<string, TaskState>>;
+  /** Which view is currently active (Phase 5). */
+  readonly activeView: ActiveView;
+  /** When true, agent generates a plan before executing (Phase 6). */
+  readonly planMode: boolean;
+  /** Files mentioned via @ in the input, attached as context (Phase 6). */
+  readonly mentionedFiles: readonly string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -122,13 +178,31 @@ export type ReplEvent =
   // Compaction
   | { readonly type: "compact-begin" }
   | { readonly type: "compact-end" }
-  // Tool use (added to transcript)
+  // Tool use (legacy flat entry — kept for backward compat, no longer emitted by translateEngineEvent)
   | {
       readonly type: "tool-entry";
       readonly id: string;
       readonly name: string;
       readonly summary?: string;
     }
+  // Rich tool call lifecycle (Phase 1a — replaces tool-entry in translateEngineEvent)
+  | { readonly type: "tool-start"; readonly id: string; readonly name: string }
+  | { readonly type: "tool-args-delta"; readonly id: string; readonly jsonDelta: string }
+  | { readonly type: "tool-result"; readonly id: string; readonly content: string; readonly isError: boolean }
+  // Expand/collapse tool output (Phase 1a)
+  | { readonly type: "toggle-expand" }
+  // Message queue — messages typed during streaming, auto-submitted on turn end (Phase 3)
+  | { readonly type: "queue-message"; readonly text: string }
+  | { readonly type: "dequeue-message" }
+  // Multi-agent events (Phase 5)
+  | { readonly type: "agent-spawned"; readonly id: string; readonly name: string; readonly role: string; readonly parentId?: string }
+  | { readonly type: "agent-status"; readonly id: string; readonly phase: AgentPhase; readonly toolCount?: number; readonly tokenUsage?: number }
+  | { readonly type: "task-update"; readonly id: string; readonly title: string; readonly status: TaskStatus; readonly assignee?: string }
+  | { readonly type: "set-view"; readonly view: ActiveView }
+  // Input enhancements (Phase 6)
+  | { readonly type: "toggle-plan-mode" }
+  | { readonly type: "add-mentioned-file"; readonly filePath: string }
+  | { readonly type: "clear-mentioned-files" }
   // System / hook message
   | { readonly type: "system-entry"; readonly id: string; readonly text: string }
   // Dropdown navigation (slash-command autocomplete)
@@ -187,6 +261,14 @@ export function createInitialState(opts?: InitialStateOptions): ReplState {
     pendingPermission: undefined,
     streamingEntryId: undefined,
     dropdownIndex: 0,
+    toolCalls: {},
+    globalExpand: false,
+    messageQueue: [],
+    agents: {},
+    tasks: {},
+    activeView: "transcript",
+    planMode: false,
+    mentionedFiles: [],
   };
 }
 
@@ -304,6 +386,7 @@ export function reduce(state: ReplState, event: ReplEvent): ReplState {
         historyIndex: -1,
         historyDraft: "",
         streamingEntryId: assistantId,
+        mentionedFiles: [],
       };
     }
 
@@ -400,6 +483,163 @@ export function reduce(state: ReplState, event: ReplEvent): ReplState {
       };
     }
 
+    case "tool-start": {
+      const tc: ToolCallState = {
+        id: event.id,
+        name: event.name,
+        streamingArgs: "",
+        args: undefined,
+        result: undefined,
+        isError: false,
+        pending: true,
+      };
+      return {
+        ...state,
+        toolCalls: { ...state.toolCalls, [event.id]: tc },
+        transcript: [
+          ...state.transcript,
+          {
+            id: event.id,
+            kind: "tool" as const,
+            text: "",
+            tool: { name: event.name },
+            toolCallId: event.id,
+          },
+        ],
+      };
+    }
+
+    case "tool-args-delta": {
+      const existing = state.toolCalls[event.id];
+      if (existing === undefined) return state;
+      return {
+        ...state,
+        toolCalls: {
+          ...state.toolCalls,
+          [event.id]: {
+            ...existing,
+            streamingArgs: existing.streamingArgs + event.jsonDelta,
+          },
+        },
+      };
+    }
+
+    case "tool-result": {
+      const existing = state.toolCalls[event.id];
+      if (existing === undefined) return state;
+      let args = existing.args;
+      if (args === undefined && existing.streamingArgs.length > 0) {
+        try {
+          args = JSON.parse(existing.streamingArgs);
+        } catch {
+          args = undefined;
+        }
+      }
+      return {
+        ...state,
+        toolCalls: {
+          ...state.toolCalls,
+          [event.id]: {
+            ...existing,
+            result: event.content,
+            isError: event.isError,
+            pending: false,
+            args,
+          },
+        },
+      };
+    }
+
+    case "toggle-expand": {
+      return { ...state, globalExpand: !state.globalExpand };
+    }
+
+    case "queue-message": {
+      if (state.name !== "streaming") return state;
+      if (event.text.length === 0) return state;
+      return {
+        ...state,
+        messageQueue: [...state.messageQueue, event.text],
+        input: { value: "", cursor: 0, killBuffer: state.input.killBuffer },
+      };
+    }
+
+    case "dequeue-message": {
+      if (state.messageQueue.length === 0) return state;
+      return {
+        ...state,
+        messageQueue: state.messageQueue.slice(1),
+      };
+    }
+
+    case "agent-spawned": {
+      const agent: AgentState = {
+        id: event.id,
+        name: event.name,
+        role: event.role,
+        parentId: event.parentId,
+        phase: "spawning",
+        toolCount: 0,
+        tokenUsage: 0,
+      };
+      return {
+        ...state,
+        agents: { ...state.agents, [event.id]: agent },
+      };
+    }
+
+    case "agent-status": {
+      const existing = state.agents[event.id];
+      if (existing === undefined) return state;
+      return {
+        ...state,
+        agents: {
+          ...state.agents,
+          [event.id]: {
+            ...existing,
+            phase: event.phase,
+            toolCount: event.toolCount ?? existing.toolCount,
+            tokenUsage: event.tokenUsage ?? existing.tokenUsage,
+          },
+        },
+      };
+    }
+
+    case "task-update": {
+      const existingTask = state.tasks[event.id];
+      const task: TaskState = {
+        id: event.id,
+        title: event.title,
+        status: event.status,
+        assignee: event.assignee ?? existingTask?.assignee,
+      };
+      return {
+        ...state,
+        tasks: { ...state.tasks, [event.id]: task },
+      };
+    }
+
+    case "set-view": {
+      return { ...state, activeView: event.view };
+    }
+
+    case "toggle-plan-mode": {
+      return { ...state, planMode: !state.planMode };
+    }
+
+    case "add-mentioned-file": {
+      if (state.mentionedFiles.includes(event.filePath)) return state;
+      return {
+        ...state,
+        mentionedFiles: [...state.mentionedFiles, event.filePath],
+      };
+    }
+
+    case "clear-mentioned-files": {
+      if (state.mentionedFiles.length === 0) return state;
+      return { ...state, mentionedFiles: [] };
+    }
+
     case "system-entry": {
       return {
         ...state,
@@ -415,6 +655,7 @@ export function reduce(state: ReplState, event: ReplEvent): ReplState {
       return {
         ...state,
         transcript: [],
+        toolCalls: {},
       };
     }
 

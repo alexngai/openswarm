@@ -33,15 +33,18 @@
  * causes problems (test isolation, packaging, slow init under load).
  */
 
-import { For, Show } from "solid-js";
+import { For, Show, createMemo } from "solid-js";
 import {
   SyntaxStyle,
   TreeSitterClient,
   getTreeSitterClient,
   type ThemeTokenStyle,
 } from "@opentui/core";
-import type { TranscriptEntry } from "../repl/state.js";
+import type { TranscriptEntry, ToolCallState } from "../repl/state.js";
 import { entryColor, theme } from "./theme.js";
+import { ToolChip } from "./entries/tool-chip.js";
+import { ToolGroup } from "./entries/tool-group.js";
+import { groupTranscriptEntries, type TranscriptItem } from "./entries/group.js";
 
 /**
  * Markdown scope → palette mapping. Scope names are the ones OpenTUI's
@@ -106,6 +109,10 @@ export interface TranscriptProps {
    * find_stream_safe_boundary needed unless that contract proves leaky).
    */
   readonly streamingEntryId?: string | undefined;
+  /** Rich tool call states for ToolChip rendering (Phase 1a). */
+  readonly toolCalls?: Readonly<Record<string, ToolCallState>>;
+  /** Global expand flag for tool chips (Phase 1a). */
+  readonly globalExpand?: boolean;
 }
 
 function UserEntry(props: { text: string }) {
@@ -153,10 +160,37 @@ function SystemEntry(props: { text: string }) {
 }
 
 export function Transcript(props: TranscriptProps) {
+  const items = createMemo((): TranscriptItem[] =>
+    groupTranscriptEntries(props.entries, props.toolCalls ?? {}),
+  );
+
+  const entryMap = createMemo(() => {
+    const m = new Map<string, TranscriptEntry>();
+    for (const e of props.entries) m.set(e.id, e);
+    return m;
+  });
+
   return (
     <scrollbox flexGrow={1}>
-      <For each={props.entries as TranscriptEntry[]}>
-        {(entry) => {
+      <For each={items()}>
+        {(item) => {
+          if (item.type === "group") {
+            const tcs = item.entryIds
+              .map((id) => {
+                const entry = entryMap().get(id);
+                return entry?.toolCallId !== undefined
+                  ? props.toolCalls?.[entry.toolCallId]
+                  : undefined;
+              })
+              .filter((tc): tc is ToolCallState => tc !== undefined);
+            return (
+              <ToolGroup
+                toolCalls={tcs}
+                expanded={props.globalExpand ?? false}
+              />
+            );
+          }
+          const entry = item.entry;
           switch (entry.kind) {
             case "user":
               return <UserEntry text={entry.text} />;
@@ -167,13 +201,25 @@ export function Transcript(props: TranscriptProps) {
                   streaming={entry.id === props.streamingEntryId}
                 />
               );
-            case "tool":
+            case "tool": {
+              const tc = entry.toolCallId !== undefined
+                ? props.toolCalls?.[entry.toolCallId]
+                : undefined;
+              if (tc !== undefined) {
+                return (
+                  <ToolChip
+                    tc={tc}
+                    expanded={props.globalExpand ?? false}
+                  />
+                );
+              }
               return (
                 <ToolEntry
                   name={entry.tool?.name ?? "tool"}
                   summary={entry.tool?.summary ?? entry.text}
                 />
               );
+            }
             case "system":
               return <SystemEntry text={entry.text} />;
           }

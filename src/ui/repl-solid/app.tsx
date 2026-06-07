@@ -16,10 +16,14 @@ import { Show, onMount, onCleanup, createEffect, createMemo, untrack } from "sol
 import { createReplStore } from "./store.js";
 import { Transcript } from "./transcript.js";
 import { Input } from "./input.js";
-import { Status } from "./status.js";
+import { Footer } from "./footer.js";
 import { Spinner } from "./spinner.js";
 import { Dropdown } from "./dropdown.js";
-import { PermissionPrompt } from "./permission-prompt.js";
+import { ApprovalPanel } from "./approval-panel.js";
+import { MessageQueue } from "./message-queue.js";
+import { AgentTree } from "./views/agent-tree.js";
+import { TaskBoard } from "./views/task-board.js";
+import { extractMentionPrefix, getFileCandidates, applyMention } from "./file-mention.js";
 import { dispatchSlashLine } from "../../cli/slash/dispatcher.js";
 import { loadHistory, appendHistoryEntry } from "../history.js";
 import type {
@@ -104,8 +108,26 @@ export function App(props: AppProps) {
     }
   });
 
+  // Phase 3 — auto-dequeue: when state returns to idle with queued messages,
+  // pop the first message and submit it as the next turn.
+  createEffect(() => {
+    if (state.name === "idle" && state.messageQueue.length > 0) {
+      const next = state.messageQueue[0];
+      untrack(() => {
+        dispatch({ type: "dequeue-message" });
+        dispatch({ type: "submit", text: next });
+        props.onSubmit?.(next);
+      });
+    }
+  });
+
   const handleSubmit = (line: string): void => {
     if (line.length === 0) return;
+    // Phase 3: if still streaming, queue instead of submitting now.
+    if (state.name === "streaming") {
+      dispatch({ type: "queue-message", text: line });
+      return;
+    }
     if (line.startsWith("/") && props.registry !== undefined) {
       const registry = props.registry;
       void (async () => {
@@ -131,32 +153,39 @@ export function App(props: AppProps) {
 
   const getTokens = (): number => props.getTokens?.() ?? 0;
 
-  // Dropdown candidates — visible only when input starts with "/" and a
-  // registry is available. Filter by the prefix after "/".
+  // Dropdown mode: "slash" for /commands, "mention" for @file mentions, "none" otherwise.
+  const dropdownMode = createMemo<"slash" | "mention" | "none">(() => {
+    const value = state.input.value;
+    if (value.startsWith("/") && props.registry !== undefined) return "slash";
+    const mentionPrefix = extractMentionPrefix(value, state.input.cursor);
+    if (mentionPrefix !== undefined) return "mention";
+    return "none";
+  });
+
   const dropdownCandidates = createMemo<
     ReadonlyArray<{ name: string; description: string }>
   >(() => {
-    const registry = props.registry;
-    if (registry === undefined) return [];
-    const value = state.input.value;
-    if (!value.startsWith("/")) return [];
-    const prefix = value.slice(1).toLowerCase();
-    return registry
-      .list()
-      .filter((c) => c.name.toLowerCase().startsWith(prefix));
+    const mode = dropdownMode();
+    if (mode === "slash") {
+      const registry = props.registry!;
+      const prefix = state.input.value.slice(1).toLowerCase();
+      return registry
+        .list()
+        .filter((c) => c.name.toLowerCase().startsWith(prefix));
+    }
+    if (mode === "mention") {
+      const prefix = extractMentionPrefix(state.input.value, state.input.cursor) ?? "";
+      return getFileCandidates(prefix);
+    }
+    return [];
   });
 
-  // Effective dropdown selection: store index, clamped to the current
-  // candidates length. If candidates shrink past the store index, we clamp
-  // here so the render is consistent; the next arrow key will catch up.
   const dropdownSelectedIndex = createMemo(() => {
     const len = dropdownCandidates().length;
     if (len === 0) return 0;
     return Math.min(state.dropdownIndex, len - 1);
   });
 
-  // When the dropdown becomes inactive (no "/" prefix or no matches), reset
-  // the store index so the next activation starts at 0.
   createEffect(() => {
     if (dropdownCandidates().length === 0) {
       untrack(() => {
@@ -210,6 +239,29 @@ export function App(props: AppProps) {
       }
       return;
     }
+    // Ctrl+O: toggle tool output expand/collapse.
+    if (key.ctrl === true && key.name === "o") {
+      dispatch({ type: "toggle-expand" });
+      return;
+    }
+    // Shift+Tab: toggle plan mode.
+    if (key.shift === true && (key.name === "tab" || key.printable === "\t")) {
+      dispatch({ type: "toggle-plan-mode" });
+      return;
+    }
+    // Phase 5 view switching: Ctrl+A → agents, Ctrl+T → tasks, Esc → transcript.
+    if (key.name === "escape" && state.activeView !== "transcript") {
+      dispatch({ type: "set-view", view: "transcript" });
+      return;
+    }
+    if (key.ctrl === true && key.name === "a") {
+      dispatch({ type: "set-view", view: "agents" });
+      return;
+    }
+    if (key.ctrl === true && key.name === "t") {
+      dispatch({ type: "set-view", view: "tasks" });
+      return;
+    }
     if (state.name === "awaiting-permission") {
       if (key.ctrl === true && key.name === "c") {
         respondPermission(false);
@@ -247,12 +299,19 @@ export function App(props: AppProps) {
         }
         return;
       }
-      // Tab → accept current selection. Lookup via the clamped index.
+      // Tab → accept current selection.
       if (key.name === "tab" || key.printable === "\t") {
         const idx = dropdownSelectedIndex();
         const chosen = candidates[idx];
         if (chosen !== undefined) {
-          dispatch({ type: "dropdown-accept", value: `/${chosen.name}` });
+          const mode = dropdownMode();
+          if (mode === "mention") {
+            const result = applyMention(state.input.value, state.input.cursor, chosen.name);
+            dispatch({ type: "input-changed", value: result.value, cursor: result.cursor });
+            dispatch({ type: "add-mentioned-file", filePath: chosen.name });
+          } else {
+            dispatch({ type: "dropdown-accept", value: `/${chosen.name}` });
+          }
         }
         return;
       }
@@ -262,10 +321,26 @@ export function App(props: AppProps) {
 
   return (
     <box flexDirection="column" flexGrow={1}>
-      <Transcript
-        entries={state.transcript}
-        streamingEntryId={state.streamingEntryId}
-      />
+      <box flexGrow={1} height={state.activeView === "transcript" ? undefined : 0}>
+        {state.activeView === "transcript" ? (
+          <Transcript
+            entries={state.transcript}
+            streamingEntryId={state.streamingEntryId}
+            toolCalls={state.toolCalls}
+            globalExpand={state.globalExpand}
+          />
+        ) : <text />}
+      </box>
+      <box flexGrow={1} height={state.activeView === "agents" ? undefined : 0}>
+        {state.activeView === "agents" ? (
+          <AgentTree agents={state.agents} />
+        ) : <text />}
+      </box>
+      <box flexGrow={1} height={state.activeView === "tasks" ? undefined : 0}>
+        {state.activeView === "tasks" ? (
+          <TaskBoard tasks={state.tasks} />
+        ) : <text />}
+      </box>
       <Show when={state.name === "streaming"}>
         <Spinner />
       </Show>
@@ -275,7 +350,7 @@ export function App(props: AppProps) {
           state.pendingPermission !== undefined
         }
       >
-        <PermissionPrompt pending={state.pendingPermission!} />
+        <ApprovalPanel pending={state.pendingPermission!} />
       </Show>
       <Show when={state.name !== "shutdown"}>
         <Input
@@ -290,13 +365,16 @@ export function App(props: AppProps) {
           }
         />
       </Show>
+      <Show when={state.messageQueue.length > 0}>
+        <MessageQueue messages={state.messageQueue} />
+      </Show>
       <Show when={dropdownCandidates().length > 1}>
         <Dropdown
           candidates={dropdownCandidates()}
           selectedIndex={dropdownSelectedIndex()}
         />
       </Show>
-      <Status state={state} model={props.model} getTokens={getTokens} />
+      <Footer state={state} model={props.model} getTokens={getTokens} />
     </box>
   );
 }
@@ -360,18 +438,18 @@ export function translateEngineEvent(evt: NormalizedEvent): ReplEvent[] {
     case "text_delta":
       return [{ type: "stream-delta", text: evt.text }];
     case "tool_use_start":
-      return [{ type: "tool-entry", id: evt.id, name: evt.name }];
+      return [{ type: "tool-start", id: evt.id, name: evt.name }];
     case "tool_use_input":
+      return [{ type: "tool-args-delta", id: evt.id, jsonDelta: evt.jsonDelta }];
     case "tool_use_end":
       return [];
     case "tool_result":
       return [
         {
-          type: "system-entry",
-          id: `tr-${evt.toolUseId}`,
-          text: evt.isError
-            ? `tool error: ${evt.content.slice(0, 120)}`
-            : `tool ok: ${evt.content.slice(0, 120).split("\n")[0] ?? ""}`,
+          type: "tool-result",
+          id: evt.toolUseId,
+          content: evt.content,
+          isError: evt.isError,
         },
       ];
     case "message_stop":
@@ -411,8 +489,45 @@ export function translateEngineEvent(evt: NormalizedEvent): ReplEvent[] {
     case "cache_miss":
       return [];
     case "info":
-      // Unknown Codex notification — no UI action; log to dev console if desired.
       return [];
+    case "retry":
+      return [
+        {
+          type: "system-entry",
+          id: `retry-${Date.now()}`,
+          text: `retrying (${evt.attempt}/${evt.maxRetries})…`,
+        },
+      ];
+    case "agent_spawned":
+      return [
+        {
+          type: "agent-spawned",
+          id: evt.agentId,
+          name: evt.name,
+          role: evt.role,
+          parentId: evt.parentId,
+        },
+      ];
+    case "agent_status":
+      return [
+        {
+          type: "agent-status",
+          id: evt.agentId,
+          phase: evt.phase,
+          toolCount: evt.toolCount,
+          tokenUsage: evt.tokenUsage,
+        },
+      ];
+    case "task_update":
+      return [
+        {
+          type: "task-update",
+          id: evt.taskId,
+          title: evt.title,
+          status: evt.status,
+          assignee: evt.assignee,
+        },
+      ];
   }
 }
 
