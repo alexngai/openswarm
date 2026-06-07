@@ -209,6 +209,7 @@ describe("App — end-to-end interactive flow", () => {
     mockInput.pressEnter();
     await renderOnce();
     await flush(30);
+    await renderOnce();
 
     push({
       type: "text_delta",
@@ -218,7 +219,9 @@ describe("App — end-to-end interactive flow", () => {
         "```typescript\nconst x: number = 42;\n```",
     });
     push({ type: "message_stop" });
-    await flush(120);
+    await flush(200);
+    await renderOnce();
+    await flush(80);
     await renderOnce();
 
     const frame = captureCharFrame();
