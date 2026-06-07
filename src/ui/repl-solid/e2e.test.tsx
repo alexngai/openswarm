@@ -530,4 +530,58 @@ describe("App — end-to-end interactive flow", () => {
 
     close();
   });
+
+  // -------------------------------------------------------------------
+  // Phase 4 — Streaming Args Preview
+  // -------------------------------------------------------------------
+
+  it("streaming tool args show file path in chip header before result arrives", async () => {
+    const { events, push, close } = makeEventChannel();
+
+    const { captureCharFrame, mockInput, renderOnce } = await testRender(
+      () => (
+        <App
+          events={events}
+          model="test-model"
+          permissionMode="workspace-write"
+          onSubmit={() => undefined}
+        />
+      ),
+      { width: 100, height: 20 },
+    );
+    await renderOnce();
+
+    await mockInput.typeText("edit");
+    mockInput.pressEnter();
+    await renderOnce();
+    await flush(30);
+
+    // Start an edit_file tool call and stream partial args.
+    push({ type: "tool_use_start", id: "e1", name: "edit_file" });
+    await flush(30);
+    await renderOnce();
+
+    // Stream file_path field.
+    push({ type: "tool_use_input", id: "e1", jsonDelta: '{"file_path": "src/index.ts"' });
+    await flush(30);
+    await renderOnce();
+
+    const midFrame = captureCharFrame();
+    // Even before tool_result, the chip should show the file path.
+    expect(midFrame).toContain("edit_file");
+    expect(midFrame).toContain("src/index.ts");
+    expect(midFrame).toContain("Using");
+
+    // Now complete the tool.
+    push({ type: "tool_use_input", id: "e1", jsonDelta: ', "old_string": "const a", "new_string": "const b"}' });
+    push({ type: "tool_result", toolUseId: "e1", content: "ok", isError: false });
+    await flush(50);
+    await renderOnce();
+
+    const finalFrame = captureCharFrame();
+    expect(finalFrame).toContain("Used");
+    expect(finalFrame).toContain("src/index.ts");
+
+    close();
+  });
 });

@@ -11,6 +11,7 @@
 
 import type { ToolCallState } from "../../repl/state.js";
 import { computeDiff, compactDiff } from "../diff/compute.js";
+import { getStreamingArg } from "./streaming.js";
 
 export interface ToolRenderer {
   /** Numeric/status suffix for the chip header line. */
@@ -25,6 +26,10 @@ function getArg(tc: ToolCallState, key: string): string | undefined {
   if (tc.args !== null && typeof tc.args === "object") {
     const val = (tc.args as Record<string, unknown>)[key];
     if (typeof val === "string") return val;
+  }
+  // Phase 4: fall back to streaming args for live preview during streaming.
+  if (tc.pending && tc.streamingArgs.length > 0) {
+    return getStreamingArg(tc.streamingArgs, key);
   }
   return undefined;
 }

@@ -12,10 +12,12 @@
  * body rebuilds on expand/collapse.
  */
 
-import { Show, For } from "solid-js";
+import { Show, For, createSignal, onMount, onCleanup } from "solid-js";
 import type { ToolCallState } from "../../repl/state.js";
 import { getRenderer } from "../tools/registry.js";
 import { theme } from "../theme.js";
+
+const BRAILLE_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 export interface ToolChipProps {
   readonly tc: ToolCallState;
@@ -25,8 +27,22 @@ export interface ToolChipProps {
 export function ToolChip(props: ToolChipProps) {
   const renderer = () => getRenderer(props.tc.name);
 
+  // Streaming indicator — braille spinner while args are arriving.
+  const [spinnerFrame, setSpinnerFrame] = createSignal(0);
+  onMount(() => {
+    const interval = setInterval(() => {
+      setSpinnerFrame((f) => (f + 1) % BRAILLE_FRAMES.length);
+    }, 80);
+    onCleanup(() => clearInterval(interval));
+  });
+
   const bullet = () => {
-    if (props.tc.pending) return "●";
+    if (props.tc.pending) {
+      if (props.tc.streamingArgs.length > 0) {
+        return BRAILLE_FRAMES[spinnerFrame()] ?? "⠋";
+      }
+      return "●";
+    }
     if (props.tc.isError) return "✗";
     return "✓";
   };
