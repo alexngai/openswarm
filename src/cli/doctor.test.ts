@@ -136,7 +136,7 @@ describe("runDoctor", () => {
     expect(parsed).toHaveProperty("checks");
     expect(parsed).toHaveProperty("overall");
     expect(Array.isArray(parsed.checks)).toBe(true);
-    expect(parsed.checks).toHaveLength(5);
+    expect(parsed.checks).toHaveLength(6);
     expect(["pass", "fail"]).toContain(parsed.overall);
   });
 

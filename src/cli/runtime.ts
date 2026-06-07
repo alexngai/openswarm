@@ -25,6 +25,8 @@ import { NativeEngine } from "../engine/native.js";
 import { HardenedNativeEngine } from "../engine/hardened-native.js";
 import { ScriptedTestEngine } from "../engine/test-engine.js";
 import { CodexFrameworkEngine } from "../engine/codex-framework.js";
+import { CodexResponsesTransportProvider } from "../providers/codex-responses/index.js";
+import { OpenAICodexAuth } from "../auth/openai-codex-oauth.js";
 import { PluginRegistry } from "../plugins/registry.js";
 import { ClaudeCodeSource } from "../plugins/claude-code-source.js";
 import { PluginStateStore } from "../plugins/state.js";
@@ -281,6 +283,26 @@ export async function buildAgentRuntime(
     makeEngine = async () => ({
       engine: new CodexFrameworkEngine({ cwd: process.cwd() }),
     });
+  } else if (opts.framework === "codex-native") {
+    // In-process ChatGPT-subscription path (docs/42). The backend's accepted
+    // model set is plan-dependent and gpt-5.x only; default to gpt-5.5 unless
+    // the user passed an explicit gpt* model (the CLI default is a Claude id).
+    const codexModel = /^gpt/i.test(resolvedModelId) ? resolvedModelId : "gpt-5.5";
+    makeEngine = async (sessionId: string) => {
+      const auth = new OpenAICodexAuth();
+      const provider = new CodexResponsesTransportProvider({
+        modelId: codexModel,
+        credentials: auth,
+        sessionId,
+      });
+      const engine = new HardenedNativeEngine({
+        provider,
+        sessionId,
+        eagerToolDispatch: opts.eagerToolDispatch,
+        midTurnCompaction: opts.midTurnCompaction,
+      });
+      return { engine, providerId: provider.id };
+    };
   } else if (scriptedMode) {
     makeEngine = async () => ({ engine: new ScriptedTestEngine() });
   } else {

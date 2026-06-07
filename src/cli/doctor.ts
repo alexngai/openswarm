@@ -20,6 +20,7 @@ import { createRequire } from "node:module";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 import { detectAuth } from "../auth/status.js";
+import { readCodexTokens } from "../auth/openai-codex-token-store.js";
 
 const execFile = promisify(execFileCb);
 
@@ -248,6 +249,26 @@ async function checkCodexCli(): Promise<CheckResult> {
   };
 }
 
+async function checkCodexAuth(): Promise<CheckResult> {
+  const tokens = readCodexTokens();
+  if (tokens === null) {
+    return {
+      name: "codex-auth",
+      status: "warn",
+      message:
+        "Not logged in to ChatGPT — run `swarm-harness login --provider openai-codex` to use --framework codex-native.",
+    };
+  }
+  const mins = Math.round((tokens.expiresAt - Date.now()) / 60_000);
+  const expiry =
+    mins > 0 ? `access token valid ~${mins} min` : "access token expired (refreshes on next use)";
+  return {
+    name: "codex-auth",
+    status: "pass",
+    message: `ChatGPT (codex) authenticated; ${expiry}.`,
+  };
+}
+
 async function checkWorkspace(cwd: string): Promise<CheckResult> {
   const probeFile = path.join(cwd, `.swarm-harness-doctor-probe-${process.pid}`);
   try {
@@ -277,6 +298,7 @@ export async function runDoctor(
     checkInstall(),
     checkWorkspace(cwd),
     checkCodexCli(),
+    checkCodexAuth(),
   ]);
 
   const overall: "pass" | "fail" = checks.some((c) => c.status === "fail")

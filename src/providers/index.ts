@@ -19,9 +19,15 @@ import type { AuthSource } from "../auth/index.js";
 // ---------------------------------------------------------------------------
 
 export interface Provider {
-  /** Stable id: "anthropic" | "openai" | "google" | "xai" | "openai-compat" | "codex-chatgpt". */
+  /** Stable id: "anthropic" | "openai" | "google" | "xai" | "openai-compat" | "openai-codex". */
   readonly id: string;
-  readonly model: LanguageModel;
+  /**
+   * Vercel AI SDK model handle. Omitted by providers that own their transport
+   * and bypass the AI SDK entirely (e.g. CodexResponsesTransportProvider speaks
+   * raw HTTPS+SSE). Engines never read this — they only call `stream()` — so it
+   * is purely an internal handle for AI-SDK-backed providers.
+   */
+  readonly model?: LanguageModel;
   readonly capabilities: ProviderCapabilities;
   /**
    * Stream a single provider turn. Yields ProviderEvents that NativeEngine

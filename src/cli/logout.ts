@@ -7,6 +7,8 @@
  *   1 — user error (missing/unknown provider)
  */
 
+import { OpenAICodexAuth } from "../auth/openai-codex-oauth.js";
+
 // ---------------------------------------------------------------------------
 // parseProvider
 // ---------------------------------------------------------------------------
@@ -30,6 +32,12 @@ export async function logoutMain(argv: string[]): Promise<number> {
   }
 
   switch (provider) {
+    case "openai-codex": {
+      await new OpenAICodexAuth().logout();
+      process.stdout.write("Cleared ChatGPT (codex) credentials.\n");
+      return 0;
+    }
+
     case "codex-chatgpt": {
       process.stdout.write("Run: codex logout\n");
       return 0;
@@ -45,7 +53,7 @@ export async function logoutMain(argv: string[]): Promise<number> {
 
     default:
       process.stderr.write(
-        `error: unknown provider: ${provider}. Known: codex-chatgpt, claude-agent-sdk.\n`,
+        `error: unknown provider: ${provider}. Known: openai-codex, codex-chatgpt, claude-agent-sdk.\n`,
       );
       return 1;
   }
