@@ -26,7 +26,7 @@
  *   shutdown            : none
  */
 
-import type { PermissionMode, RequiredPermission } from "../../core/types.js";
+import type { PermissionMode, RequiredPermission, AgentPhase, TaskStatus } from "../../core/types.js";
 
 // ---------------------------------------------------------------------------
 // State types
@@ -86,6 +86,25 @@ export interface PendingPermission {
   readonly reason?: string;
 }
 
+export interface AgentState {
+  readonly id: string;
+  readonly name: string;
+  readonly role: string;
+  readonly parentId?: string;
+  readonly phase: AgentPhase;
+  readonly toolCount: number;
+  readonly tokenUsage: number;
+}
+
+export interface TaskState {
+  readonly id: string;
+  readonly title: string;
+  readonly status: TaskStatus;
+  readonly assignee?: string;
+}
+
+export type ActiveView = "transcript" | "agents" | "tasks";
+
 export interface InputBuffer {
   readonly value: string;
   readonly cursor: number;
@@ -121,6 +140,12 @@ export interface ReplState {
   readonly globalExpand: boolean;
   /** Messages queued during streaming, auto-submitted when the turn ends (Phase 3). */
   readonly messageQueue: readonly string[];
+  /** Multi-agent state keyed by agent id (Phase 5). */
+  readonly agents: Readonly<Record<string, AgentState>>;
+  /** Task board state keyed by task id (Phase 5). */
+  readonly tasks: Readonly<Record<string, TaskState>>;
+  /** Which view is currently active (Phase 5). */
+  readonly activeView: ActiveView;
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +190,11 @@ export type ReplEvent =
   // Message queue — messages typed during streaming, auto-submitted on turn end (Phase 3)
   | { readonly type: "queue-message"; readonly text: string }
   | { readonly type: "dequeue-message" }
+  // Multi-agent events (Phase 5)
+  | { readonly type: "agent-spawned"; readonly id: string; readonly name: string; readonly role: string; readonly parentId?: string }
+  | { readonly type: "agent-status"; readonly id: string; readonly phase: AgentPhase; readonly toolCount?: number; readonly tokenUsage?: number }
+  | { readonly type: "task-update"; readonly id: string; readonly title: string; readonly status: TaskStatus; readonly assignee?: string }
+  | { readonly type: "set-view"; readonly view: ActiveView }
   // System / hook message
   | { readonly type: "system-entry"; readonly id: string; readonly text: string }
   // Dropdown navigation (slash-command autocomplete)
@@ -226,6 +256,9 @@ export function createInitialState(opts?: InitialStateOptions): ReplState {
     toolCalls: {},
     globalExpand: false,
     messageQueue: [],
+    agents: {},
+    tasks: {},
+    activeView: "transcript",
   };
 }
 
@@ -526,6 +559,57 @@ export function reduce(state: ReplState, event: ReplEvent): ReplState {
         ...state,
         messageQueue: state.messageQueue.slice(1),
       };
+    }
+
+    case "agent-spawned": {
+      const agent: AgentState = {
+        id: event.id,
+        name: event.name,
+        role: event.role,
+        parentId: event.parentId,
+        phase: "spawning",
+        toolCount: 0,
+        tokenUsage: 0,
+      };
+      return {
+        ...state,
+        agents: { ...state.agents, [event.id]: agent },
+      };
+    }
+
+    case "agent-status": {
+      const existing = state.agents[event.id];
+      if (existing === undefined) return state;
+      return {
+        ...state,
+        agents: {
+          ...state.agents,
+          [event.id]: {
+            ...existing,
+            phase: event.phase,
+            toolCount: event.toolCount ?? existing.toolCount,
+            tokenUsage: event.tokenUsage ?? existing.tokenUsage,
+          },
+        },
+      };
+    }
+
+    case "task-update": {
+      const existingTask = state.tasks[event.id];
+      const task: TaskState = {
+        id: event.id,
+        title: event.title,
+        status: event.status,
+        assignee: event.assignee ?? existingTask?.assignee,
+      };
+      return {
+        ...state,
+        tasks: { ...state.tasks, [event.id]: task },
+      };
+    }
+
+    case "set-view": {
+      return { ...state, activeView: event.view };
     }
 
     case "system-entry": {

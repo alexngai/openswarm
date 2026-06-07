@@ -205,4 +205,29 @@ export type NormalizedEvent =
       readonly maxRetries: number;
       readonly error: ProviderError;
       readonly delayMs: number;
+    }
+  // Phase 5 — Multi-agent events (emitted by SwarmHost when workers spawn/transition)
+  | {
+      readonly type: "agent_spawned";
+      readonly agentId: string;
+      readonly name: string;
+      readonly role: string;
+      readonly parentId?: string;
+    }
+  | {
+      readonly type: "agent_status";
+      readonly agentId: string;
+      readonly phase: AgentPhase;
+      readonly toolCount?: number;
+      readonly tokenUsage?: number;
+    }
+  | {
+      readonly type: "task_update";
+      readonly taskId: string;
+      readonly title: string;
+      readonly status: TaskStatus;
+      readonly assignee?: string;
     };
+
+export type AgentPhase = "spawning" | "running" | "idle" | "done" | "failed";
+export type TaskStatus = "pending" | "active" | "done" | "failed";

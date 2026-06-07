@@ -21,6 +21,8 @@ import { Spinner } from "./spinner.js";
 import { Dropdown } from "./dropdown.js";
 import { ApprovalPanel } from "./approval-panel.js";
 import { MessageQueue } from "./message-queue.js";
+import { AgentTree } from "./views/agent-tree.js";
+import { TaskBoard } from "./views/task-board.js";
 import { dispatchSlashLine } from "../../cli/slash/dispatcher.js";
 import { loadHistory, appendHistoryEntry } from "../history.js";
 import type {
@@ -234,6 +236,11 @@ export function App(props: AppProps) {
       dispatch({ type: "toggle-expand" });
       return;
     }
+    // Phase 5 view switching: Ctrl+A → agents, Ctrl+T → tasks, Esc → transcript.
+    if (key.name === "escape" && state.activeView !== "transcript") {
+      dispatch({ type: "set-view", view: "transcript" });
+      return;
+    }
     if (state.name === "awaiting-permission") {
       if (key.ctrl === true && key.name === "c") {
         respondPermission(false);
@@ -286,12 +293,26 @@ export function App(props: AppProps) {
 
   return (
     <box flexDirection="column" flexGrow={1}>
-      <Transcript
-        entries={state.transcript}
-        streamingEntryId={state.streamingEntryId}
-        toolCalls={state.toolCalls}
-        globalExpand={state.globalExpand}
-      />
+      <box flexGrow={1} height={state.activeView === "transcript" ? undefined : 0}>
+        {state.activeView === "transcript" ? (
+          <Transcript
+            entries={state.transcript}
+            streamingEntryId={state.streamingEntryId}
+            toolCalls={state.toolCalls}
+            globalExpand={state.globalExpand}
+          />
+        ) : <text />}
+      </box>
+      <box flexGrow={1} height={state.activeView === "agents" ? undefined : 0}>
+        {state.activeView === "agents" ? (
+          <AgentTree agents={state.agents} />
+        ) : <text />}
+      </box>
+      <box flexGrow={1} height={state.activeView === "tasks" ? undefined : 0}>
+        {state.activeView === "tasks" ? (
+          <TaskBoard tasks={state.tasks} />
+        ) : <text />}
+      </box>
       <Show when={state.name === "streaming"}>
         <Spinner />
       </Show>
@@ -440,8 +461,45 @@ export function translateEngineEvent(evt: NormalizedEvent): ReplEvent[] {
     case "cache_miss":
       return [];
     case "info":
-      // Unknown Codex notification — no UI action; log to dev console if desired.
       return [];
+    case "retry":
+      return [
+        {
+          type: "system-entry",
+          id: `retry-${Date.now()}`,
+          text: `retrying (${evt.attempt}/${evt.maxRetries})…`,
+        },
+      ];
+    case "agent_spawned":
+      return [
+        {
+          type: "agent-spawned",
+          id: evt.agentId,
+          name: evt.name,
+          role: evt.role,
+          parentId: evt.parentId,
+        },
+      ];
+    case "agent_status":
+      return [
+        {
+          type: "agent-status",
+          id: evt.agentId,
+          phase: evt.phase,
+          toolCount: evt.toolCount,
+          tokenUsage: evt.tokenUsage,
+        },
+      ];
+    case "task_update":
+      return [
+        {
+          type: "task-update",
+          id: evt.taskId,
+          title: evt.title,
+          status: evt.status,
+          assignee: evt.assignee,
+        },
+      ];
   }
 }
 

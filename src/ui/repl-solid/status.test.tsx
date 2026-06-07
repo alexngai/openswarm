@@ -26,6 +26,9 @@ function makeState(overrides: Partial<ReplState>): ReplState {
     toolCalls: {},
     globalExpand: false,
     messageQueue: [],
+    agents: {},
+    tasks: {},
+    activeView: "transcript" as const,
     ...overrides,
   };
 }

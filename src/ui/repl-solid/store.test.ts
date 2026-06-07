@@ -225,6 +225,67 @@ describe("createReplStore — Solid binding over reduce", () => {
   });
 
   // -------------------------------------------------------------------
+  // Phase 5 — multi-agent state
+  // -------------------------------------------------------------------
+
+  it("agent-spawned creates agent record", () => {
+    const { state, dispatch } = createReplStore();
+    dispatch({ type: "agent-spawned", id: "a1", name: "researcher", role: "search" });
+    expect(state.agents["a1"]).toBeDefined();
+    expect(state.agents["a1"]!.name).toBe("researcher");
+    expect(state.agents["a1"]!.phase).toBe("spawning");
+  });
+
+  it("agent-spawned with parentId tracks hierarchy", () => {
+    const { state, dispatch } = createReplStore();
+    dispatch({ type: "agent-spawned", id: "a1", name: "orchestrator", role: "plan" });
+    dispatch({ type: "agent-spawned", id: "a2", name: "worker", role: "execute", parentId: "a1" });
+    expect(state.agents["a2"]!.parentId).toBe("a1");
+  });
+
+  it("agent-status updates phase and metrics", () => {
+    const { state, dispatch } = createReplStore();
+    dispatch({ type: "agent-spawned", id: "a1", name: "worker", role: "code" });
+    dispatch({ type: "agent-status", id: "a1", phase: "running", toolCount: 3, tokenUsage: 5000 });
+    expect(state.agents["a1"]!.phase).toBe("running");
+    expect(state.agents["a1"]!.toolCount).toBe(3);
+    expect(state.agents["a1"]!.tokenUsage).toBe(5000);
+  });
+
+  it("agent-status for unknown agent is no-op", () => {
+    const { state, dispatch } = createReplStore();
+    dispatch({ type: "agent-status", id: "unknown", phase: "done" });
+    expect(state.agents["unknown"]).toBeUndefined();
+  });
+
+  it("task-update creates task record", () => {
+    const { state, dispatch } = createReplStore();
+    dispatch({ type: "task-update", id: "t1", title: "Fix bug", status: "pending", assignee: "worker-1" });
+    expect(state.tasks["t1"]).toBeDefined();
+    expect(state.tasks["t1"]!.title).toBe("Fix bug");
+    expect(state.tasks["t1"]!.status).toBe("pending");
+    expect(state.tasks["t1"]!.assignee).toBe("worker-1");
+  });
+
+  it("task-update updates existing task status", () => {
+    const { state, dispatch } = createReplStore();
+    dispatch({ type: "task-update", id: "t1", title: "Fix bug", status: "pending" });
+    dispatch({ type: "task-update", id: "t1", title: "Fix bug", status: "done" });
+    expect(state.tasks["t1"]!.status).toBe("done");
+  });
+
+  it("set-view changes activeView", () => {
+    const { state, dispatch } = createReplStore();
+    expect(state.activeView).toBe("transcript");
+    dispatch({ type: "set-view", view: "agents" });
+    expect(state.activeView).toBe("agents");
+    dispatch({ type: "set-view", view: "tasks" });
+    expect(state.activeView).toBe("tasks");
+    dispatch({ type: "set-view", view: "transcript" });
+    expect(state.activeView).toBe("transcript");
+  });
+
+  // -------------------------------------------------------------------
   // Original tests
   // -------------------------------------------------------------------
 
