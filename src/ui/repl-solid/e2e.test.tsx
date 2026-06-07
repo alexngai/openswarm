@@ -73,6 +73,21 @@ async function flush(ms = 50): Promise<void> {
   await new Promise<void>((r) => setTimeout(r, ms));
 }
 
+async function waitForContent(
+  captureCharFrame: () => string,
+  renderOnce: () => Promise<void>,
+  needle: string,
+  maxAttempts = 20,
+): Promise<string> {
+  for (let i = 0; i < maxAttempts; i++) {
+    await flush(50);
+    await renderOnce();
+    const frame = captureCharFrame();
+    if (frame.includes(needle)) return frame;
+  }
+  return captureCharFrame();
+}
+
 describe("App — end-to-end interactive flow", () => {
   it("user types + Enter → onSubmit fires and user entry appears in transcript", async () => {
     const { events, close } = makeEventChannel();
@@ -219,12 +234,10 @@ describe("App — end-to-end interactive flow", () => {
         "```typescript\nconst x: number = 42;\n```",
     });
     push({ type: "message_stop" });
-    await flush(200);
-    await renderOnce();
-    await flush(80);
-    await renderOnce();
 
-    const frame = captureCharFrame();
+    // Tree-sitter renders headings/paragraphs asynchronously via CodeRenderable
+    // with drawUnstyledText:false — poll until highlighting completes.
+    const frame = await waitForContent(captureCharFrame, renderOnce, "Overview");
 
     // Text content survives.
     expect(frame).toContain("Overview");
