@@ -9,3 +9,5 @@ results.jsonl
 dead-letter.jsonl
 .claude/
 .omc/
+# local reference checkouts (cloned repos, not tracked as submodules)
+references/
