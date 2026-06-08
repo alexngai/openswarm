@@ -21,6 +21,9 @@ import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 import { detectAuth } from "../auth/status.js";
 import { readCodexTokens, type CodexTokens } from "../auth/openai-codex-token-store.js";
+import { runCodexTlsPreflight, formatCodexTlsFix } from "../auth/openai-codex-tls-preflight.js";
+import { fetchCodexUsage, formatCodexUsage } from "../auth/openai-codex-usage.js";
+import { OpenAICodexAuth } from "../auth/openai-codex-oauth.js";
 
 const execFile = promisify(execFileCb);
 
@@ -273,6 +276,35 @@ async function checkCodexAuth(): Promise<CheckResult> {
   return codexAuthCheck(readCodexTokens(), Date.now());
 }
 
+async function checkCodexUsage(): Promise<CheckResult> {
+  if (readCodexTokens() === null) {
+    return { name: "codex-usage", status: "pass", message: "skipped (not logged in to ChatGPT)" };
+  }
+  try {
+    const { token, accountId } = await new OpenAICodexAuth().getCredentials();
+    return { name: "codex-usage", status: "pass", message: formatCodexUsage(await fetchCodexUsage(token, accountId)) };
+  } catch (err) {
+    return {
+      name: "codex-usage",
+      status: "warn",
+      message: `could not fetch usage: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
+async function checkCodexTls(): Promise<CheckResult> {
+  // Only meaningful for codex users; skip the network probe otherwise so we
+  // don't add latency (or a failure) for everyone else.
+  if (readCodexTokens() === null) {
+    return { name: "codex-tls", status: "pass", message: "skipped (not logged in to ChatGPT)" };
+  }
+  const result = await runCodexTlsPreflight();
+  if (result.ok) {
+    return { name: "codex-tls", status: "pass", message: "auth.openai.com TLS validates" };
+  }
+  return { name: "codex-tls", status: "warn", message: formatCodexTlsFix(result) };
+}
+
 async function checkWorkspace(cwd: string): Promise<CheckResult> {
   const probeFile = path.join(cwd, `.swarm-harness-doctor-probe-${process.pid}`);
   try {
@@ -303,6 +335,8 @@ export async function runDoctor(
     checkWorkspace(cwd),
     checkCodexCli(),
     checkCodexAuth(),
+    checkCodexTls(),
+    checkCodexUsage(),
   ]);
 
   const overall: "pass" | "fail" = checks.some((c) => c.status === "fail")
