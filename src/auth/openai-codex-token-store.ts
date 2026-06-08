@@ -24,7 +24,11 @@ export interface CodexTokens {
 const PROVIDER_KEY = "openai-codex";
 
 function authFilePath(baseDir?: string): string {
-  return path.join(baseDir ?? path.join(os.homedir(), ".swarm-harness"), "auth.json");
+  // SWARM_HARNESS_AUTH_DIR relocates the credential store (used by the live
+  // e2e to point a spawned CLI at a seeded temp store; mirrors
+  // SWARM_HARNESS_HISTORY_PATH / SWARM_HARNESS_WORKERS_DIR).
+  const dir = baseDir ?? process.env["SWARM_HARNESS_AUTH_DIR"] ?? path.join(os.homedir(), ".swarm-harness");
+  return path.join(dir, "auth.json");
 }
 
 /** Sync sleep without busy-spinning the CPU (token writes are sync). */
