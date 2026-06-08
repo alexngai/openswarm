@@ -160,3 +160,100 @@ describe("CodexResponsesTransportProvider", () => {
     expect(out[0]).toMatchObject({ type: "error", code: "transport" });
   });
 });
+
+// Mock WebSocket that replies to each `send` with a canned Responses event
+// sequence (delta turns, identified by previous_response_id, get a fresh id).
+function makeMockSocket() {
+  const listeners: Record<string, ((e: unknown) => void)[]> = {};
+  return {
+    readyState: 1,
+    sent: [] as string[],
+    send(data: string) {
+      this.sent.push(data);
+      const body = JSON.parse(data) as { previous_response_id?: string };
+      const isDelta = body.previous_response_id !== undefined;
+      const id = isDelta ? "R2" : "R1";
+      const evts = [
+        { type: "response.created", response: { id } },
+        { type: "response.output_text.delta", delta: isDelta ? "B" : "A" },
+        { type: "response.completed", response: { id, usage: { input_tokens: 1, output_tokens: 1 } } },
+      ];
+      queueMicrotask(() => {
+        for (const e of evts) (listeners["message"] ?? []).forEach((l) => l({ data: JSON.stringify(e) }));
+      });
+    },
+    close() {
+      this.readyState = 3;
+    },
+    addEventListener(t: string, l: (e: unknown) => void) {
+      (listeners[t] ??= []).push(l);
+    },
+    removeEventListener(t: string, l: (e: unknown) => void) {
+      listeners[t] = (listeners[t] ?? []).filter((x) => x !== l);
+    },
+  };
+}
+
+describe("CodexResponsesTransportProvider — WebSocket transport", () => {
+  const user = (t: string) => ({ role: "user" as const, content: [{ type: "text" as const, text: t }] });
+
+  it("streams a turn over WS with the full body (no previous_response_id)", async () => {
+    const socket = makeMockSocket();
+    let connects = 0;
+    const p = new CodexResponsesTransportProvider({
+      modelId: "gpt-5.5", credentials: creds, transport: "websocket", sessionId: "s",
+      wsConnectImpl: async () => { connects++; return socket as never; },
+    });
+    const out = await collect(p.stream({ messages: [user("hi")], model: "gpt-5.5", sessionId: "s" }));
+    expect(out).toContainEqual({ type: "text-delta", text: "A" });
+    expect(out.at(-1)).toMatchObject({ type: "finish" });
+    const sent = JSON.parse(socket.sent[0]);
+    expect(sent.type).toBe("response.create");
+    expect(sent.previous_response_id).toBeUndefined();
+    expect(connects).toBe(1);
+    p.dispose();
+  });
+
+  it("sends only the delta + previous_response_id on turn 2, reusing the connection", async () => {
+    const socket = makeMockSocket();
+    let connects = 0;
+    const p = new CodexResponsesTransportProvider({
+      modelId: "gpt-5.5", credentials: creds, transport: "websocket", sessionId: "s",
+      wsConnectImpl: async () => { connects++; return socket as never; },
+    });
+    await collect(p.stream({ messages: [user("hi")], model: "gpt-5.5", sessionId: "s" }));
+    await collect(p.stream({
+      messages: [user("hi"), { role: "assistant", content: [{ type: "text", text: "A" }] }, user("more")],
+      model: "gpt-5.5", sessionId: "s",
+    }));
+    expect(connects).toBe(1); // connection reused across turns
+    const turn2 = JSON.parse(socket.sent[1]);
+    expect(turn2.previous_response_id).toBe("R1");
+    expect(turn2.input).toHaveLength(1); // only the new user message, not the full history
+    expect(turn2.input[0]).toMatchObject({ type: "message", role: "user" });
+    p.dispose();
+  });
+
+  it("auto mode falls back to SSE when the WS connection fails", async () => {
+    const fetchImpl = vi.fn(async () => sseResponse(['data: {"type":"response.completed","response":{}}\n\n']));
+    const p = new CodexResponsesTransportProvider({
+      modelId: "gpt-5.5", credentials: creds, transport: "auto", fetchImpl,
+      wsConnectImpl: async () => { throw new Error("no ws"); },
+    });
+    const out = await collect(p.stream({ messages: [user("hi")], model: "gpt-5.5", sessionId: "s" }));
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(out.at(-1)).toMatchObject({ type: "finish" });
+  });
+
+  it("websocket mode (no fallback) yields a transport error when the WS connection fails", async () => {
+    const fetchImpl = vi.fn();
+    const p = new CodexResponsesTransportProvider({
+      modelId: "gpt-5.5", credentials: creds, transport: "websocket",
+      fetchImpl: fetchImpl as never,
+      wsConnectImpl: async () => { throw new Error("no ws"); },
+    });
+    const out = await collect(p.stream({ messages: [user("hi")], model: "gpt-5.5", sessionId: "s" }));
+    expect(out[0]).toMatchObject({ type: "error", code: "transport" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});

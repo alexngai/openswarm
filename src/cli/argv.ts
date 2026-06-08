@@ -67,6 +67,11 @@ export interface CommonOpts {
    */
   readonly framework: FrameworkChoice;
   /**
+   * codex-native transport. "sse" (default), or "websocket"/"auto" for the
+   * delta connection that avoids re-uploading context each turn (docs/42 §9).
+   */
+  readonly codexTransport?: "sse" | "websocket" | "auto";
+  /**
    * When true, print { engineId, providerId?, modelId } as JSON to stdout
    * and exit 0 before running any turn. For smoke tests only — not in --help.
    */
@@ -226,6 +231,7 @@ export function parseArgv(args: string[]): ParsedArgs {
   let acpSingle = false;
   let acpTeam = false;
   let framework: FrameworkChoice = "auto";
+  let codexTransport: "sse" | "websocket" | "auto" | undefined;
   let dumpEngine = false;
   // `--device` selects the headless device-code login flow (login subcommand only).
   let device = false;
@@ -452,6 +458,20 @@ export function parseArgv(args: string[]): ParsedArgs {
         };
       }
       model = val;
+      i += 2;
+      continue;
+    }
+
+    if (tok === "--codex-transport") {
+      const val = expanded[i + 1];
+      if (val !== "sse" && val !== "websocket" && val !== "auto") {
+        return {
+          kind: "error",
+          message: `--codex-transport requires one of: sse, websocket, auto`,
+          showHelp: true,
+        };
+      }
+      codexTransport = val;
       i += 2;
       continue;
     }
@@ -804,6 +824,7 @@ export function parseArgv(args: string[]): ParsedArgs {
     dumpTools,
     enableWebSearch,
     framework,
+    codexTransport,
     dumpEngine,
     ...(acpSingle ? { single: true } : {}),
     ...(acpTeam ? { team: true } : {}),

@@ -52,6 +52,15 @@ describe("parseArgv", () => {
     });
   });
 
+  it("parses --codex-transport", () => {
+    const r = parseArgv(["--codex-transport", "websocket", "hi"]);
+    expect(r).toMatchObject({ kind: "prompt", opts: { codexTransport: "websocket" } });
+  });
+
+  it("rejects an invalid --codex-transport value", () => {
+    expect(parseArgv(["--codex-transport", "bogus", "hi"])).toMatchObject({ kind: "error" });
+  });
+
   it("login --device selects the headless flow", () => {
     expect(parseArgv(["login", "--provider", "openai-codex", "--device"])).toEqual({
       kind: "login",

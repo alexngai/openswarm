@@ -277,6 +277,13 @@ resource-efficient v1.
 > redaction, and broad test coverage (multi-turn tool loop, abort, refresh
 > failure, device flow, PKCE/CSRF, runtime branch). The build is fully clean
 > (`minimem` installed). Live-proven end-to-end incl. a multi-turn tool loop.
+>
+> **Phase 2 COMPLETE.** #7 TLS preflight + #8 usage windows (both folded into
+> `doctor`), #6.1 reasoning continuity (openclaw Option A — live-validated 2-turn
+> replay), and #9 the WebSocket "cached" transport (`--codex-transport
+> websocket|auto`, connection reuse + delta/`previous_response_id`, SSE
+> auto-fallback) — **live-validated**: turn 2 continues on the same socket via a
+> delta. The whole codex-native plan is now implemented.
 
 **Phase 1** (working path): JWT/PKCE/device auth + token store →
 request-builder/sse/events/errors/headers → provider → `Provider.model`

@@ -74,6 +74,8 @@ export interface CodexRequestBody {
   /** Stable per-session key → ~96% prefix caching on repeat (docs/42 §6.2). */
   readonly prompt_cache_key?: string;
   readonly max_output_tokens?: number;
+  /** WebSocket delta continuation: prior turn's response id (docs/42 §9). */
+  readonly previous_response_id?: string;
 }
 
 // ---------------------------------------------------------------------------

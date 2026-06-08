@@ -311,6 +311,7 @@ export async function buildAgentRuntime(
         modelId: codexModel,
         credentials: auth,
         sessionId,
+        ...(opts.codexTransport !== undefined ? { transport: opts.codexTransport } : {}),
       });
       const engine = new HardenedNativeEngine({
         provider,

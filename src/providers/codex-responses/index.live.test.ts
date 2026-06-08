@@ -160,4 +160,38 @@ describe.runIf(live)("CodexResponsesTransportProvider (live)", () => {
     expect(out2.some((e) => e.type === "error")).toBe(false); // 400 if reasoning replay rejected
     expect(out2.at(-1)).toMatchObject({ type: "finish" });
   }, 120_000);
+
+  it("streams over WebSocket and continues on the same connection (#9)", async () => {
+    const ws = new CodexResponsesTransportProvider({
+      modelId: "gpt-5.5",
+      credentials: codexLoginCredentials(),
+      sessionId: "swarm-harness-live-ws",
+      transport: "websocket", // no SSE fallback — a WS failure surfaces as an error
+    });
+    try {
+      const out1 = await collect(ws.stream({
+        messages: [{ role: "user", content: [{ type: "text", text: "Reply with exactly: alpha" }] }],
+        model: "gpt-5.5", sessionId: "swarm-harness-live-ws",
+      }));
+      const err1 = out1.find((e) => e.type === "error");
+      expect(err1, err1 ? (err1 as { message: string }).message : "").toBeUndefined();
+      const text1 = out1.filter((e) => e.type === "text-delta").map((e) => (e as { text: string }).text).join("");
+      expect(text1.toLowerCase()).toContain("alpha");
+
+      // Turn 2 reuses the connection and sends a delta + previous_response_id.
+      const out2 = await collect(ws.stream({
+        messages: [
+          { role: "user", content: [{ type: "text", text: "Reply with exactly: alpha" }] },
+          { role: "assistant", content: [{ type: "text", text: text1 }] },
+          { role: "user", content: [{ type: "text", text: "Now reply with exactly: beta" }] },
+        ],
+        model: "gpt-5.5", sessionId: "swarm-harness-live-ws",
+      }));
+      expect(out2.some((e) => e.type === "error")).toBe(false);
+      const text2 = out2.filter((e) => e.type === "text-delta").map((e) => (e as { text: string }).text).join("");
+      expect(text2.toLowerCase()).toContain("beta");
+    } finally {
+      ws.dispose();
+    }
+  }, 120_000);
 });

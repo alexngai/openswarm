@@ -135,9 +135,19 @@ function messageToInput(msg: ProviderMessage): CodexInputItem[] {
     return items;
   }
 
-  // assistant
+  return assistantContentToCodexInput(msg.content);
+}
+
+type AssistantContent = Extract<ProviderMessage, { role: "assistant" }>["content"];
+
+/**
+ * Convert assistant message blocks (reasoning / text / tool_use) to codex input
+ * items, preserving order. Exported so the WebSocket transport can reconstruct
+ * the assistant turn's items identically for delta/continuation bookkeeping.
+ */
+export function assistantContentToCodexInput(content: AssistantContent): CodexInputItem[] {
   const items: CodexInputItem[] = [];
-  for (const block of msg.content) {
+  for (const block of content) {
     if (block.type === "reasoning") {
       const item = parseReasoningSignature(block.signature);
       if (item !== undefined) items.push(item);
