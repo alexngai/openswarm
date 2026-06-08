@@ -249,6 +249,42 @@ describe("HardenedNativeEngine: text-only turn", () => {
   });
 });
 
+describe("HardenedNativeEngine: reasoning continuity", () => {
+  it("captures a reasoning block into the assistant message, before text/tool, for replay", async () => {
+    const sig = '{"id":"rs_1","type":"reasoning","encrypted_content":"ENC","summary":[]}';
+    const captured: ProviderRequest[] = [];
+    const provider = new MockProvider({
+      onRequest: (r) => captured.push(r),
+      capabilities: { reasoning: true },
+      scripts: [
+        [
+          { type: "reasoning", signature: sig },
+          { type: "text-delta", text: "thinking" },
+          { type: "tool-call", id: "t1", name: "bash", input: { cmd: "ls" } },
+          { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
+        ],
+        [
+          { type: "text-delta", text: "done" },
+          { type: "finish", stopReason: "end_turn", usage: DEFAULT_USAGE },
+        ],
+      ],
+    });
+    const dispatcher = new MockDispatcher({ scriptedResults: [{ status: "ok", output: "x" }] });
+    const engine = new HardenedNativeEngine({ provider });
+    await collect(
+      engine.run(
+        baseConfig({
+          dispatcher: dispatcher as unknown as ToolDispatcher,
+          canUseTool: async () => ({ allow: true }),
+        }),
+      ),
+    );
+    const assistant = captured[1]!.messages.find((m) => m.role === "assistant")!;
+    expect(assistant.content.map((b) => b.type)).toEqual(["reasoning", "text", "tool_use"]);
+    expect(assistant.content[0]).toEqual({ type: "reasoning", signature: sig });
+  });
+});
+
 describe("HardenedNativeEngine: one tool call", () => {
   it("gates via canUseTool, dispatches, emits tool_result, continues to next turn", async () => {
     const provider = new MockProvider({

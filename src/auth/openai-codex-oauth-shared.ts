@@ -29,11 +29,15 @@ async function postForm(
   url: string,
   form: Record<string, string>,
   fetchImpl: typeof fetch,
+  timeoutMs = 10_000,
 ): Promise<TokenResponse> {
   const res = await fetchImpl(url, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(form).toString(),
+    // Bound the token POST so a hung/tarpitting endpoint can't wedge a refresh
+    // (and, via it, `doctor` or any turn that refreshes).
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) {
     // Surface only the structured OAuth error fields — never the raw body, which

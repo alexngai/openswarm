@@ -86,6 +86,15 @@ describe("estimateTokens", () => {
     };
     expect(estimateTokens(msg)).toBeGreaterThan(0);
   });
+
+  it("counts a reasoning block by its signature length (not 0)", () => {
+    const msg: ProviderMessage = {
+      role: "assistant",
+      content: [{ type: "reasoning", signature: "x".repeat(8000) }],
+    };
+    // Was a real undercount: a reasoning block used to contribute 0 tokens.
+    expect(estimateTokens(msg)).toBe(Math.floor(8000 / 4) + 1);
+  });
 });
 
 // ---------------------------------------------------------------------------

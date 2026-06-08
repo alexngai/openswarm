@@ -161,6 +161,48 @@ describe.runIf(live)("CodexResponsesTransportProvider (live)", () => {
     expect(out2.at(-1)).toMatchObject({ type: "finish" });
   }, 120_000);
 
+  it("replays reasoning + tool_use across turns without rejection (#6.1 pairing)", async () => {
+    // swarm-coder synthesizes an fc_* id after a reasoning item (it omits
+    // openclaw's previousReplayItemWasReasoning id-pairing avoidance). This is
+    // the agent hot path; a 400 here would mean the backend enforces pairing.
+    const tool: ToolSpec = {
+      name: "get_weather",
+      description: "Get the current weather for a city.",
+      inputSchema: { type: "object", properties: { city: { type: "string" } }, required: ["city"], additionalProperties: false },
+      requiredPermission: "none",
+      tier: 1,
+    };
+    const provider = new CodexResponsesTransportProvider({
+      modelId: "gpt-5.5",
+      credentials: codexLoginCredentials(),
+      sessionId: "swarm-harness-live-reasoning-tool",
+      reasoning: { effort: "high", summary: "auto" },
+    });
+    const userTurn = { role: "user" as const, content: [{ type: "text" as const, text: "Reason about whether Paris or London is warmer, then use get_weather to check the warmer one." }] };
+    const out1 = await collect(provider.stream({ messages: [userTurn], tools: [tool], model: "gpt-5.5", sessionId: "swarm-harness-live-reasoning-tool" }));
+    const reasoning = out1.find((e) => e.type === "reasoning") as { signature: string } | undefined;
+    const call = out1.find((e) => e.type === "tool-call") as { id: string; name: string; input: unknown } | undefined;
+    expect(call, "expected a tool call").toBeDefined();
+
+    const assistantContent: Array<{ type: "reasoning"; signature: string } | { type: "tool_use"; id: string; name: string; input: unknown }> = [];
+    if (reasoning) assistantContent.push({ type: "reasoning", signature: reasoning.signature });
+    assistantContent.push({ type: "tool_use", id: call!.id, name: call!.name, input: call!.input });
+
+    const req2: ProviderRequest = {
+      messages: [
+        userTurn,
+        { role: "assistant", content: assistantContent },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: call!.id, content: JSON.stringify({ tempC: 18 }) }] },
+      ],
+      tools: [tool],
+      model: "gpt-5.5",
+      sessionId: "swarm-harness-live-reasoning-tool",
+    };
+    const out2 = await collect(provider.stream(req2));
+    expect(out2.some((e) => e.type === "error")).toBe(false); // 400 if reasoning+fc pairing rejected
+    expect(out2.at(-1)).toMatchObject({ type: "finish" });
+  }, 120_000);
+
   it("streams over WebSocket and continues on the same connection (#9)", async () => {
     const ws = new CodexResponsesTransportProvider({
       modelId: "gpt-5.5",

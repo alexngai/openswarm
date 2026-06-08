@@ -144,19 +144,25 @@ export async function* parseCodexWs(
   };
   const onMessage = (event: unknown) => {
     const text = decodeWsData((event as { data?: unknown } | undefined)?.data);
-    if (text === null) return;
+    if (text === null || text.trim() === "") return; // undecodable/empty keep-alive
+    let parsed: CodexSseEvent;
     try {
-      const parsed = JSON.parse(text) as CodexSseEvent;
-      if (parsed && typeof parsed.type === "string") {
-        if (COMPLETION_TYPES.has(parsed.type)) {
-          sawCompletion = true;
-          done = true;
-        }
-        queue.push(parsed);
-        wake();
-      }
+      parsed = JSON.parse(text) as CodexSseEvent;
     } catch {
-      // ignore malformed frames
+      // A corrupt frame would otherwise be dropped, completing the turn with
+      // silently-missing assistant content. Fail the turn so the engine retries.
+      failed = new Error("malformed codex WebSocket frame");
+      done = true;
+      wake();
+      return;
+    }
+    if (parsed && typeof parsed.type === "string") {
+      if (COMPLETION_TYPES.has(parsed.type)) {
+        sawCompletion = true;
+        done = true;
+      }
+      queue.push(parsed);
+      wake();
     }
   };
   const onError = () => {
@@ -175,6 +181,13 @@ export async function* parseCodexWs(
     wake();
   };
 
+  // Prefer ArrayBuffer over Blob for any binary frame so decodeWsData can read
+  // it synchronously (some runtimes default to Blob).
+  try {
+    (socket as { binaryType?: string }).binaryType = "arraybuffer";
+  } catch {
+    /* runtime without binaryType — text frames still work */
+  }
   socket.addEventListener("message", onMessage);
   socket.addEventListener("error", onError);
   socket.addEventListener("close", onClose);

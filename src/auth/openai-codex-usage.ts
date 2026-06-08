@@ -32,6 +32,7 @@ interface RawUsage {
 }
 
 function clampPercent(n: number): number {
+  if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(100, Math.round(n)));
 }
 
@@ -72,19 +73,19 @@ export async function fetchCodexUsage(
   const windows: CodexUsageWindow[] = [];
   const pw = data.rate_limit?.primary_window;
   if (pw) {
-    const h = Math.round((pw.limit_window_seconds || 10800) / 3600);
+    const h = Math.round((pw.limit_window_seconds ?? 10800) / 3600);
     windows.push({
       label: `${h}h`,
-      usedPercent: clampPercent(pw.used_percent || 0),
+      usedPercent: clampPercent(pw.used_percent ?? 0),
       ...(pw.reset_at ? { resetAt: pw.reset_at * 1000 } : {}),
     });
   }
   const sw = data.rate_limit?.secondary_window;
   if (sw) {
-    const h = Math.round((sw.limit_window_seconds || 86400) / 3600);
+    const h = Math.round((sw.limit_window_seconds ?? 86400) / 3600);
     windows.push({
       label: secondaryLabel(h, sw.reset_at, pw?.reset_at),
-      usedPercent: clampPercent(sw.used_percent || 0),
+      usedPercent: clampPercent(sw.used_percent ?? 0),
       ...(sw.reset_at ? { resetAt: sw.reset_at * 1000 } : {}),
     });
   }

@@ -27,6 +27,13 @@ describe("runCodexTlsPreflight", () => {
     expect((await runCodexTlsPreflight({ fetchImpl })) as { kind: string }).toMatchObject({ kind: "tls-cert" });
   });
 
+  it("classifies a timeout/abort as network (not a cert issue)", async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw Object.assign(new Error("The operation was aborted"), { name: "TimeoutError" });
+    }) as unknown as typeof fetch;
+    expect((await runCodexTlsPreflight({ fetchImpl })) as { kind: string }).toMatchObject({ kind: "network" });
+  });
+
   it("classifies a non-TLS failure as network", async () => {
     const fetchImpl = vi.fn(async () => {
       throw Object.assign(new Error("getaddrinfo ENOTFOUND"), { code: "ENOTFOUND" });

@@ -470,3 +470,45 @@ describe("codexAuthCheck (pure, hermetic)", () => {
     expect(r.message).toContain("expired");
   });
 });
+
+describe("codexUsageCheck / codexTlsCheck (hermetic, injected deps)", () => {
+  const tokens = { access: "a", refresh: "r", accountId: "x", expiresAt: Date.now() + 1_000_000 };
+
+  it("usage: skipped when not logged in", async () => {
+    const { codexUsageCheck } = await import("./doctor.js");
+    expect((await codexUsageCheck(null)).message).toContain("skipped");
+  });
+
+  it("usage: pass with formatted windows on success", async () => {
+    const { codexUsageCheck } = await import("./doctor.js");
+    const r = await codexUsageCheck(tokens, async () => ({ plan: "Plus", windows: [{ label: "3h", usedPercent: 10 }] }));
+    expect(r.status).toBe("pass");
+    expect(r.message).toContain("Plus");
+  });
+
+  it("usage: WARN (not fail) when the fetch errors", async () => {
+    const { codexUsageCheck } = await import("./doctor.js");
+    const r = await codexUsageCheck(tokens, async () => {
+      throw new Error("401");
+    });
+    expect(r.status).toBe("warn");
+    expect(r.message).toContain("401");
+  });
+
+  it("tls: skipped when not logged in", async () => {
+    const { codexTlsCheck } = await import("./doctor.js");
+    expect((await codexTlsCheck(false)).message).toContain("skipped");
+  });
+
+  it("tls: pass when the probe validates", async () => {
+    const { codexTlsCheck } = await import("./doctor.js");
+    expect((await codexTlsCheck(true, async () => ({ ok: true }))).status).toBe("pass");
+  });
+
+  it("tls: WARN with a brew hint on a cert failure", async () => {
+    const { codexTlsCheck } = await import("./doctor.js");
+    const r = await codexTlsCheck(true, async () => ({ ok: false, kind: "tls-cert", message: "x" }));
+    expect(r.status).toBe("warn");
+    expect(r.message).toContain("brew");
+  });
+});

@@ -234,6 +234,120 @@ describe("CodexResponsesTransportProvider — WebSocket transport", () => {
     p.dispose();
   });
 
+  it("keeps the delta across a reasoning turn (continuation baseline matches the replay)", async () => {
+    // Settles the id-keep-vs-strip question: lastResponseItems and the next-turn
+    // replay both run assistantContentToCodexInput→parseReasoningSignature (id
+    // stripped on BOTH sides), so the prefix should match → delta, not full body.
+    const reasoningItem = { id: "rs_1", type: "reasoning", encrypted_content: "ENC", summary: [] as unknown[] };
+    const listeners: Record<string, ((e: unknown) => void)[]> = {};
+    const socket = {
+      readyState: 1,
+      sent: [] as string[],
+      send(data: string) {
+        this.sent.push(data);
+        const body = JSON.parse(data) as { previous_response_id?: string };
+        const id = body.previous_response_id ? "R2" : "R1";
+        const evts = [
+          { type: "response.created", response: { id } },
+          ...(body.previous_response_id ? [] : [{ type: "response.output_item.done", item: reasoningItem }]),
+          { type: "response.output_text.delta", delta: body.previous_response_id ? "B" : "A" },
+          { type: "response.completed", response: { id, usage: {} } },
+        ];
+        queueMicrotask(() => {
+          for (const e of evts) (listeners["message"] ?? []).forEach((l) => l({ data: JSON.stringify(e) }));
+        });
+      },
+      close() { this.readyState = 3; },
+      addEventListener(t: string, l: (e: unknown) => void) { (listeners[t] ??= []).push(l); },
+      removeEventListener(t: string, l: (e: unknown) => void) { listeners[t] = (listeners[t] ?? []).filter((x) => x !== l); },
+    };
+    const p = new CodexResponsesTransportProvider({
+      modelId: "gpt-5.5", credentials: creds, transport: "websocket", sessionId: "s",
+      wsConnectImpl: async () => socket as never,
+    });
+    await collect(p.stream({ messages: [user("hi")], model: "gpt-5.5", sessionId: "s" }));
+    await collect(p.stream({
+      messages: [
+        user("hi"),
+        { role: "assistant", content: [{ type: "reasoning", signature: JSON.stringify(reasoningItem) }, { type: "text", text: "A" }] },
+        user("more"),
+      ],
+      model: "gpt-5.5", sessionId: "s",
+    }));
+    const turn2 = JSON.parse(socket.sent[1]);
+    expect(turn2.previous_response_id).toBe("R1"); // delta survived the reasoning turn
+    expect(turn2.input).toHaveLength(1);
+    p.dispose();
+  });
+
+  it("records the response id from response.completed (not a stale created id)", async () => {
+    const listeners: Record<string, ((e: unknown) => void)[]> = {};
+    const socket = {
+      readyState: 1,
+      sent: [] as string[],
+      send(data: string) {
+        this.sent.push(data);
+        const body = JSON.parse(data) as { previous_response_id?: string };
+        const evts = body.previous_response_id
+          ? [{ type: "response.created", response: { id: "RC2" } }, { type: "response.completed", response: { id: "RD2", usage: {} } }]
+          : [{ type: "response.created", response: { id: "RC1" } }, { type: "response.completed", response: { id: "RD1", usage: {} } }];
+        queueMicrotask(() => {
+          for (const e of evts) (listeners["message"] ?? []).forEach((l) => l({ data: JSON.stringify(e) }));
+        });
+      },
+      close() { this.readyState = 3; },
+      addEventListener(t: string, l: (e: unknown) => void) { (listeners[t] ??= []).push(l); },
+      removeEventListener(t: string, l: (e: unknown) => void) { listeners[t] = (listeners[t] ?? []).filter((x) => x !== l); },
+    };
+    const p = new CodexResponsesTransportProvider({
+      modelId: "gpt-5.5", credentials: creds, transport: "websocket", sessionId: "s",
+      wsConnectImpl: async () => socket as never,
+    });
+    await collect(p.stream({ messages: [user("hi")], model: "gpt-5.5", sessionId: "s" }));
+    await collect(p.stream({
+      messages: [user("hi"), { role: "assistant", content: [{ type: "text", text: "A" }] }, user("more")],
+      model: "gpt-5.5", sessionId: "s",
+    }));
+    // previous_response_id must be the COMPLETED id (RD1), not the created id (RC1).
+    expect(JSON.parse(socket.sent[1]).previous_response_id).toBe("RD1");
+    p.dispose();
+  });
+
+  it("yields a transport error when send() throws (dead socket)", async () => {
+    const socket = {
+      readyState: 1,
+      send() { throw new Error("socket closed"); },
+      close() {},
+      addEventListener() {},
+      removeEventListener() {},
+    };
+    const p = new CodexResponsesTransportProvider({
+      modelId: "gpt-5.5", credentials: creds, transport: "websocket",
+      wsConnectImpl: async () => socket as never,
+    });
+    const out = await collect(p.stream({ messages: [user("hi")], model: "gpt-5.5", sessionId: "s" }));
+    expect(out[0]).toMatchObject({ type: "error", code: "transport" });
+    p.dispose();
+  });
+
+  it("auto mode falls back to SSE when send() throws", async () => {
+    const socket = {
+      readyState: 1,
+      send() { throw new Error("socket closed"); },
+      close() {},
+      addEventListener() {},
+      removeEventListener() {},
+    };
+    const fetchImpl = vi.fn(async () => sseResponse(['data: {"type":"response.completed","response":{}}\n\n']));
+    const p = new CodexResponsesTransportProvider({
+      modelId: "gpt-5.5", credentials: creds, transport: "auto", fetchImpl,
+      wsConnectImpl: async () => socket as never,
+    });
+    const out = await collect(p.stream({ messages: [user("hi")], model: "gpt-5.5", sessionId: "s" }));
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(out.at(-1)).toMatchObject({ type: "finish" });
+  });
+
   it("auto mode falls back to SSE when the WS connection fails", async () => {
     const fetchImpl = vi.fn(async () => sseResponse(['data: {"type":"response.completed","response":{}}\n\n']));
     const p = new CodexResponsesTransportProvider({

@@ -23,7 +23,6 @@ import { detectAuth } from "../auth/status.js";
 import { readCodexTokens, type CodexTokens } from "../auth/openai-codex-token-store.js";
 import { runCodexTlsPreflight, formatCodexTlsFix } from "../auth/openai-codex-tls-preflight.js";
 import { fetchCodexUsage, formatCodexUsage } from "../auth/openai-codex-usage.js";
-import { OpenAICodexAuth } from "../auth/openai-codex-oauth.js";
 
 const execFile = promisify(execFileCb);
 
@@ -276,13 +275,20 @@ async function checkCodexAuth(): Promise<CheckResult> {
   return codexAuthCheck(readCodexTokens(), Date.now());
 }
 
-async function checkCodexUsage(): Promise<CheckResult> {
-  if (readCodexTokens() === null) {
+/** Pure usage-check logic (injectable fetch) — hermetically testable. */
+export async function codexUsageCheck(
+  tokens: CodexTokens | null,
+  fetchUsage: typeof fetchCodexUsage = fetchCodexUsage,
+): Promise<CheckResult> {
+  if (tokens === null) {
     return { name: "codex-usage", status: "pass", message: "skipped (not logged in to ChatGPT)" };
   }
   try {
-    const { token, accountId } = await new OpenAICodexAuth().getCredentials();
-    return { name: "codex-usage", status: "pass", message: formatCodexUsage(await fetchCodexUsage(token, accountId)) };
+    return {
+      name: "codex-usage",
+      status: "pass",
+      message: formatCodexUsage(await fetchUsage(tokens.access, tokens.accountId)),
+    };
   } catch (err) {
     return {
       name: "codex-usage",
@@ -292,17 +298,29 @@ async function checkCodexUsage(): Promise<CheckResult> {
   }
 }
 
-async function checkCodexTls(): Promise<CheckResult> {
-  // Only meaningful for codex users; skip the network probe otherwise so we
-  // don't add latency (or a failure) for everyone else.
-  if (readCodexTokens() === null) {
+async function checkCodexUsage(): Promise<CheckResult> {
+  // Use the stored access token directly (codexUsageCheck): a health check must
+  // NOT mutate credentials — getCredentials() can refresh/rotate/clear them.
+  return codexUsageCheck(readCodexTokens());
+}
+
+/** Pure TLS-check logic (injectable probe) — hermetically testable. */
+export async function codexTlsCheck(
+  loggedIn: boolean,
+  run: typeof runCodexTlsPreflight = runCodexTlsPreflight,
+): Promise<CheckResult> {
+  if (!loggedIn) {
     return { name: "codex-tls", status: "pass", message: "skipped (not logged in to ChatGPT)" };
   }
-  const result = await runCodexTlsPreflight();
+  const result = await run();
   if (result.ok) {
     return { name: "codex-tls", status: "pass", message: "auth.openai.com TLS validates" };
   }
   return { name: "codex-tls", status: "warn", message: formatCodexTlsFix(result) };
+}
+
+async function checkCodexTls(): Promise<CheckResult> {
+  return codexTlsCheck(readCodexTokens() !== null);
 }
 
 async function checkWorkspace(cwd: string): Promise<CheckResult> {

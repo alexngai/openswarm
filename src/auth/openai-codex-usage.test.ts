@@ -35,6 +35,37 @@ describe("fetchCodexUsage", () => {
     expect((await fetchCodexUsage("t", "a", { fetchImpl })).plan).toBe("Pro ($5.00)");
   });
 
+  it("labels a 24h secondary window as Week when the reset cadence is weekly", async () => {
+    const fetchImpl = vi.fn(async () =>
+      ok({
+        rate_limit: {
+          primary_window: { limit_window_seconds: 10800, used_percent: 0, reset_at: 1000 },
+          secondary_window: { limit_window_seconds: 86400, used_percent: 5, reset_at: 1000 + 4 * 24 * 3600 },
+        },
+      }),
+    ) as unknown as typeof fetch;
+    expect((await fetchCodexUsage("t", "a", { fetchImpl })).windows[1].label).toBe("Week");
+  });
+
+  it("labels a 24h secondary window as Day when the reset is near", async () => {
+    const fetchImpl = vi.fn(async () =>
+      ok({
+        rate_limit: {
+          primary_window: { limit_window_seconds: 10800, used_percent: 0, reset_at: 1000 },
+          secondary_window: { limit_window_seconds: 86400, used_percent: 5, reset_at: 1000 + 3600 },
+        },
+      }),
+    ) as unknown as typeof fetch;
+    expect((await fetchCodexUsage("t", "a", { fetchImpl })).windows[1].label).toBe("Day");
+  });
+
+  it("preserves a legitimate 0% (no || coercion)", async () => {
+    const fetchImpl = vi.fn(async () =>
+      ok({ rate_limit: { primary_window: { limit_window_seconds: 10800, used_percent: 0, reset_at: 1 } } }),
+    ) as unknown as typeof fetch;
+    expect((await fetchCodexUsage("t", "a", { fetchImpl })).windows[0].usedPercent).toBe(0);
+  });
+
   it("throws on a non-2xx response", async () => {
     const fetchImpl = vi.fn(async () => ({ ok: false, status: 401 }) as unknown as Response) as unknown as typeof fetch;
     await expect(fetchCodexUsage("t", "a", { fetchImpl })).rejects.toThrow(/401/);

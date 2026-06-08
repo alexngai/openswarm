@@ -5,6 +5,7 @@ import {
   buildWsTurnBody,
   wsBodyKey,
   isWebSocketReusable,
+  parseCodexWs,
   OPENAI_BETA_RESPONSES_WEBSOCKETS,
   type WsContinuation,
 } from "./websocket.js";
@@ -92,5 +93,68 @@ describe("buildWsTurnBody (delta / continuation)", () => {
   it("returns the body unchanged with no continuation", () => {
     const body = mkBody([A]);
     expect(buildWsTurnBody(body, null)).toBe(body);
+  });
+});
+
+function fakeSocket() {
+  const L: Record<string, ((e: unknown) => void)[]> = {};
+  const socket = {
+    readyState: 1,
+    send() {},
+    close() {},
+    addEventListener(t: string, l: (e: unknown) => void) {
+      (L[t] ??= []).push(l);
+    },
+    removeEventListener(t: string, l: (e: unknown) => void) {
+      L[t] = (L[t] ?? []).filter((x) => x !== l);
+    },
+  };
+  return { socket, emit: (t: string, e: unknown) => (L[t] ?? []).forEach((l) => l(e)) };
+}
+const tick = () => new Promise((r) => setTimeout(r, 0));
+
+describe("parseCodexWs", () => {
+  it("fails the stream on a malformed frame (does not silently drop it)", async () => {
+    const { socket, emit } = fakeSocket();
+    const first = parseCodexWs(socket as never).next();
+    await tick();
+    emit("message", { data: "{bad json" });
+    await expect(first).rejects.toThrow(/malformed/);
+  });
+
+  it("decodes an ArrayBuffer (binary) frame", async () => {
+    const { socket, emit } = fakeSocket();
+    const it = parseCodexWs(socket as never);
+    const first = it.next();
+    await tick();
+    emit("message", { data: new TextEncoder().encode('{"type":"response.completed","response":{}}').buffer });
+    expect((await first).value).toMatchObject({ type: "response.completed" });
+  });
+
+  it("ignores an empty keep-alive frame", async () => {
+    const { socket, emit } = fakeSocket();
+    const it = parseCodexWs(socket as never);
+    const first = it.next();
+    await tick();
+    emit("message", { data: "   " }); // ignored
+    emit("message", { data: '{"type":"response.completed","response":{}}' });
+    expect((await first).value).toMatchObject({ type: "response.completed" });
+  });
+
+  it("rejects when aborted mid-stream", async () => {
+    const { socket } = fakeSocket();
+    const ac = new AbortController();
+    const first = parseCodexWs(socket as never, ac.signal).next();
+    await tick();
+    ac.abort();
+    await expect(first).rejects.toThrow(/aborted/);
+  });
+
+  it("rejects when the socket closes before completion", async () => {
+    const { socket, emit } = fakeSocket();
+    const first = parseCodexWs(socket as never).next();
+    await tick();
+    emit("close", {});
+    await expect(first).rejects.toThrow(/closed before completion/);
   });
 });

@@ -120,6 +120,35 @@ describe("buildCodexRequest", () => {
     expect(body.input[1]).toMatchObject({ type: "message", role: "assistant" });
   });
 
+  it("replays reasoning → tool_use → tool_result in order (agent hot path)", () => {
+    const sig = JSON.stringify({ id: "rs_1", type: "reasoning", encrypted_content: "ENC", summary: [] });
+    const messages: ProviderMessage[] = [
+      { role: "user", content: [{ type: "text", text: "go" }] },
+      {
+        role: "assistant",
+        content: [
+          { type: "reasoning", signature: sig },
+          { type: "tool_use", id: "call_1", name: "ls", input: {} },
+        ],
+      },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "call_1", content: "a.ts" }] },
+    ];
+    const body = buildCodexRequest(req({ messages }));
+    expect(body.input.map((i) => i.type)).toEqual([
+      "message", // user "go"
+      "reasoning", // reasoning replayed BEFORE the function_call it preceded
+      "function_call",
+      "function_call_output",
+    ]);
+    expect(body.input[1]).toEqual({ type: "reasoning", encrypted_content: "ENC", summary: [] });
+  });
+
+  it("normalizes a non-array reasoning summary to []", () => {
+    const sig = JSON.stringify({ id: "rs", type: "reasoning", encrypted_content: "E", summary: "oops" });
+    const msg: ProviderMessage = { role: "assistant", content: [{ type: "reasoning", signature: sig }] };
+    expect(buildCodexRequest(req({ messages: [msg] })).input[0]).toEqual({ type: "reasoning", encrypted_content: "E", summary: [] });
+  });
+
   it("skips a malformed reasoning signature", () => {
     const msg: ProviderMessage = { role: "assistant", content: [{ type: "reasoning", signature: "not json" }] };
     expect(buildCodexRequest(req({ messages: [msg] })).input).toHaveLength(0);

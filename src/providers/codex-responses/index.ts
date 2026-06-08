@@ -178,6 +178,9 @@ export class CodexResponsesTransportProvider implements TransportProvider {
       });
     } catch (err) {
       this.resetWs();
+      // A user-cancelled turn is not a failure — the engine owns abort. Don't
+      // emit a retryable error (which would drive a spurious retry).
+      if (req.abort?.aborted) return;
       // Only fall back to SSE if nothing was emitted yet (can't un-yield).
       if (this.transport === "auto" && !started) {
         yield* this.streamSse(body, headerParams, req.abort);
