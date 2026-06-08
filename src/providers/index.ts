@@ -103,6 +103,14 @@ export interface ProviderRequest {
 export type ProviderEvent =
   | { readonly type: "text-delta"; readonly text: string }
   | { readonly type: "reasoning-delta"; readonly text: string }
+  /**
+   * A completed reasoning item, emitted once at item end. `signature` is an
+   * opaque, provider-specific blob (e.g. the codex reasoning item incl. its
+   * encrypted content) that the engine persists on the assistant message and
+   * replays next turn for reasoning continuity. Display text rides on
+   * `reasoning-delta`; this carries the replayable state.
+   */
+  | { readonly type: "reasoning"; readonly signature: string }
   | { readonly type: "tool-input-start"; readonly id: string; readonly name: string }
   | { readonly type: "tool-input-delta"; readonly id: string; readonly delta: string }
   | {
@@ -156,6 +164,10 @@ export type ProviderMessage =
             readonly name: string;
             readonly input: unknown;
           }
+        // Opaque reasoning state for continuity (see ProviderEvent "reasoning").
+        // Providers that don't reason never produce these; consumers that don't
+        // understand them (e.g. the Vercel replay path) filter them out.
+        | { readonly type: "reasoning"; readonly signature: string }
       )[];
     };
 

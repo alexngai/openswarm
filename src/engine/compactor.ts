@@ -409,6 +409,8 @@ function summarizeBlock(block: AnyBlock): string {
   } else if (block.type === "tool_use") {
     const inputStr = JSON.stringify(block.input);
     raw = `tool_use ${block.name}(${inputStr})`;
+  } else if (block.type === "reasoning") {
+    raw = "reasoning"; // opaque encrypted blob — nothing to summarize
   } else {
     // tool_result
     const errPrefix = block.is_error === true ? "error " : "";
@@ -471,6 +473,8 @@ function collectKeyFiles(messages: readonly ProviderMessage[]): string[] {
         textContent = block.text;
       } else if (block.type === "tool_use") {
         textContent = JSON.stringify(block.input);
+      } else if (block.type === "reasoning") {
+        textContent = ""; // opaque — no file candidates
       } else {
         textContent = block.content;
       }

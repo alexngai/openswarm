@@ -123,4 +123,41 @@ describe.runIf(live)("CodexResponsesTransportProvider (live)", () => {
     expect(text2.length).toBeGreaterThan(0);
     expect(out2.at(-1)).toMatchObject({ type: "finish" });
   }, 90_000);
+
+  it("replays reasoning across turns without rejection (#6.1)", async () => {
+    // effort:high reliably produces a reasoning item (with encrypted_content);
+    // turn 2 replays it as a reasoning input item — a 400 here would mean the
+    // synthesized/normalized reasoning replay was rejected.
+    const reasoningProvider = new CodexResponsesTransportProvider({
+      modelId: "gpt-5.5",
+      credentials: codexLoginCredentials(),
+      sessionId: "swarm-harness-live-reasoning",
+      reasoning: { effort: "high", summary: "auto" },
+    });
+    const userTurn = { role: "user" as const, content: [{ type: "text" as const, text: "Reason step by step about whether 17 is prime, then state the answer." }] };
+
+    const out1 = await collect(reasoningProvider.stream({ messages: [userTurn], model: "gpt-5.5", sessionId: "swarm-harness-live-reasoning" }));
+    const reasoning = out1.find((e) => e.type === "reasoning") as { signature: string } | undefined;
+    const text1 = out1.filter((e) => e.type === "text-delta").map((e) => (e as { text: string }).text).join("");
+    expect(reasoning, "expected a reasoning item at effort:high").toBeDefined();
+
+    const req2: ProviderRequest = {
+      messages: [
+        userTurn,
+        {
+          role: "assistant",
+          content: [
+            { type: "reasoning", signature: reasoning!.signature },
+            { type: "text", text: text1 || "17 is prime." },
+          ],
+        },
+        { role: "user", content: [{ type: "text", text: "Reply with exactly: confirmed" }] },
+      ],
+      model: "gpt-5.5",
+      sessionId: "swarm-harness-live-reasoning",
+    };
+    const out2 = await collect(reasoningProvider.stream(req2));
+    expect(out2.some((e) => e.type === "error")).toBe(false); // 400 if reasoning replay rejected
+    expect(out2.at(-1)).toMatchObject({ type: "finish" });
+  }, 120_000);
 });

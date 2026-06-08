@@ -145,6 +145,13 @@ describe("CodexEventTranslator", () => {
     expect(out.filter((e) => e.type === "tool-call")).toHaveLength(1);
   });
 
+  it("emits a reasoning signature on reasoning item done", () => {
+    const item = { id: "rs_1", type: "reasoning", encrypted_content: "ENC", summary: [] };
+    expect(run([{ type: "response.output_item.done", item }])).toEqual([
+      { type: "reasoning", signature: JSON.stringify(item) },
+    ]);
+  });
+
   it("maps the top-level error event variant", () => {
     const out = run([{ type: "error", error: { code: "rate_limit", message: "slow" } }]);
     expect(out).toEqual([{ type: "error", code: "provider_unavailable", message: "slow", retryable: true }]);

@@ -106,6 +106,25 @@ describe("buildCodexRequest", () => {
     expect(body.input[0]).toEqual({ type: "function_call_output", call_id: "call_9", output: "ERROR: boom" });
   });
 
+  it("replays an assistant reasoning block as a reasoning input item (id stripped, summary array)", () => {
+    const sig = JSON.stringify({ id: "rs_1", type: "reasoning", encrypted_content: "ENC", summary: [{ text: "x" }] });
+    const msg: ProviderMessage = {
+      role: "assistant",
+      content: [
+        { type: "reasoning", signature: sig },
+        { type: "text", text: "hi" },
+      ],
+    };
+    const body = buildCodexRequest(req({ messages: [msg] }));
+    expect(body.input[0]).toEqual({ type: "reasoning", encrypted_content: "ENC", summary: [{ text: "x" }] });
+    expect(body.input[1]).toMatchObject({ type: "message", role: "assistant" });
+  });
+
+  it("skips a malformed reasoning signature", () => {
+    const msg: ProviderMessage = { role: "assistant", content: [{ type: "reasoning", signature: "not json" }] };
+    expect(buildCodexRequest(req({ messages: [msg] })).input).toHaveLength(0);
+  });
+
   it("maps toolChoice variants", () => {
     expect(buildCodexRequest(req({ toolChoice: "required" })).tool_choice).toBe("required");
     expect(buildCodexRequest(req({ toolChoice: { name: "x" } })).tool_choice).toEqual({

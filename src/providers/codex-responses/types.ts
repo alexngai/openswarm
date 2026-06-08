@@ -45,7 +45,10 @@ export type CodexInputItem =
       readonly type: "function_call_output";
       readonly call_id: string;
       readonly output: string;
-    };
+    }
+  // A replayed reasoning item (carries encrypted_content). Shape is the codex
+  // reasoning item minus its id; kept permissive since it round-trips opaquely.
+  | ({ readonly type: "reasoning" } & Record<string, unknown>);
 
 export type CodexContentPart =
   | { readonly type: "input_text"; readonly text: string }

@@ -258,6 +258,8 @@ function formatBlock(block: ProviderMessage["content"][number]): string {
       return `[Tool call: ${block.name}(${inputStr.slice(0, 500)}...)]`;
     }
     return `[Tool call: ${block.name}(${inputStr})]`;
+  } else if (block.type === "reasoning") {
+    return "[Reasoning]";
   } else {
     // tool_result
     const content = block.content;

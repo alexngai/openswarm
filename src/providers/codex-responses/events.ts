@@ -100,6 +100,11 @@ export class CodexEventTranslator {
    */
   private onItemDone(ev: CodexSseEvent): ProviderEvent[] {
     const item = ev.item as Record<string, unknown> | undefined;
+    // Capture the completed reasoning item (incl. encrypted_content) as an
+    // opaque signature for replay-based reasoning continuity.
+    if (item?.type === "reasoning") {
+      return [{ type: "reasoning", signature: JSON.stringify(item) }];
+    }
     if (!item || item.type !== "function_call") return [];
     const itemId = String(item.id ?? "");
     if (this.emittedDone.has(itemId)) return [];

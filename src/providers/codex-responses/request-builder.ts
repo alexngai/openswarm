@@ -51,6 +51,28 @@ function foreignFunctionCallId(callId: string): string {
   return `fc_${createHash("sha256").update(callId).digest("hex").slice(0, 32)}`;
 }
 
+/**
+ * Parse a persisted reasoning signature (the JSON-serialized codex reasoning
+ * item) back into a replay input item. Mirrors openclaw: drop the item `id`
+ * (store:false keeps no server item state) and ensure `summary` is an array.
+ * Returns undefined for a malformed/empty signature.
+ */
+function parseReasoningSignature(signature: string): CodexInputItem | undefined {
+  try {
+    const parsed = JSON.parse(signature) as Record<string, unknown>;
+    if (parsed === null || parsed.type !== "reasoning") return undefined;
+    const { id: _id, ...rest } = parsed;
+    void _id;
+    return {
+      type: "reasoning",
+      ...rest,
+      summary: Array.isArray(rest.summary) ? rest.summary : [],
+    } as CodexInputItem;
+  } catch {
+    return undefined;
+  }
+}
+
 function toolToCodex(tool: ToolSpec): CodexTool {
   return {
     type: "function",
@@ -116,7 +138,10 @@ function messageToInput(msg: ProviderMessage): CodexInputItem[] {
   // assistant
   const items: CodexInputItem[] = [];
   for (const block of msg.content) {
-    if (block.type === "text") {
+    if (block.type === "reasoning") {
+      const item = parseReasoningSignature(block.signature);
+      if (item !== undefined) items.push(item);
+    } else if (block.type === "text") {
       items.push({
         type: "message",
         role: "assistant",
