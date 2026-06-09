@@ -5,26 +5,54 @@ A TypeScript coding agent where one agent is a tool and N coordinated agents is 
 ## Quickstart
 
 ```bash
-# Download the standalone binary (no Bun/Node required)
-curl -fsSL https://github.com/alexngai/swarm-harness/releases/latest/download/swarm-harness-darwin-arm64 -o swarm-harness
-chmod +x swarm-harness
+# Run without installing (npm picks the right platform binary)
+npx swarm-harness "explain this codebase"
 
-# Authenticate (pick one)
+# Authenticate first (pick one)
 export ANTHROPIC_API_KEY=sk-ant-...        # API billing
 # or: claude auth login                    # Claude Max subscription
 
-# Run a single agent
-./swarm-harness "explain this codebase"
-
 # Run a team of agents
-./swarm-harness team start my-team --spec team.yaml
+npx swarm-harness team start my-team --spec team.yaml
 ```
 
 ## Install
 
-### Standalone binary (recommended)
+### npm (recommended)
 
-Download a prebuilt binary from [GitHub Releases](https://github.com/alexngai/swarm-harness/releases):
+```bash
+npm install -g swarm-harness     # global `swarm-harness` command
+# or run on demand:
+npx swarm-harness "..."
+```
+
+Requires **Node.js >= 20**. Installing pulls in a self-contained, prebuilt
+binary for your platform (shipped as an `optionalDependencies` package) that
+bundles the Bun runtime and the full interactive TUI — no Bun install needed.
+
+**Platform support:**
+
+| Platform | Interactive TUI | Headless / swarm / ACP / API |
+|----------|:---:|:---:|
+| macOS (Apple Silicon) — `darwin-arm64` | ✅ | ✅ |
+| macOS (Intel) — `darwin-x64` | ✅ | ✅ |
+| Linux (x64) — `linux-x64` | ✅ | ✅ |
+| Other platforms (Node ≥ 20) | — | ✅ |
+
+On platforms without a prebuilt binary, the pure-Node launcher still runs every
+headless, swarm, ACP, and programmatic-API path; only the interactive TUI
+(which needs the Bun runtime) is unavailable and degrades to headless output.
+
+### Standalone binary
+
+Prefer a single file with no npm at all? Download a prebuilt binary from
+[GitHub Releases](https://github.com/alexngai/swarm-coder/releases):
+
+```bash
+curl -fsSL https://github.com/alexngai/swarm-coder/releases/latest/download/swarm-harness-darwin-arm64 -o swarm-harness
+chmod +x swarm-harness
+./swarm-harness "explain this codebase"
+```
 
 | Platform | Binary |
 |----------|--------|
@@ -39,11 +67,11 @@ No runtime dependencies required.
 Requires [Bun](https://bun.sh) >= 1.3.8:
 
 ```bash
-git clone https://github.com/alexngai/swarm-harness.git
-cd swarm-harness
+git clone https://github.com/alexngai/swarm-coder.git
+cd swarm-coder
 bun install
-bun run build                  # dist/cli.js (Bun bundle)
-bun run build:compile          # dist/swarm-harness (standalone binary)
+bun run build                  # dist/ (node bundle)
+bun run build:compile          # packages/cli-<platform>/swarm-harness (standalone binary)
 ```
 
 ## Authentication
@@ -389,7 +417,7 @@ npm test             # vitest suite (2800+ tests)
 bun test src/ui/     # OpenTUI/Solid component tests
 ```
 
-- File issues at [github.com/alexngai/swarm-harness/issues](https://github.com/alexngai/swarm-harness/issues)
+- File issues at [github.com/alexngai/swarm-coder/issues](https://github.com/alexngai/swarm-coder/issues)
 - See [CLAUDE.md](CLAUDE.md) for local development conventions
 
 ## License

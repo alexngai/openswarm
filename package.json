@@ -1,7 +1,7 @@
 {
   "name": "swarm-harness",
   "version": "0.3.0",
-  "description": "swarm-compatible coding agent",
+  "description": "Multi-agent coding agent CLI: one agent is a tool, N coordinated agents are the product. Built on Anthropic's Claude Agent SDK with swarm/team orchestration, multi-provider support, and a Bun-native interactive TUI.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -41,10 +41,21 @@
     "node": ">=20"
   },
   "keywords": [
+    "ai",
+    "agent",
+    "ai-agent",
+    "multi-agent",
     "swarm",
-    "agents",
+    "coding-agent",
+    "cli",
+    "tui",
+    "orchestration",
     "claude",
-    "coding"
+    "claude-agent-sdk",
+    "anthropic",
+    "openai",
+    "codex",
+    "acp"
   ],
   "author": "Alex Ngai <alexander.s.ngai@gmail.com>",
   "license": "MIT",
