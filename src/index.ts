@@ -9,7 +9,24 @@
  * for M0 scope.
  */
 
-export const VERSION = "0.0.1";
+import { createRequire } from "node:module";
+
+// Version source of truth is package.json. The bun-compiled binary can't read
+// package.json from its embedded fs, so build-binary.ts injects the version as
+// the `__SWARM_HARNESS_VERSION__` compile-time constant; under node we read it
+// from package.json. (`typeof` on an undeclared name is safe — never throws.)
+declare const __SWARM_HARNESS_VERSION__: string | undefined;
+
+function resolveVersion(): string {
+  if (typeof __SWARM_HARNESS_VERSION__ !== "undefined") return __SWARM_HARNESS_VERSION__;
+  try {
+    return (createRequire(import.meta.url)("../package.json") as { version?: string }).version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
+export const VERSION = resolveVersion();
 
 // Core types
 export type {

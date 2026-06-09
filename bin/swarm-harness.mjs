@@ -1,0 +1,50 @@
+#!/usr/bin/env node
+/**
+ * swarm-harness launcher (pure node, no deps).
+ *
+ * Prefers the self-contained, bun-compiled platform binary shipped as an
+ * optional dependency (@swarm-harness/cli-<platform>-<arch>) — it bundles the
+ * bun runtime and the full interactive TUI. Falls back to running the node
+ * bundle (dist/cli.js) when no binary is available for this platform: that
+ * covers everything except the interactive TUI, which main.ts degrades to
+ * headless under node.
+ */
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
+const args = process.argv.slice(2);
+const { platform, arch } = process;
+const exe = platform === "win32" ? "swarm-harness.exe" : "swarm-harness";
+
+function resolvePlatformBinary() {
+  const pkgName = `@swarm-harness/cli-${platform}-${arch}`;
+  // Production: the installed optional-dependency package.
+  try {
+    const pkgDir = dirname(require.resolve(`${pkgName}/package.json`));
+    const p = join(pkgDir, exe);
+    if (existsSync(p)) return p;
+  } catch {
+    /* not installed for this platform */
+  }
+  // Development: the local packages/ build output.
+  const local = join(here, "..", "packages", `cli-${platform}-${arch}`, exe);
+  return existsSync(local) ? local : null;
+}
+
+const bin = resolvePlatformBinary();
+try {
+  if (bin !== null) {
+    execFileSync(bin, args, { stdio: "inherit", env: process.env });
+  } else {
+    const cli = join(here, "..", "dist", "cli.js");
+    execFileSync(process.execPath, [cli, ...args], { stdio: "inherit", env: process.env });
+  }
+} catch (err) {
+  if (err && typeof err.status === "number") process.exit(err.status);
+  throw err;
+}

@@ -15,13 +15,16 @@
  *   bun-darwin-arm64, bun-darwin-x64, bun-linux-x64, bun-windows-x64
  */
 
+import { mkdirSync } from "node:fs";
 import { createSolidTransformPlugin } from "@opentui/solid/bun-plugin";
 import sdkPkg from "@anthropic-ai/claude-agent-sdk/package.json" with { type: "json" };
+import pkg from "../package.json" with { type: "json" };
 
-// The compiled binary can't read @anthropic-ai/claude-agent-sdk/package.json
-// at runtime (embedded filesystem doesn't expose node_modules paths). Inject
-// the version as a compile-time constant so `doctor` shows the right value.
+// The compiled binary can't read package.json from its embedded fs at runtime,
+// so inject both versions as compile-time constants (see src/index.ts and the
+// SDK-version lookup in doctor).
 const SDK_VERSION: string = (sdkPkg as { version?: string }).version ?? "unknown";
+const PKG_VERSION: string = (pkg as { version?: string }).version ?? "0.0.0";
 
 const target =
   (process.argv[2] as
@@ -31,12 +34,15 @@ const target =
     | "bun-windows-x64"
     | undefined) ?? "bun-darwin-arm64";
 
-const outfile =
-  target === "bun-windows-x64"
-    ? "dist/swarm-harness.exe"
-    : "dist/swarm-harness";
+// Emit into the per-platform package dir (mirrors openswarm), so each
+// @swarm-harness/cli-<platform>-<arch> optional-dep ships its own binary.
+const platformArch = target.replace(/^bun-/, ""); // e.g. darwin-arm64
+const isWindows = target === "bun-windows-x64";
+const pkgDir = `packages/cli-${platformArch}`;
+const outfile = `${pkgDir}/${isWindows ? "swarm-harness.exe" : "swarm-harness"}`;
+mkdirSync(pkgDir, { recursive: true });
 
-console.log(`Building ${outfile} for ${target}…`);
+console.log(`Building ${outfile} for ${target} (v${PKG_VERSION})…`);
 
 const result = await Bun.build({
   entrypoints: ["./src/cli.ts"],
@@ -50,6 +56,7 @@ const result = await Bun.build({
   // binaries — the node_modules path isn't in the embedded fs).
   define: {
     __SWARM_HARNESS_AGENT_SDK_VERSION__: JSON.stringify(SDK_VERSION),
+    __SWARM_HARNESS_VERSION__: JSON.stringify(PKG_VERSION),
   },
 });
 

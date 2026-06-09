@@ -11,3 +11,6 @@ dead-letter.jsonl
 .omc/
 # local reference checkouts (cloned repos, not tracked as submodules)
 references/
+# compiled platform binaries (build artifacts)
+packages/*/swarm-harness
+packages/*/swarm-harness.exe
