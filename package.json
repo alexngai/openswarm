@@ -34,7 +34,8 @@
     "test:all": "npm run test && npm run test:ui",
     "typecheck:ui": "tsc -p src/ui/repl-solid/tsconfig.json",
     "build:dev": "tsc",
-    "build:packages": "npm run build:compile:darwin-arm64 && npm run build:compile:darwin-x64 && npm run build:compile:linux-x64"
+    "build:packages": "npm run build:compile:darwin-arm64 && npm run build:compile:darwin-x64 && npm run build:compile:linux-x64",
+    "publish:release": "bun scripts/publish.ts"
   },
   "engines": {
     "node": ">=20"
