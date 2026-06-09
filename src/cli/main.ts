@@ -212,6 +212,9 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     model: rt.resolvedModelId,
     auth: rt.auth,
     tools: rt.tools,
+    // Without this the native/hardened engines can offer tools but cannot
+    // execute them (batch dispatch no-ops → every tool returns "tool failed").
+    dispatcher: rt.dispatcher,
     canUseTool,
     permissionMode: opts.permissionMode,
     resumeFrom,

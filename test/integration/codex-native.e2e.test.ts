@@ -105,7 +105,12 @@ describe.runIf(live)("codex-native CLI e2e (live)", () => {
     expect(code).toBe(0);
     expect(events.some((e) => e.type === "error")).toBe(false);
     expect(events.some((e) => e.type === "tool_use_start")).toBe(true);
-    expect(events.some((e) => e.type === "tool_result")).toBe(true);
+    const toolResults = events.filter((e) => e.type === "tool_result");
+    expect(toolResults.length).toBeGreaterThan(0);
+    // A tool must actually EXECUTE — not just be invoked. (A missing dispatcher
+    // would surface every tool as isError "tool failed".)
+    expect(toolResults.some((e) => e.isError === false)).toBe(true);
+    expect(toolResults.every((e) => e.content !== "tool failed")).toBe(true);
     expect(events.some((e) => e.type === "message_stop")).toBe(true);
   }, 120_000);
 });
