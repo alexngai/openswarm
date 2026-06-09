@@ -14,7 +14,8 @@
     "x64"
   ],
   "files": [
-    "swarm-harness"
+    "swarm-harness",
+    "libopentui.so"
   ],
   "preferUnpacked": true
 }

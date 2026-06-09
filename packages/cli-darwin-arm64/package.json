@@ -14,7 +14,8 @@
     "arm64"
   ],
   "files": [
-    "swarm-harness"
+    "swarm-harness",
+    "libopentui.dylib"
   ],
   "preferUnpacked": true
 }
