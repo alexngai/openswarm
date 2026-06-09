@@ -109,24 +109,42 @@ function createNativeLibShim(t: Target): BunPlugin {
 }
 
 // ---------------------------------------------------------------------------
-// Ensure the target platform's native package is installed (for the copy step
-// and so cross-compile bundling can resolve assets). Installs with --no-save.
+// Resolve the target platform's native libopentui.<ext> for the copy step.
+//
+// For the host platform it's already in node_modules. For cross-compile the
+// package manager refuses to *install* an os/cpu-mismatched package, so we
+// fetch the tarball directly with `npm pack` (which ignores os/cpu gating) and
+// extract the lib into a build cache. Returns the lib's path, or null if it
+// can't be obtained.
 // ---------------------------------------------------------------------------
 function ensureNativePackage(t: Target): string | null {
   if (!t.libName) return null;
   const nativePkg = `@opentui/core-${t.platform}-${t.arch}`;
-  const dir = resolve(`node_modules/${nativePkg}`);
-  if (!existsSync(dir)) {
-    console.log(`  Installing ${nativePkg}@${OPENTUI_VERSION} (cross-compile)…`);
-    try {
-      execSync(`bun add --no-save ${nativePkg}@${OPENTUI_VERSION}`, { stdio: "pipe" });
-    } catch (err) {
-      console.error(`  Failed to install ${nativePkg}. Cross-compilation needs all platform packages.`);
-      throw err;
-    }
+
+  // Fast path: installed for the host platform.
+  const installed = resolve(`node_modules/${nativePkg}`, t.libName);
+  if (existsSync(installed)) return installed;
+
+  // Cross-compile: fetch + extract the tarball.
+  const cacheDir = resolve(`.build/native/${t.platform}-${t.arch}`);
+  const cachedLib = resolve(cacheDir, "package", t.libName);
+  if (existsSync(cachedLib)) return cachedLib;
+
+  console.log(`  Fetching ${nativePkg}@${OPENTUI_VERSION} native lib (cross-compile)…`);
+  mkdirSync(cacheDir, { recursive: true });
+  try {
+    const out = execSync(
+      `npm pack ${nativePkg}@${OPENTUI_VERSION} --pack-destination ${cacheDir} --json`,
+      { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] },
+    );
+    const filename = (JSON.parse(out) as Array<{ filename: string }>)[0]?.filename;
+    if (!filename) throw new Error("npm pack returned no filename");
+    execSync(`tar -xzf ${resolve(cacheDir, filename)} -C ${cacheDir}`, { stdio: "pipe" });
+  } catch (err) {
+    console.error(`  Failed to fetch ${nativePkg}. Cross-compilation needs its native lib.`);
+    throw err;
   }
-  const lib = resolve(dir, t.libName);
-  return existsSync(lib) ? lib : null;
+  return existsSync(cachedLib) ? cachedLib : null;
 }
 
 // Emit into the per-platform package dir (mirrors openswarm), so each
