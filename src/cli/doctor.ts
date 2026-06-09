@@ -20,6 +20,9 @@ import { createRequire } from "node:module";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 import { detectAuth } from "../auth/status.js";
+import { readCodexTokens, type CodexTokens } from "../auth/openai-codex-token-store.js";
+import { runCodexTlsPreflight, formatCodexTlsFix } from "../auth/openai-codex-tls-preflight.js";
+import { fetchCodexUsage, formatCodexUsage } from "../auth/openai-codex-usage.js";
 
 const execFile = promisify(execFileCb);
 
@@ -248,6 +251,78 @@ async function checkCodexCli(): Promise<CheckResult> {
   };
 }
 
+/** Pure check logic — separated from I/O so it is hermetically testable. */
+export function codexAuthCheck(tokens: CodexTokens | null, now: number): CheckResult {
+  if (tokens === null) {
+    return {
+      name: "codex-auth",
+      status: "warn",
+      message:
+        "Not logged in to ChatGPT — run `swarm-harness login --provider openai-codex` to use --framework codex-native.",
+    };
+  }
+  const mins = Math.round((tokens.expiresAt - now) / 60_000);
+  const expiry =
+    mins > 0 ? `access token valid ~${mins} min` : "access token expired (refreshes on next use)";
+  return {
+    name: "codex-auth",
+    status: "pass",
+    message: `ChatGPT (codex) authenticated; ${expiry}.`,
+  };
+}
+
+async function checkCodexAuth(): Promise<CheckResult> {
+  return codexAuthCheck(readCodexTokens(), Date.now());
+}
+
+/** Pure usage-check logic (injectable fetch) — hermetically testable. */
+export async function codexUsageCheck(
+  tokens: CodexTokens | null,
+  fetchUsage: typeof fetchCodexUsage = fetchCodexUsage,
+): Promise<CheckResult> {
+  if (tokens === null) {
+    return { name: "codex-usage", status: "pass", message: "skipped (not logged in to ChatGPT)" };
+  }
+  try {
+    return {
+      name: "codex-usage",
+      status: "pass",
+      message: formatCodexUsage(await fetchUsage(tokens.access, tokens.accountId)),
+    };
+  } catch (err) {
+    return {
+      name: "codex-usage",
+      status: "warn",
+      message: `could not fetch usage: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
+async function checkCodexUsage(): Promise<CheckResult> {
+  // Use the stored access token directly (codexUsageCheck): a health check must
+  // NOT mutate credentials — getCredentials() can refresh/rotate/clear them.
+  return codexUsageCheck(readCodexTokens());
+}
+
+/** Pure TLS-check logic (injectable probe) — hermetically testable. */
+export async function codexTlsCheck(
+  loggedIn: boolean,
+  run: typeof runCodexTlsPreflight = runCodexTlsPreflight,
+): Promise<CheckResult> {
+  if (!loggedIn) {
+    return { name: "codex-tls", status: "pass", message: "skipped (not logged in to ChatGPT)" };
+  }
+  const result = await run();
+  if (result.ok) {
+    return { name: "codex-tls", status: "pass", message: "auth.openai.com TLS validates" };
+  }
+  return { name: "codex-tls", status: "warn", message: formatCodexTlsFix(result) };
+}
+
+async function checkCodexTls(): Promise<CheckResult> {
+  return codexTlsCheck(readCodexTokens() !== null);
+}
+
 async function checkWorkspace(cwd: string): Promise<CheckResult> {
   const probeFile = path.join(cwd, `.swarm-harness-doctor-probe-${process.pid}`);
   try {
@@ -277,6 +352,9 @@ export async function runDoctor(
     checkInstall(),
     checkWorkspace(cwd),
     checkCodexCli(),
+    checkCodexAuth(),
+    checkCodexTls(),
+    checkCodexUsage(),
   ]);
 
   const overall: "pass" | "fail" = checks.some((c) => c.status === "fail")

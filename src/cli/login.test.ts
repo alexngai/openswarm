@@ -1,8 +1,46 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 
+const { loginSpy } = vi.hoisted(() => ({ loginSpy: vi.fn() }));
+vi.mock("../auth/openai-codex-oauth.js", () => ({
+  OpenAICodexAuth: class {
+    login = loginSpy;
+  },
+}));
+
 describe("loginMain", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    loginSpy.mockReset();
+  });
+
+  it("openai-codex → browser login, exit 0", async () => {
+    loginSpy.mockResolvedValue(undefined);
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const { loginMain } = await import("./login.js");
+    const code = await loginMain(["--provider", "openai-codex"]);
+    expect(code).toBe(0);
+    expect(loginSpy).toHaveBeenCalledWith({ deviceCode: false });
+  });
+
+  it("openai-codex --device → device login", async () => {
+    loginSpy.mockResolvedValue(undefined);
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const { loginMain } = await import("./login.js");
+    await loginMain(["--provider", "openai-codex", "--device"]);
+    expect(loginSpy).toHaveBeenCalledWith({ deviceCode: true });
+  });
+
+  it("openai-codex login failure → exit 2", async () => {
+    loginSpy.mockRejectedValue(new Error("boom"));
+    const errChunks: string[] = [];
+    vi.spyOn(process.stderr, "write").mockImplementation((c: unknown) => {
+      errChunks.push(String(c));
+      return true;
+    });
+    const { loginMain } = await import("./login.js");
+    const code = await loginMain(["--provider", "openai-codex"]);
+    expect(code).toBe(2);
+    expect(errChunks.join("")).toContain("ChatGPT login failed");
   });
 
   it("codex-chatgpt → prints redirect message and exits 0", async () => {

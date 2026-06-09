@@ -26,7 +26,7 @@ import type { TopologyKind } from "../swarm/team-spec.js";
 // Public types
 // ---------------------------------------------------------------------------
 
-export type FrameworkChoice = "native" | "hardened-native" | "claude-agent-sdk" | "codex-chatgpt" | "auto";
+export type FrameworkChoice = "native" | "hardened-native" | "claude-agent-sdk" | "codex-chatgpt" | "codex-native" | "auto";
 
 export interface CommonOpts {
   model?: string;
@@ -66,6 +66,11 @@ export interface CommonOpts {
    * everything else → native). Not advertised prominently in --help.
    */
   readonly framework: FrameworkChoice;
+  /**
+   * codex-native transport. "sse" (default), or "websocket"/"auto" for the
+   * delta connection that avoids re-uploading context each turn (docs/42 §9).
+   */
+  readonly codexTransport?: "sse" | "websocket" | "auto";
   /**
    * When true, print { engineId, providerId?, modelId } as JSON to stdout
    * and exit 0 before running any turn. For smoke tests only — not in --help.
@@ -125,7 +130,7 @@ export type ParsedArgs =
     }
   | { kind: "plugin"; pluginArgv: string[] }
   | { kind: "worktree"; worktreeArgv: string[] }
-  | { kind: "login"; provider: string }
+  | { kind: "login"; provider: string; device: boolean }
   | { kind: "logout"; provider: string }
   | { kind: "acp"; opts: CommonOpts }
   | {
@@ -226,7 +231,10 @@ export function parseArgv(args: string[]): ParsedArgs {
   let acpSingle = false;
   let acpTeam = false;
   let framework: FrameworkChoice = "auto";
+  let codexTransport: "sse" | "websocket" | "auto" | undefined;
   let dumpEngine = false;
+  // `--device` selects the headless device-code login flow (login subcommand only).
+  let device = false;
   let eagerToolDispatch = false;
   let midTurnCompaction = false;
   let maxTokens: number | undefined;
@@ -402,10 +410,10 @@ export function parseArgv(args: string[]): ParsedArgs {
           showHelp: true,
         };
       }
-      if (val !== "native" && val !== "hardened-native" && val !== "claude-agent-sdk" && val !== "codex-chatgpt" && val !== "auto") {
+      if (val !== "native" && val !== "hardened-native" && val !== "claude-agent-sdk" && val !== "codex-chatgpt" && val !== "codex-native" && val !== "auto") {
         return {
           kind: "error",
-          message: `invalid --framework "${val}". Valid values: native, hardened-native, claude-agent-sdk, codex-chatgpt, auto`,
+          message: `invalid --framework "${val}". Valid values: native, hardened-native, claude-agent-sdk, codex-chatgpt, codex-native, auto`,
           showHelp: true,
         };
       }
@@ -417,6 +425,13 @@ export function parseArgv(args: string[]): ParsedArgs {
     // Internal debug flag — not advertised in --help.
     if (tok === "--dump-engine") {
       dumpEngine = true;
+      i++;
+      continue;
+    }
+
+    // Headless device-code login (login subcommand).
+    if (tok === "--device") {
+      device = true;
       i++;
       continue;
     }
@@ -443,6 +458,20 @@ export function parseArgv(args: string[]): ParsedArgs {
         };
       }
       model = val;
+      i += 2;
+      continue;
+    }
+
+    if (tok === "--codex-transport") {
+      const val = expanded[i + 1];
+      if (val !== "sse" && val !== "websocket" && val !== "auto") {
+        return {
+          kind: "error",
+          message: `--codex-transport requires one of: sse, websocket, auto`,
+          showHelp: true,
+        };
+      }
+      codexTransport = val;
       i += 2;
       continue;
     }
@@ -795,6 +824,7 @@ export function parseArgv(args: string[]): ParsedArgs {
     dumpTools,
     enableWebSearch,
     framework,
+    codexTransport,
     dumpEngine,
     ...(acpSingle ? { single: true } : {}),
     ...(acpTeam ? { team: true } : {}),
@@ -1076,7 +1106,7 @@ export function parseArgv(args: string[]): ParsedArgs {
     case "login": {
       // --provider was consumed by the main flag loop.
       // Default to claude-agent-sdk when omitted.
-      return { kind: "login", provider: provider ?? "claude-agent-sdk" };
+      return { kind: "login", provider: provider ?? "claude-agent-sdk", device };
     }
 
     case "logout": {

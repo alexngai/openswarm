@@ -44,6 +44,31 @@ describe("parseArgv", () => {
     expect(parseArgv(["version"])).toEqual({ kind: "version" });
   });
 
+  it("login parses --provider and defaults device to false", () => {
+    expect(parseArgv(["login", "--provider", "openai-codex"])).toEqual({
+      kind: "login",
+      provider: "openai-codex",
+      device: false,
+    });
+  });
+
+  it("parses --codex-transport", () => {
+    const r = parseArgv(["--codex-transport", "websocket", "hi"]);
+    expect(r).toMatchObject({ kind: "prompt", opts: { codexTransport: "websocket" } });
+  });
+
+  it("rejects an invalid --codex-transport value", () => {
+    expect(parseArgv(["--codex-transport", "bogus", "hi"])).toMatchObject({ kind: "error" });
+  });
+
+  it("login --device selects the headless flow", () => {
+    expect(parseArgv(["login", "--provider", "openai-codex", "--device"])).toEqual({
+      kind: "login",
+      provider: "openai-codex",
+      device: true,
+    });
+  });
+
   // ---- Flags ---------------------------------------------------------------
 
   it("--model flag sets model in opts", () => {

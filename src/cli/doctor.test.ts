@@ -136,7 +136,7 @@ describe("runDoctor", () => {
     expect(parsed).toHaveProperty("checks");
     expect(parsed).toHaveProperty("overall");
     expect(Array.isArray(parsed.checks)).toBe(true);
-    expect(parsed.checks).toHaveLength(5);
+    expect(parsed.checks).toHaveLength(8);
     expect(["pass", "fail"]).toContain(parsed.overall);
   });
 
@@ -443,5 +443,72 @@ describe("runDoctor", () => {
     } finally {
       execFileMock.mockReset();
     }
+  });
+});
+
+describe("codexAuthCheck (pure, hermetic)", () => {
+  const NOW = Date.parse("2026-06-07T00:00:00Z");
+
+  it("warns when not logged in", async () => {
+    const { codexAuthCheck } = await import("./doctor.js");
+    const r = codexAuthCheck(null, NOW);
+    expect(r.status).toBe("warn");
+    expect(r.message).toContain("login --provider openai-codex");
+  });
+
+  it("passes with remaining validity when the token is fresh", async () => {
+    const { codexAuthCheck } = await import("./doctor.js");
+    const r = codexAuthCheck({ access: "a", refresh: "r", accountId: "x", expiresAt: NOW + 30 * 60_000 }, NOW);
+    expect(r.status).toBe("pass");
+    expect(r.message).toContain("valid ~30 min");
+  });
+
+  it("passes but reports expiry when the token is past due", async () => {
+    const { codexAuthCheck } = await import("./doctor.js");
+    const r = codexAuthCheck({ access: "a", refresh: "r", accountId: "x", expiresAt: NOW - 60_000 }, NOW);
+    expect(r.status).toBe("pass");
+    expect(r.message).toContain("expired");
+  });
+});
+
+describe("codexUsageCheck / codexTlsCheck (hermetic, injected deps)", () => {
+  const tokens = { access: "a", refresh: "r", accountId: "x", expiresAt: Date.now() + 1_000_000 };
+
+  it("usage: skipped when not logged in", async () => {
+    const { codexUsageCheck } = await import("./doctor.js");
+    expect((await codexUsageCheck(null)).message).toContain("skipped");
+  });
+
+  it("usage: pass with formatted windows on success", async () => {
+    const { codexUsageCheck } = await import("./doctor.js");
+    const r = await codexUsageCheck(tokens, async () => ({ plan: "Plus", windows: [{ label: "3h", usedPercent: 10 }] }));
+    expect(r.status).toBe("pass");
+    expect(r.message).toContain("Plus");
+  });
+
+  it("usage: WARN (not fail) when the fetch errors", async () => {
+    const { codexUsageCheck } = await import("./doctor.js");
+    const r = await codexUsageCheck(tokens, async () => {
+      throw new Error("401");
+    });
+    expect(r.status).toBe("warn");
+    expect(r.message).toContain("401");
+  });
+
+  it("tls: skipped when not logged in", async () => {
+    const { codexTlsCheck } = await import("./doctor.js");
+    expect((await codexTlsCheck(false)).message).toContain("skipped");
+  });
+
+  it("tls: pass when the probe validates", async () => {
+    const { codexTlsCheck } = await import("./doctor.js");
+    expect((await codexTlsCheck(true, async () => ({ ok: true }))).status).toBe("pass");
+  });
+
+  it("tls: WARN with a brew hint on a cert failure", async () => {
+    const { codexTlsCheck } = await import("./doctor.js");
+    const r = await codexTlsCheck(true, async () => ({ ok: false, kind: "tls-cert", message: "x" }));
+    expect(r.status).toBe("warn");
+    expect(r.message).toContain("brew");
   });
 });

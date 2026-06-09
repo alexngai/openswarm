@@ -78,7 +78,8 @@ type AssistantBlock =
       readonly id: string;
       readonly name: string;
       readonly input: unknown;
-    };
+    }
+  | { readonly type: "reasoning"; readonly signature: string };
 
 // ---------------------------------------------------------------------------
 // Abort-aware sleep — maps to Codex responses_retry.rs:58-72
@@ -336,6 +337,12 @@ export class HardenedNativeEngine implements AgentEngine {
                 break;
 
               case "reasoning-delta":
+                break;
+
+              case "reasoning":
+                // Persist reasoning state on the assistant message so it is
+                // replayed next turn (reasoning continuity) and snapshotted.
+                assistantContent.push({ type: "reasoning", signature: ev.signature });
                 break;
 
               case "tool-input-start":

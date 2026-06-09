@@ -72,11 +72,14 @@ export interface CodexFrameworkEngineOptions {
 
 /**
  * Default model used when --framework codex-chatgpt is selected without a
- * Codex-compatible --model. Per Stage 3.0 spike (test/fixtures/codex-app-server/
- * SPIKE-NOTES.md), `gpt-5.4` is verified to work on ChatGPT subscriptions.
- * The codex CLI's own default `gpt-5.2-codex` is rejected on non-Pro accounts.
+ * Codex-compatible --model. The ChatGPT-account model allowlist is enforced
+ * server-side and drifts: as of the 2026-06 live spike (docs/42), the backend
+ * rejects `gpt-5.4` and ALL `-codex` variants on a ChatGPT plan with HTTP 400
+ * ("not supported when using Codex with a ChatGPT account"); `gpt-5.5` is the
+ * working default. The set is plan-dependent, so this is a best-effort default —
+ * an explicit unsupported --model still surfaces the backend's 400.
  */
-const CODEX_CHATGPT_DEFAULT_MODEL = "gpt-5.4";
+const CODEX_CHATGPT_DEFAULT_MODEL = "gpt-5.5";
 
 /**
  * Returns true only for model ids that Codex App Server accepts (GPT / o-series).
@@ -89,7 +92,7 @@ function isCodexCompatibleModel(model: string | undefined): model is string {
 /**
  * Resolve the model to send to Codex. If the caller passed a Codex-compatible
  * model, use it. Otherwise (including the CLI default `claude-sonnet-4-6`,
- * which Codex would reject), substitute the spike-verified default `gpt-5.4`
+ * which Codex would reject), substitute the spike-verified default `gpt-5.5`
  * so users running `swarm-harness --framework codex-chatgpt "say hi"` without
  * `--model` get a working session instead of a silent provider_unavailable.
  */

@@ -25,6 +25,10 @@ import { NativeEngine } from "../engine/native.js";
 import { HardenedNativeEngine } from "../engine/hardened-native.js";
 import { ScriptedTestEngine } from "../engine/test-engine.js";
 import { CodexFrameworkEngine } from "../engine/codex-framework.js";
+import { CodexResponsesTransportProvider } from "../providers/codex-responses/index.js";
+import { OpenAICodexAuth } from "../auth/openai-codex-oauth.js";
+import { readCodexTokens } from "../auth/openai-codex-token-store.js";
+import { DEFAULT_COMPACTION } from "../engine/compactor.js";
 import { PluginRegistry } from "../plugins/registry.js";
 import { ClaudeCodeSource } from "../plugins/claude-code-source.js";
 import { PluginStateStore } from "../plugins/state.js";
@@ -96,13 +100,24 @@ export async function buildAgentRuntime(
   // never calls the API).
   const scriptedMode = !!process.env.SWARM_HARNESS_TEST_SCRIPT;
   if (!scriptedMode) {
-    const authStatus = await detectAuth();
-    if (authStatus.state === "none") {
-      process.stderr.write(
-        "error: no auth found.\n" +
-          "  Run `claude auth login` or set ANTHROPIC_API_KEY.\n",
-      );
-      return { kind: "exit", code: 1 };
+    if (opts.framework === "codex-native") {
+      // codex-native uses ChatGPT (codex) credentials, not Anthropic auth.
+      if (readCodexTokens() === null) {
+        process.stderr.write(
+          "error: not logged in to ChatGPT.\n" +
+            "  Run `swarm-harness login --provider openai-codex`.\n",
+        );
+        return { kind: "exit", code: 1 };
+      }
+    } else {
+      const authStatus = await detectAuth();
+      if (authStatus.state === "none") {
+        process.stderr.write(
+          "error: no auth found.\n" +
+            "  Run `claude auth login` or set ANTHROPIC_API_KEY.\n",
+        );
+        return { kind: "exit", code: 1 };
+      }
     }
   }
 
@@ -274,13 +289,45 @@ export async function buildAgentRuntime(
   //    makeEngine(sessionId); validation errors surface here as exit code 2.
   const aliases = await loadAliases();
   const rawModel = opts.model ?? DEFAULT_MODEL;
-  const resolvedModelId = resolveAlias(rawModel, aliases);
+  let resolvedModelId = resolveAlias(rawModel, aliases);
 
   let makeEngine: MakeEngine;
   if (opts.framework === "codex-chatgpt") {
     makeEngine = async () => ({
       engine: new CodexFrameworkEngine({ cwd: process.cwd() }),
     });
+  } else if (opts.framework === "codex-native") {
+    // In-process ChatGPT-subscription path (docs/42). The backend's accepted
+    // model set is plan-dependent and gpt-5.x only; default to gpt-5.5 unless
+    // the user passed an explicit gpt* model (the CLI default is a Claude id).
+    const codexModel = /^gpt/i.test(resolvedModelId) ? resolvedModelId : "gpt-5.5";
+    // Reflect the effective model everywhere downstream — budget/cost pricing,
+    // --dump-engine, RunConfig.model, and the system-prompt "Model" block — not
+    // just the API call (the provider also overrides req.model internally).
+    resolvedModelId = codexModel;
+    makeEngine = async (sessionId: string) => {
+      const auth = new OpenAICodexAuth();
+      const provider = new CodexResponsesTransportProvider({
+        modelId: codexModel,
+        credentials: auth,
+        sessionId,
+        ...(opts.codexTransport !== undefined ? { transport: opts.codexTransport } : {}),
+      });
+      const engine = new HardenedNativeEngine({
+        provider,
+        sessionId,
+        eagerToolDispatch: opts.eagerToolDispatch,
+        midTurnCompaction: opts.midTurnCompaction,
+        // Size compaction to the provider's real context window (~400k), not the
+        // 10k DEFAULT_COMPACTION — otherwise we'd compact away the byte-stable
+        // prefix that the ~96% prompt caching relies on (docs/42 §6.2).
+        compactionConfig: {
+          preserveRecentMessages: DEFAULT_COMPACTION.preserveRecentMessages,
+          maxEstimatedTokens: Math.floor(provider.capabilities.maxContextTokens * 0.8),
+        },
+      });
+      return { engine, providerId: provider.id };
+    };
   } else if (scriptedMode) {
     makeEngine = async () => ({ engine: new ScriptedTestEngine() });
   } else {

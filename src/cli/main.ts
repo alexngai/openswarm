@@ -212,6 +212,9 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     model: rt.resolvedModelId,
     auth: rt.auth,
     tools: rt.tools,
+    // Without this the native/hardened engines can offer tools but cannot
+    // execute them (batch dispatch no-ops → every tool returns "tool failed").
+    dispatcher: rt.dispatcher,
     canUseTool,
     permissionMode: opts.permissionMode,
     resumeFrom,
@@ -448,7 +451,11 @@ export async function main(argv: string[]): Promise<number> {
       return runTeamKill(parsed.name);
 
     case "login":
-      return loginMain(["--provider", parsed.provider]);
+      return loginMain([
+        "--provider",
+        parsed.provider,
+        ...(parsed.device ? ["--device"] : []),
+      ]);
 
     case "logout":
       return logoutMain(["--provider", parsed.provider]);

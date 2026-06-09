@@ -69,7 +69,8 @@ type AssistantBlock =
       readonly id: string;
       readonly name: string;
       readonly input: unknown;
-    };
+    }
+  | { readonly type: "reasoning"; readonly signature: string };
 
 // ---------------------------------------------------------------------------
 // NativeEngine
@@ -261,6 +262,11 @@ export class NativeEngine implements AgentEngine {
             case "reasoning-delta":
               // Dropped in M4a — NormalizedEvent has no reasoning variant.
               // TODO(M4b): extend NormalizedEvent with reasoning_delta.
+              break;
+
+            case "reasoning":
+              // Persist reasoning state for replay-based continuity + snapshots.
+              assistantContent.push({ type: "reasoning", signature: ev.signature });
               break;
 
             case "tool-input-start":

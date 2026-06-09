@@ -19,9 +19,15 @@ import type { AuthSource } from "../auth/index.js";
 // ---------------------------------------------------------------------------
 
 export interface Provider {
-  /** Stable id: "anthropic" | "openai" | "google" | "xai" | "openai-compat" | "codex-chatgpt". */
+  /** Stable id: "anthropic" | "openai" | "google" | "xai" | "openai-compat" | "openai-codex". */
   readonly id: string;
-  readonly model: LanguageModel;
+  /**
+   * Vercel AI SDK model handle. Omitted by providers that own their transport
+   * and bypass the AI SDK entirely (e.g. CodexResponsesTransportProvider speaks
+   * raw HTTPS+SSE). Engines never read this — they only call `stream()` — so it
+   * is purely an internal handle for AI-SDK-backed providers.
+   */
+  readonly model?: LanguageModel;
   readonly capabilities: ProviderCapabilities;
   /**
    * Stream a single provider turn. Yields ProviderEvents that NativeEngine
@@ -97,6 +103,14 @@ export interface ProviderRequest {
 export type ProviderEvent =
   | { readonly type: "text-delta"; readonly text: string }
   | { readonly type: "reasoning-delta"; readonly text: string }
+  /**
+   * A completed reasoning item, emitted once at item end. `signature` is an
+   * opaque, provider-specific blob (e.g. the codex reasoning item incl. its
+   * encrypted content) that the engine persists on the assistant message and
+   * replays next turn for reasoning continuity. Display text rides on
+   * `reasoning-delta`; this carries the replayable state.
+   */
+  | { readonly type: "reasoning"; readonly signature: string }
   | { readonly type: "tool-input-start"; readonly id: string; readonly name: string }
   | { readonly type: "tool-input-delta"; readonly id: string; readonly delta: string }
   | {
@@ -150,6 +164,10 @@ export type ProviderMessage =
             readonly name: string;
             readonly input: unknown;
           }
+        // Opaque reasoning state for continuity (see ProviderEvent "reasoning").
+        // Providers that don't reason never produce these; consumers that don't
+        // understand them (e.g. the Vercel replay path) filter them out.
+        | { readonly type: "reasoning"; readonly signature: string }
       )[];
     };
 

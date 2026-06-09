@@ -29,7 +29,8 @@ function isRetryableTransportError(err: unknown): boolean {
 
 export class RetryingProvider implements Provider {
   readonly id: string;
-  readonly model: LanguageModel;
+  // Optional: mirrors Provider.model, which own-transport providers omit.
+  readonly model?: LanguageModel;
   readonly capabilities: ProviderCapabilities;
 
   constructor(

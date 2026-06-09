@@ -8,6 +8,8 @@
  *   2 — infra error (unexpected throws)
  */
 
+import { OpenAICodexAuth } from "../auth/openai-codex-oauth.js";
+
 // ---------------------------------------------------------------------------
 // Main entry
 // ---------------------------------------------------------------------------
@@ -20,6 +22,23 @@ export async function loginMain(argv: string[]): Promise<number> {
     providerIdx !== -1 ? argv[providerIdx + 1] : "claude-agent-sdk";
 
   switch (provider) {
+    case "openai-codex": {
+      // In-process ChatGPT-subscription auth (docs/42) — we own the OAuth flow.
+      const deviceCode = argv.includes("--device");
+      try {
+        await new OpenAICodexAuth().login({ deviceCode });
+      } catch (err) {
+        process.stderr.write(
+          `error: ChatGPT login failed: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+        return 2;
+      }
+      process.stdout.write(
+        "Authenticated with ChatGPT. Run with `--framework codex-native`.\n",
+      );
+      return 0;
+    }
+
     case "codex-chatgpt": {
       process.stdout.write(
         "swarm-harness now delegates ChatGPT auth to the official codex CLI.\n" +
@@ -42,7 +61,7 @@ export async function loginMain(argv: string[]): Promise<number> {
 
     default:
       process.stderr.write(
-        `error: unknown provider: ${provider}. Known: codex-chatgpt, claude-agent-sdk.\n`,
+        `error: unknown provider: ${provider}. Known: openai-codex, codex-chatgpt, claude-agent-sdk.\n`,
       );
       return 1;
   }

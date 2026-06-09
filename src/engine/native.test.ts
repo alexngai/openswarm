@@ -298,6 +298,50 @@ describe("NativeEngine: one tool call", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 2b. Reasoning continuity (#6.1)
+// ---------------------------------------------------------------------------
+
+describe("NativeEngine: reasoning continuity", () => {
+  it("captures a reasoning block into the assistant message, before text/tool, for replay", async () => {
+    const sig = '{"id":"rs_1","type":"reasoning","encrypted_content":"ENC","summary":[]}';
+    const captured: ProviderRequest[] = [];
+    const provider = new MockProvider({
+      onRequest: (r) => captured.push(r),
+      capabilities: { reasoning: true },
+      scripts: [
+        // turn 1: reasoning, then text, then a tool call (so the loop continues)
+        [
+          { type: "reasoning", signature: sig },
+          { type: "text-delta", text: "thinking" },
+          { type: "tool-call", id: "t1", name: "bash", input: { cmd: "ls" } },
+          { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
+        ],
+        // turn 2: terminal
+        [
+          { type: "text-delta", text: "done" },
+          { type: "finish", stopReason: "end_turn", usage: DEFAULT_USAGE },
+        ],
+      ],
+    });
+    const dispatcher = new MockDispatcher({ scriptedResults: [{ status: "ok", output: "x" }] });
+    const engine = new NativeEngine({ provider });
+    await collect(
+      engine.run(
+        baseConfig({
+          dispatcher: dispatcher as unknown as ToolDispatcher,
+          canUseTool: async () => ({ allow: true }),
+        }),
+      ),
+    );
+
+    // Turn 2 replays the assistant turn — reasoning block must be first.
+    const assistant = captured[1]!.messages.find((m) => m.role === "assistant")!;
+    expect(assistant.content.map((b) => b.type)).toEqual(["reasoning", "text", "tool_use"]);
+    expect(assistant.content[0]).toEqual({ type: "reasoning", signature: sig });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 3. Permission denied
 // ---------------------------------------------------------------------------
 
