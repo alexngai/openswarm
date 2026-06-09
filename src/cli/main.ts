@@ -189,7 +189,17 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   let currentPermissionMode = opts.permissionMode;
   const permissionBridge = new PermissionBridge();
   // Determined up-front so the gate and the UI route share one heuristic.
-  const useHeadless = opts.headless || !process.stdout.isTTY;
+  // The interactive TUI needs bun (OpenTUI's bun:ffi). When running under plain
+  // node (e.g. the launcher's node-bundle fallback on a platform without the
+  // compiled binary), degrade the TUI to headless instead of crashing.
+  const tuiUnavailable = !process.versions.bun;
+  if (!opts.headless && process.stdout.isTTY && tuiUnavailable) {
+    process.stderr.write(
+      "[swarm-harness] interactive TUI requires the compiled binary (bun runtime); " +
+        "falling back to headless output. Install the platform binary or pass --headless to silence this.\n",
+    );
+  }
+  const useHeadless = opts.headless || !process.stdout.isTTY || tuiUnavailable;
   const canUseTool = makeCanUseTool({
     dispatcher: rt.dispatcher,
     permEngine: rt.permEngine,

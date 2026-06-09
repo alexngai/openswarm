@@ -1,7 +1,7 @@
 {
   "name": "swarm-harness",
   "version": "0.3.0",
-  "description": "swarm-compatible coding agent",
+  "description": "Multi-agent coding agent CLI: one agent is a tool, N coordinated agents are the product. Built on Anthropic's Claude Agent SDK with swarm/team orchestration, multi-provider support, and a Bun-native interactive TUI.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -12,21 +12,19 @@
     }
   },
   "bin": {
-    "swarm-harness": "dist/cli.js"
+    "swarm-harness": "bin/swarm-harness.mjs"
   },
   "files": [
-    "dist",
-    "README.md",
-    "LICENSE"
+    "bin/",
+    "dist/"
   ],
   "scripts": {
-    "build": "tsc",
-    "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper node_modules/node-pty/prebuilds/linux-*/spawn-helper 2>/dev/null || true",
+    "build": "tsc -p tsconfig.build.json",
     "build:compile": "bun scripts/build-binary.ts",
     "build:compile:darwin-arm64": "bun scripts/build-binary.ts bun-darwin-arm64",
     "build:compile:darwin-x64": "bun scripts/build-binary.ts bun-darwin-x64",
     "build:compile:linux-x64": "bun scripts/build-binary.ts bun-linux-x64",
-    "prepublishOnly": "npm run build",
+    "prepublishOnly": "npm run build && npx --yes publint",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run test/integration",
@@ -34,27 +32,41 @@
     "test:ui:unit": "bun test src/ui/repl-solid/opentui.test.tsx src/ui/repl-solid/store.test.ts src/ui/repl-solid/transcript.test.tsx src/ui/repl-solid/input.test.tsx src/ui/repl-solid/status.test.tsx src/ui/repl-solid/dropdown.test.tsx src/ui/repl-solid/spinner.test.tsx src/ui/repl-solid/app.test.tsx src/ui/repl-solid/e2e.test.tsx",
     "test:ui:live": "bun test src/ui/repl-solid/cli-bun.test.ts",
     "test:all": "npm run test && npm run test:ui",
-    "typecheck:ui": "tsc -p src/ui/repl-solid/tsconfig.json"
+    "typecheck:ui": "tsc -p src/ui/repl-solid/tsconfig.json",
+    "build:dev": "tsc",
+    "build:packages": "npm run build:compile:darwin-arm64 && npm run build:compile:darwin-x64 && npm run build:compile:linux-x64",
+    "publish:release": "bun scripts/publish.ts"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "keywords": [
+    "ai",
+    "agent",
+    "ai-agent",
+    "multi-agent",
     "swarm",
-    "agents",
+    "coding-agent",
+    "cli",
+    "tui",
+    "orchestration",
     "claude",
-    "coding"
+    "claude-agent-sdk",
+    "anthropic",
+    "openai",
+    "codex",
+    "acp"
   ],
   "author": "Alex Ngai <alexander.s.ngai@gmail.com>",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/alexngai/swarm-harness.git"
+    "url": "git+https://github.com/alexngai/swarm-coder.git"
   },
   "bugs": {
-    "url": "https://github.com/alexngai/swarm-harness/issues"
+    "url": "https://github.com/alexngai/swarm-coder/issues"
   },
-  "homepage": "https://github.com/alexngai/swarm-harness",
+  "homepage": "https://github.com/alexngai/swarm-coder#readme",
   "devDependencies": {
     "@types/node": "^25.6.0",
     "@types/proper-lockfile": "^4.1.4",
@@ -85,6 +97,9 @@
     "zod-to-json-schema": "^3.25.2"
   },
   "optionalDependencies": {
+    "@swarm-harness/cli-darwin-arm64": "0.3.0",
+    "@swarm-harness/cli-darwin-x64": "0.3.0",
+    "@swarm-harness/cli-linux-x64": "0.3.0",
     "minimem": "^0.1.1"
   }
 }

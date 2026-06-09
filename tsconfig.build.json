@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "sourceMap": false,
+    "declarationMap": false
+  },
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/ui/repl-solid/**/*.tsx",
+    "src/ui/repl-solid/cli-bun.test.ts",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "test"
+  ]
+}
