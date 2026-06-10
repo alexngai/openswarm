@@ -139,7 +139,7 @@ export type ParsedArgs =
       concurrency: number;
       output: string;
       permissionMode: PermissionMode;
-      /** When set, the orchestrator wires a MapAdapter to this URL (v0.4 stage 4J). */
+      /** When set, the CLI attaches a MAP-sidecar observer dialing this hub URL. */
       mapUrl?: string;
       /** v0.5 stage 5E.3: when true, fork the team daemon and return immediately. */
       detach: boolean;
@@ -151,7 +151,7 @@ export type ParsedArgs =
       concurrency: number;
       output: string;
       permissionMode: PermissionMode;
-      /** When set, the orchestrator wires a MapAdapter to this URL (v0.4 stage 4J). */
+      /** When set, the CLI attaches a MAP-sidecar observer dialing this hub URL. */
       mapUrl?: string;
       maxTokens?: number;
       maxCostUsd?: number;
