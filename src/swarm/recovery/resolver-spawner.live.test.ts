@@ -130,7 +130,9 @@ describe.skipIf(!LIVE)("spawn-resolver with a live Claude resolver", () => {
       team = new TeamSession({
         name: "live-resolver",
         host,
-        permissionMode: "workspace-write",
+        // The conflict worktree is a throwaway dir outside the orchestrator's
+        // workspace, so the resolver needs unrestricted file/bash access there.
+        permissionMode: "danger-full-access",
       });
 
       const spawnResolver = buildResolverSpawner({
