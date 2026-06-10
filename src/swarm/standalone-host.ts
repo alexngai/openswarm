@@ -163,6 +163,16 @@ export class StandaloneHost implements SwarmHost {
    * agentId as the memberId.
    */
   private readonly agentToMemberId = new Map<AgentId, string>();
+  /** docs/44 P2 — pending conflict-resolution waiters, keyed by conflictId. */
+  private readonly conflictWaiters = new Map<
+    string,
+    (v: { resolutionCommit?: string } | null) => void
+  >();
+  /** docs/44 P2 — resolutions that arrived before anyone started awaiting. */
+  private readonly resolvedConflicts = new Map<
+    string,
+    { resolutionCommit?: string }
+  >();
 
   // Expose the registry via the TaskAPI wrapper.
   readonly task: TaskAPI;
@@ -355,6 +365,51 @@ export class StandaloneHost implements SwarmHost {
       sourceAgentId: agentId,
       targetStream: opts.targetStream,
       ...(opts.strategy !== undefined && { strategy: opts.strategy }),
+    });
+  }
+
+  /**
+   * docs/44 P2 — mark a conflict resolved (called by the `resolve_conflict`
+   * tool). Wakes a matching waiter if present; otherwise records the
+   * resolution so a later `waitForConflictResolution` returns immediately.
+   */
+  resolveConflict(
+    conflictId: string,
+    opts?: { readonly resolutionCommit?: string },
+  ): void {
+    const payload = { resolutionCommit: opts?.resolutionCommit };
+    const waiter = this.conflictWaiters.get(conflictId);
+    if (waiter !== undefined) {
+      this.conflictWaiters.delete(conflictId);
+      waiter(payload);
+      return;
+    }
+    this.resolvedConflicts.set(conflictId, payload);
+  }
+
+  /**
+   * docs/44 P2 — await resolution of a conflict, or time out. Returns the
+   * resolution payload on success, or `null` on timeout. Idempotent-friendly:
+   * a resolution that arrived before the wait started is consumed immediately.
+   */
+  async waitForConflictResolution(
+    conflictId: string,
+    timeoutMs: number,
+  ): Promise<{ readonly resolutionCommit?: string } | null> {
+    const already = this.resolvedConflicts.get(conflictId);
+    if (already !== undefined) {
+      this.resolvedConflicts.delete(conflictId);
+      return already;
+    }
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.conflictWaiters.delete(conflictId);
+        resolve(null);
+      }, timeoutMs);
+      this.conflictWaiters.set(conflictId, (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      });
     });
   }
 

@@ -32,7 +32,22 @@ export interface ConflictContext {
   readonly recoveryDepth: number;
   /** Strategy-specific config from role/team YAML. */
   readonly strategyConfig?: Record<string, unknown>;
+  /**
+   * docs/44 P2 — injected per-run resolver spawner. The topology provides this
+   * (it needs the live team) so `spawn-resolver` can spawn a resolver agent,
+   * await its `resolve_conflict`, and retry the merge. Absent (e.g. no live
+   * team) → `spawn-resolver` gracefully escalates. Wired live in P2b.
+   */
+  readonly spawnResolver?: ResolverSpawner;
 }
+
+/**
+ * Spawns a resolver agent for a conflict and returns the eventual resolution.
+ * Implemented per-run by the topology; injected via `ConflictContext`.
+ */
+export type ResolverSpawner = (
+  ctx: ConflictContext,
+) => Promise<ConflictResolution>;
 
 export type ConflictResolution =
   | { readonly kind: "resolved"; readonly resolutionCommit?: string }

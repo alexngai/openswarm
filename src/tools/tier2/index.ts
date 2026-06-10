@@ -23,6 +23,7 @@ import { askUserQuestionTool } from "./ask_user_question.js";
 import { teamMembersTool } from "./team_members.js";
 import { taskPullNextTool } from "./task_pull_next.js";
 import { commitChangesTool } from "./commit_changes.js";
+import { resolveConflictTool } from "./resolve_conflict.js";
 
 /** All Tier 2 tools in a stable order. */
 export function buildTier2Tools(): readonly ToolImpl[] {
@@ -40,6 +41,7 @@ export function buildTier2Tools(): readonly ToolImpl[] {
     teamMembersTool,
     taskPullNextTool,
     commitChangesTool,
+    resolveConflictTool,
   ] as const;
 }
 
@@ -57,4 +59,5 @@ export {
   teamMembersTool,
   taskPullNextTool,
   commitChangesTool,
+  resolveConflictTool,
 };

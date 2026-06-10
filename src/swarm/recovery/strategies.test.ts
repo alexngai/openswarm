@@ -48,9 +48,14 @@ describe("built-in recovery strategies", () => {
 });
 
 describe("createDefaultRecoveryRegistry", () => {
-  it("registers defer, abandon, and escalate", () => {
+  it("registers the built-in recovery strategies", () => {
     const r = createDefaultRecoveryRegistry();
-    expect([...r.list()].sort()).toEqual(["abandon", "defer", "escalate"]);
+    expect([...r.list()].sort()).toEqual([
+      "abandon",
+      "defer",
+      "escalate",
+      "spawn-resolver",
+    ]);
   });
 
   it("does NOT register auto-resolve (D2 — intentionally cut)", () => {

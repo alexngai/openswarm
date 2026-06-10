@@ -138,6 +138,30 @@ defer + escalate. (Mirror macro's `conflict-resolution-git.e2e.test.ts`.)
 
 ### P2 — `spawn-resolver` + `resolve_conflict` (W1b + W6) _(M–L)_
 
+> **Split into P2a (done) + P2b (pending live-git work).** The merge conflict
+> lives in a throwaway worktree, the resolver runs as a subprocess WorkerHost,
+> and a real LLM resolver needs a live-agent test — so the self-contained,
+> unit-testable core ships first; the live wiring + real-git worktree handling
+> follows.
+>
+> **P2a — ✅ DONE (2026-06-09).** `resolver` built-in role (commit_changes +
+> resolve_conflict); `resolve_conflict` tool (`src/tools/tier2/`) +
+> `StandaloneHost.resolveConflict`/`waitForConflictResolution` coordination
+> primitive (optional on `SwarmHost`); `spawn-resolver` strategy
+> (`recovery/spawn-resolver.ts`) with an **injected** `ctx.spawnResolver`
+> (bounded recursion, escalate-on-timeout/no-spawner), registered in the default
+> registry (inert until a spawner is injected). Verify: `src/swarm` + `src/tools`
+> **742 pass**, `tsc --noEmit` clean. **Deferred from P2a:** the `attach`
+> BranchPolicy — it locks a git-worktree design (one-worktree-per-branch) better
+> decided against real git in P2b.
+>
+> **P2b — TODO (needs live validation).** Real `ResolverSpawner` in peer-team
+> (spawn resolver into the live team, place it on the conflict, await
+> `waitForConflictResolution`, retry the merge); WorkerHost→orchestrator IPC for
+> `resolve_conflict`; the resolver-worktree mechanism (likely retain the
+> conflicted merge worktree instead of cleaning it up); a live-agent e2e.
+
+
 The autonomous-team conflict path. Two new primitives.
 
 **New primitive 1 — attach to the conflicted branch.** macro forks a *new* stream;

@@ -145,7 +145,35 @@ const REVIEWER: Role = {
   ],
 };
 
-export const BUILTIN_ROLES: readonly Role[] = [ARCHITECT, EXECUTOR, REVIEWER];
+const RESOLVER: Role = {
+  name: "resolver",
+  systemPromptSuffix:
+    "You are the conflict resolver. A merge produced conflicts. Inspect the " +
+    "conflicting files, resolve every conflict marker so the result is " +
+    "correct — preserve the intent of BOTH sides; never blindly discard one " +
+    "side. Then commit your resolution with `commit_changes`, and finally call " +
+    "`resolve_conflict` with the conflictId you were given. Do not start any " +
+    "unrelated work.",
+  allowedTools: [
+    "bash",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "multi_edit",
+    "glob",
+    "grep",
+    "todo_write",
+    "commit_changes",
+    "resolve_conflict",
+  ],
+};
+
+export const BUILTIN_ROLES: readonly Role[] = [
+  ARCHITECT,
+  EXECUTOR,
+  REVIEWER,
+  RESOLVER,
+];
 
 // ---------------------------------------------------------------------------
 // Custom role loader

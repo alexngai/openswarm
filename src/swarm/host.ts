@@ -179,6 +179,31 @@ export interface SwarmHost {
     message: string,
     metadata?: Record<string, unknown>,
   ): Promise<import("./adapters/git-cascade-branch-policy.js").CommitChangesResult | null>;
+
+  /**
+   * docs/44 P2 — mark a conflict (by id) as resolved. Called by the
+   * `resolve_conflict` tool after a resolver agent commits its fix; wakes any
+   * matching `waitForConflictResolution` waiter (or is recorded for one that
+   * hasn't started waiting yet).
+   *
+   * Optional: only StandaloneHost implements it today. WorkerHost (the
+   * resolver's subprocess) gains an IPC proxy in P2b; until then the tool
+   * feature-detects and reports unsupported.
+   */
+  resolveConflict?(
+    conflictId: string,
+    opts?: { readonly resolutionCommit?: string },
+  ): void;
+
+  /**
+   * docs/44 P2 — await resolution of a conflict, or time out. Used by the
+   * spawn-resolver coordinator (P2b). Resolves with the resolution payload on
+   * success, or `null` on timeout. Optional.
+   */
+  waitForConflictResolution?(
+    conflictId: string,
+    timeoutMs: number,
+  ): Promise<{ readonly resolutionCommit?: string } | null>;
 }
 
 // ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ import { RecoveryRegistry } from "./registry.js";
 import { deferStrategy } from "./defer.js";
 import { abandonStrategy } from "./abandon.js";
 import { escalateStrategy } from "./escalate.js";
+import { spawnResolverStrategy } from "./spawn-resolver.js";
 import type { ConflictResolution } from "./types.js";
 
 export * from "./types.js";
@@ -17,16 +18,21 @@ export { RecoveryRegistry, DEFAULT_RECOVERY_STRATEGY } from "./registry.js";
 export { deferStrategy } from "./defer.js";
 export { abandonStrategy } from "./abandon.js";
 export { escalateStrategy } from "./escalate.js";
+export { spawnResolverStrategy, DEFAULT_MAX_RECOVERY_DEPTH } from "./spawn-resolver.js";
 
 /**
- * Register the built-in recovery strategies on a registry. P1: defer (default),
- * abandon, escalate. `auto-resolve` is intentionally NOT built (docs/44 D2 —
- * blind side-picking is harmful); `spawn-resolver` lands in P2.
+ * Register the built-in recovery strategies on a registry: defer (default),
+ * abandon, escalate, spawn-resolver. `auto-resolve` is intentionally NOT built
+ * (docs/44 D2 — blind side-picking is harmful).
+ *
+ * `spawn-resolver` is registered but inert until the topology injects a
+ * `ConflictContext.spawnResolver` (P2b); without one it escalates.
  */
 export function registerBuiltinRecoveryStrategies(registry: RecoveryRegistry): void {
   registry.register(deferStrategy);
   registry.register(abandonStrategy);
   registry.register(escalateStrategy);
+  registry.register(spawnResolverStrategy);
 }
 
 /** Construct a registry pre-loaded with the built-in strategies. */
