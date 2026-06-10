@@ -166,4 +166,26 @@ describe("mergeStreamToBranch retain-on-conflict", () => {
     expect(fin.success).toBe(false);
     expect(fin.errorType).toBe("stale");
   });
+
+  it("does not shell-inject via a malicious targetBranch (Track-A hardening)", async () => {
+    const sentinel = path.join(os.tmpdir(), `swh-injtest-${Date.now()}.PWNED`);
+    // A branch value carrying a shell command. With argv (execFileSync) this is
+    // just an invalid ref → git fails cleanly; with shell interpolation it
+    // would run `touch <sentinel>`.
+    const evil = `main; touch ${sentinel}`;
+
+    const r = await adapter.mergeStreamIdIntoBranch("nostream", evil);
+    expect(r.success).toBe(false);
+    expect(fs.existsSync(sentinel)).toBe(false);
+
+    // And the finalize update-ref path.
+    const fin = await adapter.finalizeConflictResolution({
+      worktree: repo,
+      targetBranch: evil,
+      oldSha: "0000000000000000000000000000000000000000",
+      resolutionCommit: "HEAD",
+    });
+    expect(fin.success).toBe(false);
+    expect(fs.existsSync(sentinel)).toBe(false);
+  });
 });

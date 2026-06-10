@@ -15,8 +15,22 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { execFileSync } from "node:child_process";
 import type { AgentId } from "../../core/types.js";
 import type { BranchPolicy } from "../host.js";
+
+/**
+ * Run a git command WITHOUT a shell (argv form). Branch names, refs, paths, and
+ * shas are passed as discrete argv entries, so no value can inject shell
+ * metacharacters or break on spaces — unlike string-interpolated `execSync`.
+ * Returns stdout as a string. docs/44 Track-A hardening (CRITICAL: injection).
+ */
+function runGit(args: readonly string[], cwd: string): string {
+  return execFileSync("git", args as string[], {
+    cwd,
+    stdio: "pipe",
+  }).toString();
+}
 
 /**
  * Result of resolving a BranchPolicy at spawn time. When `cwd` is set, the
@@ -524,24 +538,21 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
     for (const { streamId, worktree } of this.agentStreams.values()) {
       streamWorktrees.set(streamId, worktree);
     }
-    const cp = await import("node:child_process");
     const fsp = await import("node:fs/promises");
     const os = await import("node:os");
     const tmpWorktrees: string[] = [];
     const provider = (streamId: string): string => {
       const recorded = streamWorktrees.get(streamId);
       if (recorded !== undefined) return recorded;
-      // Allocate a tmp worktree on the stream's branch.
       const branch = `stream/${streamId}`;
       const tmpDir = path.join(
         os.tmpdir(),
         `swh-cascade-${streamId}-${Date.now()}`,
       );
-      cp.execSync(
-        `git worktree add --detach ${JSON.stringify(tmpDir)} ${JSON.stringify(branch)}`,
-        { cwd: this.repoPath, stdio: "pipe" },
-      );
+      // Record the path BEFORE creating the worktree so cleanup still attempts
+      // removal on a partial `worktree add` failure (Track-A hardening).
       tmpWorktrees.push(tmpDir);
+      runGit(["worktree", "add", "--detach", tmpDir, branch], this.repoPath);
       return tmpDir;
     };
     try {
@@ -564,10 +575,7 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
       // Clean up any tmp worktrees we allocated.
       for (const tmp of tmpWorktrees) {
         try {
-          cp.execSync(
-            `git worktree remove --force ${JSON.stringify(tmp)}`,
-            { cwd: this.repoPath, stdio: "pipe" },
-          );
+          runGit(["worktree", "remove", "--force", tmp], this.repoPath);
         } catch {
           // Best-effort; tmp dirs in /tmp will be cleaned by the OS.
         }
@@ -638,101 +646,104 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
     opts: { strategy?: string; retainOnConflict?: boolean } = {},
   ): Promise<MergeStreamResult> {
     // Use a fresh tmp worktree so we don't disturb any active checkout.
-    const cp = await import("node:child_process");
     const fsp = await import("node:fs/promises");
     const os = await import("node:os");
     const tmpRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "swh-merge-"));
+    // docs/44 P2b — when set, the finally leaves the conflicted worktree in
+    // place for a resolver to fix (caller finalizes via
+    // finalizeConflictResolution, which removes it).
+    let retainWorktree = false;
     try {
-      // git worktree add --detach <tmp> <targetBranch>: detached at the
-      // target's HEAD so we can merge without colliding with an already-
-      // checked-out branch (typical: main is checked out in the repo cwd).
-      cp.execSync(
-        `git worktree add --detach ${JSON.stringify(tmpRoot)} ${JSON.stringify(targetBranch)}`,
-        { cwd: this.repoPath, stdio: "pipe" },
+      // worktree add --detach <tmp> <targetBranch>: detached at the target's
+      // HEAD so we can merge without colliding with an already-checked-out
+      // branch (typical: main is checked out in the repo cwd).
+      runGit(
+        ["worktree", "add", "--detach", tmpRoot, targetBranch],
+        this.repoPath,
       );
-      // docs/44 P2b — when set, the finally leaves the conflicted worktree in
-      // place for a resolver to fix (caller finalizes via
-      // finalizeConflictResolution, which removes it).
-      let retainWorktree = false;
-      let oldSha = "";
       try {
-        const sourceBranch = `stream/${streamId}`;
-        const flag = opts.strategy === "fast-forward" ? "--ff-only" : "--no-ff";
-        // Capture old branch sha for the update-ref CAS so we don't clobber
-        // concurrent updates.
-        oldSha = cp
-          .execSync(`git rev-parse ${JSON.stringify(targetBranch)}`, {
-            cwd: this.repoPath,
-            stdio: "pipe",
-          })
-          .toString()
-          .trim();
-        const out = cp.execSync(
-          `git merge ${flag} ${JSON.stringify(sourceBranch)} -m ${JSON.stringify(`Merge stream/${streamId} into ${targetBranch}`)}`,
-          { cwd: tmpRoot, stdio: "pipe" },
-        );
-        const newHead = cp
-          .execSync("git rev-parse HEAD", { cwd: tmpRoot, stdio: "pipe" })
-          .toString()
-          .trim();
-        // Atomically update the target branch ref to the new merge commit.
-        cp.execSync(
-          `git update-ref refs/heads/${targetBranch} ${newHead} ${oldSha}`,
-          { cwd: this.repoPath, stdio: "pipe" },
-        );
-        void out;
-        return { success: true, newHead };
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        // Authoritative conflict detection: a failed merge leaves unmerged
-        // entries. (git writes "CONFLICT ..." to stdout, not to err.message,
-        // so string-matching the thrown error is unreliable.)
-        let conflicts: string[] = [];
+        let oldSha = "";
+        let newHead = "";
         try {
-          conflicts = cp
-            .execSync("git diff --name-only --diff-filter=U", {
-              cwd: tmpRoot,
-              stdio: "pipe",
-            })
-            .toString()
-            .split("\n")
-            .map((s) => s.trim())
-            .filter((s) => s.length > 0);
-        } catch {
-          // Best-effort; leave conflicts empty if the query fails.
-        }
-        if (conflicts.length > 0) {
-          if (opts.retainOnConflict === true) {
-            retainWorktree = true;
+          const sourceBranch = `stream/${streamId}`;
+          const flag =
+            opts.strategy === "fast-forward" ? "--ff-only" : "--no-ff";
+          // Capture old branch sha for the update-ref CAS so we don't clobber
+          // concurrent updates.
+          oldSha = runGit(["rev-parse", targetBranch], this.repoPath).trim();
+          runGit(
+            [
+              "merge",
+              flag,
+              sourceBranch,
+              "-m",
+              `Merge stream/${streamId} into ${targetBranch}`,
+            ],
+            tmpRoot,
+          );
+          newHead = runGit(["rev-parse", "HEAD"], tmpRoot).trim();
+        } catch (mergeErr) {
+          const msg =
+            mergeErr instanceof Error ? mergeErr.message : String(mergeErr);
+          // Authoritative conflict detection: a failed merge leaves unmerged
+          // entries. (git writes "CONFLICT ..." to stdout, not to err.message,
+          // so string-matching the thrown error is unreliable.)
+          let conflicts: string[] = [];
+          try {
+            conflicts = runGit(
+              ["diff", "--name-only", "--diff-filter=U"],
+              tmpRoot,
+            )
+              .split("\n")
+              .map((s) => s.trim())
+              .filter((s) => s.length > 0);
+          } catch {
+            // Best-effort; leave conflicts empty if the query fails.
+          }
+          if (conflicts.length > 0) {
+            if (opts.retainOnConflict === true) {
+              retainWorktree = true;
+              return {
+                success: false,
+                errorType: "conflict",
+                error: msg.slice(0, 500),
+                conflicts,
+                conflictWorktree: tmpRoot,
+                targetOldSha: oldSha,
+              };
+            }
             return {
               success: false,
-              errorType: "conflict",
               error: msg.slice(0, 500),
+              errorType: "conflict",
               conflicts,
-              conflictWorktree: tmpRoot,
-              targetOldSha: oldSha,
             };
           }
           return {
             success: false,
             error: msg.slice(0, 500),
-            errorType: "conflict",
-            conflicts,
+            errorType: "git_error",
           };
         }
-        return {
-          success: false,
-          error: msg.slice(0, 500),
-          errorType: "git_error",
-        };
+        // Merge succeeded — CAS the ref SEPARATELY so a concurrent target
+        // advance is classified `stale` (retryable) rather than a merge
+        // conflict or generic git error (Track-A hardening HIGH #5).
+        try {
+          runGit(
+            ["update-ref", `refs/heads/${targetBranch}`, newHead, oldSha],
+            this.repoPath,
+          );
+        } catch (casErr) {
+          const msg =
+            casErr instanceof Error ? casErr.message : String(casErr);
+          return { success: false, error: msg.slice(0, 500), errorType: "stale" };
+        }
+        return { success: true, newHead };
       } finally {
         // Clean up the tmp worktree unless a resolver needs it retained.
         if (!retainWorktree) {
           try {
-            cp.execSync(
-              `git worktree remove --force ${JSON.stringify(tmpRoot)}`,
-              { cwd: this.repoPath, stdio: "pipe" },
-            );
+            runGit(["worktree", "remove", "--force", tmpRoot], this.repoPath);
           } catch {
             // Best-effort; the tmp dir is in /tmp and will be cleaned by the OS.
           }
@@ -810,8 +821,16 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
           streamId: entry.streamId,
           ...(r.newHead !== undefined && { mergeCommit: r.newHead }),
         });
+      } else if (r.errorType === "stale") {
+        // A concurrent writer advanced the target — this is retryable, NOT a
+        // terminal failure. Leave the entry 'ready' (don't cancel/lose it) and
+        // stop the drain; a later drain retries it against the new HEAD
+        // (Track-A hardening HIGH #6).
+        break;
       } else {
-        // Cancel so the drain advances past it; surface the failure.
+        // Terminal failure (conflict / git error) — cancel so the drain
+        // advances; surface it in failed[]. (Routing failed[] into the
+        // recovery dispatcher is the deferred model-B step.)
         tracker.cancelMergeQueueEntry(entry.id);
         failed.push({
           entryId: entry.id,
@@ -835,19 +854,12 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
   async finalizeConflictResolution(
     opts: FinalizeConflictOptions,
   ): Promise<MergeStreamResult> {
-    const cp = await import("node:child_process");
+    const worktree = opts.worktree;
     // Auto-read the worktree HEAD when the caller didn't report a commit.
     let resolutionCommit: string;
     try {
       resolutionCommit =
-        opts.resolutionCommit ??
-        cp
-          .execSync("git rev-parse HEAD", {
-            cwd: opts.worktree,
-            stdio: "pipe",
-          })
-          .toString()
-          .trim();
+        opts.resolutionCommit ?? runGit(["rev-parse", "HEAD"], worktree).trim();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return {
@@ -856,23 +868,50 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
         errorType: "git_error",
       };
     }
+    // Re-verify the resolver actually produced a conflict-free tree before
+    // landing it — a buggy/lying resolver must not drive an unmerged tree onto
+    // the target (Track-A hardening: finalize-without-reverify trust gap).
     try {
-      cp.execSync(
-        `git update-ref refs/heads/${opts.targetBranch} ${resolutionCommit} ${opts.oldSha}`,
-        { cwd: this.repoPath, stdio: "pipe" },
+      const unmerged = runGit(["diff", "--name-only", "--diff-filter=U"], worktree)
+        .split("\n")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      if (unmerged.length > 0) {
+        return {
+          success: false,
+          error: `worktree still has unmerged paths: ${unmerged.join(", ")}`,
+          errorType: "unresolved",
+        };
+      }
+    } catch {
+      // Best-effort; if the check itself fails, fall through to the CAS.
+    }
+    // An empty/short oldSha would make `update-ref` CREATE the ref with no CAS,
+    // silently clobbering a concurrently-advanced target — reject it.
+    if (!opts.oldSha || opts.oldSha.length < 7) {
+      return {
+        success: false,
+        error: "missing pre-merge sha for compare-and-swap",
+        errorType: "invalid_state",
+      };
+    }
+    try {
+      runGit(
+        ["update-ref", `refs/heads/${opts.targetBranch}`, resolutionCommit, opts.oldSha],
+        this.repoPath,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      // CAS failed (target advanced). Do NOT remove the worktree — the
+      // resolver's commit is only reachable there; retain it so the caller can
+      // retry the CAS against the new HEAD (Track-A hardening HIGH #4).
       return { success: false, error: msg.slice(0, 500), errorType: "stale" };
-    } finally {
-      try {
-        cp.execSync(
-          `git worktree remove --force ${JSON.stringify(opts.worktree)}`,
-          { cwd: this.repoPath, stdio: "pipe" },
-        );
-      } catch {
-        // Best-effort.
-      }
+    }
+    // Success only — now it's safe to remove the worktree.
+    try {
+      runGit(["worktree", "remove", "--force", worktree], this.repoPath);
+    } catch {
+      // Best-effort.
     }
     return { success: true, newHead: resolutionCommit };
   }
@@ -915,13 +954,12 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
     // — failures are logged via console.warn but don't throw, so dispose
     // remains idempotent and exit-safe.
     if (this.cleanupOnDispose && this.agentStreams.size > 0) {
-      const cp = await import("node:child_process");
       for (const { worktree } of this.agentStreams.values()) {
+        // Skip worktrees already removed by a merge/finalize/cascade path —
+        // avoids noisy false-alarm warnings on every dispose (Track-A hardening).
+        if (!fs.existsSync(worktree)) continue;
         try {
-          cp.execSync(
-            `git worktree remove --force ${JSON.stringify(worktree)}`,
-            { cwd: this.repoPath, stdio: "pipe" },
-          );
+          runGit(["worktree", "remove", "--force", worktree], this.repoPath);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           console.warn(
@@ -930,10 +968,7 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
         }
       }
       try {
-        cp.execSync(`git worktree prune`, {
-          cwd: this.repoPath,
-          stdio: "pipe",
-        });
+        runGit(["worktree", "prune"], this.repoPath);
       } catch {
         // prune is best-effort; failures don't block tracker close.
       }
@@ -980,6 +1015,13 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
       this.tracker = tracker;
       return tracker;
     })();
+
+    // If init fails (transient FS error, missing dep), clear the cached promise
+    // so a later call can retry rather than forever returning the rejected one
+    // (Track-A hardening: rejected-promise poison).
+    this.trackerPromise.catch(() => {
+      this.trackerPromise = undefined;
+    });
 
     return this.trackerPromise;
   }
