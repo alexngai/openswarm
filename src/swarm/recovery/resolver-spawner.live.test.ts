@@ -108,7 +108,14 @@ describe.skipIf(!LIVE)("spawn-resolver with a live Claude resolver", () => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         trackerForTest: makeMockTracker() as any,
       });
-      host = new StandaloneHost({ branchPolicyAdapter: adapter });
+      // The orchestrator host's permission mode is the CEILING for sub-agents
+      // (host.ts: "sub-agents cannot escalate beyond this"). The resolver needs
+      // `exec` to run `git commit` via bash and to call resolve_conflict, so the
+      // host — not just the TeamSession — must grant it.
+      host = new StandaloneHost({
+        branchPolicyAdapter: adapter,
+        permissionMode: "danger-full-access",
+      });
 
       // Conflicting stream off the base.
       const res = await adapter.resolve(

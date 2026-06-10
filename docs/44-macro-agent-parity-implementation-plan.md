@@ -265,27 +265,30 @@ two target worktrees).
   conflict resolves end-to-end: target advances to the resolution, worktree
   removed, `{kind:"resolved"}`. Validates the git + coordination glue the unit
   mocks couldn't. _(M)_
-- **P2b.5 — Loop 2 gated live test. ✅ test written / ⚠️ live run surfaced a
-  tuning gap.** `recovery/resolver-spawner.live.test.ts` —
-  `describe.skipIf(!SWARM_HARNESS_LIVE_RESOLVER)`: real git conflict → real
-  `TeamSession.spawnMember` resolver subprocess (live engine) → `resolve_conflict`
-  IPC → finalize. Skipped by default (suite green); run with
-  `SWARM_HARNESS_LIVE_RESOLVER=1`.
+- **P2b.5 — Loop 2 gated live test. ✅ DONE — PASSES live (2026-06-09).**
+  `recovery/resolver-spawner.live.test.ts` — `describe.skipIf(!SWARM_HARNESS_LIVE_RESOLVER)`:
+  real git conflict → real `TeamSession.spawnMember` resolver subprocess (live
+  engine) → real `resolve_conflict` IPC → finalize. Skipped by default (suite
+  green); run with `SWARM_HARNESS_LIVE_RESOLVER=1`. **Confirmed end-to-end with
+  real Claude: the resolver resolves both sides, commits via bash, signals, the
+  IPC wakes the coordinator, finalize advances `main` — ~14s.**
 
-  **Live-run findings (2026-06-09, 3 runs):** the resolver subprocess spawns,
-  authenticates, runs **real Claude**, and correctly understands the conflict
-  ("preserve both sides… then commit") — so auth + engine + the coordinator
-  prompt all work. **But the loop doesn't close**: `resolve_conflict` never wakes
-  the coordinator → `escalated` at the timeout. `danger-full-access` (worktree is
-  outside the orchestrator cwd) didn't fix it; `handle.events()` surfaced nothing;
-  teardown of the real subprocess in this no-topology path is slow (~17 min wall).
-  **Not fully root-caused** (each cycle ~15 min). Candidates for the focused
-  follow-up: (a) the resolver needs a long-lived/multi-turn worker for the
-  read→edit→commit→signal task; (b) `commit_changes` returns `null` in a throwaway
-  (non-stream) worktree — the resolver should use bash `git commit` (prompt nudge);
-  (c) observability + `handle.kill()` cleanup in the direct-spawn path. **Deferred
-  — deterministic mechanics (P2b.1–4) fully cover the git + coordination logic;
-  this is live agent/lifecycle tuning, not a core-logic gap.**
+  **Root cause of the initial escalations (found via instrumentation):** the
+  **orchestrator host's permission mode is the ceiling** for sub-agents
+  (`host.ts`: "sub-agents cannot escalate beyond this"). The host was left at the
+  default `workspace-write`, which clamped the resolver below `exec`, so its
+  `git commit` (bash) **and** `resolve_conflict` (both require `exec`) were
+  permission-denied — the agent resolved the markers in its worktree but couldn't
+  commit or signal → escalate. Fix: construct the orchestrator `StandaloneHost`
+  with `permissionMode: "danger-full-access"`. (The earlier ~17-min teardown was
+  the *blocked* worker lingering — gone once it completes cleanly.)
+
+  **Product implication (follow-up, not blocking):** in `peer-team`, the resolver
+  inherits the team's permission mode. A team running below `exec` can't run a
+  resolver — spawn-resolver then degrades to `escalate` (the safe fallback). If we
+  want resolvers to work under restrictive teams, the spawn-resolver path needs to
+  request elevated permission for the resolver (a security trade-off to decide
+  before P4/production).
 
   _(original note:)_ Real subprocess resolver via Claude behind
   `SWARM_HARNESS_LIVE_RESOLVER=1`: real engine + `resolver` role prompt, longer
