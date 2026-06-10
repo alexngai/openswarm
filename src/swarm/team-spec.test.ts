@@ -243,6 +243,86 @@ describe("TeamCoordinationSchema", () => {
       }).success,
     ).toBe(false);
   });
+
+  // ----- mergeStreams (v0.7) ---------------------------------------------
+
+  it("accepts mergeStreams with exactly targetStream", () => {
+    expect(
+      TeamCoordinationSchema.safeParse({
+        completion: { kind: "all" },
+        mergeStreams: { targetStream: "main", failOnConflict: true },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("accepts mergeStreams with exactly targetBranch", () => {
+    expect(
+      TeamCoordinationSchema.safeParse({
+        completion: { kind: "all" },
+        mergeStreams: { targetBranch: "main", strategy: "no-ff" },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects mergeStreams with BOTH targetStream and targetBranch", () => {
+    expect(
+      TeamCoordinationSchema.safeParse({
+        completion: { kind: "all" },
+        mergeStreams: { targetStream: "s", targetBranch: "main" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects mergeStreams with NEITHER target set", () => {
+    expect(
+      TeamCoordinationSchema.safeParse({
+        completion: { kind: "all" },
+        mergeStreams: { failOnConflict: true },
+      }).success,
+    ).toBe(false);
+  });
+
+  // ----- conflictRecovery (docs/44 P1/P2) --------------------------------
+
+  it("accepts conflictRecovery with strategy, config, and depth", () => {
+    expect(
+      TeamCoordinationSchema.safeParse({
+        completion: { kind: "all" },
+        conflictRecovery: {
+          defaultStrategy: "spawn-resolver",
+          defaultConfig: { timeoutMs: 60_000 },
+          maxRecoveryDepth: 3,
+        },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects conflictRecovery.maxRecoveryDepth <= 0", () => {
+    expect(
+      TeamCoordinationSchema.safeParse({
+        completion: { kind: "all" },
+        conflictRecovery: { maxRecoveryDepth: 0 },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects conflictRecovery.maxRecoveryDepth when non-integer", () => {
+    expect(
+      TeamCoordinationSchema.safeParse({
+        completion: { kind: "all" },
+        conflictRecovery: { maxRecoveryDepth: 2.5 },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects conflictRecovery.defaultStrategy when empty", () => {
+    expect(
+      TeamCoordinationSchema.safeParse({
+        completion: { kind: "all" },
+        conflictRecovery: { defaultStrategy: "" },
+      }).success,
+    ).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

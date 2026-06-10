@@ -945,6 +945,50 @@ describe("PeerTeamTopology — coordination.mergeStreams (v0.7 stage 7C)", () =>
     await cleanup();
   });
 
+  it("P1 — an unregistered strategy defers (note) without throwing", async () => {
+    const { ctx, cleanup } = await conflictCtx();
+    const spec = peerSpec([member("a", "p")], {
+      completion: { kind: "all" },
+      mergeStreams: { targetStream: "main" },
+      conflictRecovery: { defaultStrategy: "no-such-strategy" },
+    });
+    const summary = await new PeerTeamTopology().run(spec, ctx);
+    const notes = teamNotes(ctx);
+    expect(
+      notes.some((n) =>
+        /conflict recovery \[no-such-strategy\].*deferred/.test(n),
+      ),
+    ).toBe(true);
+    expect(summary.succeeded).toBe(1); // unresolved-but-not-failOnConflict is OK
+    await cleanup();
+  });
+
+  it("P1 — a non-conflict git_error skips recovery and honors failOnConflict", async () => {
+    const { ctx, cleanup } = await makeCtx({
+      handleOpts: [{ result: successResult("a") }],
+      hostExtras: {
+        streamIdFor: () => "s-x",
+        mergeStreamForAgent: async () => ({
+          success: false,
+          errorType: "git_error",
+          error: "fatal: boom",
+        }),
+      },
+    });
+    const spec = peerSpec([member("a", "p")], {
+      completion: { kind: "all" },
+      mergeStreams: { targetStream: "main", failOnConflict: true },
+      conflictRecovery: { defaultStrategy: "escalate" },
+    });
+    await expect(new PeerTeamTopology().run(spec, ctx)).rejects.toThrow(
+      /mergeStream failed/,
+    );
+    // No recovery note — a git_error isn't a conflict, so recovery never runs.
+    const notes = teamNotes(ctx);
+    expect(notes.some((n) => /conflict recovery/.test(n))).toBe(false);
+    await cleanup();
+  });
+
   // ----- Track-A hardening — recovery wiring regressions -----------------
 
   /** A recovery strategy that records each ConflictContext it sees. */
