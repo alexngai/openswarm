@@ -597,10 +597,23 @@ cross-instance federation · networked control server · cognitive/analyst backe
 
 ## Status
 
-Draft plan (2026-06-09). Phases are independently shippable; flip items to ✅ in
-[`43-macro-agent-parity.md`](./43-macro-agent-parity.md) with a commit ref as they
-land. Recommended first PRs: **P0** (seam, zero-risk) and **P5** (host skeleton)
-in parallel.
+**Track A (P0–P4) + hardening: ✅ DONE.** **Track B (P5–P8): ✅ DONE
+(2026-06-10).** The full plan has landed — swarm-harness has macro-agent's
+git-workspace primitives (Track A) and is OpenHive-hostable end-to-end (Track B):
+`swarm-harness host --port N` binds the 3-port stride (ACP-WS / health / MAP),
+OpenHive connects ACP on `base` and MAP on `base+2`, and its cascade-action
+buttons + `_macro/spawnAgent` drive the Track-A primitives. Commit refs: P5
+`74a8e60`, P6 `90a760a`, P7 `b2669d8`, P8 `603691e` (+ the SDK packaging fix in
+the `references/multi-agent-protocol` submodule, `8903038`).
+
+Remaining follow-ons (NOT blocking the hosted path): the *outbound* MAP sidecar
+(swarm dialing back to a hub) and the dedicated task/mail bridges (P7 lists
+them); richer cascade actions (`commit`/`pause`/`resume`/`push`) once
+swarm-harness grows the matching stream primitives; and republishing the MAP SDK
+with the `/server` types fix so a fresh install needs no symlink.
+
+Phases were independently shippable; items are flipped to ✅ above and in
+[`43-macro-agent-parity.md`](./43-macro-agent-parity.md) with commit refs.
 
 ### Track A hardening pass — ✅ DONE (2026-06-09)
 
