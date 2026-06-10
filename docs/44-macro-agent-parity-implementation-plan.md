@@ -525,3 +525,31 @@ Draft plan (2026-06-09). Phases are independently shippable; flip items to ✅ i
 [`43-macro-agent-parity.md`](./43-macro-agent-parity.md) with a commit ref as they
 land. Recommended first PRs: **P0** (seam, zero-risk) and **P5** (host skeleton)
 in parallel.
+
+### Track A hardening pass — ✅ DONE (2026-06-09)
+
+Multi-agent review of P0–P4 surfaced a confirmed RCE + correctness/robustness
+bugs. Fixed in priority order, each with regression tests; full `src/swarm` gate
+green (707 passed, 1 skipped):
+
+- **CRITICAL — shell injection** in the adapter: every `execSync(\`git …\`)` with
+  interpolated refs converted to `execFileSync("git", argv)`. Injection
+  regression tests via a malicious `targetBranch`. _(commit 67f0a46)_
+- **Adapter data-loss / leaks**: merge/CAS split so a concurrent advance is
+  `stale` (retryable) not a false conflict; finalize re-verifies a conflict-free
+  tree + empty-oldSha guard; worktree removal only on success; tmp-worktree
+  registration-before-add; dispose skips already-removed worktrees. _(67f0a46)_
+- **HIGH — host coordination & kill** _(commit 832137b)_: conflict waiters are a
+  Set (concurrent waits all woken); `resolvedConflicts` buffer bounded (LRU,
+  cap 256); timers `.unref()`'d; worker `kill` registers the exit listener
+  before signalling and escalates SIGTERM→SIGKILL on a bounded grace window.
+- **CRITICAL — conflictId collision** _(commit bdf0259)_: per-invocation
+  `…:${randomUUID()}` so a stale buffered resolution can't satisfy a later
+  distinct conflict; **HIGH** `conflictRecovery.maxRecoveryDepth` now folds into
+  `strategyConfig` (was silently dropped); per-member `land() === null` now
+  `continue`s instead of aborting the cohort.
+- **HIGH — resolver-timeout worktree leak** _(commit 40372a5)_:
+  `discardConflictWorktree` (idempotent) wired as a `cleanupWorktree` dep called
+  on timeout so the git worktree registration doesn't leak.
+- **Test gaps** _(commit 11478b1)_: mergeStreams/conflictRecovery zod validation;
+  unregistered-strategy defer; non-conflict `git_error` + `failOnConflict`.
