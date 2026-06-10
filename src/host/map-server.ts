@@ -16,6 +16,7 @@ import * as http from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import { MAPServer } from "@multi-agent-protocol/sdk/server";
 import type { Stream, AnyMessage } from "@multi-agent-protocol/sdk";
+import type { CascadeRouter } from "./cascade-actions.js";
 
 export interface MapServer {
   /** `ws://<host>:<port>/map` */
@@ -35,6 +36,20 @@ export interface CreateMapServerOptions {
   readonly path?: string;
   /** Server name advertised to MAP clients (default `swarm-harness`). */
   readonly name?: string;
+  /**
+   * Extra request/response handlers merged after the SDK built-ins (docs/44 P8
+   * — the `_macro/*` extension methods OpenHive invokes).
+   */
+  readonly additionalHandlers?: Record<
+    string,
+    (params: unknown, ctx?: unknown) => Promise<unknown>
+  >;
+  /**
+   * Called for each accepted connection's router BEFORE it starts, so callers
+   * can register per-connection notification handlers (docs/44 P8 — cascade
+   * actions arrive as `x-cascade/request.*` notifications).
+   */
+  readonly onConnection?: (router: CascadeRouter) => void;
   readonly log?: (msg: string) => void;
 }
 
@@ -95,7 +110,12 @@ export async function createMapServer(
   const host = opts.host ?? "127.0.0.1";
   const wsPath = opts.path ?? "/map";
   const log = opts.log ?? (() => {});
-  const map = new MAPServer({ name: opts.name ?? "swarm-harness" });
+  const map = new MAPServer({
+    name: opts.name ?? "swarm-harness",
+    ...(opts.additionalHandlers !== undefined && {
+      additionalHandlers: opts.additionalHandlers,
+    }),
+  });
 
   const httpServer = http.createServer((_req, res) => {
     res.writeHead(426, { "content-type": "text/plain" });
@@ -113,6 +133,9 @@ export async function createMapServer(
     // OpenHive connects as a MAP client (observes + controls); the swarm's own
     // agents are registered server-side by the bridge, not over this socket.
     const router = map.accept(webSocketStream(ws), { role: "client" });
+    // Register per-connection handlers (cascade actions) BEFORE start() so no
+    // early notification is missed.
+    opts.onConnection?.(router as unknown as CascadeRouter);
     router.start();
     log(`[map] client connected (${sockets.size} active)`);
     ws.once("close", () => {

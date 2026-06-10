@@ -532,7 +532,27 @@ against the SDK.
 
 ---
 
-## P8 — CONVERGENCE: cascade actions + `_macro/spawnAgent` (H5) _(M)_
+## P8 — CONVERGENCE: cascade actions + `_macro/spawnAgent` (H5) _(M)_ — ✅ DONE (2026-06-10)
+
+> **P8 — ✅ DONE (2026-06-10).** The end-to-end "swarm-harness hosted by
+> OpenHive" milestone. `src/host/macro-methods.ts`: `_macro/spawnAgent`
+> (→ `StandaloneHost.spawn`, long-lived, tracks the handle) + `_macro/terminateAgent`
+> (→ `handle.kill()`), registered as MAP `additionalHandlers` (request/response);
+> param names match macro-agent so an OpenHive client speaks to either backend.
+> `src/host/cascade-actions.ts`: `registerCascadeActions` wires per-connection
+> `x-cascade/request.*` notifications → Track-A primitives — `merge` →
+> `host.mergeStreamIdIntoBranch` (added as a host passthrough + adapter-interface
+> method), `resolve` → `host.resolveConflict` (the P2 coordinator signal),
+> `abandon` → emit abandoned; `commit`/`pause`/`resume`/`push` emit a structured
+> `unsupported` (swarm-harness's leaner adapter); every action emits an
+> `x-cascade/stream.*` result back on the MAP bus. `boot.ts` registers both when
+> `map:true`, and now attaches a `GitCascadeBranchPolicyAdapter` to the hosted
+> host when `cwd` is a git repo (so cascade merges operate on real git;
+> degrades to `unsupported` outside a repo). Verified end-to-end: a MAP client's
+> `x-cascade/request.merge` over WS reaches the handler → the git adapter
+> (`missing_source` on a nonexistent stream in a repo; `unsupported` outside
+> one). 16 new host tests; full src/host + src/swarm + src/acp gates green
+> (887 passed).
 
 Wire OpenHive's hub buttons to Track A's primitives. Needs P1 (recovery) + P4
 (landing) + P7 (MAP).

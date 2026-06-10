@@ -25,6 +25,8 @@ import {
 } from "./acp-ws-server.js";
 import { createMapServer, type MapServer } from "./map-server.js";
 import { bridgeHostToMap } from "./map-bridge.js";
+import { createMacroMethods } from "./macro-methods.js";
+import { registerCascadeActions } from "./cascade-actions.js";
 
 export interface SwarmHostPorts {
   /** ACP-over-WebSocket (`/acp`) — the endpoint OpenHive connects to. */
@@ -96,14 +98,7 @@ export async function bootSwarmHost(
     map: base + 2,
   };
 
-  const standalone =
-    opts.makeHost?.() ??
-    new StandaloneHost({
-      permissionMode: opts.permissionMode ?? "workspace-write",
-      ...(opts.swarmId !== undefined && {
-        agentId: opts.swarmId as unknown as import("../core/types.js").AgentId,
-      }),
-    });
+  const standalone = opts.makeHost?.() ?? (await makeDefaultHost(cwd, opts));
 
   const startedAt = Date.now();
   const health = await createHealthServer({
@@ -129,14 +124,34 @@ export async function bootSwarmHost(
     });
   }
 
-  // MAP server on base+2 (P7) + the host→MAP bridge.
+  // MAP server on base+2 (P7) + the host→MAP bridge + P8 control surface.
   let mapServer: MapServer | undefined;
   let mapBridgeDispose: (() => void) | undefined;
+  let macroDispose: (() => Promise<void>) | undefined;
   if (opts.map === true) {
+    // docs/44 P8 — `_macro/*` request handlers (spawn/terminate) + per-connection
+    // cascade-action notifications, both driving the StandaloneHost / its
+    // branch-policy adapter (Track A primitives).
+    const macro = createMacroMethods({
+      host: standalone,
+      defaultCwd: cwd,
+      permissionMode: opts.permissionMode ?? "workspace-write",
+      log,
+    });
+    macroDispose = macro.dispose;
     mapServer = await createMapServer({
       port: ports.map,
       host: bindHost,
       ...(opts.swarmId !== undefined && { name: opts.swarmId }),
+      additionalHandlers: macro.handlers,
+      onConnection: (router) => {
+        registerCascadeActions(router, {
+          host: standalone,
+          // mapServer is assigned before any connection can arrive.
+          emit: (e) => mapServer!.map.emit(e),
+          log,
+        });
+      },
       log,
     });
     mapBridgeDispose = bridgeHostToMap(standalone, mapServer, {
@@ -180,9 +195,46 @@ export async function bootSwarmHost(
       // dispose), then the health server (the keep-alive). StandaloneHost has no
       // long-lived resources of its own — workers are per-spawn subprocesses.
       mapBridgeDispose?.();
+      if (macroDispose !== undefined) await macroDispose();
       if (acp !== undefined) await acp.close();
       if (mapServer !== undefined) await mapServer.close();
       await health.close();
     },
   };
+}
+
+/**
+ * Construct the host's StandaloneHost. When `cwd` is a git repo (the OpenHive-
+ * hosted workspace), attach a GitCascadeBranchPolicyAdapter so stream-based
+ * landing + cascade actions (P8 merge/resolve) actually operate on git; outside
+ * a repo we skip it and those paths degrade to "unsupported" gracefully.
+ */
+async function makeDefaultHost(
+  cwd: string,
+  opts: BootSwarmHostOptions,
+): Promise<StandaloneHost> {
+  const agentId =
+    opts.swarmId !== undefined
+      ? (opts.swarmId as unknown as import("../core/types.js").AgentId)
+      : undefined;
+  const permissionMode = opts.permissionMode ?? "workspace-write";
+
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const isGitRepo = fs.existsSync(path.join(cwd, ".git"));
+  if (!isGitRepo) {
+    return new StandaloneHost({
+      permissionMode,
+      ...(agentId !== undefined && { agentId }),
+    });
+  }
+
+  const { GitCascadeBranchPolicyAdapter } = await import(
+    "../swarm/adapters/git-cascade-branch-policy.js"
+  );
+  return new StandaloneHost({
+    permissionMode,
+    ...(agentId !== undefined && { agentId }),
+    branchPolicyAdapter: new GitCascadeBranchPolicyAdapter({ repoPath: cwd }),
+  });
 }

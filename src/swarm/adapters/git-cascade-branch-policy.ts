@@ -154,6 +154,16 @@ export interface BranchPolicyAdapter {
   }): Promise<MergeStreamResult>;
 
   /**
+   * docs/44 P4/P8 — streamId-keyed merge into a branch (the enqueuing agent may
+   * be gone by drain/cascade-action time). Optional; caller feature-detects.
+   */
+  mergeStreamIdIntoBranch?(
+    streamId: string,
+    targetBranch: string,
+    opts?: { strategy?: string; retainOnConflict?: boolean },
+  ): Promise<MergeStreamResult>;
+
+  /**
    * docs/44 P2b — finalize a resolver-fixed conflict: CAS `update-ref` the
    * target branch to the resolution commit, then remove the retained worktree.
    * Optional; caller feature-detects.

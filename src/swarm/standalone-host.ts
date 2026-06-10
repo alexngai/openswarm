@@ -362,6 +362,30 @@ export class StandaloneHost implements SwarmHost {
   }
 
   /**
+   * docs/44 P8: merge a stream (by id) into a branch — the streamId-keyed
+   * entrypoint OpenHive's cascade `merge` action drives (the enqueuing agent
+   * may be gone by then, so it's keyed by stream, not agent). Returns null when
+   * the adapter doesn't support the operation.
+   */
+  async mergeStreamIdIntoBranch(
+    streamId: string,
+    targetBranch: string,
+    opts: { readonly strategy?: string; readonly retainOnConflict?: boolean } = {},
+  ): Promise<
+    | import("./adapters/git-cascade-branch-policy.js").MergeStreamResult
+    | null
+  > {
+    if (this.branchPolicyAdapter.mergeStreamIdIntoBranch === undefined) {
+      return null;
+    }
+    return this.branchPolicyAdapter.mergeStreamIdIntoBranch(
+      streamId,
+      targetBranch,
+      opts,
+    );
+  }
+
+  /**
    * docs/44 P2b: finalize a resolver-fixed conflict via the branch-policy
    * adapter (CAS update-ref + worktree removal). Returns null when the adapter
    * doesn't support it. Used by the spawn-resolver coordinator.

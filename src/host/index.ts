@@ -23,3 +23,7 @@ export { createMapServer } from "./map-server.js";
 export type { MapServer, CreateMapServerOptions } from "./map-server.js";
 export { bridgeHostToMap } from "./map-bridge.js";
 export type { MapBridgeOptions } from "./map-bridge.js";
+export { createMacroMethods } from "./macro-methods.js";
+export type { MacroMethods, CreateMacroMethodsOptions } from "./macro-methods.js";
+export { registerCascadeActions } from "./cascade-actions.js";
+export type { CascadeActionsDeps, CascadeRouter } from "./cascade-actions.js";
