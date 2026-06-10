@@ -332,7 +332,11 @@ export class StandaloneHost implements SwarmHost {
    */
   async mergeStreamToBranchForAgent(
     agentId: AgentId,
-    opts: { readonly targetBranch: string; readonly strategy?: string },
+    opts: {
+      readonly targetBranch: string;
+      readonly strategy?: string;
+      readonly retainOnConflict?: boolean;
+    },
   ): Promise<
     | import("./adapters/git-cascade-branch-policy.js").MergeStreamResult
     | null
@@ -342,7 +346,27 @@ export class StandaloneHost implements SwarmHost {
       sourceAgentId: agentId,
       targetBranch: opts.targetBranch,
       ...(opts.strategy !== undefined && { strategy: opts.strategy }),
+      ...(opts.retainOnConflict !== undefined && {
+        retainOnConflict: opts.retainOnConflict,
+      }),
     });
+  }
+
+  /**
+   * docs/44 P2b: finalize a resolver-fixed conflict via the branch-policy
+   * adapter (CAS update-ref + worktree removal). Returns null when the adapter
+   * doesn't support it. Used by the spawn-resolver coordinator.
+   */
+  async finalizeConflictResolution(
+    opts: import("./adapters/git-cascade-branch-policy.js").FinalizeConflictOptions,
+  ): Promise<
+    | import("./adapters/git-cascade-branch-policy.js").MergeStreamResult
+    | null
+  > {
+    if (this.branchPolicyAdapter.finalizeConflictResolution === undefined) {
+      return null;
+    }
+    return this.branchPolicyAdapter.finalizeConflictResolution(opts);
   }
 
   /**

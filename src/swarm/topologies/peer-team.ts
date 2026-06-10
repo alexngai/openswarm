@@ -18,6 +18,7 @@
  * job, which the augmentation explicitly mentions.
  */
 import type { EventEmitter } from "node:events";
+import type { AgentId } from "../../core/types.js";
 import type { AgentResult, AgentHandle } from "../host.js";
 import type { LaneEvent } from "../events.js";
 import type {
@@ -37,6 +38,7 @@ import {
   describeResolution,
   type ConflictResolution,
 } from "../recovery/index.js";
+import { buildResolverSpawner } from "../recovery/resolver-spawner.js";
 import type {
   Topology,
   TopologyContext,
@@ -54,6 +56,9 @@ const DEFAULT_LANDING_REGISTRY = createDefaultLandingRegistry();
  * Used when the TopologyContext doesn't inject one.
  */
 const DEFAULT_RECOVERY_REGISTRY = createDefaultRecoveryRegistry();
+
+/** docs/44 P2b — default resolver wait before escalating (30 min). */
+const DEFAULT_RESOLVER_TIMEOUT_MS = 1_800_000;
 
 export class PeerTeamTopology implements Topology {
   readonly name = "peer-team" as const;
@@ -143,7 +148,7 @@ export class PeerTeamTopology implements Topology {
       // target. Only fires when (a) spec opted in and (b) the host's branch
       // policy adapter actually tracks streams. Conflicts are non-fatal by
       // default; opt into failOnConflict to surface them as topology errors.
-      await this.maybeMergeStreams(spec, memberHandles, ctx);
+      await this.maybeMergeStreams(spec, memberHandles, ctx, team);
 
       ctx.host.emit({
         type: "team_completed",
@@ -450,6 +455,7 @@ export class PeerTeamTopology implements Topology {
     spec: TeamSpec,
     handles: readonly AgentHandle[],
     ctx: TopologyContext,
+    team: TeamSession,
   ): Promise<void> {
     const cfg = spec.coordination.mergeStreams;
     if (cfg === undefined) return;
@@ -469,6 +475,41 @@ export class PeerTeamTopology implements Topology {
         DEFAULT_LANDING_STRATEGY,
       );
     const recovery = ctx.recoveryRegistry ?? DEFAULT_RECOVERY_REGISTRY;
+    // docs/44 P2b — when landing to a branch and the host implements the
+    // conflict primitives (a real StandaloneHost with a git-cascade adapter),
+    // build the spawn-resolver coordinator and inject it so the `spawn-resolver`
+    // strategy can run a real resolver agent. Fakes that lack these methods at
+    // runtime → no coordinator → spawn-resolver escalates.
+    const host = ctx.host;
+    const cfgTimeout = spec.coordination.conflictRecovery?.defaultConfig
+      ?.timeoutMs;
+    const timeoutMs =
+      typeof cfgTimeout === "number" ? cfgTimeout : DEFAULT_RESOLVER_TIMEOUT_MS;
+    const spawnResolver =
+      usingBranch &&
+      typeof host.finalizeConflictResolution === "function" &&
+      typeof host.waitForConflictResolution === "function"
+        ? buildResolverSpawner({
+            spawnResolver: async (s) => {
+              const h = await team.spawnMember({
+                role: s.role,
+                prompt: s.prompt,
+                branchPolicy: s.branchPolicy,
+                cwd: s.cwd,
+              });
+              return { agentId: h.agentId, kill: () => h.kill() };
+            },
+            mergeWithRetain: (agentId, tb) =>
+              host.mergeStreamToBranchForAgent(agentId as AgentId, {
+                targetBranch: tb,
+                retainOnConflict: true,
+              }),
+            waitForResolution: (cid, t) =>
+              host.waitForConflictResolution(cid, t),
+            finalize: (o) => host.finalizeConflictResolution(o),
+            timeoutMs,
+          })
+        : undefined;
     // handles[i] is index-aligned with spec.members[i] (team.spawnAll preserves
     // order), so spec.members[i].role drives per-member recovery selection.
     for (let i = 0; i < handles.length; i++) {
@@ -541,6 +582,7 @@ export class PeerTeamTopology implements Topology {
                   strategyConfig:
                     spec.coordination.conflictRecovery.defaultConfig,
                 }),
+                ...(spawnResolver !== undefined && { spawnResolver }),
               })
             : {
                 kind: "deferred",

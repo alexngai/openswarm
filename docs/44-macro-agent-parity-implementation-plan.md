@@ -219,7 +219,18 @@ two target worktrees).
   { worktree, targetBranch, oldSha, resolutionCommit })` (update-ref + remove
   worktree). Unit-test against a real temp git repo (the `policies`/`standalone-
   host` tests already use real git). _(M)_
-- **P2b.3 — real `ResolverSpawner` + coordinator in peer-team.** Build the
+- **P2b.3 — real `ResolverSpawner` + coordinator in peer-team. ✅ DONE
+  (2026-06-09).** `recovery/resolver-spawner.ts` `buildResolverSpawner(deps)`:
+  re-merge with retain → spawn `resolver` on the conflict worktree → await
+  `resolve_conflict` (or timeout→escalate) → finalize. Deps injected (unit-tested
+  with fakes across all branches). `StandaloneHost` gained
+  `mergeStreamToBranchForAgent({retainOnConflict})` + a `finalizeConflictResolution`
+  wrapper; adapter `finalizeConflictResolution` auto-reads the worktree HEAD when
+  no commit is reported (the scripted/real resolver can't echo a dynamic sha).
+  `peer-team` builds the coordinator (only when landing-to-branch + the host
+  implements the primitives) and injects `ctx.spawnResolver`. Verify: full
+  `src/swarm` **669 pass**, `npm run build` clean. The live subprocess+git path
+  is P2b.4. _(original note:)_ Build the
   closure injected as `ctx.spawnResolver`: spawn a `resolver` member with
   `cwd = conflictWorktree` + the `conflictId`/target threaded via task context;
   `await host.waitForConflictResolution(conflictId, timeoutMs)`; on resolve →

@@ -215,8 +215,12 @@ export interface FinalizeConflictOptions {
   readonly targetBranch: string;
   /** The pre-merge sha (from MergeStreamResult.targetOldSha) for the CAS. */
   readonly oldSha: string;
-  /** The resolver's commit completing the merge (the worktree's new HEAD). */
-  readonly resolutionCommit: string;
+  /**
+   * The resolver's commit completing the merge. Omit to auto-read the
+   * worktree's HEAD (a scripted/real resolver commits there but can't report
+   * the dynamic sha back through the signal).
+   */
+  readonly resolutionCommit?: string;
 }
 
 /**
@@ -685,9 +689,29 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
     opts: FinalizeConflictOptions,
   ): Promise<MergeStreamResult> {
     const cp = await import("node:child_process");
+    // Auto-read the worktree HEAD when the caller didn't report a commit.
+    let resolutionCommit: string;
+    try {
+      resolutionCommit =
+        opts.resolutionCommit ??
+        cp
+          .execSync("git rev-parse HEAD", {
+            cwd: opts.worktree,
+            stdio: "pipe",
+          })
+          .toString()
+          .trim();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        success: false,
+        error: `cannot read resolution commit: ${msg.slice(0, 200)}`,
+        errorType: "git_error",
+      };
+    }
     try {
       cp.execSync(
-        `git update-ref refs/heads/${opts.targetBranch} ${opts.resolutionCommit} ${opts.oldSha}`,
+        `git update-ref refs/heads/${opts.targetBranch} ${resolutionCommit} ${opts.oldSha}`,
         { cwd: this.repoPath, stdio: "pipe" },
       );
     } catch (err) {
@@ -703,7 +727,7 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
         // Best-effort.
       }
     }
-    return { success: true, newHead: opts.resolutionCommit };
+    return { success: true, newHead: resolutionCommit };
   }
 
   // ---- v0.7 stage 7C ---------------------------------------------------
