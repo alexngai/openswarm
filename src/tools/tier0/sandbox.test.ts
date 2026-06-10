@@ -180,6 +180,10 @@ describe("buildLandlockArgs", () => {
 
 describe("compileLandlockHelper", () => {
   it("compiles the helper binary", async () => {
+    // Landlock is a Linux kernel feature (5.13+); the helper uses Linux-only
+    // syscalls and requires -static linking which is unsupported on macOS.
+    if (process.platform !== "linux") return;
+
     // This test requires gcc — skip if not available
     let hasGcc = false;
     try {

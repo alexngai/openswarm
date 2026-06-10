@@ -240,8 +240,15 @@ describe("main", () => {
     const { runRepl } = await import("../ui/repl-solid/index.js");
 
     Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+    // Simulate the bun runtime so tuiUnavailable=false and runRepl is reached.
+    // Under plain node (vitest), process.versions.bun is undefined, which causes
+    // main.ts to set tuiUnavailable=true and fall back to headless regardless of isTTY.
+    const origBun = (process.versions as Record<string, string | undefined>).bun;
+    (process.versions as Record<string, string | undefined>).bun = "1.0.0";
 
     await main(["say hi"]);
+
+    (process.versions as Record<string, string | undefined>).bun = origBun;
 
     expect(runRepl).toHaveBeenCalled();
   });

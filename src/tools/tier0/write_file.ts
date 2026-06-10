@@ -69,9 +69,13 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
 
   // S5: Re-validate parent directory after mkdir to prevent TOCTTOU
   // (directory could be replaced with a symlink between mkdir and write).
+  // Canonicalize both paths via realpath so that symlink-prefixed OS temp
+  // directories (e.g. /var/folders → /private/var/folders on macOS) compare
+  // correctly against each other.
   try {
     const parentReal = await fs.realpath(dir);
-    if (!isUnderCwd(parentReal, ctx.cwd)) {
+    const cwdReal = await fs.realpath(ctx.cwd);
+    if (!isUnderCwd(parentReal, cwdReal)) {
       return {
         status: "error",
         message: `parent directory was replaced outside workspace after mkdir`,
