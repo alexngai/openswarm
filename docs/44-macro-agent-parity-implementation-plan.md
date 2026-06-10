@@ -265,7 +265,13 @@ two target worktrees).
   conflict resolves end-to-end: target advances to the resolution, worktree
   removed, `{kind:"resolved"}`. Validates the git + coordination glue the unit
   mocks couldn't. _(M)_
-- **P2b.5 — Loop 2 gated live test.** Real subprocess resolver via Claude behind
+- **P2b.5 — Loop 2 gated live test. ✅ DONE (test written; live run manual).**
+  `recovery/resolver-spawner.live.test.ts` — `describe.skipIf(!SWARM_HARNESS_LIVE_RESOLVER)`:
+  real git conflict → real `TeamSession.spawnMember` resolver subprocess (live
+  engine, no role overlay needed since `resolve_conflict` is in the default tool
+  set + the coordinator prompt drives it) → real `resolve_conflict` IPC →
+  finalize. Skipped by default (suite green: 30 pass / 1 skip); run with
+  `SWARM_HARNESS_LIVE_RESOLVER=1`. _(original note:)_ Real subprocess resolver via Claude behind
   `SWARM_HARNESS_LIVE_RESOLVER=1`: real engine + `resolver` role prompt, longer
   timeout. The only path that exercises the real agent-driven resolution +
   resolve_conflict IPC end-to-end. Manual. _(S)_
