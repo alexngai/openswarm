@@ -164,16 +164,25 @@ export class StandaloneHost implements SwarmHost {
    * agentId as the memberId.
    */
   private readonly agentToMemberId = new Map<AgentId, string>();
-  /** docs/44 P2 — pending conflict-resolution waiters, keyed by conflictId. */
+  /**
+   * docs/44 P2 — pending conflict-resolution waiters. A Set per conflictId so a
+   * second waiter for the same id can't clobber the first (Track-A hardening #8).
+   */
   private readonly conflictWaiters = new Map<
     string,
-    (v: { resolutionCommit?: string } | null) => void
+    Set<(v: { resolutionCommit?: string } | null) => void>
   >();
-  /** docs/44 P2 — resolutions that arrived before anyone started awaiting. */
+  /**
+   * docs/44 P2 — resolutions that arrived before anyone started awaiting.
+   * Bounded (LRU-evict oldest) so stray/late/typo'd signals — the conflictId is
+   * picked by an untrusted resolver agent — can't leak unboundedly on a
+   * long-lived host (Track-A hardening #7).
+   */
   private readonly resolvedConflicts = new Map<
     string,
     { resolutionCommit?: string }
   >();
+  private static readonly RESOLVED_CONFLICTS_CAP = 256;
 
   // Expose the registry via the TaskAPI wrapper.
   readonly task: TaskAPI;
@@ -448,11 +457,16 @@ export class StandaloneHost implements SwarmHost {
     opts?: { readonly resolutionCommit?: string },
   ): void {
     const payload = { resolutionCommit: opts?.resolutionCommit };
-    const waiter = this.conflictWaiters.get(conflictId);
-    if (waiter !== undefined) {
+    const waiters = this.conflictWaiters.get(conflictId);
+    if (waiters !== undefined && waiters.size > 0) {
       this.conflictWaiters.delete(conflictId);
-      waiter(payload);
+      for (const w of waiters) w(payload);
       return;
+    }
+    // No waiter yet — buffer for a resolve-before-wait, bounded (evict oldest).
+    if (this.resolvedConflicts.size >= StandaloneHost.RESOLVED_CONFLICTS_CAP) {
+      const oldest = this.resolvedConflicts.keys().next().value;
+      if (oldest !== undefined) this.resolvedConflicts.delete(oldest);
     }
     this.resolvedConflicts.set(conflictId, payload);
   }
@@ -472,14 +486,24 @@ export class StandaloneHost implements SwarmHost {
       return already;
     }
     return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        this.conflictWaiters.delete(conflictId);
-        resolve(null);
-      }, timeoutMs);
-      this.conflictWaiters.set(conflictId, (v) => {
+      const settle = (v: { resolutionCommit?: string } | null): void => {
         clearTimeout(timer);
+        const set = this.conflictWaiters.get(conflictId);
+        if (set !== undefined) {
+          set.delete(settle);
+          if (set.size === 0) this.conflictWaiters.delete(conflictId);
+        }
         resolve(v);
-      });
+      };
+      const timer = setTimeout(() => settle(null), timeoutMs);
+      // Don't let a pending conflict wait keep the process alive on its own.
+      (timer as { unref?: () => void }).unref?.();
+      let set = this.conflictWaiters.get(conflictId);
+      if (set === undefined) {
+        set = new Set();
+        this.conflictWaiters.set(conflictId, set);
+      }
+      set.add(settle);
     });
   }
 
@@ -847,7 +871,32 @@ export class StandaloneHost implements SwarmHost {
       sessionId: childAgentId as unknown as SessionId, // M1 fresh session per worker; reuse id
       wait: async () => resultPromise,
       kill: async () => {
+        // Track-A hardening #3: SIGTERM, then escalate to SIGKILL if the child
+        // doesn't exit within a grace window, and AWAIT actual exit. The old
+        // fire-and-forget SIGTERM let a wedged worker (e.g. blocked in a network
+        // call) linger — the mechanism behind the P2b.5 teardown hang.
+        //
+        // Register the exit listener BEFORE signalling: a child can emit "close"
+        // synchronously inside kill() (real children won't, but in-process fakes
+        // do), so subscribing after would miss it and hang on the grace timer.
+        const waitWithTimeout = (ms: number): Promise<boolean> => {
+          const exitP = transport.waitForExit().then(() => true);
+          return Promise.race([
+            exitP,
+            new Promise<boolean>((r) => {
+              const t = setTimeout(() => r(false), ms);
+              (t as { unref?: () => void }).unref?.();
+            }),
+          ]);
+        };
+        const exitedP = waitWithTimeout(5_000);
         transport.kill("SIGTERM");
+        const exited = await exitedP;
+        if (!exited) {
+          const killedP = waitWithTimeout(5_000);
+          transport.kill("SIGKILL");
+          await killedP;
+        }
       },
       events: async function* () {
         // Replay buffered events then listen for more.

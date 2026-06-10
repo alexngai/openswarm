@@ -39,6 +39,48 @@ describe("StandaloneHost conflict coordination", () => {
     host.resolveConflict!("c5");
     expect(await waitP).toEqual({ resolutionCommit: undefined });
   });
+
+  it("wakes every concurrent waiter on the same conflictId", async () => {
+    // Track-A hardening #8: waiters are a Set, so a second waiter on the same
+    // id is no longer silently dropped (the old single-slot map clobbered it).
+    const host = new StandaloneHost();
+    const a = host.waitForConflictResolution!("c6", 1000);
+    const b = host.waitForConflictResolution!("c6", 1000);
+    const c = host.waitForConflictResolution!("c6", 1000);
+    host.resolveConflict!("c6", { resolutionCommit: "shared" });
+    expect(await Promise.all([a, b, c])).toEqual([
+      { resolutionCommit: "shared" },
+      { resolutionCommit: "shared" },
+      { resolutionCommit: "shared" },
+    ]);
+  });
+
+  it("a timed-out waiter does not disturb a sibling waiter", async () => {
+    const host = new StandaloneHost();
+    const slow = host.waitForConflictResolution!("c7", 1000);
+    const fast = host.waitForConflictResolution!("c7", 10);
+    expect(await fast).toBeNull(); // times out, removes only itself
+    host.resolveConflict!("c7", { resolutionCommit: "later" });
+    expect(await slow).toEqual({ resolutionCommit: "later" });
+  });
+
+  it("bounds the resolve-before-wait buffer (evicts oldest)", async () => {
+    // Track-A hardening #7: resolvedConflicts is capped, so a flood of
+    // resolve-before-wait entries can't grow unbounded. The oldest is evicted.
+    const host = new StandaloneHost();
+    const cap = (StandaloneHost as unknown as { RESOLVED_CONFLICTS_CAP: number })
+      .RESOLVED_CONFLICTS_CAP;
+    host.resolveConflict!("evicted", { resolutionCommit: "gone" });
+    for (let i = 0; i < cap; i++) {
+      host.resolveConflict!(`k${i}`, { resolutionCommit: `v${i}` });
+    }
+    // The first entry was pushed out by the cap-th insertion → now times out.
+    expect(await host.waitForConflictResolution!("evicted", 10)).toBeNull();
+    // A recent entry is still buffered.
+    expect(await host.waitForConflictResolution!(`k${cap - 1}`, 10)).toEqual({
+      resolutionCommit: `v${cap - 1}`,
+    });
+  });
 });
 
 /** docs/44 P2b — the task.resolve_conflict IPC route (worker → orchestrator). */
