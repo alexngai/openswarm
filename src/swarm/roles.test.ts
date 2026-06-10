@@ -34,7 +34,13 @@ describe("RoleRegistry", () => {
     const reg = new RoleRegistry();
     for (const r of BUILTIN_ROLES) reg.register(r);
     const names = reg.list().map((r) => r.name);
-    expect(names).toEqual(["architect", "executor", "reviewer", "resolver"]);
+    expect(names).toEqual([
+      "architect",
+      "executor",
+      "reviewer",
+      "resolver",
+      "integrator",
+    ]);
   });
 
   it("register overwrites a role with the same name", () => {
@@ -56,9 +62,15 @@ describe("RoleRegistry", () => {
 });
 
 describe("BUILTIN_ROLES", () => {
-  it("ships the expected built-ins: architect / executor / reviewer / resolver", () => {
+  it("ships the expected built-ins", () => {
     const names = BUILTIN_ROLES.map((r) => r.name).sort();
-    expect(names).toEqual(["architect", "executor", "resolver", "reviewer"]);
+    expect(names).toEqual([
+      "architect",
+      "executor",
+      "integrator",
+      "resolver",
+      "reviewer",
+    ]);
   });
 
   it("architect excludes write tools and includes agent/task_* + messaging", () => {

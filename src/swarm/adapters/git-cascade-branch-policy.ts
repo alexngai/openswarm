@@ -149,6 +149,29 @@ export interface BranchPolicyAdapter {
   ): Promise<MergeStreamResult>;
 
   /**
+   * docs/44 P4 — enqueue a stream to be merged into a target branch (the
+   * `queue-to-branch` landing). Returns the queue entry id, or null when the
+   * adapter/tracker has no merge queue. Optional; caller feature-detects.
+   */
+  enqueueMerge?(opts: {
+    streamId: string;
+    targetBranch: string;
+    priority?: number;
+    agentId?: string;
+  }): Promise<string | null>;
+
+  /**
+   * docs/44 P4 — drain the merge queue for a target branch in priority/FIFO
+   * order, merging each ready stream via `mergeStreamIdIntoBranch`. Returns the
+   * per-entry outcome, or null when there is no queue. Optional.
+   */
+  drainMergeQueue?(opts: {
+    targetBranch: string;
+    limit?: number;
+    strategy?: string;
+  }): Promise<MergeQueueDrainResult | null>;
+
+  /**
    * v0.7 stage 7K: propagate commits from a root stream to all dependent
    * streams (forked off it). Wraps `tracker.cascadeRebase`. The adapter
    * supplies a callback worktree provider that maps each stream to its
@@ -221,6 +244,20 @@ export interface FinalizeConflictOptions {
    * the dynamic sha back through the signal).
    */
   readonly resolutionCommit?: string;
+}
+
+/** docs/44 P4 — outcome of draining the merge queue for a target branch. */
+export interface MergeQueueDrainResult {
+  readonly merged: ReadonlyArray<{
+    entryId: string;
+    streamId: string;
+    mergeCommit?: string;
+  }>;
+  readonly failed: ReadonlyArray<{
+    entryId: string;
+    streamId: string;
+    error: string;
+  }>;
 }
 
 /**
@@ -319,6 +356,22 @@ type MultiAgentRepoTrackerLike = {
     error?: string;
     errorType?: string;
   };
+  // docs/44 P4 — git-cascade merge queue. Used for ordering + persistence; the
+  // actual merge runs through mergeStreamIdIntoBranch (handles real branches),
+  // not processMergeQueue. Optional so non-queue mock trackers don't need them.
+  addToMergeQueue?(opts: {
+    streamId: string;
+    targetBranch?: string;
+    priority?: number;
+    agentId: string;
+    metadata?: Record<string, unknown>;
+  }): string;
+  markMergeQueueReady?(entryId: string): void;
+  getNextToMerge?(targetBranch?: string):
+    | { id: string; streamId: string; targetBranch: string; [k: string]: unknown }
+    | null;
+  removeFromMergeQueue?(entryId: string): void;
+  cancelMergeQueueEntry?(entryId: string): void;
   close(): void;
 };
 
@@ -565,7 +618,26 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
         errorType: "invalid_state",
       };
     }
-    // Use a fresh tmp worktree so we don't disturb the source's checkout.
+    return this.mergeStreamIdIntoBranch(stream.streamId, opts.targetBranch, {
+      ...(opts.strategy !== undefined && { strategy: opts.strategy }),
+      ...(opts.retainOnConflict !== undefined && {
+        retainOnConflict: opts.retainOnConflict,
+      }),
+    });
+  }
+
+  /**
+   * docs/44 P4 — merge a stream (by id) into an existing git branch via plain
+   * git in a throwaway worktree. The streamId-keyed core shared by
+   * `mergeStreamToBranch` (agent-keyed) and the merge-queue drain (streamId-
+   * keyed, since the enqueuing agent may be gone by drain time).
+   */
+  async mergeStreamIdIntoBranch(
+    streamId: string,
+    targetBranch: string,
+    opts: { strategy?: string; retainOnConflict?: boolean } = {},
+  ): Promise<MergeStreamResult> {
+    // Use a fresh tmp worktree so we don't disturb any active checkout.
     const cp = await import("node:child_process");
     const fsp = await import("node:fs/promises");
     const os = await import("node:os");
@@ -575,7 +647,7 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
       // target's HEAD so we can merge without colliding with an already-
       // checked-out branch (typical: main is checked out in the repo cwd).
       cp.execSync(
-        `git worktree add --detach ${JSON.stringify(tmpRoot)} ${JSON.stringify(opts.targetBranch)}`,
+        `git worktree add --detach ${JSON.stringify(tmpRoot)} ${JSON.stringify(targetBranch)}`,
         { cwd: this.repoPath, stdio: "pipe" },
       );
       // docs/44 P2b — when set, the finally leaves the conflicted worktree in
@@ -584,19 +656,19 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
       let retainWorktree = false;
       let oldSha = "";
       try {
-        const sourceBranch = `stream/${stream.streamId}`;
+        const sourceBranch = `stream/${streamId}`;
         const flag = opts.strategy === "fast-forward" ? "--ff-only" : "--no-ff";
         // Capture old branch sha for the update-ref CAS so we don't clobber
         // concurrent updates.
         oldSha = cp
-          .execSync(
-            `git rev-parse ${JSON.stringify(opts.targetBranch)}`,
-            { cwd: this.repoPath, stdio: "pipe" },
-          )
+          .execSync(`git rev-parse ${JSON.stringify(targetBranch)}`, {
+            cwd: this.repoPath,
+            stdio: "pipe",
+          })
           .toString()
           .trim();
         const out = cp.execSync(
-          `git merge ${flag} ${JSON.stringify(sourceBranch)} -m ${JSON.stringify(`Merge stream/${stream.streamId} into ${opts.targetBranch}`)}`,
+          `git merge ${flag} ${JSON.stringify(sourceBranch)} -m ${JSON.stringify(`Merge stream/${streamId} into ${targetBranch}`)}`,
           { cwd: tmpRoot, stdio: "pipe" },
         );
         const newHead = cp
@@ -604,11 +676,8 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
           .toString()
           .trim();
         // Atomically update the target branch ref to the new merge commit.
-        // Working trees of the target branch (e.g. the orchestrator's repo
-        // cwd) won't auto-refresh — they'll see the new ref on next `git
-        // pull` or `git status` but their working tree stays as-is.
         cp.execSync(
-          `git update-ref refs/heads/${opts.targetBranch} ${newHead} ${oldSha}`,
+          `git update-ref refs/heads/${targetBranch} ${newHead} ${oldSha}`,
           { cwd: this.repoPath, stdio: "pipe" },
         );
         void out;
@@ -677,6 +746,84 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
         errorType: "git_error",
       };
     }
+  }
+
+  // ---- docs/44 P4 — merge queue --------------------------------------
+
+  async enqueueMerge(opts: {
+    streamId: string;
+    targetBranch: string;
+    priority?: number;
+    agentId?: string;
+  }): Promise<string | null> {
+    const tracker = await this.ensureTracker();
+    if (
+      tracker.addToMergeQueue === undefined ||
+      tracker.markMergeQueueReady === undefined
+    ) {
+      return null;
+    }
+    const entryId = tracker.addToMergeQueue({
+      streamId: opts.streamId,
+      targetBranch: opts.targetBranch,
+      ...(opts.priority !== undefined && { priority: opts.priority }),
+      agentId: opts.agentId ?? "queue",
+    });
+    // No review gate in v1 — entries are immediately drainable.
+    tracker.markMergeQueueReady(entryId);
+    return entryId;
+  }
+
+  async drainMergeQueue(opts: {
+    targetBranch: string;
+    limit?: number;
+    strategy?: string;
+  }): Promise<MergeQueueDrainResult | null> {
+    const tracker = await this.ensureTracker();
+    if (
+      tracker.getNextToMerge === undefined ||
+      tracker.removeFromMergeQueue === undefined ||
+      tracker.cancelMergeQueueEntry === undefined
+    ) {
+      return null;
+    }
+    const merged: Array<{
+      entryId: string;
+      streamId: string;
+      mergeCommit?: string;
+    }> = [];
+    const failed: Array<{ entryId: string; streamId: string; error: string }> =
+      [];
+    const limit = opts.limit ?? Number.MAX_SAFE_INTEGER;
+    for (let n = 0; n < limit; n++) {
+      const entry = tracker.getNextToMerge(opts.targetBranch);
+      if (entry === null || entry === undefined) break;
+      const r = await this.mergeStreamIdIntoBranch(
+        entry.streamId,
+        opts.targetBranch,
+        { ...(opts.strategy !== undefined && { strategy: opts.strategy }) },
+      );
+      if (r.success) {
+        tracker.removeFromMergeQueue(entry.id);
+        merged.push({
+          entryId: entry.id,
+          streamId: entry.streamId,
+          ...(r.newHead !== undefined && { mergeCommit: r.newHead }),
+        });
+      } else {
+        // Cancel so the drain advances past it; surface the failure.
+        tracker.cancelMergeQueueEntry(entry.id);
+        failed.push({
+          entryId: entry.id,
+          streamId: entry.streamId,
+          error:
+            r.errorType === "conflict"
+              ? `conflict on ${r.conflicts?.join(", ") ?? "<unknown>"}`
+              : (r.error ?? "merge failed"),
+        });
+      }
+    }
+    return { merged, failed };
   }
 
   /**

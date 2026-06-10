@@ -168,11 +168,33 @@ const RESOLVER: Role = {
   ],
 };
 
+const INTEGRATOR: Role = {
+  name: "integrator",
+  systemPromptSuffix:
+    "You are the integrator. You drain the team's merge queue, landing each " +
+    "queued stream into the target branch in order and resolving any conflicts " +
+    "before moving on. Keep the target branch healthy.",
+  allowedTools: [
+    "bash",
+    "read_file",
+    "glob",
+    "grep",
+    "todo_write",
+    "commit_changes",
+    "resolve_conflict",
+    "send_message",
+    "check_inbox",
+    "task_get",
+    "task_list",
+  ],
+};
+
 export const BUILTIN_ROLES: readonly Role[] = [
   ARCHITECT,
   EXECUTOR,
   REVIEWER,
   RESOLVER,
+  INTEGRATOR,
 ];
 
 // ---------------------------------------------------------------------------

@@ -360,7 +360,32 @@ merges.
 
 ---
 
-### P4 — Merge queue + integrator (W2) _(M)_
+### P4 — Merge queue + integrator (W2) _(M)_ — ✅ CORE DONE (2026-06-09)
+
+> **Landed (queue mechanics + landing + role).** Used git-cascade's queue for
+> **ordering + persistence** but the actual merge runs through the adapter's
+> proven `mergeStreamToBranch` machinery — because git-cascade's own
+> `processMergeQueue` merges via `mergeStream(targetStream: branch)`, which has
+> the very branch-vs-stream limitation `mergeStreamToBranch` was built around.
+> - Adapter: refactored the merge into a streamId-keyed `mergeStreamIdIntoBranch`
+>   (the enqueuing agent may be gone by drain time); `enqueueMerge` (addToQueue +
+>   markReady) + `drainMergeQueue` (getNextToMerge → merge → remove/cancel,
+>   ordered) → `MergeQueueDrainResult {merged[], failed[]}`. Queue methods added
+>   **optional** on the tracker type so non-queue mocks don't break.
+> - `StandaloneHost.enqueueMerge` / `drainMergeQueue` wrappers.
+> - `queue-to-branch` LandingStrategy (enqueue; "success" = enqueued) registered.
+> - `INTEGRATOR` built-in role.
+> Verify: real-git test (enqueue 2 → ordered drain → both land; a conflicting
+> stream → `failed[]` while the rest keep draining) + full `src/swarm` **687
+> pass**, build clean. `mergeStreamToBranch` refactor guarded by the P2b.2 tests.
+>
+> **Deferred (the model-B agent wiring):** a long-lived `integrator` *agent*
+> draining via a `drain_queue` tool + the per-agent `done()` landing trigger so
+> workers pick `queue-to-branch`; topology opt-in (`mergeStreams.viaQueue`);
+> routing drain `failed[]` into the P1 recovery dispatcher. The primitives above
+> make these thin — they need a real many-writer-streaming consumer to land
+> against (D2).
+
 
 Needs model **B** (a long-lived integrator draining a queue). The queue itself
 ships in `git-cascade@0.0.7` — **no dep bump** (verified: `tracker.d.ts:298-333`).

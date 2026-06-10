@@ -30,6 +30,15 @@ export interface LandingHost {
     agentId: AgentId,
     opts: { readonly targetBranch: string; readonly strategy?: string },
   ): Promise<MergeStreamResult | null>;
+  /**
+   * docs/44 P4 — enqueue a stream for ordered queue-to-branch landing. Optional;
+   * the `queue-to-branch` strategy feature-detects it.
+   */
+  enqueueMerge?(opts: {
+    streamId: string;
+    targetBranch: string;
+    agentId?: string;
+  }): Promise<string | null>;
 }
 
 /**

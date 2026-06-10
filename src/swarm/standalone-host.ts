@@ -409,6 +409,36 @@ export class StandaloneHost implements SwarmHost {
   }
 
   /**
+   * docs/44 P4 — enqueue a stream for queue-to-branch landing. Returns the
+   * queue entry id, or null when the adapter has no merge queue.
+   */
+  async enqueueMerge(opts: {
+    streamId: string;
+    targetBranch: string;
+    priority?: number;
+    agentId?: string;
+  }): Promise<string | null> {
+    if (this.branchPolicyAdapter.enqueueMerge === undefined) return null;
+    return this.branchPolicyAdapter.enqueueMerge(opts);
+  }
+
+  /**
+   * docs/44 P4 — drain the merge queue for a target branch in order (the
+   * integrator action). Returns per-entry outcomes, or null when unsupported.
+   */
+  async drainMergeQueue(opts: {
+    targetBranch: string;
+    limit?: number;
+    strategy?: string;
+  }): Promise<
+    | import("./adapters/git-cascade-branch-policy.js").MergeQueueDrainResult
+    | null
+  > {
+    if (this.branchPolicyAdapter.drainMergeQueue === undefined) return null;
+    return this.branchPolicyAdapter.drainMergeQueue(opts);
+  }
+
+  /**
    * docs/44 P2 — mark a conflict resolved (called by the `resolve_conflict`
    * tool). Wakes a matching waiter if present; otherwise records the
    * resolution so a later `waitForConflictResolution` returns immediately.
