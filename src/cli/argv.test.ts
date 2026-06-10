@@ -573,4 +573,37 @@ describe("parseArgv", () => {
       cleanupWorktrees: false,
     });
   });
+
+  // ---- docs/44 P5 — host subcommand ---------------------------------------
+
+  it("parses host with --port", () => {
+    expect(parseArgv(["host", "--port", "9000"])).toMatchObject({
+      kind: "host",
+      port: 9000,
+      permissionMode: "workspace-write",
+    });
+  });
+
+  it("parses host with --port, --host, --adapter", () => {
+    expect(
+      parseArgv(["host", "--port", "9000", "--host", "0.0.0.0", "--adapter", "macro-agent"]),
+    ).toMatchObject({
+      kind: "host",
+      port: 9000,
+      host: "0.0.0.0",
+      adapter: "macro-agent",
+    });
+  });
+
+  it("host errors when --port is missing", () => {
+    expect(parseArgv(["host"])).toMatchObject({ kind: "error" });
+  });
+
+  it("host errors on a non-numeric --port", () => {
+    expect(parseArgv(["host", "--port", "abc"])).toMatchObject({ kind: "error" });
+  });
+
+  it("host errors when --port leaves no room for the +2 stride", () => {
+    expect(parseArgv(["host", "--port", "65535"])).toMatchObject({ kind: "error" });
+  });
 });

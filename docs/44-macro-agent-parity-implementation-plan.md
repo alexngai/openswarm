@@ -412,9 +412,24 @@ priority/FIFO order by one integrator; conflicts in the drain route to recovery;
 
 ## Track B — OpenHive hosting (Path B, can run parallel to Track A until P8)
 
-### P5 — `boot()` host entry + bootstrap + health (H0/H4/H3) _(M)_
+### P5 — `boot()` host entry + bootstrap + health (H0/H4/H3) _(M)_ — ✅ DONE (2026-06-10)
 
 swarm-harness's analog of macro's `bootV2` — binds its own ports, reads bootstrap.
+
+> **P5 — ✅ DONE (2026-06-10).** `src/host/` landed: `bootSwarmHost()`
+> (`boot.ts`) derives the OpenHive 3-port stride (base=ACP-WS, base+1=health,
+> base+2=MAP) and returns a handle with `shutdown()`; `health.ts` serves
+> `GET /health` (+ `/healthz`) → `200 {status:"ok", swarmId?, uptimeMs, ports}`
+> on base+1 (NOT REST CRUD, per D2); `bootstrap.ts` parses the OpenHive contract
+> (`OPENSWARM_BOOTSTRAP_TOKEN` base64-JSON, `OPENSWARM_DATA_DIR`,
+> `MACRO_BOOTSTRAP_COORDINATOR|CWD|REHYDRATE`, plus `SWARM_HARNESS_*` aliases).
+> CLI: `swarm-harness host --port N [--host H] [--adapter X]` (`cli/host.ts`,
+> `argv.ts`, `main.ts`) stays alive until SIGTERM/SIGINT → graceful shutdown.
+> Smoke-tested end-to-end: spawn → `/health` 200 → SIGTERM clean exit. The
+> ACP-WS (base, P6) and MAP (base+2, P7) servers slot into the reserved ports
+> next; the bootstrap-coordinator spawn + rehydrate-on-restart wire with ACP
+> (the handle records the intent today). 100 new unit tests (health/bootstrap/
+> boot/argv); full `src/swarm` gate green.
 
 **New**
 - `src/host/boot.ts` — `bootSwarmHost({ host, port, cwd, bootstrap })`: stands up
