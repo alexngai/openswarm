@@ -314,12 +314,20 @@ export class WorkerHost implements SwarmHost {
     conflictId: string,
     opts?: { readonly resolutionCommit?: string },
   ): Promise<void> {
-    await this.transport.send<null>("task.resolve_conflict", {
-      conflictId,
-      ...(opts?.resolutionCommit !== undefined && {
-        resolutionCommit: opts.resolutionCommit,
-      }),
-    });
+    // review LOW: this is a local IPC ack (the orchestrator handler responds
+    // synchronously), not a long operation — bound it to 10s instead of the
+    // transport's 60s default so a wedged orchestrator can't keep the resolver
+    // alive for a full minute during teardown.
+    await this.transport.send<null>(
+      "task.resolve_conflict",
+      {
+        conflictId,
+        ...(opts?.resolutionCommit !== undefined && {
+          resolutionCommit: opts.resolutionCommit,
+        }),
+      },
+      { timeoutMs: 10_000 },
+    );
   }
 
   /**

@@ -527,6 +527,25 @@ export class PeerTeamTopology implements Topology {
             timeoutMs,
           })
         : undefined;
+    // review MEDIUM: spawn-resolver needs `exec` (the resolver must `git commit`
+    // and call `resolve_conflict`), which only `danger-full-access` grants.
+    // Under a more restrictive team mode the resolver silently degrades to
+    // escalate — emit a one-time diagnostic so operators understand WHY
+    // resolution never fires (vs. a timeout), instead of debugging blind.
+    if (
+      usingBranch &&
+      ctx.permissionMode !== "danger-full-access" &&
+      spec.members.some((m) => recovery.select(m.role, spec) === "spawn-resolver")
+    ) {
+      ctx.host.emit({
+        type: "team_note",
+        payload: {
+          teamName: spec.name,
+          scope: `swarm:${spec.name}`,
+          note: `spawn-resolver selected but team permissionMode="${ctx.permissionMode}" is below danger-full-access; the resolver cannot commit or call resolve_conflict and will escalate instead of resolving`,
+        },
+      });
+    }
     // docs/44 P3 — when a member opts into `onParentAdvanced: "sync"` and we're
     // merging into a target STREAM (cascade roots are streams, not branches),
     // schedule a debounced cascade rebase of the target's dependents. Repeated

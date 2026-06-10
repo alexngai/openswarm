@@ -989,6 +989,44 @@ describe("PeerTeamTopology — coordination.mergeStreams (v0.7 stage 7C)", () =>
     await cleanup();
   });
 
+  it("P2b — warns when spawn-resolver is selected below danger-full-access", async () => {
+    const { ctx, cleanup } = await makeCtx({
+      handleOpts: [{ result: successResult("a") }],
+      hostExtras: { streamIdFor: () => "s-x" }, // mergeStreamToBranchForAgent → null
+    });
+    // makeCtx defaults permissionMode to "workspace-write" (below exec).
+    const spec = peerSpec([{ ...member("a", "p"), onConflict: "spawn-resolver" }], {
+      completion: { kind: "all" },
+      mergeStreams: { targetBranch: "main" },
+    });
+    await new PeerTeamTopology().run(spec, ctx);
+    const notes = teamNotes(ctx);
+    expect(
+      notes.some((n) =>
+        /spawn-resolver selected but team permissionMode="workspace-write" is below danger-full-access/.test(
+          n,
+        ),
+      ),
+    ).toBe(true);
+    await cleanup();
+  });
+
+  it("P2b — no permission warning under danger-full-access", async () => {
+    const { ctx, cleanup } = await makeCtx({
+      handleOpts: [{ result: successResult("a") }],
+      hostExtras: { streamIdFor: () => "s-x" },
+    });
+    (ctx as { permissionMode: string }).permissionMode = "danger-full-access";
+    const spec = peerSpec([{ ...member("a", "p"), onConflict: "spawn-resolver" }], {
+      completion: { kind: "all" },
+      mergeStreams: { targetBranch: "main" },
+    });
+    await new PeerTeamTopology().run(spec, ctx);
+    const notes = teamNotes(ctx);
+    expect(notes.some((n) => /below danger-full-access/.test(n))).toBe(false);
+    await cleanup();
+  });
+
   // ----- Track-A hardening — recovery wiring regressions -----------------
 
   /** A recovery strategy that records each ConflictContext it sees. */

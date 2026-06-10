@@ -15,12 +15,11 @@ import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { requireHost } from "./require-host.js";
+import { TaskResolveConflictParamsSchema } from "../../swarm/ipc/protocol.js";
 
-const inputSchema = z.object({
-  conflictId: z.string().min(1),
-  /** Optional sha of the resolution commit, surfaced to the coordinator. */
-  resolutionCommit: z.string().optional(),
-});
+// review LOW: reuse the IPC param schema rather than redeclaring an identical
+// one here — a second copy can silently drift from the handler's validation.
+const inputSchema = TaskResolveConflictParamsSchema;
 
 const spec: ToolSpec = {
   name: "resolve_conflict",

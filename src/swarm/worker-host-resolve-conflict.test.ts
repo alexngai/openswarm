@@ -30,18 +30,26 @@ describe("WorkerHost.resolveConflict (docs/44 P2b)", () => {
     const send = vi.fn(async () => null);
     const host = makeHost(fakeTransport(send));
     await host.resolveConflict("c1", { resolutionCommit: "abc" });
-    expect(send).toHaveBeenCalledWith("task.resolve_conflict", {
-      conflictId: "c1",
-      resolutionCommit: "abc",
-    });
+    expect(send).toHaveBeenCalledWith(
+      "task.resolve_conflict",
+      {
+        conflictId: "c1",
+        resolutionCommit: "abc",
+      },
+      { timeoutMs: 10_000 }, // bounded local-ack timeout (review LOW)
+    );
   });
 
   it("omits resolutionCommit when not provided", async () => {
     const send = vi.fn(async () => null);
     const host = makeHost(fakeTransport(send));
     await host.resolveConflict("c2");
-    expect(send).toHaveBeenCalledWith("task.resolve_conflict", {
-      conflictId: "c2",
-    });
+    expect(send).toHaveBeenCalledWith(
+      "task.resolve_conflict",
+      {
+        conflictId: "c2",
+      },
+      { timeoutMs: 10_000 },
+    );
   });
 });
