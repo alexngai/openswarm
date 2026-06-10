@@ -642,12 +642,37 @@ registers a spawned coordinator the server's registry sees, forwards lane events
 and dispatches cascade actions over the connection (committed integration test).
 18 new host/argv tests; full src/host + src/acp + src/swarm gates green (981 passed).
 
-Remaining follow-ons (NOT blocking either hosting path): the dedicated task/mail
-bridges (P7 lists them); richer cascade actions (`commit`/`pause`/`resume`/`push`)
-once swarm-harness grows the matching stream primitives; retiring the legacy
-`--map` shim (`map-adapter.ts`) now that the sidecar supersedes it; and
-republishing the MAP SDK with the `/server` types fix so a fresh install needs no
-symlink.
+### Follow-on cleanup pass — ✅ MOSTLY DONE (2026-06-10)
+
+After the hosting paths landed, the open items were worked down:
+
+- **Richer cascade actions — ✅ DONE** (`c723720`): `pause`/`resume`/`abandon`/
+  `commit`/`push` now drive git-cascade tracker calls + raw `git push` (was
+  `unsupported`). The full P8 cascade button set operates on real git.
+- **Typed task events — ✅ DONE** (`f49eee2`): the bridge emits OpenHive's
+  `task.created` / `task.status` shapes (was generic `lane.task_*`). Mail-thread →
+  MAP-conversation projection remains the larger agent-inbox bridge (deferred).
+- **Rehydrate-on-restart — ✅ DONE as orphan cleanup** (`9ccc9cc`): the
+  architecture-fitting subset. swarm-harness agents are ephemeral task-runners —
+  a reconnecting ACP client resumes the transcript via `session/load` + the spine
+  (P6), so there's no live agent tree to revive (macro's concept doesn't map).
+  Boot now scans + cleans stale worker-state from a crashed prior run.
+- **Pre-existing full-suite failures — ✅ FIXED** (`a14ba42`): root-caused (via
+  subagents) to a real `write_file` bug — the TOCTTOU "under cwd" guard compared
+  against `ctx.cwd` instead of `fs.realpath(ctx.cwd)`, so on macOS every write
+  errored. Full suite green: **3319 passed, 0 failures** (was 10 failing).
+
+Still deferred (each reassessed as genuinely large/speculative or low-value):
+
+- **Model-B integrator wiring (P4).** Large; the plan itself notes it "needs a
+  real many-writer streaming consumer to land against" — defer until a real
+  workload exists.
+- **Retire the `--map` shim.** On inspection the shim (`map-adapter.ts`, used by
+  `team start --map`) and the sidecar (`host`) serve DIFFERENT commands and
+  aren't redundant — retiring is low-value cleanup with regression risk.
+- **Full mail-thread bridge** (agent-inbox conversations/turns → MAP mail).
+- **Republish the MAP SDK** with the `/server` types fix so a fresh clone needs
+  no symlink (plus the federation/auth type-error cleanup in the SDK repo).
 
 Phases were independently shippable; items are flipped to ✅ above and in
 [`43-macro-agent-parity.md`](./43-macro-agent-parity.md) with commit refs.
