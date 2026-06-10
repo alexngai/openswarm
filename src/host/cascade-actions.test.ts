@@ -109,23 +109,80 @@ describe("registerCascadeActions", () => {
     expect(resolveConflict).toHaveBeenCalledWith("s1");
   });
 
-  it("abandon → emits stream.abandoned (no merge performed)", async () => {
-    const host = {} as unknown as StandaloneHost;
+  it("abandon → host.abandonStream + emits stream.abandoned", async () => {
+    const abandonStream = vi.fn(async () => ({ success: true }));
+    const host = { abandonStream } as unknown as StandaloneHost;
     const emit = vi.fn();
     const { router, fire } = fakeRouter();
     registerCascadeActions(router, { host, emit, log: () => {} });
     fire("x-cascade/request.abandon", { stream_id: "s1", reason: "stale" });
     await tick();
+    expect(abandonStream).toHaveBeenCalledWith("s1", "stale");
+    expect(emit).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "x-cascade/stream.abandoned" }),
+    );
+  });
+
+  it("pause/resume → host.{pause,resume}Stream + emits paused/resumed", async () => {
+    const pauseStream = vi.fn(async () => ({ success: true }));
+    const resumeStream = vi.fn(async () => ({ success: true }));
+    const host = { pauseStream, resumeStream } as unknown as StandaloneHost;
+    const emit = vi.fn();
+    const { router, fire } = fakeRouter();
+    registerCascadeActions(router, { host, emit, log: () => {} });
+    fire("x-cascade/request.pause", { stream_id: "s1", reason: "hold" });
+    fire("x-cascade/request.resume", { stream_id: "s1" });
+    await tick();
+    expect(pauseStream).toHaveBeenCalledWith("s1", "hold");
+    expect(resumeStream).toHaveBeenCalledWith("s1");
+    const types = emit.mock.calls.map((c) => (c[0] as { type: string }).type);
+    expect(types).toContain("x-cascade/stream.paused");
+    expect(types).toContain("x-cascade/stream.resumed");
+  });
+
+  it("commit → host.commitStream + emits stream.committed with the sha", async () => {
+    const commitStream = vi.fn(async () => ({ success: true, commit: "abc123", changeId: "c-1" }));
+    const host = { commitStream } as unknown as StandaloneHost;
+    const emit = vi.fn();
+    const { router, fire } = fakeRouter();
+    registerCascadeActions(router, { host, emit, log: () => {} });
+    fire("x-cascade/request.commit", { stream_id: "s1", message: "wip" });
+    await tick();
+    expect(commitStream).toHaveBeenCalledWith("s1", "wip");
     expect(emit).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: "x-cascade/stream.abandoned",
-        data: expect.objectContaining({ stream_id: "s1", reason: "stale" }),
+        type: "x-cascade/stream.committed",
+        data: expect.objectContaining({ commit: "abc123", changeId: "c-1" }),
       }),
     );
   });
 
-  it("commit/pause/resume/push → emits unsupported", async () => {
-    const host = {} as unknown as StandaloneHost;
+  it("push → host.pushStream + emits stream.pushed", async () => {
+    const pushStream = vi.fn(async () => ({ success: true, pushedCommit: "deadbeef" }));
+    const host = { pushStream } as unknown as StandaloneHost;
+    const emit = vi.fn();
+    const { router, fire } = fakeRouter();
+    registerCascadeActions(router, { host, emit, log: () => {} });
+    fire("x-cascade/request.push", { stream_id: "s1", remote: "origin", target_ref: "feature/x" });
+    await tick();
+    expect(pushStream).toHaveBeenCalledWith("s1", "origin", "feature/x");
+    expect(emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "x-cascade/stream.pushed",
+        data: expect.objectContaining({ pushedCommit: "deadbeef" }),
+      }),
+    );
+  });
+
+  it("commit/pause/resume/push → unsupported when the adapter lacks them", async () => {
+    // Host passthroughs return null when no git-cascade adapter is wired.
+    const host = {
+      abandonStream: async () => null,
+      pauseStream: async () => null,
+      resumeStream: async () => null,
+      commitStream: async () => null,
+      pushStream: async () => null,
+    } as unknown as StandaloneHost;
     const emit = vi.fn();
     const { router, fire } = fakeRouter();
     registerCascadeActions(router, { host, emit, log: () => {} });

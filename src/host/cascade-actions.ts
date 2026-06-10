@@ -7,15 +7,15 @@
  * Fire-and-forget (notifications, no response) — mirrors macro-agent's
  * `src/map/cascade-action-handler.ts` and OpenHive's `sendCascadeAction`.
  *
- * Action → primitive mapping (swarm-harness has a leaner BranchPolicyAdapter
- * than macro's GitCascadeAdapter, so some macro actions are best-effort):
+ * Action → primitive mapping (all streamId-keyed via the host/adapter; each
+ * degrades to an `unsupported` event when the host has no git-cascade adapter):
  *   merge   → host.mergeStreamIdIntoBranch(stream_id, target)
- *   resolve → host.resolveConflict(conflict_id)  (P2 coordinator signal)
- *   abandon → no merge performed; emit abandoned (stream stays on its branch)
- *   commit  → not stream-keyed in swarm-harness → unsupported note
- *   pause   → no stream pause yet → unsupported note
- *   resume  → no stream pause yet → unsupported note
- *   push    → not supported here  → unsupported note
+ *   resolve → host.resolveConflict(conflict_id)   (P2 coordinator signal)
+ *   abandon → host.abandonStream(stream_id)       (git-cascade)
+ *   pause   → host.pauseStream(stream_id)          (git-cascade)
+ *   resume  → host.resumeStream(stream_id)         (git-cascade)
+ *   commit  → host.commitStream(stream_id, msg)    (Change-Id tracked)
+ *   push    → host.pushStream(stream_id, remote)   (raw git)
  */
 
 import type { StandaloneHost } from "../swarm/standalone-host.js";
@@ -46,6 +46,8 @@ interface CascadeParams {
   conflict_id?: string;
   strategy?: string;
   message?: string;
+  remote?: string;
+  target_ref?: string;
 }
 
 /**
@@ -126,25 +128,91 @@ export function registerCascadeActions(
         return;
       }
       case "abandon": {
-        // swarm-harness abandon is a landing decision — the stream stays on its
-        // own branch, unmerged. Surface it so the hub stops tracking it.
+        const r = await deps.host.abandonStream(streamId, p.reason);
+        if (r === null) {
+          unsupported(action, streamId, "adapter does not support abandon");
+          return;
+        }
         deps.emit({
-          type: "x-cascade/stream.abandoned",
-          data: { stream_id: streamId, reason: p.reason ?? "hub-request" },
+          type: r.success ? "x-cascade/stream.abandoned" : "x-cascade/stream.error",
+          data: { stream_id: streamId, reason: p.reason ?? "hub-request", ...(r.error !== undefined && { error: r.error }) },
         });
-        log(`[cascade] abandoned ${streamId}`);
+        log(`[cascade] abandon ${streamId}: ${r.success ? "ok" : r.error}`);
         return;
       }
-      case "commit":
-      case "pause":
-      case "resume":
-      case "push":
-        unsupported(action, streamId, "not supported by the swarm-harness host");
+      case "pause": {
+        const r = await deps.host.pauseStream(streamId, p.reason);
+        if (r === null) {
+          unsupported(action, streamId, "adapter does not support pause");
+          return;
+        }
+        emitOp("paused", streamId, r);
         return;
+      }
+      case "resume": {
+        const r = await deps.host.resumeStream(streamId);
+        if (r === null) {
+          unsupported(action, streamId, "adapter does not support resume");
+          return;
+        }
+        emitOp("resumed", streamId, r);
+        return;
+      }
+      case "commit": {
+        const r = await deps.host.commitStream(
+          streamId,
+          p.message ?? "Commit via cascade action",
+        );
+        if (r === null) {
+          unsupported(action, streamId, "adapter does not support commit");
+          return;
+        }
+        deps.emit({
+          type: r.success ? "x-cascade/stream.committed" : "x-cascade/stream.error",
+          data: {
+            stream_id: streamId,
+            ...(r.commit !== undefined && { commit: r.commit }),
+            ...(r.changeId !== undefined && { changeId: r.changeId }),
+            ...(r.error !== undefined && { error: r.error }),
+          },
+        });
+        log(`[cascade] commit ${streamId}: ${r.success ? r.commit : r.error}`);
+        return;
+      }
+      case "push": {
+        const r = await deps.host.pushStream(streamId, p.remote, p.target_ref);
+        if (r === null) {
+          unsupported(action, streamId, "adapter does not support push");
+          return;
+        }
+        deps.emit({
+          type: r.success ? "x-cascade/stream.pushed" : "x-cascade/stream.error",
+          data: {
+            stream_id: streamId,
+            ...(r.pushedCommit !== undefined && { pushedCommit: r.pushedCommit }),
+            ...(r.error !== undefined && { error: r.error }),
+          },
+        });
+        log(`[cascade] push ${streamId}: ${r.success ? "ok" : r.error}`);
+        return;
+      }
       default:
         unsupported(action, streamId, "unknown cascade action");
         return;
     }
+  }
+
+  /** Emit a paused/resumed result + log. */
+  function emitOp(
+    kind: "paused" | "resumed",
+    streamId: string,
+    r: { success: boolean; error?: string },
+  ): void {
+    deps.emit({
+      type: r.success ? `x-cascade/stream.${kind}` : "x-cascade/stream.error",
+      data: { stream_id: streamId, ...(r.error !== undefined && { error: r.error }) },
+    });
+    log(`[cascade] ${kind} ${streamId}: ${r.success ? "ok" : r.error}`);
   }
 
   function unsupported(action: string, streamId: string, why: string): void {

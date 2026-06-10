@@ -94,16 +94,20 @@ describe("bootSwarmHost", () => {
       bootstrap: { coordinator: false, rehydrate: "coordinators" },
       log: () => {},
     });
+    const healthPort = h.ports.health;
     await h.shutdown();
     handle = undefined; // already shut down
-    // The health port should now be re-bindable.
-    await expect(
-      bootSwarmHost({
-        port: base,
-        bootstrap: { coordinator: false, rehydrate: "coordinators" },
-        log: () => {},
-      }).then((rebound) => rebound.shutdown()),
-    ).resolves.toBeUndefined();
+    // The health port should now be re-bindable (shutdown closed the server).
+    // Probe with a plain net server rather than re-booting a full host on the
+    // base — a full re-boot holds 3 ports and would race other parallel tests
+    // for them; this tests exactly "shutdown freed the health port".
+    const net = await import("node:net");
+    const free = await new Promise<boolean>((resolve) => {
+      const srv = net.createServer();
+      srv.once("error", () => resolve(false));
+      srv.listen(healthPort, "127.0.0.1", () => srv.close(() => resolve(true)));
+    });
+    expect(free).toBe(true);
   });
 
   it("binds the ACP-WS server on the base port when acpFactory is set", async () => {

@@ -163,6 +163,21 @@ export interface BranchPolicyAdapter {
     opts?: { strategy?: string; retainOnConflict?: boolean },
   ): Promise<MergeStreamResult>;
 
+  // docs/44 P8 cascade actions (streamId-keyed). Optional; caller feature-detects.
+  pauseStream?(streamId: string, reason?: string): Promise<CascadeOpResult>;
+  resumeStream?(streamId: string): Promise<CascadeOpResult>;
+  abandonStream?(streamId: string, reason?: string): Promise<CascadeOpResult>;
+  commitStream?(
+    streamId: string,
+    message: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<CascadeOpResult & { commit?: string; changeId?: string }>;
+  pushStream?(
+    streamId: string,
+    remote?: string,
+    targetRef?: string,
+  ): Promise<CascadeOpResult & { pushedCommit?: string }>;
+
   /**
    * docs/44 P2b — finalize a resolver-fixed conflict: CAS `update-ref` the
    * target branch to the resolution commit, then remove the retained worktree.
@@ -221,6 +236,12 @@ export interface CascadeRebaseOptions {
   readonly agentId?: string;
   /** Conflict strategy. Default: "stop_on_conflict". */
   readonly strategy?: "stop_on_conflict" | "skip_conflicting" | "defer_conflicts";
+}
+
+/** docs/44 P8 — result of a streamId-keyed cascade action. */
+export interface CascadeOpResult {
+  readonly success: boolean;
+  readonly error?: string;
 }
 
 export interface CascadeRebaseResult {
@@ -344,6 +365,10 @@ type MultiAgentRepoTrackerLike = {
     changeId: string;
     [key: string]: unknown;
   };
+  // docs/44 P8 cascade actions — git-cascade stream lifecycle controls.
+  pauseStream?(streamId: string, reason?: string): void;
+  resumeStream?(streamId: string): void;
+  abandonStream?(streamId: string, options?: { reason?: string; cascade?: boolean }): void;
   // v0.7 stage 7F — track an existing git branch (e.g. main) as a
   // worktree-less stream so it can serve as a merge target. git-cascade's
   // mergeStream requires the target stream to NOT have an active worktree
@@ -1013,6 +1038,131 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
       console.warn(
         `[git-cascade] discardConflictWorktree: failed to remove ${worktree}: ${msg.slice(0, 200)}`,
       );
+    }
+  }
+
+  // ---- docs/44 P8 cascade actions (streamId-keyed) ---------------------
+
+  /** Reverse-resolve a streamId to its recorded agent + worktree. */
+  private locateStream(
+    streamId: string,
+  ): { agentId: AgentId; worktree: string } | undefined {
+    for (const [agentId, s] of this.agentStreams) {
+      if (s.streamId === streamId) return { agentId, worktree: s.worktree };
+    }
+    return undefined;
+  }
+
+  /** Pause a stream (git-cascade marks it non-drainable until resumed). */
+  async pauseStream(
+    streamId: string,
+    reason?: string,
+  ): Promise<CascadeOpResult> {
+    const tracker = await this.ensureTracker();
+    if (tracker.pauseStream === undefined) {
+      return { success: false, error: "tracker has no pauseStream" };
+    }
+    try {
+      tracker.pauseStream(streamId, reason);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  /** Resume a previously-paused stream. */
+  async resumeStream(streamId: string): Promise<CascadeOpResult> {
+    const tracker = await this.ensureTracker();
+    if (tracker.resumeStream === undefined) {
+      return { success: false, error: "tracker has no resumeStream" };
+    }
+    try {
+      tracker.resumeStream(streamId);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  /** Abandon a stream (the work stays on its branch; the stream is marked dead). */
+  async abandonStream(
+    streamId: string,
+    reason?: string,
+  ): Promise<CascadeOpResult> {
+    const tracker = await this.ensureTracker();
+    if (tracker.abandonStream === undefined) {
+      return { success: false, error: "tracker has no abandonStream" };
+    }
+    try {
+      tracker.abandonStream(streamId, reason !== undefined ? { reason } : undefined);
+      // Drop the local mapping so dispose/cleanup doesn't touch an abandoned tree.
+      const loc = this.locateStream(streamId);
+      if (loc !== undefined) this.agentStreams.delete(loc.agentId);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  /** Commit a stream's in-flight changes via git-cascade (Change-Id tracked). */
+  async commitStream(
+    streamId: string,
+    message: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<CascadeOpResult & { commit?: string; changeId?: string }> {
+    const loc = this.locateStream(streamId);
+    if (loc === undefined) {
+      return {
+        success: false,
+        error: `no recorded worktree for stream ${streamId} (the enqueuing agent may be gone)`,
+      };
+    }
+    if (!fs.existsSync(loc.worktree)) {
+      return { success: false, error: `worktree ${loc.worktree} no longer exists` };
+    }
+    const tracker = await this.ensureTracker();
+    try {
+      const r = tracker.commitChanges({
+        streamId,
+        agentId: loc.agentId,
+        worktree: loc.worktree,
+        message,
+        ...(metadata !== undefined && { metadata }),
+      });
+      return {
+        success: true,
+        commit: r.commit,
+        ...(r.changeId !== undefined && { changeId: r.changeId }),
+      };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  /** Push a stream's branch to a remote (raw git — git-cascade has no push). */
+  async pushStream(
+    streamId: string,
+    remote = "origin",
+    targetRef?: string,
+  ): Promise<CascadeOpResult & { pushedCommit?: string }> {
+    const sourceBranch = `stream/${streamId}`;
+    try {
+      runGit(["rev-parse", "--verify", "--quiet", `refs/heads/${sourceBranch}`], this.repoPath);
+    } catch {
+      return { success: false, error: "missing_source" };
+    }
+    const ref = targetRef ?? sourceBranch;
+    try {
+      runGit(["push", remote, `${sourceBranch}:refs/heads/${ref}`], this.repoPath);
+      let pushedCommit: string | undefined;
+      try {
+        pushedCommit = runGit(["rev-parse", sourceBranch], this.repoPath).trim();
+      } catch {
+        // best-effort sha
+      }
+      return { success: true, ...(pushedCommit !== undefined && { pushedCommit }) };
+    } catch (err) {
+      return { success: false, error: (err as Error).message.slice(0, 300) };
     }
   }
 

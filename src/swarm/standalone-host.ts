@@ -412,6 +412,62 @@ export class StandaloneHost implements SwarmHost {
     await this.branchPolicyAdapter.discardConflictWorktree(worktree);
   }
 
+  // ---- docs/44 P8 cascade actions (streamId-keyed passthroughs) --------
+  // Each returns null when the adapter doesn't support the op (cascade-actions
+  // surfaces that as `unsupported`); otherwise the adapter's result.
+
+  async pauseStream(
+    streamId: string,
+    reason?: string,
+  ): Promise<import("./adapters/git-cascade-branch-policy.js").CascadeOpResult | null> {
+    if (this.branchPolicyAdapter.pauseStream === undefined) return null;
+    return this.branchPolicyAdapter.pauseStream(streamId, reason);
+  }
+
+  async resumeStream(
+    streamId: string,
+  ): Promise<import("./adapters/git-cascade-branch-policy.js").CascadeOpResult | null> {
+    if (this.branchPolicyAdapter.resumeStream === undefined) return null;
+    return this.branchPolicyAdapter.resumeStream(streamId);
+  }
+
+  async abandonStream(
+    streamId: string,
+    reason?: string,
+  ): Promise<import("./adapters/git-cascade-branch-policy.js").CascadeOpResult | null> {
+    if (this.branchPolicyAdapter.abandonStream === undefined) return null;
+    return this.branchPolicyAdapter.abandonStream(streamId, reason);
+  }
+
+  async commitStream(
+    streamId: string,
+    message: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<
+    | (import("./adapters/git-cascade-branch-policy.js").CascadeOpResult & {
+        commit?: string;
+        changeId?: string;
+      })
+    | null
+  > {
+    if (this.branchPolicyAdapter.commitStream === undefined) return null;
+    return this.branchPolicyAdapter.commitStream(streamId, message, metadata);
+  }
+
+  async pushStream(
+    streamId: string,
+    remote?: string,
+    targetRef?: string,
+  ): Promise<
+    | (import("./adapters/git-cascade-branch-policy.js").CascadeOpResult & {
+        pushedCommit?: string;
+      })
+    | null
+  > {
+    if (this.branchPolicyAdapter.pushStream === undefined) return null;
+    return this.branchPolicyAdapter.pushStream(streamId, remote, targetRef);
+  }
+
   /**
    * v0.7 stage 7C: merge an agent's stream into a target. Used by topology
    * auto-merge (see TeamCoordination.mergeStreams) and any future
