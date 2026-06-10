@@ -155,6 +155,42 @@ describe("bootSwarmHost", () => {
     expect(handle.mapServer).toBeUndefined();
   });
 
+  it("cleans up orphan worker state on boot (restart hygiene)", async () => {
+    const fsp = await import("node:fs/promises");
+    const osmod = await import("node:os");
+    const pathmod = await import("node:path");
+    const wsf = await import("../swarm/worker-state-file.js");
+    const dir = await fsp.mkdtemp(pathmod.join(osmod.tmpdir(), "swh-orphan-"));
+    const prev = process.env.SWARM_HARNESS_WORKERS_DIR;
+    process.env.SWARM_HARNESS_WORKERS_DIR = dir;
+    try {
+      // A worker that crashed mid-run: non-terminal state + a dead pid.
+      const orphanId = "orphan-1" as never;
+      wsf.writeWorkerState({
+        agentId: orphanId,
+        pid: 2147483646, // effectively never alive
+        startedAt: 1,
+        lifecycleState: "running",
+        lastTransitionAt: 1,
+      });
+      expect(wsf.readWorkerState(orphanId)).not.toBeNull();
+
+      const logs: string[] = [];
+      const { handle: h } = await bootOnFreeBase({
+        bootstrap: { coordinator: false, rehydrate: "all" },
+        log: (m) => logs.push(m),
+      });
+      handle = h;
+
+      expect(wsf.readWorkerState(orphanId)).toBeNull(); // cleaned up
+      expect(logs.some((l) => /orphan worker orphan-1/.test(l))).toBe(true);
+    } finally {
+      if (prev !== undefined) process.env.SWARM_HARNESS_WORKERS_DIR = prev;
+      else delete process.env.SWARM_HARNESS_WORKERS_DIR;
+      await fsp.rm(dir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
   it("uses an injected host (makeHost seam)", async () => {
     let made = false;
     const fakeHost = { __fake: true } as never;

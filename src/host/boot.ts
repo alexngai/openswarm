@@ -121,6 +121,32 @@ export async function bootSwarmHost(
 
   const standalone = opts.makeHost?.() ?? (await makeDefaultHost(cwd, opts));
 
+  // docs/44 — restart hygiene ("rehydrate"). swarm-harness agents are ephemeral
+  // task-runners (a reconnecting ACP client resumes the transcript via
+  // session/load + the spine, P6), so there's no live agent tree to revive on
+  // restart — but a crashed prior run can leave stale worker-state files. Scan
+  // for orphans (non-terminal state, process dead) and clean them up so state
+  // doesn't accumulate across restarts. Skipped under rehydrate:"none".
+  if (
+    bootstrap.rehydrate !== "none" &&
+    typeof standalone.scanForOrphanWorkers === "function"
+  ) {
+    try {
+      const orphans = standalone.scanForOrphanWorkers();
+      if (orphans.length > 0) {
+        const { removeWorkerState } = await import("../swarm/worker-state-file.js");
+        for (const o of orphans) {
+          log(
+            `[swarm-host] orphan worker ${o.agentId} (state=${o.lifecycleState}, pid=${o.pid} dead) — cleaning up`,
+          );
+          removeWorkerState(o.agentId);
+        }
+      }
+    } catch (err) {
+      log(`[swarm-host] orphan scan failed: ${(err as Error).message}`);
+    }
+  }
+
   const startedAt = Date.now();
   const health = await createHealthServer({
     port: ports.health,
