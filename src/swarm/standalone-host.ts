@@ -394,6 +394,21 @@ export class StandaloneHost implements SwarmHost {
   }
 
   /**
+   * docs/44 P3: propagate a root stream's new commits to its dependent (forked)
+   * streams via the branch-policy adapter's cascade rebase. Returns null when
+   * the adapter doesn't support cascades. Used by the CascadeScheduler trigger.
+   */
+  async cascadeRebase(
+    opts: import("./adapters/git-cascade-branch-policy.js").CascadeRebaseOptions,
+  ): Promise<
+    | import("./adapters/git-cascade-branch-policy.js").CascadeRebaseResult
+    | null
+  > {
+    if (this.branchPolicyAdapter.cascadeRebase === undefined) return null;
+    return this.branchPolicyAdapter.cascadeRebase(opts);
+  }
+
+  /**
    * docs/44 P2 — mark a conflict resolved (called by the `resolve_conflict`
    * tool). Wakes a matching waiter if present; otherwise records the
    * resolution so a later `waitForConflictResolution` returns immediately.

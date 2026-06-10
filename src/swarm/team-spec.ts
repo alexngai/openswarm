@@ -73,6 +73,12 @@ export interface MemberSpec {
    * `RecoveryRegistry.select`; dormant until P1 wires dispatch.
    */
   readonly onConflict?: string;
+  /**
+   * docs/44 P3 — opt this member's stream into auto-rebase when its parent/target
+   * stream advances. When any member sets this, a successful stream-merge into
+   * the target triggers a (debounced) cascade rebase of the target's dependents.
+   */
+  readonly onParentAdvanced?: "sync";
 }
 
 /**
@@ -94,6 +100,7 @@ export const MemberSpecSchema = z.object({
   cwd: z.string().optional(),
   sessionSidecarPath: z.string().optional(),
   onConflict: z.string().min(1).optional(),
+  onParentAdvanced: z.literal("sync").optional(),
 }) satisfies z.ZodType<unknown>;
 
 // ---------------------------------------------------------------------------

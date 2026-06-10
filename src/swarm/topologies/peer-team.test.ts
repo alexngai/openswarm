@@ -157,6 +157,13 @@ interface FakeHostExtras {
     | import("../adapters/git-cascade-branch-policy.js").MergeStreamResult
     | null
   >;
+  /** docs/44 P3 — stub host.cascadeRebase. */
+  readonly cascadeRebase?: (
+    opts: import("../adapters/git-cascade-branch-policy.js").CascadeRebaseOptions,
+  ) => Promise<
+    | import("../adapters/git-cascade-branch-policy.js").CascadeRebaseResult
+    | null
+  >;
 }
 
 function fakeHost(
@@ -215,6 +222,9 @@ function fakeHost(
     mergeStreamToBranchForAgent: vi.fn(
       extras.mergeStreamToBranchForAgent ?? (async () => null),
     ),
+    // docs/44 P3 — present by default (real StandaloneHost always has it); the
+    // cascade trigger's real discriminator is member.onParentAdvanced.
+    cascadeRebase: vi.fn(extras.cascadeRebase ?? (async () => null)),
   } as unknown as StandaloneHost;
 
   return {
@@ -927,6 +937,62 @@ describe("PeerTeamTopology — coordination.mergeStreams (v0.7 stage 7C)", () =>
     await expect(new PeerTeamTopology().run(spec, ctx)).rejects.toThrow(
       /mergeStream failed/,
     );
+    await cleanup();
+  });
+
+  // ----- docs/44 P3 — cascade auto-rebase --------------------------------
+
+  it("P3 — fires one coalesced cascade after stream merges into the target", async () => {
+    const cascadeRebase = vi.fn(async () => ({
+      success: true,
+      rebased: [{ streamId: "dep" }],
+    }));
+    const { ctx, cleanup } = await makeCtx({
+      handleOpts: [
+        { result: successResult("a") },
+        { result: successResult("b") },
+      ],
+      hostExtras: {
+        streamIdFor: (id: string) => `stream-${id}`,
+        mergeStreamForAgent: async () => ({ success: true, newHead: "h" }),
+        cascadeRebase,
+      },
+    });
+    const spec = peerSpec(
+      [
+        { ...member("a", "p"), onParentAdvanced: "sync" as const },
+        { ...member("b", "p"), onParentAdvanced: "sync" as const },
+      ],
+      { completion: { kind: "all" }, mergeStreams: { targetStream: "team-root" } },
+    );
+    await new PeerTeamTopology().run(spec, ctx);
+    // Both members merged into the same target → coalesced to ONE cascade.
+    expect(cascadeRebase).toHaveBeenCalledTimes(1);
+    expect(cascadeRebase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rootStream: "team-root",
+        strategy: "defer_conflicts",
+      }),
+    );
+    await cleanup();
+  });
+
+  it("P3 — no cascade when no member opts into onParentAdvanced", async () => {
+    const cascadeRebase = vi.fn(async () => ({ success: true, rebased: [] }));
+    const { ctx, cleanup } = await makeCtx({
+      handleOpts: [{ result: successResult("a") }],
+      hostExtras: {
+        streamIdFor: (id: string) => `stream-${id}`,
+        mergeStreamForAgent: async () => ({ success: true }),
+        cascadeRebase,
+      },
+    });
+    const spec = peerSpec([member("a", "p")], {
+      completion: { kind: "all" },
+      mergeStreams: { targetStream: "team-root" },
+    });
+    await new PeerTeamTopology().run(spec, ctx);
+    expect(cascadeRebase).not.toHaveBeenCalled();
     await cleanup();
   });
 

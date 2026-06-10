@@ -327,7 +327,22 @@ holds. Gate the live-agent test behind the usual flag.
 
 ---
 
-### P3 — Cascade auto-rebase (W5) _(S–M)_
+### P3 — Cascade auto-rebase (W5) _(S–M)_ — ✅ DONE (2026-06-09)
+
+> **Landed.** `src/swarm/cascade-scheduler.ts` — `CascadeScheduler`: coalesces
+> `request(root)` per root and debounces (2s default); `flush()` drains
+> immediately for the batch case; timer auto-fire for the trickle case; injected
+> `run` callback (unit-tested without git). `StandaloneHost.cascadeRebase` wrapper
+> delegates to the adapter (which already ships `cascadeRebase` with
+> `defer_conflicts`). `MemberSpec.onParentAdvanced?: "sync"` (+ zod) opts in.
+> `peer-team` builds the scheduler when a member opts in **and** the merge target
+> is a STREAM (cascade roots are streams, not branches), `request()`s on each
+> successful stream-merge, and `flush()`es after the loop — N merges into one
+> target coalesce to **one** cascade; results surface as `team_note`s. Verify:
+> full `src/swarm` **679 pass**, `npm run build` clean. _(Cascade-conflict →
+> recovery routing left as a follow-up: the recovery dispatcher is merge-oriented;
+> cascade `defer_conflicts` failures currently surface as notes.)_
+
 
 Primitive already ships (`GitCascadeBranchPolicyAdapter.cascadeRebase()`,
 adapter:421). Add the trigger.

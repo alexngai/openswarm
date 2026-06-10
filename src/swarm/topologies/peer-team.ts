@@ -39,6 +39,7 @@ import {
   type ConflictResolution,
 } from "../recovery/index.js";
 import { buildResolverSpawner } from "../recovery/resolver-spawner.js";
+import { CascadeScheduler } from "../cascade-scheduler.js";
 import type {
   Topology,
   TopologyContext,
@@ -510,6 +511,25 @@ export class PeerTeamTopology implements Topology {
             timeoutMs,
           })
         : undefined;
+    // docs/44 P3 — when a member opts into `onParentAdvanced: "sync"` and we're
+    // merging into a target STREAM (cascade roots are streams, not branches),
+    // schedule a debounced cascade rebase of the target's dependents. Repeated
+    // member merges into the same target coalesce into one cascade.
+    const cascadeEnabled =
+      !usingBranch &&
+      targetStream !== undefined &&
+      typeof host.cascadeRebase === "function" &&
+      spec.members.some((m) => m.onParentAdvanced === "sync");
+    const cascade = cascadeEnabled
+      ? new CascadeScheduler({
+          run: (root) =>
+            host.cascadeRebase({
+              rootStream: root,
+              agentId: "cascade-driver",
+              strategy: "defer_conflicts",
+            }),
+        })
+      : undefined;
     // handles[i] is index-aligned with spec.members[i] (team.spawnAll preserves
     // order), so spec.members[i].role drives per-member recovery selection.
     for (let i = 0; i < handles.length; i++) {
@@ -607,6 +627,33 @@ export class PeerTeamTopology implements Topology {
             `PeerTeamTopology: mergeStream failed for ${handle.agentId}: ${reason}`,
           );
         }
+      } else if (cascade !== undefined) {
+        // Successful stream merge advanced the target — request a (coalesced)
+        // cascade rebase of its dependents.
+        cascade.request(targetStream!);
+      }
+    }
+
+    // docs/44 P3 — run the coalesced cascade(s) now and surface the outcome.
+    if (cascade !== undefined) {
+      const results = await cascade.flush();
+      for (const [root, r] of results) {
+        if (r === null) continue;
+        const unrebased =
+          r.conflicts !== undefined && r.conflicts.length > 0
+            ? r.conflicts.map((c) => c.streamId).join(", ")
+            : undefined;
+        ctx.host.emit({
+          type: "team_note",
+          payload: {
+            teamName: spec.name,
+            scope: `swarm:${spec.name}`,
+            note:
+              !r.success || unrebased !== undefined
+                ? `cascade rebase of ${root} left unrebased streams: ${unrebased ?? r.error ?? "unknown"}`
+                : `cascade rebase of ${root}: ${r.rebased?.length ?? 0} dependent(s) rebased`,
+          },
+        });
       }
     }
   }
