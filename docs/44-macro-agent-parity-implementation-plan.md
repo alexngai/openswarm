@@ -87,7 +87,18 @@ registry select/registration; `MergeToParentStrategy` exercised by the current
 
 ---
 
-### P1 — Conflict-recovery dispatch, sync strategies _(M)_
+### P1 — Conflict-recovery dispatch, sync strategies _(M)_ — ✅ DONE (2026-06-09)
+
+> **Landed.** Built-in strategies `src/swarm/recovery/{defer,abandon,escalate}.ts`
+> (pure; `auto-resolve` intentionally absent per D2) + `createDefaultRecoveryRegistry`
+> + `describeResolution`. `peer-team.ts maybeMergeStreams` now dispatches recovery
+> at the conflict branch: original failure note preserved, then
+> `recovery.select(role, spec).recover(...)` runs and emits a second note; throws
+> only when `!resolved && failOnConflict`. **Default `defer` ⇒ identical behavior
+> to P0** (existing conflict tests unchanged). Unknown strategy names (e.g.
+> `spawn-resolver` pre-P2) degrade to deferred. `pipeline` doesn't land streams,
+> so peer-team is the only wiring site. Verify: full `src/swarm` **643 pass**
+> (+10), `tsc --noEmit` clean.
 
 Stop swallowing conflicts. Dispatch a recovery strategy at the existing conflict
 branch.

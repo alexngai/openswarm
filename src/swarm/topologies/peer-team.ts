@@ -32,6 +32,11 @@ import {
   createDefaultLandingRegistry,
   DEFAULT_LANDING_STRATEGY,
 } from "../landing/index.js";
+import {
+  createDefaultRecoveryRegistry,
+  describeResolution,
+  type ConflictResolution,
+} from "../recovery/index.js";
 import type {
   Topology,
   TopologyContext,
@@ -43,6 +48,12 @@ import type {
  * inject one. Constructed once; holds the built-in `merge-to-parent` strategy.
  */
 const DEFAULT_LANDING_REGISTRY = createDefaultLandingRegistry();
+
+/**
+ * docs/44 P1 — default conflict-recovery registry (defer / abandon / escalate).
+ * Used when the TopologyContext doesn't inject one.
+ */
+const DEFAULT_RECOVERY_REGISTRY = createDefaultRecoveryRegistry();
 
 export class PeerTeamTopology implements Topology {
   readonly name = "peer-team" as const;
@@ -457,7 +468,11 @@ export class PeerTeamTopology implements Topology {
       (ctx.landingRegistry ?? DEFAULT_LANDING_REGISTRY).get(
         DEFAULT_LANDING_STRATEGY,
       );
-    for (const handle of handles) {
+    const recovery = ctx.recoveryRegistry ?? DEFAULT_RECOVERY_REGISTRY;
+    // handles[i] is index-aligned with spec.members[i] (team.spawnAll preserves
+    // order), so spec.members[i].role drives per-member recovery selection.
+    for (let i = 0; i < handles.length; i++) {
+      const handle = handles[i]!;
       const streamId = ctx.host.streamIdFor(handle.agentId);
       if (streamId === undefined) continue;
       const result =
@@ -489,10 +504,10 @@ export class PeerTeamTopology implements Topology {
       }
       const target = usingBranch ? cfg.targetBranch : targetStream;
       if (!result.success) {
-        const reason =
-          result.errorType === "conflict"
-            ? `conflict on ${result.conflicts?.join(", ") ?? "<unknown>"}`
-            : (result.error ?? "unknown merge error");
+        const isConflict = result.errorType === "conflict";
+        const reason = isConflict
+          ? `conflict on ${result.conflicts?.join(", ") ?? "<unknown>"}`
+          : (result.error ?? "unknown merge error");
         ctx.host.emit({
           type: "team_note",
           payload: {
@@ -501,7 +516,51 @@ export class PeerTeamTopology implements Topology {
             note: `mergeStream(${streamId} → ${target}) failed: ${reason}`,
           },
         });
-        if (cfg.failOnConflict === true) {
+
+        // docs/44 P1 — dispatch conflict recovery per role/team config. The
+        // default strategy is `defer` (a no-op), so a team that hasn't opted
+        // into recovery behaves exactly as before: the note above is emitted
+        // and `failOnConflict` still decides whether to throw.
+        let resolved = false;
+        if (isConflict) {
+          const role = spec.members[i]?.role;
+          const strategyName = recovery.select(role, spec);
+          const resolution: ConflictResolution = recovery.has(strategyName)
+            ? await recovery.recover(strategyName, {
+                conflictId: `${handle.agentId}:${streamId}`,
+                sourceAgentId: handle.agentId,
+                streamId,
+                paths: result.conflicts ?? [],
+                operation: "merge",
+                ...(usingBranch
+                  ? { targetBranch: cfg.targetBranch! }
+                  : { targetStream: targetStream! }),
+                recoveryDepth: 0,
+                ...(spec.coordination.conflictRecovery?.defaultConfig !==
+                  undefined && {
+                  strategyConfig:
+                    spec.coordination.conflictRecovery.defaultConfig,
+                }),
+              })
+            : {
+                kind: "deferred",
+                reason: `strategy "${strategyName}" not registered`,
+              };
+          resolved = resolution.kind === "resolved";
+          ctx.host.emit({
+            type: "team_note",
+            payload: {
+              teamName: spec.name,
+              scope: `swarm:${spec.name}`,
+              note: `conflict recovery [${strategyName}] for ${handle.agentId}: ${describeResolution(resolution)}`,
+            },
+          });
+        }
+
+        // Throw only when the conflict was NOT resolved. `failOnConflict`
+        // preserves its contract: an unresolved conflict (or a non-conflict
+        // merge error) fails the topology.
+        if (!resolved && cfg.failOnConflict === true) {
           throw new Error(
             `PeerTeamTopology: mergeStream failed for ${handle.agentId}: ${reason}`,
           );

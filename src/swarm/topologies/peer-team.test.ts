@@ -859,6 +859,77 @@ describe("PeerTeamTopology — coordination.mergeStreams (v0.7 stage 7C)", () =>
     await cleanup();
   });
 
+  // ----- docs/44 P1 — conflict-recovery dispatch -------------------------
+
+  function conflictCtx() {
+    return makeCtx({
+      handleOpts: [{ result: successResult("ok-a") }],
+      hostExtras: {
+        streamIdFor: () => "s-x",
+        mergeStreamForAgent: async () => ({
+          success: false,
+          errorType: "conflict",
+          conflicts: ["src/foo.ts"],
+        }),
+      },
+    });
+  }
+
+  function teamNotes(ctx: { host: { emit: unknown } }): string[] {
+    const emit = ctx.host.emit as unknown as ReturnType<typeof vi.fn>;
+    return emit.mock.calls
+      .map((c) => c[0] as { type: string; payload?: { note?: string } })
+      .filter((e) => e.type === "team_note")
+      .map((e) => e.payload?.note ?? "");
+  }
+
+  it("P1 — dispatches the team-default recovery strategy (escalate)", async () => {
+    const { ctx, cleanup } = await conflictCtx();
+    const spec = peerSpec([member("a", "p")], {
+      completion: { kind: "all" },
+      mergeStreams: { targetStream: "main" },
+      conflictRecovery: { defaultStrategy: "escalate" },
+    });
+    const summary = await new PeerTeamTopology().run(spec, ctx);
+    const notes = teamNotes(ctx);
+    // Original failure note is still emitted first (behavior preserved).
+    expect(notes[0]).toMatch(/conflict on src\/foo\.ts/);
+    expect(notes.some((n) => /conflict recovery \[escalate\]/.test(n))).toBe(true);
+    expect(notes.some((n) => /escalated to human/.test(n))).toBe(true);
+    expect(summary.succeeded).toBe(1); // escalate is non-fatal without failOnConflict
+    await cleanup();
+  });
+
+  it("P1 — member.onConflict overrides the team default", async () => {
+    const { ctx, cleanup } = await conflictCtx();
+    const spec = peerSpec(
+      [{ ...member("a", "p"), onConflict: "abandon" }],
+      {
+        completion: { kind: "all" },
+        mergeStreams: { targetStream: "main" },
+        conflictRecovery: { defaultStrategy: "escalate" },
+      },
+    );
+    await new PeerTeamTopology().run(spec, ctx);
+    const notes = teamNotes(ctx);
+    expect(notes.some((n) => /conflict recovery \[abandon\]/.test(n))).toBe(true);
+    expect(notes.some((n) => /abandoned s-x/.test(n))).toBe(true);
+    await cleanup();
+  });
+
+  it("P1 — failOnConflict still throws when recovery does not resolve", async () => {
+    const { ctx, cleanup } = await conflictCtx();
+    const spec = peerSpec([member("a", "p")], {
+      completion: { kind: "all" },
+      mergeStreams: { targetStream: "main", failOnConflict: true },
+      conflictRecovery: { defaultStrategy: "escalate" },
+    });
+    await expect(new PeerTeamTopology().run(spec, ctx)).rejects.toThrow(
+      /mergeStream failed/,
+    );
+    await cleanup();
+  });
+
   it("v0.7 stage 7D — applies default {kind:'stream'} when host supports streams and member has no policy", async () => {
     const captured: SpawnRequest[] = [];
     const harness = await makeCtx({
