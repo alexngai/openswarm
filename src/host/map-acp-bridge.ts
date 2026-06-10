@@ -72,8 +72,10 @@ export function wireAcpOverMap(opts: AcpOverMapOptions): AcpOverMap {
   }
 
   const handler = {
-    initialize: async (params: any, ctx: { streamId: string }) =>
-      (await teamFor(ctx.streamId).agent.initialize(params)) as any,
+    initialize: async (params: any, ctx: { streamId: string }) => {
+      log(`[acp-map] initialize stream=${ctx.streamId}`);
+      return (await teamFor(ctx.streamId).agent.initialize(params)) as any;
+    },
     authenticate: async (params: any, ctx: { streamId: string }) =>
       (await teamFor(ctx.streamId).agent.authenticate?.(params)) as any,
     newSession: async (params: any, ctx: { streamId: string }) =>

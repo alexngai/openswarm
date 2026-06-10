@@ -627,8 +627,12 @@ socket):
   `ACPAgentAdapter` (server side, wire-compatible with OpenHive's
   `ACPStreamConnection`) delegates its `ACPAgentHandler` to our P6
   `createTeamConnection` / `AcpTeamAgent` via a per-stream forwarding shim — all
-  team logic reused. (Cross-SDK ACP types bridged by structural casts;
-  end-to-end version negotiation validated against a live OpenHive.)
+  team logic reused. **Validated end-to-end** (committed test): a real SDK
+  `TestServer` hub + `ClientConnection`/`createACPStream` → our sidecar's adapter
+  → `AcpTeamAgent`; `initialize` returns the swarm-harness capabilities
+  (`agentInfo`, `loadSession`, `_meta.swarm`) and `newSession` creates the team —
+  so the cross-SDK ACP type/version bridging works. (A live `prompt()` runs a
+  real coordinator/model and is exercised separately.)
 - CLI/boot: `swarm-harness host --port N --map-server ws://hub [--map-scope …]
   [--onboard-token …]` (or `SWARM_MAP_SERVER` env) → outbound sidecar + ACP-over-MAP;
   gated on explicit config (never on a bootstrap token alone).
