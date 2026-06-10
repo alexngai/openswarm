@@ -17,6 +17,7 @@
  * for static awareness; runtime fresh state is the `team_members()` tool's
  * job, which the augmentation explicitly mentions.
  */
+import { randomUUID } from "node:crypto";
 import type { EventEmitter } from "node:events";
 import type { AgentId } from "../../core/types.js";
 import type { AgentResult, AgentHandle } from "../host.js";
@@ -482,10 +483,22 @@ export class PeerTeamTopology implements Topology {
     // strategy can run a real resolver agent. Fakes that lack these methods at
     // runtime → no coordinator → spawn-resolver escalates.
     const host = ctx.host;
-    const cfgTimeout = spec.coordination.conflictRecovery?.defaultConfig
-      ?.timeoutMs;
+    const recoveryCfg = spec.coordination.conflictRecovery;
+    const cfgTimeout = recoveryCfg?.defaultConfig?.timeoutMs;
     const timeoutMs =
       typeof cfgTimeout === "number" ? cfgTimeout : DEFAULT_RESOLVER_TIMEOUT_MS;
+    // Fold the sibling `conflictRecovery.maxRecoveryDepth` into strategyConfig
+    // so the spawn-resolver strategy (which reads strategyConfig.maxRecoveryDepth)
+    // actually honors it. Without this, the top-level key was silently dropped
+    // and resolver recursion always used the built-in default depth.
+    const mergedConfig: Record<string, unknown> = {
+      ...(recoveryCfg?.defaultConfig ?? {}),
+      ...(recoveryCfg?.maxRecoveryDepth !== undefined && {
+        maxRecoveryDepth: recoveryCfg.maxRecoveryDepth,
+      }),
+    };
+    const strategyConfig =
+      Object.keys(mergedConfig).length > 0 ? mergedConfig : undefined;
     const spawnResolver =
       usingBranch &&
       typeof host.finalizeConflictResolution === "function" &&
@@ -549,8 +562,10 @@ export class PeerTeamTopology implements Topology {
               ...(cfg.strategy !== undefined && { strategy: cfg.strategy }),
             });
       if (result === null) {
-        // Adapter doesn't support this merge path — emit a note so the
-        // operator knows the auto-merge silently skipped.
+        // This landing strategy can't merge this member (e.g. adapter lacks
+        // the capability) — emit a note and SKIP THIS MEMBER. Must `continue`,
+        // not `return`: a per-member null must not abort the rest of the
+        // cohort (a custom strategy may decline one member yet land others).
         ctx.host.emit({
           type: "team_note",
           payload: {
@@ -561,7 +576,7 @@ export class PeerTeamTopology implements Topology {
               : `mergeStreams.targetStream=${targetStream} requires a stream-aware adapter; skipping merge`,
           },
         });
-        return;
+        continue;
       }
       const target = usingBranch ? cfg.targetBranch : targetStream;
       if (!result.success) {
@@ -588,7 +603,11 @@ export class PeerTeamTopology implements Topology {
           const strategyName = recovery.select(role, spec);
           const resolution: ConflictResolution = recovery.has(strategyName)
             ? await recovery.recover(strategyName, {
-                conflictId: `${handle.agentId}:${streamId}`,
+                // Unique per recovery invocation: the conflictId keys the host's
+                // waiter map and resolve-before-wait buffer, so a deterministic
+                // agentId:streamId would let a stale buffered resolution satisfy
+                // a later distinct conflict (and collide concurrent resolvers).
+                conflictId: `${handle.agentId}:${streamId}:${randomUUID()}`,
                 sourceAgentId: handle.agentId,
                 streamId,
                 paths: result.conflicts ?? [],
@@ -597,11 +616,7 @@ export class PeerTeamTopology implements Topology {
                   ? { targetBranch: cfg.targetBranch! }
                   : { targetStream: targetStream! }),
                 recoveryDepth: 0,
-                ...(spec.coordination.conflictRecovery?.defaultConfig !==
-                  undefined && {
-                  strategyConfig:
-                    spec.coordination.conflictRecovery.defaultConfig,
-                }),
+                ...(strategyConfig !== undefined && { strategyConfig }),
                 ...(spawnResolver !== undefined && { spawnResolver }),
               })
             : {

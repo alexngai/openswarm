@@ -17,6 +17,11 @@ import { join } from "node:path";
 import { PeerTeamTopology } from "./peer-team.js";
 import { WorkerPool } from "../worker-pool.js";
 import { DeadLetterWriter } from "../dead-letter.js";
+import { RecoveryRegistry } from "../recovery/registry.js";
+import type {
+  ConflictContext,
+  ConflictResolution,
+} from "../recovery/types.js";
 import type { TeamSpec, MemberSpec } from "../team-spec.js";
 import type { TopologyContext } from "../topologies-types.js";
 import type { StandaloneHost } from "../standalone-host.js";
@@ -937,6 +942,117 @@ describe("PeerTeamTopology — coordination.mergeStreams (v0.7 stage 7C)", () =>
     await expect(new PeerTeamTopology().run(spec, ctx)).rejects.toThrow(
       /mergeStream failed/,
     );
+    await cleanup();
+  });
+
+  // ----- Track-A hardening — recovery wiring regressions -----------------
+
+  /** A recovery strategy that records each ConflictContext it sees. */
+  function capturingRegistry(): {
+    registry: RecoveryRegistry;
+    seen: ConflictContext[];
+  } {
+    const seen: ConflictContext[] = [];
+    const registry = new RecoveryRegistry();
+    registry.register({
+      name: "capture",
+      mode: "sync",
+      async recover(ctx: ConflictContext): Promise<ConflictResolution> {
+        seen.push(ctx);
+        return { kind: "deferred", reason: "captured" };
+      },
+    });
+    return { registry, seen };
+  }
+
+  it("hardening — a per-member null land() skips that member, not the cohort", async () => {
+    // Both members have streams, but the adapter can't merge (returns null).
+    // The loop must `continue` (one skip note PER member), not `return` after
+    // the first — otherwise later members are silently dropped.
+    const { ctx, cleanup } = await makeCtx({
+      handleOpts: [
+        { result: successResult("a") },
+        { result: successResult("b") },
+      ],
+      hostExtras: {
+        streamIdFor: (id: string) => `stream-${id}`,
+        mergeStreamForAgent: async () => null, // adapter declines every member
+      },
+    });
+    const spec = peerSpec(
+      [member("a", "pa"), member("b", "pb")],
+      { completion: { kind: "all" }, mergeStreams: { targetStream: "main" } },
+    );
+    await new PeerTeamTopology().run(spec, ctx);
+    const skipNotes = teamNotes(ctx).filter((n) =>
+      /requires a stream-aware adapter; skipping merge/.test(n),
+    );
+    expect(skipNotes).toHaveLength(2); // one per member — proves no early return
+    await cleanup();
+  });
+
+  it("hardening — each recovery invocation gets a UNIQUE conflictId", async () => {
+    const { registry, seen } = capturingRegistry();
+    const { ctx, cleanup } = await makeCtx({
+      handleOpts: [
+        { result: successResult("a") },
+        { result: successResult("b") },
+      ],
+      hostExtras: {
+        // Same streamId for both so the OLD `agentId:streamId` scheme would
+        // still differ by agentId — use a constant stream to isolate the test
+        // on the random suffix: distinct agentIds + constant stream.
+        streamIdFor: () => "s-shared",
+        mergeStreamForAgent: async () => ({
+          success: false,
+          errorType: "conflict",
+          conflicts: ["src/foo.ts"],
+        }),
+      },
+    });
+    (ctx as { recoveryRegistry?: RecoveryRegistry }).recoveryRegistry = registry;
+    const spec = peerSpec([member("a", "pa"), member("b", "pb")], {
+      completion: { kind: "all" },
+      mergeStreams: { targetStream: "main" },
+      conflictRecovery: { defaultStrategy: "capture" },
+    });
+    await new PeerTeamTopology().run(spec, ctx);
+    expect(seen).toHaveLength(2);
+    const ids = seen.map((c) => c.conflictId);
+    expect(new Set(ids).size).toBe(2); // unique despite shared streamId
+    for (const id of ids) expect(id).toMatch(/-/); // carries a uuid suffix
+    await cleanup();
+  });
+
+  it("hardening — conflictRecovery.maxRecoveryDepth folds into strategyConfig", async () => {
+    const { registry, seen } = capturingRegistry();
+    const { ctx, cleanup } = await makeCtx({
+      handleOpts: [{ result: successResult("a") }],
+      hostExtras: {
+        streamIdFor: () => "s-x",
+        mergeStreamForAgent: async () => ({
+          success: false,
+          errorType: "conflict",
+          conflicts: ["src/foo.ts"],
+        }),
+      },
+    });
+    (ctx as { recoveryRegistry?: RecoveryRegistry }).recoveryRegistry = registry;
+    const spec = peerSpec([member("a", "p")], {
+      completion: { kind: "all" },
+      mergeStreams: { targetStream: "main" },
+      conflictRecovery: {
+        defaultStrategy: "capture",
+        defaultConfig: { foo: "bar" },
+        maxRecoveryDepth: 7, // sibling key — must reach the strategy
+      },
+    });
+    await new PeerTeamTopology().run(spec, ctx);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.strategyConfig).toMatchObject({
+      foo: "bar",
+      maxRecoveryDepth: 7,
+    });
     await cleanup();
   });
 
