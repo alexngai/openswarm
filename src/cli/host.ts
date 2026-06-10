@@ -20,6 +20,10 @@ export interface RunHostOptions {
   readonly permissionMode?: PermissionMode;
   /** OpenHive `--adapter` value (accepted for compatibility; informational). */
   readonly adapter?: string;
+  /** docs/44 Case 2 — outbound MAP: dial this hub instead of waiting to be dialed. */
+  readonly mapServer?: string;
+  readonly mapScope?: string;
+  readonly onboardToken?: string;
 }
 
 /** Default CommonOpts for the hosted ACP coordinator team (headless, no TTY). */
@@ -59,6 +63,12 @@ export async function runHost(opts: RunHostOptions): Promise<number> {
       acpFactory: (conn) => createTeamConnection(conn, acpOpts),
       // MAP server on base+2 so OpenHive can observe/control the swarm (P7).
       map: true,
+      // docs/44 Case 2 — outbound MAP sidecar + ACP-over-MAP when a hub URL is
+      // configured (the swarm dials out instead of waiting to be dialed).
+      ...(opts.mapServer !== undefined && { mapServer: opts.mapServer }),
+      ...(opts.mapScope !== undefined && { mapScope: opts.mapScope }),
+      ...(opts.onboardToken !== undefined && { onboardToken: opts.onboardToken }),
+      acpTeamOpts: acpOpts,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

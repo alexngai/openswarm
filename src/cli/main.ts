@@ -61,6 +61,7 @@ Usage:
   swarm-harness swarm run <tasks-file> [--concurrency N] [--output <path>]
   swarm-harness acp                              Serve over the Agent Client Protocol (stdio)
   swarm-harness host --port N [--host H]         Run as an OpenHive-hosted swarm (binds N, N+1, N+2)
+                  [--map-server ws://hub]        ...or dial a configured OpenHive hub (outbound MAP + ACP)
   swarm-harness help
   swarm-harness version
 
@@ -480,6 +481,9 @@ export async function main(argv: string[]): Promise<number> {
         port: parsed.port,
         ...(parsed.host !== undefined && { host: parsed.host }),
         ...(parsed.adapter !== undefined && { adapter: parsed.adapter }),
+        ...(parsed.mapServer !== undefined && { mapServer: parsed.mapServer }),
+        ...(parsed.mapScope !== undefined && { mapScope: parsed.mapScope }),
+        ...(parsed.onboardToken !== undefined && { onboardToken: parsed.onboardToken }),
         permissionMode: parsed.permissionMode,
       });
     }

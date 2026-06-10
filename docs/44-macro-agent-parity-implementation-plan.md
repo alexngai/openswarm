@@ -606,11 +606,44 @@ buttons + `_macro/spawnAgent` drive the Track-A primitives. Commit refs: P5
 `74a8e60`, P6 `90a760a`, P7 `b2669d8`, P8 `603691e` (+ the SDK packaging fix in
 the `references/multi-agent-protocol` submodule, `8903038`).
 
-Remaining follow-ons (NOT blocking the hosted path): the *outbound* MAP sidecar
-(swarm dialing back to a hub) and the dedicated task/mail bridges (P7 lists
-them); richer cascade actions (`commit`/`pause`/`resume`/`push`) once
-swarm-harness grows the matching stream primitives; and republishing the MAP SDK
-with the `/server` types fix so a fresh install needs no symlink.
+### Case 2 — outbound MAP sidecar + ACP-over-MAP — ✅ DONE (2026-06-10)
+
+Two hosting topologies: **(1) spawned by OpenHive** (the inbound P5–P8 path —
+the hub dials our servers; spec Option A, "swarm needs nothing" beyond MAP+health)
+and **(2) configured OpenHive destination** (the swarm dials a known hub). Case 2
+landed, modelled on `references/claude-code-swarm`'s `connectToMAP` but in-process
+(our `host` is already a persistent daemon — no separate sidecar process / UNIX
+socket):
+
+- `src/host/map-sidecar.ts` — `createMapSidecar` opens an outbound MAP
+  `AgentConnection` to a configured hub (open or verified auth), with SDK
+  reconnection. Reuses the SAME host→MAP bridge + cascade dispatch as the inbound
+  server by registering over the connection (`conn.spawn` / `conn.send` /
+  `conn.onNotification`). Connect failure is non-fatal (degrades to no-outbound).
+- `src/host/map-bridge.ts` — refactored to a direction-agnostic `MapSink`;
+  `inboundMapSink(mapServer)` wraps the P7 server, the sidecar provides an
+  outbound sink. Async-registration-safe (handles `conn.spawn` races).
+- `src/host/map-acp-bridge.ts` — ACP-over-MAP for live chat. The SDK's
+  `ACPAgentAdapter` (server side, wire-compatible with OpenHive's
+  `ACPStreamConnection`) delegates its `ACPAgentHandler` to our P6
+  `createTeamConnection` / `AcpTeamAgent` via a per-stream forwarding shim — all
+  team logic reused. (Cross-SDK ACP types bridged by structural casts;
+  end-to-end version negotiation validated against a live OpenHive.)
+- CLI/boot: `swarm-harness host --port N --map-server ws://hub [--map-scope …]
+  [--onboard-token …]` (or `SWARM_MAP_SERVER` env) → outbound sidecar + ACP-over-MAP;
+  gated on explicit config (never on a bootstrap token alone).
+
+Verified end-to-end: the real SDK `AgentConnection` dials a real `MAPServer`,
+registers a spawned coordinator the server's registry sees, forwards lane events,
+and dispatches cascade actions over the connection (committed integration test).
+18 new host/argv tests; full src/host + src/acp + src/swarm gates green (981 passed).
+
+Remaining follow-ons (NOT blocking either hosting path): the dedicated task/mail
+bridges (P7 lists them); richer cascade actions (`commit`/`pause`/`resume`/`push`)
+once swarm-harness grows the matching stream primitives; retiring the legacy
+`--map` shim (`map-adapter.ts`) now that the sidecar supersedes it; and
+republishing the MAP SDK with the `/server` types fix so a fresh install needs no
+symlink.
 
 Phases were independently shippable; items are flipped to ✅ above and in
 [`43-macro-agent-parity.md`](./43-macro-agent-parity.md) with commit refs.

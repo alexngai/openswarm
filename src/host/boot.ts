@@ -24,9 +24,12 @@ import {
   type AcpConnection,
 } from "./acp-ws-server.js";
 import { createMapServer, type MapServer } from "./map-server.js";
-import { bridgeHostToMap } from "./map-bridge.js";
+import { bridgeHostToMap, inboundMapSink } from "./map-bridge.js";
 import { createMacroMethods } from "./macro-methods.js";
 import { registerCascadeActions } from "./cascade-actions.js";
+import { createMapSidecar, type MapSidecar } from "./map-sidecar.js";
+import { wireAcpOverMap, type AcpOverMap } from "./map-acp-bridge.js";
+import type { CommonOpts } from "../cli/argv.js";
 
 export interface SwarmHostPorts {
   /** ACP-over-WebSocket (`/acp`) — the endpoint OpenHive connects to. */
@@ -45,6 +48,8 @@ export interface SwarmHostHandle {
   readonly acp: AcpWsServer | undefined;
   /** MAP server (base+2) — present when `map` was enabled. */
   readonly mapServer: MapServer | undefined;
+  /** Outbound MAP sidecar — present when `mapServer` (a hub URL) was configured. */
+  readonly sidecar: MapSidecar | undefined;
   readonly bootstrap: BootstrapConfig;
   /** Stable id for this swarm (MAP swarm_id when known). */
   readonly swarmId: string | undefined;
@@ -78,6 +83,22 @@ export interface BootSwarmHostOptions {
    * events. Default off (P5/P6 hosts without it).
    */
   readonly map?: boolean;
+  /**
+   * docs/44 Case 2 — OUTBOUND MAP. When set to a hub WS URL, the swarm dials it
+   * as a MAP agent (instead of/in addition to waiting to be dialed) and runs the
+   * host→MAP bridge + cascade + ACP-over-MAP over that connection. Fires only on
+   * explicit config, never on a bootstrap token alone.
+   */
+  readonly mapServer?: string;
+  /** MAP scope for the outbound sidecar (default `swarm:<swarmId|default>`). */
+  readonly mapScope?: string;
+  /** Onboard token for a verified-auth hub (outbound). */
+  readonly onboardToken?: string;
+  /**
+   * Hosted ACP coordinator-team options. When set alongside `mapServer`, live
+   * ACP chat is served over the outbound MAP connection (ACP-over-MAP).
+   */
+  readonly acpTeamOpts?: CommonOpts;
   /** Structured log sink (default writes to process.stderr). */
   readonly log?: (msg: string) => void;
 }
@@ -154,10 +175,35 @@ export async function bootSwarmHost(
       },
       log,
     });
-    mapBridgeDispose = bridgeHostToMap(standalone, mapServer, {
+    mapBridgeDispose = bridgeHostToMap(standalone, inboundMapSink(mapServer), {
       ...(opts.swarmId !== undefined && { swarmId: opts.swarmId }),
       log,
     });
+  }
+
+  // docs/44 Case 2 — OUTBOUND MAP sidecar: dial a configured hub, register over
+  // the connection, run the bridge + cascade + (optionally) ACP-over-MAP.
+  let sidecar: MapSidecar | undefined;
+  let acpOverMap: AcpOverMap | undefined;
+  if (opts.mapServer !== undefined && opts.mapServer !== "") {
+    const scope = opts.mapScope ?? `swarm:${opts.swarmId ?? "default"}`;
+    sidecar = await createMapSidecar({
+      host: standalone,
+      server: opts.mapServer,
+      scope,
+      ...(opts.swarmId !== undefined && { swarmId: opts.swarmId }),
+      ...(opts.onboardToken !== undefined && { credential: opts.onboardToken }),
+      log,
+    });
+    if (sidecar !== undefined && opts.acpTeamOpts !== undefined) {
+      // Live ACP chat over the outbound connection (the hub can't dial our
+      // ACP-WS server in this topology).
+      acpOverMap = wireAcpOverMap({
+        connection: sidecar.connection,
+        acpOpts: opts.acpTeamOpts,
+        log,
+      });
+    }
   }
 
   // Bootstrap coordinator (H0). The default coordinator becomes chat-ready over
@@ -187,6 +233,7 @@ export async function bootSwarmHost(
     health,
     acp,
     mapServer,
+    sidecar,
     bootstrap,
     swarmId: opts.swarmId,
     async shutdown(): Promise<void> {
@@ -194,6 +241,8 @@ export async function bootSwarmHost(
       // onto a closing MAP server), then ACP/MAP servers (in-flight connections
       // dispose), then the health server (the keep-alive). StandaloneHost has no
       // long-lived resources of its own — workers are per-spawn subprocesses.
+      if (acpOverMap !== undefined) await acpOverMap.close();
+      if (sidecar !== undefined) await sidecar.close();
       mapBridgeDispose?.();
       if (macroDispose !== undefined) await macroDispose();
       if (acp !== undefined) await acp.close();

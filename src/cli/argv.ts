@@ -168,6 +168,10 @@ export type ParsedArgs =
       port: number;
       host?: string;
       adapter?: string;
+      // docs/44 Case 2 — outbound MAP (dial a configured hub).
+      mapServer?: string;
+      mapScope?: string;
+      onboardToken?: string;
       permissionMode: PermissionMode;
     }
   | { kind: "error"; message: string; showHelp: boolean };
@@ -268,6 +272,9 @@ export function parseArgv(args: string[]): ParsedArgs {
   let hostPort: number | undefined;
   let hostBindAddr: string | undefined;
   let hostAdapter: string | undefined;
+  let hostMapServer: string | undefined;
+  let hostMapScope: string | undefined;
+  let hostOnboardToken: string | undefined;
 
   // v0.4 stage 4K — topology subcommand state.
   let specPath: string | undefined;
@@ -620,6 +627,37 @@ export function parseArgv(args: string[]): ParsedArgs {
         return { kind: "error", message: "--adapter requires a value", showHelp: true };
       }
       hostAdapter = val;
+      i += 2;
+      continue;
+    }
+
+    // docs/44 Case 2 — outbound MAP flags.
+    if (tok === "--map-server") {
+      const val = expanded[i + 1];
+      if (val === undefined || val.startsWith("-")) {
+        return { kind: "error", message: "--map-server requires a value", showHelp: true };
+      }
+      hostMapServer = val;
+      i += 2;
+      continue;
+    }
+
+    if (tok === "--map-scope") {
+      const val = expanded[i + 1];
+      if (val === undefined || val.startsWith("-")) {
+        return { kind: "error", message: "--map-scope requires a value", showHelp: true };
+      }
+      hostMapScope = val;
+      i += 2;
+      continue;
+    }
+
+    if (tok === "--onboard-token") {
+      const val = expanded[i + 1];
+      if (val === undefined || val.startsWith("-")) {
+        return { kind: "error", message: "--onboard-token requires a value", showHelp: true };
+      }
+      hostOnboardToken = val;
       i += 2;
       continue;
     }
@@ -1165,11 +1203,16 @@ export function parseArgv(args: string[]): ParsedArgs {
           showHelp: true,
         };
       }
+      // SWARM_MAP_SERVER env is an alias for --map-server (matches cc-swarm).
+      const mapServer = hostMapServer ?? process.env.SWARM_MAP_SERVER;
       return {
         kind: "host",
         port: hostPort,
         ...(hostBindAddr !== undefined && { host: hostBindAddr }),
         ...(hostAdapter !== undefined && { adapter: hostAdapter }),
+        ...(mapServer !== undefined && mapServer !== "" && { mapServer }),
+        ...(hostMapScope !== undefined && { mapScope: hostMapScope }),
+        ...(hostOnboardToken !== undefined && { onboardToken: hostOnboardToken }),
         permissionMode,
       };
     }
