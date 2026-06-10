@@ -57,6 +57,8 @@ export async function runHost(opts: RunHostOptions): Promise<number> {
       // ACP-over-WebSocket on the base port: each client gets its own
       // coordinator team (docs/44 P6).
       acpFactory: (conn) => createTeamConnection(conn, acpOpts),
+      // MAP server on base+2 so OpenHive can observe/control the swarm (P7).
+      map: true,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

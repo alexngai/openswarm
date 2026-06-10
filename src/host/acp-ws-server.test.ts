@@ -13,19 +13,6 @@ import { createAcpWsServer, type AcpWsServer } from "./acp-ws-server.js";
 
 /** docs/44 P6 — ACP-over-WebSocket transport round-trip. */
 
-async function freePort(): Promise<number> {
-  const net = await import("node:net");
-  return new Promise<number>((resolve, reject) => {
-    const srv = net.createServer();
-    srv.once("error", reject);
-    srv.listen(0, "127.0.0.1", () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
-
 /** Client-side adapter mirroring the server's WS→Stream bridge. */
 function clientStream(ws: WebSocket): Stream {
   const readable = new ReadableStream<AnyMessage>({
@@ -77,9 +64,8 @@ describe("createAcpWsServer", () => {
         initializeResponse({ protocolVersion: req.protocolVersion }),
     } as unknown as Agent;
 
-    const port = await freePort();
     server = await createAcpWsServer({
-      port,
+      port: 0,
       makeConnection: () => ({
         agent: fakeAgent,
         close: async () => {
@@ -87,7 +73,7 @@ describe("createAcpWsServer", () => {
         },
       }),
     });
-    expect(server.url).toBe(`ws://127.0.0.1:${port}/acp`);
+    expect(server.url).toBe(`ws://127.0.0.1:${server.port}/acp`);
 
     const ws = await connectClient(server.url);
     const client = new ClientSideConnection(
@@ -114,24 +100,22 @@ describe("createAcpWsServer", () => {
   });
 
   it("answers non-WS HTTP requests with 426 Upgrade Required", async () => {
-    const port = await freePort();
     server = await createAcpWsServer({
-      port,
+      port: 0,
       makeConnection: () => ({ agent: {} as unknown as Agent }),
     });
-    const res = await fetch(`http://127.0.0.1:${port}/acp`);
+    const res = await fetch(`http://127.0.0.1:${server.port}/acp`);
     expect(res.status).toBe(426);
   });
 
   it("rejects when the port is already bound", async () => {
-    const port = await freePort();
     server = await createAcpWsServer({
-      port,
+      port: 0,
       makeConnection: () => ({ agent: {} as unknown as Agent }),
     });
     await expect(
       createAcpWsServer({
-        port,
+        port: server.port,
         makeConnection: () => ({ agent: {} as unknown as Agent }),
       }),
     ).rejects.toMatchObject({ code: "EADDRINUSE" });

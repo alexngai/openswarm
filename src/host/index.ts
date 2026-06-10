@@ -19,3 +19,7 @@ export type {
   AcpConnection,
   CreateAcpWsServerOptions,
 } from "./acp-ws-server.js";
+export { createMapServer } from "./map-server.js";
+export type { MapServer, CreateMapServerOptions } from "./map-server.js";
+export { bridgeHostToMap } from "./map-bridge.js";
+export type { MapBridgeOptions } from "./map-bridge.js";

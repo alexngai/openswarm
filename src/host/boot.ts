@@ -23,6 +23,8 @@ import {
   type AcpWsServer,
   type AcpConnection,
 } from "./acp-ws-server.js";
+import { createMapServer, type MapServer } from "./map-server.js";
+import { bridgeHostToMap } from "./map-bridge.js";
 
 export interface SwarmHostPorts {
   /** ACP-over-WebSocket (`/acp`) — the endpoint OpenHive connects to. */
@@ -39,6 +41,8 @@ export interface SwarmHostHandle {
   readonly health: HealthServer;
   /** ACP-over-WebSocket server (base port) — present when `acpFactory` was set. */
   readonly acp: AcpWsServer | undefined;
+  /** MAP server (base+2) — present when `map` was enabled. */
+  readonly mapServer: MapServer | undefined;
   readonly bootstrap: BootstrapConfig;
   /** Stable id for this swarm (MAP swarm_id when known). */
   readonly swarmId: string | undefined;
@@ -66,6 +70,12 @@ export interface BootSwarmHostOptions {
    * server (P5 health-only host).
    */
   readonly acpFactory?: (conn: AgentSideConnection) => AcpConnection;
+  /**
+   * Enable the MAP server on base+2 (docs/44 P7). OpenHive's MAPClientManager
+   * connects here; the host→MAP bridge registers agents + forwards lifecycle
+   * events. Default off (P5/P6 hosts without it).
+   */
+  readonly map?: boolean;
   /** Structured log sink (default writes to process.stderr). */
   readonly log?: (msg: string) => void;
 }
@@ -119,6 +129,22 @@ export async function bootSwarmHost(
     });
   }
 
+  // MAP server on base+2 (P7) + the host→MAP bridge.
+  let mapServer: MapServer | undefined;
+  let mapBridgeDispose: (() => void) | undefined;
+  if (opts.map === true) {
+    mapServer = await createMapServer({
+      port: ports.map,
+      host: bindHost,
+      ...(opts.swarmId !== undefined && { name: opts.swarmId }),
+      log,
+    });
+    mapBridgeDispose = bridgeHostToMap(standalone, mapServer, {
+      ...(opts.swarmId !== undefined && { swarmId: opts.swarmId }),
+      log,
+    });
+  }
+
   // Bootstrap coordinator (H0). The default coordinator becomes chat-ready over
   // ACP; until the ACP-WS server lands (P6) there's no transport to drive it,
   // so P5 resolves + records the intent rather than spawning a headless agent
@@ -145,15 +171,17 @@ export async function bootSwarmHost(
     ports,
     health,
     acp,
+    mapServer,
     bootstrap,
     swarmId: opts.swarmId,
     async shutdown(): Promise<void> {
-      // Close the ACP-WS server first so in-flight connections tear down their
-      // per-connection teams before the health server (the keep-alive) stops.
-      // StandaloneHost has no long-lived resources of its own yet — workers are
-      // per-spawn subprocesses reaped via their handles. P7's MAP server adds
-      // its teardown here too.
+      // Tear down in reverse-dependency order: stop the bridge (no more events
+      // onto a closing MAP server), then ACP/MAP servers (in-flight connections
+      // dispose), then the health server (the keep-alive). StandaloneHost has no
+      // long-lived resources of its own — workers are per-spawn subprocesses.
+      mapBridgeDispose?.();
       if (acp !== undefined) await acp.close();
+      if (mapServer !== undefined) await mapServer.close();
       await health.close();
     },
   };

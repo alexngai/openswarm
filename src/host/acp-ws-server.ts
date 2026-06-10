@@ -160,9 +160,12 @@ export async function createAcpWsServer(
     httpServer.listen(opts.port, host);
   });
 
+  const addr = httpServer.address();
+  const port = typeof addr === "object" && addr !== null ? addr.port : opts.port;
+
   return {
-    url: `ws://${host}:${opts.port}${wsPath}`,
-    port: opts.port,
+    url: `ws://${host}:${port}${wsPath}`,
+    port,
     connectionCount: () => sockets.size,
     close: () =>
       new Promise<void>((resolve) => {

@@ -485,7 +485,30 @@ enrichment rides through.
 
 ---
 
-### P7 — MAP server + per-agent register + sidecar (H2) _(L — dominant cost)_
+### P7 — MAP server + per-agent register + sidecar (H2) _(L — dominant cost)_ — ✅ DONE (2026-06-10)
+
+> **P7 — ✅ DONE (2026-06-10).** Adopted `@multi-agent-protocol/sdk`'s
+> `MAPServer`. `src/host/map-server.ts`: `createMapServer` binds an inbound WS
+> server on `base+2` at `/map`, adapts each `ws` socket into the MAP `Stream`,
+> and hands it to `MAPServer.accept(stream, {role:"client"})` — OpenHive's
+> MAPClientManager connects here (Path B: swarm = server, hub = client).
+> `src/host/map-bridge.ts`: `bridgeHostToMap` subscribes the StandaloneHost lane
+> bus and registers agents via the SDK registry on `worker_spawned` (coordinators
+> carry `capabilities:['acp']` + structured metadata so OpenHive resolves its ACP
+> target; workers don't), unregisters on `worker_exited`, and forwards
+> lifecycle/task/mail lane events onto the MAP event bus. `boot.ts` stands up the
+> MAP server + bridge when `map:true`; `cli/host.ts` enables it. Verified
+> end-to-end: a real MAP SDK `ClientConnection` over WS completed the `connect`
+> handshake against the live `swarm-harness host` and called `listAgents()`.
+> **SDK packaging fix:** the SDK's `/server` subpath shipped no `.d.ts`
+> (rollup-dts hard-fails on pre-existing federation/auth strict errors); fixed in
+> the `references/multi-agent-protocol` submodule by emitting the server
+> declaration tree with `tsc` (best-effort) and repointing the `./server` export
+> — symlinked into swarm-harness node_modules for now, to be republished. 16 new
+> host tests (transport + bridge register/unregister/forward/dispose); full
+> src/host + src/acp + src/swarm gates green (955 passed). The outbound sidecar
+> (dial-back to a hub) + full task/mail bridges are the remaining follow-ons
+> beyond the OpenHive-hosted path.
 
 Today swarm-harness is MAP-client-only over a shim. Build the server.
 

@@ -72,9 +72,13 @@ export async function createHealthServer(
   // drain and exit the daemon the instant nothing else is ref'd. Teardown is
   // explicit via close().
 
+  // Read back the actual port (supports port 0 → OS-assigned).
+  const addr = server.address();
+  const port = typeof addr === "object" && addr !== null ? addr.port : opts.port;
+
   return {
-    url: `http://${host}:${opts.port}`,
-    port: opts.port,
+    url: `http://${host}:${port}`,
+    port,
     close: () =>
       new Promise<void>((resolve) => {
         server.close(() => resolve());
