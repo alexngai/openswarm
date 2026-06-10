@@ -69,7 +69,7 @@ describe("describeResolution", () => {
     expect(describeResolution({ kind: "resolved", resolutionCommit: "abc" })).toMatch(/resolved \(abc\)/);
     expect(describeResolution({ kind: "resolved" })).toBe("resolved");
     expect(describeResolution({ kind: "deferred", reason: "x" })).toMatch(/deferred \(x\)/);
-    expect(describeResolution({ kind: "abandoned", streamId: "s", reason: "r" })).toMatch(/abandoned s \(r\)/);
+    expect(describeResolution({ kind: "abandoned", streamId: "s", reason: "r" })).toMatch(/abandoned s — work left unmerged on its branch \(r\)/);
     expect(describeResolution({ kind: "escalated", escalatedTo: "human" })).toMatch(/escalated to human/);
     expect(describeResolution({ kind: "failed", error: "boom" })).toMatch(/failed: boom/);
   });

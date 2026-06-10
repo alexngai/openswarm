@@ -50,7 +50,11 @@ export function describeResolution(r: ConflictResolution): string {
     case "deferred":
       return `deferred (${r.reason})`;
     case "abandoned":
-      return `abandoned ${r.streamId} (${r.reason})`;
+      // review MEDIUM: "abandon" is a landing decision, not a cleanup — the
+      // stream's branch/worktree stay on disk, unmerged (per-stream removal is
+      // deferred, docs/44 P8). Say so explicitly so an operator reading the log
+      // doesn't mistake "abandoned" for "discarded/cleaned up".
+      return `abandoned ${r.streamId} — work left unmerged on its branch (${r.reason})`;
     case "escalated":
       return `escalated to ${r.escalatedTo}`;
     case "failed":

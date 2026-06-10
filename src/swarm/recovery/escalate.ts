@@ -10,6 +10,10 @@ import type { ConflictRecoveryStrategy } from "./types.js";
 
 export const escalateStrategy: ConflictRecoveryStrategy = {
   name: "escalate",
+  // Forward-declared "async": in P1 recover() returns synchronously; the real
+  // pause-and-await-external-resolution behavior lands at P8 (hosted path). No
+  // caller branches on `mode` today, so this labels the future shape rather
+  // than a current contract (review note).
   mode: "async",
   async recover() {
     return { kind: "escalated", escalatedTo: "human" };

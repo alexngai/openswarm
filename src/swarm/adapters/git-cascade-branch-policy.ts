@@ -825,6 +825,13 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
 
   // ---- docs/44 P4 — merge queue --------------------------------------
 
+  /**
+   * Enqueue a stream for the merge queue. `targetBranch` is REQUIRED here on
+   * purpose: the underlying git-cascade queue defaults both `addToQueue` and
+   * `getNextToMerge` to the literal `"main"`, so if a caller ever omitted it,
+   * enqueue and drain could silently target different branches and the drain
+   * would find nothing. Keep it required and explicit (review LOW).
+   */
   async enqueueMerge(opts: {
     streamId: string;
     targetBranch: string;

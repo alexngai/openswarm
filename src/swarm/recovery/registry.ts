@@ -41,6 +41,11 @@ export class RecoveryRegistry {
    * Resolve the strategy name for a member role from spec config. The
    * per-member override (matched by role) wins, then the team default, then
    * the safe `defer` fallback.
+   *
+   * NOTE (review LOW): role→member is a first-match lookup. If two members
+   * share a role but declare different `onConflict`, the first in spec order
+   * wins for both. Roles are expected to be unique per team; if duplicate-role
+   * members ever need distinct recovery, this needs a member-id key instead.
    */
   select(role: string | undefined, spec: TeamSpec): string {
     const member =
