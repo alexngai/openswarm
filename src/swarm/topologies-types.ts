@@ -70,6 +70,18 @@ export interface TopologyContext {
    * the live session.
    */
   readonly onTeamCreated?: (team: TeamSession) => void;
+  /**
+   * docs/44 P0 — landing-strategy registry for finalizing member streams.
+   * Optional; topologies fall back to a built-in default registry
+   * (`createDefaultLandingRegistry`) when absent, so existing callers need
+   * no change.
+   */
+  readonly landingRegistry?: import("./landing/index.js").LandingRegistry;
+  /**
+   * docs/44 P0 — conflict-recovery registry. Created here for injection/
+   * testing; dormant until P1 wires recovery dispatch into the landing path.
+   */
+  readonly recoveryRegistry?: import("./recovery/registry.js").RecoveryRegistry;
 }
 
 /**

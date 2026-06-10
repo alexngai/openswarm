@@ -28,11 +28,21 @@ import type {
 } from "../team-spec.js";
 import { TeamSession } from "../team-session.js";
 import { applyDefaultBranchPolicy } from "./branch-policy-defaults.js";
+import {
+  createDefaultLandingRegistry,
+  DEFAULT_LANDING_STRATEGY,
+} from "../landing/index.js";
 import type {
   Topology,
   TopologyContext,
   TeamResult,
 } from "../topologies-types.js";
+
+/**
+ * docs/44 P0 — default landing registry used when the TopologyContext doesn't
+ * inject one. Constructed once; holds the built-in `merge-to-parent` strategy.
+ */
+const DEFAULT_LANDING_REGISTRY = createDefaultLandingRegistry();
 
 export class PeerTeamTopology implements Topology {
   readonly name = "peer-team" as const;
@@ -438,18 +448,30 @@ export class PeerTeamTopology implements Topology {
     const usingBranch = cfg.targetBranch !== undefined;
     const targetStream = cfg.targetStream;
     if (!usingBranch && targetStream === undefined) return;
+    // docs/44 P0 — landing now delegates to the merge-to-parent LandingStrategy.
+    // Behavior is unchanged: the strategy makes the same adapter calls and
+    // returns null when the adapter can't perform the merge. The per-agent
+    // merge logic lives in the strategy so it can be selected per-role and
+    // composed with conflict recovery (P1).
+    const landing =
+      (ctx.landingRegistry ?? DEFAULT_LANDING_REGISTRY).get(
+        DEFAULT_LANDING_STRATEGY,
+      );
     for (const handle of handles) {
       const streamId = ctx.host.streamIdFor(handle.agentId);
       if (streamId === undefined) continue;
-      const result = usingBranch
-        ? await ctx.host.mergeStreamToBranchForAgent(handle.agentId, {
-            targetBranch: cfg.targetBranch!,
-            ...(cfg.strategy !== undefined && { strategy: cfg.strategy }),
-          })
-        : await ctx.host.mergeStreamForAgent(handle.agentId, {
-            targetStream: targetStream!,
-            ...(cfg.strategy !== undefined && { strategy: cfg.strategy }),
-          });
+      const result =
+        landing === undefined
+          ? null
+          : await landing.land({
+              host: ctx.host,
+              agentId: handle.agentId,
+              streamId,
+              ...(usingBranch
+                ? { targetBranch: cfg.targetBranch! }
+                : { targetStream: targetStream! }),
+              ...(cfg.strategy !== undefined && { strategy: cfg.strategy }),
+            });
       if (result === null) {
         // Adapter doesn't support this merge path — emit a note so the
         // operator knows the auto-merge silently skipped.

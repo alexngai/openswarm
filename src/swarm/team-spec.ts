@@ -66,6 +66,13 @@ export interface MemberSpec {
    * The ACP team path sets this on the coordinator root for `session/load`.
    */
   readonly sessionSidecarPath?: string;
+  /**
+   * docs/44 P0/P1 — per-member conflict-recovery strategy name (e.g.
+   * "defer", "escalate", "spawn-resolver"). Overrides
+   * `coordination.conflictRecovery.defaultStrategy`. Resolved by
+   * `RecoveryRegistry.select`; dormant until P1 wires dispatch.
+   */
+  readonly onConflict?: string;
 }
 
 /**
@@ -86,6 +93,7 @@ export const MemberSpecSchema = z.object({
   longLived: z.boolean().optional(),
   cwd: z.string().optional(),
   sessionSidecarPath: z.string().optional(),
+  onConflict: z.string().min(1).optional(),
 }) satisfies z.ZodType<unknown>;
 
 // ---------------------------------------------------------------------------
@@ -215,6 +223,17 @@ export interface TeamCoordination {
     /** When true, a merge conflict surfaces as a topology failure. Default false. */
     readonly failOnConflict?: boolean;
   };
+  /**
+   * docs/44 P0/P1 — team-level conflict-recovery defaults. `defaultStrategy`
+   * is used when a member has no `onConflict`; `defaultConfig` is passed to the
+   * selected strategy; `maxRecoveryDepth` bounds resolver recursion. Resolved
+   * by `RecoveryRegistry`; dormant until P1 wires dispatch.
+   */
+  readonly conflictRecovery?: {
+    readonly defaultStrategy?: string;
+    readonly defaultConfig?: Record<string, unknown>;
+    readonly maxRecoveryDepth?: number;
+  };
 }
 
 export const TeamCoordinationSchema = z.object({
@@ -248,6 +267,13 @@ export const TeamCoordinationSchema = z.object({
       (v) => (v.targetStream !== undefined) !== (v.targetBranch !== undefined),
       { message: "mergeStreams: exactly one of targetStream or targetBranch must be set" },
     )
+    .optional(),
+  conflictRecovery: z
+    .object({
+      defaultStrategy: z.string().min(1).optional(),
+      defaultConfig: z.record(z.string(), z.unknown()).optional(),
+      maxRecoveryDepth: z.number().int().positive().optional(),
+    })
     .optional(),
 });
 
