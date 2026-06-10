@@ -553,3 +553,27 @@ green (707 passed, 1 skipped):
   on timeout so the git worktree registration doesn't leak.
 - **Test gaps** _(commit 11478b1)_: mergeStreams/conflictRecovery zod validation;
   unregistered-strategy defer; non-conflict `git_error` + `failOnConflict`.
+
+#### Lower-priority pass (MEDIUM/LOW) — ✅ DONE (2026-06-09)
+
+All actionable MEDIUM/LOW review items (the cosmetic `void out`/`msg.slice` nit
+was the only deliberate skip — the review itself said to ignore it):
+
+- **Observability** _(c78967d)_: `resolveConflict` emits a `team_note` for both
+  waiter-woken (`conflictSignal:"resolved"`) and no-waiter (`"buffered"` — the
+  resolve-before-wait OR dropped post-timeout signal) paths, so an orphaned/late
+  signal is no longer silent (MEDIUM: timeout-race surface + swallowed signals).
+- **Adapter robustness** _(df90479)_: `missing_source` errorType when
+  `stream/<id>` doesn't exist (likely under streamId-keyed drain); `agentStreams`
+  pruned + worktree torn down on a landed stream (bounds the map); `fast-forward`
+  ⊥ `retainOnConflict` documented.
+- **Resolver diagnostics + polish** _(89389b3)_: one-time `team_note` when
+  spawn-resolver is selected below `danger-full-access` (resolver can't `exec`,
+  so it degrades to escalate — now visible); 10s bound on the `resolve_conflict`
+  IPC ack; tool reuses `TaskResolveConflictParamsSchema` (no schema drift).
+- **Resolver reap** _(f78204b)_: resolver subprocess killed on every post-spawn
+  path (success/failure/timeout), not just timeout — no lingering process per
+  resolved conflict on a persistent team.
+- **Deferred-semantics clarity** _(15b3d41)_: `abandoned` note says "work left
+  unmerged on its branch"; escalate `mode:"async"` annotated as P8 forward-decl;
+  `select` duplicate-role and `enqueueMerge` required-targetBranch documented.
