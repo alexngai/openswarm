@@ -191,7 +191,12 @@ two target worktrees).
 
 **Steps:**
 
-- **P2b.1 — `resolve_conflict` IPC proxy.** Mirror `WorkerHost.commitChanges`
+- **P2b.1 — `resolve_conflict` IPC proxy. ✅ DONE (2026-06-09).** `task.resolve_conflict`
+  request method + `TaskResolveConflictParamsSchema` (`ipc/protocol.ts`);
+  `WorkerHost.resolveConflict` awaits the orchestrator ack; `StandaloneHost`
+  routes the frame → `resolveConflict` → acks; `SwarmHost.resolveConflict` widened
+  to `void | Promise<void>` so the tool awaits delivery. Verify: swarm+tier2
+  **746 pass**, `tsc` clean. _(original note:)_ Mirror `WorkerHost.commitChanges`
   (`worker-host.ts:292` → `transport.send("task.commit_changes", …)`): add
   `WorkerHost.resolveConflict` → `transport.send("task.resolve_conflict", …)`,
   add `task.resolve_conflict` to `IpcRequestMethod` + a params schema

@@ -193,7 +193,7 @@ export interface SwarmHost {
   resolveConflict?(
     conflictId: string,
     opts?: { readonly resolutionCommit?: string },
-  ): void;
+  ): void | Promise<void>;
 
   /**
    * docs/44 P2 — await resolution of a conflict, or time out. Used by the

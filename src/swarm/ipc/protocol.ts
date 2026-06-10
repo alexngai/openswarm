@@ -77,7 +77,8 @@ export type IpcRequestMethod =
   | "drain"
   | "team.members"
   | "task.pull_next"
-  | "task.commit_changes";
+  | "task.commit_changes"
+  | "task.resolve_conflict";
 
 export type IpcResponse = IpcOk | IpcErr;
 
@@ -437,6 +438,30 @@ export const TaskCommitChangesParamsSchema = z.object({
 });
 export type TaskCommitChangesParams = z.infer<
   typeof TaskCommitChangesParamsSchema
+>;
+
+// ---------------------------------------------------------------------------
+// docs/44 P2b — task.resolve_conflict
+// ---------------------------------------------------------------------------
+
+/**
+ * params for "task.resolve_conflict" request (resolver worker → orchestrator).
+ *
+ * Signals that the worker has resolved its assigned merge conflict and
+ * committed the fix. The orchestrator routes this to
+ * `StandaloneHost.resolveConflict`, waking the spawn-resolver coordinator's
+ * `waitForConflictResolution`. Sent as a request (not a notification) so the
+ * resolver awaits the orchestrator's ack before exiting — guaranteeing the
+ * signal is delivered before the worker process tears down.
+ *
+ * Result: null (ack only).
+ */
+export const TaskResolveConflictParamsSchema = z.object({
+  conflictId: z.string().min(1),
+  resolutionCommit: z.string().optional(),
+});
+export type TaskResolveConflictParams = z.infer<
+  typeof TaskResolveConflictParamsSchema
 >;
 
 /** result for "team.members" — array of `{memberId, role, agentId}` peers. */

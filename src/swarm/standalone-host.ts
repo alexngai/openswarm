@@ -54,6 +54,7 @@ import {
   SpawnRequestParamsSchema,
   TaskPullNextParamsSchema,
   TaskCommitChangesParamsSchema,
+  TaskResolveConflictParamsSchema,
   AskUserQuestionParamsSchema,
   PermissionRequestParamsSchema,
   type IpcRequest,
@@ -1355,6 +1356,28 @@ export class StandaloneHost implements SwarmHost {
           err instanceof Error ? err.message : String(err),
         );
       }
+      return;
+    }
+    if (frame.method === "task.resolve_conflict") {
+      // docs/44 P2b: a resolver worker reports it resolved its assigned
+      // conflict. Route to resolveConflict (conflictId-keyed, agent-agnostic)
+      // to wake the spawn-resolver coordinator's waiter, then ack.
+      const parsed = TaskResolveConflictParamsSchema.safeParse(frame.params);
+      if (!parsed.success) {
+        transport.respondError(
+          frame.id,
+          IPC_ERROR_CODES.INVALID_PARAMS,
+          parsed.error.message,
+        );
+        return;
+      }
+      this.resolveConflict(
+        parsed.data.conflictId,
+        parsed.data.resolutionCommit !== undefined
+          ? { resolutionCommit: parsed.data.resolutionCommit }
+          : undefined,
+      );
+      transport.respond(frame.id, null);
       return;
     }
 

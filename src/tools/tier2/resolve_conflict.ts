@@ -51,7 +51,7 @@ async function execute(
         "resolve_conflict is not supported in this context (no recovery coordinator)",
     };
   }
-  host.resolveConflict(
+  await host.resolveConflict(
     parsed.data.conflictId,
     parsed.data.resolutionCommit !== undefined
       ? { resolutionCommit: parsed.data.resolutionCommit }
