@@ -13,10 +13,10 @@ import { Readable, Writable } from "node:stream";
 import { AgentSideConnection, ndJsonStream } from "@agentclientprotocol/sdk";
 import { buildAgentRuntime } from "../cli/runtime.js";
 import { AcpAgent } from "./agent.js";
-import { AcpTeamAgent } from "./team-agent.js";
-import { createOrchestratorRunner } from "./team-runner.js";
-import { AcpPermissionRouter } from "./team-permission.js";
-import { startSpineRecorder } from "./spine.js";
+import {
+  createTeamConnection,
+  type TeamConnection,
+} from "./team-connection.js";
 import type { CommonOpts } from "../cli/argv.js";
 
 /**
@@ -89,36 +89,21 @@ async function runAcpSingle(opts: CommonOpts): Promise<number> {
 
 /** Stage B: serve a coordinator team over ACP (docs/33). */
 async function runAcpTeam(opts: CommonOpts): Promise<number> {
-  const router = new AcpPermissionRouter();
-  const runner = createOrchestratorRunner({
-    permissionMode: opts.permissionMode,
-    interactionHandler: router,
-  });
-  router.setRoster(() => runner.getActiveTeam()?.members);
-  // Permission escalation for spawned workers is enabled by the host because it
-  // holds an interactionHandler (the router) — scoped to each worker's env, no
-  // process.env mutation here (docs/33 B0.4 + §8). See StandaloneHost.spawn.
-
-  // Persist the orchestration spine per session for session/load replay (B1.3).
-  const spine = startSpineRecorder(runner);
-
+  // Per-connection team wiring (router + runner + spine) lives in
+  // createTeamConnection, shared with the host ACP-WS path (docs/44 P6).
+  // Permission escalation for spawned workers is enabled because the runner
+  // holds the router as its interactionHandler (docs/33 B0.4 + §8).
+  let teamConn: TeamConnection | undefined;
   const connection = new AgentSideConnection((conn) => {
-    router.setConn(conn);
-    return new AcpTeamAgent(conn, runner, opts, router, (sessionId) =>
-      spine.start(sessionId),
-    );
+    teamConn = createTeamConnection(conn, opts);
+    return teamConn.agent;
   }, stdioStream());
   await connection.closed;
 
-  // Flush the spine before tearing down the team.
+  // Flush the spine + tear down the persistent root the team kept alive across
+  // prompts (B0.5).
   try {
-    await spine.stop();
-  } catch {
-    // best effort
-  }
-  // Tear down the persistent root the team kept alive across prompts (B0.5).
-  try {
-    await runner.getActiveTeam()?.dispose();
+    await teamConn?.close();
   } catch {
     // best effort
   }

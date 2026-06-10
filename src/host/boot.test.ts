@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
+import type { Agent } from "@agentclientprotocol/sdk";
 import { bootSwarmHost, type SwarmHostHandle } from "./boot.js";
 
 /** docs/44 P5 — bootSwarmHost port layout, health, bootstrap, shutdown. */
@@ -81,6 +82,31 @@ describe("bootSwarmHost", () => {
         log: () => {},
       }).then((h) => h.shutdown()),
     ).resolves.toBeUndefined();
+  });
+
+  it("binds the ACP-WS server on the base port when acpFactory is set", async () => {
+    const base = await freePort();
+    handle = await bootSwarmHost({
+      port: base,
+      bootstrap: { coordinator: false, rehydrate: "coordinators" },
+      acpFactory: () => ({ agent: {} as unknown as Agent }),
+      log: () => {},
+    });
+    expect(handle.acp).toBeDefined();
+    expect(handle.acp!.url).toBe(`ws://127.0.0.1:${base}/acp`);
+    // A plain HTTP probe to the base port → 426 (it's a WS endpoint).
+    const res = await fetch(`http://127.0.0.1:${base}/acp`);
+    expect(res.status).toBe(426);
+  });
+
+  it("omits the ACP-WS server when no acpFactory (P5 health-only host)", async () => {
+    const base = await freePort();
+    handle = await bootSwarmHost({
+      port: base,
+      bootstrap: { coordinator: false, rehydrate: "coordinators" },
+      log: () => {},
+    });
+    expect(handle.acp).toBeUndefined();
   });
 
   it("uses an injected host (makeHost seam)", async () => {

@@ -9,6 +9,8 @@
 
 import { bootSwarmHost } from "../host/boot.js";
 import { readBootstrapConfig } from "../host/bootstrap.js";
+import { createTeamConnection } from "../acp/team-connection.js";
+import type { CommonOpts } from "./argv.js";
 import type { PermissionMode } from "../core/types.js";
 
 export interface RunHostOptions {
@@ -20,11 +22,29 @@ export interface RunHostOptions {
   readonly adapter?: string;
 }
 
+/** Default CommonOpts for the hosted ACP coordinator team (headless, no TTY). */
+function hostedAcpOpts(permissionMode: PermissionMode): CommonOpts {
+  return {
+    permissionMode,
+    outputFormat: "json",
+    headless: true,
+    plugins: true,
+    skills: true,
+    mcp: true,
+    hooks: true,
+    dumpTools: false,
+    enableWebSearch: false,
+    framework: "auto",
+  };
+}
+
 export async function runHost(opts: RunHostOptions): Promise<number> {
   const bootstrap = readBootstrapConfig();
   // The data dir (OPENSWARM_DATA_DIR) is where per-spawn state lives; default
   // the working dir to it so spawned agents operate in the hosted workspace.
   const cwd = opts.cwd ?? bootstrap.dataDir ?? process.cwd();
+  const permissionMode = opts.permissionMode ?? "workspace-write";
+  const acpOpts = hostedAcpOpts(permissionMode);
 
   let handle;
   try {
@@ -33,9 +53,10 @@ export async function runHost(opts: RunHostOptions): Promise<number> {
       ...(opts.host !== undefined && { host: opts.host }),
       cwd,
       bootstrap,
-      ...(opts.permissionMode !== undefined && {
-        permissionMode: opts.permissionMode,
-      }),
+      permissionMode,
+      // ACP-over-WebSocket on the base port: each client gets its own
+      // coordinator team (docs/44 P6).
+      acpFactory: (conn) => createTeamConnection(conn, acpOpts),
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

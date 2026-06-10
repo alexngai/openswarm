@@ -13,10 +13,16 @@
  * already exposes their port numbers so callers can advertise the full layout.
  */
 
+import type { AgentSideConnection } from "@agentclientprotocol/sdk";
 import type { PermissionMode } from "../core/types.js";
 import { StandaloneHost } from "../swarm/standalone-host.js";
 import { createHealthServer, type HealthServer } from "./health.js";
 import { readBootstrapConfig, type BootstrapConfig } from "./bootstrap.js";
+import {
+  createAcpWsServer,
+  type AcpWsServer,
+  type AcpConnection,
+} from "./acp-ws-server.js";
 
 export interface SwarmHostPorts {
   /** ACP-over-WebSocket (`/acp`) — the endpoint OpenHive connects to. */
@@ -31,6 +37,8 @@ export interface SwarmHostHandle {
   readonly host: StandaloneHost;
   readonly ports: SwarmHostPorts;
   readonly health: HealthServer;
+  /** ACP-over-WebSocket server (base port) — present when `acpFactory` was set. */
+  readonly acp: AcpWsServer | undefined;
   readonly bootstrap: BootstrapConfig;
   /** Stable id for this swarm (MAP swarm_id when known). */
   readonly swarmId: string | undefined;
@@ -52,6 +60,12 @@ export interface BootSwarmHostOptions {
   readonly swarmId?: string;
   /** Test seam: construct the StandaloneHost (default `new StandaloneHost(...)`). */
   readonly makeHost?: () => StandaloneHost;
+  /**
+   * Per-connection ACP agent factory (docs/44 P6). When set, an ACP-over-
+   * WebSocket server is bound on the base port at `/acp`. Omitted → no ACP
+   * server (P5 health-only host).
+   */
+  readonly acpFactory?: (conn: AgentSideConnection) => AcpConnection;
   /** Structured log sink (default writes to process.stderr). */
   readonly log?: (msg: string) => void;
 }
@@ -92,7 +106,18 @@ export async function bootSwarmHost(
     }),
   });
 
-  // P6 (ACP-WS on ports.acp) and P7 (MAP on ports.map) slot in here later.
+  // ACP-over-WebSocket on the base port (P6). Bound only when a factory is
+  // supplied; the health-only host (P5) omits it. P7 adds the MAP server on
+  // ports.map alongside.
+  let acp: AcpWsServer | undefined;
+  if (opts.acpFactory !== undefined) {
+    acp = await createAcpWsServer({
+      port: ports.acp,
+      host: bindHost,
+      makeConnection: opts.acpFactory,
+      log,
+    });
+  }
 
   // Bootstrap coordinator (H0). The default coordinator becomes chat-ready over
   // ACP; until the ACP-WS server lands (P6) there's no transport to drive it,
@@ -119,13 +144,16 @@ export async function bootSwarmHost(
     host: standalone,
     ports,
     health,
+    acp,
     bootstrap,
     swarmId: opts.swarmId,
     async shutdown(): Promise<void> {
+      // Close the ACP-WS server first so in-flight connections tear down their
+      // per-connection teams before the health server (the keep-alive) stops.
       // StandaloneHost has no long-lived resources of its own yet — workers are
-      // per-spawn subprocesses reaped via their handles (and the ACP-WS/MAP
-      // servers, P6/P7, will register their own teardown here). P5 just stops
-      // the health server.
+      // per-spawn subprocesses reaped via their handles. P7's MAP server adds
+      // its teardown here too.
+      if (acp !== undefined) await acp.close();
       await health.close();
     },
   };

@@ -13,3 +13,9 @@ export { createHealthServer } from "./health.js";
 export type { HealthServer, CreateHealthServerOptions } from "./health.js";
 export { readBootstrapConfig } from "./bootstrap.js";
 export type { BootstrapConfig, RehydratePolicy } from "./bootstrap.js";
+export { createAcpWsServer } from "./acp-ws-server.js";
+export type {
+  AcpWsServer,
+  AcpConnection,
+  CreateAcpWsServerOptions,
+} from "./acp-ws-server.js";

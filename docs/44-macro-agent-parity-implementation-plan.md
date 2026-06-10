@@ -451,7 +451,25 @@ boots a coordinator when `BOOTSTRAP_COORDINATOR` is set, and OpenHive's
 
 ---
 
-### P6 — ACP-over-WebSocket (+ ACP-over-MAP) (H1) _(M)_
+### P6 — ACP-over-WebSocket (+ ACP-over-MAP) (H1) _(M)_ — ✅ DONE (2026-06-10)
+
+> **P6 — ✅ DONE (2026-06-10).** `src/host/acp-ws-server.ts`: `createAcpWsServer`
+> accepts WebSocket connections on the base port at `/acp`, adapts each `ws`
+> socket into the SDK's `Stream` (parsed `AnyMessage` duplex — no ndjson framing
+> over WS), and hands it to an `AgentSideConnection`. Per-connection teardown via
+> `AcpConnection.close()`; non-WS HTTP probes get 426. The per-connection
+> coordinator-team wiring (router + runner + spine) was extracted into
+> `src/acp/team-connection.ts` (`createTeamConnection`), now shared by the stdio
+> path (`runAcpTeam`, refactored, regression-free) and the host. `boot.ts` binds
+> the ACP-WS server when an `acpFactory` is supplied; `cli/host.ts` wires the
+> team factory so each WS client gets its own coordinator team. Verified
+> end-to-end: a WebSocket client `initialize` against the live `swarm-harness
+> host` returns `{protocolVersion, agentInfo:swarm-harness, agentCapabilities:{
+> loadSession:true, _meta.swarm}}` — resume-by-session rides on `loadSession`
+> (AcpTeamAgent's session/load + spine replay). Concurrent connections get
+> independent teams (single-active-client assumption; reconnect resumes via the
+> persisted spine). Added `ws`/`@types/ws` deps. Transport + boot-wiring unit
+> tests; full src/swarm + src/acp gates green (946 passed).
 
 **New / modified**
 - `src/acp/ws-transport.ts` — WebSocket transport in front of the existing
