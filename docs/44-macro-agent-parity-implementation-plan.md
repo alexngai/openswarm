@@ -155,11 +155,75 @@ defer + escalate. (Mirror macro's `conflict-resolution-git.e2e.test.ts`.)
 > BranchPolicy — it locks a git-worktree design (one-worktree-per-branch) better
 > decided against real git in P2b.
 >
-> **P2b — TODO (needs live validation).** Real `ResolverSpawner` in peer-team
-> (spawn resolver into the live team, place it on the conflict, await
-> `waitForConflictResolution`, retry the merge); WorkerHost→orchestrator IPC for
-> `resolve_conflict`; the resolver-worktree mechanism (likely retain the
-> conflicted merge worktree instead of cleaning it up); a live-agent e2e.
+> **P2b — PLANNED (see "P2b sub-plan" below).** Real `ResolverSpawner` +
+> WorkerHost→orchestrator IPC + the conflicted-worktree mechanism + two test
+> loops.
+
+#### P2b sub-plan — live resolver wiring
+
+**Test-loop model (verified in this environment).** Integration tests spawn real
+`node dist/cli.js --worker` subprocesses but select a `ScriptedTestEngine` via
+`SWARM_HARNESS_TEST_SCRIPT=<fixture.json>` (`worker-entry.ts:359`); a fixture is a
+JSON event array that includes **real tool calls** (`tool_use_* → tool_result`,
+e.g. `test/fixtures/worker-scripts/with-tool-call.json`). So two loops:
+
+- **Loop 1 — deterministic mechanics (scripted engine, no LLM, CI-able).** The
+  resolver is a *scripted* worker; everything else is real (git, worktrees,
+  merge, conflict, IPC, retry). Covers ~90% of P2b correctness. Needs only
+  `npm run build` (integration `global-setup.ts` does it). Readiness confirmed:
+  `npm run test:integration` → 40 pass / 7 live-skipped, 33s.
+- **Loop 2 — true live agent (real Claude, gated).** Swaps the scripted resolver
+  for the real engine + the `resolver` role prompt; validates only that the LLM
+  *resolves the conflict correctly*. Env present: `@anthropic-ai/claude-agent-sdk`
+  + native binary + Claude Max auth. Gate behind a new flag; manual, costs tokens.
+
+**D4 — Conflicted-worktree mechanism: retain-and-resolve-in-place** _(decided)_.
+Today `mergeStreamToBranch` (adapter:511) merges `stream/<src>` into a detached
+tmp worktree at the target and, on conflict, deletes it in `finally` — so the
+markers vanish. P2b adds a **retain-on-conflict** mode: leave the conflicted tmp
+worktree, return its path + the target's pre-merge sha. The resolver runs *in
+that worktree* (the merge is mid-state), resolves markers, commits (completing
+the merge), and calls `resolve_conflict`. The coordinator finalizes with the
+existing CAS `git update-ref refs/heads/<target> <resolutionCommit> <oldSha>`
+(adapter:561) and removes the worktree. Most faithful + reuses the finalize path;
+rejected alternative: resolver re-merges in its own worktree (more moving parts,
+two target worktrees).
+
+**Steps:**
+
+- **P2b.1 — `resolve_conflict` IPC proxy.** Mirror `WorkerHost.commitChanges`
+  (`worker-host.ts:292` → `transport.send("task.commit_changes", …)`): add
+  `WorkerHost.resolveConflict` → `transport.send("task.resolve_conflict", …)`,
+  add `task.resolve_conflict` to `IpcRequestMethod` + a params schema
+  (`ipc/protocol.ts`), and an orchestrator handler routing to
+  `StandaloneHost.resolveConflict`. Unit-test the worker proxy + orchestrator
+  routing. _(S–M)_
+- **P2b.2 — retain-on-conflict in the adapter.** Add a `retainOnConflict` option
+  to `mergeStreamToBranch`; on conflict, skip cleanup and return
+  `{ ..., conflictWorktree, targetOldSha }`. Add `finalizeConflictResolution(
+  { worktree, targetBranch, oldSha, resolutionCommit })` (update-ref + remove
+  worktree). Unit-test against a real temp git repo (the `policies`/`standalone-
+  host` tests already use real git). _(M)_
+- **P2b.3 — real `ResolverSpawner` + coordinator in peer-team.** Build the
+  closure injected as `ctx.spawnResolver`: spawn a `resolver` member with
+  `cwd = conflictWorktree` + the `conflictId`/target threaded via task context;
+  `await host.waitForConflictResolution(conflictId, timeoutMs)`; on resolve →
+  `finalizeConflictResolution` → `{kind:"resolved"}`; on timeout →
+  `{kind:"escalated"}` + worktree cleanup. Pass `recoveryDepth+1` for
+  resolver-induced conflicts. _(M)_
+- **P2b.4 — Loop 1 integration test + harness extension.** Extend
+  `test/integration/harness.ts` to init a temp git repo, wire a real
+  `GitCascadeBranchPolicyAdapter` onto the orchestrator host, and spawn
+  `branchPolicy:{kind:"stream"}` workers. Fixtures: two conflicting writers + a
+  resolver (`edit_file`/bash → commit → `resolve_conflict`). Assert: target has
+  the merged resolution, no markers, team succeeded. _(M)_
+- **P2b.5 — Loop 2 gated live test.** Same body behind
+  `SWARM_HARNESS_LIVE_RESOLVER=1`: real engine + `resolver` role prompt, longer
+  timeout. Manual. _(S)_
+
+**Acceptance:** Loop 1 green in CI (a real conflict is resolved end-to-end by a
+scripted resolver subprocess through real git + IPC); Loop 2 green once locally
+against real Claude.
 
 
 The autonomous-team conflict path. Two new primitives.
