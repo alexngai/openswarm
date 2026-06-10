@@ -471,14 +471,49 @@ export class StandaloneHost implements SwarmHost {
     if (waiters !== undefined && waiters.size > 0) {
       this.conflictWaiters.delete(conflictId);
       for (const w of waiters) w(payload);
+      // Track-A hardening (review MEDIUM): make the happy path observable.
+      this.emitConflictSignalNote(conflictId, "resolved", opts?.resolutionCommit);
       return;
     }
     // No waiter yet — buffer for a resolve-before-wait, bounded (evict oldest).
+    // This branch ALSO catches a post-timeout signal (the waiter already
+    // settled to null and removed itself): without a note it vanishes silently
+    // and the merge is abandoned despite a valid resolution commit existing —
+    // exactly the failure mode that made the original hang undebuggable.
     if (this.resolvedConflicts.size >= StandaloneHost.RESOLVED_CONFLICTS_CAP) {
       const oldest = this.resolvedConflicts.keys().next().value;
       if (oldest !== undefined) this.resolvedConflicts.delete(oldest);
     }
     this.resolvedConflicts.set(conflictId, payload);
+    this.emitConflictSignalNote(conflictId, "buffered", opts?.resolutionCommit);
+  }
+
+  /**
+   * docs/44 P2 — surface a conflict-resolution signal as an observable
+   * `team_note` (review MEDIUM: silent orphaned signals). `outcome` is
+   * `"resolved"` when a live waiter was woken, or `"buffered"` when the signal
+   * arrived with no waiter (a resolve-before-wait OR a dropped post-timeout
+   * signal — the latter is the diagnostic case worth seeing in the log).
+   */
+  private emitConflictSignalNote(
+    conflictId: string,
+    outcome: "resolved" | "buffered",
+    resolutionCommit: string | undefined,
+  ): void {
+    const note =
+      outcome === "resolved"
+        ? `conflict ${conflictId} resolved (waiter woken)`
+        : `conflict ${conflictId} signal buffered with no waiter (resolve-before-wait or dropped post-timeout signal)`;
+    this.emit({
+      type: "team_note",
+      payload: {
+        scope: this.scopeOf(this.agentId),
+        note,
+        conflictId,
+        conflictSignal: outcome,
+        ...(resolutionCommit !== undefined && { resolutionCommit }),
+      },
+    });
   }
 
   /**

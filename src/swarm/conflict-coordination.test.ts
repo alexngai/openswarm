@@ -64,6 +64,47 @@ describe("StandaloneHost conflict coordination", () => {
     expect(await slow).toEqual({ resolutionCommit: "later" });
   });
 
+  it("emits a team_note when a waiter is woken (observability)", async () => {
+    const host = new StandaloneHost();
+    const emit = vi.spyOn(
+      host as unknown as { emit: (e: unknown) => void },
+      "emit",
+    );
+    const waitP = host.waitForConflictResolution!("obs1", 1000);
+    host.resolveConflict!("obs1", { resolutionCommit: "abc" });
+    await waitP;
+    const notes = emit.mock.calls
+      .map((c) => c[0] as { type: string; payload?: Record<string, unknown> })
+      .filter((e) => e.type === "team_note");
+    expect(
+      notes.some(
+        (n) =>
+          n.payload?.conflictSignal === "resolved" &&
+          n.payload?.conflictId === "obs1",
+      ),
+    ).toBe(true);
+  });
+
+  it("emits a team_note when a signal arrives with no waiter (orphaned)", async () => {
+    const host = new StandaloneHost();
+    const emit = vi.spyOn(
+      host as unknown as { emit: (e: unknown) => void },
+      "emit",
+    );
+    // Resolve-before-wait / dropped post-timeout signal — must be surfaced.
+    host.resolveConflict!("obs2", { resolutionCommit: "def" });
+    const notes = emit.mock.calls
+      .map((c) => c[0] as { type: string; payload?: Record<string, unknown> })
+      .filter((e) => e.type === "team_note");
+    expect(
+      notes.some(
+        (n) =>
+          n.payload?.conflictSignal === "buffered" &&
+          n.payload?.conflictId === "obs2",
+      ),
+    ).toBe(true);
+  });
+
   it("bounds the resolve-before-wait buffer (evicts oldest)", async () => {
     // Track-A hardening #7: resolvedConflicts is capped, so a flood of
     // resolve-before-wait entries can't grow unbounded. The oldest is evicted.
