@@ -379,6 +379,16 @@ export class StandaloneHost implements SwarmHost {
   }
 
   /**
+   * docs/44 P2b: discard a retained conflict worktree without landing it
+   * (resolver timed out / was abandoned). Prevents a leaked git worktree
+   * registration. No-op when the adapter doesn't support it.
+   */
+  async discardConflictWorktree(worktree: string): Promise<void> {
+    if (this.branchPolicyAdapter.discardConflictWorktree === undefined) return;
+    await this.branchPolicyAdapter.discardConflictWorktree(worktree);
+  }
+
+  /**
    * v0.7 stage 7C: merge an agent's stream into a target. Used by topology
    * auto-merge (see TeamCoordination.mergeStreams) and any future
    * model-invokable merge tool. Returns null when the adapter doesn't

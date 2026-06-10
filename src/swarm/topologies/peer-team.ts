@@ -521,6 +521,9 @@ export class PeerTeamTopology implements Topology {
             waitForResolution: (cid, t) =>
               host.waitForConflictResolution(cid, t),
             finalize: (o) => host.finalizeConflictResolution(o),
+            ...(typeof host.discardConflictWorktree === "function" && {
+              cleanupWorktree: (wt) => host.discardConflictWorktree!(wt),
+            }),
             timeoutMs,
           })
         : undefined;

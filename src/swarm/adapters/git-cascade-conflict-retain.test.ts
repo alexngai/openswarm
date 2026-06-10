@@ -167,6 +167,31 @@ describe("mergeStreamToBranch retain-on-conflict", () => {
     expect(fin.errorType).toBe("stale");
   });
 
+  it("discardConflictWorktree removes a retained worktree (idempotent)", async () => {
+    const base = git(repo, "rev-parse HEAD");
+    fs.writeFileSync(path.join(repo, "foo.ts"), "MAIN\nline2\n");
+    git(repo, "add -A");
+    git(repo, "commit -q -m main-change");
+    await makeConflictingStream("agentD" as AgentId, base);
+
+    const r = await adapter.mergeStreamToBranch({
+      sourceAgentId: "agentD" as AgentId,
+      targetBranch: "main",
+      retainOnConflict: true,
+    });
+    expect(fs.existsSync(r.conflictWorktree!)).toBe(true);
+
+    // Discard (resolver-timeout path) removes the worktree...
+    await adapter.discardConflictWorktree(r.conflictWorktree!);
+    expect(fs.existsSync(r.conflictWorktree!)).toBe(false);
+    // ...and the git worktree registration is gone (no stale prunable entry).
+    expect(git(repo, "worktree list")).not.toContain(r.conflictWorktree!);
+    // Idempotent: a second discard on the now-missing path is a no-op.
+    await expect(
+      adapter.discardConflictWorktree(r.conflictWorktree!),
+    ).resolves.toBeUndefined();
+  });
+
   it("does not shell-inject via a malicious targetBranch (Track-A hardening)", async () => {
     const sentinel = path.join(os.tmpdir(), `swh-injtest-${Date.now()}.PWNED`);
     // A branch value carrying a shell command. With argv (execFileSync) this is

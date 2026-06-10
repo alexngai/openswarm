@@ -52,6 +52,12 @@ export interface ResolverSpawnerDeps {
     oldSha: string;
     resolutionCommit?: string;
   }): Promise<MergeStreamResult | null>;
+  /**
+   * Discard a retained conflict worktree without landing it — called when the
+   * resolver times out so the git worktree registration doesn't leak. Optional;
+   * when absent, the worktree is left in place (legacy behavior).
+   */
+  cleanupWorktree?(worktree: string): Promise<void>;
   /** How long to wait for the resolver before escalating. */
   timeoutMs: number;
 }
@@ -117,9 +123,12 @@ export function buildResolverSpawner(
       deps.timeoutMs,
     );
     if (resolution === null) {
-      // Timed out — stop the resolver and escalate. The retained worktree is
-      // left under the OS tmp dir for inspection.
+      // Timed out — stop the resolver, discard the retained conflict worktree
+      // (so the git worktree registration doesn't leak), and escalate.
       await handle.kill().catch(() => {});
+      if (deps.cleanupWorktree !== undefined) {
+        await deps.cleanupWorktree(merge.conflictWorktree).catch(() => {});
+      }
       return { kind: "escalated", escalatedTo: "human" };
     }
 

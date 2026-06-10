@@ -163,6 +163,13 @@ export interface BranchPolicyAdapter {
   ): Promise<MergeStreamResult>;
 
   /**
+   * docs/44 P2b — discard a retained conflict worktree without landing it
+   * (resolver timeout/abandon). Best-effort, idempotent. Optional; caller
+   * feature-detects.
+   */
+  discardConflictWorktree?(worktree: string): Promise<void>;
+
+  /**
    * docs/44 P4 — enqueue a stream to be merged into a target branch (the
    * `queue-to-branch` landing). Returns the queue entry id, or null when the
    * adapter/tracker has no merge queue. Optional; caller feature-detects.
@@ -914,6 +921,25 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
       // Best-effort.
     }
     return { success: true, newHead: resolutionCommit };
+  }
+
+  /**
+   * docs/44 P2b — discard a retained conflict worktree WITHOUT landing it.
+   * Used when a resolver times out / is abandoned: the in-progress merge is
+   * thrown away so the git worktree registration doesn't leak (Track-A
+   * hardening HIGH #4). Best-effort + idempotent: a missing/already-removed
+   * worktree is a no-op.
+   */
+  async discardConflictWorktree(worktree: string): Promise<void> {
+    if (!fs.existsSync(worktree)) return;
+    try {
+      runGit(["worktree", "remove", "--force", worktree], this.repoPath);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[git-cascade] discardConflictWorktree: failed to remove ${worktree}: ${msg.slice(0, 200)}`,
+      );
+    }
   }
 
   // ---- v0.7 stage 7C ---------------------------------------------------

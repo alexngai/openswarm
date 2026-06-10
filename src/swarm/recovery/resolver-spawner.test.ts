@@ -76,6 +76,24 @@ describe("buildResolverSpawner", () => {
     expect(r).toEqual({ kind: "escalated", escalatedTo: "human" });
   });
 
+  it("discards the retained worktree on timeout (no leak)", async () => {
+    const cleanupWorktree = vi.fn(async () => {});
+    const d = deps({
+      waitForResolution: vi.fn(async () => null),
+      cleanupWorktree,
+    });
+    const r = await buildResolverSpawner(d)(ctx());
+    expect(cleanupWorktree).toHaveBeenCalledWith("/tmp/wt");
+    expect(r.kind).toBe("escalated");
+  });
+
+  it("tolerates a missing cleanupWorktree dep on timeout (legacy)", async () => {
+    const d = deps({ waitForResolution: vi.fn(async () => null) });
+    // cleanupWorktree omitted — must not throw.
+    const r = await buildResolverSpawner(d)(ctx());
+    expect(r.kind).toBe("escalated");
+  });
+
   it("fails when finalize fails (e.g. stale CAS)", async () => {
     const d = deps({ finalize: vi.fn(async () => ({ success: false, errorType: "stale", error: "stale" })) });
     const r = await buildResolverSpawner(d)(ctx());
