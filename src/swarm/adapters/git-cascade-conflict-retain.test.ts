@@ -75,6 +75,39 @@ async function makeConflictingStream(
 }
 
 describe("mergeStreamToBranch retain-on-conflict", () => {
+  it("reports missing_source when the stream branch doesn't exist", async () => {
+    // review MEDIUM: the enqueuing agent may be gone by drain time, so a
+    // missing stream/<id> is a likely state — surface it distinctly rather
+    // than lumping it into a generic git_error.
+    const r = await adapter.mergeStreamIdIntoBranch("ghost-stream", "main");
+    expect(r.success).toBe(false);
+    expect(r.errorType).toBe("missing_source");
+  });
+
+  it("prunes the agent→stream mapping on a clean merge (bounds agentStreams)", async () => {
+    // A stream that touches a DIFFERENT file merges into main with no conflict.
+    const base = git(repo, "rev-parse HEAD");
+    const res = await adapter.resolve({ kind: "stream", name: "x" }, "agentE" as AgentId);
+    const streamId = res.streamId!;
+    const swt = await fsp.mkdtemp(path.join(os.tmpdir(), "swh-clean-wt-"));
+    tmpDirs.push(swt);
+    git(repo, `worktree add -q ${JSON.stringify(swt)} -b stream/${streamId} ${base}`);
+    fs.writeFileSync(path.join(swt, "bar.ts"), "new file\n");
+    git(swt, "add -A");
+    git(swt, "commit -q -m clean-change");
+    git(repo, `worktree remove --force ${JSON.stringify(swt)}`);
+
+    expect(adapter.streamIdFor("agentE" as AgentId)).toBe(streamId);
+
+    const r = await adapter.mergeStreamToBranch({
+      sourceAgentId: "agentE" as AgentId,
+      targetBranch: "main",
+    });
+    expect(r.success).toBe(true);
+    // Mapping pruned once the stream landed — no unbounded growth.
+    expect(adapter.streamIdFor("agentE" as AgentId)).toBeUndefined();
+  });
+
   it("retains the conflicted worktree and surfaces paths + oldSha", async () => {
     // main diverges from base so the stream merge conflicts on foo.ts line 1.
     const base = git(repo, "rev-parse HEAD");

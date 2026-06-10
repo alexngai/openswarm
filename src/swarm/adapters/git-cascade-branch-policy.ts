@@ -633,12 +633,46 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
         errorType: "invalid_state",
       };
     }
-    return this.mergeStreamIdIntoBranch(stream.streamId, opts.targetBranch, {
-      ...(opts.strategy !== undefined && { strategy: opts.strategy }),
-      ...(opts.retainOnConflict !== undefined && {
-        retainOnConflict: opts.retainOnConflict,
-      }),
-    });
+    const result = await this.mergeStreamIdIntoBranch(
+      stream.streamId,
+      opts.targetBranch,
+      {
+        ...(opts.strategy !== undefined && { strategy: opts.strategy }),
+        ...(opts.retainOnConflict !== undefined && {
+          retainOnConflict: opts.retainOnConflict,
+        }),
+      },
+    );
+    // review MEDIUM: once the stream has landed, eagerly tear down the agent's
+    // worktree and prune the mapping so `agentStreams` doesn't grow unbounded on
+    // a long-lived host. Only on a clean success — a retained conflict
+    // (success:false) is still in flight and gets finalized later.
+    if (result.success) this.disposeAgentStream(opts.sourceAgentId);
+    return result;
+  }
+
+  /**
+   * review MEDIUM: remove an agent's stream worktree (if it still exists) and
+   * drop the `agentStreams` entry. Called when a stream has landed so the map
+   * stays bounded and the worktree is cleaned eagerly rather than deferred to
+   * dispose(). Safe because merges run after the member has completed. Best-
+   * effort: worktree-removal failures are swallowed (dispose's existsSync guard
+   * already tolerates a missing worktree).
+   */
+  private disposeAgentStream(agentId: AgentId): void {
+    const stream = this.agentStreams.get(agentId);
+    if (stream === undefined) return;
+    if (fs.existsSync(stream.worktree)) {
+      try {
+        runGit(
+          ["worktree", "remove", "--force", stream.worktree],
+          this.repoPath,
+        );
+      } catch {
+        // Best-effort; a leftover worktree is cleaned by dispose() / the OS.
+      }
+    }
+    this.agentStreams.delete(agentId);
   }
 
   /**
@@ -652,6 +686,23 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
     targetBranch: string,
     opts: { strategy?: string; retainOnConflict?: boolean } = {},
   ): Promise<MergeStreamResult> {
+    // docs/44 P4 (review MEDIUM): verify the source branch exists BEFORE doing
+    // any work. The whole streamId-keying rationale is "the enqueuing agent may
+    // be gone by drain time", so a missing `stream/<id>` is a likely state, not
+    // an exotic one. Surface it as a distinct `missing_source` so the drain can
+    // skip/handle it deliberately instead of lumping it into `git_error`.
+    try {
+      runGit(
+        ["rev-parse", "--verify", "--quiet", `refs/heads/stream/${streamId}`],
+        this.repoPath,
+      );
+    } catch {
+      return {
+        success: false,
+        error: `source branch stream/${streamId} does not exist`,
+        errorType: "missing_source",
+      };
+    }
     // Use a fresh tmp worktree so we don't disturb any active checkout.
     const fsp = await import("node:fs/promises");
     const os = await import("node:os");
@@ -673,6 +724,12 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
         let newHead = "";
         try {
           const sourceBranch = `stream/${streamId}`;
+          // NOTE (review MEDIUM): `--ff-only` is incompatible with
+          // retainOnConflict — it fails when a fast-forward isn't possible but
+          // NEVER leaves unmerged paths, so a diverged history is classified
+          // `git_error`, not `conflict`, and no worktree is retained. Callers
+          // wanting resolver-driven recovery must not pass strategy
+          // "fast-forward".
           const flag =
             opts.strategy === "fast-forward" ? "--ff-only" : "--no-ff";
           // Capture old branch sha for the update-ref CAS so we don't clobber
@@ -965,6 +1022,8 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
       worktree: stream.worktree,
       ...(opts.strategy !== undefined && { strategy: opts.strategy }),
     });
+    // review MEDIUM: prune the landed source stream (bounds agentStreams).
+    if (result.success) this.disposeAgentStream(opts.sourceAgentId);
     return {
       success: result.success,
       ...(result.newHead !== undefined && { newHead: result.newHead }),
