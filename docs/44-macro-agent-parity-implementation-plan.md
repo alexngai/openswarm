@@ -237,15 +237,38 @@ two target worktrees).
   `finalizeConflictResolution` → `{kind:"resolved"}`; on timeout →
   `{kind:"escalated"}` + worktree cleanup. Pass `recoveryDepth+1` for
   resolver-induced conflicts. _(M)_
-- **P2b.4 — Loop 1 integration test + harness extension.** Extend
-  `test/integration/harness.ts` to init a temp git repo, wire a real
-  `GitCascadeBranchPolicyAdapter` onto the orchestrator host, and spawn
-  `branchPolicy:{kind:"stream"}` workers. Fixtures: two conflicting writers + a
-  resolver (`edit_file`/bash → commit → `resolve_conflict`). Assert: target has
-  the merged resolution, no markers, team succeeded. _(M)_
-- **P2b.5 — Loop 2 gated live test.** Same body behind
+- **D5 — ScriptedTestEngine does NOT execute tools** _(found 2026-06-09)_. It
+  replays fixture events (`test-engine.ts:136` `yield event`); the `tool_result`
+  in a fixture is baked-in, not produced by running the tool. So a *scripted*
+  resolver subprocess cannot actually resolve a conflict or invoke
+  `resolve_conflict`. Loop 1 therefore can't drive the real resolver subprocess
+  deterministically — it splits into a direct integration test (P2b.4, real git +
+  real coordination, simulated agent) and the live subprocess test (P2b.5). The
+  subprocess `resolve_conflict` IPC itself is already unit-tested (P2b.1). _(A
+  future option: extend ScriptedTestEngine with a real tool-exec directive to get
+  a deterministic subprocess test — out of scope per D2.)_
+- **P2b.4 — direct coordinator + real-git integration test. ✅ DONE
+  (2026-06-09).** `recovery/resolver-spawner.integration.test.ts`: real temp git
+  repo + real `GitCascadeBranchPolicyAdapter` + real `StandaloneHost`; drives
+  `buildResolverSpawner` with REAL deps (host merge/finalize/wait) and a simulated
+  resolver agent (writes the resolution in the worktree + `host.resolveConflict`).
+  Asserts a real conflict resolves end-to-end (main advances to the resolution,
+  resolved content present, worktree removed) and the timeout→escalate path
+  leaves main untouched. (Test git is isolated from the host `~/.gitconfig` via
+  `GIT_CONFIG_GLOBAL=/dev/null` + env identity — a host gpgsign/hook made the
+  resolver's `git commit` block the event loop.) Verify: full `src/swarm`
+  **671 pass**, `npm run build` clean. _(original note:)_ Real temp git repo,
+  real `GitCascadeBranchPolicyAdapter` + real `StandaloneHost`; drive
+  `buildResolverSpawner` with REAL deps (`mergeWithRetain`/`finalize` =
+  adapter+git, `waitForResolution`/signal = host) and a simulated resolver agent
+  (writes the resolution in the worktree + `host.resolveConflict`). Assert the
+  conflict resolves end-to-end: target advances to the resolution, worktree
+  removed, `{kind:"resolved"}`. Validates the git + coordination glue the unit
+  mocks couldn't. _(M)_
+- **P2b.5 — Loop 2 gated live test.** Real subprocess resolver via Claude behind
   `SWARM_HARNESS_LIVE_RESOLVER=1`: real engine + `resolver` role prompt, longer
-  timeout. Manual. _(S)_
+  timeout. The only path that exercises the real agent-driven resolution +
+  resolve_conflict IPC end-to-end. Manual. _(S)_
 
 **Acceptance:** Loop 1 green in CI (a real conflict is resolved end-to-end by a
 scripted resolver subprocess through real git + IPC); Loop 2 green once locally
