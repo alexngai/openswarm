@@ -109,11 +109,14 @@ describe("bridgeHostToMap", () => {
     server.map.on("*", (e) => seen.push(e.type));
 
     host.emit({ type: "team_started", payload: { teamName: "t", scope: "swarm:default" } });
+    host.emit({ type: "task_created", payload: { taskId: "t1", prompt: "do x" } });
     host.emit({ type: "task_completed", payload: { taskId: "t1" } });
 
     await tick();
+    // Team lifecycle stays generic; task events use OpenHive's typed names.
     expect(seen).toContain("lane.team_started");
-    expect(seen).toContain("lane.task_completed");
+    expect(seen).toContain("task.created");
+    expect(seen).toContain("task.status");
   });
 
   it("disposer stops further projection", async () => {

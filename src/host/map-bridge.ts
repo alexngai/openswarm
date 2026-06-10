@@ -141,15 +141,48 @@ export function bridgeHostToMap(
         }
         break;
       }
+      // Task lifecycle → OpenHive-recognized typed payloads (its coordination
+      // listener routes task.created / task.status). On the outbound sidecar
+      // these are delivered as scope messages (conn.send) — exactly the
+      // `message.sent` shape OpenHive's task projection consumes.
+      case "task_created": {
+        const p = evt.payload as { taskId?: string; prompt?: string };
+        void sink.emitEvent({
+          type: "task.created",
+          data: {
+            ...(p.taskId !== undefined && { taskId: p.taskId }),
+            ...(p.prompt !== undefined && { title: p.prompt }),
+          },
+        });
+        break;
+      }
+      case "task_completed": {
+        const p = evt.payload as { taskId?: string };
+        void sink.emitEvent({
+          type: "task.status",
+          data: { ...(p.taskId !== undefined && { taskId: p.taskId }), status: "completed" },
+        });
+        break;
+      }
+      case "task_failed": {
+        const p = evt.payload as { taskId?: string; error?: string };
+        void sink.emitEvent({
+          type: "task.status",
+          data: {
+            ...(p.taskId !== undefined && { taskId: p.taskId }),
+            status: "failed",
+            ...(p.error !== undefined && { error: p.error }),
+          },
+        });
+        break;
+      }
       case "worker_lifecycle_changed":
       case "team_started":
       case "team_completed":
       case "team_aborted":
-      case "task_created":
-      case "task_completed":
-      case "task_failed":
       case "message_sent":
-        // Forward as observability events on the MAP bus (lifecycle/task/mail).
+        // Lifecycle/mail observability — generic `lane.*`. (Full mail-thread
+        // projection onto MAP conversations is the larger agent-inbox bridge.)
         void sink.emitEvent({ type: `lane.${evt.type}`, data: evt.payload });
         break;
       default:
