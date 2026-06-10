@@ -118,33 +118,42 @@ export function buildResolverSpawner(
       cwd: merge.conflictWorktree,
     });
 
-    const resolution = await deps.waitForResolution(
-      ctx.conflictId,
-      deps.timeoutMs,
-    );
-    if (resolution === null) {
-      // Timed out — stop the resolver, discard the retained conflict worktree
-      // (so the git worktree registration doesn't leak), and escalate.
-      await handle.kill().catch(() => {});
-      if (deps.cleanupWorktree !== undefined) {
-        await deps.cleanupWorktree(merge.conflictWorktree).catch(() => {});
+    try {
+      const resolution = await deps.waitForResolution(
+        ctx.conflictId,
+        deps.timeoutMs,
+      );
+      if (resolution === null) {
+        // Timed out — discard the retained conflict worktree (so the git
+        // worktree registration doesn't leak) and escalate. The resolver is
+        // reaped in the finally below.
+        if (deps.cleanupWorktree !== undefined) {
+          await deps.cleanupWorktree(merge.conflictWorktree).catch(() => {});
+        }
+        return { kind: "escalated", escalatedTo: "human" };
       }
-      return { kind: "escalated", escalatedTo: "human" };
-    }
 
-    const fin = await deps.finalize({
-      worktree: merge.conflictWorktree,
-      targetBranch,
-      oldSha: merge.targetOldSha,
-      ...(resolution.resolutionCommit !== undefined && {
-        resolutionCommit: resolution.resolutionCommit,
-      }),
-    });
-    if (fin === null || !fin.success) {
-      return { kind: "failed", error: fin?.error ?? "finalize failed" };
+      const fin = await deps.finalize({
+        worktree: merge.conflictWorktree,
+        targetBranch,
+        oldSha: merge.targetOldSha,
+        ...(resolution.resolutionCommit !== undefined && {
+          resolutionCommit: resolution.resolutionCommit,
+        }),
+      });
+      if (fin === null || !fin.success) {
+        return { kind: "failed", error: fin?.error ?? "finalize failed" };
+      }
+      return fin.newHead !== undefined
+        ? { kind: "resolved", resolutionCommit: fin.newHead }
+        : { kind: "resolved" };
+    } finally {
+      // Reap the resolver on EVERY post-spawn path (success/failure/timeout),
+      // not just timeout (review MEDIUM). The resolver sends resolve_conflict
+      // BEFORE its process exits, so without this it lingers until team
+      // teardown — and never, for a persistent/daemon team, leaking one
+      // subprocess per resolved conflict. kill() is best-effort + idempotent.
+      await handle.kill().catch(() => {});
     }
-    return fin.newHead !== undefined
-      ? { kind: "resolved", resolutionCommit: fin.newHead }
-      : { kind: "resolved" };
   };
 }

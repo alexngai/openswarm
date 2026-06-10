@@ -45,6 +45,27 @@ describe("buildResolverSpawner", () => {
     expect(r).toEqual({ kind: "resolved", resolutionCommit: "fix" });
   });
 
+  it("reaps the resolver on the success path (no lingering subprocess)", async () => {
+    const kill = vi.fn(async () => {});
+    const d = deps({
+      spawnResolver: vi.fn(async () => ({ agentId: "r1", kill })),
+    });
+    const r = await buildResolverSpawner(d)(ctx());
+    expect(r.kind).toBe("resolved");
+    expect(kill).toHaveBeenCalledOnce(); // reaped, not left for team teardown
+  });
+
+  it("reaps the resolver when finalize fails", async () => {
+    const kill = vi.fn(async () => {});
+    const d = deps({
+      spawnResolver: vi.fn(async () => ({ agentId: "r1", kill })),
+      finalize: vi.fn(async () => ({ success: false, errorType: "stale", error: "stale" })),
+    });
+    const r = await buildResolverSpawner(d)(ctx());
+    expect(r.kind).toBe("failed");
+    expect(kill).toHaveBeenCalledOnce();
+  });
+
   it("fails when no targetBranch (stream-landing path unsupported)", async () => {
     const d = deps();
     const r = await buildResolverSpawner(d)(ctx({ targetBranch: undefined }));
