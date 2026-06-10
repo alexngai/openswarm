@@ -662,17 +662,33 @@ After the hosting paths landed, the open items were worked down:
   against `ctx.cwd` instead of `fs.realpath(ctx.cwd)`, so on macOS every write
   errored. Full suite green: **3319 passed, 0 failures** (was 10 failing).
 
+Done since:
+
+- **MAP SDK `/server` bundled types — ✅ FIXED** (SDK submodule `6925e56`): the
+  `/server` subpath shipped no usable `.d.ts` because tsup's dts build
+  hard-failed on pre-existing federation/auth type errors; we'd worked around it
+  with a best-effort `tsc`-tree emit. Root-caused instead: resolved all 39 type
+  errors (type-level, plus two genuine federation contract fixes verified by the
+  SDK suite) so `tsup` emits clean bundled declarations with `dts: true`.
+  `./server` export → bundled `./dist/server.d.ts`; `build` back to plain `tsup`.
+  SDK build clean, **2222/2222** SDK tests pass; swarm-harness builds against the
+  bundled types. Republish (3a) is now unblocked.
+- **Retire the `--map` shim — ✅ DONE** (`9d54669`): on closer inspection the
+  shim (`map-adapter.ts` + `map-protocol.ts`, used by `team start --map`) and the
+  host sidecar weren't just different commands — they emitted DIFFERENT wire
+  vocabularies (`swarm.*` duck-typed notifications vs. the host's typed,
+  OpenHive-shaped `worker.*`/`task.*`/`lane.*`). Unified both onto the shared
+  outbound sidecar: Orchestrator's `mapAdapter` generalized to a transport-
+  agnostic `observer?: HostObserver`; the CLI's `--map` path now builds it from
+  `createMapSidecar` (real SDK). `team start --map` and `host --map-server` are
+  now wire-identical. Deleted the shim + its test (−694/+77). Suite green.
+
 Still deferred (each reassessed as genuinely large/speculative or low-value):
 
 - **Model-B integrator wiring (P4).** Large; the plan itself notes it "needs a
   real many-writer streaming consumer to land against" — defer until a real
   workload exists.
-- **Retire the `--map` shim.** On inspection the shim (`map-adapter.ts`, used by
-  `team start --map`) and the sidecar (`host`) serve DIFFERENT commands and
-  aren't redundant — retiring is low-value cleanup with regression risk.
 - **Full mail-thread bridge** (agent-inbox conversations/turns → MAP mail).
-- **Republish the MAP SDK** with the `/server` types fix so a fresh clone needs
-  no symlink (plus the federation/auth type-error cleanup in the SDK repo).
 
 Phases were independently shippable; items are flipped to ✅ above and in
 [`43-macro-agent-parity.md`](./43-macro-agent-parity.md) with commit refs.
