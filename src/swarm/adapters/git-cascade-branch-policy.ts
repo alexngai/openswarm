@@ -130,7 +130,23 @@ export interface BranchPolicyAdapter {
     sourceAgentId: AgentId;
     targetBranch: string;
     strategy?: string;
+    /**
+     * docs/44 P2b — when true, a merge conflict does NOT clean up the tmp
+     * worktree; instead the result carries `conflictWorktree` + `targetOldSha`
+     * so a resolver agent can fix the conflict in place. Finalize via
+     * `finalizeConflictResolution`.
+     */
+    retainOnConflict?: boolean;
   }): Promise<MergeStreamResult>;
+
+  /**
+   * docs/44 P2b — finalize a resolver-fixed conflict: CAS `update-ref` the
+   * target branch to the resolution commit, then remove the retained worktree.
+   * Optional; caller feature-detects.
+   */
+  finalizeConflictResolution?(
+    opts: FinalizeConflictOptions,
+  ): Promise<MergeStreamResult>;
 
   /**
    * v0.7 stage 7K: propagate commits from a root stream to all dependent
@@ -178,6 +194,29 @@ export interface MergeStreamResult {
   readonly conflicts?: readonly string[];
   readonly error?: string;
   readonly errorType?: string;
+  /**
+   * docs/44 P2b — set on a conflict when `retainOnConflict` was requested: the
+   * path to the retained tmp worktree holding the in-progress (conflicted)
+   * merge, for a resolver agent to fix in place. The caller MUST eventually
+   * call `finalizeConflictResolution` (which removes it) or clean it up.
+   */
+  readonly conflictWorktree?: string;
+  /**
+   * docs/44 P2b — the target branch's pre-merge sha, for the compare-and-swap
+   * `update-ref` when finalizing a resolved conflict.
+   */
+  readonly targetOldSha?: string;
+}
+
+/** docs/44 P2b — options for finalizing a resolver-fixed conflict. */
+export interface FinalizeConflictOptions {
+  /** The retained conflict worktree (from MergeStreamResult.conflictWorktree). */
+  readonly worktree: string;
+  readonly targetBranch: string;
+  /** The pre-merge sha (from MergeStreamResult.targetOldSha) for the CAS. */
+  readonly oldSha: string;
+  /** The resolver's commit completing the merge (the worktree's new HEAD). */
+  readonly resolutionCommit: string;
 }
 
 /**
@@ -512,6 +551,7 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
     sourceAgentId: AgentId;
     targetBranch: string;
     strategy?: string;
+    retainOnConflict?: boolean;
   }): Promise<MergeStreamResult> {
     const stream = this.agentStreams.get(opts.sourceAgentId);
     if (stream === undefined) {
@@ -534,12 +574,17 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
         `git worktree add --detach ${JSON.stringify(tmpRoot)} ${JSON.stringify(opts.targetBranch)}`,
         { cwd: this.repoPath, stdio: "pipe" },
       );
+      // docs/44 P2b — when set, the finally leaves the conflicted worktree in
+      // place for a resolver to fix (caller finalizes via
+      // finalizeConflictResolution, which removes it).
+      let retainWorktree = false;
+      let oldSha = "";
       try {
         const sourceBranch = `stream/${stream.streamId}`;
         const flag = opts.strategy === "fast-forward" ? "--ff-only" : "--no-ff";
         // Capture old branch sha for the update-ref CAS so we don't clobber
         // concurrent updates.
-        const oldSha = cp
+        oldSha = cp
           .execSync(
             `git rev-parse ${JSON.stringify(opts.targetBranch)}`,
             { cwd: this.repoPath, stdio: "pipe" },
@@ -566,22 +611,58 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
         return { success: true, newHead };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        const isConflict = msg.includes("CONFLICT") || msg.includes("conflict");
+        // Authoritative conflict detection: a failed merge leaves unmerged
+        // entries. (git writes "CONFLICT ..." to stdout, not to err.message,
+        // so string-matching the thrown error is unreliable.)
+        let conflicts: string[] = [];
+        try {
+          conflicts = cp
+            .execSync("git diff --name-only --diff-filter=U", {
+              cwd: tmpRoot,
+              stdio: "pipe",
+            })
+            .toString()
+            .split("\n")
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0);
+        } catch {
+          // Best-effort; leave conflicts empty if the query fails.
+        }
+        if (conflicts.length > 0) {
+          if (opts.retainOnConflict === true) {
+            retainWorktree = true;
+            return {
+              success: false,
+              errorType: "conflict",
+              error: msg.slice(0, 500),
+              conflicts,
+              conflictWorktree: tmpRoot,
+              targetOldSha: oldSha,
+            };
+          }
+          return {
+            success: false,
+            error: msg.slice(0, 500),
+            errorType: "conflict",
+            conflicts,
+          };
+        }
         return {
           success: false,
           error: msg.slice(0, 500),
-          errorType: isConflict ? "conflict" : "git_error",
+          errorType: "git_error",
         };
       } finally {
-        // Always clean up the tmp worktree; git worktree remove --force
-        // removes both the dir and git's registry entry.
-        try {
-          cp.execSync(
-            `git worktree remove --force ${JSON.stringify(tmpRoot)}`,
-            { cwd: this.repoPath, stdio: "pipe" },
-          );
-        } catch {
-          // Best-effort; the tmp dir is in /tmp and will be cleaned by the OS.
+        // Clean up the tmp worktree unless a resolver needs it retained.
+        if (!retainWorktree) {
+          try {
+            cp.execSync(
+              `git worktree remove --force ${JSON.stringify(tmpRoot)}`,
+              { cwd: this.repoPath, stdio: "pipe" },
+            );
+          } catch {
+            // Best-effort; the tmp dir is in /tmp and will be cleaned by the OS.
+          }
         }
       }
     } catch (err) {
@@ -592,6 +673,37 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
         errorType: "git_error",
       };
     }
+  }
+
+  /**
+   * docs/44 P2b — finalize a resolver-fixed conflict. CAS-updates the target
+   * branch to the resolution commit (the resolver's merge-completing commit in
+   * the retained worktree), then removes the worktree. Returns `errorType:
+   * "stale"` when the target advanced concurrently (CAS mismatch).
+   */
+  async finalizeConflictResolution(
+    opts: FinalizeConflictOptions,
+  ): Promise<MergeStreamResult> {
+    const cp = await import("node:child_process");
+    try {
+      cp.execSync(
+        `git update-ref refs/heads/${opts.targetBranch} ${opts.resolutionCommit} ${opts.oldSha}`,
+        { cwd: this.repoPath, stdio: "pipe" },
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, error: msg.slice(0, 500), errorType: "stale" };
+    } finally {
+      try {
+        cp.execSync(
+          `git worktree remove --force ${JSON.stringify(opts.worktree)}`,
+          { cwd: this.repoPath, stdio: "pipe" },
+        );
+      } catch {
+        // Best-effort.
+      }
+    }
+    return { success: true, newHead: opts.resolutionCommit };
   }
 
   // ---- v0.7 stage 7C ---------------------------------------------------

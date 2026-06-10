@@ -203,7 +203,17 @@ two target worktrees).
   (`ipc/protocol.ts`), and an orchestrator handler routing to
   `StandaloneHost.resolveConflict`. Unit-test the worker proxy + orchestrator
   routing. _(S–M)_
-- **P2b.2 — retain-on-conflict in the adapter.** Add a `retainOnConflict` option
+- **P2b.2 — retain-on-conflict in the adapter. ✅ DONE (2026-06-09).**
+  `mergeStreamToBranch({retainOnConflict})` now leaves the conflicted tmp
+  worktree in place and returns `conflictWorktree` + `targetOldSha` + the
+  unmerged `conflicts` paths; `finalizeConflictResolution({worktree,
+  targetBranch, oldSha, resolutionCommit})` CAS-updates the ref (`stale` on
+  mismatch) + removes the worktree. **Also fixed** conflict detection to be
+  authoritative (unmerged-paths query) — git writes "CONFLICT" to stdout not
+  err.message, so the prior string-match could mislabel real conflicts as
+  `git_error` and bypass P1 recovery. Verify: real-git test (retain → resolve →
+  finalize, no-retain cleanup, stale CAS) + full `src/swarm` **661 pass**, `tsc`
+  clean. _(original note:)_ Add a `retainOnConflict` option
   to `mergeStreamToBranch`; on conflict, skip cleanup and return
   `{ ..., conflictWorktree, targetOldSha }`. Add `finalizeConflictResolution(
   { worktree, targetBranch, oldSha, resolutionCommit })` (update-ref + remove
