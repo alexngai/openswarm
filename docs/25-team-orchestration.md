@@ -670,41 +670,40 @@ Per Q4, prefer agents over rigid structured outputs. Default aggregators ship in
 
 Each adapter is one module. All four implement existing swarm-harness interfaces; toggling them on/off doesn't change worker code.
 
-### 10.1 MAP — `src/swarm/adapters/map-adapter.ts` (v0.4)
+### 10.1 MAP — `src/host/map-sidecar.ts` + `src/host/map-bridge.ts`
 
-**Connection:** in-process MAP client (per Q4). The orchestrator instantiates `AgentConnection` from `@multi-agent-protocol/sdk` at startup. One connection per team (scope = `swarm:<name>`).
+> **History.** v0.4 shipped a bespoke `src/swarm/adapters/map-adapter.ts` that
+> forwarded a curated subset of lane events as duck-typed `swarm.*` JSON-RPC
+> notifications. Track B (OpenHive hosting) later added the typed host sidecar,
+> which emitted OpenHive-shaped events — so a hub saw a different vocabulary
+> depending on the entry point. The shim was retired (commit `9d54669`); both
+> `team start --map` and `host --map-server` now share the sidecar below.
 
-**Event emission:** the existing `host.emit()` already produces typed lane events. The adapter subscribes to the lane-event stream and forwards relevant ones as MAP events:
+**Connection:** the real typed `AgentConnection` from `@multi-agent-protocol/sdk`. `createMapSidecar` dials the configured hub, registers the swarm, and bridges the live host to it via `bridgeHostToMap`. The orchestrator stays transport-agnostic: it drives a generic `HostObserver` (`start(host)` / `stop()`) that the CLI's `--map` path backs with the sidecar. One connection per team (scope = `swarm:<name>:<pid>`). Connection failure degrades to "no outbound MAP" — observability never fails a run.
 
-| Lane event | MAP method |
+**Event emission:** `bridgeHostToMap` subscribes to the host's lane-event bus and maps relevant events onto MAP agent registration + OpenHive-typed events:
+
+| Lane event | MAP effect |
 |---|---|
-| `worker_spawned` | `swarm.agent.spawned` |
-| `worker_exited` (success) | `swarm.agent.completed` |
-| `worker_exited` (failure) | `swarm.agent.failed` |
-| `task_created` / `task_updated` / `task_completed` | `swarm.task.dispatched` / `swarm.task.updated` / `swarm.task.completed` |
-| `message_sent` | `swarm.message.sent` |
-| `branch_lock_acquired` / `branch_lock_released` | `swarm.branch.locked` / `swarm.branch.released` |
+| `worker_spawned` | `map/agents/register` (coordinators get `capabilities:['acp']`) + `agent.registered` |
+| `worker_exited` | `map/agents/unregister` + `agent.unregistered` |
+| `task_created` | `task.created` |
+| `task_completed` / `task_failed` | `task.status` (`status: completed` / `failed`) |
+| `team_started` / `team_completed` / `team_aborted` / `worker_lifecycle_changed` / `message_sent` | `lane.<event>` |
 
-(Exact name mapping matches cc-swarm where overlap exists; new events use the same `swarm.*` namespace.)
+The inbound MAP **server** (`host`, `base+2` `/map`) and the outbound **sidecar** (`host --map-server`, or `team start --map`) share this same bridge, so a hub sees identical shapes from either direction. Cascade actions (`x-cascade/request.*`) are dispatched back onto real git via `registerCascadeActions`.
 
-**Inbound messages:** MAP can deliver messages to the team scope. Adapter subscribes; routes via `TeamSession.send()` to the appropriate member. Federation (cross-process / cross-machine) Just Works.
+**Configuration** — per-invocation:
 
-**Configuration:**
-
-```jsonc
-// .swarm-harness/settings.json
-{
-  "map": {
-    "enabled": true,
-    "url": "ws://localhost:8080",      // optional; default from $MAP_URL
-    "scope": "swarm:my-team"           // optional; default = derived from team name
-  }
-}
+```
+swarm team start <template> --map ws://localhost:8080 ...   # outbound, team CLI
+swarm host --port N --map-server ws://hub [--map-scope …]   # outbound, host daemon
+swarm host --port N                                         # inbound MAP server on base+2
 ```
 
-Or per-invocation: `swarm team start --map ws://localhost:8080 ...`.
+`--map` with no value falls back to `$MAP_URL` then `ws://localhost:8080`.
 
-**Off by default.** When disabled, the orchestrator never imports the MAP SDK (lazy require). No runtime cost.
+**Off by default.** The flag is opt-in; the SDK is now a first-class dependency (the host path links it directly), so there's no lazy-require dance.
 
 ### 10.2 agent-inbox — pluggable `AgentInbox` (v0.6, Q5)
 
@@ -804,7 +803,7 @@ A pipeline-of-streams (each stage forks from the previous) auto-cascades when an
 
 **Event integration:**
 
-git-cascade already emits MAP-compatible events (`x-cascade/stream.opened`, `.committed`, `.merged`, `.conflicted`, `.abandoned`). The MAP adapter forwards them with no translation. Synergy: enabling `--map` + `--git-cascade` gives full team-of-agents-on-branches observability for free.
+git-cascade already emits MAP-compatible events (`x-cascade/stream.opened`, `.committed`, `.merged`, `.conflicted`, `.abandoned`). The host→MAP bridge forwards them with no translation. Synergy: enabling `--map` + `--git-cascade` gives full team-of-agents-on-branches observability for free.
 
 **Default policies per topology:**
 
@@ -865,7 +864,7 @@ swarm-harness topology peer-team --spec ./team-spec.json
 ### 11.4 New: ecosystem flags (additive on any of the above)
 
 ```bash
---map [URL]                # enable MAP adapter (default URL from $MAP_URL or settings)
+--map [URL]                # forward events to a MAP/OpenHive hub (default URL from $MAP_URL)
 --opentasks               # enable opentasks-backed TaskRegistry
 --inbox                   # enable agent-inbox-backed AgentInbox
 --git-cascade             # enable git-cascade-backed BranchPolicy

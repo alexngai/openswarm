@@ -26,7 +26,6 @@ import { StandaloneHost } from "./standalone-host.js";
 import { WorkerPool } from "./worker-pool.js";
 import { DeadLetterWriter } from "./dead-letter.js";
 import type { RoleRegistry } from "./roles.js";
-import type { MapAdapter } from "./adapters/map-adapter.js";
 import type {
   TeamSpec,
   TopologyKind,
@@ -54,6 +53,19 @@ export type { AgentResult, Usage };
 // Public types
 // ---------------------------------------------------------------------------
 
+/**
+ * A lifecycle hook the orchestrator drives around a topology run, used to
+ * attach external observability to the live host without coupling the
+ * orchestrator to any particular transport. The CLI's `--map` path supplies
+ * one backed by the shared MAP sidecar (see src/cli/team.ts → createMapSidecar).
+ */
+export interface HostObserver {
+  /** Attach to the host. Called once, before any topology event fires. */
+  start(host: StandaloneHost): Promise<void>;
+  /** Detach + tear down. Called in runTeam()'s finally block. */
+  stop(): Promise<void>;
+}
+
 export interface OrchestratorOptions {
   readonly concurrency: number;
   readonly permissionMode: PermissionMode;
@@ -80,11 +92,13 @@ export interface OrchestratorOptions {
    */
   readonly defaultRole?: string;
   /**
-   * Optional MAP adapter for external observability (v0.4 stage 4J).
-   * Off by default — only constructed when `--map` is passed on the CLI.
-   * When present, runTeam() calls start()/stop() around the topology run.
+   * Optional lifecycle hook for external observability (e.g. an outbound
+   * MAP/OpenHive connection). Off by default — the CLI constructs one when
+   * `--map` is passed. runTeam() calls start(host) before any topology event
+   * fires and stop() in its finally block. Both must swallow their own errors:
+   * a hung observer must never fail the run.
    */
-  readonly mapAdapter?: MapAdapter;
+  readonly observer?: HostObserver;
   /**
    * v0.6 stage 5F: when true, the topology context is built with
    * `persistent: true` so topologies skip team.dispose() after their
@@ -221,11 +235,11 @@ export class Orchestrator extends EventEmitter {
     };
     process.once("SIGINT", this.sigintHandler);
 
-    // v0.4 stage 4J: start the optional MAP adapter before any topology
-    // events fire. The adapter subscribes to the host's lane event bus and
-    // forwards a curated subset to an external MAP-protocol observer.
-    if (this.opts.mapAdapter !== undefined) {
-      await this.opts.mapAdapter.start(this.host);
+    // Start the optional observability hook before any topology event fires.
+    // The CLI's `--map` path supplies a MAP-sidecar-backed observer that
+    // registers agents + forwards lifecycle events to an OpenHive hub.
+    if (this.opts.observer !== undefined) {
+      await this.opts.observer.start(this.host);
     }
 
     try {
@@ -260,10 +274,10 @@ export class Orchestrator extends EventEmitter {
       // Detach the external-signal listener so a long-lived caller signal
       // doesn't accumulate listeners across runs.
       unlinkExternal?.();
-      // v0.4 stage 4J: stop the MAP adapter. Errors are swallowed inside
-      // stop() so a hung MAP server can't fail the run.
-      if (this.opts.mapAdapter !== undefined) {
-        await this.opts.mapAdapter.stop();
+      // Stop the observability hook. Errors are swallowed inside stop() so a
+      // hung MAP server can't fail the run.
+      if (this.opts.observer !== undefined) {
+        await this.opts.observer.stop();
       }
       await this.deadLetter.close();
     }

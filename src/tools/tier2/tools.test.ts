@@ -312,7 +312,7 @@ describe("agent", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildTier2Tools", () => {
-  it("returns all thirteen tools in a stable order", () => {
+  it("returns all fourteen tools in a stable order", () => {
     const tools = buildTier2Tools();
     expect(tools.map((t) => t.spec.name)).toEqual([
       "task_create",
@@ -328,6 +328,7 @@ describe("buildTier2Tools", () => {
       "team_members",
       "task_pull_next",
       "commit_changes",
+      "resolve_conflict",
     ]);
   });
 

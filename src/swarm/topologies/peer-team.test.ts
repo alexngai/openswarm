@@ -17,6 +17,11 @@ import { join } from "node:path";
 import { PeerTeamTopology } from "./peer-team.js";
 import { WorkerPool } from "../worker-pool.js";
 import { DeadLetterWriter } from "../dead-letter.js";
+import { RecoveryRegistry } from "../recovery/registry.js";
+import type {
+  ConflictContext,
+  ConflictResolution,
+} from "../recovery/types.js";
 import type { TeamSpec, MemberSpec } from "../team-spec.js";
 import type { TopologyContext } from "../topologies-types.js";
 import type { StandaloneHost } from "../standalone-host.js";
@@ -157,6 +162,13 @@ interface FakeHostExtras {
     | import("../adapters/git-cascade-branch-policy.js").MergeStreamResult
     | null
   >;
+  /** docs/44 P3 — stub host.cascadeRebase. */
+  readonly cascadeRebase?: (
+    opts: import("../adapters/git-cascade-branch-policy.js").CascadeRebaseOptions,
+  ) => Promise<
+    | import("../adapters/git-cascade-branch-policy.js").CascadeRebaseResult
+    | null
+  >;
 }
 
 function fakeHost(
@@ -215,6 +227,9 @@ function fakeHost(
     mergeStreamToBranchForAgent: vi.fn(
       extras.mergeStreamToBranchForAgent ?? (async () => null),
     ),
+    // docs/44 P3 — present by default (real StandaloneHost always has it); the
+    // cascade trigger's real discriminator is member.onParentAdvanced.
+    cascadeRebase: vi.fn(extras.cascadeRebase ?? (async () => null)),
   } as unknown as StandaloneHost;
 
   return {
@@ -856,6 +871,326 @@ describe("PeerTeamTopology — coordination.mergeStreams (v0.7 stage 7C)", () =>
       (c) => (c[0] as { type: string }).type === "team_aborted",
     );
     expect(aborted).toHaveLength(1);
+    await cleanup();
+  });
+
+  // ----- docs/44 P1 — conflict-recovery dispatch -------------------------
+
+  function conflictCtx() {
+    return makeCtx({
+      handleOpts: [{ result: successResult("ok-a") }],
+      hostExtras: {
+        streamIdFor: () => "s-x",
+        mergeStreamForAgent: async () => ({
+          success: false,
+          errorType: "conflict",
+          conflicts: ["src/foo.ts"],
+        }),
+      },
+    });
+  }
+
+  function teamNotes(ctx: { host: { emit: unknown } }): string[] {
+    const emit = ctx.host.emit as unknown as ReturnType<typeof vi.fn>;
+    return emit.mock.calls
+      .map((c) => c[0] as { type: string; payload?: { note?: string } })
+      .filter((e) => e.type === "team_note")
+      .map((e) => e.payload?.note ?? "");
+  }
+
+  it("P1 — dispatches the team-default recovery strategy (escalate)", async () => {
+    const { ctx, cleanup } = await conflictCtx();
+    const spec = peerSpec([member("a", "p")], {
+      completion: { kind: "all" },
+      mergeStreams: { targetStream: "main" },
+      conflictRecovery: { defaultStrategy: "escalate" },
+    });
+    const summary = await new PeerTeamTopology().run(spec, ctx);
+    const notes = teamNotes(ctx);
+    // Original failure note is still emitted first (behavior preserved).
+    expect(notes[0]).toMatch(/conflict on src\/foo\.ts/);
+    expect(notes.some((n) => /conflict recovery \[escalate\]/.test(n))).toBe(true);
+    expect(notes.some((n) => /escalated to human/.test(n))).toBe(true);
+    expect(summary.succeeded).toBe(1); // escalate is non-fatal without failOnConflict
+    await cleanup();
+  });
+
+  it("P1 — member.onConflict overrides the team default", async () => {
+    const { ctx, cleanup } = await conflictCtx();
+    const spec = peerSpec(
+      [{ ...member("a", "p"), onConflict: "abandon" }],
+      {
+        completion: { kind: "all" },
+        mergeStreams: { targetStream: "main" },
+        conflictRecovery: { defaultStrategy: "escalate" },
+      },
+    );
+    await new PeerTeamTopology().run(spec, ctx);
+    const notes = teamNotes(ctx);
+    expect(notes.some((n) => /conflict recovery \[abandon\]/.test(n))).toBe(true);
+    expect(notes.some((n) => /abandoned s-x/.test(n))).toBe(true);
+    await cleanup();
+  });
+
+  it("P1 — failOnConflict still throws when recovery does not resolve", async () => {
+    const { ctx, cleanup } = await conflictCtx();
+    const spec = peerSpec([member("a", "p")], {
+      completion: { kind: "all" },
+      mergeStreams: { targetStream: "main", failOnConflict: true },
+      conflictRecovery: { defaultStrategy: "escalate" },
+    });
+    await expect(new PeerTeamTopology().run(spec, ctx)).rejects.toThrow(
+      /mergeStream failed/,
+    );
+    await cleanup();
+  });
+
+  it("P1 — an unregistered strategy defers (note) without throwing", async () => {
+    const { ctx, cleanup } = await conflictCtx();
+    const spec = peerSpec([member("a", "p")], {
+      completion: { kind: "all" },
+      mergeStreams: { targetStream: "main" },
+      conflictRecovery: { defaultStrategy: "no-such-strategy" },
+    });
+    const summary = await new PeerTeamTopology().run(spec, ctx);
+    const notes = teamNotes(ctx);
+    expect(
+      notes.some((n) =>
+        /conflict recovery \[no-such-strategy\].*deferred/.test(n),
+      ),
+    ).toBe(true);
+    expect(summary.succeeded).toBe(1); // unresolved-but-not-failOnConflict is OK
+    await cleanup();
+  });
+
+  it("P1 — a non-conflict git_error skips recovery and honors failOnConflict", async () => {
+    const { ctx, cleanup } = await makeCtx({
+      handleOpts: [{ result: successResult("a") }],
+      hostExtras: {
+        streamIdFor: () => "s-x",
+        mergeStreamForAgent: async () => ({
+          success: false,
+          errorType: "git_error",
+          error: "fatal: boom",
+        }),
+      },
+    });
+    const spec = peerSpec([member("a", "p")], {
+      completion: { kind: "all" },
+      mergeStreams: { targetStream: "main", failOnConflict: true },
+      conflictRecovery: { defaultStrategy: "escalate" },
+    });
+    await expect(new PeerTeamTopology().run(spec, ctx)).rejects.toThrow(
+      /mergeStream failed/,
+    );
+    // No recovery note — a git_error isn't a conflict, so recovery never runs.
+    const notes = teamNotes(ctx);
+    expect(notes.some((n) => /conflict recovery/.test(n))).toBe(false);
+    await cleanup();
+  });
+
+  it("P2b — warns when spawn-resolver is selected below danger-full-access", async () => {
+    const { ctx, cleanup } = await makeCtx({
+      handleOpts: [{ result: successResult("a") }],
+      hostExtras: { streamIdFor: () => "s-x" }, // mergeStreamToBranchForAgent → null
+    });
+    // makeCtx defaults permissionMode to "workspace-write" (below exec).
+    const spec = peerSpec([{ ...member("a", "p"), onConflict: "spawn-resolver" }], {
+      completion: { kind: "all" },
+      mergeStreams: { targetBranch: "main" },
+    });
+    await new PeerTeamTopology().run(spec, ctx);
+    const notes = teamNotes(ctx);
+    expect(
+      notes.some((n) =>
+        /spawn-resolver selected but team permissionMode="workspace-write" is below danger-full-access/.test(
+          n,
+        ),
+      ),
+    ).toBe(true);
+    await cleanup();
+  });
+
+  it("P2b — no permission warning under danger-full-access", async () => {
+    const { ctx, cleanup } = await makeCtx({
+      handleOpts: [{ result: successResult("a") }],
+      hostExtras: { streamIdFor: () => "s-x" },
+    });
+    (ctx as { permissionMode: string }).permissionMode = "danger-full-access";
+    const spec = peerSpec([{ ...member("a", "p"), onConflict: "spawn-resolver" }], {
+      completion: { kind: "all" },
+      mergeStreams: { targetBranch: "main" },
+    });
+    await new PeerTeamTopology().run(spec, ctx);
+    const notes = teamNotes(ctx);
+    expect(notes.some((n) => /below danger-full-access/.test(n))).toBe(false);
+    await cleanup();
+  });
+
+  // ----- Track-A hardening — recovery wiring regressions -----------------
+
+  /** A recovery strategy that records each ConflictContext it sees. */
+  function capturingRegistry(): {
+    registry: RecoveryRegistry;
+    seen: ConflictContext[];
+  } {
+    const seen: ConflictContext[] = [];
+    const registry = new RecoveryRegistry();
+    registry.register({
+      name: "capture",
+      mode: "sync",
+      async recover(ctx: ConflictContext): Promise<ConflictResolution> {
+        seen.push(ctx);
+        return { kind: "deferred", reason: "captured" };
+      },
+    });
+    return { registry, seen };
+  }
+
+  it("hardening — a per-member null land() skips that member, not the cohort", async () => {
+    // Both members have streams, but the adapter can't merge (returns null).
+    // The loop must `continue` (one skip note PER member), not `return` after
+    // the first — otherwise later members are silently dropped.
+    const { ctx, cleanup } = await makeCtx({
+      handleOpts: [
+        { result: successResult("a") },
+        { result: successResult("b") },
+      ],
+      hostExtras: {
+        streamIdFor: (id: string) => `stream-${id}`,
+        mergeStreamForAgent: async () => null, // adapter declines every member
+      },
+    });
+    const spec = peerSpec(
+      [member("a", "pa"), member("b", "pb")],
+      { completion: { kind: "all" }, mergeStreams: { targetStream: "main" } },
+    );
+    await new PeerTeamTopology().run(spec, ctx);
+    const skipNotes = teamNotes(ctx).filter((n) =>
+      /requires a stream-aware adapter; skipping merge/.test(n),
+    );
+    expect(skipNotes).toHaveLength(2); // one per member — proves no early return
+    await cleanup();
+  });
+
+  it("hardening — each recovery invocation gets a UNIQUE conflictId", async () => {
+    const { registry, seen } = capturingRegistry();
+    const { ctx, cleanup } = await makeCtx({
+      handleOpts: [
+        { result: successResult("a") },
+        { result: successResult("b") },
+      ],
+      hostExtras: {
+        // Same streamId for both so the OLD `agentId:streamId` scheme would
+        // still differ by agentId — use a constant stream to isolate the test
+        // on the random suffix: distinct agentIds + constant stream.
+        streamIdFor: () => "s-shared",
+        mergeStreamForAgent: async () => ({
+          success: false,
+          errorType: "conflict",
+          conflicts: ["src/foo.ts"],
+        }),
+      },
+    });
+    (ctx as { recoveryRegistry?: RecoveryRegistry }).recoveryRegistry = registry;
+    const spec = peerSpec([member("a", "pa"), member("b", "pb")], {
+      completion: { kind: "all" },
+      mergeStreams: { targetStream: "main" },
+      conflictRecovery: { defaultStrategy: "capture" },
+    });
+    await new PeerTeamTopology().run(spec, ctx);
+    expect(seen).toHaveLength(2);
+    const ids = seen.map((c) => c.conflictId);
+    expect(new Set(ids).size).toBe(2); // unique despite shared streamId
+    for (const id of ids) expect(id).toMatch(/-/); // carries a uuid suffix
+    await cleanup();
+  });
+
+  it("hardening — conflictRecovery.maxRecoveryDepth folds into strategyConfig", async () => {
+    const { registry, seen } = capturingRegistry();
+    const { ctx, cleanup } = await makeCtx({
+      handleOpts: [{ result: successResult("a") }],
+      hostExtras: {
+        streamIdFor: () => "s-x",
+        mergeStreamForAgent: async () => ({
+          success: false,
+          errorType: "conflict",
+          conflicts: ["src/foo.ts"],
+        }),
+      },
+    });
+    (ctx as { recoveryRegistry?: RecoveryRegistry }).recoveryRegistry = registry;
+    const spec = peerSpec([member("a", "p")], {
+      completion: { kind: "all" },
+      mergeStreams: { targetStream: "main" },
+      conflictRecovery: {
+        defaultStrategy: "capture",
+        defaultConfig: { foo: "bar" },
+        maxRecoveryDepth: 7, // sibling key — must reach the strategy
+      },
+    });
+    await new PeerTeamTopology().run(spec, ctx);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.strategyConfig).toMatchObject({
+      foo: "bar",
+      maxRecoveryDepth: 7,
+    });
+    await cleanup();
+  });
+
+  // ----- docs/44 P3 — cascade auto-rebase --------------------------------
+
+  it("P3 — fires one coalesced cascade after stream merges into the target", async () => {
+    const cascadeRebase = vi.fn(async () => ({
+      success: true,
+      rebased: [{ streamId: "dep" }],
+    }));
+    const { ctx, cleanup } = await makeCtx({
+      handleOpts: [
+        { result: successResult("a") },
+        { result: successResult("b") },
+      ],
+      hostExtras: {
+        streamIdFor: (id: string) => `stream-${id}`,
+        mergeStreamForAgent: async () => ({ success: true, newHead: "h" }),
+        cascadeRebase,
+      },
+    });
+    const spec = peerSpec(
+      [
+        { ...member("a", "p"), onParentAdvanced: "sync" as const },
+        { ...member("b", "p"), onParentAdvanced: "sync" as const },
+      ],
+      { completion: { kind: "all" }, mergeStreams: { targetStream: "team-root" } },
+    );
+    await new PeerTeamTopology().run(spec, ctx);
+    // Both members merged into the same target → coalesced to ONE cascade.
+    expect(cascadeRebase).toHaveBeenCalledTimes(1);
+    expect(cascadeRebase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rootStream: "team-root",
+        strategy: "defer_conflicts",
+      }),
+    );
+    await cleanup();
+  });
+
+  it("P3 — no cascade when no member opts into onParentAdvanced", async () => {
+    const cascadeRebase = vi.fn(async () => ({ success: true, rebased: [] }));
+    const { ctx, cleanup } = await makeCtx({
+      handleOpts: [{ result: successResult("a") }],
+      hostExtras: {
+        streamIdFor: (id: string) => `stream-${id}`,
+        mergeStreamForAgent: async () => ({ success: true }),
+        cascadeRebase,
+      },
+    });
+    const spec = peerSpec([member("a", "p")], {
+      completion: { kind: "all" },
+      mergeStreams: { targetStream: "team-root" },
+    });
+    await new PeerTeamTopology().run(spec, ctx);
+    expect(cascadeRebase).not.toHaveBeenCalled();
     await cleanup();
   });
 

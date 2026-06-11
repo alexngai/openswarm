@@ -15,8 +15,22 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { execFileSync } from "node:child_process";
 import type { AgentId } from "../../core/types.js";
 import type { BranchPolicy } from "../host.js";
+
+/**
+ * Run a git command WITHOUT a shell (argv form). Branch names, refs, paths, and
+ * shas are passed as discrete argv entries, so no value can inject shell
+ * metacharacters or break on spaces — unlike string-interpolated `execSync`.
+ * Returns stdout as a string. docs/44 Track-A hardening (CRITICAL: injection).
+ */
+function runGit(args: readonly string[], cwd: string): string {
+  return execFileSync("git", args as string[], {
+    cwd,
+    stdio: "pipe",
+  }).toString();
+}
 
 /**
  * Result of resolving a BranchPolicy at spawn time. When `cwd` is set, the
@@ -130,7 +144,78 @@ export interface BranchPolicyAdapter {
     sourceAgentId: AgentId;
     targetBranch: string;
     strategy?: string;
+    /**
+     * docs/44 P2b — when true, a merge conflict does NOT clean up the tmp
+     * worktree; instead the result carries `conflictWorktree` + `targetOldSha`
+     * so a resolver agent can fix the conflict in place. Finalize via
+     * `finalizeConflictResolution`.
+     */
+    retainOnConflict?: boolean;
   }): Promise<MergeStreamResult>;
+
+  /**
+   * docs/44 P4/P8 — streamId-keyed merge into a branch (the enqueuing agent may
+   * be gone by drain/cascade-action time). Optional; caller feature-detects.
+   */
+  mergeStreamIdIntoBranch?(
+    streamId: string,
+    targetBranch: string,
+    opts?: { strategy?: string; retainOnConflict?: boolean },
+  ): Promise<MergeStreamResult>;
+
+  // docs/44 P8 cascade actions (streamId-keyed). Optional; caller feature-detects.
+  pauseStream?(streamId: string, reason?: string): Promise<CascadeOpResult>;
+  resumeStream?(streamId: string): Promise<CascadeOpResult>;
+  abandonStream?(streamId: string, reason?: string): Promise<CascadeOpResult>;
+  commitStream?(
+    streamId: string,
+    message: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<CascadeOpResult & { commit?: string; changeId?: string }>;
+  pushStream?(
+    streamId: string,
+    remote?: string,
+    targetRef?: string,
+  ): Promise<CascadeOpResult & { pushedCommit?: string }>;
+
+  /**
+   * docs/44 P2b — finalize a resolver-fixed conflict: CAS `update-ref` the
+   * target branch to the resolution commit, then remove the retained worktree.
+   * Optional; caller feature-detects.
+   */
+  finalizeConflictResolution?(
+    opts: FinalizeConflictOptions,
+  ): Promise<MergeStreamResult>;
+
+  /**
+   * docs/44 P2b — discard a retained conflict worktree without landing it
+   * (resolver timeout/abandon). Best-effort, idempotent. Optional; caller
+   * feature-detects.
+   */
+  discardConflictWorktree?(worktree: string): Promise<void>;
+
+  /**
+   * docs/44 P4 — enqueue a stream to be merged into a target branch (the
+   * `queue-to-branch` landing). Returns the queue entry id, or null when the
+   * adapter/tracker has no merge queue. Optional; caller feature-detects.
+   */
+  enqueueMerge?(opts: {
+    streamId: string;
+    targetBranch: string;
+    priority?: number;
+    agentId?: string;
+  }): Promise<string | null>;
+
+  /**
+   * docs/44 P4 — drain the merge queue for a target branch in priority/FIFO
+   * order, merging each ready stream via `mergeStreamIdIntoBranch`. Returns the
+   * per-entry outcome, or null when there is no queue. Optional.
+   */
+  drainMergeQueue?(opts: {
+    targetBranch: string;
+    limit?: number;
+    strategy?: string;
+  }): Promise<MergeQueueDrainResult | null>;
 
   /**
    * v0.7 stage 7K: propagate commits from a root stream to all dependent
@@ -151,6 +236,12 @@ export interface CascadeRebaseOptions {
   readonly agentId?: string;
   /** Conflict strategy. Default: "stop_on_conflict". */
   readonly strategy?: "stop_on_conflict" | "skip_conflicting" | "defer_conflicts";
+}
+
+/** docs/44 P8 — result of a streamId-keyed cascade action. */
+export interface CascadeOpResult {
+  readonly success: boolean;
+  readonly error?: string;
 }
 
 export interface CascadeRebaseResult {
@@ -178,6 +269,47 @@ export interface MergeStreamResult {
   readonly conflicts?: readonly string[];
   readonly error?: string;
   readonly errorType?: string;
+  /**
+   * docs/44 P2b — set on a conflict when `retainOnConflict` was requested: the
+   * path to the retained tmp worktree holding the in-progress (conflicted)
+   * merge, for a resolver agent to fix in place. The caller MUST eventually
+   * call `finalizeConflictResolution` (which removes it) or clean it up.
+   */
+  readonly conflictWorktree?: string;
+  /**
+   * docs/44 P2b — the target branch's pre-merge sha, for the compare-and-swap
+   * `update-ref` when finalizing a resolved conflict.
+   */
+  readonly targetOldSha?: string;
+}
+
+/** docs/44 P2b — options for finalizing a resolver-fixed conflict. */
+export interface FinalizeConflictOptions {
+  /** The retained conflict worktree (from MergeStreamResult.conflictWorktree). */
+  readonly worktree: string;
+  readonly targetBranch: string;
+  /** The pre-merge sha (from MergeStreamResult.targetOldSha) for the CAS. */
+  readonly oldSha: string;
+  /**
+   * The resolver's commit completing the merge. Omit to auto-read the
+   * worktree's HEAD (a scripted/real resolver commits there but can't report
+   * the dynamic sha back through the signal).
+   */
+  readonly resolutionCommit?: string;
+}
+
+/** docs/44 P4 — outcome of draining the merge queue for a target branch. */
+export interface MergeQueueDrainResult {
+  readonly merged: ReadonlyArray<{
+    entryId: string;
+    streamId: string;
+    mergeCommit?: string;
+  }>;
+  readonly failed: ReadonlyArray<{
+    entryId: string;
+    streamId: string;
+    error: string;
+  }>;
 }
 
 /**
@@ -233,6 +365,10 @@ type MultiAgentRepoTrackerLike = {
     changeId: string;
     [key: string]: unknown;
   };
+  // docs/44 P8 cascade actions — git-cascade stream lifecycle controls.
+  pauseStream?(streamId: string, reason?: string): void;
+  resumeStream?(streamId: string): void;
+  abandonStream?(streamId: string, options?: { reason?: string; cascade?: boolean }): void;
   // v0.7 stage 7F — track an existing git branch (e.g. main) as a
   // worktree-less stream so it can serve as a merge target. git-cascade's
   // mergeStream requires the target stream to NOT have an active worktree
@@ -276,6 +412,22 @@ type MultiAgentRepoTrackerLike = {
     error?: string;
     errorType?: string;
   };
+  // docs/44 P4 — git-cascade merge queue. Used for ordering + persistence; the
+  // actual merge runs through mergeStreamIdIntoBranch (handles real branches),
+  // not processMergeQueue. Optional so non-queue mock trackers don't need them.
+  addToMergeQueue?(opts: {
+    streamId: string;
+    targetBranch?: string;
+    priority?: number;
+    agentId: string;
+    metadata?: Record<string, unknown>;
+  }): string;
+  markMergeQueueReady?(entryId: string): void;
+  getNextToMerge?(targetBranch?: string):
+    | { id: string; streamId: string; targetBranch: string; [k: string]: unknown }
+    | null;
+  removeFromMergeQueue?(entryId: string): void;
+  cancelMergeQueueEntry?(entryId: string): void;
   close(): void;
 };
 
@@ -428,24 +580,21 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
     for (const { streamId, worktree } of this.agentStreams.values()) {
       streamWorktrees.set(streamId, worktree);
     }
-    const cp = await import("node:child_process");
     const fsp = await import("node:fs/promises");
     const os = await import("node:os");
     const tmpWorktrees: string[] = [];
     const provider = (streamId: string): string => {
       const recorded = streamWorktrees.get(streamId);
       if (recorded !== undefined) return recorded;
-      // Allocate a tmp worktree on the stream's branch.
       const branch = `stream/${streamId}`;
       const tmpDir = path.join(
         os.tmpdir(),
         `swh-cascade-${streamId}-${Date.now()}`,
       );
-      cp.execSync(
-        `git worktree add --detach ${JSON.stringify(tmpDir)} ${JSON.stringify(branch)}`,
-        { cwd: this.repoPath, stdio: "pipe" },
-      );
+      // Record the path BEFORE creating the worktree so cleanup still attempts
+      // removal on a partial `worktree add` failure (Track-A hardening).
       tmpWorktrees.push(tmpDir);
+      runGit(["worktree", "add", "--detach", tmpDir, branch], this.repoPath);
       return tmpDir;
     };
     try {
@@ -468,10 +617,7 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
       // Clean up any tmp worktrees we allocated.
       for (const tmp of tmpWorktrees) {
         try {
-          cp.execSync(
-            `git worktree remove --force ${JSON.stringify(tmp)}`,
-            { cwd: this.repoPath, stdio: "pipe" },
-          );
+          runGit(["worktree", "remove", "--force", tmp], this.repoPath);
         } catch {
           // Best-effort; tmp dirs in /tmp will be cleaned by the OS.
         }
@@ -512,6 +658,7 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
     sourceAgentId: AgentId;
     targetBranch: string;
     strategy?: string;
+    retainOnConflict?: boolean;
   }): Promise<MergeStreamResult> {
     const stream = this.agentStreams.get(opts.sourceAgentId);
     if (stream === undefined) {
@@ -521,67 +668,184 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
         errorType: "invalid_state",
       };
     }
-    // Use a fresh tmp worktree so we don't disturb the source's checkout.
-    const cp = await import("node:child_process");
+    const result = await this.mergeStreamIdIntoBranch(
+      stream.streamId,
+      opts.targetBranch,
+      {
+        ...(opts.strategy !== undefined && { strategy: opts.strategy }),
+        ...(opts.retainOnConflict !== undefined && {
+          retainOnConflict: opts.retainOnConflict,
+        }),
+      },
+    );
+    // review MEDIUM: once the stream has landed, eagerly tear down the agent's
+    // worktree and prune the mapping so `agentStreams` doesn't grow unbounded on
+    // a long-lived host. Only on a clean success — a retained conflict
+    // (success:false) is still in flight and gets finalized later.
+    if (result.success) this.disposeAgentStream(opts.sourceAgentId);
+    return result;
+  }
+
+  /**
+   * review MEDIUM: remove an agent's stream worktree (if it still exists) and
+   * drop the `agentStreams` entry. Called when a stream has landed so the map
+   * stays bounded and the worktree is cleaned eagerly rather than deferred to
+   * dispose(). Safe because merges run after the member has completed. Best-
+   * effort: worktree-removal failures are swallowed (dispose's existsSync guard
+   * already tolerates a missing worktree).
+   */
+  private disposeAgentStream(agentId: AgentId): void {
+    const stream = this.agentStreams.get(agentId);
+    if (stream === undefined) return;
+    if (fs.existsSync(stream.worktree)) {
+      try {
+        runGit(
+          ["worktree", "remove", "--force", stream.worktree],
+          this.repoPath,
+        );
+      } catch {
+        // Best-effort; a leftover worktree is cleaned by dispose() / the OS.
+      }
+    }
+    this.agentStreams.delete(agentId);
+  }
+
+  /**
+   * docs/44 P4 — merge a stream (by id) into an existing git branch via plain
+   * git in a throwaway worktree. The streamId-keyed core shared by
+   * `mergeStreamToBranch` (agent-keyed) and the merge-queue drain (streamId-
+   * keyed, since the enqueuing agent may be gone by drain time).
+   */
+  async mergeStreamIdIntoBranch(
+    streamId: string,
+    targetBranch: string,
+    opts: { strategy?: string; retainOnConflict?: boolean } = {},
+  ): Promise<MergeStreamResult> {
+    // docs/44 P4 (review MEDIUM): verify the source branch exists BEFORE doing
+    // any work. The whole streamId-keying rationale is "the enqueuing agent may
+    // be gone by drain time", so a missing `stream/<id>` is a likely state, not
+    // an exotic one. Surface it as a distinct `missing_source` so the drain can
+    // skip/handle it deliberately instead of lumping it into `git_error`.
+    try {
+      runGit(
+        ["rev-parse", "--verify", "--quiet", `refs/heads/stream/${streamId}`],
+        this.repoPath,
+      );
+    } catch {
+      return {
+        success: false,
+        error: `source branch stream/${streamId} does not exist`,
+        errorType: "missing_source",
+      };
+    }
+    // Use a fresh tmp worktree so we don't disturb any active checkout.
     const fsp = await import("node:fs/promises");
     const os = await import("node:os");
     const tmpRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "swh-merge-"));
+    // docs/44 P2b — when set, the finally leaves the conflicted worktree in
+    // place for a resolver to fix (caller finalizes via
+    // finalizeConflictResolution, which removes it).
+    let retainWorktree = false;
     try {
-      // git worktree add --detach <tmp> <targetBranch>: detached at the
-      // target's HEAD so we can merge without colliding with an already-
-      // checked-out branch (typical: main is checked out in the repo cwd).
-      cp.execSync(
-        `git worktree add --detach ${JSON.stringify(tmpRoot)} ${JSON.stringify(opts.targetBranch)}`,
-        { cwd: this.repoPath, stdio: "pipe" },
+      // worktree add --detach <tmp> <targetBranch>: detached at the target's
+      // HEAD so we can merge without colliding with an already-checked-out
+      // branch (typical: main is checked out in the repo cwd).
+      runGit(
+        ["worktree", "add", "--detach", tmpRoot, targetBranch],
+        this.repoPath,
       );
       try {
-        const sourceBranch = `stream/${stream.streamId}`;
-        const flag = opts.strategy === "fast-forward" ? "--ff-only" : "--no-ff";
-        // Capture old branch sha for the update-ref CAS so we don't clobber
-        // concurrent updates.
-        const oldSha = cp
-          .execSync(
-            `git rev-parse ${JSON.stringify(opts.targetBranch)}`,
-            { cwd: this.repoPath, stdio: "pipe" },
-          )
-          .toString()
-          .trim();
-        const out = cp.execSync(
-          `git merge ${flag} ${JSON.stringify(sourceBranch)} -m ${JSON.stringify(`Merge stream/${stream.streamId} into ${opts.targetBranch}`)}`,
-          { cwd: tmpRoot, stdio: "pipe" },
-        );
-        const newHead = cp
-          .execSync("git rev-parse HEAD", { cwd: tmpRoot, stdio: "pipe" })
-          .toString()
-          .trim();
-        // Atomically update the target branch ref to the new merge commit.
-        // Working trees of the target branch (e.g. the orchestrator's repo
-        // cwd) won't auto-refresh — they'll see the new ref on next `git
-        // pull` or `git status` but their working tree stays as-is.
-        cp.execSync(
-          `git update-ref refs/heads/${opts.targetBranch} ${newHead} ${oldSha}`,
-          { cwd: this.repoPath, stdio: "pipe" },
-        );
-        void out;
-        return { success: true, newHead };
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        const isConflict = msg.includes("CONFLICT") || msg.includes("conflict");
-        return {
-          success: false,
-          error: msg.slice(0, 500),
-          errorType: isConflict ? "conflict" : "git_error",
-        };
-      } finally {
-        // Always clean up the tmp worktree; git worktree remove --force
-        // removes both the dir and git's registry entry.
+        let oldSha = "";
+        let newHead = "";
         try {
-          cp.execSync(
-            `git worktree remove --force ${JSON.stringify(tmpRoot)}`,
-            { cwd: this.repoPath, stdio: "pipe" },
+          const sourceBranch = `stream/${streamId}`;
+          // NOTE (review MEDIUM): `--ff-only` is incompatible with
+          // retainOnConflict — it fails when a fast-forward isn't possible but
+          // NEVER leaves unmerged paths, so a diverged history is classified
+          // `git_error`, not `conflict`, and no worktree is retained. Callers
+          // wanting resolver-driven recovery must not pass strategy
+          // "fast-forward".
+          const flag =
+            opts.strategy === "fast-forward" ? "--ff-only" : "--no-ff";
+          // Capture old branch sha for the update-ref CAS so we don't clobber
+          // concurrent updates.
+          oldSha = runGit(["rev-parse", targetBranch], this.repoPath).trim();
+          runGit(
+            [
+              "merge",
+              flag,
+              sourceBranch,
+              "-m",
+              `Merge stream/${streamId} into ${targetBranch}`,
+            ],
+            tmpRoot,
           );
-        } catch {
-          // Best-effort; the tmp dir is in /tmp and will be cleaned by the OS.
+          newHead = runGit(["rev-parse", "HEAD"], tmpRoot).trim();
+        } catch (mergeErr) {
+          const msg =
+            mergeErr instanceof Error ? mergeErr.message : String(mergeErr);
+          // Authoritative conflict detection: a failed merge leaves unmerged
+          // entries. (git writes "CONFLICT ..." to stdout, not to err.message,
+          // so string-matching the thrown error is unreliable.)
+          let conflicts: string[] = [];
+          try {
+            conflicts = runGit(
+              ["diff", "--name-only", "--diff-filter=U"],
+              tmpRoot,
+            )
+              .split("\n")
+              .map((s) => s.trim())
+              .filter((s) => s.length > 0);
+          } catch {
+            // Best-effort; leave conflicts empty if the query fails.
+          }
+          if (conflicts.length > 0) {
+            if (opts.retainOnConflict === true) {
+              retainWorktree = true;
+              return {
+                success: false,
+                errorType: "conflict",
+                error: msg.slice(0, 500),
+                conflicts,
+                conflictWorktree: tmpRoot,
+                targetOldSha: oldSha,
+              };
+            }
+            return {
+              success: false,
+              error: msg.slice(0, 500),
+              errorType: "conflict",
+              conflicts,
+            };
+          }
+          return {
+            success: false,
+            error: msg.slice(0, 500),
+            errorType: "git_error",
+          };
+        }
+        // Merge succeeded — CAS the ref SEPARATELY so a concurrent target
+        // advance is classified `stale` (retryable) rather than a merge
+        // conflict or generic git error (Track-A hardening HIGH #5).
+        try {
+          runGit(
+            ["update-ref", `refs/heads/${targetBranch}`, newHead, oldSha],
+            this.repoPath,
+          );
+        } catch (casErr) {
+          const msg =
+            casErr instanceof Error ? casErr.message : String(casErr);
+          return { success: false, error: msg.slice(0, 500), errorType: "stale" };
+        }
+        return { success: true, newHead };
+      } finally {
+        // Clean up the tmp worktree unless a resolver needs it retained.
+        if (!retainWorktree) {
+          try {
+            runGit(["worktree", "remove", "--force", tmpRoot], this.repoPath);
+          } catch {
+            // Best-effort; the tmp dir is in /tmp and will be cleaned by the OS.
+          }
         }
       }
     } catch (err) {
@@ -591,6 +855,314 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
         error: `failed to create tmp worktree: ${msg.slice(0, 200)}`,
         errorType: "git_error",
       };
+    }
+  }
+
+  // ---- docs/44 P4 — merge queue --------------------------------------
+
+  /**
+   * Enqueue a stream for the merge queue. `targetBranch` is REQUIRED here on
+   * purpose: the underlying git-cascade queue defaults both `addToQueue` and
+   * `getNextToMerge` to the literal `"main"`, so if a caller ever omitted it,
+   * enqueue and drain could silently target different branches and the drain
+   * would find nothing. Keep it required and explicit (review LOW).
+   */
+  async enqueueMerge(opts: {
+    streamId: string;
+    targetBranch: string;
+    priority?: number;
+    agentId?: string;
+  }): Promise<string | null> {
+    const tracker = await this.ensureTracker();
+    if (
+      tracker.addToMergeQueue === undefined ||
+      tracker.markMergeQueueReady === undefined
+    ) {
+      return null;
+    }
+    const entryId = tracker.addToMergeQueue({
+      streamId: opts.streamId,
+      targetBranch: opts.targetBranch,
+      ...(opts.priority !== undefined && { priority: opts.priority }),
+      agentId: opts.agentId ?? "queue",
+    });
+    // No review gate in v1 — entries are immediately drainable.
+    tracker.markMergeQueueReady(entryId);
+    return entryId;
+  }
+
+  async drainMergeQueue(opts: {
+    targetBranch: string;
+    limit?: number;
+    strategy?: string;
+  }): Promise<MergeQueueDrainResult | null> {
+    const tracker = await this.ensureTracker();
+    if (
+      tracker.getNextToMerge === undefined ||
+      tracker.removeFromMergeQueue === undefined ||
+      tracker.cancelMergeQueueEntry === undefined
+    ) {
+      return null;
+    }
+    const merged: Array<{
+      entryId: string;
+      streamId: string;
+      mergeCommit?: string;
+    }> = [];
+    const failed: Array<{ entryId: string; streamId: string; error: string }> =
+      [];
+    const limit = opts.limit ?? Number.MAX_SAFE_INTEGER;
+    for (let n = 0; n < limit; n++) {
+      const entry = tracker.getNextToMerge(opts.targetBranch);
+      if (entry === null || entry === undefined) break;
+      const r = await this.mergeStreamIdIntoBranch(
+        entry.streamId,
+        opts.targetBranch,
+        { ...(opts.strategy !== undefined && { strategy: opts.strategy }) },
+      );
+      if (r.success) {
+        tracker.removeFromMergeQueue(entry.id);
+        merged.push({
+          entryId: entry.id,
+          streamId: entry.streamId,
+          ...(r.newHead !== undefined && { mergeCommit: r.newHead }),
+        });
+      } else if (r.errorType === "stale") {
+        // A concurrent writer advanced the target — this is retryable, NOT a
+        // terminal failure. Leave the entry 'ready' (don't cancel/lose it) and
+        // stop the drain; a later drain retries it against the new HEAD
+        // (Track-A hardening HIGH #6).
+        break;
+      } else {
+        // Terminal failure (conflict / git error) — cancel so the drain
+        // advances; surface it in failed[]. (Routing failed[] into the
+        // recovery dispatcher is the deferred model-B step.)
+        tracker.cancelMergeQueueEntry(entry.id);
+        failed.push({
+          entryId: entry.id,
+          streamId: entry.streamId,
+          error:
+            r.errorType === "conflict"
+              ? `conflict on ${r.conflicts?.join(", ") ?? "<unknown>"}`
+              : (r.error ?? "merge failed"),
+        });
+      }
+    }
+    return { merged, failed };
+  }
+
+  /**
+   * docs/44 P2b — finalize a resolver-fixed conflict. CAS-updates the target
+   * branch to the resolution commit (the resolver's merge-completing commit in
+   * the retained worktree), then removes the worktree. Returns `errorType:
+   * "stale"` when the target advanced concurrently (CAS mismatch).
+   */
+  async finalizeConflictResolution(
+    opts: FinalizeConflictOptions,
+  ): Promise<MergeStreamResult> {
+    const worktree = opts.worktree;
+    // Auto-read the worktree HEAD when the caller didn't report a commit.
+    let resolutionCommit: string;
+    try {
+      resolutionCommit =
+        opts.resolutionCommit ?? runGit(["rev-parse", "HEAD"], worktree).trim();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        success: false,
+        error: `cannot read resolution commit: ${msg.slice(0, 200)}`,
+        errorType: "git_error",
+      };
+    }
+    // Re-verify the resolver actually produced a conflict-free tree before
+    // landing it — a buggy/lying resolver must not drive an unmerged tree onto
+    // the target (Track-A hardening: finalize-without-reverify trust gap).
+    try {
+      const unmerged = runGit(["diff", "--name-only", "--diff-filter=U"], worktree)
+        .split("\n")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      if (unmerged.length > 0) {
+        return {
+          success: false,
+          error: `worktree still has unmerged paths: ${unmerged.join(", ")}`,
+          errorType: "unresolved",
+        };
+      }
+    } catch {
+      // Best-effort; if the check itself fails, fall through to the CAS.
+    }
+    // An empty/short oldSha would make `update-ref` CREATE the ref with no CAS,
+    // silently clobbering a concurrently-advanced target — reject it.
+    if (!opts.oldSha || opts.oldSha.length < 7) {
+      return {
+        success: false,
+        error: "missing pre-merge sha for compare-and-swap",
+        errorType: "invalid_state",
+      };
+    }
+    try {
+      runGit(
+        ["update-ref", `refs/heads/${opts.targetBranch}`, resolutionCommit, opts.oldSha],
+        this.repoPath,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // CAS failed (target advanced). Do NOT remove the worktree — the
+      // resolver's commit is only reachable there; retain it so the caller can
+      // retry the CAS against the new HEAD (Track-A hardening HIGH #4).
+      return { success: false, error: msg.slice(0, 500), errorType: "stale" };
+    }
+    // Success only — now it's safe to remove the worktree.
+    try {
+      runGit(["worktree", "remove", "--force", worktree], this.repoPath);
+    } catch {
+      // Best-effort.
+    }
+    return { success: true, newHead: resolutionCommit };
+  }
+
+  /**
+   * docs/44 P2b — discard a retained conflict worktree WITHOUT landing it.
+   * Used when a resolver times out / is abandoned: the in-progress merge is
+   * thrown away so the git worktree registration doesn't leak (Track-A
+   * hardening HIGH #4). Best-effort + idempotent: a missing/already-removed
+   * worktree is a no-op.
+   */
+  async discardConflictWorktree(worktree: string): Promise<void> {
+    if (!fs.existsSync(worktree)) return;
+    try {
+      runGit(["worktree", "remove", "--force", worktree], this.repoPath);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[git-cascade] discardConflictWorktree: failed to remove ${worktree}: ${msg.slice(0, 200)}`,
+      );
+    }
+  }
+
+  // ---- docs/44 P8 cascade actions (streamId-keyed) ---------------------
+
+  /** Reverse-resolve a streamId to its recorded agent + worktree. */
+  private locateStream(
+    streamId: string,
+  ): { agentId: AgentId; worktree: string } | undefined {
+    for (const [agentId, s] of this.agentStreams) {
+      if (s.streamId === streamId) return { agentId, worktree: s.worktree };
+    }
+    return undefined;
+  }
+
+  /** Pause a stream (git-cascade marks it non-drainable until resumed). */
+  async pauseStream(
+    streamId: string,
+    reason?: string,
+  ): Promise<CascadeOpResult> {
+    const tracker = await this.ensureTracker();
+    if (tracker.pauseStream === undefined) {
+      return { success: false, error: "tracker has no pauseStream" };
+    }
+    try {
+      tracker.pauseStream(streamId, reason);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  /** Resume a previously-paused stream. */
+  async resumeStream(streamId: string): Promise<CascadeOpResult> {
+    const tracker = await this.ensureTracker();
+    if (tracker.resumeStream === undefined) {
+      return { success: false, error: "tracker has no resumeStream" };
+    }
+    try {
+      tracker.resumeStream(streamId);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  /** Abandon a stream (the work stays on its branch; the stream is marked dead). */
+  async abandonStream(
+    streamId: string,
+    reason?: string,
+  ): Promise<CascadeOpResult> {
+    const tracker = await this.ensureTracker();
+    if (tracker.abandonStream === undefined) {
+      return { success: false, error: "tracker has no abandonStream" };
+    }
+    try {
+      tracker.abandonStream(streamId, reason !== undefined ? { reason } : undefined);
+      // Drop the local mapping so dispose/cleanup doesn't touch an abandoned tree.
+      const loc = this.locateStream(streamId);
+      if (loc !== undefined) this.agentStreams.delete(loc.agentId);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  /** Commit a stream's in-flight changes via git-cascade (Change-Id tracked). */
+  async commitStream(
+    streamId: string,
+    message: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<CascadeOpResult & { commit?: string; changeId?: string }> {
+    const loc = this.locateStream(streamId);
+    if (loc === undefined) {
+      return {
+        success: false,
+        error: `no recorded worktree for stream ${streamId} (the enqueuing agent may be gone)`,
+      };
+    }
+    if (!fs.existsSync(loc.worktree)) {
+      return { success: false, error: `worktree ${loc.worktree} no longer exists` };
+    }
+    const tracker = await this.ensureTracker();
+    try {
+      const r = tracker.commitChanges({
+        streamId,
+        agentId: loc.agentId,
+        worktree: loc.worktree,
+        message,
+        ...(metadata !== undefined && { metadata }),
+      });
+      return {
+        success: true,
+        commit: r.commit,
+        ...(r.changeId !== undefined && { changeId: r.changeId }),
+      };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  /** Push a stream's branch to a remote (raw git — git-cascade has no push). */
+  async pushStream(
+    streamId: string,
+    remote = "origin",
+    targetRef?: string,
+  ): Promise<CascadeOpResult & { pushedCommit?: string }> {
+    const sourceBranch = `stream/${streamId}`;
+    try {
+      runGit(["rev-parse", "--verify", "--quiet", `refs/heads/${sourceBranch}`], this.repoPath);
+    } catch {
+      return { success: false, error: "missing_source" };
+    }
+    const ref = targetRef ?? sourceBranch;
+    try {
+      runGit(["push", remote, `${sourceBranch}:refs/heads/${ref}`], this.repoPath);
+      let pushedCommit: string | undefined;
+      try {
+        pushedCommit = runGit(["rev-parse", sourceBranch], this.repoPath).trim();
+      } catch {
+        // best-effort sha
+      }
+      return { success: true, ...(pushedCommit !== undefined && { pushedCommit }) };
+    } catch (err) {
+      return { success: false, error: (err as Error).message.slice(0, 300) };
     }
   }
 
@@ -617,6 +1189,8 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
       worktree: stream.worktree,
       ...(opts.strategy !== undefined && { strategy: opts.strategy }),
     });
+    // review MEDIUM: prune the landed source stream (bounds agentStreams).
+    if (result.success) this.disposeAgentStream(opts.sourceAgentId);
     return {
       success: result.success,
       ...(result.newHead !== undefined && { newHead: result.newHead }),
@@ -632,13 +1206,12 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
     // — failures are logged via console.warn but don't throw, so dispose
     // remains idempotent and exit-safe.
     if (this.cleanupOnDispose && this.agentStreams.size > 0) {
-      const cp = await import("node:child_process");
       for (const { worktree } of this.agentStreams.values()) {
+        // Skip worktrees already removed by a merge/finalize/cascade path —
+        // avoids noisy false-alarm warnings on every dispose (Track-A hardening).
+        if (!fs.existsSync(worktree)) continue;
         try {
-          cp.execSync(
-            `git worktree remove --force ${JSON.stringify(worktree)}`,
-            { cwd: this.repoPath, stdio: "pipe" },
-          );
+          runGit(["worktree", "remove", "--force", worktree], this.repoPath);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           console.warn(
@@ -647,10 +1220,7 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
         }
       }
       try {
-        cp.execSync(`git worktree prune`, {
-          cwd: this.repoPath,
-          stdio: "pipe",
-        });
+        runGit(["worktree", "prune"], this.repoPath);
       } catch {
         // prune is best-effort; failures don't block tracker close.
       }
@@ -697,6 +1267,13 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
       this.tracker = tracker;
       return tracker;
     })();
+
+    // If init fails (transient FS error, missing dep), clear the cached promise
+    // so a later call can retry rather than forever returning the rejected one
+    // (Track-A hardening: rejected-promise poison).
+    this.trackerPromise.catch(() => {
+      this.trackerPromise = undefined;
+    });
 
     return this.trackerPromise;
   }

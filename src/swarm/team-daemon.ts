@@ -281,7 +281,7 @@ export class TeamDaemon {
       persistent: true,
     });
     // The host has a private `events` EventEmitter (same duck-typed access
-    // pattern used by src/swarm/adapters/map-adapter.ts:84-86).
+    // pattern used by the host→MAP bridge in src/host/map-bridge.ts).
     const bus = (host as unknown as { readonly events: EventEmitter }).events;
     return {
       runTeam: (spec) => orch.runTeam(spec),

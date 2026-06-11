@@ -17,7 +17,9 @@
  * for static awareness; runtime fresh state is the `team_members()` tool's
  * job, which the augmentation explicitly mentions.
  */
+import { randomUUID } from "node:crypto";
 import type { EventEmitter } from "node:events";
+import type { AgentId } from "../../core/types.js";
 import type { AgentResult, AgentHandle } from "../host.js";
 import type { LaneEvent } from "../events.js";
 import type {
@@ -28,11 +30,37 @@ import type {
 } from "../team-spec.js";
 import { TeamSession } from "../team-session.js";
 import { applyDefaultBranchPolicy } from "./branch-policy-defaults.js";
+import {
+  createDefaultLandingRegistry,
+  DEFAULT_LANDING_STRATEGY,
+} from "../landing/index.js";
+import {
+  createDefaultRecoveryRegistry,
+  describeResolution,
+  type ConflictResolution,
+} from "../recovery/index.js";
+import { buildResolverSpawner } from "../recovery/resolver-spawner.js";
+import { CascadeScheduler } from "../cascade-scheduler.js";
 import type {
   Topology,
   TopologyContext,
   TeamResult,
 } from "../topologies-types.js";
+
+/**
+ * docs/44 P0 — default landing registry used when the TopologyContext doesn't
+ * inject one. Constructed once; holds the built-in `merge-to-parent` strategy.
+ */
+const DEFAULT_LANDING_REGISTRY = createDefaultLandingRegistry();
+
+/**
+ * docs/44 P1 — default conflict-recovery registry (defer / abandon / escalate).
+ * Used when the TopologyContext doesn't inject one.
+ */
+const DEFAULT_RECOVERY_REGISTRY = createDefaultRecoveryRegistry();
+
+/** docs/44 P2b — default resolver wait before escalating (30 min). */
+const DEFAULT_RESOLVER_TIMEOUT_MS = 1_800_000;
 
 export class PeerTeamTopology implements Topology {
   readonly name = "peer-team" as const;
@@ -122,7 +150,7 @@ export class PeerTeamTopology implements Topology {
       // target. Only fires when (a) spec opted in and (b) the host's branch
       // policy adapter actually tracks streams. Conflicts are non-fatal by
       // default; opt into failOnConflict to surface them as topology errors.
-      await this.maybeMergeStreams(spec, memberHandles, ctx);
+      await this.maybeMergeStreams(spec, memberHandles, ctx, team);
 
       ctx.host.emit({
         type: "team_completed",
@@ -429,6 +457,7 @@ export class PeerTeamTopology implements Topology {
     spec: TeamSpec,
     handles: readonly AgentHandle[],
     ctx: TopologyContext,
+    team: TeamSession,
   ): Promise<void> {
     const cfg = spec.coordination.mergeStreams;
     if (cfg === undefined) return;
@@ -438,21 +467,127 @@ export class PeerTeamTopology implements Topology {
     const usingBranch = cfg.targetBranch !== undefined;
     const targetStream = cfg.targetStream;
     if (!usingBranch && targetStream === undefined) return;
-    for (const handle of handles) {
+    // docs/44 P0 — landing now delegates to the merge-to-parent LandingStrategy.
+    // Behavior is unchanged: the strategy makes the same adapter calls and
+    // returns null when the adapter can't perform the merge. The per-agent
+    // merge logic lives in the strategy so it can be selected per-role and
+    // composed with conflict recovery (P1).
+    const landing =
+      (ctx.landingRegistry ?? DEFAULT_LANDING_REGISTRY).get(
+        DEFAULT_LANDING_STRATEGY,
+      );
+    const recovery = ctx.recoveryRegistry ?? DEFAULT_RECOVERY_REGISTRY;
+    // docs/44 P2b — when landing to a branch and the host implements the
+    // conflict primitives (a real StandaloneHost with a git-cascade adapter),
+    // build the spawn-resolver coordinator and inject it so the `spawn-resolver`
+    // strategy can run a real resolver agent. Fakes that lack these methods at
+    // runtime → no coordinator → spawn-resolver escalates.
+    const host = ctx.host;
+    const recoveryCfg = spec.coordination.conflictRecovery;
+    const cfgTimeout = recoveryCfg?.defaultConfig?.timeoutMs;
+    const timeoutMs =
+      typeof cfgTimeout === "number" ? cfgTimeout : DEFAULT_RESOLVER_TIMEOUT_MS;
+    // Fold the sibling `conflictRecovery.maxRecoveryDepth` into strategyConfig
+    // so the spawn-resolver strategy (which reads strategyConfig.maxRecoveryDepth)
+    // actually honors it. Without this, the top-level key was silently dropped
+    // and resolver recursion always used the built-in default depth.
+    const mergedConfig: Record<string, unknown> = {
+      ...(recoveryCfg?.defaultConfig ?? {}),
+      ...(recoveryCfg?.maxRecoveryDepth !== undefined && {
+        maxRecoveryDepth: recoveryCfg.maxRecoveryDepth,
+      }),
+    };
+    const strategyConfig =
+      Object.keys(mergedConfig).length > 0 ? mergedConfig : undefined;
+    const spawnResolver =
+      usingBranch &&
+      typeof host.finalizeConflictResolution === "function" &&
+      typeof host.waitForConflictResolution === "function"
+        ? buildResolverSpawner({
+            spawnResolver: async (s) => {
+              const h = await team.spawnMember({
+                role: s.role,
+                prompt: s.prompt,
+                branchPolicy: s.branchPolicy,
+                cwd: s.cwd,
+              });
+              return { agentId: h.agentId, kill: () => h.kill() };
+            },
+            mergeWithRetain: (agentId, tb) =>
+              host.mergeStreamToBranchForAgent(agentId as AgentId, {
+                targetBranch: tb,
+                retainOnConflict: true,
+              }),
+            waitForResolution: (cid, t) =>
+              host.waitForConflictResolution(cid, t),
+            finalize: (o) => host.finalizeConflictResolution(o),
+            ...(typeof host.discardConflictWorktree === "function" && {
+              cleanupWorktree: (wt) => host.discardConflictWorktree!(wt),
+            }),
+            timeoutMs,
+          })
+        : undefined;
+    // review MEDIUM: spawn-resolver needs `exec` (the resolver must `git commit`
+    // and call `resolve_conflict`), which only `danger-full-access` grants.
+    // Under a more restrictive team mode the resolver silently degrades to
+    // escalate — emit a one-time diagnostic so operators understand WHY
+    // resolution never fires (vs. a timeout), instead of debugging blind.
+    if (
+      usingBranch &&
+      ctx.permissionMode !== "danger-full-access" &&
+      spec.members.some((m) => recovery.select(m.role, spec) === "spawn-resolver")
+    ) {
+      ctx.host.emit({
+        type: "team_note",
+        payload: {
+          teamName: spec.name,
+          scope: `swarm:${spec.name}`,
+          note: `spawn-resolver selected but team permissionMode="${ctx.permissionMode}" is below danger-full-access; the resolver cannot commit or call resolve_conflict and will escalate instead of resolving`,
+        },
+      });
+    }
+    // docs/44 P3 — when a member opts into `onParentAdvanced: "sync"` and we're
+    // merging into a target STREAM (cascade roots are streams, not branches),
+    // schedule a debounced cascade rebase of the target's dependents. Repeated
+    // member merges into the same target coalesce into one cascade.
+    const cascadeEnabled =
+      !usingBranch &&
+      targetStream !== undefined &&
+      typeof host.cascadeRebase === "function" &&
+      spec.members.some((m) => m.onParentAdvanced === "sync");
+    const cascade = cascadeEnabled
+      ? new CascadeScheduler({
+          run: (root) =>
+            host.cascadeRebase({
+              rootStream: root,
+              agentId: "cascade-driver",
+              strategy: "defer_conflicts",
+            }),
+        })
+      : undefined;
+    // handles[i] is index-aligned with spec.members[i] (team.spawnAll preserves
+    // order), so spec.members[i].role drives per-member recovery selection.
+    for (let i = 0; i < handles.length; i++) {
+      const handle = handles[i]!;
       const streamId = ctx.host.streamIdFor(handle.agentId);
       if (streamId === undefined) continue;
-      const result = usingBranch
-        ? await ctx.host.mergeStreamToBranchForAgent(handle.agentId, {
-            targetBranch: cfg.targetBranch!,
-            ...(cfg.strategy !== undefined && { strategy: cfg.strategy }),
-          })
-        : await ctx.host.mergeStreamForAgent(handle.agentId, {
-            targetStream: targetStream!,
-            ...(cfg.strategy !== undefined && { strategy: cfg.strategy }),
-          });
+      const result =
+        landing === undefined
+          ? null
+          : await landing.land({
+              host: ctx.host,
+              agentId: handle.agentId,
+              streamId,
+              ...(usingBranch
+                ? { targetBranch: cfg.targetBranch! }
+                : { targetStream: targetStream! }),
+              ...(cfg.strategy !== undefined && { strategy: cfg.strategy }),
+            });
       if (result === null) {
-        // Adapter doesn't support this merge path — emit a note so the
-        // operator knows the auto-merge silently skipped.
+        // This landing strategy can't merge this member (e.g. adapter lacks
+        // the capability) — emit a note and SKIP THIS MEMBER. Must `continue`,
+        // not `return`: a per-member null must not abort the rest of the
+        // cohort (a custom strategy may decline one member yet land others).
         ctx.host.emit({
           type: "team_note",
           payload: {
@@ -463,14 +598,14 @@ export class PeerTeamTopology implements Topology {
               : `mergeStreams.targetStream=${targetStream} requires a stream-aware adapter; skipping merge`,
           },
         });
-        return;
+        continue;
       }
       const target = usingBranch ? cfg.targetBranch : targetStream;
       if (!result.success) {
-        const reason =
-          result.errorType === "conflict"
-            ? `conflict on ${result.conflicts?.join(", ") ?? "<unknown>"}`
-            : (result.error ?? "unknown merge error");
+        const isConflict = result.errorType === "conflict";
+        const reason = isConflict
+          ? `conflict on ${result.conflicts?.join(", ") ?? "<unknown>"}`
+          : (result.error ?? "unknown merge error");
         ctx.host.emit({
           type: "team_note",
           payload: {
@@ -479,11 +614,83 @@ export class PeerTeamTopology implements Topology {
             note: `mergeStream(${streamId} → ${target}) failed: ${reason}`,
           },
         });
-        if (cfg.failOnConflict === true) {
+
+        // docs/44 P1 — dispatch conflict recovery per role/team config. The
+        // default strategy is `defer` (a no-op), so a team that hasn't opted
+        // into recovery behaves exactly as before: the note above is emitted
+        // and `failOnConflict` still decides whether to throw.
+        let resolved = false;
+        if (isConflict) {
+          const role = spec.members[i]?.role;
+          const strategyName = recovery.select(role, spec);
+          const resolution: ConflictResolution = recovery.has(strategyName)
+            ? await recovery.recover(strategyName, {
+                // Unique per recovery invocation: the conflictId keys the host's
+                // waiter map and resolve-before-wait buffer, so a deterministic
+                // agentId:streamId would let a stale buffered resolution satisfy
+                // a later distinct conflict (and collide concurrent resolvers).
+                conflictId: `${handle.agentId}:${streamId}:${randomUUID()}`,
+                sourceAgentId: handle.agentId,
+                streamId,
+                paths: result.conflicts ?? [],
+                operation: "merge",
+                ...(usingBranch
+                  ? { targetBranch: cfg.targetBranch! }
+                  : { targetStream: targetStream! }),
+                recoveryDepth: 0,
+                ...(strategyConfig !== undefined && { strategyConfig }),
+                ...(spawnResolver !== undefined && { spawnResolver }),
+              })
+            : {
+                kind: "deferred",
+                reason: `strategy "${strategyName}" not registered`,
+              };
+          resolved = resolution.kind === "resolved";
+          ctx.host.emit({
+            type: "team_note",
+            payload: {
+              teamName: spec.name,
+              scope: `swarm:${spec.name}`,
+              note: `conflict recovery [${strategyName}] for ${handle.agentId}: ${describeResolution(resolution)}`,
+            },
+          });
+        }
+
+        // Throw only when the conflict was NOT resolved. `failOnConflict`
+        // preserves its contract: an unresolved conflict (or a non-conflict
+        // merge error) fails the topology.
+        if (!resolved && cfg.failOnConflict === true) {
           throw new Error(
             `PeerTeamTopology: mergeStream failed for ${handle.agentId}: ${reason}`,
           );
         }
+      } else if (cascade !== undefined) {
+        // Successful stream merge advanced the target — request a (coalesced)
+        // cascade rebase of its dependents.
+        cascade.request(targetStream!);
+      }
+    }
+
+    // docs/44 P3 — run the coalesced cascade(s) now and surface the outcome.
+    if (cascade !== undefined) {
+      const results = await cascade.flush();
+      for (const [root, r] of results) {
+        if (r === null) continue;
+        const unrebased =
+          r.conflicts !== undefined && r.conflicts.length > 0
+            ? r.conflicts.map((c) => c.streamId).join(", ")
+            : undefined;
+        ctx.host.emit({
+          type: "team_note",
+          payload: {
+            teamName: spec.name,
+            scope: `swarm:${spec.name}`,
+            note:
+              !r.success || unrebased !== undefined
+                ? `cascade rebase of ${root} left unrebased streams: ${unrebased ?? r.error ?? "unknown"}`
+                : `cascade rebase of ${root}: ${r.rebased?.length ?? 0} dependent(s) rebased`,
+          },
+        });
       }
     }
   }

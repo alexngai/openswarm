@@ -11,11 +11,10 @@ import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as net from "node:net";
 import type { PermissionMode } from "../core/types.js";
-import { Orchestrator } from "../swarm/orchestrator.js";
+import { Orchestrator, type HostObserver } from "../swarm/orchestrator.js";
 import { loadTemplate } from "../swarm/openteams/loader.js";
 import { openteamsToTeamSpec } from "../swarm/openteams/mapping.js";
-import { MapAdapter } from "../swarm/adapters/map-adapter.js";
-import type { MapClientFactory } from "../swarm/adapters/map-protocol.js";
+import { createMapSidecar, type MapSidecar } from "../host/map-sidecar.js";
 import { TeamSpecSchema, type TeamSpec, type TopologyKind } from "../swarm/team-spec.js";
 import { computeTeamPaths, teamsBaseDir } from "./team-paths.js";
 
@@ -33,17 +32,12 @@ export interface TeamStartOptions {
   /** Read template from a fixture dir instead of shelling out (testing). */
   readonly fixtureDir?: string;
   /**
-   * v0.4 stage 4J: when set, the orchestrator wires a MapAdapter that
-   * forwards a curated subset of lane events to a MAP-protocol observer at
-   * this URL. Off when undefined — MAP SDK is never imported.
+   * When set, the orchestrator attaches a MAP-sidecar-backed observer that
+   * registers agents + forwards lifecycle events to an OpenHive hub at this
+   * WS URL. Off when undefined. Uses the same outbound path as `host
+   * --map-server`, so a hub sees identical event shapes from either entry point.
    */
   readonly mapUrl?: string;
-  /**
-   * Test-only override: inject a fake MapClientFactory instead of dynamically
-   * importing `@multi-agent-protocol/sdk`. When unset and `mapUrl` is set,
-   * the production factory is built via dynamic import.
-   */
-  readonly mapFactory?: MapClientFactory;
   /**
    * v0.5 stage 5E.3: when true, fork a per-team daemon and return 0 once the
    * socket binds. Sync (default) behavior is byte-identical to v0.4.
@@ -92,24 +86,13 @@ export async function runTeamStart(
     return await detachAndForkDaemon(spec);
   }
 
-  // 3. Optional MAP adapter (v0.4 stage 4J — observability).
-  // Only constructed when `--map` was passed. Production path lazy-imports
-  // `@multi-agent-protocol/sdk`; tests pass an in-memory factory.
-  let mapAdapter: MapAdapter | undefined;
-  if (opts.mapUrl !== undefined) {
-    const factory = opts.mapFactory ?? (await buildMapFactory());
-    if (factory === undefined) {
-      // SDK not installed and no test factory injected — surface a clear
-      // error and exit 2. The dynamic-import error message has already been
-      // written to stderr inside buildMapFactory().
-      return 2;
-    }
-    mapAdapter = new MapAdapter({
-      url: opts.mapUrl,
-      teamName: spec.name,
-      factory,
-    });
-  }
+  // 3. Optional MAP observability. Only constructed when `--map` was passed.
+  // Routes through the shared outbound sidecar (same path as `host
+  // --map-server`), so a hub sees identical OpenHive-typed event shapes.
+  const observer =
+    opts.mapUrl !== undefined
+      ? makeMapObserver(opts.mapUrl, spec.name)
+      : undefined;
 
   // 4. Open results stream + orchestrator.
   const resultsOut = fs.createWriteStream(opts.output, { flags: "a" });
@@ -118,7 +101,7 @@ export async function runTeamStart(
     permissionMode: opts.permissionMode,
     resultsOut,
     eventsOut: process.stderr,
-    ...(mapAdapter !== undefined && { mapAdapter }),
+    ...(observer !== undefined && { observer }),
   });
 
   // 5. Run.
@@ -142,59 +125,36 @@ export async function runTeamStart(
 }
 
 // ---------------------------------------------------------------------------
-// MAP SDK loader (v0.4 stage 4J)
+// MAP observability hook
 // ---------------------------------------------------------------------------
 
 /**
- * Lazy-load `@multi-agent-protocol/sdk` and adapt its AgentConnection API to
- * our `MapClientFactory` shim. When the package isn't installed, write a
- * helpful message to stderr and return undefined — caller exits 2.
+ * Build a {@link HostObserver} that, on start, dials the configured MAP/OpenHive
+ * hub via the shared outbound sidecar and bridges the live host's agents +
+ * lifecycle events to it. The sidecar owns the real `@multi-agent-protocol/sdk`
+ * `AgentConnection` (typed, not duck-typed) and the OpenHive-typed event shapes,
+ * so `team start --map` and `host --map-server` are wire-identical.
  *
- * Pulled out as a module-level function so that simply importing team.ts
- * does not require the SDK to be present on disk.
+ * Scope keeps the historical `swarm:<team>:<pid>` form so two harness processes
+ * orchestrating the same team name don't collide on a shared hub. Connection
+ * failure degrades to "no outbound MAP" (createMapSidecar returns undefined) —
+ * observability must never fail a run.
  */
-async function buildMapFactory(): Promise<MapClientFactory | undefined> {
-  let sdk: unknown;
-  try {
-    // The package name is a literal string so bundlers don't try to resolve
-    // it at build time. The dynamic import is also wrapped so a missing
-    // package surfaces as a runtime error we can format cleanly.
-    sdk = await import(
-      /* @vite-ignore */ "@multi-agent-protocol/sdk" as string
-    );
-  } catch {
-    process.stderr.write(
-      "error: --map requires @multi-agent-protocol/sdk to be installed.\n" +
-        "  Run: npm install @multi-agent-protocol/sdk\n",
-    );
-    return undefined;
-  }
-  // Duck-type the SDK's AgentConnection. Exact API surface verified at
-  // runtime; we don't depend on its types at compile time.
-  const sdkAny = sdk as {
-    AgentConnection?: {
-      connect: (opts: unknown) => Promise<{
-        send: (method: string, params: unknown) => Promise<void>;
-        notify: (method: string, params: unknown) => void;
-        close: () => Promise<void>;
-      }>;
-    };
-  };
-  if (sdkAny.AgentConnection === undefined) {
-    process.stderr.write(
-      "error: @multi-agent-protocol/sdk did not export AgentConnection — incompatible version.\n",
-    );
-    return undefined;
-  }
-  const AgentConnection = sdkAny.AgentConnection;
+function makeMapObserver(url: string, teamName: string): HostObserver {
+  const scope = `swarm:${teamName}:${process.pid}`;
+  let sidecar: MapSidecar | undefined;
   return {
-    connect: async (opts) => {
-      const conn = await AgentConnection.connect(opts);
-      return {
-        send: (method, params) => conn.send(method, params),
-        notify: (method, params) => conn.notify(method, params),
-        close: () => conn.close(),
-      };
+    async start(host) {
+      sidecar = await createMapSidecar({
+        host,
+        server: url,
+        scope,
+        log: (m) => process.stderr.write(`${m}\n`),
+      });
+    },
+    async stop() {
+      await sidecar?.close().catch(() => {});
+      sidecar = undefined;
     },
   };
 }
@@ -210,10 +170,8 @@ export interface TopologyRunOptions {
   readonly concurrency: number;
   /** Results JSONL file. */
   readonly output: string;
-  /** v0.4 stage 4J — optional MAP observability URL. */
+  /** Optional MAP/OpenHive observability URL (same path as `host --map-server`). */
   readonly mapUrl?: string;
-  /** v0.4 stage 4K — test-only override mirroring TeamStartOptions. */
-  readonly mapFactory?: MapClientFactory;
   readonly maxTokens?: number;
   readonly maxCostUsd?: number;
   /**
@@ -275,17 +233,11 @@ export async function runTopology(opts: TopologyRunOptions): Promise<number> {
       : 0;
   }
 
-  // 2. Optional MAP adapter (mirrors team start).
-  let mapAdapter: MapAdapter | undefined;
-  if (opts.mapUrl !== undefined) {
-    const factory = opts.mapFactory ?? (await buildMapFactory());
-    if (factory === undefined) return 2;
-    mapAdapter = new MapAdapter({
-      url: opts.mapUrl,
-      teamName: spec.name,
-      factory,
-    });
-  }
+  // 2. Optional MAP observability (mirrors team start — shared sidecar path).
+  const observer =
+    opts.mapUrl !== undefined
+      ? makeMapObserver(opts.mapUrl, spec.name)
+      : undefined;
 
   // 3. Open results stream + orchestrator.
   const resultsOut = fs.createWriteStream(opts.output, { flags: "a" });
@@ -294,7 +246,7 @@ export async function runTopology(opts: TopologyRunOptions): Promise<number> {
     permissionMode: opts.permissionMode,
     resultsOut,
     eventsOut: process.stderr,
-    ...(mapAdapter !== undefined && { mapAdapter }),
+    ...(observer !== undefined && { observer }),
   });
 
   // 4. Run.

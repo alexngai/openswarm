@@ -8,6 +8,8 @@
 
 import { describe, it, expect, vi } from "vitest";
 import * as path from "node:path";
+import * as fs from "node:fs";
+import * as os from "node:os";
 import {
   GitCascadeBranchPolicyAdapter,
   IdentityBranchPolicyAdapter,
@@ -540,19 +542,24 @@ describe("GitCascadeBranchPolicyAdapter.dispose", () => {
 
   it("v0.7 stage 7H — cleanupOnDispose=true attempts git worktree remove (warns on failure)", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // A real (non-git) dir so the recorded worktree EXISTS and removal is
+    // attempted; `git worktree remove` then fails (not a git repo) → warns.
+    // (Track-A hardening: dispose now skips already-removed worktrees, so the
+    // path must exist for the warn-on-failure behavior to fire.)
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "swh-dispose-"));
     const fake = makeTracker();
     const adapter = new GitCascadeBranchPolicyAdapter({
-      repoPath: "/repo-does-not-exist",
+      repoPath: repo,
       trackerForTest: fake.tracker,
       cleanupOnDispose: true,
     });
-    await adapter.resolve({ kind: "stream" }, "a" as AgentId);
-    // Worktree path is fake; git will fail. We expect a console.warn but
-    // the dispose itself must not throw (best-effort cleanup).
+    const res = await adapter.resolve({ kind: "stream" }, "a" as AgentId);
+    fs.mkdirSync(res.cwd!, { recursive: true });
     await expect(adapter.dispose()).resolves.toBeUndefined();
     expect(warnSpy).toHaveBeenCalled();
     expect(warnSpy.mock.calls[0]?.[0]).toMatch(/cleanup-on-dispose: failed/);
     expect(fake.tracker.close).toHaveBeenCalledTimes(1);
     warnSpy.mockRestore();
+    fs.rmSync(repo, { recursive: true, force: true });
   });
 });

@@ -304,6 +304,33 @@ export class WorkerHost implements SwarmHost {
   }
 
   /**
+   * docs/44 P2b: signal the orchestrator that this (resolver) worker has
+   * resolved its assigned merge conflict and committed the fix. Proxies via
+   * `task.resolve_conflict` and AWAITS the orchestrator's ack so the signal is
+   * guaranteed delivered before the worker exits — a fire-and-forget
+   * notification could be dropped during subprocess teardown.
+   */
+  async resolveConflict(
+    conflictId: string,
+    opts?: { readonly resolutionCommit?: string },
+  ): Promise<void> {
+    // review LOW: this is a local IPC ack (the orchestrator handler responds
+    // synchronously), not a long operation — bound it to 10s instead of the
+    // transport's 60s default so a wedged orchestrator can't keep the resolver
+    // alive for a full minute during teardown.
+    await this.transport.send<null>(
+      "task.resolve_conflict",
+      {
+        conflictId,
+        ...(opts?.resolutionCommit !== undefined && {
+          resolutionCommit: opts.resolutionCommit,
+        }),
+      },
+      { timeoutMs: 10_000 },
+    );
+  }
+
+  /**
    * Resolve the team scope for an agent id. WorkerHost only knows about its
    * own scope (set at construction from env); callers asking about another
    * agent's scope must go through the orchestrator. v0.4 stage 4M.7: enables

@@ -573,4 +573,68 @@ describe("parseArgv", () => {
       cleanupWorktrees: false,
     });
   });
+
+  // ---- docs/44 P5 — host subcommand ---------------------------------------
+
+  it("parses host with --port", () => {
+    expect(parseArgv(["host", "--port", "9000"])).toMatchObject({
+      kind: "host",
+      port: 9000,
+      permissionMode: "workspace-write",
+    });
+  });
+
+  it("parses host with --port, --host, --adapter", () => {
+    expect(
+      parseArgv(["host", "--port", "9000", "--host", "0.0.0.0", "--adapter", "macro-agent"]),
+    ).toMatchObject({
+      kind: "host",
+      port: 9000,
+      host: "0.0.0.0",
+      adapter: "macro-agent",
+    });
+  });
+
+  it("host errors when --port is missing", () => {
+    expect(parseArgv(["host"])).toMatchObject({ kind: "error" });
+  });
+
+  it("host errors on a non-numeric --port", () => {
+    expect(parseArgv(["host", "--port", "abc"])).toMatchObject({ kind: "error" });
+  });
+
+  it("host errors when --port leaves no room for the +2 stride", () => {
+    expect(parseArgv(["host", "--port", "65535"])).toMatchObject({ kind: "error" });
+  });
+
+  it("parses host --map-server (outbound) with scope + onboard token", () => {
+    expect(
+      parseArgv([
+        "host", "--port", "9000",
+        "--map-server", "ws://hub:7836",
+        "--map-scope", "swarm:x",
+        "--onboard-token", "tok123",
+      ]),
+    ).toMatchObject({
+      kind: "host",
+      port: 9000,
+      mapServer: "ws://hub:7836",
+      mapScope: "swarm:x",
+      onboardToken: "tok123",
+    });
+  });
+
+  it("host reads SWARM_MAP_SERVER env as a --map-server alias", () => {
+    const prev = process.env.SWARM_MAP_SERVER;
+    process.env.SWARM_MAP_SERVER = "ws://envhub:7836";
+    try {
+      expect(parseArgv(["host", "--port", "9000"])).toMatchObject({
+        kind: "host",
+        mapServer: "ws://envhub:7836",
+      });
+    } finally {
+      if (prev !== undefined) process.env.SWARM_MAP_SERVER = prev;
+      else delete process.env.SWARM_MAP_SERVER;
+    }
+  });
 });

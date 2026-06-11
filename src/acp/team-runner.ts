@@ -7,7 +7,7 @@
  * The real adapter mirrors the team-daemon's proven wiring
  * (src/swarm/team-daemon.ts:262-294): own a StandaloneHost, hand it to a
  * persistent Orchestrator, and subscribe to the host's lane-event bus via the
- * established duck-typed `events` access (also used by adapters/map-adapter.ts).
+ * established duck-typed `events` access (also used by host/map-bridge.ts).
  */
 
 import { EventEmitter } from "node:events";

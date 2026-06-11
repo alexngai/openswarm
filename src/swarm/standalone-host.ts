@@ -54,6 +54,7 @@ import {
   SpawnRequestParamsSchema,
   TaskPullNextParamsSchema,
   TaskCommitChangesParamsSchema,
+  TaskResolveConflictParamsSchema,
   AskUserQuestionParamsSchema,
   PermissionRequestParamsSchema,
   type IpcRequest,
@@ -163,6 +164,25 @@ export class StandaloneHost implements SwarmHost {
    * agentId as the memberId.
    */
   private readonly agentToMemberId = new Map<AgentId, string>();
+  /**
+   * docs/44 P2 — pending conflict-resolution waiters. A Set per conflictId so a
+   * second waiter for the same id can't clobber the first (Track-A hardening #8).
+   */
+  private readonly conflictWaiters = new Map<
+    string,
+    Set<(v: { resolutionCommit?: string } | null) => void>
+  >();
+  /**
+   * docs/44 P2 — resolutions that arrived before anyone started awaiting.
+   * Bounded (LRU-evict oldest) so stray/late/typo'd signals — the conflictId is
+   * picked by an untrusted resolver agent — can't leak unboundedly on a
+   * long-lived host (Track-A hardening #7).
+   */
+  private readonly resolvedConflicts = new Map<
+    string,
+    { resolutionCommit?: string }
+  >();
+  private static readonly RESOLVED_CONFLICTS_CAP = 256;
 
   // Expose the registry via the TaskAPI wrapper.
   readonly task: TaskAPI;
@@ -321,7 +341,11 @@ export class StandaloneHost implements SwarmHost {
    */
   async mergeStreamToBranchForAgent(
     agentId: AgentId,
-    opts: { readonly targetBranch: string; readonly strategy?: string },
+    opts: {
+      readonly targetBranch: string;
+      readonly strategy?: string;
+      readonly retainOnConflict?: boolean;
+    },
   ): Promise<
     | import("./adapters/git-cascade-branch-policy.js").MergeStreamResult
     | null
@@ -331,7 +355,117 @@ export class StandaloneHost implements SwarmHost {
       sourceAgentId: agentId,
       targetBranch: opts.targetBranch,
       ...(opts.strategy !== undefined && { strategy: opts.strategy }),
+      ...(opts.retainOnConflict !== undefined && {
+        retainOnConflict: opts.retainOnConflict,
+      }),
     });
+  }
+
+  /**
+   * docs/44 P8: merge a stream (by id) into a branch — the streamId-keyed
+   * entrypoint OpenHive's cascade `merge` action drives (the enqueuing agent
+   * may be gone by then, so it's keyed by stream, not agent). Returns null when
+   * the adapter doesn't support the operation.
+   */
+  async mergeStreamIdIntoBranch(
+    streamId: string,
+    targetBranch: string,
+    opts: { readonly strategy?: string; readonly retainOnConflict?: boolean } = {},
+  ): Promise<
+    | import("./adapters/git-cascade-branch-policy.js").MergeStreamResult
+    | null
+  > {
+    if (this.branchPolicyAdapter.mergeStreamIdIntoBranch === undefined) {
+      return null;
+    }
+    return this.branchPolicyAdapter.mergeStreamIdIntoBranch(
+      streamId,
+      targetBranch,
+      opts,
+    );
+  }
+
+  /**
+   * docs/44 P2b: finalize a resolver-fixed conflict via the branch-policy
+   * adapter (CAS update-ref + worktree removal). Returns null when the adapter
+   * doesn't support it. Used by the spawn-resolver coordinator.
+   */
+  async finalizeConflictResolution(
+    opts: import("./adapters/git-cascade-branch-policy.js").FinalizeConflictOptions,
+  ): Promise<
+    | import("./adapters/git-cascade-branch-policy.js").MergeStreamResult
+    | null
+  > {
+    if (this.branchPolicyAdapter.finalizeConflictResolution === undefined) {
+      return null;
+    }
+    return this.branchPolicyAdapter.finalizeConflictResolution(opts);
+  }
+
+  /**
+   * docs/44 P2b: discard a retained conflict worktree without landing it
+   * (resolver timed out / was abandoned). Prevents a leaked git worktree
+   * registration. No-op when the adapter doesn't support it.
+   */
+  async discardConflictWorktree(worktree: string): Promise<void> {
+    if (this.branchPolicyAdapter.discardConflictWorktree === undefined) return;
+    await this.branchPolicyAdapter.discardConflictWorktree(worktree);
+  }
+
+  // ---- docs/44 P8 cascade actions (streamId-keyed passthroughs) --------
+  // Each returns null when the adapter doesn't support the op (cascade-actions
+  // surfaces that as `unsupported`); otherwise the adapter's result.
+
+  async pauseStream(
+    streamId: string,
+    reason?: string,
+  ): Promise<import("./adapters/git-cascade-branch-policy.js").CascadeOpResult | null> {
+    if (this.branchPolicyAdapter.pauseStream === undefined) return null;
+    return this.branchPolicyAdapter.pauseStream(streamId, reason);
+  }
+
+  async resumeStream(
+    streamId: string,
+  ): Promise<import("./adapters/git-cascade-branch-policy.js").CascadeOpResult | null> {
+    if (this.branchPolicyAdapter.resumeStream === undefined) return null;
+    return this.branchPolicyAdapter.resumeStream(streamId);
+  }
+
+  async abandonStream(
+    streamId: string,
+    reason?: string,
+  ): Promise<import("./adapters/git-cascade-branch-policy.js").CascadeOpResult | null> {
+    if (this.branchPolicyAdapter.abandonStream === undefined) return null;
+    return this.branchPolicyAdapter.abandonStream(streamId, reason);
+  }
+
+  async commitStream(
+    streamId: string,
+    message: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<
+    | (import("./adapters/git-cascade-branch-policy.js").CascadeOpResult & {
+        commit?: string;
+        changeId?: string;
+      })
+    | null
+  > {
+    if (this.branchPolicyAdapter.commitStream === undefined) return null;
+    return this.branchPolicyAdapter.commitStream(streamId, message, metadata);
+  }
+
+  async pushStream(
+    streamId: string,
+    remote?: string,
+    targetRef?: string,
+  ): Promise<
+    | (import("./adapters/git-cascade-branch-policy.js").CascadeOpResult & {
+        pushedCommit?: string;
+      })
+    | null
+  > {
+    if (this.branchPolicyAdapter.pushStream === undefined) return null;
+    return this.branchPolicyAdapter.pushStream(streamId, remote, targetRef);
   }
 
   /**
@@ -355,6 +489,146 @@ export class StandaloneHost implements SwarmHost {
       sourceAgentId: agentId,
       targetStream: opts.targetStream,
       ...(opts.strategy !== undefined && { strategy: opts.strategy }),
+    });
+  }
+
+  /**
+   * docs/44 P3: propagate a root stream's new commits to its dependent (forked)
+   * streams via the branch-policy adapter's cascade rebase. Returns null when
+   * the adapter doesn't support cascades. Used by the CascadeScheduler trigger.
+   */
+  async cascadeRebase(
+    opts: import("./adapters/git-cascade-branch-policy.js").CascadeRebaseOptions,
+  ): Promise<
+    | import("./adapters/git-cascade-branch-policy.js").CascadeRebaseResult
+    | null
+  > {
+    if (this.branchPolicyAdapter.cascadeRebase === undefined) return null;
+    return this.branchPolicyAdapter.cascadeRebase(opts);
+  }
+
+  /**
+   * docs/44 P4 — enqueue a stream for queue-to-branch landing. Returns the
+   * queue entry id, or null when the adapter has no merge queue.
+   */
+  async enqueueMerge(opts: {
+    streamId: string;
+    targetBranch: string;
+    priority?: number;
+    agentId?: string;
+  }): Promise<string | null> {
+    if (this.branchPolicyAdapter.enqueueMerge === undefined) return null;
+    return this.branchPolicyAdapter.enqueueMerge(opts);
+  }
+
+  /**
+   * docs/44 P4 — drain the merge queue for a target branch in order (the
+   * integrator action). Returns per-entry outcomes, or null when unsupported.
+   */
+  async drainMergeQueue(opts: {
+    targetBranch: string;
+    limit?: number;
+    strategy?: string;
+  }): Promise<
+    | import("./adapters/git-cascade-branch-policy.js").MergeQueueDrainResult
+    | null
+  > {
+    if (this.branchPolicyAdapter.drainMergeQueue === undefined) return null;
+    return this.branchPolicyAdapter.drainMergeQueue(opts);
+  }
+
+  /**
+   * docs/44 P2 — mark a conflict resolved (called by the `resolve_conflict`
+   * tool). Wakes a matching waiter if present; otherwise records the
+   * resolution so a later `waitForConflictResolution` returns immediately.
+   */
+  resolveConflict(
+    conflictId: string,
+    opts?: { readonly resolutionCommit?: string },
+  ): void {
+    const payload = { resolutionCommit: opts?.resolutionCommit };
+    const waiters = this.conflictWaiters.get(conflictId);
+    if (waiters !== undefined && waiters.size > 0) {
+      this.conflictWaiters.delete(conflictId);
+      for (const w of waiters) w(payload);
+      // Track-A hardening (review MEDIUM): make the happy path observable.
+      this.emitConflictSignalNote(conflictId, "resolved", opts?.resolutionCommit);
+      return;
+    }
+    // No waiter yet — buffer for a resolve-before-wait, bounded (evict oldest).
+    // This branch ALSO catches a post-timeout signal (the waiter already
+    // settled to null and removed itself): without a note it vanishes silently
+    // and the merge is abandoned despite a valid resolution commit existing —
+    // exactly the failure mode that made the original hang undebuggable.
+    if (this.resolvedConflicts.size >= StandaloneHost.RESOLVED_CONFLICTS_CAP) {
+      const oldest = this.resolvedConflicts.keys().next().value;
+      if (oldest !== undefined) this.resolvedConflicts.delete(oldest);
+    }
+    this.resolvedConflicts.set(conflictId, payload);
+    this.emitConflictSignalNote(conflictId, "buffered", opts?.resolutionCommit);
+  }
+
+  /**
+   * docs/44 P2 — surface a conflict-resolution signal as an observable
+   * `team_note` (review MEDIUM: silent orphaned signals). `outcome` is
+   * `"resolved"` when a live waiter was woken, or `"buffered"` when the signal
+   * arrived with no waiter (a resolve-before-wait OR a dropped post-timeout
+   * signal — the latter is the diagnostic case worth seeing in the log).
+   */
+  private emitConflictSignalNote(
+    conflictId: string,
+    outcome: "resolved" | "buffered",
+    resolutionCommit: string | undefined,
+  ): void {
+    const note =
+      outcome === "resolved"
+        ? `conflict ${conflictId} resolved (waiter woken)`
+        : `conflict ${conflictId} signal buffered with no waiter (resolve-before-wait or dropped post-timeout signal)`;
+    this.emit({
+      type: "team_note",
+      payload: {
+        scope: this.scopeOf(this.agentId),
+        note,
+        conflictId,
+        conflictSignal: outcome,
+        ...(resolutionCommit !== undefined && { resolutionCommit }),
+      },
+    });
+  }
+
+  /**
+   * docs/44 P2 — await resolution of a conflict, or time out. Returns the
+   * resolution payload on success, or `null` on timeout. Idempotent-friendly:
+   * a resolution that arrived before the wait started is consumed immediately.
+   */
+  async waitForConflictResolution(
+    conflictId: string,
+    timeoutMs: number,
+  ): Promise<{ readonly resolutionCommit?: string } | null> {
+    const already = this.resolvedConflicts.get(conflictId);
+    if (already !== undefined) {
+      this.resolvedConflicts.delete(conflictId);
+      return already;
+    }
+    return new Promise((resolve) => {
+      const settle = (v: { resolutionCommit?: string } | null): void => {
+        clearTimeout(timer);
+        const set = this.conflictWaiters.get(conflictId);
+        if (set !== undefined) {
+          set.delete(settle);
+          if (set.size === 0) this.conflictWaiters.delete(conflictId);
+        }
+        resolve(v);
+      };
+      const timer = setTimeout(() => settle(null), timeoutMs);
+      // Don't let a pending conflict wait keep the process alive on its own.
+      (timer as { unref?: () => void }).unref?.();
+      let set = this.conflictWaiters.get(conflictId);
+      if (set === undefined) {
+        set = new Set();
+        this.conflictWaiters.set(conflictId, set);
+      }
+      set.add(settle);
     });
   }
 
@@ -722,7 +996,32 @@ export class StandaloneHost implements SwarmHost {
       sessionId: childAgentId as unknown as SessionId, // M1 fresh session per worker; reuse id
       wait: async () => resultPromise,
       kill: async () => {
+        // Track-A hardening #3: SIGTERM, then escalate to SIGKILL if the child
+        // doesn't exit within a grace window, and AWAIT actual exit. The old
+        // fire-and-forget SIGTERM let a wedged worker (e.g. blocked in a network
+        // call) linger — the mechanism behind the P2b.5 teardown hang.
+        //
+        // Register the exit listener BEFORE signalling: a child can emit "close"
+        // synchronously inside kill() (real children won't, but in-process fakes
+        // do), so subscribing after would miss it and hang on the grace timer.
+        const waitWithTimeout = (ms: number): Promise<boolean> => {
+          const exitP = transport.waitForExit().then(() => true);
+          return Promise.race([
+            exitP,
+            new Promise<boolean>((r) => {
+              const t = setTimeout(() => r(false), ms);
+              (t as { unref?: () => void }).unref?.();
+            }),
+          ]);
+        };
+        const exitedP = waitWithTimeout(5_000);
         transport.kill("SIGTERM");
+        const exited = await exitedP;
+        if (!exited) {
+          const killedP = waitWithTimeout(5_000);
+          transport.kill("SIGKILL");
+          await killedP;
+        }
       },
       events: async function* () {
         // Replay buffered events then listen for more.
@@ -1300,6 +1599,28 @@ export class StandaloneHost implements SwarmHost {
           err instanceof Error ? err.message : String(err),
         );
       }
+      return;
+    }
+    if (frame.method === "task.resolve_conflict") {
+      // docs/44 P2b: a resolver worker reports it resolved its assigned
+      // conflict. Route to resolveConflict (conflictId-keyed, agent-agnostic)
+      // to wake the spawn-resolver coordinator's waiter, then ack.
+      const parsed = TaskResolveConflictParamsSchema.safeParse(frame.params);
+      if (!parsed.success) {
+        transport.respondError(
+          frame.id,
+          IPC_ERROR_CODES.INVALID_PARAMS,
+          parsed.error.message,
+        );
+        return;
+      }
+      this.resolveConflict(
+        parsed.data.conflictId,
+        parsed.data.resolutionCommit !== undefined
+          ? { resolutionCommit: parsed.data.resolutionCommit }
+          : undefined,
+      );
+      transport.respond(frame.id, null);
       return;
     }
 

@@ -26,6 +26,8 @@ Early design capture for swarm-harness — a TypeScript agent harness built arou
 - [37-hardened-engine-design.md](./37-hardened-engine-design.md) — production-hardened NativeEngine (retry, eager dispatch, mid-turn compaction)
 - [38-hardened-engine-implementation-plan.md](./38-hardened-engine-implementation-plan.md) — implementation plan for hardened engine
 - [39-codex-parity-gap-analysis.md](./39-codex-parity-gap-analysis.md) — gap analysis vs OpenAI Codex CLI (all P0/P1/P2 gaps closed)
+- [43-macro-agent-parity.md](./43-macro-agent-parity.md) — gap analysis vs macro-agent (the spiritual predecessor); tracked checklist + scope decisions (D1 landing model, D2 pruned scope, D3 OpenHive hosting). Draft.
+- [44-macro-agent-parity-implementation-plan.md](./44-macro-agent-parity-implementation-plan.md) — phased build plan for the decided scope: Track A (git-workspace P0–P4) + Track B (OpenHive hosting P5–P7), converging at P8 (cascade actions). Draft.
 
 ### Memory System
 

@@ -139,7 +139,7 @@ export type ParsedArgs =
       concurrency: number;
       output: string;
       permissionMode: PermissionMode;
-      /** When set, the orchestrator wires a MapAdapter to this URL (v0.4 stage 4J). */
+      /** When set, the CLI attaches a MAP-sidecar observer dialing this hub URL. */
       mapUrl?: string;
       /** v0.5 stage 5E.3: when true, fork the team daemon and return immediately. */
       detach: boolean;
@@ -151,7 +151,7 @@ export type ParsedArgs =
       concurrency: number;
       output: string;
       permissionMode: PermissionMode;
-      /** When set, the orchestrator wires a MapAdapter to this URL (v0.4 stage 4J). */
+      /** When set, the CLI attaches a MAP-sidecar observer dialing this hub URL. */
       mapUrl?: string;
       maxTokens?: number;
       maxCostUsd?: number;
@@ -162,6 +162,18 @@ export type ParsedArgs =
   | { kind: "team-kill"; name: string }
   | { kind: "team-logs"; name: string; follow: boolean }
   | { kind: "team-watch"; name: string }
+  | {
+      // docs/44 P5 — OpenHive-compatible host entrypoint.
+      kind: "host";
+      port: number;
+      host?: string;
+      adapter?: string;
+      // docs/44 Case 2 — outbound MAP (dial a configured hub).
+      mapServer?: string;
+      mapScope?: string;
+      onboardToken?: string;
+      permissionMode: PermissionMode;
+    }
   | { kind: "error"; message: string; showHelp: boolean };
 
 // ---------------------------------------------------------------------------
@@ -182,6 +194,7 @@ const SUBCOMMANDS = new Set([
   "topology",
   "worktree",
   "acp",
+  "host",
 ]);
 
 // v0.4 stage 4K — committee/critic-loop are reserved but unimplemented.
@@ -254,6 +267,14 @@ export function parseArgv(args: string[]): ParsedArgs {
   // Optional value: `--map ws://host:port` or `--map` alone (uses MAP_URL env
   // var, falls back to ws://localhost:8080).
   let mapUrl: string | undefined;
+
+  // docs/44 P5 — `host` subcommand state (OpenHive-compatible host).
+  let hostPort: number | undefined;
+  let hostBindAddr: string | undefined;
+  let hostAdapter: string | undefined;
+  let hostMapServer: string | undefined;
+  let hostMapScope: string | undefined;
+  let hostOnboardToken: string | undefined;
 
   // v0.4 stage 4K — topology subcommand state.
   let specPath: string | undefined;
@@ -567,6 +588,76 @@ export function parseArgv(args: string[]): ParsedArgs {
         };
       }
       swarmOutput = val;
+      i += 2;
+      continue;
+    }
+
+    // docs/44 P5 — `host` subcommand flags.
+    if (tok === "--port") {
+      const val = expanded[i + 1];
+      if (val === undefined || val.startsWith("-")) {
+        return { kind: "error", message: "--port requires a value", showHelp: true };
+      }
+      const n = Number.parseInt(val, 10);
+      if (Number.isNaN(n) || n < 1 || n > 65_533) {
+        return {
+          kind: "error",
+          message: `--port must be a port number (1..65533, leaves room for the +2 stride), got "${val}"`,
+          showHelp: true,
+        };
+      }
+      hostPort = n;
+      i += 2;
+      continue;
+    }
+
+    if (tok === "--host") {
+      const val = expanded[i + 1];
+      if (val === undefined || val.startsWith("-")) {
+        return { kind: "error", message: "--host requires a value", showHelp: true };
+      }
+      hostBindAddr = val;
+      i += 2;
+      continue;
+    }
+
+    if (tok === "--adapter") {
+      const val = expanded[i + 1];
+      if (val === undefined || val.startsWith("-")) {
+        return { kind: "error", message: "--adapter requires a value", showHelp: true };
+      }
+      hostAdapter = val;
+      i += 2;
+      continue;
+    }
+
+    // docs/44 Case 2 — outbound MAP flags.
+    if (tok === "--map-server") {
+      const val = expanded[i + 1];
+      if (val === undefined || val.startsWith("-")) {
+        return { kind: "error", message: "--map-server requires a value", showHelp: true };
+      }
+      hostMapServer = val;
+      i += 2;
+      continue;
+    }
+
+    if (tok === "--map-scope") {
+      const val = expanded[i + 1];
+      if (val === undefined || val.startsWith("-")) {
+        return { kind: "error", message: "--map-scope requires a value", showHelp: true };
+      }
+      hostMapScope = val;
+      i += 2;
+      continue;
+    }
+
+    if (tok === "--onboard-token") {
+      const val = expanded[i + 1];
+      if (val === undefined || val.startsWith("-")) {
+        return { kind: "error", message: "--onboard-token requires a value", showHelp: true };
+      }
+      hostOnboardToken = val;
       i += 2;
       continue;
     }
@@ -1101,6 +1192,29 @@ export function parseArgv(args: string[]): ParsedArgs {
       // shared CommonOpts (model, permission-mode, --no-mcp, …); any positional
       // is ignored (the editor/client drives prompts over the wire).
       return { kind: "acp", opts };
+    }
+
+    case "host": {
+      // docs/44 P5 — OpenHive-compatible host. Binds base/base+1/base+2.
+      if (hostPort === undefined) {
+        return {
+          kind: "error",
+          message: "host requires --port <N>, e.g. swarm-harness host --port 9000",
+          showHelp: true,
+        };
+      }
+      // SWARM_MAP_SERVER env is an alias for --map-server (matches cc-swarm).
+      const mapServer = hostMapServer ?? process.env.SWARM_MAP_SERVER;
+      return {
+        kind: "host",
+        port: hostPort,
+        ...(hostBindAddr !== undefined && { host: hostBindAddr }),
+        ...(hostAdapter !== undefined && { adapter: hostAdapter }),
+        ...(mapServer !== undefined && mapServer !== "" && { mapServer }),
+        ...(hostMapScope !== undefined && { mapScope: hostMapScope }),
+        ...(hostOnboardToken !== undefined && { onboardToken: hostOnboardToken }),
+        permissionMode,
+      };
     }
 
     case "login": {
