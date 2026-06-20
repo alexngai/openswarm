@@ -186,5 +186,11 @@ export interface ResolvedProvider {
   readonly providerFactory?: (auth: AuthSource, modelId: string) => Provider | Promise<Provider>;
   readonly engineFactory?: () => import("../engine/index.js").AgentEngine;
   readonly modelId?: string;
+  /**
+   * Optional self-described auth. When present the caller uses it instead of the id-prefix lookup in
+   * `buildAuthForProvider` — needed for providers whose auth can't be inferred from the (prefix-stripped)
+   * model id, e.g. the LiteLLM gateway (arbitrary model names, keyed by LITELLM_API_KEY).
+   */
+  readonly authFactory?: () => AuthSource | Promise<AuthSource>;
   readonly message?: string;
 }
