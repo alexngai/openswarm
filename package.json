@@ -1,6 +1,6 @@
 {
   "name": "swarm-harness",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Multi-agent coding agent CLI: one agent is a tool, N coordinated agents are the product. Built on Anthropic's Claude Agent SDK with swarm/team orchestration, multi-provider support, and a Bun-native interactive TUI.",
   "type": "module",
   "main": "dist/index.js",
@@ -100,9 +100,9 @@
     "zod-to-json-schema": "^3.25.2"
   },
   "optionalDependencies": {
-    "@swarm-harness/cli-darwin-arm64": "0.3.0",
-    "@swarm-harness/cli-darwin-x64": "0.3.0",
-    "@swarm-harness/cli-linux-x64": "0.3.0",
+    "@swarm-harness/cli-darwin-arm64": "0.3.1",
+    "@swarm-harness/cli-darwin-x64": "0.3.1",
+    "@swarm-harness/cli-linux-x64": "0.3.1",
     "minimem": "^0.1.1"
   }
 }
