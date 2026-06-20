@@ -24,6 +24,9 @@ import type { ProviderMessage } from "./index.js";
 type ToolResultContent = {
   type: "tool-result";
   toolCallId: string;
+  // AI SDK v6 ToolResultPart REQUIRES toolName — omitting it fails ModelMessage[] schema validation
+  // (AI_InvalidPromptError) the moment a tool_result enters history, breaking the multi-turn tool loop.
+  toolName: string;
   output: { type: "text"; value: string };
 };
 
@@ -36,7 +39,7 @@ function systemToModel(
 
 function userToModel(
   msg: Extract<ProviderMessage, { role: "user" }>,
-  seenToolUseIds: Set<string>
+  toolUseNames: Map<string, string>
 ): ModelMessage[] {
   const textBlocks = msg.content.filter((c) => c.type === "text") as Array<{
     type: "text";
@@ -53,7 +56,7 @@ function userToModel(
 
   // Guard: tool_result without a corresponding tool_use
   for (const tr of toolResultBlocks) {
-    if (!seenToolUseIds.has(tr.tool_use_id)) {
+    if (!toolUseNames.has(tr.tool_use_id)) {
       throw new Error(
         `[message-replay] tool_result references tool_use_id "${tr.tool_use_id}" ` +
           `but no matching assistant tool_use was found in the session. ` +
@@ -73,6 +76,7 @@ function userToModel(
     const toolContent: ToolResultContent[] = toolResultBlocks.map((tr) => ({
       type: "tool-result" as const,
       toolCallId: tr.tool_use_id,
+      toolName: toolUseNames.get(tr.tool_use_id) ?? "unknown",
       output: { type: "text" as const, value: tr.content },
     }));
     // AI SDK v6 tool results use role "tool"
@@ -84,7 +88,7 @@ function userToModel(
 
 function assistantToModel(
   msg: Extract<ProviderMessage, { role: "assistant" }>,
-  seenToolUseIds: Set<string>
+  toolUseNames: Map<string, string>
 ): ModelMessage {
   const textBlocks = msg.content.filter((c) => c.type === "text") as Array<{
     type: "text";
@@ -97,9 +101,9 @@ function assistantToModel(
     input: unknown;
   }>;
 
-  // Track all tool_use ids so we can validate tool_results later
+  // Track tool_use id → name so tool_results can carry the required toolName + be validated.
   for (const tu of toolUseBlocks) {
-    seenToolUseIds.add(tu.id);
+    toolUseNames.set(tu.id, tu.name);
   }
 
   if (toolUseBlocks.length === 0) {
@@ -142,8 +146,8 @@ export function providerMessagesToVercel(
   messages: readonly ProviderMessage[]
 ): ModelMessage[] {
   const result: ModelMessage[] = [];
-  // Track tool_use ids seen in assistant turns so we can guard tool_results
-  const seenToolUseIds = new Set<string>();
+  // Track tool_use id → name from assistant turns so tool_results carry the required toolName + validate.
+  const toolUseNames = new Map<string, string>();
 
   for (const msg of messages) {
     switch (msg.role) {
@@ -151,10 +155,10 @@ export function providerMessagesToVercel(
         result.push(systemToModel(msg));
         break;
       case "user":
-        result.push(...userToModel(msg, seenToolUseIds));
+        result.push(...userToModel(msg, toolUseNames));
         break;
       case "assistant":
-        result.push(assistantToModel(msg, seenToolUseIds));
+        result.push(assistantToModel(msg, toolUseNames));
         break;
       default: {
         // Exhaustive check
