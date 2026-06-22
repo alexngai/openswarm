@@ -90,6 +90,22 @@ describe("resolveProvider", () => {
     expect(result.modelId).toBe("k2-chat");
   });
 
+  // LiteLLM gateway: litellm/ | gateway/ | bedrock/ | azure/ → native, routed through the gateway, with
+  // a self-described authFactory (LITELLM_API_KEY) and the gateway model name (prefix stripped).
+  it.each([
+    ["litellm/claude-haiku", "claude-haiku"],
+    ["gateway/gpt-4o", "gpt-4o"],
+    ["bedrock/claude-sonnet-4-6", "claude-sonnet-4-6"],
+    ["azure/gpt-4o", "gpt-4o"],
+    ["litellm/agentica-org/DeepSWE-Preview", "agentica-org/DeepSWE-Preview"], // open-weight, slash in the name
+  ])('%s → native litellm transport, modelId "%s", authFactory present', (id, cleanId) => {
+    const result = resolveProvider(id);
+    expect(result.kind).toBe("native");
+    expect(typeof result.providerFactory).toBe("function");
+    expect(typeof result.authFactory).toBe("function");
+    expect(result.modelId).toBe(cleanId);
+  });
+
   it('unknown-random-model → kind "error" listing known prefixes', () => {
     const result = resolveProvider("unknown-random-model");
     expect(result.kind).toBe("error");

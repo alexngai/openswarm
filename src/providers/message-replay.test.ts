@@ -175,4 +175,16 @@ describe("providerMessagesToVercel", () => {
     expect(result[1]!.role).toBe("assistant");
     expect(result[2]!.role).toBe("tool");
   });
+
+  it("tool_result carries the required AI SDK v6 toolName (from the matching tool_use)", () => {
+    const msgs: ProviderMessage[] = [
+      { role: "assistant", content: [{ type: "tool_use", id: "tc-9", name: "read_file", input: {} }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "tc-9", content: "x" }] },
+    ];
+    const tool = providerMessagesToVercel(msgs)[1]!;
+    expect(tool.role).toBe("tool");
+    const part = (tool.content as Array<{ type: string; toolCallId: string; toolName: string }>)[0]!;
+    // Omitting toolName makes AI SDK v6 reject the messages (AI_InvalidPromptError) → broke the tool loop.
+    expect(part).toMatchObject({ type: "tool-result", toolCallId: "tc-9", toolName: "read_file" });
+  });
 });

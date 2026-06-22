@@ -358,7 +358,9 @@ export async function buildAgentRuntime(
       const providerModelId = resolved.modelId!;
       const useHardened = opts.framework === "hardened-native";
       makeEngine = async (sessionId: string) => {
-        const providerAuth = await buildAuthForProvider(providerModelId);
+        const providerAuth = resolved.authFactory
+          ? await resolved.authFactory()
+          : await buildAuthForProvider(providerModelId);
         const provider = await providerFactory(providerAuth, providerModelId);
         const engine = useHardened
           ? new HardenedNativeEngine({
@@ -379,7 +381,9 @@ export async function buildAgentRuntime(
         const providerFactory = resolved.providerFactory!;
         const providerModelId = resolved.modelId!;
         makeEngine = async (sessionId: string) => {
-          const providerAuth = await buildAuthForProvider(providerModelId);
+          const providerAuth = resolved.authFactory
+          ? await resolved.authFactory()
+          : await buildAuthForProvider(providerModelId);
           const provider = await providerFactory(providerAuth, providerModelId);
           return {
             engine: new NativeEngine({ provider, sessionId }),

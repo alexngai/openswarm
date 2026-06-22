@@ -1,6 +1,6 @@
 {
   "name": "@swarm-harness/cli-darwin-arm64",
-  "version": "0.3.0",
+  "version": "0.3.2",
   "description": "swarm-harness compiled binary for macOS ARM64",
   "license": "MIT",
   "repository": {
