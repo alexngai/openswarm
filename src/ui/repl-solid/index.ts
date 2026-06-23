@@ -31,7 +31,7 @@ export type TokenGetter = () => number;
 
 export interface RunReplConfig {
   readonly engine: AgentEngine;
-  readonly buildRunConfig: (prompt: string) => RunConfig;
+  readonly buildRunConfig: (prompt: string) => RunConfig | Promise<RunConfig>;
   readonly initialPrompt?: string;
   readonly model: string;
   readonly permissionMode: PermissionMode;
@@ -106,14 +106,14 @@ export async function runRepl(config: RunReplConfig): Promise<void> {
       config.initialPrompt.length > 0
     ) {
       const turn = config.engine.run(
-        config.buildRunConfig(config.initialPrompt),
+        await config.buildRunConfig(config.initialPrompt),
       );
       yield* turn;
     }
     while (true) {
       const prompt = await nextPrompt();
       if (prompt === null) return;
-      const turn = config.engine.run(config.buildRunConfig(prompt));
+      const turn = config.engine.run(await config.buildRunConfig(prompt));
       yield* turn;
     }
   }

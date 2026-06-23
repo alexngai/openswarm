@@ -317,13 +317,18 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   const turnAbort = new AbortController();
   await runRepl({
     engine,
-    buildRunConfig: (prompt) => {
+    buildRunConfig: async (prompt) => {
       const rf = pendingResumeFrom;
       // Resume applies once — clear after consuming.
       pendingResumeFrom = undefined;
+      // Surface memory (minimem + skills) into this REPL turn.
+      const enriched = await enrichTurnInputs(config.systemPrompt, prompt, {
+        query: prompt,
+      });
       return {
         ...config,
-        prompt,
+        systemPrompt: enriched.systemPrompt,
+        prompt: enriched.prompt,
         model: currentModel,
         permissionMode: currentPermissionMode,
         abort: turnAbort.signal,
