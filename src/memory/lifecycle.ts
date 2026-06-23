@@ -15,6 +15,7 @@ import type { MemoryFragment, TurnContext, CompressionSummary } from "./types.js
 import { getMemoryCoordinator } from "./coordinator.js";
 import { FileMemoryProvider } from "./providers/file-provider.js";
 import { MinimemProvider } from "./providers/minimem-provider.js";
+import { SkillProvider } from "./providers/skill-provider.js";
 import { archiveSession } from "./archive.js";
 
 // ---------------------------------------------------------------------------
@@ -49,6 +50,23 @@ export async function onSessionStart(opts?: SessionStartOptions): Promise<void> 
       }
     } catch {
       // minimem not available — no-op, file provider handles basics
+    }
+  }
+
+  // Register the read-only SkillProvider (skill-tree filesystem skills) if not
+  // present and not disabled. Only activates when its skills directory exists.
+  if (
+    !coordinator.providerNames.includes("skills") &&
+    process.env.SWARM_MEMORY_PROVIDERS !== "file"
+  ) {
+    const skillProvider = new SkillProvider();
+    try {
+      await coordinator.register(skillProvider);
+      if (!(await skillProvider.isAvailable())) {
+        await coordinator.unregister("skills");
+      }
+    } catch {
+      // skills unavailable — no-op
     }
   }
 }

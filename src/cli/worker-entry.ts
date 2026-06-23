@@ -1,5 +1,4 @@
 import * as path from "node:path";
-import * as os from "node:os";
 import type { AgentId } from "../core/types.js";
 import { ParentTransport } from "../swarm/ipc/parent-transport.js";
 import { WorkerHost } from "../swarm/worker-host.js";
@@ -19,7 +18,7 @@ import type { FrameworkChoice } from "./argv.js";
 import type { ResolvedProvider } from "../providers/index.js";
 import { ToolDispatcher } from "../tools/dispatcher.js";
 import { buildTier0Tools } from "../tools/tier0/index.js";
-import { setSkillStore, createSkillBankStore } from "../memory/index.js";
+import { onSessionStart, onBeforeTurn, formatMemoryFragments } from "../memory/index.js";
 import { buildTier2Tools } from "../tools/tier2/index.js";
 import { PermissionEngine } from "../permissions/index.js";
 import { AnthropicEnvAuth } from "../auth/anthropic-env-auth.js";
@@ -232,8 +231,26 @@ async function executeTurn(
       priorSessionId = readSessionSidecar(sidecarPath);
     }
 
+    // Surface memory (minimem + file providers) into this turn before the run.
+    // Best-effort: a failing/slow provider must never block the agent.
+    let memoryBlock: string | null = null;
+    try {
+      await onSessionStart({ agentId });
+      const fragments = await onBeforeTurn({
+        query: task.prompt,
+        agentId,
+        ...(priorSessionId !== undefined && { sessionId: priorSessionId }),
+      });
+      memoryBlock = formatMemoryFragments(fragments);
+    } catch {
+      // memory unavailable — proceed without enrichment
+    }
+    const enrichedSystemPrompt = memoryBlock
+      ? `${systemPrompt}\n\n${memoryBlock}`
+      : systemPrompt;
+
     const runConfig = {
-      systemPrompt,
+      systemPrompt: enrichedSystemPrompt,
       prompt: task.prompt,
       model: "claude-sonnet-4-6",
       auth,
@@ -413,34 +430,6 @@ export async function runWorkerEntry(): Promise<number> {
   );
   for (const tool of [...buildTier0Tools(), ...buildTier2Tools()]) {
     dispatcher.register(tool);
-  }
-
-  // Durable skills for this worker — the SAME shared store the orchestrator
-  // uses (~/.swarm-harness/skills/skills.db), so skills a worker saves persist
-  // and are visible across the swarm rather than dying with the subprocess.
-  // The adapter picks node:sqlite/bun:sqlite per runtime and sets busy_timeout
-  // so concurrent cross-process writes wait rather than erroring. Falls back
-  // silently to the in-memory default if a built-in SQLite isn't available.
-  try {
-    const skillsDbPath = path.join(
-      os.homedir(),
-      ".swarm-harness",
-      "skills",
-      "skills.db",
-    );
-    setSkillStore(
-      await createSkillBankStore({
-        dbPath: skillsDbPath,
-        agentId,
-        ...(teamScope ? { team: teamScope } : {}),
-      }),
-    );
-  } catch (err) {
-    process.stderr.write(
-      `[swarm-harness] worker durable skill store unavailable, using in-memory: ${
-        err instanceof Error ? err.message : String(err)
-      }\n`,
-    );
   }
 
   const permissionEngine = new PermissionEngine(permissionMode);

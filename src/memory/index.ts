@@ -59,25 +59,6 @@ export {
 export { StateDBCuratedStore, StateDBArchiveStore } from "./state-store.js";
 
 export {
-  getSkillStore,
-  setSkillStore,
-  resetSkillStore,
-  FileSkillStore,
-  parseSkillContent,
-  formatSkill,
-  formatSkillList,
-  MAX_SKILL_CONTENT_SIZE,
-  type Skill,
-  type SkillStore,
-} from "./skills.js";
-
-export {
-  SkillBankStore,
-  createSkillBankStore,
-  type SkillBankStoreOptions,
-} from "./skill-bank-store.js";
-
-export {
   agentScopeKey,
   publishSharedMemory,
   getSharedMemory,
@@ -88,6 +69,7 @@ export {
 
 export { FileMemoryProvider } from "./providers/file-provider.js";
 export { MinimemProvider, type MinimemProviderConfig } from "./providers/minimem-provider.js";
+export { SkillProvider, resolveSkillsDir, type SkillProviderConfig } from "./providers/skill-provider.js";
 
 export {
   onSessionStart,
