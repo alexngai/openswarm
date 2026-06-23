@@ -44,6 +44,7 @@ import type { CommonOpts } from "./argv.js";
 import type { NormalizedEvent } from "../core/types.js";
 import type { RunConfig } from "../engine/index.js";
 import { buildSystemPrompt } from "../engine/default-system-prompt.js";
+import { enrichTurnInputs } from "../memory/index.js";
 import { VERSION } from "../index.js";
 
 // ---------------------------------------------------------------------------
@@ -246,12 +247,21 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
 
   if (useHeadless) {
     // Headless path: one-shot engine run → JSONL.
+    // Surface memory (minimem + skills) into the orchestrator's one-shot run.
+    const enriched = await enrichTurnInputs(config.systemPrompt, config.prompt, {
+      query: text,
+    });
+    const enrichedConfig: RunConfig = {
+      ...config,
+      systemPrompt: enriched.systemPrompt,
+      prompt: enriched.prompt,
+    };
     // When budget limits are set, wrap the event stream so we can abort
     // after each event and emit a budget_exceeded JSONL line before exit.
     const headlessAbort = new AbortController();
     const headlessConfig = hasBudgetLimits
-      ? { ...config, abort: headlessAbort.signal }
-      : config;
+      ? { ...enrichedConfig, abort: headlessAbort.signal }
+      : enrichedConfig;
     const rawEvents = engine.run(headlessConfig);
     const { events, hadError } = withErrorTracking(rawEvents);
 
@@ -414,6 +424,7 @@ export async function main(argv: string[]): Promise<number> {
         gitCascade: parsed.gitCascade,
         cleanupWorktrees: parsed.cleanupWorktrees,
         ...(parsed.model !== undefined ? { modelId: parsed.model } : {}),
+        ...(parsed.traceOutput !== undefined ? { traceOutput: parsed.traceOutput } : {}),
       });
 
     case "plugin":
@@ -444,6 +455,7 @@ export async function main(argv: string[]): Promise<number> {
         ...(parsed.maxTokens !== undefined && { maxTokens: parsed.maxTokens }),
         ...(parsed.maxCostUsd !== undefined && { maxCostUsd: parsed.maxCostUsd }),
         ...(parsed.model !== undefined && { modelId: parsed.model }),
+        ...(parsed.traceOutput !== undefined && { traceOutput: parsed.traceOutput }),
       });
 
     case "team-logs":

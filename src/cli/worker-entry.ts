@@ -18,7 +18,7 @@ import type { FrameworkChoice } from "./argv.js";
 import type { ResolvedProvider } from "../providers/index.js";
 import { ToolDispatcher } from "../tools/dispatcher.js";
 import { buildTier0Tools } from "../tools/tier0/index.js";
-import { onSessionStart, onBeforeTurn, formatMemoryFragments } from "../memory/index.js";
+import { enrichTurnInputs } from "../memory/index.js";
 import { buildTier2Tools } from "../tools/tier2/index.js";
 import { PermissionEngine } from "../permissions/index.js";
 import { AnthropicEnvAuth } from "../auth/anthropic-env-auth.js";
@@ -231,27 +231,16 @@ async function executeTurn(
       priorSessionId = readSessionSidecar(sidecarPath);
     }
 
-    // Surface memory (minimem + file providers) into this turn before the run.
-    // Best-effort: a failing/slow provider must never block the agent.
-    let memoryBlock: string | null = null;
-    try {
-      await onSessionStart({ agentId });
-      const fragments = await onBeforeTurn({
-        query: task.prompt,
-        agentId,
-        ...(priorSessionId !== undefined && { sessionId: priorSessionId }),
-      });
-      memoryBlock = formatMemoryFragments(fragments);
-    } catch {
-      // memory unavailable — proceed without enrichment
-    }
-    const enrichedSystemPrompt = memoryBlock
-      ? `${systemPrompt}\n\n${memoryBlock}`
-      : systemPrompt;
+    // Surface memory (minimem + skills) into this turn via the shared seam.
+    const enriched = await enrichTurnInputs(systemPrompt, task.prompt, {
+      query: task.prompt,
+      agentId,
+      ...(priorSessionId !== undefined && { sessionId: priorSessionId }),
+    });
 
     const runConfig = {
-      systemPrompt: enrichedSystemPrompt,
-      prompt: task.prompt,
+      systemPrompt: enriched.systemPrompt,
+      prompt: enriched.prompt,
       model: "claude-sonnet-4-6",
       auth,
       tools: allTools,

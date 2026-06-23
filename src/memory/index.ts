@@ -78,6 +78,7 @@ export {
   onCompaction,
   onSessionEnd,
   formatMemoryFragments,
+  enrichTurnInputs,
   type SessionStartOptions,
   type TurnCompleteInfo,
   type SessionEndInfo,
