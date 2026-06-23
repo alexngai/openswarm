@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import * as os from "node:os";
 import type { AgentId } from "../core/types.js";
 import { ParentTransport } from "../swarm/ipc/parent-transport.js";
 import { WorkerHost } from "../swarm/worker-host.js";
@@ -18,6 +19,7 @@ import type { FrameworkChoice } from "./argv.js";
 import type { ResolvedProvider } from "../providers/index.js";
 import { ToolDispatcher } from "../tools/dispatcher.js";
 import { buildTier0Tools } from "../tools/tier0/index.js";
+import { setSkillStore, createSkillBankStore } from "../memory/index.js";
 import { buildTier2Tools } from "../tools/tier2/index.js";
 import { PermissionEngine } from "../permissions/index.js";
 import { AnthropicEnvAuth } from "../auth/anthropic-env-auth.js";
@@ -39,6 +41,10 @@ import type { PermissionMode, Usage } from "../core/types.js";
 import type { ToolExecutionContext, ToolImpl } from "../tools/types.js";
 import { readSessionSidecar, writeSessionSidecar } from "./session-sidecar.js";
 import { buildSystemPrompt } from "../engine/default-system-prompt.js";
+import {
+  buildToolUseWarmupPrompt,
+  formatUnknownToolFeedback,
+} from "../tools/tool-feedback.js";
 
 function parseIntEnv(key: string, fallback: number): number {
   const raw = process.env[key];
@@ -105,8 +111,9 @@ async function buildNativeWorkerEngine({
 export function composeSystemPrompt(
   basePrompt: string | undefined,
   roleSuffix: string | undefined,
+  toolWarmup?: string,
 ): string {
-  return [basePrompt ?? "", roleSuffix ?? ""]
+  return [basePrompt ?? "", toolWarmup ?? "", roleSuffix ?? ""]
     .filter((s) => s.length > 0)
     .join("\n\n");
 }
@@ -146,7 +153,10 @@ export function buildWorkerCanUseTool(deps: {
   return async (toolName, input) => {
     const tool = deps.dispatcher.get(toolName);
     if (tool === undefined) {
-      return { allow: false, reason: `unknown tool: ${toolName}` };
+      return {
+        allow: false,
+        reason: formatUnknownToolFeedback(toolName, deps.dispatcher.list()),
+      };
     }
     const decision = deps.permissionEngine.check(tool.spec);
     if (decision.allow || deps.escalate === undefined) {
@@ -204,7 +214,11 @@ async function executeTurn(
     const basePrompt = useNativePrompt
       ? buildSystemPrompt({ cwd: process.cwd(), extensions: envBasePrompt ?? undefined })
       : (envBasePrompt ?? "");
-    const systemPrompt = composeSystemPrompt(basePrompt, roleSuffix);
+    const toolWarmup =
+      process.env.SWARM_HARNESS_TOOL_USE_WARMUP === "1"
+        ? buildToolUseWarmupPrompt(allTools.map((t) => t.spec))
+        : undefined;
+    const systemPrompt = composeSystemPrompt(basePrompt, roleSuffix, toolWarmup);
 
     // Long-lived workers resume the prior turn's session so conversation
     // context carries across run_more (the engine tracks its latest session id).
@@ -224,6 +238,7 @@ async function executeTurn(
       model: "claude-sonnet-4-6",
       auth,
       tools: allTools,
+      dispatcher,
       permissionMode,
       ...(priorSessionId !== undefined && {
         resumeFrom: {
@@ -399,6 +414,35 @@ export async function runWorkerEntry(): Promise<number> {
   for (const tool of [...buildTier0Tools(), ...buildTier2Tools()]) {
     dispatcher.register(tool);
   }
+
+  // Durable skills for this worker — the SAME shared store the orchestrator
+  // uses (~/.swarm-harness/skills/skills.db), so skills a worker saves persist
+  // and are visible across the swarm rather than dying with the subprocess.
+  // The adapter picks node:sqlite/bun:sqlite per runtime and sets busy_timeout
+  // so concurrent cross-process writes wait rather than erroring. Falls back
+  // silently to the in-memory default if a built-in SQLite isn't available.
+  try {
+    const skillsDbPath = path.join(
+      os.homedir(),
+      ".swarm-harness",
+      "skills",
+      "skills.db",
+    );
+    setSkillStore(
+      await createSkillBankStore({
+        dbPath: skillsDbPath,
+        agentId,
+        ...(teamScope ? { team: teamScope } : {}),
+      }),
+    );
+  } catch (err) {
+    process.stderr.write(
+      `[swarm-harness] worker durable skill store unavailable, using in-memory: ${
+        err instanceof Error ? err.message : String(err)
+      }\n`,
+    );
+  }
+
   const permissionEngine = new PermissionEngine(permissionMode);
   const auth = new AnthropicEnvAuth();
 

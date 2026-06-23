@@ -38,7 +38,7 @@
     "publish:release": "bun scripts/publish.ts"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "keywords": [
     "ai",
@@ -92,6 +92,7 @@
     "fast-glob": "^3.3.3",
     "git-cascade": "^0.0.7",
     "proper-lockfile": "4.1.2",
+    "skill-tree": "^0.3.0",
     "solid-js": "^1.9.11",
     "turndown": "^7.2.4",
     "ws": "^8.21.0",
@@ -103,6 +104,6 @@
     "@swarm-harness/cli-darwin-arm64": "0.3.2",
     "@swarm-harness/cli-darwin-x64": "0.3.2",
     "@swarm-harness/cli-linux-x64": "0.3.2",
-    "minimem": "^0.1.1"
+    "minimem": "^0.1.2"
   }
 }

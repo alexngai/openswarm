@@ -20,91 +20,91 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("SkillStore (in-memory)", () => {
-  it("rejects content exceeding size limit", () => {
+  it("rejects content exceeding size limit", async () => {
     const store = getSkillStore();
-    expect(() =>
+    await expect(
       store.save({ name: "big", tags: [], content: "x".repeat(1001) }),
-    ).toThrow("1000");
+    ).rejects.toThrow("1000");
   });
 
-  it("saves and retrieves a skill", () => {
+  it("saves and retrieves a skill", async () => {
     const store = getSkillStore();
-    store.save({
+    await store.save({
       name: "deploy-staging",
       tags: ["deploy", "staging"],
       content: "1. Build\n2. Push\n3. Verify",
     });
 
-    const skill = store.get("deploy-staging");
+    const skill = await store.get("deploy-staging");
     expect(skill).not.toBeNull();
     expect(skill!.name).toBe("deploy-staging");
     expect(skill!.tags).toEqual(["deploy", "staging"]);
     expect(skill!.content).toContain("Build");
   });
 
-  it("returns null for missing skill", () => {
-    expect(getSkillStore().get("nope")).toBeNull();
+  it("returns null for missing skill", async () => {
+    expect(await getSkillStore().get("nope")).toBeNull();
   });
 
-  it("lists all skills", () => {
+  it("lists all skills", async () => {
     const store = getSkillStore();
-    store.save({ name: "a", tags: [], content: "A" });
-    store.save({ name: "b", tags: [], content: "B" });
-    expect(store.list()).toHaveLength(2);
+    await store.save({ name: "a", tags: [], content: "A" });
+    await store.save({ name: "b", tags: [], content: "B" });
+    expect(await store.list()).toHaveLength(2);
   });
 
-  it("searches by tag", () => {
+  it("searches by tag", async () => {
     const store = getSkillStore();
-    store.save({ name: "deploy", tags: ["deploy", "ci"], content: "Steps" });
-    store.save({ name: "test", tags: ["testing"], content: "Run tests" });
+    await store.save({ name: "deploy", tags: ["deploy", "ci"], content: "Steps" });
+    await store.save({ name: "test", tags: ["testing"], content: "Run tests" });
 
-    const results = store.search("deploy");
+    const results = await store.search("deploy");
     expect(results).toHaveLength(1);
     expect(results[0]!.name).toBe("deploy");
   });
 
-  it("searches by name", () => {
+  it("searches by name", async () => {
     const store = getSkillStore();
-    store.save({ name: "run-tests", tags: [], content: "npm test" });
+    await store.save({ name: "run-tests", tags: [], content: "npm test" });
 
-    const results = store.search("run-tests");
+    const results = await store.search("run-tests");
     expect(results).toHaveLength(1);
   });
 
-  it("searches by content", () => {
+  it("searches by content", async () => {
     const store = getSkillStore();
-    store.save({ name: "db-migrate", tags: [], content: "Run npx prisma migrate" });
+    await store.save({ name: "db-migrate", tags: [], content: "Run npx prisma migrate" });
 
-    const results = store.search("prisma");
+    const results = await store.search("prisma");
     expect(results).toHaveLength(1);
   });
 
-  it("respects search limit", () => {
+  it("respects search limit", async () => {
     const store = getSkillStore();
     for (let i = 0; i < 10; i++) {
-      store.save({ name: `skill-${i}`, tags: ["common"], content: "procedure" });
+      await store.save({ name: `skill-${i}`, tags: ["common"], content: "procedure" });
     }
 
-    expect(store.search("common", 3)).toHaveLength(3);
+    expect(await store.search("common", 3)).toHaveLength(3);
   });
 
-  it("removes a skill", () => {
+  it("removes a skill", async () => {
     const store = getSkillStore();
-    store.save({ name: "temp", tags: [], content: "temporary" });
-    expect(store.remove("temp")).toBe(true);
-    expect(store.get("temp")).toBeNull();
+    await store.save({ name: "temp", tags: [], content: "temporary" });
+    expect(await store.remove("temp")).toBe(true);
+    expect(await store.get("temp")).toBeNull();
   });
 
-  it("remove returns false for missing skill", () => {
-    expect(getSkillStore().remove("nonexistent")).toBe(false);
+  it("remove returns false for missing skill", async () => {
+    expect(await getSkillStore().remove("nonexistent")).toBe(false);
   });
 
-  it("updates existing skill", () => {
+  it("updates existing skill", async () => {
     const store = getSkillStore();
-    store.save({ name: "s1", tags: ["v1"], content: "Version 1" });
-    store.save({ name: "s1", tags: ["v2"], content: "Version 2" });
+    await store.save({ name: "s1", tags: ["v1"], content: "Version 1" });
+    await store.save({ name: "s1", tags: ["v2"], content: "Version 2" });
 
-    const skill = store.get("s1");
+    const skill = await store.get("s1");
     expect(skill!.content).toBe("Version 2");
     expect(skill!.tags).toEqual(["v2"]);
   });
@@ -123,24 +123,24 @@ describe("FileSkillStore", () => {
     }
   });
 
-  it("creates directory if needed", () => {
+  it("creates directory if needed", async () => {
     tmpDir = path.join(os.tmpdir(), `skills-test-${Date.now()}`);
     const store = new FileSkillStore(tmpDir);
     expect(fs.existsSync(tmpDir)).toBe(true);
-    expect(store.list()).toEqual([]);
+    expect(await store.list()).toEqual([]);
   });
 
-  it("saves and retrieves a skill from files", () => {
+  it("saves and retrieves a skill from files", async () => {
     tmpDir = path.join(os.tmpdir(), `skills-test-${Date.now()}`);
     const store = new FileSkillStore(tmpDir);
 
-    store.save({
+    await store.save({
       name: "deploy-staging",
       tags: ["deploy", "staging"],
       content: "1. Build\n2. Push\n3. Verify",
     });
 
-    const skill = store.get("deploy-staging");
+    const skill = await store.get("deploy-staging");
     expect(skill).not.toBeNull();
     expect(skill!.name).toBe("deploy-staging");
     expect(skill!.tags).toEqual(["deploy", "staging"]);
@@ -151,65 +151,65 @@ describe("FileSkillStore", () => {
     expect(fs.existsSync(filePath)).toBe(true);
   });
 
-  it("lists skills from directory", () => {
+  it("lists skills from directory", async () => {
     tmpDir = path.join(os.tmpdir(), `skills-test-${Date.now()}`);
     const store = new FileSkillStore(tmpDir);
 
-    store.save({ name: "a", tags: [], content: "A" });
-    store.save({ name: "b", tags: [], content: "B" });
+    await store.save({ name: "a", tags: [], content: "A" });
+    await store.save({ name: "b", tags: [], content: "B" });
 
-    expect(store.list()).toHaveLength(2);
+    expect(await store.list()).toHaveLength(2);
   });
 
-  it("removes skill file", () => {
+  it("removes skill file", async () => {
     tmpDir = path.join(os.tmpdir(), `skills-test-${Date.now()}`);
     const store = new FileSkillStore(tmpDir);
 
-    store.save({ name: "temp", tags: [], content: "temp" });
-    expect(store.remove("temp")).toBe(true);
-    expect(store.get("temp")).toBeNull();
+    await store.save({ name: "temp", tags: [], content: "temp" });
+    expect(await store.remove("temp")).toBe(true);
+    expect(await store.get("temp")).toBeNull();
     expect(fs.existsSync(path.join(tmpDir, "temp.md"))).toBe(false);
   });
 
-  it("sanitizes path traversal in names", () => {
+  it("sanitizes path traversal in names", async () => {
     tmpDir = path.join(os.tmpdir(), `skills-test-${Date.now()}`);
     const store = new FileSkillStore(tmpDir);
 
-    store.save({ name: "../../etc/passwd", tags: [], content: "should be safe" });
+    await store.save({ name: "../../etc/passwd", tags: [], content: "should be safe" });
     const files = fs.readdirSync(tmpDir);
     expect(files).toHaveLength(1);
     expect(files[0]).not.toContain("..");
     expect(files[0]).toBe("------etc-passwd.md");
   });
 
-  it("rejects content exceeding size limit", () => {
+  it("rejects content exceeding size limit", async () => {
     tmpDir = path.join(os.tmpdir(), `skills-test-${Date.now()}`);
     const store = new FileSkillStore(tmpDir);
 
-    expect(() =>
+    await expect(
       store.save({ name: "big", tags: [], content: "x".repeat(1001) }),
-    ).toThrow("1000");
+    ).rejects.toThrow("1000");
   });
 
-  it("escapes YAML special characters in frontmatter", () => {
+  it("escapes YAML special characters in frontmatter", async () => {
     tmpDir = path.join(os.tmpdir(), `skills-test-${Date.now()}`);
     const store = new FileSkillStore(tmpDir);
 
-    store.save({ name: "safe-yaml", tags: ["tag: with colon", "normal"], content: "content" });
-    const skill = store.get("safe-yaml");
+    await store.save({ name: "safe-yaml", tags: ["tag: with colon", "normal"], content: "content" });
+    const skill = await store.get("safe-yaml");
     expect(skill).not.toBeNull();
     expect(skill!.tags).toContain("tag: with colon");
     expect(skill!.tags).toContain("normal");
   });
 
-  it("searches across files", () => {
+  it("searches across files", async () => {
     tmpDir = path.join(os.tmpdir(), `skills-test-${Date.now()}`);
     const store = new FileSkillStore(tmpDir);
 
-    store.save({ name: "deploy", tags: ["ci"], content: "deploy steps" });
-    store.save({ name: "test", tags: ["testing"], content: "test steps" });
+    await store.save({ name: "deploy", tags: ["ci"], content: "deploy steps" });
+    await store.save({ name: "test", tags: ["testing"], content: "test steps" });
 
-    const results = store.search("ci");
+    const results = await store.search("ci");
     expect(results).toHaveLength(1);
     expect(results[0]!.name).toBe("deploy");
   });

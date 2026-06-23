@@ -72,6 +72,12 @@ export {
 } from "./skills.js";
 
 export {
+  SkillBankStore,
+  createSkillBankStore,
+  type SkillBankStoreOptions,
+} from "./skill-bank-store.js";
+
+export {
   agentScopeKey,
   publishSharedMemory,
   getSharedMemory,

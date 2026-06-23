@@ -25,11 +25,11 @@ export interface Skill {
 // ---------------------------------------------------------------------------
 
 export interface SkillStore {
-  save(skill: Skill): void;
-  get(name: string): Skill | null;
-  list(): Skill[];
-  search(query: string, limit?: number): Skill[];
-  remove(name: string): boolean;
+  save(skill: Skill): Promise<void>;
+  get(name: string): Promise<Skill | null>;
+  list(): Promise<Skill[]>;
+  search(query: string, limit?: number): Promise<Skill[]>;
+  remove(name: string): Promise<boolean>;
 }
 
 // ---------------------------------------------------------------------------
@@ -39,7 +39,7 @@ export interface SkillStore {
 class InMemorySkillStore implements SkillStore {
   private data = new Map<string, Skill>();
 
-  save(skill: Skill): void {
+  async save(skill: Skill): Promise<void> {
     if (skill.content.length > MAX_SKILL_CONTENT_SIZE) {
       throw new Error(
         `skill content exceeds ${MAX_SKILL_CONTENT_SIZE} character limit (${skill.content.length} chars)`,
@@ -48,15 +48,15 @@ class InMemorySkillStore implements SkillStore {
     this.data.set(skill.name, skill);
   }
 
-  get(name: string): Skill | null {
+  async get(name: string): Promise<Skill | null> {
     return this.data.get(name) ?? null;
   }
 
-  list(): Skill[] {
+  async list(): Promise<Skill[]> {
     return [...this.data.values()];
   }
 
-  search(query: string, limit = 5): Skill[] {
+  async search(query: string, limit = 5): Promise<Skill[]> {
     const lower = query.toLowerCase();
     const results: Skill[] = [];
 
@@ -76,7 +76,7 @@ class InMemorySkillStore implements SkillStore {
     return results;
   }
 
-  remove(name: string): boolean {
+  async remove(name: string): Promise<boolean> {
     return this.data.delete(name);
   }
 }
@@ -111,7 +111,7 @@ export class FileSkillStore implements SkillStore {
     }
   }
 
-  save(skill: Skill): void {
+  async save(skill: Skill): Promise<void> {
     if (skill.content.length > MAX_SKILL_CONTENT_SIZE) {
       throw new Error(
         `skill content exceeds ${MAX_SKILL_CONTENT_SIZE} character limit (${skill.content.length} chars)`,
@@ -129,13 +129,13 @@ export class FileSkillStore implements SkillStore {
     fs.writeFileSync(filePath, `${header}\n${skill.content}\n`, "utf8");
   }
 
-  get(name: string): Skill | null {
+  async get(name: string): Promise<Skill | null> {
     const filePath = this.skillPath(name);
     if (!fs.existsSync(filePath)) return null;
     return this.parseSkillFile(filePath, name);
   }
 
-  list(): Skill[] {
+  async list(): Promise<Skill[]> {
     if (!fs.existsSync(this.directory)) return [];
     const files = fs.readdirSync(this.directory).filter((f) => f.endsWith(".md"));
     return files
@@ -143,11 +143,11 @@ export class FileSkillStore implements SkillStore {
       .filter((s): s is Skill => s !== null);
   }
 
-  search(query: string, limit = 5): Skill[] {
+  async search(query: string, limit = 5): Promise<Skill[]> {
     const lower = query.toLowerCase();
     const results: Skill[] = [];
 
-    for (const skill of this.list()) {
+    for (const skill of await this.list()) {
       const matchesTag = skill.tags.some((t) =>
         t.toLowerCase().includes(lower),
       );
@@ -163,7 +163,7 @@ export class FileSkillStore implements SkillStore {
     return results;
   }
 
-  remove(name: string): boolean {
+  async remove(name: string): Promise<boolean> {
     const filePath = this.skillPath(name);
     if (!fs.existsSync(filePath)) return false;
     fs.unlinkSync(filePath);

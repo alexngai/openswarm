@@ -78,7 +78,14 @@ async function execute(
         tags: input.tags ?? [],
         content: input.content,
       };
-      store.save(skill);
+      try {
+        await store.save(skill);
+      } catch (err) {
+        return {
+          status: "error",
+          message: err instanceof Error ? err.message : String(err),
+        };
+      }
 
       return {
         status: "ok",
@@ -87,7 +94,7 @@ async function execute(
     }
 
     case "list": {
-      const skills = store.list();
+      const skills = await store.list();
       return { status: "ok", output: formatSkillList(skills) };
     }
 
@@ -95,7 +102,7 @@ async function execute(
       if (!input.name) {
         return { status: "error", message: "name is required for get action" };
       }
-      const skill = store.get(input.name);
+      const skill = await store.get(input.name);
       if (!skill) {
         return {
           status: "error",
@@ -109,7 +116,7 @@ async function execute(
       if (!input.name) {
         return { status: "error", message: "name is required for remove action" };
       }
-      const removed = store.remove(input.name);
+      const removed = await store.remove(input.name);
       if (!removed) {
         return {
           status: "error",

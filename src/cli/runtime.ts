@@ -20,6 +20,7 @@ import { detectAuth } from "../auth/status.js";
 import { AnthropicEnvAuth } from "../auth/anthropic-env-auth.js";
 import { ToolDispatcher } from "../tools/dispatcher.js";
 import { buildTier0Tools } from "../tools/tier0/index.js";
+import { setSkillStore, createSkillBankStore } from "../memory/index.js";
 import { PermissionEngine } from "../permissions/index.js";
 import { NativeEngine } from "../engine/native.js";
 import { HardenedNativeEngine } from "../engine/hardened-native.js";
@@ -144,6 +145,28 @@ export async function buildAgentRuntime(
   const dispatcher = new ToolDispatcher({ hooks: hookRuntime });
   for (const tool of buildTier0Tools()) {
     dispatcher.register(tool);
+  }
+
+  // Point the `skill_save` tool's store at a durable, skill-tree-backed store
+  // (SQLite via node:sqlite — works under Node, Bun, and compiled binaries).
+  // Gated by --skills (default on); falls back silently to the in-memory
+  // default if unavailable (e.g. Node < 22.5 or skill-tree missing).
+  if (opts.skills) {
+    try {
+      const skillsDbPath = path.join(
+        os.homedir(),
+        ".swarm-harness",
+        "skills",
+        "skills.db",
+      );
+      setSkillStore(await createSkillBankStore({ dbPath: skillsDbPath }));
+    } catch (err) {
+      process.stderr.write(
+        `[swarm-harness] durable skill store unavailable, using in-memory: ${
+          err instanceof Error ? err.message : String(err)
+        }\n`,
+      );
+    }
   }
 
   // 2a. Discover and register plugin tools (opt-in via --plugins, default on).
