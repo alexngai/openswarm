@@ -57,11 +57,20 @@ async function tryLoadSkillTree(): Promise<SkillTreeModule | null> {
 // ---------------------------------------------------------------------------
 
 /**
- * Resolve the skills directory (the skill-tree filesystem `basePath`):
+ * Resolve the skills directory — the skill-tree filesystem `basePath`.
+ *
+ * skill-tree's FilesystemStorageAdapter stores skills under
+ * `<basePath>/.skilltree/skills`, and openhive/cognitive-core write the shared
+ * ecosystem store the same way with a default basePath of `~/.skill-tree`
+ * (openhive `skill-management.ts`: `skilltreeDir = join(localPath, '.skilltree')`).
+ * To read that store, swarm-harness must point at the same basePath:
  *   1. Explicit override — config or `SWARM_HARNESS_SKILLS_DIR`.
- *   2. Swarmkit ecosystem — the shared skill store from `~/.swarmkit/config.json`
- *      (so swarm-harness reads the same store openhive/cognitive-core write to).
- *   3. Standalone default — `~/.skill-tree`.
+ *   2. Ecosystem default — `~/.skill-tree`.
+ *
+ * (openhive can be configured with additional `globalSkillPaths`, e.g.
+ * `~/.claude/skills`; those use a different on-disk layout and would need
+ * multi-store support here, so they are out of scope — use the override to
+ * point at a specific store.)
  */
 export function resolveSkillsDir(override?: string): string {
   if (override && override.length > 0) return override;
@@ -69,22 +78,7 @@ export function resolveSkillsDir(override?: string): string {
   const env = process.env.SWARM_HARNESS_SKILLS_DIR;
   if (env && env.length > 0) return env;
 
-  const home = os.homedir();
-  try {
-    const cfgPath = path.join(home, ".swarmkit", "config.json");
-    if (fs.existsSync(cfgPath)) {
-      const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8")) as {
-        skillTree?: { basePath?: string };
-        "skill-tree"?: { basePath?: string };
-      };
-      const shared = cfg.skillTree?.basePath ?? cfg["skill-tree"]?.basePath;
-      if (shared && shared.length > 0) return shared;
-    }
-  } catch {
-    // Malformed config — fall through to the conventional default.
-  }
-
-  return path.join(home, ".skill-tree");
+  return path.join(os.homedir(), ".skill-tree");
 }
 
 // ---------------------------------------------------------------------------

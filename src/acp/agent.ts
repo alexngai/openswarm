@@ -147,6 +147,7 @@ export class AcpAgent implements Agent {
     // Surface memory (minimem + skills) into this ACP turn via the shared seam.
     const enriched = await enrichTurnInputs(config.systemPrompt, config.prompt, {
       query: config.prompt,
+      sessionId: req.sessionId,
     });
     const runConfig: RunConfig = {
       ...config,
