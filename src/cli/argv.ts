@@ -127,6 +127,8 @@ export type ParsedArgs =
       gitCascade: boolean;
       /** v0.7 stage 7H: auto-cleanup worktrees on exit (requires --git-cascade). */
       cleanupWorktrees: boolean;
+      /** Default worker model for tasks without an explicit task.model. */
+      model?: string;
     }
   | { kind: "plugin"; pluginArgv: string[] }
   | { kind: "worktree"; worktreeArgv: string[] }
@@ -155,6 +157,8 @@ export type ParsedArgs =
       mapUrl?: string;
       maxTokens?: number;
       maxCostUsd?: number;
+      /** Default worker model for members without an explicit member.model. */
+      model?: string;
     }
   | { kind: "team-send"; name: string; prompt: string }
   | { kind: "team-list" }
@@ -1002,6 +1006,7 @@ export function parseArgv(args: string[]): ParsedArgs {
         agentInbox,
         gitCascade,
         cleanupWorktrees,
+        ...(model !== undefined && { model }),
       };
     }
 
@@ -1184,6 +1189,7 @@ export function parseArgv(args: string[]): ParsedArgs {
         ...(mapUrl !== undefined && { mapUrl }),
         ...(maxTokens !== undefined && { maxTokens }),
         ...(maxCostUsd !== undefined && { maxCostUsd }),
+        ...(model !== undefined && { model }),
       };
     }
 

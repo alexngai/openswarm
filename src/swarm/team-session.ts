@@ -93,6 +93,7 @@ export class TeamSession {
       branchPolicy: spec.branchPolicy ?? { kind: "none" },
       commitPolicy: spec.commitPolicy ?? { kind: "none" },
       escalationPolicy: spec.escalationPolicy ?? { kind: "none" },
+      ...(spec.model !== undefined && { model: spec.model }),
       ...(spec.budget !== undefined && { budget: spec.budget }),
       role: spec.role,
     };

@@ -807,6 +807,7 @@ export class StandaloneHost implements SwarmHost {
       orchestratorPid: process.pid,
       parentToolUseId: request.parentToolUseId,
       permissionMode: clampedMode,
+      ...(request.model !== undefined && { model: request.model }),
       ...(request.role !== undefined && { role: request.role }),
       ...(request.allowedTools !== undefined && {
         allowedTools: request.allowedTools,

@@ -89,6 +89,7 @@ describe("swarm.ts policy parse layer", () => {
   it("accepts valid discriminated union packet with optional id", () => {
     const result = taskPacketSchema.safeParse({
       prompt: "hello",
+      model: "litellm/qwen3.6-35b-a3b",
       branchPolicy: { kind: "none" },
       commitPolicy: { kind: "auto" },
       escalationPolicy: { kind: "retry", max: 3, backoff: "exponential" },

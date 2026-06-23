@@ -9,10 +9,13 @@ import { HardenedNativeEngine } from "../engine/hardened-native.js";
 import { ScriptedTestEngine } from "../engine/test-engine.js";
 import { filterCodexPeerTools } from "../tools/codex-peer-tools.js";
 import { resolveProvider } from "../providers/routing.js";
+import { loadAliases, resolveAlias } from "../providers/aliases.js";
 import { OpenAIEnvAuth } from "../auth/openai-env.js";
+import type { AuthSource } from "../auth/index.js";
 import type { AgentEngine, PermissionDecision } from "../engine/index.js";
 import type { RetryPolicy } from "../engine/retry-policy.js";
 import type { FrameworkChoice } from "./argv.js";
+import type { ResolvedProvider } from "../providers/index.js";
 import { ToolDispatcher } from "../tools/dispatcher.js";
 import { buildTier0Tools } from "../tools/tier0/index.js";
 import { buildTier2Tools } from "../tools/tier2/index.js";
@@ -41,6 +44,54 @@ function parseIntEnv(key: string, fallback: number): number {
   const raw = process.env[key];
   if (raw === undefined || !/^\d+$/.test(raw)) return fallback;
   return Number.parseInt(raw, 10);
+}
+
+const DEFAULT_WORKER_MODEL = "claude-sonnet-4-6";
+
+async function resolveWorkerModel(rawModel: string): Promise<string> {
+  const aliases = await loadAliases();
+  return resolveAlias(rawModel, aliases);
+}
+
+async function buildWorkerProviderAuth(
+  resolved: ResolvedProvider,
+  modelId: string,
+): Promise<AuthSource> {
+  if (resolved.authFactory !== undefined) {
+    return await resolved.authFactory();
+  }
+  if (/^(gpt|o[134]|openai\/)/i.test(modelId)) {
+    return new OpenAIEnvAuth();
+  }
+  throw new Error(`no auth source wired for worker model ${modelId}`);
+}
+
+async function buildNativeWorkerEngine({
+  resolved,
+  agentId,
+  hardened,
+}: {
+  readonly resolved: ResolvedProvider;
+  readonly agentId: AgentId;
+  readonly hardened: boolean;
+}): Promise<AgentEngine> {
+  const providerModelId = resolved.modelId!;
+  const providerAuth = await buildWorkerProviderAuth(resolved, providerModelId);
+  const provider = await resolved.providerFactory!(providerAuth, providerModelId);
+  if (!hardened) {
+    return new NativeEngine({ provider, sessionId: agentId });
+  }
+  const retryPolicy: RetryPolicy = {
+    maxRetries: parseIntEnv("SWARM_HARNESS_RETRY_MAX_RETRIES", 3),
+    backoffBaseMs: parseIntEnv("SWARM_HARNESS_RETRY_BACKOFF_BASE_MS", 100),
+  };
+  return new HardenedNativeEngine({
+    provider,
+    sessionId: agentId,
+    retryPolicy,
+    eagerToolDispatch: process.env.SWARM_HARNESS_EAGER_TOOL_DISPATCH === "1",
+    midTurnCompaction: process.env.SWARM_HARNESS_MID_TURN_COMPACTION === "1",
+  });
 }
 
 /**
@@ -351,9 +402,13 @@ export async function runWorkerEntry(): Promise<number> {
   const permissionEngine = new PermissionEngine(permissionMode);
   const auth = new AnthropicEnvAuth();
 
-  // Engine selection: read SWARM_HARNESS_FRAMEWORK env var (default: "auto").
+  // Engine selection: read SWARM_HARNESS_MODEL and SWARM_HARNESS_FRAMEWORK.
+  // Defaults preserve the historical Claude worker path, while per-task or
+  // per-member models can route through native OpenAI-compatible transports.
   const frameworkEnv = (process.env.SWARM_HARNESS_FRAMEWORK ?? "auto") as FrameworkChoice;
-  const workerModel = "claude-sonnet-4-6";
+  const workerModel = await resolveWorkerModel(
+    process.env.SWARM_HARNESS_MODEL ?? initialTask.model ?? DEFAULT_WORKER_MODEL,
+  );
 
   let engine: AgentEngine;
   if (process.env.SWARM_HARNESS_TEST_SCRIPT) {
@@ -374,18 +429,10 @@ export async function runWorkerEntry(): Promise<number> {
   } else if (frameworkEnv === "hardened-native") {
     const resolved = resolveProvider(workerModel);
     if (resolved.kind === "native") {
-      const nativeAuth = new OpenAIEnvAuth();
-      const provider = await resolved.providerFactory!(nativeAuth, resolved.modelId!);
-      const retryPolicy: RetryPolicy = {
-        maxRetries: parseIntEnv("SWARM_HARNESS_RETRY_MAX_RETRIES", 3),
-        backoffBaseMs: parseIntEnv("SWARM_HARNESS_RETRY_BACKOFF_BASE_MS", 100),
-      };
-      engine = new HardenedNativeEngine({
-        provider,
-        sessionId: agentId,
-        retryPolicy,
-        eagerToolDispatch: process.env.SWARM_HARNESS_EAGER_TOOL_DISPATCH === "1",
-        midTurnCompaction: process.env.SWARM_HARNESS_MID_TURN_COMPACTION === "1",
+      engine = await buildNativeWorkerEngine({
+        resolved,
+        agentId,
+        hardened: true,
       });
     } else {
       engine = new ClaudeAgentSdkEngine();
@@ -393,15 +440,29 @@ export async function runWorkerEntry(): Promise<number> {
   } else if (frameworkEnv === "native") {
     const resolved = resolveProvider(workerModel);
     if (resolved.kind === "native") {
-      const nativeAuth = new OpenAIEnvAuth();
-      const provider = await resolved.providerFactory!(nativeAuth, resolved.modelId!);
-      engine = new NativeEngine({ provider, sessionId: agentId });
+      engine = await buildNativeWorkerEngine({
+        resolved,
+        agentId,
+        hardened: false,
+      });
     } else {
       engine = new ClaudeAgentSdkEngine();
     }
   } else {
-    // auto — default to ClaudeAgentSdkEngine (worker model is always claude).
-    engine = new ClaudeAgentSdkEngine();
+    // auto — route Claude through the SDK and non-Claude models through the
+    // native transport provider resolved from their model prefix.
+    const resolved = resolveProvider(workerModel);
+    if (resolved.kind === "sdk") {
+      engine = resolved.engineFactory!();
+    } else if (resolved.kind === "native") {
+      engine = await buildNativeWorkerEngine({
+        resolved,
+        agentId,
+        hardened: false,
+      });
+    } else {
+      throw new Error(resolved.message);
+    }
   }
 
   const ctx: TurnContext = {

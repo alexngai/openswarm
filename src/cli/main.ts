@@ -413,6 +413,7 @@ export async function main(argv: string[]): Promise<number> {
         agentInbox: parsed.agentInbox,
         gitCascade: parsed.gitCascade,
         cleanupWorktrees: parsed.cleanupWorktrees,
+        ...(parsed.model !== undefined ? { modelId: parsed.model } : {}),
       });
 
     case "plugin":
@@ -442,6 +443,7 @@ export async function main(argv: string[]): Promise<number> {
         ...(parsed.mapUrl !== undefined && { mapUrl: parsed.mapUrl }),
         ...(parsed.maxTokens !== undefined && { maxTokens: parsed.maxTokens }),
         ...(parsed.maxCostUsd !== undefined && { maxCostUsd: parsed.maxCostUsd }),
+        ...(parsed.model !== undefined && { modelId: parsed.model }),
       });
 
     case "team-logs":

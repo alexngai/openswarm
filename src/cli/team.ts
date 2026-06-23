@@ -174,6 +174,8 @@ export interface TopologyRunOptions {
   readonly mapUrl?: string;
   readonly maxTokens?: number;
   readonly maxCostUsd?: number;
+  /** Default worker model for members without an explicit member.model. */
+  readonly modelId?: string;
   /**
    * Test-only injection of a constructed Orchestrator. When set, runTopology
    * skips its own Orchestrator construction and calls `orch.runTeam(spec)`.
@@ -223,7 +225,18 @@ export async function runTopology(opts: TopologyRunOptions): Promise<number> {
     );
     return 2;
   }
-  const spec = parseResult.data as TeamSpec;
+  const parsedSpec = parseResult.data as TeamSpec;
+  const spec =
+    opts.modelId === undefined
+      ? parsedSpec
+      : {
+          ...parsedSpec,
+          members: parsedSpec.members.map((member) =>
+            member.model === undefined
+              ? { ...member, model: opts.modelId }
+              : member,
+          ),
+        };
 
   // Test path: caller injected an orchestrator stub. Run + return early.
   if (opts.orchestrator !== undefined) {

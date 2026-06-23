@@ -147,7 +147,12 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
       return 2;
     }
     const id = parsed.data.id ?? `task-${i + 1}`;
-    tasks.push({ ...parsed.data, id } as TaskPacket);
+    tasks.push({
+      ...parsed.data,
+      id,
+      ...(parsed.data.model === undefined &&
+        opts.modelId !== undefined && { model: opts.modelId }),
+    } as TaskPacket);
   }
 
   if (tasks.length === 0) {

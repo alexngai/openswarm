@@ -42,6 +42,7 @@ export interface SpawnWorkerArgs {
   readonly parentToolUseId?: string;
   readonly permissionMode?: PermissionMode;
   readonly testScript?: string; // optional path to ScriptedTestEngine fixture
+  readonly model?: string; // optional model id or alias for this worker
   readonly cwd?: string;        // default process.cwd()
   readonly nodeExecPath?: string; // default process.execPath
   readonly cliJsPath?: string;    // default <repoRoot>/dist/cli.js
@@ -112,6 +113,9 @@ export function spawnWorker(args: SpawnWorkerArgs): ChildProcess {
   }
   if (args.testScript !== undefined) {
     env.SWARM_HARNESS_TEST_SCRIPT = args.testScript;
+  }
+  if (args.model !== undefined) {
+    env.SWARM_HARNESS_MODEL = args.model;
   }
   if (args.role !== undefined) {
     env.SWARM_HARNESS_ROLE = args.role;

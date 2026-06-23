@@ -68,6 +68,20 @@ describe("spawnWorker", () => {
     expect(env.SWARM_HARNESS_PARENT_TOOL_USE_ID).toBe("tool-use-123");
   });
 
+  it("sets SWARM_HARNESS_MODEL when provided", () => {
+    spawnWorker({
+      agentId: "agent-model",
+      depth: 1,
+      parentPid: 200,
+      orchestratorPid: 200,
+      model: "litellm/qwen3.6-35b-a3b",
+    });
+
+    const [_exec, _argv, opts] = spawnMocked.mock.calls[0]!;
+    const env = (opts as { env: NodeJS.ProcessEnv }).env;
+    expect(env.SWARM_HARNESS_MODEL).toBe("litellm/qwen3.6-35b-a3b");
+  });
+
   it("does NOT set SWARM_HARNESS_PARENT_TOOL_USE_ID when not provided", () => {
     spawnWorker({
       agentId: "agent-xyz",

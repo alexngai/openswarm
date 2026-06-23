@@ -89,6 +89,19 @@ describe("parseArgv: topology", () => {
     expect(result.maxCostUsd).toBe(1.5);
   });
 
+  it("topology propagates --model as the default member model", () => {
+    const result = parseArgv([
+      "topology",
+      "pipeline",
+      "--spec",
+      "./spec.json",
+      "--model",
+      "litellm/qwen3.6-35b-a3b",
+    ]);
+    if (result.kind !== "topology") throw new Error("expected topology");
+    expect(result.model).toBe("litellm/qwen3.6-35b-a3b");
+  });
+
   it("topology fanout --spec ./spec.json --map ws://x:9 sets mapUrl", () => {
     const result = parseArgv([
       "topology",
@@ -338,6 +351,45 @@ describe("runTopology", () => {
     const passedSpec = runTeam.mock.calls[0]![0] as { topology: string; name: string };
     expect(passedSpec.topology).toBe("peer-team");
     expect(passedSpec.name).toBe("topo-smoke");
+  });
+
+  it("applies modelId as the default for members without model", async () => {
+    const specPath = path.join(tmpDir, "spec.json");
+    await fs.writeFile(
+      specPath,
+      JSON.stringify({
+        name: "topo-model",
+        topology: "pipeline",
+        members: [
+          { role: "executor", prompt: "use default" },
+          { role: "reviewer", prompt: "keep explicit", model: "gpt-4o" },
+        ],
+        coordination: { completion: { kind: "all" } },
+      }),
+    );
+
+    const runTeam = vi.fn().mockResolvedValue({
+      succeeded: 2,
+      failed: 0,
+      timeout: 0,
+      cancelled: 0,
+    });
+
+    await runTopology({
+      topologyKind: "pipeline",
+      specPath,
+      permissionMode: "workspace-write",
+      concurrency: 1,
+      output: path.join(tmpDir, "results.jsonl"),
+      modelId: "litellm/qwen3.6-35b-a3b",
+      orchestrator: { runTeam } as never,
+    });
+
+    const passedSpec = runTeam.mock.calls[0]![0] as {
+      members: Array<{ model?: string }>;
+    };
+    expect(passedSpec.members[0]!.model).toBe("litellm/qwen3.6-35b-a3b");
+    expect(passedSpec.members[1]!.model).toBe("gpt-4o");
   });
 
   it("returns 1 when the topology run reports failures", async () => {
