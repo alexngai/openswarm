@@ -73,6 +73,7 @@
     "@types/turndown": "^5.0.6",
     "@types/ws": "^8.18.1",
     "node-pty": "^1.1.0",
+    "swarmkit-eval": "^0.0.6",
     "typescript": "^5.6.3",
     "vitest": "^4.1.4"
   },
