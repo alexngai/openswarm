@@ -49,6 +49,8 @@ async function checkAuth(): Promise<CheckResult> {
       return { name: "auth", status: "pass", message: "CLAUDE_CODE_OAUTH_TOKEN set" };
     case "env-auth-token":
       return { name: "auth", status: "pass", message: "ANTHROPIC_AUTH_TOKEN set" };
+    case "env-bedrock":
+      return { name: "auth", status: "pass", message: "Amazon Bedrock (CLAUDE_CODE_USE_BEDROCK) enabled" };
     case "keychain":
       return { name: "auth", status: "pass", message: "keychain credential found (Claude Code-credentials)" };
     case "file":

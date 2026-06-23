@@ -36,8 +36,11 @@ export function resolveProvider(modelId: string): ResolvedProvider {
     };
   }
 
-  // claude* → SDK engine
-  if (/^claude/i.test(modelId)) {
+  // claude* (direct) OR an Amazon Bedrock / Vertex Anthropic inference-profile id (e.g.
+  // us.anthropic.claude-sonnet-4-5-20250929-v1:0) → Claude Agent SDK, which talks to Bedrock/Vertex
+  // itself via CLAUDE_CODE_USE_BEDROCK / CLAUDE_CODE_USE_VERTEX. The `bedrock/` | `gateway/` | `litellm/`
+  // prefixes are matched above (LiteLLM gateway) and take precedence.
+  if (/^claude/i.test(modelId) || /anthropic\.claude/i.test(modelId)) {
     return {
       kind: "sdk",
       engineFactory: () => new ClaudeAgentSdkEngine(),
