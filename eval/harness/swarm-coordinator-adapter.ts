@@ -18,6 +18,7 @@ import {
   type PublicCell,
   type RunContext,
   type RawRun,
+  type TraceEvent,
 } from "swarmkit-eval";
 
 export interface SwarmCoordinatorOptions {
@@ -82,8 +83,16 @@ export class SwarmCoordinatorAdapter implements ExecutionAdapter {
     await ws.writeFiles([{ path: `${dir}/team.json`, content: JSON.stringify(spec, null, 2) }]);
 
     const resultsPath = `${dir}/results.jsonl`;
+    // The coordinator command's STDOUT is only the architect's final text — the rich per-worker
+    // activity (architect + spawned teammates' turns / tool calls / text) is NOT on stdout. The
+    // `topology` command writes that per-worker spine to a lane-event JSONL via `--trace-output`
+    // (attachLaneTrace over the StandaloneHost bus, which re-emits EVERY spawned worker's events,
+    // each tagged with its agentId). We read that file back below and map it to TraceEvent[] so the
+    // team/hetero traces are as rich as the single-agent ones.
+    const traceOutputPath = `${dir}/trace.jsonl`;
     const cmd =
       `${bin} topology coordinator --spec ${dir}/team.json --output ${resultsPath} ` +
+      `--trace-output ${traceOutputPath} ` +
       `--model ${shq(model)} --permission-mode ${permissionMode} --headless --output-format json`;
     const env: Record<string, string> = {
       NO_COLOR: "1",
@@ -108,11 +117,15 @@ export class SwarmCoordinatorAdapter implements ExecutionAdapter {
     // usage across the whole spawn tree (root + peers) and emit it (ResultLine to --output, or a JSON line).
     // sumTeamUsage already handles the --output path for when that lands.
     const usage = (await sumTeamUsage(ws, resultsPath)) ?? parsed.usage;
+    // Prefer the rich per-worker lane-event trace (architect + spawned teammates). Fall back to the
+    // thin stdout-derived trajectory (architect final text only) if --trace-output produced nothing.
+    const laneTrajectory = await readLaneTrajectory(ws, traceOutputPath);
+    const trajectory = laneTrajectory.length > 0 ? laneTrajectory : parsed.trajectory;
     const raw: RawRun = {
       output: parsed.output || r.stdout.slice(0, 2000),
       workdir: ws.root,
       usage,
-      trajectory: parsed.trajectory,
+      trajectory,
       durationMs: Date.now() - start,
     };
     return raw;
@@ -146,4 +159,115 @@ async function sumTeamUsage(
   }
   if (!seen) return undefined;
   return { inputTokens: inT, outputTokens: outT, cacheReadTokens: cr, cacheCreationTokens: cw, totalTokens: inT + outT };
+}
+
+/**
+ * Read the lane-event JSONL written by `topology --trace-output` and map it to the eval's
+ * `TraceEvent[]` trajectory shape (the same shape the SINGLE arm's `swarmHarnessParse` produces, so
+ * team/hetero traces are comparable — plus a per-event `agentId` so the MAST judge can attribute
+ * activity to the architect vs each spawned teammate).
+ *
+ * Lane events (one JSON object per line) carry `{ ts, agentId, type, payload }` for EVERY worker in
+ * the spawn tree (root architect + spawned executor/reviewer), re-emitted onto the StandaloneHost bus.
+ * The lane-event `payload` is the raw worker engine `NormalizedEvent` (worker-entry.ts forwards
+ * `payload: evt`), so field names follow NormalizedEvent, not the typed lane-payload interfaces:
+ *  - `tool_use_start` ({ id, name })            → `{ type:"tool", name, agentId }`  (the spine)
+ *  - `tool_result`    ({ toolUseId, content, isError }) → folded onto the matching tool event's output/isError
+ *  - `text_delta`     ({ text })                → accumulated per agent, flushed as `{ type:"message", from, content }`
+ *  - `message_stop`   ({ usage })               → `{ type:"llm", model:agentId, usage }`  (per-turn token accounting)
+ * `ts` is normalized to a monotonic index (matching the single-arm traces, whose ts is row-ordinal).
+ */
+async function readLaneTrajectory(
+  ws: { readFile(path: string): Promise<string | null> },
+  traceOutputPath: string,
+): Promise<TraceEvent[]> {
+  const content = await ws.readFile(traceOutputPath).catch(() => null);
+  if (!content) return [];
+
+  const events: TraceEvent[] = [];
+  // toolUseId → index in `events` of the corresponding "tool" event (to fold in its result).
+  const toolByUseId = new Map<string, number>();
+  // agentId → buffered text_delta chunks awaiting flush (on tool_use_start / message_stop / next text owner change).
+  const textByAgent = new Map<string, string>();
+  let ts = 0;
+
+  const flushText = (agentId: string): void => {
+    const buf = textByAgent.get(agentId);
+    if (buf && buf.trim().length > 0) {
+      events.push({ type: "message", ts: ts++, from: agentId, content: buf });
+    }
+    textByAgent.delete(agentId);
+  };
+
+  for (const line of content.split("\n")) {
+    const s = line.trim();
+    if (!s.startsWith("{")) continue;
+    let evt: { ts?: number; agentId?: string; type?: string; payload?: unknown };
+    try {
+      evt = JSON.parse(s);
+    } catch {
+      continue;
+    }
+    const agentId = typeof evt.agentId === "string" ? evt.agentId : "unknown";
+    const p = (evt.payload ?? {}) as Record<string, unknown>;
+
+    switch (evt.type) {
+      case "text_delta": {
+        const text = typeof p.text === "string" ? p.text : "";
+        if (text) textByAgent.set(agentId, (textByAgent.get(agentId) ?? "") + text);
+        break;
+      }
+      case "tool_use_start": {
+        // payload is the raw NormalizedEvent: { type, id, name } (no input on the start event).
+        flushText(agentId);
+        const name = typeof p.name === "string" ? p.name : "tool";
+        const idx = events.length;
+        events.push({ type: "tool", ts: ts++, name, agentId });
+        if (typeof p.id === "string") toolByUseId.set(p.id, idx);
+        break;
+      }
+      case "tool_result": {
+        const useId = typeof p.toolUseId === "string" ? p.toolUseId : undefined;
+        const idx = useId !== undefined ? toolByUseId.get(useId) : undefined;
+        if (idx !== undefined) {
+          const ev = events[idx] as Extract<TraceEvent, { type: "tool" }>;
+          events[idx] = {
+            ...ev,
+            ...(p.content !== undefined ? { output: p.content } : {}),
+            ...(p.isError === true ? { isError: true } : {}),
+          };
+        }
+        break;
+      }
+      case "message_stop": {
+        flushText(agentId);
+        const u = (p.usage ?? {}) as Record<string, number>;
+        events.push({
+          type: "llm",
+          ts: ts++,
+          model: agentId, // per-agent attribution (lane events don't carry the model id here)
+          usage: {
+            inputTokens: u.inputTokens ?? 0,
+            outputTokens: u.outputTokens ?? 0,
+            cacheReadTokens: u.cacheReadInputTokens ?? 0,
+            totalTokens: (u.inputTokens ?? 0) + (u.outputTokens ?? 0),
+          },
+        });
+        break;
+      }
+      case "message_sent":
+      case "message_received": {
+        const from = typeof p.from === "string" ? p.from : agentId;
+        const to = typeof p.to === "string" ? p.to : undefined;
+        const c = typeof p.content === "string" ? p.content : typeof p.text === "string" ? p.text : "";
+        events.push({ type: "message", ts: ts++, from, ...(to ? { to } : {}), content: c });
+        break;
+      }
+      default:
+        break;
+    }
+  }
+  // Flush any trailing text buffers.
+  for (const agentId of [...textByAgent.keys()]) flushText(agentId);
+  return events;
 }
