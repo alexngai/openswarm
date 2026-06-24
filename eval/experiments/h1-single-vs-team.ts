@@ -103,7 +103,12 @@ function h1Config(arms: Arm[], seeds: number[]): EvalConfig {
     models: H1_MODELS,
     seeds,
     backend: "e2b",
-    concurrency: { cells: 2, modelConnections: 2 }, // bounded — good neighbor on the shared E2B account
+    // Bounded — good neighbor on the shared E2B account; H1_CONCURRENCY throttles Azure rate limits
+    // (each team cell fans to 3–4 concurrent model calls, so lower this for the gpt-5.5 team arms).
+    concurrency: {
+      cells: process.env.H1_CONCURRENCY ? Number(process.env.H1_CONCURRENCY) : 2,
+      modelConnections: process.env.H1_CONCURRENCY ? Number(process.env.H1_CONCURRENCY) : 2,
+    },
     output: { dir: ".eval-runs", trace: true },
   };
 }
