@@ -8,6 +8,7 @@ function dispatcherWith(name: string, requiredPermission: string): ToolDispatche
   return {
     get: (n: string) =>
       n === name ? { spec: { name, requiredPermission } } : undefined,
+    list: () => [{ name, requiredPermission }],
   } as unknown as ToolDispatcher;
 }
 
@@ -73,6 +74,21 @@ describe("buildWorkerCanUseTool", () => {
     });
     const d = await gate("nonexistent", {});
     expect(d.allow).toBe(false);
+    expect(d.reason).toContain("invalid_tool_name");
+    expect(d.reason).toContain("Available tools: `x`");
     expect(escalate).not.toHaveBeenCalled();
+  });
+
+  it("returns an explicit alias correction for shell-like tool names", async () => {
+    const gate = buildWorkerCanUseTool({
+      dispatcher: dispatcherWith("bash", "exec"),
+      permissionEngine: engine({ allow: true }),
+      permissionMode: "workspace-write",
+    });
+    const d = await gate("shell", {});
+    expect(d.allow).toBe(false);
+    expect(d.reason).toContain("invalid_tool_name");
+    expect(d.reason).toContain("Use tool `bash`");
+    expect(d.reason).toContain('{"command":"pwd"}');
   });
 });

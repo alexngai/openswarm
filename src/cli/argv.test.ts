@@ -574,6 +574,34 @@ describe("parseArgv", () => {
     });
   });
 
+  it("swarm run propagates --model as the default task model", () => {
+    const result = parseArgv([
+      "swarm",
+      "run",
+      "tasks.jsonl",
+      "--model",
+      "litellm/qwen3.6-35b-a3b",
+    ]);
+    expect(result).toMatchObject({
+      kind: "swarm-run",
+      model: "litellm/qwen3.6-35b-a3b",
+    });
+  });
+
+  it("swarm run propagates --trace-output", () => {
+    const result = parseArgv([
+      "swarm",
+      "run",
+      "tasks.jsonl",
+      "--trace-output",
+      "/tmp/swarm.trace.jsonl",
+    ]);
+    expect(result).toMatchObject({
+      kind: "swarm-run",
+      traceOutput: "/tmp/swarm.trace.jsonl",
+    });
+  });
+
   // ---- docs/44 P5 — host subcommand ---------------------------------------
 
   it("parses host with --port", () => {

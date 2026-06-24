@@ -34,11 +34,18 @@ interface MakeHandleOpts {
   readonly result?: AgentResult;
   readonly waitMs?: number;
   readonly resultPromise?: Promise<AgentResult>;
+  /**
+   * Sequence of results returned by successive runMore() calls. The Nth
+   * runMore() resolves with runMoreResults[N-1]; once exhausted it resolves
+   * with the last entry so a never-terminating loop is still bounded.
+   */
+  readonly runMoreResults?: readonly AgentResult[];
 }
 
 interface FakeHandle extends AgentHandle {
   readonly killed: { value: boolean };
   readonly killSpy: ReturnType<typeof vi.fn>;
+  readonly runMoreSpy: ReturnType<typeof vi.fn>;
 }
 
 function makeHandle(
@@ -88,6 +95,17 @@ function makeHandle(
     resolveKilled?.({ status: "killed", wallClockMs: 0 });
   });
 
+  let runMoreCalls = 0;
+  const runMoreSpy = vi.fn(async (_prompt: string): Promise<AgentResult> => {
+    const seq = opts.runMoreResults;
+    if (seq === undefined || seq.length === 0) {
+      throw new Error("runMore not configured in coordinator test fake");
+    }
+    const idx = Math.min(runMoreCalls, seq.length - 1);
+    runMoreCalls++;
+    return seq[idx]!;
+  });
+
   return {
     agentId,
     sessionId,
@@ -96,11 +114,11 @@ function makeHandle(
     events: async function* () {
       return;
     },
-    runMore: () =>
-      Promise.reject(new Error("runMore not supported in coordinator test fake")),
+    runMore: runMoreSpy,
     drain: () => Promise.resolve(),
     killed,
     killSpy,
+    runMoreSpy,
   };
 }
 
@@ -486,6 +504,71 @@ describe("CoordinatorTopology (direct invocation)", () => {
     const spec = coordSpec([root], { completion: { kind: "all" } });
     await new CoordinatorTopology().run(spec, ctx);
     expect(captured[0]).toEqual({ kind: "stream" });
+    await cleanup();
+  });
+
+  it("verifiedCompletion: stops on the sentinel after one continuation", async () => {
+    const { ctx, harness, cleanup } = await makeCtx({
+      handleOpts: [
+        {
+          // First terminal turn: success WITHOUT the sentinel.
+          result: successResult("declared done early"),
+          // First continuation emits the sentinel → loop stops.
+          runMoreResults: [successResult(`all green\nTASK_VERIFIED_COMPLETE`)],
+        },
+      ],
+    });
+    const spec = coordSpec([member("root", "lead", "coordinator")], {
+      completion: { kind: "all" },
+      verifiedCompletion: { maxRounds: 3 },
+    });
+
+    const summary = await new CoordinatorTopology().run(spec, ctx);
+
+    expect(harness.handles[0]!.runMoreSpy).toHaveBeenCalledTimes(1);
+    expect(summary.succeeded).toBe(1);
+    expect(summary.failed).toBe(0);
+    expect(summary.aggregateOutput).toContain("TASK_VERIFIED_COMPLETE");
+
+    await cleanup();
+  });
+
+  it("verifiedCompletion: respects maxRounds when the sentinel never appears", async () => {
+    const { ctx, harness, cleanup } = await makeCtx({
+      handleOpts: [
+        {
+          result: successResult("declared done early"),
+          // Every continuation returns success but never the sentinel.
+          runMoreResults: [successResult("still no sentinel")],
+        },
+      ],
+    });
+    const spec = coordSpec([member("root", "lead", "coordinator")], {
+      completion: { kind: "all" },
+      verifiedCompletion: { maxRounds: 3 },
+    });
+
+    const summary = await new CoordinatorTopology().run(spec, ctx);
+
+    // Exactly maxRounds continuations, then the team terminates (no infinite loop).
+    expect(harness.handles[0]!.runMoreSpy).toHaveBeenCalledTimes(3);
+    expect(summary.succeeded).toBe(1);
+
+    await cleanup();
+  });
+
+  it("verifiedCompletion UNSET: runMore is never called (unchanged behavior)", async () => {
+    const { ctx, harness, cleanup } = await makeCtx({
+      handleOpts: [{ result: successResult("root-output") }],
+    });
+    const spec = coordSpec([member("root", "lead", "coordinator")]);
+
+    const summary = await new CoordinatorTopology().run(spec, ctx);
+
+    expect(harness.handles[0]!.runMoreSpy).not.toHaveBeenCalled();
+    expect(summary.succeeded).toBe(1);
+    expect(summary.aggregateOutput).toBe("root-output");
+
     await cleanup();
   });
 });

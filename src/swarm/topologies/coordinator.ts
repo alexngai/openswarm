@@ -33,6 +33,28 @@ import { applyDefaultBranchPolicy } from "./branch-policy-defaults.js";
 import { TeamSession } from "../team-session.js";
 import type { Topology, TopologyContext, TeamResult } from "../topologies-types.js";
 
+/**
+ * Verified-completion sentinel. The root must emit this EXACT line on its own
+ * once it has evidence the task is fully resolved. Seeing it ends the
+ * verification loop early.
+ */
+const VERIFIED_SENTINEL = "TASK_VERIFIED_COMPLETE";
+
+/**
+ * Continuation prompt pushed to the long-lived root after it declares done, to
+ * force it to actually verify the work before the team terminates.
+ */
+const VERIFICATION_PROMPT = [
+  "You ended your turn, but completion has NOT yet been verified.",
+  "Before the team terminates you MUST:",
+  "  1. Run the project's relevant tests for your change.",
+  "  2. Confirm, with evidence, that the reported issue is FULLY resolved and that no regressions were introduced.",
+  "  3. If anything is incomplete or a test fails, keep working and fix it now using your tools.",
+  "",
+  `Only when you have verified evidence that the task is fully resolved should you end your final turn with the EXACT line \`${VERIFIED_SENTINEL}\` on its own.`,
+  "If you cannot yet verify completion, do NOT emit that line — continue working instead.",
+].join("\n");
+
 export class CoordinatorTopology implements Topology {
   readonly name = "coordinator" as const;
 
@@ -112,6 +134,27 @@ export class CoordinatorTopology implements Topology {
       const rootHandle = await team.spawnMember(rootMember);
 
       rootResult = await rootHandle.wait();
+
+      // Verified-completion gate: after the root declares done, force it to
+      // actually verify (run tests, confirm the issue is resolved) before the
+      // team terminates, capped at maxRounds. Unset → byte-for-byte old path.
+      const vc = spec.coordination?.verifiedCompletion;
+      if (vc !== undefined) {
+        for (let round = 0; round < vc.maxRounds; round++) {
+          // Stop if the root failed/was cancelled, or it emitted the sentinel.
+          if (rootResult.status !== "success") break;
+          if (rootResult.output.includes(VERIFIED_SENTINEL)) break;
+          ctx.host.emit({
+            type: "team_note",
+            payload: {
+              teamName: spec.name,
+              scope: team.scope,
+              note: `verification round ${round + 1}/${vc.maxRounds}`,
+            },
+          });
+          rootResult = await rootHandle.runMore(VERIFICATION_PROMPT);
+        }
+      }
 
       ctx.host.emit({
         type: "team_completed",

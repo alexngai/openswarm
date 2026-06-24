@@ -127,6 +127,10 @@ export type ParsedArgs =
       gitCascade: boolean;
       /** v0.7 stage 7H: auto-cleanup worktrees on exit (requires --git-cascade). */
       cleanupWorktrees: boolean;
+      /** Default worker model for tasks without an explicit task.model. */
+      model?: string;
+      /** Raw lane-event JSONL trace path. */
+      traceOutput?: string;
     }
   | { kind: "plugin"; pluginArgv: string[] }
   | { kind: "worktree"; worktreeArgv: string[] }
@@ -155,6 +159,10 @@ export type ParsedArgs =
       mapUrl?: string;
       maxTokens?: number;
       maxCostUsd?: number;
+      /** Default worker model for members without an explicit member.model. */
+      model?: string;
+      /** Raw lane-event JSONL trace path. */
+      traceOutput?: string;
     }
   | { kind: "team-send"; name: string; prompt: string }
   | { kind: "team-list" }
@@ -256,6 +264,7 @@ export function parseArgv(args: string[]): ParsedArgs {
   // Defaults for swarm-run (consumed when subcommand === "swarm").
   let swarmConcurrency = 3;
   let swarmOutput = "./results.jsonl";
+  let traceOutput: string | undefined;
   let swarmDeadLetter = "./dead-letter.jsonl";
   let swarmAllowDeadLetter = false;
   let swarmRole: string | undefined;
@@ -588,6 +597,20 @@ export function parseArgv(args: string[]): ParsedArgs {
         };
       }
       swarmOutput = val;
+      i += 2;
+      continue;
+    }
+
+    if (tok === "--trace-output") {
+      const val = expanded[i + 1];
+      if (val === undefined || val.startsWith("-")) {
+        return {
+          kind: "error",
+          message: "--trace-output requires a value",
+          showHelp: true,
+        };
+      }
+      traceOutput = val;
       i += 2;
       continue;
     }
@@ -1002,6 +1025,8 @@ export function parseArgv(args: string[]): ParsedArgs {
         agentInbox,
         gitCascade,
         cleanupWorktrees,
+        ...(model !== undefined && { model }),
+        ...(traceOutput !== undefined && { traceOutput }),
       };
     }
 
@@ -1184,6 +1209,8 @@ export function parseArgv(args: string[]): ParsedArgs {
         ...(mapUrl !== undefined && { mapUrl }),
         ...(maxTokens !== undefined && { maxTokens }),
         ...(maxCostUsd !== undefined && { maxCostUsd }),
+        ...(model !== undefined && { model }),
+        ...(traceOutput !== undefined && { traceOutput }),
       };
     }
 

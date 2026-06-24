@@ -237,6 +237,7 @@ export class FanoutTopology implements Topology {
             task,
             permissionMode: ctx.permissionMode,
             parentAgentId: ctx.host.agentId,
+            ...(task.model !== undefined && { model: task.model }),
             ...(role !== undefined && {
               role: role.name,
               allowedTools: role.allowedTools,
@@ -529,6 +530,7 @@ function memberToTaskPacket(m: MemberSpec, idx: number): TaskPacket {
   return {
     id: m.id ?? `task-${idx + 1}`,
     prompt: m.prompt,
+    ...(m.model !== undefined && { model: m.model }),
     branchPolicy: m.branchPolicy ?? { kind: "none" },
     commitPolicy: m.commitPolicy ?? { kind: "none" },
     escalationPolicy: m.escalationPolicy ?? { kind: "none" },

@@ -8,6 +8,11 @@ dist/
 # swarm-coder run artifacts (tests and smoke scripts emit these at repo root)
 results.jsonl
 dead-letter.jsonl
+# swarmkit-eval run output + content-addressed store
+.eval-runs/
+.runs/
+# packed local-harness tarballs for sandbox evals
+eval/.artifacts/
 .claude/
 .omc/
 # local reference checkouts (cloned repos, not tracked as submodules)

@@ -20,6 +20,8 @@ export type AuthStatus =
   | { state: "env-api-key"; source: "ANTHROPIC_API_KEY" }
   | { state: "env-oauth-token"; source: "CLAUDE_CODE_OAUTH_TOKEN" }
   | { state: "env-auth-token"; source: "ANTHROPIC_AUTH_TOKEN" }
+  | { state: "env-bedrock"; source: "CLAUDE_CODE_USE_BEDROCK" }
+  | { state: "env-openai-compat"; source: string }
   | { state: "keychain"; service: "Claude Code-credentials" }
   | { state: "file"; path: string }
   | { state: "none" };
@@ -44,6 +46,25 @@ export async function detectAuth(): Promise<AuthStatus> {
   const authToken = process.env["ANTHROPIC_AUTH_TOKEN"];
   if (authToken) {
     return { state: "env-auth-token", source: "ANTHROPIC_AUTH_TOKEN" };
+  }
+
+  // Amazon Bedrock: the Claude Agent SDK authenticates to Bedrock itself when
+  // CLAUDE_CODE_USE_BEDROCK is set (via AWS_BEARER_TOKEN_BEDROCK or the standard AWS
+  // credential chain). swarm-harness doesn't own the credential — we just recognize the
+  // mode so the run gate passes through to the SDK instead of demanding an Anthropic key.
+  const useBedrock = process.env["CLAUDE_CODE_USE_BEDROCK"];
+  if (useBedrock && useBedrock !== "0" && useBedrock !== "false") {
+    return { state: "env-bedrock", source: "CLAUDE_CODE_USE_BEDROCK" };
+  }
+
+  // OpenAI-compatible API-key providers (Azure OpenAI direct via azureoai/, OpenAI, xAI, LiteLLM
+  // gateway, etc.): swarm-harness doesn't own these credentials — the per-provider transport supplies
+  // its own auth (e.g. azureoai/ → AZURE_OPENAI_API_KEY header). Recognize the key here so the run gate
+  // passes through to the transport instead of demanding an Anthropic key.
+  for (const k of ["AZURE_OPENAI_API_KEY", "OPENAI_API_KEY", "XAI_API_KEY", "LITELLM_API_KEY"] as const) {
+    if (process.env[k]) {
+      return { state: "env-openai-compat", source: k };
+    }
   }
 
   // 2. Platform-specific credential store check (presence only — no decryption).

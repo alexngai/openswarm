@@ -37,6 +37,7 @@ import type {
 } from "../core/types.js";
 import type { ToolImpl } from "../tools/types.js";
 import type { ToolDispatcher } from "../tools/dispatcher.js";
+import type { SwarmHost } from "../swarm/host.js";
 import type { HooksConfigFile } from "../hooks/config.js";
 import type { RetryPolicy } from "./retry-policy.js";
 import type { ToolSpec } from "../core/types.js";
@@ -166,6 +167,17 @@ export interface RunConfig {
    * not own a dispatcher omit this field.
    */
   readonly dispatcher?: ToolDispatcher;
+
+  /**
+   * Optional swarm host. Native engines dispatch tools through the
+   * `dispatcher` directly (bypassing the SDK-path tool wrappers in
+   * worker-entry.ts that inject `ctx.host`), so they must thread the host
+   * into each tool request's execution context themselves. Without it,
+   * Tier 2 TEAM tools (`agent`, `send_message`, `check_inbox`, `task_list`)
+   * fail with "requires SwarmHost". The Claude Agent SDK engine ignores this
+   * field because its wrapped tools already carry the host.
+   */
+  readonly host?: SwarmHost;
 
   /**
    * Built-in SDK tools to allowlist. When present, these tool names are

@@ -146,6 +146,7 @@ export async function buildAgentRuntime(
     dispatcher.register(tool);
   }
 
+
   // 2a. Discover and register plugin tools (opt-in via --plugins, default on).
   const pluginTools: ToolImpl[] = [];
   const envPluginsDir = process.env.SWARM_HARNESS_PLUGINS_DIR;

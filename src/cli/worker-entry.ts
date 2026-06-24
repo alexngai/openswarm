@@ -9,12 +9,16 @@ import { HardenedNativeEngine } from "../engine/hardened-native.js";
 import { ScriptedTestEngine } from "../engine/test-engine.js";
 import { filterCodexPeerTools } from "../tools/codex-peer-tools.js";
 import { resolveProvider } from "../providers/routing.js";
+import { loadAliases, resolveAlias } from "../providers/aliases.js";
 import { OpenAIEnvAuth } from "../auth/openai-env.js";
+import type { AuthSource } from "../auth/index.js";
 import type { AgentEngine, PermissionDecision } from "../engine/index.js";
 import type { RetryPolicy } from "../engine/retry-policy.js";
 import type { FrameworkChoice } from "./argv.js";
+import type { ResolvedProvider } from "../providers/index.js";
 import { ToolDispatcher } from "../tools/dispatcher.js";
 import { buildTier0Tools } from "../tools/tier0/index.js";
+import { enrichTurnInputs } from "../memory/index.js";
 import { buildTier2Tools } from "../tools/tier2/index.js";
 import { PermissionEngine } from "../permissions/index.js";
 import { AnthropicEnvAuth } from "../auth/anthropic-env-auth.js";
@@ -24,6 +28,7 @@ import {
   loadCustomRoles,
 } from "../swarm/roles.js";
 import { normalizedEventToLaneType } from "../swarm/events.js";
+import { startSessionRecorder, type SessionRecorder } from "../swarm/session-recorder.js";
 import type {
   AgentResult,
   TaskPacket,
@@ -36,11 +41,63 @@ import type { PermissionMode, Usage } from "../core/types.js";
 import type { ToolExecutionContext, ToolImpl } from "../tools/types.js";
 import { readSessionSidecar, writeSessionSidecar } from "./session-sidecar.js";
 import { buildSystemPrompt } from "../engine/default-system-prompt.js";
+import {
+  buildToolUseWarmupPrompt,
+  formatUnknownToolFeedback,
+} from "../tools/tool-feedback.js";
 
 function parseIntEnv(key: string, fallback: number): number {
   const raw = process.env[key];
   if (raw === undefined || !/^\d+$/.test(raw)) return fallback;
   return Number.parseInt(raw, 10);
+}
+
+const DEFAULT_WORKER_MODEL = "claude-sonnet-4-6";
+
+async function resolveWorkerModel(rawModel: string): Promise<string> {
+  const aliases = await loadAliases();
+  return resolveAlias(rawModel, aliases);
+}
+
+async function buildWorkerProviderAuth(
+  resolved: ResolvedProvider,
+  modelId: string,
+): Promise<AuthSource> {
+  if (resolved.authFactory !== undefined) {
+    return await resolved.authFactory();
+  }
+  if (/^(gpt|o[134]|openai\/)/i.test(modelId)) {
+    return new OpenAIEnvAuth();
+  }
+  throw new Error(`no auth source wired for worker model ${modelId}`);
+}
+
+async function buildNativeWorkerEngine({
+  resolved,
+  agentId,
+  hardened,
+}: {
+  readonly resolved: ResolvedProvider;
+  readonly agentId: AgentId;
+  readonly hardened: boolean;
+}): Promise<AgentEngine> {
+  const providerModelId = resolved.modelId!;
+  const providerAuth = await buildWorkerProviderAuth(resolved, providerModelId);
+  const provider = await resolved.providerFactory!(providerAuth, providerModelId);
+  if (!hardened) {
+    return new NativeEngine({ provider, sessionId: agentId });
+  }
+  const retryPolicy: RetryPolicy = {
+    maxRetries: parseIntEnv("SWARM_HARNESS_RETRY_MAX_RETRIES", 3),
+    backoffBaseMs: parseIntEnv("SWARM_HARNESS_RETRY_BACKOFF_BASE_MS", 100),
+  };
+  return new HardenedNativeEngine({
+    provider,
+    sessionId: agentId,
+    retryPolicy,
+    eagerToolDispatch: process.env.SWARM_HARNESS_EAGER_TOOL_DISPATCH === "1",
+    midTurnCompaction: process.env.SWARM_HARNESS_MID_TURN_COMPACTION === "1",
+  });
 }
 
 /**
@@ -54,8 +111,9 @@ function parseIntEnv(key: string, fallback: number): number {
 export function composeSystemPrompt(
   basePrompt: string | undefined,
   roleSuffix: string | undefined,
+  toolWarmup?: string,
 ): string {
-  return [basePrompt ?? "", roleSuffix ?? ""]
+  return [basePrompt ?? "", toolWarmup ?? "", roleSuffix ?? ""]
     .filter((s) => s.length > 0)
     .join("\n\n");
 }
@@ -70,6 +128,9 @@ interface TurnContext {
   readonly host: WorkerHost;
   readonly transport: ParentTransport;
   readonly engine: AgentEngine;
+  /** Resolved model id passed to the engine run config (e.g. a Bedrock inference-profile id).
+   *  Drives the actual model call — distinct from the value used for engine selection. */
+  readonly model: string;
   readonly auth: AnthropicEnvAuth;
   readonly dispatcher: ToolDispatcher;
   readonly permissionMode: PermissionMode;
@@ -95,7 +156,10 @@ export function buildWorkerCanUseTool(deps: {
   return async (toolName, input) => {
     const tool = deps.dispatcher.get(toolName);
     if (tool === undefined) {
-      return { allow: false, reason: `unknown tool: ${toolName}` };
+      return {
+        allow: false,
+        reason: formatUnknownToolFeedback(toolName, deps.dispatcher.list()),
+      };
     }
     const decision = deps.permissionEngine.check(tool.spec);
     if (decision.allow || deps.escalate === undefined) {
@@ -123,12 +187,13 @@ async function executeTurn(
   task: TaskPacket,
 ): Promise<AgentResult> {
   const { agentId, transport, engine, auth, dispatcher, permissionMode,
-    permissionEngine, roleSuffix, resolvedAllowedTools, parentToolUseId } = ctx;
+    permissionEngine, roleSuffix, resolvedAllowedTools, parentToolUseId, model } = ctx;
 
   const startedAt = Date.now();
   let finalText = "";
   let errMsg: string | undefined;
   let usage: Usage | undefined;
+  let recorder: SessionRecorder | null = null;
 
   try {
     // Build the tool list the engine sees. When an allowlist is in effect,
@@ -153,7 +218,11 @@ async function executeTurn(
     const basePrompt = useNativePrompt
       ? buildSystemPrompt({ cwd: process.cwd(), extensions: envBasePrompt ?? undefined })
       : (envBasePrompt ?? "");
-    const systemPrompt = composeSystemPrompt(basePrompt, roleSuffix);
+    const toolWarmup =
+      process.env.SWARM_HARNESS_TOOL_USE_WARMUP === "1"
+        ? buildToolUseWarmupPrompt(allTools.map((t) => t.spec))
+        : undefined;
+    const systemPrompt = composeSystemPrompt(basePrompt, roleSuffix, toolWarmup);
 
     // Long-lived workers resume the prior turn's session so conversation
     // context carries across run_more (the engine tracks its latest session id).
@@ -167,12 +236,24 @@ async function executeTurn(
       priorSessionId = readSessionSidecar(sidecarPath);
     }
 
+    // Surface memory (minimem + skills) into this turn via the shared seam.
+    const enriched = await enrichTurnInputs(systemPrompt, task.prompt, {
+      query: task.prompt,
+      agentId,
+      ...(priorSessionId !== undefined && { sessionId: priorSessionId }),
+    });
+
     const runConfig = {
-      systemPrompt,
-      prompt: task.prompt,
-      model: "claude-sonnet-4-6",
+      systemPrompt: enriched.systemPrompt,
+      prompt: enriched.prompt,
+      model,
       auth,
       tools: allTools,
+      dispatcher,
+      // Native engines dispatch tools through the dispatcher directly, bypassing
+      // the host-injecting tool wrappers above. Thread the host so Tier 2 TEAM
+      // tools (agent/send_message/check_inbox/task_list) receive ctx.host.
+      host: ctx.host,
       permissionMode,
       ...(priorSessionId !== undefined && {
         resumeFrom: {
@@ -195,6 +276,14 @@ async function executeTurn(
       }),
     };
 
+    // Layer 0: record this worker's session transcript (opt-in, best-effort) so
+    // sessionlog's swarm-harness adapter + cognitive-core can distill it.
+    recorder = await startSessionRecorder({
+      sessionId: priorSessionId ?? agentId,
+      agentId,
+      prompt: task.prompt,
+    });
+
     for await (const evt of engine.run(runConfig)) {
       if (evt.type === "text_delta") {
         finalText += evt.text;
@@ -209,13 +298,15 @@ async function executeTurn(
       // dropped (they were never usefully consumed).
       const laneType = normalizedEventToLaneType(evt.type);
       if (laneType !== undefined) {
-        await transport.notify("lane_event", {
+        const laneEvent = {
           ts: Date.now(),
           agentId,
           type: laneType,
           payload: evt,
           ...(parentToolUseId !== undefined && { parentToolUseId }),
-        });
+        };
+        recorder?.record(laneEvent);
+        await transport.notify("lane_event", laneEvent);
       }
     }
     // B1.4: persist this turn's engine session id so a fresh process can resume
@@ -226,6 +317,26 @@ async function executeTurn(
     }
   } catch (err) {
     errMsg = err instanceof Error ? err.message : String(err);
+  } finally {
+    if (recorder !== null) {
+      await recorder.close();
+      // Layer 1: signal the host→MAP bridge to report this session's trajectory
+      // (sessionId links to the recorded sessionlog session). Best-effort.
+      try {
+        await transport.notify("lane_event", {
+          ts: Date.now(),
+          agentId,
+          type: "trajectory_checkpoint",
+          payload: {
+            sessionId: recorder.sessionId,
+            label: task.prompt.slice(0, 200),
+            transcriptPath: recorder.transcriptPath,
+          },
+        });
+      } catch {
+        // trajectory reporting must never fail the turn
+      }
+    }
   }
 
   const wallClockMs = Date.now() - startedAt;
@@ -348,12 +459,17 @@ export async function runWorkerEntry(): Promise<number> {
   for (const tool of [...buildTier0Tools(), ...buildTier2Tools()]) {
     dispatcher.register(tool);
   }
+
   const permissionEngine = new PermissionEngine(permissionMode);
   const auth = new AnthropicEnvAuth();
 
-  // Engine selection: read SWARM_HARNESS_FRAMEWORK env var (default: "auto").
+  // Engine selection: read SWARM_HARNESS_MODEL and SWARM_HARNESS_FRAMEWORK.
+  // Defaults preserve the historical Claude worker path, while per-task or
+  // per-member models can route through native OpenAI-compatible transports.
   const frameworkEnv = (process.env.SWARM_HARNESS_FRAMEWORK ?? "auto") as FrameworkChoice;
-  const workerModel = "claude-sonnet-4-6";
+  const workerModel = await resolveWorkerModel(
+    process.env.SWARM_HARNESS_MODEL ?? initialTask.model ?? DEFAULT_WORKER_MODEL,
+  );
 
   let engine: AgentEngine;
   if (process.env.SWARM_HARNESS_TEST_SCRIPT) {
@@ -374,18 +490,10 @@ export async function runWorkerEntry(): Promise<number> {
   } else if (frameworkEnv === "hardened-native") {
     const resolved = resolveProvider(workerModel);
     if (resolved.kind === "native") {
-      const nativeAuth = new OpenAIEnvAuth();
-      const provider = await resolved.providerFactory!(nativeAuth, resolved.modelId!);
-      const retryPolicy: RetryPolicy = {
-        maxRetries: parseIntEnv("SWARM_HARNESS_RETRY_MAX_RETRIES", 3),
-        backoffBaseMs: parseIntEnv("SWARM_HARNESS_RETRY_BACKOFF_BASE_MS", 100),
-      };
-      engine = new HardenedNativeEngine({
-        provider,
-        sessionId: agentId,
-        retryPolicy,
-        eagerToolDispatch: process.env.SWARM_HARNESS_EAGER_TOOL_DISPATCH === "1",
-        midTurnCompaction: process.env.SWARM_HARNESS_MID_TURN_COMPACTION === "1",
+      engine = await buildNativeWorkerEngine({
+        resolved,
+        agentId,
+        hardened: true,
       });
     } else {
       engine = new ClaudeAgentSdkEngine();
@@ -393,15 +501,29 @@ export async function runWorkerEntry(): Promise<number> {
   } else if (frameworkEnv === "native") {
     const resolved = resolveProvider(workerModel);
     if (resolved.kind === "native") {
-      const nativeAuth = new OpenAIEnvAuth();
-      const provider = await resolved.providerFactory!(nativeAuth, resolved.modelId!);
-      engine = new NativeEngine({ provider, sessionId: agentId });
+      engine = await buildNativeWorkerEngine({
+        resolved,
+        agentId,
+        hardened: false,
+      });
     } else {
       engine = new ClaudeAgentSdkEngine();
     }
   } else {
-    // auto — default to ClaudeAgentSdkEngine (worker model is always claude).
-    engine = new ClaudeAgentSdkEngine();
+    // auto — route Claude through the SDK and non-Claude models through the
+    // native transport provider resolved from their model prefix.
+    const resolved = resolveProvider(workerModel);
+    if (resolved.kind === "sdk") {
+      engine = resolved.engineFactory!();
+    } else if (resolved.kind === "native") {
+      engine = await buildNativeWorkerEngine({
+        resolved,
+        agentId,
+        hardened: false,
+      });
+    } else {
+      throw new Error(resolved.message);
+    }
   }
 
   const ctx: TurnContext = {
@@ -409,6 +531,7 @@ export async function runWorkerEntry(): Promise<number> {
     host,
     transport,
     engine,
+    model: workerModel,
     auth,
     dispatcher,
     permissionMode,

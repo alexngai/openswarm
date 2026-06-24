@@ -357,6 +357,8 @@ export type AgentResult =
 export interface TaskPacket {
   readonly id: string;
   readonly prompt: string;
+  /** Optional model id or alias for this task's worker. */
+  readonly model?: string;
   readonly branchPolicy: BranchPolicy;
   readonly commitPolicy: CommitPolicy;
   readonly escalationPolicy: EscalationPolicy;

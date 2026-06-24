@@ -67,9 +67,11 @@ describe("ToolDispatcher", () => {
 
   it("dispatch returns error for unknown tool", async () => {
     const dispatcher = new ToolDispatcher();
+    dispatcher.register(makeTool("bash"));
     const result = await dispatcher.dispatch("unknown", { x: "hello" }, ctx);
     expect(result.status).toBe("error");
-    expect((result as { status: "error"; message: string }).message).toContain("unknown tool: unknown");
+    expect((result as { status: "error"; message: string }).message).toContain("invalid_tool_name");
+    expect((result as { status: "error"; message: string }).message).toContain("Available tools: `bash`");
   });
 
   it("dispatch validates input via zodSchema and returns error on bad input", async () => {
@@ -78,7 +80,31 @@ describe("ToolDispatcher", () => {
     // Pass a number instead of string for x
     const result = await dispatcher.dispatch("validated-tool", { x: 42 }, ctx);
     expect(result.status).toBe("error");
-    expect((result as { status: "error"; message: string }).message).toBeTruthy();
+    const message = (result as { status: "error"; message: string }).message;
+    expect(message).toContain("invalid_tool_arguments");
+    expect(message).toContain("Required keys: `x`");
+    expect(message).toContain("Received:");
+  });
+
+  it("dispatch gives bash-specific correction for cmd alias arguments", async () => {
+    const dispatcher = new ToolDispatcher();
+    dispatcher.register({
+      ...makeTool("bash"),
+      zodSchema: z.object({ command: z.string() }),
+      spec: {
+        ...makeTool("bash").spec,
+        inputSchema: {
+          type: "object",
+          properties: { command: { type: "string" } },
+          required: ["command"],
+        },
+      },
+    });
+    const result = await dispatcher.dispatch("bash", { cmd: "pytest" }, ctx);
+    expect(result.status).toBe("error");
+    expect((result as { status: "error"; message: string }).message).toContain(
+      'Use {"command":"..."} rather than {"cmd":"..."}',
+    );
   });
 
   it("dispatch passes ctx to execute", async () => {
@@ -502,13 +528,13 @@ describe("ToolDispatcher — allowedTools allowlist (M3a Phase 6)", () => {
     expect(dispatcher.get("write_file")).toBeUndefined();
   });
 
-  it("dispatch on a filtered-out tool returns 'unknown tool' error (model never sees bash)", async () => {
+  it("dispatch on a filtered-out tool returns explicit correction feedback", async () => {
     const dispatcher = new ToolDispatcher({
       allowedTools: ["read_file"],
     });
     dispatcher.register(makeTool("read_file"));
     dispatcher.register(makeTool("bash"));
-    // bash was filtered at registration — dispatch returns "unknown tool".
+    // bash was filtered at registration — dispatch returns structured feedback.
     const bashResult = await dispatcher.dispatch(
       "bash",
       { x: "echo hi" },
@@ -517,7 +543,10 @@ describe("ToolDispatcher — allowedTools allowlist (M3a Phase 6)", () => {
     expect(bashResult.status).toBe("error");
     expect(
       (bashResult as { status: "error"; message: string }).message,
-    ).toContain("unknown tool: bash");
+    ).toContain("invalid_tool_name");
+    expect(
+      (bashResult as { status: "error"; message: string }).message,
+    ).toContain("Available tools: `read_file`");
     // read_file is in the allowlist — dispatch succeeds.
     const good = await dispatcher.dispatch("read_file", { x: "f.txt" }, ctx);
     expect(good.status).toBe("ok");

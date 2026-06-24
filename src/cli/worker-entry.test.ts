@@ -40,6 +40,16 @@ describe("composeSystemPrompt (M1 regression)", () => {
     // Joined with a blank-line separator.
     expect(combined).toBe(`${base}\n\n${suffix}`);
   });
+
+  it("inserts tool warmup before the role suffix", () => {
+    const combined = composeSystemPrompt(
+      "Base directives.",
+      "Role overlay.",
+      "Tool warmup.",
+    );
+
+    expect(combined).toBe("Base directives.\n\nTool warmup.\n\nRole overlay.");
+  });
 });
 
 // ---------------------------------------------------------------------------

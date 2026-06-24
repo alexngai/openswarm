@@ -40,6 +40,7 @@ import { makeAcpTranslator } from "./translator.js";
 import { AcpPermissionBridge } from "./permission.js";
 import { promptToText } from "./content.js";
 import { historyChunks } from "./history.js";
+import { enrichTurnInputs } from "../memory/index.js";
 
 interface AcpSession {
   readonly engine: AgentEngine;
@@ -143,8 +144,19 @@ export class AcpAgent implements Agent {
     };
     session.resumeFrom = undefined;
 
+    // Surface memory (minimem + skills) into this ACP turn via the shared seam.
+    const enriched = await enrichTurnInputs(config.systemPrompt, config.prompt, {
+      query: config.prompt,
+      sessionId: req.sessionId,
+    });
+    const runConfig: RunConfig = {
+      ...config,
+      systemPrompt: enriched.systemPrompt,
+      prompt: enriched.prompt,
+    };
+
     try {
-      for await (const ev of session.engine.run(config)) {
+      for await (const ev of session.engine.run(runConfig)) {
         await translator.emit(ev);
       }
     } catch (err) {

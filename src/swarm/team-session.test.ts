@@ -154,6 +154,42 @@ describe("TeamSession", () => {
     expect(seen[0]!.cwd).toBe("/work/project");
   });
 
+  it("spawnMember threads spec.model through to the spawner", async () => {
+    const host = new StandaloneHost({ maxDepth: 5 });
+    const seen: SpawnWorkerArgs[] = [];
+    (host as unknown as { spawnFn: (a: SpawnWorkerArgs) => unknown }).spawnFn = (
+      args: SpawnWorkerArgs,
+    ) => {
+      seen.push(args);
+      const pair = fakeProcPair();
+      setImmediate(() => {
+        pair.emitFromWorker({ kind: "notification", method: "worker_ready", params: {} });
+        setImmediate(() => {
+          pair.emitFromWorker({
+            kind: "notification",
+            method: "task_result",
+            params: { status: "success", output: "done", usage: { inputTokens: 0, outputTokens: 0 }, wallClockMs: 0 },
+          });
+        });
+      });
+      return pair.child;
+    };
+    const team = new TeamSession({
+      name: "alpha",
+      host,
+      permissionMode: "workspace-write",
+    });
+
+    await team.spawnMember({
+      role: "executor",
+      prompt: "go",
+      model: "litellm/qwen3.6-35b-a3b",
+    });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.model).toBe("litellm/qwen3.6-35b-a3b");
+  });
+
+
   it("spawnAll spawns members in parallel; roles aggregate correctly", async () => {
     const host = new StandaloneHost({ maxDepth: 5 });
     installAutoSpawn(host);

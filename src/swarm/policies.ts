@@ -64,6 +64,7 @@ export const EscalationPolicySchema = z.discriminatedUnion("kind", [
 export const TaskPacketSchema = z.object({
   id: z.string(),
   prompt: z.string(),
+  model: z.string().optional(),
   branchPolicy: BranchPolicySchema,
   commitPolicy: CommitPolicySchema,
   escalationPolicy: EscalationPolicySchema,

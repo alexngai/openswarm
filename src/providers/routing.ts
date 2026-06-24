@@ -16,7 +16,7 @@ import type { ResolvedProvider, Provider } from "./index.js";
 import { ClaudeAgentSdkEngine } from "../engine/claude-agent-sdk.js";
 import { OpenAICompatApiKeyAuth } from "../auth/openai-compat-api-key.js";
 
-const KNOWN_PREFIXES = "claude*, gpt*, o1*, o3*, o4*, grok*, gemini-*, qwen*, kimi*, litellm/*, gateway/*, bedrock/*, azure/*";
+const KNOWN_PREFIXES = "claude*, gpt*, o1*, o3*, o4*, grok*, gemini-*, qwen*, kimi*, litellm/*, gateway/*, bedrock/*, azure/*, azureoai/*";
 
 export function resolveProvider(modelId: string): ResolvedProvider {
   // litellm/ | gateway/ | bedrock/ | azure/ → the LiteLLM gateway (OpenAI-compat). One endpoint, the
@@ -36,8 +36,28 @@ export function resolveProvider(modelId: string): ResolvedProvider {
     };
   }
 
-  // claude* → SDK engine
-  if (/^claude/i.test(modelId)) {
+  // azureoai/<deployment> → Azure OpenAI DIRECT (no gateway). Distinct from the azure/ prefix above
+  // (which routes to the LiteLLM gateway). The stripped value is the Azure deployment name (e.g.
+  // gpt-4.1). Auth is the Azure resource api-key (AZURE_OPENAI_API_KEY), sent as the api-key header.
+  const azureOai = /^azureoai\/(.+)$/i.exec(modelId);
+  if (azureOai) {
+    const deployment = azureOai[1]!;
+    return {
+      kind: "native",
+      providerFactory: async (auth: AuthSource, _id: string): Promise<Provider> => {
+        const { AzureTransportProvider } = await import("./azure-transport.js");
+        return await AzureTransportProvider.create(auth, deployment);
+      },
+      authFactory: () => new OpenAICompatApiKeyAuth("AZURE_OPENAI_API_KEY", "azure"),
+      modelId: deployment,
+    };
+  }
+
+  // claude* (direct) OR an Amazon Bedrock / Vertex Anthropic inference-profile id (e.g.
+  // us.anthropic.claude-sonnet-4-5-20250929-v1:0) → Claude Agent SDK, which talks to Bedrock/Vertex
+  // itself via CLAUDE_CODE_USE_BEDROCK / CLAUDE_CODE_USE_VERTEX. The `bedrock/` | `gateway/` | `litellm/`
+  // prefixes are matched above (LiteLLM gateway) and take precedence.
+  if (/^claude/i.test(modelId) || /anthropic\.claude/i.test(modelId)) {
     return {
       kind: "sdk",
       engineFactory: () => new ClaudeAgentSdkEngine(),

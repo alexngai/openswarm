@@ -141,6 +141,8 @@ swarm-harness swarm run tasks.jsonl --concurrency 5 --output out.jsonl
 ```
 
 Fans out tasks across a worker pool with role overlays, retry policies, dead-letter handling, and lane-event telemetry.
+Pass `--model <id>` to set the default worker model for tasks that do not
+specify their own `model` field. Task-level `model` wins over the CLI default.
 
 ### Team orchestration
 
@@ -172,6 +174,10 @@ swarm-harness topology peer-team --spec ./team.yaml \
   --agent-inbox \          # persistent threaded messaging
   --map ws://localhost:8080  # forward events to MAP observer
 ```
+
+Pass `--model <id>` to set the default model for members that do not specify
+their own `model`. A member-level `model` in the TeamSpec wins over the CLI
+default.
 
 **Example TeamSpec** (`team.yaml`):
 
