@@ -32,7 +32,7 @@ import {
   type SweInstance,
   type Arm,
 } from "swarmkit-eval";
-import { H1_ARMS } from "../harness/swarm-modes.js";
+import { SwarmCoordinatorAdapter } from "../harness/swarm-coordinator-adapter.js";
 import { sandboxInstallLocalHarness, LOCAL_HARNESS_TARBALL, LOCAL_SKILLTREE_TARBALL } from "../harness/local.js";
 
 /** One Claude model, held constant — H1 isolates topology, not model diversity (that's H2).
@@ -98,7 +98,7 @@ export async function runH1(): Promise<void> {
   if (instances.length === 0) {
     throw new Error(`runH1: no instances in ${INSTANCES_DIR} — run eval/scripts/prep-swe-subset.sh`);
   }
-  const arms = process.env.H1_ARM ? H1_ARMS.filter((a) => a.id === process.env.H1_ARM) : H1_ARMS;
+  const armIds = process.env.H1_ARM ? [process.env.H1_ARM] : ["single", "team"];
   const seeds = process.env.H1_SEEDS ? process.env.H1_SEEDS.split(",").map((s) => Number(s.trim())) : H1_SEEDS;
 
   // Build per-instance templates ONCE (shared by both arms), server-side — NO local Docker pull.
@@ -141,13 +141,34 @@ export async function runH1(): Promise<void> {
     e2b: { apiKey, user: "root", root: "/testbed", timeoutMs: 1_800_000 },
   });
   const store = new LocalResultStore(".eval-runs");
-  const config = h1Config(arms, seeds);
 
-  const results = await runEval(config, { benchmark, adapter: harness.adapter, backend, store });
+  // `single` = one swarm-harness agent (generic CLI adapter). `team` = a real coordinator team
+  // (architect + executor + reviewer via `topology coordinator`, the SwarmCoordinatorAdapter). Different
+  // adapters → separate runEval passes over the SAME templates/benchmark/backend; buildReport's paired
+  // row is the H1 single-vs-team verdict.
+  const SINGLE: Arm = { id: "single", label: "single-agent", scaffold: {} };
+  const TEAM: Arm = { id: "team", label: "homogeneous team", scaffold: {} };
+  const allResults: Awaited<ReturnType<typeof runEval>> = [];
 
-  // `single` is the baseline; the report's "Comparisons (paired vs baseline)" row IS the H1 verdict.
-  console.log(renderMarkdownReport(buildReport(results, config, { baselineArmId: "single" })));
-  console.error(`[h1] ${results.length} cells over ${instances.length} instances × ${arms.length} arms × ${seeds.length} seeds.`);
+  if (armIds.includes("single")) {
+    allResults.push(
+      ...(await runEval(h1Config([SINGLE], seeds), { benchmark, adapter: harness.adapter, backend, store })),
+    );
+  }
+  if (armIds.includes("team")) {
+    const teamAdapter = new SwarmCoordinatorAdapter({
+      env: bedrockEnv(),
+      defaultModel: H1_MODEL,
+      timeoutMs: 1_500_000, // 25 min — a 3-agent team is slower; still < the 30-min sandbox lifetime
+    });
+    allResults.push(
+      ...(await runEval(h1Config([TEAM], seeds), { benchmark, adapter: teamAdapter, backend, store })),
+    );
+  }
+
+  const reportCfg = h1Config([SINGLE, TEAM], seeds);
+  console.log(renderMarkdownReport(buildReport(allResults, reportCfg, { baselineArmId: "single" })));
+  console.error(`[h1] ${allResults.length} cells over ${instances.length} instances × ${armIds.length} arm(s) × ${seeds.length} seed(s).`);
 }
 
 if (process.env.RUN_H1) {
