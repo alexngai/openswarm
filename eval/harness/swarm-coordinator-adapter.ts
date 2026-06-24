@@ -63,10 +63,9 @@ export class SwarmCoordinatorAdapter implements ExecutionAdapter {
       ],
       coordination: { completion: { kind: "all" } },
     };
-    // NOTE: swarm-harness's coordinator long-lived-worker path currently ignores the configured model
-    // (member.model / --model / SWARM_HARNESS_MODEL / user aliases) and falls back to its default model
-    // name, which is invalid on Bedrock — so this adapter can't run until that propagation is fixed in
-    // swarm-harness. See docs/45 / the team-arm investigation.
+    // Requires swarm-harness with the worker model-propagation fix (commit 4d0aae1): spawned coordinator
+    // workers now use the configured model (the Bedrock id). Before that fix they hardcoded the default
+    // model in the RunConfig, which 400s as invalid on Bedrock.
     await ws.writeFiles([{ path: `${dir}/team.json`, content: JSON.stringify(spec, null, 2) }]);
 
     const cmd =
