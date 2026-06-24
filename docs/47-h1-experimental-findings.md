@@ -64,20 +64,25 @@ All committed with tests — genuine swarm-harness value:
 
 The design's bet: the value of "multi-agent" is **ensemble variance + selection**, not within-task coordination. Test: best-of-N single (N independent single-agent attempts, union them) vs a team (~N agents coordinated), at equal compute. GPT-5.5, hard 9:
 
-| | resolve | solved |
-|---|--:|---|
-| single (per-seed mean over 3 seeds) | ~1.3/9 | — |
-| **best-of-3 single (union)** | **2/9** | xarray-3993 (all seeds) + sklearn-25102 (seed 2 only) |
-| team (~3 agents, 1 seed) | 1/9 | xarray-3993 |
+| | resolve |
+|---|--:|
+| single per-seed (mean of 5) | ~1.4/9 |
+| best-of-1 | 1/9 |
+| best-of-3 | 2/9 |
+| **best-of-5** | **2/9 (plateau)** |
+| team (~3 agents, 1 seed) | 1/9 |
 
-- **Variance is real and exploitable** — seed 2 solved sklearn-25102 that seeds 1+3 missed; the union captures it.
-- **At equal compute (3 independent attempts ≈ a 3-agent team), the ensemble wins: 2/9 > 1/9.** The coordinated team only ever reached the robustly-solvable instance; best-of-3 single got that *plus* one more via variance.
-- Directionally confirms the §4 reframe: spend the multi-agent budget on **diverse independent attempts + select**, not on one coordinated team. **Caveat:** N=9, 2-vs-1 edge is underpowered; team is single-seed (equal-*budget*, not a best-of-3 *team*); only 2/9 instances are solvable at all here.
+The union **plateaus at 2/9** (no growth N=3→5). Instances tier cleanly: **xarray-3993** solved by all 5 seeds (always-reachable); **sklearn-25102** by seeds 2+5 only (~40% — *stochastically* reachable, the ensemble recovers it); the other **7 by zero attempts** (beyond this config's capability).
+
+- **Ensemble beats the coordinated team at equal compute (2/9 > 1/9)** — the design's §4 reframe holds: spend the multi-agent budget on **diverse independent attempts + select**, not coordination.
+- **But the gain is bounded and small.** Best-of-N only recovers the *stochastically-solvable* slice; it cannot manufacture capability for genuinely-hard instances. Here that slice is one instance, exhausted by N=3. **Ensemble-select's payoff scales with how much failure is variance (recoverable) vs capability (not) — and on hard SWE most failure is capability.**
+- **Caveat:** N=9; 2-vs-1 edge is underpowered; team is single-seed (equal-*budget*, not a best-of-3 *team*).
 
 ## Open questions / next
 
-- **Strengthen the ensemble result:** best-of-5 single (does the union keep growing with N — the sharp prediction?); a best-of-3 *team* for a fuller pass@k; cross-family on Sonnet.
-- **Diverse-config ensemble:** union of single + functioning team + functioning hetero (the original disjoint-coverage signal, now on host-fixed data).
+- **Mixed-difficulty set (highest value):** the hard set's 3-way tier (1 always / 1 stochastic / 7 impossible) gives almost no headroom — the ensemble gain is capped at 1 instance. A ~40–60%-single set would have a far larger *stochastic* slice, where ensemble-vs-coordination should separate cleanly (and with more power than N=9).
+- **Diverse-config ensemble:** union of single + functioning team + functioning hetero (the original disjoint-coverage signal, now on host-fixed data) — does config diversity beat seed diversity?
+- **Best-of-N team / cross-family:** a best-of-3 *team* for a fuller pass@k; replicate the ensemble-vs-team comparison on Sonnet.
 - **Power:** multi-seed per arm to move below the current MDE ~0.3.
 - **Finish the corrected 3-way:** the `hetero` arm on GPT-5.5 was also spawn-broken — re-run for completeness.
 - **Token/cost axis:** the coordinator still surfaces no aggregate usage (spawn-tree usage isn't summed) — the cost side of the frontier is blank.
