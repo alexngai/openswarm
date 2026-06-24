@@ -1,0 +1,99 @@
+/**
+ * Session recorder — writes a worker's lane-event spine to a per-session
+ * `events.jsonl` transcript that sessionlog's `swarm-harness` agent adapter can
+ * read (and cognitive-core can later distill).
+ *
+ * Layout matches the adapter: `<sessionsDir>/<sessionId>/events.jsonl`, where
+ * `sessionsDir` is `SWARM_HARNESS_SESSION_DIR` or `<cwd>/.swarm/swarm-harness/sessions`.
+ *
+ * Opt-in + best-effort: recording only happens when enabled (a session dir or
+ * the record flag is set), and every operation swallows errors so it can never
+ * block or crash a worker. This is Layer 0 part A (the transcript); driving
+ * sessionlog checkpoints from it is part B.
+ */
+
+import * as fs from "node:fs";
+import * as path from "node:path";
+import type { LaneEvent } from "./events.js";
+
+/** Recording is opt-in: a session dir or the explicit flag turns it on. */
+export function recordingEnabled(): boolean {
+  return (
+    process.env.SWARM_HARNESS_RECORD_SESSIONS === "1" ||
+    (process.env.SWARM_HARNESS_SESSION_DIR ?? "").length > 0
+  );
+}
+
+export function resolveSessionsDir(cwd: string): string {
+  const override = process.env.SWARM_HARNESS_SESSION_DIR;
+  if (override && override.length > 0) return override;
+  return path.join(cwd, ".swarm", "swarm-harness", "sessions");
+}
+
+export interface SessionRecorder {
+  /** Append a lane event to the transcript (best-effort). */
+  record(event: LaneEvent): void;
+  /** Flush and close the transcript. */
+  close(): Promise<void>;
+  /** Absolute path of the events.jsonl transcript. */
+  readonly transcriptPath: string;
+}
+
+export interface SessionRecorderOptions {
+  readonly sessionId: string;
+  readonly agentId: string;
+  /** The task prompt — recorded as the first `turn_start` so it is distillable. */
+  readonly prompt: string;
+  readonly cwd?: string;
+}
+
+/**
+ * Begin recording a session transcript. Returns `null` when recording is
+ * disabled or cannot be set up — callers use `recorder?.record(...)`.
+ */
+export function startSessionRecorder(
+  opts: SessionRecorderOptions,
+): SessionRecorder | null {
+  if (!recordingEnabled()) return null;
+  try {
+    const cwd = opts.cwd ?? process.cwd();
+    const dir = path.join(resolveSessionsDir(cwd), opts.sessionId);
+    fs.mkdirSync(dir, { recursive: true });
+    const transcriptPath = path.join(dir, "events.jsonl");
+    const stream = fs.createWriteStream(transcriptPath, { flags: "w" });
+
+    const writeLine = (obj: unknown): void => {
+      try {
+        stream.write(JSON.stringify(obj) + "\n");
+      } catch {
+        // transcript write failed — drop silently, never block the worker
+      }
+    };
+
+    // Record the task prompt as turn_start so the adapter's extractPrompts works.
+    writeLine({
+      ts: Date.now(),
+      agentId: opts.agentId,
+      type: "turn_start",
+      payload: { prompt: opts.prompt },
+    });
+
+    return {
+      transcriptPath,
+      record(event: LaneEvent): void {
+        writeLine(event);
+      },
+      close(): Promise<void> {
+        return new Promise((resolve) => {
+          try {
+            stream.end(() => resolve());
+          } catch {
+            resolve();
+          }
+        });
+      },
+    };
+  } catch {
+    return null;
+  }
+}

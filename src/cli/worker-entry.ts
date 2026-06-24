@@ -28,6 +28,7 @@ import {
   loadCustomRoles,
 } from "../swarm/roles.js";
 import { normalizedEventToLaneType } from "../swarm/events.js";
+import { startSessionRecorder, type SessionRecorder } from "../swarm/session-recorder.js";
 import type {
   AgentResult,
   TaskPacket,
@@ -189,6 +190,7 @@ async function executeTurn(
   let finalText = "";
   let errMsg: string | undefined;
   let usage: Usage | undefined;
+  let recorder: SessionRecorder | null = null;
 
   try {
     // Build the tool list the engine sees. When an allowlist is in effect,
@@ -267,6 +269,14 @@ async function executeTurn(
       }),
     };
 
+    // Layer 0: record this worker's session transcript (opt-in, best-effort) so
+    // sessionlog's swarm-harness adapter + cognitive-core can distill it.
+    recorder = startSessionRecorder({
+      sessionId: priorSessionId ?? agentId,
+      agentId,
+      prompt: task.prompt,
+    });
+
     for await (const evt of engine.run(runConfig)) {
       if (evt.type === "text_delta") {
         finalText += evt.text;
@@ -281,13 +291,15 @@ async function executeTurn(
       // dropped (they were never usefully consumed).
       const laneType = normalizedEventToLaneType(evt.type);
       if (laneType !== undefined) {
-        await transport.notify("lane_event", {
+        const laneEvent = {
           ts: Date.now(),
           agentId,
           type: laneType,
           payload: evt,
           ...(parentToolUseId !== undefined && { parentToolUseId }),
-        });
+        };
+        recorder?.record(laneEvent);
+        await transport.notify("lane_event", laneEvent);
       }
     }
     // B1.4: persist this turn's engine session id so a fresh process can resume
@@ -298,6 +310,8 @@ async function executeTurn(
     }
   } catch (err) {
     errMsg = err instanceof Error ? err.message : String(err);
+  } finally {
+    await recorder?.close();
   }
 
   const wallClockMs = Date.now() - startedAt;
