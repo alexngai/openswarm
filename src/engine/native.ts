@@ -386,7 +386,10 @@ export class NativeEngine implements AgentEngine {
                 decision.updatedInput !== undefined
                   ? decision.updatedInput
                   : req.input,
-              ctx: { cwd: process.cwd() },
+              ctx: {
+                cwd: process.cwd(),
+                ...(config.host !== undefined ? { host: config.host } : {}),
+              },
             });
             allowedIds.push(req.id);
           }

@@ -298,6 +298,69 @@ describe("NativeEngine: one tool call", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 2a. Host threading — RunConfig.host reaches the dispatched ToolRequest.ctx
+//     (regression for Tier 2 TEAM tools failing with "requires SwarmHost"
+//     on non-Claude native engines — they bypass the SDK-path tool wrappers
+//     that inject ctx.host, so the host must come via RunConfig.host.)
+// ---------------------------------------------------------------------------
+
+describe("NativeEngine: host threading into tool ctx", () => {
+  function toolCallScripts(): readonly Script[] {
+    return [
+      [
+        { type: "tool-call", id: "t1", name: "agent", input: { task: "x" } },
+        { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
+      ],
+      [
+        { type: "text-delta", text: "done" },
+        { type: "finish", stopReason: "end_turn", usage: DEFAULT_USAGE },
+      ],
+    ];
+  }
+
+  it("passes RunConfig.host through to the dispatched ToolRequest.ctx.host", async () => {
+    const fakeHost = { __fake: "host" } as unknown as NonNullable<
+      RunConfig["host"]
+    >;
+    const provider = new MockProvider({ scripts: toolCallScripts() });
+    const dispatcher = new MockDispatcher();
+    const engine = new NativeEngine({ provider });
+
+    await collect(
+      engine.run(
+        baseConfig({
+          dispatcher: dispatcher as unknown as ToolDispatcher,
+          host: fakeHost,
+        }),
+      ),
+    );
+
+    expect(dispatcher.batchCalls).toHaveLength(1);
+    const req = dispatcher.batchCalls[0]![0]!;
+    expect(req.ctx.host).toBe(fakeHost);
+    expect(req.ctx.cwd).toBe(process.cwd());
+  });
+
+  it("omits ctx.host when RunConfig.host is unset (non-host tools unaffected)", async () => {
+    const provider = new MockProvider({ scripts: toolCallScripts() });
+    const dispatcher = new MockDispatcher();
+    const engine = new NativeEngine({ provider });
+
+    await collect(
+      engine.run(
+        baseConfig({ dispatcher: dispatcher as unknown as ToolDispatcher }),
+      ),
+    );
+
+    expect(dispatcher.batchCalls).toHaveLength(1);
+    const req = dispatcher.batchCalls[0]![0]!;
+    expect(req.ctx.host).toBeUndefined();
+    expect("host" in req.ctx).toBe(false);
+    expect(req.ctx.cwd).toBe(process.cwd());
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 2b. Reasoning continuity (#6.1)
 // ---------------------------------------------------------------------------
 

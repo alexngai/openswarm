@@ -250,6 +250,10 @@ async function executeTurn(
       auth,
       tools: allTools,
       dispatcher,
+      // Native engines dispatch tools through the dispatcher directly, bypassing
+      // the host-injecting tool wrappers above. Thread the host so Tier 2 TEAM
+      // tools (agent/send_message/check_inbox/task_list) receive ctx.host.
+      host: ctx.host,
       permissionMode,
       ...(priorSessionId !== undefined && {
         resumeFrom: {
