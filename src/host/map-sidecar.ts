@@ -16,6 +16,7 @@ import { AgentConnection } from "@multi-agent-protocol/sdk";
 import type { StandaloneHost } from "../swarm/standalone-host.js";
 import { bridgeHostToMap, type MapSink } from "./map-bridge.js";
 import { registerCascadeActions, type CascadeRouter } from "./cascade-actions.js";
+import { resolveTrajectoryContent } from "./trajectory-content-provider.js";
 
 export interface MapSidecarOptions {
   readonly host: StandaloneHost;
@@ -76,8 +77,8 @@ export async function createMapSidecar(
       lifecycle: { canObserve: true },
       // We drive cascade actions on real git (P8) — advertise canAct.
       cascade: { canAct: true, emitsConflicts: true },
-      // Layer 1: we report worker session trajectories to the hub.
-      trajectory: { canReport: true },
+      // Layer 1/2: report worker session trajectories + serve their content.
+      trajectory: { canReport: true, canServeContent: true },
     },
     metadata: {
       type: "swarm-harness-sidecar",
@@ -226,6 +227,20 @@ export async function createMapSidecar(
       void sink.emitEvent({ type: e.type, data: e.data });
     },
     log,
+  });
+
+  // Layer 2: serve trajectory content when the hub requests it for a checkpoint
+  // we reported. The checkpointId is the worker session id (Layer 1), so the
+  // recorded events.jsonl resolves directly. Best-effort.
+  conn.onNotification("trajectory/content.request", (params) => {
+    const p = (params ?? {}) as { checkpointId?: string; requestId?: string };
+    if (typeof p.checkpointId !== "string") return;
+    const content = resolveTrajectoryContent(p.checkpointId);
+    void conn.sendNotification?.("trajectory/content.response", {
+      ...(p.requestId !== undefined && { requestId: p.requestId }),
+      checkpointId: p.checkpointId,
+      content,
+    });
   });
 
   log(`[map-sidecar] connected to ${opts.server} as ${agentName} (scope ${opts.scope})`);

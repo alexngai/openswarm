@@ -100,8 +100,20 @@ adapters, and keeps swarm-coder's side thin (just lifecycle driving).
   `trajectory: { canReport: true }`. Tests in `map-bridge.test.ts` +
   `map-sidecar.test.ts`. (Only the outbound/hosted-swarm path emits; standalone
   single runs have no sidecar.)
-- **Layer 2** — trajectory content provider over the sessionlog transcript (mirror
-  `content-provider.mjs`).
+- **Layer 2 — DONE.** When the hub requests content for a checkpoint we
+  reported, the sidecar serves it. `trajectory-content-provider.ts`
+  resolves the worker session's `events.jsonl` (checkpointId = sessionId) into
+  the inline content result `{ checkpointId, streaming: false, artifacts:
+  { transcript, prompts, metadata, context } }`. `map-sidecar.ts` advertises
+  `trajectory: { canServeContent: true }` and answers `trajectory/content.request`
+  notifications with `sendNotification("trajectory/content.response", …)`.
+  Tests: `trajectory-content-provider.test.ts` + `map-sidecar.test.ts`.
+  (The hub-side forwarding/correlation follows MAP's content protocol; confirm
+  the exact request/response shape against openhive when that consumer lands.)
+
+**Trajectory ingest pipeline complete: record (0) → checkpoint (0b) → emit (1) →
+serve content (2).** Remaining ecosystem work is on the consumer side
+(openhive/cognitive-core requesting + distilling).
 
 ## Risks / open questions
 

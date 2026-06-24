@@ -3,6 +3,9 @@ import { createMapSidecar, type MapSidecar } from "./map-sidecar.js";
 import { createMapServer, type MapServer } from "./map-server.js";
 import { StandaloneHost } from "../swarm/standalone-host.js";
 import { EventEmitter } from "node:events";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 
 /** docs/44 Case 2 — outbound MAP sidecar (connect + register + cascade). */
 
@@ -15,16 +18,18 @@ function fakeConn() {
   const send = vi.fn(async () => ({}));
   const callExtension = vi.fn(async () => ({}));
   const disconnect = vi.fn(async () => ({}));
+  const sendNotification = vi.fn(async () => {});
   const conn = {
     spawn,
     send,
     callExtension,
     disconnect,
+    sendNotification,
     onNotification: vi.fn((method: string, h: (p: unknown) => void) => {
       notifications.set(method, h);
     }),
   };
-  return { conn, spawn, send, callExtension, disconnect, notifications };
+  return { conn, spawn, send, callExtension, disconnect, sendNotification, notifications };
 }
 
 describe("createMapSidecar", () => {
@@ -239,5 +244,49 @@ describe("createMapSidecar — trajectory reporting (Layer 1)", () => {
     expect(calls).toHaveLength(2);
     expect(calls[1]![1]).toEqual(expect.objectContaining({ resource_id: "r1" }));
     await sidecar!.close();
+  });
+});
+
+describe("createMapSidecar — content serving (Layer 2)", () => {
+  afterEach(() => {
+    delete process.env.SWARM_HARNESS_SESSION_DIR;
+  });
+
+  it("serves trajectory content on a content.request notification", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tcp-sc-"));
+    process.env.SWARM_HARNESS_SESSION_DIR = dir;
+    fs.mkdirSync(path.join(dir, "s1"), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "s1", "events.jsonl"),
+      JSON.stringify({ ts: 1, agentId: "a1", type: "turn_start", payload: { prompt: "hi" } }) + "\n",
+    );
+
+    const f = fakeConn();
+    const host = new StandaloneHost();
+    const sidecar = await createMapSidecar({
+      host,
+      server: "ws://hub",
+      scope: "swarm:test",
+      connect: async () => f.conn as never,
+      log: () => {},
+    });
+
+    const handler = f.notifications.get("trajectory/content.request");
+    expect(handler).toBeDefined();
+    handler!({ checkpointId: "s1", requestId: "r1" });
+    await tick();
+
+    expect(f.sendNotification).toHaveBeenCalledWith(
+      "trajectory/content.response",
+      expect.objectContaining({
+        requestId: "r1",
+        checkpointId: "s1",
+        content: expect.objectContaining({
+          artifacts: expect.objectContaining({ prompts: "hi" }),
+        }),
+      }),
+    );
+    await sidecar!.close();
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });
