@@ -348,6 +348,20 @@ Running the 14-mode MAST judge (Azure GPT-4.1, cross-family) over the rich GPT-5
 
 Holding outcome constant, only the teams show premature termination — a clean, non-outcome-conditioned signal that pinpoints the **coordinator's termination policy** (not message-passing) as the failure driver. Concretely: the homo team abandoned xarray-3993 in 39s, the instance single solved in 179s. **Design implication:** fix coordinator termination (require verified completion before the root declares done) before any team topology can match — let alone beat — a single agent.
 
+### 6b.3 The fix worked mechanically — but premature termination was a symptom, not the cause
+
+Implemented an opt-in `coordination.verifiedCompletion: { maxRounds: N }` gate (commit b2cc557): after the root declares done, the coordinator forces up to N verify-then-continue `runMore` rounds (root must run tests + confirm resolution, ending with a `TASK_VERIFIED_COMPLETE` sentinel) before the team terminates. Re-ran the GPT-5.5 homo team with `maxRounds=3` (A/B vs the non-verified baseline via a distinct configVersion).
+
+| GPT-5.5 homo team | resolve | latency p50 |
+|---|--:|--:|
+| baseline (no gate) | 0/9 | 65s |
+| **verified (maxRounds=3)** | **0/9** | **234s** |
+
+- **The gate fired and eliminated premature termination.** Latency jumped 65s → 234s (now *exceeding* single's 179s); verified traces are huge (661 KB, "verification" appears 22× in one). The team now grinds at single-agent-level effort instead of quitting at ~50s.
+- **Accuracy did not move (still 0/9).** Even xarray-3993 — which single solves in 179s — the verified team ran 114s (3× its 39s baseline) and *still failed*.
+
+**Refined conclusion:** premature termination was a *real* failure mode (now fixable), but **not the binding constraint**. Forced to work as hard as a single agent, the coordinator team is *still* less effective (0/9 vs single's 1/9) — the deficit is **structural coordination overhead** (an architect working the task through teammates, fragmenting a context that benefits from one coherent solver), not just early stopping. This is a deeper validation of the strong-single-baseline thesis: teams underperform single even at equal compute, so the §4 reframe stands — pursue ensemble-select over coordinated within-task teams. (Caveat: N=9/1-seed; the 0-vs-1 gap is underpowered. The robust claim is that fixing the obvious termination bug did **not** lift the team to match single. `verifiedCompletion` is retained as a genuine harness improvement regardless.)
+
 ---
 
 ## 7. Phased rollout
