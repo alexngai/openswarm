@@ -53,7 +53,8 @@ try {
     { user: "root" },
   );
   await run(sbx, "topology --help", `${SH} topology 2>&1 || true`);
-  await run(sbx, "coordinator run", `cd /testbed && ${SH} topology coordinator --spec /tmp/team.json --model ${MODEL} --permission-mode danger-full-access --headless --output-format json`);
+  await run(sbx, "coordinator run", `cd /testbed && ${SH} topology coordinator --spec /tmp/team.json --output /tmp/res.jsonl --model ${MODEL} --permission-mode danger-full-access --headless --output-format json`);
+  await run(sbx, "results file", `echo "--- /tmp/res.jsonl ---"; cat /tmp/res.jsonl 2>&1 | head -40; echo "--- cwd .sbx results? ---"; ls -la /testbed/.sbx 2>&1 | head`);
 } finally {
   await sbx.kill();
   console.error("[diag] killed");

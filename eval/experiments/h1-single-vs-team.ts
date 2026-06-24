@@ -83,6 +83,23 @@ function h1Config(arms: Arm[], seeds: number[]): EvalConfig {
   };
 }
 
+// Heterogeneous team: a lead architect that orchestrates specialized roles, including a DEDICATED
+// verification engineer (targets MAST FC3 "verification", ~21% of multi-agent failures). Same model as
+// single/homo — this isolates ROLE/PROMPT heterogeneity + verification capacity (model diversity is a
+// later ablation). Note: 4 agents vs homo's 3, so size is part of the treatment (size-matched ablation TBD).
+const HETERO_PREAMBLE =
+  "You are the technical lead of a specialist team resolving a software issue. Investigate first: " +
+  "reproduce the problem, locate its root cause in the codebase, and form a minimal, precise fix plan. " +
+  "Delegate implementation to the executor, verification to the resolver, and adversarial review to the " +
+  "reviewer. Integrate their work and resolve disagreements. Do NOT declare the task complete until the " +
+  "resolver confirms the fix passes the relevant tests with no regressions AND the reviewer has no " +
+  "unaddressed correctness concerns. The issue to resolve:";
+const HETERO_ROSTER = [
+  { role: "executor", prompt: "Senior implementation engineer: implement the MINIMAL, correct code change for the planned fix, following the repository's existing conventions. Do not refactor unrelated code or over-engineer. Report precisely what you changed and why." },
+  { role: "resolver", prompt: "Verification engineer: reproduce the reported bug, run the relevant existing tests, and verify the proposed fix resolves the issue with NO regressions. Add a focused test if coverage is missing. Report exact pass/fail evidence; if anything fails, name it and explain." },
+  { role: "reviewer", prompt: "Adversarial reviewer: hunt for correctness bugs, missed edge cases, and regressions in the change. Be skeptical and demand evidence the fix is complete and minimal. Approve only when you cannot find a defect." },
+];
+
 export async function runH1(): Promise<void> {
   const apiKey = process.env.E2B_API_KEY;
   if (!apiKey) {
@@ -101,7 +118,7 @@ export async function runH1(): Promise<void> {
   if (instances.length === 0) {
     throw new Error(`runH1: no instances in ${INSTANCES_DIR} — run eval/scripts/prep-swe-subset.sh`);
   }
-  const armIds = process.env.H1_ARM ? [process.env.H1_ARM] : ["single", "team"];
+  const armIds = process.env.H1_ARM ? [process.env.H1_ARM] : ["single", "team", "hetero"];
   const seeds = process.env.H1_SEEDS ? process.env.H1_SEEDS.split(",").map((s) => Number(s.trim())) : H1_SEEDS;
 
   // Build per-instance templates ONCE (shared by both arms), server-side — NO local Docker pull.
@@ -151,6 +168,7 @@ export async function runH1(): Promise<void> {
   // row is the H1 single-vs-team verdict.
   const SINGLE: Arm = { id: "single", label: "single-agent", scaffold: {} };
   const TEAM: Arm = { id: "team", label: "homogeneous team", scaffold: {} };
+  const HETERO: Arm = { id: "hetero", label: "heterogeneous team", scaffold: {} };
   const allResults: Awaited<ReturnType<typeof runEval>> = [];
 
   if (armIds.includes("single")) {
@@ -168,8 +186,21 @@ export async function runH1(): Promise<void> {
       ...(await runEval(h1Config([TEAM], seeds), { benchmark, adapter: teamAdapter, backend, store })),
     );
   }
+  if (armIds.includes("hetero")) {
+    const heteroAdapter = new SwarmCoordinatorAdapter({
+      env: bedrockEnv(),
+      defaultModel: H1_MODEL,
+      timeoutMs: TEAM_TIMEOUT_MS,
+      name: "h1-hetero",
+      roster: HETERO_ROSTER,
+      architectPreamble: HETERO_PREAMBLE,
+    });
+    allResults.push(
+      ...(await runEval(h1Config([HETERO], seeds), { benchmark, adapter: heteroAdapter, backend, store })),
+    );
+  }
 
-  const reportCfg = h1Config([SINGLE, TEAM], seeds);
+  const reportCfg = h1Config([SINGLE, TEAM, HETERO], seeds);
   console.log(renderMarkdownReport(buildReport(allResults, reportCfg, { baselineArmId: "single" })));
   console.error(`[h1] ${allResults.length} cells over ${instances.length} instances × ${armIds.length} arm(s) × ${seeds.length} seed(s).`);
 }

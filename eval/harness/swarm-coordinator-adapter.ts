@@ -30,9 +30,17 @@ export interface SwarmCoordinatorOptions {
   readonly timeoutMs?: number;
   /** Absolute path to the in-sandbox CLI (default: the installed `swarm-harness`). */
   readonly bin?: string;
+  /** Teammates the architect coordinates. Default = a generic executor + reviewer (the "homogeneous"
+   *  baseline). Pass a specialized roster (distinct roles/prompts, optionally per-member models) for a
+   *  HETEROGENEOUS team. */
+  readonly roster?: ReadonlyArray<{ role: string; prompt: string; model?: string }>;
+  /** Prepended to the task prompt for the architect root — lead/orchestration framing for hetero teams. */
+  readonly architectPreamble?: string;
+  /** Team name in the spec (cosmetic; disambiguates logs). Default "h1-team". */
+  readonly name?: string;
 }
 
-const TEAMMATES = [
+const TEAMMATES: ReadonlyArray<{ role: string; prompt: string; model?: string }> = [
   { role: "executor", prompt: "Implement the required code change in this repository to satisfy the task." },
   { role: "reviewer", prompt: "Review the implementer's change for correctness and regressions; flag fixes." },
 ];
@@ -53,13 +61,18 @@ export class SwarmCoordinatorAdapter implements ExecutionAdapter {
     const agentId = ctx.env?.AGENT_ID ?? "agent";
     const dir = `.sbx/${agentId.replace(/[^\w.-]/g, "_")}`;
 
-    // Coordinator TeamSpec: an architect root that spawns the two teammates; all on the same model.
+    // Coordinator TeamSpec: an architect root that spawns + coordinates the roster (default = the generic
+    // executor+reviewer "homogeneous" baseline; a specialized roster makes it heterogeneous).
+    const roster = this.opts.roster ?? TEAMMATES;
+    const architectPrompt = this.opts.architectPreamble
+      ? `${this.opts.architectPreamble}\n\n${cell.task.prompt}`
+      : cell.task.prompt;
     const spec = {
-      name: "h1-team",
+      name: this.opts.name ?? "h1-team",
       topology: "coordinator",
       members: [
-        { role: "architect", prompt: cell.task.prompt, longLived: true, model },
-        ...TEAMMATES.map((t) => ({ ...t, model })),
+        { role: "architect", prompt: architectPrompt, longLived: true, model },
+        ...roster.map((t) => ({ role: t.role, prompt: t.prompt, model: t.model ?? model })),
       ],
       coordination: { completion: { kind: "all" } },
     };
@@ -68,8 +81,9 @@ export class SwarmCoordinatorAdapter implements ExecutionAdapter {
     // model in the RunConfig, which 400s as invalid on Bedrock.
     await ws.writeFiles([{ path: `${dir}/team.json`, content: JSON.stringify(spec, null, 2) }]);
 
+    const resultsPath = `${dir}/results.jsonl`;
     const cmd =
-      `${bin} topology coordinator --spec ${dir}/team.json ` +
+      `${bin} topology coordinator --spec ${dir}/team.json --output ${resultsPath} ` +
       `--model ${shq(model)} --permission-mode ${permissionMode} --headless --output-format json`;
     const env: Record<string, string> = {
       NO_COLOR: "1",
@@ -87,13 +101,49 @@ export class SwarmCoordinatorAdapter implements ExecutionAdapter {
     const start = Date.now();
     const r = await ws.run(cmd, { env, timeoutMs: this.opts.timeoutMs ?? 1_800_000 });
     const parsed = swarmHarnessParse(r.stdout);
+    // Best-effort token usage: the `topology coordinator` command does NOT currently surface usage —
+    // stdout is just the architect's final text, and the --output stream stays empty (the coordinator
+    // tallies only the root, and spawned-peer usage is never aggregated up the spawn tree). So this yields
+    // nothing today and the team/hetero cost axis reads 0. Proper fix is a swarm-harness change: aggregate
+    // usage across the whole spawn tree (root + peers) and emit it (ResultLine to --output, or a JSON line).
+    // sumTeamUsage already handles the --output path for when that lands.
+    const usage = (await sumTeamUsage(ws, resultsPath)) ?? parsed.usage;
     const raw: RawRun = {
       output: parsed.output || r.stdout.slice(0, 2000),
       workdir: ws.root,
-      usage: parsed.usage,
+      usage,
       trajectory: parsed.trajectory,
       durationMs: Date.now() - start,
     };
     return raw;
   }
+}
+
+/** Sum per-member token usage from the coordinator's JSONL results stream (one ResultLine per member). */
+async function sumTeamUsage(
+  ws: { readFile(path: string): Promise<string | null> },
+  resultsPath: string,
+): Promise<RawRun["usage"] | undefined> {
+  const content = await ws.readFile(resultsPath).catch(() => null);
+  if (!content) return undefined;
+  let inT = 0, outT = 0, cr = 0, cw = 0, seen = false;
+  for (const line of content.split("\n")) {
+    const s = line.trim();
+    if (!s) continue;
+    try {
+      const u = (JSON.parse(s) as {
+        usage?: { inputTokens?: number; outputTokens?: number; cacheReadInputTokens?: number; cacheWriteInputTokens?: number };
+      }).usage;
+      if (!u) continue;
+      seen = true;
+      inT += u.inputTokens ?? 0;
+      outT += u.outputTokens ?? 0;
+      cr += u.cacheReadInputTokens ?? 0;
+      cw += u.cacheWriteInputTokens ?? 0;
+    } catch {
+      /* skip non-JSON lines */
+    }
+  }
+  if (!seen) return undefined;
+  return { inputTokens: inT, outputTokens: outT, cacheReadTokens: cr, cacheCreationTokens: cw, totalTokens: inT + outT };
 }
