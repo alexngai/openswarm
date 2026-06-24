@@ -104,3 +104,50 @@ adapters, and keeps swarm-coder's side thin (just lifecycle driving).
 - Granularity of `TurnEnd` → checkpoint for swarm workers (per turn vs per task).
 - `worker-host.ts` / `team.ts` currently carry **unrelated uncommitted changes** —
   coordinate before editing the worker lifecycle.
+
+## Progress
+
+- **Part 1 (sessionlog adapter): DONE** — `sessionlog` branch
+  `swarm-harness-agent-adapter` (`f5ed457`). Registered `swarm-harness` agent
+  (`Agent` + `TranscriptAnalyzer`); 7-test suite.
+- **Part 2a (transcript recording): DONE** — swarm-coder `2c59dfb`.
+  `src/swarm/session-recorder.ts` writes the per-session `events.jsonl`
+  (opt-in via `SWARM_HARNESS_SESSION_DIR` / `SWARM_HARNESS_RECORD_SESSIONS=1`),
+  wired into `worker-entry.ts`. Verified end-to-end against the Part 1 adapter
+  (prompt + modified files + summary extracted from the recorder's output).
+- **Part 2b (checkpoint driving): TODO** — recipe below.
+
+## Part 2b recipe (programmatic checkpoint driving)
+
+Drive sessionlog **at session close** (transcript fully flushed → one checkpoint
+per task; avoids per-turn flush ordering). Programmatic dispatch builds `Event`s
+directly, so **no HookSupport** is needed on the adapter.
+
+Prerequisites:
+1. Add `sessionlog` as a swarm-coder dependency (+ symlink for dev, like
+   skill-tree/minimem).
+2. Export `resolveSessionRepoConfig` from sessionlog's `index.ts` (currently
+   internal to `cli.ts`).
+
+Checkpointer (`src/swarm/session-checkpointer.ts`, dynamic import + best-effort):
+```ts
+const sl = await import("sessionlog");          // best-effort; no-op if absent
+if (!(await sl.isEnabled(cwd))) return;          // respect sessionlog config
+const cfg = await sl.resolveSessionRepoConfig(); // { sessionRepoCwd, sessionsDir, checkpointsBranch }
+const handler = sl.createLifecycleHandler({
+  sessionStore: sl.createSessionStore(undefined, cfg.sessionsDir),
+  checkpointStore: sl.createCheckpointStore(undefined, cfg.sessionRepoCwd, cfg.checkpointsBranch),
+  cwd,
+});
+const agent = sl.getAgent("swarm-harness");
+const base = { sessionID, sessionRef /* = events.jsonl path */, timestamp: new Date() };
+await handler.dispatch(agent, { ...base, type: sl.EventType.SessionStart, prompt });
+await handler.dispatch(agent, { ...base, type: sl.EventType.TurnEnd });   // -> checkpoint commit
+await handler.dispatch(agent, { ...base, type: sl.EventType.SessionEnd });
+```
+Wire: `SessionRecorder.close()` flushes the stream, then calls the checkpointer.
+
+Verification (needs a real environment): a temp **git repo** with sessionlog
+**enabled**, run a worker with recording on, then assert a checkpoint commit
+lands on `checkpointsBranch`. Requires `sessionlog` wired as a dep — hence
+deferred to where that environment exists.
