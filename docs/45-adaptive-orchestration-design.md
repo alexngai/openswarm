@@ -362,6 +362,21 @@ Implemented an opt-in `coordination.verifiedCompletion: { maxRounds: N }` gate (
 
 **Refined conclusion:** premature termination was a *real* failure mode (now fixable), but **not the binding constraint**. Forced to work as hard as a single agent, the coordinator team is *still* less effective (0/9 vs single's 1/9) — the deficit is **structural coordination overhead** (an architect working the task through teammates, fragmenting a context that benefits from one coherent solver), not just early stopping. This is a deeper validation of the strong-single-baseline thesis: teams underperform single even at equal compute, so the §4 reframe stands — pursue ensemble-select over coordinated within-task teams. (Caveat: N=9/1-seed; the 0-vs-1 gap is underpowered. The robust claim is that fixing the obvious termination bug did **not** lift the team to match single. `verifiedCompletion` is retained as a genuine harness improvement regardless.)
 
+### 6b.4 CORRECTION: the GPT-5.5 "team worse / structural overhead" result was a spawn BUG
+
+⚠️ **§6b.1–§6b.3's GPT-5.5 *team* conclusions are retracted.** A trace-level diagnosis (comparing single-that-solved vs team-that-failed on xarray-3993) found the GPT-5.5 "teams" never functioned: the architect had only read-only tools (architect role delegates execution), tried to spawn an executor, and got *"requires SwarmHost"* — **all 3 spawn attempts failed**. Root cause: the **native engine** (non-Claude models) dispatched tools with no `SwarmHost` in the context, so tier-2 team tools (`agent`/spawn, `send_message`, `check_inbox`) errored. The Claude SDK engine was unaffected — so the **Sonnet team results were valid**, but the GPT-5.5 team was a **deadlocked read-only planner**, not a team. The "premature termination" (§6b.2) and "structural overhead" (§6b.3) were artifacts of agents that couldn't delegate.
+
+Fixed by threading `SwarmHost` into native-engine tool dispatch (commit fcf9c5c). Re-ran the GPT-5.5 team (host-fixed):
+
+| GPT-5.5 team | spawns teammates? | resolve |
+|---|---|--:|
+| broken (no host) | no (1 agent, deadlocked) | 0/9 |
+| **fixed** | **yes (3–4 agents in 8/9)** | **1/9** |
+
+The functioning GPT-5.5 team resolves **1/9 — the same instance (xarray-3993, 182s, 3 agents) single solves**, exactly matching Sonnet.
+
+**Corrected cross-family conclusion:** functioning multi-agent teams reach **PARITY** with single on hard SWE across BOTH families (Sonnet 1/9=1/9, GPT-5.5 1/9=1/9) — **no benefit, but no harm** once the infra works. The strong-single-baseline thesis holds as parity, NOT "teams actively hurt" (that was the bug). The §4 reframe (ensemble-select over coordinated teams) still stands — teams don't *beat* single — but the honest basis is parity, not team inferiority. **Lesson: validate that the multi-agent system is actually multi-agent before drawing conclusions from aggregate scores.**
+
 ---
 
 ## 7. Phased rollout

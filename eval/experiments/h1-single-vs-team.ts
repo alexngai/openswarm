@@ -99,7 +99,9 @@ function h1Config(arms: Arm[], seeds: number[]): EvalConfig {
     runId: "h1",
     // Verified-completion runs get a distinct config version so their cells don't collide with the
     // non-verified baseline in the content-addressed cache (keeps both for comparison).
-    configVersion: process.env.H1_VERIFY_ROUNDS ? `v0-vc${process.env.H1_VERIFY_ROUNDS}` : "v0",
+    configVersion:
+      process.env.H1_CONFIG_VERSION ??
+      (process.env.H1_VERIFY_ROUNDS ? `v0-vc${process.env.H1_VERIFY_ROUNDS}` : "v0"),
     benchmark: "swe",
     arms,
     models: H1_MODELS,
