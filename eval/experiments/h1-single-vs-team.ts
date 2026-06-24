@@ -97,7 +97,9 @@ function sized<T>(xs: readonly T[], n?: number): T[] {
 function h1Config(arms: Arm[], seeds: number[]): EvalConfig {
   return {
     runId: "h1",
-    configVersion: "v0",
+    // Verified-completion runs get a distinct config version so their cells don't collide with the
+    // non-verified baseline in the content-addressed cache (keeps both for comparison).
+    configVersion: process.env.H1_VERIFY_ROUNDS ? `v0-vc${process.env.H1_VERIFY_ROUNDS}` : "v0",
     benchmark: "swe",
     arms,
     models: H1_MODELS,
@@ -141,6 +143,8 @@ export async function runH1(): Promise<void> {
   const AGENT_TIMEOUT_MS = process.env.H1_AGENT_TIMEOUT_MS ? Number(process.env.H1_AGENT_TIMEOUT_MS) : 1_200_000;
   const TEAM_TIMEOUT_MS = process.env.H1_TEAM_TIMEOUT_MS ? Number(process.env.H1_TEAM_TIMEOUT_MS) : 1_500_000;
   const SANDBOX_TIMEOUT_MS = process.env.H1_SANDBOX_TIMEOUT_MS ? Number(process.env.H1_SANDBOX_TIMEOUT_MS) : 1_800_000;
+  // Coordinator verified-completion rounds (counters premature termination). Off unless H1_VERIFY_ROUNDS set.
+  const VERIFY_ROUNDS = process.env.H1_VERIFY_ROUNDS ? Number(process.env.H1_VERIFY_ROUNDS) : undefined;
   const harness: Harness = swarmHarness({ env: providerEnv(), timeoutMs: AGENT_TIMEOUT_MS });
 
   const limit = process.env.H1_INSTANCE_LIMIT ? Number(process.env.H1_INSTANCE_LIMIT) : undefined;
@@ -211,6 +215,7 @@ export async function runH1(): Promise<void> {
       env: providerEnv(),
       defaultModel: H1_MODEL,
       timeoutMs: TEAM_TIMEOUT_MS, // a 3-agent team is slower; keep < the sandbox lifetime
+      verifiedCompletionRounds: VERIFY_ROUNDS,
     });
     allResults.push(
       ...(await runEval(h1Config([TEAM], seeds), { benchmark, adapter: teamAdapter, backend, store })),
@@ -224,6 +229,7 @@ export async function runH1(): Promise<void> {
       name: "h1-hetero",
       roster: HETERO_ROSTER,
       architectPreamble: HETERO_PREAMBLE,
+      verifiedCompletionRounds: VERIFY_ROUNDS,
     });
     allResults.push(
       ...(await runEval(h1Config([HETERO], seeds), { benchmark, adapter: heteroAdapter, backend, store })),

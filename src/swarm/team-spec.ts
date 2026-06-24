@@ -208,6 +208,9 @@ export interface TeamCoordination {
   readonly communication?: TeamCommunicationRules;
   /** V0.4.Q5 — long-lived worker idle timeout. Default 600_000 (10 min). */
   readonly idleTimeoutMs?: number;
+  /** Coordinator-only: after the root declares done, force up to maxRounds verification-continuation
+   *  turns (root must run tests + confirm the task is fully resolved) before the team terminates. */
+  readonly verifiedCompletion?: { readonly maxRounds: number };
   /** V0.4.Q7 — explicit shared MAP scope override. */
   readonly mapScope?: string;
   /** V0.4.Q4 — `team send` routing entry point. */
@@ -256,6 +259,7 @@ export const TeamCoordinationSchema = z.object({
   defaultBranchPolicy: z.unknown().optional(),
   communication: TeamCommunicationRulesSchema.optional(),
   idleTimeoutMs: z.number().int().positive().optional(),
+  verifiedCompletion: z.object({ maxRounds: z.number().int().positive() }).optional(),
   mapScope: z.string().min(1).optional(),
   entryPoint: z
     .union([

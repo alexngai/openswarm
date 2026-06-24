@@ -39,6 +39,10 @@ export interface SwarmCoordinatorOptions {
   readonly architectPreamble?: string;
   /** Team name in the spec (cosmetic; disambiguates logs). Default "h1-team". */
   readonly name?: string;
+  /** Coordinator verified-completion: force up to N verify-then-continue rounds before the root
+   *  terminates (counters the premature-termination failure mode). Requires swarm-harness with the
+   *  verifiedCompletion gate; omitted from the spec when unset. */
+  readonly verifiedCompletionRounds?: number;
 }
 
 const TEAMMATES: ReadonlyArray<{ role: string; prompt: string; model?: string }> = [
@@ -75,7 +79,12 @@ export class SwarmCoordinatorAdapter implements ExecutionAdapter {
         { role: "architect", prompt: architectPrompt, longLived: true, model },
         ...roster.map((t) => ({ role: t.role, prompt: t.prompt, model: t.model ?? model })),
       ],
-      coordination: { completion: { kind: "all" } },
+      coordination: {
+        completion: { kind: "all" },
+        ...(this.opts.verifiedCompletionRounds
+          ? { verifiedCompletion: { maxRounds: this.opts.verifiedCompletionRounds } }
+          : {}),
+      },
     };
     // Requires swarm-harness with the worker model-propagation fix (commit 4d0aae1): spawned coordinator
     // workers now use the configured model (the Bedrock id). Before that fix they hardcoded the default
