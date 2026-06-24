@@ -63,6 +63,10 @@ export class SwarmCoordinatorAdapter implements ExecutionAdapter {
       ],
       coordination: { completion: { kind: "all" } },
     };
+    // NOTE: swarm-harness's coordinator long-lived-worker path currently ignores the configured model
+    // (member.model / --model / SWARM_HARNESS_MODEL / user aliases) and falls back to its default model
+    // name, which is invalid on Bedrock — so this adapter can't run until that propagation is fixed in
+    // swarm-harness. See docs/45 / the team-arm investigation.
     await ws.writeFiles([{ path: `${dir}/team.json`, content: JSON.stringify(spec, null, 2) }]);
 
     const cmd =
@@ -75,6 +79,9 @@ export class SwarmCoordinatorAdapter implements ExecutionAdapter {
       ...this.opts.env, // CLAUDE_CODE_USE_BEDROCK + AWS creds → inherited by spawned workers
       ...(cell.arm.scaffold.env ?? {}),
       ...(ctx.env ?? {}),
+      // The subprocess spawner inherits process.env; without this the spawned coordinator workers fall
+      // back to swarm-harness's default model (claude-sonnet-4-6, invalid on Bedrock). Pin the Bedrock id.
+      SWARM_HARNESS_MODEL: model,
       AGENT_ID: agentId,
     };
 
