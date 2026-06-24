@@ -3,7 +3,9 @@
 Experimental infrastructure for the adaptive-orchestration work in
 [docs/45](../docs/45-adaptive-orchestration-design.md). Everything here is **research code**, not
 shipped product: `eval/` is outside `tsconfig.build.json` and `package.json#files`, so it never
-lands in the npm package. Experiments run with **bun** (`bun eval/experiments/<file>.ts`).
+lands in the npm package. Experiments run under **node via global `tsx`** (`tsx eval/experiments/<file>.ts`) —
+**not bun** (bun's gzip handling corrupts E2B's compressed output). See
+[docs/47](../docs/47-h1-experimental-findings.md) for H1 findings + the full reproduction recipe.
 
 ## Why this exists
 
@@ -12,7 +14,7 @@ multi-agent literature on swarm-harness, then show structural fixes overcome the
 
 | Hyp. | Claim | Status |
 |---|---|---|
-| **H1** | Homogeneous Claude team ≤ single long-lived agent, at higher cost (reproduce arXiv 2601.12307) — negative control | stub |
+| **H1** | Homogeneous Claude team ≤ single long-lived agent, at higher cost (reproduce arXiv 2601.12307) — negative control | **done: parity, 2 families ([docs/47](../docs/47-h1-experimental-findings.md))** |
 | **H2** | Heterogeneous roster (different base models per role) beats best single model + homogeneous team | — |
 | **H3** | Structural fixes (isolation + access-lists + first-class verification) beat the **~+14%** tactical ceiling and shift the MAST histogram | — |
 | **H4** | An orchestrator that *decides* whether to fan out is Pareto-better | — |

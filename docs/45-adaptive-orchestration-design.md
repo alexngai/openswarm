@@ -295,6 +295,11 @@ H3 yields **>+14%** over baseline *and* a measurable FC2/FC3 drop in the MAST hi
 
 ## 6b. First experimental results (2026-06-24)
 
+> ⚠️ **Read [docs/47](47-h1-experimental-findings.md) for the corrected bottom line.** §6b.1–§6b.3 below are
+> the blow-by-blow and contain an **intermediate conclusion that §6b.4 retracts** (the "GPT-5.5 teams are
+> worse / structural overhead" result was a spawn bug, not a finding). Kept as an audit trail. Corrected
+> result: functioning teams reach **parity** with single across both model families.
+
 H1 ran on Bedrock Sonnet-4.5 over SWE-bench-Verified via the `eval/` harness (E2B sandboxes, faithful swebench grader, no local Docker). Arms: `single`, `team` (homogeneous coordinator: architect+executor+reviewer), `hetero` (architect-lead + implementer + dedicated verification engineer + adversarial critic — targets MAST FC3).
 
 **Easy set (5 instances, mostly <1h):** single 4/5 → saturates; useless for discrimination. Lesson: pick on difficulty.
