@@ -60,9 +60,24 @@ All committed with tests — genuine swarm-harness value:
 2. **Pick instances on difficulty.** The easy set saturated single (4/5) → zero discriminating power. The hard set's 11% floor is the opposite problem (low power per cell); a mixed ~40–60% band would be ideal.
 3. **Cross-family replication catches infra bugs** the single-family run hides (the spawn bug only manifested on the native engine).
 
+## Ensemble test — best-of-N single vs team at equal budget
+
+The design's bet: the value of "multi-agent" is **ensemble variance + selection**, not within-task coordination. Test: best-of-N single (N independent single-agent attempts, union them) vs a team (~N agents coordinated), at equal compute. GPT-5.5, hard 9:
+
+| | resolve | solved |
+|---|--:|---|
+| single (per-seed mean over 3 seeds) | ~1.3/9 | — |
+| **best-of-3 single (union)** | **2/9** | xarray-3993 (all seeds) + sklearn-25102 (seed 2 only) |
+| team (~3 agents, 1 seed) | 1/9 | xarray-3993 |
+
+- **Variance is real and exploitable** — seed 2 solved sklearn-25102 that seeds 1+3 missed; the union captures it.
+- **At equal compute (3 independent attempts ≈ a 3-agent team), the ensemble wins: 2/9 > 1/9.** The coordinated team only ever reached the robustly-solvable instance; best-of-3 single got that *plus* one more via variance.
+- Directionally confirms the §4 reframe: spend the multi-agent budget on **diverse independent attempts + select**, not on one coordinated team. **Caveat:** N=9, 2-vs-1 edge is underpowered; team is single-seed (equal-*budget*, not a best-of-3 *team*); only 2/9 instances are solvable at all here.
+
 ## Open questions / next
 
-- **Ensemble test (the design's actual bet):** best-of-N single vs a team at *equal token budget* — does union over diverse independent attempts beat one coherent agent? (The disjoint-coverage signal hinted union ≈ 3× single, but that was on the pre-fix data and is underpowered.)
+- **Strengthen the ensemble result:** best-of-5 single (does the union keep growing with N — the sharp prediction?); a best-of-3 *team* for a fuller pass@k; cross-family on Sonnet.
+- **Diverse-config ensemble:** union of single + functioning team + functioning hetero (the original disjoint-coverage signal, now on host-fixed data).
 - **Power:** multi-seed per arm to move below the current MDE ~0.3.
 - **Finish the corrected 3-way:** the `hetero` arm on GPT-5.5 was also spawn-broken — re-run for completeness.
 - **Token/cost axis:** the coordinator still surfaces no aggregate usage (spawn-tree usage isn't summed) — the cost side of the frontier is blank.
