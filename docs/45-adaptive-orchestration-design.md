@@ -314,6 +314,22 @@ H1 ran on Bedrock Sonnet-4.5 over SWE-bench-Verified via the `eval/` harness (E2
 
 **Caveats / next:** disjoint coverage at N=9/1-seed could be noise. The decisive follow-up is **multi-seed** per config to test (a) whether union grows with diverse attempts (the ensemble hypothesis) and (b) whether any config systematically wins. Also pending: a mixed-difficulty set (~40–60% single, better power than the 11% floor) and **team/hetero token accounting** (the coordinator surfaces no usage today — needs a swarm-harness change to aggregate spawn-tree usage; cost axis currently blank).
 
+### 6b.1 Cross-family replication on GPT-5.5 (Azure)
+
+To test whether the finding is Claude-specific, the whole 3-way was re-run on **Azure GPT-5.5** (a reasoning model) via a new swarm-harness direct-Azure transport (`azureoai/`). gpt-4.1 was unusable — it plans in text and never calls tools on open-ended SWE tasks; gpt-5.5 engages the agentic loop natively (validated: 323s, 105 tool calls).
+
+| Arm | Sonnet-4.5 | GPT-5.5 | GPT-5.5 latency p50 |
+|---|--:|--:|--:|
+| single | 1/9 | **1/9** (same instance: xarray-3993) | 179s |
+| homo team | 1/9 | **0/9** | 65s |
+| hetero team | 1/9 | **0/9** | 74s |
+
+- **single agrees across families** — both resolve exactly xarray-3993, fail the other 8. The hard set is hard for both frontier families.
+- **Teams don't beat single on either family; on GPT-5.5 they are *worse*** (paired Δ = −0.111, CI [−0.33, 0]). The homo team failed xarray-3993 in **39s** — the instance single *solved* in 179s.
+- **Mechanism: premature termination.** GPT-5.5 team cells terminate ~3× faster than single (p50 65–74s vs 179s) — the coordinator + `completion: all` declares done before doing the thorough investigation single does. This is the concrete "teams add coordination overhead that destroys value" failure, now visible in two families.
+
+**Robust conclusion:** across two model families, no multi-agent configuration beats the single-agent baseline; on the stronger reasoning model, coordination actively hurts via early convergence. Strengthens the §4 reframe toward ensemble-select over coordinated teams. (Real swarm-harness improvements banked: direct Azure transport, OpenAI-compatible auth-gate recognition.)
+
 ---
 
 ## 7. Phased rollout
