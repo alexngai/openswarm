@@ -35,9 +35,15 @@ import {
 import { SwarmCoordinatorAdapter } from "../harness/swarm-coordinator-adapter.js";
 import { sandboxInstallLocalHarness, LOCAL_HARNESS_TARBALL, LOCAL_SKILLTREE_TARBALL } from "../harness/local.js";
 
-/** One Claude model, held constant — H1 isolates topology, not model diversity (that's H2).
- *  Bedrock inference-profile id (the agent runs under CLAUDE_CODE_USE_BEDROCK). Override with H1_MODEL. */
-const H1_MODEL = process.env.H1_MODEL ?? "us.anthropic.claude-sonnet-4-5-20250929-v1:0";
+/** Provider for the in-sandbox agent, held constant within a run (H1 isolates topology, not model).
+ *  "bedrock" (default) = Claude Sonnet-4.5 via CLAUDE_CODE_USE_BEDROCK; "azure" = GPT-4.1 via the
+ *  azureoai/ DIRECT transport (cross-family replication). Override the id with H1_MODEL. */
+const H1_PROVIDER = (process.env.H1_PROVIDER ?? "bedrock").toLowerCase();
+const H1_MODEL =
+  process.env.H1_MODEL ??
+  // gpt-5.5 (reasoning) engages the agentic tool loop on open-ended SWE tasks; gpt-4.1 plans in text
+  // and stops, so it's unsuitable for the agentic comparison.
+  (H1_PROVIDER === "azure" ? "azureoai/gpt-5.5" : "us.anthropic.claude-sonnet-4-5-20250929-v1:0");
 export const H1_MODELS: ModelRef[] = [{ name: H1_MODEL }];
 export const H1_SEEDS = [1, 2, 3];
 const INSTANCES_DIR = process.env.SWE_INSTANCES_DIR ?? "eval/.artifacts/swe-instances";
@@ -62,6 +68,25 @@ function bedrockEnv(): Record<string, string> {
   }
   if (!env.AWS_REGION && !env.AWS_DEFAULT_REGION) env.AWS_REGION = "us-east-1";
   return env;
+}
+
+/** Azure-direct auth — the `azureoai/` transport calls Azure OpenAI directly from the sandbox.
+ *  Non-Claude models (gpt-4.1) plan in text and stop without acting on open-ended SWE tasks; the
+ *  tool-use warmup nudges exact tool names + a proactive first bash call so the agentic loop engages.
+ *  (A non-Claude-specific scaffolding addition — note as a comparison caveat.) */
+function azureEnv(): Record<string, string> {
+  const env: Record<string, string> = { SWARM_HARNESS_TOOL_USE_WARMUP: "1" };
+  for (const k of ["AZURE_API_BASE", "AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_API_VERSION"]) {
+    const v = process.env[k];
+    if (v) env[k] = v;
+  }
+  if (!env.AZURE_OPENAI_API_VERSION) env.AZURE_OPENAI_API_VERSION = "2024-08-01-preview";
+  return env;
+}
+
+/** The in-sandbox agent env for the selected provider (H1_PROVIDER). */
+function providerEnv(): Record<string, string> {
+  return H1_PROVIDER === "azure" ? azureEnv() : bedrockEnv();
 }
 
 /** Cost-control knobs for a validation run: H1_INSTANCE_LIMIT=1 H1_ARM=single H1_SEEDS=1 → one cell. */
@@ -111,7 +136,7 @@ export async function runH1(): Promise<void> {
   const AGENT_TIMEOUT_MS = process.env.H1_AGENT_TIMEOUT_MS ? Number(process.env.H1_AGENT_TIMEOUT_MS) : 1_200_000;
   const TEAM_TIMEOUT_MS = process.env.H1_TEAM_TIMEOUT_MS ? Number(process.env.H1_TEAM_TIMEOUT_MS) : 1_500_000;
   const SANDBOX_TIMEOUT_MS = process.env.H1_SANDBOX_TIMEOUT_MS ? Number(process.env.H1_SANDBOX_TIMEOUT_MS) : 1_800_000;
-  const harness: Harness = swarmHarness({ env: bedrockEnv(), timeoutMs: AGENT_TIMEOUT_MS });
+  const harness: Harness = swarmHarness({ env: providerEnv(), timeoutMs: AGENT_TIMEOUT_MS });
 
   const limit = process.env.H1_INSTANCE_LIMIT ? Number(process.env.H1_INSTANCE_LIMIT) : undefined;
   const instances = sized(loadSweInstances(INSTANCES_DIR), limit);
@@ -178,7 +203,7 @@ export async function runH1(): Promise<void> {
   }
   if (armIds.includes("team")) {
     const teamAdapter = new SwarmCoordinatorAdapter({
-      env: bedrockEnv(),
+      env: providerEnv(),
       defaultModel: H1_MODEL,
       timeoutMs: TEAM_TIMEOUT_MS, // a 3-agent team is slower; keep < the sandbox lifetime
     });
@@ -188,7 +213,7 @@ export async function runH1(): Promise<void> {
   }
   if (armIds.includes("hetero")) {
     const heteroAdapter = new SwarmCoordinatorAdapter({
-      env: bedrockEnv(),
+      env: providerEnv(),
       defaultModel: H1_MODEL,
       timeoutMs: TEAM_TIMEOUT_MS,
       name: "h1-hetero",
