@@ -26,6 +26,7 @@ const CACHE = ".eval-runs/cache";
 const INSTANCES = process.env.SWE_INSTANCES_DIR ?? "eval/.artifacts/swe-hard";
 const MIN_BYTES = process.env.MAST_MIN_TRACE_BYTES ? Number(process.env.MAST_MIN_TRACE_BYTES) : 1500;
 const ARMS = process.env.MAST_ARMS ? process.env.MAST_ARMS.split(",").map((s) => s.trim()) : null;
+const MODEL = process.env.MAST_MODEL ?? null; // substring filter on the cell's model (e.g. "gpt-5.5")
 
 function problemStatement(taskId: string): string {
   const f = path.join(INSTANCES, `${taskId}.json`);
@@ -69,7 +70,7 @@ async function main(): Promise<void> {
   let judged = 0;
 
   for (const jf of files) {
-    let cell: { armId?: string; taskId?: string; score?: { full?: boolean } };
+    let cell: { armId?: string; taskId?: string; model?: string; score?: { full?: boolean } };
     try {
       cell = JSON.parse(readFileSync(path.join(CACHE, jf), "utf8"));
     } catch {
@@ -77,6 +78,7 @@ async function main(): Promise<void> {
     }
     if (!cell.armId || !cell.taskId) continue;
     if (ARMS && !ARMS.includes(cell.armId)) continue;
+    if (MODEL && !(cell.model ?? "").includes(MODEL)) continue;
     const tpath = path.join(CACHE, jf.replace(/\.json$/, ".trace.jsonl"));
     if (!existsSync(tpath)) continue;
     const traceRaw = readFileSync(tpath, "utf8");

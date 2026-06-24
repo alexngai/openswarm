@@ -330,6 +330,24 @@ To test whether the finding is Claude-specific, the whole 3-way was re-run on **
 
 **Robust conclusion:** across two model families, no multi-agent configuration beats the single-agent baseline; on the stronger reasoning model, coordination actively hurts via early convergence. Strengthens the §4 reframe toward ensemble-select over coordinated teams. (Real swarm-harness improvements banked: direct Azure transport, OpenAI-compatible auth-gate recognition.)
 
+### 6b.2 The mechanism: premature termination, not coordination breakdown
+
+Running the 14-mode MAST judge (Azure GPT-4.1, cross-family) over the rich GPT-5.5 traces — all of which are *failures*, so this compares **how** each arm fails, not whether:
+
+| Mode | single | team | hetero |
+|---|--:|--:|--:|
+| **FM-3.1 Premature termination** | **0/8** | **6/9** | **8/9** |
+| FM-3.2 Incomplete verification | 7/8 | 9/9 | 9/9 |
+| FC3 share | 44% | 88% | 74% |
+| FC2 Inter-agent | 19% | **0%** | 13% |
+| FC1 Spec/design | 38% | 12% | 12% |
+
+- **Single never terminates early (FM-3.1 = 0).** Its failures are genuine: it grinds, the fix doesn't pass (FM-3.2), and it makes the most spec/design errors (FC1 38%) because it gets furthest.
+- **Teams fail by quitting early (FM-3.1 = 6–8/9), FC3-dominated (74–88%).** The coordinator + `completion: all` declares done before the work is solved.
+- **It is NOT inter-agent breakdown** — FC2 is 0% (homo) / 13% (hetero). The teams don't fail from miscommunication; they fail from stopping too soon, before even reaching the spec-error stage.
+
+Holding outcome constant, only the teams show premature termination — a clean, non-outcome-conditioned signal that pinpoints the **coordinator's termination policy** (not message-passing) as the failure driver. Concretely: the homo team abandoned xarray-3993 in 39s, the instance single solved in 179s. **Design implication:** fix coordinator termination (require verified completion before the root declares done) before any team topology can match — let alone beat — a single agent.
+
 ---
 
 ## 7. Phased rollout
