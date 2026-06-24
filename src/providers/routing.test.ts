@@ -106,6 +106,27 @@ describe("resolveProvider", () => {
     expect(result.modelId).toBe(cleanId);
   });
 
+  // Azure OpenAI DIRECT: azureoai/<deployment> → native, distinct from the azure/ gateway prefix.
+  // The deployment name is the prefix-stripped value; authFactory supplies AZURE_OPENAI_API_KEY.
+  it.each([
+    ["azureoai/gpt-4.1", "gpt-4.1"],
+    ["azureoai/gpt-4o", "gpt-4o"],
+  ])('%s → native azure transport, modelId "%s", authFactory present', (id, deployment) => {
+    const result = resolveProvider(id);
+    expect(result.kind).toBe("native");
+    expect(typeof result.providerFactory).toBe("function");
+    expect(typeof result.authFactory).toBe("function");
+    expect(result.modelId).toBe(deployment);
+  });
+
+  // azure/ must STILL route to the LiteLLM gateway (not the direct Azure transport).
+  it('azure/gpt-4o → native litellm gateway (unchanged), modelId "gpt-4o"', () => {
+    const result = resolveProvider("azure/gpt-4o");
+    expect(result.kind).toBe("native");
+    expect(result.modelId).toBe("gpt-4o");
+    expect(typeof result.authFactory).toBe("function");
+  });
+
   it('unknown-random-model → kind "error" listing known prefixes', () => {
     const result = resolveProvider("unknown-random-model");
     expect(result.kind).toBe("error");
