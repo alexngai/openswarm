@@ -128,6 +128,9 @@ interface TurnContext {
   readonly host: WorkerHost;
   readonly transport: ParentTransport;
   readonly engine: AgentEngine;
+  /** Resolved model id passed to the engine run config (e.g. a Bedrock inference-profile id).
+   *  Drives the actual model call — distinct from the value used for engine selection. */
+  readonly model: string;
   readonly auth: AnthropicEnvAuth;
   readonly dispatcher: ToolDispatcher;
   readonly permissionMode: PermissionMode;
@@ -184,7 +187,7 @@ async function executeTurn(
   task: TaskPacket,
 ): Promise<AgentResult> {
   const { agentId, transport, engine, auth, dispatcher, permissionMode,
-    permissionEngine, roleSuffix, resolvedAllowedTools, parentToolUseId } = ctx;
+    permissionEngine, roleSuffix, resolvedAllowedTools, parentToolUseId, model } = ctx;
 
   const startedAt = Date.now();
   let finalText = "";
@@ -243,7 +246,7 @@ async function executeTurn(
     const runConfig = {
       systemPrompt: enriched.systemPrompt,
       prompt: enriched.prompt,
-      model: "claude-sonnet-4-6",
+      model,
       auth,
       tools: allTools,
       dispatcher,
@@ -506,6 +509,7 @@ export async function runWorkerEntry(): Promise<number> {
     host,
     transport,
     engine,
+    model: workerModel,
     auth,
     dispatcher,
     permissionMode,
