@@ -105,6 +105,7 @@
     "@swarm-harness/cli-darwin-arm64": "0.3.2",
     "@swarm-harness/cli-darwin-x64": "0.3.2",
     "@swarm-harness/cli-linux-x64": "0.3.2",
-    "minimem": "^0.1.2"
+    "minimem": "^0.1.2",
+    "sessionlog": "^0.0.7"
   }
 }

@@ -8,13 +8,17 @@
  *
  * Opt-in + best-effort: recording only happens when enabled (a session dir or
  * the record flag is set), and every operation swallows errors so it can never
- * block or crash a worker. This is Layer 0 part A (the transcript); driving
- * sessionlog checkpoints from it is part B.
+ * block or crash a worker. Writes the transcript (Layer 0a) and, when sessionlog
+ * is enabled in the repo, drives the checkpoint lifecycle (Layer 0b).
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { LaneEvent } from "./events.js";
+import {
+  beginCheckpointedSession,
+  type CheckpointedSession,
+} from "./session-checkpointer.js";
 
 /** Recording is opt-in: a session dir or the explicit flag turns it on. */
 export function recordingEnabled(): boolean {
@@ -48,12 +52,13 @@ export interface SessionRecorderOptions {
 }
 
 /**
- * Begin recording a session transcript. Returns `null` when recording is
- * disabled or cannot be set up — callers use `recorder?.record(...)`.
+ * Begin recording a session transcript (and, when sessionlog is enabled, open a
+ * checkpoint session). Returns `null` when recording is disabled or cannot be
+ * set up — callers use `recorder?.record(...)` / `await recorder?.close()`.
  */
-export function startSessionRecorder(
+export async function startSessionRecorder(
   opts: SessionRecorderOptions,
-): SessionRecorder | null {
+): Promise<SessionRecorder | null> {
   if (!recordingEnabled()) return null;
   try {
     const cwd = opts.cwd ?? process.cwd();
@@ -78,6 +83,17 @@ export function startSessionRecorder(
       payload: { prompt: opts.prompt },
     });
 
+    // Open a sessionlog checkpoint session (SessionStart + TurnStart) now, so
+    // the turn window captures the work that follows. No-ops unless sessionlog
+    // is enabled in this repo.
+    const checkpoint: CheckpointedSession | null =
+      await beginCheckpointedSession({
+        sessionId: opts.sessionId,
+        sessionRef: transcriptPath,
+        prompt: opts.prompt,
+        cwd,
+      });
+
     return {
       transcriptPath,
       record(event: LaneEvent): void {
@@ -85,10 +101,18 @@ export function startSessionRecorder(
       },
       close(): Promise<void> {
         return new Promise((resolve) => {
+          // Flush the transcript, then finish the checkpoint (TurnEnd ->
+          // SessionEnd). Best-effort: a failed checkpoint never blocks close.
+          const finalize = (): void => {
+            void Promise.resolve(checkpoint?.finish()).then(
+              () => resolve(),
+              () => resolve(),
+            );
+          };
           try {
-            stream.end(() => resolve());
+            stream.end(finalize);
           } catch {
-            resolve();
+            finalize();
           }
         });
       },

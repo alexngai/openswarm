@@ -271,7 +271,7 @@ async function executeTurn(
 
     // Layer 0: record this worker's session transcript (opt-in, best-effort) so
     // sessionlog's swarm-harness adapter + cognitive-core can distill it.
-    recorder = startSessionRecorder({
+    recorder = await startSessionRecorder({
       sessionId: priorSessionId ?? agentId,
       agentId,
       prompt: task.prompt,

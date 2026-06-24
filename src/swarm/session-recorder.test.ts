@@ -15,10 +15,10 @@ afterEach(() => {
 });
 
 describe("session recorder", () => {
-  it("is disabled by default and returns null", () => {
+  it("is disabled by default and returns null", async () => {
     expect(recordingEnabled()).toBe(false);
     expect(
-      startSessionRecorder({ sessionId: "s1", agentId: "a1", prompt: "hi" }),
+      await startSessionRecorder({ sessionId: "s1", agentId: "a1", prompt: "hi" }),
     ).toBeNull();
   });
 
@@ -31,10 +31,11 @@ describe("session recorder", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rec-"));
     process.env.SWARM_HARNESS_SESSION_DIR = dir;
 
-    const rec = startSessionRecorder({
+    const rec = await startSessionRecorder({
       sessionId: "s1",
       agentId: "a1",
       prompt: "add a migration",
+      cwd: dir, // not a sessionlog-enabled repo -> checkpointing no-ops
     });
     expect(rec).not.toBeNull();
     expect(rec!.transcriptPath).toBe(path.join(dir, "s1", "events.jsonl"));

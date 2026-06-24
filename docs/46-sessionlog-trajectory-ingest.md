@@ -115,7 +115,28 @@ adapters, and keeps swarm-coder's side thin (just lifecycle driving).
   (opt-in via `SWARM_HARNESS_SESSION_DIR` / `SWARM_HARNESS_RECORD_SESSIONS=1`),
   wired into `worker-entry.ts`. Verified end-to-end against the Part 1 adapter
   (prompt + modified files + summary extracted from the recorder's output).
-- **Part 2b (checkpoint driving): TODO** — recipe below.
+- **Part 2b (checkpoint driving): DONE** — `src/swarm/session-checkpointer.ts`
+  (programmatic, two-phase), driven from `SessionRecorder` (begin at record
+  start, finish at close). `sessionlog` added as an optional dep + exported
+  `resolveSessionRepoConfig` (sessionlog `b86f4e9`). Verified by
+  `session-checkpointer.integration.test.ts`: the real recorder, in a
+  sessionlog-enabled git repo, produces a `sessionlog/<hash>` checkpoint.
+
+  Two corrections vs the naive recipe, found during implementation:
+  1. **Pass the repo `cwd` to the stores** — the CLI passes `undefined` only
+     because its own `process.cwd()` is the repo; an in-process caller is not in
+     the repo, so `createSessionStore`/`createCheckpointStore` need it explicitly
+     (otherwise the session state is written to the wrong place and no checkpoint
+     forms).
+  2. **Two-phase lifecycle** — `SessionStart`+`TurnStart` at record start (marks
+     the turn offset *before* the work), then `TurnEnd`+`SessionEnd` at close
+     after the transcript flushes. Dispatching all of it at close captures an
+     empty turn window → no checkpoint.
+
+  Note: `TurnEnd` creates a work-snapshot checkpoint (`sessionlog/<hash>`);
+  promotion to a *committed* checkpoint (`checkpoints/v1`, what cognitive-core
+  reads) happens via sessionlog's commit strategy when the worker actually
+  commits code — out of scope here.
 
 ## Part 2b recipe (programmatic checkpoint driving)
 
