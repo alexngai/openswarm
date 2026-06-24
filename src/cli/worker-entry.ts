@@ -314,7 +314,25 @@ async function executeTurn(
   } catch (err) {
     errMsg = err instanceof Error ? err.message : String(err);
   } finally {
-    await recorder?.close();
+    if (recorder !== null) {
+      await recorder.close();
+      // Layer 1: signal the host→MAP bridge to report this session's trajectory
+      // (sessionId links to the recorded sessionlog session). Best-effort.
+      try {
+        await transport.notify("lane_event", {
+          ts: Date.now(),
+          agentId,
+          type: "trajectory_checkpoint",
+          payload: {
+            sessionId: recorder.sessionId,
+            label: task.prompt.slice(0, 200),
+            transcriptPath: recorder.transcriptPath,
+          },
+        });
+      } catch {
+        // trajectory reporting must never fail the turn
+      }
+    }
   }
 
   const wallClockMs = Date.now() - startedAt;

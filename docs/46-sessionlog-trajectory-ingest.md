@@ -91,8 +91,15 @@ adapters, and keeps swarm-coder's side thin (just lifecycle driving).
 
 - **Layer 0 (this doc)** — record worker sessions via sessionlog. Unblocks
   cognitive-core distillation out-of-band, *no MAP needed*.
-- **Layer 1** — sidecar emits `trajectory/checkpoint` per task (mirror
-  `map-connection.mjs`), with broadcast fallback + `resource_id` caching.
+- **Layer 1 — DONE.** A worker emits a `trajectory_checkpoint` lane event once
+  its session is recorded (`worker-entry.ts`, carrying `sessionId` + `label` +
+  `transcriptPath`); the host→MAP bridge (`map-bridge.ts`) maps it to the
+  worker's MAP id and calls `sink.emitTrajectory`; the outbound sidecar
+  (`map-sidecar.ts`) reports it via `callExtension("trajectory/checkpoint", …)`
+  with `resource_id` caching and a broadcast-message fallback, advertising
+  `trajectory: { canReport: true }`. Tests in `map-bridge.test.ts` +
+  `map-sidecar.test.ts`. (Only the outbound/hosted-swarm path emits; standalone
+  single runs have no sidecar.)
 - **Layer 2** — trajectory content provider over the sessionlog transcript (mirror
   `content-provider.mjs`).
 

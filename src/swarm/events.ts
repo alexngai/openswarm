@@ -54,6 +54,8 @@ export type LaneEventType =
   | "task_completed"
   | "task_failed"
   | "task_stopped"
+  // ---------------- Trajectory ----------------
+  | "trajectory_checkpoint"
   // ---------------- Permission ----------------
   | "permission_prompt"
   | "permission_granted"
@@ -484,6 +486,20 @@ export interface TaskFailedPayload {
   readonly taskId: string;
   readonly error: string;
   readonly failureClass?: FailureClass;
+}
+
+/**
+ * Payload for `trajectory_checkpoint` events — emitted by a worker once its
+ * session transcript is recorded (Layer 0), so the host→MAP bridge can report a
+ * MAP `trajectory/checkpoint`. `sessionId` links to the recorded sessionlog
+ * session (the content the hub can later request).
+ */
+export interface TrajectoryCheckpointPayload {
+  readonly sessionId: string;
+  /** Human-readable label, e.g. the task prompt. */
+  readonly label: string;
+  /** Absolute path of the recorded events.jsonl transcript (for the content provider). */
+  readonly transcriptPath?: string;
 }
 
 // ---------------------------------------------------------------------------

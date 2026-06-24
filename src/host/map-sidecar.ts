@@ -76,6 +76,8 @@ export async function createMapSidecar(
       lifecycle: { canObserve: true },
       // We drive cascade actions on real git (P8) — advertise canAct.
       cascade: { canAct: true, emitsConflicts: true },
+      // Layer 1: we report worker session trajectories to the hub.
+      trajectory: { canReport: true },
     },
     metadata: {
       type: "swarm-harness-sidecar",
@@ -138,6 +140,10 @@ export async function createMapSidecar(
     disconnect(reason?: string): Promise<unknown>;
   };
 
+  // Cached trajectory resource id from the hub's first response — passed on
+  // subsequent reports so the hub links them (mirrors cc-swarm sidecar-server).
+  let trajectoryResourceId: string | undefined;
+
   const sink: MapSink = {
     registerAgent: async (spec) => {
       const res = await conn.spawn({
@@ -165,6 +171,35 @@ export async function createMapSidecar(
         await conn.send({ scope: opts.scope }, { type: event.type, data: event.data });
       } catch {
         // Best-effort observability.
+      }
+    },
+    emitTrajectory: async (checkpoint) => {
+      // Hub-push via the trajectory extension; fall back to a broadcast message
+      // when the hub doesn't support it. Cache + replay the server resource_id.
+      try {
+        if (typeof conn.callExtension !== "function") {
+          throw new Error("trajectory extension unavailable");
+        }
+        const params = {
+          checkpoint,
+          ...(trajectoryResourceId !== undefined && {
+            resource_id: trajectoryResourceId,
+          }),
+        };
+        const res = (await conn.callExtension(
+          "trajectory/checkpoint",
+          params,
+        )) as { resource_id?: string } | undefined;
+        if (res?.resource_id !== undefined) trajectoryResourceId = res.resource_id;
+      } catch {
+        try {
+          await conn.send(
+            { scope: opts.scope },
+            { type: "trajectory.checkpoint", checkpoint },
+          );
+        } catch {
+          // Best-effort.
+        }
       }
     },
   };

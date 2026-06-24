@@ -41,6 +41,8 @@ export interface SessionRecorder {
   close(): Promise<void>;
   /** Absolute path of the events.jsonl transcript. */
   readonly transcriptPath: string;
+  /** The session identifier this recorder is writing under. */
+  readonly sessionId: string;
 }
 
 export interface SessionRecorderOptions {
@@ -96,6 +98,7 @@ export async function startSessionRecorder(
 
     return {
       transcriptPath,
+      sessionId: opts.sessionId,
       record(event: LaneEvent): void {
         writeLine(event);
       },

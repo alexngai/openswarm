@@ -14,9 +14,18 @@
  */
 
 import type { EventEmitter } from "node:events";
-import type { LaneEvent } from "../swarm/events.js";
+import type { LaneEvent, TrajectoryCheckpointPayload } from "../swarm/events.js";
 import type { StandaloneHost } from "../swarm/standalone-host.js";
 import type { MapServer } from "./map-server.js";
+
+/** A MAP trajectory checkpoint — the `trajectory/checkpoint` extension payload. */
+export interface TrajectoryCheckpoint {
+  id: string;
+  agentId: string;
+  sessionId?: string;
+  label?: string;
+  metadata?: Record<string, unknown>;
+}
 
 /** Where the bridge registers agents + emits events. Direction-agnostic. */
 export interface MapSink {
@@ -33,6 +42,8 @@ export interface MapSink {
     data: unknown;
     source?: { agentId?: string };
   }): void | Promise<void>;
+  /** Report a MAP trajectory checkpoint (Layer 1). Best-effort. */
+  emitTrajectory(checkpoint: TrajectoryCheckpoint): void | Promise<void>;
 }
 
 export interface MapBridgeOptions {
@@ -55,6 +66,11 @@ export function inboundMapSink(mapServer: MapServer): MapSink {
     },
     emitEvent: (e) => {
       mapServer.map.emit(e);
+    },
+    emitTrajectory: (cp) => {
+      // Inbound (we are the server): surface as an event. The hub-push path
+      // (callExtension trajectory/checkpoint) is the outbound sidecar's job.
+      mapServer.map.emit({ type: "trajectory.checkpoint", data: cp });
     },
   };
 }
@@ -174,6 +190,32 @@ export function bridgeHostToMap(
             ...(p.error !== undefined && { error: p.error }),
           },
         });
+        break;
+      }
+      // Layer 1: a worker finished a recorded session — report it as a MAP
+      // trajectory/checkpoint, looking up the worker's MAP-assigned id.
+      case "trajectory_checkpoint": {
+        const p = evt.payload as TrajectoryCheckpointPayload;
+        const idP = registered.get(evt.agentId);
+        if (idP !== undefined) {
+          void idP
+            .then((id) => {
+              void sink.emitTrajectory({
+                id: p.sessionId,
+                agentId: id,
+                sessionId: p.sessionId,
+                label: p.label,
+                metadata: {
+                  ...(opts.swarmId !== undefined && { swarmId: opts.swarmId }),
+                  ...(p.transcriptPath !== undefined && {
+                    transcriptPath: p.transcriptPath,
+                  }),
+                },
+              });
+              log(`[map-bridge] trajectory checkpoint ${p.sessionId} → ${id}`);
+            })
+            .catch(() => {});
+        }
         break;
       }
       case "worker_lifecycle_changed":
