@@ -15,8 +15,10 @@ import { Orchestrator, type HostObserver } from "../swarm/orchestrator.js";
 import { loadTemplate } from "../swarm/openteams/loader.js";
 import { openteamsToTeamSpec } from "../swarm/openteams/mapping.js";
 import { createMapSidecar, type MapSidecar } from "../host/map-sidecar.js";
+import { StandaloneHost } from "../swarm/standalone-host.js";
 import { TeamSpecSchema, type TeamSpec, type TopologyKind } from "../swarm/team-spec.js";
 import { computeTeamPaths, teamsBaseDir } from "./team-paths.js";
+import { attachLaneTrace } from "./trace-output.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -176,6 +178,8 @@ export interface TopologyRunOptions {
   readonly maxCostUsd?: number;
   /** Default worker model for members without an explicit member.model. */
   readonly modelId?: string;
+  /** Raw lane-event JSONL trace path. */
+  readonly traceOutput?: string;
   /**
    * Test-only injection of a constructed Orchestrator. When set, runTopology
    * skips its own Orchestrator construction and calls `orch.runTeam(spec)`.
@@ -254,20 +258,28 @@ export async function runTopology(opts: TopologyRunOptions): Promise<number> {
 
   // 3. Open results stream + orchestrator.
   const resultsOut = fs.createWriteStream(opts.output, { flags: "a" });
+  const host = new StandaloneHost({ permissionMode: opts.permissionMode });
+  const traceRecorder = attachLaneTrace(host, opts.traceOutput);
   const orch = new Orchestrator({
     concurrency: opts.concurrency,
     permissionMode: opts.permissionMode,
     resultsOut,
     eventsOut: process.stderr,
+    host,
     ...(observer !== undefined && { observer }),
   });
 
   // 4. Run.
   const startedAt = Date.now();
-  const result = await orch.runTeam(spec);
-  const elapsed = Date.now() - startedAt;
-
-  await new Promise<void>((resolve) => resultsOut.end(resolve));
+  let result;
+  let elapsed;
+  try {
+    result = await orch.runTeam(spec);
+    elapsed = Date.now() - startedAt;
+  } finally {
+    await traceRecorder?.close();
+    await new Promise<void>((resolve) => resultsOut.end(resolve));
+  }
 
   process.stderr.write(
     `[swarm-harness] topology ${opts.topologyKind} "${spec.name}" complete in ${elapsed}ms: ` +

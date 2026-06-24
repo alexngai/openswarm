@@ -8,6 +8,7 @@
  * Config (env):
  *   LITELLM_BASE_URL  — the gateway base URL, e.g. http://127.0.0.1:4000/v1 (must end in /v1)
  *   LITELLM_API_KEY   — the gateway master key (or a per-run virtual key)
+ *   LITELLM_EXTRA_BODY — optional JSON object merged into each request body for OpenAI-compatible gateways
  *
  * Modeled on DashScopeTransportProvider (the other OpenAI-compat transport).
  * Use the async factory `LiteLLMTransportProvider.create()`.
@@ -41,6 +42,53 @@ function defaultCapabilities(): ProviderCapabilities {
   };
 }
 
+function parseJsonObject(raw: string, envName: string): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`${envName} must be valid JSON: ${(error as Error).message}`);
+  }
+
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${envName} must be a JSON object`);
+  }
+  return parsed as Record<string, unknown>;
+}
+
+export function liteLLMExtraBodyFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): Record<string, unknown> | undefined {
+  const raw = env["LITELLM_EXTRA_BODY"]?.trim();
+  if (!raw) return undefined;
+  return parseJsonObject(raw, "LITELLM_EXTRA_BODY");
+}
+
+export function mergeLiteLLMExtraBody(
+  body: BodyInit | null | undefined,
+  extraBody: Record<string, unknown> | undefined,
+): BodyInit | null | undefined {
+  if (extraBody === undefined || body === undefined || body === null) return body;
+  if (typeof body !== "string") return body;
+
+  const parsed = JSON.parse(body) as unknown;
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return body;
+
+  return JSON.stringify({
+    ...(parsed as Record<string, unknown>),
+    ...extraBody,
+  });
+}
+
+function fetchWithExtraBody(extraBody: Record<string, unknown> | undefined): typeof fetch {
+  if (extraBody === undefined) return globalThis.fetch.bind(globalThis);
+  return (input, init) =>
+    globalThis.fetch(input, {
+      ...init,
+      body: mergeLiteLLMExtraBody(init?.body, extraBody),
+    });
+}
+
 function mapFinishReason(reason: FinishReason): StopReason {
   switch (reason) {
     case "stop":
@@ -69,16 +117,19 @@ export class LiteLLMTransportProvider implements TransportProvider {
 
   private readonly auth: AuthSource;
   private readonly modelId: string;
+  private readonly extraBody: Record<string, unknown> | undefined;
 
   private constructor(auth: AuthSource, modelId: string) {
     this.auth = auth;
     this.modelId = modelId;
+    this.extraBody = liteLLMExtraBodyFromEnv();
     const baseURL = process.env["LITELLM_BASE_URL"] ?? "";
     const client = createOpenAI({
       apiKey: process.env["LITELLM_API_KEY"] ?? "",
       baseURL,
+      fetch: fetchWithExtraBody(this.extraBody),
     });
-    this.model = client(this.modelId) as LanguageModel;
+    this.model = client.chat(this.modelId) as LanguageModel;
     this.capabilities = defaultCapabilities();
   }
 

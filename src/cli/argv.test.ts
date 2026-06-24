@@ -588,6 +588,20 @@ describe("parseArgv", () => {
     });
   });
 
+  it("swarm run propagates --trace-output", () => {
+    const result = parseArgv([
+      "swarm",
+      "run",
+      "tasks.jsonl",
+      "--trace-output",
+      "/tmp/swarm.trace.jsonl",
+    ]);
+    expect(result).toMatchObject({
+      kind: "swarm-run",
+      traceOutput: "/tmp/swarm.trace.jsonl",
+    });
+  });
+
   // ---- docs/44 P5 — host subcommand ---------------------------------------
 
   it("parses host with --port", () => {

@@ -3,6 +3,10 @@ import type { ToolImpl, ToolExecutionContext, ToolResult } from "./types.js";
 import type { HookRuntime } from "../hooks/runtime.js";
 import { ToolAccesses, type ToolAccesses as ToolAccessesType } from "./access.js";
 import { ToolScheduler } from "./scheduler.js";
+import {
+  formatToolSchemaFeedback,
+  formatUnknownToolFeedback,
+} from "./tool-feedback.js";
 
 // ---------------------------------------------------------------------------
 // M3b Phase 0.6 — batch dispatch types
@@ -114,7 +118,10 @@ export class ToolDispatcher {
   ): Promise<ToolResult> {
     const tool = this.registry.get(name);
     if (tool === undefined) {
-      return { status: "error", message: `unknown tool: ${name}` };
+      return {
+        status: "error",
+        message: formatUnknownToolFeedback(name, this.list()),
+      };
     }
 
     // PreToolUse hook (fires for ALL tiers — covers Tier 2 tools that bypass
@@ -151,7 +158,15 @@ export class ToolDispatcher {
     if (tool.zodSchema !== undefined) {
       const result = tool.zodSchema.safeParse(effectiveInput);
       if (!result.success) {
-        return { status: "error", message: result.error.message };
+        return {
+          status: "error",
+          message: formatToolSchemaFeedback({
+            toolName: name,
+            input: effectiveInput,
+            inputSchema: tool.spec.inputSchema,
+            validationMessage: result.error.message,
+          }),
+        };
       }
     }
 

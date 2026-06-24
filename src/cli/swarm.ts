@@ -25,6 +25,7 @@ import {
 import { OpenTasksTaskRegistry } from "../swarm/adapters/opentasks-task-registry.js";
 import { AgentInboxBackend } from "../swarm/adapters/agent-inbox-backend.js";
 import { GitCascadeBranchPolicyAdapter } from "../swarm/adapters/git-cascade-branch-policy.js";
+import { attachLaneTrace } from "./trace-output.js";
 
 // ---------------------------------------------------------------------------
 // Schema (Phase 2: discriminated-union policies)
@@ -103,6 +104,8 @@ export interface SwarmRunOptions {
    * Defaults to "claude-sonnet-4-6" when not supplied.
    */
   readonly modelId?: string;
+  /** Raw lane-event JSONL trace path. */
+  readonly traceOutput?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -195,7 +198,8 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
   const needsCustomHost =
     opts.opentasks === true ||
     opts.agentInbox === true ||
-    opts.gitCascade === true;
+    opts.gitCascade === true ||
+    opts.traceOutput !== undefined;
   if (needsCustomHost) {
     let taskWrapper: ((inner: import("../swarm/host.js").TaskAPI) => import("../swarm/host.js").TaskAPI) | undefined;
 
@@ -240,6 +244,7 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
       ...(branchPolicyAdapter !== undefined && { branchPolicyAdapter }),
     });
   }
+  const traceRecorder = host !== undefined ? attachLaneTrace(host, opts.traceOutput) : undefined;
 
   const orch = new Orchestrator({
     concurrency: opts.concurrency,
@@ -256,11 +261,15 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
   });
 
   const startedAt = Date.now();
-  const summary = await orch.run(tasks);
-  const elapsed = Date.now() - startedAt;
-
-  // Flush results.jsonl.
-  await new Promise<void>((resolve) => resultsOut.end(resolve));
+  let summary;
+  let elapsed;
+  try {
+    summary = await orch.run(tasks);
+    elapsed = Date.now() - startedAt;
+  } finally {
+    await traceRecorder?.close();
+    await new Promise<void>((resolve) => resultsOut.end(resolve));
+  }
 
   // v0.2.Q7 aggregate budget check: parse the output file to sum usage across
   // all completed tasks, then compare against the aggregate limits.

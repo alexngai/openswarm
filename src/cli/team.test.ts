@@ -102,6 +102,19 @@ describe("parseArgv: topology", () => {
     expect(result.model).toBe("litellm/qwen3.6-35b-a3b");
   });
 
+  it("topology propagates --trace-output", () => {
+    const result = parseArgv([
+      "topology",
+      "pipeline",
+      "--spec",
+      "./spec.json",
+      "--trace-output",
+      "/tmp/topology.trace.jsonl",
+    ]);
+    if (result.kind !== "topology") throw new Error("expected topology");
+    expect(result.traceOutput).toBe("/tmp/topology.trace.jsonl");
+  });
+
   it("topology fanout --spec ./spec.json --map ws://x:9 sets mapUrl", () => {
     const result = parseArgv([
       "topology",
