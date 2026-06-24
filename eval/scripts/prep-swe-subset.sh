@@ -6,7 +6,7 @@
 # Usage:  eval/scripts/prep-swe-subset.sh [instance_id …]   (defaults to a tiny 3-instance set)
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"; cd "$ROOT"
-OUT="eval/.artifacts/swe-instances"
+OUT="${SWE_INSTANCES_DIR:-eval/.artifacts/swe-instances}"
 SWE_GRADE="node_modules/swarmkit-eval/dist/adapters/swe/swe_grade.py"
 
 IDS=("$@")

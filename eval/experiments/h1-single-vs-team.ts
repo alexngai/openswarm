@@ -89,9 +89,12 @@ export async function runH1(): Promise<void> {
     throw new Error("runH1: set E2B_API_KEY in env (source ~/.zshrc; ~/.e2b is the CLI token only)");
   }
   const local = process.env.HARNESS === "local";
-  // 20-min agent command timeout (default 15) for hard instances; still < the 30-min sandbox lifetime,
-  // leaving headroom for grading. A genuine timeout is now scored as a failure, not a batch crash.
-  const harness: Harness = swarmHarness({ env: bedrockEnv(), timeoutMs: 1_200_000 });
+  // Timeouts (env-overridable for harder instances). Keep agent timeouts < the sandbox lifetime so
+  // grading has headroom; a genuine timeout is scored as a failure, not a batch crash.
+  const AGENT_TIMEOUT_MS = process.env.H1_AGENT_TIMEOUT_MS ? Number(process.env.H1_AGENT_TIMEOUT_MS) : 1_200_000;
+  const TEAM_TIMEOUT_MS = process.env.H1_TEAM_TIMEOUT_MS ? Number(process.env.H1_TEAM_TIMEOUT_MS) : 1_500_000;
+  const SANDBOX_TIMEOUT_MS = process.env.H1_SANDBOX_TIMEOUT_MS ? Number(process.env.H1_SANDBOX_TIMEOUT_MS) : 1_800_000;
+  const harness: Harness = swarmHarness({ env: bedrockEnv(), timeoutMs: AGENT_TIMEOUT_MS });
 
   const limit = process.env.H1_INSTANCE_LIMIT ? Number(process.env.H1_INSTANCE_LIMIT) : undefined;
   const instances = sized(loadSweInstances(INSTANCES_DIR), limit);
@@ -138,7 +141,7 @@ export async function runH1(): Promise<void> {
   // 30-min sandbox lifetime — the default 5 min is shorter than long agent runs (e.g. sympy/sklearn),
   // which otherwise get killed mid-run ("sandbox reached its end of life").
   const backend = await createBackend("e2b", {
-    e2b: { apiKey, user: "root", root: "/testbed", timeoutMs: 1_800_000 },
+    e2b: { apiKey, user: "root", root: "/testbed", timeoutMs: SANDBOX_TIMEOUT_MS },
   });
   const store = new LocalResultStore(".eval-runs");
 
@@ -159,7 +162,7 @@ export async function runH1(): Promise<void> {
     const teamAdapter = new SwarmCoordinatorAdapter({
       env: bedrockEnv(),
       defaultModel: H1_MODEL,
-      timeoutMs: 1_500_000, // 25 min — a 3-agent team is slower; still < the 30-min sandbox lifetime
+      timeoutMs: TEAM_TIMEOUT_MS, // a 3-agent team is slower; keep < the sandbox lifetime
     });
     allResults.push(
       ...(await runEval(h1Config([TEAM], seeds), { benchmark, adapter: teamAdapter, backend, store })),
