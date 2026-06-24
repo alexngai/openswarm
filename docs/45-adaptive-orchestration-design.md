@@ -293,6 +293,29 @@ H3 yields **>+14%** over baseline *and* a measurable FC2/FC3 drop in the MAST hi
 
 ---
 
+## 6b. First experimental results (2026-06-24)
+
+H1 ran on Bedrock Sonnet-4.5 over SWE-bench-Verified via the `eval/` harness (E2B sandboxes, faithful swebench grader, no local Docker). Arms: `single`, `team` (homogeneous coordinator: architect+executor+reviewer), `hetero` (architect-lead + implementer + dedicated verification engineer + adversarial critic — targets MAST FC3).
+
+**Easy set (5 instances, mostly <1h):** single 4/5 → saturates; useless for discrimination. Lesson: pick on difficulty.
+
+**Hard set (9 instances, `1-4h`+`>4h`):** the headline.
+
+| Arm | Resolve | Latency p50 | Resolved instance |
+|---|--:|--:|---|
+| single | **1/9 (11%)** | 447s | xarray-3993 |
+| homo team | **1/9 (11%)** | 290s (terminates early) | sympy-13878 |
+| hetero team | **1/9 (11%)** | 706s (most work) | sklearn-25102 |
+
+- **All three identical on aggregate (11%); paired Δ = 0, not significant, MDE 0.47** (N=9, 1 seed → underpowered).
+- **Coverage is DISJOINT** — each config solves a different instance; union = **3/9 (33%)**.
+
+**Reading:** confirms the strong-single-baseline thesis (§3.1, arXiv 2601.12307) — neither adding agents nor heterogeneity/verification-specialization lifts aggregate accuracy on hard tasks (hetero did 1.5× the work for the same yield). The live signal is the disjoint coverage: the value of "multi-agent" here looks like **trajectory variance / ensemble diversity** (union over independent diverse attempts ≈ 3×), **not within-task coordination**. This reframes the Conductor seam (§4) toward **best-of-N / ensemble-select across diverse configs** over coordinated message-passing teams.
+
+**Caveats / next:** disjoint coverage at N=9/1-seed could be noise. The decisive follow-up is **multi-seed** per config to test (a) whether union grows with diverse attempts (the ensemble hypothesis) and (b) whether any config systematically wins. Also pending: a mixed-difficulty set (~40–60% single, better power than the 11% floor) and **team/hetero token accounting** (the coordinator surfaces no usage today — needs a swarm-harness change to aggregate spawn-tree usage; cost axis currently blank).
+
+---
+
 ## 7. Phased rollout
 
 - **P0 — Eval infra (eval-first).** `swarmkit-eval` wired + smoke-verified ([eval/](../eval/)). Three
