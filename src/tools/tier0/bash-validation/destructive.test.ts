@@ -74,11 +74,25 @@ describe("validateDestructive", () => {
     expect(result.kind).toBe("warn");
   });
 
+  it("does not treat /tmp subpaths as root deletion", () => {
+    const result = validateDestructive("rm -rf /tmp/mydir && git clone repo /tmp/mydir");
+    expect(result.kind).toBe("allow");
+  });
+
   // Generic rm -rf warning for non-specific targets
-  it("warns on rm -rf with arbitrary target", () => {
-    const result = validateDestructive("rm -rf /tmp/mydir");
+  it("warns on rm -rf with arbitrary non-temp target", () => {
+    const result = validateDestructive("rm -rf /workspace/mydir");
     expect(result.kind).toBe("warn");
     expect(result.kind === "warn" && result.message).toMatch(/Recursive forced deletion/i);
+  });
+
+  it("warns on exact root deletion but not root-prefixed paths", () => {
+    const root = validateDestructive("rm -rf /");
+    expect(root.kind).toBe("warn");
+    expect(root.kind === "warn" && root.message).toMatch(/root/i);
+
+    const tmp = validateDestructive("rm -rf /tmp/sotopia");
+    expect(tmp.kind).toBe("allow");
   });
 
   // --- safe commands ---

@@ -144,7 +144,7 @@ describe("bashValidationGate", () => {
 
     const result = await bashValidationGate(
       // rm -rf with a non-root path triggers the destructive warn, not a block
-      bashInput("rm -rf /tmp/test-dir", "workspace-write"),
+      bashInput("rm -rf /workspace/test-dir", "workspace-write"),
       makeDeps({ bridge, useHeadless: false }),
     );
 
@@ -162,7 +162,7 @@ describe("bashValidationGate", () => {
     });
 
     const result = await bashValidationGate(
-      bashInput("rm -rf /tmp/test-dir", "workspace-write"),
+      bashInput("rm -rf /workspace/test-dir", "workspace-write"),
       makeDeps({ bridge, useHeadless: false }),
     );
 
@@ -175,7 +175,7 @@ describe("bashValidationGate", () => {
       .mockResolvedValue({ allow: true });
 
     const result = await bashValidationGate(
-      bashInput("rm -rf /tmp/test-dir", "workspace-write"),
+      bashInput("rm -rf /workspace/test-dir", "workspace-write"),
       makeDeps({ useHeadless: true, headlessApproval: fakeHeadless }),
     );
 
@@ -190,7 +190,7 @@ describe("bashValidationGate", () => {
       .mockResolvedValue({ allow: false, reason: "user denied bash: stdin EOF" });
 
     const result = await bashValidationGate(
-      bashInput("rm -rf /tmp/test-dir", "workspace-write"),
+      bashInput("rm -rf /workspace/test-dir", "workspace-write"),
       makeDeps({ useHeadless: true, headlessApproval: fakeHeadless }),
     );
 
@@ -207,7 +207,7 @@ describe("bashValidationGate", () => {
     });
 
     await bashValidationGate(
-      bashInput("rm -rf /tmp/test-dir", "workspace-write"),
+      bashInput("rm -rf /workspace/test-dir", "workspace-write"),
       makeDeps({ bridge, useHeadless: false }),
     );
 
@@ -227,7 +227,7 @@ describe("bashValidationGate — validationApproved flag (v0.2.Q5)", () => {
     vi.spyOn(bridge, "request").mockResolvedValue({ allow: true });
 
     const result = await bashValidationGate(
-      bashInput("rm -rf /tmp/test-dir", "workspace-write"),
+      bashInput("rm -rf /workspace/test-dir", "workspace-write"),
       makeDeps({ bridge, useHeadless: false }),
     );
 
@@ -242,7 +242,7 @@ describe("bashValidationGate — validationApproved flag (v0.2.Q5)", () => {
     vi.spyOn(bridge, "request").mockResolvedValue({ allow: false, reason: "denied" });
 
     const result = await bashValidationGate(
-      bashInput("rm -rf /tmp/test-dir", "workspace-write"),
+      bashInput("rm -rf /workspace/test-dir", "workspace-write"),
       makeDeps({ bridge, useHeadless: false }),
     );
 
@@ -271,7 +271,7 @@ describe("bashValidationGate — validationApproved flag (v0.2.Q5)", () => {
       .mockResolvedValue({ allow: true });
 
     const result = await bashValidationGate(
-      bashInput("rm -rf /tmp/test-dir", "workspace-write"),
+      bashInput("rm -rf /workspace/test-dir", "workspace-write"),
       makeDeps({ useHeadless: true, headlessApproval: fakeHeadless }),
     );
 
@@ -318,7 +318,7 @@ describe("canUseTool mode-check collapse — validationApproved skips permEngine
       {
         toolName: "bash",
         toolImpl: bashTool,
-        input: { command: "rm -rf /tmp/test-dir" },
+        input: { command: "rm -rf /workspace/test-dir" },
         currentMode: "workspace-write",
       },
       {
@@ -363,9 +363,9 @@ describe("bashValidationGate — emitLaneEvent wiring", () => {
     return bashInput("cat /etc/passwd");
   }
 
-  // Helper: Warn-path command (rm -rf /tmp/… triggers destructive warn)
+  // Helper: Warn-path command (rm -rf outside known scratch dirs triggers destructive warn)
   function warnInput(): BashGateInput {
-    return bashInput("rm -rf /tmp/test-dir", "workspace-write");
+    return bashInput("rm -rf /workspace/test-dir", "workspace-write");
   }
 
   // 1. bash_validation_blocked fires with typed payload on Block path
@@ -400,7 +400,7 @@ describe("bashValidationGate — emitLaneEvent wiring", () => {
     expect(event.type).toBe("bash_validation_warned");
     const payload = event.payload as BashValidationWarnedPayload;
     expect(payload.decision).toBe("approved");
-    expect(payload.command).toBe("rm -rf /tmp/test-dir");
+    expect(payload.command).toBe("rm -rf /workspace/test-dir");
     expect(typeof payload.submodule).toBe("string");
     expect(typeof payload.message).toBe("string");
     expect(typeof payload.intent).toBe("string");
