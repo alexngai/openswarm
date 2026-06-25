@@ -2,8 +2,8 @@
  * MinimemProvider — optional provider wrapping the minimem package for
  * hybrid vector + BM25 search and knowledge graph capabilities.
  *
- * minimem is an optional dependency. If not installed or if embedding setup
- * fails, the provider degrades gracefully:
+ * If minimem cannot initialize, or if embedding setup fails, the provider
+ * degrades gracefully:
  * 1. With embeddings: full hybrid vector + BM25 search
  * 2. Without embeddings: BM25-only search (still useful)
  * 3. Without minimem: provider reports unavailable, coordinator skips it
@@ -23,7 +23,8 @@ import type {
 } from "../types.js";
 
 // ---------------------------------------------------------------------------
-// Dynamic import wrapper — minimem is optional
+// Dynamic import wrapper — minimem may be unavailable in direct binary-package
+// installs or other constrained runtimes.
 // ---------------------------------------------------------------------------
 
 interface MinimemInstance {

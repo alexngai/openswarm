@@ -2,8 +2,8 @@
  * Integration test for Layer 0b — driving the real recorder in a sessionlog
  * -enabled git repo and asserting a checkpoint is created.
  *
- * Guarded: skips when `sessionlog` is not resolvable (e.g. CI without the dev
- * symlink, since it is an optional dependency).
+ * Guarded: skips when the installed sessionlog package does not provide a
+ * swarm-harness agent adapter yet.
  */
 
 import { describe, it, expect, beforeAll, afterEach } from "vitest";
@@ -19,7 +19,12 @@ let sl: { enable: (o: unknown) => Promise<unknown> } | undefined;
 beforeAll(async () => {
   try {
     const mod = (await import("sessionlog")) as unknown as typeof sl;
-    if (mod && typeof mod.enable === "function") sl = mod;
+    const hasSwarmHarnessAgent =
+      mod &&
+      typeof mod.enable === "function" &&
+      typeof (mod as { getAgent?: (name: string) => unknown }).getAgent === "function" &&
+      (mod as { getAgent: (name: string) => unknown }).getAgent("swarm-harness");
+    if (hasSwarmHarnessAgent) sl = mod;
   } catch {
     sl = undefined;
   }
@@ -36,7 +41,7 @@ const ev = (type: string, payload: unknown): LaneEvent =>
 describe("session checkpointer (integration)", () => {
   it("creates a sessionlog checkpoint from a recorded session", async () => {
     if (!sl) {
-      console.warn("[skip] sessionlog not resolvable — integration skipped");
+      console.warn("[skip] sessionlog swarm-harness adapter unavailable — integration skipped");
       return;
     }
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-int-"));
