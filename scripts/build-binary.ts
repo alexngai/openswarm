@@ -160,6 +160,13 @@ console.log(`Building ${outfile} for ${target.bunTarget} (v${PKG_VERSION})…`);
 
 const result = await Bun.build({
   entrypoints: ["./src/cli.ts"],
+  external: [
+    // Optional runtime integrations. The CLI already degrades gracefully when
+    // they are absent, and bundling them can pull in Node-only modules that Bun
+    // cannot compile into the standalone binary.
+    "minimem",
+    "sessionlog",
+  ],
   compile: {
     target: target.bunTarget,
     outfile,
