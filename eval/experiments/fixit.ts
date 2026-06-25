@@ -8,8 +8,11 @@
  * controlled substrate: each module is a sealed-test checkpoint, so coverage = passed/total is a clean
  * breadth metric (purer than the TAC-blended S_partial).
  *
- * Runs LOCALLY end-to-end — `InProcessBackend` mkdtemps a workspace per cell, seeds `setup.files`, runs
- * commands via child_process. No E2B/EC2/Modal. Two arms (different adapters → one runEval pass each):
+ * Backend (FIXIT_BACKEND): "in-process" (default) mkdtemps a local workspace per cell; "e2b" runs each
+ * cell in a cloud sandbox built from ONE generic template (node + the packed local swarm-harness +
+ * python3/pip/pytest) — the agent runs IN the sandbox via the sandbox-installed harness. Provider
+ * (FIXIT_PROVIDER): "bedrock" (default, Claude) | "azure" (gpt-5.5 via the azureoai/ NATIVE engine — use
+ * this to dodge the LOCAL Claude-SDK runtime bug). Two arms (different adapters → one runEval pass each):
  *   - single : one swarm-harness agent (the generic CLI adapter).
  *   - team   : a SwarmCoordinatorAdapter — an architect that spawns a FAMILY-SPECIALIST roster
  *              (string / numeric / datetime / validation), the specialization treatment.
@@ -34,6 +37,9 @@ import {
   fixitBenchmark,
   fixitGoldenFiles,
   swarmHarness,
+  createBackend,
+  buildE2bTemplate,
+  e2bSafeName,
   type EvalConfig,
   type Arm,
   type FixitConfig,
@@ -42,8 +48,14 @@ import {
   type RunContext,
   type RawRun,
   type CellResult,
+  type ExecutionBackend,
 } from "swarmkit-eval";
 import { SwarmCoordinatorAdapter } from "../harness/swarm-coordinator-adapter.js";
+import {
+  sandboxInstallLocalHarness,
+  LOCAL_HARNESS_TARBALL,
+  LOCAL_SKILLTREE_TARBALL,
+} from "../harness/local.js";
 
 // ─── Knobs ───────────────────────────────────────────────────────────────────────────────────────
 const FIXIT_N = process.env.FIXIT_N ? Number(process.env.FIXIT_N) : 12;
@@ -55,7 +67,17 @@ const SEEDS = (process.env.FIXIT_SEEDS ?? "1,2,3,4").split(",").map((s) => Numbe
 const FIXIT_TASK_SEED = process.env.FIXIT_TASK_SEED ? Number(process.env.FIXIT_TASK_SEED) : 7;
 const ARM_IDS = (process.env.FIXIT_ARMS ?? "single,team").split(",").map((s) => s.trim()).filter(Boolean);
 const FIXIT_K = process.env.FIXIT_K ? Number(process.env.FIXIT_K) : 4;
-const FIXIT_MODEL = process.env.FIXIT_MODEL ?? "us.anthropic.claude-sonnet-4-5-20250929-v1:0";
+// Backend: "in-process" (default; local mkdtemp workspace) | "e2b" (cloud sandbox, agent runs IN the
+// sandbox via the packed local harness — used to dodge the LOCAL Claude-SDK runtime bug; see header).
+const FIXIT_BACKEND = (process.env.FIXIT_BACKEND ?? "in-process").toLowerCase();
+// Provider for the in-sandbox/in-process agent: "bedrock" (default, Claude via Bedrock) | "azure"
+// (gpt-5.5 via the azureoai/ DIRECT transport = swarm-harness's NATIVE engine, no Claude SDK).
+const FIXIT_PROVIDER = (process.env.FIXIT_PROVIDER ?? "bedrock").toLowerCase();
+const FIXIT_MODEL =
+  process.env.FIXIT_MODEL ??
+  (FIXIT_PROVIDER === "azure"
+    ? "azureoai/gpt-5.5"
+    : "us.anthropic.claude-sonnet-4-5-20250929-v1:0");
 /** Local swarm-harness CLI (the study runs in-process on this machine — no sandbox install). Both the
  *  single (swarmHarness) and team (SwarmCoordinatorAdapter) adapters accept this `bin` override. */
 const FIXIT_HARNESS_BIN =
@@ -81,6 +103,36 @@ function bedrockEnv(): Record<string, string> {
   if (!env.AWS_REGION && !env.AWS_DEFAULT_REGION) env.AWS_REGION = "us-east-1";
   return env;
 }
+
+/** Azure-direct auth — the `azureoai/` transport calls Azure OpenAI directly, using swarm-harness's
+ *  NATIVE engine (no Claude Agent SDK). The tool-use warmup nudges exact tool names + a proactive first
+ *  bash call so the agentic loop engages. Forward any Azure creds present in OUR env (read at runtime —
+ *  never hardcoded; secrets never printed). Default the api-version to a known-good preview. */
+function azureEnv(): Record<string, string> {
+  const env: Record<string, string> = { SWARM_HARNESS_TOOL_USE_WARMUP: "1" };
+  for (const k of ["AZURE_API_BASE", "AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_API_VERSION"]) {
+    const v = process.env[k];
+    if (v) env[k] = v;
+  }
+  if (!env.AZURE_OPENAI_API_VERSION) env.AZURE_OPENAI_API_VERSION = "2024-08-01-preview";
+  return env;
+}
+
+/** The in-agent env for the selected provider (FIXIT_PROVIDER). */
+function providerEnv(): Record<string, string> {
+  return FIXIT_PROVIDER === "azure" ? azureEnv() : bedrockEnv();
+}
+
+// ─── E2B (cloud-sandbox backend) ──────────────────────────────────────────────────────────────────
+// ONE generic template for ALL FixIt tasks (the benchmark is self-contained Python — no per-task image,
+// unlike SWE-bench). Namespaced (`fixit-agent`) so it never clobbers shared templates. Baked with:
+// node + the LOCAL packed swarm-harness (so the working-tree native-engine fix is what runs) + python3
+// + pip + pytest (the CheckpointGrader runs `python3 -m pytest` IN the sandbox post-agent).
+const FIXIT_E2B_TEMPLATE = e2bSafeName(process.env.FIXIT_E2B_TEMPLATE ?? "fixit-agent");
+// Public Docker Hub python image (server-side pull is reliable on E2B); ships python3 + pip, we add pytest.
+const FIXIT_E2B_BASE_IMAGE = process.env.FIXIT_E2B_BASE_IMAGE ?? "python:3.11-slim";
+const SANDBOX_TGZ = "/opt/swarm-harness-local.tgz";
+const SANDBOX_ST = "/opt/skill-tree-local.tgz"; // unpublished sibling dep, co-installed
 
 // ─── The family-specialist roster (the team arm's specialization treatment) ──────────────────────
 const TEAM_PREAMBLE =
@@ -155,12 +207,18 @@ interface ArmDef {
   makeAdapter(cfg: FixitConfig): ExecutionAdapter;
   fakeFraction: number;
 }
+// In E2B mode the agent runs IN the sandbox via the packed local harness, so it must use the
+// sandbox-installed `swarm-harness` (the harness spec's default bin) — NOT the local-machine bin. Only
+// the in-process path overrides `bin` to the local CLI.
+const E2B = FIXIT_BACKEND === "e2b";
+const binOverride: { bin?: string } = E2B ? {} : { bin: FIXIT_HARNESS_BIN };
+
 const ARM_TABLE: Record<string, ArmDef> = {
   single: {
     id: "single",
     label: "single-agent",
     fakeFraction: 0.55,
-    makeAdapter: () => swarmHarness({ env: bedrockEnv(), timeoutMs: AGENT_TIMEOUT_MS, bin: FIXIT_HARNESS_BIN }).adapter,
+    makeAdapter: () => swarmHarness({ env: providerEnv(), timeoutMs: AGENT_TIMEOUT_MS, ...binOverride }).adapter,
   },
   team: {
     id: "team",
@@ -168,13 +226,13 @@ const ARM_TABLE: Record<string, ArmDef> = {
     fakeFraction: 0.9,
     makeAdapter: () =>
       new SwarmCoordinatorAdapter({
-        env: bedrockEnv(),
+        env: providerEnv(),
         defaultModel: FIXIT_MODEL,
         timeoutMs: AGENT_TIMEOUT_MS,
         name: "fixit-team",
         roster: TEAM_ROSTER,
         architectPreamble: TEAM_PREAMBLE,
-        bin: FIXIT_HARNESS_BIN,
+        ...binOverride,
       }),
   },
 };
@@ -187,10 +245,66 @@ function fixitEvalConfig(arms: Arm[]): EvalConfig {
     arms,
     models: [{ name: FIXIT_MODEL }],
     seeds: SEEDS,
-    backend: "in-process",
+    backend: E2B ? "e2b" : "in-process",
     concurrency: { cells: CONCURRENCY, modelConnections: CONCURRENCY },
     output: { dir: ".eval-runs", trace: true },
   };
+}
+
+// ─── E2B template build + backend ──────────────────────────────────────────────────────────────────
+// A C toolchain baked FIRST: swarm-harness's local sibling dep `skill-tree` pulls `better-sqlite3`, a
+// NATIVE addon with no node-20 prebuilt — node-gyp must compile it, which needs make + g++ (the slim
+// base ships neither → "not found: make"). build-essential covers make/g++; python3 is already present.
+const FIXIT_BUILD_TOOLCHAIN: readonly string[] = [
+  "(command -v make >/dev/null 2>&1 && command -v g++ >/dev/null 2>&1) || (apt-get update && apt-get install -y --no-install-recommends build-essential)",
+];
+/** The full root install for the FixIt template, in order: build toolchain → node + the LOCAL packed
+ *  swarm-harness (+ skill-tree) → pytest. */
+const FIXIT_INSTALL_COMMANDS: readonly string[] = [
+  ...FIXIT_BUILD_TOOLCHAIN,
+  ...sandboxInstallLocalHarness(SANDBOX_TGZ, [SANDBOX_ST]),
+];
+const FIXIT_EXTRA_STEPS: readonly string[] = [
+  "python3 -m pip install --no-cache-dir -q pytest",
+  "python3 -m pytest --version",
+];
+const FIXIT_READY_CMD = "/opt/node/bin/swarm-harness --version && python3 -m pytest --version";
+const FIXIT_COPY_FILES: readonly { src: string; dest: string }[] = [
+  { src: LOCAL_SKILLTREE_TARBALL, dest: SANDBOX_ST },
+  { src: LOCAL_HARNESS_TARBALL, dest: SANDBOX_TGZ },
+];
+
+// Bake ONE generic template: build toolchain + node + the packed local swarm-harness, then pytest
+// (python3/pip ship in the base image). extraSteps run as root AFTER the harness install; the readyCmd
+// probes both the harness and python so a bad template fails the BUILD fast (not a ready-probe timeout).
+// Exported so eval/scripts/verify-fixit-template.ts reuses the EXACT same build args.
+export async function buildFixitTemplate(apiKey: string): Promise<{ templateName: string; templateId?: string }> {
+  return buildE2bTemplate(FIXIT_E2B_BASE_IMAGE, FIXIT_E2B_TEMPLATE, {
+    apiKey,
+    memoryMB: process.env.FIXIT_E2B_BUILD_MEM ? Number(process.env.FIXIT_E2B_BUILD_MEM) : 8192,
+    cpuCount: 2,
+    copyFiles: FIXIT_COPY_FILES,
+    installCommands: FIXIT_INSTALL_COMMANDS,
+    extraSteps: FIXIT_EXTRA_STEPS,
+    readyCmd: FIXIT_READY_CMD,
+    log: (m) => console.error(`[tmpl] ${m}`),
+  });
+}
+export { FIXIT_E2B_TEMPLATE };
+
+/** The FixIt backend for the selected FIXIT_BACKEND: E2BBackend (generic template) or InProcessBackend. */
+async function makeBackend(): Promise<ExecutionBackend> {
+  if (!E2B) return new InProcessBackend();
+  const apiKey = process.env.E2B_API_KEY;
+  if (!apiKey) throw new Error("FIXIT_BACKEND=e2b: set E2B_API_KEY (source ~/.zshrc)");
+  // Build the generic template once (server-side, no local Docker), then run every task on it. 30-min
+  // sandbox lifetime (the default 5 min is shorter than a long agent run). E2B SAFETY: the backend kills
+  // ONLY the sandboxes it creates — we never enumerate/kill foreign sandboxes on the shared account.
+  await buildFixitTemplate(apiKey);
+  const SANDBOX_TIMEOUT_MS = process.env.FIXIT_SANDBOX_TIMEOUT_MS ? Number(process.env.FIXIT_SANDBOX_TIMEOUT_MS) : 1_800_000;
+  return createBackend("e2b", {
+    e2b: { apiKey, user: "root", template: FIXIT_E2B_TEMPLATE, timeoutMs: SANDBOX_TIMEOUT_MS },
+  });
 }
 
 // ─── Coverage metrics (the clean breadth axis) ───────────────────────────────────────────────────
@@ -249,7 +363,9 @@ export async function runFixit(): Promise<void> {
   // well-defined. (`fixitBenchmark` makes one EvalTask per element of `seeds`, hence the singleton here.)
   const cfg: FixitConfig = { n: FIXIT_N, seeds: [FIXIT_TASK_SEED] };
   const benchmark = fixitBenchmark(cfg);
-  const backend = new InProcessBackend();
+  // FAKE (no-LLM mock) writes golden files into the local mkdtemp workspace, so it always runs
+  // in-process regardless of FIXIT_BACKEND. REAL mode honors FIXIT_BACKEND (in-process | e2b).
+  const backend = FAKE ? new InProcessBackend() : await makeBackend();
   const store = new LocalResultStore(".eval-runs");
 
   const armDefs = ARM_IDS.map((id) => {
@@ -313,15 +429,19 @@ export async function runFixit(): Promise<void> {
 if (process.env.RUN_FIXIT) {
   await runFixit();
 } else {
+  const creds = FIXIT_PROVIDER === "azure" ? "Azure OpenAI creds" : "Bedrock creds";
   console.error(
     `[fixit] dry: set RUN_FIXIT=1 to run.\n` +
-      `  arms    : ${ARM_IDS.join(", ")}\n` +
-      `  N       : ${FIXIT_N}\n` +
-      `  seeds   : ${SEEDS.join(", ")}\n` +
-      `  K       : ${FIXIT_K} (team/ensemble size)\n` +
-      `  model   : ${FIXIT_MODEL}\n` +
-      `  mode    : ${FAKE ? "FAKE (no-LLM mock)" : "REAL (needs swarm-harness on PATH + Bedrock creds)"}\n` +
-      `  roster  : ${TEAM_ROSTER.map((r) => r.role).join(", ")}\n` +
+      `  arms     : ${ARM_IDS.join(", ")}\n` +
+      `  N        : ${FIXIT_N}\n` +
+      `  seeds    : ${SEEDS.join(", ")}\n` +
+      `  K        : ${FIXIT_K} (team/ensemble size)\n` +
+      `  backend  : ${FIXIT_BACKEND}${E2B ? ` (template ${FIXIT_E2B_TEMPLATE} from ${FIXIT_E2B_BASE_IMAGE})` : ""}\n` +
+      `  provider : ${FIXIT_PROVIDER}\n` +
+      `  model    : ${FIXIT_MODEL}\n` +
+      `  agent bin: ${E2B ? "swarm-harness (sandbox-installed)" : FIXIT_HARNESS_BIN}\n` +
+      `  mode     : ${FAKE ? "FAKE (no-LLM mock)" : `REAL (needs ${E2B ? "E2B_API_KEY + " : "swarm-harness on PATH + "}${creds})`}\n` +
+      `  roster   : ${TEAM_ROSTER.map((r) => r.role).join(", ")}\n` +
       `  FIXIT_FAKE=1 RUN_FIXIT=1 npx tsx eval/experiments/fixit.ts   # no-spend smoke`,
   );
 }
