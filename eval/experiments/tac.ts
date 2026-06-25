@@ -7,12 +7,23 @@
  *
  * Backends: in-process (fake plumbing), e2b, ec2 (Docker-capable). Self-grading (TAC result.json → S_partial).
  *
+ * EC2 worker bringup (IMPORTANT — verified 2026-06-25): the baked AMI carries the TAC images, but a
+ * BARE Ec2Backend LAUNCH does NOT bring the service containers up — with bootstrap_tac=false the
+ * user-data only starts Docker; start_gitlab_direct/api-server run only under bootstrap_tac=true (or a
+ * preseeded docker-volume snapshot), and the AMI's baked container state is inconsistent after the
+ * bake's instance-stop. So for EC2 use either: (a) ATTACH mode (EC2_HOST=<a worker already brought up
+ * by run-ec2-pool.sh / bootstrap_tac=true>), or (b) pass bootstrap user-data to the launch. The bare
+ * EC2_AMI_ID launch below validates the infra chain (launch→SSH→workspace→readiness) but stops at TAC
+ * init because GitLab isn't up; use swarmkit-eval adapters/tac/scripts/run-ec2-pool.sh for real runs.
+ *
  * Run under node/tsx (never bun):
  *   # fake plumbing smoke (no Docker, no spend):
  *   EVAL_FAKE=1 TAC_ROLE=sde TAC_DEPS=gitlab EVAL_TASK_LIMIT=2 RUN_TAC=1 tsx eval/experiments/tac.ts
- *   # real on EC2 (after baking the worker AMI via swarmkit-eval adapters/tac/scripts/bake-ec2-ami.sh):
- *   EVAL_BACKEND=ec2 EC2_AMI_ID=<baked> EC2_SSH_KEY_PATH=<key> TAC_ROLE=sde TAC_DEPS=gitlab \
- *     EVAL_ARMS=stock RUN_TAC=1 tsx eval/experiments/tac.ts
+ *   # real on EC2 — ATTACH to a brought-up worker + wait for the baked services to be healthy:
+ *   EVAL_BACKEND=ec2 EC2_HOST=<worker-ip> EC2_SSH_KEY_PATH=<key> EC2_ROOT=/home/ubuntu/tac-run \
+ *     EC2_SECURITY_GROUP_IDS=<ssh-sg> TAC_ROLE=sde TAC_DEPS=gitlab EVAL_ARMS=stock \
+ *     EC2_SETUP_COMMANDS='for i in $(seq 1 72); do curl -fsS http://127.0.0.1:2999/api/healthcheck/gitlab >/dev/null 2>&1 && break; sleep 10; done; curl -fsS http://127.0.0.1:2999/api/healthcheck/gitlab >/dev/null' \
+ *     RUN_TAC=1 tsx eval/experiments/tac.ts
  *
  * Env: EVAL_FAKE, EVAL_BACKEND(in-process|e2b|ec2), EVAL_ARMS(stock,notes,opentasks), EVAL_MODEL,
  *   EVAL_REPEATS/EVAL_SEEDS, EVAL_TASK_LIMIT, TAC_ROOT(default ~/GitHub/TheAgentCompany), the TAC selector
@@ -70,9 +81,34 @@ function buildBackend(): ExecutionBackend {
       securityGroupIds: process.env.EC2_SECURITY_GROUP_IDS?.split(","),
       sshKeyPath: process.env.EC2_SSH_KEY_PATH,
       root: process.env.EC2_ROOT ?? "/workspace",
+      // Forward the agent's model creds + grader-proxy config INTO the instance (the agent calls
+      // Bedrock from the EC2 box). Mirrors opentasks run.ts passEc2Env.
+      env: passEc2Env(),
+      // Setup commands run after SSH-ready, before the cell — used to WAIT for the baked TAC
+      // services (gitlab + api-server, --restart always) to become healthy on a fresh boot.
+      // Separate multiple commands with ';;'. See header for the readiness-wait one-liner.
+      setupCommands: process.env.EC2_SETUP_COMMANDS
+        ? process.env.EC2_SETUP_COMMANDS.split(";;").map((s) => s.trim()).filter(Boolean)
+        : undefined,
+      setupTimeoutMs: process.env.EC2_SETUP_TIMEOUT ? Number(process.env.EC2_SETUP_TIMEOUT) : undefined,
     } as ConstructorParameters<typeof Ec2Backend>[0]);
   }
   throw new Error(`Unsupported EVAL_BACKEND=${BACKEND} (use in-process|e2b|ec2)`);
+}
+
+/** Env forwarded into the EC2 instance so the in-box agent + grader reach Bedrock/litellm. */
+function passEc2Env(): Record<string, string> {
+  const keys = [
+    "CLAUDE_CODE_USE_BEDROCK", "AWS_BEARER_TOKEN_BEDROCK", "AWS_REGION", "AWS_PROFILE",
+    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+    "ANTHROPIC_MODEL", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+    "LITELLM_API_KEY", "LITELLM_BASE_URL", "LITELLM_MODEL",
+    "TAC_GRADER_PROXY", "TAC_GRADER_PROXY_HOST", "TAC_GRADER_PROXY_PORT", "TAC_GRADER_PROXY_MODEL",
+    "TAC_GRADER_PROXY_KEY", "TAC_GRADER_BEDROCK_MODEL", "TAC_GRADER_BEDROCK_REGION",
+  ];
+  const out: Record<string, string> = {};
+  for (const k of keys) if (process.env[k]) out[k] = process.env[k]!;
+  return out;
 }
 
 async function main(): Promise<void> {
