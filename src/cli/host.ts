@@ -24,12 +24,14 @@ export interface RunHostOptions {
   readonly mapServer?: string;
   readonly mapScope?: string;
   readonly onboardToken?: string;
+  readonly model?: string;
 }
 
 /** Default CommonOpts for the hosted ACP coordinator team (headless, no TTY). */
-function hostedAcpOpts(permissionMode: PermissionMode): CommonOpts {
+function hostedAcpOpts(permissionMode: PermissionMode, model?: string): CommonOpts {
   return {
     permissionMode,
+    ...(model !== undefined && { model }),
     outputFormat: "json",
     headless: true,
     plugins: true,
@@ -48,7 +50,7 @@ export async function runHost(opts: RunHostOptions): Promise<number> {
   // the working dir to it so spawned agents operate in the hosted workspace.
   const cwd = opts.cwd ?? bootstrap.dataDir ?? process.cwd();
   const permissionMode = opts.permissionMode ?? "workspace-write";
-  const acpOpts = hostedAcpOpts(permissionMode);
+  const acpOpts = hostedAcpOpts(permissionMode, opts.model);
 
   let handle;
   try {

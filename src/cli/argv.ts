@@ -181,6 +181,7 @@ export type ParsedArgs =
       mapScope?: string;
       onboardToken?: string;
       permissionMode: PermissionMode;
+      model?: string;
     }
   | { kind: "error"; message: string; showHelp: boolean };
 
@@ -1241,6 +1242,7 @@ export function parseArgv(args: string[]): ParsedArgs {
         ...(hostMapScope !== undefined && { mapScope: hostMapScope }),
         ...(hostOnboardToken !== undefined && { onboardToken: hostOnboardToken }),
         permissionMode,
+        ...(model !== undefined && { model }),
       };
     }
 

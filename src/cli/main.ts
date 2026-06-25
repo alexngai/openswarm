@@ -503,6 +503,7 @@ export async function main(argv: string[]): Promise<number> {
         ...(parsed.mapServer !== undefined && { mapServer: parsed.mapServer }),
         ...(parsed.mapScope !== undefined && { mapScope: parsed.mapScope }),
         ...(parsed.onboardToken !== undefined && { onboardToken: parsed.onboardToken }),
+        ...(parsed.model !== undefined && { model: parsed.model }),
         permissionMode: parsed.permissionMode,
       });
     }

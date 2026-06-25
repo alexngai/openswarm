@@ -623,6 +623,14 @@ describe("parseArgv", () => {
     });
   });
 
+  it("parses host with --model", () => {
+    expect(parseArgv(["host", "--port", "9000", "--model", "haiku"])).toMatchObject({
+      kind: "host",
+      port: 9000,
+      model: "haiku",
+    });
+  });
+
   it("host errors when --port is missing", () => {
     expect(parseArgv(["host"])).toMatchObject({ kind: "error" });
   });
