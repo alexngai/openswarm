@@ -1,0 +1,117 @@
+/**
+ * tac.ts — run TheAgentCompany on the SHARED swarmkit-eval TAC adapter (Phase 4).
+ *
+ * Proves the migration: swarm-coder runs TAC via swarmkit-eval's ported `TacDockerAdapter`
+ * (single agent × stock/notes/opentasks coordination arms — the autonomation RCT), with NO
+ * opentasks dependency. The multi-agent single-vs-team variant lives in tac-single-vs-team.ts (marble).
+ *
+ * Backends: in-process (fake plumbing), e2b, ec2 (Docker-capable). Self-grading (TAC result.json → S_partial).
+ *
+ * Run under node/tsx (never bun):
+ *   # fake plumbing smoke (no Docker, no spend):
+ *   EVAL_FAKE=1 TAC_ROLE=sde TAC_DEPS=gitlab EVAL_TASK_LIMIT=2 RUN_TAC=1 tsx eval/experiments/tac.ts
+ *   # real on EC2 (after baking the worker AMI via swarmkit-eval adapters/tac/scripts/bake-ec2-ami.sh):
+ *   EVAL_BACKEND=ec2 EC2_AMI_ID=<baked> EC2_SSH_KEY_PATH=<key> TAC_ROLE=sde TAC_DEPS=gitlab \
+ *     EVAL_ARMS=stock RUN_TAC=1 tsx eval/experiments/tac.ts
+ *
+ * Env: EVAL_FAKE, EVAL_BACKEND(in-process|e2b|ec2), EVAL_ARMS(stock,notes,opentasks), EVAL_MODEL,
+ *   EVAL_REPEATS/EVAL_SEEDS, EVAL_TASK_LIMIT, TAC_ROOT(default ~/GitHub/TheAgentCompany), the TAC selector
+ *   (TAC_ROLE/TAC_DEPS/EVAL_TASKS), and the backend env (EC2_ and E2B_ vars, — see swarmkit-eval).
+ */
+import * as path from "node:path";
+import {
+  E2BBackend,
+  Ec2Backend,
+  InProcessBackend,
+  LocalResultStore,
+  buildReport,
+  renderMarkdownReport,
+  runEval,
+  tacDockerBenchmark,
+  tacDockerArms,
+  tacSelectorFromEnv,
+  tacDockerAdapterFromEnv,
+  TacFakeAdapter,
+  type BackendId,
+  type EvalConfig,
+  type ExecutionBackend,
+  type RunDeps,
+} from "swarmkit-eval";
+
+const MODEL = process.env.EVAL_MODEL ?? "haiku";
+const ARM_IDS = (process.env.EVAL_ARMS ?? "stock,notes,opentasks").split(",").map((s) => s.trim());
+const REPEATS = Number(process.env.EVAL_REPEATS ?? 1);
+const SEEDS = process.env.EVAL_SEEDS
+  ? process.env.EVAL_SEEDS.split(",").map((s) => Number(s.trim()))
+  : Array.from({ length: REPEATS }, (_, i) => i + 1);
+const LIMIT = process.env.EVAL_TASK_LIMIT ? Number(process.env.EVAL_TASK_LIMIT) : undefined;
+const FAKE = process.env.EVAL_FAKE === "1";
+const TAC_ROOT = process.env.TAC_ROOT ?? `${process.env.HOME}/GitHub/TheAgentCompany`;
+const BACKEND = (process.env.EVAL_BACKEND ?? "in-process") as BackendId;
+const OUT = path.resolve(process.cwd(), process.env.EVAL_OUT_DIR ?? ".eval-runs/tac");
+
+function buildBackend(): ExecutionBackend {
+  if (BACKEND === "in-process") return new InProcessBackend();
+  if (BACKEND === "e2b") {
+    return new E2BBackend({
+      template: process.env.E2B_TEMPLATE ?? "",
+      timeoutMs: Number(process.env.E2B_TIMEOUT ?? 1_800_000),
+      ...(process.env.E2B_ROOT ? { root: process.env.E2B_ROOT } : {}),
+    });
+  }
+  if (BACKEND === "ec2") {
+    return new Ec2Backend({
+      region: process.env.EC2_REGION ?? process.env.AWS_REGION,
+      host: process.env.EC2_HOST,
+      instanceId: process.env.EC2_INSTANCE_ID,
+      amiId: process.env.EC2_AMI_ID,
+      instanceType: process.env.EC2_INSTANCE_TYPE,
+      keyName: process.env.EC2_KEY_NAME,
+      securityGroupIds: process.env.EC2_SECURITY_GROUP_IDS?.split(","),
+      sshKeyPath: process.env.EC2_SSH_KEY_PATH,
+      root: process.env.EC2_ROOT ?? "/workspace",
+    } as ConstructorParameters<typeof Ec2Backend>[0]);
+  }
+  throw new Error(`Unsupported EVAL_BACKEND=${BACKEND} (use in-process|e2b|ec2)`);
+}
+
+async function main(): Promise<void> {
+  if (FAKE && BACKEND !== "in-process") throw new Error("EVAL_FAKE=1 only supports EVAL_BACKEND=in-process");
+
+  const selector = tacSelectorFromEnv();
+  const benchmark = tacDockerBenchmark({ root: TAC_ROOT, selector });
+  const arms = tacDockerArms(ARM_IDS as Parameters<typeof tacDockerArms>[0]);
+
+  const config: EvalConfig = {
+    runId: `tac-${MODEL}-${FAKE ? "fake" : BACKEND}`,
+    configVersion: process.env.EVAL_CONFIG_VERSION ?? "tac-v2",
+    benchmark: "theagentcompany",
+    arms,
+    models: [{ name: MODEL }],
+    seeds: SEEDS,
+    backend: BACKEND,
+    concurrency: { cells: Number(process.env.EVAL_CONCURRENCY ?? 1), modelConnections: Number(process.env.EVAL_CONCURRENCY ?? 1) },
+    output: { dir: OUT, trace: true },
+    ...(LIMIT !== undefined ? { taskLimit: LIMIT } : {}),
+  };
+  const deps: RunDeps = {
+    benchmark,
+    adapter: FAKE ? new TacFakeAdapter() : tacDockerAdapterFromEnv(),
+    backend: buildBackend(),
+    store: new LocalResultStore(OUT),
+  };
+
+  console.error(`[tac] model=${MODEL} arms=${ARM_IDS.join(",")} seeds=${SEEDS.join(",")} root=${TAC_ROOT} [${FAKE ? "FAKE" : `DOCKER:${BACKEND}`}]`);
+  const results = await runEval(config, deps);
+  for (const r of results) {
+    console.error(`  ${r.taskId} | ${r.armId.padEnd(9)} seed${r.seed}: ${r.status} S_partial=${(r.score?.partial ?? 0).toFixed(2)} full=${r.score?.full ?? false}`);
+  }
+  const baseline = ARM_IDS.includes("stock") ? "stock" : ARM_IDS[0]!;
+  console.log("\n" + renderMarkdownReport(buildReport(results, config, { baselineArmId: baseline, accuracyMetric: "sPartial" })));
+}
+
+if (process.env.RUN_TAC) {
+  await main();
+} else {
+  console.error("[tac] dry: set RUN_TAC=1 (+ EVAL_FAKE=1 for the no-spend plumbing smoke). See header.");
+}
