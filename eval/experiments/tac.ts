@@ -113,6 +113,10 @@ function passEc2Env(): Record<string, string> {
 
 async function main(): Promise<void> {
   if (FAKE && BACKEND !== "in-process") throw new Error("EVAL_FAKE=1 only supports EVAL_BACKEND=in-process");
+  // The in-sandbox agent must run as a NON-root user (claude-code refuses --dangerously-skip-permissions
+  // as root). opentasks's run-pool defaults this; mirror it so the docker-adapter never runs the agent as
+  // root. tacDefaultAgentSetupCommand then creates this user.
+  process.env.TAC_AGENT_USER ??= "agent";
 
   const selector = tacSelectorFromEnv();
   const benchmark = tacDockerBenchmark({ root: TAC_ROOT, selector });
