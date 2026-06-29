@@ -171,6 +171,7 @@ export class Orchestrator extends EventEmitter {
       // treats empty strings as undefined when reconstructing TaskPacket.
       role: t.role ?? "",
       prompt: t.prompt,
+      ...(t.model !== undefined && { model: t.model }),
       ...(t.budget !== undefined && { budget: t.budget }),
       branchPolicy: t.branchPolicy,
       commitPolicy: t.commitPolicy,

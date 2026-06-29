@@ -25,7 +25,7 @@
  *     EC2_SETUP_COMMANDS='for i in $(seq 1 72); do curl -fsS http://127.0.0.1:2999/api/healthcheck/gitlab >/dev/null 2>&1 && break; sleep 10; done; curl -fsS http://127.0.0.1:2999/api/healthcheck/gitlab >/dev/null' \
  *     RUN_TAC=1 tsx eval/experiments/tac.ts
  *
- * Env: EVAL_FAKE, EVAL_BACKEND(in-process|e2b|ec2), EVAL_ARMS(stock,notes,opentasks), EVAL_MODEL,
+ * Env: EVAL_FAKE, EVAL_BACKEND(in-process|e2b|ec2), EVAL_ARMS(stock,notes,opentasks,acceptance), EVAL_MODEL,
  *   EVAL_REPEATS/EVAL_SEEDS, EVAL_TASK_LIMIT, TAC_ROOT(default ~/GitHub/TheAgentCompany), the TAC selector
  *   (TAC_ROLE/TAC_DEPS/EVAL_TASKS), and the backend env (EC2_ and E2B_ vars, — see swarmkit-eval).
  */
@@ -39,7 +39,6 @@ import {
   renderMarkdownReport,
   runEval,
   tacDockerBenchmark,
-  tacDockerArms,
   tacSelectorFromEnv,
   tacDockerAdapterFromEnv,
   TacFakeAdapter,
@@ -48,6 +47,7 @@ import {
   type ExecutionBackend,
   type RunDeps,
 } from "swarmkit-eval";
+import { tacExperimentArms } from "./tac-arms.js";
 
 const MODEL = process.env.EVAL_MODEL ?? "haiku";
 const ARM_IDS = (process.env.EVAL_ARMS ?? "stock,notes,opentasks").split(",").map((s) => s.trim());
@@ -105,6 +105,12 @@ function passEc2Env(): Record<string, string> {
     "LITELLM_API_KEY", "LITELLM_BASE_URL", "LITELLM_MODEL",
     "TAC_GRADER_PROXY", "TAC_GRADER_PROXY_HOST", "TAC_GRADER_PROXY_PORT", "TAC_GRADER_PROXY_MODEL",
     "TAC_GRADER_PROXY_KEY", "TAC_GRADER_BEDROCK_MODEL", "TAC_GRADER_BEDROCK_REGION",
+    "TAC_AGENT_SETUP_CMD", "TAC_PREFLIGHT_ONLY", "TAC_ENV_PREFLIGHT", "TAC_EVAL_LLM_PREFLIGHT",
+    "TAC_GITLAB_SERVICE_RESET", "TAC_GITLAB_TOKEN_REFRESH", "TAC_GITLAB_WIKI_SMOKE",
+    "TAC_GITLAB_WIKI_SMOKE_REQUIRE_GIT", "TAC_GITLAB_WIKI_TARGET_SMOKE_PROJECT",
+    "TAC_SWARM_HARNESS_VERSION", "TAC_SWARM_HARNESS_MODE", "TAC_SWARM_HARNESS_CONCURRENCY",
+    "TAC_SWARM_HARNESS_TASKS", "TAC_SWARM_HARNESS_AGENTS",
+    "TAC_SWARM_HARNESS_MULTIAGENT_PROMPT", "TAC_SWARM_HARNESS_OPENTASKS",
   ];
   const out: Record<string, string> = {};
   for (const k of keys) if (process.env[k]) out[k] = process.env[k]!;
@@ -120,7 +126,7 @@ async function main(): Promise<void> {
 
   const selector = tacSelectorFromEnv();
   const benchmark = tacDockerBenchmark({ root: TAC_ROOT, selector });
-  const arms = tacDockerArms(ARM_IDS as Parameters<typeof tacDockerArms>[0]);
+  const arms = tacExperimentArms(ARM_IDS);
 
   const config: EvalConfig = {
     runId: `tac-${MODEL}-${FAKE ? "fake" : BACKEND}`,

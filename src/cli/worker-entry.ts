@@ -466,9 +466,11 @@ export async function runWorkerEntry(): Promise<number> {
   // Engine selection: read SWARM_HARNESS_MODEL and SWARM_HARNESS_FRAMEWORK.
   // Defaults preserve the historical Claude worker path, while per-task or
   // per-member models can route through native OpenAI-compatible transports.
+  // TAC/Bedrock containers also provide ANTHROPIC_MODEL; use it as a final
+  // provider-specific fallback before the built-in alias.
   const frameworkEnv = (process.env.SWARM_HARNESS_FRAMEWORK ?? "auto") as FrameworkChoice;
   const workerModel = await resolveWorkerModel(
-    process.env.SWARM_HARNESS_MODEL ?? initialTask.model ?? DEFAULT_WORKER_MODEL,
+    process.env.SWARM_HARNESS_MODEL ?? initialTask.model ?? process.env.ANTHROPIC_MODEL ?? DEFAULT_WORKER_MODEL,
   );
 
   let engine: AgentEngine;
