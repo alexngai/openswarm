@@ -93,7 +93,7 @@ function isCodexCompatibleModel(model: string | undefined): model is string {
  * Resolve the model to send to Codex. If the caller passed a Codex-compatible
  * model, use it. Otherwise (including the CLI default `claude-sonnet-4-6`,
  * which Codex would reject), substitute the spike-verified default `gpt-5.5`
- * so users running `swarm-harness --framework codex-chatgpt "say hi"` without
+ * so users running `openswarm --framework codex-chatgpt "say hi"` without
  * `--model` get a working session instead of a silent provider_unavailable.
  */
 function resolveCodexModel(model: string | undefined): string {

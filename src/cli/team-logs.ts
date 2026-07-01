@@ -1,5 +1,5 @@
 /**
- * team-logs.ts — `swarm-harness team logs <name> [--follow]`.
+ * team-logs.ts — `openswarm team logs <name> [--follow]`.
  *
  * v0.5 stage 5E.5: read (or tail) a team daemon's events.jsonl. Default
  * behavior reads the file once and exits. With --follow, prints up to the

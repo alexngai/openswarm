@@ -15,7 +15,7 @@ import * as path from "node:path";
 import * as crypto from "node:crypto";
 
 const tmpDir = fs.mkdtempSync(
-  path.join(os.tmpdir(), `swarm-harness-vitest-${crypto.randomUUID()}-`),
+  path.join(os.tmpdir(), `openswarm-vitest-${crypto.randomUUID()}-`),
 );
 process.env["SWARM_HARNESS_HISTORY_PATH"] = path.join(tmpDir, "history");
 // Prevent vitest tests from writing to the user's real ~/.swarm-harness/workers/.

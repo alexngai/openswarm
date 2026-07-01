@@ -138,7 +138,7 @@ describe("ACP-over-MAP — live round trip via TestServer", () => {
       agentInfo?: { name?: string };
       agentCapabilities?: { loadSession?: boolean };
     };
-    expect(init.agentInfo?.name).toBe("swarm-harness");
+    expect(init.agentInfo?.name).toBe("openswarm");
     expect(init.agentCapabilities?.loadSession).toBe(true);
 
     const sess = (await (

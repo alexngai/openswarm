@@ -52,19 +52,19 @@ import { VERSION } from "../index.js";
 // ---------------------------------------------------------------------------
 
 const HELP_TEXT = `
-swarm-harness v${VERSION}
+openswarm v${VERSION}
 
 Usage:
-  swarm-harness [flags] <prompt-text>
-  swarm-harness prompt [flags] <prompt-text>
-  swarm-harness doctor [--output-format text|json]
-  swarm-harness init [<dir>]
-  swarm-harness swarm run <tasks-file> [--concurrency N] [--output <path>]
-  swarm-harness acp                              Serve over the Agent Client Protocol (stdio)
-  swarm-harness host --port N [--host H]         Run as an OpenHive-hosted swarm (binds N, N+1, N+2)
+  openswarm [flags] <prompt-text>
+  openswarm prompt [flags] <prompt-text>
+  openswarm doctor [--output-format text|json]
+  openswarm init [<dir>]
+  openswarm swarm run <tasks-file> [--concurrency N] [--output <path>]
+  openswarm acp                                  Serve over the Agent Client Protocol (stdio)
+  openswarm host --port N [--host H]             Run as an OpenHive-hosted swarm (binds N, N+1, N+2)
                   [--map-server ws://hub]        ...or dial a configured OpenHive hub (outbound MAP + ACP)
-  swarm-harness help
-  swarm-harness version
+  openswarm help
+  openswarm version
 
 Flags:
   --model <id>                   Model id or alias (e.g. sonnet, claude-sonnet-4-6)
@@ -88,13 +88,13 @@ swarm run flags:
   --allow-dead-letter            Do not exit non-zero when this run appends to dead-letter
 
 Examples:
-  swarm-harness "explain this codebase"
-  swarm-harness prompt --model sonnet "refactor src/foo.ts"
-  swarm-harness --resume latest "continue where we left off"
-  swarm-harness --permission-mode read-only "what does this code do?"
-  swarm-harness doctor
-  swarm-harness init
-  swarm-harness swarm run tasks.jsonl --concurrency 5 --output out.jsonl
+  openswarm "explain this codebase"
+  openswarm prompt --model sonnet "refactor src/foo.ts"
+  openswarm --resume latest "continue where we left off"
+  openswarm --permission-mode read-only "what does this code do?"
+  openswarm doctor
+  openswarm init
+  openswarm swarm run tasks.jsonl --concurrency 5 --output out.jsonl
 `.trimStart();
 
 export function printHelp(): void {
@@ -198,7 +198,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   const tuiUnavailable = !process.versions.bun;
   if (!opts.headless && process.stdout.isTTY && tuiUnavailable) {
     process.stderr.write(
-      "[swarm-harness] interactive TUI requires the compiled binary (bun runtime); " +
+      "[openswarm] interactive TUI requires the compiled binary (bun runtime); " +
         "falling back to headless output. Install the platform binary or pass --headless to silence this.\n",
     );
   }
@@ -366,7 +366,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
         const budgetResult = checkBudget(u, budgetLimits, rt.resolvedModelId);
         if (budgetResult.exceeded && !turnAbort.signal.aborted) {
           process.stderr.write(
-            `[swarm-harness] budget exceeded: ${budgetResult.reason ?? "limit reached"} — aborting\n`,
+            `[openswarm] budget exceeded: ${budgetResult.reason ?? "limit reached"} — aborting\n`,
           );
           turnAbort.abort();
         }
@@ -511,7 +511,7 @@ export async function main(argv: string[]): Promise<number> {
     case "error":
       process.stderr.write(`error: ${parsed.message}\n`);
       if (parsed.showHelp) {
-        process.stderr.write('\nRun `swarm-harness help` for usage.\n');
+        process.stderr.write('\nRun `openswarm help` for usage.\n');
       }
       return 2;
 

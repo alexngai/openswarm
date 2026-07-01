@@ -1,4 +1,4 @@
-# swarm-harness
+# OpenSwarm
 
 A TypeScript coding agent where one agent is a tool and N coordinated agents is the product. Built on Anthropic's Claude Agent SDK with first-class multi-agent swarm orchestration, multi-provider support, and a Bun-native interactive REPL.
 
@@ -6,14 +6,14 @@ A TypeScript coding agent where one agent is a tool and N coordinated agents is 
 
 ```bash
 # Run without installing (npm picks the right platform binary)
-npx swarm-harness "explain this codebase"
+npx openswarm "explain this codebase"
 
 # Authenticate first (pick one)
 export ANTHROPIC_API_KEY=sk-ant-...        # API billing
 # or: claude auth login                    # Claude Max subscription
 
 # Run a team of agents
-npx swarm-harness team start my-team --spec team.yaml
+npx openswarm team start my-team --spec team.yaml
 ```
 
 ## Install
@@ -21,12 +21,14 @@ npx swarm-harness team start my-team --spec team.yaml
 ### npm (recommended)
 
 ```bash
-npm install -g swarm-harness     # global `swarm-harness` command
+npm install -g openswarm     # global `openswarm` command
 # or run on demand:
-npx swarm-harness "..."
+npx openswarm "..."
 ```
 
-Requires **Node.js >= 20**. Installing pulls in a self-contained, prebuilt
+The legacy `swarm-harness` command remains as an alias during the migration.
+
+Requires **Node.js >= 22**. Installing pulls in a self-contained, prebuilt
 binary for your platform (shipped as an `optionalDependencies` package) that
 bundles the Bun runtime and the full interactive TUI — no Bun install needed.
 
@@ -46,19 +48,19 @@ headless, swarm, ACP, and programmatic-API path; only the interactive TUI
 ### Standalone binary
 
 Prefer a single file with no npm at all? Download a prebuilt binary from
-[GitHub Releases](https://github.com/alexngai/swarm-coder/releases):
+[GitHub Releases](https://github.com/alexngai/openswarm/releases):
 
 ```bash
-curl -fsSL https://github.com/alexngai/swarm-coder/releases/latest/download/swarm-harness-darwin-arm64 -o swarm-harness
-chmod +x swarm-harness
-./swarm-harness "explain this codebase"
+curl -fsSL https://github.com/alexngai/openswarm/releases/latest/download/openswarm-darwin-arm64 -o openswarm
+chmod +x openswarm
+./openswarm "explain this codebase"
 ```
 
 | Platform | Binary |
 |----------|--------|
-| macOS (Apple Silicon) | `swarm-harness-darwin-arm64` |
-| macOS (Intel) | `swarm-harness-darwin-x64` |
-| Linux (x64) | `swarm-harness-linux-x64` |
+| macOS (Apple Silicon) | `openswarm-darwin-arm64` |
+| macOS (Intel) | `openswarm-darwin-x64` |
+| Linux (x64) | `openswarm-linux-x64` |
 
 No runtime dependencies required.
 
@@ -67,22 +69,22 @@ No runtime dependencies required.
 Requires [Bun](https://bun.sh) >= 1.3.8:
 
 ```bash
-git clone https://github.com/alexngai/swarm-coder.git
-cd swarm-coder
+git clone https://github.com/alexngai/openswarm.git
+cd openswarm
 bun install
 bun run build                  # dist/ (node bundle)
-bun run build:compile          # packages/cli-<platform>/swarm-harness (standalone binary)
+bun run build:compile          # packages/cli-<platform>/openswarm (standalone binary)
 ```
 
 ## Authentication
 
-swarm-harness does NOT manage Claude credentials. It detects what's available from your environment and uses it. Three paths for Anthropic; the other providers use plain env-var API keys.
+OpenSwarm does NOT manage Claude credentials. It detects what's available from your environment and uses it. Three paths for Anthropic; the other providers use plain env-var API keys.
 
 ### 1. API key (hits API billing)
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-swarm-harness "explain this codebase"
+openswarm "explain this codebase"
 ```
 
 Get a key at [console.anthropic.com](https://console.anthropic.com).
@@ -95,17 +97,17 @@ If you have a Claude Max subscription, use Anthropic's own CLI to authenticate:
 claude auth login
 ```
 
-This persists credentials to your system keychain (macOS/Linux) or `~/.claude/.credentials.json`. swarm-harness inherits them automatically.
+This persists credentials to your system keychain (macOS/Linux) or `~/.claude/.credentials.json`. OpenSwarm inherits them automatically.
 
 ### 3. CI / headless (long-lived token)
 
 ```bash
 claude setup-token
 export CLAUDE_CODE_OAUTH_TOKEN=...
-swarm-harness "say hello"
+openswarm "say hello"
 ```
 
-**Important:** Per Anthropic's Terms of Service, swarm-harness owns zero auth code. Users authenticate via Anthropic's own tools. swarm-harness only reads what's already available in your environment or keychain.
+**Important:** Per Anthropic's Terms of Service, OpenSwarm owns zero auth code. Users authenticate via Anthropic's own tools. OpenSwarm only reads what's already available in your environment or keychain.
 
 ## Usage
 
@@ -113,19 +115,19 @@ swarm-harness "say hello"
 
 ```bash
 # Interactive TUI with markdown rendering, syntax highlighting, inline approvals
-swarm-harness "explain this codebase"
+openswarm "explain this codebase"
 
 # Choose a model
-swarm-harness --model opus "refactor this codebase for performance"
+openswarm --model opus "refactor this codebase for performance"
 
 # Resume a previous session
-swarm-harness --resume latest "and now add tests for the changes"
+openswarm --resume latest "and now add tests for the changes"
 
 # Read-only mode (bash validation blocks writes)
-swarm-harness --permission-mode read-only "find all TypeScript errors"
+openswarm --permission-mode read-only "find all TypeScript errors"
 
 # Headless mode for CI / orchestrators (structured JSONL output)
-swarm-harness --headless --output-format json "list all .ts files"
+openswarm --headless --output-format json "list all .ts files"
 ```
 
 The agent runs in an interactive TUI built on OpenTUI/Solid. Markdown is rendered with syntax-highlighted fenced code blocks (TypeScript, JavaScript, Markdown, Zig via Tree-sitter). It reads files, edits code, runs commands, searches with grep, and iterates until the task is done.
@@ -137,7 +139,7 @@ The agent runs in an interactive TUI built on OpenTUI/Solid. Markdown is rendere
 ### Swarm run (task fanout)
 
 ```bash
-swarm-harness swarm run tasks.jsonl --concurrency 5 --output out.jsonl
+openswarm swarm run tasks.jsonl --concurrency 5 --output out.jsonl
 ```
 
 Fans out tasks across a worker pool with role overlays, retry policies, dead-letter handling, and lane-event telemetry.
@@ -163,13 +165,13 @@ Run multi-agent teams using six topology patterns. Teams are defined as openteam
 
 ```bash
 # From an openteams template
-swarm-harness team start gsd
+openswarm team start gsd
 
 # From a TeamSpec file
-swarm-harness topology peer-team --spec ./team.yaml
+openswarm topology peer-team --spec ./team.yaml
 
 # With ecosystem adapters
-swarm-harness topology peer-team --spec ./team.yaml \
+openswarm topology peer-team --spec ./team.yaml \
   --git-cascade \          # worktree-per-member (filesystem isolation)
   --agent-inbox \          # persistent threaded messaging
   --map ws://localhost:8080  # forward events to MAP observer
@@ -202,35 +204,35 @@ coordination:
 **Background daemons:**
 
 ```bash
-swarm-harness team start gsd --detach   # fork a background daemon
-swarm-harness team list                 # show running daemons
-swarm-harness team logs gsd --follow    # tail live events
-swarm-harness team send gsd "add error handling to the API routes"
-swarm-harness team stop gsd             # graceful drain
-swarm-harness team kill gsd             # immediate stop
+openswarm team start gsd --detach   # fork a background daemon
+openswarm team list                 # show running daemons
+openswarm team logs gsd --follow    # tail live events
+openswarm team send gsd "add error handling to the API routes"
+openswarm team stop gsd             # graceful drain
+openswarm team kill gsd             # immediate stop
 ```
 
 **Git-cascade worktree isolation** (`--git-cascade`): each team member runs in its own git worktree under `.swarm-harness/worktrees/`. Parallel members edit files without stomping each other. Members can commit with Change-Id trailers for audit trails, and streams auto-merge to a target branch on completion.
 
 ```bash
 # Pipeline with fork-from-prev: each stage picks up the previous stage's commits
-swarm-harness topology pipeline --spec ./pipeline.yaml --git-cascade
+openswarm topology pipeline --spec ./pipeline.yaml --git-cascade
 
 # Clean up worktrees after the run
-swarm-harness topology peer-team --spec ./team.yaml --git-cascade --cleanup-worktrees
+openswarm topology peer-team --spec ./team.yaml --git-cascade --cleanup-worktrees
 
 # Manage worktrees manually
-swarm-harness worktree list
-swarm-harness worktree clean --dry-run
+openswarm worktree list
+openswarm worktree clean --dry-run
 ```
 
 ### Editor integration (ACP)
 
-swarm-harness speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP), so it runs as an external agent inside ACP-aware editors like [Zed](https://zed.dev). It serves JSON-RPC over stdio:
+OpenSwarm speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP), so it runs as an external agent inside ACP-aware editors like [Zed](https://zed.dev). It serves JSON-RPC over stdio:
 
 ```bash
-swarm-harness acp            # a coordinator team (default)
-swarm-harness acp --single   # one agent (the Stage A surface)
+openswarm acp            # a coordinator team (default)
+openswarm acp --single   # one agent (the Stage A surface)
 ```
 
 You won't usually run this by hand — the editor spawns it. In Zed, add to `settings.json`:
@@ -238,15 +240,15 @@ You won't usually run this by hand — the editor spawns it. In Zed, add to `set
 ```json
 {
   "agent_servers": {
-    "swarm-harness": {
-      "command": "swarm-harness",
+    "openswarm": {
+      "command": "openswarm",
       "args": ["acp"]
     }
   }
 }
 ```
 
-Then pick **swarm-harness** in the Agent Panel.
+Then pick **OpenSwarm** in the Agent Panel.
 
 **Team mode (default).** Each ACP session is a coordinator team: you converse with a long-lived **lead** that can spawn peers via the `agent` tool. The lead narrates; every member's tool calls surface `[role]`-attributed (with file locations and inline diffs for edits); the team roster drives a live plan; a member's permission escalation — or a question — is routed to the editor's approval UI. Member work is also tagged with versioned `_meta.swarm` so a swarm-aware client can re-expand per-member lanes (stock clients ignore it). Follow-up prompts **steer the same root** — the conversation continues with context — and `session/cancel` stops the turn. `session/load` replays a prior team session's transcript (the lead's narration + `[role]` tool calls *with arguments* + plan board, wall-clock order) and resumes its engine context. Shared flags apply, e.g. `"args": ["acp", "--model", "opus", "--permission-mode", "workspace-write"]`.
 
@@ -257,13 +259,13 @@ Then pick **swarm-harness** in the Agent Panel.
 ### Subcommands
 
 ```bash
-swarm-harness acp                    # serve over the Agent Client Protocol (stdio)
-swarm-harness doctor                 # health check (auth, config, install, workspace)
-swarm-harness init                   # scaffold .swarm-harness/ + .gitignore + CLAUDE.md
-swarm-harness plugin list            # list installed plugins
-swarm-harness plugin install <spec>  # install a plugin
-swarm-harness help                   # show usage
-swarm-harness --version              # print version
+openswarm acp                    # serve over the Agent Client Protocol (stdio)
+openswarm doctor                 # health check (auth, config, install, workspace)
+openswarm init                   # scaffold .swarm-harness/ + .gitignore + CLAUDE.md
+openswarm plugin list            # list installed plugins
+openswarm plugin install <spec>  # install a plugin
+openswarm help                   # show usage
+openswarm --version              # print version
 ```
 
 ## Flags
@@ -307,7 +309,7 @@ swarm-harness --version              # print version
 
 ## Models & aliases
 
-swarm-harness routes `--model <id>` by prefix to the matching provider transport. Built-in aliases resolve short names to canonical model ids; users can override or extend via `~/.swarm-harness/settings.json`:
+OpenSwarm routes `--model <id>` by prefix to the matching provider transport. Built-in aliases resolve short names to canonical model ids; users can override or extend via `~/.swarm-harness/settings.json`:
 
 ```json
 { "aliases": { "my-fast": "gpt-4o-mini" } }
@@ -328,7 +330,7 @@ Delegates the agent loop to the locally-installed Codex CLI binary via its App S
 ```bash
 npm install -g @openai/codex
 codex login
-swarm-harness --framework codex-chatgpt --model gpt-5.4 "explain this codebase"
+openswarm --framework codex-chatgpt --model gpt-5.4 "explain this codebase"
 ```
 
 Teams can mix engine frameworks — peers on Claude Max, ChatGPT Plus, and direct API can collaborate in the same team.
@@ -374,7 +376,7 @@ Fifteen Tier 0 tools ship built-in. Additional tools are auto-discovered from pl
 
 ## Architecture
 
-swarm-harness is structured around three stable abstraction seams:
+OpenSwarm is structured around three stable abstraction seams:
 
 1. **AgentEngine** — pluggable conversation loop (Claude Agent SDK, NativeEngine via Vercel AI SDK, Codex ChatGPT framework)
 2. **ToolDispatcher** — tiered tool registry with unified permission gating
@@ -423,7 +425,7 @@ npm test             # vitest suite (2800+ tests)
 bun test src/ui/     # OpenTUI/Solid component tests
 ```
 
-- File issues at [github.com/alexngai/swarm-coder/issues](https://github.com/alexngai/swarm-coder/issues)
+- File issues at [github.com/alexngai/openswarm/issues](https://github.com/alexngai/openswarm/issues)
 - See [CLAUDE.md](CLAUDE.md) for local development conventions
 
 ## License

@@ -54,7 +54,7 @@ if [ "$MODE" != "--offline" ]; then
   done <<< "$OUT"
   [ "$PURE" = 1 ] && ok "stdout is pure JSON-RPC" || bad "stdout had non-JSON-RPC lines"
 
-  echo "$OUT" | grep -q '"agentInfo":{"name":"swarm-harness"' \
+  echo "$OUT" | grep -q '"agentInfo":{"name":"openswarm"' \
     && ok "initialize -> InitializeResponse" || bad "no InitializeResponse"
   echo "$OUT" | grep -q '"sessionId"' \
     && ok "session/new -> sessionId" || bad "no session/new response"

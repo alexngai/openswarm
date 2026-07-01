@@ -2,7 +2,7 @@
 # scripts/smoke-codex-team.sh — operator-run smoke for stage 4H codex peer
 # tools registration via App Server `dynamicTools`.
 #
-# Spawns a 1-codex-peer team via `swarm-harness topology peer-team` and
+# Spawns a 1-codex-peer team via `openswarm topology peer-team` and
 # verifies the codex peer can execute a task end-to-end. The 4K team CLI
 # flags this script depended on shipped in v0.4 (commit a4defac); the
 # previous stub status is removed.

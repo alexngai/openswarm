@@ -1,7 +1,7 @@
 /**
  * map-sidecar.ts — docs/44 Case 2. The OUTBOUND MAP connection: the swarm dials
  * a configured OpenHive destination and registers itself, rather than waiting to
- * be dialed (the inbound P7 server). This is how a standalone `swarm-harness
+ * be dialed (the inbound P7 server). This is how a standalone `openswarm
  * host` reaches a known hub.
  *
  * Models cc-swarm's `connectToMAP` (references/claude-code-swarm), but in-process

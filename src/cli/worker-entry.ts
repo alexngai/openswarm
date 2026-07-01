@@ -432,7 +432,7 @@ export async function runWorkerEntry(): Promise<number> {
       resolvedAllowedTools = role.allowedTools;
     } else {
       process.stderr.write(
-        `[swarm-harness] worker: unknown role "${roleName}" — proceeding without role overlay\n`,
+        `[openswarm] worker: unknown role "${roleName}" — proceeding without role overlay\n`,
       );
     }
   }
@@ -583,7 +583,7 @@ export async function runWorkerEntry(): Promise<number> {
     // in the task_result payload.
     host.markIdle();
     process.stderr.write(
-      `[swarm-harness] long-lived worker initial turn failed (agentId=${agentId}): ${
+      `[openswarm] long-lived worker initial turn failed (agentId=${agentId}): ${
         initialResult.status === "failure" ? initialResult.error : initialResult.status
       }\n`,
     );
@@ -737,7 +737,7 @@ export async function runWorkerEntry(): Promise<number> {
     await transport.notify("task_result", result);
     if (result.status !== "success") {
       process.stderr.write(
-        `[swarm-harness] long-lived worker turn failed (agentId=${agentId}): ${
+        `[openswarm] long-lived worker turn failed (agentId=${agentId}): ${
           result.status === "failure" ? result.error : result.status
         }\n`,
       );

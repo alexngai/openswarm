@@ -76,7 +76,7 @@ async function checkConfig(cwd: string): Promise<CheckResult> {
     return {
       name: "config",
       status: "warn",
-      message: "no config found — run `swarm-harness init`",
+      message: "no config found — run `openswarm init`",
     };
   }
 }
@@ -262,7 +262,7 @@ export function codexAuthCheck(tokens: CodexTokens | null, now: number): CheckRe
       name: "codex-auth",
       status: "warn",
       message:
-        "Not logged in to ChatGPT — run `swarm-harness login --provider openai-codex` to use --framework codex-native.",
+        "Not logged in to ChatGPT — run `openswarm login --provider openai-codex` to use --framework codex-native.",
     };
   }
   const mins = Math.round((tokens.expiresAt - now) / 60_000);

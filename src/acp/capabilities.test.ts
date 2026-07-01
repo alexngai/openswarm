@@ -8,7 +8,7 @@ import {
 describe("initializeResponse", () => {
   it("advertises agent info, empty auth methods, loadSession on", () => {
     const res = initializeResponse({ protocolVersion: PROTOCOL_VERSION });
-    expect(res.agentInfo?.name).toBe("swarm-harness");
+    expect(res.agentInfo?.name).toBe("openswarm");
     expect(res.authMethods).toEqual([]);
     expect(res.agentCapabilities?.loadSession).toBe(true);
     expect(res.protocolVersion).toBe(PROTOCOL_VERSION);

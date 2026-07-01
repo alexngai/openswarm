@@ -1,14 +1,14 @@
 #!/usr/bin/env bun
 /**
- * scripts/publish.ts — bump versions, build, and publish all swarm-harness
+ * scripts/publish.ts — bump versions, build, and publish all OpenSwarm
  * packages to npm.
  *
  * Publishes in dependency order (platform binaries first, main package last,
  * since the main package's optionalDependencies point at the platform ones):
- *   1. @swarm-harness/cli-darwin-arm64
- *   2. @swarm-harness/cli-darwin-x64
- *   3. @swarm-harness/cli-linux-x64
- *   4. swarm-harness (main package)
+ *   1. @swarmkit-ai/openswarm-cli-darwin-arm64
+ *   2. @swarmkit-ai/openswarm-cli-darwin-x64
+ *   3. @swarmkit-ai/openswarm-cli-linux-x64
+ *   4. openswarm (main package)
  *
  * By default builds + publishes only the CURRENT platform's compiled binary.
  * Use --all-platforms to cross-compile and publish every platform package.
@@ -88,7 +88,7 @@ const newVersion = versionArg ? bumpVersion(currentVersion, versionArg) : curren
 const isBump = newVersion !== currentVersion;
 
 console.log(`\n╔════════════════════════════════════════╗`);
-console.log(`║          swarm-harness publish         ║`);
+console.log(`║            OpenSwarm publish           ║`);
 console.log(`╚════════════════════════════════════════╝\n`);
 console.log(`  Version:   ${isBump ? `${currentVersion} → ${newVersion}` : `${currentVersion} (no bump)`}`);
 console.log(`  Platforms: ${allPlatforms ? "all" : `${process.platform}-${process.arch} (current)`}`);
@@ -145,7 +145,7 @@ if (isBump) {
     const optDeps = json.optionalDependencies as Record<string, string> | undefined;
     if (optDeps) {
       for (const name of Object.keys(optDeps)) {
-        if (name.startsWith("@swarm-harness/cli-")) optDeps[name] = newVersion;
+        if (name.startsWith("@swarmkit-ai/openswarm-cli-")) optDeps[name] = newVersion;
       }
     }
     // Never mutate files on disk during a dry-run.
@@ -182,7 +182,7 @@ if (!skipBuild) {
 // Verify each platform package we're about to publish actually has its binary
 // (a preferUnpacked package with no binary would publish a broken install).
 for (const p of targetPackages) {
-  const exe = p.platform === "win32" ? "swarm-harness.exe" : "swarm-harness";
+  const exe = p.platform === "win32" ? "openswarm.exe" : "openswarm";
   const binPath = resolve(ROOT, p.dir, exe);
   if (!existsSync(binPath) && !dryRun) {
     console.error(`\n  Error: ${p.dir}/${exe} missing — run without --skip-build, or build it first.`);
@@ -254,6 +254,6 @@ console.log(`\n═════════════════════�
 console.log(
   dryRun
     ? "Dry run complete. No packages were published."
-    : `Published swarm-harness@${newVersion} 🎉`,
+    : `Published openswarm@${newVersion} 🎉`,
 );
 console.log(`════════════════════════════════════════\n`);

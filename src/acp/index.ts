@@ -1,5 +1,5 @@
 /**
- * runAcp — serve swarm-harness over the Agent Client Protocol on stdio.
+ * runAcp — serve OpenSwarm over the Agent Client Protocol on stdio.
  *
  * Builds the shared agent runtime (docs/32 §3), wraps stdin/stdout as an
  * ndjson JSON-RPC stream, and hands an AcpAgent to the SDK's

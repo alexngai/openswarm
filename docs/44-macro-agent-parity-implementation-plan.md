@@ -421,7 +421,8 @@ swarm-harness's analog of macro's `bootV2` — binds its own ports, reads bootst
 > base+2=MAP) and returns a handle with `shutdown()`; `health.ts` serves
 > `GET /health` (+ `/healthz`) → `200 {status:"ok", swarmId?, uptimeMs, ports}`
 > on base+1 (NOT REST CRUD, per D2); `bootstrap.ts` parses the OpenHive contract
-> (`OPENSWARM_BOOTSTRAP_TOKEN` base64-JSON, `OPENSWARM_DATA_DIR`,
+> (`SWARM_RUNNER_BOOTSTRAP_TOKEN` base64-JSON, `SWARM_RUNNER_DATA_DIR`,
+> legacy `OPENSWARM_*`,
 > `MACRO_BOOTSTRAP_COORDINATOR|CWD|REHYDRATE`, plus `SWARM_HARNESS_*` aliases).
 > CLI: `swarm-harness host --port N [--host H] [--adapter X]` (`cli/host.ts`,
 > `argv.ts`, `main.ts`) stays alive until SIGTERM/SIGINT → graceful shutdown.
@@ -438,7 +439,8 @@ swarm-harness's analog of macro's `bootV2` — binds its own ports, reads bootst
 - `src/host/health.ts` — tiny HTTP `/health` (+ `/metrics`) on `base+1`
   (probed by OpenHive `deriveHealthUrls`). **Not** REST CRUD (D2).
 - `src/cli/*` — `--port` / `--host` flags routed to `bootSwarmHost`.
-- Bootstrap env: read `OPENSWARM_BOOTSTRAP_TOKEN`, `OPENSWARM_DATA_DIR`,
+- Bootstrap env: read `SWARM_RUNNER_BOOTSTRAP_TOKEN`, `SWARM_RUNNER_DATA_DIR`
+  (legacy `OPENSWARM_*` accepted),
   `MACRO_BOOTSTRAP_COORDINATOR/CWD`, `MACRO_BOOTSTRAP_REHYDRATE` (swarm-harness-
   prefixed aliases acceptable). State dir keyed by `swarm_id`.
 - **Rehydrate-on-restart**: on boot with `REHYDRATE=all`, restore the full agent
@@ -580,7 +582,7 @@ the end-to-end "swarm-harness hosted by OpenHive" milestone.
 `auto-resolve` · `direct-push`/`optimistic-push` · declarative workspace DSL (W4)
 · capability→tool map (C1) · foreign-agent wrapping (R1/R2) · REST CRUD API ·
 cross-instance federation · networked control server · cognitive/analyst backend
-(N5, deferred). The openswarm *adapter* (Path A) is a cheap later add once
+(N5, deferred). The Swarm Runner *adapter* (Path A) is a cheap later add once
 `boot()` exists, not in this plan.
 
 ## Test strategy

@@ -1,5 +1,5 @@
 /**
- * argv.ts — hand-rolled CLI argument parser for swarm-harness.
+ * argv.ts — hand-rolled CLI argument parser for OpenSwarm.
  *
  * Parses process.argv.slice(2). No external dependencies.
  *
@@ -729,7 +729,7 @@ export function parseArgv(args: string[]): ParsedArgs {
     if (tok === "--ecosystem") {
       ecosystem = true;
       process.stderr.write(
-        "[swarm-harness] --ecosystem v0.4 enables MAP only; opentasks/agent-inbox/git-cascade land in v0.5+.\n",
+        "[openswarm] --ecosystem v0.4 enables MAP only; opentasks/agent-inbox/git-cascade land in v0.5+.\n",
       );
       i++;
       continue;
@@ -970,7 +970,7 @@ export function parseArgv(args: string[]): ParsedArgs {
       if (text.length === 0) {
         return {
           kind: "error",
-          message: 'prompt requires text, e.g. swarm-harness prompt "say hi"',
+          message: 'prompt requires text, e.g. openswarm prompt "say hi"',
           showHelp: true,
         };
       }
@@ -1227,7 +1227,7 @@ export function parseArgv(args: string[]): ParsedArgs {
       if (hostPort === undefined) {
         return {
           kind: "error",
-          message: "host requires --port <N>, e.g. swarm-harness host --port 9000",
+          message: "host requires --port <N>, e.g. openswarm host --port 9000",
           showHelp: true,
         };
       }

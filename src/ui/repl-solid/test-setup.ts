@@ -24,5 +24,5 @@ setMaxListeners(100);
 // Isolate history file from the real user history for all bun:test runs.
 process.env["SWARM_HARNESS_HISTORY_PATH"] = path.join(
   os.tmpdir(),
-  `swarm-harness-test-history-${crypto.randomUUID()}`,
+  `openswarm-test-history-${crypto.randomUUID()}`,
 );

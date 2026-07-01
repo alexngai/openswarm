@@ -495,7 +495,7 @@ export class FanoutTopology implements Topology {
 
     if (firstResultWriteError) {
       process.stderr.write(
-        `[swarm-harness] ${resultWriteFailures} task result(s) failed to persist; first error: ${String(firstResultWriteError)}\n`,
+        `[openswarm] ${resultWriteFailures} task result(s) failed to persist; first error: ${String(firstResultWriteError)}\n`,
       );
     }
 
@@ -690,7 +690,7 @@ async function releaseBranchLockFor(
     await handle.release();
   } catch (err) {
     process.stderr.write(
-      `[swarm-harness] branch-lock release failed for task ${taskId}: ${err instanceof Error ? err.message : String(err)}\n`,
+      `[openswarm] branch-lock release failed for task ${taskId}: ${err instanceof Error ? err.message : String(err)}\n`,
     );
   }
   ctx.host.emit({

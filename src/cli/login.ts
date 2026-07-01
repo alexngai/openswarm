@@ -1,5 +1,5 @@
 /**
- * login.ts — `swarm-harness login --provider <name>` subcommand.
+ * login.ts — `openswarm login --provider <name>` subcommand.
  *
  * Dispatches to the appropriate auth provider's login() method.
  * Exit codes:
@@ -41,9 +41,9 @@ export async function loginMain(argv: string[]): Promise<number> {
 
     case "codex-chatgpt": {
       process.stdout.write(
-        "swarm-harness now delegates ChatGPT auth to the official codex CLI.\n" +
+        "OpenSwarm now delegates ChatGPT auth to the official codex CLI.\n" +
           "Run: codex login\n" +
-          "This is a one-time setup; swarm-harness will then use your subscription\n" +
+          "This is a one-time setup; OpenSwarm will then use your subscription\n" +
           "automatically when you pass --framework codex-chatgpt.\n" +
           "If you don't have codex installed yet: npm install -g @openai/codex\n",
       );

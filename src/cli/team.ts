@@ -1,5 +1,5 @@
 /**
- * team.ts — implementation of `swarm-harness team start <template>`.
+ * team.ts — implementation of `openswarm team start <template>`.
  *
  * v0.4 stage 4F: minimal CLI surface that loads an openteams template,
  * maps it to a TeamSpec, and runs it through the Orchestrator. Full CLI
@@ -114,7 +114,7 @@ export async function runTeamStart(
   await new Promise<void>((resolve) => resultsOut.end(resolve));
 
   process.stderr.write(
-    `[swarm-harness] team "${spec.name}" complete in ${elapsed}ms: ` +
+    `[openswarm] team "${spec.name}" complete in ${elapsed}ms: ` +
       `${result.succeeded} succeeded, ${result.failed} failed, ${result.timeout} timeout, ${result.cancelled} cancelled\n`,
   );
   if (result.aggregateOutput !== undefined) {
@@ -282,7 +282,7 @@ export async function runTopology(opts: TopologyRunOptions): Promise<number> {
   }
 
   process.stderr.write(
-    `[swarm-harness] topology ${opts.topologyKind} "${spec.name}" complete in ${elapsed}ms: ` +
+    `[openswarm] topology ${opts.topologyKind} "${spec.name}" complete in ${elapsed}ms: ` +
       `${result.succeeded} succeeded, ${result.failed} failed, ${result.timeout} timeout, ${result.cancelled} cancelled\n`,
   );
   if (result.aggregateOutput !== undefined) {
@@ -375,7 +375,7 @@ async function detachAndForkDaemon(spec: TeamSpec): Promise<number> {
     }
     if (await tryConnect(paths.sockPath)) {
       process.stderr.write(
-        `[swarm-harness] team "${spec.name}" started (pid ${child.pid}, socket ${paths.sockPath})\n`,
+        `[openswarm] team "${spec.name}" started (pid ${child.pid}, socket ${paths.sockPath})\n`,
       );
       return 0;
     }

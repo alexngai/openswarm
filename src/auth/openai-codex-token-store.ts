@@ -2,7 +2,7 @@
  * Persistent store for codex (ChatGPT-subscription) OAuth tokens.
  *
  * OAuth yields a short-lived access token, a long-lived refresh token, and the
- * account id — each `swarm-harness` run is a fresh process, so these must
+ * account id — each `openswarm` run is a fresh process, so these must
  * persist to disk and be silent-refreshed when the access token expires
  * (docs/42 §6 / Q6). Posture: a single `0600` JSON file under
  * `~/.swarm-harness/auth.json`, provider-namespaced so other providers can

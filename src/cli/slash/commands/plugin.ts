@@ -17,7 +17,7 @@ import { PluginStateStore } from "../../../plugins/state.js";
 
 const USAGE = "usage: /plugin <list|enable|disable> [id]";
 const DEFERRED =
-  "install, update, and uninstall are CLI-only in v0.1 — run `swarm-harness plugin <sub>` from a shell.";
+  "install, update, and uninstall are CLI-only in v0.1 — run `openswarm plugin <sub>` from a shell.";
 
 export const pluginCommand: SlashCommand = {
   name: "plugin",

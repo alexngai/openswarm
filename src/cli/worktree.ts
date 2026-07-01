@@ -1,5 +1,5 @@
 /**
- * worktree.ts — `swarm-harness worktree list|clean` subcommand (v0.7 stage 7D).
+ * worktree.ts — `openswarm worktree list|clean` subcommand (v0.7 stage 7D).
  *
  * Manages the per-team worktrees that the git-cascade BranchPolicy adapter
  * creates under `<repo>/.swarm-harness/worktrees/<streamId>/`. Run after a
@@ -146,8 +146,8 @@ async function listWorktrees(repo: string): Promise<string[]> {
 
 function usage(): string {
   return `Usage:
-  swarm-harness worktree list   [--repo <path>] [--json]
-  swarm-harness worktree clean  [--repo <path>] [--dry-run]
+  openswarm worktree list   [--repo <path>] [--json]
+  openswarm worktree clean  [--repo <path>] [--dry-run]
 
 Manages git-cascade-created worktrees under <repo>/.swarm-harness/worktrees/.
 Use \`clean\` to reclaim disk and prune git's worktree registry after a team

@@ -40,7 +40,7 @@ Reference paths below are relative to `references/macro-agent/`.
 ## 1. OpenHive hosting-adapter contract _(was: networked servers)_
 
 The original N1–N5 "servers buffet" resolves, per OpenHive's actual usage
-(`references/openhive`), into **one bounded thing: be a hostable OpenSwarm
+(`references/openhive`), into **one bounded thing: be a hostable Swarm Runner
 adapter.** OpenHive doesn't *connect to* a swarm — it **spawns** it as a child
 subprocess on 127.0.0.1 (`src/swarm/providers/local.ts` `LocalProvider`,
 `spawn(bin, ['--port','--host','--adapter','macro-agent'])`), binds **three
@@ -58,11 +58,11 @@ the hub UI (the escalate target for hosted teams; ties to W1).
 
 | # | Piece | Status | Priority | Effort | Notes |
 |---|---|---|---|---|---|
-| H0 | **Programmatic `boot()` host entry** (binds the three ports from flags + bootstrap env) | ❌ | P1 | M | Foundational — swarm-harness's analog of macro-agent `bootV2()`; none exists today. Per **D3 Path B**, swarm-harness binds its **own** ports (no openswarm gateway); OpenHive spawns it via `spawn_command_override`. |
+| H0 | **Programmatic `boot()` host entry** (binds the three ports from flags + bootstrap env) | ❌ | P1 | M | Foundational — swarm-harness's analog of macro-agent `bootV2()`; none exists today. Per **D3 Path B**, swarm-harness binds its **own** ports (no Swarm Runner gateway); OpenHive spawns it via `spawn_command_override`. |
 | H1 | **ACP-over-WebSocket** on `--port` at `/acp` (+ ACP-over-MAP) | ❌ | P1 | M | Primary live channel. Wrap the existing stdio `AcpAgent` (`src/acp/index.ts`) in a WS transport — reuses shipped ACP + `session/load`/resume + `_meta.swarm` work. (was N2) |
 | H2 | **MAP server** on `--port+2` at `/map` + bridges | ⚠️ | P1 | L | **Dominant cost.** Hub's `MAPClientManager` connects here. Today swarm-harness only forwards *outbound* over a shim (`map-adapter.ts`); gap = *hosting* a MAP server via **`@multi-agent-protocol/sdk`** (D3, replaces `map-protocol.ts`) + per-agent register (`map/agents/register`, `protocols:['acp']`) + sidecar dial-back + task/mail bridges. (subset of old O1) |
 | H3 | **Health/metrics HTTP** on `--port+1` | ❌ | P2 | S | `/health` probed by the hub (`deriveHealthUrls`). Trivial — **not** the full REST CRUD. |
-| H4 | **OpenSwarm bootstrap protocol** | ❌ | P2 | S | `--port/--host/--adapter` flags + env (`OPENSWARM_BOOTSTRAP_TOKEN`, `OPENSWARM_DATA_DIR`, `MACRO_BOOTSTRAP_COORDINATOR/CWD`, `MACRO_BOOTSTRAP_REHYDRATE=all` → restore full agent tree on restart). |
+| H4 | **Swarm Runner bootstrap protocol** | ❌ | P2 | S | `--port/--host/--adapter` flags + env (`SWARM_RUNNER_BOOTSTRAP_TOKEN`, `SWARM_RUNNER_DATA_DIR`, legacy `OPENSWARM_*`, `MACRO_BOOTSTRAP_COORDINATOR/CWD`, `MACRO_BOOTSTRAP_REHYDRATE=all` → restore full agent tree on restart). |
 | H5 | **Cascade-action handlers** (`merge/abandon/pause/resume/resolve/push/commit`) | ❌ | P1 | M | The hub's buttons over the git-workspace layer. `resolve` = escalate-to-human (links W1); `merge/push/commit/abandon` call the same landing primitives as W1/W2/W5. Build alongside §2. |
 | ~~N1~~ | ~~REST/HTTP CRUD API~~ | 🚫 | — | — | **Rejected.** OpenHive uses MAP for agent/task/team ops; only `/health`+metrics over HTTP (→ H3). |
 | ~~N3~~ | ~~Cross-instance federation~~ | 🚫 | — | — | **Rejected.** OpenHive *is* the coordination/federation plane; a hosted child never peer-federates. |
@@ -213,7 +213,7 @@ landing/recovery primitives W1/W2/W5 build (H5). Build them together.
 
 ### D3 — OpenHive hosting: Path B (direct-spawn) + real MAP SDK _(decided 2026-06-09)_
 
-OpenHive hosts swarms via `openswarm` (a gateway + TUI) that loads a
+OpenHive hosts swarms via `swarm-runner` (a gateway + TUI) that loads a
 `MAPServerAdapter` plugin — macro-agent plugs in as `src/hosting/adapters/
 macro-agent.ts` (~340 lines of glue) whose `bootV2()` binds the three ports.
 swarm-harness is a *full product* (own TUI/engine/binary), not a headless
@@ -221,9 +221,9 @@ backend, so:
 
 - **Path B (direct-spawn, standalone)** — swarm-harness binds its **own** three
   ports and speaks MAP; OpenHive spawns it via `LocalProvider`'s
-  `spawn_command_override` (the path already reserved for "non-openswarm kinds").
-  No `openswarm` dependency. A thin openswarm adapter can come later for free
-  once the `boot()` core exists, but is not the target.
+  `spawn_command_override` (the path already reserved for non-Swarm Runner kinds).
+  No `swarm-runner` dependency. A thin Swarm Runner adapter can come later for
+  free once the `boot()` core exists, but is not the target.
 - **Adopt `@multi-agent-protocol/sdk`** for the MAP layer (H2), replacing the
   in-house `map-protocol.ts` shim — guarantees wire parity with the hub for the
   server, `map/agents/register`, and ACP-over-MAP paths.

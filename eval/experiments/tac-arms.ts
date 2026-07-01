@@ -1,6 +1,6 @@
 import { tacDockerArms, type Arm } from "swarmkit-eval";
 
-const BASE_TAC_ARM_IDS = new Set(["stock", "notes", "opentasks"]);
+const BASE_TAC_ARM_IDS = new Set(["stock", "notes", "opentasks", "opentasks-team-contract"]);
 
 const ACCEPTANCE_CHECKLIST_ARM: Arm = {
   id: "acceptance",
@@ -38,8 +38,8 @@ export function tacExperimentArms(ids: readonly string[]): Arm[] {
       return ACCEPTANCE_CHECKLIST_ARM;
     }
     if (BASE_TAC_ARM_IDS.has(id)) {
-      return tacDockerArms([id as "stock" | "notes" | "opentasks"])[0]!;
+      return tacDockerArms([id as "stock" | "notes" | "opentasks" | "opentasks-team-contract"])[0]!;
     }
-    throw new Error(`Unknown TAC arm '${id}'. Supported: stock, notes, opentasks, acceptance`);
+    throw new Error(`Unknown TAC arm '${id}'. Supported: stock, notes, opentasks, opentasks-team-contract, acceptance`);
   });
 }

@@ -1,5 +1,5 @@
 /**
- * swarm.ts — implementation of `swarm-harness swarm run <tasks-file>`.
+ * swarm.ts — implementation of `openswarm swarm run <tasks-file>`.
  *
  * Reads a JSONL file of TaskPackets, validates each line with zod,
  * then drives the Orchestrator to execute them concurrently.
@@ -144,7 +144,7 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
       );
       if (isPolicyParseError(parsed.error.message)) {
         process.stderr.write(
-          `[swarm-harness] TaskPacket policies are now discriminated unions — see docs/11-m3a-plan.md §Policy migration\n`,
+          `[openswarm] TaskPacket policies are now discriminated unions — see docs/11-m3a-plan.md §Policy migration\n`,
         );
       }
       return 2;
@@ -215,13 +215,13 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
       }
       const client = new OpenTasksClient(sockPath);
       taskWrapper = (inner) => new OpenTasksTaskRegistry(inner, client);
-      process.stderr.write(`[swarm-harness] --opentasks enabled (socket: ${sockPath})\n`);
+      process.stderr.write(`[openswarm] --opentasks enabled (socket: ${sockPath})\n`);
     }
 
     let inboxBackend: import("../swarm/inbox.js").InboxBackend | undefined;
     if (opts.agentInbox === true) {
       inboxBackend = new AgentInboxBackend();
-      process.stderr.write(`[swarm-harness] --agent-inbox enabled (in-memory storage)\n`);
+      process.stderr.write(`[openswarm] --agent-inbox enabled (in-memory storage)\n`);
     }
 
     let branchPolicyAdapter:
@@ -233,7 +233,7 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
         ...(opts.cleanupWorktrees === true && { cleanupOnDispose: true }),
       });
       process.stderr.write(
-        `[swarm-harness] --git-cascade enabled (worktrees under ${process.cwd()}/.swarm-harness/worktrees/${opts.cleanupWorktrees === true ? "; auto-cleanup on exit" : ""})\n`,
+        `[openswarm] --git-cascade enabled (worktrees under ${process.cwd()}/.swarm-harness/worktrees/${opts.cleanupWorktrees === true ? "; auto-cleanup on exit" : ""})\n`,
       );
     }
 
@@ -313,7 +313,7 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
         workersAborted: 0, // all tasks already completed at aggregate-check time
       };
       process.stderr.write(
-        `[swarm-harness] swarm aggregate budget exceeded: ${budgetResult.reason ?? "limit reached"}\n`,
+        `[openswarm] swarm aggregate budget exceeded: ${budgetResult.reason ?? "limit reached"}\n`,
       );
       process.stderr.write(JSON.stringify(exceededEvent) + "\n");
       return 3;
@@ -323,18 +323,18 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
   // Print summary.
   const total = tasks.length;
   process.stderr.write(
-    `\n[swarm-harness] swarm complete in ${elapsed}ms: ${summary.succeeded}/${total} succeeded, ${summary.failed} failed, ${summary.timeout} timeout, ${summary.cancelled} cancelled${summary.resultWriteFailures > 0 ? ` (${summary.resultWriteFailures} result write failures)` : ""}\n`,
+    `\n[openswarm] swarm complete in ${elapsed}ms: ${summary.succeeded}/${total} succeeded, ${summary.failed} failed, ${summary.timeout} timeout, ${summary.cancelled} cancelled${summary.resultWriteFailures > 0 ? ` (${summary.resultWriteFailures} result write failures)` : ""}\n`,
   );
 
   if (summary.resultWriteFailures > 0) return 1;
   if (summary.deadLetterViolation) {
     if (summary.deadLetterWriteFailures > 0) {
       process.stderr.write(
-        `[swarm-harness] exiting non-zero: dead-letter writer failed ${summary.deadLetterWriteFailures} time(s) writing to ${opts.deadLetter ?? "./dead-letter.jsonl"}; --allow-dead-letter does NOT suppress write failures\n`,
+        `[openswarm] exiting non-zero: dead-letter writer failed ${summary.deadLetterWriteFailures} time(s) writing to ${opts.deadLetter ?? "./dead-letter.jsonl"}; --allow-dead-letter does NOT suppress write failures\n`,
       );
     } else {
       process.stderr.write(
-        `[swarm-harness] exiting non-zero: ${opts.deadLetter ?? "./dead-letter.jsonl"} has new entries from this run; pass --allow-dead-letter to accept\n`,
+        `[openswarm] exiting non-zero: ${opts.deadLetter ?? "./dead-letter.jsonl"} has new entries from this run; pass --allow-dead-letter to accept\n`,
       );
     }
     return 1;

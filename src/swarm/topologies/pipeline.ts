@@ -181,7 +181,7 @@ export class PipelineTopology implements Topology {
 
     if (firstResultWriteError) {
       process.stderr.write(
-        `[swarm-harness] ${resultWriteFailures} pipeline stage result(s) failed to persist; first error: ${String(firstResultWriteError)}\n`,
+        `[openswarm] ${resultWriteFailures} pipeline stage result(s) failed to persist; first error: ${String(firstResultWriteError)}\n`,
       );
     }
 

@@ -105,7 +105,7 @@ export async function buildAgentRuntime(
       if (readCodexTokens() === null) {
         process.stderr.write(
           "error: not logged in to ChatGPT.\n" +
-            "  Run `swarm-harness login --provider openai-codex`.\n",
+            "  Run `openswarm login --provider openai-codex`.\n",
         );
         return { kind: "exit", code: 1 };
       }
@@ -129,13 +129,13 @@ export async function buildAgentRuntime(
       hooksConfig = await loadHooksConfig({ cwd: process.cwd() });
     } catch (err) {
       process.stderr.write(
-        `[swarm-harness] hooks config error: ${err instanceof Error ? err.message : String(err)}\n`,
+        `[openswarm] hooks config error: ${err instanceof Error ? err.message : String(err)}\n`,
       );
     }
     const n = countMatchers(hooksConfig.config);
     if (n > 0 && hooksConfig.resolvedPath !== undefined) {
       process.stderr.write(
-        `[swarm-harness] hooks loaded from ${hooksConfig.resolvedPath} (${n} matchers across ${countEvents(hooksConfig.config)} events)\n`,
+        `[openswarm] hooks loaded from ${hooksConfig.resolvedPath} (${n} matchers across ${countEvents(hooksConfig.config)} events)\n`,
       );
     }
   }
@@ -159,10 +159,10 @@ export async function buildAgentRuntime(
   if (opts.plugins) {
     const pluginRegistry = new PluginRegistry(pluginStateStore);
     pluginRegistry.registerSource(
-      new ClaudeCodeSource({ id: "swarm-harness", pluginsDir: swarmPluginsDir }),
+      new ClaudeCodeSource({ id: "openswarm", pluginsDir: swarmPluginsDir }),
     );
     pluginRegistry.registerSource(new ClaudeCodeSource());
-    process.stderr.write("[swarm-harness] discovering plugins...\n");
+    process.stderr.write("[openswarm] discovering plugins...\n");
     try {
       const discovered = await pluginRegistry.buildPluginTools();
       for (const tool of discovered) {
@@ -175,7 +175,7 @@ export async function buildAgentRuntime(
       }
     } catch (err) {
       process.stderr.write(
-        `[swarm-harness] plugin discovery error: ${err instanceof Error ? err.message : String(err)}\n`,
+        `[openswarm] plugin discovery error: ${err instanceof Error ? err.message : String(err)}\n`,
       );
     }
   }
@@ -207,12 +207,12 @@ export async function buildAgentRuntime(
       loaded = await loadMcpConfig();
     } catch (err) {
       process.stderr.write(
-        `[swarm-harness] mcp config load error: ${err instanceof Error ? err.message : String(err)}\n`,
+        `[openswarm] mcp config load error: ${err instanceof Error ? err.message : String(err)}\n`,
       );
       loaded = { configs: [] };
     }
     if (loaded.resolvedPath !== undefined) {
-      process.stderr.write(`[swarm-harness] mcp config: ${loaded.resolvedPath}\n`);
+      process.stderr.write(`[openswarm] mcp config: ${loaded.resolvedPath}\n`);
     }
     if (loaded.configs.length > 0) {
       const results = await Promise.allSettled(
@@ -227,7 +227,7 @@ export async function buildAgentRuntime(
         const cfg = loaded.configs[i]!;
         if (r.status === "rejected") {
           process.stderr.write(
-            `[swarm-harness] mcp server '${cfg.name}' failed to connect: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}\n`,
+            `[openswarm] mcp server '${cfg.name}' failed to connect: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}\n`,
           );
           continue;
         }
@@ -246,7 +246,7 @@ export async function buildAgentRuntime(
           }
         } catch (err) {
           process.stderr.write(
-            `[swarm-harness] mcp server '${cfg.name}' listTools failed: ${err instanceof Error ? err.message : String(err)}\n`,
+            `[openswarm] mcp server '${cfg.name}' listTools failed: ${err instanceof Error ? err.message : String(err)}\n`,
           );
         }
       }

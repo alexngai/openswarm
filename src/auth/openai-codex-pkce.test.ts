@@ -30,7 +30,7 @@ describe("buildAuthorizeUrl", () => {
     expect(p.get("code_challenge")).toBe("chal");
     expect(p.get("code_challenge_method")).toBe("S256");
     expect(p.get("state")).toBe("state-xyz");
-    expect(p.get("originator")).toBe("swarm-harness");
+    expect(p.get("originator")).toBe("openswarm");
   });
 });
 

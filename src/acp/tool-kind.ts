@@ -1,5 +1,5 @@
 /**
- * Maps swarm-harness Tier-0 tool calls onto ACP presentation: ToolKind (icon /
+ * Maps OpenSwarm Tier-0 tool calls onto ACP presentation: ToolKind (icon /
  * UI treatment), a human-readable title, follow-along file locations, and
  * inline diffs for edit-family tools. Built from the tool *input* args, which
  * are available before the tool runs. See docs/32 §4.

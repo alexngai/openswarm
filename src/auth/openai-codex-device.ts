@@ -49,7 +49,7 @@ export async function runDeviceOAuth(opts: DeviceOAuthOptions = {}): Promise<Tok
   const intervalMs = Math.max(parseInt(device.interval ?? "5", 10) || 5, 1) * 1000;
 
   print(
-    `\nTo authorize swarm-harness with ChatGPT:\n` +
+    `\nTo authorize OpenSwarm with ChatGPT:\n` +
       `  1. Visit: ${CODEX_ISSUER}/codex/device\n` +
       `  2. Enter code: ${device.user_code}\n\nWaiting for approval...\n`,
   );

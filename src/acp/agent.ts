@@ -1,5 +1,5 @@
 /**
- * AcpAgent — implements the ACP SDK `Agent` interface for swarm-harness.
+ * AcpAgent — implements the ACP SDK `Agent` interface for OpenSwarm.
  *
  * Stage A Steps 1–2: session lifecycle + initialize. The prompt turn is a
  * clean no-op until Step 3 wires the engine→session/update translator

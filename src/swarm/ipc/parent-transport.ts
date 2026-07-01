@@ -277,7 +277,7 @@ export class ParentTransport extends EventEmitter {
 
     if (this.outboundBufferedBytes + bytes > OUTBOUND_QUEUE_MAX_BYTES) {
       process.stderr.write(
-        `[swarm-harness] worker outbound queue full; dropping ${typeLabel}\n`,
+        `[openswarm] worker outbound queue full; dropping ${typeLabel}\n`,
       );
       return;
     }

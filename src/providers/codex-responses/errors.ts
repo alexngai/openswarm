@@ -57,7 +57,7 @@ export function classifyCodexHttpError(
   if (status === 401 || status === 403) {
     return {
       error: { code: "auth", message: baseMessage, retryable: false },
-      friendlyMessage: "ChatGPT authentication failed — run `swarm-harness login --provider openai-codex`.",
+      friendlyMessage: "ChatGPT authentication failed — run `openswarm login --provider openai-codex`.",
     };
   }
 

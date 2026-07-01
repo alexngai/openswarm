@@ -224,12 +224,12 @@ export class Orchestrator extends EventEmitter {
     this.sigintHandler = () => {
       if (this.shuttingDown) {
         // Second Ctrl-C — force exit.
-        process.stderr.write("[swarm-harness] second SIGINT — forcing exit\n");
+        process.stderr.write("[openswarm] second SIGINT — forcing exit\n");
         process.exit(130);
       }
       this.shuttingDown = true;
       process.stderr.write(
-        "[swarm-harness] SIGINT received; draining workers...\n",
+        "[openswarm] SIGINT received; draining workers...\n",
       );
       abortController.abort();
       this.pool.close();

@@ -1,7 +1,7 @@
 {
-  "name": "swarm-harness",
+  "name": "openswarm",
   "version": "0.3.5",
-  "description": "Multi-agent coding agent CLI: one agent is a tool, N coordinated agents are the product. Built on Anthropic's Claude Agent SDK with swarm/team orchestration, multi-provider support, and a Bun-native interactive TUI.",
+  "description": "OpenSwarm multi-agent coding CLI: one agent is a tool, N coordinated agents are the product. Built on Anthropic's Claude Agent SDK with swarm/team orchestration, multi-provider support, and a Bun-native interactive TUI.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -12,6 +12,7 @@
     }
   },
   "bin": {
+    "openswarm": "bin/openswarm.mjs",
     "swarm-harness": "bin/swarm-harness.mjs"
   },
   "files": [
@@ -61,12 +62,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/alexngai/swarm-coder.git"
+    "url": "git+https://github.com/alexngai/openswarm.git"
   },
   "bugs": {
-    "url": "https://github.com/alexngai/swarm-coder/issues"
+    "url": "https://github.com/alexngai/openswarm/issues"
   },
-  "homepage": "https://github.com/alexngai/swarm-coder#readme",
+  "homepage": "https://github.com/alexngai/openswarm#readme",
   "devDependencies": {
     "@types/node": "^25.6.0",
     "@types/proper-lockfile": "^4.1.4",
@@ -104,8 +105,8 @@
     "zod-to-json-schema": "^3.25.2"
   },
   "optionalDependencies": {
-    "@swarm-harness/cli-darwin-arm64": "0.3.5",
-    "@swarm-harness/cli-darwin-x64": "0.3.5",
-    "@swarm-harness/cli-linux-x64": "0.3.5"
+    "@swarmkit-ai/openswarm-cli-darwin-arm64": "0.3.5",
+    "@swarmkit-ai/openswarm-cli-darwin-x64": "0.3.5",
+    "@swarmkit-ai/openswarm-cli-linux-x64": "0.3.5"
   }
 }

@@ -1,5 +1,5 @@
 /**
- * host.ts — docs/44 P5. CLI entry for `swarm-harness host --port N [--host H]`.
+ * host.ts — docs/44 P5. CLI entry for `openswarm host --port N [--host H]`.
  *
  * Spawned by OpenHive's hosting provider as a child process (see
  * `references/openhive` local provider). Binds the 3-port stride, answers
@@ -46,8 +46,8 @@ function hostedAcpOpts(permissionMode: PermissionMode, model?: string): CommonOp
 
 export async function runHost(opts: RunHostOptions): Promise<number> {
   const bootstrap = readBootstrapConfig();
-  // The data dir (OPENSWARM_DATA_DIR) is where per-spawn state lives; default
-  // the working dir to it so spawned agents operate in the hosted workspace.
+  // The data dir is where per-spawn state lives; default the working dir to it
+  // so spawned agents operate in the hosted workspace.
   const cwd = opts.cwd ?? bootstrap.dataDir ?? process.cwd();
   const permissionMode = opts.permissionMode ?? "workspace-write";
   const acpOpts = hostedAcpOpts(permissionMode, opts.model);
@@ -74,18 +74,18 @@ export async function runHost(opts: RunHostOptions): Promise<number> {
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[swarm-harness] host failed to start: ${msg}\n`);
+    process.stderr.write(`[openswarm] host failed to start: ${msg}\n`);
     return 1;
   }
 
   if (opts.adapter !== undefined) {
-    process.stderr.write(`[swarm-harness] adapter=${opts.adapter}\n`);
+    process.stderr.write(`[openswarm] adapter=${opts.adapter}\n`);
   }
 
   // Stay alive until a termination signal, then shut down gracefully.
   await new Promise<void>((resolve) => {
     const stop = (sig: NodeJS.Signals): void => {
-      process.stderr.write(`[swarm-harness] ${sig} received; shutting down...\n`);
+      process.stderr.write(`[openswarm] ${sig} received; shutting down...\n`);
       resolve();
     };
     process.once("SIGTERM", () => stop("SIGTERM"));

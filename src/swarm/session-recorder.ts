@@ -1,6 +1,6 @@
 /**
  * Session recorder — writes a worker's lane-event spine to a per-session
- * `events.jsonl` transcript that sessionlog's `swarm-harness` agent adapter can
+ * `events.jsonl` transcript that sessionlog's OpenSwarm agent adapter can
  * read (and cognitive-core can later distill).
  *
  * Layout matches the adapter: `<sessionsDir>/<sessionId>/events.jsonl`, where

@@ -28,7 +28,7 @@ const TLS_CERT_ERROR_PATTERNS = [
 ];
 
 const PROBE_URL =
-  "https://auth.openai.com/oauth/authorize?response_type=code&client_id=swarm-harness-preflight" +
+  "https://auth.openai.com/oauth/authorize?response_type=code&client_id=openswarm-preflight" +
   "&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&scope=openid";
 
 export type TlsPreflightResult =

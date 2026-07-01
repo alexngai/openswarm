@@ -1,5 +1,5 @@
 /**
- * logout.ts — `swarm-harness logout --provider <name>` subcommand.
+ * logout.ts — `openswarm logout --provider <name>` subcommand.
  *
  * Dispatches to the appropriate auth provider's logout() method.
  * Exit codes:
@@ -46,7 +46,7 @@ export async function logoutMain(argv: string[]): Promise<number> {
     case "claude-agent-sdk": {
       process.stdout.write(
         "claude-agent-sdk manages auth via `claude login` (Anthropic SDK). " +
-          "swarm-harness has no per-provider token to clear for this provider.\n",
+          "OpenSwarm has no per-provider token to clear for this provider.\n",
       );
       return 0;
     }

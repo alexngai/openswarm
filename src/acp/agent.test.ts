@@ -54,7 +54,7 @@ describe("AcpAgent", () => {
   it("initialize returns the agent info", async () => {
     const agent = new AcpAgent(conn, stubRuntime(), opts);
     const res = await agent.initialize({ protocolVersion: 1 });
-    expect(res.agentInfo?.name).toBe("swarm-harness");
+    expect(res.agentInfo?.name).toBe("openswarm");
   });
 
   it("newSession returns a session id; prompt on it ends the turn", async () => {

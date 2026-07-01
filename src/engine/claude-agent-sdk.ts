@@ -31,8 +31,10 @@ import { z, ZodObject, toJSONSchema as zodToJSONSchema } from "zod";
  * engine key by the bare tool name (e.g. `read_file`). We strip the prefix
  * at the engine boundary so the rest of the system sees unprefixed names.
  */
-const MCP_PREFIX = "mcp__swarm-harness__";
+const MCP_PREFIX = "mcp__openswarm__";
+const LEGACY_MCP_PREFIX = "mcp__swarm-harness__";
 function stripMcpPrefix(name: string): string {
+  if (name.startsWith(LEGACY_MCP_PREFIX)) return name.slice(LEGACY_MCP_PREFIX.length);
   return name.startsWith(MCP_PREFIX) ? name.slice(MCP_PREFIX.length) : name;
 }
 import {
@@ -56,7 +58,7 @@ type SDKPermissionMode =
 
 /**
  * Always returns SDK `default` mode so canUseTool fires for every tool call,
- * regardless of swarm-harness PermissionMode. Our PermissionEngine returns
+ * regardless of OpenSwarm PermissionMode. Our PermissionEngine returns
  * Allow for everything in danger-full-access — the SDK mode would just gate
  * a second time. Going through canUseTool in all modes lets bash-validation
  * (Phase 5 stage A) act as the safety floor even in danger mode.
@@ -161,7 +163,7 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
     });
 
     const mcpServer = createSdkMcpServer({
-      name: "swarm-harness",
+      name: "openswarm",
       tools: mcpTools,
     });
 
@@ -289,7 +291,7 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
         // canUseTool — see RunConfig.enabledBuiltinTools JSDoc). Default is
         // empty (no built-in tools) unless explicitly enabled by the caller.
         tools: [...(config.enabledBuiltinTools ?? [])],
-        mcpServers: { "swarm-harness": mcpServer },
+        mcpServers: { openswarm: mcpServer },
         canUseTool: sdkCanUseTool,
         permissionMode: sdkPermissionMode,
         maxTurns: config.maxTurns,

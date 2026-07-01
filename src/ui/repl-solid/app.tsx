@@ -64,7 +64,7 @@ export function App(props: AppProps) {
         dispatch({ type: "hydrate-history", history: loaded });
       }
     } catch (err) {
-      process.stderr.write(`swarm-harness: failed to load history: ${err}\n`);
+      process.stderr.write(`openswarm: failed to load history: ${err}\n`);
     }
   });
 
@@ -145,7 +145,7 @@ export function App(props: AppProps) {
     try {
       appendHistoryEntry(line);
     } catch (err) {
-      process.stderr.write(`swarm-harness: failed to persist history: ${err}\n`);
+      process.stderr.write(`openswarm: failed to persist history: ${err}\n`);
     }
     dispatch({ type: "submit", text: line });
     props.onSubmit?.(line);

@@ -199,7 +199,7 @@ describe("ACP e2e (ClientSideConnection <-> AcpAgent)", () => {
         protocolVersion: 1,
         clientCapabilities: {},
       });
-      expect(init.agentInfo?.name).toBe("swarm-harness");
+      expect(init.agentInfo?.name).toBe("openswarm");
       expect(init.agentCapabilities?.loadSession).toBe(true);
 
       const { sessionId } = await client.newSession({
@@ -436,7 +436,7 @@ describe("ACP e2e (subprocess)", () => {
           protocolVersion: 1,
           clientCapabilities: {},
         });
-        expect(init.agentInfo?.name).toBe("swarm-harness");
+        expect(init.agentInfo?.name).toBe("openswarm");
         expect(init.agentCapabilities?.loadSession).toBe(true);
 
         const { sessionId } = await conn.newSession({

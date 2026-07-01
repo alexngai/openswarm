@@ -11,12 +11,12 @@ describe("readBootstrapConfig", () => {
     expect(cfg.dataDir).toBeUndefined();
   });
 
-  it("reads the macro-agent bootstrap env vars", () => {
+  it("reads the Swarm Runner bootstrap env vars", () => {
     const cfg = readBootstrapConfig({
       MACRO_BOOTSTRAP_COORDINATOR: "true",
       MACRO_BOOTSTRAP_CWD: "/work/repo",
       MACRO_BOOTSTRAP_REHYDRATE: "all",
-      OPENSWARM_DATA_DIR: "/data/swarm-1",
+      SWARM_RUNNER_DATA_DIR: "/data/swarm-1",
     });
     expect(cfg.coordinator).toBe(true);
     expect(cfg.coordinatorCwd).toBe("/work/repo");
@@ -38,13 +38,24 @@ describe("readBootstrapConfig", () => {
   it("decodes a base64 JSON bootstrap token", () => {
     const token = { openteams: { team_bundle_id: "tb_1" }, foo: 42 };
     const raw = Buffer.from(JSON.stringify(token), "utf-8").toString("base64");
-    const cfg = readBootstrapConfig({ OPENSWARM_BOOTSTRAP_TOKEN: raw });
+    const cfg = readBootstrapConfig({ SWARM_RUNNER_BOOTSTRAP_TOKEN: raw });
     expect(cfg.token).toEqual(token);
+  });
+
+  it("accepts legacy OPENSWARM bootstrap env vars", () => {
+    const token = { openteams: { team_bundle_id: "legacy" } };
+    const raw = Buffer.from(JSON.stringify(token), "utf-8").toString("base64");
+    const cfg = readBootstrapConfig({
+      OPENSWARM_BOOTSTRAP_TOKEN: raw,
+      OPENSWARM_DATA_DIR: "/data/legacy",
+    });
+    expect(cfg.token).toEqual(token);
+    expect(cfg.dataDir).toBe("/data/legacy");
   });
 
   it("tolerates a malformed token (non-fatal, token undefined)", () => {
     const cfg = readBootstrapConfig({
-      OPENSWARM_BOOTSTRAP_TOKEN: "@@not-base64-json@@",
+      SWARM_RUNNER_BOOTSTRAP_TOKEN: "@@not-base64-json@@",
       MACRO_BOOTSTRAP_COORDINATOR: "true",
     });
     expect(cfg.token).toBeUndefined();

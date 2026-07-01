@@ -3,7 +3,7 @@
   "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "swarm-harness",
+      "name": "openswarm",
       "dependencies": {
         "@agentclientprotocol/sdk": "^0.24.0",
         "@ai-sdk/google": "3.0.64",
@@ -41,9 +41,9 @@
         "vitest": "^4.1.4",
       },
       "optionalDependencies": {
-        "@swarm-harness/cli-darwin-arm64": "0.3.3",
-        "@swarm-harness/cli-darwin-x64": "0.3.3",
-        "@swarm-harness/cli-linux-x64": "0.3.3",
+        "@swarmkit-ai/openswarm-cli-darwin-arm64": "0.3.5",
+        "@swarmkit-ai/openswarm-cli-darwin-x64": "0.3.5",
+        "@swarmkit-ai/openswarm-cli-linux-x64": "0.3.5",
       },
     },
   },

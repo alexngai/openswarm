@@ -68,7 +68,7 @@ export class OpenAICodexAuth implements InteractiveAuth, CodexCredentialSource {
   async refresh(): Promise<void> {
     const stored = readCodexTokens(this.baseDir);
     if (stored === null) {
-      throw new Error("not authenticated — run `swarm-harness login --provider openai-codex`");
+      throw new Error("not authenticated — run `openswarm login --provider openai-codex`");
     }
     await this.doRefresh(stored);
   }
@@ -93,7 +93,7 @@ export class OpenAICodexAuth implements InteractiveAuth, CodexCredentialSource {
   private async validTokens(): Promise<CodexTokens> {
     const stored = readCodexTokens(this.baseDir);
     if (stored === null) {
-      throw new Error("not authenticated — run `swarm-harness login --provider openai-codex`");
+      throw new Error("not authenticated — run `openswarm login --provider openai-codex`");
     }
     if (stored.expiresAt - this.now() > REFRESH_BUFFER_MS) {
       return stored;

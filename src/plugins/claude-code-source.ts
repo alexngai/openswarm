@@ -349,7 +349,7 @@ export class ClaudeCodeSource implements PluginSource {
       const normalizedDir = path.resolve(pluginDir) + path.sep;
       if (!resolved.startsWith(normalizedDir) && resolved !== path.resolve(pluginDir)) {
         const msg = `plugin '${manifest.id}' entryModule escapes plugin directory`;
-        process.stderr.write(`[swarm-harness] ${msg}\n`);
+        process.stderr.write(`[openswarm] ${msg}\n`);
         throw new Error(msg);
       }
     }
@@ -446,6 +446,6 @@ export class ClaudeCodeSource implements PluginSource {
   }
 
   private _warn(pluginId: string, msg: string): void {
-    process.stderr.write(`[swarm-harness] plugin ${pluginId}: ${msg}\n`);
+    process.stderr.write(`[openswarm] plugin ${pluginId}: ${msg}\n`);
   }
 }

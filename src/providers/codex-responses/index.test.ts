@@ -67,7 +67,7 @@ describe("CodexResponsesTransportProvider", () => {
     const headers = captured!.init.headers as Record<string, string>;
     expect(headers["Authorization"]).toBe("Bearer tok");
     expect(headers["chatgpt-account-id"]).toBe("acc");
-    expect(headers["originator"]).toBe("swarm-harness");
+    expect(headers["originator"]).toBe("openswarm");
     const body = JSON.parse(captured!.init.body as string);
     expect(body.model).toBe("gpt-5.5"); // provider overrides req.model
     expect(body.store).toBe(false);

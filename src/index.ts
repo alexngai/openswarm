@@ -1,5 +1,5 @@
 /**
- * swarm-harness — TypeScript coding agent built on Anthropic's Claude Agent SDK.
+ * OpenSwarm — TypeScript coding agent built on Anthropic's Claude Agent SDK.
  *
  * This file is the library entry point. Most users interact via the CLI
  * (`node dist/cli.js`); library consumers can import the types and classes
@@ -13,11 +13,13 @@ import { createRequire } from "node:module";
 
 // Version source of truth is package.json. The bun-compiled binary can't read
 // package.json from its embedded fs, so build-binary.ts injects the version as
-// the `__SWARM_HARNESS_VERSION__` compile-time constant; under node we read it
-// from package.json. (`typeof` on an undeclared name is safe — never throws.)
+// the `__OPENSWARM_VERSION__` compile-time constant; under node we read it from
+// package.json. (`typeof` on an undeclared name is safe — never throws.)
+declare const __OPENSWARM_VERSION__: string | undefined;
 declare const __SWARM_HARNESS_VERSION__: string | undefined;
 
 function resolveVersion(): string {
+  if (typeof __OPENSWARM_VERSION__ !== "undefined") return __OPENSWARM_VERSION__;
   if (typeof __SWARM_HARNESS_VERSION__ !== "undefined") return __SWARM_HARNESS_VERSION__;
   try {
     return (createRequire(import.meta.url)("../package.json") as { version?: string }).version ?? "0.0.0";

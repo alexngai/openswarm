@@ -6,7 +6,7 @@
  * cleanup. RPC method handlers other than `status` are stubbed with
  * UNKNOWN_METHOD until 5E.4. The events.jsonl writer lands in 5E.5.
  *
- * The daemon is per-team — each `swarm-harness team start --detach` forks one
+ * The daemon is per-team — each `openswarm team start --detach` forks one
  * of these processes per team name. Multi-team-in-one-process (and a host
  * daemon) are deferred per docs/28 §V0.5.Q1.
  */

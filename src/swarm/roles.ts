@@ -224,7 +224,7 @@ export async function loadCustomRoles(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(
-      `[swarm-harness] roles: unreadable ${configPath}: ${msg}\n`,
+      `[openswarm] roles: unreadable ${configPath}: ${msg}\n`,
     );
     return [];
   }
@@ -235,7 +235,7 @@ export async function loadCustomRoles(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(
-      `[swarm-harness] roles: malformed JSON in ${configPath}: ${msg}\n`,
+      `[openswarm] roles: malformed JSON in ${configPath}: ${msg}\n`,
     );
     return [];
   }
@@ -243,7 +243,7 @@ export async function loadCustomRoles(
   const fileParsed = RolesFileSchema.safeParse(json);
   if (!fileParsed.success) {
     process.stderr.write(
-      `[swarm-harness] roles: invalid shape in ${configPath} (expected { roles: Role[] }): ${fileParsed.error.message}\n`,
+      `[openswarm] roles: invalid shape in ${configPath} (expected { roles: Role[] }): ${fileParsed.error.message}\n`,
     );
     return [];
   }
@@ -254,7 +254,7 @@ export async function loadCustomRoles(
     const parsed = RoleSchema.safeParse(entry);
     if (!parsed.success) {
       process.stderr.write(
-        `[swarm-harness] roles: skipping invalid role at index ${i}: ${parsed.error.message}\n`,
+        `[openswarm] roles: skipping invalid role at index ${i}: ${parsed.error.message}\n`,
       );
       continue;
     }
