@@ -27,7 +27,7 @@ import { runDeviceOAuth } from "./openai-codex-device.js";
 const REFRESH_BUFFER_MS = 60_000;
 
 export interface OpenAICodexAuthOptions {
-  /** Token-store base dir (tests). Defaults to ~/.swarm-harness. */
+  /** Token-store base dir (tests). Defaults to ~/.openswarm. */
   readonly baseDir?: string;
   /** Injectable for tests. */
   readonly fetchImpl?: typeof fetch;

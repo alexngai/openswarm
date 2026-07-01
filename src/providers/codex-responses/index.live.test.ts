@@ -6,7 +6,7 @@
  * OAuth flow lands — this validates the real request→SSE→event pipeline against
  * the live backend with code we control.
  *
- *   CODEX_LIVE=1 SWARM_HARNESS_SKIP_INTEGRATION_BUILD=1 \
+ *   CODEX_LIVE=1 OPENSWARM_SKIP_INTEGRATION_BUILD=1 \
  *     npx vitest run src/providers/codex-responses/index.live.test.ts
  */
 
@@ -40,14 +40,14 @@ describe.runIf(live)("CodexResponsesTransportProvider (live)", () => {
   const provider = new CodexResponsesTransportProvider({
     modelId: "gpt-5.5",
     credentials: codexLoginCredentials(),
-    sessionId: "swarm-harness-live-smoke",
+    sessionId: "openswarm-live-smoke",
   });
 
   it("streams a plain text turn and finishes", async () => {
     const req: ProviderRequest = {
       messages: [{ role: "user", content: [{ type: "text", text: "Reply with exactly: pong" }] }],
       model: "gpt-5.5",
-      sessionId: "swarm-harness-live-smoke",
+      sessionId: "openswarm-live-smoke",
     };
     const out = await collect(provider.stream(req));
     const text = out.filter((e) => e.type === "text-delta").map((e) => (e as { text: string }).text).join("");
@@ -76,7 +76,7 @@ describe.runIf(live)("CodexResponsesTransportProvider (live)", () => {
       ],
       tools: [tool],
       model: "gpt-5.5",
-      sessionId: "swarm-harness-live-smoke",
+      sessionId: "openswarm-live-smoke",
     };
     const out = await collect(provider.stream(req));
     const call = out.find((e) => e.type === "tool-call");
@@ -100,7 +100,7 @@ describe.runIf(live)("CodexResponsesTransportProvider (live)", () => {
       requiredPermission: "none",
       tier: 1,
     };
-    const session = "swarm-harness-live-multiturn";
+    const session = "openswarm-live-multiturn";
     const userTurn = { role: "user" as const, content: [{ type: "text" as const, text: "Use get_weather to check Paris, then tell me the temperature." }] };
 
     const out1 = await collect(provider.stream({ messages: [userTurn], tools: [tool], model: "gpt-5.5", sessionId: session }));
@@ -131,12 +131,12 @@ describe.runIf(live)("CodexResponsesTransportProvider (live)", () => {
     const reasoningProvider = new CodexResponsesTransportProvider({
       modelId: "gpt-5.5",
       credentials: codexLoginCredentials(),
-      sessionId: "swarm-harness-live-reasoning",
+      sessionId: "openswarm-live-reasoning",
       reasoning: { effort: "high", summary: "auto" },
     });
     const userTurn = { role: "user" as const, content: [{ type: "text" as const, text: "Reason step by step about whether 17 is prime, then state the answer." }] };
 
-    const out1 = await collect(reasoningProvider.stream({ messages: [userTurn], model: "gpt-5.5", sessionId: "swarm-harness-live-reasoning" }));
+    const out1 = await collect(reasoningProvider.stream({ messages: [userTurn], model: "gpt-5.5", sessionId: "openswarm-live-reasoning" }));
     const reasoning = out1.find((e) => e.type === "reasoning") as { signature: string } | undefined;
     const text1 = out1.filter((e) => e.type === "text-delta").map((e) => (e as { text: string }).text).join("");
     expect(reasoning, "expected a reasoning item at effort:high").toBeDefined();
@@ -154,7 +154,7 @@ describe.runIf(live)("CodexResponsesTransportProvider (live)", () => {
         { role: "user", content: [{ type: "text", text: "Reply with exactly: confirmed" }] },
       ],
       model: "gpt-5.5",
-      sessionId: "swarm-harness-live-reasoning",
+      sessionId: "openswarm-live-reasoning",
     };
     const out2 = await collect(reasoningProvider.stream(req2));
     expect(out2.some((e) => e.type === "error")).toBe(false); // 400 if reasoning replay rejected
@@ -162,7 +162,7 @@ describe.runIf(live)("CodexResponsesTransportProvider (live)", () => {
   }, 120_000);
 
   it("replays reasoning + tool_use across turns without rejection (#6.1 pairing)", async () => {
-    // swarm-coder synthesizes an fc_* id after a reasoning item (it omits
+    // openswarm synthesizes an fc_* id after a reasoning item (it omits
     // openclaw's previousReplayItemWasReasoning id-pairing avoidance). This is
     // the agent hot path; a 400 here would mean the backend enforces pairing.
     const tool: ToolSpec = {
@@ -175,11 +175,11 @@ describe.runIf(live)("CodexResponsesTransportProvider (live)", () => {
     const provider = new CodexResponsesTransportProvider({
       modelId: "gpt-5.5",
       credentials: codexLoginCredentials(),
-      sessionId: "swarm-harness-live-reasoning-tool",
+      sessionId: "openswarm-live-reasoning-tool",
       reasoning: { effort: "high", summary: "auto" },
     });
     const userTurn = { role: "user" as const, content: [{ type: "text" as const, text: "Reason about whether Paris or London is warmer, then use get_weather to check the warmer one." }] };
-    const out1 = await collect(provider.stream({ messages: [userTurn], tools: [tool], model: "gpt-5.5", sessionId: "swarm-harness-live-reasoning-tool" }));
+    const out1 = await collect(provider.stream({ messages: [userTurn], tools: [tool], model: "gpt-5.5", sessionId: "openswarm-live-reasoning-tool" }));
     const reasoning = out1.find((e) => e.type === "reasoning") as { signature: string } | undefined;
     const call = out1.find((e) => e.type === "tool-call") as { id: string; name: string; input: unknown } | undefined;
     expect(call, "expected a tool call").toBeDefined();
@@ -196,7 +196,7 @@ describe.runIf(live)("CodexResponsesTransportProvider (live)", () => {
       ],
       tools: [tool],
       model: "gpt-5.5",
-      sessionId: "swarm-harness-live-reasoning-tool",
+      sessionId: "openswarm-live-reasoning-tool",
     };
     const out2 = await collect(provider.stream(req2));
     expect(out2.some((e) => e.type === "error")).toBe(false); // 400 if reasoning+fc pairing rejected
@@ -207,13 +207,13 @@ describe.runIf(live)("CodexResponsesTransportProvider (live)", () => {
     const ws = new CodexResponsesTransportProvider({
       modelId: "gpt-5.5",
       credentials: codexLoginCredentials(),
-      sessionId: "swarm-harness-live-ws",
+      sessionId: "openswarm-live-ws",
       transport: "websocket", // no SSE fallback — a WS failure surfaces as an error
     });
     try {
       const out1 = await collect(ws.stream({
         messages: [{ role: "user", content: [{ type: "text", text: "Reply with exactly: alpha" }] }],
-        model: "gpt-5.5", sessionId: "swarm-harness-live-ws",
+        model: "gpt-5.5", sessionId: "openswarm-live-ws",
       }));
       const err1 = out1.find((e) => e.type === "error");
       expect(err1, err1 ? (err1 as { message: string }).message : "").toBeUndefined();
@@ -227,7 +227,7 @@ describe.runIf(live)("CodexResponsesTransportProvider (live)", () => {
           { role: "assistant", content: [{ type: "text", text: text1 }] },
           { role: "user", content: [{ type: "text", text: "Now reply with exactly: beta" }] },
         ],
-        model: "gpt-5.5", sessionId: "swarm-harness-live-ws",
+        model: "gpt-5.5", sessionId: "openswarm-live-ws",
       }));
       expect(out2.some((e) => e.type === "error")).toBe(false);
       const text2 = out2.filter((e) => e.type === "text-delta").map((e) => (e as { text: string }).text).join("");

@@ -21,7 +21,7 @@ export type HookEvent =
   | "PostCompact";
 
 /**
- * Hook config as declared by the user in .swarm-harness/hooks.json
+ * Hook config as declared by the user in .openswarm/hooks.json
  * (claude-code compatible format).
  */
 export interface HookConfig {

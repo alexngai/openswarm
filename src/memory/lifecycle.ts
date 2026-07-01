@@ -100,7 +100,7 @@ export function formatMemoryFragments(fragments: MemoryFragment[]): string | nul
  * an empty system prompt, so writing there would clobber the preset).
  *
  * Best-effort: returns the inputs unchanged on any failure, so memory never
- * blocks a turn. Set SWARM_HARNESS_MEMORY_DEBUG=1 to log what was injected.
+ * blocks a turn. Set OPENSWARM_MEMORY_DEBUG=1 to log what was injected.
  */
 export async function enrichTurnInputs(
   systemPrompt: string,
@@ -120,7 +120,7 @@ export async function enrichTurnInputs(
   const block = formatMemoryFragments(fragments);
   if (!block) return { systemPrompt, prompt };
 
-  if (process.env.SWARM_HARNESS_MEMORY_DEBUG === "1") {
+  if (process.env.OPENSWARM_MEMORY_DEBUG === "1") {
     process.stderr.write(
       `[memory] injected ${fragments.length} fragment(s): ${fragments
         .map((f) => f.source)

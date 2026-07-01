@@ -7,8 +7,8 @@ This repository participates in the SwarmKit ecosystem. Before changing architec
 
 ```sh
 node /Users/alexngai/GitHub/swarmkit-wiki/scripts/query-knowledge.mjs context --cwd "$PWD"
-node /Users/alexngai/GitHub/swarmkit-wiki/scripts/query-knowledge.mjs repo swarm-harness
-node /Users/alexngai/GitHub/swarmkit-wiki/scripts/query-knowledge.mjs interactions swarm-harness
+node /Users/alexngai/GitHub/swarmkit-wiki/scripts/query-knowledge.mjs repo openswarm
+node /Users/alexngai/GitHub/swarmkit-wiki/scripts/query-knowledge.mjs interactions openswarm
 node /Users/alexngai/GitHub/swarmkit-wiki/scripts/query-knowledge.mjs search "<concept>"
 ```
 

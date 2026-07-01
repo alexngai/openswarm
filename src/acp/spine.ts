@@ -44,7 +44,7 @@ function baseDir(): string {
 export function acpSessionDir(sessionId: string): string {
   // sessionId is a server-minted UUID; sanitize defensively against separators.
   const safe = sessionId.replace(/[^A-Za-z0-9._-]/g, "_");
-  return path.join(baseDir(), "swarm-harness", "acp", safe);
+  return path.join(baseDir(), "openswarm", "acp", safe);
 }
 
 /** The orchestration spine path for an ACP session. */

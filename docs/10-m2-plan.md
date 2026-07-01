@@ -8,7 +8,7 @@
 
 ## Scope
 
-M1 shipped the swarm. M2 makes the atomic agent feel like a real CLI — ink REPL with streaming markdown, slash commands, Tier 1 productivity tools, plugin/skill discovery that reads existing `~/.claude/` installations, MCP stdio client, lifecycle hooks, and a compaction observer. When M2 lands, `swarm-harness prompt` inside a terminal should feel competitive with Claude Code.
+M1 shipped the swarm. M2 makes the atomic agent feel like a real CLI — ink REPL with streaming markdown, slash commands, Tier 1 productivity tools, plugin/skill discovery that reads existing `~/.claude/` installations, MCP stdio client, lifecycle hooks, and a compaction observer. When M2 lands, `openswarm prompt` inside a terminal should feel competitive with Claude Code.
 
 **In scope:**
 - ink TUI rewrite: state-machine-driven REPL, streaming markdown renderer, tab-completion dropdown, emacs keybindings (Ctrl+A/E/K/U/W), spinner, slash-prefix detection
@@ -46,7 +46,7 @@ Five decisions locked via user interview:
 
 Each is executable with a one-line test harness or manual smoke step.
 
-1. `swarm-harness prompt "..."` on a TTY enters interactive ink REPL; turn completes; prompt returns to idle; user can type next turn. State transitions visible in a status bar.
+1. `openswarm prompt "..."` on a TTY enters interactive ink REPL; turn completes; prompt returns to idle; user can type next turn. State transitions visible in a status bar.
 2. Tab-completion dropdown appears when the line starts with `/` and the cursor is at end; cycling through candidates works via ↑/↓ (and Tab).
 3. Emacs keybindings in the input line: Ctrl+A (BOL), Ctrl+E (EOL), Ctrl+K (kill to EOL), Ctrl+U (kill to BOL), Ctrl+W (kill prev word).
 4. Streaming markdown renders correctly when assistant text contains fenced code blocks, lists, bold/italic, links.
@@ -60,7 +60,7 @@ Each is executable with a one-line test harness or manual smoke step.
 12. `PluginSource.claude-code.discover()` returns manifest list sourced from `~/.claude/plugins/`; `load(id)` returns a `LoadedPlugin` whose `executeTool()` works for both shell and node-exports plugin types on a fixture each.
 13. `SkillSource.claude-code.discover()` walks `CODEX_HOME` → `CLAUDE_CONFIG_DIR` → cwd-ancestor `.claude` / `.codex` / `.claw` / `.omc` paths, de-duplicating by skill id; returns union.
 14. MCP stdio client connects to a local mock MCP server on startup; each of the server's tools is registered in our dispatcher as `mcp__<server>__<tool>` and callable by the model.
-15. Hooks: with `.swarm-harness/hooks.json` declaring a `PreToolUse` command, running a tool invokes the command, honors exit codes (0 allow, 2 deny, other fail), merges `updatedInput` / `systemMessage` / `permissionDecision` from stdout JSON.
+15. Hooks: with `.openswarm/hooks.json` declaring a `PreToolUse` command, running a tool invokes the command, honors exit codes (0 allow, 2 deny, other fail), merges `updatedInput` / `systemMessage` / `permissionDecision` from stdout JSON.
 16. `npx tsc --noEmit` passes strict mode.
 17. `npm test` runs ≥ 60 new M2 tests (in addition to M1's 340), all passing.
 18. Real-subprocess integration tests cover: REPL lifecycle (happy path), slash-command dispatch, plugin-subprocess execution, MCP tool registration, hook exit-code branches.
@@ -69,7 +69,7 @@ Each is executable with a one-line test harness or manual smoke step.
 21. Hook `PreToolUse` fires for a Tier 2 `agent` tool invocation (verified via hook fixture that logs all events; `agent` invocation appears in the log).
 22. Tool name collision (Tier 1 + plugin registering the same bare name) resolves to Tier 1; `degraded_registration` lane event is emitted identifying the skipped plugin entry.
 23. `/cost` shows cumulative token counts (input, output, cache_read, cache_write, est_cost_usd); counts survive across turns within the same session; reset to zero on `/clear`.
-24. Config path hierarchy resolves `.swarm-harness/hooks.json` before `~/.claude/settings.json`; `config_resolved` lane event captures the winning path at startup.
+24. Config path hierarchy resolves `.openswarm/hooks.json` before `~/.claude/settings.json`; `config_resolved` lane event captures the winning path at startup.
 
 ## Implementation phases
 
@@ -87,10 +87,10 @@ Each is executable with a one-line test harness or manual smoke step.
 
 ### Config discovery
 
-All config files (`.swarm-harness/hooks.json`, `.swarm-harness/mcp.json`, plugin directories, etc.) are resolved using a consistent hierarchy. First-match-wins:
+All config files (`.openswarm/hooks.json`, `.openswarm/mcp.json`, plugin directories, etc.) are resolved using a consistent hierarchy. First-match-wins:
 
-1. `$SWARM_HARNESS_CONFIG_DIR/<file>` (env override)
-2. `<cwd>/.swarm-harness/<file>`
+1. `$OPENSWARM_CONFIG_DIR/<file>` (env override)
+2. `<cwd>/.openswarm/<file>`
 3. `<cwd>/.claude/<file>` (fallback for existing Claude Code installs)
 4. `$HOME/.claude/<file>`
 
@@ -297,7 +297,7 @@ export type SlashResult =
 
 8.2. `src/mcp/bridge.ts` — converts each `McpToolDescriptor` into a first-class `ToolImpl` in our dispatcher. Name: `mcp__<serverName>__<toolName>`. Input schema: translated from MCP's JSON Schema into our `ToolSpec.inputSchema`. Execute: calls `client.callTool(name, args)`, maps result to `ToolResult`.
 
-8.3. `src/cli/main.ts` — at startup, read MCP server configs from `.swarm-harness/mcp.json` (or `~/.claude/mcp_servers.json` if the Claude Code format is already there). Parallel-connect each server with per-server 10s timeout. On fail-soft: log degraded-startup lane event, skip that server's tools, continue. On success: register all tools first-class.
+8.3. `src/cli/main.ts` — at startup, read MCP server configs from `.openswarm/mcp.json` (or `~/.claude/mcp_servers.json` if the Claude Code format is already there). Parallel-connect each server with per-server 10s timeout. On fail-soft: log degraded-startup lane event, skip that server's tools, continue. On success: register all tools first-class.
 
 MCP tool permission gating policy (M2 default):
 - MCP tools flow through the existing `canUseTool` path (they are registered in our dispatcher with `mcp__<server>__<tool>` names).
@@ -329,7 +329,7 @@ Unit test: construct two sources registering the same bare tool name; assert the
 
 9.1. `src/hooks/types.ts` — finalize `HookEvent`, `HookConfig`, `HookResult` per Phase 0.4.
 
-9.2. `src/hooks/config.ts` — load hook config from `.swarm-harness/hooks.json` (with fallback to `~/.claude/settings.json`'s `hooks` field so existing Claude Code hook configs light up free). Validate via Zod.
+9.2. `src/hooks/config.ts` — load hook config from `.openswarm/hooks.json` (with fallback to `~/.claude/settings.json`'s `hooks` field so existing Claude Code hook configs light up free). Validate via Zod.
 
 9.3. `src/hooks/runtime.ts` — `HookRuntime`:
 - `invoke(event: HookEvent, payload: unknown): Promise<HookResult>`
@@ -343,10 +343,10 @@ Unit test: construct two sources registering the same bare tool name; assert the
 
 9.4. Wire hooks into the engine:
 - `ClaudeAgentSdkEngine.run()` produces JS async callbacks (via `HookRuntime.buildSdkCallbacks()`) and passes them to `query()` options via `hooks: { PreToolUse: [{ matcher, hooks: [asyncCallback] }] }`.
-- The SDK's `hooks` field accepts **JavaScript callback functions**, not shell-command config objects. Shell-command configs live in `.swarm-harness/hooks.json` (preserved for user authoring / Claude Code format compatibility); our runtime wraps them in JS callbacks before handing off to the SDK.
+- The SDK's `hooks` field accepts **JavaScript callback functions**, not shell-command config objects. Shell-command configs live in `.openswarm/hooks.json` (preserved for user authoring / Claude Code format compatibility); our runtime wraps them in JS callbacks before handing off to the SDK.
 - Exit-code translation (0/2/other) happens inside our JS wrapper, not in the SDK.
 
-9.5. `.swarm-harness/hooks.json` example:
+9.5. `.openswarm/hooks.json` example:
 ```json
 {
   "PreToolUse": [
@@ -453,7 +453,7 @@ scripts/
 | Slash commands race with streaming state | High | Medium | State machine's `streaming` state rejects most slash commands (except `/stop`, `/approve`, `/deny`). Dispatcher checks `ctx.state` first; non-safe commands return an error message instead of executing. |
 | Plugin discovery hits permission-sensitive directories | Medium | Medium | `fs.readdir` with error-silent fallback; never throw on unreadable dirs; emit a `degraded_discovery` lane event. |
 | MCP server hangs on startup | Medium | High | Per-server 10s connect timeout; fail-soft (skip server's tools, continue); log `degraded_startup` lane event. |
-| Hook config leaks arbitrary shell command execution | **High** | **High** | Hook configs live ONLY in `.swarm-harness/hooks.json` or `~/.claude/settings.json` — user-controlled trust boundary. We don't download or auto-merge hook configs. Document explicitly: "hooks run with your shell permissions; only enable configs you trust." Future: signed hook manifests (M5). |
+| Hook config leaks arbitrary shell command execution | **High** | **High** | Hook configs live ONLY in `.openswarm/hooks.json` or `~/.claude/settings.json` — user-controlled trust boundary. We don't download or auto-merge hook configs. Document explicitly: "hooks run with your shell permissions; only enable configs you trust." Future: signed hook manifests (M5). |
 | Subprocess-plugin exec is slow (50–200ms startup per call) | Medium | Medium | Document the cost in `src/plugins/claude-code-source.ts` JSDoc. Users choose `execMode: "in-process"` in their own plugins to skip subprocess overhead. |
 | SDK built-in `web_search` returns unpredictable shapes across minor SDK versions | Medium | Low | Pin SDK to `~0.2.116` (already pinned from M0). Integration test checks web_search smoke returns non-empty results live. |
 | Compaction observer misses SDK event shape changes | Medium | Medium | Integration test: scripted SDK emits compact boundary message → assert lane event emitted. If SDK changes shape, test breaks and we update the translator. |
@@ -468,11 +468,11 @@ Run after each phase:
 
 - **Phase 0:** `npx tsc --noEmit` clean
 - **Phase 1:** `ls node_modules/@modelcontextprotocol/sdk` exists
-- **Phase 2:** `npx vitest run src/ui/repl/` green (pure reducer tests); `npx swarm-harness prompt "hi"` in a real terminal shows the new REPL
+- **Phase 2:** `npx vitest run src/ui/repl/` green (pure reducer tests); `npx openswarm prompt "hi"` in a real terminal shows the new REPL
 - **Phase 3:** every slash command's test passes; manually entering `/help` in the REPL shows the full list
-- **Phase 4:** Tier 1 tool tests green; `npx swarm-harness prompt "fetch https://example.com"` actually fetches live
+- **Phase 4:** Tier 1 tool tests green; `npx openswarm prompt "fetch https://example.com"` actually fetches live
 - **Phase 5:** `/compact` emits an observable compaction event in the JSONL stream
-- **Phase 6:** `npx swarm-harness doctor` + plugin fixture present → plugin tool appears in `/help`-style listing; invoking the model with "use shell-plugin's tool" actually calls it
+- **Phase 6:** `npx openswarm doctor` + plugin fixture present → plugin tool appears in `/help`-style listing; invoking the model with "use shell-plugin's tool" actually calls it
 - **Phase 7:** `SkillSource.claude-code.discover()` returns real skills from user's `~/.claude/skills`; `skill` tool loads them
 - **Phase 8:** mock MCP server fixture exposes a tool; that tool shows up in `/help`-style output and is invokable
 - **Phase 9:** hook fixture fires on a real tool call; exit code 2 denies the call visibly

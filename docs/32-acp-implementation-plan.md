@@ -115,7 +115,7 @@ export async function runAcp(opts: CommonOpts): Promise<number> {
 
 **stdout discipline (§ doc 30 A.1):** `redirectConsoleToStderr()` reassigns
 `console.log/info/warn/debug = console.error`. Audit that no code on the ACP path writes to
-`process.stdout` except the JSON-RPC stream — `runHeadless` and the stderr `[swarm-harness] …`
+`process.stdout` except the JSON-RPC stream — `runHeadless` and the stderr `[openswarm] …`
 progress lines are fine (stderr), but `--dump-*` paths and any `process.stdout.write` must be guarded.
 Add a test that captures stdout during a scripted session and asserts every line parses as JSON-RPC.
 
@@ -172,7 +172,7 @@ string; embedded `resource` blocks (if `promptCapabilities.embeddedContext`) inl
 export function initializeResponse(req): InitializeResponse {
   return {
     protocolVersion: negotiate(req.protocolVersion),   // echo min(ours, theirs)
-    agentInfo: { name: "swarm-harness", version: VERSION },
+    agentInfo: { name: "openswarm", version: VERSION },
     agentCapabilities: {
       loadSession: true,
       promptCapabilities: { embeddedContext: true, image: false, audio: false },
@@ -299,7 +299,7 @@ team replay is Stage B).
 | E2E (editor) | real Zed `agent_servers` entry → manual checklist (doc 30 §7 acceptance) | manual |
 
 The integration test leans on the existing `ScriptedTestEngine` ([src/engine/test-engine.ts](../src/engine/test-engine.ts))
-+ `SWARM_HARNESS_TEST_SCRIPT` so no live API is needed in CI.
++ `OPENSWARM_TEST_SCRIPT` so no live API is needed in CI.
 
 ---
 

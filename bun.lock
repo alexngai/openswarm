@@ -41,9 +41,9 @@
         "vitest": "^4.1.4",
       },
       "optionalDependencies": {
-        "@swarmkit-ai/openswarm-cli-darwin-arm64": "0.3.5",
-        "@swarmkit-ai/openswarm-cli-darwin-x64": "0.3.5",
-        "@swarmkit-ai/openswarm-cli-linux-x64": "0.3.5",
+        "@openswarm/cli-darwin-arm64": "0.3.5",
+        "@openswarm/cli-darwin-x64": "0.3.5",
+        "@openswarm/cli-linux-x64": "0.3.5",
       },
     },
   },

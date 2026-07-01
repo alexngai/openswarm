@@ -42,7 +42,7 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   const input: Input = parsed.data;
 
   const isOrchestratorCaller = host.kind === "standalone";
-  const allowPeerStop = process.env.SWARM_HARNESS_ALLOW_PEER_TASK_STOP === "1";
+  const allowPeerStop = process.env.OPENSWARM_ALLOW_PEER_TASK_STOP === "1";
 
   if (!isOrchestratorCaller && !allowPeerStop) {
     // Worker caller — perform ancestry check.

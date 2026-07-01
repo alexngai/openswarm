@@ -1,7 +1,7 @@
 /**
  * Tests for the command intent classifier.
  *
- * Ported from claw's bash_validation.rs tests + swarm-harness-specific cases.
+ * Ported from claw's bash_validation.rs tests + openswarm-specific cases.
  */
 
 import { describe, it, expect } from "vitest";

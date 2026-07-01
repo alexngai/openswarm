@@ -13,9 +13,9 @@ Phased execution plan for closing the prioritized gaps in [15-parity-gaps.md](do
 
 ## Phase 0 — Bun runtime + OpenTUI/Solid migration
 
-**Goal:** Migrate swarm-harness from Node → Bun (required by `@opentui/core`'s `bun:ffi` native dependency) AND replace the Ink/React TUI substrate with OpenTUI/Solid. Decided 2026-04-22 per Q15 in [17-parity-design-questions.md](docs/17-parity-design-questions.md) after Bun viability was confirmed empirically.
+**Goal:** Migrate openswarm from Node → Bun (required by `@opentui/core`'s `bun:ffi` native dependency) AND replace the Ink/React TUI substrate with OpenTUI/Solid. Decided 2026-04-22 per Q15 in [17-parity-design-questions.md](docs/17-parity-design-questions.md) after Bun viability was confirmed empirically.
 
-**Why both at once:** OpenTUI is Bun-only (uses `bun:ffi` to load a native Zig rendering library). Empirical probe showed swarm-harness's existing TypeScript runs cleanly under Bun with zero code changes — migration is tooling + distribution, not a rewrite. Doing the runtime swap alongside the TUI swap avoids two disruptive transitions.
+**Why both at once:** OpenTUI is Bun-only (uses `bun:ffi` to load a native Zig rendering library). Empirical probe showed openswarm's existing TypeScript runs cleanly under Bun with zero code changes — migration is tooling + distribution, not a rewrite. Doing the runtime swap alongside the TUI swap avoids two disruptive transitions.
 
 **Gaps closed:** None directly — enabling work. Unlocks native solutions for T1, T2, T3, T4 (see [15-parity-gaps.md](docs/15-parity-gaps.md)).
 
@@ -26,7 +26,7 @@ Phased execution plan for closing the prioritized gaps in [15-parity-gaps.md](do
 2. Create `src/ui/repl-solid/tsconfig.json` extending main with `"jsx": "preserve"` + `"jsxImportSource": "@opentui/solid"` for editor/type-checking.
 3. Update [package.json](package.json) scripts:
    - `build`: `bun build src/cli.ts --target=bun --outfile=dist/cli.js` (bundle) + `tsc --noEmit` (type check).
-   - `build:compile`: `bun build --compile --target=bun-darwin-arm64 src/cli.ts --outfile=dist/swarm-harness` (standalone binary).
+   - `build:compile`: `bun build --compile --target=bun-darwin-arm64 src/cli.ts --outfile=dist/openswarm` (standalone binary).
    - `test`: keep `vitest run` for non-TUI tests. Add `test:ui` as `bun test src/ui/repl-solid/**/*.test.tsx`.
 4. Keep [src/ui/repl-solid/store.ts](src/ui/repl-solid/store.ts) from the spike (already committed in 9bc1925).
 
@@ -104,9 +104,9 @@ Port each component one-for-one. All take store state as input; write bun tests 
    - Update `/model` alias table to expose grok/gemini/qwen model names.
 
 **Acceptance criteria:**
-- `swarm-harness plugin install <local-path>` then `plugin enable <name>` surfaces the plugin's commands/hooks in the next session.
+- `openswarm plugin install <local-path>` then `plugin enable <name>` surfaces the plugin's commands/hooks in the next session.
 - `~/.claude/plugins/state.json` matches Claude Code's format (no drift) — diff against a pre-change snapshot.
-- `swarm-harness --model grok-<x> "hello"` returns a response via xAI transport (local smoke).
+- `openswarm --model grok-<x> "hello"` returns a response via xAI transport (local smoke).
 - Same for `--model gemini-<x>` and a dashscope/qwen model.
 - `npm test` green across `src/plugins/` and `src/providers/`.
 
@@ -193,7 +193,7 @@ Port each component one-for-one. All take store state as input; write bun tests 
    - `TextareaRenderable` from Phase 0 already supports newlines. Wire keybindings: `input_newline` → Shift+Enter + Ctrl+J; `input_submit` → Enter. Match claw's scheme.
    - Paste detection: `onPaste` receives a `PasteEvent` with `bytes`; decode and insert. Match opencode's implementation at [component/prompt/index.tsx](references/opencode/packages/opencode/src/cli/cmd/tui/component/prompt/index.tsx).
 2. **Persistent history** (T6)
-   - Write submitted prompts to `~/.swarm-harness/history` (newline-delimited, 10k-entry cap).
+   - Write submitted prompts to `~/.openswarm/history` (newline-delimited, 10k-entry cap).
    - Load on startup; map Up/Down to history navigation via textarea keybindings.
 3. **Full Emacs keybindings** (T7)
    - Map remaining textarea actions: `move-word-left/right`, `delete-word-backward`, `move-line-start/end`, etc. Reference opencode's [component/textarea-keybindings.ts](references/opencode/packages/opencode/src/cli/cmd/tui/component/textarea-keybindings.ts) for the action set.
@@ -240,7 +240,7 @@ Each submodule is independently tested. Output is a structured validation result
 4. Update WorkerHost and Orchestrator to emit new events; keep JSONL stream shape backwards-compatible (add fields, don't remove).
 
 **Acceptance criteria:**
-- Running `swarm-harness --headless` with a deliberately destructive prompt is blocked at the validation layer (not just at exec time), with a structured error naming the submodule that rejected it.
+- Running `openswarm --headless` with a deliberately destructive prompt is blocked at the validation layer (not just at exec time), with a structured error naming the submodule that rejected it.
 - A worker that fails during trust-prompt surfaces `trust_required → failed` in the lane event stream, visible in both TUI and `--headless` JSONL.
 - Downstream consumers of TaskPacket compile-error if a new LaneEvent variant is added and not handled (TS exhaustive check).
 
@@ -261,13 +261,13 @@ Each submodule is independently tested. Output is a structured validation result
 > **Implementation note (2026-04-30):** REDESIGNED to use the **Codex App Server (JSON-RPC over stdio)** instead of the originally-planned custom Vercel AI SDK provider hitting `chatgpt.com/backend-api/codex/responses`. Web research confirmed the App Server is OpenAI's officially documented integration surface for third-party tools. The pivot eliminates the operator SSE spike (no longer needed) and changes the categorization from `TransportProvider` to `FrameworkProvider`. Full plan + design lock at [docs/24-phase-6-codex-app-server-plan.md](24-phase-6-codex-app-server-plan.md). The scope/acceptance/estimate/blocker bullets below predate the pivot and are kept for historical record only.
 
 **Scope (pre-pivot, see doc 24 for current):**
-- ~~Finish M4b Phase 4 OAuth wiring.~~ Auth delegated entirely to `codex login`; swarm-harness owns zero OAuth code in this mode.
+- ~~Finish M4b Phase 4 OAuth wiring.~~ Auth delegated entirely to `codex login`; openswarm owns zero OAuth code in this mode.
 - ~~Codex App Server endpoint integration.~~ Replaced by `CodexAppServerProvider` spawning the `codex` binary as a subprocess.
 - ~~PKCE + browser callback flow.~~ Owned by `codex login`, not us.
 
 **Acceptance criteria (pre-pivot):**
-- ~~`swarm-harness login --provider openai`~~ → redirects to `codex login` instead.
-- `swarm-harness --framework codex-chatgpt --model gpt-5 "..."` runs against ChatGPT subscription quota via the App Server.
+- ~~`openswarm login --provider openai`~~ → redirects to `codex login` instead.
+- `openswarm --framework codex-chatgpt --model gpt-5 "..."` runs against ChatGPT subscription quota via the App Server.
 - ~~Token refresh works across session boundaries.~~ Codex owns token lifecycle.
 
 **Estimate:** ~2.5 days. **No external operator dependency.**

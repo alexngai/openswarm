@@ -52,8 +52,8 @@ export interface OpenteamsConfig {
    * fixture root). Roles without a prompt are absent from this map.
    */
   readonly rolePrompts?: Record<string, string>;
-  /** swarm-harness extension block — overrides default mappings. */
-  readonly "x-swarm-harness"?: {
+  /** openswarm extension block — overrides default mappings. */
+  readonly "x-openswarm"?: {
     readonly topology?:
       | "fanout"
       | "pipeline"
@@ -107,7 +107,7 @@ export async function loadTemplate(
   // Production path: shell out to openteams.
   const binary = opts.openteamsBinary ?? "openteams";
   const tmpDir = await fs.mkdtemp(
-    path.join(os.tmpdir(), "swarm-harness-openteams-"),
+    path.join(os.tmpdir(), "openswarm-openteams-"),
   );
   try {
     const result = spawnSync(

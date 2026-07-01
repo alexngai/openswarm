@@ -98,7 +98,7 @@ export async function buildAgentRuntime(
 ): Promise<BuildRuntimeResult> {
   // 1. Validate auth. Scripted-test mode skips the check (the scripted engine
   // never calls the API).
-  const scriptedMode = !!process.env.SWARM_HARNESS_TEST_SCRIPT;
+  const scriptedMode = !!process.env.OPENSWARM_TEST_SCRIPT;
   if (!scriptedMode) {
     if (opts.framework === "codex-native") {
       // codex-native uses ChatGPT (codex) credentials, not Anthropic auth.
@@ -149,11 +149,11 @@ export async function buildAgentRuntime(
 
   // 2a. Discover and register plugin tools (opt-in via --plugins, default on).
   const pluginTools: ToolImpl[] = [];
-  const envPluginsDir = process.env.SWARM_HARNESS_PLUGINS_DIR;
+  const envPluginsDir = process.env.OPENSWARM_PLUGINS_DIR;
   const swarmPluginsDir =
     envPluginsDir && envPluginsDir.length > 0
       ? envPluginsDir
-      : path.join(os.homedir(), ".swarm-harness", "plugins");
+      : path.join(os.homedir(), ".openswarm", "plugins");
   // One shared store across plugin discovery and the `/plugin` slash command.
   const pluginStateStore = new PluginStateStore(swarmPluginsDir);
   if (opts.plugins) {

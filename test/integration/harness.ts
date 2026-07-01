@@ -33,16 +33,16 @@ export function spawnWorkerProcess(opts: HarnessOpts): HarnessResult {
       cwd: process.cwd(),
       env: {
         ...process.env,
-        SWARM_HARNESS_AGENT_ID: agentId,
-        SWARM_HARNESS_PARENT_PID: String(process.pid),
-        SWARM_HARNESS_ORCHESTRATOR_PID: String(process.pid),
-        SWARM_HARNESS_DEPTH: String(opts.depth ?? 1),
-        SWARM_HARNESS_TEST_SCRIPT: scriptPath,
+        OPENSWARM_AGENT_ID: agentId,
+        OPENSWARM_PARENT_PID: String(process.pid),
+        OPENSWARM_ORCHESTRATOR_PID: String(process.pid),
+        OPENSWARM_DEPTH: String(opts.depth ?? 1),
+        OPENSWARM_TEST_SCRIPT: scriptPath,
         ...(opts.permissionMode !== undefined && {
-          SWARM_HARNESS_PERMISSION_MODE: opts.permissionMode,
+          OPENSWARM_PERMISSION_MODE: opts.permissionMode,
         }),
         ...(opts.heartbeatIntervalMs !== undefined && {
-          SWARM_HARNESS_HEARTBEAT_MS: String(opts.heartbeatIntervalMs),
+          OPENSWARM_HEARTBEAT_MS: String(opts.heartbeatIntervalMs),
         }),
         ...opts.env,
       },

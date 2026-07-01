@@ -1,5 +1,5 @@
 /**
- * MAST judge — LLM-as-judge that tags a swarm-harness trace with the 14 MAST failure modes.
+ * MAST judge — LLM-as-judge that tags a openswarm trace with the 14 MAST failure modes.
  *
  * The LLM call is INJECTED (`LlmComplete`) so this module is pure and unit-testable with a mock;
  * a real run wires it to the gateway/Claude. Output is a per-mode verdict; `aggregateMast` rolls

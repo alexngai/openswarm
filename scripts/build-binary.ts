@@ -148,7 +148,7 @@ function ensureNativePackage(t: Target): string | null {
 }
 
 // Emit into the per-platform package dir (mirrors Swarm Runner), so each
-// @swarmkit-ai/openswarm-cli-<platform>-<arch> optional-dep ships its own binary.
+// @openswarm/cli-<platform>-<arch> optional-dep ships its own binary.
 const platformArch = target.bunTarget.replace(/^bun-/, ""); // e.g. darwin-arm64
 const pkgDir = `packages/cli-${platformArch}`;
 const outfile = `${pkgDir}/${target.exe}`;
@@ -177,12 +177,11 @@ const result = await Bun.build({
     createSolidTransformPlugin({ moduleName: "@opentui/solid" }),
   ],
   define: {
-    // Inject the SDK + harness versions so the compiled binary reports the
+    // Inject the SDK + package versions so the compiled binary reports the
     // real versions (runtime package.json lookup fails in compiled binaries —
     // node_modules isn't in the embedded fs).
-    __SWARM_HARNESS_AGENT_SDK_VERSION__: JSON.stringify(SDK_VERSION),
+    __OPENSWARM_AGENT_SDK_VERSION__: JSON.stringify(SDK_VERSION),
     __OPENSWARM_VERSION__: JSON.stringify(PKG_VERSION),
-    __SWARM_HARNESS_VERSION__: JSON.stringify(PKG_VERSION),
     // Pin the dynamic native-lib import to the target so it's statically
     // analyzable (lets the shim match it; required for cross-compile).
     "process.platform": JSON.stringify(target.platform),

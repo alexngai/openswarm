@@ -43,7 +43,7 @@ export interface CodexFrameworkEngineOptions {
   /**
    * Tier 2 tool implementations to register with the codex agent as host
    * dynamicTools. Each tool's spec is converted to a Codex `Tool` descriptor
-   * sent at thread/start; calls dispatch back through the swarm-harness
+   * sent at thread/start; calls dispatch back through the openswarm
    * tool implementation. (Stage 4H — V0.4.Q11)
    */
   readonly tools?: readonly ToolImpl[];
@@ -101,7 +101,7 @@ function resolveCodexModel(model: string | undefined): string {
 }
 
 /**
- * Convert a swarm-harness ToolImpl to the Codex `Tool` descriptor passed in
+ * Convert a openswarm ToolImpl to the Codex `Tool` descriptor passed in
  * `thread/start.dynamicTools`. The ToolSpec.inputSchema is already a JSON
  * Schema (built via `zodToJsonSchema` in each tier-2 tool definition).
  */
@@ -115,7 +115,7 @@ function toolImplToCodexTool(impl: ToolImpl): Tool {
 
 /**
  * Build the onDynamicToolCall handler that routes codex agent tool calls
- * back to the swarm-harness tool implementations.
+ * back to the openswarm tool implementations.
  *
  * Unknown-tool requests, validation errors, and execution exceptions are
  * all wrapped into a `{success: false}` response — the handler never throws.

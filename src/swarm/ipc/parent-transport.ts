@@ -212,7 +212,7 @@ export class ParentTransport extends EventEmitter {
       const decoded = decodeFrame(line);
       if (!decoded.ok) {
         process.stderr.write(
-          `[swarm-harness/ParentTransport] malformed frame: ${decoded.error}\n`,
+          `[openswarm/ParentTransport] malformed frame: ${decoded.error}\n`,
         );
         continue;
       }

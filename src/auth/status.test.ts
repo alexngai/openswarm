@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { detectAuth } from "./status.js";
 import { AnthropicEnvAuth } from "./anthropic-env-auth.js";
 
@@ -19,6 +19,21 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+const AUTH_ENV_KEYS = [
+  "ANTHROPIC_API_KEY",
+  "CLAUDE_CODE_OAUTH_TOKEN",
+  "ANTHROPIC_AUTH_TOKEN",
+  "CLAUDE_CODE_USE_BEDROCK",
+  "AZURE_OPENAI_API_KEY",
+  "OPENAI_API_KEY",
+  "XAI_API_KEY",
+  "LITELLM_API_KEY",
+] as const;
+
+function clearAuthEnv() {
+  for (const key of AUTH_ENV_KEYS) vi.stubEnv(key, "");
+}
 
 /** Stub the underlying execFile (callback form) to simulate keychain success. */
 async function stubKeychainFound() {
@@ -58,6 +73,10 @@ async function stubFileAbsent() {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+beforeEach(() => {
+  clearAuthEnv();
+});
 
 describe("detectAuth", () => {
   afterEach(() => {

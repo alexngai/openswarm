@@ -10,7 +10,7 @@ Companion to [docs/21-roadmap-v0.2-to-v0.4.md](21-roadmap-v0.2-to-v0.4.md). This
 
 ## TL;DR
 
-Pivot from "custom HTTP+SSE provider hitting a private browser endpoint" to **"FrameworkProvider that delegates to the locally-installed `codex` CLI via the documented JSON-RPC App Server protocol."** Same end goal (ChatGPT Plus/Pro subscription quota for swarm-harness users), better integration surface, lower risk, no spike needed.
+Pivot from "custom HTTP+SSE provider hitting a private browser endpoint" to **"FrameworkProvider that delegates to the locally-installed `codex` CLI via the documented JSON-RPC App Server protocol."** Same end goal (ChatGPT Plus/Pro subscription quota for openswarm users), better integration surface, lower risk, no spike needed.
 
 This is also a categorization change: Codex was misclassified as a `TransportProvider` (raw model access). It is in fact a `FrameworkProvider` (agent-loop owner) — the same pattern as Anthropic's Agent SDK for Claude Max subscription auth.
 
@@ -30,7 +30,7 @@ Research findings (full report at session log 2026-04-30):
 | Risk class | Policy-tolerated, ungoverned client_id, ungoverned endpoint | Officially supported integration surface |
 | Implementation cost | 1.5d post-spike + ongoing maintenance to chase undocumented changes | 2.5d total + stable upgrade path |
 
-The App Server pivot makes Phase 6 strictly safer and aligns with how Anthropic's Agent SDK is integrated: the user authenticates via the official tool, swarm-harness delegates the agent loop to the framework.
+The App Server pivot makes Phase 6 strictly safer and aligns with how Anthropic's Agent SDK is integrated: the user authenticates via the official tool, openswarm delegates the agent loop to the framework.
 
 ---
 
@@ -42,8 +42,8 @@ Inventory of Phase 4 + Phase 6-adjacent code that survives the pivot:
 |---|---|---|
 | `src/auth/openai-oauth.ts` (420 lines) — full PKCE + browser callback + token persist + refresh | shipped (M4b Phase 4) | **Deprecated.** App Server path delegates auth to `codex login`; we don't store OAuth tokens. Keep for backward-compat read-side until v0.4 cleanup; new mode never invokes it. |
 | `src/auth/openai-oauth.test.ts` | shipped | Stays green; covers the deprecated module's correctness. |
-| `swarm-harness login --provider codex-chatgpt` | shipped | **Redirected.** New behavior: prints "use `codex login` instead — swarm-harness delegates to the official tool" with a link. Doesn't invoke OAuth flow. |
-| `swarm-harness logout --provider codex-chatgpt` | shipped | **Redirected.** Same redirect message. |
+| `openswarm login --provider codex-chatgpt` | shipped | **Redirected.** New behavior: prints "use `codex login` instead — openswarm delegates to the official tool" with a link. Doesn't invoke OAuth flow. |
+| `openswarm logout --provider codex-chatgpt` | shipped | **Redirected.** Same redirect message. |
 | `src/tools/framework-filter.ts` — strips SwarmHost tools in framework modes | shipped | Stays as-is. App Server mode is a framework mode and benefits from the same filter. |
 | `src/cli/argv.ts` `--framework codex-chatgpt` flag | shipped | Stays. Flag name is keyboard-stable; the underlying transport changes from "custom HTTP" to "App Server JSON-RPC". |
 | `src/cli/main.ts:388` "blocked" stub | shipped | **Removed.** Replaced with CodexFrameworkProvider construction. |
@@ -79,13 +79,13 @@ App Server supports stdio + WebSocket + Unix socket per the [Codex App Server ch
 
 **Decision: `FrameworkProvider`. Codex App Server hosts agent threads (with built-in tools, permission prompts, sandboxing); it doesn't expose raw model APIs.**
 
-This corrects the M4b Phase 5 spec, which claimed Codex was a `TransportProvider`. App Server hosts the agent loop. swarm-harness in `--framework codex-chatgpt` mode acts as a thin shell that delegates the turn to Codex and translates events back. Same pattern as the Anthropic Agent SDK FrameworkProvider for Claude Max.
+This corrects the M4b Phase 5 spec, which claimed Codex was a `TransportProvider`. App Server hosts the agent loop. openswarm in `--framework codex-chatgpt` mode acts as a thin shell that delegates the turn to Codex and translates events back. Same pattern as the Anthropic Agent SDK FrameworkProvider for Claude Max.
 
-Consequence: in this mode, swarm-harness does NOT run its own tool dispatcher, permission engine, bash validation, or session loop. Codex owns all of that. swarm-harness owns the CLI surface, the lane-event translation, the orchestrator (when in swarm mode), and the user-facing UX.
+Consequence: in this mode, openswarm does NOT run its own tool dispatcher, permission engine, bash validation, or session loop. Codex owns all of that. openswarm owns the CLI surface, the lane-event translation, the orchestrator (when in swarm mode), and the user-facing UX.
 
 ### P6.Q4 — Auth delegation
 
-**Decision: delegate entirely to `codex login`. swarm-harness owns zero auth code for this provider.**
+**Decision: delegate entirely to `codex login`. openswarm owns zero auth code for this provider.**
 
 Mirrors the Anthropic Agent SDK pattern (we never see the Claude Max OAuth token; the SDK manages it). Same here: the user runs `codex login` once via the official tool; the App Server inherits credentials from `~/.codex/auth.json` (or wherever Codex persists them).
 
@@ -95,7 +95,7 @@ Mirrors the Anthropic Agent SDK pattern (we never see the Claude Max OAuth token
 
 **Decision: `which codex` (PATH lookup) with a clear error if absent.**
 
-Doctor check (`swarm-harness doctor`) gains a new "codex CLI" entry that:
+Doctor check (`openswarm doctor`) gains a new "codex CLI" entry that:
 - ✅ if `codex --version` succeeds and returns a version number
 - ⚠️ if absent — message: "Install via `npm install -g @openai/codex` to enable `--framework codex-chatgpt` mode."
 - ❌ never — absence isn't a failure for non-codex modes
@@ -104,7 +104,7 @@ No bundling. Users who want this mode install Codex separately. Same UX bar as `
 
 ### P6.Q6 — Tool surface in `codex-chatgpt` mode
 
-**Decision: swarm-harness's tools are entirely hidden. The agent sees only Codex's built-in tool surface.**
+**Decision: openswarm's tools are entirely hidden. The agent sees only Codex's built-in tool surface.**
 
 In FrameworkProvider mode, the framework owns the tool dispatcher. Codex has its own tool surface (`read_file`, `apply_patch`, `run_command`, etc.) which the agent sees and uses. Our `bashValidationGate`, `PermissionEngine`, `bashTool`, etc. are not invoked.
 
@@ -130,7 +130,7 @@ Field mapping is locked by Stage 3.0 spike against the App Server's actual JSON-
 
 ### P6.Q9 — Backward-compat for the deprecated OAuth path
 
-**Decision: removed in v0.3 (originally planned for v0.4). `swarm-harness login --provider codex-chatgpt` redirects to `codex login` instead of running the OAuth flow.**
+**Decision: removed in v0.3 (originally planned for v0.4). `openswarm login --provider codex-chatgpt` redirects to `codex login` instead of running the OAuth flow.**
 
 Original plan kept `src/auth/openai-oauth.ts` in the tree for one release cycle so the deprecation was observable as code (jsdoc `@deprecated` tag) and behavior (login redirect message). After v0.3 ship-readiness review, the file + its 393-line test suite were removed in the same release — the redirect message in `login`/`logout` and the negative tests in those files are the only deprecation signal callers need; keeping 818 lines of dead OAuth code as "reference material" wasn't pulling its weight.
 
@@ -140,7 +140,7 @@ Original plan kept `src/auth/openai-oauth.ts` in the tree for one release cycle 
 
 ### Stage 3.0 — Codex App Server JSON-RPC spike (~0.25d)
 
-Local development setup + protocol verification. No swarm-harness code changes.
+Local development setup + protocol verification. No openswarm code changes.
 
 - `npm install -g @openai/codex` (or use existing install)
 - `codex login` (one-time interactive)
@@ -202,9 +202,9 @@ Tests:
 ### Stage 3E — Live smoke + close-out (~0.25d)
 
 - Operator (you) runs the live smoke pass:
-  - `swarm-harness doctor` reports codex-CLI presence + version.
-  - `swarm-harness --framework codex-chatgpt --model gpt-5 "say hi"` returns a real response via subscription quota.
-  - `swarm-harness --framework codex-chatgpt --model gpt-5 "list files in the current directory"` exercises a tool call (Codex's `read_file` or equivalent).
+  - `openswarm doctor` reports codex-CLI presence + version.
+  - `openswarm --framework codex-chatgpt --model gpt-5 "say hi"` returns a real response via subscription quota.
+  - `openswarm --framework codex-chatgpt --model gpt-5 "list files in the current directory"` exercises a tool call (Codex's `read_file` or equivalent).
   - Verify ChatGPT subscription quota was actually consumed (check ChatGPT dashboard if accessible).
 - Bump `package.json` to `0.3.0`.
 - Tag `v0.3`.
@@ -213,9 +213,9 @@ Tests:
 
 ## Acceptance criteria (Phase 6 as a whole)
 
-1. ✅ `swarm-harness --framework codex-chatgpt --model gpt-5 "say hi"` returns a real ChatGPT response via the user's subscription quota.
-2. ✅ `swarm-harness doctor` reports codex CLI presence + version (or a clear "install codex" message if absent).
-3. ✅ `swarm-harness login --provider codex-chatgpt` redirects to `codex login` with a clear message; does not invoke our deprecated OAuth flow.
+1. ✅ `openswarm --framework codex-chatgpt --model gpt-5 "say hi"` returns a real ChatGPT response via the user's subscription quota.
+2. ✅ `openswarm doctor` reports codex CLI presence + version (or a clear "install codex" message if absent).
+3. ✅ `openswarm login --provider codex-chatgpt` redirects to `codex login` with a clear message; does not invoke our deprecated OAuth flow.
 4. ✅ Tool surface is empty in `codex-chatgpt` mode (Codex provides its own tools).
 5. ✅ Lane events from a Codex turn appear in the `--headless` JSONL stream as standard `NormalizedEvent` shapes (text_delta, tool_use_*, message_stop).
 6. ✅ App Server crash mid-turn surfaces as a structured error event; engine is restartable.

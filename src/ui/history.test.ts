@@ -176,7 +176,7 @@ describe("DEFAULT_HISTORY_PATH", () => {
     expect(DEFAULT_HISTORY_PATH).toContain(os.homedir());
   });
 
-  it("ends with .swarm-harness/history", () => {
-    expect(DEFAULT_HISTORY_PATH).toMatch(/\.swarm-harness[/\\]history$/);
+  it("ends with .openswarm/history", () => {
+    expect(DEFAULT_HISTORY_PATH).toMatch(/\.openswarm[/\\]history$/);
   });
 });

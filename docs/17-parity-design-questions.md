@@ -8,12 +8,12 @@ Format: Question · Why it matters · Options · Lean · What'd clarify · **Cla
 
 ## Q1. Plugin state.json: share with Claude Code, or own namespace? (Phase 1)
 
-**Why it matters.** The plan currently says we write to `~/.claude/plugins/state.json` — the same file Claude Code writes. If we mutate it, we risk format drift, races with concurrent Claude Code processes, and breaking Claude Code's own plugin state. If we own our own file, users get a worse story ("why doesn't swarm-harness see the plugins I installed through Claude Code?").
+**Why it matters.** The plan currently says we write to `~/.claude/plugins/state.json` — the same file Claude Code writes. If we mutate it, we risk format drift, races with concurrent Claude Code processes, and breaking Claude Code's own plugin state. If we own our own file, users get a worse story ("why doesn't openswarm see the plugins I installed through Claude Code?").
 
 **Options:**
 - **(a) Write to `~/.claude/plugins/state.json`** — shared. Mirrors Claude Code exactly. Fragile to format changes we don't control; ownership ambiguity.
-- **(b) Read-only from `~/.claude/plugins/state.json`, write to `~/.swarm-harness/plugins/state.json`** — discover theirs, manage ours. Users who install via Claude Code get discovery for free; installs via swarm-harness live in our namespace.
-- **(c) Own namespace only (`~/.swarm-harness/plugins/`)** — clean separation, but users with an existing Claude Code plugin library re-install everything.
+- **(b) Read-only from `~/.claude/plugins/state.json`, write to `~/.openswarm/plugins/state.json`** — discover theirs, manage ours. Users who install via Claude Code get discovery for free; installs via openswarm live in our namespace.
+- **(c) Own namespace only (`~/.openswarm/plugins/`)** — clean separation, but users with an existing Claude Code plugin library re-install everything.
 
 **Lean: (b).** Aligns with the existing philosophy ("We never mutate Claude Code's installation" — `06-open-questions.md` Q5). Discovery of their plugins is already how we do skills/hooks.
 
@@ -21,7 +21,7 @@ Format: Question · Why it matters · Options · Lean · What'd clarify · **Cla
 
 **Claw-code reference.** Claw writes `{config_home}/settings.json` (not `state.json` — our assumption was off) with shape `{ "plugin_id": true|false, ... }` at `plugins/src/lib.rs:2251`. Registry manifest is a separate file at `{config_home}/plugins/installed.json` (`lib.rs:1057-1060`). Claw owns both files — not inherited from elsewhere. `SETTINGS_FILE_NAME = "settings.json"` at line 21.
 
-**Updated lean after comparison: still (b), but with claw's file split.** We should mirror claw's two-file schema (`settings.json` for enable/disable boolean map + `installed.json` for manifest registry) under `~/.swarm-harness/plugins/`. Reading claw's files at `~/.claude/plugins/` gives us free discovery of plugins installed via claw/Claude Code. **Action:** revise Phase 1 scope to write two files, not one; match claw's exact schema for forward compatibility.
+**Updated lean after comparison: still (b), but with claw's file split.** We should mirror claw's two-file schema (`settings.json` for enable/disable boolean map + `installed.json` for manifest registry) under `~/.openswarm/plugins/`. Reading claw's files at `~/.claude/plugins/` gives us free discovery of plugins installed via claw/Claude Code. **Action:** revise Phase 1 scope to write two files, not one; match claw's exact schema for forward compatibility.
 
 ---
 
@@ -193,15 +193,15 @@ Format: Question · Why it matters · Options · Lean · What'd clarify · **Cla
 **Why it matters.** Without a stopping criterion, this plan grows forever. Phase 1–5 close ~70% of the gaps in [15-parity-gaps.md](docs/15-parity-gaps.md). Do we stop there, or push to 90%+?
 
 **Options:**
-- **(a) Ship v0.1 after Phase 5.** Call it "parity for swarm-harness's core use cases." Document remaining gaps as v0.2 candidates.
+- **(a) Ship v0.1 after Phase 5.** Call it "parity for openswarm's core use cases." Document remaining gaps as v0.2 candidates.
 - **(b) Push through all P0–P1 gaps before v0.1.** Longer runway, cleaner story.
 - **(c) Feature-based stopping.** Ship when "daily driver" works — define "daily driver" first.
 
 **Lean: (a).** Phase 5 end-state is a usable product. Shipping is how we find out what's actually missing vs. what we guessed at.
 
-**What'd clarify this.** A dogfood sprint between Phase 4 and Phase 5 where we actually use swarm-harness for real work for a week and list what broke. That list becomes the revised v0.1 blocker set — and may change the plan.
+**What'd clarify this.** A dogfood sprint between Phase 4 and Phase 5 where we actually use openswarm for real work for a week and list what broke. That list becomes the revised v0.1 blocker set — and may change the plan.
 
-**Claw-code reference.** Not a claw-comparable question — this is swarm-harness's v0.1 scoping. Claw's analogous document is `PARITY.md` (honest list of what's merged on main vs. branch-only), which suggests their model is "ship honest partial parity, document the delta." That's essentially option (a).
+**Claw-code reference.** Not a claw-comparable question — this is openswarm's v0.1 scoping. Claw's analogous document is `PARITY.md` (honest list of what's merged on main vs. branch-only), which suggests their model is "ship honest partial parity, document the delta." That's essentially option (a).
 
 **Updated lean after comparison: (a) confirmed.** Claw's own `PARITY.md` ships with unfinished items explicitly documented. We can do the same: v0.1 ships after Phase 5 with a clear parity-gaps appendix. **Action:** no change to plan; add a v0.1 launch-readiness checklist in a future doc.
 
@@ -211,7 +211,7 @@ Format: Question · Why it matters · Options · Lean · What'd clarify · **Cla
 
 | Q | Change |
 |---|---|
-| Q1 | Revise Phase 1 to write two files (`settings.json` + `installed.json`) under `~/.swarm-harness/plugins/`, matching claw's schema. |
+| Q1 | Revise Phase 1 to write two files (`settings.json` + `installed.json`) under `~/.openswarm/plugins/`, matching claw's schema. |
 | Q2 | No change — claw validates our pipeline choice. |
 | Q3 | **New approach (e): boundary-detected incremental render.** Port `find_stream_safe_boundary` logic. +0.5d to Phase 3b. |
 | Q4 | Drop the "session memory" feature from Phase 2 scope. Match claw exactly. |
@@ -297,7 +297,7 @@ loop {
 
 **Headline:** we're ahead of claw on structural fit for a long-lived, reactive, multi-pane-capable TUI. We're behind on specific surface features (multi-line input, markdown rendering, inline approvals, code highlighting). Phase 2–4 of the plan closes surface-feature gaps without migrating to claw's structural model. Do not let "claw has it" become "we should structure like claw has it."
 
-**One thing we may want to borrow structurally:** an event-emitter layer between the runtime and the TUI. Right now both claw and swarm-harness wire these directly. If we add telemetry, a second UI, or log mirroring, a pub/sub layer pays off. Defer to v0.2+ unless a near-term need surfaces.
+**One thing we may want to borrow structurally:** an event-emitter layer between the runtime and the TUI. Right now both claw and openswarm wire these directly. If we add telemetry, a second UI, or log mirroring, a pub/sub layer pays off. Defer to v0.2+ unless a near-term need surfaces.
 
 ---
 
@@ -328,7 +328,7 @@ Resolves the pre-implementation ambiguities for Phase 2 (inline y/N approvals, T
 
 **P2.Q3. `toolUseId` in `PendingPermission`.** → **Drop.** Claw captures only `tool_name`, `input`, `current_mode`, `required_mode`, `reason` (no id — `permissions.rs:70-76`). The SDK's `CanUseTool` signature also has no tool_use_id. Claw's tool loop is **strictly serial** (`conversation.rs:400` for-loop); one prompt at a time. `PendingPermission` shrinks to `{toolName, input, currentMode, requiredMode, reason}`.
 
-**P2.Q4. Headless approval model.** → **Same `canUseTool` in TTY and headless.** Block on stdin read; `y` / `yes` → approve; EOF / anything else → deny (claw `main.rs:7394-7404`). In `--headless`, emit a JSONL `{"type":"permission_required", ...}` line **before** the read so orchestrators know what to feed — small deviation from claw's plain-text prompt, but a swarm-harness format convention, not a semantic change. `danger-full-access` → SDK `bypassPermissions` → no `canUseTool` fires at all; headless runs never block.
+**P2.Q4. Headless approval model.** → **Same `canUseTool` in TTY and headless.** Block on stdin read; `y` / `yes` → approve; EOF / anything else → deny (claw `main.rs:7394-7404`). In `--headless`, emit a JSONL `{"type":"permission_required", ...}` line **before** the read so orchestrators know what to feed — small deviation from claw's plain-text prompt, but a openswarm format convention, not a semantic change. `danger-full-access` → SDK `bypassPermissions` → no `canUseTool` fires at all; headless runs never block.
 
 **P2.Q5. Keep `/approve` + `/deny` slash commands?** → **Delete them.** Claw has neither (`main.rs:7388` is the only decision surface). Our current slash commands only flip the reducer — they don't resolve any real pending approval, because none exists in the real flow. Clean up: remove the commands from `buildDefaultRegistry`, delete the tests, update `dispatcher.test.ts` count. Adds a 15→16 … wait, Phase 1 brought us to 15; Phase 2 takes us to 13 after removing approve + deny.
 
@@ -373,7 +373,7 @@ Resolves the pre-implementation ambiguities for Phase 3 (markdown + code renderi
 **Consequence for `transcript.tsx`.** The "Phase 3 stage A" `SyntaxStyle.create()` placeholder is replaced by `SyntaxStyle.fromTheme(...)`; the lazy-init guard stays (FFI safety in tests). Inline `P3.Qn` cites resolve to anchors in this section.
 
 **Phase 3 follow-ups shipped (2026-04-30).** The original design lock listed several items as "out of scope" that turned out to be cheap once the substrate was understood. Resolved in the same Phase 3 work block:
-- **Tree-sitter highlighting wired.** OpenTUI ships `TreeSitterClient` + bundled WASM grammars (typescript, javascript, markdown, markdown_inline, zig) under `node_modules/@opentui/core/assets/`. The markdown grammar's `injectionMapping.infoStringMap` (parsers-config.d.ts:28-39) routes fenced info strings → filetype, so ` ```typescript ` blocks pick up TS-aware highlighting without any per-grammar plumbing. Wired via `getTreeSitterClient()` with the same lazy-init pattern as `markdownSyntaxStyle`; fire-and-forget `.initialize()` with try/catch fallback to no-highlighting on worker errors. Disable via `SWARM_HARNESS_DISABLE_TREE_SITTER=1` if needed.
+- **Tree-sitter highlighting wired.** OpenTUI ships `TreeSitterClient` + bundled WASM grammars (typescript, javascript, markdown, markdown_inline, zig) under `node_modules/@opentui/core/assets/`. The markdown grammar's `injectionMapping.infoStringMap` (parsers-config.d.ts:28-39) routes fenced info strings → filetype, so ` ```typescript ` blocks pick up TS-aware highlighting without any per-grammar plumbing. Wired via `getTreeSitterClient()` with the same lazy-init pattern as `markdownSyntaxStyle`; fire-and-forget `.initialize()` with try/catch fallback to no-highlighting on worker errors. Disable via `OPENSWARM_DISABLE_TREE_SITTER=1` if needed.
 - **Streaming-smoothness verified empirically.** The "trust `streaming={true}`" decision in P3.Q4 was conditional on a contingency port of claw's `find_stream_safe_boundary`. A bun:test now pumps a 5-chunk markdown response with mid-fence pauses + a deferred close fence, asserts no marker leak after `message_stop`. Passes — contingency port retired.
 - **Width-regression coverage extended.** P3.Q6 sample now includes a markdown table; cell content asserted at both 80 and 120 col.
 - **Bare-Transcript flake skipped, not fixed.** Two `bun:test` cases (`transcript.test.tsx › renders all entry kinds`, `e2e.test.tsx › full turn`) couldn't capture the assistant `<markdown>` content via `captureCharFrame`. The same primitive renders correctly when driven through the App composition with at least one priming render — covered by 6 other tests. Skipped with TODO; non-blocking for v0.
@@ -414,7 +414,7 @@ Resolves the pre-implementation ambiguities for Phase 3 (markdown + code renderi
 
 **What'd clarify this.** A short OpenTUI evaluation: does it have (1) a stable React reconciler, (2) native or easy markdown/code-block rendering, (3) reliable multi-line input support, (4) ESM cleanliness? That evaluation + the Phase 3a spike together resolve the question.
 
-**Claw-code reference.** N/A — claw doesn't use a React-style framework. This is a swarm-harness-specific question driven by our Ink dependency.
+**Claw-code reference.** N/A — claw doesn't use a React-style framework. This is a openswarm-specific question driven by our Ink dependency.
 
 **Opencode reference (evidence, April 2026).** [references/opencode/](references/opencode/) uses OpenTUI in production. Key findings:
 
@@ -431,7 +431,7 @@ Resolves the pre-implementation ambiguities for Phase 3 (markdown + code renderi
   - No native markdown layout — `<code filetype="markdown">` is syntax-highlighted code, not true markdown tables/links. Experimental `<markdown>` behind `OPENCODE_EXPERIMENTAL_MARKDOWN` flag.
   - Manual scroll tracking (`ScrollBoxRenderable` doesn't auto-scroll).
   - Every textarea keybinding must be mapped manually ([component/textarea-keybindings.ts](references/opencode/packages/opencode/src/cli/cmd/tui/component/textarea-keybindings.ts)).
-- Migration effort estimate for swarm-harness: **3–6 weeks** for a single dev (Ink rewrite ~1–2w, state model Solid store ~1w, input ~3–5d, markdown/code ~3–5d, dialogs ~1w, context system ~3–5d, testing ~1w).
+- Migration effort estimate for openswarm: **3–6 weeks** for a single dev (Ink rewrite ~1–2w, state model Solid store ~1w, input ~3–5d, markdown/code ~3–5d, dialogs ~1w, context system ~3–5d, testing ~1w).
 
 **Updated lean after comparison: (a) migrate now, sequenced as Phase 0.** Evidence shifts this from "maybe" to "defensible yes" — opencode proves the stack works in production, and every one of our biggest TUI gaps has a native OpenTUI answer. The Solid.js shift is real but unavoidable if we want those primitives. Sequencing: Phase 0 (OpenTUI migration, ~3–6w) runs in parallel with Phase 1 (non-TUI plugin + provider ship). Phase 2–5 happen on OpenTUI from the start, avoiding the rework cost. **Risk owned:** pre-1.0 API may churn. Mitigation: pin versions, mirror opencode's upgrade-opentui.ts script pattern for batch bumps.
 
@@ -439,7 +439,7 @@ Resolves the pre-implementation ambiguities for Phase 3 (markdown + code renderi
 
 **BLOCKER — 2026-04-22 (same day, post-spike):** `@opentui/core` depends on `bun:ffi` and loads a native Zig rendering library. Node cannot resolve `bun:` imports. This was missed in the initial evaluation. Every grep under `node_modules/@opentui/core/` for `from "bun:` returned multiple hits in both `.d.ts` and runtime `.js` files. README examples exclusively use `bun install` / `bun run`. OpenTUI is Bun-only by design.
 
-**EMPIRICAL PROBE — 2026-04-22 (same day, post-blocker):** Investigated whether migrating swarm-harness to Bun is viable. Results:
+**EMPIRICAL PROBE — 2026-04-22 (same day, post-blocker):** Investigated whether migrating openswarm to Bun is viable. Results:
 
 | Probe | Result | Notes |
 |---|---|---|
@@ -449,8 +449,8 @@ Resolves the pre-implementation ambiguities for Phase 3 (markdown + code renderi
 | `bun build src/cli.ts --target=bun` | ⚠️ | Fails on `react-devtools-core` (Ink's optional dep). Moot once Ink is removed. |
 | `bun x vitest run <non-TUI tests>` | ✅ | Existing vitest tests pass under Bun-launched vitest. |
 
-**Conclusion:** swarm-harness's existing TypeScript is **already Bun-compatible without code changes**. The migration is tooling + distribution, not a rewrite. Estimated migration effort drops from 3–6w to **2–3w**.
+**Conclusion:** openswarm's existing TypeScript is **already Bun-compatible without code changes**. The migration is tooling + distribution, not a rewrite. Estimated migration effort drops from 3–6w to **2–3w**.
 
-**DECISION — 2026-04-22 (resolved):** Migrate swarm-harness from Node → Bun runtime **and** Ink/React → OpenTUI/Solid as combined Phase 0. Distribution strategy: single compiled binary via `bun build --compile` so end users don't install Bun separately. Test strategy: mixed — keep vitest for the 1171 non-TUI tests; use `bun test` for OpenTUI-touching tests. Both coexist in the repo.
+**DECISION — 2026-04-22 (resolved):** Migrate openswarm from Node → Bun runtime **and** Ink/React → OpenTUI/Solid as combined Phase 0. Distribution strategy: single compiled binary via `bun build --compile` so end users don't install Bun separately. Test strategy: mixed — keep vitest for the 1171 non-TUI tests; use `bun test` for OpenTUI-touching tests. Both coexist in the repo.
 
 **Tradeoff owned:** Pinning to Bun 1.x as a first-class runtime. Bun 1.3.8 is production-mature; distribution via compiled binary removes the user-facing install requirement. We accept Bun's `bun:ffi` and plugin system as load-bearing infrastructure.

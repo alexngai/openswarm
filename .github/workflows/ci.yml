@@ -42,17 +42,17 @@ jobs:
 
       - name: Build compiled binary (linux-x64)
         # Build the binary before running tests so the PTY e2e suite has
-        # a `dist/swarm-harness` to spawn. node-pty runs under Node/vitest.
+        # a `dist/openswarm` to spawn. node-pty runs under Node/vitest.
         run: npm run build:compile:linux-x64
 
       - name: Run vitest suite (unit + integration + PTY)
         env:
-          SWARM_HARNESS_SKIP_INTEGRATION_BUILD: "1"
+          OPENSWARM_SKIP_INTEGRATION_BUILD: "1"
         run: npm test
 
       - name: Run bun test suite (OpenTUI/Solid components)
         env:
-          SWARM_HARNESS_SKIP_LIVE: "1"
+          OPENSWARM_SKIP_LIVE: "1"
         run: bun test src/ui/repl-solid/
 
       - name: Run full smoke (offline)

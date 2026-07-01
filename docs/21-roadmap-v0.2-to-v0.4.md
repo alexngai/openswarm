@@ -33,7 +33,7 @@ Pulled from doc 15 + doc 16 + Phase 5/5.5 design locks + smoke pass:
 | ID | Description | Current state | Source of deferral |
 |---|---|---|---|
 | **#1** | bash-validation never fires in `danger-full-access` (SDK bypassPermissions) | Documented in [src/cli/main.ts:469](src/cli/main.ts) | P2.Q10 + Phase 5 design lock |
-| **#2** | Worker state file (`.swarm-harness/workers/<agentId>.json`) | Design promises it ([05-swarm-model.md:109](05-swarm-model.md)); not implemented | docs vs code |
+| **#2** | Worker state file (`.openswarm/workers/<agentId>.json`) | Design promises it ([05-swarm-model.md:109](05-swarm-model.md)); not implemented | docs vs code |
 | **#3** | A2 branch-lock audit (claw has 3 modules; we have partial M3a stubs) | Marked ⚠️ in doc 15 | doc 16 timeline — never scheduled |
 | **#4** | Standalone binary `SDK vunknown` cosmetic in doctor output | Found by v0.1 smoke pass | smoke report |
 | **#5** | Two-prompt UX when validation Warn approved + mode-deny | v0.1 close-out fix accepted as v0.2 polish | code comment in main.ts |
@@ -58,7 +58,7 @@ Side effect: in danger-full-access, every tool call goes through canUseTool. For
 
 ### v0.2.Q2 — Worker state file (#2)
 
-**Decision: implement per [05-swarm-model.md:109](05-swarm-model.md). Atomic write at `.swarm-harness/workers/<agentId>.json` on every lifecycle transition (post-Phase 5.5a).**
+**Decision: implement per [05-swarm-model.md:109](05-swarm-model.md). Atomic write at `.openswarm/workers/<agentId>.json` on every lifecycle transition (post-Phase 5.5a).**
 
 Schema:
 ```ts
@@ -94,7 +94,7 @@ If the audit finds <0.5d of work, ship in v0.2. If >1d, file a v0.3+ ticket and 
 
 Cosmetic-only fix; user value low but cheap.
 
-**Shipped — already in tree (commit `1b0c6eb`, Phase 0 follow-ups).** `scripts/build-binary.ts` reads the SDK version from package.json and injects it via `Bun.build({ define: { __SWARM_HARNESS_AGENT_SDK_VERSION__: ... } })`. `src/cli/doctor.ts` uses the injected constant with a runtime-fs-walk override for the Node path. The v0.1 smoke pass saw "vunknown" only because the smoke build invoked `bun build --compile` raw instead of going through `scripts/build-binary.ts`. Stage 2D's only deliverable is verifying the right path is documented — done.
+**Shipped — already in tree (commit `1b0c6eb`, Phase 0 follow-ups).** `scripts/build-binary.ts` reads the SDK version from package.json and injects it via `Bun.build({ define: { __OPENSWARM_AGENT_SDK_VERSION__: ... } })`. `src/cli/doctor.ts` uses the injected constant with a runtime-fs-walk override for the Node path. The v0.1 smoke pass saw "vunknown" only because the smoke build invoked `bun build --compile` raw instead of going through `scripts/build-binary.ts`. Stage 2D's only deliverable is verifying the right path is documented — done.
 
 ### v0.2.Q5 — Two-prompt UX collapse (#5)
 
@@ -144,7 +144,7 @@ Six stages, sequenced for independence. Each ends in a shippable state.
 
 - New: `src/swarm/worker-state-file.ts` — atomic writer + reader.
 - Edit `src/swarm/worker-host.ts` `_transitionTo()`: write the state file after every transition.
-- Edit orchestrator: on startup, scan `.swarm-harness/workers/` for orphan files where `pid` is not alive — emit a `crash_detected` lane event.
+- Edit orchestrator: on startup, scan `.openswarm/workers/` for orphan files where `pid` is not alive — emit a `crash_detected` lane event.
 - Tests: state-file round-trip + orchestrator orphan-detection.
 
 ### Stage 2C — A2 branch-lock audit (v0.2.Q3) · ~0.5–1d
@@ -185,7 +185,7 @@ Six stages, sequenced for independence. Each ends in a shippable state.
 **Acceptance criteria for v0.2:**
 - All 13 audit items either shipped, audit-completed, or explicitly re-deferred with rationale.
 - Bash-validation fires in all 3 permission modes (verified by integration test).
-- Worker state file present in `.swarm-harness/workers/` after a real swarm run; orphan detection works.
+- Worker state file present in `.openswarm/workers/` after a real swarm run; orphan detection works.
 - Budget enforcement aborts a run that exceeds `--max-tokens` (verified by smoke).
 - All test suites green.
 
@@ -195,7 +195,7 @@ Six stages, sequenced for independence. Each ends in a shippable state.
 |---|---|
 | All 13 audit items closed | Shipped: #1 (2A), #2 (2B), #4 (2D), #5 (2E), #6 (2F), #7 (2F), #8 (2F), #9 (2F), #13 (2E). Audit-completed: #3 (2C — no code changes needed, 🟦 divergent). Re-deferred with rationale: #10 (blocked on OpenTUI), #11 (band-aid sufficient), #12 (user-driven design item). |
 | Bash-validation in all 3 modes | Stage 2A dropped `bypassPermissions`; integration test `bash-validation-danger.test.ts` verifies Block under `danger-full-access`. |
-| Worker state file | Stage 2B writes `~/.swarm-harness/workers/<agentId>.json` atomically on every lifecycle transition; orchestrator startup scans for orphans. |
+| Worker state file | Stage 2B writes `~/.openswarm/workers/<agentId>.json` atomically on every lifecycle transition; orchestrator startup scans for orphans. |
 | Budget enforcement | Stage 2E: `--max-tokens` and `--max-cost-usd` flags on `prompt` and `swarm run`; per-turn accounting aborts with exit code 3 and `budget_exceeded` lane event. |
 | TypedLaneEvent migration | Stage 2F: 10 more variants typed (13 total). Rolling policy documented in design lock. |
 | A8 token preflight | Stage 2F: `serverCountTokens()` in `src/engine/token-preflight.ts`; gracefully falls back to local estimate for OAuth users. |
@@ -209,7 +209,7 @@ Six stages, sequenced for independence. Each ends in a shippable state.
 
 # Release v0.3 — Phase 6 Codex App Server FrameworkProvider (Fork C)
 
-**Goal:** Ship ChatGPT Plus / Pro subscription support for swarm-harness users. Closes gap P4.
+**Goal:** Ship ChatGPT Plus / Pro subscription support for openswarm users. Closes gap P4.
 
 **Estimate:** ~2.5 days. **No external operator spike required** under the new design (see below).
 
@@ -220,7 +220,7 @@ Six stages, sequenced for independence. Each ends in a shippable state.
 ## Headline
 
 - **Integration target:** spawn the locally-installed `codex` binary as a subprocess and speak JSON-RPC over stdio (officially documented at `developers.openai.com/codex/app-server`).
-- **Auth:** delegate entirely to `codex login`. swarm-harness owns zero OAuth code in this mode (deprecates `src/auth/openai-oauth.ts`).
+- **Auth:** delegate entirely to `codex login`. openswarm owns zero OAuth code in this mode (deprecates `src/auth/openai-oauth.ts`).
 - **Categorization:** `FrameworkProvider`, not `TransportProvider` — the App Server hosts agent threads with their own tool surface; we delegate the loop.
 - **CLI:** `--framework codex-chatgpt` flag stays the same; underlying transport changes from "custom HTTP+SSE" → "App Server JSON-RPC". User-facing UX is identical.
 
@@ -243,7 +243,7 @@ Six stages, sequenced for independence. Each ends in a shippable state.
 |---|---|---|
 | Endpoint | `chatgpt.com/backend-api/codex/responses` (private browser channel, reverse-engineered) | Local `codex` binary subprocess (officially documented integration) |
 | Protocol | HTTP + SSE | JSON-RPC 2.0 over stdio |
-| Auth | swarm-harness owns OAuth + reverse-engineered client_id | Delegate to `codex login`; we own zero auth code |
+| Auth | openswarm owns OAuth + reverse-engineered client_id | Delegate to `codex login`; we own zero auth code |
 | Spike needed? | Yes — operator-captured SSE fixtures (BLOCKED v0.3 entirely) | No — local development verifies the documented JSON-RPC protocol |
 | Risk | Browser channel can change without notice; client_id sharing is ungoverned | Officially supported, versioned protocol with public changelog |
 | Estimate | 1.5d post-spike (spike was indefinite) | 2.5d total, no external dependency |
@@ -266,7 +266,7 @@ Six stages, sequenced for independence. Each ends in a shippable state.
 
 | ID | What | Today | What v0.4 ships |
 |---|---|---|---|
-| Real teams | `team_create`, `team_delete`, persistence, named role overlays | Roles work via `--role` flag and TaskPacket; no team primitive | Tier 3 team tools + `.swarm-harness/teams.json` persistence |
+| Real teams | `team_create`, `team_delete`, persistence, named role overlays | Roles work via `--role` flag and TaskPacket; no team primitive | Tier 3 team tools + `.openswarm/teams.json` persistence |
 | Budget enforcement at swarm level | Per-task token + cost limits, aggregate cap | Per-prompt only (v0.2 ships single-agent budget) | Aggregate across swarm; declarative in tasks.jsonl |
 | Multi-pane swarm watcher | Single subprocess JSONL stream | None — `swarm run` is fire-and-aggregate | New `swarm watch` subcommand: OpenTUI multi-pane lane viewer |
 | Mock parity harness | Live API only | Smoke scripts via `--live` | D1 — mock Anthropic service + scripted scenarios for regression coverage |
@@ -276,9 +276,9 @@ Six stages, sequenced for independence. Each ends in a shippable state.
 ### Stage 4A — Tier 3 teams · ~4–5d
 
 - New: `src/tools/tier3/team.ts` — `team_create`, `team_delete` tools.
-- New: `src/swarm/team-registry.ts` — persistent team store at `.swarm-harness/teams.json`.
+- New: `src/swarm/team-registry.ts` — persistent team store at `.openswarm/teams.json`.
 - Schema: `{ name, members: AgentId[], roles: { architect: AgentId[], executor: AgentId[], reviewer: AgentId[], critic: AgentId[] } }`.
-- Per-role system-prompt overlays + tool allowlists from `.swarm-harness/roles.json` (already partially supported in M3a Phase 6).
+- Per-role system-prompt overlays + tool allowlists from `.openswarm/roles.json` (already partially supported in M3a Phase 6).
 - Spawn integration: `task.team` field on `TaskPacket` routes the task to a team; orchestrator picks a role-matching member.
 - Tests: team-creation round-trip, role-based dispatch.
 
@@ -292,7 +292,7 @@ Six stages, sequenced for independence. Each ends in a shippable state.
 
 ### Stage 4C — `swarm watch` TUI · ~5–7d
 
-- New CLI subcommand: `swarm-harness swarm watch <results-file-or-stream>` opens an OpenTUI multi-pane viewer.
+- New CLI subcommand: `openswarm swarm watch <results-file-or-stream>` opens an OpenTUI multi-pane viewer.
 - Each worker = one pane. Shows lane events streaming, current state (from worker-state-file), token usage, status indicator.
 - Pane navigation: arrow keys + tab to focus; Enter to drill into a worker's full event log.
 - Built on the existing OpenTUI/Solid substrate (`src/ui/repl-solid/`); reuses the `<scrollbox>` + `<markdown>` primitives.
@@ -306,7 +306,7 @@ Six stages, sequenced for independence. Each ends in a shippable state.
 - Wire into CI: regression-protect the JSONL schema across engines.
 
 **Acceptance criteria for v0.4:**
-- `swarm-harness team create my-team --architect alice --executor bob` persists; subsequent `swarm run` with `task.team = "my-team"` dispatches by role.
+- `openswarm team create my-team --architect alice --executor bob` persists; subsequent `swarm run` with `task.team = "my-team"` dispatches by role.
 - `swarm run --max-tokens-aggregate 100000 tasks.jsonl` aborts when the cap is exceeded.
 - `swarm watch out.jsonl` shows a live multi-pane viewer.
 - 10+ scripted parity scenarios pass; regression-fails on JSONL schema breakage.

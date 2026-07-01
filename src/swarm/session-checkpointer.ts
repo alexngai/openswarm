@@ -52,7 +52,7 @@ export async function beginCheckpointedSession(
     // Respect sessionlog's own enabled config — no-op if it isn't set up here.
     if (!(await sl.isEnabled(opts.cwd))) return null;
 
-    const agent = sl.getAgent("swarm-harness");
+    const agent = sl.getAgent("openswarm");
     if (!agent) return null;
 
     const cfg = typeof sl.resolveSessionRepoConfig === "function"

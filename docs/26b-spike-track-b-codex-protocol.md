@@ -3,15 +3,15 @@
 **Status:** COMPLETE — protocol research, live probe, and viability analysis all delivered.
 **Date:** 2026-05-02
 **Codex CLI version:** 0.98.0 (locally installed) — supports the experimental `dynamicTools` API.
-**Author:** swarm-coder protocol spike (executor agent).
+**Author:** openswarm protocol spike (executor agent).
 
 ---
 
 ## 1. Question
 
-Can swarm-harness register Tier 2 swarm tools (`send_message`, `check_inbox`, `task_create/get/list/update`, `task_stop`, `task_output`, `ask_user_question`) as host tools that the Codex agent will plan against and invoke mid-turn, with tool results routed back through swarm-harness?
+Can openswarm register Tier 2 swarm tools (`send_message`, `check_inbox`, `task_create/get/list/update`, `task_stop`, `task_output`, `ask_user_question`) as host tools that the Codex agent will plan against and invoke mid-turn, with tool results routed back through openswarm?
 
-If yes, codex-mode workers can be **true peers** in swarm-harness teams (per `docs/25-team-orchestration.md` Track B). If no, we fall back to orchestrator-mediated coordination.
+If yes, codex-mode workers can be **true peers** in openswarm teams (per `docs/25-team-orchestration.md` Track B). If no, we fall back to orchestrator-mediated coordination.
 
 ---
 
@@ -50,7 +50,7 @@ If yes, codex-mode workers can be **true peers** in swarm-harness teams (per `do
   "method": "initialize",
   "id": 1,
   "params": {
-    "clientInfo": {"name": "swarm-harness", "version": "0.4.0"},
+    "clientInfo": {"name": "openswarm", "version": "0.4.0"},
     "capabilities": { "experimentalApi": true }
   }
 }
@@ -180,7 +180,7 @@ Our local `test/fixtures/codex-app-server/v2/ThreadStartParams.ts` does NOT cont
   "method": "thread/start",
   "params": {
     "model": "gpt-5.4",
-    "cwd": "/Users/alexngai/GitHub/swarm-coder",
+    "cwd": "/Users/alexngai/GitHub/openswarm",
     "approvalPolicy": "never",
     "sandbox": "danger-full-access",
     "experimentalRawEvents": false,
@@ -279,7 +279,7 @@ The agent literally returned the synthetic value the host computed, proving the 
 
 ### Verdict: **GREEN.**
 
-The mechanism does exactly what swarm-harness Track B requires:
+The mechanism does exactly what openswarm Track B requires:
 
 1. **Host-defined tools are registerable** at thread start — declarative JSON Schema, no engine restart.
 2. **The agent plans against them.** It requested `swarm_ping` with the right arguments, treated the tool as first-class.
@@ -304,13 +304,13 @@ None of these caveats invalidate the mechanism. They are all manageable engineer
 
 ## 5. Implementation cost estimate
 
-If we proceed in v0.4, the work to wire all 5 tracks of swarm-harness Tier 2 tools (8 tools total: `send_message`, `check_inbox`, `task_create/get/list/update`, `task_stop`, `task_output`, `ask_user_question`) through DynamicToolCall is:
+If we proceed in v0.4, the work to wire all 5 tracks of openswarm Tier 2 tools (8 tools total: `send_message`, `check_inbox`, `task_create/get/list/update`, `task_stop`, `task_output`, `ask_user_question`) through DynamicToolCall is:
 
 | Workitem | Estimate | Files |
 |---|---|---|
 | Add `DynamicToolSpec`, `DynamicToolCallParams`, `DynamicToolCallResponse`, `DynamicToolCallOutputContentItem` types to `codex-app-server-types.ts`. Bump `InitializeCapabilities` to include `experimentalApi: true` | 0.25 day | `src/providers/codex-app-server-types.ts` |
 | Extend `CodexAppServerProvider` constructor to accept `tools: ToolHandler[]`. Route `item/tool/call` ServerRequests to handlers; handle errors as `success: false` + `inputText` content | 0.5 day | `src/providers/codex-app-server.ts` |
-| Bridge swarm-harness Tier 2 tools (in `src/tools/tier2/`) to `DynamicToolSpec` objects. Generate JSON Schema from existing tool input zod schemas. Emit `tool_use_*` NormalizedEvents on the way through, for parity with other engines | 0.5 day | `src/tools/tier2/*.ts`, `src/tools/dispatcher.ts` |
+| Bridge openswarm Tier 2 tools (in `src/tools/tier2/`) to `DynamicToolSpec` objects. Generate JSON Schema from existing tool input zod schemas. Emit `tool_use_*` NormalizedEvents on the way through, for parity with other engines | 0.5 day | `src/tools/tier2/*.ts`, `src/tools/dispatcher.ts` |
 | Engine wiring in `src/engine/codex-framework.ts`: pass team-scoped tools through; respect framework-filter (in framework mode, normally Tier 2 is stripped — for codex-mode-as-team-peer, override to allow Tier 2 specifically when DynamicToolCall is enabled) | 0.5 day | `src/engine/codex-framework.ts`, `src/tools/framework-filter.ts` |
 | Add `capabilities.experimentalApi: true` to `initialize` plus a doctor probe (`omc-doctor`-style) that verifies the codex CLI accepts our experimental fields | 0.25 day | `src/providers/codex-app-server.ts`, possibly new file `src/providers/codex-app-server-doctor.ts` |
 | Update `docs/25-team-orchestration.md` §8a to lift the "framework-mode peers can't participate" constraint specifically for codex with DynamicToolCall enabled. Document the new path | 0.25 day | `docs/25-team-orchestration.md` |
@@ -415,7 +415,7 @@ The Python SDK at `sdk/python/src/codex_app_server/` (in the upstream codex repo
 Re-run the probe at any time with:
 
 ```bash
-cd /Users/alexngai/Github/swarm-coder
+cd /Users/alexngai/Github/openswarm
 node scripts/codex-app-server-dynamic-tool-spike.mjs
 # expect: VERDICT: PASS (GREEN) at the bottom
 # fixture overwritten at: test/fixtures/codex-app-server/dynamic-tool-call-spike.jsonl

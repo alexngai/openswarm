@@ -302,9 +302,9 @@ describe("loadNetworkPolicyConfig", () => {
     expect(config.blockPrivateAddresses).toBe(true);
   });
 
-  it("loads from .swarm-harness/network.json", () => {
+  it("loads from .openswarm/network.json", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "netpol-"));
-    const configDir = path.join(tmpDir, ".swarm-harness");
+    const configDir = path.join(tmpDir, ".openswarm");
     fs.mkdirSync(configDir);
     fs.writeFileSync(
       path.join(configDir, "network.json"),
@@ -336,14 +336,14 @@ describe("loadNetworkPolicyConfig", () => {
     const config = loadNetworkPolicyConfig({
       cwd: "/nonexistent",
       homedir: "/nonexistent",
-      envOverrides: { SWARM_HARNESS_CONFIG_DIR: tmpDir },
+      envOverrides: { OPENSWARM_CONFIG_DIR: tmpDir },
     });
     expect(config.mode).toBe("none");
   });
 
   it("handles invalid JSON gracefully", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "netpol-"));
-    const configDir = path.join(tmpDir, ".swarm-harness");
+    const configDir = path.join(tmpDir, ".openswarm");
     fs.mkdirSync(configDir);
     fs.writeFileSync(path.join(configDir, "network.json"), "not json{{{");
 
@@ -357,7 +357,7 @@ describe("loadNetworkPolicyConfig", () => {
 
   it("validates and defaults invalid fields", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "netpol-"));
-    const configDir = path.join(tmpDir, ".swarm-harness");
+    const configDir = path.join(tmpDir, ".openswarm");
     fs.mkdirSync(configDir);
     fs.writeFileSync(
       path.join(configDir, "network.json"),

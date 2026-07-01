@@ -3,7 +3,7 @@
  * OpenSwarm launcher (pure node, no deps).
  *
  * Prefers the self-contained, bun-compiled platform binary shipped as an
- * optional dependency (@swarmkit-ai/openswarm-cli-<platform>-<arch>) — it
+ * optional dependency (@openswarm/cli-<platform>-<arch>) — it
  * bundles the bun runtime and the full interactive TUI. Falls back to running
  * the node bundle (dist/cli.js) when no binary is available for this platform:
  * that covers everything except the interactive TUI, which main.ts degrades to
@@ -22,7 +22,7 @@ const { platform, arch } = process;
 const exe = platform === "win32" ? "openswarm.exe" : "openswarm";
 
 function resolvePlatformBinary() {
-  const pkgName = `@swarmkit-ai/openswarm-cli-${platform}-${arch}`;
+  const pkgName = `@openswarm/cli-${platform}-${arch}`;
   // Production: the installed optional-dependency package.
   try {
     const pkgDir = dirname(require.resolve(`${pkgName}/package.json`));

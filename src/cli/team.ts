@@ -334,7 +334,7 @@ async function detachAndForkDaemon(spec: TeamSpec): Promise<number> {
   const cliPath = process.argv[1];
   if (cliPath === undefined) {
     process.stderr.write(
-      "error: --detach requires process.argv[1] to be the swarm-harness CLI path\n",
+      "error: --detach requires process.argv[1] to be the openswarm CLI path\n",
     );
     await logHandle.close();
     return 2;
@@ -348,11 +348,11 @@ async function detachAndForkDaemon(spec: TeamSpec): Promise<number> {
       stdio: ["ignore", logHandle.fd, logHandle.fd],
       env: {
         ...process.env,
-        SWARM_HARNESS_DAEMON_SPEC: paths.specPath,
-        SWARM_HARNESS_DAEMON_SOCK: paths.sockPath,
-        SWARM_HARNESS_DAEMON_PID: paths.pidPath,
-        SWARM_HARNESS_DAEMON_EVENTS: paths.eventsPath,
-        SWARM_HARNESS_DAEMON_STATE: paths.statePath,
+        OPENSWARM_DAEMON_SPEC: paths.specPath,
+        OPENSWARM_DAEMON_SOCK: paths.sockPath,
+        OPENSWARM_DAEMON_PID: paths.pidPath,
+        OPENSWARM_DAEMON_EVENTS: paths.eventsPath,
+        OPENSWARM_DAEMON_STATE: paths.statePath,
       },
     },
   );

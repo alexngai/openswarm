@@ -10,7 +10,7 @@ lands in the npm package. Experiments run under **node via global `tsx`** (`tsx 
 ## Why this exists
 
 We're approaching orchestration **experimentally** — reproduce the failure findings of the
-multi-agent literature on swarm-harness, then show structural fixes overcome them (docs/45):
+multi-agent literature on openswarm, then show structural fixes overcome them (docs/45):
 
 | Hyp. | Claim | Status |
 |---|---|---|
@@ -28,8 +28,8 @@ We don't build a bespoke harness — we depend on
 benchmarks, LiteLLM-gateway model routing (for heterogeneity), a MAB driver (for the H4 learned-priors
 layer), and paired-CI / pass^k / Pareto statistics.
 
-swarm-harness is already a **registered harness** in swarmkit-eval
-(`swarmHarness()` → `swarm-harness --single --headless --output-format json …`), wired as the
+openswarm is already a **registered harness** in swarmkit-eval
+(`swarmHarness()` → `openswarm --single --headless --output-format json …`), wired as the
 **single-agent baseline**. Team/heterogeneous arms use `execution: "marble"` (native multi-agent).
 
 ### Local dev-dependency (live-linked)

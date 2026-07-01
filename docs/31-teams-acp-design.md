@@ -48,7 +48,7 @@ and hope the client copes."** Degradation is then automatic-by-construction, not
 | One narrating voice; `agent_message_chunk` has **no author field** | Many voices; interleave → garbage without attribution |
 | One turn in flight per session, ending in one `stopReason` | Team reaches quiescence when the task graph drains |
 | `request_permission` is per-session | Each member has its own gated tool calls — possibly concurrent |
-| `locations` point into the project tree | git-cascade members edit in `.swarm-harness/worktrees/<id>/` |
+| `locations` point into the project tree | git-cascade members edit in `.openswarm/worktrees/<id>/` |
 | No "inject mid-turn" method | Steering (your Ctrl-S) wants to message a running team |
 
 Every hard problem below is a facet of "project N concurrent agents onto 1 linear session without
@@ -126,7 +126,7 @@ interface SwarmMeta {
     id: string;            // stable member id within the team
     name: string;          // human label, e.g. "architect"
     role?: string;         // "lead" | "worker" | ...
-    worktree?: string;     // absolute path under .swarm-harness/worktrees/<id>/, if git-cascade
+    worktree?: string;     // absolute path under .openswarm/worktrees/<id>/, if git-cascade
     stream?: string;       // git-cascade streamId, if any
   };
   /** Team/task context for board rendering + dependency edges. */
@@ -216,7 +216,7 @@ This is the single feature that is rich-mode-only. It is a graceful *missing fea
 
 ## 8. Worktrees / git-cascade in an editor
 
-Members edit in `.swarm-harness/worktrees/<id>/`, but the editor's project tree is the **main**
+Members edit in `.openswarm/worktrees/<id>/`, but the editor's project tree is the **main**
 worktree — so member `locations` point at paths the developer isn't viewing.
 
 - **Baseline:** surface member changes as inline `diff` **content blocks** (render independent of the

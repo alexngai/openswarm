@@ -4,7 +4,7 @@
  * read (and cognitive-core can later distill).
  *
  * Layout matches the adapter: `<sessionsDir>/<sessionId>/events.jsonl`, where
- * `sessionsDir` is `SWARM_HARNESS_SESSION_DIR` or `<cwd>/.swarm/swarm-harness/sessions`.
+ * `sessionsDir` is `OPENSWARM_SESSION_DIR` or `<cwd>/.swarm/openswarm/sessions`.
  *
  * Opt-in + best-effort: recording only happens when enabled (a session dir or
  * the record flag is set), and every operation swallows errors so it can never
@@ -23,15 +23,15 @@ import {
 /** Recording is opt-in: a session dir or the explicit flag turns it on. */
 export function recordingEnabled(): boolean {
   return (
-    process.env.SWARM_HARNESS_RECORD_SESSIONS === "1" ||
-    (process.env.SWARM_HARNESS_SESSION_DIR ?? "").length > 0
+    process.env.OPENSWARM_RECORD_SESSIONS === "1" ||
+    (process.env.OPENSWARM_SESSION_DIR ?? "").length > 0
   );
 }
 
 export function resolveSessionsDir(cwd: string): string {
-  const override = process.env.SWARM_HARNESS_SESSION_DIR;
+  const override = process.env.OPENSWARM_SESSION_DIR;
   if (override && override.length > 0) return override;
-  return path.join(cwd, ".swarm", "swarm-harness", "sessions");
+  return path.join(cwd, ".swarm", "openswarm", "sessions");
 }
 
 export interface SessionRecorder {

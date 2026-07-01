@@ -16,7 +16,7 @@ A mid-experiment conclusion that "GPT-5.5 teams are *worse* (0/9) due to structu
 
 ## Setup
 
-- **Harness:** swarm-harness (working tree, packed locally — never published) via `swarmkit-eval`'s `(task × arm × model × seed)` matrix runner, ground-truth **swebench grading** (faithful `get_eval_report`), **E2B** Firecracker sandboxes (server-side template builds — no local Docker).
+- **Harness:** openswarm (working tree, packed locally — never published) via `swarmkit-eval`'s `(task × arm × model × seed)` matrix runner, ground-truth **swebench grading** (faithful `get_eval_report`), **E2B** Firecracker sandboxes (server-side template builds — no local Docker).
 - **Runtime:** node via global `tsx` (NOT bun — bun's gzip handling corrupts E2B compressed output).
 - **Instances (hard set, 9):** repo-diverse SWE-bench-Verified, `1-4h` + `>4h` human-difficulty buckets (the easy set saturated single at 4/5 — useless for discrimination).
 - **Arms:** `single` (one long-lived agent) · `team` (homogeneous coordinator: architect + executor + reviewer) · `hetero` (architect-lead + implementer + dedicated verifier + adversarial critic).
@@ -42,7 +42,7 @@ The aggregate scores were misleading at two points; reading the actual trajector
 
 ## Harness improvements shipped (independent of the experiment's outcome)
 
-All committed with tests — genuine swarm-harness value:
+All committed with tests — genuine openswarm value:
 
 | Commit | Fix |
 |---|---|
@@ -91,7 +91,7 @@ The union **plateaus at 2/9** (no growth N=3→5). Instances tier cleanly: **xar
 
 ```sh
 # prereqs: source ~/.zshrc (E2B + Bedrock + Azure creds); global tsx; packed local harness
-bash eval/scripts/pack-local-harness.sh                 # build+pack working-tree swarm-harness (+skill-tree)
+bash eval/scripts/pack-local-harness.sh                 # build+pack working-tree openswarm (+skill-tree)
 bash eval/scripts/prep-swe-subset.sh <instance ids…>    # SWE_INSTANCES_DIR=eval/.artifacts/swe-hard, SWE_DATASET=…Verified
 
 # run an arm (node/tsx, NOT bun):

@@ -1,5 +1,5 @@
 /**
- * Translate codex Responses SSE events into swarm-harness ProviderEvents.
+ * Translate codex Responses SSE events into openswarm ProviderEvents.
  *
  * Stateful because tool-call arguments stream as deltas keyed by the Responses
  * item id (`fc_*`), while downstream correlation uses `call_id` (the id a

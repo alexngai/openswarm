@@ -37,7 +37,7 @@ import {
 
 /**
  * On-disk paths owned by one daemon instance. Per V0.5.Q3, production callers
- * generate these under `${XDG_RUNTIME_DIR}/swarm-harness/teams/<name>/`.
+ * generate these under `${XDG_RUNTIME_DIR}/openswarm/teams/<name>/`.
  */
 export interface TeamDaemonPaths {
   readonly sockPath: string;

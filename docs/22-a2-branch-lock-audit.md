@@ -31,7 +31,7 @@
 | `AcquireOptions` | `{ agentId, timeoutMs, lockDir?, cwd?, pollIntervalMs?, staleReclaimAfterMs? }` | Options. `lockDir` overrides git-anchored path (test-only). |
 | `LockFileContent` | private `{ ownerAgentId, acquiredAt, pid, branch }` | JSON written to the lock file. |
 | `acquire(branch, opts)` | `async → LockHandle` | `fs.open(path, "wx")` (O_EXCL-equivalent). On EEXIST: calls `tryReclaimStale`; if not reclaimed, polls until timeout. Throws on timeout with descriptive message to stderr. Release is idempotent. |
-| `resolveLockDir(override, cwd)` | private async | Runs `git rev-parse --git-common-dir`; resolves relative path; anchors to `<gitCommonDir>/swarm-harness/branch-locks`. |
+| `resolveLockDir(override, cwd)` | private async | Runs `git rev-parse --git-common-dir`; resolves relative path; anchors to `<gitCommonDir>/openswarm/branch-locks`. |
 | `tryReclaimStale(lockPath, threshold)` | private async | Reads lock file; checks `isDeadPid(parsed.pid)`; checks age vs `staleReclaimAfterMs`; unlinks if stale. Returns `true` if the slot is now free. |
 | `isDeadPid(pid)` | private | `process.kill(pid, 0)` signal-0 test. ESRCH → dead. EPERM → alive (process exists, no permission). |
 | `sanitizeBranchName(branch)` | exported | Replaces `[^A-Za-z0-9._-]` with `-`; appends 4-char FNV-1a hash of original branch; appends `.lock`. |
@@ -51,7 +51,7 @@
 | `resolveExpectedBase(override, cwd)` | private async | Reads `<cwd>/.swarm-base` if no explicit override. Returns `undefined` if absent or empty. |
 | `formatWarning(result)` | exported | Returns `"base diverged: expected X, got Y"` for `diverged`; `null` for all other variants. |
 
-**Note on file marker:** Our marker file is `.swarm-base`; claw's is `.claw-base`. Intentional: swarm-harness is not a claw fork and should not read claw's artifacts.
+**Note on file marker:** Our marker file is `.swarm-base`; claw's is `.claw-base`. Intentional: openswarm is not a claw fork and should not read claw's artifacts.
 
 **Test coverage** (`src/swarm/git/stale-base.test.ts`): 5 tests using real temporary git repos — matches, diverged, no-expected-base, not-a-git-repo, `.swarm-base` file resolution.
 
@@ -190,12 +190,12 @@ The full implementation already exceeds claw-parity in the two areas where swarm
 
 | File | Lines | Role |
 |---|---|---|
-| `/Users/alexngai/GitHub/swarm-coder/src/swarm/git/branch-lock.ts` | 331 | Layer A: collision detector (claw port) + Layer B: atomic file lock (new) |
-| `/Users/alexngai/GitHub/swarm-coder/src/swarm/git/branch-lock.test.ts` | 307 | Tests for both layers |
-| `/Users/alexngai/GitHub/swarm-coder/src/swarm/git/stale-base.ts` | 77 | HEAD vs expected-base comparison |
-| `/Users/alexngai/GitHub/swarm-coder/src/swarm/git/stale-base.test.ts` | 86 | Real-git-repo tests |
-| `/Users/alexngai/GitHub/swarm-coder/src/swarm/git/stale-branch.ts` | 191 | Branch freshness + policy application |
-| `/Users/alexngai/GitHub/swarm-coder/src/swarm/git/stale-branch.test.ts` | 306 | Pure policy + mocked git tests |
-| `/Users/alexngai/GitHub/swarm-coder/references/claw-code/rust/crates/runtime/src/branch_lock.rs` | 145 | Claw reference: collision detector only |
-| `/Users/alexngai/GitHub/swarm-coder/references/claw-code/rust/crates/runtime/src/stale_base.rs` | 430 | Claw reference: base-commit check |
-| `/Users/alexngai/GitHub/swarm-coder/references/claw-code/rust/crates/runtime/src/stale_branch.rs` | 418 | Claw reference: freshness + policy |
+| `/Users/alexngai/GitHub/openswarm/src/swarm/git/branch-lock.ts` | 331 | Layer A: collision detector (claw port) + Layer B: atomic file lock (new) |
+| `/Users/alexngai/GitHub/openswarm/src/swarm/git/branch-lock.test.ts` | 307 | Tests for both layers |
+| `/Users/alexngai/GitHub/openswarm/src/swarm/git/stale-base.ts` | 77 | HEAD vs expected-base comparison |
+| `/Users/alexngai/GitHub/openswarm/src/swarm/git/stale-base.test.ts` | 86 | Real-git-repo tests |
+| `/Users/alexngai/GitHub/openswarm/src/swarm/git/stale-branch.ts` | 191 | Branch freshness + policy application |
+| `/Users/alexngai/GitHub/openswarm/src/swarm/git/stale-branch.test.ts` | 306 | Pure policy + mocked git tests |
+| `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/runtime/src/branch_lock.rs` | 145 | Claw reference: collision detector only |
+| `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/runtime/src/stale_base.rs` | 430 | Claw reference: base-commit check |
+| `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/runtime/src/stale_branch.rs` | 418 | Claw reference: freshness + policy |

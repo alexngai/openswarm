@@ -23,7 +23,7 @@
  *      launch mode: TAC_EC2_AMI + instance type). Security group must allow SSH + the GitLab port.
  *   3. The TAC task image (`ghcr.io/theagentcompany/<task>-image:1.0.0`) available where the per-cell
  *      init (pre_init gate + populate_data) runs — host-gitlab.ts drives it before each cell.
- *   4. Provider creds: Bedrock (CLAUDE_CODE_USE_BEDROCK + AWS_* ) or swap the agent adapter to swarm-harness.
+ *   4. Provider creds: Bedrock (CLAUDE_CODE_USE_BEDROCK + AWS_* ) or swap the agent adapter to openswarm.
  *
  * ENV:
  *   TAC_GITLAB_URL     URL agents use to reach GitLab (required)
@@ -62,7 +62,7 @@ const GITLAB_URL = process.env.TAC_GITLAB_URL;
 const GITLAB_PORT = Number(process.env.TAC_GITLAB_PORT ?? 8929);
 const MODEL = process.env.ANTHROPIC_MODEL ?? "apac.anthropic.claude-sonnet-4-20250514-v1:0";
 
-/** Bedrock env forwarded into each agent sandbox (swap for swarm-harness + Azure later — see docs/47). */
+/** Bedrock env forwarded into each agent sandbox (swap for openswarm + Azure later — see docs/47). */
 function bedrockEnv(): Record<string, string> {
   const env: Record<string, string> = {
     CLAUDE_CODE_USE_BEDROCK: "1",

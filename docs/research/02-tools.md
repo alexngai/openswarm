@@ -1,4 +1,4 @@
-# 02 — Tools, Bash Validation, Sandbox (claw-code Rust → swarm-harness)
+# 02 — Tools, Bash Validation, Sandbox (claw-code Rust → openswarm)
 
 Research extract from `references/claw-code/rust/crates/tools/src/lib.rs` and the `runtime/` crate. Focus is pure-execution tools: `bash`, file ops, search, `web_fetch`/`web_search`, `todo_write`, `notebook_edit`, `structured_output`, `repl`, `sleep`, `ask_user_question`, plus the bash validation / sandbox infrastructure that wraps them. MCP, LSP, plugin, skill, task/team/cron/worker surfaces are deliberately out of scope.
 
@@ -208,7 +208,7 @@ Notable gaps / surprises: the bash validation pipeline is dead code in practice,
 - Permission: `ReadOnly`
 - Input: `{ query: string, max_results?: integer≥1 }`
 - Output: matches from `deferred_tool_specs()` (tools hidden behind on-demand schema loading).
-- Note: swarm-harness's tier model implicitly handles deferred tool discovery via its tool registry; direct port may not be needed.
+- Note: openswarm's tier model implicitly handles deferred tool discovery via its tool registry; direct port may not be needed.
 
 ### 2.17 (Excluded from this slice, listed for completeness)
 
@@ -230,7 +230,7 @@ Source: `runtime/src/bash_validation.rs` (1004 LOC). The upstream Claude Code `B
 
 Helpers: `extract_first_command` strips leading `KEY=val` env assignments and handles quoted values; `extract_sudo_inner` skips sudo flags to find the real command.
 
-**Implication for swarm-harness:** We can lift these lists and algorithms verbatim into TypeScript, and we should actually wire them into the bash-execution critical path (unlike claw-code). `classify_command` plus a `validate_command` pre-flight is enough to drive the downgrade logic that `classify_bash_permission` is attempting more crudely in the `run_bash` path.
+**Implication for openswarm:** We can lift these lists and algorithms verbatim into TypeScript, and we should actually wire them into the bash-execution critical path (unlike claw-code). `classify_command` plus a `validate_command` pre-flight is enough to drive the downgrade logic that `classify_bash_permission` is attempting more crudely in the `run_bash` path.
 
 A separate, narrower classifier lives at `tools/src/lib.rs::classify_bash_permission` (lines 1844-1874) and *is* wired into dispatch — it is a duplicate, stricter-but-shallower reimplementation. If both are ported, decide which owns runtime dispatch vs diagnostics.
 
@@ -281,7 +281,7 @@ Per-call overrides (in `BashCommandInput`):
 
 All fold into `SandboxConfig::resolve_request` which merges per-call overrides on top of config file defaults.
 
-## 5. Requirements for swarm-harness
+## 5. Requirements for openswarm
 
 Tags: [v0] ship in Tier 0 MVP · [v1] Tier 1-2 · [later] Tier 3-5 · [skip] not worth porting.
 
@@ -341,12 +341,12 @@ Tags: [v0] ship in Tier 0 MVP · [v1] Tier 1-2 · [later] Tier 3-5 · [skip] not
 
 ### Other observations worth carrying over
 
-- **[v0]** Lane-event-style structured output on preflight blocks (e.g. branch divergence) is a good pattern for swarm-harness telemetry — keep the idea, drop the specific `workspace_test_branch_preflight` heuristic unless the v0 scope includes test/CI awareness.
+- **[v0]** Lane-event-style structured output on preflight blocks (e.g. branch divergence) is a good pattern for openswarm telemetry — keep the idea, drop the specific `workspace_test_branch_preflight` heuristic unless the v0 scope includes test/CI awareness.
 - **[v0]** Ship-prepared detection on `git push … main|master` is a string-match hack; if we want CI/ship telemetry, do it through a hook rather than a tool intercept.
 
 ## 6. Open questions
 
-1. **Grep backend**: claw-code's `grep_search` uses `walkdir` + `regex`, not ripgrep, despite "(ripgrep-backed)" in our doc. For swarm-harness v0, do we shell out to `rg` when available, ship `ripgrep-node`, or accept a pure-JS impl?
+1. **Grep backend**: claw-code's `grep_search` uses `walkdir` + `regex`, not ripgrep, despite "(ripgrep-backed)" in our doc. For openswarm v0, do we shell out to `rg` when available, ship `ripgrep-node`, or accept a pure-JS impl?
 2. **Workspace boundary enforcement scope**: claw-code defines but doesn't wire `*_in_workspace` helpers. Do we enforce the boundary at the tool layer (every read/write/edit), at the permission-engine layer, or both?
 3. **AskUserQuestion transport**: stdin is wrong for a server-mode host. What interface should the tool present (promise resolved by host, EventEmitter, WebSocket message)?
 4. **REPL semantics**: persistent kernel vs spawn-per-call? The former is meaningfully different from `bash` + `python3 -c`; the latter is redundant.
@@ -354,15 +354,15 @@ Tags: [v0] ship in Tier 0 MVP · [v1] Tier 1-2 · [later] Tier 3-5 · [skip] not
 6. **Sandbox on macOS/Windows**: ship Linux-only in v0 and document the absence, or invest in `sandbox-exec` / Windows equivalents?
 7. **PDF extraction**: port claw-code's hand-rolled extractor, or depend on a library? The claw-code implementation is pragmatic but silently returns `""` for encrypted/image-only PDFs — we should at least surface that state.
 8. **Truncation marker**: claw-code injects `"\n\n[output truncated — exceeded 16384 bytes]"` into stdout/stderr content. Should we instead expose truncation as an out-of-band boolean + size field so the model doesn't have to parse the marker?
-9. **`multi_edit`**: claw-code has no such tool — each `edit_file` is a single replacement. Claude Code proper supports batched edits. Is this a Tier 0 gap for swarm-harness?
+9. **`multi_edit`**: claw-code has no such tool — each `edit_file` is a single replacement. Claude Code proper supports batched edits. Is this a Tier 0 gap for openswarm?
 
 ## 7. File references
 
-- `/Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/crates/tools/src/lib.rs` — tool registry, `mvp_tool_specs()` (lines 385-1172), `execute_tool` dispatch (lines 1189-1291), all `run_*`/`execute_*` implementations, `classify_bash_permission` (lines 1844-1906), `workspace_test_branch_preflight` (lines 1916-2060), `execute_web_fetch`/`execute_web_search` (2747-3128), `execute_todo_write` (3130-3173), `execute_notebook_edit` (5055-5175), `execute_sleep` (5225-5237), `execute_structured_output` (5475-5485), `execute_repl` (5487-5565)
-- `/Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/crates/tools/src/pdf_extract.rs` — flate2 + BT/ET operator extractor; module only, not an MVP tool
-- `/Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/crates/tools/src/lane_completion.rs` — lane-completion detector (out of scope for this slice)
-- `/Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/crates/runtime/src/bash.rs` — `BashCommandInput`/`Output`, `execute_bash`, `prepare_command`, `prepare_tokio_command`, 16 KiB truncation
-- `/Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/crates/runtime/src/bash_validation.rs` — full validation pipeline (read-only, destructive, mode, sed, path, semantics) — library code, not wired into `execute_bash`
-- `/Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/crates/runtime/src/file_ops.rs` — `read_file`, `write_file`, `edit_file`, `glob_search`, `grep_search`, `MAX_READ_SIZE`, `MAX_WRITE_SIZE`, `is_binary_file`, `validate_workspace_boundary`, `is_symlink_escape`, `expand_braces`
-- `/Users/alexngai/GitHub/swarm-harness/references/claw-code/rust/crates/runtime/src/sandbox.rs` — `SandboxConfig/Request/Status`, `FilesystemIsolationMode`, `detect_container_environment`, `resolve_sandbox_status_for_request`, `build_linux_sandbox_command`, `unshare_user_namespace_works`
-- `/Users/alexngai/GitHub/swarm-harness/docs/04-tool-tiers.md` — target tier taxonomy this research feeds
+- `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/tools/src/lib.rs` — tool registry, `mvp_tool_specs()` (lines 385-1172), `execute_tool` dispatch (lines 1189-1291), all `run_*`/`execute_*` implementations, `classify_bash_permission` (lines 1844-1906), `workspace_test_branch_preflight` (lines 1916-2060), `execute_web_fetch`/`execute_web_search` (2747-3128), `execute_todo_write` (3130-3173), `execute_notebook_edit` (5055-5175), `execute_sleep` (5225-5237), `execute_structured_output` (5475-5485), `execute_repl` (5487-5565)
+- `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/tools/src/pdf_extract.rs` — flate2 + BT/ET operator extractor; module only, not an MVP tool
+- `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/tools/src/lane_completion.rs` — lane-completion detector (out of scope for this slice)
+- `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/runtime/src/bash.rs` — `BashCommandInput`/`Output`, `execute_bash`, `prepare_command`, `prepare_tokio_command`, 16 KiB truncation
+- `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/runtime/src/bash_validation.rs` — full validation pipeline (read-only, destructive, mode, sed, path, semantics) — library code, not wired into `execute_bash`
+- `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/runtime/src/file_ops.rs` — `read_file`, `write_file`, `edit_file`, `glob_search`, `grep_search`, `MAX_READ_SIZE`, `MAX_WRITE_SIZE`, `is_binary_file`, `validate_workspace_boundary`, `is_symlink_escape`, `expand_braces`
+- `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/runtime/src/sandbox.rs` — `SandboxConfig/Request/Status`, `FilesystemIsolationMode`, `detect_container_environment`, `resolve_sandbox_status_for_request`, `build_linux_sandbox_command`, `unshare_user_namespace_works`
+- `/Users/alexngai/GitHub/openswarm/docs/04-tool-tiers.md` — target tier taxonomy this research feeds

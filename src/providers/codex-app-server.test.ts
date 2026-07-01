@@ -942,7 +942,7 @@ describe("CodexAppServerProvider — Stage 3B", () => {
           type: "commandExecution",
           id: "call_PAE0TiLDxJLcFgyGvdqf16rT",
           command: "/bin/zsh -lc 'ls -1 README.md package.json'",
-          cwd: "/Users/alexngai/GitHub/swarm-coder",
+          cwd: "/Users/alexngai/GitHub/openswarm",
           processId: "21323",
           status: "inProgress",
           commandActions: [{ type: "listFiles" }],
@@ -964,7 +964,7 @@ describe("CodexAppServerProvider — Stage 3B", () => {
           type: "commandExecution",
           id: "call_PAE0TiLDxJLcFgyGvdqf16rT",
           command: "/bin/zsh -lc 'ls -1 README.md package.json'",
-          cwd: "/Users/alexngai/GitHub/swarm-coder",
+          cwd: "/Users/alexngai/GitHub/openswarm",
           status: "completed",
           commandActions: [{ type: "listFiles" }],
           aggregatedOutput: "README.md\npackage.json\n",
@@ -996,7 +996,7 @@ describe("CodexAppServerProvider — Stage 3B", () => {
     expect(toolInput!.id).toBe("call_PAE0TiLDxJLcFgyGvdqf16rT");
     const parsed = JSON.parse(toolInput!.jsonDelta) as { command: string; cwd: string };
     expect(parsed.command).toContain("ls -1");
-    expect(parsed.cwd).toContain("swarm-coder");
+    expect(parsed.cwd).toContain("openswarm");
 
     const toolEnd = events.find((e) => e.type === "tool_use_end") as
       | { type: "tool_use_end"; id: string }

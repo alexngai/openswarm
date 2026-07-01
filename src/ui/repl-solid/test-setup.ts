@@ -10,8 +10,8 @@
  * created EventTargets/EventEmitters — affects anything OpenTUI creates
  * after this preload runs.
  *
- * SWARM_HARNESS_HISTORY_PATH is set to a per-process temp path so tests
- * never read from or write to the user's real ~/.swarm-harness/history file.
+ * OPENSWARM_HISTORY_PATH is set to a per-process temp path so tests
+ * never read from or write to the user's real ~/.openswarm/history file.
  */
 
 import { setMaxListeners } from "events";
@@ -22,7 +22,7 @@ import * as crypto from "crypto";
 setMaxListeners(100);
 
 // Isolate history file from the real user history for all bun:test runs.
-process.env["SWARM_HARNESS_HISTORY_PATH"] = path.join(
+process.env["OPENSWARM_HISTORY_PATH"] = path.join(
   os.tmpdir(),
   `openswarm-test-history-${crypto.randomUUID()}`,
 );

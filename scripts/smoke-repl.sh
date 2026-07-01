@@ -95,8 +95,8 @@ fi
 # prompt via --dump-tools (which doesn't invoke tools) to confirm the hook
 # config loads; then exercise the dispatcher-level deny path via node.
 TMP_O3=$(mktemp -d)
-mkdir -p "$TMP_O3/.swarm-coder"
-cat > "$TMP_O3/.swarm-coder/hooks.json" <<EOF
+mkdir -p "$TMP_O3/.openswarm"
+cat > "$TMP_O3/.openswarm/hooks.json" <<EOF
 {"PreToolUse":[{"matcher":"read_file","command":"bash $HOOKS_FIXTURES/deny-hook.sh"}]}
 EOF
 
@@ -255,9 +255,9 @@ else
 
     # [L5] One hook invocation — hook writes to a log file; verify it exists.
     TMP_L5=$(mktemp -d)
-    mkdir -p "$TMP_L5/.swarm-coder"
+    mkdir -p "$TMP_L5/.openswarm"
     LOG="$TMP_L5/hook.log"
-    cat > "$TMP_L5/.swarm-coder/hooks.json" <<EOF
+    cat > "$TMP_L5/.openswarm/hooks.json" <<EOF
 {"PreToolUse":[{"matcher":"*","command":"cat >/dev/null; echo pre-hook-fired >> $LOG; echo '{}'; exit 0"}]}
 EOF
     OUT_L5=$((cd "$TMP_L5" && $BIN prompt --headless "Use the read_file tool to read package.json, then tell me one field." ) 2>&1)

@@ -54,7 +54,7 @@ fi
 # O2: bun src/cli.ts --help.
 # ---------------------------------------------------------------------------
 if bun src/cli.ts --help 2>/tmp/smoke-opentui-o2.err \
-  | grep -q "swarm-coder"; then
+  | grep -q "openswarm"; then
   record O2 PASS "bun src/cli.ts --help prints usage"
 else
   record O2 FAIL "bun src/cli.ts --help failed (see /tmp/smoke-opentui-o2.err)"
@@ -73,9 +73,9 @@ fi
 # ---------------------------------------------------------------------------
 # O4: bun build --compile produces a working standalone binary.
 # ---------------------------------------------------------------------------
-BINARY_PATH="$REPO_ROOT/dist/swarm-coder"
+BINARY_PATH="$REPO_ROOT/dist/openswarm"
 if bun "$REPO_ROOT/scripts/build-binary.ts" >/tmp/smoke-opentui-o4-build.log 2>&1; then
-  if "$BINARY_PATH" --help 2>/tmp/smoke-opentui-o4-help.err | grep -q "swarm-coder" \
+  if "$BINARY_PATH" --help 2>/tmp/smoke-opentui-o4-help.err | grep -q "openswarm" \
     && "$BINARY_PATH" doctor 2>/tmp/smoke-opentui-o4-doctor.err | grep -qE "auth|install|workspace"; then
     record O4 PASS "compiled binary passes --help and doctor"
   else

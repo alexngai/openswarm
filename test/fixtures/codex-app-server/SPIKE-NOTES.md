@@ -76,7 +76,7 @@ After operator reactivated auth + we passed `model: "gpt-5.4"` (the default `gpt
 
 Token cost for "Reply with the single word DONE.": **8141 total** (8121 input, 7040 cached, 20 output, 13 reasoning output). The cached input is the model's system prompt / Codex's tool surface, indicating the App Server does aggressive prompt caching.
 
-For our swarm-harness translation to NormalizedEvent:
+For our openswarm translation to NormalizedEvent:
 
 | Codex event | NormalizedEvent equivalent |
 |---|---|
@@ -119,7 +119,7 @@ Model is selected by codex's local config (`~/.codex/config.toml`) unless the `t
 - `SandboxMode.ts`, `AskForApproval.ts` — turn-level policy
 - `RateLimitSnapshot.ts`, `RateLimitWindow.ts` — quota reporting
 
-The generated bindings are large (250+ files, 411 KB JSON schema). For the swarm-harness `CodexAppServerProvider` we only need ~10 of these types; the rest are App Server features we don't use (skills, MCP, account management, file search, etc.).
+The generated bindings are large (250+ files, 411 KB JSON schema). For the openswarm `CodexAppServerProvider` we only need ~10 of these types; the rest are App Server features we don't use (skills, MCP, account management, file search, etc.).
 
 ## Implementation notes for Stage 3A
 

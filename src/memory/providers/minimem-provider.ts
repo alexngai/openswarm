@@ -102,7 +102,7 @@ export class MinimemProvider implements MemoryProvider {
       process.env.MINIMEM_STORE_PATH ??
       path.join(
         process.env.HOME ?? process.env.USERPROFILE ?? ".",
-        ".swarm-harness",
+        ".openswarm",
         "memory",
       );
 

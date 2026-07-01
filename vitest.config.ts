@@ -24,8 +24,8 @@ export default defineConfig({
     environment: "node",
     globalSetup: ["./test/integration/global-setup.ts"],
     // Per-worker setup that runs before any test file. Phase 4 follow-up:
-    // sets SWARM_HARNESS_HISTORY_PATH so tests never touch the user's real
-    // ~/.swarm-harness/history (symmetric to bun:test's test-setup.ts).
+    // sets OPENSWARM_HISTORY_PATH so tests never touch the user's real
+    // ~/.openswarm/history (symmetric to bun:test's test-setup.ts).
     setupFiles: ["./test/vitest-setup.ts"],
     testTimeout: 15_000,
     hookTimeout: 60_000,

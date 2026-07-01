@@ -1,5 +1,5 @@
 /**
- * Classify codex Responses HTTP errors into swarm-harness ProviderErrors.
+ * Classify codex Responses HTTP errors into openswarm ProviderErrors.
  *
  * Handles both error body shapes seen live (docs/42):
  *   - model gating: `{ "detail": "The 'gpt-5.4' model is not supported ..." }` (400)

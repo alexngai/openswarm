@@ -1,8 +1,8 @@
 # 37 — Hardened NativeEngine Design
 
 Port of production-hardened loop mechanics from OpenAI Codex (Rust) into
-swarm-harness's NativeEngine (TypeScript). Goal: Codex-level resilience
-while preserving swarm-harness's provider flexibility, swarmkit integration,
+openswarm's NativeEngine (TypeScript). Goal: Codex-level resilience
+while preserving openswarm's provider flexibility, swarmkit integration,
 and composable architecture.
 
 ## 1  Motivation
@@ -62,11 +62,11 @@ HardenedNativeEngine
        └─ RetryingProvider (optional decorator — transport fallback)
 ```
 
-## 4  Codex-to-swarm-harness 1:1 Mapping
+## 4  Codex-to-openswarm 1:1 Mapping
 
 ### 4.1  Core loop (PORTABLE — logic maps 1:1)
 
-| Codex function | File:Lines | swarm-harness target | Status |
+| Codex function | File:Lines | openswarm target | Status |
 |----------------|-----------|---------------------|--------|
 | `run_turn` | `turn.rs:136-422` | `HardenedNativeEngine.run()` outer loop | TODO |
 | `run_sampling_request` | `turn.rs:999-1087` | `streamWithRetry()` private method | TODO |
@@ -80,7 +80,7 @@ HardenedNativeEngine
 
 ### 4.2  Tool execution (PORTABLE — needs ToolScheduler adaptation)
 
-| Codex function | File:Lines | swarm-harness target | Status |
+| Codex function | File:Lines | openswarm target | Status |
 |----------------|-----------|---------------------|--------|
 | `ToolCallRuntime.handle_tool_call` | `parallel.rs:62-79` | Eager dispatch in streaming loop | TODO |
 | `handle_tool_call_with_source` | `parallel.rs:81-178` | `ToolScheduler.add()` per tool during stream | TODO |
@@ -89,7 +89,7 @@ HardenedNativeEngine
 
 ### 4.3  Retry engine (PORTABLE — direct translation)
 
-| Codex function | File:Lines | swarm-harness target | Status |
+| Codex function | File:Lines | openswarm target | Status |
 |----------------|-----------|---------------------|--------|
 | `handle_retryable_response_stream_error` | `responses_retry.rs:22-79` | `RetryPolicy.handleError()` | TODO |
 | `log_retry` | `responses_retry.rs:81-105` | Yield `info` NormalizedEvent | TODO |
@@ -97,7 +97,7 @@ HardenedNativeEngine
 
 ### 4.4  Streaming delta handling (ADAPT — different event types)
 
-| Codex function | File:Lines | swarm-harness equivalent | Notes |
+| Codex function | File:Lines | openswarm equivalent | Notes |
 |----------------|-----------|-------------------------|-------|
 | `ResponseEvent::OutputItemDone` match | `turn.rs:1871-1950` | `ProviderEvent "tool-call"` handler | Codex queues tool immediately; we do same |
 | `ResponseEvent::OutputTextDelta` | `turn.rs:1990-2010` | `ProviderEvent "text-delta"` handler | Already implemented |
@@ -106,7 +106,7 @@ HardenedNativeEngine
 
 ### 4.5  Context management (ADAPT — different compaction strategy)
 
-| Codex function | File:Lines | swarm-harness target | Notes |
+| Codex function | File:Lines | openswarm target | Notes |
 |----------------|-----------|---------------------|-------|
 | `run_pre_sampling_compact` | `turn.rs:784-804` | Existing pre-turn compaction (line 177) | Already implemented |
 | Mid-turn compaction check | `turn.rs:268-321` | New: check after tool results | Uses existing compactor |
@@ -116,8 +116,8 @@ HardenedNativeEngine
 
 | Codex function | File:Lines | Reason |
 |----------------|-----------|--------|
-| `submission_loop` | `handlers.rs:738-887` | swarm-harness uses one-shot run() |
-| `build_skills_and_plugins` | `turn.rs:456-611` | swarm-harness has own skill/plugin system |
+| `submission_loop` | `handlers.rs:738-887` | openswarm uses one-shot run() |
+| `build_skills_and_plugins` | `turn.rs:456-611` | openswarm has own skill/plugin system |
 | `mirror_user_text_to_realtime` | `handlers.rs:298-318` | Realtime/WebRTC not applicable |
 | `handle_plan_segments` | `turn.rs:1464-1525` | Plan mode deferred to future work |
 | `realtime_conversation_list_voices` | `handlers.rs:76-86` | Realtime not applicable |
@@ -364,7 +364,7 @@ export interface HardenedNativeSnapshot {
 
 ## 7  Invariants
 
-Carried over from Codex and swarm-harness, verified by tests:
+Carried over from Codex and openswarm, verified by tests:
 
 1. **Tool results returned in original order** — even with eager dispatch and
    out-of-order completion, results are yielded in the order the model

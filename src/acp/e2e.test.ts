@@ -423,7 +423,7 @@ describe("ACP e2e (subprocess)", () => {
         ],
         {
           cwd: process.cwd(),
-          env: { ...process.env, SWARM_HARNESS_TEST_SCRIPT: fixture },
+          env: { ...process.env, OPENSWARM_TEST_SCRIPT: fixture },
           stdio: ["pipe", "pipe", "ignore"],
         },
       );
@@ -650,7 +650,7 @@ describe("ACP e2e (subprocess, team — deterministic)", () => {
         ["src/cli.ts", "acp", "--team", "--no-plugins", "--no-skills", "--no-mcp", "--no-hooks"],
         {
           cwd: process.cwd(),
-          env: { ...process.env, SWARM_HARNESS_TEST_SCRIPT: fixture },
+          env: { ...process.env, OPENSWARM_TEST_SCRIPT: fixture },
           stdio: ["pipe", "pipe", "ignore"],
         },
       );
@@ -710,7 +710,7 @@ describe("ACP e2e (subprocess, team — deterministic)", () => {
       {
         const child = spawn(BUN!, teamArgs, {
           cwd: process.cwd(),
-          env: { ...process.env, SWARM_HARNESS_TEST_SCRIPT: fixture },
+          env: { ...process.env, OPENSWARM_TEST_SCRIPT: fixture },
           stdio: ["pipe", "pipe", "ignore"],
         });
         child.on("error", () => {});

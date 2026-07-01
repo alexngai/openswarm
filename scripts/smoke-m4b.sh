@@ -224,7 +224,7 @@ if ! $OFFLINE; then
   fi
 
   # [L4] Codex ChatGPT — Phase 5 provider not yet implemented; login path works
-  record skipped L4 "Codex ChatGPT — Phase 5 provider not yet implemented; login flow works via \`swarm-coder login --provider codex-chatgpt\`"
+  record skipped L4 "Codex ChatGPT — Phase 5 provider not yet implemented; login flow works via \`openswarm login --provider codex-chatgpt\`"
 
 fi  # end live cases
 

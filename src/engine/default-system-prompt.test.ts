@@ -88,7 +88,7 @@ describe("default-system-prompt", () => {
     expect(BASE_SYSTEM_PROMPT).toContain("## Safety");
   });
 
-  it("base prompt contains swarm-harness tool references", () => {
+  it("base prompt contains openswarm tool references", () => {
     expect(BASE_SYSTEM_PROMPT).toContain("edit_file");
     expect(BASE_SYSTEM_PROMPT).toContain("multi_edit");
     expect(BASE_SYSTEM_PROMPT).toContain("write_file");

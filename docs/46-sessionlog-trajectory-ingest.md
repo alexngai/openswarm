@@ -5,9 +5,9 @@ Related: `docs/45-adaptive-orchestration-design.md`, the memory system (`src/mem
 
 ## Goal
 
-Make swarm-harness's **worker agent sessions** recordable as trajectories so the
+Make openswarm's **worker agent sessions** recordable as trajectories so the
 swarmkit learning loop (cognitive-core → playbooks → skills) can distill them.
-Today swarm-harness *consumes* skills/memory at every turn (done — `enrichTurnInputs`
+Today openswarm *consumes* skills/memory at every turn (done — `enrichTurnInputs`
 at all four engine-run sites) but produces **no ingestable trajectory** of its own
 agents' work. This closes the producer side.
 
@@ -33,7 +33,7 @@ Two pieces, both directly mirrorable:
   (live `transcriptPath` JSONL + committed `createCheckpointStore().readSessionContent()`).
 
 Crucially, claude-code-swarm only **reads** sessionlog state — sessionlog's own
-**Claude Code hooks** do the recording. swarm-harness is its own runtime, so it must
+**Claude Code hooks** do the recording. openswarm is its own runtime, so it must
 drive sessionlog **programmatically**.
 
 ## sessionlog's integration contract
@@ -52,12 +52,12 @@ sessionlog is built around pluggable **agent adapters** + a hook-driven lifecycl
 - Checkpoints are git-native (`createCheckpointStore`, `commitTree`, a checkpoints
   branch).
 
-## Design for swarm-harness
+## Design for openswarm
 
 Two parts:
 
-1. **A swarm-harness `Agent` adapter** — maps a worker's transcript to sessionlog's
-   `Agent`/`SessionEntry` shape. swarm-harness already has the trajectory data in its
+1. **A openswarm `Agent` adapter** — maps a worker's transcript to sessionlog's
+   `Agent`/`SessionEntry` shape. openswarm already has the trajectory data in its
    lane-event spine (`src/swarm/events.ts` → `events.jsonl`); the adapter converts
    those lane events into sessionlog session entries (user prompt, tool_use,
    tool_result, assistant text).
@@ -81,11 +81,11 @@ translation layer.
 
 | Option | Where the `Agent` adapter lives | Trade-off |
 |---|---|---|
-| **A. Upstream in sessionlog** *(recommended)* | `sessionlog/src/agent/agents/swarm-harness.ts`, registered alongside the other four | Ecosystem-correct (sessionlog is *designed* for this); `detectPresence`/registry "just work"; reusable by other swarmkit tools. Cost: a sessionlog change + release. |
-| **B. Local in swarm-harness** | swarm-coder drives `createLifecycleHandler` + a locally-defined adapter object | No upstream change; faster to land. Cost: couples swarm-coder to sessionlog internals; duplicates adapter concerns; not reusable. |
+| **A. Upstream in sessionlog** *(recommended)* | `sessionlog/src/agent/agents/openswarm.ts`, registered alongside the other four | Ecosystem-correct (sessionlog is *designed* for this); `detectPresence`/registry "just work"; reusable by other swarmkit tools. Cost: a sessionlog change + release. |
+| **B. Local in openswarm** | openswarm drives `createLifecycleHandler` + a locally-defined adapter object | No upstream change; faster to land. Cost: couples openswarm to sessionlog internals; duplicates adapter concerns; not reusable. |
 
 Recommendation: **A** — it matches sessionlog's architecture and the four existing
-adapters, and keeps swarm-coder's side thin (just lifecycle driving).
+adapters, and keeps openswarm's side thin (just lifecycle driving).
 
 ## Roadmap
 
@@ -127,11 +127,11 @@ serve content (2).** Remaining ecosystem work is on the consumer side
 ## Progress
 
 - **Part 1 (sessionlog adapter): DONE** — `sessionlog` branch
-  `swarm-harness-agent-adapter` (`f5ed457`). Registered `swarm-harness` agent
+  `openswarm-agent-adapter` (`f5ed457`). Registered `openswarm` agent
   (`Agent` + `TranscriptAnalyzer`); 7-test suite.
-- **Part 2a (transcript recording): DONE** — swarm-coder `2c59dfb`.
+- **Part 2a (transcript recording): DONE** — openswarm `2c59dfb`.
   `src/swarm/session-recorder.ts` writes the per-session `events.jsonl`
-  (opt-in via `SWARM_HARNESS_SESSION_DIR` / `SWARM_HARNESS_RECORD_SESSIONS=1`),
+  (opt-in via `OPENSWARM_SESSION_DIR` / `OPENSWARM_RECORD_SESSIONS=1`),
   wired into `worker-entry.ts`. Verified end-to-end against the Part 1 adapter
   (prompt + modified files + summary extracted from the recorder's output).
 - **Part 2b (checkpoint driving): DONE** — `src/swarm/session-checkpointer.ts`
@@ -164,7 +164,7 @@ per task; avoids per-turn flush ordering). Programmatic dispatch builds `Event`s
 directly, so **no HookSupport** is needed on the adapter.
 
 Prerequisites:
-1. Add `sessionlog` as a swarm-coder dependency (+ symlink for dev, like
+1. Add `sessionlog` as a openswarm dependency (+ symlink for dev, like
    skill-tree/minimem).
 2. Export `resolveSessionRepoConfig` from sessionlog's `index.ts` (currently
    internal to `cli.ts`).
@@ -179,7 +179,7 @@ const handler = sl.createLifecycleHandler({
   checkpointStore: sl.createCheckpointStore(undefined, cfg.sessionRepoCwd, cfg.checkpointsBranch),
   cwd,
 });
-const agent = sl.getAgent("swarm-harness");
+const agent = sl.getAgent("openswarm");
 const base = { sessionID, sessionRef /* = events.jsonl path */, timestamp: new Date() };
 await handler.dispatch(agent, { ...base, type: sl.EventType.SessionStart, prompt });
 await handler.dispatch(agent, { ...base, type: sl.EventType.TurnEnd });   // -> checkpoint commit

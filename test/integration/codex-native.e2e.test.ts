@@ -4,7 +4,7 @@
  *
  * Gated behind CODEX_LIVE=1 (needs a valid `codex login` token). Seeds a temp
  * credential store from ~/.codex/auth.json and points the subprocess at it via
- * SWARM_HARNESS_AUTH_DIR — so it never touches the user's real ~/.swarm-harness.
+ * OPENSWARM_AUTH_DIR — so it never touches the user's real ~/.openswarm.
  *
  *   CODEX_LIVE=1 npx vitest run test/integration/codex-native.e2e.test.ts
  *
@@ -55,7 +55,7 @@ function runCli(args: string[], prompt: string): Promise<CliResult> {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [CLI, ...args, prompt], {
       cwd: process.cwd(),
-      env: { ...process.env, SWARM_HARNESS_AUTH_DIR: authDir },
+      env: { ...process.env, OPENSWARM_AUTH_DIR: authDir },
     });
     let stdout = "";
     let stderr = "";

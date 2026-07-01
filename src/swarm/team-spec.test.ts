@@ -417,7 +417,7 @@ describe("TeamSpecSchema — cc-swarm gsd template translated form", () => {
   it("admits the shape produced by translating cc-swarm's gsd openteams template", () => {
     // Hand-written translation of the cc-swarm gsd template's shape per
     // docs/25 §5.4 mapping rules:
-    //   topology.root + flat spawn_rules + x-swarm-harness override → peer-team
+    //   topology.root + flat spawn_rules + x-openswarm override → peer-team
     //   communication block → TeamCommunicationRules
     //   per-role members materialized via openteams (placeholders here)
     const gsd: TeamSpec = {

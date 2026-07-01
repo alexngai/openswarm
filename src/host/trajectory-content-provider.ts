@@ -84,7 +84,7 @@ export function resolveTrajectoryContent(
           sessionId: checkpointId,
           turns,
           toolCalls,
-          source: "swarm-harness",
+          source: "openswarm",
         },
         context: `openswarm session ${checkpointId} (${turns} turn(s), ${toolCalls} tool call(s))`,
       },

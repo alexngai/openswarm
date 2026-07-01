@@ -33,7 +33,7 @@ Simplest useful orchestrator: a task-fanout runner.
 ```
 orchestrator
   ├─ input:  tasks.jsonl   (one task per line)
-  ├─ for each task: spawn subprocess `swarm-harness --headless --task-file=<tmp>`
+  ├─ for each task: spawn subprocess `openswarm --headless --task-file=<tmp>`
   ├─ tail each subprocess's JSONL events, forward to console
   └─ output: results.jsonl (one result per task)
 ```
@@ -108,7 +108,7 @@ The Zod schemas live in `src/swarm/policies.ts`. Legacy flat strings (`"main"`, 
 
 ### Worker state file
 
-Each worker writes an atomic state file at `.swarm-harness/workers/<agentId>.json` (pattern borrowed from claw's `.claw/worker-state.json`). Orchestrator reads this for crash recovery — if a worker dies without emitting a final event, the state file is the last known good record.
+Each worker writes an atomic state file at `.openswarm/workers/<agentId>.json` (pattern borrowed from claw's `.claw/worker-state.json`). Orchestrator reads this for crash recovery — if a worker dies without emitting a final event, the state file is the last known good record.
 
 ## Failure model
 
@@ -124,7 +124,7 @@ Every atomic agent has an `agentId` assigned at spawn time. It is:
 - Stable for the agent's lifetime
 - Used as the inbox address for `send_message`
 - Logged on every event
-- Passed via env `SWARM_HARNESS_AGENT_ID` to subprocess workers
+- Passed via env `OPENSWARM_AGENT_ID` to subprocess workers
 - Propagated through to the session log header
 
 ## Team roles (deferred to M3)
@@ -137,7 +137,7 @@ At M3, orchestrators may assign roles: `architect`, `executor`, `reviewer`, `cri
 
 Multi-agent swarms writing to the same git working tree need coordination to avoid stepping on each other. Claw has three small, pure, well-tested modules (research/05-swarm.md §6) we port near-verbatim:
 
-- **`branch_lock`** — advisory lock on a branch; prevents two workers from concurrently committing to the same branch. Uses a lock file under `.swarm-harness/locks/<branch>.lock` with atomic-create semantics and stale-lock eviction.
+- **`branch_lock`** — advisory lock on a branch; prevents two workers from concurrently committing to the same branch. Uses a lock file under `.openswarm/locks/<branch>.lock` with atomic-create semantics and stale-lock eviction.
 - **`stale_base`** — detects when a worker's base commit has diverged from the current branch tip. Orchestrator decides: rebase, abort, or escalate.
 - **`stale_branch`** — detects when a workspace test was run against a branch that has since moved. Blocks bash preflight on stale state.
 

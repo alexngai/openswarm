@@ -288,12 +288,12 @@ export function loadNetworkPolicyConfig(
   const env = opts.envOverrides ?? process.env;
 
   const candidates: string[] = [];
-  const envDir = env.SWARM_HARNESS_CONFIG_DIR;
+  const envDir = env.OPENSWARM_CONFIG_DIR;
   if (envDir !== undefined && envDir.length > 0) {
     candidates.push(path.join(envDir, "network.json"));
   }
-  candidates.push(path.join(cwd, ".swarm-harness", "network.json"));
-  candidates.push(path.join(home, ".swarm-harness", "network.json"));
+  candidates.push(path.join(cwd, ".openswarm", "network.json"));
+  candidates.push(path.join(home, ".openswarm", "network.json"));
 
   for (const filePath of candidates) {
     try {

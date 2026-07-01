@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { resolveTrajectoryContent } from "./trajectory-content-provider.js";
 
 afterEach(() => {
-  delete process.env.SWARM_HARNESS_SESSION_DIR;
+  delete process.env.OPENSWARM_SESSION_DIR;
 });
 
 function seed(dir: string, sessionId: string, lines: object[]): void {
@@ -19,13 +19,13 @@ function seed(dir: string, sessionId: string, lines: object[]): void {
 
 describe("resolveTrajectoryContent", () => {
   it("returns null when the session is not found", () => {
-    process.env.SWARM_HARNESS_SESSION_DIR = path.join(os.tmpdir(), "no-such-xyz");
+    process.env.OPENSWARM_SESSION_DIR = path.join(os.tmpdir(), "no-such-xyz");
     expect(resolveTrajectoryContent("ghost")).toBeNull();
   });
 
   it("serves transcript + prompts + metadata for a recorded session", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tcp-"));
-    process.env.SWARM_HARNESS_SESSION_DIR = dir;
+    process.env.OPENSWARM_SESSION_DIR = dir;
     seed(dir, "s1", [
       { ts: 1, agentId: "a1", type: "turn_start", payload: { prompt: "do a thing" } },
       { ts: 2, agentId: "a1", type: "tool_use_start", payload: { id: "t1", name: "Write" } },
@@ -42,7 +42,7 @@ describe("resolveTrajectoryContent", () => {
       sessionId: "s1",
       turns: 1,
       toolCalls: 1,
-      source: "swarm-harness",
+      source: "openswarm",
     });
 
     fs.rmSync(dir, { recursive: true, force: true });

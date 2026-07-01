@@ -81,7 +81,7 @@ export async function createMapSidecar(
       trajectory: { canReport: true, canServeContent: true },
     },
     metadata: {
-      type: "swarm-harness-sidecar",
+      type: "openswarm-sidecar",
       ...(opts.swarmId !== undefined && { swarmId: opts.swarmId }),
       ...(opts.systemId !== undefined && { systemId: opts.systemId }),
     },

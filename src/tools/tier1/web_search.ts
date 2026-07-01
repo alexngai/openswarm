@@ -133,7 +133,7 @@ export class DuckDuckGoBackend implements SearchBackend {
       method: "POST",
       headers: {
         "User-Agent":
-          "Mozilla/5.0 (compatible; SwarmHarness/1.0; +https://github.com/anthropics/swarm-harness)",
+          "Mozilla/5.0 (compatible; SwarmHarness/1.0; +https://github.com/anthropics/openswarm)",
         Accept: "text/html",
       },
       signal: options.signal ?? AbortSignal.timeout(15_000),

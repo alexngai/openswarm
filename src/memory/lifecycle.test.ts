@@ -25,11 +25,11 @@ import type { MemoryFragment } from "./types.js";
 beforeEach(() => {
   // Keep provider-registration tests deterministic: point the SkillProvider at
   // a non-existent dir so it stays unavailable (these tests cover file/minimem).
-  process.env.SWARM_HARNESS_SKILLS_DIR = "/nonexistent-skill-tree-dir-for-tests";
+  process.env.OPENSWARM_SKILLS_DIR = "/nonexistent-skill-tree-dir-for-tests";
 });
 
 afterEach(async () => {
-  delete process.env.SWARM_HARNESS_SKILLS_DIR;
+  delete process.env.OPENSWARM_SKILLS_DIR;
   await resetMemoryCoordinator();
   resetCuratedMemoryStore();
   resetCuratedMemoryLimits();

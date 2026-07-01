@@ -14,7 +14,7 @@
  *
  * Typical wrapper usage from swarmkit/src/eval:
  *   TAC_POOL_WORKER_COUNT=8 TAC_POOL_SERVICE_SLICE=gitlab-redis \
- *   TAC_POOL_RUNNER_CMD='cd /Users/alexngai/GitHub/swarm-coder && RUN_TAC_POOL=1 tsx eval/experiments/tac-pool.ts' \
+ *   TAC_POOL_RUNNER_CMD='cd /Users/alexngai/GitHub/openswarm && RUN_TAC_POOL=1 tsx eval/experiments/tac-pool.ts' \
  *   adapters/tac/scripts/run-ec2-pool.sh
  *
  * No-infra plan validation:
@@ -83,7 +83,7 @@ const FAIL_FAST = process.env.TAC_POOL_FAIL_FAST === "1";
 const FAIL_ON_CELL_STATUS = process.env.TAC_POOL_FAIL_ON_CELL_STATUS === "1";
 const SERVICE_RESET = process.env.TAC_GITLAB_SERVICE_RESET ?? process.env.TAC_POOL_GITLAB_SERVICE_RESET ?? "hard";
 const CHILD_TIMEOUT_MS = process.env.TAC_POOL_CHILD_TIMEOUT_MS ? Number(process.env.TAC_POOL_CHILD_TIMEOUT_MS) : undefined;
-const SWARM_HARNESS_TARBALL = process.env.TAC_SWARM_HARNESS_TARBALL;
+const OPENSWARM_TARBALL = process.env.TAC_OPENSWARM_TARBALL;
 const SKIP_COMPLETED = process.env.TAC_POOL_SKIP_COMPLETED === "1" || process.env.TAC_POOL_SKIP_COMPLETED === "true";
 const DRY_PLAN = process.env.TAC_POOL_DRY_PLAN === "1" || process.env.TAC_POOL_DRY_PLAN === "true";
 const SERVICE_SLICE = process.env.TAC_POOL_SERVICE_SLICE ?? "full";
@@ -321,8 +321,8 @@ async function runJob(job: TacPoolJob, worker: NonNullable<PoolManifest["workers
   };
 
   console.error(`[tac-pool] start ${id} on ${worker.name ?? workerHost}`);
-  if (SWARM_HARNESS_TARBALL) {
-    await syncSwarmHarnessTarball(workerHost, childEnv.EC2_ROOT, SWARM_HARNESS_TARBALL);
+  if (OPENSWARM_TARBALL) {
+    await syncSwarmHarnessTarball(workerHost, childEnv.EC2_ROOT, OPENSWARM_TARBALL);
   }
   const processResult = await spawnTac(childEnv, log);
   const exitCode = processResult.exitCode;
@@ -414,7 +414,7 @@ async function cleanupWorkerTacProcesses(workerHost: string, label: string, log:
         "set +e",
         "containers=$(sudo docker ps -aq --filter 'name=^/tac-')",
         'if [ -n "$containers" ]; then sudo docker rm -f $containers >/dev/null 2>&1; fi',
-        "pkill -f 'swarm-harness swarm run .*/eval/.tac/' >/dev/null 2>&1 || true",
+        "pkill -f 'openswarm swarm run .*/eval/.tac/' >/dev/null 2>&1 || true",
         "pkill -f '@anthropic-ai/claude-agent-sdk.*/claude' >/dev/null 2>&1 || true",
         "exit 0",
       ].join("; "),
@@ -425,11 +425,11 @@ async function cleanupWorkerTacProcesses(workerHost: string, label: string, log:
 }
 
 async function syncSwarmHarnessTarball(workerHost: string, remoteRoot: string | undefined, tarball: string): Promise<void> {
-  if (!remoteRoot) throw new Error("EC2_ROOT is required to sync TAC_SWARM_HARNESS_TARBALL");
+  if (!remoteRoot) throw new Error("EC2_ROOT is required to sync TAC_OPENSWARM_TARBALL");
   const local = path.resolve(tarball);
   await fs.access(local);
   const key = process.env.EC2_SSH_KEY_PATH;
-  if (!key) throw new Error("EC2_SSH_KEY_PATH is required to sync TAC_SWARM_HARNESS_TARBALL");
+  if (!key) throw new Error("EC2_SSH_KEY_PATH is required to sync TAC_OPENSWARM_TARBALL");
   const sshBase = [
     "-o", "StrictHostKeyChecking=no",
     "-o", "UserKnownHostsFile=/dev/null",
@@ -443,7 +443,7 @@ async function syncSwarmHarnessTarball(workerHost: string, remoteRoot: string | 
   await runLocal("scp", [
     ...sshBase,
     local,
-    `ubuntu@${workerHost}:${remoteRoot}/artifacts/swarm-harness.tgz`,
+    `ubuntu@${workerHost}:${remoteRoot}/artifacts/openswarm.tgz`,
   ]);
 }
 

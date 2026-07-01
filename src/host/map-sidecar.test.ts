@@ -249,12 +249,12 @@ describe("createMapSidecar — trajectory reporting (Layer 1)", () => {
 
 describe("createMapSidecar — content serving (Layer 2)", () => {
   afterEach(() => {
-    delete process.env.SWARM_HARNESS_SESSION_DIR;
+    delete process.env.OPENSWARM_SESSION_DIR;
   });
 
   it("serves trajectory content on a content.request notification", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tcp-sc-"));
-    process.env.SWARM_HARNESS_SESSION_DIR = dir;
+    process.env.OPENSWARM_SESSION_DIR = dir;
     fs.mkdirSync(path.join(dir, "s1"), { recursive: true });
     fs.writeFileSync(
       path.join(dir, "s1", "events.jsonl"),

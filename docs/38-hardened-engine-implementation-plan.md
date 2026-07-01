@@ -1,6 +1,6 @@
 # 38 — Hardened NativeEngine Implementation Plan
 
-Phased delivery plan for the Codex-to-swarm-harness core loop port.
+Phased delivery plan for the Codex-to-openswarm core loop port.
 Design rationale in `docs/37-hardened-engine-design.md`.
 
 ## Phase 0  Scaffolding (1 day)

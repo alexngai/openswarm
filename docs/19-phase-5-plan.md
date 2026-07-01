@@ -107,10 +107,10 @@ Mapping from validation result to canUseTool return:
 
 ### P5.Q6 — Test corpus
 
-**Decision: both — port ~15 claw test cases + add ~10 swarm-harness-specific integration tests.**
+**Decision: both — port ~15 claw test cases + add ~10 openswarm-specific integration tests.**
 
 - **Ported claw cases** (one-to-one tests of each submodule): destructive command rejection (`rm -rf /`), path traversal (`../etc/passwd`), in-place sed (`sed -i`), package install in read-only mode (`npm install`), network in read-only (`curl`), git read vs write subcommands. Per-submodule unit tests.
-- **swarm-harness integration tests:** canUseTool integration (mode-allow + Warn → bridge → user-decides), headless mode (Warn → JSONL line → stdin EOF = deny), lane event emission verified end-to-end, FailureClass propagation.
+- **openswarm integration tests:** canUseTool integration (mode-allow + Warn → bridge → user-decides), headless mode (Warn → JSONL line → stdin EOF = deny), lane event emission verified end-to-end, FailureClass propagation.
 
 ### P5.Q7 — WorkerLifecycle state enum membership
 
@@ -128,7 +128,7 @@ type WorkerLifecycleState =
   | "failed";
 ```
 
-`trust_required` is **reserved** — Claude Agent SDK doesn't surface a trust prompt, so this state is never visited in current swarm-harness. Documented in the type's jsdoc as a future-proofing reservation. Honors doc 16's acceptance criterion ("trust_required → failed visible in lane events") without inventing a fake trust UI.
+`trust_required` is **reserved** — Claude Agent SDK doesn't surface a trust prompt, so this state is never visited in current openswarm. Documented in the type's jsdoc as a future-proofing reservation. Honors doc 16's acceptance criterion ("trust_required → failed visible in lane events") without inventing a fake trust UI.
 
 **Claw reference.** Claw's `WorkerStatus` ([worker_boot.rs](references/claw-code/rust/crates/runtime/src/worker_boot.rs)) has more states (e.g. distinct `Spawning`, `TrustRequired`, `ReadyForPrompt`, etc., plus claw-specific ones for git lane orchestration). We adopt the doc-16 subset; the rest are claw-internal concerns.
 
@@ -162,7 +162,7 @@ type WorkerLifecycleState =
 
 **Decision: skip the enum. Use the lifecycle's `trust_required` state as a reserved placeholder (P5.Q7).**
 
-- Claw's `WorkerTrustResolution` is tightly coupled to claw-CLI's UX for accepting host-machine claude-code trust state. swarm-harness inherits Anthropic auth via the SDK; there's no equivalent UX surface.
+- Claw's `WorkerTrustResolution` is tightly coupled to claw-CLI's UX for accepting host-machine claude-code trust state. openswarm inherits Anthropic auth via the SDK; there's no equivalent UX surface.
 - If a future SDK release adds a trust callback, we can revisit and emit a `trust_required` transition then.
 
 ### P5.Q12 — When does bash-validation fire in the engine flow?
@@ -231,7 +231,7 @@ if (toolName === "bash" && modeDecision.allow) {
 ```
 
 **Acceptance:**
-- `swarm-harness --permission-mode read-only --headless "say rm -rf /"` blocks with structured error naming the submodule (`destructive`).
+- `openswarm --permission-mode read-only --headless "say rm -rf /"` blocks with structured error naming the submodule (`destructive`).
 - `--headless` `rm /tmp/foo` (mode workspace-write, path inside cwd) → Warn → JSONL `permission_required` → EOF on stdin → deny.
 - TTY mode same case → inline y/N prompt with the submodule + message.
 - Per-submodule unit tests covering ~15 ported claw cases.
@@ -315,7 +315,7 @@ export interface WorkerLifecycleChangedPayload {
 
 From [docs/16-parity-plan.md:240-244](16-parity-plan.md):
 
-1. ✅ `swarm-harness --headless` with a destructive prompt blocks at the validation layer with a structured error naming the rejecting submodule. (Stage A)
+1. ✅ `openswarm --headless` with a destructive prompt blocks at the validation layer with a structured error naming the rejecting submodule. (Stage A)
 2. ✅ A worker that fails during the trust-prompt path surfaces `trust_required → failed` in the lane event stream. (Stage B + C — note: `trust_required` is reserved per P5.Q11; the test exercises a synthetic transition rather than an actual SDK trust failure.)
 3. ✅ Adding a new `LaneEvent` variant to the typed union without updating its consumers is a compile error. (Stage C)
 
@@ -347,7 +347,7 @@ From [docs/16-parity-plan.md:240-244](16-parity-plan.md):
 ## Out of scope (defer to v0.2 or later)
 
 - **Full claw `lane_events.rs` port.** That file is 2509 lines including business logic for roadmap/ship/blocker tracking. Phase 5 only adds 3 new typed variants; the rest is claw-specific orchestration we don't need.
-- **`WorkerRegistry` + `Worker` struct port.** swarm-harness already has `WorkerHost` + `Orchestrator`. Adding claw's parallel registry would be redundant.
+- **`WorkerRegistry` + `Worker` struct port.** openswarm already has `WorkerHost` + `Orchestrator`. Adding claw's parallel registry would be redundant.
 - **Big-bang migration of all 70+ existing `LaneEventType` variants to typed payloads.** Incremental per P5.Q9.
 - **`pdf_extract`, `repl`, `powerShell` tools (TO3, TO4, TO5).** Tier 3 / windows; deferred elsewhere.
 - **MCP lifecycle hardening (TO2).** Separate gap with its own scope; not in Phase 5.

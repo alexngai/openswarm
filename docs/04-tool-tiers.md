@@ -38,7 +38,7 @@ The minimum viable coding agent. An atomic unit must have exactly these to be us
 
 ## Tier 2 — Swarm primitives
 
-What makes swarm-harness a *swarm*. Dispatched via `SwarmHost`. Works in both standalone and worker modes — the surface does not change.
+What makes openswarm a *swarm*. Dispatched via `SwarmHost`. Works in both standalone and worker modes — the surface does not change.
 
 | Tool | Purpose |
 |---|---|

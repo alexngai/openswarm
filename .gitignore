@@ -4,8 +4,8 @@ dist/
 *.log
 .DS_Store
 .omc/
-.swarm-coder/
-# swarm-coder run artifacts (tests and smoke scripts emit these at repo root)
+.openswarm/
+# openswarm run artifacts (tests and smoke scripts emit these at repo root)
 results.jsonl
 dead-letter.jsonl
 # swarmkit-eval run output + content-addressed store
@@ -18,7 +18,7 @@ eval/.artifacts/
 # local reference checkouts (cloned repos, not tracked as submodules)
 references/
 # compiled platform binaries (build artifacts)
-packages/*/swarm-harness
-packages/*/swarm-harness.exe
+packages/*/openswarm
+packages/*/openswarm.exe
 packages/*/libopentui.dylib
 packages/*/libopentui.so

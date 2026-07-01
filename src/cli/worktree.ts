@@ -2,7 +2,7 @@
  * worktree.ts — `openswarm worktree list|clean` subcommand (v0.7 stage 7D).
  *
  * Manages the per-team worktrees that the git-cascade BranchPolicy adapter
- * creates under `<repo>/.swarm-harness/worktrees/<streamId>/`. Run after a
+ * creates under `<repo>/.openswarm/worktrees/<streamId>/`. Run after a
  * team finishes to reclaim disk + git's worktree registry; the audit-trail
  * philosophy of git-cascade means we never auto-clean.
  *
@@ -20,7 +20,7 @@ import { existsSync } from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 
-const WORKTREES_SUBDIR = path.join(".swarm-harness", "worktrees");
+const WORKTREES_SUBDIR = path.join(".openswarm", "worktrees");
 
 export interface WorktreeMainOpts {
   /** Override stdout — used by tests. Defaults to process.stdout.write. */
@@ -149,7 +149,7 @@ function usage(): string {
   openswarm worktree list   [--repo <path>] [--json]
   openswarm worktree clean  [--repo <path>] [--dry-run]
 
-Manages git-cascade-created worktrees under <repo>/.swarm-harness/worktrees/.
+Manages git-cascade-created worktrees under <repo>/.openswarm/worktrees/.
 Use \`clean\` to reclaim disk and prune git's worktree registry after a team
 run. Use \`list\` to inspect what's there. Default --repo is the cwd.
 `;

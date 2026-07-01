@@ -26,7 +26,7 @@ npm install -g openswarm     # global `openswarm` command
 npx openswarm "..."
 ```
 
-The legacy `swarm-harness` command remains as an alias during the migration.
+The legacy `openswarm` command remains as an alias during the migration.
 
 Requires **Node.js >= 22**. Installing pulls in a self-contained, prebuilt
 binary for your platform (shipped as an `optionalDependencies` package) that
@@ -212,7 +212,7 @@ openswarm team stop gsd             # graceful drain
 openswarm team kill gsd             # immediate stop
 ```
 
-**Git-cascade worktree isolation** (`--git-cascade`): each team member runs in its own git worktree under `.swarm-harness/worktrees/`. Parallel members edit files without stomping each other. Members can commit with Change-Id trailers for audit trails, and streams auto-merge to a target branch on completion.
+**Git-cascade worktree isolation** (`--git-cascade`): each team member runs in its own git worktree under `.openswarm/worktrees/`. Parallel members edit files without stomping each other. Members can commit with Change-Id trailers for audit trails, and streams auto-merge to a target branch on completion.
 
 ```bash
 # Pipeline with fork-from-prev: each stage picks up the previous stage's commits
@@ -261,7 +261,7 @@ Then pick **OpenSwarm** in the Agent Panel.
 ```bash
 openswarm acp                    # serve over the Agent Client Protocol (stdio)
 openswarm doctor                 # health check (auth, config, install, workspace)
-openswarm init                   # scaffold .swarm-harness/ + .gitignore + CLAUDE.md
+openswarm init                   # scaffold .openswarm/ + .gitignore + CLAUDE.md
 openswarm plugin list            # list installed plugins
 openswarm plugin install <spec>  # install a plugin
 openswarm help                   # show usage
@@ -309,7 +309,7 @@ openswarm --version              # print version
 
 ## Models & aliases
 
-OpenSwarm routes `--model <id>` by prefix to the matching provider transport. Built-in aliases resolve short names to canonical model ids; users can override or extend via `~/.swarm-harness/settings.json`:
+OpenSwarm routes `--model <id>` by prefix to the matching provider transport. Built-in aliases resolve short names to canonical model ids; users can override or extend via `~/.openswarm/settings.json`:
 
 ```json
 { "aliases": { "my-fast": "gpt-4o-mini" } }
@@ -360,7 +360,7 @@ Fifteen Tier 0 tools ship built-in. Additional tools are auto-discovered from pl
 **Swarm tools** (available to team members): `agent`, `send_message`, `check_inbox`, `task_create`, `task_update`, `task_list`, `task_get`, `task_pull_next`, `task_stop`, `task_output`, `commit_changes`.
 
 **Extension points:**
-- **Plugins** — `~/.swarm-harness/plugins/` (owned) + read-only discovery of `~/.claude/plugins/`
+- **Plugins** — `~/.openswarm/plugins/` (owned) + read-only discovery of `~/.claude/plugins/`
 - **MCP servers** — first-class stdio client; tools registered as `mcp__<server>__<tool>`
 - **Skills** — auto-loaded from `.claude/skills/`
 - **Hooks** — PreToolUse / PostToolUse / SessionStart / SessionEnd / Stop / PermissionRequest / SubagentStart / SubagentStop / PreCompact / PostCompact / UserPromptSubmit

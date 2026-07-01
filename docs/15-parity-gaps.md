@@ -1,14 +1,14 @@
-# Parity gaps: swarm-harness vs claw-code
+# Parity gaps: openswarm vs claw-code
 
-Living tracker of disparities between `swarm-harness` (TS) and `references/claw-code/` (Rust reference). Not all gaps should be closed — some reflect intentional design divergence. Use this doc to decide which to close, which to defer, and which to reject.
+Living tracker of disparities between `openswarm` (TS) and `references/claw-code/` (Rust reference). Not all gaps should be closed — some reflect intentional design divergence. Use this doc to decide which to close, which to defer, and which to reject.
 
-**swarm-harness is not a port.** It is a swarm-native reimplementation that borrows from claw-code where the design aligns. Anchor every decision in `00-vision.md` and `05-swarm-model.md` before adopting a claw pattern.
+**openswarm is not a port.** It is a swarm-native reimplementation that borrows from claw-code where the design aligns. Anchor every decision in `00-vision.md` and `05-swarm-model.md` before adopting a claw pattern.
 
 ## Legend
 
 | Status | Meaning |
 |---|---|
-| ❌ missing | No equivalent exists in swarm-harness |
+| ❌ missing | No equivalent exists in openswarm |
 | ⚠️ partial | Implemented but incomplete or staged-not-shipped |
 | ✅ present | Behaviorally equivalent |
 | 🟦 divergent | Intentionally different design; not a gap |
@@ -22,7 +22,7 @@ Living tracker of disparities between `swarm-harness` (TS) and `references/claw-
 
 ## 1. TUI
 
-swarm-harness uses Ink/React; claw-code uses crossterm + rustyline + syntect + pulldown_cmark. The rendering stacks produce visibly different experiences. This section is where the user's pain is most tangible.
+openswarm uses Ink/React; claw-code uses crossterm + rustyline + syntect + pulldown_cmark. The rendering stacks produce visibly different experiences. This section is where the user's pain is most tangible.
 
 | # | Gap | Status | Priority | Effort | Notes |
 |---|---|---|---|---|---|
@@ -31,12 +31,12 @@ swarm-harness uses Ink/React; claw-code uses crossterm + rustyline + syntect + p
 | T3 | Syntax-highlighted code blocks | ✅ | P1 | M | Phase 3 follow-up — Tree-sitter wired via `getTreeSitterClient()` in [transcript.tsx](src/ui/repl-solid/transcript.tsx). Bundled OpenTUI WASM grammars for typescript, javascript, markdown, zig; fenced code blocks pick up language-aware highlighting via the markdown grammar's `infoStringMap`. |
 | T4 | Tables in markdown | ✅ | P2 | S | Phase 3 — free from OpenTUI's native table layout in `<markdown>` (Markdown.d.ts:11-50). Width-regression tests in [e2e.test.tsx](src/ui/repl-solid/e2e.test.tsx) assert table cells render at 80 + 120 col. |
 | T5 | Inline approval prompts (y/N) instead of `/approve`/`/deny` | ✅ | P0 | S | Phase 2 stages C–G (`eeb4293..6d27a94`) — `PermissionBridge` async coordinator + inline `PermissionPrompt` Solid component + headless JSONL `permission_required` + stdin reader. `/approve` and `/deny` slash commands removed (P2.Q5). |
-| T6 | Persistent command history across sessions | ✅ | P2 | S | Phase 4 stage A — `src/ui/history.ts` writes to `~/.swarm-harness/history` (10k-entry cap, dedup, multi-line escape). |
+| T6 | Persistent command history across sessions | ✅ | P2 | S | Phase 4 stage A — `src/ui/history.ts` writes to `~/.openswarm/history` (10k-entry cap, dedup, multi-line escape). |
 | T7 | Emacs keybindings (full set) | ✅ | P2 | S | Phase 4 stage B — Alt+B/F/D/Backspace word motions + Ctrl+Y yank wired in `input.tsx` KEY_BINDINGS + reducer. |
 | T8 | Spinner that overwrites same line and transitions to ✔/✘ | ✅ | P3 | XS | v0.2 Stage 2F — [spinner.tsx](src/ui/repl-solid/spinner.tsx) now transitions to ✔ (success) or ✘ (failure) for `transitionMs` ms (default 500) when `active` goes false. `outcome` prop controls which glyph. Phase collapses to "done" (hidden) after transition. Tests in spinner.test.tsx cover success transition, failure transition, and post-transition hide. |
-| T9 | Slash-command dropdown menu (swarm-harness has this) | 🟦 | — | — | Nice-to-keep; claw only has silent rustyline completion. Don't regress. |
-| T10 | Compaction lifecycle UI (swarm-harness has this) | 🟦 | — | — | Don't regress. |
-| T11 | Pending-permission display in status bar (swarm-harness has this) | 🟦 | — | — | Keep even after T5 lands — status bar shows *what* is pending. |
+| T9 | Slash-command dropdown menu (openswarm has this) | 🟦 | — | — | Nice-to-keep; claw only has silent rustyline completion. Don't regress. |
+| T10 | Compaction lifecycle UI (openswarm has this) | 🟦 | — | — | Don't regress. |
+| T11 | Pending-permission display in status bar (openswarm has this) | 🟦 | — | — | Keep even after T5 lands — status bar shows *what* is pending. |
 
 **TUI decision** (resolved 2026-04-30 in Phase 3): T2/T3/T4 ship via OpenTUI's native `<markdown>` primitive + bundled Tree-sitter WASM grammars (typescript, javascript, markdown, zig). The Phase 0 substrate migration (Bun + OpenTUI/Solid) made the original "hand-roll vs library" choice moot. See [Phase 3 design lock](17-parity-design-questions.md#phase-3--design-lock-2026-04-30).
 
@@ -54,8 +54,8 @@ swarm-harness uses Ink/React; claw-code uses crossterm + rustyline + syntect + p
 | A6 | Sandbox abstraction (Linux `unshare`, macOS sandbox-exec) | ❌ | P3 | L | claw: `runtime/sandbox.rs`. Platform-specific; low user value for macOS-first. Defer. |
 | A7 | Green contract (declarative config validation) | ❌ | P3 | S | claw: `runtime/green_contract.rs`. Cosmetic until config becomes complex. |
 | A8 | Server-side token preflight | ✅ | P2 | S | v0.2.Q6 Stage 2F — `serverCountTokens()` in `src/engine/token-preflight.ts` calls `@anthropic-ai/sdk` `client.messages.countTokens()` when `ANTHROPIC_API_KEY` is set; result propagates via `countTokens()` with `source: "server"`. **Nuance:** Claude Max subscription users authenticate via OAuth (not API key) — the `count_tokens` REST endpoint returns 401 for them. Those callers always fall through to `source: "local-estimate"`. If the Agent SDK ever exposes a native token-count method compatible with OAuth, prefer it in `token-preflight.ts`. |
-| A9 | Two-engine design (SDK + Native) | 🟦 | — | — | swarm-harness unique. Don't regress. |
-| A10 | Swarm orchestration (WorkerPool, lane events, role overlays) | ✅ | — | — | swarm-harness lead — full team primitives shipped via `TeamSession` + topology layer (v0.4, commits `0bd0f20..<close-out>`). Multi-engine peer parity (transport / `--framework claude-agent-sdk` / `--framework codex-chatgpt` via DynamicToolCall). v0.5 added Committee + CriticLoop topologies (5A), opentasks adapter (5B), pull-protocol (5C), `team watch` MVP (5D), and the long-lived team daemon (5E.1–5E.7) with `team start --detach` / `team send` / `list` / `stop` / `kill` / `logs`. v0.6 stage 5F shipped `send_prompt` against persistent peer-team daemons. See [docs/25](25-team-orchestration.md), [docs/27](27-v0.4-teams-implementation-plan.md), [docs/28](28-v0.5-daemon-plan.md). |
+| A9 | Two-engine design (SDK + Native) | 🟦 | — | — | openswarm unique. Don't regress. |
+| A10 | Swarm orchestration (WorkerPool, lane events, role overlays) | ✅ | — | — | openswarm lead — full team primitives shipped via `TeamSession` + topology layer (v0.4, commits `0bd0f20..<close-out>`). Multi-engine peer parity (transport / `--framework claude-agent-sdk` / `--framework codex-chatgpt` via DynamicToolCall). v0.5 added Committee + CriticLoop topologies (5A), opentasks adapter (5B), pull-protocol (5C), `team watch` MVP (5D), and the long-lived team daemon (5E.1–5E.7) with `team start --detach` / `team send` / `list` / `stop` / `kill` / `logs`. v0.6 stage 5F shipped `send_prompt` against persistent peer-team daemons. See [docs/25](25-team-orchestration.md), [docs/27](27-v0.4-teams-implementation-plan.md), [docs/28](28-v0.5-daemon-plan.md). |
 
 ---
 
@@ -68,7 +68,7 @@ swarm-harness uses Ink/React; claw-code uses crossterm + rustyline + syntect + p
 | TO3 | `pdf_extract` tool | ❌ | P3 | S | claw tier 3. Defer unless a user hits it. |
 | TO4 | `repl` tool (interactive REPL) | ❌ | P3 | M | claw tier 3. Unclear value relative to bash + write-to-file. |
 | TO5 | `powerShell` tool | ❌ | P3 | S | Windows-specific; out of scope for v0. |
-| TO6 | Edit-file ambiguity rejection (swarm-harness fix vs claw silent-first-match) | 🟦 | — | — | swarm-harness improvement over claw. Keep. |
+| TO6 | Edit-file ambiguity rejection (openswarm fix vs claw silent-first-match) | 🟦 | — | — | openswarm improvement over claw. Keep. |
 
 ---
 
@@ -91,7 +91,7 @@ M4b work is the bulk of this section. Most gaps are "written but not shipped" ra
 | # | Gap | Status | Priority | Effort | Notes |
 |---|---|---|---|---|---|
 | PS1 | Plugin install/enable/disable/update/uninstall lifecycle | ✅ | P0 | XS | Phase 1 stage 5 (`82a8a50`) — `/plugin install`, `/plugin enable`, `/plugin disable`, `/plugin list` slash commands wired in [src/cli/slash/commands/plugin.ts](src/cli/slash/commands/plugin.ts). |
-| PS2 | Plugin state persistence | ✅ | P0 | XS | Phase 1 stage 2 (`c0a4ebc`) — two-file schema at `~/.swarm-harness/plugins/{settings,installed}.json` (Q1 design lock). Read-only discovery of `~/.claude/plugins/` for plugins installed via Claude Code. |
+| PS2 | Plugin state persistence | ✅ | P0 | XS | Phase 1 stage 2 (`c0a4ebc`) — two-file schema at `~/.openswarm/plugins/{settings,installed}.json` (Q1 design lock). Read-only discovery of `~/.claude/plugins/` for plugins installed via Claude Code. |
 | PS3 | Real cron scheduler (background worker pool) | ❌ | P2 | L | `CronRegistry` is in-memory only; scheduled tasks never fire. Defer until a user needs it. |
 | PS4 | Extended slash: `/ultraplan` | ❌ | P3 | M | Claw multi-turn planner. Could ship as a plugin. |
 | PS5 | Extended slash: `/teleport` (symbol jump) | ❌ | P3 | M | Claw LSP-backed. Requires LSP client maturity. |

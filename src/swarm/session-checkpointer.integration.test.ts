@@ -3,7 +3,7 @@
  * -enabled git repo and asserting a checkpoint is created.
  *
  * Guarded: skips when the installed sessionlog package does not provide a
- * swarm-harness agent adapter yet.
+ * openswarm agent adapter yet.
  */
 
 import { describe, it, expect, beforeAll, afterEach } from "vitest";
@@ -23,7 +23,7 @@ beforeAll(async () => {
       mod &&
       typeof mod.enable === "function" &&
       typeof (mod as { getAgent?: (name: string) => unknown }).getAgent === "function" &&
-      (mod as { getAgent: (name: string) => unknown }).getAgent("swarm-harness");
+      (mod as { getAgent: (name: string) => unknown }).getAgent("openswarm");
     if (hasSwarmHarnessAgent) sl = mod;
   } catch {
     sl = undefined;
@@ -31,8 +31,8 @@ beforeAll(async () => {
 });
 
 afterEach(() => {
-  delete process.env.SWARM_HARNESS_SESSION_DIR;
-  delete process.env.SWARM_HARNESS_RECORD_SESSIONS;
+  delete process.env.OPENSWARM_SESSION_DIR;
+  delete process.env.OPENSWARM_RECORD_SESSIONS;
 });
 
 const ev = (type: string, payload: unknown): LaneEvent =>
@@ -41,7 +41,7 @@ const ev = (type: string, payload: unknown): LaneEvent =>
 describe("session checkpointer (integration)", () => {
   it("creates a sessionlog checkpoint from a recorded session", async () => {
     if (!sl) {
-      console.warn("[skip] sessionlog swarm-harness adapter unavailable — integration skipped");
+      console.warn("[skip] sessionlog openswarm adapter unavailable — integration skipped");
       return;
     }
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-int-"));
@@ -51,14 +51,14 @@ describe("session checkpointer (integration)", () => {
       sh("git config user.email t@t.co && git config user.name t");
       sh("git commit -q --allow-empty -m init");
 
-      process.env.SWARM_HARNESS_SESSION_DIR = path.join(
+      process.env.OPENSWARM_SESSION_DIR = path.join(
         repo,
         ".swarm",
-        "swarm-harness",
+        "openswarm",
         "sessions",
       );
-      process.env.SWARM_HARNESS_RECORD_SESSIONS = "1";
-      await sl.enable({ cwd: repo, agent: "swarm-harness", skipAgentHooks: true });
+      process.env.OPENSWARM_RECORD_SESSIONS = "1";
+      await sl.enable({ cwd: repo, agent: "openswarm", skipAgentHooks: true });
 
       // Drive the real recorder: begin -> record a Write -> close (finish).
       const rec = await startSessionRecorder({

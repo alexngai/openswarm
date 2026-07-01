@@ -1,8 +1,8 @@
-# ACP compatibility plan — expose swarm-harness as an Agent Client Protocol agent
+# ACP compatibility plan — expose openswarm as an Agent Client Protocol agent
 
 Companion to [docs/02-architecture.md](02-architecture.md) (the `AgentEngine` seam) and
 [docs/03-interfaces.md §1](03-interfaces.md). This doc is the design + execution plan for
-making swarm-harness drivable from ACP clients (Zed, Neovim's CodeCompanion/avante, and any
+making openswarm drivable from ACP clients (Zed, Neovim's CodeCompanion/avante, and any
 future editor that speaks the protocol).
 
 **Authoring date:** 2026-06-02.
@@ -23,7 +23,7 @@ ACP (Agent Client Protocol) is JSON-RPC 2.0 over newline-delimited JSON on stdio
 `session/update` notifications back while calling *client* methods (`session/request_permission`,
 `fs/*`, `terminal/*`) mid-turn.
 
-swarm-harness already has the two seams ACP needs:
+openswarm already has the two seams ACP needs:
 
 - **`AgentEngine.run(config): AsyncIterable<NormalizedEvent>`** ([src/engine/index.ts:64](../src/engine/index.ts)) —
   a streaming event channel. ACP `session/update` is *also* a streaming event channel. The ACP
@@ -34,7 +34,7 @@ swarm-harness already has the two seams ACP needs:
 
 So this is **not a port**. It's a new `run()` consumer (an event translator) plus a new
 `PermissionGate` implementation (a `requestPermission` round-trip), wired behind a new
-`swarm-harness acp` subcommand. Both reference adapters (`@agentclientprotocol/claude-agent-acp`,
+`openswarm acp` subcommand. Both reference adapters (`@agentclientprotocol/claude-agent-acp`,
 `zed-industries/codex-acp`) follow the same pattern — **embed the engine, translate the events** —
 and neither bakes ACP into the engine core. We do the same, as a subcommand rather than a
 separate package, because our engine is already in-process.
@@ -119,9 +119,9 @@ Takeaway both teams converge on: keep ACP out of the engine; write a thin transl
 
 ---
 
-## 2. Why swarm-harness fits this with minimal new surface
+## 2. Why openswarm fits this with minimal new surface
 
-| ACP need | Existing swarm-harness seam | File |
+| ACP need | Existing openswarm seam | File |
 |---|---|---|
 | Stream agent output | `AgentEngine.run()` yields `AsyncIterable<NormalizedEvent>` | [src/engine/index.ts:64](../src/engine/index.ts) |
 | Approve a tool call | `PermissionGate(toolName, input) → PermissionDecision` | [src/engine/index.ts:243](../src/engine/index.ts) |
@@ -156,7 +156,7 @@ The ACP adapter is conceptually `runHeadless` with: (a) ACP-shaped frames instea
 ACP `ToolKind ∈ read|edit|delete|move|search|execute|think|fetch|switch_mode|other`. Build a
 static table from our Tier-0 tools:
 
-| swarm-harness tool | `ToolKind` | `locations` source | diff? |
+| openswarm tool | `ToolKind` | `locations` source | diff? |
 |---|---|---|---|
 | `read_file` | `read` | `input.path` (+ `line` from offset) | — |
 | `write_file` | `edit` | `input.path` | synth diff (oldText: prior file contents or `null`, newText: `input.content`) |
@@ -173,7 +173,7 @@ tools is the single highest-leverage detail for editor UX. Diffs render as inlin
 `edit_file`'s existing old/new payload maps straight to ACP `Diff {path, oldText, newText}`.
 
 ### 3.5 `todo_write` → ACP `plan`
-swarm-harness ships a `todo_write` tool. Instead of surfacing it as a `tool_call`, intercept it
+openswarm ships a `todo_write` tool. Instead of surfacing it as a `tool_call`, intercept it
 in the translator and emit a `plan` update (`entries: {content, priority, status}[]`). Zed renders
 this as a live todo panel — high-value, low-cost. (This is the one place the translator is *not*
 a pure 1:1 passthrough; it consumes the tool's input and re-shapes it.)
@@ -182,7 +182,7 @@ a pure 1:1 passthrough; it consumes the tool's input and re-shapes it.)
 
 ## 5. Stop-reason & cancellation mapping
 
-| swarm-harness `StopReason` | ACP `StopReason` |
+| openswarm `StopReason` | ACP `StopReason` |
 |---|---|
 | `end_turn` | `end_turn` |
 | `max_tokens` | `max_tokens` |
@@ -222,7 +222,7 @@ engine in a wedged state).
 
 **Stage A — single-agent ACP parity.**
 
-- **A.1 — Dependency + entry.** Add `@agentclientprotocol/sdk`. New `swarm-harness acp` subcommand
+- **A.1 — Dependency + entry.** Add `@agentclientprotocol/sdk`. New `openswarm acp` subcommand
   ([src/cli/acp.ts]) that builds `ndJsonStream(stdout, stdin)` + `AgentSideConnection`, and
   **redirects all logging to stderr** (assert nothing writes to stdout outside the JSON-RPC stream).
 - **A.2 — `initialize`.** Declare `agentInfo`, `agentCapabilities` (`loadSession: true`,
@@ -276,10 +276,10 @@ engine in a wedged state).
 ## 9. Open question — teams × ACP (to discuss next, separate doc)
 
 ACP is **single-agent by design**: one session is one linear conversation with one assistant
-voice. swarm-harness's headline is **N coordinated agents**. ACP has no native multi-agent concept,
+voice. openswarm's headline is **N coordinated agents**. ACP has no native multi-agent concept,
 so exposing a *team* over ACP requires a deliberate design decision. Two broad directions:
 
-- **(A) Atomic-agent parity** — a session = one swarm-harness agent. Zed talks to it exactly as it
+- **(A) Atomic-agent parity** — a session = one openswarm agent. Zed talks to it exactly as it
   talks to Claude/Codex. This is what Stage A ships: low-risk, reuses everything, no protocol
   invention.
 - **(B) Orchestrator-as-session** — a session = the team lead; teammate activity is surfaced as

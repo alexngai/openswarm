@@ -19,7 +19,7 @@ afterEach(async () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
     tmpDir = undefined;
   }
-  delete process.env.SWARM_HARNESS_SKILLS_DIR;
+  delete process.env.OPENSWARM_SKILLS_DIR;
 });
 
 describe("memory surfacing (lifecycle e2e)", () => {
@@ -48,7 +48,7 @@ describe("memory surfacing (lifecycle e2e)", () => {
       updatedAt: new Date(),
     });
 
-    process.env.SWARM_HARNESS_SKILLS_DIR = tmpDir;
+    process.env.OPENSWARM_SKILLS_DIR = tmpDir;
 
     // The real lifecycle: register providers, then enrich a turn.
     await onSessionStart({ agentId: "test-agent" });
@@ -66,7 +66,7 @@ describe("memory surfacing (lifecycle e2e)", () => {
   });
 
   it("surfaces nothing (and never throws) when no skills dir exists", async () => {
-    process.env.SWARM_HARNESS_SKILLS_DIR = path.join(os.tmpdir(), "definitely-absent-xyz");
+    process.env.OPENSWARM_SKILLS_DIR = path.join(os.tmpdir(), "definitely-absent-xyz");
     await onSessionStart({ agentId: "test-agent" });
     const fragments = await onBeforeTurn({ query: "prisma" });
     expect(fragments.find((f) => f.source.startsWith("skill:"))).toBeUndefined();

@@ -145,7 +145,7 @@ describe("MinimemProvider with minimem available", () => {
     const provider = new MinimemProvider();
 
     // The provider should read MINIMEM_EMBEDDING_PROVIDER and MINIMEM_STORE_PATH
-    // from env, falling back to "none" and ~/.swarm-harness/memory respectively
+    // from env, falling back to "none" and ~/.openswarm/memory respectively
     await provider.initialize({});
 
     await provider.shutdown();

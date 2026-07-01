@@ -9,7 +9,7 @@
  *     runtime tool re-registration in v0.1).
  *
  * Uses ctx.pluginStore if present, otherwise constructs a default store
- * pointing at ~/.swarm-harness/plugins/ (doc 17 Q1).
+ * pointing at ~/.openswarm/plugins/ (doc 17 Q1).
  */
 
 import type { SlashCommand } from "../index.js";

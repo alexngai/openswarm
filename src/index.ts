@@ -16,11 +16,9 @@ import { createRequire } from "node:module";
 // the `__OPENSWARM_VERSION__` compile-time constant; under node we read it from
 // package.json. (`typeof` on an undeclared name is safe — never throws.)
 declare const __OPENSWARM_VERSION__: string | undefined;
-declare const __SWARM_HARNESS_VERSION__: string | undefined;
 
 function resolveVersion(): string {
   if (typeof __OPENSWARM_VERSION__ !== "undefined") return __OPENSWARM_VERSION__;
-  if (typeof __SWARM_HARNESS_VERSION__ !== "undefined") return __SWARM_HARNESS_VERSION__;
   try {
     return (createRequire(import.meta.url)("../package.json") as { version?: string }).version ?? "0.0.0";
   } catch {

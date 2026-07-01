@@ -5,9 +5,9 @@
  *
  * Publishes in dependency order (platform binaries first, main package last,
  * since the main package's optionalDependencies point at the platform ones):
- *   1. @swarmkit-ai/openswarm-cli-darwin-arm64
- *   2. @swarmkit-ai/openswarm-cli-darwin-x64
- *   3. @swarmkit-ai/openswarm-cli-linux-x64
+ *   1. @openswarm/cli-darwin-arm64
+ *   2. @openswarm/cli-darwin-x64
+ *   3. @openswarm/cli-linux-x64
  *   4. openswarm (main package)
  *
  * By default builds + publishes only the CURRENT platform's compiled binary.
@@ -145,7 +145,7 @@ if (isBump) {
     const optDeps = json.optionalDependencies as Record<string, string> | undefined;
     if (optDeps) {
       for (const name of Object.keys(optDeps)) {
-        if (name.startsWith("@swarmkit-ai/openswarm-cli-")) optDeps[name] = newVersion;
+        if (name.startsWith("@openswarm/cli-")) optDeps[name] = newVersion;
       }
     }
     // Never mutate files on disk during a dry-run.

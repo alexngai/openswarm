@@ -2,7 +2,7 @@
 
 ## 1. Motivation
 
-swarm-harness's current TUI is a functional single-agent REPL: streaming markdown, Emacs keybindings, slash commands, a braille spinner, and a y/N permission prompt. It is roughly 6 components and ~1,000 lines of UI code.
+openswarm's current TUI is a functional single-agent REPL: streaming markdown, Emacs keybindings, slash commands, a braille spinner, and a y/N permission prompt. It is roughly 6 components and ~1,000 lines of UI code.
 
 This is adequate for simple sessions but falls short in three areas:
 
@@ -20,7 +20,7 @@ This is adequate for simple sessions but falls short in three areas:
 
 - **Codex** (openai/codex) — A Rust/Ratatui TUI with approval overlays, unified diff rendering, session fork/resume, and streaming intelligence.
 
-This design takes Kimi Code's interaction model (progressive disclosure, single column, smart defaults) and combines it with Swarm Runner's multi-agent capabilities (agent tree, task tracking), adapted to swarm-harness's existing engine and protocol.
+This design takes Kimi Code's interaction model (progressive disclosure, single column, smart defaults) and combines it with Swarm Runner's multi-agent capabilities (agent tree, task tracking), adapted to openswarm's existing engine and protocol.
 
 ## 2. Design Principles
 
@@ -324,7 +324,7 @@ Tasks (2 done, 1 active, 3 pending)
   ◌ Final review                 —         pending
 ```
 
-- Maps to swarm-harness task graph (`task_create`, `task_update` IPC)
+- Maps to openswarm task graph (`task_create`, `task_update` IPC)
 - j/k navigation, Enter to view task details
 
 Both views are rendered as full-screen replacements of the transcript (like Kimi Code's session picker or help panel), not as persistent sidebars.
@@ -555,8 +555,8 @@ The bulk of the implementation is new code following Kimi Code patterns, not Swa
 ### What we intentionally skip
 
 - **Multi-panel layout** — Swarm Runner's sidebar + main + details layout adds complexity without proportional value for the common case. If a user needs persistent agent visibility, the agent tree view (Ctrl+A) covers it.
-- **Plugin system** — Swarm Runner's 10-extension-point plugin architecture is over-engineered for swarm-harness. Swarm-harness already has its own plugin and MCP systems.
-- **View tabs** — Swarm Runner's 11 views (tasks, teams, topology, timeline, streams, environments, federation, settings, etc.) are macro-agent-specific. We add only 2 views (agents, tasks) that map to swarm-harness concepts.
+- **Plugin system** — Swarm Runner's 10-extension-point plugin architecture is over-engineered for openswarm. Swarm-harness already has its own plugin and MCP systems.
+- **View tabs** — Swarm Runner's 11 views (tasks, teams, topology, timeline, streams, environments, federation, settings, etc.) are macro-agent-specific. We add only 2 views (agents, tasks) that map to openswarm concepts.
 
 ## 10. Implementation & Test Plan
 

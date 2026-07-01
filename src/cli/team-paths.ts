@@ -2,7 +2,7 @@
  * team-paths.ts — shared path computation for the team daemon.
  *
  * v0.5 stage 5E follow-up: macOS Unix socket `sun_path` is limited to ~104
- * characters, and the natural `${TMPDIR}/swarm-harness/teams/<name>/daemon.sock`
+ * characters, and the natural `${TMPDIR}/openswarm/teams/<name>/daemon.sock`
  * path under `/var/folders/.../T/` regularly exceeds it. The kernel silently
  * truncates the filename, so the daemon binds to a path that the client
  * can't connect to.
@@ -55,7 +55,7 @@ export function computeTeamPaths(teamName: string): TeamPaths {
     process.env.XDG_RUNTIME_DIR !== ""
       ? process.env.XDG_RUNTIME_DIR
       : (process.env.TMPDIR ?? os.tmpdir());
-  const dir = path.join(baseDir, "swarm-harness", "teams", teamName);
+  const dir = path.join(baseDir, "openswarm", "teams", teamName);
 
   const naturalSockPath = path.join(dir, "daemon.sock");
   const sockPath =
@@ -97,5 +97,5 @@ export function teamsBaseDir(): string {
     process.env.XDG_RUNTIME_DIR !== ""
       ? process.env.XDG_RUNTIME_DIR
       : (process.env.TMPDIR ?? os.tmpdir());
-  return path.join(baseDir, "swarm-harness", "teams");
+  return path.join(baseDir, "openswarm", "teams");
 }

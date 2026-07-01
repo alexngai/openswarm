@@ -43,7 +43,7 @@ export class WorkerHost implements SwarmHost {
 
   /**
    * Team scope this worker belongs to. Set by `worker-entry.ts` from
-   * `SWARM_HARNESS_TEAM_SCOPE` env (V0.4.Q1 propagation). Defaults to
+   * `OPENSWARM_TEAM_SCOPE` env (V0.4.Q1 propagation). Defaults to
    * `"swarm:default"` for legacy single-team runs.
    */
   private readonly _teamScope: string;
@@ -465,7 +465,7 @@ export class WorkerHost implements SwarmHost {
   /**
    * Proxy ask_user_question through the orchestrator.
    *
-   * Timeout: controlled by `SWARM_HARNESS_ASK_TIMEOUT_MS` env var (default
+   * Timeout: controlled by `OPENSWARM_ASK_TIMEOUT_MS` env var (default
    * 600_000 ms). On orchestrator-side timeout the IPC layer surfaces
    * `request_timeout`, which we translate to `{status: "timed-out"}`.
    * Transport close returns `{status: "error", message: "transport_closed: ..."}`.
@@ -474,7 +474,7 @@ export class WorkerHost implements SwarmHost {
     question: string,
     options?: readonly string[],
   ): Promise<import("./host.js").AskUserResponse> {
-    const rawTimeout = process.env.SWARM_HARNESS_ASK_TIMEOUT_MS ?? "600000";
+    const rawTimeout = process.env.OPENSWARM_ASK_TIMEOUT_MS ?? "600000";
     const parsedTimeout = parseInt(rawTimeout, 10);
     const timeoutMs =
       Number.isFinite(parsedTimeout) && parsedTimeout > 0
@@ -513,7 +513,7 @@ export class WorkerHost implements SwarmHost {
   async requestPermission(
     req: import("./host.js").PermissionRequest,
   ): Promise<import("./host.js").PermissionDecisionResponse> {
-    const rawTimeout = process.env.SWARM_HARNESS_ASK_TIMEOUT_MS ?? "600000";
+    const rawTimeout = process.env.OPENSWARM_ASK_TIMEOUT_MS ?? "600000";
     const parsedTimeout = parseInt(rawTimeout, 10);
     const timeoutMs =
       Number.isFinite(parsedTimeout) && parsedTimeout > 0

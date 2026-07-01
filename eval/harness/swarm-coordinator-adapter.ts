@@ -1,7 +1,7 @@
 /**
- * swarm-coordinator-adapter.ts — the H1 "team" arm: a real swarm-harness COORDINATOR team.
+ * swarm-coordinator-adapter.ts — the H1 "team" arm: a real openswarm COORDINATOR team.
  *
- * The generic CLI-harness adapter can't drive `swarm-harness topology coordinator --spec <file>` (the
+ * The generic CLI-harness adapter can't drive `openswarm topology coordinator --spec <file>` (the
  * prompt lives inside the spec JSON, not as a positional), so this custom ExecutionAdapter writes a
  * coordinator TeamSpec (architect root + executor + reviewer, all on the same Bedrock model) into the
  * workspace and invokes the existing `topology` command. The root spawns the two teammates via the
@@ -29,7 +29,7 @@ export interface SwarmCoordinatorOptions {
   readonly permissionMode?: string;
   /** Per-cell timeout (a 3-agent team is slower than one agent). Default 30 min. */
   readonly timeoutMs?: number;
-  /** Absolute path to the in-sandbox CLI (default: the installed `swarm-harness`). */
+  /** Absolute path to the in-sandbox CLI (default: the installed `openswarm`). */
   readonly bin?: string;
   /** Teammates the architect coordinates. Default = a generic executor + reviewer (the "homogeneous"
    *  baseline). Pass a specialized roster (distinct roles/prompts, optionally per-member models) for a
@@ -40,7 +40,7 @@ export interface SwarmCoordinatorOptions {
   /** Team name in the spec (cosmetic; disambiguates logs). Default "h1-team". */
   readonly name?: string;
   /** Coordinator verified-completion: force up to N verify-then-continue rounds before the root
-   *  terminates (counters the premature-termination failure mode). Requires swarm-harness with the
+   *  terminates (counters the premature-termination failure mode). Requires openswarm with the
    *  verifiedCompletion gate; omitted from the spec when unset. */
   readonly verifiedCompletionRounds?: number;
 }
@@ -61,7 +61,7 @@ export class SwarmCoordinatorAdapter implements ExecutionAdapter {
     if (!ws) throw new Error("SwarmCoordinatorAdapter requires a backend-provisioned workspace");
 
     const model = cell.model.name || this.opts.defaultModel || "us.anthropic.claude-sonnet-4-5-20250929-v1:0";
-    const bin = this.opts.bin ?? "swarm-harness";
+    const bin = this.opts.bin ?? "openswarm";
     const permissionMode = this.opts.permissionMode ?? "danger-full-access";
     const agentId = ctx.env?.AGENT_ID ?? "agent";
     const dir = `.sbx/${agentId.replace(/[^\w.-]/g, "_")}`;
@@ -86,7 +86,7 @@ export class SwarmCoordinatorAdapter implements ExecutionAdapter {
           : {}),
       },
     };
-    // Requires swarm-harness with the worker model-propagation fix (commit 4d0aae1): spawned coordinator
+    // Requires openswarm with the worker model-propagation fix (commit 4d0aae1): spawned coordinator
     // workers now use the configured model (the Bedrock id). Before that fix they hardcoded the default
     // model in the RunConfig, which 400s as invalid on Bedrock.
     await ws.writeFiles([{ path: `${dir}/team.json`, content: JSON.stringify(spec, null, 2) }]);
@@ -111,8 +111,8 @@ export class SwarmCoordinatorAdapter implements ExecutionAdapter {
       ...(cell.arm.scaffold.env ?? {}),
       ...(ctx.env ?? {}),
       // The subprocess spawner inherits process.env; without this the spawned coordinator workers fall
-      // back to swarm-harness's default model (claude-sonnet-4-6, invalid on Bedrock). Pin the Bedrock id.
-      SWARM_HARNESS_MODEL: model,
+      // back to openswarm's default model (claude-sonnet-4-6, invalid on Bedrock). Pin the Bedrock id.
+      OPENSWARM_MODEL: model,
       AGENT_ID: agentId,
     };
 
@@ -122,7 +122,7 @@ export class SwarmCoordinatorAdapter implements ExecutionAdapter {
     // Best-effort token usage: the `topology coordinator` command does NOT currently surface usage —
     // stdout is just the architect's final text, and the --output stream stays empty (the coordinator
     // tallies only the root, and spawned-peer usage is never aggregated up the spawn tree). So this yields
-    // nothing today and the team/hetero cost axis reads 0. Proper fix is a swarm-harness change: aggregate
+    // nothing today and the team/hetero cost axis reads 0. Proper fix is a openswarm change: aggregate
     // usage across the whole spawn tree (root + peers) and emit it (ResultLine to --output, or a JSON line).
     // sumTeamUsage already handles the --output path for when that lands.
     const usage = (await sumTeamUsage(ws, resultsPath)) ?? parsed.usage;

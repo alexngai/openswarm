@@ -7,7 +7,7 @@
  * in framework modes on the assumption that they couldn't dispatch through
  * the framework's tool surface. Track A (docs/26 §Track A) verified
  * empirically that they work fine under --framework claude-agent-sdk —
- * canUseTool routes the framework's call back to the swarm-harness
+ * canUseTool routes the framework's call back to the openswarm
  * implementation. The strip was conservative, not technically required.
  *
  * v0.4 stage 4G: dropped the strip uniformly. Tier 2 tools are now

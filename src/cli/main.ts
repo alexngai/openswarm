@@ -354,7 +354,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
       },
       getUsage: () => engine.getCumulativeUsage(),
       abort: turnAbort,
-      sessionLogPath: ".swarm-harness/sessions.log",
+      sessionLogPath: ".openswarm/sessions.log",
       pluginStore: rt.pluginStateStore,
     },
     permissionBridge,
@@ -406,7 +406,7 @@ export async function main(argv: string[]): Promise<number> {
 
     case "team-daemon-entry":
       // v0.5 stage 5E.3: forked per-team daemon entry. Reads its TeamSpec +
-      // socket/pid/events/state paths from SWARM_HARNESS_DAEMON_* env set by
+      // socket/pid/events/state paths from OPENSWARM_DAEMON_* env set by
       // the parent forker (`team start --detach`).
       return runTeamDaemonEntry();
 

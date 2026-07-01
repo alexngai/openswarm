@@ -6,11 +6,11 @@
  * a TeamDaemon, runs the team, and exits cleanly.
  *
  * Required env vars (set by `team start --detach` in 5E.3):
- *   SWARM_HARNESS_DAEMON_SPEC    — path to a JSON file containing the TeamSpec
- *   SWARM_HARNESS_DAEMON_SOCK    — Unix socket path
- *   SWARM_HARNESS_DAEMON_PID     — pid file path
- *   SWARM_HARNESS_DAEMON_EVENTS  — events.jsonl path
- *   SWARM_HARNESS_DAEMON_STATE   — team-state.json path
+ *   OPENSWARM_DAEMON_SPEC    — path to a JSON file containing the TeamSpec
+ *   OPENSWARM_DAEMON_SOCK    — Unix socket path
+ *   OPENSWARM_DAEMON_PID     — pid file path
+ *   OPENSWARM_DAEMON_EVENTS  — events.jsonl path
+ *   OPENSWARM_DAEMON_STATE   — team-state.json path
  */
 
 import * as fsp from "node:fs/promises";
@@ -18,11 +18,11 @@ import { TeamSpecSchema, type TeamSpec } from "../swarm/team-spec.js";
 import { TeamDaemon } from "../swarm/team-daemon.js";
 
 const REQUIRED_ENV = [
-  "SWARM_HARNESS_DAEMON_SPEC",
-  "SWARM_HARNESS_DAEMON_SOCK",
-  "SWARM_HARNESS_DAEMON_PID",
-  "SWARM_HARNESS_DAEMON_EVENTS",
-  "SWARM_HARNESS_DAEMON_STATE",
+  "OPENSWARM_DAEMON_SPEC",
+  "OPENSWARM_DAEMON_SOCK",
+  "OPENSWARM_DAEMON_PID",
+  "OPENSWARM_DAEMON_EVENTS",
+  "OPENSWARM_DAEMON_STATE",
 ] as const;
 
 export async function runTeamDaemonEntry(): Promise<number> {
@@ -35,11 +35,11 @@ export async function runTeamDaemonEntry(): Promise<number> {
     }
   }
 
-  const specPath = process.env.SWARM_HARNESS_DAEMON_SPEC!;
-  const sockPath = process.env.SWARM_HARNESS_DAEMON_SOCK!;
-  const pidPath = process.env.SWARM_HARNESS_DAEMON_PID!;
-  const eventsPath = process.env.SWARM_HARNESS_DAEMON_EVENTS!;
-  const statePath = process.env.SWARM_HARNESS_DAEMON_STATE!;
+  const specPath = process.env.OPENSWARM_DAEMON_SPEC!;
+  const sockPath = process.env.OPENSWARM_DAEMON_SOCK!;
+  const pidPath = process.env.OPENSWARM_DAEMON_PID!;
+  const eventsPath = process.env.OPENSWARM_DAEMON_EVENTS!;
+  const statePath = process.env.OPENSWARM_DAEMON_STATE!;
 
   let spec: TeamSpec;
   try {

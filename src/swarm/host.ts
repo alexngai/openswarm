@@ -117,12 +117,12 @@ export interface SwarmHost {
   /**
    * This agent's own depth in the recursion tree.
    * 0 for the orchestrator's StandaloneHost; set authoritatively by the
-   * orchestrator for WorkerHost instances (via `SWARM_HARNESS_DEPTH` env var).
+   * orchestrator for WorkerHost instances (via `OPENSWARM_DEPTH` env var).
    */
   readonly depth: number;
   /**
    * This host's permission mode. Sub-agents cannot escalate beyond this.
-   * Set by the orchestrator; workers receive it via `SWARM_HARNESS_PERMISSION_MODE` env.
+   * Set by the orchestrator; workers receive it via `OPENSWARM_PERMISSION_MODE` env.
    */
   readonly permissionMode: PermissionMode;
 
@@ -258,7 +258,7 @@ export interface SpawnRequest {
   /**
    * When spawned via the `agent` tool, the tool_use_id from the parent's
    * transcript. Orchestrator propagates to child via
-   * `SWARM_HARNESS_PARENT_TOOL_USE_ID` env var. Child's event translator stamps
+   * `OPENSWARM_PARENT_TOOL_USE_ID` env var. Child's event translator stamps
    * this id on every emitted NormalizedEvent / LaneEvent so the orchestrator's
    * merged stream can attribute sub-agent events back to the invoking tool_use
    * in the parent's transcript.
@@ -291,7 +291,7 @@ export interface SpawnRequest {
    * `longLived` is false.
    *
    * Default: 600_000 (10 min). Honoured worker-side via the
-   * `SWARM_HARNESS_IDLE_TIMEOUT_MS` env variable.
+   * `OPENSWARM_IDLE_TIMEOUT_MS` env variable.
    */
   readonly idleTimeoutMs?: number;
 }

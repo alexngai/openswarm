@@ -6,7 +6,7 @@
  * OpenAICodexAuth credential source (the same class the `codex-native` CLI
  * path uses) end-to-end against the live backend.
  *
- *   CODEX_LIVE=1 SWARM_HARNESS_SKIP_INTEGRATION_BUILD=1 \
+ *   CODEX_LIVE=1 OPENSWARM_SKIP_INTEGRATION_BUILD=1 \
  *     npx vitest run src/auth/openai-codex-oauth.live.test.ts
  */
 
@@ -52,13 +52,13 @@ describe.runIf(live)("OpenAICodexAuth (live, full stack)", () => {
     const provider = new CodexResponsesTransportProvider({
       modelId: "gpt-5.5",
       credentials: auth, // OpenAICodexAuth IS a CodexCredentialSource
-      sessionId: "swarm-harness-oauth-live",
+      sessionId: "openswarm-oauth-live",
     });
 
     const req: ProviderRequest = {
       messages: [{ role: "user", content: [{ type: "text", text: "Reply with exactly: ack" }] }],
       model: "gpt-5.5",
-      sessionId: "swarm-harness-oauth-live",
+      sessionId: "openswarm-oauth-live",
     };
     const out: ProviderEvent[] = [];
     for await (const e of provider.stream(req)) out.push(e);

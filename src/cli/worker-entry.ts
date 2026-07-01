@@ -88,15 +88,15 @@ async function buildNativeWorkerEngine({
     return new NativeEngine({ provider, sessionId: agentId });
   }
   const retryPolicy: RetryPolicy = {
-    maxRetries: parseIntEnv("SWARM_HARNESS_RETRY_MAX_RETRIES", 3),
-    backoffBaseMs: parseIntEnv("SWARM_HARNESS_RETRY_BACKOFF_BASE_MS", 100),
+    maxRetries: parseIntEnv("OPENSWARM_RETRY_MAX_RETRIES", 3),
+    backoffBaseMs: parseIntEnv("OPENSWARM_RETRY_BACKOFF_BASE_MS", 100),
   };
   return new HardenedNativeEngine({
     provider,
     sessionId: agentId,
     retryPolicy,
-    eagerToolDispatch: process.env.SWARM_HARNESS_EAGER_TOOL_DISPATCH === "1",
-    midTurnCompaction: process.env.SWARM_HARNESS_MID_TURN_COMPACTION === "1",
+    eagerToolDispatch: process.env.OPENSWARM_EAGER_TOOL_DISPATCH === "1",
+    midTurnCompaction: process.env.OPENSWARM_MID_TURN_COMPACTION === "1",
   });
 }
 
@@ -212,14 +212,14 @@ async function executeTurn(
       },
     }));
 
-    const envBasePrompt = process.env.SWARM_HARNESS_BASE_SYSTEM_PROMPT;
+    const envBasePrompt = process.env.OPENSWARM_BASE_SYSTEM_PROMPT;
     const useNativePrompt =
       engine.id === "native" || engine.id === "hardened-native";
     const basePrompt = useNativePrompt
       ? buildSystemPrompt({ cwd: process.cwd(), extensions: envBasePrompt ?? undefined })
       : (envBasePrompt ?? "");
     const toolWarmup =
-      process.env.SWARM_HARNESS_TOOL_USE_WARMUP === "1"
+      process.env.OPENSWARM_TOOL_USE_WARMUP === "1"
         ? buildToolUseWarmupPrompt(allTools.map((t) => t.spec))
         : undefined;
     const systemPrompt = composeSystemPrompt(basePrompt, roleSuffix, toolWarmup);
@@ -230,7 +230,7 @@ async function executeTurn(
     // B1.4: on the first turn (no in-memory id) fall back to the session sidecar
     // so a freshly-spawned root resumes the prior conversation across processes
     // (ACP session/load live resume).
-    const sidecarPath = process.env.SWARM_HARNESS_SESSION_SIDECAR;
+    const sidecarPath = process.env.OPENSWARM_SESSION_SIDECAR;
     let priorSessionId = engine.getSessionId?.();
     if (priorSessionId === undefined && sidecarPath !== undefined) {
       priorSessionId = readSessionSidecar(sidecarPath);
@@ -267,7 +267,7 @@ async function executeTurn(
         permissionMode,
         // Escalate denied calls to the orchestrator only when the ACP team path
         // enabled it (env flag set on the spawned worker); else deny directly.
-        ...(process.env.SWARM_HARNESS_PERMISSION_ESCALATION === "1"
+        ...(process.env.OPENSWARM_PERMISSION_ESCALATION === "1"
           ? { escalate: (req: PermissionRequest) => ctx.host.requestPermission(req) }
           : {}),
       }),
@@ -277,7 +277,7 @@ async function executeTurn(
     };
 
     // Layer 0: record this worker's session transcript (opt-in, best-effort) so
-    // sessionlog's swarm-harness adapter + cognitive-core can distill it.
+    // sessionlog's openswarm adapter + cognitive-core can distill it.
     recorder = await startSessionRecorder({
       sessionId: priorSessionId ?? agentId,
       agentId,
@@ -352,21 +352,21 @@ async function executeTurn(
 }
 
 export async function runWorkerEntry(): Promise<number> {
-  const agentId = (process.env.SWARM_HARNESS_AGENT_ID ?? "unknown") as AgentId;
-  const depthStr = process.env.SWARM_HARNESS_DEPTH ?? "0";
+  const agentId = (process.env.OPENSWARM_AGENT_ID ?? "unknown") as AgentId;
+  const depthStr = process.env.OPENSWARM_DEPTH ?? "0";
   const depth = Number.parseInt(depthStr, 10);
-  const parentToolUseId = process.env.SWARM_HARNESS_PARENT_TOOL_USE_ID;
+  const parentToolUseId = process.env.OPENSWARM_PARENT_TOOL_USE_ID;
 
-  const heartbeatIntervalMs = process.env.SWARM_HARNESS_HEARTBEAT_MS
-    ? Number.parseInt(process.env.SWARM_HARNESS_HEARTBEAT_MS, 10)
+  const heartbeatIntervalMs = process.env.OPENSWARM_HEARTBEAT_MS
+    ? Number.parseInt(process.env.OPENSWARM_HEARTBEAT_MS, 10)
     : undefined;
   const transport = new ParentTransport({ agentId, heartbeatIntervalMs });
-  const permissionMode = (process.env.SWARM_HARNESS_PERMISSION_MODE ??
+  const permissionMode = (process.env.OPENSWARM_PERMISSION_MODE ??
     "workspace-write") as PermissionMode;
   // v0.4 stage 4M.7: WorkerHost reads team scope from env so its scopeOf()
   // can resolve the worker's own scope when the agent tool spawns a peer
   // via team: "self". Falls back to "swarm:default" when unset.
-  const teamScope = process.env.SWARM_HARNESS_TEAM_SCOPE;
+  const teamScope = process.env.OPENSWARM_TEAM_SCOPE;
   const host = new WorkerHost(
     agentId,
     depth,
@@ -378,8 +378,8 @@ export async function runWorkerEntry(): Promise<number> {
   );
 
   // v0.4 stage 4D: opt-in long-lived worker mode.
-  const longLived = process.env.SWARM_HARNESS_LONG_LIVED === "1";
-  const idleTimeoutRaw = process.env.SWARM_HARNESS_IDLE_TIMEOUT_MS;
+  const longLived = process.env.OPENSWARM_LONG_LIVED === "1";
+  const idleTimeoutRaw = process.env.OPENSWARM_IDLE_TIMEOUT_MS;
   const idleTimeoutMs =
     idleTimeoutRaw !== undefined && /^\d+$/.test(idleTimeoutRaw)
       ? Number.parseInt(idleTimeoutRaw, 10)
@@ -405,13 +405,13 @@ export async function runWorkerEntry(): Promise<number> {
   host.markRunning(initialTask.id);
 
   // M3a Phase 6: role overlay + allowedTools filter.
-  // `SWARM_HARNESS_ROLE` names a role; we look it up in a worker-local
+  // `OPENSWARM_ROLE` names a role; we look it up in a worker-local
   // RoleRegistry (built-ins + custom roles loaded fresh from cwd).
-  // `SWARM_HARNESS_ALLOWED_TOOLS` carries an explicit JSON array that wins
+  // `OPENSWARM_ALLOWED_TOOLS` carries an explicit JSON array that wins
   // over the role-derived list when both are present. The system prompt
   // suffix is appended to RunConfig.systemPrompt (role suffix wins on
   // conflicts per the plan).
-  const roleName = process.env.SWARM_HARNESS_ROLE;
+  const roleName = process.env.OPENSWARM_ROLE;
   let roleSuffix = "";
   let resolvedAllowedTools: readonly string[] | undefined;
   if (roleName !== undefined && roleName.length > 0) {
@@ -419,7 +419,7 @@ export async function runWorkerEntry(): Promise<number> {
     for (const r of BUILTIN_ROLES) roleReg.register(r);
     try {
       const custom = await loadCustomRoles(
-        path.join(process.cwd(), ".swarm-harness", "roles.json"),
+        path.join(process.cwd(), ".openswarm", "roles.json"),
       );
       for (const r of custom) roleReg.register(r);
     } catch {
@@ -436,7 +436,7 @@ export async function runWorkerEntry(): Promise<number> {
       );
     }
   }
-  const envAllowed = process.env.SWARM_HARNESS_ALLOWED_TOOLS;
+  const envAllowed = process.env.OPENSWARM_ALLOWED_TOOLS;
   if (envAllowed !== undefined && envAllowed.length > 0) {
     try {
       const parsed = JSON.parse(envAllowed);
@@ -463,18 +463,18 @@ export async function runWorkerEntry(): Promise<number> {
   const permissionEngine = new PermissionEngine(permissionMode);
   const auth = new AnthropicEnvAuth();
 
-  // Engine selection: read SWARM_HARNESS_MODEL and SWARM_HARNESS_FRAMEWORK.
+  // Engine selection: read OPENSWARM_MODEL and OPENSWARM_FRAMEWORK.
   // Defaults preserve the historical Claude worker path, while per-task or
   // per-member models can route through native OpenAI-compatible transports.
   // TAC/Bedrock containers also provide ANTHROPIC_MODEL; use it as a final
   // provider-specific fallback before the built-in alias.
-  const frameworkEnv = (process.env.SWARM_HARNESS_FRAMEWORK ?? "auto") as FrameworkChoice;
+  const frameworkEnv = (process.env.OPENSWARM_FRAMEWORK ?? "auto") as FrameworkChoice;
   const workerModel = await resolveWorkerModel(
-    process.env.SWARM_HARNESS_MODEL ?? initialTask.model ?? process.env.ANTHROPIC_MODEL ?? DEFAULT_WORKER_MODEL,
+    process.env.OPENSWARM_MODEL ?? initialTask.model ?? process.env.ANTHROPIC_MODEL ?? DEFAULT_WORKER_MODEL,
   );
 
   let engine: AgentEngine;
-  if (process.env.SWARM_HARNESS_TEST_SCRIPT) {
+  if (process.env.OPENSWARM_TEST_SCRIPT) {
     engine = new ScriptedTestEngine();
   } else if (frameworkEnv === "claude-agent-sdk") {
     engine = new ClaudeAgentSdkEngine();

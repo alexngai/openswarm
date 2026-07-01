@@ -1,4 +1,4 @@
-# claw-code integrations research (for swarm-harness)
+# claw-code integrations research (for openswarm)
 
 Research of how claw-code (Rust) wires external integrations — plugins, skills,
 MCP, and LSP — into the runtime. Extracted to inform `PluginSource` /
@@ -37,7 +37,7 @@ lifecycle and registry — none of them share a transport abstraction.
   language-detection-by-extension, and tool shape are.
 
 Key takeaway for interfaces: claw-code chose separate, concrete subsystems
-rather than a shared `Source` abstraction. swarm-harness's `PluginSource` /
+rather than a shared `Source` abstraction. openswarm's `PluginSource` /
 `SkillSource` needs to preserve discovery-vs-load-vs-execute as distinct phases
 and keep transport-specific details (MCP stdio framing, LSP language mapping)
 inside source adapters.
@@ -319,7 +319,7 @@ Diagnostics aren't scoped to a file by structure — the registry scans all serv
 
 Tool surface (`run_lsp`): a single generic `lsp` tool takes `{ action, path?, line?, character?, query? }` and delegates to `dispatch`. Tier-4 breaks this into `lsp_diagnostics`, `lsp_hover`, etc. — claw's plumbing is one dispatch; the split is a UX choice at the tool-spec layer.
 
-## 6. Requirements for swarm-harness
+## 6. Requirements for openswarm
 
 ### Plugins
 
@@ -352,7 +352,7 @@ Tool surface (`run_lsp`): a single generic `lsp` tool takes `{ action, path?, li
 ### MCP (Tier 4)
 
 - [v0] Stdio transport only, `initialize` / `tools/list` / `tools/call` / `resources/list` / `resources/read`.
-- [v0] LSP-style `Content-Length`-framed JSON-RPC, protocol version `"2025-03-26"`, client info `{ name: "swarm-harness", version }`.
+- [v0] LSP-style `Content-Length`-framed JSON-RPC, protocol version `"2025-03-26"`, client info `{ name: "openswarm", version }`.
 - [v0] Per-server `tool_call_timeout_ms`; defaults around 10 s initialize / 30 s list / 60 s call.
 - [v0] Qualified tool naming `mcp__<normalized>__<tool>` with identical normalization rules (alphanumeric + `_`/`-`, underscore collapse for `claude.ai ` prefix).
 - [v0] `McpToolRegistry`-style mirror so tool handlers read status without racing the manager.
@@ -378,7 +378,7 @@ Tool surface (`run_lsp`): a single generic `lsp` tool takes `{ action, path?, li
 
 1. **`PluginSource.load` return shape.** claw's `RegisteredPlugin` carries
    metadata, hooks, lifecycle commands, and tools all together. Should
-   swarm-harness's `LoadedPlugin` also bundle hooks + lifecycle + tools, or split
+   openswarm's `LoadedPlugin` also bundle hooks + lifecycle + tools, or split
    tools onto a separate `ToolSource` abstraction? Leaning: bundle into
    `LoadedPlugin` since they share the plugin-root context (env vars, cwd).
 
@@ -411,7 +411,7 @@ Tool surface (`run_lsp`): a single generic `lsp` tool takes `{ action, path?, li
    prelude) without changing the source contract.
 
 6. **Plugin / skill ID collisions across sources.** claw errors on duplicate
-   plugin tool names globally. For multi-source discovery, swarm-harness's
+   plugin tool names globally. For multi-source discovery, openswarm's
    "source-id disambiguation" (`03-interfaces.md`) needs a concrete collision
    policy: warn + last-wins, error + refuse-to-start, or exposed both with
    prefix. Lean: error on tool-name collisions (the model can't disambiguate
@@ -420,7 +420,7 @@ Tool surface (`run_lsp`): a single generic `lsp` tool takes `{ action, path?, li
 
 7. **`.claude.json` vs `settings.json`.** claw-code has two locations in
    different READMEs (`.claude.json` in outer, `.claw.json` in rust/CLAUDE.md).
-   swarm-harness should pick one canonical name (suggest `.swarm.json` or just
+   openswarm should pick one canonical name (suggest `.swarm.json` or just
    `settings.json` under a config home) and document it upfront.
 
 8. **Bundled plugins — ship in npm package, or separate optional install?**

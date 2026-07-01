@@ -32,7 +32,7 @@ import { z, ZodObject, toJSONSchema as zodToJSONSchema } from "zod";
  * at the engine boundary so the rest of the system sees unprefixed names.
  */
 const MCP_PREFIX = "mcp__openswarm__";
-const LEGACY_MCP_PREFIX = "mcp__swarm-harness__";
+const LEGACY_MCP_PREFIX = "mcp__openswarm__";
 function stripMcpPrefix(name: string): string {
   if (name.startsWith(LEGACY_MCP_PREFIX)) return name.slice(LEGACY_MCP_PREFIX.length);
   return name.startsWith(MCP_PREFIX) ? name.slice(MCP_PREFIX.length) : name;

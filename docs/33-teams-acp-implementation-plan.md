@@ -236,7 +236,7 @@ A second hardening round closed the robustness/doc gaps the review flagged:
 
 - **Permission escalation is host-derived, not a process.env mutation (R-a).** Enabling worker
   escalation no longer mutates the orchestrator's `process.env`. `StandaloneHost.spawn` sets
-  `SpawnWorkerArgs.permissionEscalation` (→ `SWARM_HARNESS_PERMISSION_ESCALATION=1` in *the child's*
+  `SpawnWorkerArgs.permissionEscalation` (→ `OPENSWARM_PERMISSION_ESCALATION=1` in *the child's*
   env) iff the host holds an `interactionHandler`. Only the ACP team path sets one, so non-ACP
   orchestrators are unaffected. [standalone-host.ts](../src/swarm/standalone-host.ts),
   [subprocess-spawner.ts](../src/swarm/subprocess-spawner.ts).

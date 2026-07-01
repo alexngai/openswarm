@@ -1,5 +1,5 @@
 {
-  "name": "@swarmkit-ai/openswarm-cli-darwin-x64",
+  "name": "@openswarm/cli-darwin-x64",
   "version": "0.3.5",
   "description": "OpenSwarm compiled binary for macOS x64",
   "license": "MIT",

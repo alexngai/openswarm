@@ -79,7 +79,7 @@ describe("ACP team — real coordinator+worker+IPC permission escalation", () =>
       // ...process.env. Escalation is NOT set here: the host enables it because
       // it holds an interactionHandler (scoped to the worker's env), so this
       // also exercises that wiring (no process.env mutation).
-      const restoreScript = withEnv("SWARM_HARNESS_TEST_SCRIPT", ESCALATE_FIXTURE);
+      const restoreScript = withEnv("OPENSWARM_TEST_SCRIPT", ESCALATE_FIXTURE);
 
       const captured: PermissionRequest[] = [];
       const handler: InteractionHandler = {
@@ -123,7 +123,7 @@ describe("ACP team — real coordinator+worker+IPC permission escalation", () =>
   it(
     "steers a live team: swarm/steer delivers to the real root's inbox (B2.0)",
     async () => {
-      const restoreScript = withEnv("SWARM_HARNESS_TEST_SCRIPT", TEXT_FIXTURE);
+      const restoreScript = withEnv("OPENSWARM_TEST_SCRIPT", TEXT_FIXTURE);
       const r = createOrchestratorRunner({ permissionMode: "workspace-write" });
       runner = r;
       try {
@@ -147,7 +147,7 @@ describe("ACP team — real coordinator+worker+IPC permission escalation", () =>
   it(
     "persists an attributed orchestration spine from the real lane bus (B1.3)",
     async () => {
-      const restoreScript = withEnv("SWARM_HARNESS_TEST_SCRIPT", ESCALATE_FIXTURE);
+      const restoreScript = withEnv("OPENSWARM_TEST_SCRIPT", ESCALATE_FIXTURE);
       const handler: InteractionHandler = {
         requestPermission: async () => ({ outcome: "deny", reason: "test-policy" }),
       };
@@ -210,8 +210,8 @@ describe("ACP team — real coordinator+worker+IPC permission escalation", () =>
       const sessionId = randomUUID();
       const dir = acpSessionDir(sessionId);
       const sidecarPath = acpSidecarPath(sessionId);
-      const restoreScript = withEnv("SWARM_HARNESS_TEST_SCRIPT", TEXT_FIXTURE);
-      const restoreSid = withEnv("SWARM_HARNESS_TEST_SESSION_ID", "sess-1");
+      const restoreScript = withEnv("OPENSWARM_TEST_SCRIPT", TEXT_FIXTURE);
+      const restoreSid = withEnv("OPENSWARM_TEST_SESSION_ID", "sess-1");
       try {
         // Process 1: the root persists its engine session id to the sidecar.
         const r1 = createOrchestratorRunner({ permissionMode: "workspace-write" });
@@ -222,7 +222,7 @@ describe("ACP team — real coordinator+worker+IPC permission escalation", () =>
 
         // Process 2: a fresh team reads the sidecar and resumes that session on
         // its first turn (the scripted engine echoes the resumed id).
-        const restoreEcho = withEnv("SWARM_HARNESS_TEST_ECHO_RESUME", "1");
+        const restoreEcho = withEnv("OPENSWARM_TEST_ECHO_RESUME", "1");
         try {
           const r2 = createOrchestratorRunner({ permissionMode: "workspace-write" });
           runner = r2;

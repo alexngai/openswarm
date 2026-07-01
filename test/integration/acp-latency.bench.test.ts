@@ -31,7 +31,7 @@ describe("ACP team first-event latency (bench)", () => {
   (BENCH ? it : it.skip)(
     "measures runTeam -> first root engine event over N iterations",
     async () => {
-      process.env.SWARM_HARNESS_TEST_SCRIPT = TEXT_FIXTURE;
+      process.env.OPENSWARM_TEST_SCRIPT = TEXT_FIXTURE;
       const N = Number(process.env.SWARM_ACP_BENCH_N ?? "8");
       const samples: number[] = [];
 

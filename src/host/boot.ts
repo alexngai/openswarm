@@ -1,5 +1,5 @@
 /**
- * boot.ts — docs/44 P5 (H0). `bootSwarmHost` is swarm-harness's analog of
+ * boot.ts — docs/44 P5 (H0). `bootSwarmHost` is openswarm's analog of
  * macro-agent's `bootV2`: it binds the OpenHive 3-port stride and stands up the
  * gateway/health server, returning a handle with `shutdown()`.
  *
@@ -121,7 +121,7 @@ export async function bootSwarmHost(
 
   const standalone = opts.makeHost?.() ?? (await makeDefaultHost(cwd, opts));
 
-  // docs/44 — restart hygiene ("rehydrate"). swarm-harness agents are ephemeral
+  // docs/44 — restart hygiene ("rehydrate"). openswarm agents are ephemeral
   // task-runners (a reconnecting ACP client resumes the transcript via
   // session/load + the spine, P6), so there's no live agent tree to revive on
   // restart — but a crashed prior run can leave stale worker-state files. Scan

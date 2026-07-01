@@ -30,15 +30,15 @@ describe("computeTeamPaths", () => {
     process.env.XDG_RUNTIME_DIR = "/run/user/1000";
     delete process.env.TMPDIR;
     const paths = computeTeamPaths("alpha");
-    expect(paths.dir).toBe("/run/user/1000/swarm-harness/teams/alpha");
+    expect(paths.dir).toBe("/run/user/1000/openswarm/teams/alpha");
     expect(paths.sockPath).toBe(
-      "/run/user/1000/swarm-harness/teams/alpha/daemon.sock",
+      "/run/user/1000/openswarm/teams/alpha/daemon.sock",
     );
     expect(paths.pidPath).toBe(
-      "/run/user/1000/swarm-harness/teams/alpha/daemon.pid",
+      "/run/user/1000/openswarm/teams/alpha/daemon.pid",
     );
     expect(paths.eventsPath).toBe(
-      "/run/user/1000/swarm-harness/teams/alpha/events.jsonl",
+      "/run/user/1000/openswarm/teams/alpha/events.jsonl",
     );
   });
 
@@ -46,14 +46,14 @@ describe("computeTeamPaths", () => {
     delete process.env.XDG_RUNTIME_DIR;
     process.env.TMPDIR = "/tmp/test-tmp";
     const paths = computeTeamPaths("beta");
-    expect(paths.dir).toBe("/tmp/test-tmp/swarm-harness/teams/beta");
+    expect(paths.dir).toBe("/tmp/test-tmp/openswarm/teams/beta");
   });
 
   it("keeps the natural socket path when it's under the length limit", () => {
     process.env.XDG_RUNTIME_DIR = "/run/user/1000";
     const paths = computeTeamPaths("short");
     expect(paths.sockPath).toBe(
-      "/run/user/1000/swarm-harness/teams/short/daemon.sock",
+      "/run/user/1000/openswarm/teams/short/daemon.sock",
     );
     // Naturally under 100 chars — no hash fallback expected.
     expect(paths.sockPath.startsWith("/tmp/swh-")).toBe(false);
@@ -68,8 +68,8 @@ describe("computeTeamPaths", () => {
     expect(path.basename(paths.sockPath)).toMatch(/^swh-[a-f0-9]{12}\.sock$/);
     expect(path.dirname(paths.sockPath)).toBe("/tmp");
     // Other files keep their natural location — no length limit there.
-    expect(paths.pidPath).toContain("/swarm-harness/teams/");
-    expect(paths.eventsPath).toContain("/swarm-harness/teams/");
+    expect(paths.pidPath).toContain("/openswarm/teams/");
+    expect(paths.eventsPath).toContain("/openswarm/teams/");
   });
 
   it("is deterministic — same team name in same env gives same socket path", () => {
@@ -112,14 +112,14 @@ describe("teamsBaseDir", () => {
     else process.env.TMPDIR = prevTmp;
   });
 
-  it("returns ${XDG_RUNTIME_DIR}/swarm-harness/teams when set", () => {
+  it("returns ${XDG_RUNTIME_DIR}/openswarm/teams when set", () => {
     process.env.XDG_RUNTIME_DIR = "/run/user/1000";
-    expect(teamsBaseDir()).toBe("/run/user/1000/swarm-harness/teams");
+    expect(teamsBaseDir()).toBe("/run/user/1000/openswarm/teams");
   });
 
   it("falls back to TMPDIR when XDG_RUNTIME_DIR is unset", () => {
     delete process.env.XDG_RUNTIME_DIR;
     process.env.TMPDIR = "/tmp/x";
-    expect(teamsBaseDir()).toBe("/tmp/x/swarm-harness/teams");
+    expect(teamsBaseDir()).toBe("/tmp/x/openswarm/teams");
   });
 });

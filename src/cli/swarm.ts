@@ -54,7 +54,7 @@ export interface SwarmRunOptions {
   /**
    * Default role name applied to every task that doesn't override via its
    * own `role` field (M3a Phase 6). Resolved against the RoleRegistry
-   * built at startup (built-ins + custom from `.swarm-harness/roles.json`).
+   * built at startup (built-ins + custom from `.openswarm/roles.json`).
    */
   readonly defaultRole?: string;
   /**
@@ -78,7 +78,7 @@ export interface SwarmRunOptions {
   /**
    * v0.7 stage 7A.4: when true, wire a GitCascadeBranchPolicyAdapter so
    * members spec'd with kind:"stream" / kind:"fork" land in per-agent
-   * worktrees under .swarm-harness/worktrees/<streamId>/.
+   * worktrees under .openswarm/worktrees/<streamId>/.
    */
   readonly gitCascade?: boolean;
   /**
@@ -163,12 +163,12 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
     return 2;
   }
 
-  // Build RoleRegistry: built-ins + custom from .swarm-harness/roles.json.
+  // Build RoleRegistry: built-ins + custom from .openswarm/roles.json.
   const roles = new RoleRegistry();
   for (const r of BUILTIN_ROLES) roles.register(r);
   const customRolesPath = path.join(
     process.cwd(),
-    ".swarm-harness",
+    ".openswarm",
     "roles.json",
   );
   const custom = await loadCustomRoles(customRolesPath);
@@ -233,7 +233,7 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
         ...(opts.cleanupWorktrees === true && { cleanupOnDispose: true }),
       });
       process.stderr.write(
-        `[openswarm] --git-cascade enabled (worktrees under ${process.cwd()}/.swarm-harness/worktrees/${opts.cleanupWorktrees === true ? "; auto-cleanup on exit" : ""})\n`,
+        `[openswarm] --git-cascade enabled (worktrees under ${process.cwd()}/.openswarm/worktrees/${opts.cleanupWorktrees === true ? "; auto-cleanup on exit" : ""})\n`,
       );
     }
 

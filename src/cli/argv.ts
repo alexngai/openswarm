@@ -337,13 +337,13 @@ export function parseArgv(args: string[]): ParsedArgs {
     }
     if (tok === "--team-daemon") {
       // v0.5 stage 5E.3: internal entry for the forked per-team daemon.
-      // Reads its spec + paths from SWARM_HARNESS_DAEMON_* env (set by the
+      // Reads its spec + paths from OPENSWARM_DAEMON_* env (set by the
       // parent forker in `team start --detach`).
       return { kind: "team-daemon-entry" };
     }
 
     if (tok === "--agent-id" || tok.startsWith("--agent-id=")) {
-      // Accept and ignore — agentId is read from SWARM_HARNESS_AGENT_ID env var.
+      // Accept and ignore — agentId is read from OPENSWARM_AGENT_ID env var.
       // The flag exists only for process-listing clarity.
       if (tok === "--agent-id") {
         i += 2; // skip the value token too

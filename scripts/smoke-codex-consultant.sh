@@ -5,7 +5,7 @@
 # framework="codex-chatgpt", spawning a one-shot Codex consultant. Verifies
 # the result round-trips back through the consultant chain that 4M.5 + 4M.6
 # wired and 4M.7 finalised — agent.ts → SpawnRequest.framework →
-# StandaloneHost.spawn → spawnWorker → SWARM_HARNESS_FRAMEWORK env →
+# StandaloneHost.spawn → spawnWorker → OPENSWARM_FRAMEWORK env →
 # CodexFrameworkEngine → codex App Server → ChatGPT.
 #
 # REQUIRES (live mode):

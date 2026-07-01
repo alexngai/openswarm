@@ -37,7 +37,7 @@ Before breaking into stages, confirm what's *already shipped* so we don't redo i
 | In-memory `state.history` per session | ✅ | [state.ts:281-290](src/ui/repl/state.ts) |
 | `state.input.killBuffer` (single-slot kill ring) | ✅ | reducer fills on K/U/W |
 | Paste preserves newlines | ✅ (free from OpenTUI) | bundled `TextareaRenderable.handlePaste` UTF-8-decodes + strips ANSI; **does not strip newlines** |
-| **Persistent history** (`~/.swarm-harness/history`) | ❌ | nothing on disk |
+| **Persistent history** (`~/.openswarm/history`) | ❌ | nothing on disk |
 | **CRLF normalization on paste** | ❌ | `decodePasteBytes` is just `TextDecoder.decode`; Windows `\r\n` survives raw |
 | **Word motions** (Alt+B / Alt+F / Alt+D / Alt+Backspace) | ❌ | TextareaActions exist (`word-forward`, `word-backward`, `delete-word-forward`); zero KEY_BINDINGS entries |
 | **Yank (Ctrl+Y)** | ❌ | killBuffer fills but nothing reads it |
@@ -54,9 +54,9 @@ Numbers are Phase-4-local (distinct from the Q1–Q18 parity questions in [17-pa
 
 ### P4.Q1 — History persistence: file format + path
 
-**Decision: newline-delimited UTF-8 at `~/.swarm-harness/history`. 10,000-entry cap. Truncate-from-front on overflow.**
+**Decision: newline-delimited UTF-8 at `~/.openswarm/history`. 10,000-entry cap. Truncate-from-front on overflow.**
 
-- **Path:** `~/.swarm-harness/history` (matches doc 16 scope text and the existing `~/.swarm-harness/plugins/` namespace from Phase 1).
+- **Path:** `~/.openswarm/history` (matches doc 16 scope text and the existing `~/.openswarm/plugins/` namespace from Phase 1).
 - **Format:** plain newline-delimited UTF-8. One entry per line. No JSON wrapping — this is human-readable and matches `bash`/`zsh` history conventions. Entries are submitted prompts only (slash commands included).
 - **Cap:** 10,000 entries, truncate-from-front on overflow (oldest entries drop). Bounded file size; predictable read cost on startup.
 - **Multi-line entries:** for now, **flatten on save** by replacing `\n` with `` (SOH control char) so each entry stays on one file line. Restore on load. (Rationale: simpler than a JSONL-per-entry format; preserves the "one line per entry" mental model for `tail`/`grep`. SOH is unlikely to appear in real prompts.)
@@ -69,14 +69,14 @@ Numbers are Phase-4-local (distinct from the Q1–Q18 parity questions in [17-pa
 
 **Decision: global.**
 
-- One file at `~/.swarm-harness/history`, shared across all projects.
-- Up-arrow recalls anything you typed before, regardless of which directory you ran swarm-harness from.
+- One file at `~/.openswarm/history`, shared across all projects.
+- Up-arrow recalls anything you typed before, regardless of which directory you ran openswarm from.
 
 **Rationale.** Two camps in the wild:
 - **Global** (bash, zsh default): users want the same Up-arrow story everywhere. Easier mental model.
 - **Per-cwd** (Claude Code, claw's `record_prompt_history` for sessions): keeps prompts contextual; a "fix the test" prompt from project A doesn't pollute Up-arrow in project B.
 
-We pick global because: (1) doc 16 wrote the path as a single global file; (2) claw's session-prompt-history is *separate* from rustyline's editor history (the Up-arrow line editor is global; per-session is a `/history` slash command). swarm-harness does the same separation: persistent file = line editor; session-scoped is a future `/history` command.
+We pick global because: (1) doc 16 wrote the path as a single global file; (2) claw's session-prompt-history is *separate* from rustyline's editor history (the Up-arrow line editor is global; per-session is a `/history` slash command). openswarm does the same separation: persistent file = line editor; session-scoped is a future `/history` command.
 
 ### P4.Q3 — Dedup: store every entry or skip consecutive duplicates?
 
@@ -159,13 +159,13 @@ Four stages, each independently shippable. Sequenced so the highest-impact item 
 export function loadHistory(filePath?: string): string[];
 export function appendHistoryEntry(entry: string, filePath?: string): void;
 export const HISTORY_CAP = 10_000;
-export const DEFAULT_HISTORY_PATH = path.join(os.homedir(), ".swarm-harness", "history");
+export const DEFAULT_HISTORY_PATH = path.join(os.homedir(), ".openswarm", "history");
 ```
 
 Behavior:
 - `loadHistory` reads file → splits by `\n` → unescapes `` → returns array. Missing file → `[]`. Malformed lines → skip silently.
 - `appendHistoryEntry` skips blanks (`entry.trim() === ""`); skips consecutive duplicate (reads last line of existing file, compares); escapes `\n` to ``; appends; if file exceeds cap, rewrites with `tail`-style truncation.
-- All file ops use `mkdirSync(dirname(file), { recursive: true })` to ensure `~/.swarm-harness/` exists.
+- All file ops use `mkdirSync(dirname(file), { recursive: true })` to ensure `~/.openswarm/` exists.
 
 **Wiring:**
 - `app.tsx` `onMount`: call `loadHistory()`, dispatch a `hydrate-history` reducer event.
@@ -284,7 +284,7 @@ From [docs/16-parity-plan.md:197-200](16-parity-plan.md), refined:
 ## Risks
 
 - **CRLF normalization at the wrapping layer may not work** if OpenTUI's textarea doesn't expose `handlePaste` as a settable property. Fallback: subclass `TextareaRenderable`. Cost: +0.25d.
-- **History file race** if the user runs two swarm-harness instances simultaneously and both append. Atomicity is per-`appendFileSync` call; concurrent writes can interleave but won't corrupt at the file-system level. We accept this — multi-instance history merging is v0.2 territory.
+- **History file race** if the user runs two openswarm instances simultaneously and both append. Atomicity is per-`appendFileSync` call; concurrent writes can interleave but won't corrupt at the file-system level. We accept this — multi-instance history merging is v0.2 territory.
 - **Path expansion edge case**: `~` in `process.env.HOME` works, but a user with a non-standard HOME or running under `sudo` may write to the wrong place. Use `os.homedir()` not raw `~`. Already the pattern elsewhere in the repo.
 
 ---
@@ -315,7 +315,7 @@ From [docs/16-parity-plan.md:197-200](16-parity-plan.md), refined:
 
 Confirmed shipped 2026-04-30. Each criterion from the acceptance criteria section is met:
 
-- [x] **T6 — Persistent history (Stage A):** `src/ui/history.ts` ships `loadHistory` / `appendHistoryEntry`; app hydrates on mount, appends before dispatch. File at `~/.swarm-harness/history`, 10k-entry cap, consecutive-dedup, blank-skip, multi-line SOH encoding. Unit tests in `src/ui/history.test.ts` cover all edge cases. Commits in range f4d35ad..1df9547.
+- [x] **T6 — Persistent history (Stage A):** `src/ui/history.ts` ships `loadHistory` / `appendHistoryEntry`; app hydrates on mount, appends before dispatch. File at `~/.openswarm/history`, 10k-entry cap, consecutive-dedup, blank-skip, multi-line SOH encoding. Unit tests in `src/ui/history.test.ts` cover all edge cases. Commits in range f4d35ad..1df9547.
 - [x] **T7 — Word motions + yank (Stage B):** `src/ui/repl-solid/input.tsx` gains KEY_BINDINGS for Alt+B/F/D/Backspace; reducer gains Ctrl+Y yank from `killBuffer`. Tests extend `state.test.ts` and `input.test.tsx`. Same commit range.
 - [x] **T1 polish — CRLF normalization (Stage C):** `src/ui/repl-solid/input.tsx` wraps `handlePaste` to normalize `\r\n` and bare `\r` to `\n` before insertion. Bun-native test confirms no `\r` artifacts after Windows-style paste. Same commit range.
 - [x] **Docs + cleanup (Stage D):** `docs/15-parity-gaps.md` marks T1/T6/T7 ✅; `docs/16-parity-plan.md` § Phase 4 gains implementation note cross-referencing this file; `docs/18-phase-4-plan.md` status updated to shipped. Commit immediately follows 1df9547.

@@ -1,5 +1,5 @@
 /**
- * Wire-protocol framework for swarm-harness JSONL streams.
+ * Wire-protocol framework for openswarm JSONL streams.
  *
  * Adds three pieces inspired by kimi-code's
  * `packages/agent-core/src/agent/records`:

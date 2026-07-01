@@ -309,9 +309,9 @@ describe("loadExecPolicyConfig", () => {
     expect(config.rules).toEqual([]);
   });
 
-  it("loads rules from .swarm-harness/rules.json", () => {
+  it("loads rules from .openswarm/rules.json", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "execpol-"));
-    const configDir = path.join(tmpDir, ".swarm-harness");
+    const configDir = path.join(tmpDir, ".openswarm");
     fs.mkdirSync(configDir);
     fs.writeFileSync(
       path.join(configDir, "rules.json"),
@@ -337,7 +337,7 @@ describe("loadExecPolicyConfig", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "execpol-"));
 
     // Project layer
-    const projectDir = path.join(tmpDir, "project", ".swarm-harness");
+    const projectDir = path.join(tmpDir, "project", ".openswarm");
     fs.mkdirSync(projectDir, { recursive: true });
     fs.writeFileSync(
       path.join(projectDir, "rules.json"),
@@ -347,7 +347,7 @@ describe("loadExecPolicyConfig", () => {
     );
 
     // User layer
-    const homeDir = path.join(tmpDir, "home", ".swarm-harness");
+    const homeDir = path.join(tmpDir, "home", ".openswarm");
     fs.mkdirSync(homeDir, { recursive: true });
     fs.writeFileSync(
       path.join(homeDir, "rules.json"),
@@ -366,7 +366,7 @@ describe("loadExecPolicyConfig", () => {
 
   it("skips invalid rules", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "execpol-"));
-    const configDir = path.join(tmpDir, ".swarm-harness");
+    const configDir = path.join(tmpDir, ".openswarm");
     fs.mkdirSync(configDir);
     fs.writeFileSync(
       path.join(configDir, "rules.json"),
@@ -391,7 +391,7 @@ describe("loadExecPolicyConfig", () => {
 
   it("handles malformed JSON", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "execpol-"));
-    const configDir = path.join(tmpDir, ".swarm-harness");
+    const configDir = path.join(tmpDir, ".openswarm");
     fs.mkdirSync(configDir);
     fs.writeFileSync(path.join(configDir, "rules.json"), "{{invalid");
 
@@ -478,7 +478,7 @@ describe("persistAmendment", () => {
     const amendment = deriveAmendment("git push origin main")!;
     persistAmendment(amendment, { homedir: tmpDir });
 
-    const filePath = path.join(tmpDir, ".swarm-harness", "rules.json");
+    const filePath = path.join(tmpDir, ".openswarm", "rules.json");
     expect(fs.existsSync(filePath)).toBe(true);
 
     const content = JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -488,7 +488,7 @@ describe("persistAmendment", () => {
 
   it("appends to existing rules", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "amend-"));
-    const dir = path.join(tmpDir, ".swarm-harness");
+    const dir = path.join(tmpDir, ".openswarm");
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(
       path.join(dir, "rules.json"),
@@ -510,7 +510,7 @@ describe("persistAmendment", () => {
     persistAmendment(amendment, { homedir: tmpDir });
     persistAmendment(amendment, { homedir: tmpDir });
 
-    const filePath = path.join(tmpDir, ".swarm-harness", "rules.json");
+    const filePath = path.join(tmpDir, ".openswarm", "rules.json");
     const content = JSON.parse(fs.readFileSync(filePath, "utf8"));
     expect(content.rules.length).toBe(1);
   });

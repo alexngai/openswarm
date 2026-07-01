@@ -1,9 +1,9 @@
 /**
- * init.ts — initialize a swarm-harness workspace.
+ * init.ts — initialize a openswarm workspace.
  *
  * Creates:
- *   .swarm-harness/        (recursive mkdir)
- *   .gitignore           (appends .swarm-harness/ if not already present)
+ *   .openswarm/        (recursive mkdir)
+ *   .gitignore           (appends .openswarm/ if not already present)
  *   CLAUDE.md            (stack-detected starter; never overwrites existing)
  *
  * Idempotent — safe to run multiple times.
@@ -85,11 +85,11 @@ function claudeMdContent(stack: Stack): string {
 // ---------------------------------------------------------------------------
 
 export async function runInit(cwd: string): Promise<number> {
-  const configDir = path.join(cwd, ".swarm-harness");
+  const configDir = path.join(cwd, ".openswarm");
   const gitignorePath = path.join(cwd, ".gitignore");
   const claudeMdPath = path.join(cwd, "CLAUDE.md");
 
-  // 1. Create .swarm-harness/ directory.
+  // 1. Create .openswarm/ directory.
   let dirCreated = false;
   try {
     await fs.mkdir(configDir, { recursive: true });
@@ -97,7 +97,7 @@ export async function runInit(cwd: string): Promise<number> {
     // We rely on mkdir's recursive silently succeeding for existing dirs.
     dirCreated = true;
   } catch (err) {
-    process.stderr.write(`error: could not create .swarm-harness/: ${String(err)}\n`);
+    process.stderr.write(`error: could not create .openswarm/: ${String(err)}\n`);
     return 1;
   }
 
@@ -113,13 +113,13 @@ export async function runInit(cwd: string): Promise<number> {
   }
 
   if (dirWasNew) {
-    process.stdout.write("created  .swarm-harness/\n");
+    process.stdout.write("created  .openswarm/\n");
   } else {
-    process.stdout.write("skipped  .swarm-harness/ (already exists)\n");
+    process.stdout.write("skipped  .openswarm/ (already exists)\n");
   }
 
-  // 2. Append .swarm-harness/ to .gitignore if not already present.
-  const gitignoreEntry = ".swarm-harness/";
+  // 2. Append .openswarm/ to .gitignore if not already present.
+  const gitignoreEntry = ".openswarm/";
   let gitignoreUpdated = false;
   try {
     let existing = "";
@@ -140,9 +140,9 @@ export async function runInit(cwd: string): Promise<number> {
   }
 
   if (gitignoreUpdated) {
-    process.stdout.write("updated  .gitignore (added .swarm-harness/)\n");
+    process.stdout.write("updated  .gitignore (added .openswarm/)\n");
   } else {
-    process.stdout.write("skipped  .gitignore (.swarm-harness/ already present)\n");
+    process.stdout.write("skipped  .gitignore (.openswarm/ already present)\n");
   }
 
   // 3. Create CLAUDE.md if it doesn't exist.

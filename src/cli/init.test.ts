@@ -8,7 +8,7 @@ import * as path from "node:path";
 // ---------------------------------------------------------------------------
 
 async function makeTmpDir(): Promise<string> {
-  return fs.mkdtemp(path.join(os.tmpdir(), "swarm-harness-init-test-"));
+  return fs.mkdtemp(path.join(os.tmpdir(), "openswarm-init-test-"));
 }
 
 async function cleanTmpDir(dir: string): Promise<void> {
@@ -29,7 +29,7 @@ describe("runInit", () => {
     tmps.length = 0;
   });
 
-  it("creates .swarm-harness/ directory", async () => {
+  it("creates .openswarm/ directory", async () => {
     const dir = await makeTmpDir();
     tmps.push(dir);
 
@@ -37,11 +37,11 @@ describe("runInit", () => {
     const code = await runInit(dir);
 
     expect(code).toBe(0);
-    const stat = await fs.stat(path.join(dir, ".swarm-harness"));
+    const stat = await fs.stat(path.join(dir, ".openswarm"));
     expect(stat.isDirectory()).toBe(true);
   });
 
-  it("adds .swarm-harness/ to .gitignore", async () => {
+  it("adds .openswarm/ to .gitignore", async () => {
     const dir = await makeTmpDir();
     tmps.push(dir);
 
@@ -49,10 +49,10 @@ describe("runInit", () => {
     await runInit(dir);
 
     const gitignore = await fs.readFile(path.join(dir, ".gitignore"), "utf8");
-    expect(gitignore).toContain(".swarm-harness/");
+    expect(gitignore).toContain(".openswarm/");
   });
 
-  it("does not duplicate .swarm-harness/ entry in .gitignore on second run", async () => {
+  it("does not duplicate .openswarm/ entry in .gitignore on second run", async () => {
     const dir = await makeTmpDir();
     tmps.push(dir);
 
@@ -61,7 +61,7 @@ describe("runInit", () => {
     await runInit(dir);
 
     const gitignore = await fs.readFile(path.join(dir, ".gitignore"), "utf8");
-    const count = gitignore.split(".swarm-harness/").length - 1;
+    const count = gitignore.split(".openswarm/").length - 1;
     expect(count).toBe(1);
   });
 
@@ -145,7 +145,7 @@ describe("runInit", () => {
     expect(code2).toBe(0);
   });
 
-  it("appends .swarm-harness/ to existing .gitignore without removing existing entries", async () => {
+  it("appends .openswarm/ to existing .gitignore without removing existing entries", async () => {
     const dir = await makeTmpDir();
     tmps.push(dir);
 
@@ -157,6 +157,6 @@ describe("runInit", () => {
     const gitignore = await fs.readFile(path.join(dir, ".gitignore"), "utf8");
     expect(gitignore).toContain("node_modules/");
     expect(gitignore).toContain("dist/");
-    expect(gitignore).toContain(".swarm-harness/");
+    expect(gitignore).toContain(".openswarm/");
   });
 });

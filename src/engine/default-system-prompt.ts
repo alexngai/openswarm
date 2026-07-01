@@ -3,7 +3,7 @@
  *
  * Structure follows the Codex CLI base prompt
  * (codex-rs/core/prompt_with_apply_patch_instructions.md) with behavioral
- * guidance preserved and tool references updated to match swarm-harness's
+ * guidance preserved and tool references updated to match openswarm's
  * actual tool surface (edit_file, todo_write, bash, etc.).
  *
  * Composable: `buildSystemPrompt()` layers base + caller extensions + role

@@ -73,7 +73,7 @@ export interface BrowserOAuthOptions {
 const SUCCESS_HTML =
   "<!doctype html><meta charset=utf-8><title>OpenSwarm</title>" +
   "<body style='font-family:system-ui;text-align:center;padding-top:4rem'>" +
-  "<h1>Authorized</h1><p>You can close this window and return to swarm-harness.</p>" +
+  "<h1>Authorized</h1><p>You can close this window and return to openswarm.</p>" +
   "<script>setTimeout(()=>window.close(),1500)</script>";
 
 /**

@@ -56,10 +56,10 @@ import { writeFileSync, existsSync, mkdirSync } from "node:fs";
 
 const repo = process.cwd();
 // Ensure the harness state dirs exist before the tracker opens its sqlite DB.
-const dbDir = path.join(repo, ".swarm-harness", "git-cascade");
+const dbDir = path.join(repo, ".openswarm", "git-cascade");
 const dbPath = path.join(dbDir, "tracker.db");
 mkdirSync(dbDir, { recursive: true });
-mkdirSync(path.join(repo, ".swarm-harness", "worktrees"), { recursive: true });
+mkdirSync(path.join(repo, ".openswarm", "worktrees"), { recursive: true });
 // Share a single tracker between the smoke's raw setup (trunk) and the
 // adapter (member streams). Without sharing, the adapter would open its
 // own DB and not see the trunk stream.
@@ -159,7 +159,7 @@ const grandStreamId = await (async () => {
 })();
 
 // Drop a new file in the root's worktree and commit it.
-const rootWorktree = path.join(repo, ".swarm-harness", "worktrees", rootStreamId);
+const rootWorktree = path.join(repo, ".openswarm", "worktrees", rootStreamId);
 writeFileSync(path.join(rootWorktree, "cascade.txt"), "cascade payload\n");
 execSync("git add cascade.txt", { cwd: rootWorktree });
 const cRoot = await adapter.commitChanges("agent-root", "feat: cascade payload");
@@ -242,7 +242,7 @@ fi
 
 # ---- Flow E: worktree CLI ---------------------------------------------------
 LIST_OUT=$(node "$REPO_ROOT/dist/cli.js" worktree list --repo "$TMP" 2>&1)
-if echo "$LIST_OUT" | grep -q "/.swarm-harness/worktrees/"; then
+if echo "$LIST_OUT" | grep -q "/.openswarm/worktrees/"; then
   record PASS FlowE-list "worktree list found a worktree"
 else
   echo "$LIST_OUT"
@@ -250,7 +250,7 @@ else
 fi
 
 CLEAN_OUT=$(node "$REPO_ROOT/dist/cli.js" worktree clean --repo "$TMP" 2>&1)
-if echo "$CLEAN_OUT" | grep -qE "removed: .*\\.swarm-harness/worktrees/" && echo "$CLEAN_OUT" | grep -qE "summary: removed=[0-9]+ failed=0"; then
+if echo "$CLEAN_OUT" | grep -qE "removed: .*\\.openswarm/worktrees/" && echo "$CLEAN_OUT" | grep -qE "summary: removed=[0-9]+ failed=0"; then
   record PASS FlowE-clean "worktree clean removed worktrees with no failures"
 else
   echo "$CLEAN_OUT"
@@ -258,10 +258,10 @@ else
 fi
 
 # Verify the worktree directory is actually gone.
-if [[ ! -d "$TMP/.swarm-harness/worktrees" ]] || [[ -z "$(ls -A "$TMP/.swarm-harness/worktrees" 2>/dev/null)" ]]; then
+if [[ ! -d "$TMP/.openswarm/worktrees" ]] || [[ -z "$(ls -A "$TMP/.openswarm/worktrees" 2>/dev/null)" ]]; then
   record PASS FlowE-cleanup "worktree dir is gone post-clean"
 else
-  ls -la "$TMP/.swarm-harness/worktrees"
+  ls -la "$TMP/.openswarm/worktrees"
   record FAIL FlowE-cleanup "worktree dir still exists post-clean"
 fi
 

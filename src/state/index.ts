@@ -710,7 +710,7 @@ export function getStateDB(dbPath?: string): StateDB {
       dbPath ??
       path.join(
         process.env.HOME ?? process.env.USERPROFILE ?? ".",
-        ".swarm-harness",
+        ".openswarm",
         "state.db",
       );
     stateDB = new StateDB(resolvedPath);

@@ -1,7 +1,7 @@
 /**
  * smoke.ts — zero-token wiring check.
  *
- * Proves the swarm-coder ↔ swarmkit-eval seam works end-to-end: matrix → backend →
+ * Proves the openswarm ↔ swarmkit-eval seam works end-to-end: matrix → backend →
  * adapter → grade → content-addressed store → paired-CI report. Uses the built-in
  * `smoke` benchmark (3 arms × 3 seeds) driven by the deterministic MockAdapter on the
  * in-process backend. No models are called, so this is safe to run anytime.

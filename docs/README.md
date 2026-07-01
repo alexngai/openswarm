@@ -1,10 +1,10 @@
-# swarm-harness design docs
+# openswarm design docs
 
-Early design capture for swarm-harness — a TypeScript agent harness built around Claude, where the atomic unit is a single coding agent and the primary product surface is multi-agent swarm orchestration.
+Early design capture for openswarm — a TypeScript agent harness built around Claude, where the atomic unit is a single coding agent and the primary product surface is multi-agent swarm orchestration.
 
 ## Map
 
-- [00-vision.md](./00-vision.md) — project intent, what swarm-harness is, relationship to claw-code
+- [00-vision.md](./00-vision.md) — project intent, what openswarm is, relationship to claw-code
 - [01-requirements.md](./01-requirements.md) — functional and non-functional requirements, scope
 - [02-architecture.md](./02-architecture.md) — package layout, layering, process topologies
 - [03-interfaces.md](./03-interfaces.md) — the three abstraction seams that must stay stable
@@ -38,7 +38,7 @@ Early design capture for swarm-harness — a TypeScript agent harness built arou
 *All stages below are **shipped** (Stage A + team stages B0–B2, the §9 robustness pass, and the
 published convention). B3 (standardization) is intentionally skipped (Q5).*
 
-- [30-acp-compatibility-plan.md](./30-acp-compatibility-plan.md) — **Stage A: single-agent ACP parity.** Expose one swarm-harness agent over ACP (JSON-RPC/ndjson on stdio) by reusing the `AgentEngine.run()` stream + `PermissionGate` seams. Event mapping, tool-kind/diff tables, staged plan A.1–A.7 with acceptance.
+- [30-acp-compatibility-plan.md](./30-acp-compatibility-plan.md) — **Stage A: single-agent ACP parity.** Expose one openswarm agent over ACP (JSON-RPC/ndjson on stdio) by reusing the `AgentEngine.run()` stream + `PermissionGate` seams. Event mapping, tool-kind/diff tables, staged plan A.1–A.7 with acceptance.
 - [31-teams-acp-design.md](./31-teams-acp-design.md) — **Stage B: driving a *team* from an editor.** Projecting N concurrent members onto one ACP session with graceful degradation: additive `_meta.swarm` enrichment, capability-negotiated baseline-vs-rich emission, per-topology mapping. §11 decisions locked (quiescence, permissions, member-text, session/load, build-our-own-client).
 - [32-acp-implementation-plan.md](./32-acp-implementation-plan.md) — **Build-ready task breakdown for Stage A.** The shared `buildAgentRuntime` refactor, `src/acp/` module layout, `AcpAgent` + translator + permission-driver signatures, test strategy, and a 7-step checkpointed build sequence (~2.5–3d). Grounded in the current `src/cli/main.ts` run-assembly seams.
 - [33-teams-acp-implementation-plan.md](./33-teams-acp-implementation-plan.md) — **Stage B build plan + live status board.** B0 (team-by-default coordinator) build sequence, then §6 status and **§9 — the live board** tracking everything since: B1/B2, the robustness pass (subtree quiescence, permission-IPC serialization, `allow_always`, parity, headless `ask_user_question` park-and-resume, latency), and the post-review caveats.

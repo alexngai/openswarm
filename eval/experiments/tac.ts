@@ -1,7 +1,7 @@
 /**
  * tac.ts — run TheAgentCompany on the SHARED swarmkit-eval TAC adapter (Phase 4).
  *
- * Proves the migration: swarm-coder runs TAC via swarmkit-eval's ported `TacDockerAdapter`
+ * Proves the migration: openswarm runs TAC via swarmkit-eval's ported `TacDockerAdapter`
  * (single agent × stock/notes/opentasks coordination arms — the autonomation RCT), with NO
  * opentasks dependency. The multi-agent single-vs-team variant lives in tac-single-vs-team.ts (marble).
  *
@@ -108,9 +108,9 @@ function passEc2Env(): Record<string, string> {
     "TAC_AGENT_SETUP_CMD", "TAC_PREFLIGHT_ONLY", "TAC_ENV_PREFLIGHT", "TAC_EVAL_LLM_PREFLIGHT",
     "TAC_GITLAB_SERVICE_RESET", "TAC_GITLAB_TOKEN_REFRESH", "TAC_GITLAB_WIKI_SMOKE",
     "TAC_GITLAB_WIKI_SMOKE_REQUIRE_GIT", "TAC_GITLAB_WIKI_TARGET_SMOKE_PROJECT",
-    "TAC_SWARM_HARNESS_VERSION", "TAC_SWARM_HARNESS_MODE", "TAC_SWARM_HARNESS_CONCURRENCY",
-    "TAC_SWARM_HARNESS_TASKS", "TAC_SWARM_HARNESS_AGENTS",
-    "TAC_SWARM_HARNESS_MULTIAGENT_PROMPT", "TAC_SWARM_HARNESS_ROLE_POLICY", "TAC_SWARM_HARNESS_OPENTASKS",
+    "TAC_OPENSWARM_VERSION", "TAC_OPENSWARM_MODE", "TAC_OPENSWARM_CONCURRENCY",
+    "TAC_OPENSWARM_TASKS", "TAC_OPENSWARM_AGENTS",
+    "TAC_OPENSWARM_MULTIAGENT_PROMPT", "TAC_OPENSWARM_ROLE_POLICY", "TAC_OPENSWARM_OPENTASKS",
     "TAC_TEAM_PROTOCOL",
   ];
   const out: Record<string, string> = {};

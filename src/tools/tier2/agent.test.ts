@@ -1,9 +1,9 @@
 /**
  * Tests for the `agent` Tier 2 tool — v0.4 stage 4E.1 additions.
  *
- * Focused on the new `team` and `framework` parameters: verifies they
- * propagate to the SpawnRequest correctly and that backward-compatible
- * callers (no team / framework) keep their existing behavior.
+ * Focused on the new `team` parameter and the retired `framework` parameter:
+ * verifies team scope propagates to the SpawnRequest correctly and that
+ * stale callers cannot override deployment-level engine selection.
  */
 
 import { describe, it, expect } from "vitest";
@@ -61,7 +61,7 @@ describe("agent tool — team parameter", () => {
 });
 
 describe("agent tool — framework parameter", () => {
-  it("plumbs framework through to the SpawnRequest", async () => {
+  it("ignores stale framework input instead of plumbing it to SpawnRequest", async () => {
     const { host, calls } = makeFakeHost();
     const result = await agentTool.execute(
       { prompt: "do work", framework: "codex-chatgpt", wait: false },
@@ -69,7 +69,7 @@ describe("agent tool — framework parameter", () => {
     );
     expect(result.status).toBe("ok");
     expect(calls.spawn).toHaveLength(1);
-    expect(calls.spawn[0]?.framework).toBe("codex-chatgpt");
+    expect(calls.spawn[0]?.framework).toBeUndefined();
   });
 
   it("omitted framework leaves it undefined on SpawnRequest", async () => {

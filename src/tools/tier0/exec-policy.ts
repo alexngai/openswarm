@@ -331,16 +331,16 @@ export function loadExecPolicyConfig(
   const candidates: string[] = [];
 
   // System layer (lowest priority)
-  candidates.push("/etc/swarm-harness/rules.json");
+  candidates.push("/etc/openswarm/rules.json");
 
   // Project layer
-  candidates.push(path.join(cwd, ".swarm-harness", "rules.json"));
+  candidates.push(path.join(cwd, ".openswarm", "rules.json"));
 
   // User layer
-  candidates.push(path.join(home, ".swarm-harness", "rules.json"));
+  candidates.push(path.join(home, ".openswarm", "rules.json"));
 
   // Env override (highest priority)
-  const envDir = env.SWARM_HARNESS_CONFIG_DIR;
+  const envDir = env.OPENSWARM_CONFIG_DIR;
   if (envDir !== undefined && envDir.length > 0) {
     candidates.push(path.join(envDir, "rules.json"));
   }
@@ -443,7 +443,7 @@ export function persistAmendment(
   opts: LoadExecPolicyOptions = {},
 ): void {
   const home = opts.homedir ?? os.homedir();
-  const filePath = path.join(home, ".swarm-harness", "rules.json");
+  const filePath = path.join(home, ".openswarm", "rules.json");
 
   let existing: { rules: PrefixRule[] } = { rules: [] };
   try {

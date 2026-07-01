@@ -22,13 +22,13 @@ function codexOpts(overrides: Partial<CommonOpts> = {}): CommonOpts {
 }
 
 describe("buildAgentRuntime — codex-native branch", () => {
-  const prev = process.env.SWARM_HARNESS_TEST_SCRIPT;
+  const prev = process.env.OPENSWARM_TEST_SCRIPT;
   beforeEach(() => {
-    process.env.SWARM_HARNESS_TEST_SCRIPT = "1"; // skip the auth gate for the unit test
+    process.env.OPENSWARM_TEST_SCRIPT = "1"; // skip the auth gate for the unit test
   });
   afterEach(() => {
-    if (prev === undefined) delete process.env.SWARM_HARNESS_TEST_SCRIPT;
-    else process.env.SWARM_HARNESS_TEST_SCRIPT = prev;
+    if (prev === undefined) delete process.env.OPENSWARM_TEST_SCRIPT;
+    else process.env.OPENSWARM_TEST_SCRIPT = prev;
   });
 
   it("defaults a non-gpt model to gpt-5.5 and builds a HardenedNativeEngine via openai-codex", async () => {

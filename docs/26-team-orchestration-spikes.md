@@ -16,7 +16,7 @@ Two spikes ran in parallel to determine whether `--framework claude-agent-sdk` a
 | Track | Question | Verdict | Cost to ship in v0.4 |
 |---|---|---|---|
 | A | Can `claude-agent-sdk` framework-mode workers use Tier 2 SwarmHost-routed tools (`send_message`, `check_inbox`, `task_stop`, `task_output`, `ask_user_question`) if we don't strip them? | **GREEN** — most work today; 3 pre-existing defects surfaced | ~1d (drop strip + verify) plus ~1.5d (defect fixes) |
-| B | Can Codex App Server's `DynamicToolCall` mechanism register swarm-harness Tier 2 tools as host tools the agent will call? | **GREEN** — full round-trip captured live | ~4d (wire DynamicToolCall + 5 tools through the JSON-RPC pipe) |
+| B | Can Codex App Server's `DynamicToolCall` mechanism register openswarm Tier 2 tools as host tools the agent will call? | **GREEN** — full round-trip captured live | ~4d (wire DynamicToolCall + 5 tools through the JSON-RPC pipe) |
 
 **Net:** "true peer teams" are achievable in v0.4 across all three engine modes (transport / claude-agent-sdk / codex-chatgpt). The §8a "framework members can't be peers" constraint in the design draft was wrong; the rewrite reflects empirical reality.
 
@@ -82,7 +82,7 @@ The check belongs in `task_stop.ts` or in `StandaloneHost.task.stop` and uses th
 
 ## Track B — Codex App Server `DynamicToolCall` viability
 
-**Goal:** determine whether Codex App Server's experimental `DynamicToolCall` mechanism can be used to register swarm-harness Tier 2 tools as host tools that the Codex agent will plan against and invoke.
+**Goal:** determine whether Codex App Server's experimental `DynamicToolCall` mechanism can be used to register openswarm Tier 2 tools as host tools that the Codex agent will plan against and invoke.
 
 **Method:** captured a full live JSON-RPC round-trip at [test/fixtures/codex-app-server/dynamic-tool-call-spike.jsonl](../test/fixtures/codex-app-server/dynamic-tool-call-spike.jsonl) (129 frames, 41 KB). Single test tool `swarm_ping(content: string) → string` registered at thread start; agent prompted to call it.
 
@@ -94,7 +94,7 @@ The check belongs in `task_stop.ts` or in `StandaloneHost.task.stop` and uses th
 {
   "jsonrpc": "2.0", "id": 1, "method": "initialize",
   "params": {
-    "clientInfo": {"name": "swarm-harness-track-b-spike", "version": "0.0.1"},
+    "clientInfo": {"name": "openswarm-track-b-spike", "version": "0.0.1"},
     "capabilities": {"experimentalApi": true}
   }
 }
@@ -179,7 +179,7 @@ Tool-call request sent at `1777760806175`; host response at `1777760806176`. **~
 
 ### Viability classification: **GREEN**
 
-DynamicToolCall is the right primitive for hosting swarm-harness Tier 2 tools in codex-mode workers. The lifecycle is standard JSON-RPC request/response over the existing stdio pipe; no protocol invention needed. Response shape (`contentItems` with `inputText`) maps cleanly to swarm-harness's existing tool result format.
+DynamicToolCall is the right primitive for hosting openswarm Tier 2 tools in codex-mode workers. The lifecycle is standard JSON-RPC request/response over the existing stdio pipe; no protocol invention needed. Response shape (`contentItems` with `inputText`) maps cleanly to openswarm's existing tool result format.
 
 ### Implementation cost estimate (v0.4)
 
@@ -191,7 +191,7 @@ DynamicToolCall is the right primitive for hosting swarm-harness Tier 2 tools in
 | Error path: when tool execution fails, return `success: false` with diagnostic in `contentItems` | 0.5d |
 | Wire `experimentalApi: true` into the existing `initialize` capabilities | 0.25d |
 | Tests: round-trip a registered tool, error path, multi-tool registration | 1d |
-| Hook into `framework-filter.ts` so codex framework mode no longer fully strips swarm-harness tools — only the ones that don't make sense for codex | 0.25d |
+| Hook into `framework-filter.ts` so codex framework mode no longer fully strips openswarm tools — only the ones that don't make sense for codex | 0.25d |
 
 **Total: ~4 days.** Risk: low. The protocol is captured; all moving parts are observable.
 
@@ -199,8 +199,8 @@ DynamicToolCall is the right primitive for hosting swarm-harness Tier 2 tools in
 
 1. **`experimentalApi: true` may be unstable.** The capability flag name suggests pre-release. Verify against current Codex CLI release notes before ship; pin a tested CLI version.
 2. **`gpt-5.4` model dependency persists** ([SPIKE-NOTES.md](../test/fixtures/codex-app-server/SPIKE-NOTES.md): codex-prefixed models are 400-rejected on subscription auth). Already a known constraint; not new.
-3. **Codex's own tool surface remains active** — agents in codex framework mode see Codex's `exec`/`apply_patch`/etc. AND swarm-harness's Tier 2 tools. Verify the agent doesn't get confused; if it does, mitigation is to suppress Codex's surface via a thread/start parameter (need to check protocol for that).
-4. **Schema differences between Codex's `Tool` and swarm-harness's `ToolSpec`.** Codex requires `inputSchema` as JSON Schema; swarm-harness Tier 2 tools have zod schemas. We already convert via `zod-to-json-schema` (used in [agent.ts:32](../src/tools/tier2/agent.ts)) — same conversion will work here.
+3. **Codex's own tool surface remains active** — agents in codex framework mode see Codex's `exec`/`apply_patch`/etc. AND openswarm's Tier 2 tools. Verify the agent doesn't get confused; if it does, mitigation is to suppress Codex's surface via a thread/start parameter (need to check protocol for that).
+4. **Schema differences between Codex's `Tool` and openswarm's `ToolSpec`.** Codex requires `inputSchema` as JSON Schema; openswarm Tier 2 tools have zod schemas. We already convert via `zod-to-json-schema` (used in [agent.ts:32](../src/tools/tier2/agent.ts)) — same conversion will work here.
 
 ### Recommendation
 

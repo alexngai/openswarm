@@ -18,7 +18,7 @@
  *   - `executor` — full Tier 0 + Tier 1, no recursive spawn (`agent`)
  *   - `reviewer` — read-only + structured_output (no writes, no spawn)
  *
- * Custom roles are loaded from `<cwd>/.swarm-harness/roles.json` at
+ * Custom roles are loaded from `<cwd>/.openswarm/roles.json` at
  * orchestrator startup. Invalid entries are skipped with a stderr warning;
  * a missing or unreadable file yields `[]` so operators can ship without
  * customisation.
@@ -209,7 +209,7 @@ export const BUILTIN_ROLES: readonly Role[] = [
  * whole load. A missing file yields `[]` silently. Unreadable or malformed
  * files yield `[]` with a stderr warning.
  *
- * The trust boundary is the same as M2 hooks: `.swarm-harness/roles.json` is
+ * The trust boundary is the same as M2 hooks: `.openswarm/roles.json` is
  * user-controlled. Signed role manifests are M5+.
  */
 export async function loadCustomRoles(

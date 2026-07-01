@@ -16,7 +16,7 @@ Turn M0's atomic agent into a coordinated swarm: one orchestrator process spawns
 - In-memory `TaskRegistry` owned by the orchestrator; accessed by workers via IPC
 - Tier 2 tools: `agent`, `task_create`, `task_update`, `task_get`, `task_list`
 - Lane event catalog port from `docs/research/05-swarm.md` §5 (names and failure taxonomy)
-- `swarm-harness swarm run tasks.jsonl --concurrency N` CLI subcommand
+- `openswarm swarm run tasks.jsonl --concurrency N` CLI subcommand
 - `results.jsonl` output stream (append-as-complete)
 - Real-subprocess integration tests with mocked-SDK child process
 - `scripts/smoke-swarm.sh` live-API gate (optional, like M0's `smoke.sh`)
@@ -28,7 +28,7 @@ Turn M0's atomic agent into a coordinated swarm: one orchestrator process spawns
 - Remote triggers
 - Per-worker git worktree isolation (shared cwd for M1; worktree lands with M3 git coord)
 - File-backed TaskRegistry (in-memory only; persistence arrives with retry in M3)
-- **Worker-state file** at `.swarm-harness/workers/<agentId>.json` → M3 alongside file-backed TaskRegistry. `docs/05-swarm-model.md` §2.3 describes it, but it's not needed for M1's in-memory model.
+- **Worker-state file** at `.openswarm/workers/<agentId>.json` → M3 alongside file-backed TaskRegistry. `docs/05-swarm-model.md` §2.3 describes it, but it's not needed for M1's in-memory model.
 - Plugins / skills / MCP-beyond-engine (M2)
 
 ## Decision context
@@ -44,7 +44,7 @@ Planning informed by M0 learnings + four locked decisions (see prompt interview)
 
 Each is executable with a one-line test harness.
 
-1. `swarm-harness swarm run tasks.jsonl --concurrency 3` parses a JSONL task file, spawns workers, exits 0 when all complete.
+1. `openswarm swarm run tasks.jsonl --concurrency 3` parses a JSONL task file, spawns workers, exits 0 when all complete.
 2. With a 10-task file and `--concurrency 3`: at most 3 worker subprocesses alive at any instant. **Verification:** the orchestrator's internal `WorkerPool` instruments `activeCount`; test asserts `activeCount <= concurrency` at 10ms sampling intervals. `ps` sampling is a secondary sanity check, not the primary gate.
 3. Each task reaches a terminal state (`succeeded` | `failed` | `timeout` | `cancelled`) — never orphaned `pending` / `running` on orchestrator exit. Every task in the input file gets a terminal state record in `results.jsonl`; internal registry state alone is insufficient.
 4. `results.jsonl` has one line per input task with `{id, status, output?, error?, usage, wallClockMs, agentId, sessionId, completedAt}`. `completedAt` is epoch-ms at which the orchestrator received `task_result`. Consumers that require stable ordering sort by `completedAt` after read (the write order is a valid interleaving of completions, not a stable order on simultaneous finishes).
@@ -54,7 +54,7 @@ Each is executable with a one-line test harness.
 8. `agent` tool from within a worker spawns a sub-agent via `WorkerHost.spawn`. Sub-agent's lane events relay back up through the parent worker's JSONL to the orchestrator; parent's `await agent.wait()` resolves with the sub-agent's `AgentResult`. All events carry `parentToolUseId` matching the `agent` tool-use id in the parent's transcript.
 9. Recursion depth limit: fourth-level nested spawn rejects with `{ status: "error", message: "recursion depth limit reached (<MAX_DEPTH>)" }` — no fork bomb. **Authoritative:** orchestrator computes depth from its own agent map; a worker sending `SpawnRequest.depth: 0` cannot bypass the limit.
 10. `task_create` / `task_update` / `task_get` / `task_list` from any agent (orchestrator or worker) hit the orchestrator's registry via IPC; semantics match the `SwarmHost.task` interface in `src/swarm/host.ts`.
-11. **(11a)** Worker environment inheritance — unit-testable: `SWARM_HARNESS_AGENT_ID`, `SWARM_HARNESS_PARENT_PID`, `SWARM_HARNESS_ORCHESTRATOR_PID`, `SWARM_HARNESS_DEPTH`, and (when spawned from the `agent` tool) `SWARM_HARNESS_PARENT_TOOL_USE_ID` are set in the child process env. Verified by a test-mode worker that echoes its env back via IPC.
+11. **(11a)** Worker environment inheritance — unit-testable: `OPENSWARM_AGENT_ID`, `OPENSWARM_PARENT_PID`, `OPENSWARM_ORCHESTRATOR_PID`, `OPENSWARM_DEPTH`, and (when spawned from the `agent` tool) `OPENSWARM_PARENT_TOOL_USE_ID` are set in the child process env. Verified by a test-mode worker that echoes its env back via IPC.
     **(11b)** Auth inheritance — live-smoke only, covered by AC #15: the SDK inside the child can reach a valid Anthropic credential (env `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` or keychain). Not unit-testable without API calls.
 12. `npx tsc --noEmit` passes strict mode.
 13. `npm test` runs ≥ 30 new M1 tests (in addition to M0's 218), all passing.
@@ -75,7 +75,7 @@ Edits surfaced by the nested-spawn decision + the critic revision.
 
 0.4. **Authoritative depth enforcement.** `StandaloneHost` maintains `Map<AgentId, number>` tracking each live agent's depth. On `spawn()` — whether called locally or dispatched via IPC from a `WorkerHost` — the orchestrator **computes** `childDepth = parentDepth + 1` from its own records. The `depth` field on an incoming `SpawnRequest` is **ignored** (client-supplied values may be stale, lying, or hallucinated). `SpawnRequest.depth` becomes output-only — orchestrator sets it on the way to the child's env. This is defense-in-depth: no worker (even a malicious one) can bypass `MAX_DEPTH`.
 
-0.5. **`parentToolUseId` propagation.** Add `SpawnRequest.parentToolUseId?: string`. The `agent` tool (Phase 6.1) captures the `toolUseId` from its own MCP handler invocation (exposed by the Agent SDK in the `extra` argument to the tool handler) and passes it as `parentToolUseId` on the spawn request. The orchestrator propagates to the child via env var `SWARM_HARNESS_PARENT_TOOL_USE_ID`. The child worker's event translator stamps this id on every emitted `NormalizedEvent` / lane event, so the orchestrator's merged stream can attribute sub-agent events to the invoking tool_use in the parent's transcript.
+0.5. **`parentToolUseId` propagation.** Add `SpawnRequest.parentToolUseId?: string`. The `agent` tool (Phase 6.1) captures the `toolUseId` from its own MCP handler invocation (exposed by the Agent SDK in the `extra` argument to the tool handler) and passes it as `parentToolUseId` on the spawn request. The orchestrator propagates to the child via env var `OPENSWARM_PARENT_TOOL_USE_ID`. The child worker's event translator stamps this id on every emitted `NormalizedEvent` / lane event, so the orchestrator's merged stream can attribute sub-agent events to the invoking tool_use in the parent's transcript.
 
 ### Phase 1 — Dependencies (~0.1 day)
 
@@ -169,7 +169,7 @@ All request methods, their params types, and their result types centralized here
   - `send(method, params): Promise<result>` — sends request to parent, awaits response. Same per-request timeout + `transport_closed` cleanup rules as 3.2.
   - `notify(method, params)` — one-way emission.
   - **Backpressure + bounded outbound queue.** `send()` and `notify()` return `Promise<void>`; resolve only after `process.stdout.write()` returns `true` OR the `drain` event fires. Queue cap: 1 MiB. When full:
-    - Low-priority notifications (`lane_event`, `heartbeat`) dropped with a stderr warning: `"[swarm-harness] worker outbound queue full; dropping <method>"`.
+    - Low-priority notifications (`lane_event`, `heartbeat`) dropped with a stderr warning: `"[openswarm] worker outbound queue full; dropping <method>"`.
     - High-priority frames (`task_result`, `worker_ready`, request frames awaiting responses) block — never dropped.
   - **Heartbeat.** Every 30s the worker emits `{ kind: "notification", method: "heartbeat", params: { agentId, ts } }`. Orchestrator tracks `lastHeartbeatAt` per agent; missing 3 consecutive heartbeats (90s) → `worker_stuck` event logged and SIGTERM sent. Soft signal in M1; hard detection lands in M3.
   - Correlation-id matching for responses.
@@ -206,13 +206,13 @@ All request methods, their params types, and their result types centralized here
     - `cwd`: `process.cwd()` (shared)
     - `stdio`: `["pipe", "pipe", "inherit"]` (stdout is JSONL, stderr passes through to console for debugging)
     - `env`: inherits `process.env` + overrides:
-      - `SWARM_HARNESS_AGENT_ID` — `crypto.randomUUID()`; stable for worker's lifetime; never reused.
-      - `SWARM_HARNESS_PARENT_PID`: `process.pid`
-      - `SWARM_HARNESS_ORCHESTRATOR_PID`: top-level orchestrator pid
-      - `SWARM_HARNESS_DEPTH`: authoritative child depth (computed by orchestrator per §0.4)
-      - `SWARM_HARNESS_PARENT_TOOL_USE_ID`: optional; set only when spawned from the `agent` tool (per §0.5)
-      - `SWARM_HARNESS_TEST_SCRIPT`: optional path for tests
-      - *(note: `SWARM_HARNESS_SESSION_ID` is NOT set — resume is out of M1 scope; the SDK assigns a fresh session id per `query()` call)*
+      - `OPENSWARM_AGENT_ID` — `crypto.randomUUID()`; stable for worker's lifetime; never reused.
+      - `OPENSWARM_PARENT_PID`: `process.pid`
+      - `OPENSWARM_ORCHESTRATOR_PID`: top-level orchestrator pid
+      - `OPENSWARM_DEPTH`: authoritative child depth (computed by orchestrator per §0.4)
+      - `OPENSWARM_PARENT_TOOL_USE_ID`: optional; set only when spawned from the `agent` tool (per §0.5)
+      - `OPENSWARM_TEST_SCRIPT`: optional path for tests
+      - *(note: `OPENSWARM_SESSION_ID` is NOT set — resume is out of M1 scope; the SDK assigns a fresh session id per `query()` call)*
     - `detached: false` — on POSIX, parent death closes stdio and most child writes hit EPIPE. Combined with the orchestrator's exit-handler SIGKILL sweep (defined in Phase 5.1 + Risk table) this reliably reaps workers on crash. On Windows, only the SIGKILL sweep reaps; Windows support is best-effort for M1; document in README.
 
 4.2. `src/swarm/standalone-host.ts` — `StandaloneHost implements SwarmHost`:
@@ -237,8 +237,8 @@ All request methods, their params types, and their result types centralized here
   - Awaits `run` request from parent (delivers task packet via IPC per §3.7).
   - Instantiates `WorkerHost` wrapping the `ParentTransport`.
   - Builds Tier 0 + Tier 2 tools (Tier 2 tools use `ctx.host = workerHost`).
-  - Runs `ClaudeAgentSdkEngine` (or `ScriptedTestEngine` if `SWARM_HARNESS_TEST_SCRIPT` is set).
-  - Stamps every outbound event with `parentToolUseId` (if `SWARM_HARNESS_PARENT_TOOL_USE_ID` is set) per §0.5.
+  - Runs `ClaudeAgentSdkEngine` (or `ScriptedTestEngine` if `OPENSWARM_TEST_SCRIPT` is set).
+  - Stamps every outbound event with `parentToolUseId` (if `OPENSWARM_PARENT_TOOL_USE_ID` is set) per §0.5.
   - Emits lane events throughout; emits heartbeats every 30s.
   - On engine completion: sends `task_result` notification, closes transport, exits 0/1.
 
@@ -254,7 +254,7 @@ All request methods, their params types, and their result types centralized here
   - Internal `WorkerPool` with `activeCount` instrumentation (for AC #2 testability).
   - For each task: queue → pool acquires a slot → spawn worker → wait for `worker_ready` → `transport.send("run", task)` → await `task_result` notification → release slot → append to `results.jsonl`.
   - Handles incoming spawn requests from workers (nested): spawns a sub-worker via the same machinery, relays events up, returns result.
-  - **Results write-failure handling.** On `results.jsonl` write error callback: emit `error` lane event via `eventsOut`, log to stderr `"[swarm-harness] failed to persist result for task <id>: <err>"`, increment `resultWriteFailures`. On first write failure: stop accepting new results, drain remaining workers to completion, exit non-zero with summary `"N task results failed to persist"`.
+  - **Results write-failure handling.** On `results.jsonl` write error callback: emit `error` lane event via `eventsOut`, log to stderr `"[openswarm] failed to persist result for task <id>: <err>"`, increment `resultWriteFailures`. On first write failure: stop accepting new results, drain remaining workers to completion, exit non-zero with summary `"N task results failed to persist"`.
   - **SIGTERM → SIGKILL escalation.** Unified policy for all shutdown paths (SIGINT, internal timeout, crash):
     1. Broadcast `shutdown` notification to all live workers.
     2. 5s grace.
@@ -294,7 +294,7 @@ Behavior:
   - **Permission mode clamping.** If `input.permissionMode` is more permissive than the parent's mode, clamp to parent's: `read-only` ⊂ `workspace-write` ⊂ `danger-full-access`. Sub-agents cannot escalate.
   - Creates a task via `host.task.create(...)`.
   - Calls `host.spawn({ task, permissionMode: clamped, parentToolUseId: ctx.toolUseId, ... })`. `depth` is NOT passed by this tool — the orchestrator computes it authoritatively per §0.4.
-  - Orchestrator's depth check: if `childDepth > MAX_DEPTH` (default 3, override via `SWARM_HARNESS_MAX_DEPTH`), rejects with `{ status: "error", message: "recursion depth limit reached (<MAX_DEPTH>)" }`. Error message interpolates the runtime limit so tests using override values don't flap.
+  - Orchestrator's depth check: if `childDepth > MAX_DEPTH` (default 3, override via `OPENSWARM_MAX_DEPTH`), rejects with `{ status: "error", message: "recursion depth limit reached (<MAX_DEPTH>)" }`. Error message interpolates the runtime limit so tests using override values don't flap.
   - If `wait === true`: awaits `handle.wait()`, returns the sub-agent's result as tool output.
   - If `wait === false`: returns the agent id + task id; caller polls via `task_get`.
   - Permission: `requiredPermission: "exec"` — this is a side-effect that creates subprocess work.
@@ -302,7 +302,7 @@ Behavior:
 
 6.2. `src/cli/main.ts` — when building the top-level runtime: instantiate `StandaloneHost`, register Tier 0 + Tier 2 tools. CLI `prompt` carries Tier 2 too — standalone runs can use `agent` for local recursion.
 
-6.3. `src/swarm/depth-limit.ts` — `DEFAULT_MAX_DEPTH = 3` constant, override via `SWARM_HARNESS_MAX_DEPTH` env. The enforcement happens inside `SwarmHost.spawn()` impls (per §0.4) using the orchestrator's authoritative depth map — NOT inside the tool. The `agent` tool is advisory; the host is the gate.
+6.3. `src/swarm/depth-limit.ts` — `DEFAULT_MAX_DEPTH = 3` constant, override via `OPENSWARM_MAX_DEPTH` env. The enforcement happens inside `SwarmHost.spawn()` impls (per §0.4) using the orchestrator's authoritative depth map — NOT inside the tool. The `agent` tool is advisory; the host is the gate.
 
 6.4. Integration tests:
   - 3 levels of nesting succeed (depth 0 → 1 → 2 → 3).
@@ -313,14 +313,14 @@ Behavior:
 ### Phase 7 — Tests (~2 days)
 
 7.1. `src/engine/test-engine.ts` — `ScriptedTestEngine implements AgentEngine`:
-  - Loads a JSON file from `SWARM_HARNESS_TEST_SCRIPT`.
+  - Loads a JSON file from `OPENSWARM_TEST_SCRIPT`.
   - Each entry describes an event to emit (or a command like `spawn` / `task_create`).
   - Lets tests drive deterministic worker behavior without real API calls.
   - `capabilities` match `ClaudeAgentSdkEngine` (`streaming: true`, `mcp: true`, etc.) so tool wiring doesn't diverge between test and real paths.
 
 7.2. Integration test harness: `test/integration/swarm.test.ts`:
   - Spawns `dist/cli.js --worker` as a real child process. The test runs `npm run build` in a setup step, OR runs against `src/**` via `tsx` if we add a dev runner — decide during implementation.
-  - Sets `SWARM_HARNESS_TEST_SCRIPT` to a fixture file under `test/fixtures/worker-scripts/`.
+  - Sets `OPENSWARM_TEST_SCRIPT` to a fixture file under `test/fixtures/worker-scripts/`.
   - Drives IPC via the real `WorkerTransport`; asserts orchestrator sees the right events and produces the right `results.jsonl`.
 
 7.3. Concrete integration scenarios — **≥ 7**:
@@ -420,7 +420,7 @@ Run after each phase:
 - **Phase 1:** none (deps / utility step).
 - **Phase 2:** `npx vitest run src/tools/tier2/ src/swarm/task-registry.test.ts` green.
 - **Phase 3:** `npx vitest run src/swarm/ipc/` green; round-trip + backpressure + pending-request-cleanup tests pass.
-- **Phase 4:** manual subprocess spawn: `SWARM_HARNESS_AGENT_ID=test-1 node dist/cli.js --worker --agent-id=test-1 </dev/null` emits `worker_ready` then exits after stdin close.
+- **Phase 4:** manual subprocess spawn: `OPENSWARM_AGENT_ID=test-1 node dist/cli.js --worker --agent-id=test-1 </dev/null` emits `worker_ready` then exits after stdin close.
 - **Phase 5:** manual `node dist/cli.js swarm run test/fixtures/simple-tasks.jsonl --concurrency 2` with ScriptedTestEngine.
 - **Phase 6:** depth-limit, nested spawn, permission-clamping tests all pass.
 - **Phase 7:** `npm test` shows ≥ 248 tests (218 from M0 + 30 new); all green; < 60s total.
@@ -485,6 +485,6 @@ M2 (per `docs/07-implementation-plan.md`): ink UI depth + plugin/skill discovery
   - Fixed `detached: false` claim + added exit-handler SIGKILL sweep (M3)
   - Added `requireHost` helper spec (M5)
   - AC#4 adds `completedAt` for consumer sort (M6)
-  - Dropped `SWARM_HARNESS_SESSION_ID` from M1 env list (M7)
+  - Dropped `OPENSWARM_SESSION_ID` from M1 env list (M7)
   - Heartbeat + unified SIGTERM→SIGKILL escalation + UUID agentId + permission clamping + worker-state-file deferred to M3 (missing pieces)
   - Cleaned up "Open items" — resolved items removed

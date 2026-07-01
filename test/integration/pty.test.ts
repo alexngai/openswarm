@@ -3,7 +3,7 @@
  *
  * Unlike the `testRender`-based tests which exercise the Solid + OpenTUI +
  * bun:ffi stack but render into an in-memory buffer, these tests spawn the
- * compiled `dist/swarm-harness` binary under a real pseudo-terminal (PTY)
+ * compiled `dist/openswarm` binary under a real pseudo-terminal (PTY)
  * and verify the output stream the way a human would see it. Closes the
  * last gap in Phase 0 e2e coverage: terminal emulation, ANSI positioning,
  * raw-mode keyboard input, clean teardown under SIGINT.
@@ -13,7 +13,7 @@
  * test under Node avoids that mismatch while still exercising the
  * Bun-compiled binary via PTY.
  *
- * Prereq: `dist/swarm-harness` must exist. Run `npm run build:compile` first.
+ * Prereq: `dist/openswarm` must exist. Run `npm run build:compile` first.
  *
  * Scope: mount → initial frame → slash-command → exit. Each scenario
  * spawns a fresh process and kills it after assertions. Deliberately NOT
@@ -29,7 +29,7 @@ import { existsSync } from "node:fs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..");
-const BINARY = join(REPO_ROOT, "dist", "swarm-harness");
+const BINARY = join(REPO_ROOT, "dist", "openswarm");
 const hasBinary = existsSync(BINARY);
 const describePty = hasBinary ? describe : describe.skip;
 

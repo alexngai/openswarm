@@ -1172,7 +1172,7 @@ export class StandaloneHost implements SwarmHost {
     for (const r of recipients) {
       // v0.6 stage 6A.1: scope-keyed enqueue. Use the recipient's scope so
       // the message lands in the right queue when the backend is multi-
-      // tenant (one in-memory backend per swarm-harness process serving
+      // tenant (one in-memory backend per openswarm process serving
       // multiple team scopes; or a shared sqlite-backed agent-inbox).
       const recipientScope = this.scopeOf(r);
       const d = await this.messageInbox.enqueue(recipientScope, r, message);

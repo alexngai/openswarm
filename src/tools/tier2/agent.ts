@@ -14,7 +14,7 @@ const inputSchema = z.object({
   maxTurns: z.number().int().positive().optional(),
   wait: z.boolean().optional().default(true),
   // Added v0.4 stage 4E.1: team scope. The `framework` param was removed: engine
-  // selection is fixed by the run's SWARM_HARNESS_FRAMEWORK / SWARM_HARNESS_MODEL
+  // selection is fixed by the run's OPENSWARM_FRAMEWORK / OPENSWARM_MODEL
   // env so a model can't spawn into an engine the deployment lacks (e.g. codex /
   // claude-agent-sdk in a single-provider eval — the agent enum offered neither
   // `native` nor the configured engine, so any LLM-set value was always wrong).

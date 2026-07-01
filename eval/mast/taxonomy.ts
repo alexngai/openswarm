@@ -1,6 +1,6 @@
 /**
  * MAST — Multi-Agent System failure Taxonomy (Cemri et al., arXiv 2503.13657).
- * 14 fine-grained failure modes in 3 categories. Used as the LLM-as-judge rubric over swarm-harness
+ * 14 fine-grained failure modes in 3 categories. Used as the LLM-as-judge rubric over openswarm
  * traces (docs/45 §6) to produce a per-mode failure histogram for OUR system.
  *
  * Validate the judge against MAST-Data labels before trusting the histogram.

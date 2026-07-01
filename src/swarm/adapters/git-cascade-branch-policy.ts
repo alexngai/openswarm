@@ -435,7 +435,7 @@ export interface GitCascadeBranchPolicyAdapterOptions {
   /** Absolute path to the git repository (typically `process.cwd()`). */
   readonly repoPath: string;
   /**
-   * sqlite db path. Default: `${repoPath}/.swarm-harness/git-cascade/tracker.db`
+   * sqlite db path. Default: `${repoPath}/.openswarm/git-cascade/tracker.db`
    * (per docs/29 §V0.7.Q6). Survives orchestrator restarts so cascade
    * rebases (7C+) can reach prior streams.
    */
@@ -484,10 +484,10 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
     this.repoPath = opts.repoPath;
     this.dbPath =
       opts.dbPath ??
-      path.join(this.repoPath, ".swarm-harness", "git-cascade", "tracker.db");
+      path.join(this.repoPath, ".openswarm", "git-cascade", "tracker.db");
     this.worktreesDir = path.join(
       this.repoPath,
-      ".swarm-harness",
+      ".openswarm",
       "worktrees",
     );
     this.testTracker = opts.trackerForTest;

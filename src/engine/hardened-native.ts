@@ -1,7 +1,7 @@
 /**
  * HardenedNativeEngine — production-hardened variant of NativeEngine.
  *
- * Ports Codex-grade resilience into swarm-harness's composable architecture:
+ * Ports Codex-grade resilience into openswarm's composable architecture:
  *   - Retry with exponential backoff (Codex: responses_retry.rs:22-79)
  *   - Eager tool dispatch during streaming (Codex: turn.rs:1830-2214)
  *   - Mid-turn compaction (Codex: turn.rs:268-321)

@@ -7,7 +7,7 @@
  * `Storage`. Default storage is in-memory; pass `SqliteStorage` for
  * cross-restart persistence.
  *
- * Mapping decisions (swarm-harness ↔ agent-inbox):
+ * Mapping decisions (openswarm ↔ agent-inbox):
  *   - AgentMessage.from / .to ↔ Message.sender_id / Message.recipients[0]
  *     (single-recipient direct sends; broadcast happens in StandaloneHost
  *     by enqueueing once per recipient)
