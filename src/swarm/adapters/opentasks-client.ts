@@ -52,14 +52,21 @@ export interface UpdateNodeParams {
 }
 
 /**
- * Walk-up socket discovery — the daemon's lifecycle layer follows the
- * priority `.swarm/opentasks/` → `.opentasks/` → `.git/opentasks/` from cwd
- * upward. Returns the first existing path, or `null` if none found.
+ * Walk-up socket discovery — the daemon's lifecycle layer follows the priority
+ * `.openswarm/opentasks/` → `.swarm/opentasks/` (legacy) → `.opentasks/` →
+ * `.git/opentasks/` from cwd upward. Returns the first existing path, or `null`
+ * if none found. `.openswarm` and `.swarm` are both honored while the swarmkit
+ * namespace migrates from `.swarm` to `.openswarm`.
  */
 export function findOpenTasksSocket(cwd: string = process.cwd()): string | null {
   let dir = cwd;
   for (;;) {
-    for (const sub of [".swarm/opentasks", ".opentasks", ".git/opentasks"]) {
+    for (const sub of [
+      ".openswarm/opentasks",
+      ".swarm/opentasks",
+      ".opentasks",
+      ".git/opentasks",
+    ]) {
       const candidate = path.join(dir, sub, "daemon.sock");
       if (fs.existsSync(candidate)) return candidate;
     }

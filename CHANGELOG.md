@@ -19,11 +19,23 @@ openswarm rename) → their functional `OPENSWARM_*` equivalents
 `OPENSWARM_SKIP_LIVE`, `OPENSWARM_SKIP_INTEGRATION_BUILD`). `smoke-m4b.sh` [O6]
 now runs the current `openai-codex-oauth*.test.ts` files.
 
-**Intentionally not renamed** (cross-repo contracts owned jointly with sibling
-repos): `.swarm/openswarm/sessions` (sessionlog's openswarm adapter hardcodes
-this layout) and `.swarm/opentasks` socket discovery (opentasks' own
-client/discover convention). Renaming these requires a coordinated migration
-across sessionlog and opentasks.
+**Cross-repo path migration (`.swarm` → `.openswarm`), phase 1 — dual support.**
+The session (`.swarm/openswarm/sessions`) and opentasks-socket
+(`.swarm/opentasks`) layouts are contracts shared with the `sessionlog` and
+`opentasks` sibling repos, so they can't be hard-cut unilaterally. All three
+repos now **honor both names, preferring the new `.openswarm/…` layout when it
+exists** and falling back to legacy `.swarm/…`:
+
+- openswarm: `resolveSessionsDir` and `findOpenTasksSocket` prefer `.openswarm`,
+  else `.swarm` (still the fresh-create default).
+- sessionlog: the openswarm adapter's `getSessionDir` / `detectPresence` check
+  both layouts and `protectedDirs` now guards `.openswarm` too.
+- opentasks: `resolveProjectDir`, `discover` candidates, client walk-up, and
+  `deriveRepoRoot` all recognize `.openswarm/opentasks` ahead of `.swarm/opentasks`.
+
+Migration is opt-in per project (create/move to `.openswarm/…` and every repo
+follows). **Phase 2 (later)** flips the fresh-create defaults to `.openswarm`;
+**phase 3** drops the `.swarm` fallbacks.
 
 ### Added
 

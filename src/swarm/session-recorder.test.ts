@@ -69,4 +69,21 @@ describe("session recorder", () => {
     process.env.OPENSWARM_SESSION_DIR = "/custom";
     expect(resolveSessionsDir("/repo")).toBe("/custom");
   });
+
+  it("resolveSessionsDir prefers .openswarm when the migrated dir exists", () => {
+    delete process.env.OPENSWARM_SESSION_DIR;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sessdir-"));
+    try {
+      // No .openswarm dir yet → legacy .swarm default.
+      expect(resolveSessionsDir(dir)).toBe(
+        path.join(dir, ".swarm", "openswarm", "sessions"),
+      );
+      // Create the migrated layout → it takes precedence.
+      const migrated = path.join(dir, ".openswarm", "openswarm", "sessions");
+      fs.mkdirSync(migrated, { recursive: true });
+      expect(resolveSessionsDir(dir)).toBe(migrated);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

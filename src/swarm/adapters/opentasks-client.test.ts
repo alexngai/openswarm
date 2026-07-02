@@ -158,4 +158,23 @@ describe("findOpenTasksSocket", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "ot-none-"));
     expect(findOpenTasksSocket(root)).toBeNull();
   });
+
+  it("prefers .openswarm/opentasks over legacy .swarm/opentasks", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ot-pref-"));
+    const legacy = path.join(root, ".swarm", "opentasks");
+    const migrated = path.join(root, ".openswarm", "opentasks");
+    fs.mkdirSync(legacy, { recursive: true });
+    fs.mkdirSync(migrated, { recursive: true });
+    fs.writeFileSync(path.join(legacy, "daemon.sock"), "");
+    fs.writeFileSync(path.join(migrated, "daemon.sock"), "");
+    expect(findOpenTasksSocket(root)).toBe(path.join(migrated, "daemon.sock"));
+  });
+
+  it("falls back to legacy .swarm/opentasks when .openswarm is absent", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ot-legacy-"));
+    const legacy = path.join(root, ".swarm", "opentasks");
+    fs.mkdirSync(legacy, { recursive: true });
+    fs.writeFileSync(path.join(legacy, "daemon.sock"), "");
+    expect(findOpenTasksSocket(root)).toBe(path.join(legacy, "daemon.sock"));
+  });
 });

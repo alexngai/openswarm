@@ -4,7 +4,10 @@
  * read (and cognitive-core can later distill).
  *
  * Layout matches the adapter: `<sessionsDir>/<sessionId>/events.jsonl`, where
- * `sessionsDir` is `OPENSWARM_SESSION_DIR` or `<cwd>/.swarm/openswarm/sessions`.
+ * `sessionsDir` is `OPENSWARM_SESSION_DIR` or, preferring the new swarmkit
+ * namespace, `<cwd>/.openswarm/openswarm/sessions` when present, else the
+ * legacy `<cwd>/.swarm/openswarm/sessions` (see resolveSessionsDir). sessionlog
+ * and opentasks honor both names during the `.swarm` → `.openswarm` migration.
  *
  * Opt-in + best-effort: recording only happens when enabled (a session dir or
  * the record flag is set), and every operation swallows errors so it can never
@@ -31,6 +34,12 @@ export function recordingEnabled(): boolean {
 export function resolveSessionsDir(cwd: string): string {
   const override = process.env.OPENSWARM_SESSION_DIR;
   if (override && override.length > 0) return override;
+  // Prefer the new swarmkit namespace when a project has migrated; otherwise
+  // fall back to (and freshly create) the legacy `.swarm` layout so readers
+  // that haven't been updated still find the transcripts. Full cutover to
+  // `.openswarm` (flip the default, drop `.swarm`) is a later coordinated step.
+  const migrated = path.join(cwd, ".openswarm", "openswarm", "sessions");
+  if (fs.existsSync(migrated)) return migrated;
   return path.join(cwd, ".swarm", "openswarm", "sessions");
 }
 

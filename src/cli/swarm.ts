@@ -59,7 +59,8 @@ export interface SwarmRunOptions {
   /**
    * v0.5 stage 5B: explicit opentasks daemon socket path. When unset and
    * `opentasks` is true, the socket is auto-discovered via the standard
-   * walk-up (`.swarm/opentasks` → `.opentasks` → `.git/opentasks`).
+   * walk-up (`.openswarm/opentasks` → `.swarm/opentasks` → `.opentasks` →
+   * `.git/opentasks`).
    */
   readonly opentasksSocket?: string;
   /**
