@@ -11,11 +11,17 @@
  */
 
 import type { AgentId } from "../core/types.js";
-import type { MemoryFragment, TurnContext, CompressionSummary } from "./types.js";
+import type {
+  MemoryFragment,
+  SurfacedSkill,
+  TurnContext,
+  CompressionSummary,
+} from "./types.js";
 import { getMemoryCoordinator } from "./coordinator.js";
 import { FileMemoryProvider } from "./providers/file-provider.js";
 import { MinimemProvider } from "./providers/minimem-provider.js";
 import { SkillProvider } from "./providers/skill-provider.js";
+import { CogcorePlaybookProvider } from "./providers/cogcore-playbook-provider.js";
 import { archiveSession } from "./archive.js";
 import { maybeAutoConsolidate } from "./auto-consolidate.js";
 
@@ -70,6 +76,26 @@ export async function onSessionStart(opts?: SessionStartOptions): Promise<void> 
       // skills unavailable — no-op
     }
   }
+
+  // Register the read-only CogcorePlaybookProvider (cognitive-core's canonical
+  // `<storage>/playbooks/<slug>/SKILL.md` store) if not present and not
+  // disabled. Closes the local learning loop: sessions recorded here are
+  // distilled by `cogcore run` (auto-consolidate) into playbooks this provider
+  // surfaces on later turns. Only activates when a playbooks store exists.
+  if (
+    !coordinator.providerNames.includes("cogcore-playbooks") &&
+    process.env.OPENSWARM_MEMORY_PROVIDERS !== "file"
+  ) {
+    const cogcoreProvider = new CogcorePlaybookProvider();
+    try {
+      await coordinator.register(cogcoreProvider);
+      if (!(await cogcoreProvider.isAvailable())) {
+        await coordinator.unregister("cogcore-playbooks");
+      }
+    } catch {
+      // cogcore playbooks unavailable — no-op
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -102,12 +128,22 @@ export function formatMemoryFragments(fragments: MemoryFragment[]): string | nul
  *
  * Best-effort: returns the inputs unchanged on any failure, so memory never
  * blocks a turn. Set OPENSWARM_MEMORY_DEBUG=1 to log what was injected.
+ *
+ * `surfacedSkills` reports the skills injected into this turn so callers that
+ * record sessions can declare the exposure to sessionlog (`SkillsSurfaced`) —
+ * cognitive-core's exposure attribution depends on that declaration.
  */
+export interface EnrichedTurnInputs {
+  readonly systemPrompt: string;
+  readonly prompt: string;
+  readonly surfacedSkills: readonly SurfacedSkill[];
+}
+
 export async function enrichTurnInputs(
   systemPrompt: string,
   prompt: string,
   context: TurnContext,
-): Promise<{ systemPrompt: string; prompt: string }> {
+): Promise<EnrichedTurnInputs> {
   let fragments: MemoryFragment[];
   try {
     await onSessionStart(
@@ -115,11 +151,15 @@ export async function enrichTurnInputs(
     );
     fragments = await onBeforeTurn(context);
   } catch {
-    return { systemPrompt, prompt };
+    return { systemPrompt, prompt, surfacedSkills: [] };
   }
 
+  const surfacedSkills = fragments
+    .map((f) => f.skill)
+    .filter((s): s is SurfacedSkill => s !== undefined);
+
   const block = formatMemoryFragments(fragments);
-  if (!block) return { systemPrompt, prompt };
+  if (!block) return { systemPrompt, prompt, surfacedSkills };
 
   if (process.env.OPENSWARM_MEMORY_DEBUG === "1") {
     process.stderr.write(
@@ -130,11 +170,12 @@ export async function enrichTurnInputs(
   }
 
   if (systemPrompt.trim().length > 0) {
-    return { systemPrompt: `${systemPrompt}\n\n${block}`, prompt };
+    return { systemPrompt: `${systemPrompt}\n\n${block}`, prompt, surfacedSkills };
   }
   return {
     systemPrompt,
     prompt: `# Relevant memory\n${block}\n\n# Task\n${prompt}`,
+    surfacedSkills,
   };
 }
 

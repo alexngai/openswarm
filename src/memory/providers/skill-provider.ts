@@ -141,6 +141,7 @@ export class SkillProvider implements MemoryProvider {
       return results.slice(0, maxResults).map((s) => ({
         source: `skill:${s.id}`,
         content: formatSkill(s),
+        skill: { id: s.id, name: s.name, sourceType: "skill-tree" },
       }));
     } catch {
       return [];

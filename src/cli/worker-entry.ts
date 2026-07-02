@@ -328,6 +328,7 @@ async function executeTurn(
       sessionId: priorSessionId ?? agentId,
       agentId,
       prompt: task.prompt,
+      surfacedSkills: enriched.surfacedSkills,
     });
 
     // Crash-recovery T2: persist the engine session id to the sidecar as soon

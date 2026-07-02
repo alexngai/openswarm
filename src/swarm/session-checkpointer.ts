@@ -31,6 +31,17 @@ export interface BeginCheckpointOptions {
   readonly prompt: string;
   /** The worker's repo working directory sessionlog operates in. */
   readonly cwd: string;
+  /**
+   * Skills injected into this turn's context (from the memory SkillProvider).
+   * Declared to sessionlog via a SkillsSurfaced event so cognitive-core's
+   * exposure attribution counts this session as guided (its external-exposure
+   * contract maps sessionlog `skillsSurfaced` → surfacedPlaybookIds).
+   */
+  readonly surfacedSkills?: readonly {
+    id: string;
+    name: string;
+    sourceType?: string;
+  }[];
 }
 
 interface SessionRepoConfig {
@@ -80,6 +91,30 @@ export async function beginCheckpointedSession(
       type: sl.EventType.TurnStart,
       timestamp: new Date(),
     });
+
+    // Declare surfaced skills inside the turn window so they land in the
+    // TurnEnd checkpoint's metadata (`skillsSurfaced`). `upstreamSkillId`
+    // carries the stable skill-tree id; cognitive-core matches on both the
+    // name and that id. Best-effort: an old sessionlog without the event
+    // enum no-ops via the outer catch on dispatch.
+    if (opts.surfacedSkills !== undefined && opts.surfacedSkills.length > 0) {
+      const surfacedAt = new Date().toISOString();
+      try {
+        await handler.dispatch(agent, {
+          ...base,
+          type: sl.EventType.SkillsSurfaced,
+          timestamp: new Date(),
+          skillsSurfaced: opts.surfacedSkills.map((s) => ({
+            name: s.name,
+            sourceType: s.sourceType ?? "skill-tree",
+            upstreamSkillId: s.id,
+            surfacedAt,
+          })),
+        });
+      } catch {
+        // exposure declaration is additive — never block checkpointing
+      }
+    }
 
     let finished = false;
     return {

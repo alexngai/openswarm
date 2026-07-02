@@ -35,6 +35,21 @@ export interface MemoryFragment {
   readonly source: string;
   readonly content: string;
   readonly relevance?: number;
+  /**
+   * Set when this fragment is a surfaced skill (SkillProvider). Carried so
+   * the session recorder can declare skill exposure to sessionlog
+   * (`skillsSurfaced`), which cognitive-core's learning loop uses to
+   * attribute out-of-band guidance instead of mislabeling sessions unguided.
+   */
+  readonly skill?: SurfacedSkill;
+}
+
+/** Identity of a skill surfaced into a turn's context. */
+export interface SurfacedSkill {
+  readonly id: string;
+  readonly name: string;
+  /** Provenance of the skill store (e.g. "skill-tree", "cognitive-core"). */
+  readonly sourceType?: string;
 }
 
 export interface TurnContext {

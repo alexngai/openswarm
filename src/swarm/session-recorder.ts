@@ -60,6 +60,16 @@ export interface SessionRecorderOptions {
   /** The task prompt — recorded as the first `turn_start` so it is distillable. */
   readonly prompt: string;
   readonly cwd?: string;
+  /**
+   * Skills injected into this turn's context — declared to sessionlog as
+   * SkillsSurfaced so downstream learning (cognitive-core) attributes the
+   * guidance instead of counting the session as unguided.
+   */
+  readonly surfacedSkills?: readonly {
+    id: string;
+    name: string;
+    sourceType?: string;
+  }[];
 }
 
 /**
@@ -103,6 +113,9 @@ export async function startSessionRecorder(
         sessionRef: transcriptPath,
         prompt: opts.prompt,
         cwd,
+        ...(opts.surfacedSkills !== undefined && {
+          surfacedSkills: opts.surfacedSkills,
+        }),
       });
 
     return {
