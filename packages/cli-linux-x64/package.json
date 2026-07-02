@@ -15,7 +15,8 @@
   ],
   "files": [
     "openswarm",
-    "libopentui.so"
+    "libopentui.so",
+    "claude"
   ],
   "preferUnpacked": true
 }

@@ -15,7 +15,8 @@
   ],
   "files": [
     "openswarm",
-    "libopentui.dylib"
+    "libopentui.dylib",
+    "claude"
   ],
   "preferUnpacked": true
 }

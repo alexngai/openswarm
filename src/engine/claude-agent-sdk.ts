@@ -23,6 +23,33 @@ import type {
 } from "./index.js";
 import type { NormalizedEvent, PermissionMode } from "../core/types.js";
 import { z, ZodObject, toJSONSchema as zodToJSONSchema } from "zod";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+
+/**
+ * Resolve the SDK's native `claude` helper when we run as a `bun build --compile`
+ * standalone binary.
+ *
+ * Inside a compiled binary the SDK's own resolver
+ * (`require.resolve("@anthropic-ai/claude-agent-sdk-<plat>/claude")`) can't find
+ * the native executable — node_modules isn't in the embedded fs — so `query()`
+ * spawns a bad path and the child exits 1 ("Claude Code process exited with
+ * code 1"). `scripts/build-binary.ts` co-locates that binary next to the compiled
+ * executable (mirroring the libopentui handling), so here we point the SDK at it
+ * explicitly via `pathToClaudeCodeExecutable`.
+ *
+ * Returns `undefined` for dev/node runs, where the file is not next to
+ * `process.execPath` and the SDK's built-in auto-resolution already works.
+ */
+let _colocatedClaude: string | null | undefined;
+function resolveColocatedClaudeExecutable(): string | undefined {
+  if (_colocatedClaude === undefined) {
+    const exe = process.platform === "win32" ? "claude.exe" : "claude";
+    const candidate = join(dirname(process.execPath), exe);
+    _colocatedClaude = existsSync(candidate) ? candidate : null;
+  }
+  return _colocatedClaude ?? undefined;
+}
 
 /**
  * Claude Agent SDK exposes MCP-registered tools to the model under the
@@ -277,6 +304,7 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
     }
 
     // 8. Call query().
+    const colocatedClaude = resolveColocatedClaudeExecutable();
     const response = query({
       prompt: buildPrompt(),
       options: {
@@ -304,6 +332,9 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
         ...(abortController != null && { abortController }),
         ...(outputFormat != null && { outputFormat }),
         ...(hasHooks && { hooks: sdkHooks }),
+        // In a compiled binary, point the SDK at the co-located native `claude`
+        // (build-binary.ts ships it next to the executable). No-op in dev/node.
+        ...(colocatedClaude != null && { pathToClaudeCodeExecutable: colocatedClaude }),
       },
     });
 

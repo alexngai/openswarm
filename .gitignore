@@ -24,3 +24,6 @@ packages/*/openswarm
 packages/*/openswarm.exe
 packages/*/libopentui.dylib
 packages/*/libopentui.so
+# claude-agent-sdk native helper, co-located by build-binary.ts (~205MB)
+packages/*/claude
+packages/*/claude.exe
