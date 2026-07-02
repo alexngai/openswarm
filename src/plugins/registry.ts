@@ -128,11 +128,11 @@ export class PluginRegistry {
     // with an empty/uninitialised store, all discovered plugins are treated
     // as enabled:
     //   - pre-M4b callers that never set a store (backward compat)
-    //   - fresh installs where `~/.swarm-harness/plugins/` is empty
-    //   - integration tests that point SWARM_HARNESS_PLUGINS_DIR at a fixture
+    //   - fresh installs where `~/.openswarm/plugins/` is empty
+    //   - integration tests that point OPENSWARM_PLUGINS_DIR at a fixture
     //     tree without a matching settings.json / installed.json
     // Filtering activates once the user has installed at least one plugin
-    // through our flow (`swarm-harness plugin install <src>`).
+    // through our flow (`openswarm plugin install <src>`).
     let enabledSet: ReadonlySet<string> | null = null;
     if (this._stateStore !== null) {
       try {
@@ -244,6 +244,6 @@ export class PluginRegistry {
   // ---------------------------------------------------------------------------
 
   private _warn(msg: string): void {
-    process.stderr.write(`[swarm-harness] ${msg}\n`);
+    process.stderr.write(`[openswarm] ${msg}\n`);
   }
 }

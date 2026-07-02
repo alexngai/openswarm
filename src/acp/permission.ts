@@ -5,7 +5,7 @@
  *
  * Because it extends PermissionBridge, `makeCanUseTool` reuses its body
  * unchanged: pass this bridge with `useHeadless: false` and both prompt points
- * route through ACP (docs/32 §8).
+ * route through ACP (docs/archive/32 §8).
  *
  * Limitation: the engine's PermissionGate fires with (toolName, input) but no
  * tool_use id, so the permission request carries a fresh toolCallId rather than
@@ -15,8 +15,8 @@
 
 import * as crypto from "node:crypto";
 import { PermissionBridge } from "../permissions/bridge.js";
+import type { BridgeDecision } from "../permissions/bridge.js";
 import type { AgentSideConnection } from "@agentclientprotocol/sdk";
-import type { PermissionDecision } from "../engine/index.js";
 import type { PendingPermission } from "../ui/repl/state.js";
 import { toolKind, toolTitle } from "./tool-kind.js";
 
@@ -30,7 +30,7 @@ export class AcpPermissionBridge extends PermissionBridge {
 
   override async request(
     pending: PendingPermission,
-  ): Promise<PermissionDecision> {
+  ): Promise<BridgeDecision> {
     const res = await this.conn.requestPermission({
       sessionId: this.sessionId,
       toolCall: {
@@ -42,7 +42,7 @@ export class AcpPermissionBridge extends PermissionBridge {
       options: [
         {
           optionId: "allow_always",
-          name: `Always allow ${pending.toolName}`,
+          name: `Always allow ${pending.toolName} (this session)`,
           kind: "allow_always",
         },
         { optionId: "allow", name: "Allow", kind: "allow_once" },
@@ -57,7 +57,11 @@ export class AcpPermissionBridge extends PermissionBridge {
     if (outcome.optionId === "reject") {
       return { allow: false, reason: "denied by user" };
     }
-    // "allow" or "allow_always" — both proceed for this call.
+    // "allow_always" additionally records a session-scoped allow rule in the
+    // bash gate (Phase 3 B4; banned-broad prefixes are refused there).
+    if (outcome.optionId === "allow_always") {
+      return { allow: true, alwaysAllow: true };
+    }
     return { allow: true };
   }
 }

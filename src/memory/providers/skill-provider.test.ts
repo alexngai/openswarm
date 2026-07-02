@@ -11,7 +11,7 @@ afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
     tmpDir = undefined;
   }
-  delete process.env.SWARM_HARNESS_SKILLS_DIR;
+  delete process.env.OPENSWARM_SKILLS_DIR;
 });
 
 describe("resolveSkillsDir", () => {
@@ -19,8 +19,8 @@ describe("resolveSkillsDir", () => {
     expect(resolveSkillsDir("/custom/skills")).toBe("/custom/skills");
   });
 
-  it("uses SWARM_HARNESS_SKILLS_DIR when no override", () => {
-    process.env.SWARM_HARNESS_SKILLS_DIR = "/env/skills";
+  it("uses OPENSWARM_SKILLS_DIR when no override", () => {
+    process.env.OPENSWARM_SKILLS_DIR = "/env/skills";
     expect(resolveSkillsDir()).toBe("/env/skills");
   });
 

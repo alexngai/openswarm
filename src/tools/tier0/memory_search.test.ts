@@ -1,13 +1,19 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { memorySearchTool } from "./memory_search.js";
 import {
   archiveSession,
   resetArchiveStore,
 } from "../../memory/archive.js";
+import {
+  getMemoryCoordinator,
+  resetMemoryCoordinator,
+} from "../../memory/coordinator.js";
+import type { MemoryProvider } from "../../memory/types.js";
 import type { ToolExecutionContext } from "../types.js";
 
-afterEach(() => {
+afterEach(async () => {
   resetArchiveStore();
+  await resetMemoryCoordinator();
 });
 
 function ctx(): ToolExecutionContext {
@@ -100,6 +106,64 @@ describe("memorySearchTool", () => {
     expect(result.status).toBe("ok");
     if (result.status === "ok") {
       expect(result.output).toContain("Date:");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 3 B2 — coordinator-backed search, grouped by provider (Q5)
+// ---------------------------------------------------------------------------
+
+describe("memorySearchTool — coordinator providers (Phase 3 B2)", () => {
+  function searchProvider(
+    name: string,
+    results: Array<{ source: string; content: string }>,
+  ): MemoryProvider {
+    return {
+      name,
+      capabilities: { enrichment: false, persistence: false, search: true, graph: false },
+      initialize: vi.fn().mockResolvedValue(undefined),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+      isAvailable: vi.fn().mockResolvedValue(true),
+      enrichTurn: vi.fn().mockResolvedValue([]),
+      onMemoryWrite: vi.fn().mockResolvedValue(undefined),
+      onTurnComplete: vi.fn().mockResolvedValue(undefined),
+      onCompress: vi.fn().mockResolvedValue(undefined),
+      search: vi.fn().mockResolvedValue(results),
+    };
+  }
+
+  it("groups results by provider with source labels", async () => {
+    const coord = getMemoryCoordinator();
+    await coord.register(
+      searchProvider("minimem", [
+        { source: "minimem:notes/today.md", content: "vector hit" },
+      ]),
+    );
+    await coord.register(
+      searchProvider("file", [
+        { source: "file:archive:s9", content: "archive hit" },
+      ]),
+    );
+
+    const result = await memorySearchTool.execute({ query: "hit" }, ctx());
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.output).toContain("grouped by provider");
+      expect(result.output).toContain("## minimem");
+      expect(result.output).toContain("[minimem:notes/today.md]");
+      expect(result.output).toContain("vector hit");
+      expect(result.output).toContain("## file");
+      expect(result.output).toContain("archive hit");
+    }
+  });
+
+  it("reports no memories when providers exist but nothing matches", async () => {
+    await getMemoryCoordinator().register(searchProvider("minimem", []));
+    const result = await memorySearchTool.execute({ query: "nada" }, ctx());
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.output).toContain("No memories found");
     }
   });
 });

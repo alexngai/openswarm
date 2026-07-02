@@ -2,7 +2,7 @@
  * LiteLLMTransportProvider — Vercel AI SDK transport for a LiteLLM gateway
  * (OpenAI-compatible /v1). One endpoint, many providers: the gateway routes the
  * model name to Bedrock / Azure OpenAI / OpenAI-compatible open-weight (vLLM,
- * Together) deployments, so swarm-harness reaches all of them through a single
+ * Together) deployments, so openswarm reaches all of them through a single
  * `litellm/<gateway-model-name>` model id without native Bedrock/Azure transports.
  *
  * Config (env):

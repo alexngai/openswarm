@@ -48,13 +48,13 @@ describe("spawnWorker", () => {
     const [_exec, _argv, opts] = spawnMocked.mock.calls[0]!;
     const env = (opts as { env: NodeJS.ProcessEnv }).env;
 
-    expect(env.SWARM_HARNESS_AGENT_ID).toBe("agent-abc");
-    expect(env.SWARM_HARNESS_DEPTH).toBe("2");
-    expect(env.SWARM_HARNESS_PARENT_PID).toBe("1000");
-    expect(env.SWARM_HARNESS_ORCHESTRATOR_PID).toBe("1001");
+    expect(env.OPENSWARM_AGENT_ID).toBe("agent-abc");
+    expect(env.OPENSWARM_DEPTH).toBe("2");
+    expect(env.OPENSWARM_PARENT_PID).toBe("1000");
+    expect(env.OPENSWARM_ORCHESTRATOR_PID).toBe("1001");
   });
 
-  it("sets SWARM_HARNESS_PARENT_TOOL_USE_ID when provided", () => {
+  it("sets OPENSWARM_PARENT_TOOL_USE_ID when provided", () => {
     spawnWorker({
       agentId: "agent-xyz",
       depth: 1,
@@ -65,10 +65,10 @@ describe("spawnWorker", () => {
 
     const [_exec, _argv, opts] = spawnMocked.mock.calls[0]!;
     const env = (opts as { env: NodeJS.ProcessEnv }).env;
-    expect(env.SWARM_HARNESS_PARENT_TOOL_USE_ID).toBe("tool-use-123");
+    expect(env.OPENSWARM_PARENT_TOOL_USE_ID).toBe("tool-use-123");
   });
 
-  it("sets SWARM_HARNESS_MODEL when provided", () => {
+  it("sets OPENSWARM_MODEL when provided", () => {
     spawnWorker({
       agentId: "agent-model",
       depth: 1,
@@ -79,10 +79,10 @@ describe("spawnWorker", () => {
 
     const [_exec, _argv, opts] = spawnMocked.mock.calls[0]!;
     const env = (opts as { env: NodeJS.ProcessEnv }).env;
-    expect(env.SWARM_HARNESS_MODEL).toBe("litellm/qwen3.6-35b-a3b");
+    expect(env.OPENSWARM_MODEL).toBe("litellm/qwen3.6-35b-a3b");
   });
 
-  it("does NOT set SWARM_HARNESS_PARENT_TOOL_USE_ID when not provided", () => {
+  it("does NOT set OPENSWARM_PARENT_TOOL_USE_ID when not provided", () => {
     spawnWorker({
       agentId: "agent-xyz",
       depth: 1,
@@ -92,13 +92,13 @@ describe("spawnWorker", () => {
 
     const [_exec, _argv, opts] = spawnMocked.mock.calls[0]!;
     const env = (opts as { env: NodeJS.ProcessEnv }).env;
-    expect(env.SWARM_HARNESS_PARENT_TOOL_USE_ID).toBeUndefined();
+    expect(env.OPENSWARM_PARENT_TOOL_USE_ID).toBeUndefined();
   });
 
-  it("sets SWARM_HARNESS_SESSION_SIDECAR only when sessionSidecarPath is provided (B1.4)", () => {
+  it("sets OPENSWARM_SESSION_SIDECAR only when sessionSidecarPath is provided (B1.4)", () => {
     spawnWorker({ agentId: "a", depth: 1, parentPid: 1, orchestratorPid: 1 });
     let env = (spawnMocked.mock.calls[0]![2] as { env: NodeJS.ProcessEnv }).env;
-    expect(env.SWARM_HARNESS_SESSION_SIDECAR).toBeUndefined();
+    expect(env.OPENSWARM_SESSION_SIDECAR).toBeUndefined();
 
     spawnMocked.mockClear();
     spawnWorker({
@@ -109,7 +109,7 @@ describe("spawnWorker", () => {
       sessionSidecarPath: "/tmp/s/lead-session.json",
     });
     env = (spawnMocked.mock.calls[0]![2] as { env: NodeJS.ProcessEnv }).env;
-    expect(env.SWARM_HARNESS_SESSION_SIDECAR).toBe("/tmp/s/lead-session.json");
+    expect(env.OPENSWARM_SESSION_SIDECAR).toBe("/tmp/s/lead-session.json");
   });
 
   it("passes --worker and --agent-id flags in argv", () => {

@@ -20,6 +20,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { bashValidationGate } from "./bash-gate.js";
 import { PermissionBridge } from "./bridge.js";
+import { SessionAllowRules } from "./session-rules.js";
 import type { BashGateDeps, BashGateInput } from "./bash-gate.js";
 import type { ToolImpl } from "../tools/types.js";
 import type { PermissionDecision } from "../engine/index.js";
@@ -144,7 +145,7 @@ describe("bashValidationGate", () => {
 
     const result = await bashValidationGate(
       // rm -rf with a non-root path triggers the destructive warn, not a block
-      bashInput("rm -rf /tmp/test-dir", "workspace-write"),
+      bashInput("rm -rf /workspace/test-dir", "workspace-write"),
       makeDeps({ bridge, useHeadless: false }),
     );
 
@@ -162,7 +163,7 @@ describe("bashValidationGate", () => {
     });
 
     const result = await bashValidationGate(
-      bashInput("rm -rf /tmp/test-dir", "workspace-write"),
+      bashInput("rm -rf /workspace/test-dir", "workspace-write"),
       makeDeps({ bridge, useHeadless: false }),
     );
 
@@ -175,7 +176,7 @@ describe("bashValidationGate", () => {
       .mockResolvedValue({ allow: true });
 
     const result = await bashValidationGate(
-      bashInput("rm -rf /tmp/test-dir", "workspace-write"),
+      bashInput("rm -rf /workspace/test-dir", "workspace-write"),
       makeDeps({ useHeadless: true, headlessApproval: fakeHeadless }),
     );
 
@@ -190,7 +191,7 @@ describe("bashValidationGate", () => {
       .mockResolvedValue({ allow: false, reason: "user denied bash: stdin EOF" });
 
     const result = await bashValidationGate(
-      bashInput("rm -rf /tmp/test-dir", "workspace-write"),
+      bashInput("rm -rf /workspace/test-dir", "workspace-write"),
       makeDeps({ useHeadless: true, headlessApproval: fakeHeadless }),
     );
 
@@ -207,7 +208,7 @@ describe("bashValidationGate", () => {
     });
 
     await bashValidationGate(
-      bashInput("rm -rf /tmp/test-dir", "workspace-write"),
+      bashInput("rm -rf /workspace/test-dir", "workspace-write"),
       makeDeps({ bridge, useHeadless: false }),
     );
 
@@ -227,7 +228,7 @@ describe("bashValidationGate — validationApproved flag (v0.2.Q5)", () => {
     vi.spyOn(bridge, "request").mockResolvedValue({ allow: true });
 
     const result = await bashValidationGate(
-      bashInput("rm -rf /tmp/test-dir", "workspace-write"),
+      bashInput("rm -rf /workspace/test-dir", "workspace-write"),
       makeDeps({ bridge, useHeadless: false }),
     );
 
@@ -242,7 +243,7 @@ describe("bashValidationGate — validationApproved flag (v0.2.Q5)", () => {
     vi.spyOn(bridge, "request").mockResolvedValue({ allow: false, reason: "denied" });
 
     const result = await bashValidationGate(
-      bashInput("rm -rf /tmp/test-dir", "workspace-write"),
+      bashInput("rm -rf /workspace/test-dir", "workspace-write"),
       makeDeps({ bridge, useHeadless: false }),
     );
 
@@ -271,13 +272,128 @@ describe("bashValidationGate — validationApproved flag (v0.2.Q5)", () => {
       .mockResolvedValue({ allow: true });
 
     const result = await bashValidationGate(
-      bashInput("rm -rf /tmp/test-dir", "workspace-write"),
+      bashInput("rm -rf /workspace/test-dir", "workspace-write"),
       makeDeps({ useHeadless: true, headlessApproval: fakeHeadless }),
     );
 
     expect(result).not.toBeNull();
     expect(result!.allow).toBe(true);
     expect((result as { validationApproved?: boolean }).validationApproved).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 3 B4 — session-scoped "always allow" rules
+// ---------------------------------------------------------------------------
+
+describe("bashValidationGate — session allow rules (Phase 3 B4)", () => {
+  it("Warn approved with alwaysAllow records a rule; identical prefix skips the next prompt", async () => {
+    const bridge = new PermissionBridge();
+    const request = vi
+      .spyOn(bridge, "request")
+      .mockResolvedValue({ allow: true, alwaysAllow: true });
+    const rules = new SessionAllowRules();
+
+    const first = await bashValidationGate(
+      bashInput("rm -rf /workspace/test-dir", "workspace-write"),
+      makeDeps({ bridge, sessionRules: rules }),
+    );
+    expect(first!.allow).toBe(true);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(rules.list()).toEqual(["rm -rf"]);
+
+    // Same prefix ("rm -rf"), different target: no second prompt.
+    const second = await bashValidationGate(
+      bashInput("rm -rf /workspace/other-dir", "workspace-write"),
+      makeDeps({ bridge, sessionRules: rules }),
+    );
+    expect(second!.allow).toBe(true);
+    expect((second as { validationApproved?: boolean }).validationApproved).toBe(true);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("plain approval (no alwaysAllow) records nothing — prompted again next time", async () => {
+    const bridge = new PermissionBridge();
+    const request = vi.spyOn(bridge, "request").mockResolvedValue({ allow: true });
+    const rules = new SessionAllowRules();
+
+    await bashValidationGate(
+      bashInput("rm -rf /workspace/test-dir", "workspace-write"),
+      makeDeps({ bridge, sessionRules: rules }),
+    );
+    await bashValidationGate(
+      bashInput("rm -rf /workspace/test-dir", "workspace-write"),
+      makeDeps({ bridge, sessionRules: rules }),
+    );
+    expect(rules.list()).toEqual([]);
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it("session rules never override Block results", async () => {
+    const rules = new SessionAllowRules();
+    // Manually seed a rule matching the blocked command's prefix.
+    expect(rules.tryAdd("rm -rf foo", "workspace-write").added).toBe(true);
+
+    const result = await bashValidationGate(
+      bashInput("rm -rf foo", "read-only"),
+      makeDeps({ sessionRules: rules }),
+    );
+    expect(result!.allow).toBe(false);
+  });
+
+  it("emits an auto-approved warn lane event on a session-rule hit", async () => {
+    const bridge = new PermissionBridge();
+    vi.spyOn(bridge, "request").mockResolvedValue({ allow: true, alwaysAllow: true });
+    const events: LaneEvent[] = [];
+    const rules = new SessionAllowRules();
+    const deps = makeDeps({ bridge, sessionRules: rules, emitLaneEvent: (e) => events.push(e) });
+
+    await bashValidationGate(bashInput("rm -rf /workspace/a", "workspace-write"), deps);
+    await bashValidationGate(bashInput("rm -rf /workspace/b", "workspace-write"), deps);
+
+    expect(events).toHaveLength(2);
+    const second = events[1]!;
+    expect(second.type).toBe("bash_validation_warned");
+    expect((second.payload as BashValidationWarnedPayload).message).toContain(
+      "auto-approved by session allow rule",
+    );
+  });
+});
+
+describe("SessionAllowRules — banned-prefix veto (Phase 3 B4 / Q7)", () => {
+  it("refuses banned-broad prefixes (interpreters, shells, bare git)", () => {
+    const rules = new SessionAllowRules();
+    expect(rules.tryAdd("python", "workspace-write").added).toBe(false);
+    expect(rules.tryAdd("bash -c 'anything'", "workspace-write").added).toBe(false);
+    expect(rules.tryAdd("git", "workspace-write").added).toBe(false);
+    expect(rules.list()).toEqual([]);
+  });
+
+  it("allows narrowed prefixes (git push, python -m)", () => {
+    const rules = new SessionAllowRules();
+    expect(rules.tryAdd("git push origin main", "workspace-write")).toEqual({
+      added: true,
+      prefix: "git push",
+    });
+    expect(rules.matches("git push --force-with-lease")).toBe(true);
+    expect(rules.matches("git pull")).toBe(false);
+  });
+
+  it("danger-full-access bypasses the banned-prefix veto (yolo config)", () => {
+    const rules = new SessionAllowRules();
+    expect(rules.tryAdd("python", "danger-full-access").added).toBe(true);
+    expect(rules.matches("python anything.py")).toBe(true);
+  });
+
+  it("tryAdd refusal reports the banned command and a user-facing reason", () => {
+    const rules = new SessionAllowRules();
+    const result = rules.tryAdd("bash -c 'rm -rf /'", "workspace-write");
+    expect(result.added).toBe(false);
+    expect(result.prefix).toBe("bash -c");
+    if (!result.added) {
+      expect(result.reason).toContain("too broad");
+      expect(result.reason).toContain("bash");
+    }
   });
 });
 
@@ -318,7 +434,7 @@ describe("canUseTool mode-check collapse — validationApproved skips permEngine
       {
         toolName: "bash",
         toolImpl: bashTool,
-        input: { command: "rm -rf /tmp/test-dir" },
+        input: { command: "rm -rf /workspace/test-dir" },
         currentMode: "workspace-write",
       },
       {
@@ -363,9 +479,9 @@ describe("bashValidationGate — emitLaneEvent wiring", () => {
     return bashInput("cat /etc/passwd");
   }
 
-  // Helper: Warn-path command (rm -rf /tmp/… triggers destructive warn)
+  // Helper: Warn-path command (rm -rf outside known scratch dirs triggers destructive warn)
   function warnInput(): BashGateInput {
-    return bashInput("rm -rf /tmp/test-dir", "workspace-write");
+    return bashInput("rm -rf /workspace/test-dir", "workspace-write");
   }
 
   // 1. bash_validation_blocked fires with typed payload on Block path
@@ -400,7 +516,7 @@ describe("bashValidationGate — emitLaneEvent wiring", () => {
     expect(event.type).toBe("bash_validation_warned");
     const payload = event.payload as BashValidationWarnedPayload;
     expect(payload.decision).toBe("approved");
-    expect(payload.command).toBe("rm -rf /tmp/test-dir");
+    expect(payload.command).toBe("rm -rf /workspace/test-dir");
     expect(typeof payload.submodule).toBe("string");
     expect(typeof payload.message).toBe("string");
     expect(typeof payload.intent).toBe("string");

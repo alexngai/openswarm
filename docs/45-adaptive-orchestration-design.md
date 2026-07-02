@@ -2,13 +2,13 @@
 
 **Status:** Draft for discussion · **Author:** (design spike) · **Date:** 2026-06-23
 
-> Goal: let swarm-harness assemble multi-agent teams that *adapt to the task* instead of
+> Goal: let openswarm assemble multi-agent teams that *adapt to the task* instead of
 > being frozen in a hand-written YAML topology — while staying unobtrusive (the YAML
 > remains a valid, fast path) and defensible against the standard multi-agent critiques.
 
 This doc consolidates four external sources — **Sakana Fugu**, **GPTSwarm**, the **MAST
 failure taxonomy**, and the **"Strong Single-Agent Baseline"** paper — into a concrete
-design direction for swarm-harness, grounded in the current code
+design direction for openswarm, grounded in the current code
 ([team-spec.ts](../src/swarm/team-spec.ts), [orchestrator.ts](../src/swarm/orchestrator.ts),
 [topologies-types.ts](../src/swarm/topologies-types.ts), the
 [openteams loader](../src/swarm/openteams/loader.ts)).
@@ -98,7 +98,7 @@ it with a *single* agent.
 
 ---
 
-## 3. Is swarm-harness subject to these criticisms? (honest self-assessment)
+## 3. Is openswarm subject to these criticisms? (honest self-assessment)
 
 **Yes, and one critique bites harder than the rest.**
 
@@ -107,7 +107,7 @@ Our atomic unit has been "one Claude agent" and our default teams are homogeneou
 workers. Worse than the paper's setup: we spawn **separate subprocess workers**
 ([subprocess-spawner.ts](../src/swarm/subprocess-spawner.ts)), so we get **zero KV-cache
 reuse** across agents — exactly the cost the Single-Agent paper says is wasted. **A
-homogeneous swarm-harness team is, on their evidence, strictly more expensive than one
+homogeneous openswarm team is, on their evidence, strictly more expensive than one
 long-lived multi-turn agent for no quality gain.**
 
 There are only three honest justifications for keeping it multi-agent, and our design should
@@ -125,7 +125,7 @@ deliberately lean on them:
 > isolation-verification.** If a task offers none of the three, the right answer is to fall
 > back to a single long-lived worker — and our orchestrator should be allowed to decide that.
 
-### 3.2 MAST modes mapped to current swarm-harness behavior
+### 3.2 MAST modes mapped to current openswarm behavior
 
 | MAST mode | Exposure today | Structural lever we have |
 |---|---|---|
@@ -234,7 +234,7 @@ Because MAST shows tactical fixes top out at ~+14%, every item here is **structu
 ## 5b. Resolved decisions (2026-06-23)
 
 - **Approach is experimental.** We aim to *reproduce* the multi-agent failure findings (MAST +
-  the homogeneity null) on swarm-harness, then show structural fixes overcome them. Data-first.
+  the homogeneity null) on openswarm, then show structural fixes overcome them. Data-first.
 - **Heterogeneity is the default.** Teams are heterogeneous by construction (different base models
   per role) — the only regime the literature grants multi-agent a durable edge. We'll measure
   whether diversity actually pays.
@@ -257,8 +257,8 @@ Built on **`swarmkit-eval`** (live-linked dev dependency; see [eval/README.md](.
 which already provides the `(task × arm × model × seed)` matrix runner, ground-truth grading,
 sandboxed backends (E2B is our backend), the SWE-bench / GAIA(HAL) / **MARBLE multi-agent**
 benchmarks, LiteLLM-gateway routing for heterogeneity, a MAB driver for the T3 priors layer, and
-paired-CI / pass^k / Pareto statistics. swarm-harness is a registered harness there
-(`swarmHarness()` → `swarm-harness --single …`, the single-agent baseline arm).
+paired-CI / pass^k / Pareto statistics. openswarm is a registered harness there
+(`openSwarm()` → `openswarm --single …`, the single-agent baseline arm).
 
 **The experimental spine — four hypotheses, each an arm with a kill criterion:**
 
@@ -277,7 +277,7 @@ finding that failures spread across all three categories on our homogeneous arm;
 **Disciplines:**
 1. **Always vs the strong single-agent baseline.** Headline metric = **value-add = team −
    single_agent** at known cost (the 2601.12307 discipline). Hold the scaffold constant, swap only
-   the policy (non-Claude models run through `NativeEngine`/swarm-harness's *own* tool loop — Fugu's
+   the policy (non-Claude models run through `NativeEngine`/openswarm's *own* tool loop — Fugu's
    "minimal harness to expose the model"; the Codex-own-harness path is a separate, labeled arm).
 2. **Primary metric = terminal task success**; secondary = tokens, wall-clock, $/task.
 3. **Task arenas:** SWE-bench subset (coding = our domain, build-vs-debug heterogeneity story) +
@@ -317,11 +317,11 @@ H1 ran on Bedrock Sonnet-4.5 over SWE-bench-Verified via the `eval/` harness (E2
 
 **Reading:** confirms the strong-single-baseline thesis (§3.1, arXiv 2601.12307) — neither adding agents nor heterogeneity/verification-specialization lifts aggregate accuracy on hard tasks (hetero did 1.5× the work for the same yield). The live signal is the disjoint coverage: the value of "multi-agent" here looks like **trajectory variance / ensemble diversity** (union over independent diverse attempts ≈ 3×), **not within-task coordination**. This reframes the Conductor seam (§4) toward **best-of-N / ensemble-select across diverse configs** over coordinated message-passing teams.
 
-**Caveats / next:** disjoint coverage at N=9/1-seed could be noise. The decisive follow-up is **multi-seed** per config to test (a) whether union grows with diverse attempts (the ensemble hypothesis) and (b) whether any config systematically wins. Also pending: a mixed-difficulty set (~40–60% single, better power than the 11% floor) and **team/hetero token accounting** (the coordinator surfaces no usage today — needs a swarm-harness change to aggregate spawn-tree usage; cost axis currently blank).
+**Caveats / next:** disjoint coverage at N=9/1-seed could be noise. The decisive follow-up is **multi-seed** per config to test (a) whether union grows with diverse attempts (the ensemble hypothesis) and (b) whether any config systematically wins. Also pending: a mixed-difficulty set (~40–60% single, better power than the 11% floor) and **team/hetero token accounting** (the coordinator surfaces no usage today — needs a openswarm change to aggregate spawn-tree usage; cost axis currently blank).
 
 ### 6b.1 Cross-family replication on GPT-5.5 (Azure)
 
-To test whether the finding is Claude-specific, the whole 3-way was re-run on **Azure GPT-5.5** (a reasoning model) via a new swarm-harness direct-Azure transport (`azureoai/`). gpt-4.1 was unusable — it plans in text and never calls tools on open-ended SWE tasks; gpt-5.5 engages the agentic loop natively (validated: 323s, 105 tool calls).
+To test whether the finding is Claude-specific, the whole 3-way was re-run on **Azure GPT-5.5** (a reasoning model) via a new openswarm direct-Azure transport (`azureoai/`). gpt-4.1 was unusable — it plans in text and never calls tools on open-ended SWE tasks; gpt-5.5 engages the agentic loop natively (validated: 323s, 105 tool calls).
 
 | Arm | Sonnet-4.5 | GPT-5.5 | GPT-5.5 latency p50 |
 |---|--:|--:|--:|
@@ -333,7 +333,7 @@ To test whether the finding is Claude-specific, the whole 3-way was re-run on **
 - **Teams don't beat single on either family; on GPT-5.5 they are *worse*** (paired Δ = −0.111, CI [−0.33, 0]). The homo team failed xarray-3993 in **39s** — the instance single *solved* in 179s.
 - **Mechanism: premature termination.** GPT-5.5 team cells terminate ~3× faster than single (p50 65–74s vs 179s) — the coordinator + `completion: all` declares done before doing the thorough investigation single does. This is the concrete "teams add coordination overhead that destroys value" failure, now visible in two families.
 
-**Robust conclusion:** across two model families, no multi-agent configuration beats the single-agent baseline; on the stronger reasoning model, coordination actively hurts via early convergence. Strengthens the §4 reframe toward ensemble-select over coordinated teams. (Real swarm-harness improvements banked: direct Azure transport, OpenAI-compatible auth-gate recognition.)
+**Robust conclusion:** across two model families, no multi-agent configuration beats the single-agent baseline; on the stronger reasoning model, coordination actively hurts via early convergence. Strengthens the §4 reframe toward ensemble-select over coordinated teams. (Real openswarm improvements banked: direct Azure transport, OpenAI-compatible auth-gate recognition.)
 
 ### 6b.2 The mechanism: premature termination, not coordination breakdown
 
@@ -387,7 +387,7 @@ The functioning GPT-5.5 team resolves **1/9 — the same instance (xarray-3993, 
 ## 7. Phased rollout
 
 - **P0 — Eval infra (eval-first).** `swarmkit-eval` wired + smoke-verified ([eval/](../eval/)). Three
-  immediate steps, in order: **(1)** point the `swarmHarness` adapter at the locally-built CLI (iterate
+  immediate steps, in order: **(1)** point the `openSwarm` adapter at the locally-built CLI (iterate
   without publishing); **(2)** make H1 run on E2B (single-agent vs homogeneous team on a SWE-bench
   subset); **(3)** the MAST judge (validated against MAST-Data). Reproduce H1.
 - **P1 — Heterogeneity + roster (H2).** Roster contract `{role, engine, model}`; heterogeneous arm

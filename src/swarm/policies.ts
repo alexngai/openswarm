@@ -5,7 +5,7 @@
  * discriminated unions. Import TaskPacketSchema in CLI entry points and
  * tools that accept raw user input.
  *
- * See docs/11-m3a-plan.md §Phase 2 and §Policy migration for before/after
+ * See docs/archive/11-m3a-plan.md §Phase 2 and §Policy migration for before/after
  * migration examples.
  */
 

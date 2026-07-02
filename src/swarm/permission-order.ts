@@ -23,3 +23,8 @@ export function clampPermissionMode(
     ? parentActive
     : childRequested;
 }
+
+/** Numeric rank of a permission mode (higher = broader access). */
+export function permissionRank(mode: PermissionMode): number {
+  return PERMISSION_ORDER[mode];
+}

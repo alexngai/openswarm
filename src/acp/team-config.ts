@@ -4,7 +4,7 @@
  * the `agent` tool. The user's prompt becomes the lead's prompt.
  *
  * Later: a `--team <template>` flag to pick an openteams template, and richer
- * coordination (aggregators, branch policies) per docs/33.
+ * coordination (aggregators, branch policies) per docs/archive/33.
  */
 
 import type { TeamSpec } from "../swarm/team-spec.js";

@@ -17,6 +17,7 @@ import { validateBashCommand } from "../tools/tier0/bash-validation/index.js";
 import { classifyCommand } from "../tools/tier0/bash-validation/intent.js";
 import { readHeadlessApproval } from "./headless-prompt.js";
 import type { PermissionBridge } from "./bridge.js";
+import type { SessionAllowRules } from "./session-rules.js";
 import type { PermissionDecision } from "../engine/index.js";
 import type { AgentId, PermissionMode } from "../core/types.js";
 import type { ToolImpl } from "../tools/types.js";
@@ -43,6 +44,15 @@ export interface BashGateDeps {
    * Emission is wrapped in try/catch so a faulty emitter never breaks the gate.
    */
   readonly emitLaneEvent?: (event: LaneEvent) => void;
+  /**
+   * Session-scoped "always allow" rules (Phase 3 B4). When present:
+   *   - a Warn whose command matches a recorded rule skips the prompt, and
+   *   - a Warn approved with `alwaysAllow` records a rule (vetoed for
+   *     banned-broad prefixes unless mode is danger-full-access).
+   * Only consulted on the Warn path — Block results and mode denials are
+   * never overridden by session rules.
+   */
+  readonly sessionRules?: SessionAllowRules;
 }
 
 export interface BashGateInput {
@@ -129,6 +139,29 @@ export async function bashValidationGate(
     const warnMessage = validationResult.message;
     const warnIntent = classifyCommand(cmd);
 
+    // Session rule hit: the user already always-allowed this prefix in this
+    // session — skip the repeat prompt. (Rules are only ever consulted here,
+    // on the Warn path; Block above never reaches this point.)
+    if (deps.sessionRules?.matches(cmd) === true) {
+      try {
+        emitLaneEvent?.({
+          ts: Date.now(),
+          agentId: BASH_GATE_AGENT_ID,
+          type: "bash_validation_warned",
+          payload: {
+            command: cmd,
+            submodule: warnSubmodule,
+            message: `${warnMessage} (auto-approved by session allow rule)`,
+            decision: "approved",
+            intent: warnIntent,
+          },
+        });
+      } catch {
+        // Faulty emitter must not break the gate.
+      }
+      return { allow: true, validationApproved: true };
+    }
+
     const warnPending = {
       toolName: toolImpl.spec.name,
       input,
@@ -163,6 +196,17 @@ export async function bashValidationGate(
     // The user already approved the destructive action — a second prompt
     // for the same tool call would be redundant and annoying.
     if (result.allow) {
+      // Phase 3 B4: "always allow (this session)" — record a session rule.
+      // tryAdd refuses banned-broad prefixes (bash, python, bash -c, ...)
+      // unless mode is danger-full-access; refusal only skips the standing
+      // rule — this call was already approved and proceeds.
+      if (
+        deps.sessionRules !== undefined &&
+        "alwaysAllow" in result &&
+        result.alwaysAllow === true
+      ) {
+        deps.sessionRules.tryAdd(cmd, currentMode);
+      }
       return { allow: true, validationApproved: true };
     }
     return result;

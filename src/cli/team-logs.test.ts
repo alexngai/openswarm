@@ -50,7 +50,7 @@ describe("runTeamLogs", () => {
   }
 
   async function writeEvents(name: string, content: string): Promise<string> {
-    const dir = path.join(tmpRoot, "swarm-harness", "teams", name);
+    const dir = path.join(tmpRoot, "openswarm", "teams", name);
     await fs.mkdir(dir, { recursive: true });
     const filePath = path.join(dir, "events.jsonl");
     await fs.writeFile(filePath, content);

@@ -97,4 +97,21 @@ describe("runHeadless", () => {
     const parsed = lines().map((l) => JSON.parse(l) as NormalizedEvent);
     expect(parsed.map((e) => (e as { type: "text_delta"; text: string }).text)).toEqual(texts);
   });
+
+  it("adds reconstructed tool input to tool_use_end", async () => {
+    const { stream, lines } = makeCollector();
+    const events: NormalizedEvent[] = [
+      { type: "tool_use_start", id: "tool-1", name: "bash" },
+      { type: "tool_use_input", id: "tool-1", jsonDelta: '{"command":' },
+      { type: "tool_use_input", id: "tool-1", jsonDelta: '"pwd"}' },
+      { type: "tool_use_end", id: "tool-1" },
+    ];
+    await runHeadless(makeStream(events), { out: stream });
+    const parsed = lines().map((l) => JSON.parse(l) as NormalizedEvent);
+    expect(parsed[3]).toEqual({
+      type: "tool_use_end",
+      id: "tool-1",
+      input: { command: "pwd" },
+    });
+  });
 });

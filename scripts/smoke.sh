@@ -82,7 +82,7 @@ fi
 # smoke.sh already built dist at the top of this script; skip vitest's
 # globalSetup build (see vitest.config.ts) to avoid a redundant tsc run
 # and the occasional parallel-build race that produced flaky failures.
-TEST_OUT=$(SWARM_CODER_SKIP_INTEGRATION_BUILD=1 npx vitest run 2>&1)
+TEST_OUT=$(OPENSWARM_SKIP_INTEGRATION_BUILD=1 npx vitest run 2>&1)
 VITEST_EXIT=$?
 
 if [[ $VITEST_EXIT -eq 0 ]] && echo "$TEST_OUT" | grep -qE 'Tests[[:space:]]+[0-9]+ passed'; then
@@ -169,20 +169,20 @@ INIT_OK=true
 (
   cd "$INIT_DIR"
   $BIN init > /dev/null 2>&1 || exit 1
-  [[ -d .swarm-coder ]] || { echo "missing .swarm-coder/" >&2; exit 1; }
-  grep -q '\.swarm-coder/' .gitignore || { echo ".gitignore missing .swarm-coder/ entry" >&2; exit 1; }
+  [[ -d .openswarm ]] || { echo "missing .openswarm/" >&2; exit 1; }
+  grep -q '\.openswarm/' .gitignore || { echo ".gitignore missing .openswarm/ entry" >&2; exit 1; }
   [[ -f CLAUDE.md ]] || { echo "missing CLAUDE.md" >&2; exit 1; }
   # Idempotent second run
   $BIN init > /dev/null 2>&1 || exit 1
-  # Confirm only one .swarm-coder/ line in .gitignore (idempotency)
-  COUNT=$(grep -c '^\.swarm-coder/$' .gitignore 2>/dev/null || echo 0)
-  [[ "$COUNT" == "1" ]] || { echo ".gitignore has $COUNT .swarm-coder/ entries (want 1)" >&2; exit 1; }
+  # Confirm only one .openswarm/ line in .gitignore (idempotency)
+  COUNT=$(grep -c '^\.openswarm/$' .gitignore 2>/dev/null || echo 0)
+  [[ "$COUNT" == "1" ]] || { echo ".gitignore has $COUNT .openswarm/ entries (want 1)" >&2; exit 1; }
 ) && INIT_OK=true || INIT_OK=false
 
 rm -rf "$INIT_DIR"
 
 if $INIT_OK; then
-  record PASS 8 "init scaffolds .swarm-coder/ + .gitignore + CLAUDE.md, idempotent"
+  record PASS 8 "init scaffolds .openswarm/ + .gitignore + CLAUDE.md, idempotent"
 else
   record FAIL 8 "init failed (see stderr above)"
 fi

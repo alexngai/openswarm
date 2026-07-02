@@ -53,36 +53,36 @@ export interface SpawnWorkerArgs {
   readonly role?: string;
   /**
    * Explicit tool allowlist for this worker (M3a Phase 6). Serialised as
-   * JSON in `SWARM_HARNESS_ALLOWED_TOOLS`. Overrides any role-derived list
+   * JSON in `OPENSWARM_ALLOWED_TOOLS`. Overrides any role-derived list
    * on the worker side when both are provided.
    */
   readonly allowedTools?: readonly string[];
   /**
    * Engine/framework selection propagated from the orchestrator.
-   * Written to `SWARM_HARNESS_FRAMEWORK`. Default: "auto".
+   * Written to `OPENSWARM_FRAMEWORK`. Default: "auto".
    */
   readonly framework?: FrameworkChoice;
   /**
    * Team scope for this worker (v0.4 stage 4A.3). Propagated via
-   * `SWARM_HARNESS_TEAM_SCOPE` only when non-default; the worker side will
+   * `OPENSWARM_TEAM_SCOPE` only when non-default; the worker side will
    * consume this in stage 4D when long-lived workers ship.
    */
   readonly teamScope?: string;
   /**
    * v0.4 stage 4D: opt the worker into long-lived mode. When set, the
-   * spawner exports `SWARM_HARNESS_LONG_LIVED=1` so the worker entry point
+   * spawner exports `OPENSWARM_LONG_LIVED=1` so the worker entry point
    * loops on `run_more` / `drain` instead of exiting after the initial task.
    */
   readonly longLived?: boolean;
   /**
    * v0.4 stage 4D: idle timeout in ms for long-lived workers. Plumbed via
-   * `SWARM_HARNESS_IDLE_TIMEOUT_MS`. Ignored when `longLived` is unset.
+   * `OPENSWARM_IDLE_TIMEOUT_MS`. Ignored when `longLived` is unset.
    */
   readonly idleTimeoutMs?: number;
   /**
    * Stage B (ACP teams): route this worker's mode-denied tool calls back to the
    * orchestrator (which forwards them to an operator) instead of denying them
-   * outright. Exported via `SWARM_HARNESS_PERMISSION_ESCALATION=1`. The host
+   * outright. Exported via `OPENSWARM_PERMISSION_ESCALATION=1`. The host
    * sets this when it holds an `interactionHandler`, so escalation is scoped to
    * the worker's env rather than mutating the orchestrator's process.env.
    */
@@ -91,7 +91,7 @@ export interface SpawnWorkerArgs {
    * Stage B1.4: path to a session sidecar this worker writes its engine session
    * id to (and reads on its first turn to resume across processes). Only the
    * coordinator root gets one (threaded from the ACP layer). Exported via
-   * `SWARM_HARNESS_SESSION_SIDECAR`.
+   * `OPENSWARM_SESSION_SIDECAR`.
    */
   readonly sessionSidecarPath?: string;
 }
@@ -100,54 +100,54 @@ export function spawnWorker(args: SpawnWorkerArgs): ChildProcess {
   const cliPath = args.cliJsPath ?? DEFAULT_CLI_PATH;
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    SWARM_HARNESS_AGENT_ID: args.agentId,
-    SWARM_HARNESS_PARENT_PID: String(args.parentPid),
-    SWARM_HARNESS_ORCHESTRATOR_PID: String(args.orchestratorPid),
-    SWARM_HARNESS_DEPTH: String(args.depth),
+    OPENSWARM_AGENT_ID: args.agentId,
+    OPENSWARM_PARENT_PID: String(args.parentPid),
+    OPENSWARM_ORCHESTRATOR_PID: String(args.orchestratorPid),
+    OPENSWARM_DEPTH: String(args.depth),
   };
   if (args.parentToolUseId !== undefined) {
-    env.SWARM_HARNESS_PARENT_TOOL_USE_ID = args.parentToolUseId;
+    env.OPENSWARM_PARENT_TOOL_USE_ID = args.parentToolUseId;
   }
   if (args.permissionMode !== undefined) {
-    env.SWARM_HARNESS_PERMISSION_MODE = args.permissionMode;
+    env.OPENSWARM_PERMISSION_MODE = args.permissionMode;
   }
   if (args.testScript !== undefined) {
-    env.SWARM_HARNESS_TEST_SCRIPT = args.testScript;
+    env.OPENSWARM_TEST_SCRIPT = args.testScript;
   }
   if (args.model !== undefined) {
-    env.SWARM_HARNESS_MODEL = args.model;
+    env.OPENSWARM_MODEL = args.model;
   }
   if (args.role !== undefined) {
-    env.SWARM_HARNESS_ROLE = args.role;
+    env.OPENSWARM_ROLE = args.role;
   }
   if (args.allowedTools !== undefined) {
-    env.SWARM_HARNESS_ALLOWED_TOOLS = JSON.stringify(args.allowedTools);
+    env.OPENSWARM_ALLOWED_TOOLS = JSON.stringify(args.allowedTools);
   }
   if (args.framework !== undefined) {
-    env.SWARM_HARNESS_FRAMEWORK = args.framework;
+    env.OPENSWARM_FRAMEWORK = args.framework;
   }
   // Only emit the team scope env when the team is non-default — keeps the
   // env footprint clean for legacy single-team runs (v0.4 stage 4A.3).
   if (args.teamScope !== undefined && args.teamScope !== "swarm:default") {
-    env.SWARM_HARNESS_TEAM_SCOPE = args.teamScope;
+    env.OPENSWARM_TEAM_SCOPE = args.teamScope;
   }
   // v0.4 stage 4D: opt-in long-lived worker mode. Worker entry checks
-  // SWARM_HARNESS_LONG_LIVED === "1" and loops on run_more/drain instead
+  // OPENSWARM_LONG_LIVED === "1" and loops on run_more/drain instead
   // of exiting after the initial task.
   if (args.longLived === true) {
-    env.SWARM_HARNESS_LONG_LIVED = "1";
+    env.OPENSWARM_LONG_LIVED = "1";
   }
   if (args.idleTimeoutMs !== undefined) {
-    env.SWARM_HARNESS_IDLE_TIMEOUT_MS = String(args.idleTimeoutMs);
+    env.OPENSWARM_IDLE_TIMEOUT_MS = String(args.idleTimeoutMs);
   }
   if (args.permissionEscalation === true) {
-    env.SWARM_HARNESS_PERMISSION_ESCALATION = "1";
+    env.OPENSWARM_PERMISSION_ESCALATION = "1";
   }
   if (args.sessionSidecarPath !== undefined) {
-    env.SWARM_HARNESS_SESSION_SIDECAR = args.sessionSidecarPath;
+    env.OPENSWARM_SESSION_SIDECAR = args.sessionSidecarPath;
   }
   // Per-worker prompt-cache routing key is derived inside worker-entry from
-  // SWARM_HARNESS_AGENT_ID. We don't propagate the parent's session id here:
+  // OPENSWARM_AGENT_ID. We don't propagate the parent's session id here:
   // workers share a backend by virtue of routing, not by sharing keys, so
   // each worker gets its own stable key from its own unique agentId.
 

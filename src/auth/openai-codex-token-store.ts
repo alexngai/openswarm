@@ -2,10 +2,10 @@
  * Persistent store for codex (ChatGPT-subscription) OAuth tokens.
  *
  * OAuth yields a short-lived access token, a long-lived refresh token, and the
- * account id — each `swarm-harness` run is a fresh process, so these must
+ * account id — each `openswarm` run is a fresh process, so these must
  * persist to disk and be silent-refreshed when the access token expires
  * (docs/42 §6 / Q6). Posture: a single `0600` JSON file under
- * `~/.swarm-harness/auth.json`, provider-namespaced so other providers can
+ * `~/.openswarm/auth.json`, provider-namespaced so other providers can
  * coexist. Never logged.
  */
 
@@ -24,10 +24,10 @@ export interface CodexTokens {
 const PROVIDER_KEY = "openai-codex";
 
 function authFilePath(baseDir?: string): string {
-  // SWARM_HARNESS_AUTH_DIR relocates the credential store (used by the live
+  // OPENSWARM_AUTH_DIR relocates the credential store (used by the live
   // e2e to point a spawned CLI at a seeded temp store; mirrors
-  // SWARM_HARNESS_HISTORY_PATH / SWARM_HARNESS_WORKERS_DIR).
-  const dir = baseDir ?? process.env["SWARM_HARNESS_AUTH_DIR"] ?? path.join(os.homedir(), ".swarm-harness");
+  // OPENSWARM_HISTORY_PATH / OPENSWARM_WORKERS_DIR).
+  const dir = baseDir ?? process.env["OPENSWARM_AUTH_DIR"] ?? path.join(os.homedir(), ".openswarm");
   return path.join(dir, "auth.json");
 }
 

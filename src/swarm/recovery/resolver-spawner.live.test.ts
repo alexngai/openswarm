@@ -14,16 +14,16 @@ import type { AgentId } from "../../core/types.js";
 /**
  * docs/44 P2b.5 — Loop 2: the spawn-resolver loop with a REAL resolver
  * subprocess driven by the live engine (Claude). Skipped unless
- * `SWARM_HARNESS_LIVE_RESOLVER=1`. This is the only path that exercises real
+ * `OPENSWARM_LIVE_RESOLVER=1`. This is the only path that exercises real
  * agent-driven conflict resolution + the resolve_conflict IPC end-to-end
  * (ScriptedTestEngine can't execute tools — D5). Requires `dist/cli.js`
  * (built by the integration globalSetup) + Claude auth. Costs tokens.
  *
- * Run: SWARM_HARNESS_LIVE_RESOLVER=1 npx vitest run \
+ * Run: OPENSWARM_LIVE_RESOLVER=1 npx vitest run \
  *   src/swarm/recovery/resolver-spawner.live.test.ts
  */
 
-const LIVE = process.env.SWARM_HARNESS_LIVE_RESOLVER === "1";
+const LIVE = process.env.OPENSWARM_LIVE_RESOLVER === "1";
 
 const GIT_ENV: NodeJS.ProcessEnv = {
   ...process.env,

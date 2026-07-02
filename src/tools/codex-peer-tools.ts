@@ -6,7 +6,7 @@
  * peer-team workflow are exposed; 3 (`agent`, `task_create`, `task_update`)
  * are deferred because their semantics overlap with codex's own internal
  * task / planning surface and would confuse the agent. See
- * docs/27-v0.4-teams-implementation-plan.md §V0.4.Q11.
+ * docs/archive/27-v0.4-teams-implementation-plan.md §V0.4.Q11.
  */
 
 import type { ToolImpl } from "./types.js";

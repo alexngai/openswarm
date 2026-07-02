@@ -6,23 +6,32 @@
  * a TeamDaemon, runs the team, and exits cleanly.
  *
  * Required env vars (set by `team start --detach` in 5E.3):
- *   SWARM_HARNESS_DAEMON_SPEC    — path to a JSON file containing the TeamSpec
- *   SWARM_HARNESS_DAEMON_SOCK    — Unix socket path
- *   SWARM_HARNESS_DAEMON_PID     — pid file path
- *   SWARM_HARNESS_DAEMON_EVENTS  — events.jsonl path
- *   SWARM_HARNESS_DAEMON_STATE   — team-state.json path
+ *   OPENSWARM_DAEMON_SPEC    — path to a JSON file containing the TeamSpec
+ *   OPENSWARM_DAEMON_SOCK    — Unix socket path
+ *   OPENSWARM_DAEMON_PID     — pid file path
+ *   OPENSWARM_DAEMON_EVENTS  — events.jsonl path
+ *   OPENSWARM_DAEMON_STATE   — team-state.json path
+ *   OPENSWARM_DAEMON_CHECKPOINT — team-checkpoint.json path (crash-recovery)
  */
 
 import * as fsp from "node:fs/promises";
+import type { PermissionMode } from "../core/types.js";
 import { TeamSpecSchema, type TeamSpec } from "../swarm/team-spec.js";
 import { TeamDaemon } from "../swarm/team-daemon.js";
 
+const PERMISSION_MODES: readonly PermissionMode[] = [
+  "read-only",
+  "workspace-write",
+  "danger-full-access",
+];
+
 const REQUIRED_ENV = [
-  "SWARM_HARNESS_DAEMON_SPEC",
-  "SWARM_HARNESS_DAEMON_SOCK",
-  "SWARM_HARNESS_DAEMON_PID",
-  "SWARM_HARNESS_DAEMON_EVENTS",
-  "SWARM_HARNESS_DAEMON_STATE",
+  "OPENSWARM_DAEMON_SPEC",
+  "OPENSWARM_DAEMON_SOCK",
+  "OPENSWARM_DAEMON_PID",
+  "OPENSWARM_DAEMON_EVENTS",
+  "OPENSWARM_DAEMON_STATE",
+  "OPENSWARM_DAEMON_CHECKPOINT",
 ] as const;
 
 export async function runTeamDaemonEntry(): Promise<number> {
@@ -35,11 +44,12 @@ export async function runTeamDaemonEntry(): Promise<number> {
     }
   }
 
-  const specPath = process.env.SWARM_HARNESS_DAEMON_SPEC!;
-  const sockPath = process.env.SWARM_HARNESS_DAEMON_SOCK!;
-  const pidPath = process.env.SWARM_HARNESS_DAEMON_PID!;
-  const eventsPath = process.env.SWARM_HARNESS_DAEMON_EVENTS!;
-  const statePath = process.env.SWARM_HARNESS_DAEMON_STATE!;
+  const specPath = process.env.OPENSWARM_DAEMON_SPEC!;
+  const sockPath = process.env.OPENSWARM_DAEMON_SOCK!;
+  const pidPath = process.env.OPENSWARM_DAEMON_PID!;
+  const eventsPath = process.env.OPENSWARM_DAEMON_EVENTS!;
+  const statePath = process.env.OPENSWARM_DAEMON_STATE!;
+  const checkpointPath = process.env.OPENSWARM_DAEMON_CHECKPOINT!;
 
   let spec: TeamSpec;
   try {
@@ -59,9 +69,23 @@ export async function runTeamDaemonEntry(): Promise<number> {
     return 2;
   }
 
+  // Phase 4.1c — optional effective config threaded from `team start`.
+  const rawMode = process.env.OPENSWARM_DAEMON_PERMISSION_MODE;
+  const permissionMode = PERMISSION_MODES.find((m) => m === rawMode);
+  const rawConcurrency = Number.parseInt(
+    process.env.OPENSWARM_DAEMON_CONCURRENCY ?? "",
+    10,
+  );
+  const concurrency =
+    Number.isFinite(rawConcurrency) && rawConcurrency > 0
+      ? rawConcurrency
+      : undefined;
+
   const daemon = new TeamDaemon({
     spec,
-    paths: { sockPath, pidPath, eventsPath, statePath },
+    paths: { sockPath, pidPath, eventsPath, statePath, checkpointPath },
+    ...(permissionMode !== undefined && { permissionMode }),
+    ...(concurrency !== undefined && { concurrency }),
   });
 
   try {

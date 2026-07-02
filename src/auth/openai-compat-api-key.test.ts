@@ -18,13 +18,6 @@ describe("OpenAICompatApiKeyAuth", () => {
     expect(await auth.isAuthenticated()).toBe(true);
   });
 
-  it("headers returns Authorization Bearer with the key", async () => {
-    vi.stubEnv("DASHSCOPE_API_KEY", "ds-my-key");
-    const auth = new OpenAICompatApiKeyAuth("DASHSCOPE_API_KEY", "openai-compat");
-    const hdrs = await auth.headers();
-    expect(hdrs["Authorization"]).toBe("Bearer ds-my-key");
-  });
-
   it("has correct kind and supplied providerId", () => {
     const auth = new OpenAICompatApiKeyAuth("DASHSCOPE_API_KEY", "openai-compat");
     expect(auth.kind).toBe("api-key");
@@ -35,8 +28,6 @@ describe("OpenAICompatApiKeyAuth", () => {
     vi.stubEnv("CUSTOM_API_KEY", "custom-val");
     const auth = new OpenAICompatApiKeyAuth("CUSTOM_API_KEY", "custom-provider");
     expect(await auth.isAuthenticated()).toBe(true);
-    const hdrs = await auth.headers();
-    expect(hdrs["Authorization"]).toBe("Bearer custom-val");
     expect(auth.providerId).toBe("custom-provider");
   });
 });

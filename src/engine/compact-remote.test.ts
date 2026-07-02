@@ -2,7 +2,9 @@ import { describe, it, expect, vi } from "vitest";
 import {
   compactSessionRemote,
   isRemoteCompactionConfig,
+  missingSummarySections,
   REMOTE_COMPACTION_SYSTEM_PROMPT,
+  REQUIRED_SUMMARY_SECTIONS,
   type RemoteCompactionConfig,
 } from "./compact-remote.js";
 import type {
@@ -149,6 +151,45 @@ function slowProvider(delayMs: number, response: string): Provider {
   };
 }
 
+/** A response containing every required `## …` section (passes validation). */
+function conformingSummary(marker = "Work done."): string {
+  const body = REQUIRED_SUMMARY_SECTIONS.map((s) => `## ${s}\n${marker}`).join(
+    "\n\n",
+  );
+  return `<analysis>Some analysis notes.</analysis>\n<summary>\n${body}\n</summary>`;
+}
+
+/** Provider that returns a different response on each successive stream() call. */
+function sequenceProvider(responses: string[]): Provider {
+  let call = 0;
+  return {
+    ...mockProvider(""),
+    stream(_request: ProviderRequest): AsyncIterable<ProviderEvent> {
+      const response = responses[Math.min(call, responses.length - 1)]!;
+      call++;
+      const events: ProviderEvent[] = [
+        { type: "text-delta", text: response },
+        {
+          type: "finish",
+          stopReason: "end_turn",
+          usage: { inputTokens: 100, outputTokens: 50 },
+        },
+      ];
+      return {
+        [Symbol.asyncIterator]() {
+          let i = 0;
+          return {
+            async next() {
+              if (i < events.length) return { value: events[i++]!, done: false };
+              return { value: undefined, done: true } as any;
+            },
+          };
+        },
+      };
+    },
+  };
+}
+
 function remoteConfig(
   provider: Provider,
   overrides?: Partial<RemoteCompactionConfig>,
@@ -205,8 +246,7 @@ describe("compactSessionRemote", () => {
     const messages = makeFiller(15);
     const session: Session = { messages };
 
-    const llmResponse =
-      "<analysis>Important session about testing.</analysis>\n<summary>\n## Primary Request\nUser was testing remote compaction.\n</summary>";
+    const llmResponse = conformingSummary("User was testing remote compaction.");
 
     const provider = mockProvider(llmResponse);
     const streamSpy = vi.spyOn(provider, "stream");
@@ -218,7 +258,7 @@ describe("compactSessionRemote", () => {
 
     expect(streamSpy).toHaveBeenCalledTimes(1);
     expect(result.removedMessageCount).toBeGreaterThan(0);
-    expect(result.summary).toContain("Primary Request");
+    expect(result.summary).toContain("Primary Request and Intent");
     expect(result.compactedSession.messages.length).toBeLessThan(
       messages.length,
     );
@@ -366,17 +406,7 @@ describe("compactSessionRemote", () => {
   });
 
   it("extracts summary tags from response", async () => {
-    const llmResponse = `<analysis>
-Some analysis notes.
-</analysis>
-
-<summary>
-## Primary Request
-Testing the compactor.
-
-## Pending Tasks
-- Run remaining tests
-</summary>`;
+    const llmResponse = conformingSummary("Testing the compactor.");
 
     const messages = makeFiller(15);
     const result = await compactSessionRemote(
@@ -384,23 +414,32 @@ Testing the compactor.
       remoteConfig(mockProvider(llmResponse)),
     );
 
-    expect(result.summary).toContain("Primary Request");
+    expect(result.summary).toContain("Primary Request and Intent");
     expect(result.summary).toContain("Pending Tasks");
-    // Analysis block should be stripped by formatCompactSummary
+    // Analysis block should be stripped (only the <summary> slice is kept).
     expect(result.summary).not.toContain("analysis notes");
   });
 
-  it("handles response without summary tags", async () => {
-    const llmResponse = "The user was working on a compaction feature.";
+  it("falls back to mechanical when the response lacks required sections after a retry", async () => {
+    // Neither attempt conforms → validation fails twice → mechanical fallback.
+    const provider = mockProvider("The user was working on a compaction feature.");
+    const streamSpy = vi.spyOn(provider, "stream");
 
     const messages = makeFiller(15);
     const result = await compactSessionRemote(
       { messages },
-      remoteConfig(mockProvider(llmResponse)),
+      remoteConfig(provider),
     );
 
-    // Should wrap in summary tags
-    expect(result.summary).toContain("compaction feature");
+    // Initial attempt + exactly one corrective retry.
+    expect(streamSpy).toHaveBeenCalledTimes(2);
+    const systemText = (
+      result.compactedSession.messages[0]!.content[0] as {
+        type: "text";
+        text: string;
+      }
+    ).text;
+    expect(systemText).toContain("Conversation summary:");
   });
 
   it("merges with existing summary", async () => {
@@ -423,7 +462,7 @@ Testing the compactor.
 
     const result = await compactSessionRemote(
       { messages },
-      remoteConfig(mockProvider("<summary>## New context\nMore work done.</summary>")),
+      remoteConfig(mockProvider(conformingSummary("More work done."))),
     );
 
     expect(result.removedMessageCount).toBeGreaterThan(0);
@@ -474,6 +513,81 @@ Testing the compactor.
     const userMsgText = (callArgs.messages[0]!.content[0] as { text: string }).text;
     expect(userMsgText).toContain("Tool call: read_file");
     expect(userMsgText).toContain("Tool result:");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Section validation + retry
+// ---------------------------------------------------------------------------
+
+describe("missingSummarySections", () => {
+  it("reports no missing sections for a conforming summary", () => {
+    expect(missingSummarySections(conformingSummary())).toEqual([]);
+  });
+
+  it("reports the sections absent from a partial summary", () => {
+    const partial = "<summary>\n## Primary Request and Intent\nx\n</summary>";
+    const missing = missingSummarySections(partial);
+    expect(missing).toContain("Pending Tasks");
+    expect(missing).toContain("Current Work");
+    expect(missing).not.toContain("Primary Request and Intent");
+  });
+
+  it("matches section headers case-insensitively", () => {
+    const body = REQUIRED_SUMMARY_SECTIONS.map(
+      (s) => `## ${s.toUpperCase()}\nx`,
+    ).join("\n\n");
+    expect(missingSummarySections(`<summary>\n${body}\n</summary>`)).toEqual([]);
+  });
+});
+
+describe("compactSessionRemote — section validation", () => {
+  it("accepts a fully-conforming summary without retrying", async () => {
+    const provider = mockProvider(conformingSummary());
+    const streamSpy = vi.spyOn(provider, "stream");
+
+    const result = await compactSessionRemote(
+      { messages: makeFiller(15) },
+      remoteConfig(provider),
+    );
+
+    expect(streamSpy).toHaveBeenCalledTimes(1);
+    expect(result.summary).toContain("Current Work");
+  });
+
+  it("retries once with a corrective note, then uses the corrected summary", async () => {
+    const provider = sequenceProvider([
+      "<summary>\n## Primary Request and Intent\nonly one section\n</summary>",
+      conformingSummary("corrected on retry"),
+    ]);
+    const streamSpy = vi.spyOn(provider, "stream");
+
+    const result = await compactSessionRemote(
+      { messages: makeFiller(15) },
+      remoteConfig(provider),
+    );
+
+    expect(streamSpy).toHaveBeenCalledTimes(2);
+    // The retry prompt must enumerate the missing sections.
+    const retryText = (
+      streamSpy.mock.calls[1]![0].messages[0]!.content[0] as { text: string }
+    ).text;
+    expect(retryText).toContain("Correction Required");
+    expect(retryText).toContain("Pending Tasks");
+    // Final summary is the corrected remote one, not a mechanical fallback.
+    expect(result.summary).toContain("corrected on retry");
+  });
+
+  it("does not retry more than once (bounded)", async () => {
+    const provider = mockProvider("<summary>never conforms</summary>");
+    const streamSpy = vi.spyOn(provider, "stream");
+
+    await compactSessionRemote(
+      { messages: makeFiller(15) },
+      remoteConfig(provider),
+    );
+
+    expect(streamSpy).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -5,10 +5,10 @@
  * requestPermission round-trip) rather than calling AcpAgent methods directly.
  *
  * The deterministic cases use a scripted/gating engine and run in CI. The live
- * case (gated by SWARM_ACP_LIVE=1) builds the real runtime and drives an actual
+ * case (gated by OPENSWARM_ACP_LIVE=1) builds the real runtime and drives an actual
  * model turn — run it with a Claude credential available:
  *
- *   SWARM_ACP_LIVE=1 npx vitest run src/acp/e2e.test.ts
+ *   OPENSWARM_ACP_LIVE=1 npx vitest run src/acp/e2e.test.ts
  */
 
 import { describe, it, expect } from "vitest";
@@ -171,6 +171,14 @@ function gatingRuntime(): AgentRuntime {
 
 const opts = { permissionMode: "workspace-write" } as CommonOpts;
 
+// The gating tests force a mode-deny prompt on `write_file`. Since the gate now
+// checks the LIVE current mode (getCurrentMode → opts.permissionMode) rather
+// than the PermissionEngine's frozen construction mode, the *current* mode must
+// itself deny writes — otherwise the tool fast-path allows and no prompt fires.
+// In production the engine mode and the current mode share one source, so this
+// read-only pairing mirrors a real read-only ACP session.
+const gatingOpts = { permissionMode: "read-only" } as CommonOpts;
+
 // ---------------------------------------------------------------------------
 // Deterministic e2e
 // ---------------------------------------------------------------------------
@@ -199,7 +207,7 @@ describe("ACP e2e (ClientSideConnection <-> AcpAgent)", () => {
         protocolVersion: 1,
         clientCapabilities: {},
       });
-      expect(init.agentInfo?.name).toBe("swarm-harness");
+      expect(init.agentInfo?.name).toBe("openswarm");
       expect(init.agentCapabilities?.loadSession).toBe(true);
 
       const { sessionId } = await client.newSession({
@@ -229,7 +237,7 @@ describe("ACP e2e (ClientSideConnection <-> AcpAgent)", () => {
       outcome: { outcome: "selected", optionId: "reject" },
     }));
     const { client, dispose } = connect(
-      (conn) => new AcpAgent(conn, gatingRuntime(), opts),
+      (conn) => new AcpAgent(conn, gatingRuntime(), gatingOpts),
       harness,
     );
     try {
@@ -255,7 +263,7 @@ describe("ACP e2e (ClientSideConnection <-> AcpAgent)", () => {
       outcome: { outcome: "selected", optionId: "allow" },
     }));
     const { client, dispose } = connect(
-      (conn) => new AcpAgent(conn, gatingRuntime(), opts),
+      (conn) => new AcpAgent(conn, gatingRuntime(), gatingOpts),
       harness,
     );
     try {
@@ -276,10 +284,10 @@ describe("ACP e2e (ClientSideConnection <-> AcpAgent)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Live e2e — gated by SWARM_ACP_LIVE=1 (needs a Claude credential)
+// Live e2e — gated by OPENSWARM_ACP_LIVE=1 (needs a Claude credential)
 // ---------------------------------------------------------------------------
 
-const LIVE = process.env.SWARM_ACP_LIVE === "1";
+const LIVE = process.env.OPENSWARM_ACP_LIVE === "1";
 
 describe("ACP e2e (live model)", () => {
   (LIVE ? it : it.skip)(
@@ -295,6 +303,7 @@ describe("ACP e2e (live model)", () => {
         hooks: false,
         dumpTools: false,
         enableWebSearch: false,
+        plan: false,
         framework: "auto",
       };
       const built = await buildAgentRuntime(liveOpts);
@@ -423,7 +432,7 @@ describe("ACP e2e (subprocess)", () => {
         ],
         {
           cwd: process.cwd(),
-          env: { ...process.env, SWARM_HARNESS_TEST_SCRIPT: fixture },
+          env: { ...process.env, OPENSWARM_TEST_SCRIPT: fixture },
           stdio: ["pipe", "pipe", "ignore"],
         },
       );
@@ -436,7 +445,7 @@ describe("ACP e2e (subprocess)", () => {
           protocolVersion: 1,
           clientCapabilities: {},
         });
-        expect(init.agentInfo?.name).toBe("swarm-harness");
+        expect(init.agentInfo?.name).toBe("openswarm");
         expect(init.agentCapabilities?.loadSession).toBe(true);
 
         const { sessionId } = await conn.newSession({
@@ -650,7 +659,7 @@ describe("ACP e2e (subprocess, team — deterministic)", () => {
         ["src/cli.ts", "acp", "--team", "--no-plugins", "--no-skills", "--no-mcp", "--no-hooks"],
         {
           cwd: process.cwd(),
-          env: { ...process.env, SWARM_HARNESS_TEST_SCRIPT: fixture },
+          env: { ...process.env, OPENSWARM_TEST_SCRIPT: fixture },
           stdio: ["pipe", "pipe", "ignore"],
         },
       );
@@ -710,7 +719,7 @@ describe("ACP e2e (subprocess, team — deterministic)", () => {
       {
         const child = spawn(BUN!, teamArgs, {
           cwd: process.cwd(),
-          env: { ...process.env, SWARM_HARNESS_TEST_SCRIPT: fixture },
+          env: { ...process.env, OPENSWARM_TEST_SCRIPT: fixture },
           stdio: ["pipe", "pipe", "ignore"],
         });
         child.on("error", () => {});

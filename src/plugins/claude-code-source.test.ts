@@ -85,7 +85,7 @@ describe("ClaudeCodeSource", () => {
 
     expect(manifests).toHaveLength(0);
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("[swarm-harness] plugin bad-plugin"),
+      expect.stringContaining("[openswarm] plugin bad-plugin"),
     );
   });
 
@@ -104,7 +104,7 @@ describe("ClaudeCodeSource", () => {
 
     expect(manifests).toHaveLength(0);
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("[swarm-harness] plugin no-exec-mode"),
+      expect.stringContaining("[openswarm] plugin no-exec-mode"),
     );
   });
 
@@ -220,7 +220,7 @@ describe("ClaudeCodeSource", () => {
     const result = await plugin.executeTool("boom", {}, { cwd: tmpDir });
     expect(result.status).toBe("error");
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("[swarm-harness] plugin broken-plugin"),
+      expect.stringContaining("[openswarm] plugin broken-plugin"),
     );
   });
 

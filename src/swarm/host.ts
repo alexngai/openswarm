@@ -65,14 +65,14 @@ export interface PermissionDecisionResponse {
 /**
  * Orchestrator-side handler for worker escalations (ask_user_question and
  * permission requests). The ACP layer injects one that routes to the client;
- * absent, the orchestrator denies. See docs/33 §4.
+ * absent, the orchestrator denies. See docs/archive/33 §4.
  */
 export interface InteractionHandler {
   requestPermission(
     req: PermissionRequest,
   ): Promise<PermissionDecisionResponse>;
   /**
-   * Optional (docs/33 §9): route a member's `ask_user_question` to the operator
+   * Optional (docs/archive/33 §9): route a member's `ask_user_question` to the operator
    * (the ACP client) instead of erroring headless. Multiple-choice only — ACP
    * has no free-form text input, so an option list is required.
    */
@@ -117,12 +117,12 @@ export interface SwarmHost {
   /**
    * This agent's own depth in the recursion tree.
    * 0 for the orchestrator's StandaloneHost; set authoritatively by the
-   * orchestrator for WorkerHost instances (via `SWARM_HARNESS_DEPTH` env var).
+   * orchestrator for WorkerHost instances (via `OPENSWARM_DEPTH` env var).
    */
   readonly depth: number;
   /**
    * This host's permission mode. Sub-agents cannot escalate beyond this.
-   * Set by the orchestrator; workers receive it via `SWARM_HARNESS_PERMISSION_MODE` env.
+   * Set by the orchestrator; workers receive it via `OPENSWARM_PERMISSION_MODE` env.
    */
   readonly permissionMode: PermissionMode;
 
@@ -146,13 +146,6 @@ export interface SwarmHost {
   ): Promise<SendResult>;
 
   /**
-   * Async iterable over inbox events for this agent.
-   * Includes incoming messages, permission responses, and user answers.
-   * Iteration completes when the host shuts down.
-   */
-  inbox(): AsyncIterable<InboxEvent>;
-
-  /**
    * Drain up to `max` queued messages for this host's own agent.
    * Used by the Tier 2 `check_inbox` tool — returns [] when nothing is queued.
    * v0.6 stage 6A.1: async to allow library/daemon-backed inbox impls.
@@ -161,7 +154,7 @@ export interface SwarmHost {
 
   /**
    * Ask the operator a question and wait for a response.
-   * M3b Phase 6 implements the real transport; Phase 0 stubs throw.
+   * StandaloneHost forwards to the operator surface; WorkerHost relays over IPC.
    */
   askUser(question: string, options?: readonly string[]): Promise<AskUserResponse>;
 
@@ -215,8 +208,17 @@ export interface SpawnRequest {
   readonly permissionMode: PermissionMode;
   /** Model id or alias (e.g. "sonnet", "claude-sonnet-4-6", "gpt-4o"). */
   readonly model?: string;
-  /** Opt into a FrameworkProvider mode (subscription auth). */
-  readonly framework?: "claude-agent-sdk" | "codex-chatgpt";
+  /**
+   * Per-worker engine framework, forwarded to the spawned process as
+   * OPENSWARM_FRAMEWORK (Phase 2.2 widened this to the worker-validated set).
+   * Omit for the default `auto` selection.
+   */
+  readonly framework?:
+    | "claude-agent-sdk"
+    | "codex-chatgpt"
+    | "codex-native"
+    | "native"
+    | "hardened-native";
   /**
    * v0.7 stage 7A.2: optional working directory for the spawned worker.
    * When set, overrides the orchestrator's cwd. Used by the git-cascade
@@ -258,7 +260,7 @@ export interface SpawnRequest {
   /**
    * When spawned via the `agent` tool, the tool_use_id from the parent's
    * transcript. Orchestrator propagates to child via
-   * `SWARM_HARNESS_PARENT_TOOL_USE_ID` env var. Child's event translator stamps
+   * `OPENSWARM_PARENT_TOOL_USE_ID` env var. Child's event translator stamps
    * this id on every emitted NormalizedEvent / LaneEvent so the orchestrator's
    * merged stream can attribute sub-agent events back to the invoking tool_use
    * in the parent's transcript.
@@ -291,7 +293,7 @@ export interface SpawnRequest {
    * `longLived` is false.
    *
    * Default: 600_000 (10 min). Honoured worker-side via the
-   * `SWARM_HARNESS_IDLE_TIMEOUT_MS` env variable.
+   * `OPENSWARM_IDLE_TIMEOUT_MS` env variable.
    */
   readonly idleTimeoutMs?: number;
 }
@@ -513,17 +515,3 @@ export interface AgentMessage {
   /** Correlation id for request/response flows (e.g. ask_user_question). */
   readonly correlationId?: string;
 }
-
-export type InboxEvent =
-  | { readonly type: "message"; readonly message: AgentMessage }
-  | {
-      readonly type: "permission_response";
-      readonly toolUseId: string;
-      readonly decision: "allow" | "deny";
-      readonly reason?: string;
-    }
-  | {
-      readonly type: "answer";
-      readonly correlationId: string;
-      readonly answer: string;
-    };

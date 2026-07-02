@@ -29,7 +29,7 @@
  * forget on `.initialize()`; if init fails we drop back to the
  * single-color `markup.raw.block` palette.
  *
- * Disable via `SWARM_HARNESS_DISABLE_TREE_SITTER=1` if the worker thread
+ * Disable via `OPENSWARM_DISABLE_TREE_SITTER=1` if the worker thread
  * causes problems (test isolation, packaging, slow init under load).
  */
 
@@ -80,7 +80,7 @@ function markdownSyntaxStyle(): SyntaxStyle {
 // `null` = attempted and failed terminally — don't retry.
 let _treeSitterClient: TreeSitterClient | null | undefined = undefined;
 function treeSitterClient(): TreeSitterClient | undefined {
-  if (process.env.SWARM_HARNESS_DISABLE_TREE_SITTER === "1") return undefined;
+  if (process.env.OPENSWARM_DISABLE_TREE_SITTER === "1") return undefined;
   if (_treeSitterClient !== undefined) return _treeSitterClient ?? undefined;
   try {
     const client = getTreeSitterClient();

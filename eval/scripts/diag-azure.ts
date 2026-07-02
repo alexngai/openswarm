@@ -14,7 +14,7 @@ for (const k of ["AZURE_API_BASE", "AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_API_KE
 if (!envs.AZURE_OPENAI_API_VERSION) envs.AZURE_OPENAI_API_VERSION = "2024-08-01-preview";
 console.error(`[diag] azure env keys: ${Object.keys(envs).join(", ")}`);
 
-const SH = "/opt/node/bin/swarm-harness";
+const SH = "/opt/node/bin/openswarm";
 const sbx = await Sandbox.create(template, { apiKey });
 console.error(`[diag] sandbox ${sbx.sandboxId}`);
 async function run(label: string, cmd: string): Promise<void> {
@@ -28,7 +28,7 @@ async function run(label: string, cmd: string): Promise<void> {
   }
 }
 try {
-  await run("which + version", `${SH} --version 2>&1; echo "bin: $(command -v swarm-harness)"`);
+  await run("which + version", `${SH} --version 2>&1; echo "bin: $(command -v openswarm)"`);
   await run("azure tool-use run", `cd /testbed && ${SH} "Use your bash tool to run 'ls' here, then use your file-writing tool to create a file named PROOF.txt containing the single word DONE. Then stop." --model azureoai/gpt-4.1 --permission-mode danger-full-access --headless --output-format json`);
   await run("did it create the file?", `cat /testbed/PROOF.txt 2>&1 || echo "PROOF.txt NOT created"`);
 } finally {

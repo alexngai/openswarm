@@ -1028,7 +1028,7 @@ describe("StandaloneHost.askUser", () => {
     }
   });
 
-  it("headless: routes to interactionHandler.askUserQuestion when present (docs/33 §9)", async () => {
+  it("headless: routes to interactionHandler.askUserQuestion when present (docs/archive/33 §9)", async () => {
     const restore = withIsTTY(false);
     try {
       const seen: Array<{ q: string; options?: readonly string[] }> = [];
@@ -1158,8 +1158,8 @@ describe("StandaloneHost.askUser", () => {
 
 // ---------------------------------------------------------------------------
 // scanForOrphanWorkers (v0.2 Stage 2B)
-// SWARM_HARNESS_WORKERS_DIR is set to a tmp dir in vitest-setup.ts so these
-// writes never touch ~/.swarm-harness/workers/.
+// OPENSWARM_WORKERS_DIR is set to a tmp dir in vitest-setup.ts so these
+// writes never touch ~/.openswarm/workers/.
 // ---------------------------------------------------------------------------
 
 describe("StandaloneHost.scanForOrphanWorkers", () => {

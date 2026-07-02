@@ -1,5 +1,5 @@
 /**
- * diag-coordinator.ts — see what `swarm-harness topology coordinator --spec` actually does in-sandbox
+ * diag-coordinator.ts — see what `openswarm topology coordinator --spec` actually does in-sandbox
  * (the team cell failed in 10s / 0 tokens). Run under NODE: tsx eval/scripts/diag-coordinator.ts [template]
  */
 import { Sandbox } from "e2b";
@@ -15,7 +15,7 @@ for (const k of ["AWS_REGION", "AWS_DEFAULT_REGION", "AWS_BEARER_TOKEN_BEDROCK",
   if (v) envs[k] = v;
 }
 if (!envs.AWS_REGION && !envs.AWS_DEFAULT_REGION) envs.AWS_REGION = "us-east-1";
-envs.SWARM_HARNESS_MODEL = MODEL; // does pinning this make the spawned coordinator workers use Bedrock?
+envs.OPENSWARM_MODEL = MODEL; // does pinning this make the spawned coordinator workers use Bedrock?
 
 const spec = {
   name: "h1-team",
@@ -28,7 +28,7 @@ const spec = {
   coordination: { completion: { kind: "all" } },
 };
 
-const SH = "/opt/node/bin/swarm-harness";
+const SH = "/opt/node/bin/openswarm";
 async function run(sbx: Sandbox, label: string, cmd: string): Promise<void> {
   console.log(`\n===== ${label} =====\n$ ${cmd}`);
   try {
@@ -46,9 +46,9 @@ console.error(`[diag] sandbox ${sbx.sandboxId}`);
 try {
   await sbx.files.write("/tmp/team.json", JSON.stringify(spec, null, 2), { user: "root" });
   // Workaround test: redirect the worker's default model NAME(s) to the Bedrock id via user aliases.
-  await sbx.commands.run("mkdir -p /root/.swarm-harness", { user: "root" }).catch(() => undefined);
+  await sbx.commands.run("mkdir -p /root/.openswarm", { user: "root" }).catch(() => undefined);
   await sbx.files.write(
-    "/root/.swarm-harness/settings.json",
+    "/root/.openswarm/settings.json",
     JSON.stringify({ aliases: { sonnet: MODEL, "claude-sonnet-4-6": MODEL, "claude-sonnet-4-5": MODEL } }),
     { user: "root" },
   );

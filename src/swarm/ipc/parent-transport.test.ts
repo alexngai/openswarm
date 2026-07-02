@@ -82,7 +82,7 @@ describe("ParentTransport", () => {
     expect(result).toEqual({ done: true });
   });
 
-  // 1b. Two concurrent requests correlate independently (docs/33 §9): a worker
+  // 1b. Two concurrent requests correlate independently (docs/archive/33 §9): a worker
   // with parallel tool use can have a second permission.request outstanding
   // while the first is pending. Responses may arrive out of order.
   it("correlates two concurrent outstanding requests by id, even out of order", async () => {

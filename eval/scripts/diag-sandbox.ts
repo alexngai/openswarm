@@ -1,5 +1,5 @@
 /**
- * diag-sandbox.ts — one-off: boot the built H1 template and see what swarm-harness actually does
+ * diag-sandbox.ts — one-off: boot the built H1 template and see what openswarm actually does
  * under Bedrock-direct auth (the cell graded 0-token/1.3s, so the model was never engaged).
  *
  * Run:  source ~/.zshrc; bun eval/scripts/diag-sandbox.ts [templateName]
@@ -18,7 +18,7 @@ for (const k of ["AWS_REGION", "AWS_DEFAULT_REGION", "AWS_BEARER_TOKEN_BEDROCK",
 if (!envs.AWS_REGION && !envs.AWS_DEFAULT_REGION) envs.AWS_REGION = "us-east-1";
 console.error(`[diag] bedrock env keys: ${Object.keys(envs).join(", ")}`);
 
-const SH = "/opt/node/bin/swarm-harness";
+const SH = "/opt/node/bin/openswarm";
 async function run(sbx: Sandbox, label: string, cmd: string): Promise<void> {
   console.log(`\n========== ${label} ==========\n$ ${cmd}`);
   try {

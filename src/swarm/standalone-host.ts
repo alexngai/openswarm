@@ -6,7 +6,6 @@ import type {
   AgentHandle,
   AgentResult,
   AgentMessage,
-  InboxEvent,
   TaskAPI,
   TaskRecord,
   TaskPacket,
@@ -1172,7 +1171,7 @@ export class StandaloneHost implements SwarmHost {
     for (const r of recipients) {
       // v0.6 stage 6A.1: scope-keyed enqueue. Use the recipient's scope so
       // the message lands in the right queue when the backend is multi-
-      // tenant (one in-memory backend per swarm-harness process serving
+      // tenant (one in-memory backend per openswarm process serving
       // multiple team scopes; or a shared sqlite-backed agent-inbox).
       const recipientScope = this.scopeOf(r);
       const d = await this.messageInbox.enqueue(recipientScope, r, message);
@@ -1221,10 +1220,6 @@ export class StandaloneHost implements SwarmHost {
    */
   async drainInbox(max: number): Promise<AgentMessage[]> {
     return this.messageInbox.drain(this.scopeOf(this.agentId), this.agentId, max);
-  }
-
-  async *inbox(): AsyncIterable<InboxEvent> {
-    return; // M3b+: full inbox iterator. Phase 3 uses drainInbox + sub_agent_event.
   }
 
   /**
@@ -1286,7 +1281,7 @@ export class StandaloneHost implements SwarmHost {
     });
 
     // Route to the operator (the ACP client) when a handler is present — the ACP
-    // team path has no TTY but can prompt the editor (docs/33 §9).
+    // team path has no TTY but can prompt the editor (docs/archive/33 §9).
     if (this.interactionHandler?.askUserQuestion !== undefined) {
       return this.interactionHandler.askUserQuestion(question, options);
     }

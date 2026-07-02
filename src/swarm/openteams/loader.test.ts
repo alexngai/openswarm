@@ -64,7 +64,7 @@ describe("loadTemplate (fixture mode)", () => {
 
   it("rejects malformed YAML with a helpful error message", async () => {
     const tmpDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "swarm-harness-test-loader-bad-yaml-"),
+      path.join(os.tmpdir(), "openswarm-test-loader-bad-yaml-"),
     );
     try {
       await fs.writeFile(
@@ -84,7 +84,7 @@ describe("loadTemplate (fixture mode)", () => {
 
   it("rejects YAML that parses to a non-object root", async () => {
     const tmpDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "swarm-harness-test-loader-not-object-"),
+      path.join(os.tmpdir(), "openswarm-test-loader-not-object-"),
     );
     try {
       await fs.writeFile(
@@ -102,7 +102,7 @@ describe("loadTemplate (fixture mode)", () => {
 
   it("rejects a fixture dir without team.yaml", async () => {
     const tmpDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "swarm-harness-test-loader-empty-"),
+      path.join(os.tmpdir(), "openswarm-test-loader-empty-"),
     );
     try {
       await expect(
@@ -115,7 +115,7 @@ describe("loadTemplate (fixture mode)", () => {
 
   it("rejects team.yaml missing a name field", async () => {
     const tmpDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "swarm-harness-test-loader-no-name-"),
+      path.join(os.tmpdir(), "openswarm-test-loader-no-name-"),
     );
     try {
       await fs.writeFile(

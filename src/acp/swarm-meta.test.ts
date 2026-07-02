@@ -6,6 +6,7 @@ import {
   SWARM_META_VERSION,
 } from "./swarm-meta.js";
 import { emitNormalizedEvent, type EmitOptions } from "./normalized-translate.js";
+import { ToolInputAccumulator } from "../core/tool-input.js";
 import type { MemberInfo } from "../swarm/team-session.js";
 import type { AgentId } from "../core/types.js";
 
@@ -79,7 +80,7 @@ describe("emitNormalizedEvent — _meta.swarm plumbing (B1.0)", () => {
         send: async (u) => {
           updates.push(u);
         },
-        open: new Map(),
+        open: new ToolInputAccumulator<string>(),
       },
     };
   }

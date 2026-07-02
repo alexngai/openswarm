@@ -19,7 +19,6 @@ function makeConfig(): RunConfig {
       kind: "api-key" as const,
       providerId: "anthropic",
       isAuthenticated: async () => true,
-      headers: async () => ({}),
     },
     tools: [],
     canUseTool: async (_name, _input) => ({ allow: true }),
@@ -78,10 +77,10 @@ describe("ScriptedTestEngine — in-memory script", () => {
   });
 
   it("throws when no script source provided", () => {
-    const saved = process.env.SWARM_HARNESS_TEST_SCRIPT;
-    delete process.env.SWARM_HARNESS_TEST_SCRIPT;
+    const saved = process.env.OPENSWARM_TEST_SCRIPT;
+    delete process.env.OPENSWARM_TEST_SCRIPT;
     expect(() => new ScriptedTestEngine()).toThrow("ScriptedTestEngine");
-    if (saved !== undefined) process.env.SWARM_HARNESS_TEST_SCRIPT = saved;
+    if (saved !== undefined) process.env.OPENSWARM_TEST_SCRIPT = saved;
   });
 });
 
@@ -124,7 +123,7 @@ describe("ScriptedTestEngine — scriptPath", () => {
     expect(events[0]).toEqual({ type: "text_delta", text: "from-file" });
   });
 
-  it("reads from SWARM_HARNESS_TEST_SCRIPT env when no opts provided", async () => {
+  it("reads from OPENSWARM_TEST_SCRIPT env when no opts provided", async () => {
     const script: ScriptedEvent[] = [
       { event: { type: "text_delta", text: "from-env" } },
     ];
@@ -132,8 +131,8 @@ describe("ScriptedTestEngine — scriptPath", () => {
     tmpFile = path.join(os.tmpdir(), `test-engine-env-${Date.now()}.json`);
     fs.writeFileSync(tmpFile, JSON.stringify(script), "utf8");
 
-    const saved = process.env.SWARM_HARNESS_TEST_SCRIPT;
-    process.env.SWARM_HARNESS_TEST_SCRIPT = tmpFile;
+    const saved = process.env.OPENSWARM_TEST_SCRIPT;
+    process.env.OPENSWARM_TEST_SCRIPT = tmpFile;
 
     try {
       const engine = new ScriptedTestEngine();
@@ -142,9 +141,9 @@ describe("ScriptedTestEngine — scriptPath", () => {
       expect(events[0]).toEqual({ type: "text_delta", text: "from-env" });
     } finally {
       if (saved !== undefined) {
-        process.env.SWARM_HARNESS_TEST_SCRIPT = saved;
+        process.env.OPENSWARM_TEST_SCRIPT = saved;
       } else {
-        delete process.env.SWARM_HARNESS_TEST_SCRIPT;
+        delete process.env.OPENSWARM_TEST_SCRIPT;
       }
     }
   });

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Build + pack the LOCAL swarm-harness so evals run our working-tree changes without publishing.
-# Output: eval/.artifacts/swarm-harness-local.tgz (stable symlink → the versioned tarball).
+# Build + pack the LOCAL openswarm so evals run our working-tree changes without publishing.
+# Output: eval/.artifacts/openswarm-local.tgz (stable symlink → the versioned tarball).
 #
 # Local-FS backends (in-process) don't need this — they run the built CLI directly via
 # `localSwarmHarness()` (eval/harness/local.ts). The tarball is for SANDBOX backends (E2B/docker),
@@ -15,11 +15,11 @@ echo "[pack] tsc publish build (npm run build)…" >&2
 npm run build >/dev/null
 echo "[pack] npm pack → $ART …" >&2
 TARBALL="$(npm pack --pack-destination "$ART" | tail -1)"
-ln -sfn "$TARBALL" "$ART/swarm-harness-local.tgz"
+ln -sfn "$TARBALL" "$ART/openswarm-local.tgz"
 echo "[pack] packed: $ART/$TARBALL" >&2
 
 # Also pack the UNPUBLISHED local sibling dep `skill-tree` (the working tree needs ^0.3.0, but npm has
-# only ≤0.2.1). It's installed alongside swarm-harness in the sandbox so `npm install` resolves the dep
+# only ≤0.2.1). It's installed alongside openswarm in the sandbox so `npm install` resolves the dep
 # from the co-installed tarball instead of the registry.
 ST_DIR="$(readlink "$ROOT/node_modules/skill-tree" 2>/dev/null || true)"
 if [ -n "$ST_DIR" ] && [ -d "$ST_DIR" ]; then

@@ -1,12 +1,12 @@
 /**
  * team-daemon.ts — TeamDaemon class.
  *
- * v0.5 stage 5E.2: lifecycle scaffold for the per-team daemon (V0.5.Q1).
- * Owns the Unix socket bind, pid file, signal handlers, and stale-socket
- * cleanup. RPC method handlers other than `status` are stubbed with
- * UNKNOWN_METHOD until 5E.4. The events.jsonl writer lands in 5E.5.
+ * Per-team daemon (V0.5.Q1). Owns the Unix socket bind, pid file, signal
+ * handlers, and stale-socket cleanup. Implemented RPCs: `status`, `stop`,
+ * `kill`, `send_prompt` (see team-daemon-protocol.ts); events stream to a
+ * per-team events.jsonl. `status` does not yet report per-member state.
  *
- * The daemon is per-team — each `swarm-harness team start --detach` forks one
+ * The daemon is per-team — each `openswarm team start --detach` forks one
  * of these processes per team name. Multi-team-in-one-process (and a host
  * daemon) are deferred per docs/28 §V0.5.Q1.
  */
@@ -17,19 +17,33 @@ import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { Writable } from "node:stream";
+import type { PermissionMode } from "../core/types.js";
 import type { TeamSpec, MemberSpec } from "./team-spec.js";
 import type { TeamResult } from "./topologies-types.js";
 import type { LaneEvent } from "./events.js";
 import type { TeamSession } from "./team-session.js";
 import { Orchestrator } from "./orchestrator.js";
 import { StandaloneHost } from "./standalone-host.js";
+import { RoleRegistry, BUILTIN_ROLES, loadCustomRoles } from "./roles.js";
+import {
+  openTeamCheckpoint,
+  type TeamCheckpointStore,
+} from "./team-checkpoint.js";
 import { buildMetadataEvent, isRecordedLaneEvent } from "./wire-protocol.js";
 import {
   SendPromptParamsSchema,
+  StopParamsSchema,
   TEAM_DAEMON_ERROR_CODES,
   type TeamDaemonRequest,
   type TeamDaemonResponse,
 } from "./team-daemon-protocol.js";
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/** Default graceful-drain budget for `stop` before force-killing workers. */
+export const DEFAULT_DRAIN_TIMEOUT_MS = 30_000;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -37,13 +51,15 @@ import {
 
 /**
  * On-disk paths owned by one daemon instance. Per V0.5.Q3, production callers
- * generate these under `${XDG_RUNTIME_DIR}/swarm-harness/teams/<name>/`.
+ * generate these under `${XDG_RUNTIME_DIR}/openswarm/teams/<name>/`.
  */
 export interface TeamDaemonPaths {
   readonly sockPath: string;
   readonly pidPath: string;
   readonly eventsPath: string;
   readonly statePath: string;
+  /** Durable per-team progress checkpoint for crash-recovery (docs/28 T1). */
+  readonly checkpointPath: string;
 }
 
 /**
@@ -86,6 +102,23 @@ export interface TeamDaemonOptions {
    * verified without taking down the test runner.
    */
   readonly processExit?: (code: number) => void;
+  /**
+   * Effective permission mode for the daemon's orchestrator/host (Phase 4.1c).
+   * Threaded from `team start` via OPENSWARM_DAEMON_PERMISSION_MODE. Defaults
+   * to "workspace-write" when omitted (the historical hardcoded value).
+   */
+  readonly permissionMode?: PermissionMode;
+  /**
+   * Orchestrator worker concurrency (Phase 4.1c). Threaded from `team start`
+   * via OPENSWARM_DAEMON_CONCURRENCY. Defaults to 1 when omitted.
+   */
+  readonly concurrency?: number;
+  /**
+   * For tests + startup notices: sink for the human-readable startup line
+   * (effective config + degradation warnings). Defaults to process.stdout,
+   * which the detached forker captures into daemon.log.
+   */
+  readonly startupOut?: Writable;
 }
 
 // ---------------------------------------------------------------------------
@@ -103,6 +136,7 @@ export class TeamDaemon {
   private stopped = false;
   private eventsStream: fs.WriteStream | undefined;
   private eventsUnsubscribe: (() => void) | undefined;
+  private checkpointStore: TeamCheckpointStore | undefined;
 
   constructor(opts: TeamDaemonOptions) {
     this.opts = opts;
@@ -156,8 +190,29 @@ export class TeamDaemon {
       process.off("SIGINT", onSig);
     };
 
-    // 7. Build orchestrator if not injected.
-    this.orchestrator = this.opts.orchestrator ?? this.buildOrchestrator();
+    // 7. Build orchestrator if not injected. For the default (production)
+    //    orchestrator, open the durable checkpoint first so a restart resumes
+    //    mid-topology (docs/28 crash-recovery T1). Injected orchestrators
+    //    (tests) manage their own recovery, if any.
+    if (this.opts.orchestrator !== undefined) {
+      this.orchestrator = this.opts.orchestrator;
+    } else {
+      this.checkpointStore = await openTeamCheckpoint({
+        checkpointPath: this.opts.paths.checkpointPath,
+        spec: this.opts.spec,
+      });
+      // Resolve member roles the same way the foreground `swarm`/`team` paths
+      // do (built-ins + custom from `.openswarm/roles.json`). Without this the
+      // orchestrator has no registry and every role-bearing member fails with
+      // "unknown role" — so a detached/resumed team could never run.
+      const roles = new RoleRegistry();
+      for (const r of BUILTIN_ROLES) roles.register(r);
+      const custom = await loadCustomRoles(
+        path.join(process.cwd(), ".openswarm", "roles.json"),
+      );
+      for (const r of custom) roles.register(r);
+      this.orchestrator = this.buildOrchestrator(this.checkpointStore, roles);
+    }
 
     // 8. v0.5 stage 5E.5 — open events.jsonl writer + subscribe lane events.
     if (this.orchestrator.subscribeEvents !== undefined) {
@@ -200,8 +255,50 @@ export class TeamDaemon {
       });
     }
 
+    // 8.5 Phase 4.1c — surface effective config + any degradation up front,
+    //     so an operator inspecting daemon.log sees it at start rather than
+    //     only as a mid-run team_note.
+    this.emitStartupNotice();
+
     // 9. Kick off runTeam in the background.
     this.runTeamPromise = this.orchestrator.runTeam(this.opts.spec);
+  }
+
+  /**
+   * Write a one-time startup summary (effective permissionMode + concurrency)
+   * plus a degradation warning when the team selects the `spawn-resolver`
+   * conflict strategy under a permission mode below danger-full-access — the
+   * resolver can't commit or call resolve_conflict there and will escalate
+   * instead of resolving (mirrors the peer-team.ts mid-run team_note).
+   */
+  private emitStartupNotice(): void {
+    const out = this.opts.startupOut ?? process.stdout;
+    const permissionMode = this.opts.permissionMode ?? "workspace-write";
+    const concurrency = this.opts.concurrency ?? 1;
+    const lines: string[] = [
+      `[openswarm] team "${this.opts.spec.name}" daemon ready — ` +
+        `topology=${this.opts.spec.topology} permissionMode=${permissionMode} concurrency=${concurrency}`,
+    ];
+
+    const defaultStrategy =
+      this.opts.spec.coordination.conflictRecovery?.defaultStrategy;
+    const wantsSpawnResolver =
+      defaultStrategy === "spawn-resolver" ||
+      this.opts.spec.members.some((m) => m.onConflict === "spawn-resolver");
+    if (wantsSpawnResolver && permissionMode !== "danger-full-access") {
+      lines.push(
+        `[openswarm] warning: spawn-resolver conflict recovery is selected but ` +
+          `permissionMode="${permissionMode}" is below danger-full-access — the ` +
+          `resolver cannot commit or call resolve_conflict and will escalate ` +
+          `instead of resolving.`,
+      );
+    }
+
+    try {
+      out.write(lines.join("\n") + "\n");
+    } catch {
+      /* startup sink broken — non-fatal */
+    }
   }
 
   /**
@@ -216,14 +313,24 @@ export class TeamDaemon {
   }
 
   /**
-   * Graceful stop — close socket, drop in-flight connections, remove pid +
-   * sock files, detach signal handlers. Idempotent. The orchestrator's
-   * in-flight workers continue in the background; 5E.4 will wire actual
-   * worker drain via the 4D drain frame.
+   * Graceful stop — drain in-flight workers, close socket, drop in-flight
+   * connections, remove pid + sock files, detach signal handlers. Idempotent.
+   *
+   * Phase 4.1b: before releasing the socket we drain the active team's
+   * workers — long-lived members get a cooperative `drain()`, one-shot
+   * members are awaited to completion — bounded by `drainTimeoutMs` (default
+   * DEFAULT_DRAIN_TIMEOUT_MS). Whatever remains after the deadline is
+   * force-killed. `drainTimeoutMs: 0` skips the cooperative drain entirely
+   * (the `kill` RPC path, which relies on process exit reaping subprocesses).
    */
-  async stop(): Promise<void> {
+  async stop(opts?: { drainTimeoutMs?: number }): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
+
+    const drainTimeoutMs = opts?.drainTimeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS;
+    if (drainTimeoutMs > 0) {
+      await this.drainWorkers(drainTimeoutMs);
+    }
 
     if (this.server !== undefined) {
       // Drop existing connections so close() can resolve.
@@ -246,6 +353,13 @@ export class TeamDaemon {
       this.eventsStream = undefined;
     }
 
+    // Flush any pending checkpoint writes before we release the socket/pid so
+    // an immediate restart sees a consistent progress record.
+    if (this.checkpointStore !== undefined) {
+      await this.checkpointStore.close().catch(() => {});
+      this.checkpointStore = undefined;
+    }
+
     await this.unlinkIfExists(this.opts.paths.sockPath);
     await this.unlinkIfExists(this.opts.paths.pidPath);
 
@@ -259,7 +373,55 @@ export class TeamDaemon {
   // Private helpers
   // -------------------------------------------------------------------------
 
-  private buildOrchestrator(): TeamDaemonOrchestrator {
+  /**
+   * Phase 4.1b — drain the active team's non-terminal workers within a budget.
+   * Long-lived members get a cooperative `drain()`; one-shot members (whose
+   * `drain()` rejects) are awaited to their current task's completion. Any
+   * worker still live after `timeoutMs` is force-killed so teardown can
+   * proceed. No-op when there is no live TeamSession (test orchestrators or
+   * dispose-after-run topologies).
+   */
+  private async drainWorkers(timeoutMs: number): Promise<void> {
+    const team = this.orchestrator?.getActiveTeam?.();
+    if (team === undefined) return;
+    const members = [...team.members.values()].filter(
+      (m) => m.state !== "finished" && m.state !== "failed",
+    );
+    if (members.length === 0) return;
+
+    const drainOne = async (handle: {
+      drain: () => Promise<void>;
+      wait: () => Promise<unknown>;
+    }): Promise<void> => {
+      try {
+        await handle.drain();
+      } catch {
+        // Not a long-lived worker — await its in-flight task instead.
+        await handle.wait().catch(() => {});
+      }
+    };
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), timeoutMs);
+      (timer as { unref?: () => void }).unref?.();
+    });
+    const drained = Promise.allSettled(
+      members.map((m) => drainOne(m.handle)),
+    ).then(() => "drained" as const);
+
+    const outcome = await Promise.race([drained, timeout]);
+    if (timer !== undefined) clearTimeout(timer);
+    if (outcome === "timeout") {
+      // Deadline hit — force-kill whatever is still live.
+      await Promise.allSettled(members.map((m) => m.handle.kill()));
+    }
+  }
+
+  private buildOrchestrator(
+    checkpoint?: TeamCheckpointStore,
+    roles?: RoleRegistry,
+  ): TeamDaemonOrchestrator {
     // Default production orchestrator. Writes results to a stream sink at
     // statePath (5E.5 will refine this — for now we just need a Writable).
     const resultsOut = fs.createWriteStream(this.opts.paths.statePath, {
@@ -269,16 +431,20 @@ export class TeamDaemon {
     // subscribe to its lane-event bus. Orchestrator.opts.host accepts a
     // pre-built host; without it Orchestrator would build a private one we
     // couldn't subscribe to.
-    const host = new StandaloneHost({ permissionMode: "workspace-write" });
+    const permissionMode = this.opts.permissionMode ?? "workspace-write";
+    const concurrency = this.opts.concurrency ?? 1;
+    const host = new StandaloneHost({ permissionMode });
     // v0.6 stage 5F — persistent: true so the topology skips dispose() and
     // the daemon can route send_prompt RPCs through the live TeamSession.
     const orch = new Orchestrator({
-      concurrency: 1,
-      permissionMode: "workspace-write",
+      concurrency,
+      permissionMode,
       resultsOut,
       eventsOut: this.opts.eventsOut ?? process.stderr,
       host,
       persistent: true,
+      ...(checkpoint !== undefined && { checkpoint }),
+      ...(roles !== undefined && { roles }),
     });
     // The host has a private `events` EventEmitter (same duck-typed access
     // pattern used by the host→MAP bridge in src/host/map-bridge.ts).
@@ -411,14 +577,25 @@ export class TeamDaemon {
     const req = parsed as TeamDaemonRequest;
 
     if (req.method === "status") {
+      // Read live member states off the active TeamSession (Phase 4.1a).
+      // Topologies that dispose after their run (or test orchestrators that
+      // don't expose getActiveTeam) report an empty list.
+      const team = this.orchestrator?.getActiveTeam?.();
+      const members =
+        team === undefined
+          ? []
+          : [...team.members.values()].map((m) => ({
+              memberId: m.memberId,
+              role: m.role,
+              agentId: m.agentId,
+              state: m.state,
+            }));
       this.sendOk(socket, req.id, {
         teamName: this.opts.spec.name,
         scope: `swarm:${this.opts.spec.name}`,
         topology: this.opts.spec.topology,
         startedAt: this.startedAt,
-        // Members are populated when 5E.5 wires the orchestrator's TeamSession
-        // surface to the daemon. For 5E.4 the snapshot reports an empty list.
-        members: [],
+        members,
       });
       return;
     }
@@ -428,10 +605,17 @@ export class TeamDaemon {
       // the caller sees the response before the socket goes away. The
       // runTeam promise continues in the background; the daemon exits when
       // the orchestrator finishes or process.exit is called by the entry.
+      // Phase 4.1b: honour an optional drain budget from StopParams.
+      const parsedStop = StopParamsSchema.safeParse(req.params);
+      const drainTimeoutMs = parsedStop.success
+        ? parsedStop.data.timeoutMs
+        : undefined;
       this.sendOk(socket, req.id, { acknowledged: true });
       // Defer stop() to next tick so the response flushes.
       setImmediate(() => {
-        void this.stop().catch(() => {
+        void this.stop(
+          drainTimeoutMs !== undefined ? { drainTimeoutMs } : undefined,
+        ).catch(() => {
           /* swallow — daemon is exiting anyway */
         });
       });
@@ -443,7 +627,9 @@ export class TeamDaemon {
       // daemon process exits immediately so OS reaps in-flight workers.
       this.sendOk(socket, req.id, { acknowledged: true });
       setImmediate(() => {
-        void this.stop()
+        // Hard kill — skip the cooperative drain (drainTimeoutMs: 0); the
+        // process exit below reaps in-flight worker subprocesses via stdin EOF.
+        void this.stop({ drainTimeoutMs: 0 })
           .catch(() => {
             /* swallow */
           })
@@ -539,6 +725,10 @@ export class TeamDaemon {
       branchPolicy: template?.branchPolicy ?? { kind: "none" },
       commitPolicy: template?.commitPolicy ?? { kind: "none" },
       escalationPolicy: template?.escalationPolicy ?? { kind: "none" },
+      // Inherit the engine selection so an ad-hoc send runs on the same
+      // model/framework the team was configured with (Phase 2.2).
+      ...(template?.model !== undefined && { model: template.model }),
+      ...(template?.framework !== undefined && { framework: template.framework }),
     };
 
     const handle = await team.spawnMember(adhocMember);

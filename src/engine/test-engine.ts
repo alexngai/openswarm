@@ -24,7 +24,7 @@ export interface ScriptedEvent {
 
 export interface ScriptedTestEngineOptions {
   /** Path to a JSON file containing ScriptedEvent[]. If unset, reads
-   *  SWARM_HARNESS_TEST_SCRIPT env. */
+   *  OPENSWARM_TEST_SCRIPT env. */
   readonly scriptPath?: string;
   /** In-memory script, overrides scriptPath if both provided (tests). */
   readonly script?: readonly ScriptedEvent[];
@@ -57,10 +57,10 @@ export class ScriptedTestEngine implements AgentEngine {
     if (opts.script) {
       this.script = opts.script;
     } else {
-      const path = opts.scriptPath ?? process.env.SWARM_HARNESS_TEST_SCRIPT;
+      const path = opts.scriptPath ?? process.env.OPENSWARM_TEST_SCRIPT;
       if (!path) {
         throw new Error(
-          "ScriptedTestEngine: no script provided (opts.script or SWARM_HARNESS_TEST_SCRIPT)",
+          "ScriptedTestEngine: no script provided (opts.script or OPENSWARM_TEST_SCRIPT)",
         );
       }
       const raw = fs.readFileSync(path, "utf8");
@@ -80,11 +80,11 @@ export class ScriptedTestEngine implements AgentEngine {
   async *run(config: RunConfig): AsyncIterable<NormalizedEvent> {
     // A turn establishes the session id (as a real SDK turn would).
     this._sessionId =
-      process.env.SWARM_HARNESS_TEST_SESSION_ID ?? "scripted-session";
+      process.env.OPENSWARM_TEST_SESSION_ID ?? "scripted-session";
     // Opt-in resume echo: surface the resumed session id so cross-process
     // resume (B1.4) can be asserted end-to-end. Off by default so normal
     // run_more turns (which carry resumeFrom) keep byte-identical output.
-    if (process.env.SWARM_HARNESS_TEST_ECHO_RESUME === "1") {
+    if (process.env.OPENSWARM_TEST_ECHO_RESUME === "1") {
       const resumed = (
         config.resumeFrom?.data as { sessionId?: string } | undefined
       )?.sessionId;

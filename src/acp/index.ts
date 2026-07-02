@@ -1,12 +1,12 @@
 /**
- * runAcp — serve swarm-harness over the Agent Client Protocol on stdio.
+ * runAcp — serve OpenSwarm over the Agent Client Protocol on stdio.
  *
- * Builds the shared agent runtime (docs/32 §3), wraps stdin/stdout as an
+ * Builds the shared agent runtime (docs/archive/32 §3), wraps stdin/stdout as an
  * ndjson JSON-RPC stream, and hands an AcpAgent to the SDK's
  * AgentSideConnection. stdout is reserved exclusively for protocol frames —
  * `redirectConsoleToStderr()` keeps stray logging off the wire.
  *
- * See docs/32-acp-implementation-plan.md §5.
+ * See docs/archive/32-acp-implementation-plan.md §5.
  */
 
 import { Readable, Writable } from "node:stream";
@@ -87,12 +87,12 @@ async function runAcpSingle(opts: CommonOpts): Promise<number> {
   return 0;
 }
 
-/** Stage B: serve a coordinator team over ACP (docs/33). */
+/** Stage B: serve a coordinator team over ACP (docs/archive/33). */
 async function runAcpTeam(opts: CommonOpts): Promise<number> {
   // Per-connection team wiring (router + runner + spine) lives in
   // createTeamConnection, shared with the host ACP-WS path (docs/44 P6).
   // Permission escalation for spawned workers is enabled because the runner
-  // holds the router as its interactionHandler (docs/33 B0.4 + §8).
+  // holds the router as its interactionHandler (docs/archive/33 B0.4 + §8).
   let teamConn: TeamConnection | undefined;
   const connection = new AgentSideConnection((conn) => {
     teamConn = createTeamConnection(conn, opts);

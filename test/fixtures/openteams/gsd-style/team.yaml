@@ -1,5 +1,5 @@
 name: gsd-style-fixture
-description: "Captured fixture for swarm-harness openteams loader tests. Mirrors a cc-swarm gsd-style topology — coordinator + workers."
+description: "Captured fixture for openswarm openteams loader tests. Mirrors a cc-swarm gsd-style topology — coordinator + workers."
 version: 1
 roles:
   - lead

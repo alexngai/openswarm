@@ -10,8 +10,8 @@ import {
 import type { LaneEvent } from "./events.js";
 
 afterEach(() => {
-  delete process.env.SWARM_HARNESS_SESSION_DIR;
-  delete process.env.SWARM_HARNESS_RECORD_SESSIONS;
+  delete process.env.OPENSWARM_SESSION_DIR;
+  delete process.env.OPENSWARM_RECORD_SESSIONS;
 });
 
 describe("session recorder", () => {
@@ -23,13 +23,13 @@ describe("session recorder", () => {
   });
 
   it("enables via the record flag", () => {
-    process.env.SWARM_HARNESS_RECORD_SESSIONS = "1";
+    process.env.OPENSWARM_RECORD_SESSIONS = "1";
     expect(recordingEnabled()).toBe(true);
   });
 
   it("records the turn_start prompt + lane events to events.jsonl", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rec-"));
-    process.env.SWARM_HARNESS_SESSION_DIR = dir;
+    process.env.OPENSWARM_SESSION_DIR = dir;
 
     const rec = await startSessionRecorder({
       sessionId: "s1",
@@ -64,9 +64,26 @@ describe("session recorder", () => {
 
   it("resolveSessionsDir honors the env override and the default", () => {
     expect(resolveSessionsDir("/repo")).toBe(
-      path.join("/repo", ".swarm", "swarm-harness", "sessions"),
+      path.join("/repo", ".swarm", "openswarm", "sessions"),
     );
-    process.env.SWARM_HARNESS_SESSION_DIR = "/custom";
+    process.env.OPENSWARM_SESSION_DIR = "/custom";
     expect(resolveSessionsDir("/repo")).toBe("/custom");
+  });
+
+  it("resolveSessionsDir prefers .openswarm when the migrated dir exists", () => {
+    delete process.env.OPENSWARM_SESSION_DIR;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sessdir-"));
+    try {
+      // No .openswarm dir yet → legacy .swarm default.
+      expect(resolveSessionsDir(dir)).toBe(
+        path.join(dir, ".swarm", "openswarm", "sessions"),
+      );
+      // Create the migrated layout → it takes precedence.
+      const migrated = path.join(dir, ".openswarm", "openswarm", "sessions");
+      fs.mkdirSync(migrated, { recursive: true });
+      expect(resolveSessionsDir(dir)).toBe(migrated);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

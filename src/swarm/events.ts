@@ -175,7 +175,7 @@ export type LaneEventPayload = unknown;
  * recorded/live split (commit b71c322) for worker tool boundaries and hid the
  * real type from consumers. Returning the real type lets events.jsonl record
  * the semantic spine (tool_use_start/end, tool_result, message_stop) and lets
- * the ACP layer translate member activity (docs/33 B0.2).
+ * the ACP layer translate member activity (docs/archive/33 B0.2).
  *
  * Returns `undefined` for engine events with no lane equivalent
  * (info/hook_event/compaction/cache_*) — those were never usefully consumed and

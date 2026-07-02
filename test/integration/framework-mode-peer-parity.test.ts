@@ -6,10 +6,10 @@
  * Background: prior to v0.4 stage 4G, `filterToolsForFramework` stripped
  * 5 SwarmHost-routed tools (send_message, check_inbox, task_stop,
  * task_output, ask_user_question) from the model's tool surface in
- * framework modes. The Track A spike (docs/26 §Track A,
- * docs/26b-spike-track-b-codex-protocol.md) showed empirically that the
+ * framework modes. The Track A spike (docs/archive/26 §Track A,
+ * docs/archive/26b-spike-track-b-codex-protocol.md) showed empirically that the
  * tools dispatch fine — canUseTool routes the framework's call back to
- * swarm-harness. This file ports the spike's verifications into the main
+ * openswarm. This file ports the spike's verifications into the main
  * suite as a regression baseline now that the strip is gone.
  *
  * Approach (Layer A from the spike): bypass the engine entirely. Build a
@@ -287,7 +287,7 @@ describe("framework-mode peer parity (Layer A: pure tool dispatch via worker hos
   });
 
   describe("task_stop", () => {
-    it("peer-stop: worker A stops worker B's task (with SWARM_HARNESS_ALLOW_PEER_TASK_STOP=1)", async () => {
+    it("peer-stop: worker A stops worker B's task (with OPENSWARM_ALLOW_PEER_TASK_STOP=1)", async () => {
       // To exercise peer-stop without triggering the self-stop response-drop
       // race (kill() synchronously closes the calling worker's transport,
       // dropping its own response), we spawn TWO workers and have worker A
@@ -407,8 +407,8 @@ describe("framework-mode peer parity (Layer A: pure tool dispatch via worker hos
       }
 
       // Now allow peer-stop via env var, retry.
-      const orig = process.env.SWARM_HARNESS_ALLOW_PEER_TASK_STOP;
-      process.env.SWARM_HARNESS_ALLOW_PEER_TASK_STOP = "1";
+      const orig = process.env.OPENSWARM_ALLOW_PEER_TASK_STOP;
+      process.env.OPENSWARM_ALLOW_PEER_TASK_STOP = "1";
       try {
         const ok = await dispatcher.dispatch(
           "task_stop",
@@ -421,8 +421,8 @@ describe("framework-mode peer parity (Layer A: pure tool dispatch via worker hos
         const stoppedReq = events.find((e) => e.type === "task_stop_requested");
         expect(stoppedReq).toBeDefined();
       } finally {
-        if (orig === undefined) delete process.env.SWARM_HARNESS_ALLOW_PEER_TASK_STOP;
-        else process.env.SWARM_HARNESS_ALLOW_PEER_TASK_STOP = orig;
+        if (orig === undefined) delete process.env.OPENSWARM_ALLOW_PEER_TASK_STOP;
+        else process.env.OPENSWARM_ALLOW_PEER_TASK_STOP = orig;
       }
 
       try {

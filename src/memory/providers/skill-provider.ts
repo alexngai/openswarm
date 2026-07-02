@@ -63,8 +63,8 @@ async function tryLoadSkillTree(): Promise<SkillTreeModule | null> {
  * `<basePath>/.skilltree/skills`, and openhive/cognitive-core write the shared
  * ecosystem store the same way with a default basePath of `~/.skill-tree`
  * (openhive `skill-management.ts`: `skilltreeDir = join(localPath, '.skilltree')`).
- * To read that store, swarm-harness must point at the same basePath:
- *   1. Explicit override — config or `SWARM_HARNESS_SKILLS_DIR`.
+ * To read that store, openswarm must point at the same basePath:
+ *   1. Explicit override — config or `OPENSWARM_SKILLS_DIR`.
  *   2. Ecosystem default — `~/.skill-tree`.
  *
  * (openhive can be configured with additional `globalSkillPaths`, e.g.
@@ -75,7 +75,7 @@ async function tryLoadSkillTree(): Promise<SkillTreeModule | null> {
 export function resolveSkillsDir(override?: string): string {
   if (override && override.length > 0) return override;
 
-  const env = process.env.SWARM_HARNESS_SKILLS_DIR;
+  const env = process.env.OPENSWARM_SKILLS_DIR;
   if (env && env.length > 0) return env;
 
   return path.join(os.homedir(), ".skill-tree");

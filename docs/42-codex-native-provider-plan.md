@@ -1,11 +1,21 @@
 # 42 — Codex Native Provider (ChatGPT subscription → HardenedNativeEngine)
 
-Power swarm-harness's **in-process** native engine with **ChatGPT subscription
+Power openswarm's **in-process** native engine with **ChatGPT subscription
 plans** (Plus / Pro / Max) by speaking the Codex backend Responses protocol
 directly — no `codex` subprocess. This is the production ("own the protocol")
 path, modeled on `references/openclaw`, in contrast to the existing
 `--framework codex-chatgpt` path which delegates to the `codex` App Server
 binary.
+
+> **Status (Phase 2.4, Jul 2026): `codex-native` is the primary
+> ChatGPT-subscription path.** As of Phase 2.1 the shared engine selector
+> (`src/cli/select-engine.ts`) builds a `codex-native` engine on both the
+> single-agent CLI **and** swarm workers, and `MemberSpec.framework` accepts
+> `codex-native` (Phase 2.2). `codex-chatgpt` (the Codex-CLI App Server path)
+> is retained as the team-execution codex path and single-agent fallback; once
+> `codex-native` has soaked as a team peer, `CodexFrameworkEngine` is a
+> candidate to archive to `experimental/` (revisit after 2.1/2.2 land — see
+> `openswarm-remediation-plan.md` §2.4).
 
 ## 1  Motivation
 
@@ -107,7 +117,7 @@ shared-surface footprint of the feature.
 | `openai-codex-pkce.ts` | opencode `codex.ts:248-358,91-130` | PKCE codes, loopback server (port 1455), `buildAuthorizeUrl`, code→token exchange |
 | `openai-codex-device.ts` | opencode `codex.ts:515-595` | device-code flow (`login --device`) |
 | `openai-codex-jwt.ts` | openclaw `openai-chatgpt-auth-identity.ts` | `resolveCodexAuthIdentity` (accountId, plan, email), `resolveCodexAccessTokenExpiry` from JWT `exp` |
-| `token-store.ts` | — | read/write `~/.swarm-harness/auth.json` (location already named in `src/auth/index.ts:8`); 0600 perms |
+| `token-store.ts` | — | read/write `~/.openswarm/auth.json` (location already named in `src/auth/index.ts:8`); 0600 perms |
 
 OAuth constants (reuse Codex's so the subscription entitlement applies):
 `CLIENT_ID = app_EMoamEEZ73f0CkXaXp7hrann`, `ISSUER = https://auth.openai.com`,
@@ -119,7 +129,7 @@ scope `openid profile email offline_access`, redirect `http://localhost:1455/aut
 |------|-----------|----------------|
 | `index.ts` (`CodexResponsesTransportProvider`) | openclaw `openai-chatgpt-responses.ts` | implements `TransportProvider`; `stream()` = build → POST → parse SSE → map → yield `ProviderEvent`; `capabilities`; optional `preflight` |
 | `request-builder.ts` | openclaw `convertResponsesMessages` + body builder | `ProviderMessage[]` → Responses body. Enforces: `store:false`, `stream:true`, `instructions`=systemPrompt, `include:["reasoning.encrypted_content"]`, reasoning-effort map, tools→Responses tool shape |
-| `headers.ts` | openclaw `buildSSEHeaders` (`:1604`) | `Authorization`, `chatgpt-account-id`, `originator:"swarm-harness"`, `OpenAI-Beta: responses=experimental`, `accept: text/event-stream`, `content-type`, `session_id`/`x-client-request-id` |
+| `headers.ts` | openclaw `buildSSEHeaders` (`:1604`) | `Authorization`, `chatgpt-account-id`, `originator:"openswarm"`, `OpenAI-Beta: responses=experimental`, `accept: text/event-stream`, `content-type`, `session_id`/`x-client-request-id` |
 | `sse.ts` | openclaw `parseSSE` | SSE line reader → raw codex event objects |
 | `events.ts` | openclaw `mapCodexEvents` / `processResponsesStream` | codex event → `ProviderEvent` union (`text-delta`, `reasoning-delta`, `tool-input-*`, `tool-call`, `finish`, `error`) |
 | `errors.ts` | openclaw `parseErrorResponse` (`:1521`) | classify `usage_limit_reached`/`rate_limit_exceeded`/429 → friendly "hit ChatGPT limit (plan), retry in ~N min" via `resets_at` |
@@ -143,8 +153,8 @@ Naming: **`--framework codex-native`** (in-process) sits beside the existing
 
 End-state command:
 ```
-swarm-harness login --provider openai-codex          # our OAuth (browser or --device)
-swarm-harness --framework codex-native --model gpt-5.4 "say hi"
+openswarm login --provider openai-codex          # our OAuth (browser or --device)
+openswarm --framework codex-native --model gpt-5.4 "say hi"
 ```
 
 ## 5  Wire protocol (the ported quirks)
@@ -172,7 +182,7 @@ API. The non-obvious rules ported from openclaw:
 ## 6  Known design wrinkles — validated by live spike
 
 A live spike against `backend-api/codex/responses` (using a `codex login`
-token, originator `swarm-harness`) resolved all three. Results below.
+token, originator `openswarm`) resolved all three. Results below.
 
 ### 6.1  Reasoning continuity — replay is OPTIONAL (spike-confirmed)
 
@@ -211,9 +221,9 @@ This **demotes the WebSocket-"cached" transport to a latency-only optimization**
 caching doesn't already save). Keep it as an optional Phase 2 item, prioritized
 by measured latency on large sessions — not as a resource necessity.
 
-### 6.3  Originator / endpoint drift — `swarm-harness` accepted (spike-confirmed)
+### 6.3  Originator / endpoint drift — `openswarm` accepted (spike-confirmed)
 
-`originator: "swarm-harness"` returned `200` — the field is not allowlisted.
+`originator: "openswarm"` returned `200` — the field is not allowlisted.
 The SSE event schema is standard OpenAI Responses streaming
 (`response.created`, `response.in_progress`, `response.output_item.added`,
 `response.function_call_arguments.delta`/`done`, `response.content_part.added`,

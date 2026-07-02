@@ -141,4 +141,4 @@ stream drives both fidelities with no agent-side branching.
 - Client rendering: `src/acp/rich-view.ts` (renderer), `src/acp/rich-format.ts`,
   `src/acp/rich-client.ts`, `scripts/acp-rich-client.ts` (reference client).
 - Design + rationale: [docs/31](31-teams-acp-design.md) (§4 schema, §7 steering, Q3/Q5),
-  [docs/34](34-acp-b1-meta-swarm-plan.md) (B1), [docs/35](35-acp-b2-rich-client-plan.md) (B2).
+  [docs/archive/34](archive/34-acp-b1-meta-swarm-plan.md) (B1), [docs/archive/35](archive/35-acp-b2-rich-client-plan.md) (B2).

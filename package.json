@@ -1,7 +1,7 @@
 {
-  "name": "swarm-harness",
-  "version": "0.3.2",
-  "description": "Multi-agent coding agent CLI: one agent is a tool, N coordinated agents are the product. Built on Anthropic's Claude Agent SDK with swarm/team orchestration, multi-provider support, and a Bun-native interactive TUI.",
+  "name": "openswarm",
+  "version": "0.3.5",
+  "description": "OpenSwarm multi-agent coding CLI: one agent is a tool, N coordinated agents are the product. Built on Anthropic's Claude Agent SDK with swarm/team orchestration, multi-provider support, and a Bun-native interactive TUI.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -12,7 +12,7 @@
     }
   },
   "bin": {
-    "swarm-harness": "bin/swarm-harness.mjs"
+    "openswarm": "bin/openswarm.mjs"
   },
   "files": [
     "bin/",
@@ -61,19 +61,19 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/alexngai/swarm-coder.git"
+    "url": "git+https://github.com/alexngai/openswarm.git"
   },
   "bugs": {
-    "url": "https://github.com/alexngai/swarm-coder/issues"
+    "url": "https://github.com/alexngai/openswarm/issues"
   },
-  "homepage": "https://github.com/alexngai/swarm-coder#readme",
+  "homepage": "https://github.com/alexngai/openswarm#readme",
   "devDependencies": {
     "@types/node": "^25.6.0",
     "@types/proper-lockfile": "^4.1.4",
     "@types/turndown": "^5.0.6",
     "@types/ws": "^8.18.1",
     "node-pty": "^1.1.0",
-    "swarmkit-eval": "^0.0.6",
+    "swarmkit-eval": "^0.0.7",
     "typescript": "^5.6.3",
     "vitest": "^4.1.4"
   },
@@ -92,7 +92,9 @@
     "ai": "6.0.168",
     "fast-glob": "^3.3.3",
     "git-cascade": "^0.0.7",
+    "minimem": "^0.1.3",
     "proper-lockfile": "4.1.2",
+    "sessionlog": "^0.1.0",
     "skill-tree": "^0.3.0",
     "solid-js": "^1.9.11",
     "turndown": "^7.2.4",
@@ -102,10 +104,8 @@
     "zod-to-json-schema": "^3.25.2"
   },
   "optionalDependencies": {
-    "@swarm-harness/cli-darwin-arm64": "0.3.2",
-    "@swarm-harness/cli-darwin-x64": "0.3.2",
-    "@swarm-harness/cli-linux-x64": "0.3.2",
-    "minimem": "^0.1.2",
-    "sessionlog": "^0.0.7"
+    "@openswarm/cli-darwin-arm64": "0.3.5",
+    "@openswarm/cli-darwin-x64": "0.3.5",
+    "@openswarm/cli-linux-x64": "0.3.5"
   }
 }

@@ -1,11 +1,11 @@
 {
-  "name": "@swarm-harness/cli-darwin-x64",
-  "version": "0.3.2",
-  "description": "swarm-harness compiled binary for macOS x64",
+  "name": "@openswarm/cli-darwin-x64",
+  "version": "0.3.5",
+  "description": "OpenSwarm compiled binary for macOS x64",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/alexngai/swarm-coder"
+    "url": "https://github.com/alexngai/openswarm"
   },
   "os": [
     "darwin"
@@ -14,7 +14,7 @@
     "x64"
   ],
   "files": [
-    "swarm-harness",
+    "openswarm",
     "libopentui.dylib"
   ],
   "preferUnpacked": true

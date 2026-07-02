@@ -30,6 +30,13 @@ const spec: ToolSpec = {
 
 let _toolRegistry: readonly ToolSpec[] = [];
 
+/**
+ * Populate the searchable registry. Called by the runtime assembly once the
+ * full tool surface is registered on the dispatcher: `buildAgentRuntime()`
+ * (tier0 + tier1 + plugins + MCP) and the worker entry (tier0 + tier2,
+ * post-allowlist). Per-process singleton — orchestrator and workers are
+ * separate processes with independent surfaces.
+ */
 export function setToolRegistry(tools: readonly ToolSpec[]): void {
   _toolRegistry = tools;
 }

@@ -75,7 +75,7 @@ export interface AgentEngine {
   /**
    * The engine's current conversation/session id, if it tracks one. Long-lived
    * swarm workers read this after a turn and resume from it on the next turn so
-   * conversation context carries across `run_more` (docs/33 B0.5 follow-up).
+   * conversation context carries across `run_more` (docs/archive/33 B0.5 follow-up).
    * Engines without a session concept omit this.
    */
   getSessionId?(): string | undefined;
@@ -214,7 +214,7 @@ export interface RunConfig {
   };
 
   /**
-   * Hook configuration loaded from `.swarm-harness/hooks.json` (or Claude Code's
+   * Hook configuration loaded from `.openswarm/hooks.json` (or Claude Code's
    * `settings.json.hooks` field). The engine translates each HookConfig into
    * a JS async callback via `new HookRuntime(hooks).buildSdkHooks()` and
    * passes the result to `query({ options: { hooks } })`.

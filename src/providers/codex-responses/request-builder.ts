@@ -1,5 +1,5 @@
 /**
- * Build a codex Responses request body from a swarm-harness ProviderRequest.
+ * Build a codex Responses request body from a openswarm ProviderRequest.
  *
  * Encodes the non-negotiable backend quirks validated by the live spike
  * (docs/42 §5/§6):

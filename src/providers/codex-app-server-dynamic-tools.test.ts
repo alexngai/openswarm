@@ -509,7 +509,7 @@ describe("CodexAppServerProvider — fixture replay (Track B captured trace)", (
     // 2) thread/start — drive it; ensure dynamicTools is sent.
     const threadPromise = provider.startThread({
       model: "gpt-5.4",
-      cwd: "/Users/alexngai/GitHub/swarm-coder",
+      cwd: "/Users/alexngai/GitHub/openswarm",
       sandbox: "danger-full-access",
       approvalPolicy: "never",
     });

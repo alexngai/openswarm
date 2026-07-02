@@ -4,10 +4,23 @@
  *
  * v0.6 stage 6A.2. Implements the InboxBackend contract from
  * src/swarm/inbox.ts by delegating to agent-inbox's `MessageRouter` +
- * `Storage`. Default storage is in-memory; pass `SqliteStorage` for
- * cross-restart persistence.
+ * `Storage`. Storage is always in-memory today (see note below).
  *
- * Mapping decisions (swarm-harness ↔ agent-inbox):
+ * Persistence note (why not agent-inbox's SqliteStorage):
+ *   agent-inbox ships a `SqliteStorage` backed by `better-sqlite3`, a native
+ *   Node addon. openswarm's shipped artifact is a `bun build --compile`
+ *   single-file binary, and native `.node` addons can't be embedded in it
+ *   (same reason `minimem`/`sessionlog` are externalized in
+ *   scripts/build-binary.ts, and why `StateDB`/better-sqlite3 is test-only —
+ *   never constructed in a production path). This is a packaging constraint,
+ *   not a bun runtime incompatibility: bun runs better-sqlite3 fine when
+ *   executing sources directly. When durable inboxes land (crash-recovery
+ *   T3a), the plan is to persist with the same dependency-free atomic-JSON
+ *   write the team checkpoint uses (src/swarm/team-checkpoint.ts) rather than
+ *   a native sqlite driver, keyed by (scope, memberId) so a re-dispatched
+ *   member drains messages addressed to it.
+ *
+ * Mapping decisions (openswarm ↔ agent-inbox):
  *   - AgentMessage.from / .to ↔ Message.sender_id / Message.recipients[0]
  *     (single-recipient direct sends; broadcast happens in StandaloneHost
  *     by enqueueing once per recipient)
@@ -27,8 +40,7 @@
  * our drain just promises the messages won't be returned again.
  *
  * Overflow: agent-inbox has no overflow concept; enqueue always returns 0.
- * If overflow protection is needed, configure SqliteStorage with retention
- * policies (out of v0.6 scope).
+ * Overflow protection is out of v0.6 scope.
  */
 
 import { EventEmitter } from "node:events";
@@ -50,10 +62,11 @@ export { InMemoryStorage } from "agent-inbox";
 
 export interface AgentInboxBackendOptions {
   /**
-   * Backing storage. Defaults to a fresh InMemoryStorage. Production
-   * callers wanting persistence pass `new SqliteStorage(":memory:" |
-   * "/path/to/db")` (lazy import to avoid native-binding cost when not
-   * needed).
+   * Backing storage. Defaults to a fresh InMemoryStorage. A `Storage` impl
+   * can be injected for tests or alternate backends; note agent-inbox's
+   * `SqliteStorage` is NOT used in production because its `better-sqlite3`
+   * native addon can't be embedded in the compiled binary (see the
+   * persistence note in the file header).
    */
   readonly storage?: Storage;
   /**

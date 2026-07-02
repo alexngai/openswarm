@@ -17,6 +17,7 @@ import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { ShellSessionManager, type ShellState } from "./shell-session.js";
+import { cleanOutput } from "./output-cleanse.js";
 
 // ---------------------------------------------------------------------------
 // Singleton session manager
@@ -141,7 +142,7 @@ async function shellExecExecute(
 
   return {
     status: "ok",
-    output: formatSessionOutput(sessionId, output, stateSnapshot, prevState),
+    output: formatSessionOutput(sessionId, output, stateSnapshot, prevState, input.command),
   };
 }
 
@@ -358,8 +359,10 @@ async function shellListExecute(
         return { status: "error", message: `session ${session_id} not found` };
       }
       const parts = [`[reattach: ${session_id}]`];
-      if (allOutput.stdout) parts.push(allOutput.stdout);
-      if (allOutput.stderr) parts.push(`---\nSTDERR:\n${allOutput.stderr}`);
+      const reStdout = cleanOutput(allOutput.stdout).text;
+      const reStderr = cleanOutput(allOutput.stderr).text;
+      if (reStdout) parts.push(reStdout);
+      if (reStderr) parts.push(`---\nSTDERR:\n${reStderr}`);
       if (allOutput.exited) {
         parts.push(`[exited: ${allOutput.exitCode}]`);
       } else {
@@ -478,14 +481,21 @@ function formatSessionOutput(
   output: WaitOutput,
   state: ShellState | null,
   prevState: ShellState | null,
+  command?: string,
 ): string {
   const parts: string[] = [`[session: ${sessionId}]`];
 
-  if (output.stdout) {
-    parts.push(output.stdout);
+  // Presentation-layer cleanse: strip ANSI/progress noise, redact secrets, and
+  // elide long lines for the model-facing view. Runs here (not in the raw
+  // pipeline) so state-probe extraction still sees unmodified output.
+  const stdout = cleanOutput(output.stdout, { command }).text;
+  const stderr = cleanOutput(output.stderr, { command }).text;
+
+  if (stdout) {
+    parts.push(stdout);
   }
-  if (output.stderr) {
-    parts.push(`---\nSTDERR:\n${output.stderr}`);
+  if (stderr) {
+    parts.push(`---\nSTDERR:\n${stderr}`);
   }
 
   if (output.exited) {

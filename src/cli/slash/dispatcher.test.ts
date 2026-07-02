@@ -145,7 +145,7 @@ describe("dispatchSlashLine", () => {
 });
 
 describe("buildDefaultRegistry", () => {
-  it("returns all 13 commands", () => {
+  it("returns all 14 commands", () => {
     const registry = buildDefaultRegistry();
     const names = registry.list().map((c) => c.name);
     // Phase 2: /approve and /deny removed — y/N keypress owns the
@@ -164,8 +164,9 @@ describe("buildDefaultRegistry", () => {
       "stop",
       "compact",
       "plugin",
+      "plan",
     ]);
-    expect(names).toHaveLength(13);
+    expect(names).toHaveLength(14);
   });
 
   it("get() returns the matching command", () => {

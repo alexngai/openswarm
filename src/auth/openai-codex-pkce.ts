@@ -45,7 +45,7 @@ export function buildAuthorizeUrl(challenge: string, state: string): string {
     id_token_add_organizations: "true",
     codex_cli_simplified_flow: "true",
     state,
-    originator: "swarm-harness",
+    originator: "openswarm",
   });
   return `${CODEX_AUTHORIZE_URL}?${params.toString()}`;
 }
@@ -71,9 +71,9 @@ export interface BrowserOAuthOptions {
 }
 
 const SUCCESS_HTML =
-  "<!doctype html><meta charset=utf-8><title>swarm-harness</title>" +
+  "<!doctype html><meta charset=utf-8><title>OpenSwarm</title>" +
   "<body style='font-family:system-ui;text-align:center;padding-top:4rem'>" +
-  "<h1>Authorized</h1><p>You can close this window and return to swarm-harness.</p>" +
+  "<h1>Authorized</h1><p>You can close this window and return to openswarm.</p>" +
   "<script>setTimeout(()=>window.close(),1500)</script>";
 
 /**
@@ -142,7 +142,7 @@ export function runBrowserOAuth(opts: BrowserOAuthOptions = {}): Promise<TokenRe
     // the codex flow targets.
     server.listen(CODEX_REDIRECT_PORT, "127.0.0.1", () => {
       print(
-        `\nOpening your browser to authorize swarm-harness with ChatGPT...\n` +
+        `\nOpening your browser to authorize OpenSwarm with ChatGPT...\n` +
           `If it doesn't open, paste this URL:\n\n${authorizeUrl}\n\n`,
       );
       openBrowser(authorizeUrl);

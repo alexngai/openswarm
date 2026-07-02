@@ -1,0 +1,15 @@
+{
+  "// note": "Standalone tsconfig for archived experimental modules. NOT part of the shipped build (tsconfig.build.json only includes src/**). Modules here may import from ../src; src must never import from experimental/. See BACKLOG.md for the catalogue.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "types": ["node"]
+  },
+  "include": ["**/*.ts"]
+}

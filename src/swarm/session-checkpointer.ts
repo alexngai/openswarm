@@ -8,9 +8,10 @@
  *   - begin (at record start): SessionStart -> TurnStart  (marks the offset)
  *   - finish (at close):       TurnEnd -> SessionEnd       (TurnEnd checkpoints)
  *
- * Best-effort and fully decoupled: `sessionlog` is an optional dependency that
- * is dynamically imported, and every failure mode (missing dep, not a git repo,
- * sessionlog disabled) resolves to a no-op so it can never block a worker.
+ * Best-effort and fully decoupled: `sessionlog` is dynamically imported, and
+ * every failure mode (missing dep in direct binary-package installs, not a git
+ * repo, sessionlog disabled, adapter unavailable) resolves to a no-op so it can
+ * never block a worker.
  *
  * Note: the stores must be given the worker's repo `cwd` explicitly — the
  * sessionlog CLI passes `undefined` only because its own process.cwd() is the
@@ -32,19 +33,31 @@ export interface BeginCheckpointOptions {
   readonly cwd: string;
 }
 
+interface SessionRepoConfig {
+  sessionRepoCwd?: string;
+  sessionsDir?: string;
+  checkpointsBranch?: string;
+}
+
+type SessionlogModule = typeof import("sessionlog") & {
+  resolveSessionRepoConfig?: (cwd?: string) => Promise<SessionRepoConfig>;
+};
+
 export async function beginCheckpointedSession(
   opts: BeginCheckpointOptions,
 ): Promise<CheckpointedSession | null> {
   try {
-    const sl = await import("sessionlog");
+    const sl = (await import("sessionlog")) as SessionlogModule;
 
     // Respect sessionlog's own enabled config — no-op if it isn't set up here.
     if (!(await sl.isEnabled(opts.cwd))) return null;
 
-    const agent = sl.getAgent("swarm-harness");
+    const agent = sl.getAgent("openswarm");
     if (!agent) return null;
 
-    const cfg = await sl.resolveSessionRepoConfig(opts.cwd);
+    const cfg = typeof sl.resolveSessionRepoConfig === "function"
+      ? await sl.resolveSessionRepoConfig(opts.cwd)
+      : {};
     const handler = sl.createLifecycleHandler({
       sessionStore: sl.createSessionStore(opts.cwd, cfg.sessionsDir),
       checkpointStore: sl.createCheckpointStore(

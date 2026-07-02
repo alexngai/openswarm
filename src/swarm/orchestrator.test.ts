@@ -155,6 +155,30 @@ describe("Orchestrator", () => {
     }
   });
 
+  it("propagates per-task model through legacy fanout conversion", async () => {
+    const seen: Array<string | undefined> = [];
+    const host = fakeHost(async (req) => {
+      seen.push(req.model);
+      return makeHandle(successResult(), `agent-${req.task.id}` as AgentId);
+    });
+
+    const resultsOut = new PassThrough();
+    resultsOut.resume();
+    const orch = new Orchestrator({
+      concurrency: 1,
+      permissionMode: "workspace-write",
+      resultsOut,
+      host,
+    });
+
+    await orch.run([
+      samplePacket("t1", { model: "us.anthropic.claude-sonnet-4-5-20250929-v1:0" }),
+    ]);
+    resultsOut.end();
+
+    expect(seen).toEqual(["us.anthropic.claude-sonnet-4-5-20250929-v1:0"]);
+  });
+
   // 2. Concurrency capping: 5 tasks, concurrency=2, activeCount never exceeds 2.
   it("concurrency capping: activeCount never exceeds configured limit", async () => {
     let maxSeen = 0;

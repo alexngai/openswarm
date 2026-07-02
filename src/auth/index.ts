@@ -2,10 +2,16 @@
  * AuthSource — how credentials are supplied to a Provider.
  *
  * Orthogonal to Provider (docs/03-interfaces.md §1b): the same provider can
- * accept multiple AuthSource implementations. A TransportProvider calls
- * `headers()` before each request to merge auth headers into the outbound call.
+ * accept multiple AuthSource implementations.
  *
- * OAuth tokens live in `~/.swarm-harness/auth.json`, encrypted at rest where the
+ * Credential *delivery* is provider-specific and lives on the concrete impls,
+ * not this interface (Phase 2.3 dropped the never-consumed `headers()` method):
+ * env-key transports read their key directly from the environment, and the
+ * codex OAuth source exposes `getCredentials()`. The interface only guarantees
+ * an `isAuthenticated()` check (used by `doctor` and the transport factories)
+ * and an optional `refresh()`.
+ *
+ * OAuth tokens live in `~/.openswarm/auth.json`, encrypted at rest where the
  * platform supports it. Never write tokens to session logs or git.
  */
 
@@ -15,20 +21,6 @@ export interface AuthSource {
   readonly kind: AuthKind;
   /** Provider this auth is scoped to: "anthropic" | "openai" | "google" | "xai". */
   readonly providerId: string;
-
-  /**
-   * Called before each request. Returns headers to merge into the outbound call.
-   *
-   * - `api-key`: returns `{ "x-api-key": ... }` or `{ Authorization: "Bearer ..." }`
-   *   depending on provider wire format.
-   * - `oauth-bearer`: returns `{ Authorization: "Bearer ..." }` and any required
-   *   companion headers. Some engines (Agent SDK) may handle the OAuth flow
-   *   internally; in that case the AuthSource returns `{}` and the engine
-   *   reads its own persisted credentials.
-   *
-   * Implementations are expected to refresh expired tokens transparently.
-   */
-  headers(): Promise<Record<string, string>>;
 
   /**
    * Force a credential refresh. Only meaningful for `oauth-bearer` implementations.
@@ -47,7 +39,7 @@ export interface AuthSource {
  * Interactive login flow — POST-M0 scope.
  *
  * M0 does not implement interactive auth. Users run `claude auth login` themselves
- * (Anthropic's CLI) and swarm-harness inherits credentials from env / keychain.
+ * (Anthropic's CLI) and openswarm inherits credentials from env / keychain.
  * See docs/06-open-questions.md Q16 for the decision rationale.
  *
  * This interface stays here for symmetry; implementations arrive with future
@@ -80,6 +72,6 @@ export interface InteractiveAuth extends AuthSource {
 //
 // Removed in v0.3 (was M4 Codex App Server OAuth):
 //   OpenAIOAuthAuth — Codex App Server now delegates auth to `codex login`
-//                    via the codex-chatgpt FrameworkProvider; swarm-harness
+//                    via the codex-chatgpt FrameworkProvider; openswarm
 //                    owns zero OAuth code for this provider.
 // ---------------------------------------------------------------------------

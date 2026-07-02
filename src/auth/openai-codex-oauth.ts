@@ -27,7 +27,7 @@ import { runDeviceOAuth } from "./openai-codex-device.js";
 const REFRESH_BUFFER_MS = 60_000;
 
 export interface OpenAICodexAuthOptions {
-  /** Token-store base dir (tests). Defaults to ~/.swarm-harness. */
+  /** Token-store base dir (tests). Defaults to ~/.openswarm. */
   readonly baseDir?: string;
   /** Injectable for tests. */
   readonly fetchImpl?: typeof fetch;
@@ -48,16 +48,14 @@ export class OpenAICodexAuth implements InteractiveAuth, CodexCredentialSource {
     this.now = opts.now ?? (() => Date.now());
   }
 
-  /** Provider-facing: fresh bearer + account id, refreshing if near expiry. */
+  /**
+   * Provider-facing: fresh bearer + account id, refreshing if near expiry.
+   * The codex Responses transport consumes this directly (Phase 2.3 removed the
+   * unused AuthSource `headers()` method; this is the real credential path).
+   */
   async getCredentials(): Promise<{ token: string; accountId: string }> {
     const tokens = await this.validTokens();
     return { token: tokens.access, accountId: tokens.accountId };
-  }
-
-  /** AuthSource: headers to merge into the outbound request. */
-  async headers(): Promise<Record<string, string>> {
-    const { token, accountId } = await this.getCredentials();
-    return { Authorization: `Bearer ${token}`, "chatgpt-account-id": accountId };
   }
 
   async isAuthenticated(): Promise<boolean> {
@@ -68,7 +66,7 @@ export class OpenAICodexAuth implements InteractiveAuth, CodexCredentialSource {
   async refresh(): Promise<void> {
     const stored = readCodexTokens(this.baseDir);
     if (stored === null) {
-      throw new Error("not authenticated — run `swarm-harness login --provider openai-codex`");
+      throw new Error("not authenticated — run `openswarm login --provider openai-codex`");
     }
     await this.doRefresh(stored);
   }
@@ -93,7 +91,7 @@ export class OpenAICodexAuth implements InteractiveAuth, CodexCredentialSource {
   private async validTokens(): Promise<CodexTokens> {
     const stored = readCodexTokens(this.baseDir);
     if (stored === null) {
-      throw new Error("not authenticated — run `swarm-harness login --provider openai-codex`");
+      throw new Error("not authenticated — run `openswarm login --provider openai-codex`");
     }
     if (stored.expiresAt - this.now() > REFRESH_BUFFER_MS) {
       return stored;

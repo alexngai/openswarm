@@ -17,6 +17,7 @@ import { FileMemoryProvider } from "./providers/file-provider.js";
 import { MinimemProvider } from "./providers/minimem-provider.js";
 import { SkillProvider } from "./providers/skill-provider.js";
 import { archiveSession } from "./archive.js";
+import { maybeAutoConsolidate } from "./auto-consolidate.js";
 
 // ---------------------------------------------------------------------------
 // Session lifecycle
@@ -40,7 +41,7 @@ export async function onSessionStart(opts?: SessionStartOptions): Promise<void> 
   // Register MinimemProvider if not already present and not disabled
   if (
     !coordinator.providerNames.includes("minimem") &&
-    process.env.SWARM_MEMORY_PROVIDERS !== "file"
+    process.env.OPENSWARM_MEMORY_PROVIDERS !== "file"
   ) {
     const minimemProvider = new MinimemProvider();
     try {
@@ -57,7 +58,7 @@ export async function onSessionStart(opts?: SessionStartOptions): Promise<void> 
   // present and not disabled. Only activates when its skills directory exists.
   if (
     !coordinator.providerNames.includes("skills") &&
-    process.env.SWARM_MEMORY_PROVIDERS !== "file"
+    process.env.OPENSWARM_MEMORY_PROVIDERS !== "file"
   ) {
     const skillProvider = new SkillProvider();
     try {
@@ -100,7 +101,7 @@ export function formatMemoryFragments(fragments: MemoryFragment[]): string | nul
  * an empty system prompt, so writing there would clobber the preset).
  *
  * Best-effort: returns the inputs unchanged on any failure, so memory never
- * blocks a turn. Set SWARM_HARNESS_MEMORY_DEBUG=1 to log what was injected.
+ * blocks a turn. Set OPENSWARM_MEMORY_DEBUG=1 to log what was injected.
  */
 export async function enrichTurnInputs(
   systemPrompt: string,
@@ -120,7 +121,7 @@ export async function enrichTurnInputs(
   const block = formatMemoryFragments(fragments);
   if (!block) return { systemPrompt, prompt };
 
-  if (process.env.SWARM_HARNESS_MEMORY_DEBUG === "1") {
+  if (process.env.OPENSWARM_MEMORY_DEBUG === "1") {
     process.stderr.write(
       `[memory] injected ${fragments.length} fragment(s): ${fragments
         .map((f) => f.source)
@@ -177,7 +178,8 @@ export interface SessionEndInfo {
 }
 
 export async function onSessionEnd(info: SessionEndInfo): Promise<void> {
-  // Archive the session
+  // Archive the session in the durable archive store (FileArchiveStore when
+  // the file provider installed it; in-memory otherwise).
   archiveSession({
     sessionId: info.sessionId,
     summary: info.summary,
@@ -185,7 +187,34 @@ export async function onSessionEnd(info: SessionEndInfo): Promise<void> {
     toolsUsed: info.toolsUsed,
   });
 
-  // Shut down all providers
   const coordinator = getMemoryCoordinator();
+
+  // Phase 3 B2 — fan the session summary out to persistence-capable
+  // providers (minimem persists it via appendToday). Best-effort: a failed
+  // provider write must not block shutdown.
+  try {
+    await coordinator.onMemoryWrite({
+      scope: "project",
+      content: [
+        `Session ${info.sessionId} ended.`,
+        info.summary,
+        info.toolsUsed !== undefined && info.toolsUsed.length > 0
+          ? `Tools used: ${info.toolsUsed.join(", ")}`
+          : "",
+      ]
+        .filter((line) => line.length > 0)
+        .join("\n"),
+      timestamp: new Date().toISOString(),
+    });
+  } catch {
+    // best-effort
+  }
+
+  // Cadence-gated, best-effort kick of the cognitive-core consolidation loop.
+  // Fire-and-forget: never blocks or fails session shutdown, and no-ops when
+  // cognitive-core (`cogcore`) is not installed.
+  void maybeAutoConsolidate().catch(() => {});
+
+  // Shut down all providers
   await coordinator.shutdown();
 }

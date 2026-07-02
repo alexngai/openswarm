@@ -91,7 +91,7 @@ let turnCompleted = false;
 async function main() {
   // 1. initialize
   const initResult = await send("initialize", {
-    clientInfo: { name: "swarm-harness-spike", version: "0.0.1" },
+    clientInfo: { name: "openswarm-spike", version: "0.0.1" },
   });
   process.stderr.write(`initialize OK — userAgent: ${initResult.userAgent}\n`);
 

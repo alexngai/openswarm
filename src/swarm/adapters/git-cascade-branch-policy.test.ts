@@ -201,7 +201,7 @@ describe("GitCascadeBranchPolicyAdapter — non-stream policies", () => {
 // ---------------------------------------------------------------------------
 
 describe("GitCascadeBranchPolicyAdapter — kind:'stream'", () => {
-  it("createStream + createWorktree; returns cwd under .swarm-harness/worktrees/<id>/", async () => {
+  it("createStream + createWorktree; returns cwd under .openswarm/worktrees/<id>/", async () => {
     const fake = makeTracker();
     const adapter = new GitCascadeBranchPolicyAdapter({
       repoPath: "/repo",
@@ -220,12 +220,12 @@ describe("GitCascadeBranchPolicyAdapter — kind:'stream'", () => {
 
     expect(fake.tracker.createWorktree).toHaveBeenCalledWith({
       agentId: "agent-A",
-      path: path.join("/repo", ".swarm-harness", "worktrees", "s-1"),
+      path: path.join("/repo", ".openswarm", "worktrees", "s-1"),
       branch: "stream/s-1",
     });
 
     expect(r.cwd).toBe(
-      path.join("/repo", ".swarm-harness", "worktrees", "s-1"),
+      path.join("/repo", ".openswarm", "worktrees", "s-1"),
     );
     expect(r.streamId).toBe("s-1");
     expect(r.branch).toBe("stream/s-1");
@@ -286,7 +286,7 @@ describe("GitCascadeBranchPolicyAdapter — kind:'fork'", () => {
     expect(r.streamId).toBe("s-fork-1");
     expect(r.branch).toBe("stream/s-fork-1");
     expect(r.cwd).toBe(
-      path.join("/repo", ".swarm-harness", "worktrees", "s-fork-1"),
+      path.join("/repo", ".openswarm", "worktrees", "s-fork-1"),
     );
   });
 });
@@ -410,7 +410,7 @@ describe("GitCascadeBranchPolicyAdapter.streamIdFor + mergeStream (v0.7 stage 7C
     expect(args.targetStream).toBe("main");
     expect(args.agentId).toBe("agent-A");
     expect(args.strategy).toBe("no-ff");
-    expect(args.worktree).toContain(".swarm-harness/worktrees/s-1");
+    expect(args.worktree).toContain(".openswarm/worktrees/s-1");
   });
 
   it("mergeStream propagates conflict results without throwing", async () => {
@@ -507,7 +507,7 @@ describe("GitCascadeBranchPolicyAdapter.dispose", () => {
     expect(args.worktree.mode).toBe("callback");
     // The provider returns the recorded worktree for s-1.
     const provided = args.worktree.provider!("s-1");
-    expect(provided).toContain(".swarm-harness/worktrees/s-1");
+    expect(provided).toContain(".openswarm/worktrees/s-1");
   });
 
   it("v0.7 stage 7K — cascadeRebase forwards strategy when set", async () => {

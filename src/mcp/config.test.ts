@@ -53,21 +53,21 @@ describe("loadMcpConfig", () => {
     expect(result.resolvedPath).toBeUndefined();
   });
 
-  it("loads from $SWARM_HARNESS_CONFIG_DIR/mcp.json when present (highest priority)", async () => {
+  it("loads from $OPENSWARM_CONFIG_DIR/mcp.json when present (highest priority)", async () => {
     const expected = writeJson(envDir, "mcp.json", {
       mcpServers: {
         foo: { command: "node", args: ["a.js"] },
       },
     });
     // Decoy at lower priorities — should be ignored.
-    writeJson(path.join(cwd, ".swarm-harness"), "mcp.json", {
+    writeJson(path.join(cwd, ".openswarm"), "mcp.json", {
       mcpServers: { decoy: { command: "decoy" } },
     });
 
     const result = await loadMcpConfig({
       cwd,
       homedir: homeDir,
-      envOverrides: { SWARM_HARNESS_CONFIG_DIR: envDir },
+      envOverrides: { OPENSWARM_CONFIG_DIR: envDir },
     });
     expect(result.resolvedPath).toBe(expected);
     expect(result.configs.length).toBe(1);
@@ -76,8 +76,8 @@ describe("loadMcpConfig", () => {
     expect(result.configs[0]!.args).toEqual(["a.js"]);
   });
 
-  it("falls back to <cwd>/.swarm-harness/mcp.json when env not set", async () => {
-    const expected = writeJson(path.join(cwd, ".swarm-harness"), "mcp.json", {
+  it("falls back to <cwd>/.openswarm/mcp.json when env not set", async () => {
+    const expected = writeJson(path.join(cwd, ".openswarm"), "mcp.json", {
       mcpServers: { bar: { command: "bar" } },
     });
 
@@ -126,9 +126,9 @@ describe("loadMcpConfig", () => {
     });
   });
 
-  it("preserves priority order: env > cwd/.swarm-harness > cwd/.claude > home/.claude", async () => {
+  it("preserves priority order: env > cwd/.openswarm > cwd/.claude > home/.claude", async () => {
     writeJson(envDir, "mcp.json", { mcpServers: { winner: { command: "env" } } });
-    writeJson(path.join(cwd, ".swarm-harness"), "mcp.json", {
+    writeJson(path.join(cwd, ".openswarm"), "mcp.json", {
       mcpServers: { winner: { command: "cwd-sc" } },
     });
     writeJson(path.join(cwd, ".claude"), "mcp_servers.json", {
@@ -141,13 +141,13 @@ describe("loadMcpConfig", () => {
     const result = await loadMcpConfig({
       cwd,
       homedir: homeDir,
-      envOverrides: { SWARM_HARNESS_CONFIG_DIR: envDir },
+      envOverrides: { OPENSWARM_CONFIG_DIR: envDir },
     });
     expect(result.configs[0]!.command).toBe("env");
   });
 
   it("throws on malformed JSON", async () => {
-    const p = path.join(cwd, ".swarm-harness", "mcp.json");
+    const p = path.join(cwd, ".openswarm", "mcp.json");
     fs.mkdirSync(path.dirname(p), { recursive: true });
     fs.writeFileSync(p, "{not-json");
 
@@ -157,7 +157,7 @@ describe("loadMcpConfig", () => {
   });
 
   it("returns empty configs when mcpServers key is absent", async () => {
-    writeJson(path.join(cwd, ".swarm-harness"), "mcp.json", {
+    writeJson(path.join(cwd, ".openswarm"), "mcp.json", {
       otherKey: "whatever",
     });
 

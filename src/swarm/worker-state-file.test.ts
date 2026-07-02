@@ -35,10 +35,10 @@ function sampleState(overrides: Partial<WorkerStateFile> = {}): WorkerStateFile 
   };
 }
 
-// Clean up any tmp dirs created in SWARM_HARNESS_WORKERS_DIR override tests.
+// Clean up any tmp dirs created in OPENSWARM_WORKERS_DIR override tests.
 const dirsToCleanup: string[] = [];
 afterEach(() => {
-  delete process.env["SWARM_HARNESS_WORKERS_DIR"];
+  delete process.env["OPENSWARM_WORKERS_DIR"];
   for (const d of dirsToCleanup.splice(0)) {
     try {
       fs.rmSync(d, { recursive: true, force: true });
@@ -151,10 +151,10 @@ describe("worker-state-file", () => {
     expect(isWorkerProcessAlive(999999)).toBe(false);
   });
 
-  it("respects SWARM_HARNESS_WORKERS_DIR override", () => {
+  it("respects OPENSWARM_WORKERS_DIR override", () => {
     const dir = tmpDir();
     dirsToCleanup.push(dir);
-    process.env["SWARM_HARNESS_WORKERS_DIR"] = dir;
+    process.env["OPENSWARM_WORKERS_DIR"] = dir;
 
     const state = sampleState({ lifecycleState: "failed", failureClass: "panic" });
     writeWorkerState(state); // no explicit baseDir — uses env override

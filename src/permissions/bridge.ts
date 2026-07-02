@@ -20,8 +20,19 @@ import type { PermissionDecision } from "../engine/index.js";
 
 type DispatchFn = (event: ReplEvent) => void;
 
+/**
+ * PermissionDecision plus the optional session-scope marker (Phase 3 B4).
+ * When a surface approves with "always allow (this session)", it sets
+ * `alwaysAllow: true`; the bash gate records a SessionAllowRules entry
+ * (subject to the banned-prefix veto). Plain PermissionDecision values
+ * remain valid everywhere — the marker is additive.
+ */
+export type BridgeDecision = PermissionDecision & {
+  readonly alwaysAllow?: boolean;
+};
+
 export class PermissionBridge {
-  private resolver: ((decision: PermissionDecision) => void) | null = null;
+  private resolver: ((decision: BridgeDecision) => void) | null = null;
   private pending: PendingPermission | null = null;
   private dispatch: DispatchFn | null = null;
 
@@ -57,7 +68,7 @@ export class PermissionBridge {
    * to deny — the design is strictly serial and a second overlapping request
    * indicates a bug.
    */
-  async request(pending: PendingPermission): Promise<PermissionDecision> {
+  async request(pending: PendingPermission): Promise<BridgeDecision> {
     if (this.resolver !== null) {
       return {
         allow: false,
@@ -69,7 +80,7 @@ export class PermissionBridge {
     this.pending = pending;
     this.dispatch?.({ type: "permission-request", request: pending });
 
-    return await new Promise<PermissionDecision>((resolve) => {
+    return await new Promise<BridgeDecision>((resolve) => {
       this.resolver = resolve;
     });
   }
@@ -84,7 +95,7 @@ export class PermissionBridge {
    *
    * No-op if nothing is pending.
    */
-  respond(decision: PermissionDecision): void {
+  respond(decision: BridgeDecision): void {
     if (this.resolver === null) return;
     const resolve = this.resolver;
     this.resolver = null;

@@ -158,9 +158,9 @@ export function compactSession(
   const removed = session.messages.slice(compactedPrefixLen, keepFrom);
   const preserved = session.messages.slice(keepFrom);
 
-  const summary = mergeCompactSummaries(
-    existingSummary,
-    summarizeMessages(removed)
+  const summary = withTodoProgress(
+    mergeCompactSummaries(existingSummary, summarizeMessages(removed)),
+    session.messages,
   );
 
   const continuation = getCompactContinuationMessage(
@@ -182,6 +182,106 @@ export function compactSession(
     removedMessageCount: removed.length,
     boundaryWalkedBack,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Todo-tree progress section (borrowed from MiMoCode checkpoint*)
+//
+// Compaction drops the message that carried the latest `todo_write` state, so
+// the resumed session forgets its own plan. We recover the most recent todo
+// snapshot from the pre-compaction history and fold a compact progress block
+// into the summary so the checklist survives across the boundary. Purely
+// structural — no dependency on the todo_write tool module.
+// ---------------------------------------------------------------------------
+
+export type TodoStatus = "pending" | "in_progress" | "completed";
+
+export interface TodoProgressItem {
+  readonly content: string;
+  readonly status: TodoStatus;
+}
+
+const TODO_STATUS_ICON: Record<TodoStatus, string> = {
+  pending: "☐",
+  in_progress: "▶",
+  completed: "✓",
+};
+
+const VALID_TODO_STATUS = new Set<TodoStatus>([
+  "pending",
+  "in_progress",
+  "completed",
+]);
+
+/**
+ * Return the most recent `todo_write` snapshot found in `messages` (scanning
+ * newest-first), or null when there is none. Defensive about shape — the tool
+ * input is untyped `unknown` on the wire.
+ */
+export function extractLatestTodos(
+  messages: readonly ProviderMessage[],
+): TodoProgressItem[] | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg === undefined || msg.role !== "assistant") continue;
+    for (let b = msg.content.length - 1; b >= 0; b--) {
+      const block = msg.content[b];
+      if (block?.type !== "tool_use" || block.name !== "todo_write") continue;
+      const items = coerceTodos(block.input);
+      if (items !== null) return items;
+    }
+  }
+  return null;
+}
+
+function coerceTodos(input: unknown): TodoProgressItem[] | null {
+  if (typeof input !== "object" || input === null) return null;
+  const raw = (input as { todos?: unknown }).todos;
+  if (!Array.isArray(raw)) return null;
+  const items: TodoProgressItem[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const content = (entry as { content?: unknown }).content;
+    const status = (entry as { status?: unknown }).status;
+    if (typeof content !== "string") continue;
+    if (typeof status !== "string" || !VALID_TODO_STATUS.has(status as TodoStatus)) {
+      continue;
+    }
+    items.push({ content, status: status as TodoStatus });
+  }
+  return items.length > 0 ? items : null;
+}
+
+/** Render a `## Todos / Progress` markdown block from a todo snapshot. */
+export function renderTodoProgressBlock(
+  todos: readonly TodoProgressItem[],
+): string {
+  const done = todos.filter((t) => t.status === "completed").length;
+  const lines = [`## Todos / Progress (${done}/${todos.length} done)`];
+  for (const t of todos) {
+    lines.push(`- ${TODO_STATUS_ICON[t.status]} ${t.status}: ${t.content}`);
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Fold the latest todo snapshot into a summary string. Inserts the progress
+ * block just before the trailing `</summary>` tag when present (so it stays
+ * inside the summary envelope that formatCompactSummary/merge understand),
+ * else appends. No-op when there are no todos.
+ */
+export function withTodoProgress(
+  summary: string,
+  messages: readonly ProviderMessage[],
+): string {
+  const todos = extractLatestTodos(messages);
+  if (todos === null) return summary;
+  const block = renderTodoProgressBlock(todos);
+  const closeIdx = summary.lastIndexOf("</summary>");
+  if (closeIdx !== -1) {
+    return `${summary.slice(0, closeIdx)}${block}\n${summary.slice(closeIdx)}`;
+  }
+  return `${summary}\n\n${block}`;
 }
 
 // ---------------------------------------------------------------------------

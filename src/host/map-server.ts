@@ -34,7 +34,7 @@ export interface CreateMapServerOptions {
   readonly host?: string;
   /** WebSocket path (default `/map`). */
   readonly path?: string;
-  /** Server name advertised to MAP clients (default `swarm-harness`). */
+  /** Server name advertised to MAP clients (default `openswarm`). */
   readonly name?: string;
   /**
    * Extra request/response handlers merged after the SDK built-ins (docs/44 P8
@@ -111,7 +111,7 @@ export async function createMapServer(
   const wsPath = opts.path ?? "/map";
   const log = opts.log ?? (() => {});
   const map = new MAPServer({
-    name: opts.name ?? "swarm-harness",
+    name: opts.name ?? "openswarm",
     ...(opts.additionalHandlers !== undefined && {
       additionalHandlers: opts.additionalHandlers,
     }),

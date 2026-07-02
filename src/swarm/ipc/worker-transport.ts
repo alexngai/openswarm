@@ -177,7 +177,7 @@ export class WorkerTransport extends EventEmitter {
       if (!decoded.ok) {
         // Malformed — log to stderr and skip (don't crash transport).
         process.stderr.write(
-          `[swarm-harness/WorkerTransport] malformed frame: ${decoded.error}\n`,
+          `[openswarm/WorkerTransport] malformed frame: ${decoded.error}\n`,
         );
         continue;
       }

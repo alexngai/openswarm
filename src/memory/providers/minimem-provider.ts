@@ -2,8 +2,8 @@
  * MinimemProvider — optional provider wrapping the minimem package for
  * hybrid vector + BM25 search and knowledge graph capabilities.
  *
- * minimem is an optional dependency. If not installed or if embedding setup
- * fails, the provider degrades gracefully:
+ * If minimem cannot initialize, or if embedding setup fails, the provider
+ * degrades gracefully:
  * 1. With embeddings: full hybrid vector + BM25 search
  * 2. Without embeddings: BM25-only search (still useful)
  * 3. Without minimem: provider reports unavailable, coordinator skips it
@@ -23,7 +23,8 @@ import type {
 } from "../types.js";
 
 // ---------------------------------------------------------------------------
-// Dynamic import wrapper — minimem is optional
+// Dynamic import wrapper — minimem may be unavailable in direct binary-package
+// installs or other constrained runtimes.
 // ---------------------------------------------------------------------------
 
 interface MinimemInstance {
@@ -101,7 +102,7 @@ export class MinimemProvider implements MemoryProvider {
       process.env.MINIMEM_STORE_PATH ??
       path.join(
         process.env.HOME ?? process.env.USERPROFILE ?? ".",
-        ".swarm-harness",
+        ".openswarm",
         "memory",
       );
 
@@ -159,6 +160,27 @@ export class MinimemProvider implements MemoryProvider {
         minScore,
       });
 
+      return results.map((r) => ({
+        source: `minimem:${r.path}`,
+        content: r.snippet,
+        relevance: r.score,
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  /** Explicit query search (Phase 3 B2 — backs `memory_search`). */
+  async search(
+    query: string,
+    opts?: { readonly limit?: number },
+  ): Promise<MemoryFragment[]> {
+    if (!this.instance) return [];
+    try {
+      const results = await this.instance.search(query, {
+        maxResults: opts?.limit ?? this.config.maxResults ?? 5,
+        minScore: this.config.minScore ?? 0.3,
+      });
       return results.map((r) => ({
         source: `minimem:${r.path}`,
         content: r.snippet,

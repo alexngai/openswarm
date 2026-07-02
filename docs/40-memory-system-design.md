@@ -4,7 +4,7 @@
 
 ## Overview
 
-A 4-layer memory architecture for swarm-harness that uses **minimem** as the
+A 4-layer memory architecture for openswarm that uses **minimem** as the
 core storage/retrieval engine and a **Hermes-style provider protocol** for
 extensibility. The design lets agents accumulate, curate, and recall knowledge
 across sessions while keeping the system pluggable enough to swap or layer
@@ -145,7 +145,7 @@ Skills are files in a `skills/` directory within the project or a shared
 config location:
 
 ```
-~/.swarm-harness/skills/
+~/.openswarm/skills/
   deploy-staging.md
   run-integration-tests.md
   pr-review-checklist.md
@@ -363,7 +363,7 @@ class MinimemProvider implements MemoryProvider {
 
 Each external system (Mem0, Hindsight, etc.) gets a thin adapter implementing
 `MemoryProvider`. Configuration via environment variables or
-`~/.swarm-harness/config.json`:
+`~/.openswarm/config.json`:
 
 ```json
 {
@@ -574,7 +574,7 @@ Multi-agent memory.
 ## Configuration
 
 ```jsonc
-// ~/.swarm-harness/config.json
+// ~/.openswarm/config.json
 {
   "memory": {
     "enabled": true,
@@ -584,7 +584,7 @@ Multi-agent memory.
     },
     "selfImprovementInterval": 15,   // turns between self-review
     "skills": {
-      "directory": "~/.swarm-harness/skills"
+      "directory": "~/.openswarm/skills"
     },
     "providers": [
       {
@@ -592,7 +592,7 @@ Multi-agent memory.
         "enabled": true,
         "config": {
           "embedding": "openai",
-          "storePath": "~/.swarm-harness/minimem-store"
+          "storePath": "~/.openswarm/minimem-store"
         }
       }
     ]
@@ -604,8 +604,8 @@ Environment variable overrides:
 
 | Variable | Purpose |
 |----------|---------|
-| `SWARM_MEMORY_ENABLED` | Enable/disable memory system (`true`/`false`) |
-| `SWARM_MEMORY_PROVIDERS` | Comma-separated provider names to enable |
+| `OPENSWARM_MEMORY_ENABLED` | Enable/disable memory system (`true`/`false`) |
+| `OPENSWARM_MEMORY_PROVIDERS` | Comma-separated provider names to enable |
 | `MINIMEM_EMBEDDING_PROVIDER` | Embedding backend for minimem |
 | `MINIMEM_STORE_PATH` | Storage path for minimem data |
 

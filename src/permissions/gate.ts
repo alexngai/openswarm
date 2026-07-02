@@ -2,14 +2,14 @@
  * makeCanUseTool — factory for the engine's `canUseTool` permission gate.
  *
  * Extracted verbatim from runPrompt (src/cli/main.ts) so the single-agent CLI,
- * the ACP adapter (docs/30, docs/32), and any other engine driver share one
+ * the ACP adapter (docs/archive/30, docs/archive/32), and any other engine driver share one
  * gate implementation instead of duplicating the bash-gate + mode-check logic.
  *
  * The two prompt points — the bash-validation Warn prompt and the mode-deny
  * prompt — route through the injected `bridge` (TTY) or `readHeadlessApproval`
  * (headless). An ACP driver supplies a `PermissionBridge` subclass whose
  * `request()` forwards to `client.requestPermission` and sets
- * `useHeadless: false`, so this body is reused unchanged (docs/32 §8).
+ * `useHeadless: false`, so this body is reused unchanged (docs/archive/32 §8).
  *
  * Ordering (doc 17 "Phase 2 — design lock" + Phase 5 stage A bash gate):
  *   1. Unknown tool → hard deny.
@@ -23,6 +23,7 @@
 import { bashValidationGate } from "./bash-gate.js";
 import { readHeadlessApproval } from "./headless-prompt.js";
 import type { PermissionBridge } from "./bridge.js";
+import type { SessionAllowRules } from "./session-rules.js";
 import type { PermissionEngine } from "./index.js";
 import type { ToolDispatcher } from "../tools/dispatcher.js";
 import type { PermissionGate } from "../engine/index.js";
@@ -46,6 +47,12 @@ export interface CanUseToolDeps {
    * orchestrator sees validation events.
    */
   readonly emitLaneEvent?: (event: unknown) => void;
+  /**
+   * Session-scoped bash "always allow" rules (Phase 3 B4). Optional; when
+   * present it is threaded into the bash gate so approved Warns can be
+   * remembered for the session.
+   */
+  readonly sessionRules?: SessionAllowRules;
 }
 
 export function makeCanUseTool(deps: CanUseToolDeps): PermissionGate {
@@ -64,7 +71,13 @@ export function makeCanUseTool(deps: CanUseToolDeps): PermissionGate {
     // returns null and we fall through to the mode check.
     const bashGateResult = await bashValidationGate(
       { toolName, toolImpl, input, currentMode },
-      { bridge, useHeadless, cwd, emitLaneEvent },
+      {
+        bridge,
+        useHeadless,
+        cwd,
+        emitLaneEvent,
+        ...(deps.sessionRules !== undefined && { sessionRules: deps.sessionRules }),
+      },
     );
     // Block or Warn-denied short-circuit: never run the mode check, never
     // surface a second prompt for the same tool call.
@@ -81,7 +94,10 @@ export function makeCanUseTool(deps: CanUseToolDeps): PermissionGate {
       return { allow: true };
     }
 
-    const modeDecision = permEngine.check(toolImpl.spec, input);
+    // Check against the LIVE mode (getCurrentMode), not the engine's frozen
+    // construction mode, so `/permissions` and `request_permissions` elevation
+    // actually reduce future denials mid-session.
+    const modeDecision = permEngine.check(toolImpl.spec, input, currentMode);
     if (!modeDecision.allow) {
       const pending = {
         toolName: toolImpl.spec.name,

@@ -1,5 +1,5 @@
 /**
- * ACP team orchestration-spine recorder (B1.3, docs/34 §5).
+ * ACP team orchestration-spine recorder (B1.3, docs/archive/34 §5).
  *
  * B0 streamed lane events to the client but persisted nothing, so an ACP team
  * session had no transcript to replay. This subscribes to the runner's lane bus
@@ -44,7 +44,7 @@ function baseDir(): string {
 export function acpSessionDir(sessionId: string): string {
   // sessionId is a server-minted UUID; sanitize defensively against separators.
   const safe = sessionId.replace(/[^A-Za-z0-9._-]/g, "_");
-  return path.join(baseDir(), "swarm-harness", "acp", safe);
+  return path.join(baseDir(), "openswarm", "acp", safe);
 }
 
 /** The orchestration spine path for an ACP session. */

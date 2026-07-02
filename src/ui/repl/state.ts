@@ -1,10 +1,11 @@
 /**
- * state.ts — pure reducer for the ink REPL state machine.
+ * state.ts — pure reducer for the interactive REPL state machine, consumed
+ * by the OpenTUI/Solid REPL (`src/ui/repl-solid/`).
  *
- * No React imports. This file is intentionally decoupled from ink / React so
- * we can unit-test every transition without spinning up a renderer.
+ * No renderer imports. This file is intentionally renderer-agnostic so we
+ * can unit-test every transition without spinning up a UI.
  *
- * Transition table (authoritative — docs/10-m2-plan.md Phase 2):
+ * Transition table (authoritative — docs/archive/10-m2-plan.md Phase 2):
  *
  *   idle                --(input-changed)-----> idle
  *   idle                --(submit)-------------> streaming
@@ -283,33 +284,6 @@ export function createInitialState(opts?: InitialStateOptions): ReplState {
  */
 export type SlashCommandRegistry =
   import("../../cli/slash/index.js").SlashCommandRegistry;
-
-interface StubCommand {
-  readonly name: string;
-  readonly description: string;
-  readonly execute: () => { readonly kind: "ok" };
-}
-
-const STUB_COMMANDS: ReadonlyArray<StubCommand> = [
-  { name: "help", description: "Show available commands", execute: () => ({ kind: "ok" }) },
-  { name: "exit", description: "Exit the REPL", execute: () => ({ kind: "ok" }) },
-  { name: "clear", description: "Clear the transcript", execute: () => ({ kind: "ok" }) },
-  { name: "status", description: "Show session status", execute: () => ({ kind: "ok" }) },
-];
-
-/**
- * Minimal fallback registry. The canonical path is
- * `buildDefaultRegistry(deps)` from `src/cli/slash/index.ts`, which returns
- * the full 14-command registry. This stub is kept only so tests and the
- * REPL can render without wiring the full dependency graph.
- */
-export function createStubSlashRegistry(): SlashCommandRegistry {
-  return {
-    list: () =>
-      STUB_COMMANDS.map((c) => ({ name: c.name, description: c.description })),
-    get: (name: string) => STUB_COMMANDS.find((c) => c.name === name),
-  };
-}
 
 /**
  * Per-state slash-command validity. Commands are looked up by their bare name

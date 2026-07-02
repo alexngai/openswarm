@@ -2,8 +2,8 @@
  * MCP config loader (rev-2 Major M8).
  *
  * Hierarchy (first-match-wins):
- *   1. `$SWARM_HARNESS_CONFIG_DIR/mcp.json`
- *   2. `<cwd>/.swarm-harness/mcp.json`
+ *   1. `$OPENSWARM_CONFIG_DIR/mcp.json`
+ *   2. `<cwd>/.openswarm/mcp.json`
  *   3. `<cwd>/.claude/mcp_servers.json`                (Claude Code compat)
  *   4. `$HOME/.claude/mcp_servers.json`                (Claude Code compat)
  *
@@ -76,11 +76,11 @@ function resolveConfigPath(opts: LoadMcpConfigOptions): string | undefined {
 
   const candidates: string[] = [];
 
-  const envDir = env.SWARM_HARNESS_CONFIG_DIR;
+  const envDir = env.OPENSWARM_CONFIG_DIR;
   if (envDir && envDir.length > 0) {
     candidates.push(path.join(envDir, "mcp.json"));
   }
-  candidates.push(path.join(cwd, ".swarm-harness", "mcp.json"));
+  candidates.push(path.join(cwd, ".openswarm", "mcp.json"));
   candidates.push(path.join(cwd, ".claude", "mcp_servers.json"));
   candidates.push(path.join(home, ".claude", "mcp_servers.json"));
 

@@ -18,10 +18,8 @@ jobs:
       matrix:
         os: [ubuntu-latest]
     steps:
-      - name: Checkout (with submodules)
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -37,22 +35,40 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check bun.lock freshness
+        # Both lockfiles are tracked deliberately: package-lock.json is
+        # canonical (CI installs), bun.lock feeds `build:compile`. This step
+        # fails when bun.lock is stale against package.json so drift can't
+        # ship a binary built from different dependency resolutions.
+        run: bun install --frozen-lockfile --dry-run
+
       - name: Type-check (tsc)
         run: npm run build
 
+      - name: Type-check eval harness
+        # eval/ is outside tsconfig.build.json, so drift against swarmkit-eval
+        # is invisible to the main build. Keep it honest.
+        run: npx tsc -p eval/tsconfig.json --noEmit
+
+      - name: Type-check experimental archive
+        # experimental/ holds archived-but-revivable modules (see
+        # experimental/BACKLOG.md). Outside tsconfig.build.json; typecheck
+        # keeps them importable against the live src/ they depend on.
+        run: npx tsc -p experimental/tsconfig.json --noEmit
+
       - name: Build compiled binary (linux-x64)
         # Build the binary before running tests so the PTY e2e suite has
-        # a `dist/swarm-harness` to spawn. node-pty runs under Node/vitest.
+        # a `dist/openswarm` to spawn. node-pty runs under Node/vitest.
         run: npm run build:compile:linux-x64
 
       - name: Run vitest suite (unit + integration + PTY)
         env:
-          SWARM_HARNESS_SKIP_INTEGRATION_BUILD: "1"
+          OPENSWARM_SKIP_INTEGRATION_BUILD: "1"
         run: npm test
 
       - name: Run bun test suite (OpenTUI/Solid components)
         env:
-          SWARM_HARNESS_SKIP_LIVE: "1"
+          OPENSWARM_SKIP_LIVE: "1"
         run: bun test src/ui/repl-solid/
 
       - name: Run full smoke (offline)

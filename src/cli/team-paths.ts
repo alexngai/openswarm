@@ -2,7 +2,7 @@
  * team-paths.ts — shared path computation for the team daemon.
  *
  * v0.5 stage 5E follow-up: macOS Unix socket `sun_path` is limited to ~104
- * characters, and the natural `${TMPDIR}/swarm-harness/teams/<name>/daemon.sock`
+ * characters, and the natural `${TMPDIR}/openswarm/teams/<name>/daemon.sock`
  * path under `/var/folders/.../T/` regularly exceeds it. The kernel silently
  * truncates the filename, so the daemon binds to a path that the client
  * can't connect to.
@@ -13,8 +13,8 @@
  * shortened socket location — the CLI client and the daemon agree without
  * needing to communicate the mapping.
  *
- * Other paths (pid, events.jsonl, state.json, daemon.log, spec.json) live
- * in the natural team dir — they have no length constraint.
+ * Other paths (pid, events.jsonl, state.json, daemon.log, spec.json,
+ * checkpoint.json) live in the natural team dir — no length constraint.
  */
 
 import * as crypto from "node:crypto";
@@ -41,6 +41,8 @@ export interface TeamPaths {
   readonly statePath: string;
   readonly logPath: string;
   readonly specPath: string;
+  /** Durable per-team progress checkpoint for crash-recovery (docs/28 T1). */
+  readonly checkpointPath: string;
 }
 
 /**
@@ -55,7 +57,7 @@ export function computeTeamPaths(teamName: string): TeamPaths {
     process.env.XDG_RUNTIME_DIR !== ""
       ? process.env.XDG_RUNTIME_DIR
       : (process.env.TMPDIR ?? os.tmpdir());
-  const dir = path.join(baseDir, "swarm-harness", "teams", teamName);
+  const dir = path.join(baseDir, "openswarm", "teams", teamName);
 
   const naturalSockPath = path.join(dir, "daemon.sock");
   const sockPath =
@@ -71,6 +73,7 @@ export function computeTeamPaths(teamName: string): TeamPaths {
     statePath: path.join(dir, "state.json"),
     logPath: path.join(dir, "daemon.log"),
     specPath: path.join(dir, "spec.json"),
+    checkpointPath: path.join(dir, "checkpoint.json"),
   };
 }
 
@@ -97,5 +100,5 @@ export function teamsBaseDir(): string {
     process.env.XDG_RUNTIME_DIR !== ""
       ? process.env.XDG_RUNTIME_DIR
       : (process.env.TMPDIR ?? os.tmpdir());
-  return path.join(baseDir, "swarm-harness", "teams");
+  return path.join(baseDir, "openswarm", "teams");
 }

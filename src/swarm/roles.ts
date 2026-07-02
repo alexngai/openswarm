@@ -18,7 +18,7 @@
  *   - `executor` — full Tier 0 + Tier 1, no recursive spawn (`agent`)
  *   - `reviewer` — read-only + structured_output (no writes, no spawn)
  *
- * Custom roles are loaded from `<cwd>/.swarm-harness/roles.json` at
+ * Custom roles are loaded from `<cwd>/.openswarm/roles.json` at
  * orchestrator startup. Invalid entries are skipped with a stderr warning;
  * a missing or unreadable file yields `[]` so operators can ship without
  * customisation.
@@ -209,7 +209,7 @@ export const BUILTIN_ROLES: readonly Role[] = [
  * whole load. A missing file yields `[]` silently. Unreadable or malformed
  * files yield `[]` with a stderr warning.
  *
- * The trust boundary is the same as M2 hooks: `.swarm-harness/roles.json` is
+ * The trust boundary is the same as M2 hooks: `.openswarm/roles.json` is
  * user-controlled. Signed role manifests are M5+.
  */
 export async function loadCustomRoles(
@@ -224,7 +224,7 @@ export async function loadCustomRoles(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(
-      `[swarm-harness] roles: unreadable ${configPath}: ${msg}\n`,
+      `[openswarm] roles: unreadable ${configPath}: ${msg}\n`,
     );
     return [];
   }
@@ -235,7 +235,7 @@ export async function loadCustomRoles(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(
-      `[swarm-harness] roles: malformed JSON in ${configPath}: ${msg}\n`,
+      `[openswarm] roles: malformed JSON in ${configPath}: ${msg}\n`,
     );
     return [];
   }
@@ -243,7 +243,7 @@ export async function loadCustomRoles(
   const fileParsed = RolesFileSchema.safeParse(json);
   if (!fileParsed.success) {
     process.stderr.write(
-      `[swarm-harness] roles: invalid shape in ${configPath} (expected { roles: Role[] }): ${fileParsed.error.message}\n`,
+      `[openswarm] roles: invalid shape in ${configPath} (expected { roles: Role[] }): ${fileParsed.error.message}\n`,
     );
     return [];
   }
@@ -254,7 +254,7 @@ export async function loadCustomRoles(
     const parsed = RoleSchema.safeParse(entry);
     if (!parsed.success) {
       process.stderr.write(
-        `[swarm-harness] roles: skipping invalid role at index ${i}: ${parsed.error.message}\n`,
+        `[openswarm] roles: skipping invalid role at index ${i}: ${parsed.error.message}\n`,
       );
       continue;
     }

@@ -1,5 +1,5 @@
 /**
- * team-watch.ts — `swarm-harness team watch <name>`.
+ * team-watch.ts — `openswarm team watch <name>`.
  *
  * v0.5 stage 5D minimal: single-pane formatted live view of a team
  * daemon's events.jsonl. Builds on the tail logic from `team logs --follow`

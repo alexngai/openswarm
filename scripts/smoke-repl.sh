@@ -8,7 +8,7 @@
 # Exits 0 if every run scenario passes, 1 otherwise.
 #
 # Scenarios:
-#   Offline (ScriptedTestEngine via SWARM_CODER_TEST_SCRIPT, no API):
+#   Offline (ScriptedTestEngine via OPENSWARM_TEST_SCRIPT, no API):
 #     [O1] REPL lifecycle (headless prompt + text_delta + message_stop)
 #     [O2] /help slash command lists every registered command
 #     [O3] Hook fixture denies a tool via exit 2
@@ -59,7 +59,7 @@ npm run build > /dev/null
 # ---------------------------------------------------------------------------
 
 # [O1] REPL lifecycle — headless prompt + scripted engine.
-OUT=$(SWARM_CODER_TEST_SCRIPT="$WORKER_SCRIPT" $BIN prompt --headless "hi" 2>&1)
+OUT=$(OPENSWARM_TEST_SCRIPT="$WORKER_SCRIPT" $BIN prompt --headless "hi" 2>&1)
 EC=$?
 if [[ $EC -eq 0 ]] && \
    echo "$OUT" | grep -q '"type":"text_delta"' && \
@@ -95,12 +95,12 @@ fi
 # prompt via --dump-tools (which doesn't invoke tools) to confirm the hook
 # config loads; then exercise the dispatcher-level deny path via node.
 TMP_O3=$(mktemp -d)
-mkdir -p "$TMP_O3/.swarm-coder"
-cat > "$TMP_O3/.swarm-coder/hooks.json" <<EOF
+mkdir -p "$TMP_O3/.openswarm"
+cat > "$TMP_O3/.openswarm/hooks.json" <<EOF
 {"PreToolUse":[{"matcher":"read_file","command":"bash $HOOKS_FIXTURES/deny-hook.sh"}]}
 EOF
 
-OUT_O3=$((cd "$TMP_O3" && SWARM_CODER_TEST_SCRIPT="$WORKER_SCRIPT" $BIN prompt --headless --dump-tools --no-plugins --no-mcp --no-skills noop) 2>&1)
+OUT_O3=$((cd "$TMP_O3" && OPENSWARM_TEST_SCRIPT="$WORKER_SCRIPT" $BIN prompt --headless --dump-tools --no-plugins --no-mcp --no-skills noop) 2>&1)
 EC_O3=$?
 if [[ $EC_O3 -eq 0 ]] && echo "$OUT_O3" | grep -q "hooks loaded from"; then
   # Dispatcher-level deny: invoke the hook via the runtime and assert deny.
@@ -125,8 +125,8 @@ else
 fi
 rm -rf "$TMP_O3"
 
-# [O4] Plugin fixture — SWARM_CODER_PLUGINS_DIR + --dump-tools
-OUT_O4=$(SWARM_CODER_TEST_SCRIPT="$WORKER_SCRIPT" SWARM_CODER_PLUGINS_DIR="$PLUGINS_DIR" SWARM_CODER_CONFIG_DIR="/tmp/swc-o4-empty" $BIN prompt --headless --dump-tools --no-mcp --no-hooks --no-skills noop 2>/dev/null)
+# [O4] Plugin fixture — OPENSWARM_PLUGINS_DIR + --dump-tools
+OUT_O4=$(OPENSWARM_TEST_SCRIPT="$WORKER_SCRIPT" OPENSWARM_PLUGINS_DIR="$PLUGINS_DIR" OPENSWARM_CONFIG_DIR="/tmp/swc-o4-empty" $BIN prompt --headless --dump-tools --no-mcp --no-hooks --no-skills noop 2>/dev/null)
 EC_O4=$?
 if [[ $EC_O4 -eq 0 ]] && \
    echo "$OUT_O4" | tail -1 | grep -q 'plugin__shell-plugin__echo' && \
@@ -255,9 +255,9 @@ else
 
     # [L5] One hook invocation — hook writes to a log file; verify it exists.
     TMP_L5=$(mktemp -d)
-    mkdir -p "$TMP_L5/.swarm-coder"
+    mkdir -p "$TMP_L5/.openswarm"
     LOG="$TMP_L5/hook.log"
-    cat > "$TMP_L5/.swarm-coder/hooks.json" <<EOF
+    cat > "$TMP_L5/.openswarm/hooks.json" <<EOF
 {"PreToolUse":[{"matcher":"*","command":"cat >/dev/null; echo pre-hook-fired >> $LOG; echo '{}'; exit 0"}]}
 EOF
     OUT_L5=$((cd "$TMP_L5" && $BIN prompt --headless "Use the read_file tool to read package.json, then tell me one field." ) 2>&1)
@@ -276,7 +276,7 @@ EOF
     # subprocesses), so --permission-mode danger-full-access is required for
     # the model to actually invoke them. workspace-write would deny the call
     # before execution.
-    OUT_L6=$(SWARM_CODER_PLUGINS_DIR="$PLUGINS_DIR" SWARM_CODER_CONFIG_DIR="/tmp/swc-l6-empty" $BIN prompt --headless --no-mcp --no-skills --permission-mode danger-full-access "Call the tool named plugin__shell-plugin__echo with argument {\"marker\":\"live-l6-plugin-ok\"}. Then reply with exactly the word done." 2>&1)
+    OUT_L6=$(OPENSWARM_PLUGINS_DIR="$PLUGINS_DIR" OPENSWARM_CONFIG_DIR="/tmp/swc-l6-empty" $BIN prompt --headless --no-mcp --no-skills --permission-mode danger-full-access "Call the tool named plugin__shell-plugin__echo with argument {\"marker\":\"live-l6-plugin-ok\"}. Then reply with exactly the word done." 2>&1)
     EC_L6=$?
     # Authoritative signal: the shell plugin's own stdout (surfaced as the
     # tool_result content) echoes the marker back. The model's text_delta
@@ -307,7 +307,7 @@ description: A smoke-test skill that instructs the model to emit a specific toke
 
 When you load this skill, reply with exactly the words: live-l7-skill-ok
 EOF
-    OUT_L7=$((cd "$TMP_L7" && SWARM_CODER_CONFIG_DIR="/tmp/swc-l7-empty" $BIN prompt --headless --no-plugins --no-mcp --permission-mode workspace-write "Use the skill tool to load the skill with id 'live-l7-skill', then follow its instructions.") 2>&1)
+    OUT_L7=$((cd "$TMP_L7" && OPENSWARM_CONFIG_DIR="/tmp/swc-l7-empty" $BIN prompt --headless --no-plugins --no-mcp --permission-mode workspace-write "Use the skill tool to load the skill with id 'live-l7-skill', then follow its instructions.") 2>&1)
     EC_L7=$?
     if [[ $EC_L7 -eq 0 ]] && \
        echo "$OUT_L7" | grep -q '"type":"message_stop"' && \
@@ -325,7 +325,7 @@ EOF
     cat > "$TMP_L8/mcp.json" <<EOF
 {"mcpServers":{"mock-mcp":{"command":"$(command -v node)","args":["$REPO_ROOT/test/fixtures/mcp-mock-server/index.mjs"]}}}
 EOF
-    OUT_L8=$(SWARM_CODER_CONFIG_DIR="$TMP_L8" $BIN prompt --headless --no-plugins --no-skills --permission-mode workspace-write "Call the tool named mcp__mock-mcp__get_time with no arguments, then reply with exactly: mcp-time=<the returned timestamp>" 2>&1)
+    OUT_L8=$(OPENSWARM_CONFIG_DIR="$TMP_L8" $BIN prompt --headless --no-plugins --no-skills --permission-mode workspace-write "Call the tool named mcp__mock-mcp__get_time with no arguments, then reply with exactly: mcp-time=<the returned timestamp>" 2>&1)
     EC_L8=$?
     # Authoritative signal: the mock MCP server returns an ISO timestamp in
     # the tool_result's content. Model text_deltas arrive in small chunks

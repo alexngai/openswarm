@@ -8,7 +8,7 @@
  * opentasks mirror is best-effort — RPC failures never block the swarm
  * runtime, they just log and skip the mirror call.
  *
- * Design rationale (docs/25 §10.3): swarm-harness needs the local
+ * Design rationale (docs/25 §10.3): openswarm needs the local
  * TaskRegistry for runtime-critical state (output streaming, ownership,
  * stop attribution) which the opentasks graph model doesn't directly
  * support. The mirror gives external consumers (cc-swarm, MAP observers,
@@ -20,7 +20,7 @@ import type { AgentId } from "../../core/types.js";
 import type { TaskAPI, TaskFilter, TaskPacket, TaskRecord } from "../host.js";
 import type { OpenTasksClient } from "./opentasks-client.js";
 
-/** Map a swarm-harness TaskRecord status to an opentasks node status. */
+/** Map a openswarm TaskRecord status to an opentasks node status. */
 function mapStatus(swarmStatus: TaskRecord["status"]): string {
   switch (swarmStatus) {
     case "pending":

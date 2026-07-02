@@ -35,8 +35,8 @@ describe("worktree list", () => {
     expect(cap.lines.join("")).toMatch(/no worktrees under /);
   });
 
-  it("lists each subdirectory under .swarm-harness/worktrees/", async () => {
-    const root = path.join(tmp, ".swarm-harness", "worktrees");
+  it("lists each subdirectory under .openswarm/worktrees/", async () => {
+    const root = path.join(tmp, ".openswarm", "worktrees");
     await mkdir(path.join(root, "s-1"), { recursive: true });
     await mkdir(path.join(root, "s-2"), { recursive: true });
     // a stray file should be ignored
@@ -52,7 +52,7 @@ describe("worktree list", () => {
   });
 
   it("emits a JSON array with --json", async () => {
-    await mkdir(path.join(tmp, ".swarm-harness", "worktrees", "s-1"), {
+    await mkdir(path.join(tmp, ".openswarm", "worktrees", "s-1"), {
       recursive: true,
     });
     const cap = captureWriter();
@@ -68,7 +68,7 @@ describe("worktree list", () => {
 
 describe("worktree clean", () => {
   it("--dry-run prints would-remove lines and does not invoke git", async () => {
-    await mkdir(path.join(tmp, ".swarm-harness", "worktrees", "s-1"), {
+    await mkdir(path.join(tmp, ".openswarm", "worktrees", "s-1"), {
       recursive: true,
     });
     const cap = captureWriter();
@@ -93,10 +93,10 @@ describe("worktree clean", () => {
   });
 
   it("invokes `git worktree remove --force <path>` for each worktree (real-git skipped — uses /bin/true)", async () => {
-    await mkdir(path.join(tmp, ".swarm-harness", "worktrees", "s-1"), {
+    await mkdir(path.join(tmp, ".openswarm", "worktrees", "s-1"), {
       recursive: true,
     });
-    await mkdir(path.join(tmp, ".swarm-harness", "worktrees", "s-2"), {
+    await mkdir(path.join(tmp, ".openswarm", "worktrees", "s-2"), {
       recursive: true,
     });
     const cap = captureWriter();
@@ -114,7 +114,7 @@ describe("worktree clean", () => {
   });
 
   it("returns 1 and reports failures when git exits non-zero", async () => {
-    await mkdir(path.join(tmp, ".swarm-harness", "worktrees", "s-1"), {
+    await mkdir(path.join(tmp, ".openswarm", "worktrees", "s-1"), {
       recursive: true,
     });
     const cap = captureWriter();

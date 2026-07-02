@@ -13,20 +13,18 @@ const inputSchema = z.object({
     .optional(),
   maxTurns: z.number().int().positive().optional(),
   wait: z.boolean().optional().default(true),
-  // Added v0.4 stage 4E.1: team scope and framework selection.
+  // Added v0.4 stage 4E.1: team scope. The `framework` param was removed: engine
+  // selection is fixed by the run's OPENSWARM_FRAMEWORK / OPENSWARM_MODEL
+  // env so a model can't spawn into an engine the deployment lacks (e.g. codex /
+  // claude-agent-sdk in a single-provider eval — the agent enum offered neither
+  // `native` nor the configured engine, so any LLM-set value was always wrong).
+  // Mixed-engine teams configure the engine via the env / member spec instead.
   team: z
     .enum(["self", "child"])
     .optional()
     .describe(
       'Team scope of the spawned agent. "self" = land in caller\'s team ' +
         '(peer); "child" = sub-agent under caller (default). Omitted = "child".',
-    ),
-  framework: z
-    .enum(["claude-agent-sdk", "codex-chatgpt"])
-    .optional()
-    .describe(
-      "Framework provider for this spawn. Plumbs through to the spawn " +
-        "request; engine selection is handled by the framework provider.",
     ),
 });
 
@@ -43,8 +41,7 @@ const spec: ToolSpec = {
     "(default), this returns the sub-agent's final result. When false, " +
     "returns the agentId and taskId so the caller can poll via task_get. " +
     'Use `team: "self"` to spawn into the caller\'s team scope (peer); ' +
-    "default is a child sub-agent. Use `framework` to opt into a specific " +
-    "framework provider.",
+    "default is a child sub-agent.",
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
   requiredPermission: "exec",
@@ -98,7 +95,6 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
     permissionMode,
     taskId: record.id,
     ...(input.model !== undefined && { model: input.model }),
-    ...(input.framework !== undefined && { framework: input.framework }),
     ...(teamScope !== undefined && { teamScope }),
     ...(ctx.toolUseId !== undefined && { parentToolUseId: ctx.toolUseId }),
   };

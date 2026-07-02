@@ -5,7 +5,7 @@
  * decrypting anything. Used by `doctor` to tell the user whether they
  * need to run `claude auth login` or set ANTHROPIC_API_KEY.
  *
- * Per docs/06-open-questions.md Q16, swarm-harness does NOT manage auth.
+ * Per docs/06-open-questions.md Q16, openswarm does NOT manage auth.
  * Users authenticate via Anthropic's own CLI; we only detect presence.
  */
 
@@ -50,18 +50,25 @@ export async function detectAuth(): Promise<AuthStatus> {
 
   // Amazon Bedrock: the Claude Agent SDK authenticates to Bedrock itself when
   // CLAUDE_CODE_USE_BEDROCK is set (via AWS_BEARER_TOKEN_BEDROCK or the standard AWS
-  // credential chain). swarm-harness doesn't own the credential — we just recognize the
+  // credential chain). openswarm doesn't own the credential — we just recognize the
   // mode so the run gate passes through to the SDK instead of demanding an Anthropic key.
   const useBedrock = process.env["CLAUDE_CODE_USE_BEDROCK"];
   if (useBedrock && useBedrock !== "0" && useBedrock !== "false") {
     return { state: "env-bedrock", source: "CLAUDE_CODE_USE_BEDROCK" };
   }
 
-  // OpenAI-compatible API-key providers (Azure OpenAI direct via azureoai/, OpenAI, xAI, LiteLLM
-  // gateway, etc.): swarm-harness doesn't own these credentials — the per-provider transport supplies
-  // its own auth (e.g. azureoai/ → AZURE_OPENAI_API_KEY header). Recognize the key here so the run gate
-  // passes through to the transport instead of demanding an Anthropic key.
-  for (const k of ["AZURE_OPENAI_API_KEY", "OPENAI_API_KEY", "XAI_API_KEY", "LITELLM_API_KEY"] as const) {
+  // Non-Anthropic provider API keys (Azure OpenAI direct via azureoai/, OpenAI, xAI, Google,
+  // DashScope, LiteLLM gateway): openswarm doesn't own these credentials — the per-provider
+  // transport supplies its own auth (e.g. azureoai/ → AZURE_OPENAI_API_KEY header). Recognize the
+  // key here so the run gate passes through to the transport instead of demanding an Anthropic key.
+  for (const k of [
+    "AZURE_OPENAI_API_KEY",
+    "OPENAI_API_KEY",
+    "XAI_API_KEY",
+    "GOOGLE_GENERATIVE_AI_API_KEY",
+    "DASHSCOPE_API_KEY",
+    "LITELLM_API_KEY",
+  ] as const) {
     if (process.env[k]) {
       return { state: "env-openai-compat", source: k };
     }

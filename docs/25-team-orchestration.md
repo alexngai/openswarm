@@ -1,12 +1,12 @@
 # Team orchestration
 
-Design doc for swarm-harness's team orchestration layer. Companion to [docs/00-vision.md](00-vision.md) — the layer that turns "one agent is a tool" into "N coordinated agents is the product."
+Design doc for openswarm's team orchestration layer. Companion to [docs/00-vision.md](00-vision.md) — the layer that turns "one agent is a tool" into "N coordinated agents is the product."
 
 **Authoring date:** 2026-05-01.
 **Status:** shipped 2026-05-02 (v0.4). Commits `0bd0f20..<close-out>`. See [§16 v0.4 close-out](#16-v04-close-out) for the per-stage breakdown. Phased plan beyond v0.4 (v0.5–v0.8) per [§13](#13-phased-delivery).
-**Anchor:** [docs/00-vision.md](00-vision.md), [docs/05-swarm-model.md](05-swarm-model.md), [docs/21-roadmap-v0.2-to-v0.4.md § Release v0.4](21-roadmap-v0.2-to-v0.4.md).
+**Anchor:** [docs/00-vision.md](00-vision.md), [docs/05-swarm-model.md](05-swarm-model.md), [docs/archive/21-roadmap-v0.2-to-v0.4.md § Release v0.4](archive/21-roadmap-v0.2-to-v0.4.md).
 **Reviewed against:** v0.3 (commits `b9a13b2..6bf317f`) — Codex App Server FrameworkProvider integration. See [§8a Engine-mode parity for team peers](#8a-engine-mode-parity-for-team-peers).
-**Spike-verified 2026-05-02:** Track A (claude-agent-sdk peers) + Track B (codex DynamicToolCall) both GREEN. Empirical evidence: [docs/26-team-orchestration-spikes.md](26-team-orchestration-spikes.md).
+**Spike-verified 2026-05-02:** Track A (claude-agent-sdk peers) + Track B (codex DynamicToolCall) both GREEN. Empirical evidence: [docs/archive/26-team-orchestration-spikes.md](archive/26-team-orchestration-spikes.md).
 
 ---
 
@@ -14,18 +14,18 @@ Design doc for swarm-harness's team orchestration layer. Companion to [docs/00-v
 
 ### Goal
 
-Make `swarm-harness` a first-class implementation of the swarmkit team model — peer-spawning teams with shared messaging, shared task graphs, and topology-driven coordination — while staying useful as a single-agent CLI.
+Make `openswarm` a first-class implementation of the swarmkit team model — peer-spawning teams with shared messaging, shared task graphs, and topology-driven coordination — while staying useful as a single-agent CLI.
 
-Equivalent to Claude Code's native team primitives (`Agent({team_name})`, `SendMessage`, `TaskCreate/List/Update`) **plus** a topology layer that names common shapes (fanout, pipeline, peer team, committee, critic loop, coordinator). Wire-compatible with the swarmkit ecosystem (MAP, agent-inbox, opentasks, git-cascade) so swarm-harness teams look identical to cc-swarm teams from the outside.
+Equivalent to Claude Code's native team primitives (`Agent({team_name})`, `SendMessage`, `TaskCreate/List/Update`) **plus** a topology layer that names common shapes (fanout, pipeline, peer team, committee, critic loop, coordinator). Wire-compatible with the swarmkit ecosystem (MAP, agent-inbox, opentasks, git-cascade) so openswarm teams look identical to cc-swarm teams from the outside.
 
 ### Non-goals
 
 - Cross-machine federated teams. (MAP federation is a future stretch goal; v0.4 scope is local.)
-- Replacing Claude Code or cc-swarm. swarm-harness is its own runtime; this doc describes equivalent primitives, not interop bridges.
+- Replacing Claude Code or cc-swarm. openswarm is its own runtime; this doc describes equivalent primitives, not interop bridges.
 - Hosted multi-tenant orchestration. Local processes only.
-- Hiding the existing single-agent surface. `swarm-harness "..."` and `swarm run tasks.jsonl` keep working unchanged.
+- Hiding the existing single-agent surface. `openswarm "..."` and `swarm run tasks.jsonl` keep working unchanged.
 - Designing new coordination primitives the swarmkit ecosystem doesn't already model. Teams, scopes, threaded inboxes, task graphs, branch streams are all defined in swarmkit packages — we adopt them.
-- **Bridging Codex's native multi-agent primitives.** Codex App Server has its own multi-agent collaboration events (`CollabAgentSpawn*`, `CollabAgentInteraction*`, `CollabWaiting*`, `CollabClose*`) intended for ChatGPT's intra-process multi-agent projects. We deliberately don't bridge them — instead we use Codex's `DynamicToolCall` mechanism to register swarm-harness's Tier 2 tools as host tools. See [§8a.4](#8a4-codex-native-multi-agent-primitives--still-not-bridged) for rationale.
+- **Bridging Codex's native multi-agent primitives.** Codex App Server has its own multi-agent collaboration events (`CollabAgentSpawn*`, `CollabAgentInteraction*`, `CollabWaiting*`, `CollabClose*`) intended for ChatGPT's intra-process multi-agent projects. We deliberately don't bridge them — instead we use Codex's `DynamicToolCall` mechanism to register openswarm's Tier 2 tools as host tools. See [§8a.4](#8a4-codex-native-multi-agent-primitives--still-not-bridged) for rationale.
 
 ---
 
@@ -35,11 +35,11 @@ Resolved via brainstorm on 2026-05-01. Cited per-section below.
 
 | # | Question | Decision | Rationale |
 |---|---|---|---|
-| Q1 | openteams YAML — first-class, shell-out, or native format? | **First-class.** swarm-harness reads `team.yaml` natively via the `openteams` npm package as a library. Update openteams to expose any shared functionality. | Self-contained, format-compatible with cc-swarm, no codegen step. |
-| Q2 | Coordinator pattern — model-driven or code-driven spawn? | **Both.** Topology kind decides — `coordinator` topology spawns root only and lets the model spawn peers via `agent` tool calls; `peer-team`/`committee`/`pipeline` are code-driven up-front. | swarm-harness has more flexibility than cc-swarm (which is constrained by Claude Code's spawn restrictions); we should support both. |
+| Q1 | openteams YAML — first-class, shell-out, or native format? | **First-class.** openswarm reads `team.yaml` natively via the `openteams` npm package as a library. Update openteams to expose any shared functionality. | Self-contained, format-compatible with cc-swarm, no codegen step. |
+| Q2 | Coordinator pattern — model-driven or code-driven spawn? | **Both.** Topology kind decides — `coordinator` topology spawns root only and lets the model spawn peers via `agent` tool calls; `peer-team`/`committee`/`pipeline` are code-driven up-front. | openswarm has more flexibility than cc-swarm (which is constrained by Claude Code's spawn restrictions); we should support both. |
 | Q3 | Long-lived workers — push or pull task acceptance? | **Push primary, pull supported.** Default is orchestrator pushes tasks via IPC. Pull-from-queue (opentasks) is a flag. | Push is simpler and matches Claude Code teams; pull lights up self-balancing later. |
-| Q4 | MAP — sidecar or in-process? | **In-process.** swarm-harness embeds the MAP SDK in the orchestrator. Sidecar parity remains available behind a flag. | cc-swarm's sidecar is needed because hooks are short-lived; swarm-harness has a long-lived orchestrator and can hold the connection. |
-| Q5 | agent-inbox — replace or layer? | **Make `AgentInbox` implement the agent-inbox wire protocol with a pluggable backing store.** Default backing = in-process; opt-in backing = agent-inbox daemon/MCP. | swarm-harness must work standalone (no MCP daemon). Same wire protocol means flipping the adapter is a config change, and swarm-harness becomes one of agent-inbox's reference implementations. |
+| Q4 | MAP — sidecar or in-process? | **In-process.** openswarm embeds the MAP SDK in the orchestrator. Sidecar parity remains available behind a flag. | cc-swarm's sidecar is needed because hooks are short-lived; openswarm has a long-lived orchestrator and can hold the connection. |
+| Q5 | agent-inbox — replace or layer? | **Make `AgentInbox` implement the agent-inbox wire protocol with a pluggable backing store.** Default backing = in-process; opt-in backing = agent-inbox daemon/MCP. | openswarm must work standalone (no MCP daemon). Same wire protocol means flipping the adapter is a config change, and openswarm becomes one of agent-inbox's reference implementations. |
 | Q6 | opentasks — replace or supplement TaskRegistry? | **Pluggable `TaskAPI`.** `InMemoryTaskRegistry` (default) and `OpenTasksTaskRegistry` (opt-in) implement the same interface. | Long-term streamlining matters; one task-graph backbone for the whole stack pays off. |
 | Q7 | git-cascade integration shape | **Adapter behind `BranchPolicy`.** New `BranchPolicy` variants (`{kind: "stream", streamId}`, `{kind: "fork", parent}`) delegate to `MultiAgentRepoTracker`. Worktree-per-member becomes the default for parallel topologies. | git-cascade is the canonical worktree/branch-stack layer; we adopt its API directly. |
 | Q8 | Phasing | **v0.4 = minimum + MAP.** v0.5 adds opentasks adapter; v0.6 agent-inbox; v0.7 git-cascade; v0.8 long-tail topologies. | Ship the smallest piece that fulfills the vision, then layer adapters one at a time. |
@@ -50,17 +50,17 @@ Resolved via brainstorm on 2026-05-01. Cited per-section below.
 
 | Term | Definition |
 |---|---|
-| **Agent** | An atomic Claude-backed worker. One subprocess per agent. swarm-harness's existing primitive. |
+| **Agent** | An atomic Claude-backed worker. One subprocess per agent. openswarm's existing primitive. |
 | **Member** | An agent participating in a team. Carries a role + prompt + budget. |
 | **Peer** | A member at the same depth as another member of the same team. Peers can message each other directly. |
-| **Role** | Named configuration overlay — system-prompt suffix + tool allowlist. Resolved via `RoleRegistry`. swarm-harness primitive today. |
+| **Role** | Named configuration overlay — system-prompt suffix + tool allowlist. Resolved via `RoleRegistry`. openswarm primitive today. |
 | **Team** | A set of members sharing a `teamName` namespace. Team-scoped messaging (`*` and `role:<x>` resolve within team). One team owns a coordinated unit of work. |
 | **Topology** | A composition rule for a team — when members spawn, how they coordinate, how the team completes. Built-ins: fanout, pipeline, coordinator, peer-team, committee, critic-loop. |
 | **TeamSession** | Live runtime instance of a team. Owns the member set, message routing scope, and lifecycle. One per running team. |
 | **Scope** | swarmkit/MAP namespace. `swarm:<teamName>`. All MAP events from a team carry this scope. |
 | **Stream** | git-cascade work unit. 1:1 with a branch. Owned by an agent. Used for worktree-per-member topologies. |
 | **TopologyKind** | Discriminator naming the coordination shape: `"fanout" \| "pipeline" \| "coordinator" \| "peer-team" \| "committee" \| "critic-loop"`. Pluggable. |
-| **Engine mode** | How the agent loop is owned. `transport` = swarm-harness owns the loop (`ClaudeAgentSdkEngine` default + `NativeEngine`); full Tier 0/1/2 + MCP available natively. `framework` = an external framework owns the loop (`--framework claude-agent-sdk` for Claude Max, `--framework codex-chatgpt` for ChatGPT Plus/Pro). **All three engine modes can serve as team peers**, each via a different mechanism — see [§8a](#8a-engine-mode-parity-for-team-peers). The original framework-filter strip is dropped for team members and replaced with Codex's `DynamicToolCall` registration where the framework hosts host-defined tools. |
+| **Engine mode** | How the agent loop is owned. `transport` = openswarm owns the loop (`ClaudeAgentSdkEngine` default + `NativeEngine`); full Tier 0/1/2 + MCP available natively. `framework` = an external framework owns the loop (`--framework claude-agent-sdk` for Claude Max, `--framework codex-chatgpt` for ChatGPT Plus/Pro). **All three engine modes can serve as team peers**, each via a different mechanism — see [§8a](#8a-engine-mode-parity-for-team-peers). The original framework-filter strip is dropped for team members and replaced with Codex's `DynamicToolCall` registration where the framework hosts host-defined tools. |
 
 ---
 
@@ -86,7 +86,7 @@ Resolved via brainstorm on 2026-05-01. Cited per-section below.
 │
 ├─ Layer 2: Ecosystem adapters                          (NEW; each off by default)
 │    MAP · agent-inbox · opentasks · git-cascade
-│    Each adapter implements an existing swarm-harness interface.
+│    Each adapter implements an existing openswarm interface.
 │
 └─ Layer 1: Atomic agent + SwarmHost                    (today)
      Subprocess worker, send_message, AgentInbox, TaskRegistry, RoleRegistry,
@@ -110,7 +110,7 @@ Today's [`src/swarm/orchestrator.ts`](../src/swarm/orchestrator.ts) is a fanout 
 ```
 Standalone mode (no flags):
   ┌──────────────────────────┐
-  │ swarm-harness orchestrator│
+  │ openswarm orchestrator│
   │  ├─ TeamSession (in-proc) │
   │  ├─ AgentInbox (memory)   │
   │  ├─ TaskRegistry (memory) │
@@ -119,7 +119,7 @@ Standalone mode (no flags):
 
 Ecosystem-integrated (--map --opentasks --inbox --git-cascade):
   ┌──────────────────────────┐         ┌─────────────┐
-  │ swarm-harness orchestrator│ ◄─────► │ MAP server  │
+  │ openswarm orchestrator│ ◄─────► │ MAP server  │
   │  ├─ TeamSession           │         └─────────────┘
   │  ├─ AgentInbox (daemon)   │ ◄─────► .swarmkit/inbox/
   │  ├─ TaskRegistry (daemon) │ ◄─────► .opentasks/graph.jsonl
@@ -225,7 +225,7 @@ Per Q4: aggregation can be agent-driven (`judge`) or code-driven (`vote`, `conca
 
 ### 5.4 openteams YAML compatibility
 
-Per Q1, swarm-harness reads `team.yaml` natively. The mapping:
+Per Q1, openswarm reads `team.yaml` natively. The mapping:
 
 ```yaml
 # openteams team.yaml (compatible with cc-swarm)
@@ -253,8 +253,8 @@ communication:
     executor:  [IMPL_DONE]
     reviewer:  [REVIEW_DONE]
 
-# Optional swarm-harness extensions (under x-swarm-harness namespace):
-x-swarm-harness:
+# Optional openswarm extensions (under x-openswarm namespace):
+x-openswarm:
   topology: peer-team                         # override the default mapping
   coordination:
     completion: { kind: "all" }
@@ -266,10 +266,10 @@ x-swarm-harness:
 
 - `topology.root` + non-trivial `spawn_rules` → `TopologyKind: "coordinator"` (root + model-driven spawning).
 - `topology.root` + empty `spawn_rules` (root only) → single-agent run (no team).
-- `topology.root` + flat `spawn_rules` (all roles spawned by root) is the cc-swarm shape; we treat it as `coordinator` unless `x-swarm-harness.topology` overrides.
+- `topology.root` + flat `spawn_rules` (all roles spawned by root) is the cc-swarm shape; we treat it as `coordinator` unless `x-openswarm.topology` overrides.
 - `communication.channels`/`subscriptions`/`emissions` → `TeamCommunicationRules`. Signals translate to a structured `send_message` content schema.
-- Per-role prompts come from generated artifacts (cc-swarm uses `openteams generate all` to materialize them under `.swarm/.../agents/`); swarm-harness will use the openteams library directly to do the same generation in-process.
-- `x-swarm-harness:` is the escape hatch for swarm-harness-specific overrides (extension key per YAML convention).
+- Per-role prompts come from generated artifacts (cc-swarm uses `openteams generate all` to materialize them under `.swarm/.../agents/`); openswarm will use the openteams library directly to do the same generation in-process.
+- `x-openswarm:` is the escape hatch for openswarm-specific overrides (extension key per YAML convention).
 
 **Update to openteams package (Q1 follow-up):**
 
@@ -277,7 +277,7 @@ To make this work cleanly we likely need openteams to expose:
 
 1. A pure programmatic API for resolving + parsing a template (without a CLI shell-out).
 2. A pure programmatic API for materializing per-role prompts (without writing to disk; return strings).
-3. A typed schema for the `topology`, `communication`, and `x-*` extension blocks so swarm-harness can validate and consume them safely.
+3. A typed schema for the `topology`, `communication`, and `x-*` extension blocks so openswarm can validate and consume them safely.
 
 Filed for openteams as a separate work item; doesn't block this design.
 
@@ -336,7 +336,7 @@ New file: [`src/swarm/team-session.ts`](../src/swarm/team-session.ts). Construct
 - The `RoleRegistry` for resolving roles.
 - An optional `MemberAggregator` for aggregating results.
 
-Today's `RoleIndex`, `AgentInbox`, branch-lock manager become **team-aware** — keyed by `(scope, agentId)` instead of global `agentId`. Backwards-compat: when no `TeamSession` is in play (e.g. `swarm-harness "..."`), the implicit team is `swarm:default` and the existing single-tenant semantics still apply.
+Today's `RoleIndex`, `AgentInbox`, branch-lock manager become **team-aware** — keyed by `(scope, agentId)` instead of global `agentId`. Backwards-compat: when no `TeamSession` is in play (e.g. `openswarm "..."`), the implicit team is `swarm:default` and the existing single-tenant semantics still apply.
 
 ### 6.3 Team-scoped messaging
 
@@ -366,10 +366,10 @@ Each member has these injected via env so the model can use them:
 
 | Env var | Value |
 |---|---|
-| `SWARM_HARNESS_TEAM_NAME` | The team's `name` |
-| `SWARM_HARNESS_TEAM_SCOPE` | `swarm:<name>` |
-| `SWARM_HARNESS_MEMBER_ROLE` | This member's role |
-| `SWARM_HARNESS_MEMBER_ID` | This member's `memberId` |
+| `OPENSWARM_TEAM_NAME` | The team's `name` |
+| `OPENSWARM_TEAM_SCOPE` | `swarm:<name>` |
+| `OPENSWARM_MEMBER_ROLE` | This member's role |
+| `OPENSWARM_MEMBER_ID` | This member's `memberId` |
 
 A new Tier 2 tool, `team_members()`, returns `[{memberId, role, agentId}]` filtered to the calling team. Helps the model decide who to message.
 
@@ -379,7 +379,7 @@ A new Tier 2 tool, `team_members()`, returns `[{memberId, role, agentId}]` filte
 
 ### 7.1 Why
 
-Today's worker spawns, runs one task, exits. Claude Code teams persist between turns — you send a message to a teammate and they're still there. swarm-harness teams need the same.
+Today's worker spawns, runs one task, exits. Claude Code teams persist between turns — you send a message to a teammate and they're still there. openswarm teams need the same.
 
 ### 7.2 Worker lifecycle changes
 
@@ -538,17 +538,27 @@ The `Topology` interface is exported. Plugin-loaded custom topologies will work 
 
 ## 8a. Engine-mode parity for team peers
 
-Rewritten 2026-05-02 after spike verification. **All three engine modes can serve as team peers**, each via a distinct mechanism. The original draft of this section claimed framework-mode members couldn't be peers — that was wrong on the technical merits. Empirical evidence and per-mode protocols are in [docs/26-team-orchestration-spikes.md](26-team-orchestration-spikes.md).
+Rewritten 2026-05-02 after spike verification. **All three engine modes can serve as team peers**, each via a distinct mechanism. The original draft of this section claimed framework-mode members couldn't be peers — that was wrong on the technical merits. Empirical evidence and per-mode protocols are in [docs/archive/26-team-orchestration-spikes.md](archive/26-team-orchestration-spikes.md).
 
 ### 8a.1 Three paths to peer participation
 
 | Mode | Engine | Mechanism | Empirical status |
 |---|---|---|---|
-| **Transport** (default) | `ClaudeAgentSdkEngine` w/o `--framework`, `NativeEngine` | swarm-harness owns the loop; Tier 2 tools called natively via `ToolDispatcher`. | Already works ([src/swarm/spawn-integration.test.ts](../src/swarm/spawn-integration.test.ts)). |
-| **`claude-agent-sdk` framework** | `ClaudeAgentSdkEngine` w/ `--framework claude-agent-sdk` | Anthropic Agent SDK owns the loop; swarm-harness Tier 2 tools registered via the SDK's `tools` parameter. The SDK calls them through `canUseTool` → swarm-harness's tool implementations → SwarmHost. **Drop the `framework-filter.ts` strip.** | **Track A GREEN** — 8/8 tests pass with strip dropped. See [docs/26 §Track A](26-team-orchestration-spikes.md#track-a--claude-agent-sdk-framework-mode-peer-parity). |
-| **`codex-chatgpt` framework** | `CodexFrameworkEngine` w/ `--framework codex-chatgpt` | Codex App Server owns the loop; swarm-harness Tier 2 tools registered via `thread/start.dynamicTools`. Codex sends `item/tool/call` JSON-RPC requests; provider routes to `ToolDispatcher` and replies with `{contentItems, success}`. | **Track B GREEN** — full live round-trip captured at [test/fixtures/codex-app-server/dynamic-tool-call-spike.jsonl](../test/fixtures/codex-app-server/dynamic-tool-call-spike.jsonl). |
+| **Transport** (default) | `ClaudeAgentSdkEngine` w/o `--framework`, `NativeEngine` | openswarm owns the loop; Tier 2 tools called natively via `ToolDispatcher`. | Already works ([src/swarm/spawn-integration.test.ts](../src/swarm/spawn-integration.test.ts)). |
+| **`claude-agent-sdk` framework** | `ClaudeAgentSdkEngine` w/ `--framework claude-agent-sdk` | Anthropic Agent SDK owns the loop; openswarm Tier 2 tools registered via the SDK's `tools` parameter. The SDK calls them through `canUseTool` → openswarm's tool implementations → SwarmHost. **Drop the `framework-filter.ts` strip.** | **Track A GREEN** — 8/8 tests pass with strip dropped. See [docs/archive/26 §Track A](archive/26-team-orchestration-spikes.md#track-a--claude-agent-sdk-framework-mode-peer-parity). |
+| **`codex-chatgpt` framework** | `CodexFrameworkEngine` w/ `--framework codex-chatgpt` | Codex App Server owns the loop; openswarm Tier 2 tools registered via `thread/start.dynamicTools`. Codex sends `item/tool/call` JSON-RPC requests; provider routes to `ToolDispatcher` and replies with `{contentItems, success}`. | **Track B GREEN** — full live round-trip captured at [test/fixtures/codex-app-server/dynamic-tool-call-spike.jsonl](../test/fixtures/codex-app-server/dynamic-tool-call-spike.jsonl). |
 
 All three converge on the same `ToolDispatcher` in the worker process. Different wire formats, identical semantics. A `peer-team` topology with one member per engine mode works because every member dispatches the same `send_message` / `check_inbox` / `task_*` / `ask_user_question` operations through the same `SwarmHost`.
+
+> **Phase 2.1/2.2 update.** Workers now share the CLI's engine selector
+> (`src/cli/select-engine.ts`), so `MemberSpec.framework` accepts the full
+> worker-validated set: `claude-agent-sdk`, `codex-chatgpt`, `codex-native`,
+> `native`, and `hardened-native` (omit for the default `auto`). The value is
+> forwarded verbatim to the spawned worker via `OPENSWARM_FRAMEWORK`. This adds
+> two native transport modes and the in-process `codex-native` path (docs/42)
+> to the three engine modes described above. An explicit `native`/
+> `hardened-native` member paired with a Claude model now fails the spawn
+> instead of silently falling back to the Agent SDK.
 
 ### 8a.2 What changes vs the v0.3 codebase
 
@@ -590,10 +600,10 @@ Codex App Server has protocol-level multi-agent events (visible in [test/fixture
 
 We don't bridge them — the same reasoning still applies even though codex peers now work via `DynamicToolCall`:
 
-1. **Different lifecycle.** Codex's multi-agent is intra-process and stateful (threads persist in one Codex binary). swarm-harness's is inter-process and ephemeral (each member is a subprocess). The mental models don't compose.
-2. **Different addressing.** Codex uses internal `ThreadId`s opaque to swarm-harness; swarm-harness uses `AgentId` UUIDs. Translation across the boundary loses identity.
-3. **swarm-harness's coordination layer is richer.** Role-addressed broadcast (`role:reviewer`), team-scoped messaging, opentasks-backed shared task graph, MAP scope federation, and git-cascade per-member worktrees have no counterpart in Codex's Collab events.
-4. **DynamicToolCall is the right primitive.** It hosts swarm-harness Tier 2 tools cleanly — no impedance mismatch between Codex's intra-process model and swarm-harness's inter-process orchestration.
+1. **Different lifecycle.** Codex's multi-agent is intra-process and stateful (threads persist in one Codex binary). openswarm's is inter-process and ephemeral (each member is a subprocess). The mental models don't compose.
+2. **Different addressing.** Codex uses internal `ThreadId`s opaque to openswarm; openswarm uses `AgentId` UUIDs. Translation across the boundary loses identity.
+3. **openswarm's coordination layer is richer.** Role-addressed broadcast (`role:reviewer`), team-scoped messaging, opentasks-backed shared task graph, MAP scope federation, and git-cascade per-member worktrees have no counterpart in Codex's Collab events.
+4. **DynamicToolCall is the right primitive.** It hosts openswarm Tier 2 tools cleanly — no impedance mismatch between Codex's intra-process model and openswarm's inter-process orchestration.
 
 These remain in non-goals ([§1](#1-goal--non-goals)).
 
@@ -602,11 +612,11 @@ These remain in non-goals ([§1](#1-goal--non-goals)).
 Single-agent framework mode is fully supported and unchanged:
 
 ```bash
-swarm-harness --framework claude-agent-sdk "..."                  # Claude Max via Agent SDK
-swarm-harness --framework codex-chatgpt --model gpt-5.4 "..."     # ChatGPT Plus/Pro via Codex
+openswarm --framework claude-agent-sdk "..."                  # Claude Max via Agent SDK
+openswarm --framework codex-chatgpt --model gpt-5.4 "..."     # ChatGPT Plus/Pro via Codex
 ```
 
-These users get framework-owned permissioning, sandboxing, and tool surface. The change in v0.4 is that when these engines run as team members, they get swarm-harness's Tier 2 tools layered on top. Single-agent runs are not affected — `framework-filter` continues to apply when no team is in play, OR the strip is dropped uniformly with the understanding that Tier 2 tools no-op outside a team scope (TBD in §14.Q8).
+These users get framework-owned permissioning, sandboxing, and tool surface. The change in v0.4 is that when these engines run as team members, they get openswarm's Tier 2 tools layered on top. Single-agent runs are not affected — `framework-filter` continues to apply when no team is in play, OR the strip is dropped uniformly with the understanding that Tier 2 tools no-op outside a team scope (TBD in §14.Q8).
 
 ### 8a.6 Trace evidence
 
@@ -668,7 +678,7 @@ Per Q4, prefer agents over rigid structured outputs. Default aggregators ship in
 
 ## 10. Ecosystem adapters
 
-Each adapter is one module. All four implement existing swarm-harness interfaces; toggling them on/off doesn't change worker code.
+Each adapter is one module. All four implement existing openswarm interfaces; toggling them on/off doesn't change worker code.
 
 ### 10.1 MAP — `src/host/map-sidecar.ts` + `src/host/map-bridge.ts`
 
@@ -726,8 +736,8 @@ Wire protocol parity is the load-bearing piece. The agent-inbox tools cc-swarm u
 
 **Open follow-up to agent-inbox:**
 
-1. Document the wire schema as a stable contract (so swarm-harness's in-memory implementation stays compatible with the daemon).
-2. Allow the daemon to be embedded as a library (no separate process required) — useful for swarm-harness standalone runs that still want threading + persistence.
+1. Document the wire schema as a stable contract (so openswarm's in-memory implementation stays compatible with the daemon).
+2. Allow the daemon to be embedded as a library (no separate process required) — useful for openswarm standalone runs that still want threading + persistence.
 3. Decide whether `read_thread` semantics (auto-from-reply-chain vs explicit tags) are part of the protocol or backend-specific.
 
 ### 10.3 opentasks — `OpenTasksTaskRegistry` (v0.5, Q6)
@@ -745,7 +755,7 @@ class OpenTasksTaskRegistry implements TaskAPI {
 }
 ```
 
-When enabled, the orchestrator's TaskRegistry is backed by `.opentasks/graph.jsonl` instead of memory. Cross-system task graph (Claude Code native tasks, cc-swarm teams, swarm-harness teams) all federate through the same daemon.
+When enabled, the orchestrator's TaskRegistry is backed by `.opentasks/graph.jsonl` instead of memory. Cross-system task graph (Claude Code native tasks, cc-swarm teams, openswarm teams) all federate through the same daemon.
 
 **Configuration:**
 
@@ -758,11 +768,11 @@ When enabled, the orchestrator's TaskRegistry is backed by `.opentasks/graph.jso
 }
 ```
 
-The daemon does its own discovery walk; swarm-harness only needs to know `enabled: true` and call the client.
+The daemon does its own discovery walk; openswarm only needs to know `enabled: true` and call the client.
 
 ### 10.4 git-cascade — `BranchPolicy` adapter (v0.7, Q7)
 
-**Status (v0.7 stage 7A — shipped 2026-05-04):** the worktree-per-member primitive ships as 7A.1–7A.5 (per [docs/29-v0.7-git-cascade-plan.md](29-v0.7-git-cascade-plan.md)). `--git-cascade` opts in. Members spec'd with `branchPolicy: { kind: "stream" | "fork" }` get a per-agent worktree under `${repoPath}/.swarm-harness/worktrees/<streamId>/` and the spawned worker runs with that cwd. Commit-integration (Change-Id trailers via `tracker.commitChanges`), merge + cascade rebase, and per-topology default branch policies remain deferred to 7B / 7C / 7D.
+**Status (v0.7 stage 7A — shipped 2026-05-04):** the worktree-per-member primitive ships as 7A.1–7A.5 (per [docs/29-v0.7-git-cascade-plan.md](29-v0.7-git-cascade-plan.md)). `--git-cascade` opts in. Members spec'd with `branchPolicy: { kind: "stream" | "fork" }` get a per-agent worktree under `${repoPath}/.openswarm/worktrees/<streamId>/` and the spawned worker runs with that cwd. Commit-integration (Change-Id trailers via `tracker.commitChanges`), merge + cascade rebase, and per-topology default branch policies remain deferred to 7B / 7C / 7D.
 
 git-cascade exposes `MultiAgentRepoTracker` with: `createStream`, `forkStream`, `mergeStream`, `syncWithParent`, `commitChanges`, `createWorktree`, `cascadeRebase`, plus MAP-compatible event emission already wired ([git-cascade/README.md:144](../references/git-cascade/README.md)).
 
@@ -825,19 +835,19 @@ These are defaults; spec-level overrides win.
 ### 11.1 Preserved (no behavior change)
 
 ```bash
-swarm-harness "explain this codebase"           # single-agent, unchanged
-swarm-harness swarm run tasks.jsonl --concurrency 5 --output out.jsonl
+openswarm "explain this codebase"           # single-agent, unchanged
+openswarm swarm run tasks.jsonl --concurrency 5 --output out.jsonl
                                                 # synthesizes Fanout TeamSpec; same flags work
 ```
 
 ### 11.2 New: openteams template entry
 
 ```bash
-swarm-harness team start <template> [opts]      # resolve via openteams; spawn full team
-swarm-harness team list                         # show running teams in this orchestrator
-swarm-harness team stop <name>                  # graceful drain
-swarm-harness team kill <name>                  # immediate kill
-swarm-harness team send <name> <prompt>         # push a new prompt to a team (typically root)
+openswarm team start <template> [opts]      # resolve via openteams; spawn full team
+openswarm team list                         # show running teams in this orchestrator
+openswarm team stop <name>                  # graceful drain
+openswarm team kill <name>                  # immediate kill
+openswarm team send <name> <prompt>         # push a new prompt to a team (typically root)
 ```
 
 `team start <template>` resolves `<template>` against:
@@ -853,12 +863,12 @@ swarm-harness team send <name> <prompt>         # push a new prompt to a team (t
 For users who don't want a YAML file:
 
 ```bash
-swarm-harness topology fanout    --tasks tasks.jsonl
-swarm-harness topology pipeline  --members 'architect:design.md' 'executor:implement' 'reviewer:approve'
-swarm-harness topology committee --members 3 --prompt "Refactor X" --judge reviewer
-swarm-harness topology critic-loop --executor build --critic security-reviewer --prompt "..."
-swarm-harness topology coordinator --root architect --prompt "..."
-swarm-harness topology peer-team --spec ./team-spec.json
+openswarm topology fanout    --tasks tasks.jsonl
+openswarm topology pipeline  --members 'architect:design.md' 'executor:implement' 'reviewer:approve'
+openswarm topology committee --members 3 --prompt "Refactor X" --judge reviewer
+openswarm topology critic-loop --executor build --critic security-reviewer --prompt "..."
+openswarm topology coordinator --root architect --prompt "..."
+openswarm topology peer-team --spec ./team-spec.json
 ```
 
 ### 11.4 New: ecosystem flags (additive on any of the above)
@@ -890,12 +900,12 @@ In the interactive REPL, `/team` opens an inline picker for templates / running 
 ### 12.2 Forward compatibility
 
 - New `TeamSpec` and topology files don't conflict with existing `tasks.jsonl` files; both schemas coexist.
-- `team.yaml` (openteams) is read by swarm-harness without requiring cc-swarm; cc-swarm continues to work against the same files.
+- `team.yaml` (openteams) is read by openswarm without requiring cc-swarm; cc-swarm continues to work against the same files.
 - ecosystem flags are off by default; nothing breaks if MAP/opentasks/agent-inbox/git-cascade aren't installed.
 
 ### 12.3 Doc 15 (parity-gaps) impact
 
-The team orchestration layer closes the v0.4 audit items wholesale (Stage 4A teams, Stage 4B aggregate budget — already done, Stage 4C swarm watch, Stage 4D mock parity). Update doc 15 row A10 from "swarm-harness unique, don't regress" to "swarm-harness lead — full team primitives shipped via TeamSession + topology layer."
+The team orchestration layer closes the v0.4 audit items wholesale (Stage 4A teams, Stage 4B aggregate budget — already done, Stage 4C swarm watch, Stage 4D mock parity). Update doc 15 row A10 from "openswarm unique, don't regress" to "openswarm lead — full team primitives shipped via TeamSession + topology layer."
 
 ---
 
@@ -905,7 +915,7 @@ Per Q8: v0.4 = minimum + MAP. Adapters layered after.
 
 ### v0.4 — Team primitives + MAP
 
-**Goal:** ship the team model. swarm-harness teams behave like Claude Code teams (peers, scoped messaging, shared task list, named topologies). MAP observability matches cc-swarm.
+**Goal:** ship the team model. openswarm teams behave like Claude Code teams (peers, scoped messaging, shared task list, named topologies). MAP observability matches cc-swarm.
 
 | Stage | Scope | Effort |
 |---|---|---|
@@ -923,7 +933,7 @@ Per Q8: v0.4 = minimum + MAP. Adapters layered after.
 | 4L | Tests + doc updates (15, 21, this doc to "shipped") | ~2d |
 
 **Total ~4 weeks.** Acceptance:
-- `swarm-harness team start gsd` runs the cc-swarm gsd template against swarm-harness's own runtime, with peers messaging via team scope.
+- `openswarm team start gsd` runs the cc-swarm gsd template against openswarm's own runtime, with peers messaging via team scope.
 - A `peer-team` of 3 agents (one each in transport, `claude-agent-sdk`, and `codex-chatgpt` engine modes) can `send_message` each other and `task_create` shared tasks; orchestration succeeds.
 - Empirical evidence: Track A test suite passes with strip dropped; Track B fixture replays as a golden-trace integration test against the new `DynamicToolCall` wiring.
 - With `--map`, an external MAP server sees `swarm.agent.spawned` / `.completed` / `swarm.task.*` events tagged with the right scope.
@@ -981,7 +991,7 @@ To resolve before / during implementation. Lifted to a decision log as they clos
 
 **Resolution:** flat siblings. All team members (including the coordinator root) are at the same depth under the orchestrator. `agent` tool gains `team?: "self" | "child"` parameter — `"self"` lands the spawn in the caller's team scope (peer), `"child"` lands it as a sub-agent (today's tree-spawn semantics, preserves backward compat). Default depends on topology: coordinator topology root → `"self"`; non-coordinator contexts → `"child"`.
 
-**Linked:** Q10's team-scope peer-stop is a forced consequence — flat siblings have no ancestry between peers, so authorization must be team-scope-based. See [docs/27-v0.4-teams-implementation-plan.md](27-v0.4-teams-implementation-plan.md) §V0.4.Q1.
+**Linked:** Q10's team-scope peer-stop is a forced consequence — flat siblings have no ancestry between peers, so authorization must be team-scope-based. See [docs/archive/27-v0.4-teams-implementation-plan.md](archive/27-v0.4-teams-implementation-plan.md) §V0.4.Q1.
 
 ### v0.4.Q2 — How does a `peer-team` topology bootstrap N peers without a coordinator?
 
@@ -1014,7 +1024,7 @@ A team's "inbox" needs an entry point. Options:
 
 ### v0.4.Q5 — Idle worker timeout & drain semantics
 
-`idleTimeoutMs` default. cc-swarm uses 30 minutes for sidecar; swarm-harness workers hold more state (model, tools, MCP, plugins). Probably 10 minutes default; configurable per-team.
+`idleTimeoutMs` default. cc-swarm uses 30 minutes for sidecar; openswarm workers hold more state (model, tools, MCP, plugins). Probably 10 minutes default; configurable per-team.
 
 When timeout fires: graceful drain (worker exits cleanly, can be respawned on next push) — not abrupt kill.
 
@@ -1026,7 +1036,7 @@ Need from openteams (file separately):
 2. `materializeRolePrompts(config): Record<role, string>` — return strings, no disk write.
 3. Stable types for `topology`, `communication`, `x-*` extension blocks.
 
-If these don't exist yet, swarm-harness can wrap openteams' CLI as a stop-gap (slower, requires Node), but the library API is the right destination.
+If these don't exist yet, openswarm can wrap openteams' CLI as a stop-gap (slower, requires Node), but the library API is the right destination.
 
 ### v0.4.Q7 — MAP scope conflicts
 
@@ -1034,7 +1044,7 @@ Two orchestrators running on the same host with the same team name → same scop
 
 ### v0.4.Q8 — Codex as team substrate — RESOLVED 2026-05-02
 
-**Resolution:** Codex peers ship in v0.4 via Codex App Server's `DynamicToolCall` mechanism. Track B spike GREEN; full live round-trip captured at [test/fixtures/codex-app-server/dynamic-tool-call-spike.jsonl](../test/fixtures/codex-app-server/dynamic-tool-call-spike.jsonl). The previously-considered alternatives (write a Codex TransportProvider; bridge `Collab*` events) are now both rejected: DynamicToolCall is the right primitive, requires no auth/protocol re-implementation, and works at ~1ms tool round-trip latency. See [§8a.1](#8a1-three-paths-to-peer-participation) and [docs/26 §Track B](26-team-orchestration-spikes.md#track-b--codex-app-server-dynamictoolcall-viability).
+**Resolution:** Codex peers ship in v0.4 via Codex App Server's `DynamicToolCall` mechanism. Track B spike GREEN; full live round-trip captured at [test/fixtures/codex-app-server/dynamic-tool-call-spike.jsonl](../test/fixtures/codex-app-server/dynamic-tool-call-spike.jsonl). The previously-considered alternatives (write a Codex TransportProvider; bridge `Collab*` events) are now both rejected: DynamicToolCall is the right primitive, requires no auth/protocol re-implementation, and works at ~1ms tool round-trip latency. See [§8a.1](#8a1-three-paths-to-peer-participation) and [docs/archive/26 §Track B](archive/26-team-orchestration-spikes.md#track-b--codex-app-server-dynamictoolcall-viability).
 
 ### v0.4.Q9 — Mixed-engine consultant pattern (now supplementary)
 
@@ -1047,11 +1057,11 @@ Originally proposed as the primary mechanism for using Codex from inside a team.
 
 ### v0.4.Q10 — Default peer-stop policy — RESOLVED 2026-05-02
 
-**Resolution:** team-scope-allowed peer-stop. `task_stop.ts` checks `caller.scope === target.scope` first (allow), then falls through to ancestry check for cross-scope (allow if caller is ancestor). Forced by Q1's flat-siblings model — peers have no ancestry relationship between themselves. See [docs/27-v0.4-teams-implementation-plan.md](27-v0.4-teams-implementation-plan.md) §V0.4.Q10.
+**Resolution:** team-scope-allowed peer-stop. `task_stop.ts` checks `caller.scope === target.scope` first (allow), then falls through to ancestry check for cross-scope (allow if caller is ancestor). Forced by Q1's flat-siblings model — peers have no ancestry relationship between themselves. See [docs/archive/27-v0.4-teams-implementation-plan.md](archive/27-v0.4-teams-implementation-plan.md) §V0.4.Q10.
 
 ### v0.4.Q11 — Tool subset to register via Codex `DynamicToolCall` — RESOLVED 2026-05-02
 
-**Resolution:** pragmatic 8 tools — `send_message`, `check_inbox`, `task_stop`, `task_output`, `ask_user_question`, `task_get`, `task_list`, `team_members` (new in v0.4). Skip `agent`, `task_create`, `task_update` (semantic clash with Codex's own product concepts; defer until a real use case forces clarity). See [docs/27-v0.4-teams-implementation-plan.md](27-v0.4-teams-implementation-plan.md) §V0.4.Q11.
+**Resolution:** pragmatic 8 tools — `send_message`, `check_inbox`, `task_stop`, `task_output`, `ask_user_question`, `task_get`, `task_list`, `team_members` (new in v0.4). Skip `agent`, `task_create`, `task_update` (semantic clash with Codex's own product concepts; defer until a real use case forces clarity). See [docs/archive/27-v0.4-teams-implementation-plan.md](archive/27-v0.4-teams-implementation-plan.md) §V0.4.Q11.
 
 ---
 
@@ -1076,7 +1086,7 @@ Originally proposed as the primary mechanism for using Codex from inside a team.
 
 Shipped 2026-05-02. 18 stage commits in `0bd0f20..<close-out>`.
 
-Stage commits — see [docs/27 §13](27-v0.4-teams-implementation-plan.md#stage-breakdown) for the per-stage scope detail:
+Stage commits — see [docs/archive/27 §13](archive/27-v0.4-teams-implementation-plan.md#stage-breakdown) for the per-stage scope detail:
 
 - pre-work — `0bd0f20` — design + spike findings + implementation plan
 - 4A.1 — `929fae5` — data plumbing: scope on `SpawnRequest` + `TaskRecord`
@@ -1112,7 +1122,7 @@ they all converge on the same `SwarmHost` semantics. Track A
 defects closed; Track B's `DynamicToolCall` mechanism wired with the
 8-tool subset per V0.4.Q11.
 
-Deferred to later releases per [docs/27 §13](27-v0.4-teams-implementation-plan.md) phasing:
+Deferred to later releases per [docs/archive/27 §13](archive/27-v0.4-teams-implementation-plan.md) phasing:
 
 - `Committee` + `CriticLoop` topologies → **shipped in v0.5 (5A)**
 - opentasks adapter → **shipped in v0.5 (5B, live-verified against opentasks 0.1.3)**
@@ -1135,8 +1145,8 @@ Final test posture after 4M.3: 149 files / 1704 passing. `tsc --noEmit` clean.
 
 User-facing flows that work end-to-end as of 4M.3:
 
-- **Run an openteams template** via `swarm-harness team start <template>` (resolves through the openteams CLI; template loader cleans up its tmpdir asynchronously per M7).
-- **Run a custom topology from a JSON spec** via `swarm-harness topology <kind> --spec <path>` for any of the 4 shipped topology kinds.
+- **Run an openteams template** via `openswarm team start <template>` (resolves through the openteams CLI; template loader cleans up its tmpdir asynchronously per M7).
+- **Run a custom topology from a JSON spec** via `openswarm topology <kind> --spec <path>` for any of the 4 shipped topology kinds.
 - **Mixed-engine peer teams** across all 3 engine modes — a single team can mix transport peers (default), `--framework claude-agent-sdk` peers, and `--framework codex-chatgpt` peers, all converging on the same `SwarmHost` semantics.
 - **All 4 shipped topologies:**
     - `Fanout` — broadcast a task list to a worker pool with role overlays, retry, dead-letter (extracted from the v0.3 orchestrator).
@@ -1152,8 +1162,8 @@ User-facing flows that work end-to-end as of 4M.3:
 
 Things that exist but have known limitations:
 
-- **Cross-process team management** — shipped in v0.5 (stages 5E.1–5E.7). `team start <template> --detach` forks a per-team daemon; `team list`, `team logs [--follow]`, `team stop <name>`, `team kill <name>` work against running daemons over a Unix socket under `${XDG_RUNTIME_DIR}/swarm-harness/teams/<name>/`. **`team send` shipped early in 5F** (see [§13 v0.6 row](#13-phased-delivery)): persistent `peer-team` daemons accept `send_prompt` RPCs that spawn an ad-hoc member with the prompt as its new task (role + policies inherited from the spec's first member). Non-peer-team topologies still dispose after their initial run; per-topology persistent opt-in lands when a real workflow surfaces. Closes V0.5.Q6 ahead of schedule. See [docs/28-v0.5-daemon-plan.md](28-v0.5-daemon-plan.md) for the v0.5 daemon design + signoff trail.
-- **Worker-side `agent({team: "self"})`** — SHIPPED in 4M.7. WorkerHost gained scope awareness (reads `SWARM_HARNESS_TEAM_SCOPE` env, exposes `scopeOf`); the spawn IPC handler (4M.6) honors a caller-supplied `teamScope`. Closes the V0.4.Q1 follow-up. The B2 rejection added in 4M.1 is replaced by the unified scopeOf path. Both worker-side `team: "child"` (default child-spawn) and `team: "self"` (peer-spawn into caller's team) now work end-to-end at the unit level.
+- **Cross-process team management** — shipped in v0.5 (stages 5E.1–5E.7). `team start <template> --detach` forks a per-team daemon; `team list`, `team logs [--follow]`, `team stop <name>`, `team kill <name>` work against running daemons over a Unix socket under `${XDG_RUNTIME_DIR}/openswarm/teams/<name>/`. **`team send` shipped early in 5F** (see [§13 v0.6 row](#13-phased-delivery)): persistent `peer-team` daemons accept `send_prompt` RPCs that spawn an ad-hoc member with the prompt as its new task (role + policies inherited from the spec's first member). Non-peer-team topologies still dispose after their initial run; per-topology persistent opt-in lands when a real workflow surfaces. Closes V0.5.Q6 ahead of schedule. See [docs/28-v0.5-daemon-plan.md](28-v0.5-daemon-plan.md) for the v0.5 daemon design + signoff trail.
+- **Worker-side `agent({team: "self"})`** — SHIPPED in 4M.7. WorkerHost gained scope awareness (reads `OPENSWARM_TEAM_SCOPE` env, exposes `scopeOf`); the spawn IPC handler (4M.6) honors a caller-supplied `teamScope`. Closes the V0.4.Q1 follow-up. The B2 rejection added in 4M.1 is replaced by the unified scopeOf path. Both worker-side `team: "child"` (default child-spawn) and `team: "self"` (peer-spawn into caller's team) now work end-to-end at the unit level.
 - **Mixed-engine consultant pattern** (V0.4.Q9) — **shipped end-to-end as of 4M.9** (2026-05-04). Live consultant smoke `scripts/smoke-codex-consultant.sh` PASS: Claude transport → agent tool → IPC spawn → Codex App Server → ChatGPT → reply round-trips correctly. Earlier 4M.8 live finding traced to a project-wide JSON Schema generation bug — every Tier 2 tool's `inputSchema` was effectively empty (`zod-to-json-schema` v3 silently emits `{$schema: "..."}` for zod v4 inputs), which OpenAI rejected at the first turn that registered Tier 2 tools as dynamicTools. 4M.9 switches all 25 callers to zod v4 native `z.toJSONSchema` and improves the codex-app-server error-notification fallback so missing-message errors expose the full payload instead of becoming "Unknown error".
 - **Codex 8/10 tool subset** — codex peers register 8 of the 10 Tier 2 tools per V0.4.Q11. Skipped: `agent`, `task_create`, `task_update` (semantic clash with Codex's own product concepts). The set is additive — register more in v0.5 if dogfooding shows demand.
 - **Single team per orchestrator** — v0.4 runs one team at a time per orchestrator process. Multi-team-in-one-orchestrator (coordinator-of-coordinators) is deferred to v0.8+ per §6.4.
@@ -1245,4 +1255,4 @@ src/swarm/
 | `team_signal_received` | NEW | `{ teamName, signal, fromAgentId }` |
 | `worker_lifecycle_changed` | EXTEND | new transitions: `running → idle`, `idle → running`, `idle → finished` |
 
-Each gains a typed variant under `TypedLaneEvent` (per the rolling-migration policy in [docs/15-parity-gaps.md A5](15-parity-gaps.md)).
+Each gains a typed variant under `TypedLaneEvent` (per the rolling-migration policy in [docs/archive/15-parity-gaps.md A5](archive/15-parity-gaps.md)).

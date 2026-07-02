@@ -142,7 +142,7 @@ describe("runSwarm migration hint", () => {
     expect(exitCode).toBe(2);
     const combined = stderrLines.join("");
     expect(combined).toContain(
-      "[swarm-harness] TaskPacket policies are now discriminated unions — see docs/11-m3a-plan.md §Policy migration",
+      "[openswarm] TaskPacket policies are now discriminated unions — see docs/archive/11-m3a-plan.md §Policy migration",
     );
 
     stderrSpy.mockRestore();

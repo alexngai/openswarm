@@ -121,7 +121,7 @@ export class DuckDuckGoBackend implements SearchBackend {
   constructor(baseUrl?: string) {
     this.baseUrl =
       baseUrl ??
-      process.env.SWARM_WEB_SEARCH_BASE_URL ??
+      process.env.OPENSWARM_WEB_SEARCH_BASE_URL ??
       DEFAULT_BASE_URL;
   }
 
@@ -133,7 +133,7 @@ export class DuckDuckGoBackend implements SearchBackend {
       method: "POST",
       headers: {
         "User-Agent":
-          "Mozilla/5.0 (compatible; SwarmHarness/1.0; +https://github.com/anthropics/swarm-harness)",
+          "Mozilla/5.0 (compatible; SwarmHarness/1.0; +https://github.com/anthropics/openswarm)",
         Accept: "text/html",
       },
       signal: options.signal ?? AbortSignal.timeout(15_000),
@@ -303,7 +303,7 @@ async function execute(
     let searchHost: string;
     try {
       searchHost = new URL(
-        process.env.SWARM_WEB_SEARCH_BASE_URL ?? DEFAULT_BASE_URL,
+        process.env.OPENSWARM_WEB_SEARCH_BASE_URL ?? DEFAULT_BASE_URL,
       ).hostname;
     } catch {
       searchHost = "html.duckduckgo.com";

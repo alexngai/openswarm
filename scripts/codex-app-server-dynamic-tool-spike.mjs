@@ -180,7 +180,7 @@ function handleNotification(notif) {
 async function main() {
   // 1. initialize WITH experimentalApi capability — required for dynamicTools.
   const initResult = await send("initialize", {
-    clientInfo: { name: "swarm-harness-track-b-spike", version: "0.0.1" },
+    clientInfo: { name: "openswarm-track-b-spike", version: "0.0.1" },
     capabilities: { experimentalApi: true },
   });
   process.stderr.write(`initialize OK — userAgent: ${initResult.userAgent}\n`);

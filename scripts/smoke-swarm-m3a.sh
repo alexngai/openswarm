@@ -213,7 +213,7 @@ fi
 
 # [O5] Retry policy: task fails 2x then succeeds.
 # Uses the CLI orchestrator with a forced-fail-then-succeed fixture via
-# the SWARM_CODER_TEST_SCRIPT env var.
+# the OPENSWARM_TEST_SCRIPT env var.
 # The fixture must fail on attempts 0 and 1, succeed on attempt 2.
 # We simulate this with planRetry() assertions + the retry integration path.
 if node --input-type=module <<'EOF' > /tmp/swc-m3a-o5.log 2>&1
@@ -256,14 +256,14 @@ SMOKE_O6=$(mktemp -d)
 cat > "$SMOKE_O6/tasks.jsonl" <<'EOF'
 {"id":"dl-task","prompt":"force fail","branchPolicy":{"kind":"none"},"commitPolicy":{"kind":"none"},"escalationPolicy":{"kind":"retry","max":1,"backoff":"fixed"}}
 EOF
-export SWARM_CODER_TEST_SCRIPT="$REPO_ROOT/test/fixtures/worker-scripts/crash.json"
+export OPENSWARM_TEST_SCRIPT="$REPO_ROOT/test/fixtures/worker-scripts/crash.json"
 EXIT_O6=0
 $BIN swarm run "$SMOKE_O6/tasks.jsonl" \
   --concurrency 1 \
   --output "$SMOKE_O6/results.jsonl" \
   --dead-letter "$SMOKE_O6/dead-letter.jsonl" \
   > /tmp/swc-m3a-o6.log 2>&1 || EXIT_O6=$?
-unset SWARM_CODER_TEST_SCRIPT
+unset OPENSWARM_TEST_SCRIPT
 
 DL_LINES=0
 if [[ -f "$SMOKE_O6/dead-letter.jsonl" ]]; then

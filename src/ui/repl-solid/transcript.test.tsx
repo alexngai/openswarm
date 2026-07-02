@@ -11,6 +11,25 @@ import { testRender } from "@opentui/solid";
 import { Transcript } from "./transcript.js";
 import type { TranscriptEntry } from "../repl/state.js";
 
+async function flush(ms = 50): Promise<void> {
+  await new Promise<void>((r) => setTimeout(r, ms));
+}
+
+async function waitForContent(
+  captureCharFrame: () => string,
+  renderOnce: () => Promise<void>,
+  needle: string,
+  maxAttempts = 20,
+): Promise<string> {
+  for (let i = 0; i < maxAttempts; i++) {
+    await flush(50);
+    await renderOnce();
+    const frame = captureCharFrame();
+    if (frame.includes(needle)) return frame;
+  }
+  return captureCharFrame();
+}
+
 // Non-assistant entries — work fine under bare-Transcript bun:test capture.
 const nonAssistantEntries: readonly TranscriptEntry[] = [
   { id: "u-0", kind: "user", text: "hello from user" },
@@ -18,11 +37,11 @@ const nonAssistantEntries: readonly TranscriptEntry[] = [
   { id: "s-3", kind: "system", text: "session started" },
 ];
 
-// Assistant entry — exercises the `<markdown>` primitive. Under bare-Transcript
-// rendering in bun:test, the captured frame omits the assistant entry. The
-// same primitive captures correctly when driven through the App composition
-// (see e2e.test.tsx "assistant markdown renders" + the width-regression
-// tests). Tracked as a bun:test capture race; doesn't affect interactive use.
+// Assistant entry — exercises the `<markdown>` primitive. `<markdown>` paints
+// its content a tick after mount (deferred stream-init), so a single
+// `renderOnce()` + immediate capture races the paint and misses the text. The
+// test polls with `waitForContent` (same pattern as the App-composed e2e
+// markdown tests) to let the render settle. No App composition required.
 const allEntries: readonly TranscriptEntry[] = [
   ...nonAssistantEntries,
   { id: "a-1", kind: "assistant", text: "hello from assistant" },
@@ -42,16 +61,16 @@ describe("Transcript component", () => {
     expect(frame).toContain("session started");
   });
 
-  // TODO: skip while bare-Transcript + <markdown> capture race is unresolved.
-  // The App-composed e2e tests cover the same primitive end-to-end. Re-enable
-  // once the underlying bun:test capture issue is root-caused.
-  it.skip("renders assistant <markdown> entry in bare-Transcript frame", async () => {
+  it("renders assistant <markdown> entry in bare-Transcript frame", async () => {
     const { captureCharFrame, renderOnce } = await testRender(
       () => <Transcript entries={allEntries} />,
       { width: 80, height: 20 },
     );
-    await renderOnce();
-    const frame = captureCharFrame();
+    const frame = await waitForContent(
+      captureCharFrame,
+      renderOnce,
+      "hello from assistant",
+    );
     expect(frame).toContain("hello from assistant");
   });
 

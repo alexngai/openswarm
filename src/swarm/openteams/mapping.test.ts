@@ -65,10 +65,10 @@ describe("openteamsToTeamSpec", () => {
     expect(spec.topology).toBe("pipeline");
   });
 
-  it("x-swarm-harness.topology overrides the inferred topology", () => {
+  it("x-openswarm.topology overrides the inferred topology", () => {
     const config: OpenteamsConfig = {
       ...baseGsdConfig,
-      "x-swarm-harness": { topology: "peer-team" },
+      "x-openswarm": { topology: "peer-team" },
     };
     const spec = openteamsToTeamSpec(config);
     // Even though topology.root is set, the extension wins.
@@ -115,10 +115,10 @@ describe("openteamsToTeamSpec", () => {
     );
   });
 
-  it("x-swarm-harness.coordination overrides the default completion rule", () => {
+  it("x-openswarm.coordination overrides the default completion rule", () => {
     const config: OpenteamsConfig = {
       ...baseGsdConfig,
-      "x-swarm-harness": {
+      "x-openswarm": {
         coordination: { completion: { kind: "any" } },
       },
     };
@@ -126,10 +126,10 @@ describe("openteamsToTeamSpec", () => {
     expect(spec.coordination.completion).toEqual({ kind: "any" });
   });
 
-  it("x-swarm-harness.coordination merges aggregator + idleTimeoutMs over defaults", () => {
+  it("x-openswarm.coordination merges aggregator + idleTimeoutMs over defaults", () => {
     const config: OpenteamsConfig = {
       ...baseGsdConfig,
-      "x-swarm-harness": {
+      "x-openswarm": {
         coordination: {
           aggregator: { kind: "concat", separator: "\n---\n" },
           idleTimeoutMs: 30_000,

@@ -38,10 +38,10 @@ if [ "$MODE" != "--offline" ]; then
   FRAMES=$(printf '%s\n%s\n' \
     '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}' \
     "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"session/new\",\"params\":{\"cwd\":\"$CWD\",\"mcpServers\":[]}}")
-  # SWARM_HARNESS_TEST_SCRIPT skips auth and wires the scripted engine so the
+  # OPENSWARM_TEST_SCRIPT skips auth and wires the scripted engine so the
   # smoke needs no API key. The trailing sleep keeps stdin open long enough for
   # the agent to answer before EOF closes the connection.
-  OUT=$({ printf '%s' "$FRAMES"; sleep 2; } | SWARM_HARNESS_TEST_SCRIPT="$SCRIPT" bun src/cli.ts acp --single 2>/dev/null)
+  OUT=$({ printf '%s' "$FRAMES"; sleep 2; } | OPENSWARM_TEST_SCRIPT="$SCRIPT" bun src/cli.ts acp --single 2>/dev/null)
   rm -f "$SCRIPT"
 
   PURE=1
@@ -54,7 +54,7 @@ if [ "$MODE" != "--offline" ]; then
   done <<< "$OUT"
   [ "$PURE" = 1 ] && ok "stdout is pure JSON-RPC" || bad "stdout had non-JSON-RPC lines"
 
-  echo "$OUT" | grep -q '"agentInfo":{"name":"swarm-harness"' \
+  echo "$OUT" | grep -q '"agentInfo":{"name":"openswarm"' \
     && ok "initialize -> InitializeResponse" || bad "no InitializeResponse"
   echo "$OUT" | grep -q '"sessionId"' \
     && ok "session/new -> sessionId" || bad "no session/new response"

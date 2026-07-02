@@ -2,14 +2,14 @@
  * Hooks config loader (rev-2 Major M8 discovery hierarchy).
  *
  * First-match-wins:
- *   1. `$SWARM_HARNESS_CONFIG_DIR/hooks.json`
- *   2. `<cwd>/.swarm-harness/hooks.json`
+ *   1. `$OPENSWARM_CONFIG_DIR/hooks.json`
+ *   2. `<cwd>/.openswarm/hooks.json`
  *   3. `<cwd>/.claude/settings.json`  (Claude Code compat — `.hooks` field)
  *   4. `$HOME/.claude/settings.json`  (Claude Code compat — `.hooks` field)
  *
  * Two JSON shapes are accepted:
  *
- * A) Dedicated `hooks.json` (simple, matches docs/10-m2-plan.md §9.5):
+ * A) Dedicated `hooks.json` (simple, matches docs/archive/10-m2-plan.md §9.5):
  *    {
  *      "PreToolUse":  [{ "matcher": "bash", "command": "./log.sh" }],
  *      "PostToolUse": [{ "matcher": "*",    "command": "./audit.sh", "timeoutMs": 5000 }]
@@ -107,7 +107,7 @@ function resolveCandidates(opts: LoadHooksConfigOptions): Candidate[] {
   const env = opts.envOverrides ?? process.env;
 
   const candidates: Candidate[] = [];
-  const envDir = env.SWARM_HARNESS_CONFIG_DIR;
+  const envDir = env.OPENSWARM_CONFIG_DIR;
   if (envDir !== undefined && envDir.length > 0) {
     candidates.push({
       path: path.join(envDir, "hooks.json"),
@@ -115,7 +115,7 @@ function resolveCandidates(opts: LoadHooksConfigOptions): Candidate[] {
     });
   }
   candidates.push({
-    path: path.join(cwd, ".swarm-harness", "hooks.json"),
+    path: path.join(cwd, ".openswarm", "hooks.json"),
     isSettingsJson: false,
   });
   candidates.push({

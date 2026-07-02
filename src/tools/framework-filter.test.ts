@@ -42,7 +42,7 @@ const ALL_TOOLS = [
 // ---------------------------------------------------------------------------
 //
 // As of v0.4 stage 4G the strip was dropped uniformly: filterToolsForFramework
-// is a no-op for all framework modes. Track A (docs/26 §Track A) verified
+// is a no-op for all framework modes. Track A (docs/archive/26 §Track A) verified
 // SwarmHost-routed tools dispatch correctly through the framework's tool
 // surface. The function is kept as a no-op for future framework-specific
 // filtering needs.

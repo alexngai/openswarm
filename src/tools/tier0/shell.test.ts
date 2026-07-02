@@ -82,6 +82,31 @@ describe("shell_exec", () => {
     }
   });
 
+  it("cleanses ANSI and redacts secrets in model-facing output", async () => {
+    const result = await shellExecTool.execute(
+      { command: `printf '\\033[31mred\\033[0m key=AKIAIOSFODNN7EXAMPLE\\n'` },
+      ctx(),
+    );
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.output).toContain("red");
+      expect(result.output).not.toContain("\x1b[");
+      expect(result.output).not.toContain("AKIAIOSFODNN7EXAMPLE");
+      expect(result.output).toContain("[REDACTED:");
+    }
+  });
+
+  it("honors the # nofilter opt-out in a shell session", async () => {
+    const result = await shellExecTool.execute(
+      { command: `printf '\\033[31mred\\033[0m\\n' # nofilter` },
+      ctx(),
+    );
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.output).toContain("\x1b[31m");
+    }
+  });
+
   it("returns error for nonexistent session", async () => {
     const result = await shellExecTool.execute(
       { command: "echo x", session_id: "sh_999" },

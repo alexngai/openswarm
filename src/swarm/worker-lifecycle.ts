@@ -1,11 +1,11 @@
 import type { FailureClass } from "./events.js";
 
 /**
- * Worker lifecycle states. Per docs/19-phase-5-plan.md P5.Q7:
+ * Worker lifecycle states. Per docs/archive/19-phase-5-plan.md P5.Q7:
  * - 8 base states matching doc 16 verbatim.
  * - `trust_required` is RESERVED — Claude Agent SDK doesn't surface
  *   a trust callback, so this state is never visited in current
- *   swarm-harness. Documented as future-proofing for upstream SDK
+ *   openswarm. Documented as future-proofing for upstream SDK
  *   changes (P5.Q11).
  *
  * v0.4 stage 4D adds three states for long-lived workers:

@@ -8,7 +8,7 @@
  * runtime-preload pattern used for `bun src/cli.ts` doesn't work with
  * --compile because the bundler has already emitted final JS by then.
  *
- * Native-library handling (mirrors openswarm's build-tui.ts):
+ * Native-library handling (mirrors Swarm Runner's build-tui.ts):
  *   @opentui/core dynamically does
  *     `import("@opentui/core-${process.platform}-${process.arch}/index.ts")`
  *   and that module does `import("./libopentui.dylib", { with: {type:"file"} })`
@@ -43,7 +43,7 @@ import sdkPkg from "@anthropic-ai/claude-agent-sdk/package.json" with { type: "j
 import pkg from "../package.json" with { type: "json" };
 
 // The compiled binary can't read package.json from its embedded fs at runtime,
-// so inject both versions as compile-time constants (see src/index.ts and the
+// so inject versions as compile-time constants (see src/index.ts and the
 // SDK-version lookup in doctor).
 const SDK_VERSION: string = (sdkPkg as { version?: string }).version ?? "unknown";
 const PKG_VERSION: string = (pkg as { version?: string }).version ?? "0.0.0";
@@ -63,11 +63,11 @@ interface Target {
 }
 
 const TARGETS: Record<string, Target> = {
-  "bun-darwin-arm64": { bunTarget: "bun-darwin-arm64", platform: "darwin", arch: "arm64", libName: "libopentui.dylib", exe: "swarm-harness" },
-  "bun-darwin-x64":   { bunTarget: "bun-darwin-x64",   platform: "darwin", arch: "x64",   libName: "libopentui.dylib", exe: "swarm-harness" },
-  "bun-linux-x64":    { bunTarget: "bun-linux-x64",    platform: "linux",  arch: "x64",   libName: "libopentui.so",     exe: "swarm-harness" },
-  "bun-linux-arm64":  { bunTarget: "bun-linux-arm64",  platform: "linux",  arch: "arm64", libName: "libopentui.so",     exe: "swarm-harness" },
-  "bun-windows-x64":  { bunTarget: "bun-windows-x64",  platform: "win32",  arch: "x64",   libName: null,                exe: "swarm-harness.exe" },
+  "bun-darwin-arm64": { bunTarget: "bun-darwin-arm64", platform: "darwin", arch: "arm64", libName: "libopentui.dylib", exe: "openswarm" },
+  "bun-darwin-x64":   { bunTarget: "bun-darwin-x64",   platform: "darwin", arch: "x64",   libName: "libopentui.dylib", exe: "openswarm" },
+  "bun-linux-x64":    { bunTarget: "bun-linux-x64",    platform: "linux",  arch: "x64",   libName: "libopentui.so",     exe: "openswarm" },
+  "bun-linux-arm64":  { bunTarget: "bun-linux-arm64",  platform: "linux",  arch: "arm64", libName: "libopentui.so",     exe: "openswarm" },
+  "bun-windows-x64":  { bunTarget: "bun-windows-x64",  platform: "win32",  arch: "x64",   libName: null,                exe: "openswarm.exe" },
 };
 
 const targetKey = process.argv[2] ?? "bun-darwin-arm64";
@@ -147,8 +147,8 @@ function ensureNativePackage(t: Target): string | null {
   return existsSync(cachedLib) ? cachedLib : null;
 }
 
-// Emit into the per-platform package dir (mirrors openswarm), so each
-// @swarm-harness/cli-<platform>-<arch> optional-dep ships its own binary.
+// Emit into the per-platform package dir (mirrors Swarm Runner), so each
+// @openswarm/cli-<platform>-<arch> optional-dep ships its own binary.
 const platformArch = target.bunTarget.replace(/^bun-/, ""); // e.g. darwin-arm64
 const pkgDir = `packages/cli-${platformArch}`;
 const outfile = `${pkgDir}/${target.exe}`;
@@ -160,6 +160,13 @@ console.log(`Building ${outfile} for ${target.bunTarget} (v${PKG_VERSION})…`);
 
 const result = await Bun.build({
   entrypoints: ["./src/cli.ts"],
+  external: [
+    // Optional runtime integrations. The CLI already degrades gracefully when
+    // they are absent, and bundling them can pull in Node-only modules that Bun
+    // cannot compile into the standalone binary.
+    "minimem",
+    "sessionlog",
+  ],
   compile: {
     target: target.bunTarget,
     outfile,
@@ -170,11 +177,11 @@ const result = await Bun.build({
     createSolidTransformPlugin({ moduleName: "@opentui/solid" }),
   ],
   define: {
-    // Inject the SDK + harness versions so the compiled binary reports the
+    // Inject the SDK + package versions so the compiled binary reports the
     // real versions (runtime package.json lookup fails in compiled binaries —
     // node_modules isn't in the embedded fs).
-    __SWARM_HARNESS_AGENT_SDK_VERSION__: JSON.stringify(SDK_VERSION),
-    __SWARM_HARNESS_VERSION__: JSON.stringify(PKG_VERSION),
+    __OPENSWARM_AGENT_SDK_VERSION__: JSON.stringify(SDK_VERSION),
+    __OPENSWARM_VERSION__: JSON.stringify(PKG_VERSION),
     // Pin the dynamic native-lib import to the target so it's statically
     // analyzable (lets the shim match it; required for cross-compile).
     "process.platform": JSON.stringify(target.platform),

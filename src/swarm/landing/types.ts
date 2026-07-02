@@ -3,7 +3,7 @@
  *
  * A LandingStrategy is how a streamed team member's work is finalized once it
  * completes. macro-agent registers these on its WorkspaceManager and selects
- * one per-role via YAML; swarm-harness selects one per-topology (today) and
+ * one per-role via YAML; openswarm selects one per-topology (today) and
  * per-role (P1+). See docs/44 P0.
  *
  * P0 ships the seam + `merge-to-parent` (the behavior lifted verbatim from

@@ -161,7 +161,7 @@ export type PluginInstallSource =
 
 /**
  * Persisted plugin state — unified view over two files under
- * `~/.swarm-harness/plugins/` (doc 17 Q1):
+ * `~/.openswarm/plugins/` (doc 17 Q1):
  *   - `settings.json`  — enable map `{ [pluginId]: boolean }` (claw's shape).
  *   - `installed.json` — `{ schemaVersion, plugins: { [id]: { version, installSource } } }`.
  *

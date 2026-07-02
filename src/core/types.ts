@@ -105,7 +105,7 @@ export type NormalizedEvent =
   | { readonly type: "text_delta"; readonly text: string }
   | { readonly type: "tool_use_start"; readonly id: string; readonly name: string }
   | { readonly type: "tool_use_input"; readonly id: string; readonly jsonDelta: string }
-  | { readonly type: "tool_use_end"; readonly id: string }
+  | { readonly type: "tool_use_end"; readonly id: string; readonly input?: unknown }
   | {
       readonly type: "tool_result";
       readonly toolUseId: string;

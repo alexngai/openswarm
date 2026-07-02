@@ -74,7 +74,7 @@ async function atomicWrite(
   // the temp name and lose to `fs.rename` after the writer has been
   // unlinked by a sibling.
   const rand = crypto.randomBytes(6).toString("hex");
-  const tmp = path.join(dir, `.swarm-harness-tmp-${process.pid}-${rand}`);
+  const tmp = path.join(dir, `.openswarm-tmp-${process.pid}-${rand}`);
   try {
     await fs.writeFile(tmp, content, "utf8");
 

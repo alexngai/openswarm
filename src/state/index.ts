@@ -1,7 +1,7 @@
 /**
  * State database — SQLite-backed persistent store modeled on Codex state/ crate.
  *
- * Stores session metadata, goals, memories, and audit logs. Uses better-sqlite3
+ * Stores session metadata, memories, and audit logs. Uses better-sqlite3
  * for synchronous, single-process access. Migrations are applied automatically
  * on open.
  */
@@ -40,28 +40,6 @@ export interface SessionRecord {
   outputTokens: number;
   compactionCount: number;
   cwd: string;
-}
-
-export type GoalStatus =
-  | "active"
-  | "paused"
-  | "blocked"
-  | "usage_limited"
-  | "budget_limited"
-  | "complete";
-
-export interface GoalRecord {
-  id: string;
-  sessionId: string;
-  parentGoalId?: string;
-  status: GoalStatus;
-  description: string;
-  tokenBudget?: number;
-  tokensUsed: number;
-  turnCount: number;
-  createdAt: string;
-  updatedAt: string;
-  checkpoint?: string;
 }
 
 export interface MemoryRecord {
@@ -122,21 +100,6 @@ const MIGRATIONS: Migration[] = [
         cwd TEXT NOT NULL
       );
 
-      CREATE TABLE IF NOT EXISTS goals (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        parent_goal_id TEXT,
-        status TEXT NOT NULL DEFAULT 'active',
-        description TEXT NOT NULL,
-        token_budget INTEGER,
-        tokens_used INTEGER NOT NULL DEFAULT 0,
-        turn_count INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        checkpoint TEXT,
-        FOREIGN KEY (session_id) REFERENCES sessions(id)
-      );
-
       CREATE TABLE IF NOT EXISTS memories (
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
@@ -161,8 +124,6 @@ const MIGRATIONS: Migration[] = [
         version INTEGER PRIMARY KEY
       );
 
-      CREATE INDEX IF NOT EXISTS idx_goals_session ON goals(session_id);
-      CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status);
       CREATE INDEX IF NOT EXISTS idx_memories_session ON memories(session_id);
       CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category);
       CREATE INDEX IF NOT EXISTS idx_audit_session ON audit_log(session_id);
@@ -312,94 +273,6 @@ export class StateDB {
       .prepare("SELECT * FROM sessions ORDER BY started_at DESC LIMIT ?")
       .all(limit) as any[];
     return rows.map(mapSessionRow);
-  }
-
-  // -------------------------------------------------------------------------
-  // Goals
-  // -------------------------------------------------------------------------
-
-  createGoal(record: GoalRecord): void {
-    this.db
-      .prepare(
-        `INSERT INTO goals (id, session_id, parent_goal_id, status, description, token_budget, tokens_used, turn_count, created_at, updated_at, checkpoint)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        record.id,
-        record.sessionId,
-        record.parentGoalId ?? null,
-        record.status,
-        record.description,
-        record.tokenBudget ?? null,
-        record.tokensUsed,
-        record.turnCount,
-        record.createdAt,
-        record.updatedAt,
-        record.checkpoint ?? null,
-      );
-  }
-
-  getGoal(id: string): GoalRecord | null {
-    const row = this.db.prepare("SELECT * FROM goals WHERE id = ?").get(id) as any;
-    return row ? mapGoalRow(row) : null;
-  }
-
-  updateGoal(
-    id: string,
-    updates: Partial<
-      Pick<GoalRecord, "status" | "tokensUsed" | "turnCount" | "checkpoint" | "updatedAt">
-    >,
-  ): void {
-    const sets: string[] = [];
-    const values: unknown[] = [];
-
-    if (updates.status !== undefined) {
-      sets.push("status = ?");
-      values.push(updates.status);
-    }
-    if (updates.tokensUsed !== undefined) {
-      sets.push("tokens_used = ?");
-      values.push(updates.tokensUsed);
-    }
-    if (updates.turnCount !== undefined) {
-      sets.push("turn_count = ?");
-      values.push(updates.turnCount);
-    }
-    if (updates.checkpoint !== undefined) {
-      sets.push("checkpoint = ?");
-      values.push(updates.checkpoint);
-    }
-    if (updates.updatedAt !== undefined) {
-      sets.push("updated_at = ?");
-      values.push(updates.updatedAt);
-    }
-
-    if (sets.length === 0) return;
-    values.push(id);
-    this.db.prepare(`UPDATE goals SET ${sets.join(", ")} WHERE id = ?`).run(...values);
-  }
-
-  listGoals(sessionId?: string, status?: GoalStatus): GoalRecord[] {
-    let sql = "SELECT * FROM goals";
-    const conditions: string[] = [];
-    const values: unknown[] = [];
-
-    if (sessionId !== undefined) {
-      conditions.push("session_id = ?");
-      values.push(sessionId);
-    }
-    if (status !== undefined) {
-      conditions.push("status = ?");
-      values.push(status);
-    }
-
-    if (conditions.length > 0) {
-      sql += " WHERE " + conditions.join(" AND ");
-    }
-    sql += " ORDER BY created_at DESC";
-
-    const rows = this.db.prepare(sql).all(...values) as any[];
-    return rows.map(mapGoalRow);
   }
 
   // -------------------------------------------------------------------------
@@ -642,22 +515,6 @@ function mapSessionRow(row: any): SessionRecord {
   };
 }
 
-function mapGoalRow(row: any): GoalRecord {
-  return {
-    id: row.id,
-    sessionId: row.session_id,
-    parentGoalId: row.parent_goal_id ?? undefined,
-    status: row.status,
-    description: row.description,
-    tokenBudget: row.token_budget ?? undefined,
-    tokensUsed: row.tokens_used,
-    turnCount: row.turn_count,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    checkpoint: row.checkpoint ?? undefined,
-  };
-}
-
 function mapMemoryRow(row: any): MemoryRecord {
   return {
     id: row.id,
@@ -698,37 +555,3 @@ function mapSessionSummaryRow(row: any): SessionSummaryRow {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Singleton
-// ---------------------------------------------------------------------------
-
-let stateDB: StateDB | null = null;
-
-export function getStateDB(dbPath?: string): StateDB {
-  if (stateDB === null) {
-    const resolvedPath =
-      dbPath ??
-      path.join(
-        process.env.HOME ?? process.env.USERPROFILE ?? ".",
-        ".swarm-harness",
-        "state.db",
-      );
-    stateDB = new StateDB(resolvedPath);
-  }
-  return stateDB;
-}
-
-export function setStateDB(db: StateDB): void {
-  stateDB = db;
-}
-
-export function resetStateDB(): void {
-  if (stateDB !== null) {
-    try {
-      stateDB.close();
-    } catch {
-      // ignore close errors during reset
-    }
-  }
-  stateDB = null;
-}

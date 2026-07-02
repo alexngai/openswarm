@@ -83,15 +83,15 @@ describe("WorkerHost.scopeOf (v0.4 stage 4M.7)", () => {
 });
 
 describe("WorkerHost.askUser", () => {
-  const ORIGINAL_ENV = process.env.SWARM_HARNESS_ASK_TIMEOUT_MS;
+  const ORIGINAL_ENV = process.env.OPENSWARM_ASK_TIMEOUT_MS;
   beforeEach(() => {
-    delete process.env.SWARM_HARNESS_ASK_TIMEOUT_MS;
+    delete process.env.OPENSWARM_ASK_TIMEOUT_MS;
   });
   afterEach(() => {
     if (ORIGINAL_ENV === undefined) {
-      delete process.env.SWARM_HARNESS_ASK_TIMEOUT_MS;
+      delete process.env.OPENSWARM_ASK_TIMEOUT_MS;
     } else {
-      process.env.SWARM_HARNESS_ASK_TIMEOUT_MS = ORIGINAL_ENV;
+      process.env.OPENSWARM_ASK_TIMEOUT_MS = ORIGINAL_ENV;
     }
   });
 
@@ -144,8 +144,8 @@ describe("WorkerHost.askUser", () => {
     }
   });
 
-  it("honors SWARM_HARNESS_ASK_TIMEOUT_MS env override", async () => {
-    process.env.SWARM_HARNESS_ASK_TIMEOUT_MS = "1500";
+  it("honors OPENSWARM_ASK_TIMEOUT_MS env override", async () => {
+    process.env.OPENSWARM_ASK_TIMEOUT_MS = "1500";
     const { transport, send } = makeFakeTransport();
     send.mockResolvedValue({ answer: "ok" });
     const host = makeHost(transport);
@@ -222,8 +222,8 @@ describe("WorkerHost lifecycle state machine", () => {
 
 // ---------------------------------------------------------------------------
 // State-file writes (v0.2 Stage 2B)
-// SWARM_HARNESS_WORKERS_DIR is set to a tmp dir by vitest-setup.ts, so these
-// writes never touch ~/.swarm-harness/workers/.
+// OPENSWARM_WORKERS_DIR is set to a tmp dir by vitest-setup.ts, so these
+// writes never touch ~/.openswarm/workers/.
 // ---------------------------------------------------------------------------
 
 describe("WorkerHost state file writes", () => {

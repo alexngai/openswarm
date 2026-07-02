@@ -1,13 +1,13 @@
 /**
- * AcpAgent — implements the ACP SDK `Agent` interface for swarm-harness.
+ * AcpAgent — implements the ACP SDK `Agent` interface for OpenSwarm
+ * (single-agent mode; team mode lives in team-agent.ts).
  *
- * Stage A Steps 1–2: session lifecycle + initialize. The prompt turn is a
- * clean no-op until Step 3 wires the engine→session/update translator
- * (docs/32 §6, §9); cancel already trips the per-session AbortController so the
- * Step-3 implementation inherits correct cancellation.
+ * Owns session lifecycle + initialize, runs the prompt turn through the
+ * engine→session/update translator (docs/archive/32 §6, §9), and trips the
+ * per-session AbortController on cancel.
  *
- * The `conn` (AgentSideConnection) is the client-facing handle — Step 3 calls
- * `conn.sessionUpdate(...)` / `conn.requestPermission(...)` through it.
+ * The `conn` (AgentSideConnection) is the client-facing handle —
+ * `conn.sessionUpdate(...)` / `conn.requestPermission(...)` go through it.
  */
 
 import * as crypto from "node:crypto";
@@ -34,19 +34,29 @@ import type {
   SessionSnapshot,
 } from "../engine/index.js";
 import { makeCanUseTool } from "../permissions/gate.js";
+import { SessionAllowRules } from "../permissions/session-rules.js";
 import { SessionStore } from "../session/store.js";
 import { initializeResponse } from "./capabilities.js";
 import { makeAcpTranslator } from "./translator.js";
 import { AcpPermissionBridge } from "./permission.js";
 import { promptToText } from "./content.js";
 import { historyChunks } from "./history.js";
-import { enrichTurnInputs } from "../memory/index.js";
+import {
+  enrichTurnInputs,
+  observeTurnEvents,
+  endMemorySession,
+  type TurnRecord,
+} from "../memory/index.js";
 
 interface AcpSession {
   readonly engine: AgentEngine;
   /** Reset to a fresh controller at the start of each prompt turn. */
   abort: AbortController;
   readonly cwd: string;
+  /** Session-scoped bash "always allow" rules (Phase 3 B4); spans turns. */
+  readonly sessionRules: SessionAllowRules;
+  /** Phase 3 B1 — per-turn memory records; archived on process exit. */
+  readonly memoryTurns: TurnRecord[];
   /** Set by session/load; applied once on the next prompt, then cleared. */
   resumeFrom?: SessionSnapshot;
 }
@@ -58,7 +68,20 @@ export class AcpAgent implements Agent {
     private readonly conn: AgentSideConnection,
     private readonly rt: AgentRuntime,
     private readonly opts: CommonOpts,
-  ) {}
+  ) {
+    // Phase 3 B1/B2 (decision Q2) — ACP sessions never formally close (the
+    // client just drops the process), so `beforeExit` is the catch-all
+    // session-end point. Best-effort fire-and-forget; endMemorySession
+    // carries its own hard timeout.
+    process.once("beforeExit", () => {
+      for (const [sessionId, session] of this.sessions) {
+        void endMemorySession({
+          sessionId,
+          turns: session.memoryTurns,
+        }).catch(() => {});
+      }
+    });
+  }
 
   async initialize(req: InitializeRequest): Promise<InitializeResponse> {
     return initializeResponse(req);
@@ -79,6 +102,8 @@ export class AcpAgent implements Agent {
       engine,
       abort: new AbortController(),
       cwd: req.cwd,
+      sessionRules: new SessionAllowRules(),
+      memoryTurns: [],
     });
     return { sessionId };
   }
@@ -100,6 +125,8 @@ export class AcpAgent implements Agent {
       engine,
       abort: new AbortController(),
       cwd: req.cwd,
+      sessionRules: new SessionAllowRules(),
+      memoryTurns: [],
       resumeFrom: store.buildSnapshot(req.sessionId),
     });
     return {};
@@ -124,6 +151,7 @@ export class AcpAgent implements Agent {
       useHeadless: false,
       getCurrentMode: () => this.opts.permissionMode,
       cwd: session.cwd,
+      sessionRules: session.sessionRules,
     });
 
     const translator = makeAcpTranslator(this.conn, req.sessionId);
@@ -156,7 +184,14 @@ export class AcpAgent implements Agent {
     };
 
     try {
-      for await (const ev of session.engine.run(runConfig)) {
+      // Phase 3 B1 — the observer fires onAfterTurn / onCompaction and
+      // records this turn for the beforeExit session archive.
+      const observed = observeTurnEvents(session.engine.run(runConfig), {
+        sessionId: req.sessionId,
+        turnIndex: session.memoryTurns.length,
+        onRecord: (record) => session.memoryTurns.push(record),
+      });
+      for await (const ev of observed) {
         await translator.emit(ev);
       }
     } catch (err) {

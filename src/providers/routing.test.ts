@@ -127,6 +127,23 @@ describe("resolveProvider", () => {
     expect(typeof result.authFactory).toBe("function");
   });
 
+  // Phase 1.4 auth symmetry: grok/gemini/qwen/kimi self-describe their auth
+  // (XAI_API_KEY / GOOGLE_GENERATIVE_AI_API_KEY / DASHSCOPE_API_KEY) like the
+  // litellm/azure routes, so a model id with only its env key set reaches the
+  // transport instead of throwing in buildAuthForProvider.
+  it.each([
+    ["grok-3", "xai"],
+    ["gemini-2.0-flash", "google"],
+    ["qwen-plus", "dashscope"],
+    ["kimi-k2", "dashscope"],
+  ])("%s → authFactory present with providerId %s", async (id, providerId) => {
+    const result = resolveProvider(id);
+    expect(result.kind).toBe("native");
+    expect(typeof result.authFactory).toBe("function");
+    const auth = await result.authFactory!();
+    expect(auth.providerId).toBe(providerId);
+  });
+
   it('unknown-random-model → kind "error" listing known prefixes', () => {
     const result = resolveProvider("unknown-random-model");
     expect(result.kind).toBe("error");

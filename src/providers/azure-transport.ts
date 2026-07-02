@@ -1,6 +1,6 @@
 /**
  * AzureTransportProvider — Vercel AI SDK transport for Azure OpenAI, calling
- * Azure DIRECTLY (no gateway). swarm-harness agents run inside remote E2B
+ * Azure DIRECTLY (no gateway). openswarm agents run inside remote E2B
  * sandboxes that have internet but cannot reach a local gateway, so this
  * transport talks straight to the Azure OpenAI deployment endpoint.
  *

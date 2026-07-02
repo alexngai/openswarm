@@ -108,6 +108,13 @@ export interface OrchestratorOptions {
    * honors `persistent`; other topologies dispose regardless.
    */
   readonly persistent?: boolean;
+  /**
+   * docs/28 — team crash-recovery (T1). Threaded onto TopologyContext so
+   * topologies can skip already-succeeded units and record completions. The
+   * team daemon supplies one backed by a durable `team-checkpoint.json`; other
+   * callers omit it (no recovery).
+   */
+  readonly checkpoint?: import("./team-checkpoint.js").TeamCheckpointStore;
 }
 
 /**
@@ -171,6 +178,7 @@ export class Orchestrator extends EventEmitter {
       // treats empty strings as undefined when reconstructing TaskPacket.
       role: t.role ?? "",
       prompt: t.prompt,
+      ...(t.model !== undefined && { model: t.model }),
       ...(t.budget !== undefined && { budget: t.budget }),
       branchPolicy: t.branchPolicy,
       commitPolicy: t.commitPolicy,
@@ -195,8 +203,8 @@ export class Orchestrator extends EventEmitter {
   }
 
   /**
-   * v0.4 entry point: run a TeamSpec through its declared topology.
-   * Stage 4C only supports `topology: "fanout"`; others land in 4E.
+   * Team entry point: run a TeamSpec through its declared topology.
+   * All six topology kinds dispatch via pickTopology().
    */
   async runTeam(
     spec: TeamSpec,
@@ -223,12 +231,12 @@ export class Orchestrator extends EventEmitter {
     this.sigintHandler = () => {
       if (this.shuttingDown) {
         // Second Ctrl-C — force exit.
-        process.stderr.write("[swarm-harness] second SIGINT — forcing exit\n");
+        process.stderr.write("[openswarm] second SIGINT — forcing exit\n");
         process.exit(130);
       }
       this.shuttingDown = true;
       process.stderr.write(
-        "[swarm-harness] SIGINT received; draining workers...\n",
+        "[openswarm] SIGINT received; draining workers...\n",
       );
       abortController.abort();
       this.pool.close();
@@ -260,10 +268,23 @@ export class Orchestrator extends EventEmitter {
           defaultRole: this.opts.defaultRole,
         }),
         ...(this.opts.persistent === true && { persistent: true }),
+        ...(this.opts.checkpoint !== undefined && {
+          checkpoint: this.opts.checkpoint,
+        }),
         onTeamCreated: (team) => {
           this.activeTeam = team;
         },
       };
+      if (this.opts.checkpoint?.resumed === true) {
+        this.host.emit({
+          type: "team_note",
+          payload: {
+            teamName: spec.name,
+            scope: `swarm:${spec.name}`,
+            note: `resuming from checkpoint: ${this.opts.checkpoint.resumedUnitCount} unit(s) already succeeded`,
+          },
+        });
+      }
       return await topology.run(spec, ctx);
     } finally {
       // Clean up SIGINT handler.

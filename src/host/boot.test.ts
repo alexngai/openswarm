@@ -161,8 +161,8 @@ describe("bootSwarmHost", () => {
     const pathmod = await import("node:path");
     const wsf = await import("../swarm/worker-state-file.js");
     const dir = await fsp.mkdtemp(pathmod.join(osmod.tmpdir(), "swh-orphan-"));
-    const prev = process.env.SWARM_HARNESS_WORKERS_DIR;
-    process.env.SWARM_HARNESS_WORKERS_DIR = dir;
+    const prev = process.env.OPENSWARM_WORKERS_DIR;
+    process.env.OPENSWARM_WORKERS_DIR = dir;
     try {
       // A worker that crashed mid-run: non-terminal state + a dead pid.
       const orphanId = "orphan-1" as never;
@@ -185,8 +185,8 @@ describe("bootSwarmHost", () => {
       expect(wsf.readWorkerState(orphanId)).toBeNull(); // cleaned up
       expect(logs.some((l) => /orphan worker orphan-1/.test(l))).toBe(true);
     } finally {
-      if (prev !== undefined) process.env.SWARM_HARNESS_WORKERS_DIR = prev;
-      else delete process.env.SWARM_HARNESS_WORKERS_DIR;
+      if (prev !== undefined) process.env.OPENSWARM_WORKERS_DIR = prev;
+      else delete process.env.OPENSWARM_WORKERS_DIR;
       await fsp.rm(dir, { recursive: true, force: true }).catch(() => {});
     }
   });

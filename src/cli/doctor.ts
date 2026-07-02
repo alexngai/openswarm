@@ -3,7 +3,7 @@
  *
  * Four checks:
  *   auth      — detectAuth() presence check
- *   config    — .swarm-harness/ directory exists
+ *   config    — .openswarm/ directory exists
  *   install   — @anthropic-ai/claude-agent-sdk importable + version + CLI binary
  *   workspace — cwd is writable (probe file)
  *
@@ -68,15 +68,15 @@ async function checkAuth(): Promise<CheckResult> {
 }
 
 async function checkConfig(cwd: string): Promise<CheckResult> {
-  const configDir = path.join(cwd, ".swarm-harness");
+  const configDir = path.join(cwd, ".openswarm");
   try {
     await fs.access(configDir);
-    return { name: "config", status: "pass", message: ".swarm-harness/ directory found" };
+    return { name: "config", status: "pass", message: ".openswarm/ directory found" };
   } catch {
     return {
       name: "config",
       status: "warn",
-      message: "no config found — run `swarm-harness init`",
+      message: "no config found — run `openswarm init`",
     };
   }
 }
@@ -147,7 +147,7 @@ async function findCliBinary(): Promise<
 // output, or `bun src/cli.ts`) this identifier is undefined and the runtime
 // resolve path below is used. In the compiled binary the identifier is
 // replaced with a string literal.
-declare const __SWARM_HARNESS_AGENT_SDK_VERSION__: string | undefined;
+declare const __OPENSWARM_AGENT_SDK_VERSION__: string | undefined;
 
 async function checkInstall(): Promise<CheckResult> {
   try {
@@ -158,8 +158,8 @@ async function checkInstall(): Promise<CheckResult> {
     // "./package.json", so resolve the main entry and climb up to find its
     // package.json on disk.
     let version =
-      typeof __SWARM_HARNESS_AGENT_SDK_VERSION__ === "string"
-        ? __SWARM_HARNESS_AGENT_SDK_VERSION__
+      typeof __OPENSWARM_AGENT_SDK_VERSION__ === "string"
+        ? __OPENSWARM_AGENT_SDK_VERSION__
         : "unknown";
     try {
       const require = createRequire(import.meta.url);
@@ -262,7 +262,7 @@ export function codexAuthCheck(tokens: CodexTokens | null, now: number): CheckRe
       name: "codex-auth",
       status: "warn",
       message:
-        "Not logged in to ChatGPT — run `swarm-harness login --provider openai-codex` to use --framework codex-native.",
+        "Not logged in to ChatGPT — run `openswarm login --provider openai-codex` to use --framework codex-native.",
     };
   }
   const mins = Math.round((tokens.expiresAt - now) / 60_000);
@@ -328,7 +328,7 @@ async function checkCodexTls(): Promise<CheckResult> {
 }
 
 async function checkWorkspace(cwd: string): Promise<CheckResult> {
-  const probeFile = path.join(cwd, `.swarm-harness-doctor-probe-${process.pid}`);
+  const probeFile = path.join(cwd, `.openswarm-doctor-probe-${process.pid}`);
   try {
     await fs.writeFile(probeFile, "");
     await fs.unlink(probeFile);

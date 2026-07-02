@@ -69,6 +69,32 @@ describe("tool-kind", () => {
     expect(isEditTool("edit_file")).toBe(true);
     expect(isEditTool("write_file")).toBe(true);
     expect(isEditTool("multi_edit")).toBe(true);
+    expect(isEditTool("apply_patch")).toBe(true);
     expect(isEditTool("read_file")).toBe(false);
+  });
+
+  it("maps apply_patch to edit kind, multi-file locations, and per-op diffs", () => {
+    const patch = [
+      "*** Begin Patch",
+      "*** Add File: new.ts",
+      "+export const x = 1",
+      "*** Update File: app.ts",
+      "*** Move to: main.ts",
+      "@@",
+      "-old",
+      "+new",
+      "*** End Patch",
+    ].join("\n");
+
+    expect(toolKind("apply_patch")).toBe("edit");
+    expect(toolTitle("apply_patch", { patch })).toBe("Apply patch (2 files)");
+    expect(toolLocations("apply_patch", { patch })).toEqual([
+      { path: "new.ts" },
+      { path: "main.ts" },
+    ]);
+    expect(diffContent("apply_patch", { patch })).toEqual([
+      { type: "diff", path: "new.ts", oldText: null, newText: "export const x = 1" },
+      { type: "diff", path: "main.ts", oldText: "old", newText: "new" },
+    ]);
   });
 });

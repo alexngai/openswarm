@@ -9,10 +9,10 @@
  *     "coordinator" with one member (the root) for v0.4.
  *   - `topology.root` + flat `spawn_rules` (all roles spawned by root) →
  *     "coordinator".
- *   - `x-swarm-harness.topology` overrides the inferred topology.
+ *   - `x-openswarm.topology` overrides the inferred topology.
  *   - `communication.{channels,subscriptions,emissions,enforcement}` plumbs
  *     through unchanged into `coordination.communication`.
- *   - `x-swarm-harness.coordination` merges over the defaults — lets users
+ *   - `x-openswarm.coordination` merges over the defaults — lets users
  *     override completion rule, aggregator, etc. via the YAML extension.
  */
 
@@ -31,7 +31,7 @@ import type { OpenteamsConfig } from "./loader.js";
 export interface MapOptions {
   /**
    * Topology used when the openteams config doesn't disambiguate (no
-   * `topology.root`, no `x-swarm-harness.topology`). Default: "fanout".
+   * `topology.root`, no `x-openswarm.topology`). Default: "fanout".
    */
   readonly defaultTopology?: TopologyKind;
 }
@@ -50,7 +50,7 @@ export function openteamsToTeamSpec(
   opts: MapOptions = {},
 ): TeamSpec {
   // 1. Pick topology.
-  const ext = config["x-swarm-harness"];
+  const ext = config["x-openswarm"];
   let topology: TopologyKind;
   if (ext?.topology !== undefined) {
     topology = ext.topology;
@@ -88,7 +88,7 @@ export function openteamsToTeamSpec(
   }
 
   // 3. Build coordination block. Communication plumbs through; user-supplied
-  //    x-swarm-harness.coordination overrides any defaults we set.
+  //    x-openswarm.coordination overrides any defaults we set.
   const userCoordination =
     (ext?.coordination as Partial<TeamCoordination> | undefined) ?? {};
   const coordination: TeamCoordination = {

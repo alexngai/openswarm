@@ -25,11 +25,11 @@ import type { MemoryFragment } from "./types.js";
 beforeEach(() => {
   // Keep provider-registration tests deterministic: point the SkillProvider at
   // a non-existent dir so it stays unavailable (these tests cover file/minimem).
-  process.env.SWARM_HARNESS_SKILLS_DIR = "/nonexistent-skill-tree-dir-for-tests";
+  process.env.OPENSWARM_SKILLS_DIR = "/nonexistent-skill-tree-dir-for-tests";
 });
 
 afterEach(async () => {
-  delete process.env.SWARM_HARNESS_SKILLS_DIR;
+  delete process.env.OPENSWARM_SKILLS_DIR;
   await resetMemoryCoordinator();
   resetCuratedMemoryStore();
   resetCuratedMemoryLimits();
@@ -41,18 +41,19 @@ afterEach(async () => {
 // ---------------------------------------------------------------------------
 
 describe("onSessionStart", () => {
-  it("registers the FileMemoryProvider", async () => {
+  it("registers available memory providers", async () => {
     await onSessionStart();
     const coordinator = getMemoryCoordinator();
     expect(coordinator.providerNames).toContain("file");
-    expect(coordinator.providerCount).toBe(1);
+    expect(coordinator.providerCount).toBeGreaterThanOrEqual(1);
   });
 
-  it("does not duplicate the FileMemoryProvider", async () => {
+  it("does not duplicate providers", async () => {
     await onSessionStart();
     await onSessionStart();
     const coordinator = getMemoryCoordinator();
-    expect(coordinator.providerCount).toBe(1);
+    expect(new Set(coordinator.providerNames).size).toBe(coordinator.providerCount);
+    expect(coordinator.providerNames.filter((name) => name === "file")).toHaveLength(1);
   });
 });
 

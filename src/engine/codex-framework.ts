@@ -4,7 +4,7 @@
  * Wraps a long-lived CodexAppServerProvider (spawned lazily on first run())
  * and a single thread (started lazily on first run(), reused across calls).
  *
- * See docs/24-phase-6-codex-app-server-plan.md §Stage 3C.
+ * See docs/archive/24-phase-6-codex-app-server-plan.md §Stage 3C.
  */
 
 import type {
@@ -43,7 +43,7 @@ export interface CodexFrameworkEngineOptions {
   /**
    * Tier 2 tool implementations to register with the codex agent as host
    * dynamicTools. Each tool's spec is converted to a Codex `Tool` descriptor
-   * sent at thread/start; calls dispatch back through the swarm-harness
+   * sent at thread/start; calls dispatch back through the openswarm
    * tool implementation. (Stage 4H — V0.4.Q11)
    */
   readonly tools?: readonly ToolImpl[];
@@ -93,7 +93,7 @@ function isCodexCompatibleModel(model: string | undefined): model is string {
  * Resolve the model to send to Codex. If the caller passed a Codex-compatible
  * model, use it. Otherwise (including the CLI default `claude-sonnet-4-6`,
  * which Codex would reject), substitute the spike-verified default `gpt-5.5`
- * so users running `swarm-harness --framework codex-chatgpt "say hi"` without
+ * so users running `openswarm --framework codex-chatgpt "say hi"` without
  * `--model` get a working session instead of a silent provider_unavailable.
  */
 function resolveCodexModel(model: string | undefined): string {
@@ -101,7 +101,7 @@ function resolveCodexModel(model: string | undefined): string {
 }
 
 /**
- * Convert a swarm-harness ToolImpl to the Codex `Tool` descriptor passed in
+ * Convert a openswarm ToolImpl to the Codex `Tool` descriptor passed in
  * `thread/start.dynamicTools`. The ToolSpec.inputSchema is already a JSON
  * Schema (built via `zodToJsonSchema` in each tier-2 tool definition).
  */
@@ -115,7 +115,7 @@ function toolImplToCodexTool(impl: ToolImpl): Tool {
 
 /**
  * Build the onDynamicToolCall handler that routes codex agent tool calls
- * back to the swarm-harness tool implementations.
+ * back to the openswarm tool implementations.
  *
  * Unknown-tool requests, validation errors, and execution exceptions are
  * all wrapped into a `{success: false}` response — the handler never throws.

@@ -1,10 +1,10 @@
 /**
  * ACP `initialize` response — capability + version negotiation.
  *
- * swarm-harness owns zero auth code (env/keychain auth is validated in
+ * OpenSwarm owns zero auth code (env/keychain auth is validated in
  * buildAgentRuntime), so no auth methods are advertised. `loadSession` and
  * `promptCapabilities` are intentionally conservative for Stage A Steps 1–2;
- * they expand as the corresponding handlers land (docs/30 A.4/A.6).
+ * they expand as the corresponding handlers land (docs/archive/30 A.4/A.6).
  */
 
 import { PROTOCOL_VERSION } from "@agentclientprotocol/sdk";
@@ -20,7 +20,7 @@ export interface InitializeOptions {
   /**
    * When true (team mode), advertise `_meta.swarm` support so rich clients
    * can detect the enrichment and optionally request `memberText: "interleave"`
-   * (B1.2, docs/34 §4). Baseline clients ignore the extra key.
+   * (B1.2, docs/archive/34 §4). Baseline clients ignore the extra key.
    */
   readonly swarmMeta?: boolean;
 }
@@ -69,7 +69,7 @@ export function initializeResponse(
 
   return {
     protocolVersion,
-    agentInfo: { name: "swarm-harness", version: VERSION },
+    agentInfo: { name: "openswarm", version: VERSION },
     agentCapabilities,
     authMethods: [],
   };

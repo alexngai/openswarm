@@ -86,6 +86,10 @@ export function resolveProvider(modelId: string): ResolvedProvider {
         const { XaiTransportProvider } = await import("./xai-transport.js");
         return await XaiTransportProvider.create(auth, modelId);
       },
+      authFactory: async () => {
+        const { XaiApiKeyAuth } = await import("../auth/xai-api-key.js");
+        return new XaiApiKeyAuth();
+      },
       modelId,
     };
   }
@@ -97,6 +101,10 @@ export function resolveProvider(modelId: string): ResolvedProvider {
       providerFactory: async (auth: AuthSource, _id: string): Promise<Provider> => {
         const { GoogleTransportProvider } = await import("./google-transport.js");
         return await GoogleTransportProvider.create(auth, modelId);
+      },
+      authFactory: async () => {
+        const { GoogleApiKeyAuth } = await import("../auth/google-api-key.js");
+        return new GoogleApiKeyAuth();
       },
       modelId,
     };
@@ -111,6 +119,7 @@ export function resolveProvider(modelId: string): ResolvedProvider {
         const { DashScopeTransportProvider } = await import("./dashscope-transport.js");
         return await DashScopeTransportProvider.create(auth, cleanId);
       },
+      authFactory: () => new OpenAICompatApiKeyAuth("DASHSCOPE_API_KEY", "dashscope"),
       modelId: cleanId,
     };
   }

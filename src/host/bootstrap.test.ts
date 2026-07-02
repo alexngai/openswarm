@@ -11,28 +11,17 @@ describe("readBootstrapConfig", () => {
     expect(cfg.dataDir).toBeUndefined();
   });
 
-  it("reads the macro-agent bootstrap env vars", () => {
+  it("reads the OpenSwarm bootstrap env vars", () => {
     const cfg = readBootstrapConfig({
-      MACRO_BOOTSTRAP_COORDINATOR: "true",
-      MACRO_BOOTSTRAP_CWD: "/work/repo",
-      MACRO_BOOTSTRAP_REHYDRATE: "all",
+      OPENSWARM_BOOTSTRAP_COORDINATOR: "true",
+      OPENSWARM_BOOTSTRAP_CWD: "/work/repo",
+      OPENSWARM_BOOTSTRAP_REHYDRATE: "all",
       OPENSWARM_DATA_DIR: "/data/swarm-1",
     });
     expect(cfg.coordinator).toBe(true);
     expect(cfg.coordinatorCwd).toBe("/work/repo");
     expect(cfg.rehydrate).toBe("all");
     expect(cfg.dataDir).toBe("/data/swarm-1");
-  });
-
-  it("accepts the swarm-harness-prefixed aliases", () => {
-    const cfg = readBootstrapConfig({
-      SWARM_HARNESS_BOOTSTRAP_COORDINATOR: "true",
-      SWARM_HARNESS_DATA_DIR: "/data/sh",
-      SWARM_HARNESS_BOOTSTRAP_REHYDRATE: "none",
-    });
-    expect(cfg.coordinator).toBe(true);
-    expect(cfg.dataDir).toBe("/data/sh");
-    expect(cfg.rehydrate).toBe("none");
   });
 
   it("decodes a base64 JSON bootstrap token", () => {
@@ -45,19 +34,20 @@ describe("readBootstrapConfig", () => {
   it("tolerates a malformed token (non-fatal, token undefined)", () => {
     const cfg = readBootstrapConfig({
       OPENSWARM_BOOTSTRAP_TOKEN: "@@not-base64-json@@",
-      MACRO_BOOTSTRAP_COORDINATOR: "true",
+      OPENSWARM_BOOTSTRAP_COORDINATOR: "true",
     });
     expect(cfg.token).toBeUndefined();
     expect(cfg.coordinator).toBe(true); // rest still parses
   });
 
   it("falls back to rehydrate=coordinators on an unknown policy value", () => {
-    const cfg = readBootstrapConfig({ MACRO_BOOTSTRAP_REHYDRATE: "bogus" });
+    const cfg = readBootstrapConfig({ OPENSWARM_BOOTSTRAP_REHYDRATE: "bogus" });
     expect(cfg.rehydrate).toBe("coordinators");
   });
 
   it("treats coordinator values other than 'true' as false", () => {
-    expect(readBootstrapConfig({ MACRO_BOOTSTRAP_COORDINATOR: "1" }).coordinator).toBe(false);
-    expect(readBootstrapConfig({ MACRO_BOOTSTRAP_COORDINATOR: "" }).coordinator).toBe(false);
+    expect(readBootstrapConfig({ OPENSWARM_BOOTSTRAP_COORDINATOR: "1" }).coordinator).toBe(false);
+    expect(readBootstrapConfig({ OPENSWARM_BOOTSTRAP_COORDINATOR: "" }).coordinator).toBe(false);
   });
+
 });

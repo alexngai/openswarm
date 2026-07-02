@@ -1,5 +1,5 @@
 /**
- * `_meta.swarm` v1 — versioned swarm enrichment for ACP (docs/31 §4, docs/34).
+ * `_meta.swarm` v1 — versioned swarm enrichment for ACP (docs/31 §4, docs/archive/34).
  *
  * Every member-attributed `session/update`, `plan` entry, and `request_permission`
  * carries this *additively*, beside the standard fields the baseline already

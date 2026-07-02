@@ -1,21 +1,21 @@
 # 43 — macro-agent Parity Gap Analysis
 
-Living tracker of disparities between `swarm-harness` (TS) and
+Living tracker of disparities between `openswarm` (TS) and
 `references/macro-agent/` (TS orchestration system). Companion to
 `15-parity-gaps.md` (claw-code parity) and `39-codex-parity-gap-analysis.md`
 (Codex parity).
 
-**swarm-harness is the spiritual successor to macro-agent.** macro-agent is a
+**openswarm is the spiritual successor to macro-agent.** macro-agent is a
 *server/orchestrator* that wraps third-party agent binaries (Claude Code, etc.)
 over ACP and invests everything in coordination, git-workspace topology, and
-platform surfaces. swarm-harness is a *self-contained agent binary* that builds
+platform surfaces. openswarm is a *self-contained agent binary* that builds
 its own engine + tools and orchestrates them natively. The goal of this doc is
-**full feature parity** so swarm-harness can eventually subsume macro-agent and
+**full feature parity** so openswarm can eventually subsume macro-agent and
 users can migrate off it.
 
 Because the two have different identities, "parity" here means **the capability
 is available**, not that the implementation matches. Several macro-agent
-features are realized differently in swarm-harness (e.g. a local Unix-socket
+features are realized differently in openswarm (e.g. a local Unix-socket
 daemon vs. a networked REST/control server) — those are tracked as ⚠️ partial or
 🟦 divergent rather than ✅, with a note on what closing the gap requires.
 
@@ -23,11 +23,11 @@ daemon vs. a networked REST/control server) — those are tracked as ⚠️ part
 
 | Status | Meaning |
 |---|---|
-| ❌ missing | No equivalent exists in swarm-harness |
+| ❌ missing | No equivalent exists in openswarm |
 | ⚠️ partial | Functionally present but narrower / shallower than macro-agent |
 | ✅ parity | Capability available; behaviorally equivalent or superior |
 | 🟦 divergent | Intentionally different design; revisit before porting |
-| 🔵 swarm-lead | swarm-harness has it; macro-agent doesn't (not a gap — context) |
+| 🔵 swarm-lead | openswarm has it; macro-agent doesn't (not a gap — context) |
 
 **Priority:** `P0` (blocks migration) · `P1` (meaningful gap) · `P2` (nice-to-have) · `P3` (deferred / unclear value)
 
@@ -40,7 +40,7 @@ Reference paths below are relative to `references/macro-agent/`.
 ## 1. OpenHive hosting-adapter contract _(was: networked servers)_
 
 The original N1–N5 "servers buffet" resolves, per OpenHive's actual usage
-(`references/openhive`), into **one bounded thing: be a hostable OpenSwarm
+(`references/openhive`), into **one bounded thing: be a hostable Swarm Runner
 adapter.** OpenHive doesn't *connect to* a swarm — it **spawns** it as a child
 subprocess on 127.0.0.1 (`src/swarm/providers/local.ts` `LocalProvider`,
 `spawn(bin, ['--port','--host','--adapter','macro-agent'])`), binds **three
@@ -58,11 +58,11 @@ the hub UI (the escalate target for hosted teams; ties to W1).
 
 | # | Piece | Status | Priority | Effort | Notes |
 |---|---|---|---|---|---|
-| H0 | **Programmatic `boot()` host entry** (binds the three ports from flags + bootstrap env) | ❌ | P1 | M | Foundational — swarm-harness's analog of macro-agent `bootV2()`; none exists today. Per **D3 Path B**, swarm-harness binds its **own** ports (no openswarm gateway); OpenHive spawns it via `spawn_command_override`. |
+| H0 | **Programmatic `boot()` host entry** (binds the three ports from flags + bootstrap env) | ❌ | P1 | M | Foundational — openswarm's analog of macro-agent `bootV2()`; none exists today. Per **D3 Path B**, openswarm binds its **own** ports (no Swarm Runner gateway); OpenHive spawns it via `spawn_command_override`. |
 | H1 | **ACP-over-WebSocket** on `--port` at `/acp` (+ ACP-over-MAP) | ❌ | P1 | M | Primary live channel. Wrap the existing stdio `AcpAgent` (`src/acp/index.ts`) in a WS transport — reuses shipped ACP + `session/load`/resume + `_meta.swarm` work. (was N2) |
-| H2 | **MAP server** on `--port+2` at `/map` + bridges | ⚠️ | P1 | L | **Dominant cost.** Hub's `MAPClientManager` connects here. Today swarm-harness only forwards *outbound* over a shim (`map-adapter.ts`); gap = *hosting* a MAP server via **`@multi-agent-protocol/sdk`** (D3, replaces `map-protocol.ts`) + per-agent register (`map/agents/register`, `protocols:['acp']`) + sidecar dial-back + task/mail bridges. (subset of old O1) |
+| H2 | **MAP server** on `--port+2` at `/map` + bridges | ⚠️ | P1 | L | **Dominant cost.** Hub's `MAPClientManager` connects here. Today openswarm only forwards *outbound* over a shim (`map-adapter.ts`); gap = *hosting* a MAP server via **`@multi-agent-protocol/sdk`** (D3, replaces `map-protocol.ts`) + per-agent register (`map/agents/register`, `protocols:['acp']`) + sidecar dial-back + task/mail bridges. (subset of old O1) |
 | H3 | **Health/metrics HTTP** on `--port+1` | ❌ | P2 | S | `/health` probed by the hub (`deriveHealthUrls`). Trivial — **not** the full REST CRUD. |
-| H4 | **OpenSwarm bootstrap protocol** | ❌ | P2 | S | `--port/--host/--adapter` flags + env (`OPENSWARM_BOOTSTRAP_TOKEN`, `OPENSWARM_DATA_DIR`, `MACRO_BOOTSTRAP_COORDINATOR/CWD`, `MACRO_BOOTSTRAP_REHYDRATE=all` → restore full agent tree on restart). |
+| H4 | **OpenSwarm bootstrap protocol** | ❌ | P2 | S | `--port/--host/--adapter` flags + env (`OPENSWARM_BOOTSTRAP_TOKEN`, `OPENSWARM_DATA_DIR`, `OPENSWARM_BOOTSTRAP_COORDINATOR/CWD`, `OPENSWARM_BOOTSTRAP_REHYDRATE=all` → restore full agent tree on restart). |
 | H5 | **Cascade-action handlers** (`merge/abandon/pause/resume/resolve/push/commit`) | ❌ | P1 | M | The hub's buttons over the git-workspace layer. `resolve` = escalate-to-human (links W1); `merge/push/commit/abandon` call the same landing primitives as W1/W2/W5. Build alongside §2. |
 | ~~N1~~ | ~~REST/HTTP CRUD API~~ | 🚫 | — | — | **Rejected.** OpenHive uses MAP for agent/task/team ops; only `/health`+metrics over HTTP (→ H3). |
 | ~~N3~~ | ~~Cross-instance federation~~ | 🚫 | — | — | **Rejected.** OpenHive *is* the coordination/federation plane; a hosted child never peer-federates. |
@@ -74,7 +74,7 @@ the hub UI (the escalate target for hosted teams; ties to W1).
 ## 2. Git workspace topology & landing
 
 macro-agent's centerpiece: a declarative per-role YAML grammar driving stream
-placement, landing, and conflict recovery. swarm-harness has git-cascade
+placement, landing, and conflict recovery. openswarm has git-cascade
 worktree isolation + `mergeStreams`, but the recovery/queue depth and the
 declarative DSL are thinner. This is the highest-leverage cluster for migration.
 
@@ -92,13 +92,13 @@ declarative DSL are thinner. This is the highest-leverage cluster for migration.
 ## 3. Agent runtime model
 
 The deepest structural difference. macro-agent **detects and wraps installed
-CLI agents** as black boxes; swarm-harness **is** the agent. Full parity here is
+CLI agents** as black boxes; openswarm **is** the agent. Full parity here is
 a product decision, not just engineering.
 
 | # | Gap | Status | Priority | Effort | Notes |
 |---|---|---|---|---|---|
-| R1 | **Foreign CLI-agent detection & wrapping** (`src/agent-detection/`, drives Claude Code / arbitrary CLI agents via `acp-factory`) | 🚫 | — | XL | **Rejected** (D2) — directly contradicts swarm-harness's vision of building its own agent (`00-vision.md`). "Remote orchestration" (§1) ≠ wrapping foreign CLIs. swarm-harness keeps its own `AgentEngine` + the one Codex framework. |
-| R2 | **`acp-factory`-based session/handle abstraction** for heterogeneous agents | 🚫 | — | L | **Rejected** with R1. swarm-harness's `AgentEngine` seam is the equivalent. |
+| R1 | **Foreign CLI-agent detection & wrapping** (`src/agent-detection/`, drives Claude Code / arbitrary CLI agents via `acp-factory`) | 🚫 | — | XL | **Rejected** (D2) — directly contradicts openswarm's vision of building its own agent (`00-vision.md`). "Remote orchestration" (§1) ≠ wrapping foreign CLIs. openswarm keeps its own `AgentEngine` + the one Codex framework. |
+| R2 | **`acp-factory`-based session/handle abstraction** for heterogeneous agents | 🚫 | — | L | **Rejected** with R1. openswarm's `AgentEngine` seam is the equivalent. |
 
 ---
 
@@ -106,8 +106,8 @@ a product decision, not just engineering.
 
 | # | Gap | Status | Priority | Effort | Notes |
 |---|---|---|---|---|---|
-| O1 | **Deep MAP integration** (macro `src/map/`: server, sidecar, multiple bridges, cascade-diff-server — ~16 files) | ⚠️ | P2 | L | swarm-harness is **outbound-only**: forwards lane events via `--map ws://` (`src/swarm/adapters/map-adapter.ts` + `map-protocol.ts`). Gap = hosting/serving the MAP surface (diff server, sidecar, richer bridges). |
-| O2 | **Trajectory / coordination / cascade-diff bridges** | ⚠️ | P2 | M | Subset of O1; macro has dedicated bridges (`trajectory-reporter.ts`, `coordination-handler.ts`, `cascade-diff-server.ts`). swarm-harness emits events but doesn't reconstruct trajectories/diffs server-side. |
+| O1 | **Deep MAP integration** (macro `src/map/`: server, sidecar, multiple bridges, cascade-diff-server — ~16 files) | ⚠️ | P2 | L | openswarm is **outbound-only**: forwards lane events via `--map ws://` (`src/swarm/adapters/map-adapter.ts` + `map-protocol.ts`). Gap = hosting/serving the MAP surface (diff server, sidecar, richer bridges). |
+| O2 | **Trajectory / coordination / cascade-diff bridges** | ⚠️ | P2 | M | Subset of O1; macro has dedicated bridges (`trajectory-reporter.ts`, `coordination-handler.ts`, `cascade-diff-server.ts`). openswarm emits events but doesn't reconstruct trajectories/diffs server-side. |
 
 ---
 
@@ -116,7 +116,7 @@ a product decision, not just engineering.
 | # | Gap | Status | Priority | Effort | Notes |
 |---|---|---|---|---|---|
 | C1 | **Per-role capability gating in YAML** (`capabilities: [workspace.commit, workspace.land, ...]` gating MCP tools) | 🟦 | P2 | S | **~80% already met, divergently.** swarm gates per-role via `Role.allowedTools: readonly string[]` (`roles.ts:38`) + the dispatcher's `allowedTools` set (`dispatcher.ts:58`) — it lists tool *names* directly instead of macro's `capability → CAPABILITY_TOOL_MAP → tools` indirection (`capabilities.ts:157`). New tools (`resolve_conflict`, `drain_queue`) are already listable there. Named capability *groups* are optional sugar over `allowedTools`; not required for parity. |
-| C2 | **Capability-gated `spawn_agent`** (depth/permission via capability, not just depth-limit) | ⚠️ | P2 | S | swarm-harness has `depth-limit.ts` + ancestry; macro additionally gates spawn via role capability. Align the gating model. |
+| C2 | **Capability-gated `spawn_agent`** (depth/permission via capability, not just depth-limit) | ⚠️ | P2 | S | openswarm has `depth-limit.ts` + ancestry; macro additionally gates spawn via role capability. Align the gating model. |
 
 ---
 
@@ -124,9 +124,9 @@ a product decision, not just engineering.
 
 | # | Gap | Status | Priority | Effort | Notes |
 |---|---|---|---|---|---|
-| F1 | **`.multiagent/teams/<name>/` layout** (team.yaml + `roles/*.yaml` extending base roles + `prompts/*.md`) | ⚠️ | P2 | M | swarm-harness uses openteams templates + inline `TeamSpec`. Gap = the role-extends-base + split-prompt-file convention. Decide whether to adopt macro's layout or map it onto openteams. |
-| F2 | **Role inheritance** (`grinder` extends `worker`, `judge` extends `monitor`) | ❌ | P2 | S | No role-extends-base mechanism in swarm-harness role registry. |
-| F3 | **`on_team_complete` / `on_team_stop` team-stream policy** (keep / merge_to_main / abandon) | ⚠️ | P2 | S | swarm-harness has merge-to-target on completion; the keep/abandon team-stream lifecycle policy is partial. |
+| F1 | **`.multiagent/teams/<name>/` layout** (team.yaml + `roles/*.yaml` extending base roles + `prompts/*.md`) | ⚠️ | P2 | M | openswarm uses openteams templates + inline `TeamSpec`. Gap = the role-extends-base + split-prompt-file convention. Decide whether to adopt macro's layout or map it onto openteams. |
+| F2 | **Role inheritance** (`grinder` extends `worker`, `judge` extends `monitor`) | ❌ | P2 | S | No role-extends-base mechanism in openswarm role registry. |
+| F3 | **`on_team_complete` / `on_team_stop` team-stream policy** (keep / merge_to_main / abandon) | ⚠️ | P2 | S | openswarm has merge-to-target on completion; the keep/abandon team-stream lifecycle policy is partial. |
 
 ---
 
@@ -141,9 +141,9 @@ a product decision, not just engineering.
 | ACP editor integration | ✅ | stdio (N2 is the WS gap), plus `_meta.swarm` convention macro lacks. |
 | MAP event forwarding | ✅ | outbound (O1 is the server-side gap). |
 
-## swarm-harness leads (🔵 — macro-agent has no equivalent)
+## openswarm leads (🔵 — macro-agent has no equivalent)
 
-These are *why* swarm-harness can be the successor — it owns the vertical stack
+These are *why* openswarm can be the successor — it owns the vertical stack
 macro-agent delegates to wrapped binaries: its own pluggable `AgentEngine`
 (Claude Agent SDK + native Vercel-AI-SDK + Codex), 15 native Tier-0 tools,
 multi-provider transports (Anthropic/OpenAI/xAI/Google/DashScope), an
@@ -163,7 +163,7 @@ differently:
 - **macro-agent is agent-centric.** Each agent calls a `done()` MCP tool → a
   role-specific **done handler** runs `LandingStrategy.land()` → on conflict the
   handler dispatches a `ConflictRecoveryStrategy`. Per-agent, self-triggered.
-- **swarm-harness is topology-centric.** Members run and exit; the **topology
+- **openswarm is topology-centric.** Members run and exit; the **topology
   executor** merges streams afterward. The entire landing path is
   `PeerTeamTopology.maybeMergeStreams()` (`peer-team.ts:428`) — a loop over
   members calling `ctx.host.mergeStreamForAgent` / `mergeStreamToBranchForAgent`.
@@ -213,17 +213,17 @@ landing/recovery primitives W1/W2/W5 build (H5). Build them together.
 
 ### D3 — OpenHive hosting: Path B (direct-spawn) + real MAP SDK _(decided 2026-06-09)_
 
-OpenHive hosts swarms via `openswarm` (a gateway + TUI) that loads a
+OpenHive hosts swarms via `swarm-runner` (a gateway + TUI) that loads a
 `MAPServerAdapter` plugin — macro-agent plugs in as `src/hosting/adapters/
 macro-agent.ts` (~340 lines of glue) whose `bootV2()` binds the three ports.
-swarm-harness is a *full product* (own TUI/engine/binary), not a headless
+openswarm is a *full product* (own TUI/engine/binary), not a headless
 backend, so:
 
-- **Path B (direct-spawn, standalone)** — swarm-harness binds its **own** three
+- **Path B (direct-spawn, standalone)** — openswarm binds its **own** three
   ports and speaks MAP; OpenHive spawns it via `LocalProvider`'s
-  `spawn_command_override` (the path already reserved for "non-openswarm kinds").
-  No `openswarm` dependency. A thin openswarm adapter can come later for free
-  once the `boot()` core exists, but is not the target.
+  `spawn_command_override` (the path already reserved for non-Swarm Runner kinds).
+  No `swarm-runner` dependency. A thin Swarm Runner adapter can come later for
+  free once the `boot()` core exists, but is not the target.
 - **Adopt `@multi-agent-protocol/sdk`** for the MAP layer (H2), replacing the
   in-house `map-protocol.ts` shim — guarantees wire parity with the hub for the
   server, `map/agents/register`, and ACP-over-MAP paths.
@@ -235,7 +235,7 @@ upgraded to a server); lane/lifecycle events for the bridge; git-cascade
 primitives for cascade actions.
 
 **Dominant cost = H2** (become a MAP *server* with per-agent registration +
-ACP-over-MAP). Today swarm-harness only *emits* MAP outbound over a shim. H1
+ACP-over-MAP). Today openswarm only *emits* MAP outbound over a shim. H1
 reuses the ACP work; H3/H4 are mechanical; H5 converges with §2.
 
 ## Status

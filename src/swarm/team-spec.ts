@@ -41,8 +41,17 @@ export interface MemberSpec {
   readonly commitPolicy?: CommitPolicy;
   readonly escalationPolicy?: EscalationPolicy;
   readonly model?: string;
-  /** V0.4.Q9 — mixed-engine consultant flag (deferred; placeholder). */
-  readonly framework?: "claude-agent-sdk" | "codex-chatgpt";
+  /**
+   * Per-member engine framework, forwarded to the spawned worker as
+   * OPENSWARM_FRAMEWORK (Phase 2.2). Union is the worker-validated set after
+   * Phase 2.1; omit for the default `auto` selection.
+   */
+  readonly framework?:
+    | "claude-agent-sdk"
+    | "codex-chatgpt"
+    | "codex-native"
+    | "native"
+    | "hardened-native";
   /**
    * V0.4 stage 4E.4 — opt this member into long-lived worker mode.
    *
@@ -79,6 +88,15 @@ export interface MemberSpec {
    * the target triggers a (debounced) cascade rebase of the target's dependents.
    */
   readonly onParentAdvanced?: "sync";
+  /**
+   * docs/44 P4 / Phase 3 B3 — per-member landing strategy. `merge-to-parent`
+   * (default) merges the member's stream directly; `queue-to-branch` enqueues
+   * it for ordered draining (the topology drains the queue once all members
+   * have landed). `queue-to-branch` requires `mergeStreams.targetBranch` and
+   * a queue-capable adapter (git-cascade); otherwise the member is skipped
+   * with a team_note, same as any unsupported-adapter landing.
+   */
+  readonly landing?: "merge-to-parent" | "queue-to-branch";
 }
 
 /**
@@ -95,12 +113,15 @@ export const MemberSpecSchema = z.object({
   commitPolicy: z.unknown().optional(),
   escalationPolicy: z.unknown().optional(),
   model: z.string().optional(),
-  framework: z.enum(["claude-agent-sdk", "codex-chatgpt"]).optional(),
+  framework: z
+    .enum(["claude-agent-sdk", "codex-chatgpt", "codex-native", "native", "hardened-native"])
+    .optional(),
   longLived: z.boolean().optional(),
   cwd: z.string().optional(),
   sessionSidecarPath: z.string().optional(),
   onConflict: z.string().min(1).optional(),
   onParentAdvanced: z.literal("sync").optional(),
+  landing: z.enum(["merge-to-parent", "queue-to-branch"]).optional(),
 }) satisfies z.ZodType<unknown>;
 
 // ---------------------------------------------------------------------------

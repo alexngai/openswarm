@@ -10,7 +10,7 @@
                        │ spawn     │ messages
                        ▼           ▼
                 ┌──────────────────────────────┐
-                │  atomic agent (swarm-harness)  │
+                │  atomic agent (openswarm)  │
                 │  ┌────────────────────────┐  │
                 │  │ cli / ui               │  │  ink | headless JSONL
                 │  ├────────────────────────┤  │
@@ -67,14 +67,10 @@ src/
     archive.ts       # L3 — session archive with FTS5 search
     coordinator.ts   # L4 — MemoryCoordinator (provider fan-out, deduplication)
     lifecycle.ts     # engine lifecycle hooks (onSessionStart → onSessionEnd)
-    fragment.ts      # ContextFragment for injecting curated memory into system prompt
-    agent-scope.ts   # per-agent memory isolation + shared memory bus
-    state-store.ts   # StateDB adapters (CuratedStore, ArchiveStore)
     providers/
       file-provider.ts    # built-in provider wrapping L1 curated memory
       minimem-provider.ts # optional hybrid vector + BM25 search (graceful degradation)
-  state/             # SQLite-backed state database (sessions, goals, memory, audit log)
-  context/           # composable system prompt fragments with priority ordering
+  state/             # SQLite-backed state database (sessions, memory, audit log)
   session/           # per-worktree JSONL + engine SessionSnapshot
   tools/
     tier0/           # bash, file_ops, search, todo
@@ -114,8 +110,8 @@ Atomic agent has two runtime modes — same code, different entry:
 
 | Mode | Entry | Consumer |
 |---|---|---|
-| Interactive | `swarm-harness` (ink UI) | Human user |
-| Headless | `swarm-harness --headless --task-file=…` (JSONL on stdout) | Swarm orchestrator, CI, scripts |
+| Interactive | `openswarm` (ink UI) | Human user |
+| Headless | `openswarm --headless --task-file=…` (JSONL on stdout) | Swarm orchestrator, CI, scripts |
 
 The swarm orchestrator spawns atomic agents as subprocess workers by default. In-process mode is an optimization deferred until startup cost becomes a problem.
 
@@ -125,4 +121,4 @@ The swarm orchestrator spawns atomic agents as subprocess workers by default. In
 - Event shapes live in `src/core/events.ts` and are stable across versions.
 - Every event carries `ts`, `agentId`, `type`, `payload`.
 - Workers receive their task via `--task-file` (a JSON file), not via argv. Argv is reserved for flags.
-- Workers inherit env: `SWARM_HARNESS_AGENT_ID`, `SWARM_HARNESS_PARENT_PID`, `ANTHROPIC_API_KEY`.
+- Workers inherit env: `OPENSWARM_AGENT_ID`, `OPENSWARM_PARENT_PID`, `ANTHROPIC_API_KEY`.

@@ -1,5 +1,5 @@
 /**
- * Classify codex Responses HTTP errors into swarm-harness ProviderErrors.
+ * Classify codex Responses HTTP errors into openswarm ProviderErrors.
  *
  * Handles both error body shapes seen live (docs/42):
  *   - model gating: `{ "detail": "The 'gpt-5.4' model is not supported ..." }` (400)
@@ -7,6 +7,7 @@
  */
 
 import type { ProviderError } from "../../core/types.js";
+import { httpStatusToProviderCode } from "../error-classifier.js";
 
 export interface ClassifiedError {
   readonly error: ProviderError;
@@ -57,19 +58,21 @@ export function classifyCodexHttpError(
   if (status === 401 || status === 403) {
     return {
       error: { code: "auth", message: baseMessage, retryable: false },
-      friendlyMessage: "ChatGPT authentication failed — run `swarm-harness login --provider openai-codex`.",
+      friendlyMessage: "ChatGPT authentication failed — run `openswarm login --provider openai-codex`.",
     };
   }
 
-  // Model gating and other client errors. The backend's `detail` is the
-  // source of truth (plan-dependent allowlist — docs/42 §6.4).
-  if (status >= 400 && status < 500) {
-    return { error: { code: "invalid_request", message: baseMessage, retryable: false } };
-  }
-
-  if (status >= 500) {
-    return { error: { code: "provider_unavailable", message: baseMessage, retryable: true } };
-  }
-
-  return { error: { code: "unknown", message: baseMessage, retryable: false } };
+  // Everything else maps through the shared status→code table (Phase 2.3):
+  // 4xx → invalid_request (model gating and other client errors; the backend's
+  // `detail` is the source of truth — plan-dependent allowlist, docs/42 §6.4),
+  // 5xx → provider_unavailable, retryable. Kept below the codex-specific
+  // usage-limit and auth branches so their friendlier messaging wins.
+  const mappedCode = httpStatusToProviderCode(status);
+  return {
+    error: {
+      code: mappedCode,
+      message: baseMessage,
+      retryable: mappedCode === "provider_unavailable" || mappedCode === "rate_limit",
+    },
+  };
 }

@@ -61,6 +61,7 @@ class InMemoryArchiveStore implements ArchiveStore {
 // ---------------------------------------------------------------------------
 
 let _store: ArchiveStore = new InMemoryArchiveStore();
+let _explicit = false;
 
 export function getArchiveStore(): ArchiveStore {
   return _store;
@@ -68,10 +69,23 @@ export function getArchiveStore(): ArchiveStore {
 
 export function setArchiveStore(store: ArchiveStore): void {
   _store = store;
+  _explicit = true;
+}
+
+/**
+ * Install a store only when no caller has explicitly chosen one (Phase 3 B2).
+ * The FileMemoryProvider uses this to swap the volatile in-memory default for
+ * the durable FileArchiveStore without clobbering test doubles installed via
+ * setArchiveStore.
+ */
+export function installDefaultArchiveStore(store: ArchiveStore): void {
+  if (_explicit) return;
+  _store = store;
 }
 
 export function resetArchiveStore(): void {
   _store = new InMemoryArchiveStore();
+  _explicit = false;
 }
 
 // ---------------------------------------------------------------------------

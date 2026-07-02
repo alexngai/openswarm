@@ -1,5 +1,5 @@
 /**
- * history.ts — persistent prompt history for the swarm-harness REPL.
+ * history.ts — persistent prompt history for the openswarm REPL.
  *
  * Pure Node module: no UI deps, no Solid, no @opentui imports. File I/O is
  * intentionally synchronous so the submit flow stays simple — `appendFileSync`
@@ -23,13 +23,13 @@ export const HISTORY_CAP = 10_000;
 
 export const DEFAULT_HISTORY_PATH = path.join(
   os.homedir(),
-  ".swarm-harness",
+  ".openswarm",
   "history",
 );
 
-/** Resolve path: prefer SWARM_HARNESS_HISTORY_PATH env override, then default. */
+/** Resolve path: prefer OPENSWARM_HISTORY_PATH env override, then default. */
 function resolvePath(filePath?: string): string {
-  return filePath ?? process.env["SWARM_HARNESS_HISTORY_PATH"] ?? DEFAULT_HISTORY_PATH;
+  return filePath ?? process.env["OPENSWARM_HISTORY_PATH"] ?? DEFAULT_HISTORY_PATH;
 }
 
 /**

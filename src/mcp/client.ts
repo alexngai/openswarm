@@ -81,7 +81,7 @@ export class McpStdioClient {
     });
 
     const client = new Client(
-      { name: "swarm-harness", version: "0.0.1" },
+      { name: "openswarm", version: "0.0.1" },
       { capabilities: {} },
     );
 

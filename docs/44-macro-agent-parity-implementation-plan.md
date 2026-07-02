@@ -163,7 +163,7 @@ defer + escalate. (Mirror macro's `conflict-resolution-git.e2e.test.ts`.)
 
 **Test-loop model (verified in this environment).** Integration tests spawn real
 `node dist/cli.js --worker` subprocesses but select a `ScriptedTestEngine` via
-`SWARM_HARNESS_TEST_SCRIPT=<fixture.json>` (`worker-entry.ts:359`); a fixture is a
+`OPENSWARM_TEST_SCRIPT=<fixture.json>` (`worker-entry.ts:359`); a fixture is a
 JSON event array that includes **real tool calls** (`tool_use_* → tool_result`,
 e.g. `test/fixtures/worker-scripts/with-tool-call.json`). So two loops:
 
@@ -266,10 +266,10 @@ two target worktrees).
   removed, `{kind:"resolved"}`. Validates the git + coordination glue the unit
   mocks couldn't. _(M)_
 - **P2b.5 — Loop 2 gated live test. ✅ DONE — PASSES live (2026-06-09).**
-  `recovery/resolver-spawner.live.test.ts` — `describe.skipIf(!SWARM_HARNESS_LIVE_RESOLVER)`:
+  `recovery/resolver-spawner.live.test.ts` — `describe.skipIf(!OPENSWARM_LIVE_RESOLVER)`:
   real git conflict → real `TeamSession.spawnMember` resolver subprocess (live
   engine) → real `resolve_conflict` IPC → finalize. Skipped by default (suite
-  green); run with `SWARM_HARNESS_LIVE_RESOLVER=1`. **Confirmed end-to-end with
+  green); run with `OPENSWARM_LIVE_RESOLVER=1`. **Confirmed end-to-end with
   real Claude: the resolver resolves both sides, commits via bash, signals, the
   IPC wakes the coordinator, finalize advances `main` — ~14s.**
 
@@ -291,7 +291,7 @@ two target worktrees).
   before P4/production).
 
   _(original note:)_ Real subprocess resolver via Claude behind
-  `SWARM_HARNESS_LIVE_RESOLVER=1`: real engine + `resolver` role prompt, longer
+  `OPENSWARM_LIVE_RESOLVER=1`: real engine + `resolver` role prompt, longer
   timeout. The only path that exercises the real agent-driven resolution +
   resolve_conflict IPC end-to-end. Manual. _(S)_
 
@@ -414,7 +414,7 @@ priority/FIFO order by one integrator; conflicts in the drain route to recovery;
 
 ### P5 — `boot()` host entry + bootstrap + health (H0/H4/H3) _(M)_ — ✅ DONE (2026-06-10)
 
-swarm-harness's analog of macro's `bootV2` — binds its own ports, reads bootstrap.
+openswarm's analog of macro's `bootV2` — binds its own ports, reads bootstrap.
 
 > **P5 — ✅ DONE (2026-06-10).** `src/host/` landed: `bootSwarmHost()`
 > (`boot.ts`) derives the OpenHive 3-port stride (base=ACP-WS, base+1=health,
@@ -422,8 +422,8 @@ swarm-harness's analog of macro's `bootV2` — binds its own ports, reads bootst
 > `GET /health` (+ `/healthz`) → `200 {status:"ok", swarmId?, uptimeMs, ports}`
 > on base+1 (NOT REST CRUD, per D2); `bootstrap.ts` parses the OpenHive contract
 > (`OPENSWARM_BOOTSTRAP_TOKEN` base64-JSON, `OPENSWARM_DATA_DIR`,
-> `MACRO_BOOTSTRAP_COORDINATOR|CWD|REHYDRATE`, plus `SWARM_HARNESS_*` aliases).
-> CLI: `swarm-harness host --port N [--host H] [--adapter X]` (`cli/host.ts`,
+> `OPENSWARM_BOOTSTRAP_COORDINATOR|CWD|REHYDRATE`).
+> CLI: `openswarm host --port N [--host H] [--adapter X]` (`cli/host.ts`,
 > `argv.ts`, `main.ts`) stays alive until SIGTERM/SIGINT → graceful shutdown.
 > Smoke-tested end-to-end: spawn → `/health` 200 → SIGTERM clean exit. The
 > ACP-WS (base, P6) and MAP (base+2, P7) servers slot into the reserved ports
@@ -439,13 +439,13 @@ swarm-harness's analog of macro's `bootV2` — binds its own ports, reads bootst
   (probed by OpenHive `deriveHealthUrls`). **Not** REST CRUD (D2).
 - `src/cli/*` — `--port` / `--host` flags routed to `bootSwarmHost`.
 - Bootstrap env: read `OPENSWARM_BOOTSTRAP_TOKEN`, `OPENSWARM_DATA_DIR`,
-  `MACRO_BOOTSTRAP_COORDINATOR/CWD`, `MACRO_BOOTSTRAP_REHYDRATE` (swarm-harness-
-  prefixed aliases acceptable). State dir keyed by `swarm_id`.
+  `OPENSWARM_BOOTSTRAP_COORDINATOR/CWD`, and
+  `OPENSWARM_BOOTSTRAP_REHYDRATE`. State dir keyed by `swarm_id`.
 - **Rehydrate-on-restart**: on boot with `REHYDRATE=all`, restore the full agent
   tree from the session store (the one non-trivial bit — needs the daemon/session
   persistence to enumerate + respawn).
 
-**Acceptance:** `swarm-harness host --port N` binds 3 ports, answers `/health`,
+**Acceptance:** `openswarm host --port N` binds 3 ports, answers `/health`,
 boots a coordinator when `BOOTSTRAP_COORDINATOR` is set, and OpenHive's
 `spawn_command_override` path reaches a healthy swarm.
 
@@ -463,8 +463,8 @@ boots a coordinator when `BOOTSTRAP_COORDINATOR` is set, and OpenHive's
 > path (`runAcpTeam`, refactored, regression-free) and the host. `boot.ts` binds
 > the ACP-WS server when an `acpFactory` is supplied; `cli/host.ts` wires the
 > team factory so each WS client gets its own coordinator team. Verified
-> end-to-end: a WebSocket client `initialize` against the live `swarm-harness
-> host` returns `{protocolVersion, agentInfo:swarm-harness, agentCapabilities:{
+> end-to-end: a WebSocket client `initialize` against the live `openswarm
+> host` returns `{protocolVersion, agentInfo:openswarm, agentCapabilities:{
 > loadSession:true, _meta.swarm}}` — resume-by-session rides on `loadSession`
 > (AcpTeamAgent's session/load + spine replay). Concurrent connections get
 > independent teams (single-active-client assumption; reconnect resumes via the
@@ -499,18 +499,18 @@ enrichment rides through.
 > lifecycle/task/mail lane events onto the MAP event bus. `boot.ts` stands up the
 > MAP server + bridge when `map:true`; `cli/host.ts` enables it. Verified
 > end-to-end: a real MAP SDK `ClientConnection` over WS completed the `connect`
-> handshake against the live `swarm-harness host` and called `listAgents()`.
+> handshake against the live `openswarm host` and called `listAgents()`.
 > **SDK packaging fix:** the SDK's `/server` subpath shipped no `.d.ts`
 > (rollup-dts hard-fails on pre-existing federation/auth strict errors); fixed in
 > the `references/multi-agent-protocol` submodule by emitting the server
 > declaration tree with `tsc` (best-effort) and repointing the `./server` export
-> — symlinked into swarm-harness node_modules for now, to be republished. 16 new
+> — symlinked into openswarm node_modules for now, to be republished. 16 new
 > host tests (transport + bridge register/unregister/forward/dispose); full
 > src/host + src/acp + src/swarm gates green (955 passed). The outbound sidecar
 > (dial-back to a hub) + full task/mail bridges are the remaining follow-ons
 > beyond the OpenHive-hosted path.
 
-Today swarm-harness is MAP-client-only over a shim. Build the server.
+Today openswarm is MAP-client-only over a shim. Build the server.
 
 **New / modified**
 - Add `@multi-agent-protocol/sdk` dep (D3); **replace** `src/swarm/adapters/
@@ -534,7 +534,7 @@ against the SDK.
 
 ## P8 — CONVERGENCE: cascade actions + `_macro/spawnAgent` (H5) _(M)_ — ✅ DONE (2026-06-10)
 
-> **P8 — ✅ DONE (2026-06-10).** The end-to-end "swarm-harness hosted by
+> **P8 — ✅ DONE (2026-06-10).** The end-to-end "openswarm hosted by
 > OpenHive" milestone. `src/host/macro-methods.ts`: `_macro/spawnAgent`
 > (→ `StandaloneHost.spawn`, long-lived, tracks the handle) + `_macro/terminateAgent`
 > (→ `handle.kill()`), registered as MAP `additionalHandlers` (request/response);
@@ -544,7 +544,7 @@ against the SDK.
 > `host.mergeStreamIdIntoBranch` (added as a host passthrough + adapter-interface
 > method), `resolve` → `host.resolveConflict` (the P2 coordinator signal),
 > `abandon` → emit abandoned; `commit`/`pause`/`resume`/`push` emit a structured
-> `unsupported` (swarm-harness's leaner adapter); every action emits an
+> `unsupported` (openswarm's leaner adapter); every action emits an
 > `x-cascade/stream.*` result back on the MAP bus. `boot.ts` registers both when
 > `map:true`, and now attaches a `GitCascadeBranchPolicyAdapter` to the hosted
 > host when `cwd` is a git repo (so cascade merges operate on real git;
@@ -571,7 +571,7 @@ Wire OpenHive's hub buttons to Track A's primitives. Needs P1 (recovery) + P4
 
 **Acceptance:** from an OpenHive-style client, spawning a coordinator, merging a
 member's stream, and resolving an escalated conflict all succeed over MAP. This is
-the end-to-end "swarm-harness hosted by OpenHive" milestone.
+the end-to-end "openswarm hosted by OpenHive" milestone.
 
 ---
 
@@ -580,7 +580,7 @@ the end-to-end "swarm-harness hosted by OpenHive" milestone.
 `auto-resolve` · `direct-push`/`optimistic-push` · declarative workspace DSL (W4)
 · capability→tool map (C1) · foreign-agent wrapping (R1/R2) · REST CRUD API ·
 cross-instance federation · networked control server · cognitive/analyst backend
-(N5, deferred). The openswarm *adapter* (Path A) is a cheap later add once
+(N5, deferred). The Swarm Runner *adapter* (Path A) is a cheap later add once
 `boot()` exists, not in this plan.
 
 ## Test strategy
@@ -598,9 +598,9 @@ cross-instance federation · networked control server · cognitive/analyst backe
 ## Status
 
 **Track A (P0–P4) + hardening: ✅ DONE.** **Track B (P5–P8): ✅ DONE
-(2026-06-10).** The full plan has landed — swarm-harness has macro-agent's
+(2026-06-10).** The full plan has landed — openswarm has macro-agent's
 git-workspace primitives (Track A) and is OpenHive-hostable end-to-end (Track B):
-`swarm-harness host --port N` binds the 3-port stride (ACP-WS / health / MAP),
+`openswarm host --port N` binds the 3-port stride (ACP-WS / health / MAP),
 OpenHive connects ACP on `base` and MAP on `base+2`, and its cascade-action
 buttons + `_macro/spawnAgent` drive the Track-A primitives. Commit refs: P5
 `74a8e60`, P6 `90a760a`, P7 `b2669d8`, P8 `603691e` (+ the SDK packaging fix in
@@ -629,12 +629,12 @@ socket):
   `createTeamConnection` / `AcpTeamAgent` via a per-stream forwarding shim — all
   team logic reused. **Validated end-to-end** (committed test): a real SDK
   `TestServer` hub + `ClientConnection`/`createACPStream` → our sidecar's adapter
-  → `AcpTeamAgent`; `initialize` returns the swarm-harness capabilities
+  → `AcpTeamAgent`; `initialize` returns the openswarm capabilities
   (`agentInfo`, `loadSession`, `_meta.swarm`) and `newSession` creates the team —
   so the cross-SDK ACP type/version bridging works. (A live `prompt()` runs a
   real coordinator/model and is exercised separately.)
-- CLI/boot: `swarm-harness host --port N --map-server ws://hub [--map-scope …]
-  [--onboard-token …]` (or `SWARM_MAP_SERVER` env) → outbound sidecar + ACP-over-MAP;
+- CLI/boot: `openswarm host --port N --map-server ws://hub [--map-scope …]
+  [--onboard-token …]` (or `OPENSWARM_MAP_SERVER` env) → outbound sidecar + ACP-over-MAP;
   gated on explicit config (never on a bootstrap token alone).
 
 Verified end-to-end: the real SDK `AgentConnection` dials a real `MAPServer`,
@@ -653,7 +653,7 @@ After the hosting paths landed, the open items were worked down:
   `task.created` / `task.status` shapes (was generic `lane.task_*`). Mail-thread →
   MAP-conversation projection remains the larger agent-inbox bridge (deferred).
 - **Rehydrate-on-restart — ✅ DONE as orphan cleanup** (`9ccc9cc`): the
-  architecture-fitting subset. swarm-harness agents are ephemeral task-runners —
+  architecture-fitting subset. openswarm agents are ephemeral task-runners —
   a reconnecting ACP client resumes the transcript via `session/load` + the spine
   (P6), so there's no live agent tree to revive (macro's concept doesn't map).
   Boot now scans + cleans stale worker-state from a crashed prior run.
@@ -671,7 +671,7 @@ Done since:
   errors (type-level, plus two genuine federation contract fixes verified by the
   SDK suite) so `tsup` emits clean bundled declarations with `dts: true`.
   `./server` export → bundled `./dist/server.d.ts`; `build` back to plain `tsup`.
-  SDK build clean, **2222/2222** SDK tests pass; swarm-harness builds against the
+  SDK build clean, **2222/2222** SDK tests pass; openswarm builds against the
   bundled types. Republish (3a) is now unblocked.
 - **Retire the `--map` shim — ✅ DONE** (`9d54669`): on closer inspection the
   shim (`map-adapter.ts` + `map-protocol.ts`, used by `team start --map`) and the

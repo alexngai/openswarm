@@ -91,16 +91,16 @@ describe("codex token store", () => {
     expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
   });
 
-  it("honors SWARM_HARNESS_AUTH_DIR when no baseDir is passed", () => {
-    const prev = process.env.SWARM_HARNESS_AUTH_DIR;
-    process.env.SWARM_HARNESS_AUTH_DIR = dir;
+  it("honors OPENSWARM_AUTH_DIR when no baseDir is passed", () => {
+    const prev = process.env.OPENSWARM_AUTH_DIR;
+    process.env.OPENSWARM_AUTH_DIR = dir;
     try {
       writeCodexTokens(sample); // no baseDir → uses the env override
       expect(readCodexTokens()).toEqual(sample);
       expect(fs.existsSync(path.join(dir, "auth.json"))).toBe(true);
     } finally {
-      if (prev === undefined) delete process.env.SWARM_HARNESS_AUTH_DIR;
-      else process.env.SWARM_HARNESS_AUTH_DIR = prev;
+      if (prev === undefined) delete process.env.OPENSWARM_AUTH_DIR;
+      else process.env.OPENSWARM_AUTH_DIR = prev;
     }
   });
 });

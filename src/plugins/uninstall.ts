@@ -36,7 +36,7 @@ export async function uninstallPlugin(
   const state = await stateStore.read();
   const isInstalled = id in state.versions;
   if (!isInstalled) {
-    process.stderr.write(`[swarm-harness] plugin '${id}' is not installed\n`);
+    process.stderr.write(`[openswarm] plugin '${id}' is not installed\n`);
   }
 
   // Step 1: remove on-disk directory (ENOENT is OK)

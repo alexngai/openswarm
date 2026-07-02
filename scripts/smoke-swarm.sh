@@ -61,7 +61,7 @@ echo "→ building..."
 npm run build > /dev/null
 
 # ---------------------------------------------------------------------------
-# OFFLINE SCENARIOS (no API; ScriptedTestEngine via SWARM_CODER_TEST_SCRIPT)
+# OFFLINE SCENARIOS (no API; ScriptedTestEngine via OPENSWARM_TEST_SCRIPT)
 # ---------------------------------------------------------------------------
 
 # [O1] 3 tasks happy path
@@ -71,10 +71,10 @@ cat > "$SMOKE_DIR/tasks.jsonl" <<'EOF'
 {"id":"t2","prompt":"task two","branchPolicy":{"kind":"none"},"commitPolicy":{"kind":"none"},"escalationPolicy":{"kind":"none"}}
 {"id":"t3","prompt":"task three","branchPolicy":{"kind":"none"},"commitPolicy":{"kind":"none"},"escalationPolicy":{"kind":"none"}}
 EOF
-export SWARM_CODER_TEST_SCRIPT="$REPO_ROOT/test/fixtures/worker-scripts/text-only.json"
+export OPENSWARM_TEST_SCRIPT="$REPO_ROOT/test/fixtures/worker-scripts/text-only.json"
 EXIT_CODE=0
 $BIN swarm run "$SMOKE_DIR/tasks.jsonl" --concurrency 2 --output "$SMOKE_DIR/results.jsonl" > /tmp/swc-o1.log 2>&1 || EXIT_CODE=$?
-unset SWARM_CODER_TEST_SCRIPT
+unset OPENSWARM_TEST_SCRIPT
 
 if [[ $EXIT_CODE -eq 0 ]] && check_succeeded_lines "$SMOKE_DIR/results.jsonl" 3; then
   record PASS O1 "3 tasks happy path: results.jsonl has 3 succeeded"
@@ -92,10 +92,10 @@ cat > "$SMOKE_DIR/tasks.jsonl" <<'EOF'
 {"id":"t4","prompt":"d","branchPolicy":{"kind":"none"},"commitPolicy":{"kind":"none"},"escalationPolicy":{"kind":"none"}}
 {"id":"t5","prompt":"e","branchPolicy":{"kind":"none"},"commitPolicy":{"kind":"none"},"escalationPolicy":{"kind":"none"}}
 EOF
-export SWARM_CODER_TEST_SCRIPT="$REPO_ROOT/test/fixtures/worker-scripts/text-only.json"
+export OPENSWARM_TEST_SCRIPT="$REPO_ROOT/test/fixtures/worker-scripts/text-only.json"
 EXIT_CODE=0
 $BIN swarm run "$SMOKE_DIR/tasks.jsonl" --concurrency 2 --output "$SMOKE_DIR/results.jsonl" > /tmp/swc-o2.log 2>&1 || EXIT_CODE=$?
-unset SWARM_CODER_TEST_SCRIPT
+unset OPENSWARM_TEST_SCRIPT
 
 if [[ $EXIT_CODE -eq 0 ]] && check_succeeded_lines "$SMOKE_DIR/results.jsonl" 5; then
   record PASS O2 "5 tasks concurrency=2: 5 succeeded"
@@ -116,14 +116,14 @@ cat > "$SMOKE_DIR/tasks.jsonl" <<'EOF'
 {"id":"t4","prompt":"four","branchPolicy":{"kind":"none"},"commitPolicy":{"kind":"none"},"escalationPolicy":{"kind":"none"}}
 {"id":"t5","prompt":"five","branchPolicy":{"kind":"none"},"commitPolicy":{"kind":"none"},"escalationPolicy":{"kind":"none"}}
 EOF
-export SWARM_CODER_TEST_SCRIPT="$REPO_ROOT/test/fixtures/worker-scripts/slow.json"
+export OPENSWARM_TEST_SCRIPT="$REPO_ROOT/test/fixtures/worker-scripts/slow.json"
 $BIN swarm run "$SMOKE_DIR/tasks.jsonl" --concurrency 2 --output "$SMOKE_DIR/results.jsonl" > /tmp/swc-o3.log 2>&1 &
 SWARM_PID=$!
 sleep 0.6
 kill -INT "$SWARM_PID" 2>/dev/null
 EXIT_CODE=0
 wait "$SWARM_PID" || EXIT_CODE=$?
-unset SWARM_CODER_TEST_SCRIPT
+unset OPENSWARM_TEST_SCRIPT
 
 # Expect: exit != 0 AND at least one cancelled line in results.jsonl.
 if [[ $EXIT_CODE -ne 0 ]] && [[ -f "$SMOKE_DIR/results.jsonl" ]] && \
@@ -141,13 +141,13 @@ SMOKE_DIR=$(mktemp -d)
 cat > "$SMOKE_DIR/tasks.jsonl" <<'EOF'
 {"id":"t1","prompt":"x","branchPolicy":{"kind":"none"},"commitPolicy":{"kind":"none"},"escalationPolicy":{"kind":"none"}}
 EOF
-export SWARM_CODER_TEST_SCRIPT="$REPO_ROOT/test/fixtures/worker-scripts/text-only.json"
+export OPENSWARM_TEST_SCRIPT="$REPO_ROOT/test/fixtures/worker-scripts/text-only.json"
 EXIT_CODE=0
 $BIN swarm run "$SMOKE_DIR/tasks.jsonl" \
   --concurrency 1 \
   --output "/nonexistent-dir-smokeswarm/results.jsonl" \
   > /tmp/swc-o4.log 2>&1 || EXIT_CODE=$?
-unset SWARM_CODER_TEST_SCRIPT
+unset OPENSWARM_TEST_SCRIPT
 
 if [[ $EXIT_CODE -ne 0 ]]; then
   record PASS O4 "unwriteable --output: exit=$EXIT_CODE (non-zero)"

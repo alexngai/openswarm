@@ -204,7 +204,6 @@ function baseConfig(overrides: Partial<RunConfig> = {}): RunConfig {
       kind: "api-key" as const,
       providerId: "mock",
       isAuthenticated: async () => true,
-      headers: async () => ({}),
     },
     tools: [],
     canUseTool: async () => ({ allow: true }) as PermissionDecision,
@@ -1650,5 +1649,83 @@ describe("HardenedNativeEngine: eager tool dispatch", () => {
     const bashCall = dispatcher.dispatchCalls.find((c) => c.name === "bash");
     expect(bashCall).toBeDefined();
     expect(bashCall!.input).toEqual({ cmd: "ls" });
+  });
+});
+
+// ===========================================================================
+// Phase 4.2 — RunConfig.host threading into tool execution context
+// ===========================================================================
+
+describe("HardenedNativeEngine: RunConfig.host threading", () => {
+  const hostSentinel = { __marker: "swarm-host" } as unknown as RunConfig["host"];
+
+  function toolCallProvider(): MockProvider {
+    return new MockProvider({
+      scripts: [
+        [
+          { type: "tool-call", id: "t1", name: "bash", input: { cmd: "ls" } },
+          { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
+        ],
+        [
+          { type: "text-delta", text: "done" },
+          { type: "finish", stopReason: "end_turn", usage: DEFAULT_USAGE },
+        ],
+      ],
+    });
+  }
+
+  function ctxHostOf(req: unknown): unknown {
+    return (req as { ctx: { host?: unknown } }).ctx.host;
+  }
+
+  it("threads config.host into the batched dispatch ctx (default path)", async () => {
+    const dispatcher = new MockDispatcher({
+      scriptedResults: [{ status: "ok", output: "file.txt" }],
+    });
+    const engine = new HardenedNativeEngine({ provider: toolCallProvider() });
+    await collect(
+      engine.run(
+        baseConfig({
+          dispatcher: dispatcher as unknown as ToolDispatcher,
+          host: hostSentinel,
+        }),
+      ),
+    );
+    expect(dispatcher.batchCalls).toHaveLength(1);
+    expect(ctxHostOf(dispatcher.batchCalls[0]![0]!)).toBe(hostSentinel);
+  });
+
+  it("omits host from the dispatch ctx when config.host is unset", async () => {
+    const dispatcher = new MockDispatcher({
+      scriptedResults: [{ status: "ok", output: "file.txt" }],
+    });
+    const engine = new HardenedNativeEngine({ provider: toolCallProvider() });
+    await collect(
+      engine.run(
+        baseConfig({ dispatcher: dispatcher as unknown as ToolDispatcher }),
+      ),
+    );
+    expect(ctxHostOf(dispatcher.batchCalls[0]![0]!)).toBeUndefined();
+  });
+
+  it("threads config.host into the eager dispatch ctx", async () => {
+    const dispatcher = new MockDispatcher({
+      scriptedResults: [{ status: "ok", output: "file.txt" }],
+    });
+    const engine = new HardenedNativeEngine({
+      provider: toolCallProvider(),
+      eagerToolDispatch: true,
+    });
+    await collect(
+      engine.run(
+        baseConfig({
+          dispatcher: dispatcher as unknown as ToolDispatcher,
+          host: hostSentinel,
+        }),
+      ),
+    );
+    const bashCall = dispatcher.dispatchCalls.find((c) => c.name === "bash");
+    expect(bashCall).toBeDefined();
+    expect((bashCall!.ctx as { host?: unknown }).host).toBe(hostSentinel);
   });
 });

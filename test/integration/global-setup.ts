@@ -12,7 +12,7 @@
  * regressing any correctness guarantee — the builds were previously
  * idempotent and produced the same dist content.
  *
- * Opt out with `SWARM_HARNESS_SKIP_INTEGRATION_BUILD=1` — useful when the
+ * Opt out with `OPENSWARM_SKIP_INTEGRATION_BUILD=1` — useful when the
  * caller (e.g. smoke.sh) has already built dist.
  */
 
@@ -20,7 +20,7 @@ import { execSync } from "node:child_process";
 import * as path from "node:path";
 
 export default function setup(): void {
-  if (process.env.SWARM_HARNESS_SKIP_INTEGRATION_BUILD === "1") return;
+  if (process.env.OPENSWARM_SKIP_INTEGRATION_BUILD === "1") return;
 
   const repoRoot = path.resolve(__dirname, "..", "..");
   execSync("npm run build", {

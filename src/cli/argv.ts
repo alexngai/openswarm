@@ -1,5 +1,5 @@
 /**
- * argv.ts — hand-rolled CLI argument parser for swarm-harness.
+ * argv.ts — hand-rolled CLI argument parser for OpenSwarm.
  *
  * Parses process.argv.slice(2). No external dependencies.
  *
@@ -54,11 +54,19 @@ export interface CommonOpts {
    */
   enableWebSearch: boolean;
   /**
-   * acp subcommand: force single-agent mode (Stage A). docs/33.
+   * Plan mode: read-only investigation + design persona. When true, the
+   * *effective* permission mode is narrowed to `read-only` (in the runtime and
+   * REPL) and the plan-mode persona is appended to the system prompt.
+   * `permissionMode` above remains the user's ceiling so `/plan off` can
+   * restore write access. Toggled live in the REPL via `/plan`.
+   */
+  plan: boolean;
+  /**
+   * acp subcommand: force single-agent mode (Stage A). docs/archive/33.
    */
   readonly single?: boolean;
   /**
-   * acp subcommand: force team mode (coordinator). docs/33.
+   * acp subcommand: force team mode (coordinator). docs/archive/33.
    */
   readonly team?: boolean;
   /**
@@ -98,6 +106,14 @@ export interface CommonOpts {
    * Skipped for unknown models (only token limit applies).
    */
   readonly maxCostUsd?: number;
+  /**
+   * Maximum number of agent turns (model round-trips) for the run. On exceed the
+   * engine stops (`error_max_turns`) with the work-so-far left on disk. Applies to
+   * single-agent prompt runs — the STEP-budget analog of `--max-tokens`, for
+   * manufacturing step-bounded headroom in evals (aligns a step-economy lever with
+   * a step-denominated budget).
+   */
+  readonly maxTurns?: number;
 }
 
 export type ParsedArgs =
@@ -147,6 +163,12 @@ export type ParsedArgs =
       mapUrl?: string;
       /** v0.5 stage 5E.3: when true, fork the team daemon and return immediately. */
       detach: boolean;
+      /** Ecosystem adapters — same semantics as swarm-run. */
+      opentasks: boolean;
+      opentasksSocket?: string;
+      agentInbox: boolean;
+      gitCascade: boolean;
+      cleanupWorktrees: boolean;
     }
   | {
       kind: "topology";
@@ -163,6 +185,12 @@ export type ParsedArgs =
       model?: string;
       /** Raw lane-event JSONL trace path. */
       traceOutput?: string;
+      /** Ecosystem adapters — same semantics as swarm-run. */
+      opentasks: boolean;
+      opentasksSocket?: string;
+      agentInbox: boolean;
+      gitCascade: boolean;
+      cleanupWorktrees: boolean;
     }
   | { kind: "team-send"; name: string; prompt: string }
   | { kind: "team-list" }
@@ -181,6 +209,7 @@ export type ParsedArgs =
       mapScope?: string;
       onboardToken?: string;
       permissionMode: PermissionMode;
+      model?: string;
     }
   | { kind: "error"; message: string; showHelp: boolean };
 
@@ -205,15 +234,14 @@ const SUBCOMMANDS = new Set([
   "host",
 ]);
 
-// v0.4 stage 4K — committee/critic-loop are reserved but unimplemented.
 const SUPPORTED_TOPOLOGY_KINDS = new Set<string>([
   "fanout",
   "pipeline",
   "coordinator",
   "peer-team",
+  "committee",
+  "critic-loop",
 ]);
-
-const DEFERRED_TOPOLOGY_KINDS = new Set<string>(["committee", "critic-loop"]);
 
 const VALID_PERMISSION_MODES = new Set<string>([
   "read-only",
@@ -248,7 +276,8 @@ export function parseArgv(args: string[]): ParsedArgs {
   let hooks = true;
   let dumpTools = false;
   let enableWebSearch = false;
-  // acp subcommand mode selectors (docs/33). Default resolves in runAcp.
+  let plan = false;
+  // acp subcommand mode selectors (docs/archive/33). Default resolves in runAcp.
   let acpSingle = false;
   let acpTeam = false;
   let framework: FrameworkChoice = "auto";
@@ -260,6 +289,7 @@ export function parseArgv(args: string[]): ParsedArgs {
   let midTurnCompaction = false;
   let maxTokens: number | undefined;
   let maxCostUsd: number | undefined;
+  let maxTurns: number | undefined;
 
   // Defaults for swarm-run (consumed when subcommand === "swarm").
   let swarmConcurrency = 3;
@@ -336,13 +366,13 @@ export function parseArgv(args: string[]): ParsedArgs {
     }
     if (tok === "--team-daemon") {
       // v0.5 stage 5E.3: internal entry for the forked per-team daemon.
-      // Reads its spec + paths from SWARM_HARNESS_DAEMON_* env (set by the
+      // Reads its spec + paths from OPENSWARM_DAEMON_* env (set by the
       // parent forker in `team start --detach`).
       return { kind: "team-daemon-entry" };
     }
 
     if (tok === "--agent-id" || tok.startsWith("--agent-id=")) {
-      // Accept and ignore — agentId is read from SWARM_HARNESS_AGENT_ID env var.
+      // Accept and ignore — agentId is read from OPENSWARM_AGENT_ID env var.
       // The flag exists only for process-listing clarity.
       if (tok === "--agent-id") {
         i += 2; // skip the value token too
@@ -418,7 +448,7 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
-    // acp mode selectors (docs/33): --single forces Stage A single-agent;
+    // acp mode selectors (docs/archive/33): --single forces Stage A single-agent;
     // --team forces team mode. Default is resolved in runAcp.
     if (tok === "--single") {
       acpSingle = true;
@@ -517,6 +547,12 @@ export function parseArgv(args: string[]): ParsedArgs {
       }
       resume = val;
       i += 2;
+      continue;
+    }
+
+    if (tok === "--plan") {
+      plan = true;
+      i += 1;
       continue;
     }
 
@@ -721,14 +757,15 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
-    // v0.4 stage 4K: --ecosystem shorthand. Today only enables --map (when not
-    // already set). Forward-compatible for v0.5+ which will also enable
-    // opentasks/agent-inbox/git-cascade. Print a one-line note documenting
-    // the v0.4 limitation so operators don't quietly miss the partial wiring.
+    // --ecosystem shorthand. Enables --map only (when not already set).
+    // opentasks/agent-inbox/git-cascade have their own explicit flags on
+    // `swarm run` / `topology` / `team start`; print a one-line note so
+    // operators don't quietly miss that --ecosystem does not turn those
+    // adapters on.
     if (tok === "--ecosystem") {
       ecosystem = true;
       process.stderr.write(
-        "[swarm-harness] --ecosystem v0.4 enables MAP only; opentasks/agent-inbox/git-cascade land in v0.5+.\n",
+        "[openswarm] --ecosystem enables MAP only; pass --opentasks/--agent-inbox/--git-cascade explicitly.\n",
       );
       i++;
       continue;
@@ -748,7 +785,7 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
-    // v0.5 stage 5B: --opentasks for `swarm run`. Boolean.
+    // --opentasks for `swarm run` / `topology` / `team start`. Boolean.
     if (tok === "--opentasks") {
       opentasks = true;
       i++;
@@ -880,6 +917,28 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
+    if (tok === "--max-turns") {
+      const val = expanded[i + 1];
+      if (val === undefined || val.startsWith("-")) {
+        return {
+          kind: "error",
+          message: "--max-turns requires a value",
+          showHelp: true,
+        };
+      }
+      const n = Number.parseInt(val, 10);
+      if (Number.isNaN(n) || n < 1) {
+        return {
+          kind: "error",
+          message: `--max-turns must be a positive integer, got "${val}"`,
+          showHelp: true,
+        };
+      }
+      maxTurns = n;
+      i += 2;
+      continue;
+    }
+
     // v0.7 stage 7D — pass-through subcommands (worktree, plugin) own their
     // own flag parsing. Once we've identified one, capture all remaining
     // tokens (including --flags) as positionals so the sub-CLI can interpret
@@ -928,6 +987,9 @@ export function parseArgv(args: string[]): ParsedArgs {
   const opts: CommonOpts = {
     model,
     resume,
+    // `permissionMode` stays the user's intended ceiling; plan mode narrows the
+    // *effective* mode to read-only downstream (runtime + REPL) so `/plan off`
+    // can restore write access up to this ceiling.
     permissionMode,
     outputFormat,
     headless,
@@ -937,6 +999,7 @@ export function parseArgv(args: string[]): ParsedArgs {
     hooks,
     dumpTools,
     enableWebSearch,
+    plan,
     framework,
     codexTransport,
     dumpEngine,
@@ -946,6 +1009,7 @@ export function parseArgv(args: string[]): ParsedArgs {
     ...(midTurnCompaction ? { midTurnCompaction: true } : {}),
     ...(maxTokens !== undefined ? { maxTokens } : {}),
     ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
+    ...(maxTurns !== undefined ? { maxTurns } : {}),
   };
 
   switch (subcommand) {
@@ -969,7 +1033,7 @@ export function parseArgv(args: string[]): ParsedArgs {
       if (text.length === 0) {
         return {
           kind: "error",
-          message: 'prompt requires text, e.g. swarm-harness prompt "say hi"',
+          message: 'prompt requires text, e.g. openswarm prompt "say hi"',
           showHelp: true,
         };
       }
@@ -1042,8 +1106,8 @@ export function parseArgv(args: string[]): ParsedArgs {
 
     case "team": {
       // team start <template> [--concurrency N] [--output <path>] [--permission-mode <mode>]
-      // v0.4 stage 4K adds stubs for `send/list/stop/kill` that surface a
-      // deferred-to-v0.5 message; long-running team daemons aren't shipped yet.
+      // `send/list/stop/kill` are daemon RPC clients (see cli/team.ts) that
+      // talk to detached team daemons over their Unix sockets.
       const subSub = positionals[0];
       if (subSub === undefined) {
         return {
@@ -1077,6 +1141,11 @@ export function parseArgv(args: string[]): ParsedArgs {
           permissionMode,
           ...(mapUrl !== undefined && { mapUrl }),
           detach,
+          opentasks,
+          ...(opentasksSocket !== undefined && { opentasksSocket }),
+          agentInbox,
+          gitCascade,
+          cleanupWorktrees,
         };
       }
       if (subSub === "send") {
@@ -1171,17 +1240,10 @@ export function parseArgv(args: string[]): ParsedArgs {
           showHelp: true,
         };
       }
-      if (DEFERRED_TOPOLOGY_KINDS.has(kindStr)) {
-        return {
-          kind: "error",
-          message: `topology "${kindStr}" is deferred to v0.5; v0.4 supports fanout, pipeline, coordinator, peer-team`,
-          showHelp: false,
-        };
-      }
       if (!SUPPORTED_TOPOLOGY_KINDS.has(kindStr)) {
         return {
           kind: "error",
-          message: `unknown topology kind: ${kindStr}. Valid: fanout, pipeline, coordinator, peer-team`,
+          message: `unknown topology kind: ${kindStr}. Valid: fanout, pipeline, coordinator, peer-team, committee, critic-loop`,
           showHelp: true,
         };
       }
@@ -1211,6 +1273,11 @@ export function parseArgv(args: string[]): ParsedArgs {
         ...(maxCostUsd !== undefined && { maxCostUsd }),
         ...(model !== undefined && { model }),
         ...(traceOutput !== undefined && { traceOutput }),
+        opentasks,
+        ...(opentasksSocket !== undefined && { opentasksSocket }),
+        agentInbox,
+        gitCascade,
+        cleanupWorktrees,
       };
     }
 
@@ -1226,12 +1293,12 @@ export function parseArgv(args: string[]): ParsedArgs {
       if (hostPort === undefined) {
         return {
           kind: "error",
-          message: "host requires --port <N>, e.g. swarm-harness host --port 9000",
+          message: "host requires --port <N>, e.g. openswarm host --port 9000",
           showHelp: true,
         };
       }
-      // SWARM_MAP_SERVER env is an alias for --map-server (matches cc-swarm).
-      const mapServer = hostMapServer ?? process.env.SWARM_MAP_SERVER;
+      // OPENSWARM_MAP_SERVER env is an alias for --map-server (matches cc-swarm).
+      const mapServer = hostMapServer ?? process.env.OPENSWARM_MAP_SERVER;
       return {
         kind: "host",
         port: hostPort,
@@ -1241,6 +1308,7 @@ export function parseArgv(args: string[]): ParsedArgs {
         ...(hostMapScope !== undefined && { mapScope: hostMapScope }),
         ...(hostOnboardToken !== undefined && { onboardToken: hostOnboardToken }),
         permissionMode,
+        ...(model !== undefined && { model }),
       };
     }
 

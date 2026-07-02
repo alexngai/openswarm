@@ -22,25 +22,31 @@ export class PermissionEngine {
   constructor(private readonly mode: PermissionMode) {}
 
   /**
-   * Check whether `tool` may run under the engine's current mode.
+   * Check whether `tool` may run. `mode` defaults to the engine's construction
+   * mode; callers that track a live, mutable mode (the CLI's `/permissions` and
+   * `request_permissions` elevation — the gate reads `getCurrentMode()`) pass it
+   * explicitly so a mid-session elevation actually takes effect instead of
+   * checking against a frozen snapshot.
+   *
    * `input` is accepted so future rule grammars can inspect tool arguments
    * (e.g., path patterns); M0 ignores it.
    */
-  check(tool: ToolSpec, _input?: unknown): PermissionDecision {
+  check(tool: ToolSpec, _input?: unknown, mode?: PermissionMode): PermissionDecision {
+    const effectiveMode = mode ?? this.mode;
     const required = tool.requiredPermission;
-    if (this.isAllowed(required)) {
+    if (this.isAllowed(required, effectiveMode)) {
       return { allow: true };
     }
     return {
       allow: false,
       reason:
         `permission denied: tool "${tool.name}" requires "${required}" ` +
-        `but mode is "${this.mode}"`,
+        `but mode is "${effectiveMode}"`,
     };
   }
 
-  private isAllowed(required: RequiredPermission): boolean {
-    switch (this.mode) {
+  private isAllowed(required: RequiredPermission, mode: PermissionMode): boolean {
+    switch (mode) {
       case "danger-full-access":
         return true;
       case "workspace-write":

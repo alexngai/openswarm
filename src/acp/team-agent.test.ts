@@ -90,7 +90,7 @@ describe("AcpTeamAgent", () => {
   it("initialize advertises loadSession on (team transcript replay, B1.4)", async () => {
     const agent = new AcpTeamAgent(recordingConn([]), fakeRunner(), opts);
     const res = await agent.initialize({ protocolVersion: 1 });
-    expect(res.agentInfo?.name).toBe("swarm-harness");
+    expect(res.agentInfo?.name).toBe("openswarm");
     expect(res.agentCapabilities?.loadSession).toBe(true);
   });
 

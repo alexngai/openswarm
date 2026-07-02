@@ -177,7 +177,6 @@ function baseConfig(overrides: Partial<RunConfig> = {}): RunConfig {
       kind: "api-key" as const,
       providerId: "mock",
       isAuthenticated: async () => true,
-      headers: async () => ({}),
     },
     tools: [],
     canUseTool: async () => ({ allow: true }) as PermissionDecision,

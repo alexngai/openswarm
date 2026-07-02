@@ -151,6 +151,20 @@ vi.mock("../ui/repl-solid/index.js", () => ({
   runRepl: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("./team.js", () => ({
+  runTeamStart: vi.fn().mockResolvedValue(0),
+  runTopology: vi.fn().mockResolvedValue(0),
+  runTeamSend: vi.fn().mockResolvedValue(0),
+  runTeamList: vi.fn().mockResolvedValue(0),
+  runTeamStop: vi.fn().mockResolvedValue(0),
+  runTeamKill: vi.fn().mockResolvedValue(0),
+}));
+
+// Dynamically imported by main.ts for the `host` subcommand.
+vi.mock("./host.js", () => ({
+  runHost: vi.fn().mockResolvedValue(0),
+}));
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -171,7 +185,7 @@ describe("main", () => {
     const code = await main(["help"]);
 
     expect(code).toBe(0);
-    expect(chunks.join("")).toContain("swarm-harness");
+    expect(chunks.join("")).toContain("openswarm");
   });
 
   it("version → returns 0 and prints version", async () => {
@@ -272,7 +286,7 @@ describe("main", () => {
 
   // ---- --dump-engine (M4a Phase 6) ----------------------------------------
 
-  it("--model gpt-4o --framework auto --dump-engine → JSON with engineId:native, providerId:openai", async () => {
+  it("--model gpt-4o --framework auto --dump-engine → JSON with engineId:hardened-native, providerId:openai", async () => {
     const { resolveProvider } = await import("../providers/routing.js");
     (resolveProvider as ReturnType<typeof vi.fn>).mockReturnValueOnce({
       kind: "native",
@@ -291,7 +305,8 @@ describe("main", () => {
 
     expect(code).toBe(0);
     const parsed = JSON.parse(outChunks.join("").trim());
-    expect(parsed.engineId).toBe("native");
+    // Phase 2.1: auto + non-Claude now builds the hardened native engine.
+    expect(parsed.engineId).toBe("hardened-native");
     expect(parsed.providerId).toBe("openai");
     expect(parsed.modelId).toBe("gpt-4o");
   });
@@ -308,7 +323,10 @@ describe("main", () => {
     nativeEngineMockState.constructorCalls.length = 0;
 
     const { main } = await import("./main.js");
-    const code = await main(["--model", "gpt-4o", "--framework", "auto", "--headless", "say hi"]);
+    // Explicit --framework native exercises the (mocked) NativeEngine; auto now
+    // routes non-Claude models to HardenedNativeEngine (Phase 2.1). sessionId
+    // forwarding is identical across both native-family engines.
+    const code = await main(["--model", "gpt-4o", "--framework", "native", "--headless", "say hi"]);
 
     expect(code).toBe(0);
     expect(nativeEngineMockState.constructorCalls).toHaveLength(1);
@@ -334,7 +352,7 @@ describe("main", () => {
       "--model",
       "gpt-4o",
       "--framework",
-      "auto",
+      "native",
       "--resume",
       "session-from-cli",
       "--headless",
@@ -440,5 +458,41 @@ describe("main", () => {
     expect(parsed.engineId).toBe("claude-agent-sdk");
     expect(parsed.providerId).toBeUndefined();
     expect(parsed.modelId).toBe("claude-sonnet-4-6");
+  });
+
+  // ---- subcommand dispatch (topology / team send / host) ------------------
+
+  it("topology <kind> --spec → delegates to runTopology with kind + specPath", async () => {
+    const { main } = await import("./main.js");
+    const { runTopology } = await import("./team.js");
+
+    const code = await main(["topology", "fanout", "--spec", "./spec.json"]);
+
+    expect(code).toBe(0);
+    expect(runTopology).toHaveBeenCalledWith(
+      expect.objectContaining({ topologyKind: "fanout", specPath: "./spec.json" }),
+    );
+  });
+
+  it("team send <name> <prompt> → delegates to runTeamSend with the joined prompt", async () => {
+    const { main } = await import("./main.js");
+    const { runTeamSend } = await import("./team.js");
+
+    const code = await main(["team", "send", "sprint", "do", "the", "thing"]);
+
+    expect(code).toBe(0);
+    expect(runTeamSend).toHaveBeenCalledWith("sprint", "do the thing");
+  });
+
+  it("host --port → dynamically imports and delegates to runHost with the port", async () => {
+    const { main } = await import("./main.js");
+    const { runHost } = await import("./host.js");
+
+    const code = await main(["host", "--port", "9000"]);
+
+    expect(code).toBe(0);
+    expect(runHost).toHaveBeenCalledWith(
+      expect.objectContaining({ port: 9000 }),
+    );
   });
 });

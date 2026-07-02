@@ -43,7 +43,6 @@
  *     params carries the AgentMessage payload. Backward-compat: eventKind discriminant extends
  *     the original LaneEvent shape — existing stub callers pass through unmodified.
  *     Future M3b use of sub_agent_event MUST extend eventKind rather than changing params shape.
- *   - "sub_agent_result"  (orchestrator → worker; params: AgentResult) — M1 future; stub only
  *   - "task_stop_signal"  (orchestrator → worker; params: { taskId: string; reason?: string })
  *     M3a Phase 4: orchestrator signals a worker to stop a running task.
  */
@@ -108,7 +107,6 @@ export type IpcNotificationMethod =
   | "heartbeat"
   | "task_result"
   | "sub_agent_event"
-  | "sub_agent_result"
   | "task_stop_signal"
   | "worker_idle"
   | "worker_drained";
@@ -350,8 +348,10 @@ export const SpawnRequestParamsSchema = z.object({
     "danger-full-access",
   ]),
   model: z.string().optional(),
-  /** v0.4 stage 4M.6: forwarded from SpawnRequest.framework. */
-  framework: z.enum(["claude-agent-sdk", "codex-chatgpt"]).optional(),
+  /** v0.4 stage 4M.6: forwarded from SpawnRequest.framework (widened in 2.2). */
+  framework: z
+    .enum(["claude-agent-sdk", "codex-chatgpt", "codex-native", "native", "hardened-native"])
+    .optional(),
   /**
    * v0.4 stage 4M.7: forwarded from SpawnRequest.teamScope. When set, the
    * spawn handler injects this scope on the spawned child (peer-spawn). When

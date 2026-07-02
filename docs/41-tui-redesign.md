@@ -2,7 +2,7 @@
 
 ## 1. Motivation
 
-swarm-harness's current TUI is a functional single-agent REPL: streaming markdown, Emacs keybindings, slash commands, a braille spinner, and a y/N permission prompt. It is roughly 6 components and ~1,000 lines of UI code.
+openswarm's current TUI is a functional single-agent REPL: streaming markdown, Emacs keybindings, slash commands, a braille spinner, and a y/N permission prompt. It is roughly 6 components and ~1,000 lines of UI code.
 
 This is adequate for simple sessions but falls short in three areas:
 
@@ -16,11 +16,11 @@ This is adequate for simple sessions but falls short in three areas:
 
 - **Kimi Code** (MoonshotAI/kimi-code) — A TypeScript TUI built on `pi-tui` that achieves feature-richness through progressive disclosure: single-column layout, one-line tool chips that expand on demand, smart grouping of related calls, compact diff previews. The design philosophy is "scannable at a glance, drill down when needed."
 
-- **OpenSwarm** (alexngai/openswarm) — A Solid.js + OpenTUI TUI built for multi-agent interaction. Has per-tool renderers, agent tree hierarchy, task boards, and a plugin system. Rich but complex — 44 components, 24 context providers, multi-panel layout.
+- **Swarm Runner** (alexngai/swarm-runner, formerly OpenSwarm) — A Solid.js + OpenTUI TUI built for multi-agent interaction. Has per-tool renderers, agent tree hierarchy, task boards, and a plugin system. Rich but complex — 44 components, 24 context providers, multi-panel layout.
 
 - **Codex** (openai/codex) — A Rust/Ratatui TUI with approval overlays, unified diff rendering, session fork/resume, and streaming intelligence.
 
-This design takes Kimi Code's interaction model (progressive disclosure, single column, smart defaults) and combines it with OpenSwarm's multi-agent capabilities (agent tree, task tracking), adapted to swarm-harness's existing engine and protocol.
+This design takes Kimi Code's interaction model (progressive disclosure, single column, smart defaults) and combines it with Swarm Runner's multi-agent capabilities (agent tree, task tracking), adapted to openswarm's existing engine and protocol.
 
 ## 2. Design Principles
 
@@ -297,7 +297,7 @@ When the user types during streaming, messages queue visibly above the input (Ki
 
 ### 4.7 Multi-Agent Views (Opt-In)
 
-Accessible via keybinds or slash commands, not always visible. These draw from OpenSwarm's component library but rendered in the single-column paradigm:
+Accessible via keybinds or slash commands, not always visible. These draw from Swarm Runner's component library but rendered in the single-column paradigm:
 
 **Agent Tree** (`/agents` or Ctrl+A during swarm run):
 ```
@@ -324,7 +324,7 @@ Tasks (2 done, 1 active, 3 pending)
   ◌ Final review                 —         pending
 ```
 
-- Maps to swarm-harness task graph (`task_create`, `task_update` IPC)
+- Maps to openswarm task graph (`task_create`, `task_update` IPC)
 - j/k navigation, Enter to view task details
 
 Both views are rendered as full-screen replacements of the transcript (like Kimi Code's session picker or help panel), not as persistent sidebars.
@@ -544,19 +544,19 @@ const theme = {
 - `TranscriptEntry` gains an optional `toolCallId` field linking to the `toolCalls` record. Entries without it render as before.
 - Headless mode (`src/ui/headless.ts`) is unaffected — it emits raw NormalizedEvents as JSONL regardless of TUI changes.
 
-### OpenSwarm component reuse
+### Swarm Runner component reuse
 
-Specific components worth pulling from OpenSwarm (adapting from MAP/ACP protocol to NormalizedEvent):
+Specific components worth pulling from Swarm Runner (adapting from MAP/ACP protocol to NormalizedEvent):
 - `agent-tree.tsx` / `agent-node.tsx` — hierarchical agent rendering (Phase 5)
 - Tool renderer patterns from `tools/bash.tsx`, `tools/edit.tsx` — though these need adaptation from ACP stream format to NormalizedEvent tool results (Phase 1)
 
-The bulk of the implementation is new code following Kimi Code patterns, not OpenSwarm transplants. OpenSwarm's value is primarily in the multi-agent views (Phase 5) and as a reference for the Solid.js + OpenTUI component patterns.
+The bulk of the implementation is new code following Kimi Code patterns, not Swarm Runner transplants. Swarm Runner's value is primarily in the multi-agent views (Phase 5) and as a reference for the Solid.js + OpenTUI component patterns.
 
 ### What we intentionally skip
 
-- **Multi-panel layout** — OpenSwarm's sidebar + main + details layout adds complexity without proportional value for the common case. If a user needs persistent agent visibility, the agent tree view (Ctrl+A) covers it.
-- **Plugin system** — OpenSwarm's 10-extension-point plugin architecture is over-engineered for swarm-harness. Swarm-harness already has its own plugin and MCP systems.
-- **View tabs** — OpenSwarm's 11 views (tasks, teams, topology, timeline, streams, environments, federation, settings, etc.) are macro-agent-specific. We add only 2 views (agents, tasks) that map to swarm-harness concepts.
+- **Multi-panel layout** — Swarm Runner's sidebar + main + details layout adds complexity without proportional value for the common case. If a user needs persistent agent visibility, the agent tree view (Ctrl+A) covers it.
+- **Plugin system** — Swarm Runner's 10-extension-point plugin architecture is over-engineered for openswarm. Swarm-harness already has its own plugin and MCP systems.
+- **View tabs** — Swarm Runner's 11 views (tasks, teams, topology, timeline, streams, environments, federation, settings, etc.) are macro-agent-specific. We add only 2 views (agents, tasks) that map to openswarm concepts.
 
 ## 10. Implementation & Test Plan
 

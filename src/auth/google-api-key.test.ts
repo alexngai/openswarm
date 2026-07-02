@@ -18,13 +18,6 @@ describe("GoogleApiKeyAuth", () => {
     expect(await auth.isAuthenticated()).toBe(true);
   });
 
-  it("headers returns Authorization Bearer with the key", async () => {
-    vi.stubEnv("GOOGLE_GENERATIVE_AI_API_KEY", "google-my-key");
-    const auth = new GoogleApiKeyAuth();
-    const hdrs = await auth.headers();
-    expect(hdrs["Authorization"]).toBe("Bearer google-my-key");
-  });
-
   it("has correct kind and providerId", () => {
     const auth = new GoogleApiKeyAuth();
     expect(auth.kind).toBe("api-key");

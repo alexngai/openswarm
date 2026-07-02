@@ -16,7 +16,7 @@ A mid-experiment conclusion that "GPT-5.5 teams are *worse* (0/9) due to structu
 
 ## Setup
 
-- **Harness:** swarm-harness (working tree, packed locally — never published) via `swarmkit-eval`'s `(task × arm × model × seed)` matrix runner, ground-truth **swebench grading** (faithful `get_eval_report`), **E2B** Firecracker sandboxes (server-side template builds — no local Docker).
+- **Harness:** openswarm (working tree, packed locally — never published) via `swarmkit-eval`'s `(task × arm × model × seed)` matrix runner, ground-truth **swebench grading** (faithful `get_eval_report`), **E2B** Firecracker sandboxes (server-side template builds — no local Docker).
 - **Runtime:** node via global `tsx` (NOT bun — bun's gzip handling corrupts E2B compressed output).
 - **Instances (hard set, 9):** repo-diverse SWE-bench-Verified, `1-4h` + `>4h` human-difficulty buckets (the easy set saturated single at 4/5 — useless for discrimination).
 - **Arms:** `single` (one long-lived agent) · `team` (homogeneous coordinator: architect + executor + reviewer) · `hetero` (architect-lead + implementer + dedicated verifier + adversarial critic).
@@ -42,7 +42,7 @@ The aggregate scores were misleading at two points; reading the actual trajector
 
 ## Harness improvements shipped (independent of the experiment's outcome)
 
-All committed with tests — genuine swarm-harness value:
+All committed with tests — genuine openswarm value:
 
 | Commit | Fix |
 |---|---|
@@ -60,9 +60,29 @@ All committed with tests — genuine swarm-harness value:
 2. **Pick instances on difficulty.** The easy set saturated single (4/5) → zero discriminating power. The hard set's 11% floor is the opposite problem (low power per cell); a mixed ~40–60% band would be ideal.
 3. **Cross-family replication catches infra bugs** the single-family run hides (the spawn bug only manifested on the native engine).
 
+## Ensemble test — best-of-N single vs team at equal budget
+
+The design's bet: the value of "multi-agent" is **ensemble variance + selection**, not within-task coordination. Test: best-of-N single (N independent single-agent attempts, union them) vs a team (~N agents coordinated), at equal compute. GPT-5.5, hard 9:
+
+| | resolve |
+|---|--:|
+| single per-seed (mean of 5) | ~1.4/9 |
+| best-of-1 | 1/9 |
+| best-of-3 | 2/9 |
+| **best-of-5** | **2/9 (plateau)** |
+| team (~3 agents, 1 seed) | 1/9 |
+
+The union **plateaus at 2/9** (no growth N=3→5). Instances tier cleanly: **xarray-3993** solved by all 5 seeds (always-reachable); **sklearn-25102** by seeds 2+5 only (~40% — *stochastically* reachable, the ensemble recovers it); the other **7 by zero attempts** (beyond this config's capability).
+
+- **Ensemble beats the coordinated team at equal compute (2/9 > 1/9)** — the design's §4 reframe holds: spend the multi-agent budget on **diverse independent attempts + select**, not coordination.
+- **But the gain is bounded and small.** Best-of-N only recovers the *stochastically-solvable* slice; it cannot manufacture capability for genuinely-hard instances. Here that slice is one instance, exhausted by N=3. **Ensemble-select's payoff scales with how much failure is variance (recoverable) vs capability (not) — and on hard SWE most failure is capability.**
+- **Caveat:** N=9; 2-vs-1 edge is underpowered; team is single-seed (equal-*budget*, not a best-of-3 *team*).
+
 ## Open questions / next
 
-- **Ensemble test (the design's actual bet):** best-of-N single vs a team at *equal token budget* — does union over diverse independent attempts beat one coherent agent? (The disjoint-coverage signal hinted union ≈ 3× single, but that was on the pre-fix data and is underpowered.)
+- **Mixed-difficulty set (highest value):** the hard set's 3-way tier (1 always / 1 stochastic / 7 impossible) gives almost no headroom — the ensemble gain is capped at 1 instance. A ~40–60%-single set would have a far larger *stochastic* slice, where ensemble-vs-coordination should separate cleanly (and with more power than N=9).
+- **Diverse-config ensemble:** union of single + functioning team + functioning hetero (the original disjoint-coverage signal, now on host-fixed data) — does config diversity beat seed diversity?
+- **Best-of-N team / cross-family:** a best-of-3 *team* for a fuller pass@k; replicate the ensemble-vs-team comparison on Sonnet.
 - **Power:** multi-seed per arm to move below the current MDE ~0.3.
 - **Finish the corrected 3-way:** the `hetero` arm on GPT-5.5 was also spawn-broken — re-run for completeness.
 - **Token/cost axis:** the coordinator still surfaces no aggregate usage (spawn-tree usage isn't summed) — the cost side of the frontier is blank.
@@ -71,7 +91,7 @@ All committed with tests — genuine swarm-harness value:
 
 ```sh
 # prereqs: source ~/.zshrc (E2B + Bedrock + Azure creds); global tsx; packed local harness
-bash eval/scripts/pack-local-harness.sh                 # build+pack working-tree swarm-harness (+skill-tree)
+bash eval/scripts/pack-local-harness.sh                 # build+pack working-tree openswarm (+skill-tree)
 bash eval/scripts/prep-swe-subset.sh <instance ids…>    # SWE_INSTANCES_DIR=eval/.artifacts/swe-hard, SWE_DATASET=…Verified
 
 # run an arm (node/tsx, NOT bun):

@@ -1,5 +1,5 @@
 /**
- * NativeEngine test suite — ≥ 15 tests per docs/13-m4a-plan.md §5.6.
+ * NativeEngine test suite — ≥ 15 tests per docs/archive/13-m4a-plan.md §5.6.
  *
  * Uses MockProvider (scripted ProviderEvent yields) and MockDispatcher
  * (recorded dispatchBatch calls with scripted results). Neither speaks to
@@ -187,7 +187,6 @@ function baseConfig(overrides: Partial<RunConfig> = {}): RunConfig {
       kind: "api-key" as const,
       providerId: "mock",
       isAuthenticated: async () => true,
-      headers: async () => ({}),
     },
     tools: [],
     canUseTool: async () => ({ allow: true }) as PermissionDecision,

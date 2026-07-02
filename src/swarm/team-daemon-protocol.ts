@@ -16,9 +16,12 @@
  * Notifications (one-way; daemon → subscribers):
  *   - "team_event"    params: TeamEventParams (passthrough LaneEvent shape)
  *
- *     Subscribe mechanism is deferred to v0.6+ per docs/28 §V0.5.Q4 — v0.5
- *     callers tail events.jsonl instead. The notification type is locked
- *     here so the wire shape is stable when the subscribe path lands.
+ *     Phase 4.1d decision: there is deliberately NO socket subscribe RPC.
+ *     The per-team `events.jsonl` is the blessed follow contract — consumers
+ *     tail it (`team logs --follow`) or parse it structurally via
+ *     `src/swarm/events-log.ts` (`parseTeamEventsLog`). The notification type
+ *     is retained only as a locked wire shape for a future remote/hub path
+ *     (MAP), which is threaded separately and does not use this socket.
  */
 
 import { z } from "zod";

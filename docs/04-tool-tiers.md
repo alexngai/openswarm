@@ -19,10 +19,9 @@ The minimum viable coding agent. An atomic unit must have exactly these to be us
 | `shell_exec` | Persistent shell sessions surviving across tool calls |
 | `shell_write` | Send text input / signals to running shell sessions |
 | `shell_list` | List, inspect, reattach, or close shell sessions |
-| `request_permissions` | Request elevated permissions mid-session |
+| `request_permissions` | Request elevated permissions mid-session — *registered on the single-agent REPL + headless paths (Phase 4.1e); the handler prompts the user and, on approval, raises the live permission mode up to the CLI ceiling. Not yet advertised on ACP bridges or swarm workers (follow-up).* |
 | `memory_manage` | Manage curated memory entries (add/replace/remove) that persist across sessions |
 | `memory_search` | Search past session archives and memories |
-| `skill_save` | Save, list, get, or remove reusable procedural skills |
 
 ## Tier 1 — Productivity
 
@@ -38,7 +37,7 @@ The minimum viable coding agent. An atomic unit must have exactly these to be us
 
 ## Tier 2 — Swarm primitives
 
-What makes swarm-harness a *swarm*. Dispatched via `SwarmHost`. Works in both standalone and worker modes — the surface does not change.
+What makes openswarm a *swarm*. Dispatched via `SwarmHost`. Works in both standalone and worker modes — the surface does not change.
 
 | Tool | Purpose |
 |---|---|

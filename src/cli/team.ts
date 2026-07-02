@@ -1,5 +1,5 @@
 /**
- * team.ts — implementation of `swarm-harness team start <template>`.
+ * team.ts — implementation of `openswarm team start <template>`.
  *
  * v0.4 stage 4F: minimal CLI surface that loads an openteams template,
  * maps it to a TeamSpec, and runs it through the Orchestrator. Full CLI
@@ -15,9 +15,9 @@ import { Orchestrator, type HostObserver } from "../swarm/orchestrator.js";
 import { loadTemplate } from "../swarm/openteams/loader.js";
 import { openteamsToTeamSpec } from "../swarm/openteams/mapping.js";
 import { createMapSidecar, type MapSidecar } from "../host/map-sidecar.js";
-import { StandaloneHost } from "../swarm/standalone-host.js";
 import { TeamSpecSchema, type TeamSpec, type TopologyKind } from "../swarm/team-spec.js";
 import { computeTeamPaths, teamsBaseDir } from "./team-paths.js";
+import { buildAdapterHost, type AdapterHostOptions } from "./adapter-host.js";
 import { attachLaneTrace } from "./trace-output.js";
 
 // ---------------------------------------------------------------------------
@@ -45,6 +45,29 @@ export interface TeamStartOptions {
    * socket binds. Sync (default) behavior is byte-identical to v0.4.
    */
   readonly detach?: boolean;
+  /** Ecosystem adapters — same semantics as `swarm run` (see adapter-host.ts). */
+  readonly opentasks?: boolean;
+  readonly opentasksSocket?: string;
+  readonly agentInbox?: boolean;
+  readonly gitCascade?: boolean;
+  readonly cleanupWorktrees?: boolean;
+}
+
+/** Pick the shared adapter-host options out of a CLI options object. */
+function adapterOpts(opts: {
+  readonly opentasks?: boolean;
+  readonly opentasksSocket?: string;
+  readonly agentInbox?: boolean;
+  readonly gitCascade?: boolean;
+  readonly cleanupWorktrees?: boolean;
+}): Omit<AdapterHostOptions, "permissionMode" | "forceHost"> {
+  return {
+    ...(opts.opentasks !== undefined && { opentasks: opts.opentasks }),
+    ...(opts.opentasksSocket !== undefined && { opentasksSocket: opts.opentasksSocket }),
+    ...(opts.agentInbox !== undefined && { agentInbox: opts.agentInbox }),
+    ...(opts.gitCascade !== undefined && { gitCascade: opts.gitCascade }),
+    ...(opts.cleanupWorktrees !== undefined && { cleanupWorktrees: opts.cleanupWorktrees }),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -85,7 +108,23 @@ export async function runTeamStart(
   // 2a. v0.5 stage 5E.3: detach branch. Fork the per-team daemon and return
   //     once the socket binds. Sync (default) flow continues below unchanged.
   if (opts.detach === true) {
-    return await detachAndForkDaemon(spec);
+    // The forked daemon builds its own host and doesn't thread adapter flags
+    // through its env yet — reject the combination instead of silently
+    // dropping the adapters.
+    if (
+      opts.opentasks === true ||
+      opts.agentInbox === true ||
+      opts.gitCascade === true
+    ) {
+      process.stderr.write(
+        "error: --opentasks/--agent-inbox/--git-cascade are not supported with --detach (the daemon builds its own host). Run without --detach.\n",
+      );
+      return 2;
+    }
+    return await detachAndForkDaemon(spec, {
+      permissionMode: opts.permissionMode,
+      concurrency: opts.concurrency,
+    });
   }
 
   // 3. Optional MAP observability. Only constructed when `--map` was passed.
@@ -96,6 +135,16 @@ export async function runTeamStart(
       ? makeMapObserver(opts.mapUrl, spec.name)
       : undefined;
 
+  // 3a. Ecosystem adapters (shared assembly with `swarm run` / `topology`).
+  const hostResult = buildAdapterHost({
+    permissionMode: opts.permissionMode,
+    ...adapterOpts(opts),
+  });
+  if (!hostResult.ok) {
+    process.stderr.write(hostResult.message);
+    return 2;
+  }
+
   // 4. Open results stream + orchestrator.
   const resultsOut = fs.createWriteStream(opts.output, { flags: "a" });
   const orch = new Orchestrator({
@@ -103,6 +152,7 @@ export async function runTeamStart(
     permissionMode: opts.permissionMode,
     resultsOut,
     eventsOut: process.stderr,
+    ...(hostResult.host !== undefined && { host: hostResult.host }),
     ...(observer !== undefined && { observer }),
   });
 
@@ -114,7 +164,7 @@ export async function runTeamStart(
   await new Promise<void>((resolve) => resultsOut.end(resolve));
 
   process.stderr.write(
-    `[swarm-harness] team "${spec.name}" complete in ${elapsed}ms: ` +
+    `[openswarm] team "${spec.name}" complete in ${elapsed}ms: ` +
       `${result.succeeded} succeeded, ${result.failed} failed, ${result.timeout} timeout, ${result.cancelled} cancelled\n`,
   );
   if (result.aggregateOutput !== undefined) {
@@ -180,6 +230,12 @@ export interface TopologyRunOptions {
   readonly modelId?: string;
   /** Raw lane-event JSONL trace path. */
   readonly traceOutput?: string;
+  /** Ecosystem adapters — same semantics as `swarm run` (see adapter-host.ts). */
+  readonly opentasks?: boolean;
+  readonly opentasksSocket?: string;
+  readonly agentInbox?: boolean;
+  readonly gitCascade?: boolean;
+  readonly cleanupWorktrees?: boolean;
   /**
    * Test-only injection of a constructed Orchestrator. When set, runTopology
    * skips its own Orchestrator construction and calls `orch.runTeam(spec)`.
@@ -256,9 +312,19 @@ export async function runTopology(opts: TopologyRunOptions): Promise<number> {
       ? makeMapObserver(opts.mapUrl, spec.name)
       : undefined;
 
-  // 3. Open results stream + orchestrator.
+  // 3. Open results stream + orchestrator. Host always constructed here
+  // (lane trace needs one); adapters are layered in when flags are set.
+  const hostResult = buildAdapterHost({
+    permissionMode: opts.permissionMode,
+    ...adapterOpts(opts),
+    forceHost: true,
+  });
+  if (!hostResult.ok) {
+    process.stderr.write(hostResult.message);
+    return 2;
+  }
+  const host = hostResult.host!;
   const resultsOut = fs.createWriteStream(opts.output, { flags: "a" });
-  const host = new StandaloneHost({ permissionMode: opts.permissionMode });
   const traceRecorder = attachLaneTrace(host, opts.traceOutput);
   const orch = new Orchestrator({
     concurrency: opts.concurrency,
@@ -282,7 +348,7 @@ export async function runTopology(opts: TopologyRunOptions): Promise<number> {
   }
 
   process.stderr.write(
-    `[swarm-harness] topology ${opts.topologyKind} "${spec.name}" complete in ${elapsed}ms: ` +
+    `[openswarm] topology ${opts.topologyKind} "${spec.name}" complete in ${elapsed}ms: ` +
       `${result.succeeded} succeeded, ${result.failed} failed, ${result.timeout} timeout, ${result.cancelled} cancelled\n`,
   );
   if (result.aggregateOutput !== undefined) {
@@ -317,7 +383,10 @@ async function tryConnect(sockPath: string): Promise<boolean> {
   });
 }
 
-async function detachAndForkDaemon(spec: TeamSpec): Promise<number> {
+async function detachAndForkDaemon(
+  spec: TeamSpec,
+  config: { permissionMode: PermissionMode; concurrency: number },
+): Promise<number> {
   const paths = computeTeamPaths(spec.name);
   await fsp.mkdir(paths.dir, { recursive: true });
 
@@ -334,7 +403,7 @@ async function detachAndForkDaemon(spec: TeamSpec): Promise<number> {
   const cliPath = process.argv[1];
   if (cliPath === undefined) {
     process.stderr.write(
-      "error: --detach requires process.argv[1] to be the swarm-harness CLI path\n",
+      "error: --detach requires process.argv[1] to be the openswarm CLI path\n",
     );
     await logHandle.close();
     return 2;
@@ -348,11 +417,14 @@ async function detachAndForkDaemon(spec: TeamSpec): Promise<number> {
       stdio: ["ignore", logHandle.fd, logHandle.fd],
       env: {
         ...process.env,
-        SWARM_HARNESS_DAEMON_SPEC: paths.specPath,
-        SWARM_HARNESS_DAEMON_SOCK: paths.sockPath,
-        SWARM_HARNESS_DAEMON_PID: paths.pidPath,
-        SWARM_HARNESS_DAEMON_EVENTS: paths.eventsPath,
-        SWARM_HARNESS_DAEMON_STATE: paths.statePath,
+        OPENSWARM_DAEMON_SPEC: paths.specPath,
+        OPENSWARM_DAEMON_SOCK: paths.sockPath,
+        OPENSWARM_DAEMON_PID: paths.pidPath,
+        OPENSWARM_DAEMON_EVENTS: paths.eventsPath,
+        OPENSWARM_DAEMON_STATE: paths.statePath,
+        OPENSWARM_DAEMON_CHECKPOINT: paths.checkpointPath,
+        OPENSWARM_DAEMON_PERMISSION_MODE: config.permissionMode,
+        OPENSWARM_DAEMON_CONCURRENCY: String(config.concurrency),
       },
     },
   );
@@ -375,7 +447,7 @@ async function detachAndForkDaemon(spec: TeamSpec): Promise<number> {
     }
     if (await tryConnect(paths.sockPath)) {
       process.stderr.write(
-        `[swarm-harness] team "${spec.name}" started (pid ${child.pid}, socket ${paths.sockPath})\n`,
+        `[openswarm] team "${spec.name}" started (pid ${child.pid}, socket ${paths.sockPath})\n`,
       );
       return 0;
     }

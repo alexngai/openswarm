@@ -1,8 +1,42 @@
 import { describe, it, expect } from "vitest";
 import {
   buildSystemPrompt,
+  applyPlanMode,
   BASE_SYSTEM_PROMPT,
+  PLAN_MODE_SUFFIX,
 } from "./default-system-prompt.js";
+
+describe("plan mode composition", () => {
+  it("appends the plan persona last when planMode is set", () => {
+    const result = buildSystemPrompt({ planMode: true, roleSuffix: "ROLE" });
+    expect(result).toContain(PLAN_MODE_SUFFIX);
+    // Plan suffix must be the last segment (highest priority).
+    expect(result.endsWith(PLAN_MODE_SUFFIX)).toBe(true);
+    expect(result.indexOf("ROLE")).toBeLessThan(result.indexOf(PLAN_MODE_SUFFIX));
+  });
+
+  it("omits the plan persona when planMode is false/absent", () => {
+    expect(buildSystemPrompt({ planMode: false })).not.toContain(PLAN_MODE_SUFFIX);
+    expect(buildSystemPrompt({})).not.toContain(PLAN_MODE_SUFFIX);
+  });
+
+  it("applyPlanMode appends to a non-empty system prompt (native path)", () => {
+    const out = applyPlanMode("SYS", "do the thing", true);
+    expect(out.systemPrompt).toBe(`SYS\n\n${PLAN_MODE_SUFFIX}`);
+    expect(out.prompt).toBe("do the thing");
+  });
+
+  it("applyPlanMode prepends to the prompt when system prompt is empty (SDK path)", () => {
+    const out = applyPlanMode("", "do the thing", true);
+    expect(out.systemPrompt).toBe("");
+    expect(out.prompt.startsWith(PLAN_MODE_SUFFIX)).toBe(true);
+    expect(out.prompt).toContain("do the thing");
+  });
+
+  it("applyPlanMode is a no-op when disabled", () => {
+    expect(applyPlanMode("SYS", "P", false)).toEqual({ systemPrompt: "SYS", prompt: "P" });
+  });
+});
 
 describe("default-system-prompt", () => {
   it("returns base prompt when called with no options", () => {
@@ -88,9 +122,10 @@ describe("default-system-prompt", () => {
     expect(BASE_SYSTEM_PROMPT).toContain("## Safety");
   });
 
-  it("base prompt contains swarm-harness tool references", () => {
+  it("base prompt contains openswarm tool references", () => {
     expect(BASE_SYSTEM_PROMPT).toContain("edit_file");
     expect(BASE_SYSTEM_PROMPT).toContain("multi_edit");
+    expect(BASE_SYSTEM_PROMPT).toContain("apply_patch");
     expect(BASE_SYSTEM_PROMPT).toContain("write_file");
     expect(BASE_SYSTEM_PROMPT).toContain("read_file");
     expect(BASE_SYSTEM_PROMPT).toContain("todo_write");
@@ -113,7 +148,9 @@ describe("default-system-prompt", () => {
     const lower = BASE_SYSTEM_PROMPT.toLowerCase();
     expect(lower).not.toContain("codex cli");
     expect(lower).not.toContain("codex is");
-    expect(lower).not.toContain("apply_patch");
     expect(lower).not.toContain("update_plan");
+    // apply_patch is now a first-class openswarm tool, but the verbose Codex
+    // patch-format instructions should still stay out of the base prompt.
+    expect(lower).not.toContain("your patch language");
   });
 });

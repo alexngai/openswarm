@@ -16,12 +16,12 @@ import type { CommonOpts } from "../cli/argv.js";
  * (spawns a Claude worker subprocess) and verifies session updates stream back
  * over MAP to the client, ending with a stop reason.
  *
- * Gated: `SWARM_HARNESS_LIVE_ACP_MAP=1 npx vitest run src/host/map-acp-bridge.live.test.ts`
+ * Gated: `OPENSWARM_LIVE_ACP_MAP=1 npx vitest run src/host/map-acp-bridge.live.test.ts`
  * (needs a working Claude auth, e.g. a Max plan; `danger-full-access` so the
  * coordinator may `exec`).
  */
 
-const LIVE = process.env.SWARM_HARNESS_LIVE_ACP_MAP === "1";
+const LIVE = process.env.OPENSWARM_LIVE_ACP_MAP === "1";
 
 const acpOpts: CommonOpts = {
   permissionMode: "danger-full-access",
@@ -33,6 +33,7 @@ const acpOpts: CommonOpts = {
   hooks: false,
   dumpTools: false,
   enableWebSearch: false,
+  plan: false,
   framework: "auto",
 };
 

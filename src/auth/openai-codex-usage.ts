@@ -62,7 +62,7 @@ export async function fetchCodexUsage(
     headers: {
       Authorization: `Bearer ${token}`,
       "chatgpt-account-id": accountId,
-      originator: "swarm-harness",
+      originator: "openswarm",
       accept: "application/json",
     },
     signal: AbortSignal.timeout(opts.timeoutMs ?? 4000),

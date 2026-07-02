@@ -2,7 +2,7 @@
  * h1-single-vs-team.ts — H1 negative control (docs/45 §6).
  *
  * H1: a HOMOGENEOUS Claude team is ≤ a single long-lived Claude agent on quality, at higher cost —
- * reproducing the "Strong Single-Agent Baseline" result (arXiv 2601.12307) on swarm-harness. Both arms
+ * reproducing the "Strong Single-Agent Baseline" result (arXiv 2601.12307) on openswarm. Both arms
  * run ONE model on the SAME SWE-bench subset over E2B; the only difference is whether the agent has the
  * team-spawn tools (eval/harness/swarm-modes.ts). `buildReport` renders the paired single-vs-team delta.
  *
@@ -22,7 +22,7 @@ import {
   createBackend,
   LocalResultStore,
   sweBenchmark,
-  swarmHarness,
+  openSwarm,
   buildSweTemplates,
   e2bSafeName,
   loadSweInstances,
@@ -52,7 +52,7 @@ const INSTANCES_DIR = process.env.SWE_INSTANCES_DIR ?? "eval/.artifacts/swe-inst
 const h1TemplateName = (i: SweInstance): string => e2bSafeName(`sh-h1-${i.instanceId}`);
 
 /**
- * Bedrock-direct auth for the in-sandbox agent (docs/45: sandbox auth = Bedrock). swarm-harness routes
+ * Bedrock-direct auth for the in-sandbox agent (docs/45: sandbox auth = Bedrock). openswarm routes
  * `claude-sonnet-4-6` → Claude Agent SDK, whose Bedrock mode maps the model. E2B account secrets may
  * already inject AWS creds into the sandbox; we set the mode + region and forward any creds present in
  * OUR env (read at runtime — never hardcoded; secrets never printed).
@@ -75,7 +75,7 @@ function bedrockEnv(): Record<string, string> {
  *  tool-use warmup nudges exact tool names + a proactive first bash call so the agentic loop engages.
  *  (A non-Claude-specific scaffolding addition — note as a comparison caveat.) */
 function azureEnv(): Record<string, string> {
-  const env: Record<string, string> = { SWARM_HARNESS_TOOL_USE_WARMUP: "1" };
+  const env: Record<string, string> = { OPENSWARM_TOOL_USE_WARMUP: "1" };
   for (const k of ["AZURE_API_BASE", "AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_API_VERSION"]) {
     const v = process.env[k];
     if (v) env[k] = v;
@@ -147,7 +147,7 @@ export async function runH1(): Promise<void> {
   const SANDBOX_TIMEOUT_MS = process.env.H1_SANDBOX_TIMEOUT_MS ? Number(process.env.H1_SANDBOX_TIMEOUT_MS) : 1_800_000;
   // Coordinator verified-completion rounds (counters premature termination). Off unless H1_VERIFY_ROUNDS set.
   const VERIFY_ROUNDS = process.env.H1_VERIFY_ROUNDS ? Number(process.env.H1_VERIFY_ROUNDS) : undefined;
-  const harness: Harness = swarmHarness({ env: providerEnv(), timeoutMs: AGENT_TIMEOUT_MS });
+  const harness: Harness = openSwarm({ env: providerEnv(), timeoutMs: AGENT_TIMEOUT_MS });
 
   const limit = process.env.H1_INSTANCE_LIMIT ? Number(process.env.H1_INSTANCE_LIMIT) : undefined;
   const instances = sized(loadSweInstances(INSTANCES_DIR), limit);
@@ -159,9 +159,9 @@ export async function runH1(): Promise<void> {
 
   // Build per-instance templates ONCE (shared by both arms), server-side — NO local Docker pull.
   // HARNESS=local stages our packed tarball into the template (no publishing); else install published npm.
-  const SANDBOX_TGZ = "/opt/swarm-harness-local.tgz";
+  const SANDBOX_TGZ = "/opt/openswarm-local.tgz";
   const SANDBOX_ST = "/opt/skill-tree-local.tgz"; // unpublished sibling dep, co-installed
-  // swarm-harness has a heavy dep tree (opentui/solid/ai-sdk) — the default E2B build memory OOM-kills
+  // openswarm has a heavy dep tree (opentui/solid/ai-sdk) — the default E2B build memory OOM-kills
   // `npm i -g`. Give the build headroom (override with H1_BUILD_MEM).
   await buildSweTemplates(instances, {
     apiKey,
@@ -169,8 +169,8 @@ export async function runH1(): Promise<void> {
     memoryMB: process.env.H1_BUILD_MEM ? Number(process.env.H1_BUILD_MEM) : 8192,
     cpuCount: 2,
     log: (m) => console.error(`[tmpl] ${m}`),
-    // Probe swarm-harness (NOT the default `claude` ready cmd — claude isn't installed here).
-    readyCmd: harness.readyCmd ?? "/opt/node/bin/swarm-harness --version",
+    // Probe openswarm (NOT the default `claude` ready cmd — claude isn't installed here).
+    readyCmd: harness.readyCmd ?? "/opt/node/bin/openswarm --version",
     installCommands: local
       ? sandboxInstallLocalHarness(SANDBOX_TGZ, [SANDBOX_ST])
       : harness.templateInstall,
@@ -198,7 +198,7 @@ export async function runH1(): Promise<void> {
   });
   const store = new LocalResultStore(".eval-runs");
 
-  // `single` = one swarm-harness agent (generic CLI adapter). `team` = a real coordinator team
+  // `single` = one openswarm agent (generic CLI adapter). `team` = a real coordinator team
   // (architect + executor + reviewer via `topology coordinator`, the SwarmCoordinatorAdapter). Different
   // adapters → separate runEval passes over the SAME templates/benchmark/backend; buildReport's paired
   // row is the H1 single-vs-team verdict.

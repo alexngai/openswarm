@@ -2,7 +2,7 @@
  * runtime.ts — shared single-agent runtime assembly.
  *
  * Extracted from runPrompt (src/cli/main.ts) so the single-agent CLI and the
- * ACP adapter (docs/30, docs/32) build the same auth + hooks + dispatcher +
+ * ACP adapter (docs/archive/30, docs/archive/32) build the same auth + hooks + dispatcher +
  * tools + permission engine + engine selection from one place. Behavior is
  * identical to the prior inline assembly; the only structural change is that
  * engine construction is deferred to `makeEngine(sessionId)` so ACP can build
@@ -10,7 +10,7 @@
  * sessionId). Session *resolution* (--resume) stays in the CLI — ACP supplies
  * its own session ids.
  *
- * See docs/32-acp-implementation-plan.md §3.
+ * See docs/archive/32-acp-implementation-plan.md §3.
  */
 
 import * as path from "node:path";
@@ -28,21 +28,24 @@ import { CodexFrameworkEngine } from "../engine/codex-framework.js";
 import { CodexResponsesTransportProvider } from "../providers/codex-responses/index.js";
 import { OpenAICodexAuth } from "../auth/openai-codex-oauth.js";
 import { readCodexTokens } from "../auth/openai-codex-token-store.js";
-import { DEFAULT_COMPACTION } from "../engine/compactor.js";
+import { DEFAULT_COMPACTION, type CompactionConfig } from "../engine/compactor.js";
+import type { RemoteCompactionConfig } from "../engine/compact-remote.js";
+import type { Provider } from "../providers/index.js";
 import { PluginRegistry } from "../plugins/registry.js";
 import { ClaudeCodeSource } from "../plugins/claude-code-source.js";
 import { PluginStateStore } from "../plugins/state.js";
 import { SkillRegistry } from "../skills/registry.js";
 import { ClaudeCodeSource as ClaudeCodeSkillSource } from "../skills/claude-code-source.js";
 import { buildTier1Tools } from "../tools/tier1/index.js";
+import { setToolRegistry } from "../tools/tier1/tool_search.js";
 import { loadMcpConfig } from "../mcp/config.js";
 import { McpStdioClient } from "../mcp/client.js";
 import { buildMcpToolImpl } from "../mcp/bridge.js";
 import { loadHooksConfig, countEvents, countMatchers } from "../hooks/config.js";
 import { HookRuntime } from "../hooks/runtime.js";
 import { loadAliases, resolveAlias } from "../providers/aliases.js";
-import { resolveProvider } from "../providers/routing.js";
 import { OpenAIEnvAuth } from "../auth/openai-env.js";
+import { planEngine } from "./select-engine.js";
 import type { CommonOpts } from "./argv.js";
 import type { AgentEngine } from "../engine/index.js";
 import type { AuthSource } from "../auth/index.js";
@@ -50,6 +53,36 @@ import type { ToolImpl } from "../tools/types.js";
 import type { HooksConfigFile } from "../hooks/config.js";
 
 export const DEFAULT_MODEL = "claude-sonnet-4-6";
+
+/**
+ * Build the default compaction config for a native/hardened engine.
+ *
+ * Remote (LLM-driven, structured) compaction is ON by default: it produces far
+ * higher-fidelity summaries than the mechanical fallback, and the remote path
+ * already fails safe to mechanical on any error/timeout/validation miss. It
+ * reuses the session's own provider + model (a cheaper summarization model can
+ * be pinned via OPENSWARM_COMPACTION_MODEL). Set OPENSWARM_REMOTE_COMPACTION to
+ * 0/false/off/no to force the mechanical compactor.
+ *
+ * The trigger thresholds (preserveRecentMessages / maxEstimatedTokens) are
+ * unchanged from DEFAULT_COMPACTION — only the summarization method differs.
+ */
+export function defaultCompactionConfig(
+  provider: Provider,
+  modelId: string,
+): CompactionConfig {
+  const flag = (process.env.OPENSWARM_REMOTE_COMPACTION ?? "").toLowerCase();
+  const remoteDisabled = ["0", "false", "off", "no"].includes(flag);
+  if (remoteDisabled) return DEFAULT_COMPACTION;
+
+  const config: RemoteCompactionConfig = {
+    preserveRecentMessages: DEFAULT_COMPACTION.preserveRecentMessages,
+    maxEstimatedTokens: DEFAULT_COMPACTION.maxEstimatedTokens,
+    provider,
+    model: process.env.OPENSWARM_COMPACTION_MODEL ?? modelId,
+  };
+  return config;
+}
 
 /**
  * Build the auth source for a non-Anthropic provider model. Mirrors the prior
@@ -98,14 +131,14 @@ export async function buildAgentRuntime(
 ): Promise<BuildRuntimeResult> {
   // 1. Validate auth. Scripted-test mode skips the check (the scripted engine
   // never calls the API).
-  const scriptedMode = !!process.env.SWARM_HARNESS_TEST_SCRIPT;
+  const scriptedMode = !!process.env.OPENSWARM_TEST_SCRIPT;
   if (!scriptedMode) {
     if (opts.framework === "codex-native") {
       // codex-native uses ChatGPT (codex) credentials, not Anthropic auth.
       if (readCodexTokens() === null) {
         process.stderr.write(
           "error: not logged in to ChatGPT.\n" +
-            "  Run `swarm-harness login --provider openai-codex`.\n",
+            "  Run `openswarm login --provider openai-codex`.\n",
         );
         return { kind: "exit", code: 1 };
       }
@@ -129,13 +162,13 @@ export async function buildAgentRuntime(
       hooksConfig = await loadHooksConfig({ cwd: process.cwd() });
     } catch (err) {
       process.stderr.write(
-        `[swarm-harness] hooks config error: ${err instanceof Error ? err.message : String(err)}\n`,
+        `[openswarm] hooks config error: ${err instanceof Error ? err.message : String(err)}\n`,
       );
     }
     const n = countMatchers(hooksConfig.config);
     if (n > 0 && hooksConfig.resolvedPath !== undefined) {
       process.stderr.write(
-        `[swarm-harness] hooks loaded from ${hooksConfig.resolvedPath} (${n} matchers across ${countEvents(hooksConfig.config)} events)\n`,
+        `[openswarm] hooks loaded from ${hooksConfig.resolvedPath} (${n} matchers across ${countEvents(hooksConfig.config)} events)\n`,
       );
     }
   }
@@ -149,20 +182,20 @@ export async function buildAgentRuntime(
 
   // 2a. Discover and register plugin tools (opt-in via --plugins, default on).
   const pluginTools: ToolImpl[] = [];
-  const envPluginsDir = process.env.SWARM_HARNESS_PLUGINS_DIR;
+  const envPluginsDir = process.env.OPENSWARM_PLUGINS_DIR;
   const swarmPluginsDir =
     envPluginsDir && envPluginsDir.length > 0
       ? envPluginsDir
-      : path.join(os.homedir(), ".swarm-harness", "plugins");
+      : path.join(os.homedir(), ".openswarm", "plugins");
   // One shared store across plugin discovery and the `/plugin` slash command.
   const pluginStateStore = new PluginStateStore(swarmPluginsDir);
   if (opts.plugins) {
     const pluginRegistry = new PluginRegistry(pluginStateStore);
     pluginRegistry.registerSource(
-      new ClaudeCodeSource({ id: "swarm-harness", pluginsDir: swarmPluginsDir }),
+      new ClaudeCodeSource({ id: "openswarm", pluginsDir: swarmPluginsDir }),
     );
     pluginRegistry.registerSource(new ClaudeCodeSource());
-    process.stderr.write("[swarm-harness] discovering plugins...\n");
+    process.stderr.write("[openswarm] discovering plugins...\n");
     try {
       const discovered = await pluginRegistry.buildPluginTools();
       for (const tool of discovered) {
@@ -175,7 +208,7 @@ export async function buildAgentRuntime(
       }
     } catch (err) {
       process.stderr.write(
-        `[swarm-harness] plugin discovery error: ${err instanceof Error ? err.message : String(err)}\n`,
+        `[openswarm] plugin discovery error: ${err instanceof Error ? err.message : String(err)}\n`,
       );
     }
   }
@@ -207,12 +240,12 @@ export async function buildAgentRuntime(
       loaded = await loadMcpConfig();
     } catch (err) {
       process.stderr.write(
-        `[swarm-harness] mcp config load error: ${err instanceof Error ? err.message : String(err)}\n`,
+        `[openswarm] mcp config load error: ${err instanceof Error ? err.message : String(err)}\n`,
       );
       loaded = { configs: [] };
     }
     if (loaded.resolvedPath !== undefined) {
-      process.stderr.write(`[swarm-harness] mcp config: ${loaded.resolvedPath}\n`);
+      process.stderr.write(`[openswarm] mcp config: ${loaded.resolvedPath}\n`);
     }
     if (loaded.configs.length > 0) {
       const results = await Promise.allSettled(
@@ -227,7 +260,7 @@ export async function buildAgentRuntime(
         const cfg = loaded.configs[i]!;
         if (r.status === "rejected") {
           process.stderr.write(
-            `[swarm-harness] mcp server '${cfg.name}' failed to connect: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}\n`,
+            `[openswarm] mcp server '${cfg.name}' failed to connect: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}\n`,
           );
           continue;
         }
@@ -246,7 +279,7 @@ export async function buildAgentRuntime(
           }
         } catch (err) {
           process.stderr.write(
-            `[swarm-harness] mcp server '${cfg.name}' listTools failed: ${err instanceof Error ? err.message : String(err)}\n`,
+            `[openswarm] mcp server '${cfg.name}' listTools failed: ${err instanceof Error ? err.message : String(err)}\n`,
           );
         }
       }
@@ -261,6 +294,11 @@ export async function buildAgentRuntime(
       }
     });
   }
+
+  // 2d'. Populate the tool_search registry from the fully assembled surface
+  // (tier0 + tier1 + plugins + MCP) so dynamic discovery reflects exactly
+  // what the dispatcher will execute.
+  setToolRegistry(dispatcher.list());
 
   // 2d. --dump-tools: print registered tools as JSON and exit 0.
   if (opts.dumpTools) {
@@ -280,8 +318,11 @@ export async function buildAgentRuntime(
     return { kind: "exit", code: 0 };
   }
 
-  // 3. Build permission engine.
-  const permEngine = new PermissionEngine(opts.permissionMode);
+  // 3. Build permission engine. Plan mode narrows the effective mode to
+  //    read-only regardless of the user's requested ceiling (headless / ACP
+  //    enforce this here; the REPL additionally tracks it as a mutable local).
+  const effectivePermissionMode = opts.plan ? "read-only" : opts.permissionMode;
+  const permEngine = new PermissionEngine(effectivePermissionMode);
 
   // 4. RunConfig auth source (the Anthropic SDK engine's auth).
   const auth = new AnthropicEnvAuth();
@@ -292,106 +333,92 @@ export async function buildAgentRuntime(
   const rawModel = opts.model ?? DEFAULT_MODEL;
   let resolvedModelId = resolveAlias(rawModel, aliases);
 
+  const planResult = planEngine({
+    framework: opts.framework,
+    resolvedModelId,
+    scripted: scriptedMode,
+  });
+  if (!planResult.ok) {
+    process.stderr.write(`${planResult.message}\n`);
+    return { kind: "exit", code: 2 };
+  }
+  // Reflect the effective model everywhere downstream — budget/cost pricing,
+  // --dump-engine, RunConfig.model, and the system-prompt "Model" block. Only
+  // codex-native rewrites it (Claude id → gpt-5.x); every other path is a no-op.
+  resolvedModelId = planResult.effectiveModelId;
+  const plan = planResult.plan;
+
   let makeEngine: MakeEngine;
-  if (opts.framework === "codex-chatgpt") {
-    makeEngine = async () => ({
-      engine: new CodexFrameworkEngine({ cwd: process.cwd() }),
-    });
-  } else if (opts.framework === "codex-native") {
-    // In-process ChatGPT-subscription path (docs/42). The backend's accepted
-    // model set is plan-dependent and gpt-5.x only; default to gpt-5.5 unless
-    // the user passed an explicit gpt* model (the CLI default is a Claude id).
-    const codexModel = /^gpt/i.test(resolvedModelId) ? resolvedModelId : "gpt-5.5";
-    // Reflect the effective model everywhere downstream — budget/cost pricing,
-    // --dump-engine, RunConfig.model, and the system-prompt "Model" block — not
-    // just the API call (the provider also overrides req.model internally).
-    resolvedModelId = codexModel;
-    makeEngine = async (sessionId: string) => {
-      const auth = new OpenAICodexAuth();
-      const provider = new CodexResponsesTransportProvider({
-        modelId: codexModel,
-        credentials: auth,
-        sessionId,
-        ...(opts.codexTransport !== undefined ? { transport: opts.codexTransport } : {}),
+  switch (plan.kind) {
+    case "scripted":
+      makeEngine = async () => ({ engine: new ScriptedTestEngine() });
+      break;
+    case "codex-chatgpt":
+      makeEngine = async () => ({
+        engine: new CodexFrameworkEngine({ cwd: process.cwd() }),
       });
-      const engine = new HardenedNativeEngine({
-        provider,
-        sessionId,
-        eagerToolDispatch: opts.eagerToolDispatch,
-        midTurnCompaction: opts.midTurnCompaction,
-        // Size compaction to the provider's real context window (~400k), not the
-        // 10k DEFAULT_COMPACTION — otherwise we'd compact away the byte-stable
-        // prefix that the ~96% prompt caching relies on (docs/42 §6.2).
-        compactionConfig: {
-          preserveRecentMessages: DEFAULT_COMPACTION.preserveRecentMessages,
-          maxEstimatedTokens: Math.floor(provider.capabilities.maxContextTokens * 0.8),
-        },
-      });
-      return { engine, providerId: provider.id };
-    };
-  } else if (scriptedMode) {
-    makeEngine = async () => ({ engine: new ScriptedTestEngine() });
-  } else {
-    const resolved = resolveProvider(resolvedModelId);
-    if (resolved.kind === "error") {
-      process.stderr.write(`${resolved.message}\n`);
-      return { kind: "exit", code: 2 };
-    }
-    if (opts.framework === "claude-agent-sdk") {
-      if (resolved.kind !== "sdk") {
-        process.stderr.write(
-          `error: --framework claude-agent-sdk requires an Anthropic model; received ${resolvedModelId}.\n`,
-        );
-        return { kind: "exit", code: 2 };
-      }
-      const factory = resolved.engineFactory!;
-      makeEngine = async () => ({ engine: factory() });
-    } else if (opts.framework === "native" || opts.framework === "hardened-native") {
-      if (resolved.kind !== "native") {
-        process.stderr.write(
-          `error: --framework ${opts.framework} does not support Claude models in M4a.\n` +
-            "Use `--framework auto` (default) or `--framework claude-agent-sdk`.\n" +
-            "Native-via-@ai-sdk/anthropic is scheduled for M4b.\n",
-        );
-        return { kind: "exit", code: 2 };
-      }
-      const providerFactory = resolved.providerFactory!;
-      const providerModelId = resolved.modelId!;
-      const useHardened = opts.framework === "hardened-native";
+      break;
+    case "codex-native": {
+      // In-process ChatGPT-subscription path (docs/42).
+      const codexModel = plan.codexModelId;
       makeEngine = async (sessionId: string) => {
-        const providerAuth = resolved.authFactory
-          ? await resolved.authFactory()
+        const codexAuth = new OpenAICodexAuth();
+        const provider = new CodexResponsesTransportProvider({
+          modelId: codexModel,
+          credentials: codexAuth,
+          sessionId,
+          ...(opts.codexTransport !== undefined ? { transport: opts.codexTransport } : {}),
+        });
+        const engine = new HardenedNativeEngine({
+          provider,
+          sessionId,
+          eagerToolDispatch: opts.eagerToolDispatch,
+          midTurnCompaction: opts.midTurnCompaction,
+          // Size compaction to the provider's real context window (~400k), not
+          // the 10k DEFAULT_COMPACTION — otherwise we'd compact away the
+          // byte-stable prefix that the ~96% prompt caching relies on
+          // (docs/42 §6.2).
+          compactionConfig: {
+            preserveRecentMessages: DEFAULT_COMPACTION.preserveRecentMessages,
+            maxEstimatedTokens: Math.floor(provider.capabilities.maxContextTokens * 0.8),
+          },
+        });
+        return { engine, providerId: provider.id };
+      };
+      break;
+    }
+    case "claude-sdk": {
+      const factory = plan.resolved.engineFactory!;
+      makeEngine = async () => ({ engine: factory() });
+      break;
+    }
+    case "native": {
+      const providerFactory = plan.resolved.providerFactory!;
+      const providerModelId = plan.resolved.modelId!;
+      const authFactory = plan.resolved.authFactory;
+      const useHardened = plan.hardened;
+      makeEngine = async (sessionId: string) => {
+        const providerAuth = authFactory
+          ? await authFactory()
           : await buildAuthForProvider(providerModelId);
         const provider = await providerFactory(providerAuth, providerModelId);
+        const compactionConfig = defaultCompactionConfig(provider, providerModelId);
         const engine = useHardened
           ? new HardenedNativeEngine({
               provider,
               sessionId,
               eagerToolDispatch: opts.eagerToolDispatch,
               midTurnCompaction: opts.midTurnCompaction,
+              compactionConfig,
             })
-          : new NativeEngine({ provider, sessionId });
+          : new NativeEngine({ provider, sessionId, compactionConfig });
         return { engine, providerId: provider.id };
       };
-    } else {
-      // auto
-      if (resolved.kind === "sdk") {
-        const factory = resolved.engineFactory!;
-        makeEngine = async () => ({ engine: factory() });
-      } else {
-        const providerFactory = resolved.providerFactory!;
-        const providerModelId = resolved.modelId!;
-        makeEngine = async (sessionId: string) => {
-          const providerAuth = resolved.authFactory
-          ? await resolved.authFactory()
-          : await buildAuthForProvider(providerModelId);
-          const provider = await providerFactory(providerAuth, providerModelId);
-          return {
-            engine: new NativeEngine({ provider, sessionId }),
-            providerId: provider.id,
-          };
-        };
-      }
+      break;
+    }
+    default: {
+      const _exhaustive: never = plan;
+      throw new Error(`unreachable engine plan: ${String(_exhaustive)}`);
     }
   }
 

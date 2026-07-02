@@ -61,10 +61,13 @@ describe("bashTool", () => {
   });
 
   it("head+tail truncation preserves UTF-8 boundaries", async () => {
-    // '€' is 3 bytes (e2 82 ac). Generate enough to exceed head+tail budget (40 KiB default).
+    // '€' is 3 bytes (e2 82 ac). Use many short lines (each well under the
+    // output-cleanse long-line threshold, so elision does not pre-empt this)
+    // whose total exceeds the head+tail byte budget (40 KiB default).
     const euro = "€"; // 3 bytes
-    const count = Math.ceil((50 * 1024) / 3); // ~50 KiB
-    const bigStr = euro.repeat(count);
+    const line = euro.repeat(100) + "\n"; // 300 bytes + newline, under maxLineChars
+    const count = Math.ceil((50 * 1024) / line.length); // ~50 KiB total
+    const bigStr = line.repeat(count);
     const tmpFile = path.join(os.tmpdir(), `trunctest-${Date.now()}.txt`);
     const { writeFileSync } = await import("node:fs");
     writeFileSync(tmpFile, bigStr, "utf8");

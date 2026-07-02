@@ -19,6 +19,7 @@ import {
   mergeCompactSummaries,
   summarizeMessages,
   shouldCompact,
+  withTodoProgress,
 } from "./compactor.js";
 
 // ---------------------------------------------------------------------------
@@ -42,6 +43,46 @@ export function isRemoteCompactionConfig(
   config: CompactionConfig,
 ): config is RemoteCompactionConfig {
   return "provider" in config && "model" in config;
+}
+
+// ---------------------------------------------------------------------------
+// Summary section validation
+// ---------------------------------------------------------------------------
+
+/**
+ * Required `## …` sections a conforming remote summary must contain (mirrors
+ * the structured prompt below). "Optional Next Step" is intentionally excluded
+ * — the prompt says to omit it when there's no obvious next action.
+ */
+export const REQUIRED_SUMMARY_SECTIONS: readonly string[] = [
+  "Primary Request and Intent",
+  "Key Technical Concepts",
+  "Files and Code Sections",
+  "Errors and Fixes",
+  "Problem Solving",
+  "All User Messages",
+  "Pending Tasks",
+  "Current Work",
+];
+
+/**
+ * Returns the required sections missing from a summary. Matching is on the
+ * `## <heading>` marker, case-insensitively, so minor whitespace/casing drift
+ * in the model output doesn't spuriously fail an otherwise-complete summary.
+ */
+export function missingSummarySections(summary: string): string[] {
+  const haystack = summary.toLowerCase();
+  return REQUIRED_SUMMARY_SECTIONS.filter(
+    (section) => !haystack.includes(`## ${section.toLowerCase()}`),
+  );
+}
+
+/** Thrown when a remote summary still lacks required sections after a retry. */
+export class RemoteSummaryValidationError extends Error {
+  constructor(readonly missing: readonly string[]) {
+    super(`Remote summary missing required sections: ${missing.join(", ")}`);
+    this.name = "RemoteSummaryValidationError";
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -148,6 +189,10 @@ export async function compactSessionRemote(
     summary = mergeCompactSummaries(existingSummary, summarizeMessages(removed));
   }
 
+  // Fold the latest todo snapshot into whichever summary we ended up with, so
+  // the checklist survives the compaction boundary (matches the mechanical path).
+  summary = withTodoProgress(summary, session.messages);
+
   const continuation = getCompactContinuationMessage(
     summary,
     true,
@@ -181,26 +226,70 @@ async function summarizeRemote(
   const maxTokens = config.maxSummaryTokens ?? 2048;
   const systemPrompt = config.systemPrompt ?? REMOTE_COMPACTION_SYSTEM_PROMPT;
 
-  // Build the user message containing the conversation to summarize
+  // Build the base user message containing the conversation to summarize.
   const conversationText = formatConversationForSummary(messages, existingSummary);
 
+  // Section validation + one retry (modeled on Codex compact_remote_v2): the
+  // structured prompt asks for a fixed set of `## …` sections. A truncated or
+  // off-format response loses information silently, so we validate the sections
+  // and, if any required one is missing, retry ONCE with a corrective note
+  // enumerating the gaps. If the retry still doesn't conform we throw, which the
+  // caller turns into a mechanical-summary fallback.
+  let userText = conversationText;
+  let lastSummary = "";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const responseText = await streamSummarization(
+      userText,
+      systemPrompt,
+      config,
+      maxTokens,
+      timeoutMs,
+      abort,
+    );
+    lastSummary = extractSummaryFromResponse(responseText);
+
+    const missing = missingSummarySections(lastSummary);
+    if (missing.length === 0) {
+      return lastSummary;
+    }
+
+    // Corrective retry: re-send the original conversation plus an explicit
+    // list of the sections the previous attempt dropped.
+    userText =
+      `${conversationText}\n\n## Correction Required\n` +
+      `Your previous summary was missing these required sections: ` +
+      `${missing.join(", ")}. Re-emit the FULL summary in the exact ` +
+      `<summary>…</summary> format with every required section present.`;
+  }
+
+  // Still non-conforming after the retry — signal the caller to fall back.
+  throw new RemoteSummaryValidationError(
+    missingSummarySections(lastSummary),
+  );
+}
+
+/** Single streaming summarization call with a per-attempt timeout. */
+async function streamSummarization(
+  userText: string,
+  systemPrompt: string,
+  config: RemoteCompactionConfig,
+  maxTokens: number,
+  timeoutMs: number,
+  abort?: AbortSignal,
+): Promise<string> {
   const userMessage: ProviderMessage = {
     role: "user",
-    content: [{ type: "text", text: conversationText }],
+    content: [{ type: "text", text: userText }],
   };
 
-  // Create timeout abort
   const timeoutController = new AbortController();
   const timer = setTimeout(() => timeoutController.abort(), timeoutMs);
-
-  // Combine external abort with timeout
   const combinedAbort = abort
     ? combineAbortSignals(abort, timeoutController.signal)
     : timeoutController.signal;
 
   try {
     let responseText = "";
-
     for await (const event of config.provider.stream({
       messages: [userMessage],
       systemPrompt,
@@ -215,8 +304,7 @@ async function summarizeRemote(
         throw new Error(`Provider error: ${event.message}`);
       }
     }
-
-    return extractSummaryFromResponse(responseText);
+    return responseText;
   } finally {
     clearTimeout(timer);
   }

@@ -31,7 +31,7 @@ import { z, ZodObject, toJSONSchema as zodToJSONSchema } from "zod";
  * engine key by the bare tool name (e.g. `read_file`). We strip the prefix
  * at the engine boundary so the rest of the system sees unprefixed names.
  */
-const MCP_PREFIX = "mcp__swarm-harness__";
+const MCP_PREFIX = "mcp__openswarm__";
 function stripMcpPrefix(name: string): string {
   return name.startsWith(MCP_PREFIX) ? name.slice(MCP_PREFIX.length) : name;
 }
@@ -56,7 +56,7 @@ type SDKPermissionMode =
 
 /**
  * Always returns SDK `default` mode so canUseTool fires for every tool call,
- * regardless of swarm-harness PermissionMode. Our PermissionEngine returns
+ * regardless of OpenSwarm PermissionMode. Our PermissionEngine returns
  * Allow for everything in danger-full-access — the SDK mode would just gate
  * a second time. Going through canUseTool in all modes lets bash-validation
  * (Phase 5 stage A) act as the safety floor even in danger mode.
@@ -68,7 +68,7 @@ type SDKPermissionMode =
  * canUseTool restores the validation gate without changing user UX for safe
  * paths (PermissionEngine returns Allow → no prompt fires).
  *
- * See docs/21-roadmap-v0.2-to-v0.4.md §v0.2.Q1 for the full rationale.
+ * See docs/archive/21-roadmap-v0.2-to-v0.4.md §v0.2.Q1 for the full rationale.
  */
 function mapPermissionMode(_mode: PermissionMode): SDKPermissionMode {
   return "default";
@@ -161,7 +161,7 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
     });
 
     const mcpServer = createSdkMcpServer({
-      name: "swarm-harness",
+      name: "openswarm",
       tools: mcpTools,
     });
 
@@ -207,7 +207,7 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
 
     // 4. Permission mode. v0.2: always SDK `default` so canUseTool fires
     //    for every tool — bash-validation can Block/Warn in any mode (see
-    //    mapPermissionMode docstring + docs/21-roadmap-v0.2-to-v0.4.md
+    //    mapPermissionMode docstring + docs/archive/21-roadmap-v0.2-to-v0.4.md
     //    §v0.2.Q1). The `allowDangerouslySkipPermissions` flag is dropped
     //    here for the same reason.
     const sdkPermissionMode = mapPermissionMode(config.permissionMode);
@@ -289,7 +289,7 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
         // canUseTool — see RunConfig.enabledBuiltinTools JSDoc). Default is
         // empty (no built-in tools) unless explicitly enabled by the caller.
         tools: [...(config.enabledBuiltinTools ?? [])],
-        mcpServers: { "swarm-harness": mcpServer },
+        mcpServers: { openswarm: mcpServer },
         canUseTool: sdkCanUseTool,
         permissionMode: sdkPermissionMode,
         maxTurns: config.maxTurns,

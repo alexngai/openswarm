@@ -315,7 +315,7 @@ export class CodexAppServerProvider extends EventEmitter {
     // the App Server honors them and routes item/tool/call requests back.
     const useExperimentalApi = this.options.dynamicTools.length > 0;
     const params: InitializeParams = {
-      clientInfo: { name: "swarm-harness", version: "0.0.1" },
+      clientInfo: { name: "openswarm", version: "0.0.1" },
       capabilities: useExperimentalApi ? { experimentalApi: true } : null,
     };
 

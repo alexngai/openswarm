@@ -17,7 +17,7 @@ describe("FileMemoryProvider", () => {
     expect(provider.name).toBe("file");
     expect(provider.capabilities.enrichment).toBe(true);
     expect(provider.capabilities.persistence).toBe(true);
-    expect(provider.capabilities.search).toBe(false);
+    expect(provider.capabilities.search).toBe(true);
     expect(provider.capabilities.graph).toBe(false);
   });
 
