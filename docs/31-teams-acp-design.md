@@ -1,6 +1,6 @@
 # Teams × ACP — driving a swarm from an editor with graceful degradation
 
-Follow-up to [docs/30-acp-compatibility-plan.md §9](30-acp-compatibility-plan.md). Doc 30 ships
+Follow-up to [docs/archive/30-acp-compatibility-plan.md §9](archive/30-acp-compatibility-plan.md). Doc 30 ships
 **single-agent** ACP parity (Stage A). This doc designs **Stage B** — exposing a *team* over ACP so
 a developer can drive the swarm from an ACP editor (Zed, etc.) — while staying compatible with
 **standard, swarm-unaware** ACP clients through deliberate degradation.
@@ -8,7 +8,7 @@ a developer can drive the swarm from an ACP editor (Zed, etc.) — while staying
 **Authoring date:** 2026-06-02.
 **Status:** **design — fully implemented.** §11 open questions resolved/locked 2026-06-02; the staged
 plan (§10 B0–B2) shipped end to end. Execution lives in
-[docs/33](33-teams-acp-implementation-plan.md)/[34](34-acp-b1-meta-swarm-plan.md)/[35](35-acp-b2-rich-client-plan.md);
+[docs/archive/33](archive/33-teams-acp-implementation-plan.md)/[34](archive/34-acp-b1-meta-swarm-plan.md)/[35](archive/35-acp-b2-rich-client-plan.md);
 the `_meta.swarm` convention is published in [docs/36](36-meta-swarm-convention.md).
 **Anchor:** [docs/00-vision.md](00-vision.md) — "N coordinated agents is the product."
 **Product goal (locked for this doc):** *drive the swarm from the editor* — the developer prompts a
@@ -337,6 +337,6 @@ Builds on doc 30 Stage A. Each layer is independently shippable; earlier layers 
 - <https://agentclientprotocol.com>
 - <https://github.com/zed-industries/agent-client-protocol> (`schema/schema.json`, protocol v1; `_meta` convention)
 - <https://github.com/agentclientprotocol/claude-agent-acp> (precedent for `_meta`-gated channels)
-- [docs/30-acp-compatibility-plan.md](30-acp-compatibility-plan.md) (Stage A — single-agent parity)
+- [docs/archive/30-acp-compatibility-plan.md](archive/30-acp-compatibility-plan.md) (Stage A — single-agent parity)
 - [docs/25-team-orchestration.md](25-team-orchestration.md) (topology catalog)
 - [docs/29-v0.7-git-cascade-plan.md](29-v0.7-git-cascade-plan.md) (worktree-per-member)

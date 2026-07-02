@@ -1,8 +1,10 @@
 # openswarm design docs
 
-Early design capture for openswarm — a TypeScript agent harness built around Claude, where the atomic unit is a single coding agent and the primary product surface is multi-agent swarm orchestration.
+Design capture for openswarm — a TypeScript agent harness where the atomic unit is a single coding agent and the primary product surface is multi-agent swarm orchestration.
 
-## Map
+Numbering is chronological and stable: numbers are never reused, and archived docs keep their numbers. Historical plans and build records live in [`archive/`](./archive/).
+
+## Foundations (design of record)
 
 - [00-vision.md](./00-vision.md) — project intent, what openswarm is, relationship to claw-code
 - [01-requirements.md](./01-requirements.md) — functional and non-functional requirements, scope
@@ -11,40 +13,52 @@ Early design capture for openswarm — a TypeScript agent harness built around C
 - [04-tool-tiers.md](./04-tool-tiers.md) — tiered tool catalog (Tier 0 → Tier 5)
 - [05-swarm-model.md](./05-swarm-model.md) — atomic agent and orchestrator contracts
 - [06-open-questions.md](./06-open-questions.md) — unresolved decisions, provisional leans, and decision log
-- [07-implementation-plan.md](./07-implementation-plan.md) — tiered milestones (M0 → M5+) with exit criteria
-- [08-m0-plan.md](./08-m0-plan.md) — M0 runtime core: phased plan with acceptance criteria, risks, verification
-- [09-m1-plan.md](./09-m1-plan.md) — M1 minimum viable swarm: subprocess workers + IPC + nested spawning + orchestrator CLI
-- [10-m2-plan.md](./10-m2-plan.md) — M2 UI depth + productivity: ink REPL rewrite + 14 slash commands + Tier 1 tools + plugins/skills/MCP/hooks
-- [13-m4a-plan.md](./13-m4a-plan.md) — M4a NativeEngine: Vercel AI SDK integration, OpenAI provider, routing, aliases, compaction, parallel tool fan-out
-- [14-m4b-plan.md](./14-m4b-plan.md) — M4b provider breadth + OAuth: xAI/Google/DashScope providers, plugin lifecycle, OpenAI PKCE OAuth, quirks, framework-filter, CLI plumbing. Phase 5 (Codex ChatGPT custom provider) deferred pending operator SSE spike.
+- [07-implementation-plan.md](./07-implementation-plan.md) — original tiered milestones (M0 → M5+); per-milestone plans are archived
 
-> **Index gap:** docs 11–29 (m3 plans, parity, teams, daemon, git-cascade, etc.) exist on disk but
-> are not yet listed here. Backfill pending; browse the `docs/` directory directly meanwhile.
+## Teams & orchestration
 
-### Hardening & Parity
+- [25-team-orchestration.md](./25-team-orchestration.md) — canonical team design: `TeamSession`, topologies, long-lived workers, openteams loader (shipped v0.4)
+- [28-v0.5-daemon-plan.md](./28-v0.5-daemon-plan.md) — long-lived team daemon design (design lock; daemon shipped through 5E/5F)
+- [29-v0.7-git-cascade-plan.md](./29-v0.7-git-cascade-plan.md) — git-cascade integration design (design lock)
+- [45-adaptive-orchestration-design.md](./45-adaptive-orchestration-design.md) — adaptive orchestration design spike (draft)
+- [47-h1-experimental-findings.md](./47-h1-experimental-findings.md) — H1 single-vs-team experimental findings (eval results)
+
+## Engines & parity
 
 - [37-hardened-engine-design.md](./37-hardened-engine-design.md) — production-hardened NativeEngine (retry, eager dispatch, mid-turn compaction)
-- [38-hardened-engine-implementation-plan.md](./38-hardened-engine-implementation-plan.md) — implementation plan for hardened engine
 - [39-codex-parity-gap-analysis.md](./39-codex-parity-gap-analysis.md) — gap analysis vs OpenAI Codex CLI (all P0/P1/P2 gaps closed)
-- [43-macro-agent-parity.md](./43-macro-agent-parity.md) — gap analysis vs macro-agent (the spiritual predecessor); tracked checklist + scope decisions (D1 landing model, D2 pruned scope, D3 OpenHive hosting). Draft.
-- [44-macro-agent-parity-implementation-plan.md](./44-macro-agent-parity-implementation-plan.md) — phased build plan for the decided scope: Track A (git-workspace P0–P4) + Track B (OpenHive hosting P5–P7), converging at P8 (cascade actions). Draft.
+- [42-codex-native-provider-plan.md](./42-codex-native-provider-plan.md) — native Codex (ChatGPT-plan) provider (Phase 1 complete)
+- [43-macro-agent-parity.md](./43-macro-agent-parity.md) — gap analysis vs macro-agent; tracked checklist + scope decisions (draft)
+- [44-macro-agent-parity-implementation-plan.md](./44-macro-agent-parity-implementation-plan.md) — phased build plan: Track A (git-workspace) + Track B (OpenHive hosting) (draft)
 
-### Memory System
+## Memory & learning
 
-- [40-memory-system-design.md](./40-memory-system-design.md) — 4-layer memory architecture: curated bounded memory (L1), skills/procedural memory (L2), session archive (L3), provider protocol (L4). Implemented — all 5 phases complete.
+- [40-memory-system-design.md](./40-memory-system-design.md) — 4-layer memory architecture (curated memory, skills, session archive, provider protocol). Implemented — all 5 phases complete
+- [46-sessionlog-trajectory-ingest.md](./46-sessionlog-trajectory-ingest.md) — sessionlog trajectory ingest design (Layer 0 kickoff)
 
-### ACP compatibility (Agent Client Protocol — Zed/editor integration)
+## ACP (Agent Client Protocol — Zed/editor integration)
 
-*All stages below are **shipped** (Stage A + team stages B0–B2, the §9 robustness pass, and the
-published convention). B3 (standardization) is intentionally skipped (Q5).*
+All ACP stages are shipped; the staged build records are archived. The living references:
 
-- [30-acp-compatibility-plan.md](./30-acp-compatibility-plan.md) — **Stage A: single-agent ACP parity.** Expose one openswarm agent over ACP (JSON-RPC/ndjson on stdio) by reusing the `AgentEngine.run()` stream + `PermissionGate` seams. Event mapping, tool-kind/diff tables, staged plan A.1–A.7 with acceptance.
-- [31-teams-acp-design.md](./31-teams-acp-design.md) — **Stage B: driving a *team* from an editor.** Projecting N concurrent members onto one ACP session with graceful degradation: additive `_meta.swarm` enrichment, capability-negotiated baseline-vs-rich emission, per-topology mapping. §11 decisions locked (quiescence, permissions, member-text, session/load, build-our-own-client).
-- [32-acp-implementation-plan.md](./32-acp-implementation-plan.md) — **Build-ready task breakdown for Stage A.** The shared `buildAgentRuntime` refactor, `src/acp/` module layout, `AcpAgent` + translator + permission-driver signatures, test strategy, and a 7-step checkpointed build sequence (~2.5–3d). Grounded in the current `src/cli/main.ts` run-assembly seams.
-- [33-teams-acp-implementation-plan.md](./33-teams-acp-implementation-plan.md) — **Stage B build plan + live status board.** B0 (team-by-default coordinator) build sequence, then §6 status and **§9 — the live board** tracking everything since: B1/B2, the robustness pass (subtree quiescence, permission-IPC serialization, `allow_always`, parity, headless `ask_user_question` park-and-resume, latency), and the post-review caveats.
-- [34-acp-b1-meta-swarm-plan.md](./34-acp-b1-meta-swarm-plan.md) — **Stage B1: `_meta.swarm` enrichment + team `session/load`.** Versioned per-member meta on updates/plan/permissions, capability negotiation + `acp.memberText`, the persisted orchestration spine, and `session/load` replay (lead prose + `[role]` tool calls *with arguments* + board) with live engine context-resume.
-- [35-acp-b2-rich-client-plan.md](./35-acp-b2-rich-client-plan.md) — **Stage B2: `swarm/steer` ext + swarm-aware rich client.** The mid-turn steering channel, the `RichRenderer` (folds `_meta.swarm` into per-member lanes + a board), and the reference client `scripts/acp-rich-client.ts`.
-- [36-meta-swarm-convention.md](./36-meta-swarm-convention.md) — **The `_meta.swarm` convention (v1).** A self-contained, versioned spec for rich multi-agent rendering over ACP — the schema, where it rides, capability negotiation, `swarm/steer`, and the strip-`_meta` trust invariant. Published so any third-party ACP client can adopt it.
+- [31-teams-acp-design.md](./31-teams-acp-design.md) — driving a *team* from an editor: `_meta.swarm` enrichment, capability-negotiated baseline-vs-rich emission, per-topology mapping (fully implemented)
+- [36-meta-swarm-convention.md](./36-meta-swarm-convention.md) — the `_meta.swarm` convention (v1): self-contained versioned spec so any third-party ACP client can adopt rich multi-agent rendering
+
+## TUI
+
+- [41-tui-redesign.md](./41-tui-redesign.md) — OpenTUI/Solid REPL redesign (active)
+
+## Archive
+
+Historical milestone plans, audits, spikes, and build records live in [`archive/`](./archive/). They are retained verbatim for provenance (code comments cite them by section) but no longer describe current behavior:
+
+- **Milestones:** [08 M0](./archive/08-m0-plan.md) · [09 M1](./archive/09-m1-plan.md) · [10 M2](./archive/10-m2-plan.md) · [11 M3a](./archive/11-m3a-plan.md) · [12 M3b](./archive/12-m3b-plan.md) · [13 M4a](./archive/13-m4a-plan.md) · [14 M4b](./archive/14-m4b-plan.md)
+- **Claw parity push:** [15 gaps](./archive/15-parity-gaps.md) · [16 plan](./archive/16-parity-plan.md) · [17 design questions](./archive/17-parity-design-questions.md) · [18 phase 4](./archive/18-phase-4-plan.md) · [19 phase 5](./archive/19-phase-5-plan.md)
+- **Launch & roadmap:** [20 v0.1 launch](./archive/20-v0.1-launch.md) · [21 roadmap v0.2–v0.4](./archive/21-roadmap-v0.2-to-v0.4.md)
+- **Audits:** [22 branch-lock](./archive/22-a2-branch-lock-audit.md) · [23 smoke](./archive/23-d2-smoke-audit.md)
+- **Codex app-server:** [24 phase 6 plan](./archive/24-phase-6-codex-app-server-plan.md)
+- **Team spikes & v0.4 build record:** [26 spikes](./archive/26-team-orchestration-spikes.md) · [26b codex protocol](./archive/26b-spike-track-b-codex-protocol.md) · [27 v0.4 teams plan](./archive/27-v0.4-teams-implementation-plan.md)
+- **ACP build records:** [30 Stage A plan](./archive/30-acp-compatibility-plan.md) · [32 Stage A build](./archive/32-acp-implementation-plan.md) · [33 Stage B build + status board](./archive/33-teams-acp-implementation-plan.md) · [34 B1](./archive/34-acp-b1-meta-swarm-plan.md) · [35 B2](./archive/35-acp-b2-rich-client-plan.md)
+- **Engine build record:** [38 hardened engine plan](./archive/38-hardened-engine-implementation-plan.md)
 
 ## Research
 
@@ -59,4 +73,4 @@ Feature extraction from the claw-code reference implementation lives in [`resear
 
 ## Status
 
-Drafts. Main docs (00–07) are the design of record. Research notes are read-only reference for where design decisions came from. Resolved open questions migrate to the decision log at the bottom of `06-open-questions.md`.
+Foundations (00–07) are the design of record; resolved open questions migrate to the decision log at the bottom of `06-open-questions.md`. Everything under `archive/` is historical. Research notes are read-only reference for where design decisions came from.

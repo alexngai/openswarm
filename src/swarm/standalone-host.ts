@@ -6,7 +6,6 @@ import type {
   AgentHandle,
   AgentResult,
   AgentMessage,
-  InboxEvent,
   TaskAPI,
   TaskRecord,
   TaskPacket,
@@ -1223,10 +1222,6 @@ export class StandaloneHost implements SwarmHost {
     return this.messageInbox.drain(this.scopeOf(this.agentId), this.agentId, max);
   }
 
-  async *inbox(): AsyncIterable<InboxEvent> {
-    return; // M3b+: full inbox iterator. Phase 3 uses drainInbox + sub_agent_event.
-  }
-
   /**
    * Prompt the operator via the attached TTY and await an answer.
    *
@@ -1286,7 +1281,7 @@ export class StandaloneHost implements SwarmHost {
     });
 
     // Route to the operator (the ACP client) when a handler is present — the ACP
-    // team path has no TTY but can prompt the editor (docs/33 §9).
+    // team path has no TTY but can prompt the editor (docs/archive/33 §9).
     if (this.interactionHandler?.askUserQuestion !== undefined) {
       return this.interactionHandler.askUserQuestion(question, options);
     }

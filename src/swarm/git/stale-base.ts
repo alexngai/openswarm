@@ -3,7 +3,7 @@
  *
  * Expected-base source priority:
  *   1. `opts.expectedBase` (explicit)
- *   2. `<cwd>/.swarm-base` file contents (trimmed)
+ *   2. `<cwd>/.openswarm-base` file contents (trimmed)
  *   3. none — returns { kind: "no-expected-base" }
  *
  * `actual` = `git rev-parse HEAD`. A non-zero git exit surfaces as
@@ -58,7 +58,7 @@ async function resolveExpectedBase(
 ): Promise<string | undefined> {
   if (override !== undefined && override.length > 0) return override.trim();
   try {
-    const raw = await fs.readFile(path.join(cwd, ".swarm-base"), "utf8");
+    const raw = await fs.readFile(path.join(cwd, ".openswarm-base"), "utf8");
     const trimmed = raw.trim();
     return trimmed.length > 0 ? trimmed : undefined;
   } catch {

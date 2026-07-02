@@ -1,13 +1,13 @@
 /**
- * Barrel export for the topologies registry.
- *
- * Stage 4C shipped `FanoutTopology`. Stage 4E.2 adds `PipelineTopology`
- * (sequential — each member's output becomes context for the next).
- * Stage 4E.3 adds `PeerTeamTopology` (N parallel members with live peer
- * messaging via `send_message` / `check_inbox`). Stage 4E.4 adds
- * `CoordinatorTopology` (cc-swarm style — one long-lived root spawns
- * peers dynamically via `agent({team: "self", ...})`). The remaining
- * shapes (committee, critic-loop) land later in 4E.
+ * Barrel export for the topologies registry — all six shapes:
+ *   - `FanoutTopology` — N parallel members, independent tasks
+ *   - `PipelineTopology` — sequential; each member's output feeds the next
+ *   - `PeerTeamTopology` — N parallel members with live peer messaging
+ *     via `send_message` / `check_inbox`
+ *   - `CoordinatorTopology` — cc-swarm style; one long-lived root spawns
+ *     peers dynamically via `agent({team: "self", ...})`
+ *   - `CommitteeTopology` — parallel drafts, then a judge selects/merges
+ *   - `CriticLoopTopology` — author/critic revision loop
  */
 
 export { FanoutTopology } from "./fanout.js";

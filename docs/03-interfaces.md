@@ -85,7 +85,7 @@ Opaque per-engine state, stored alongside our per-worktree JSONL log. `--resume`
 
 ## 2. Provider (inner layer, M4a shipped)
 
-Finer-grained LLM transport. Lives *inside* `NativeEngine`. Not consumed by outer code. Shipped in M4a — see `docs/13-m4a-plan.md` for implementation detail.
+Finer-grained LLM transport. Lives *inside* `NativeEngine`. Not consumed by outer code. Shipped in M4a — see `docs/archive/13-m4a-plan.md` for implementation detail.
 
 ```ts
 export interface Provider {
@@ -228,7 +228,7 @@ export interface SwarmHost {
 }
 ```
 
-**M3a additions (Phase 6):** `SpawnRequest.role` and `SpawnRequest.allowedTools` are now load-bearing — the orchestrator populates them from the resolved `Role` object, the subprocess spawner propagates `OPENSWARM_ROLE` to the child, and the worker entry wires them into `RunConfig.systemPrompt` + `RunConfig.allowedTools`. The `BranchPolicy`, `CommitPolicy`, and `EscalationPolicy` fields on `TaskPacket` are discriminated-kind records (not flat strings); Zod schemas live in `src/swarm/policies.ts`. See `docs/11-m3a-plan.md` for the migration path from legacy flat strings.
+**M3a additions (Phase 6):** `SpawnRequest.role` and `SpawnRequest.allowedTools` are now load-bearing — the orchestrator populates them from the resolved `Role` object, the subprocess spawner propagates `OPENSWARM_ROLE` to the child, and the worker entry wires them into `RunConfig.systemPrompt` + `RunConfig.allowedTools`. The `BranchPolicy`, `CommitPolicy`, and `EscalationPolicy` fields on `TaskPacket` are discriminated-kind records (not flat strings); Zod schemas live in `src/swarm/policies.ts`. See `docs/archive/11-m3a-plan.md` for the migration path from legacy flat strings.
 
 **M3b additions:**
 - `SwarmHost.askUser(question, options?): Promise<AskUserResponse>` (Phase 6) — routes through the host, so Tier 2 `ask_user_question` works identically in standalone (TTY readline fallback) and worker (IPC → orchestrator) modes. `AskUserResponse = { status: "answered"; answer } | { status: "cancelled" | "timed-out" } | { status: "error"; message }`.

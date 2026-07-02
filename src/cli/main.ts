@@ -34,6 +34,15 @@ import { runAcp } from "./acp.js";
 import { buildAgentRuntime } from "./runtime.js";
 import { makeCanUseTool } from "../permissions/gate.js";
 import { PermissionBridge } from "../permissions/bridge.js";
+import { SessionAllowRules } from "../permissions/session-rules.js";
+import { readHeadlessApproval } from "../permissions/headless-prompt.js";
+import {
+  requestPermissionsTool,
+  setPermissionRequestHandler,
+  clearPermissionRequestHandler,
+} from "../tools/tier0/request_permissions.js";
+import { clampPermissionMode, permissionRank } from "../swarm/permission-order.js";
+import type { PendingPermission } from "../ui/repl/state.js";
 import { SessionStore } from "../session/store.js";
 import { runHeadless } from "../ui/headless.js";
 import { checkBudget } from "../core/budget.js";
@@ -44,7 +53,13 @@ import type { CommonOpts } from "./argv.js";
 import type { NormalizedEvent } from "../core/types.js";
 import type { RunConfig } from "../engine/index.js";
 import { buildSystemPrompt, applyPlanMode } from "../engine/default-system-prompt.js";
-import { enrichTurnInputs } from "../memory/index.js";
+import {
+  enrichTurnInputs,
+  observeTurnEvents,
+  endMemorySession,
+  type TurnRecord,
+} from "../memory/index.js";
+import type { AgentEngine } from "../engine/index.js";
 import { VERSION } from "../index.js";
 
 // ---------------------------------------------------------------------------
@@ -119,13 +134,20 @@ export function printVersion(): void {
  */
 function withErrorTracking(
   source: AsyncIterable<NormalizedEvent>,
-): { events: AsyncIterable<NormalizedEvent>; hadError: () => boolean } {
+): { events: AsyncIterable<NormalizedEvent>; hadError: () => boolean; hadMaxTurns: () => boolean } {
   let sawError = false;
+  let sawMaxTurns = false;
 
   async function* gen(): AsyncGenerator<NormalizedEvent> {
     for await (const evt of source) {
       if (evt.type === "error") {
         sawError = true;
+        // A maxTurns stop is a clean BUDGET limit, not a crash — flag it so the
+        // exit code reflects "hit the turn budget" (exit 3) rather than a generic error.
+        const m = (evt.error?.message ?? "").toLowerCase();
+        if (m.includes("maxturns") || m.includes("max_turns") || m.includes("max turns")) {
+          sawMaxTurns = true;
+        }
       }
       yield evt;
     }
@@ -134,6 +156,49 @@ function withErrorTracking(
   return {
     events: gen(),
     hadError: () => sawError,
+    hadMaxTurns: () => sawMaxTurns,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Session-end memory summary (Phase 3 B2, decision Q4)
+// ---------------------------------------------------------------------------
+
+/**
+ * When OPENSWARM_MEMORY_SUMMARIZER=subagent, session-end archiving runs a
+ * one-shot, tool-less subagent turn to produce the session summary instead of
+ * the static final-text truncation. Returns undefined when not configured;
+ * endMemorySession falls back to the static summary if the subagent fails.
+ */
+function buildSubagentSummarizer(
+  engine: AgentEngine,
+  base: RunConfig,
+): ((turns: readonly TurnRecord[]) => Promise<string>) | undefined {
+  if (process.env.OPENSWARM_MEMORY_SUMMARIZER !== "subagent") return undefined;
+  return async (turns) => {
+    const transcript = turns
+      .map(
+        (t) =>
+          `Turn ${t.turnIndex + 1}${
+            t.toolsUsed.length > 0 ? ` (tools: ${t.toolsUsed.join(", ")})` : ""
+          }:\n${t.summary || "(no text)"}`,
+      )
+      .join("\n\n");
+    let text = "";
+    for await (const evt of engine.run({
+      ...base,
+      systemPrompt:
+        "You summarize coding sessions for long-term memory. Reply with 3-6 " +
+        "terse bullet points capturing what was done, key decisions, and " +
+        "anything a future session should know. No preamble.",
+      prompt: `Summarize this session:\n\n${transcript}`,
+      tools: [],
+      canUseTool: async () => ({ allow: false, reason: "summarizer has no tools" }),
+      maxTurns: 1,
+    })) {
+      if (evt.type === "text_delta") text += evt.text;
+    }
+    return text.trim();
   };
 }
 
@@ -210,6 +275,9 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     );
   }
   const useHeadless = opts.headless || !process.stdout.isTTY || tuiUnavailable;
+  // Session-scoped bash "always allow" rules (Phase 3 B4): lives for this
+  // runPrompt invocation, never persisted to disk.
+  const sessionRules = new SessionAllowRules();
   const canUseTool = makeCanUseTool({
     dispatcher: rt.dispatcher,
     permEngine: rt.permEngine,
@@ -217,7 +285,46 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     useHeadless,
     getCurrentMode: () => currentPermissionMode,
     cwd: process.cwd(),
+    sessionRules,
   });
+
+  // 9a. Phase 4.1e — wire the request_permissions escalation seam for the
+  // single-agent REPL + headless paths, then register the tool so the model
+  // can actually reach it. `parentMode` (the CLI ceiling) bounds elevation;
+  // approval routes through the same prompt surface as any other permission
+  // decision (bridge on a TTY, stdin when headless). Granting mutates the
+  // live `currentPermissionMode`, which the gate reads on every call.
+  const parentMode = opts.permissionMode;
+  setPermissionRequestHandler({
+    getCurrentMode: () => currentPermissionMode,
+    requestElevation: async (requestedMode, reason) => {
+      const target = clampPermissionMode(requestedMode, parentMode);
+      // Ceiling blocks it (or it wouldn't raise the mode) — deny without a prompt.
+      if (permissionRank(target) <= permissionRank(currentPermissionMode)) {
+        return { granted: false, newMode: currentPermissionMode };
+      }
+      const pending: PendingPermission = {
+        toolName: "request_permissions",
+        input: { mode: requestedMode, reason },
+        currentMode: currentPermissionMode,
+        requiredPermission: "none",
+        reason,
+      };
+      const decision = useHeadless
+        ? await readHeadlessApproval(pending)
+        : await permissionBridge.request(pending);
+      if (!decision.allow) {
+        return { granted: false, newMode: currentPermissionMode };
+      }
+      currentPermissionMode = target;
+      return { granted: true, newMode: currentPermissionMode };
+    },
+  });
+  // Register the tool on the dispatcher + advertise it to the engine now that
+  // the handler is live. Kept out of buildTier0Tools() (which the ACP/worker
+  // paths share) precisely so it's only offered where the seam is wired.
+  rt.dispatcher.register(requestPermissionsTool);
+  const engineTools = [...rt.tools, requestPermissionsTool];
 
   // 10. Build RunConfig.
   // SDK engine: empty string → falls back to the `claude_code` preset internally.
@@ -231,7 +338,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     prompt: text,
     model: rt.resolvedModelId,
     auth: rt.auth,
-    tools: rt.tools,
+    tools: engineTools,
     // Without this the native/hardened engines can offer tools but cannot
     // execute them (batch dispatch no-ops → every tool returns "tool failed").
     dispatcher: rt.dispatcher,
@@ -240,6 +347,9 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     resumeFrom,
     hooks: rt.hooksConfig,
     ...(opts.enableWebSearch ? { enabledBuiltinTools: ["WebSearch"] } : {}),
+    // Step budget (model round-trips) — the engine turn loop self-enforces this
+    // (`error_max_turns` on exceed). The step-analog of the maxTokens budget.
+    ...(opts.maxTurns !== undefined ? { maxTurns: opts.maxTurns } : {}),
   };
 
   // 11. Route to UI.
@@ -251,6 +361,25 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   };
   const hasBudgetLimits =
     budgetLimits.maxTokens !== undefined || budgetLimits.maxCostUsd !== undefined;
+
+  // Phase 3 B1/B2 — memory lifecycle. Each turn's event stream is wrapped by
+  // the observer (tools + final text + onAfterTurn + onCompaction); the
+  // collected TurnRecords feed the session-end archive.
+  const memoryTurns: TurnRecord[] = [];
+  const recordTurn = (record: TurnRecord): void => {
+    memoryTurns.push(record);
+  };
+  const memorySummarizer = buildSubagentSummarizer(engine, config);
+  const finishMemorySession = async (): Promise<void> => {
+    // Phase 4.1e — drop the module-level escalation handler so it can't leak
+    // into a subsequent run (e.g. tests, or a later ACP session in-process).
+    clearPermissionRequestHandler();
+    await endMemorySession({
+      sessionId,
+      turns: memoryTurns,
+      ...(memorySummarizer !== undefined && { summarize: memorySummarizer }),
+    });
+  };
 
   if (useHeadless) {
     // Headless path: one-shot engine run → JSONL.
@@ -270,8 +399,12 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     const headlessConfig = hasBudgetLimits
       ? { ...enrichedConfig, abort: headlessAbort.signal }
       : enrichedConfig;
-    const rawEvents = engine.run(headlessConfig);
-    const { events, hadError } = withErrorTracking(rawEvents);
+    const rawEvents = observeTurnEvents(engine.run(headlessConfig), {
+      sessionId,
+      turnIndex: 0,
+      onRecord: recordTurn,
+    });
+    const { events, hadError, hadMaxTurns } = withErrorTracking(rawEvents);
 
     if (hasBudgetLimits) {
       // Wrap the event stream: after each event, check budget.
@@ -303,10 +436,19 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
         }
       }
       await runHeadless(budgetWrapped());
-      if (budgetViolation) return 3;
+      if (budgetViolation) {
+        await finishMemorySession();
+        return 3;
+      }
     } else {
       await runHeadless(events);
     }
+    // Phase 3 B1/B2 — archive the session (provider fan-out) before exit.
+    await finishMemorySession();
+    // A maxTurns stop is a clean budget limit (like --max-tokens' exit 3), not a
+    // generic error — so callers/eval classifiers can tell "hit the turn budget"
+    // (budget-bound, solvable at a higher budget) apart from a real crash (exit 1).
+    if (hadMaxTurns()) return 3;
     return hadError() ? 1 : 0;
   }
 
@@ -316,8 +458,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   // fields are read from locals so slash-commands can mutate them).
   // Lazy-loaded so OpenTUI deps don't get pulled into non-TTY paths.
   const { runRepl } = await import("../ui/repl-solid/index.js");
-  const { clampPermissionMode } = await import("../swarm/permission-order.js");
-  const parentMode = opts.permissionMode;
+  // clampPermissionMode + parentMode are defined at step 9a (handler wiring).
   let currentModel = config.model;
   // currentPermissionMode is declared above (the gate closes over it).
   // resumeFrom for the next turn (set by /resume, cleared after one use).
@@ -375,6 +516,10 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
       pluginStore: rt.pluginStateStore,
     },
     permissionBridge,
+    // Phase 3 B1 — memory observer around each REPL turn (onAfterTurn +
+    // onCompaction fire inside; records feed the session-end archive).
+    wrapTurnEvents: (turn, turnIndex) =>
+      observeTurnEvents(turn, { sessionId, turnIndex, onRecord: recordTurn }),
     getTokens: () => {
       const u = engine.getCumulativeUsage();
       // v0.2.Q7: check budget on every token poll. When exceeded, abort the
@@ -391,6 +536,8 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
       return u.inputTokens + u.outputTokens;
     },
   });
+  // Phase 3 B1/B2 — REPL exited; archive the session (provider fan-out).
+  await finishMemorySession();
   // Exit code 3 if budget was exceeded (abort signal was fired by budget check).
   if (hasBudgetLimits && turnAbort.signal.aborted) return 3;
   return 0;
@@ -464,6 +611,13 @@ export async function main(argv: string[]): Promise<number> {
         output: parsed.output,
         ...(parsed.mapUrl !== undefined && { mapUrl: parsed.mapUrl }),
         detach: parsed.detach,
+        opentasks: parsed.opentasks,
+        ...(parsed.opentasksSocket !== undefined && {
+          opentasksSocket: parsed.opentasksSocket,
+        }),
+        agentInbox: parsed.agentInbox,
+        gitCascade: parsed.gitCascade,
+        cleanupWorktrees: parsed.cleanupWorktrees,
       });
 
     case "topology":
@@ -478,6 +632,13 @@ export async function main(argv: string[]): Promise<number> {
         ...(parsed.maxCostUsd !== undefined && { maxCostUsd: parsed.maxCostUsd }),
         ...(parsed.model !== undefined && { modelId: parsed.model }),
         ...(parsed.traceOutput !== undefined && { traceOutput: parsed.traceOutput }),
+        opentasks: parsed.opentasks,
+        ...(parsed.opentasksSocket !== undefined && {
+          opentasksSocket: parsed.opentasksSocket,
+        }),
+        agentInbox: parsed.agentInbox,
+        gitCascade: parsed.gitCascade,
+        cleanupWorktrees: parsed.cleanupWorktrees,
       });
 
     case "team-logs":

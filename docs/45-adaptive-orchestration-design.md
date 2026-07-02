@@ -258,7 +258,7 @@ which already provides the `(task × arm × model × seed)` matrix runner, groun
 sandboxed backends (E2B is our backend), the SWE-bench / GAIA(HAL) / **MARBLE multi-agent**
 benchmarks, LiteLLM-gateway routing for heterogeneity, a MAB driver for the T3 priors layer, and
 paired-CI / pass^k / Pareto statistics. openswarm is a registered harness there
-(`swarmHarness()` → `openswarm --single …`, the single-agent baseline arm).
+(`openSwarm()` → `openswarm --single …`, the single-agent baseline arm).
 
 **The experimental spine — four hypotheses, each an arm with a kill criterion:**
 
@@ -387,7 +387,7 @@ The functioning GPT-5.5 team resolves **1/9 — the same instance (xarray-3993, 
 ## 7. Phased rollout
 
 - **P0 — Eval infra (eval-first).** `swarmkit-eval` wired + smoke-verified ([eval/](../eval/)). Three
-  immediate steps, in order: **(1)** point the `swarmHarness` adapter at the locally-built CLI (iterate
+  immediate steps, in order: **(1)** point the `openSwarm` adapter at the locally-built CLI (iterate
   without publishing); **(2)** make H1 run on E2B (single-agent vs homogeneous team on a SWE-bench
   subset); **(3)** the MAST judge (validated against MAST-Data). Reproduce H1.
 - **P1 — Heterogeneity + roster (H2).** Roster contract `{role, engine, model}`; heterogeneous arm

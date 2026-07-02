@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { APICallError } from "ai";
-import { classifyProviderError } from "./error-classifier.js";
+import {
+  classifyProviderError,
+  httpStatusToProviderCode,
+  isRetryableError,
+} from "./error-classifier.js";
 
 function makeAPICallError(opts: {
   message?: string;
@@ -185,5 +189,49 @@ describe("classifyProviderError — cause propagation", () => {
     const err = makeAPICallError({ statusCode: 429 });
     const r = classifyProviderError(err);
     expect(r.cause).toBe(err);
+  });
+});
+
+describe("shared core (Phase 2.3)", () => {
+  it("httpStatusToProviderCode maps the canonical table", () => {
+    expect(httpStatusToProviderCode(401)).toBe("auth");
+    expect(httpStatusToProviderCode(403)).toBe("auth");
+    expect(httpStatusToProviderCode(429)).toBe("rate_limit");
+    expect(httpStatusToProviderCode(408)).toBe("provider_unavailable");
+    expect(httpStatusToProviderCode(425)).toBe("provider_unavailable");
+    expect(httpStatusToProviderCode(503)).toBe("provider_unavailable");
+    expect(httpStatusToProviderCode(404)).toBe("invalid_request");
+    expect(httpStatusToProviderCode(302)).toBe("unknown");
+  });
+
+  it("isRetryableError retries transport/rate_limit/provider_unavailable only", () => {
+    for (const code of ["transport", "rate_limit", "provider_unavailable"] as const) {
+      expect(isRetryableError({ code, message: "", retryable: false })).toBe(true);
+    }
+    // `unknown` is non-retryable — reconciled with the classifier's field so
+    // the two never disagree (Phase 2.3 follow-up).
+    for (const code of ["unknown", "auth", "invalid_request", "context_overflow"] as const) {
+      expect(isRetryableError({ code, message: "", retryable: false })).toBe(false);
+    }
+  });
+
+  it("passes an already-classified ProviderError through (folds retry-policy passthrough)", () => {
+    const r = classifyProviderError({ code: "rate_limit", message: "slow down", retryable: true });
+    expect(r.code).toBe("rate_limit");
+    expect(r.message).toBe("slow down");
+    expect(r.retryable).toBe(true);
+  });
+
+  it("fallbackCode: 'transport' makes an unrecognized bare error a retryable transport failure", () => {
+    const r = classifyProviderError(new Error("conn refused"), { fallbackCode: "transport" });
+    expect(r.code).toBe("transport");
+    expect(r.retryable).toBe(true);
+    expect(r.message).toBe("conn refused");
+  });
+
+  it("default fallback keeps an unrecognized bare error as unknown/non-retryable", () => {
+    const r = classifyProviderError(new Error("weird"));
+    expect(r.code).toBe("unknown");
+    expect(r.retryable).toBe(false);
   });
 });

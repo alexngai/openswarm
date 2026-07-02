@@ -104,7 +104,7 @@ interface TaskPacket {
 }
 ```
 
-The Zod schemas live in `src/swarm/policies.ts`. Legacy flat strings (`"main"`, `"worktree"`, `"never"`, `"abort-on-error"`, etc.) are rejected at CLI parse time with a migration hint. See `docs/11-m3a-plan.md §Policy migration` for the before/after table.
+The Zod schemas live in `src/swarm/policies.ts`. Legacy flat strings (`"main"`, `"worktree"`, `"never"`, `"abort-on-error"`, etc.) are rejected at CLI parse time with a migration hint. See `docs/archive/11-m3a-plan.md §Policy migration` for the before/after table.
 
 ### Worker state file
 

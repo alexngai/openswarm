@@ -8,11 +8,12 @@
  *     prints plain text) — JSONL is our existing headless stream format.
  *   - Block on stdin for one line.
  *   - "y" / "yes" (case-insensitive, trimmed) → approve.
+ *   - "a" / "always" → approve + session-scoped allow rule (Phase 3 B4).
  *   - EOF, empty line, or anything else → deny.
  */
 
 import type { PendingPermission } from "../ui/repl/state.js";
-import type { PermissionDecision } from "../engine/index.js";
+import type { BridgeDecision } from "./bridge.js";
 
 export interface HeadlessPromptOptions {
   /** Output stream for the JSONL event. Default: process.stdout. */
@@ -28,7 +29,7 @@ export interface HeadlessPromptOptions {
 export async function readHeadlessApproval(
   pending: PendingPermission,
   opts: HeadlessPromptOptions = {},
-): Promise<PermissionDecision> {
+): Promise<BridgeDecision> {
   const out = opts.out ?? process.stdout;
   const input = opts.in ?? process.stdin;
 
@@ -47,6 +48,9 @@ export async function readHeadlessApproval(
 
   if (normalized === "y" || normalized === "yes") {
     return { allow: true };
+  }
+  if (normalized === "a" || normalized === "always") {
+    return { allow: true, alwaysAllow: true };
   }
   return {
     allow: false,

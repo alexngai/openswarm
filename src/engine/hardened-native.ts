@@ -6,10 +6,13 @@
  *   - Eager tool dispatch during streaming (Codex: turn.rs:1830-2214)
  *   - Mid-turn compaction (Codex: turn.rs:268-321)
  *
- * NativeEngine stays as the reference/test baseline (simple, predictable).
- * HardenedNativeEngine replaces it for production use.
+ * NativeEngine stays as the reference/test baseline (simple, predictable) and
+ * remains available via the explicit `--framework native` escape hatch.
+ * HardenedNativeEngine is the default for `--framework auto` + any non-Claude
+ * model on both the single-agent CLI and swarm workers (Phase 2.1), and the
+ * only engine behind `--framework hardened-native` and `codex-native`.
  *
- * See docs/37-hardened-engine-design.md and docs/38-hardened-engine-implementation-plan.md.
+ * See docs/37-hardened-engine-design.md and docs/archive/38-hardened-engine-implementation-plan.md.
  */
 
 import * as fs from "node:fs/promises";
@@ -47,12 +50,11 @@ import {
   makeHardenedSnapshot,
   extractHardenedNativeSnapshot,
 } from "./hardened-native-snapshot.js";
+import { type RetryPolicy, DEFAULT_RETRY_POLICY } from "./retry-policy.js";
 import {
-  type RetryPolicy,
-  DEFAULT_RETRY_POLICY,
   isRetryableError,
   classifyProviderError,
-} from "./retry-policy.js";
+} from "../providers/error-classifier.js";
 import { ToolScheduler } from "../tools/scheduler.js";
 import {
   ToolAccesses,
@@ -529,7 +531,7 @@ export class HardenedNativeEngine implements AgentEngine {
           fatalError = true;
           break;
         } catch (err) {
-          const providerError = classifyProviderError(err);
+          const providerError = classifyProviderError(err, { fallbackCode: "transport" });
           const classifier = retryPolicy.isRetryable ?? isRetryableError;
 
           // Context overflow recovery — maps to Codex's emergency

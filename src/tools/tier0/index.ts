@@ -3,7 +3,7 @@
  *
  * Build the full set via `buildTier0Tools()` and register them on a `ToolDispatcher`.
  *
- * See docs/04-tool-tiers.md §"Tier 0" and docs/08-m0-plan.md §"Phase 2".
+ * See docs/04-tool-tiers.md §"Tier 0" and docs/archive/08-m0-plan.md §"Phase 2".
  */
 
 import type { ToolImpl } from "../types.js";
@@ -37,7 +37,13 @@ export function buildTier0Tools(): readonly ToolImpl[] {
     shellExecTool,
     shellWriteTool,
     shellListTool,
-    requestPermissionsTool,
+    // requestPermissionsTool is intentionally NOT in this shared list. Its
+    // setPermissionRequestHandler seam is wired per surface, so the tool is
+    // registered by the caller only where a live handler exists — the
+    // single-agent REPL + headless paths register it in runPrompt
+    // (src/cli/main.ts, Phase 4.1e). ACP bridges + worker escalation remain a
+    // follow-up; until then those surfaces must NOT advertise it (it would
+    // error). See the remediation plan, Phase 4.1.
     memoryManageTool,
     memorySearchTool,
   ] as const;

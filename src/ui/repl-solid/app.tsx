@@ -202,13 +202,15 @@ export function App(props: AppProps) {
   // Ctrl-C             → deny (claw `main.rs:7406-7408` — stdin read error
   //                      becomes Deny; engine continues to the next tool)
   // Everything else is swallowed so the input buffer can't mutate.
-  const respondPermission = (allow: boolean): void => {
+  const respondPermission = (allow: boolean, alwaysAllow = false): void => {
     const pending = state.pendingPermission;
     const bridge = props.permissionBridge;
     if (pending === undefined || bridge === undefined) return;
     bridge.respond(
       allow
-        ? { allow: true }
+        ? // Phase 3 B4: `a` approves AND records a session-scoped allow rule
+          // in the bash gate (banned-broad prefixes are refused there).
+          { allow: true, ...(alwaysAllow && { alwaysAllow: true }) }
         : {
             allow: false,
             reason: `user denied ${pending.toolName} via y/N prompt`,
@@ -274,6 +276,10 @@ export function App(props: AppProps) {
       const ch = key.printable ?? "";
       if (ch === "y" || ch === "Y") {
         respondPermission(true);
+        return;
+      }
+      if (ch === "a" || ch === "A") {
+        respondPermission(true, true);
         return;
       }
       if (ch === "n" || ch === "N" || key.name === "escape") {

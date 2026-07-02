@@ -15,8 +15,15 @@
  */
 
 import * as fsp from "node:fs/promises";
+import type { PermissionMode } from "../core/types.js";
 import { TeamSpecSchema, type TeamSpec } from "../swarm/team-spec.js";
 import { TeamDaemon } from "../swarm/team-daemon.js";
+
+const PERMISSION_MODES: readonly PermissionMode[] = [
+  "read-only",
+  "workspace-write",
+  "danger-full-access",
+];
 
 const REQUIRED_ENV = [
   "OPENSWARM_DAEMON_SPEC",
@@ -62,9 +69,23 @@ export async function runTeamDaemonEntry(): Promise<number> {
     return 2;
   }
 
+  // Phase 4.1c — optional effective config threaded from `team start`.
+  const rawMode = process.env.OPENSWARM_DAEMON_PERMISSION_MODE;
+  const permissionMode = PERMISSION_MODES.find((m) => m === rawMode);
+  const rawConcurrency = Number.parseInt(
+    process.env.OPENSWARM_DAEMON_CONCURRENCY ?? "",
+    10,
+  );
+  const concurrency =
+    Number.isFinite(rawConcurrency) && rawConcurrency > 0
+      ? rawConcurrency
+      : undefined;
+
   const daemon = new TeamDaemon({
     spec,
     paths: { sockPath, pidPath, eventsPath, statePath, checkpointPath },
+    ...(permissionMode !== undefined && { permissionMode }),
+    ...(concurrency !== undefined && { concurrency }),
   });
 
   try {

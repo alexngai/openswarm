@@ -505,15 +505,11 @@ export class PeerTeamTopology implements Topology {
     const usingBranch = cfg.targetBranch !== undefined;
     const targetStream = cfg.targetStream;
     if (!usingBranch && targetStream === undefined) return;
-    // docs/44 P0 — landing now delegates to the merge-to-parent LandingStrategy.
-    // Behavior is unchanged: the strategy makes the same adapter calls and
-    // returns null when the adapter can't perform the merge. The per-agent
-    // merge logic lives in the strategy so it can be selected per-role and
-    // composed with conflict recovery (P1).
-    const landing =
-      (ctx.landingRegistry ?? DEFAULT_LANDING_REGISTRY).get(
-        DEFAULT_LANDING_STRATEGY,
-      );
+    // docs/44 P0 — landing delegates to a LandingStrategy. Phase 3 B3: the
+    // strategy is selected per member via `MemberSpec.landing` (default
+    // merge-to-parent); `queue-to-branch` members are enqueued and the queue
+    // is drained once after the cohort lands (the integrator action).
+    const landingRegistry = ctx.landingRegistry ?? DEFAULT_LANDING_REGISTRY;
     const recovery = ctx.recoveryRegistry ?? DEFAULT_RECOVERY_REGISTRY;
     // docs/44 P2b — when landing to a branch and the host implements the
     // conflict primitives (a real StandaloneHost with a git-cascade adapter),
@@ -604,11 +600,14 @@ export class PeerTeamTopology implements Topology {
         })
       : undefined;
     // handles[i] is index-aligned with spec.members[i] (team.spawnAll preserves
-    // order), so spec.members[i].role drives per-member recovery selection.
+    // order), so spec.members[i] drives per-member recovery + landing selection.
+    let queuedToBranch = false;
     for (let i = 0; i < handles.length; i++) {
       const handle = handles[i]!;
       const streamId = ctx.host.streamIdFor(handle.agentId);
       if (streamId === undefined) continue;
+      const landingName = spec.members[i]?.landing ?? DEFAULT_LANDING_STRATEGY;
+      const landing = landingRegistry.get(landingName);
       const result =
         landing === undefined
           ? null
@@ -623,19 +622,26 @@ export class PeerTeamTopology implements Topology {
             });
       if (result === null) {
         // This landing strategy can't merge this member (e.g. adapter lacks
-        // the capability) — emit a note and SKIP THIS MEMBER. Must `continue`,
-        // not `return`: a per-member null must not abort the rest of the
-        // cohort (a custom strategy may decline one member yet land others).
+        // the capability, or queue-to-branch was selected without a branch
+        // target) — emit a note and SKIP THIS MEMBER. Must `continue`, not
+        // `return`: a per-member null must not abort the rest of the cohort
+        // (a custom strategy may decline one member yet land others).
         ctx.host.emit({
           type: "team_note",
           payload: {
             teamName: spec.name,
             scope: `swarm:${spec.name}`,
             note: usingBranch
-              ? `mergeStreams.targetBranch=${cfg.targetBranch} requires an adapter that supports mergeStreamToBranch; skipping merge`
-              : `mergeStreams.targetStream=${targetStream} requires a stream-aware adapter; skipping merge`,
+              ? `landing "${landingName}" for ${handle.agentId} requires an adapter that supports it (targetBranch=${cfg.targetBranch}); skipping merge`
+              : `landing "${landingName}" for ${handle.agentId} requires a stream-aware adapter (targetStream=${targetStream}); skipping merge`,
           },
         });
+        continue;
+      }
+      if (landingName === "queue-to-branch" && result.success) {
+        // "Success" from queue-to-branch means *enqueued* — the actual merge
+        // happens in the drain below, after every member has landed.
+        queuedToBranch = true;
         continue;
       }
       const target = usingBranch ? cfg.targetBranch : targetStream;
@@ -729,6 +735,42 @@ export class PeerTeamTopology implements Topology {
                 : `cascade rebase of ${root}: ${r.rebased?.length ?? 0} dependent(s) rebased`,
           },
         });
+      }
+    }
+
+    // docs/44 P4 / Phase 3 B3 — the integrator action: once every member has
+    // landed, drain the merge queue in order for queue-to-branch members.
+    // Failures don't throw (entries stay queued for a manual/later drain);
+    // the outcome is surfaced as a team_note either way.
+    if (queuedToBranch && usingBranch) {
+      // Feature-detect like cascadeRebase above: partial hosts (test fakes,
+      // future host impls) may not carry the queue surface.
+      const drained =
+        typeof host.drainMergeQueue === "function"
+          ? await host.drainMergeQueue({
+              targetBranch: cfg.targetBranch!,
+              ...(cfg.strategy !== undefined && { strategy: cfg.strategy }),
+            })
+          : null;
+      ctx.host.emit({
+        type: "team_note",
+        payload: {
+          teamName: spec.name,
+          scope: `swarm:${spec.name}`,
+          note:
+            drained === null
+              ? `merge queue for ${cfg.targetBranch} could not be drained (adapter lacks drainMergeQueue); entries remain queued`
+              : `merge queue drained into ${cfg.targetBranch}: ${drained.merged.length} merged, ${drained.failed.length} failed${
+                  drained.failed.length > 0
+                    ? ` (${drained.failed.map((f) => `${f.streamId}: ${f.error}`).join("; ")})`
+                    : ""
+                }`,
+        },
+      });
+      if (drained !== null && drained.failed.length > 0 && cfg.failOnConflict === true) {
+        throw new Error(
+          `PeerTeamTopology: merge-queue drain into ${cfg.targetBranch} failed for ${drained.failed.length} entr${drained.failed.length === 1 ? "y" : "ies"}`,
+        );
       }
     }
   }

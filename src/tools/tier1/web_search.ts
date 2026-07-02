@@ -121,7 +121,7 @@ export class DuckDuckGoBackend implements SearchBackend {
   constructor(baseUrl?: string) {
     this.baseUrl =
       baseUrl ??
-      process.env.SWARM_WEB_SEARCH_BASE_URL ??
+      process.env.OPENSWARM_WEB_SEARCH_BASE_URL ??
       DEFAULT_BASE_URL;
   }
 
@@ -303,7 +303,7 @@ async function execute(
     let searchHost: string;
     try {
       searchHost = new URL(
-        process.env.SWARM_WEB_SEARCH_BASE_URL ?? DEFAULT_BASE_URL,
+        process.env.OPENSWARM_WEB_SEARCH_BASE_URL ?? DEFAULT_BASE_URL,
       ).hostname;
     } catch {
       searchHost = "html.duckduckgo.com";

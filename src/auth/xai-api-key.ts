@@ -11,10 +11,4 @@ export class XaiApiKeyAuth implements AuthSource {
   async isAuthenticated(): Promise<boolean> {
     return !!process.env["XAI_API_KEY"];
   }
-
-  async headers(): Promise<Record<string, string>> {
-    return {
-      Authorization: `Bearer ${process.env["XAI_API_KEY"] ?? ""}`,
-    };
-  }
 }

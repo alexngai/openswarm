@@ -57,11 +57,18 @@ export async function detectAuth(): Promise<AuthStatus> {
     return { state: "env-bedrock", source: "CLAUDE_CODE_USE_BEDROCK" };
   }
 
-  // OpenAI-compatible API-key providers (Azure OpenAI direct via azureoai/, OpenAI, xAI, LiteLLM
-  // gateway, etc.): openswarm doesn't own these credentials — the per-provider transport supplies
-  // its own auth (e.g. azureoai/ → AZURE_OPENAI_API_KEY header). Recognize the key here so the run gate
-  // passes through to the transport instead of demanding an Anthropic key.
-  for (const k of ["AZURE_OPENAI_API_KEY", "OPENAI_API_KEY", "XAI_API_KEY", "LITELLM_API_KEY"] as const) {
+  // Non-Anthropic provider API keys (Azure OpenAI direct via azureoai/, OpenAI, xAI, Google,
+  // DashScope, LiteLLM gateway): openswarm doesn't own these credentials — the per-provider
+  // transport supplies its own auth (e.g. azureoai/ → AZURE_OPENAI_API_KEY header). Recognize the
+  // key here so the run gate passes through to the transport instead of demanding an Anthropic key.
+  for (const k of [
+    "AZURE_OPENAI_API_KEY",
+    "OPENAI_API_KEY",
+    "XAI_API_KEY",
+    "GOOGLE_GENERATIVE_AI_API_KEY",
+    "DASHSCOPE_API_KEY",
+    "LITELLM_API_KEY",
+  ] as const) {
     if (process.env[k]) {
       return { state: "env-openai-compat", source: k };
     }

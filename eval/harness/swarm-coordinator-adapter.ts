@@ -12,7 +12,7 @@
  * → the H1 paired comparison.
  */
 import {
-  swarmHarnessParse,
+  openSwarmParse,
   shq,
   type ExecutionAdapter,
   type PublicCell,
@@ -118,7 +118,7 @@ export class SwarmCoordinatorAdapter implements ExecutionAdapter {
 
     const start = Date.now();
     const r = await ws.run(cmd, { env, timeoutMs: this.opts.timeoutMs ?? 1_800_000 });
-    const parsed = swarmHarnessParse(r.stdout);
+    const parsed = openSwarmParse(r.stdout);
     // Best-effort token usage: the `topology coordinator` command does NOT currently surface usage —
     // stdout is just the architect's final text, and the --output stream stays empty (the coordinator
     // tallies only the root, and spawned-peer usage is never aggregated up the spawn tree). So this yields
@@ -172,7 +172,7 @@ async function sumTeamUsage(
 
 /**
  * Read the lane-event JSONL written by `topology --trace-output` and map it to the eval's
- * `TraceEvent[]` trajectory shape (the same shape the SINGLE arm's `swarmHarnessParse` produces, so
+ * `TraceEvent[]` trajectory shape (the same shape the SINGLE arm's `openSwarmParse` produces, so
  * team/hetero traces are comparable — plus a per-event `agentId` so the MAST judge can attribute
  * activity to the architect vs each spawned teammate).
  *

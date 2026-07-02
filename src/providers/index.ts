@@ -7,7 +7,7 @@
  * TransportProvider wraps Vercel AI SDK; future FrameworkProvider (M4b)
  * wraps framework-specific clients (Claude Agent SDK, Codex App Server).
  *
- * See docs/03-interfaces.md §2 and docs/13-m4a-plan.md.
+ * See docs/03-interfaces.md §2 and docs/archive/13-m4a-plan.md.
  */
 
 import type { LanguageModel } from "ai";

@@ -9,7 +9,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { PermissionMode } from "../core/types.js";
 import { Orchestrator } from "../swarm/orchestrator.js";
-import { StandaloneHost } from "../swarm/standalone-host.js";
 import type { TaskPacket } from "../swarm/host.js";
 import { TaskPacketSchema, isPolicyParseError } from "../swarm/policies.js";
 import {
@@ -18,13 +17,7 @@ import {
   loadCustomRoles,
 } from "../swarm/roles.js";
 import { checkBudget } from "../core/budget.js";
-import {
-  OpenTasksClient,
-  findOpenTasksSocket,
-} from "../swarm/adapters/opentasks-client.js";
-import { OpenTasksTaskRegistry } from "../swarm/adapters/opentasks-task-registry.js";
-import { AgentInboxBackend } from "../swarm/adapters/agent-inbox-backend.js";
-import { GitCascadeBranchPolicyAdapter } from "../swarm/adapters/git-cascade-branch-policy.js";
+import { buildAdapterHost } from "./adapter-host.js";
 import { attachLaneTrace } from "./trace-output.js";
 
 // ---------------------------------------------------------------------------
@@ -144,7 +137,7 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
       );
       if (isPolicyParseError(parsed.error.message)) {
         process.stderr.write(
-          `[openswarm] TaskPacket policies are now discriminated unions — see docs/11-m3a-plan.md §Policy migration\n`,
+          `[openswarm] TaskPacket policies are now discriminated unions — see docs/archive/11-m3a-plan.md §Policy migration\n`,
         );
       }
       return 2;
@@ -189,61 +182,22 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
   // Open results stream.
   const resultsOut = fs.createWriteStream(opts.output, { flags: "a" });
 
-  // v0.5 stage 5B — when --opentasks is set, build a StandaloneHost that
-  // wraps its TaskAPI with the OpenTasksTaskRegistry adapter. The wrapper
-  // is best-effort: opentasks daemon failures don't block the swarm run.
-  // v0.6 stage 6A.2 — when --agent-inbox is set, build the same host with
-  // an AgentInboxBackend (library-backed; threading + persistence).
-  let host: StandaloneHost | undefined;
-  const needsCustomHost =
-    opts.opentasks === true ||
-    opts.agentInbox === true ||
-    opts.gitCascade === true ||
-    opts.traceOutput !== undefined;
-  if (needsCustomHost) {
-    let taskWrapper: ((inner: import("../swarm/host.js").TaskAPI) => import("../swarm/host.js").TaskAPI) | undefined;
-
-    if (opts.opentasks === true) {
-      const sockPath =
-        opts.opentasksSocket ?? findOpenTasksSocket(process.cwd());
-      if (sockPath === null) {
-        process.stderr.write(
-          "error: --opentasks set but no daemon socket found. Start the daemon with `opentasks daemon start` " +
-            "or pass --opentasks-socket <path>.\n",
-        );
-        return 2;
-      }
-      const client = new OpenTasksClient(sockPath);
-      taskWrapper = (inner) => new OpenTasksTaskRegistry(inner, client);
-      process.stderr.write(`[openswarm] --opentasks enabled (socket: ${sockPath})\n`);
-    }
-
-    let inboxBackend: import("../swarm/inbox.js").InboxBackend | undefined;
-    if (opts.agentInbox === true) {
-      inboxBackend = new AgentInboxBackend();
-      process.stderr.write(`[openswarm] --agent-inbox enabled (in-memory storage)\n`);
-    }
-
-    let branchPolicyAdapter:
-      | import("../swarm/adapters/git-cascade-branch-policy.js").BranchPolicyAdapter
-      | undefined;
-    if (opts.gitCascade === true) {
-      branchPolicyAdapter = new GitCascadeBranchPolicyAdapter({
-        repoPath: process.cwd(),
-        ...(opts.cleanupWorktrees === true && { cleanupOnDispose: true }),
-      });
-      process.stderr.write(
-        `[openswarm] --git-cascade enabled (worktrees under ${process.cwd()}/.openswarm/worktrees/${opts.cleanupWorktrees === true ? "; auto-cleanup on exit" : ""})\n`,
-      );
-    }
-
-    host = new StandaloneHost({
-      permissionMode: opts.permissionMode,
-      ...(taskWrapper !== undefined && { taskWrapper }),
-      ...(inboxBackend !== undefined && { inboxBackend }),
-      ...(branchPolicyAdapter !== undefined && { branchPolicyAdapter }),
-    });
+  // Ecosystem adapters (--opentasks / --agent-inbox / --git-cascade) share
+  // one assembly path with `topology` and `team start` — see adapter-host.ts.
+  const hostResult = buildAdapterHost({
+    permissionMode: opts.permissionMode,
+    ...(opts.opentasks !== undefined && { opentasks: opts.opentasks }),
+    ...(opts.opentasksSocket !== undefined && { opentasksSocket: opts.opentasksSocket }),
+    ...(opts.agentInbox !== undefined && { agentInbox: opts.agentInbox }),
+    ...(opts.gitCascade !== undefined && { gitCascade: opts.gitCascade }),
+    ...(opts.cleanupWorktrees !== undefined && { cleanupWorktrees: opts.cleanupWorktrees }),
+    forceHost: opts.traceOutput !== undefined,
+  });
+  if (!hostResult.ok) {
+    process.stderr.write(hostResult.message);
+    return 2;
   }
+  const host = hostResult.host;
   const traceRecorder = host !== undefined ? attachLaneTrace(host, opts.traceOutput) : undefined;
 
   const orch = new Orchestrator({

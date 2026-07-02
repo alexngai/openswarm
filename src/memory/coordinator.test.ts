@@ -41,6 +41,70 @@ function makeProvider(
 }
 
 // ---------------------------------------------------------------------------
+// search (Phase 3 B2)
+// ---------------------------------------------------------------------------
+
+describe("MemoryCoordinator search (Phase 3 B2)", () => {
+  function searchable(
+    name: string,
+    fragments: MemoryFragment[],
+  ): MemoryProvider {
+    return makeProvider(name, {
+      capabilities: { enrichment: true, persistence: true, search: true, graph: false },
+      search: vi.fn().mockResolvedValue(fragments),
+    });
+  }
+
+  it("groups results by provider with no cross-provider ranking (Q5)", async () => {
+    const coord = new MemoryCoordinator();
+    await coord.register(
+      searchable("minimem", [
+        { source: "minimem:a.md", content: "alpha", relevance: 0.2 },
+      ]),
+    );
+    await coord.register(
+      searchable("file", [
+        { source: "file:archive:s1", content: "beta", relevance: 0.9 },
+      ]),
+    );
+    const groups = await coord.search("query");
+    expect(groups.map((g) => g.provider)).toEqual(["minimem", "file"]);
+    expect(groups[0]!.fragments[0]!.content).toBe("alpha");
+    expect(groups[1]!.fragments[0]!.content).toBe("beta");
+  });
+
+  it("skips providers without search capability or implementation, and empty groups", async () => {
+    const coord = new MemoryCoordinator();
+    // capability true but no method → skipped (and not in searchProviderNames)
+    await coord.register(
+      makeProvider("no-impl", {
+        capabilities: { enrichment: true, persistence: true, search: true, graph: false },
+      }),
+    );
+    await coord.register(makeProvider("no-cap"));
+    await coord.register(searchable("empty", []));
+    await coord.register(searchable("hit", [{ source: "s", content: "x" }]));
+
+    expect(coord.searchProviderNames).toEqual(["empty", "hit"]);
+    const groups = await coord.search("q");
+    expect(groups.map((g) => g.provider)).toEqual(["hit"]);
+  });
+
+  it("a throwing provider doesn't break the others", async () => {
+    const coord = new MemoryCoordinator();
+    await coord.register(
+      makeProvider("boom", {
+        capabilities: { enrichment: true, persistence: true, search: true, graph: false },
+        search: vi.fn().mockRejectedValue(new Error("nope")),
+      }),
+    );
+    await coord.register(searchable("ok", [{ source: "s", content: "x" }]));
+    const groups = await coord.search("q");
+    expect(groups.map((g) => g.provider)).toEqual(["ok"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
 

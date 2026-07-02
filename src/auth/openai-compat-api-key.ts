@@ -18,10 +18,4 @@ export class OpenAICompatApiKeyAuth implements AuthSource {
   async isAuthenticated(): Promise<boolean> {
     return !!process.env[this.envVar];
   }
-
-  async headers(): Promise<Record<string, string>> {
-    return {
-      Authorization: `Bearer ${process.env[this.envVar] ?? ""}`,
-    };
-  }
 }

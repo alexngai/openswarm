@@ -18,13 +18,6 @@ describe("XaiApiKeyAuth", () => {
     expect(await auth.isAuthenticated()).toBe(true);
   });
 
-  it("headers returns Authorization Bearer with the key", async () => {
-    vi.stubEnv("XAI_API_KEY", "xai-my-key");
-    const auth = new XaiApiKeyAuth();
-    const hdrs = await auth.headers();
-    expect(hdrs["Authorization"]).toBe("Bearer xai-my-key");
-  });
-
   it("has correct kind and providerId", () => {
     const auth = new XaiApiKeyAuth();
     expect(auth.kind).toBe("api-key");

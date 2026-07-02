@@ -44,7 +44,7 @@ record() {
 # ---------------------------------------------------------------------------
 # O1: bun test — every OpenTUI/Solid test passes.
 # ---------------------------------------------------------------------------
-if SWARM_CODER_SKIP_LIVE=1 bun test src/ui/repl-solid/ >/tmp/smoke-opentui-o1.log 2>&1; then
+if OPENSWARM_SKIP_LIVE=1 bun test src/ui/repl-solid/ >/tmp/smoke-opentui-o1.log 2>&1; then
   record O1 PASS "bun test src/ui/repl-solid/ — all tests green"
 else
   record O1 FAIL "bun test src/ui/repl-solid/ failed (see /tmp/smoke-opentui-o1.log)"
@@ -90,7 +90,7 @@ fi
 #     Requires the binary from O4; node-pty runs under Node, not Bun.
 # ---------------------------------------------------------------------------
 if [[ -x "$BINARY_PATH" ]]; then
-  if SWARM_CODER_SKIP_INTEGRATION_BUILD=1 npx vitest run test/integration/pty.test.ts \
+  if OPENSWARM_SKIP_INTEGRATION_BUILD=1 npx vitest run test/integration/pty.test.ts \
     >/tmp/smoke-opentui-o5.log 2>&1; then
     record O5 PASS "PTY e2e — mount, slash dropdown, /exit, SIGINT"
   else

@@ -79,7 +79,6 @@ function makeConfig(overrides: Partial<RunConfig> = {}): RunConfig {
       kind: "api-key" as const,
       providerId: "anthropic",
       isAuthenticated: async () => true,
-      headers: async () => ({}),
     },
     tools: [],
     canUseTool: async (_name, _input) => ({ allow: true }),

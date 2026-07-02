@@ -11,7 +11,6 @@ import type {
   SpawnRequest,
   AgentHandle,
   AgentMessage,
-  InboxEvent,
   TaskAPI,
   TaskRecord,
   TaskPacket,
@@ -192,9 +191,6 @@ export function makeFakeHost(opts: FakeHostOpts = {}): {
     },
     send(_to: AgentId | "*" | `role:${string}`, _message: AgentMessage): Promise<SendResult> {
       throw new Error("send not implemented in fake host");
-    },
-    async *inbox(): AsyncIterable<InboxEvent> {
-      return;
     },
     async drainInbox(_max: number): Promise<AgentMessage[]> {
       return [];

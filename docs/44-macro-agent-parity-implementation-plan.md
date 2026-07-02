@@ -634,7 +634,7 @@ socket):
   so the cross-SDK ACP type/version bridging works. (A live `prompt()` runs a
   real coordinator/model and is exercised separately.)
 - CLI/boot: `openswarm host --port N --map-server ws://hub [--map-scope …]
-  [--onboard-token …]` (or `SWARM_MAP_SERVER` env) → outbound sidecar + ACP-over-MAP;
+  [--onboard-token …]` (or `OPENSWARM_MAP_SERVER` env) → outbound sidecar + ACP-over-MAP;
   gated on explicit config (never on a bootstrap token alone).
 
 Verified end-to-end: the real SDK `AgentConnection` dials a real `MAPServer`,

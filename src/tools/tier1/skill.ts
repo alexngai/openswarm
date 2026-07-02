@@ -22,8 +22,8 @@ const spec: ToolSpec = {
 
 /**
  * Build the skill ToolImpl, closed over an optional SkillRegistry.
- * If the registry is not provided (Phase 7 not yet wired), every call
- * returns a "skills not configured" error.
+ * The registry is wired by `buildAgentRuntime()` when `--skills` is on;
+ * without one, every call returns a "skills not configured" error.
  */
 export function buildSkillTool(registry: SkillRegistry | undefined): ToolImpl {
   return {

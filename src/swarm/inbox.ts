@@ -12,8 +12,8 @@
  *     keyed by `(scope, agentId)` so messages don't leak across team scopes
  *     when the host is multi-tenant.
  *
- * v0.6 stage 6A.2 will add `AgentInboxBackend` that wraps the agent-inbox
- * library for threading + persistence + federation.
+ * `AgentInboxBackend` (adapters/agent-inbox-backend.ts) wraps the agent-inbox
+ * library for threading + persistence + federation; opt in via `--agent-inbox`.
  *
  * Behavior preserved from the v0.5 `AgentInbox`:
  *   - bounded per-agent (`maxPerAgent`, default 1000)

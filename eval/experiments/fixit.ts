@@ -36,7 +36,7 @@ import {
   LocalResultStore,
   fixitBenchmark,
   fixitGoldenFiles,
-  swarmHarness,
+  openSwarm,
   createBackend,
   buildE2bTemplate,
   e2bSafeName,
@@ -79,7 +79,7 @@ const FIXIT_MODEL =
     ? "azureoai/gpt-5.5"
     : "us.anthropic.claude-sonnet-4-5-20250929-v1:0");
 /** Local openswarm CLI (the study runs in-process on this machine — no sandbox install). Both the
- *  single (swarmHarness) and team (SwarmCoordinatorAdapter) adapters accept this `bin` override. */
+ *  single (openSwarm) and team (SwarmCoordinatorAdapter) adapters accept this `bin` override. */
 const FIXIT_HARNESS_BIN =
   process.env.FIXIT_HARNESS_BIN ?? new URL("../../bin/openswarm.mjs", import.meta.url).pathname;
 const FAKE = process.env.FIXIT_FAKE === "1";
@@ -218,7 +218,7 @@ const ARM_TABLE: Record<string, ArmDef> = {
     id: "single",
     label: "single-agent",
     fakeFraction: 0.55,
-    makeAdapter: () => swarmHarness({ env: providerEnv(), timeoutMs: AGENT_TIMEOUT_MS, ...binOverride }).adapter,
+    makeAdapter: () => openSwarm({ env: providerEnv(), timeoutMs: AGENT_TIMEOUT_MS, ...binOverride }).adapter,
   },
   team: {
     id: "team",

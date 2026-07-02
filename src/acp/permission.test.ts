@@ -27,12 +27,12 @@ describe("AcpPermissionBridge", () => {
     expect(await b.request(pending())).toEqual({ allow: true });
   });
 
-  it("maps allow_always to allow", async () => {
+  it("maps allow_always to allow + session-rule marker (Phase 3 B4)", async () => {
     const b = new AcpPermissionBridge(
       connWith({ outcome: "selected", optionId: "allow_always" }),
       "s1",
     );
-    expect(await b.request(pending())).toEqual({ allow: true });
+    expect(await b.request(pending())).toEqual({ allow: true, alwaysAllow: true });
   });
 
   it("maps reject to deny", async () => {

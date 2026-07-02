@@ -2,7 +2,7 @@
  * runtime.ts — shared single-agent runtime assembly.
  *
  * Extracted from runPrompt (src/cli/main.ts) so the single-agent CLI and the
- * ACP adapter (docs/30, docs/32) build the same auth + hooks + dispatcher +
+ * ACP adapter (docs/archive/30, docs/archive/32) build the same auth + hooks + dispatcher +
  * tools + permission engine + engine selection from one place. Behavior is
  * identical to the prior inline assembly; the only structural change is that
  * engine construction is deferred to `makeEngine(sessionId)` so ACP can build
@@ -10,7 +10,7 @@
  * sessionId). Session *resolution* (--resume) stays in the CLI — ACP supplies
  * its own session ids.
  *
- * See docs/32-acp-implementation-plan.md §3.
+ * See docs/archive/32-acp-implementation-plan.md §3.
  */
 
 import * as path from "node:path";
@@ -37,14 +37,15 @@ import { PluginStateStore } from "../plugins/state.js";
 import { SkillRegistry } from "../skills/registry.js";
 import { ClaudeCodeSource as ClaudeCodeSkillSource } from "../skills/claude-code-source.js";
 import { buildTier1Tools } from "../tools/tier1/index.js";
+import { setToolRegistry } from "../tools/tier1/tool_search.js";
 import { loadMcpConfig } from "../mcp/config.js";
 import { McpStdioClient } from "../mcp/client.js";
 import { buildMcpToolImpl } from "../mcp/bridge.js";
 import { loadHooksConfig, countEvents, countMatchers } from "../hooks/config.js";
 import { HookRuntime } from "../hooks/runtime.js";
 import { loadAliases, resolveAlias } from "../providers/aliases.js";
-import { resolveProvider } from "../providers/routing.js";
 import { OpenAIEnvAuth } from "../auth/openai-env.js";
+import { planEngine } from "./select-engine.js";
 import type { CommonOpts } from "./argv.js";
 import type { AgentEngine } from "../engine/index.js";
 import type { AuthSource } from "../auth/index.js";
@@ -294,6 +295,11 @@ export async function buildAgentRuntime(
     });
   }
 
+  // 2d'. Populate the tool_search registry from the fully assembled surface
+  // (tier0 + tier1 + plugins + MCP) so dynamic discovery reflects exactly
+  // what the dispatcher will execute.
+  setToolRegistry(dispatcher.list());
+
   // 2d. --dump-tools: print registered tools as JSON and exit 0.
   if (opts.dumpTools) {
     const dumped = dispatcher.list().map((spec) => ({
@@ -327,74 +333,73 @@ export async function buildAgentRuntime(
   const rawModel = opts.model ?? DEFAULT_MODEL;
   let resolvedModelId = resolveAlias(rawModel, aliases);
 
+  const planResult = planEngine({
+    framework: opts.framework,
+    resolvedModelId,
+    scripted: scriptedMode,
+  });
+  if (!planResult.ok) {
+    process.stderr.write(`${planResult.message}\n`);
+    return { kind: "exit", code: 2 };
+  }
+  // Reflect the effective model everywhere downstream — budget/cost pricing,
+  // --dump-engine, RunConfig.model, and the system-prompt "Model" block. Only
+  // codex-native rewrites it (Claude id → gpt-5.x); every other path is a no-op.
+  resolvedModelId = planResult.effectiveModelId;
+  const plan = planResult.plan;
+
   let makeEngine: MakeEngine;
-  if (opts.framework === "codex-chatgpt") {
-    makeEngine = async () => ({
-      engine: new CodexFrameworkEngine({ cwd: process.cwd() }),
-    });
-  } else if (opts.framework === "codex-native") {
-    // In-process ChatGPT-subscription path (docs/42). The backend's accepted
-    // model set is plan-dependent and gpt-5.x only; default to gpt-5.5 unless
-    // the user passed an explicit gpt* model (the CLI default is a Claude id).
-    const codexModel = /^gpt/i.test(resolvedModelId) ? resolvedModelId : "gpt-5.5";
-    // Reflect the effective model everywhere downstream — budget/cost pricing,
-    // --dump-engine, RunConfig.model, and the system-prompt "Model" block — not
-    // just the API call (the provider also overrides req.model internally).
-    resolvedModelId = codexModel;
-    makeEngine = async (sessionId: string) => {
-      const auth = new OpenAICodexAuth();
-      const provider = new CodexResponsesTransportProvider({
-        modelId: codexModel,
-        credentials: auth,
-        sessionId,
-        ...(opts.codexTransport !== undefined ? { transport: opts.codexTransport } : {}),
+  switch (plan.kind) {
+    case "scripted":
+      makeEngine = async () => ({ engine: new ScriptedTestEngine() });
+      break;
+    case "codex-chatgpt":
+      makeEngine = async () => ({
+        engine: new CodexFrameworkEngine({ cwd: process.cwd() }),
       });
-      const engine = new HardenedNativeEngine({
-        provider,
-        sessionId,
-        eagerToolDispatch: opts.eagerToolDispatch,
-        midTurnCompaction: opts.midTurnCompaction,
-        // Size compaction to the provider's real context window (~400k), not the
-        // 10k DEFAULT_COMPACTION — otherwise we'd compact away the byte-stable
-        // prefix that the ~96% prompt caching relies on (docs/42 §6.2).
-        compactionConfig: {
-          preserveRecentMessages: DEFAULT_COMPACTION.preserveRecentMessages,
-          maxEstimatedTokens: Math.floor(provider.capabilities.maxContextTokens * 0.8),
-        },
-      });
-      return { engine, providerId: provider.id };
-    };
-  } else if (scriptedMode) {
-    makeEngine = async () => ({ engine: new ScriptedTestEngine() });
-  } else {
-    const resolved = resolveProvider(resolvedModelId);
-    if (resolved.kind === "error") {
-      process.stderr.write(`${resolved.message}\n`);
-      return { kind: "exit", code: 2 };
-    }
-    if (opts.framework === "claude-agent-sdk") {
-      if (resolved.kind !== "sdk") {
-        process.stderr.write(
-          `error: --framework claude-agent-sdk requires an Anthropic model; received ${resolvedModelId}.\n`,
-        );
-        return { kind: "exit", code: 2 };
-      }
-      const factory = resolved.engineFactory!;
-      makeEngine = async () => ({ engine: factory() });
-    } else if (opts.framework === "native" || opts.framework === "hardened-native") {
-      if (resolved.kind !== "native") {
-        process.stderr.write(
-          `error: --framework ${opts.framework} does not support Claude models.\n` +
-            "Use `--framework auto` (default) or `--framework claude-agent-sdk`.\n",
-        );
-        return { kind: "exit", code: 2 };
-      }
-      const providerFactory = resolved.providerFactory!;
-      const providerModelId = resolved.modelId!;
-      const useHardened = opts.framework === "hardened-native";
+      break;
+    case "codex-native": {
+      // In-process ChatGPT-subscription path (docs/42).
+      const codexModel = plan.codexModelId;
       makeEngine = async (sessionId: string) => {
-        const providerAuth = resolved.authFactory
-          ? await resolved.authFactory()
+        const codexAuth = new OpenAICodexAuth();
+        const provider = new CodexResponsesTransportProvider({
+          modelId: codexModel,
+          credentials: codexAuth,
+          sessionId,
+          ...(opts.codexTransport !== undefined ? { transport: opts.codexTransport } : {}),
+        });
+        const engine = new HardenedNativeEngine({
+          provider,
+          sessionId,
+          eagerToolDispatch: opts.eagerToolDispatch,
+          midTurnCompaction: opts.midTurnCompaction,
+          // Size compaction to the provider's real context window (~400k), not
+          // the 10k DEFAULT_COMPACTION — otherwise we'd compact away the
+          // byte-stable prefix that the ~96% prompt caching relies on
+          // (docs/42 §6.2).
+          compactionConfig: {
+            preserveRecentMessages: DEFAULT_COMPACTION.preserveRecentMessages,
+            maxEstimatedTokens: Math.floor(provider.capabilities.maxContextTokens * 0.8),
+          },
+        });
+        return { engine, providerId: provider.id };
+      };
+      break;
+    }
+    case "claude-sdk": {
+      const factory = plan.resolved.engineFactory!;
+      makeEngine = async () => ({ engine: factory() });
+      break;
+    }
+    case "native": {
+      const providerFactory = plan.resolved.providerFactory!;
+      const providerModelId = plan.resolved.modelId!;
+      const authFactory = plan.resolved.authFactory;
+      const useHardened = plan.hardened;
+      makeEngine = async (sessionId: string) => {
+        const providerAuth = authFactory
+          ? await authFactory()
           : await buildAuthForProvider(providerModelId);
         const provider = await providerFactory(providerAuth, providerModelId);
         const compactionConfig = defaultCompactionConfig(provider, providerModelId);
@@ -409,29 +414,11 @@ export async function buildAgentRuntime(
           : new NativeEngine({ provider, sessionId, compactionConfig });
         return { engine, providerId: provider.id };
       };
-    } else {
-      // auto
-      if (resolved.kind === "sdk") {
-        const factory = resolved.engineFactory!;
-        makeEngine = async () => ({ engine: factory() });
-      } else {
-        const providerFactory = resolved.providerFactory!;
-        const providerModelId = resolved.modelId!;
-        makeEngine = async (sessionId: string) => {
-          const providerAuth = resolved.authFactory
-          ? await resolved.authFactory()
-          : await buildAuthForProvider(providerModelId);
-          const provider = await providerFactory(providerAuth, providerModelId);
-          return {
-            engine: new NativeEngine({
-              provider,
-              sessionId,
-              compactionConfig: defaultCompactionConfig(provider, providerModelId),
-            }),
-            providerId: provider.id,
-          };
-        };
-      }
+      break;
+    }
+    default: {
+      const _exhaustive: never = plan;
+      throw new Error(`unreachable engine plan: ${String(_exhaustive)}`);
     }
   }
 

@@ -7,10 +7,13 @@ import { CodexFrameworkEngine } from "../engine/codex-framework.js";
 import { NativeEngine } from "../engine/native.js";
 import { HardenedNativeEngine } from "../engine/hardened-native.js";
 import { ScriptedTestEngine } from "../engine/test-engine.js";
+import { CodexResponsesTransportProvider } from "../providers/codex-responses/index.js";
+import { OpenAICodexAuth } from "../auth/openai-codex-oauth.js";
+import { DEFAULT_COMPACTION } from "../engine/compactor.js";
 import { filterCodexPeerTools } from "../tools/codex-peer-tools.js";
-import { resolveProvider } from "../providers/routing.js";
 import { loadAliases, resolveAlias } from "../providers/aliases.js";
 import { OpenAIEnvAuth } from "../auth/openai-env.js";
+import { planEngine } from "./select-engine.js";
 import type { AuthSource } from "../auth/index.js";
 import type { AgentEngine, PermissionDecision } from "../engine/index.js";
 import type { RetryPolicy } from "../engine/retry-policy.js";
@@ -18,7 +21,13 @@ import type { FrameworkChoice } from "./argv.js";
 import type { ResolvedProvider } from "../providers/index.js";
 import { ToolDispatcher } from "../tools/dispatcher.js";
 import { buildTier0Tools } from "../tools/tier0/index.js";
-import { enrichTurnInputs } from "../memory/index.js";
+import { setToolRegistry } from "../tools/tier1/tool_search.js";
+import {
+  enrichTurnInputs,
+  observeTurnEvents,
+  endMemorySession,
+  type TurnRecord,
+} from "../memory/index.js";
 import { buildTier2Tools } from "../tools/tier2/index.js";
 import { PermissionEngine } from "../permissions/index.js";
 import { AnthropicEnvAuth } from "../auth/anthropic-env-auth.js";
@@ -101,6 +110,37 @@ async function buildNativeWorkerEngine({
 }
 
 /**
+ * codex-native worker engine — the in-process ChatGPT-subscription path
+ * (docs/42), the worker-side mirror of runtime.ts's codex-native branch so a
+ * team member can be spawned with `framework: "codex-native"`. Compaction is
+ * sized to the provider's real context window to preserve the byte-stable
+ * cached prefix (docs/42 §6.2).
+ */
+async function buildCodexNativeWorkerEngine({
+  codexModelId,
+  agentId,
+}: {
+  readonly codexModelId: string;
+  readonly agentId: AgentId;
+}): Promise<AgentEngine> {
+  const provider = new CodexResponsesTransportProvider({
+    modelId: codexModelId,
+    credentials: new OpenAICodexAuth(),
+    sessionId: agentId,
+  });
+  return new HardenedNativeEngine({
+    provider,
+    sessionId: agentId,
+    eagerToolDispatch: process.env.OPENSWARM_EAGER_TOOL_DISPATCH === "1",
+    midTurnCompaction: process.env.OPENSWARM_MID_TURN_COMPACTION === "1",
+    compactionConfig: {
+      preserveRecentMessages: DEFAULT_COMPACTION.preserveRecentMessages,
+      maxEstimatedTokens: Math.floor(provider.capabilities.maxContextTokens * 0.8),
+    },
+  });
+}
+
+/**
  * Combine the parent's base system prompt with the role's system-prompt
  * suffix. Role suffix APPENDS to base (role wins on conflicts because it
  * lands last — matches the plan §6.6 "last-writer-wins" guidance).
@@ -138,6 +178,12 @@ interface TurnContext {
   readonly roleSuffix: string;
   readonly resolvedAllowedTools: readonly string[] | undefined;
   readonly parentToolUseId: string | undefined;
+  /**
+   * Phase 3 B1 — per-worker memory turn log. executeTurn appends one
+   * TurnRecord per turn (via the observer); runWorkerEntry archives them at
+   * worker shutdown through endMemorySession.
+   */
+  readonly memoryTurns: TurnRecord[];
 }
 
 /**
@@ -226,7 +272,7 @@ async function executeTurn(
 
     // Long-lived workers resume the prior turn's session so conversation
     // context carries across run_more (the engine tracks its latest session id).
-    // undefined on the first turn -> a fresh conversation (docs/33 B0.5).
+    // undefined on the first turn -> a fresh conversation (docs/archive/33 B0.5).
     // B1.4: on the first turn (no in-memory id) fall back to the session sidecar
     // so a freshly-spawned root resumes the prior conversation across processes
     // (ACP session/load live resume).
@@ -297,7 +343,15 @@ async function executeTurn(
       }
     };
 
-    for await (const evt of engine.run(runConfig)) {
+    // Phase 3 B1 — the observer fires onAfterTurn / onCompaction as the
+    // events stream through, and appends this turn's TurnRecord.
+    const observedEvents = observeTurnEvents(engine.run(runConfig), {
+      sessionId: priorSessionId ?? agentId,
+      turnIndex: ctx.memoryTurns.length,
+      agentId,
+      onRecord: (record) => ctx.memoryTurns.push(record),
+    });
+    for await (const evt of observedEvents) {
       if (evt.type === "text_delta") {
         finalText += evt.text;
       } else if (evt.type === "error") {
@@ -308,7 +362,7 @@ async function executeTurn(
       persistSidecarEarly();
       // Forward each engine event as a lane_event, preserving its real type so
       // events.jsonl records the semantic spine and the ACP layer can translate
-      // member activity (docs/33 B0.2). Events with no lane equivalent are
+      // member activity (docs/archive/33 B0.2). Events with no lane equivalent are
       // dropped (they were never usefully consumed).
       const laneType = normalizedEventToLaneType(evt.type);
       if (laneType !== undefined) {
@@ -473,6 +527,9 @@ export async function runWorkerEntry(): Promise<number> {
   for (const tool of [...buildTier0Tools(), ...buildTier2Tools()]) {
     dispatcher.register(tool);
   }
+  // Populate the tool_search registry with this worker's surface (tier0 +
+  // tier2, post-allowlist) so discovery matches what's executable here.
+  setToolRegistry(dispatcher.list());
 
   const permissionEngine = new PermissionEngine(permissionMode);
   const auth = new AnthropicEnvAuth();
@@ -483,62 +540,60 @@ export async function runWorkerEntry(): Promise<number> {
   // TAC/Bedrock containers also provide ANTHROPIC_MODEL; use it as a final
   // provider-specific fallback before the built-in alias.
   const frameworkEnv = (process.env.OPENSWARM_FRAMEWORK ?? "auto") as FrameworkChoice;
-  const workerModel = await resolveWorkerModel(
+  const requestedModel = await resolveWorkerModel(
     process.env.OPENSWARM_MODEL ?? initialTask.model ?? process.env.ANTHROPIC_MODEL ?? DEFAULT_WORKER_MODEL,
   );
 
+  // Shared CLI↔worker engine selection (Phase 2.1). Same model+framework+env
+  // inputs produce the same engine here as in runtime.ts: workers now build a
+  // codex-native engine and hard-error on an explicit native/hardened-native
+  // framework paired with a Claude model instead of silently downgrading to
+  // the Agent SDK.
+  const planResult = planEngine({
+    framework: frameworkEnv,
+    resolvedModelId: requestedModel,
+    scripted: !!process.env.OPENSWARM_TEST_SCRIPT,
+  });
+  if (!planResult.ok) {
+    throw new Error(planResult.message);
+  }
+  const workerModel = planResult.effectiveModelId;
+  const plan = planResult.plan;
+
   let engine: AgentEngine;
-  if (process.env.OPENSWARM_TEST_SCRIPT) {
-    engine = new ScriptedTestEngine();
-  } else if (frameworkEnv === "claude-agent-sdk") {
-    engine = new ClaudeAgentSdkEngine();
-  } else if (frameworkEnv === "codex-chatgpt") {
-    // V0.4.Q11: register the 8-tool peer subset with the codex agent as
-    // host dynamicTools. Routed back through this worker's SwarmHost so
-    // calls into send_message / team_members / etc. observe the same
-    // team scope as a claude-agent-sdk worker would.
-    const tier2 = buildTier2Tools();
-    const codexPeerTools = filterCodexPeerTools(tier2);
-    engine = new CodexFrameworkEngine({
-      tools: codexPeerTools,
-      host,
-    });
-  } else if (frameworkEnv === "hardened-native") {
-    const resolved = resolveProvider(workerModel);
-    if (resolved.kind === "native") {
-      engine = await buildNativeWorkerEngine({
-        resolved,
-        agentId,
-        hardened: true,
-      });
-    } else {
+  switch (plan.kind) {
+    case "scripted":
+      engine = new ScriptedTestEngine();
+      break;
+    case "claude-sdk":
       engine = new ClaudeAgentSdkEngine();
+      break;
+    case "codex-chatgpt": {
+      // V0.4.Q11: register the 8-tool peer subset with the codex agent as
+      // host dynamicTools. Routed back through this worker's SwarmHost so
+      // calls into send_message / team_members / etc. observe the same
+      // team scope as a claude-agent-sdk worker would.
+      const tier2 = buildTier2Tools();
+      const codexPeerTools = filterCodexPeerTools(tier2);
+      engine = new CodexFrameworkEngine({ tools: codexPeerTools, host });
+      break;
     }
-  } else if (frameworkEnv === "native") {
-    const resolved = resolveProvider(workerModel);
-    if (resolved.kind === "native") {
-      engine = await buildNativeWorkerEngine({
-        resolved,
+    case "codex-native":
+      engine = await buildCodexNativeWorkerEngine({
+        codexModelId: plan.codexModelId,
         agentId,
-        hardened: false,
       });
-    } else {
-      engine = new ClaudeAgentSdkEngine();
-    }
-  } else {
-    // auto — route Claude through the SDK and non-Claude models through the
-    // native transport provider resolved from their model prefix.
-    const resolved = resolveProvider(workerModel);
-    if (resolved.kind === "sdk") {
-      engine = resolved.engineFactory!();
-    } else if (resolved.kind === "native") {
+      break;
+    case "native":
       engine = await buildNativeWorkerEngine({
-        resolved,
+        resolved: plan.resolved,
         agentId,
-        hardened: false,
+        hardened: plan.hardened,
       });
-    } else {
-      throw new Error(resolved.message);
+      break;
+    default: {
+      const _exhaustive: never = plan;
+      throw new Error(`unreachable engine plan: ${String(_exhaustive)}`);
     }
   }
 
@@ -555,6 +610,16 @@ export async function runWorkerEntry(): Promise<number> {
     roleSuffix,
     resolvedAllowedTools,
     parentToolUseId,
+    memoryTurns: [],
+  };
+
+  // Phase 3 B1/B2 — archive this worker's turns at shutdown (best-effort,
+  // hard 5s timeout inside endMemorySession; never blocks worker exit).
+  const finishMemorySession = async (): Promise<void> => {
+    await endMemorySession({
+      sessionId: engine.getSessionId?.() ?? agentId,
+      turns: ctx.memoryTurns,
+    });
   };
 
   // Run the initial task.
@@ -572,6 +637,7 @@ export async function runWorkerEntry(): Promise<number> {
     }
     await transport.notify("task_result", initialResult);
     // Default behaviour (preserved): exit immediately after the initial task.
+    await finishMemorySession();
     transport.stopHeartbeat();
     transport.close();
     return initialResult.status === "success" ? 0 : 1;
@@ -763,6 +829,7 @@ export async function runWorkerEntry(): Promise<number> {
   transport.off("request", onRequest);
   transport.off("close", onClose);
 
+  await finishMemorySession();
   transport.stopHeartbeat();
   transport.close();
   return exitCode;

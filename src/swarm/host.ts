@@ -65,14 +65,14 @@ export interface PermissionDecisionResponse {
 /**
  * Orchestrator-side handler for worker escalations (ask_user_question and
  * permission requests). The ACP layer injects one that routes to the client;
- * absent, the orchestrator denies. See docs/33 §4.
+ * absent, the orchestrator denies. See docs/archive/33 §4.
  */
 export interface InteractionHandler {
   requestPermission(
     req: PermissionRequest,
   ): Promise<PermissionDecisionResponse>;
   /**
-   * Optional (docs/33 §9): route a member's `ask_user_question` to the operator
+   * Optional (docs/archive/33 §9): route a member's `ask_user_question` to the operator
    * (the ACP client) instead of erroring headless. Multiple-choice only — ACP
    * has no free-form text input, so an option list is required.
    */
@@ -146,13 +146,6 @@ export interface SwarmHost {
   ): Promise<SendResult>;
 
   /**
-   * Async iterable over inbox events for this agent.
-   * Includes incoming messages, permission responses, and user answers.
-   * Iteration completes when the host shuts down.
-   */
-  inbox(): AsyncIterable<InboxEvent>;
-
-  /**
    * Drain up to `max` queued messages for this host's own agent.
    * Used by the Tier 2 `check_inbox` tool — returns [] when nothing is queued.
    * v0.6 stage 6A.1: async to allow library/daemon-backed inbox impls.
@@ -161,7 +154,7 @@ export interface SwarmHost {
 
   /**
    * Ask the operator a question and wait for a response.
-   * M3b Phase 6 implements the real transport; Phase 0 stubs throw.
+   * StandaloneHost forwards to the operator surface; WorkerHost relays over IPC.
    */
   askUser(question: string, options?: readonly string[]): Promise<AskUserResponse>;
 
@@ -215,8 +208,17 @@ export interface SpawnRequest {
   readonly permissionMode: PermissionMode;
   /** Model id or alias (e.g. "sonnet", "claude-sonnet-4-6", "gpt-4o"). */
   readonly model?: string;
-  /** Opt into a FrameworkProvider mode (subscription auth). */
-  readonly framework?: "claude-agent-sdk" | "codex-chatgpt";
+  /**
+   * Per-worker engine framework, forwarded to the spawned process as
+   * OPENSWARM_FRAMEWORK (Phase 2.2 widened this to the worker-validated set).
+   * Omit for the default `auto` selection.
+   */
+  readonly framework?:
+    | "claude-agent-sdk"
+    | "codex-chatgpt"
+    | "codex-native"
+    | "native"
+    | "hardened-native";
   /**
    * v0.7 stage 7A.2: optional working directory for the spawned worker.
    * When set, overrides the orchestrator's cwd. Used by the git-cascade
@@ -513,17 +515,3 @@ export interface AgentMessage {
   /** Correlation id for request/response flows (e.g. ask_user_question). */
   readonly correlationId?: string;
 }
-
-export type InboxEvent =
-  | { readonly type: "message"; readonly message: AgentMessage }
-  | {
-      readonly type: "permission_response";
-      readonly toolUseId: string;
-      readonly decision: "allow" | "deny";
-      readonly reason?: string;
-    }
-  | {
-      readonly type: "answer";
-      readonly correlationId: string;
-      readonly answer: string;
-    };

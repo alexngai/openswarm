@@ -11,10 +11,4 @@ export class GoogleApiKeyAuth implements AuthSource {
   async isAuthenticated(): Promise<boolean> {
     return !!process.env["GOOGLE_GENERATIVE_AI_API_KEY"];
   }
-
-  async headers(): Promise<Record<string, string>> {
-    return {
-      Authorization: `Bearer ${process.env["GOOGLE_GENERATIVE_AI_API_KEY"] ?? ""}`,
-    };
-  }
 }

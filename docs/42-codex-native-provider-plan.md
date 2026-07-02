@@ -7,6 +7,16 @@ path, modeled on `references/openclaw`, in contrast to the existing
 `--framework codex-chatgpt` path which delegates to the `codex` App Server
 binary.
 
+> **Status (Phase 2.4, Jul 2026): `codex-native` is the primary
+> ChatGPT-subscription path.** As of Phase 2.1 the shared engine selector
+> (`src/cli/select-engine.ts`) builds a `codex-native` engine on both the
+> single-agent CLI **and** swarm workers, and `MemberSpec.framework` accepts
+> `codex-native` (Phase 2.2). `codex-chatgpt` (the Codex-CLI App Server path)
+> is retained as the team-execution codex path and single-agent fallback; once
+> `codex-native` has soaked as a team peer, `CodexFrameworkEngine` is a
+> candidate to archive to `experimental/` (revisit after 2.1/2.2 land — see
+> `openswarm-remediation-plan.md` §2.4).
+
 ## 1  Motivation
 
 Two ways to reach ChatGPT-subscription billing exist today and after this work:

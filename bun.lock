@@ -36,7 +36,7 @@
         "@types/turndown": "^5.0.6",
         "@types/ws": "^8.18.1",
         "node-pty": "^1.1.0",
-        "swarmkit-eval": "^0.0.6",
+        "swarmkit-eval": "^0.0.7",
         "typescript": "^5.6.3",
         "vitest": "^4.1.4",
       },
@@ -1138,7 +1138,7 @@
 
     "supports-preserve-symlinks-flag": ["supports-preserve-symlinks-flag@1.0.0", "", {}, "sha512-ot0WnXS9fgdkgIcePe6RHNk1WA8+muPa6cSjeR3V8K27q9BB1rTE3R1p7Hv0z1ZyAc8s6Vvv8DIyWf681MAt0w=="],
 
-    "swarmkit-eval": ["swarmkit-eval@0.0.6", "", { "peerDependencies": { "@wandb/sdk": "^0.5.0", "e2b": "^2.30.0" }, "optionalPeers": ["@wandb/sdk", "e2b"] }, "sha512-1VtcCQZc0S3sDHq0iqscSEVMCmaKTXsJm6B7mHWdi2sq3xxeq3/U97JPjS+xHvqWHv7ReiFL24nyM2G2gz8Dbg=="],
+    "swarmkit-eval": ["swarmkit-eval@0.0.7", "", { "peerDependencies": { "@wandb/sdk": "^0.5.0", "e2b": "^2.30.0" }, "optionalPeers": ["@wandb/sdk", "e2b"] }, "sha512-9Eyp4XEkloGwNqGdTsxf3TxdKvdIsM8r+m7BTyPw1FPI4SzHRN7nYIbh8PaAmYHUiOXPV9HEcpC48czYlGC/OQ=="],
 
     "tar": ["tar@7.5.16", "", { "dependencies": { "@isaacs/fs-minipass": "^4.0.0", "chownr": "^3.0.0", "minipass": "^7.1.2", "minizlib": "^3.1.0", "yallist": "^5.0.0" } }, "sha512-56adEpPMouktRlBLXiaYFFzZ/3+JXa8P9n7WbR+ibIjtviN55mEaOkiysCnPnWm+7kkui1Dn8J9l+g6zV8731w=="],
 

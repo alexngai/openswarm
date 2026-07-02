@@ -1,4 +1,5 @@
 import type { NormalizedEvent } from "../core/types.js";
+import { ToolInputAccumulator, parseToolInput } from "../core/tool-input.js";
 
 export interface HeadlessOptions {
   readonly out?: NodeJS.WritableStream;
@@ -10,33 +11,25 @@ export async function runHeadless(
   options?: HeadlessOptions,
 ): Promise<void> {
   const out = options?.out ?? process.stdout;
-  const toolInputs = new Map<string, string>();
+  const acc = new ToolInputAccumulator();
   for await (const event of events) {
     if (event.type === "tool_use_start") {
-      toolInputs.set(event.id, "");
+      acc.start(event.id, undefined);
       out.write(JSON.stringify(event) + "\n");
       continue;
     }
     if (event.type === "tool_use_input") {
-      toolInputs.set(event.id, (toolInputs.get(event.id) ?? "") + event.jsonDelta);
+      acc.append(event.id, event.jsonDelta);
       out.write(JSON.stringify(event) + "\n");
       continue;
     }
     if (event.type === "tool_use_end") {
-      const input = parseInput(toolInputs.get(event.id));
-      toolInputs.delete(event.id);
+      // Attach the reassembled `input` object; omit it entirely when the
+      // buffer is empty or malformed (fallback "undefined").
+      const input = parseToolInput(acc.end(event.id)?.raw ?? "");
       out.write(JSON.stringify(input === undefined ? event : { ...event, input }) + "\n");
       continue;
     }
     out.write(JSON.stringify(event) + "\n");
-  }
-}
-
-function parseInput(json: string | undefined): unknown {
-  if (!json) return undefined;
-  try {
-    return JSON.parse(json);
-  } catch {
-    return undefined;
   }
 }

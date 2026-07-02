@@ -6,6 +6,8 @@
  * - onMemoryWrite: syncs to curated memory store
  * - onTurnComplete: no-op (archive happens at session end)
  * - onCompress: no-op (curated memory is already bounded)
+ * - search: session-archive lookups (Phase 3 B2 — the durable fallback
+ *   behind `memory_search` when minimem is unavailable)
  */
 
 import type {
@@ -19,18 +21,29 @@ import type {
   CompressionSummary,
 } from "../types.js";
 import { getCuratedMemory, scopeKey } from "../curated.js";
+import { installDefaultArchiveStore, searchArchive } from "../archive.js";
+import { FileArchiveStore } from "./file-archive-store.js";
 
 export class FileMemoryProvider implements MemoryProvider {
   readonly name = "file";
   readonly capabilities: MemoryCapabilities = {
     enrichment: true,
     persistence: true,
-    search: false,
+    search: true,
     graph: false,
   };
 
-  async initialize(_config: ProviderConfig): Promise<void> {
-    // No initialization needed — curated memory store is ready at import time
+  async initialize(config: ProviderConfig): Promise<void> {
+    // Phase 3 B2 — swap the volatile in-memory archive default for the
+    // durable JSONL store (~/.openswarm/memory/session-archive.jsonl).
+    // Never clobbers a store installed via setArchiveStore. Under vitest the
+    // durable store is only installed when a path is passed explicitly, so
+    // tests can't write into the developer's real home directory.
+    const archiveFile =
+      typeof config.archiveFile === "string" ? config.archiveFile : undefined;
+    if (archiveFile !== undefined || process.env.VITEST === undefined) {
+      installDefaultArchiveStore(new FileArchiveStore(archiveFile));
+    }
   }
 
   async shutdown(): Promise<void> {
@@ -71,9 +84,27 @@ export class FileMemoryProvider implements MemoryProvider {
     return fragments;
   }
 
+  /** Session-archive search (Phase 3 B2). Uses the global archive store. */
+  async search(
+    query: string,
+    opts?: { readonly limit?: number },
+  ): Promise<MemoryFragment[]> {
+    return searchArchive(query, opts?.limit ?? 5).map((r) => ({
+      source: `file:archive:${r.sessionId}`,
+      content: [
+        r.summary,
+        r.tags.length > 0 ? `Tags: ${r.tags.join(", ")}` : "",
+        r.toolsUsed.length > 0 ? `Tools: ${r.toolsUsed.join(", ")}` : "",
+        `Date: ${r.createdAt}`,
+      ]
+        .filter((line) => line.length > 0)
+        .join("\n"),
+    }));
+  }
+
   async onMemoryWrite(_entry: MemoryEntry): Promise<void> {
-    // Curated memory writes go directly through executeCuratedAction,
-    // so no additional sync is needed here.
+    // Curated memory writes go directly through executeCuratedAction;
+    // session archives go through archiveSession at session end.
   }
 
   async onTurnComplete(_turn: CompletedTurn): Promise<void> {

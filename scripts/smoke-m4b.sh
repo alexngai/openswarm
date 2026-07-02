@@ -19,7 +19,7 @@
 #   [O4] DashScope over-cap:   covered by same suite (7MB rejection case called out explicitly)
 #   [O5] Plugin lifecycle:     npx vitest run src/plugins/ src/cli/plugin.test.ts
 #   [O6] Codex OAuth mock:     npx vitest run src/auth/openai-oauth.test.ts
-#   [O7] Quirks centralization: npx vitest run src/providers/quirks.test.ts
+#   [O7] Quirks centralization: npx vitest run experimental/providers/quirks.test.ts
 #   [O8] Framework-filter:     npx vitest run src/tools/framework-filter.test.ts
 #   [O9] Routing M4b:          npx vitest run src/providers/routing.test.ts
 #
@@ -88,7 +88,7 @@ if ! $LIVE_ONLY; then
 
   # [O1] xAI TransportProvider
   echo "[O1] xAI provider (xai-transport.test.ts)"
-  if SWARM_CODER_SKIP_INTEGRATION_BUILD=1 npx vitest run src/providers/xai-transport.test.ts \
+  if OPENSWARM_SKIP_INTEGRATION_BUILD=1 npx vitest run src/providers/xai-transport.test.ts \
       > /tmp/swc-m4b-o1.log 2>&1; then
     record passed O1 "xAI provider — mocked one-turn scenario"
   else
@@ -97,7 +97,7 @@ if ! $LIVE_ONLY; then
 
   # [O2] Google TransportProvider
   echo "[O2] Google provider (google-transport.test.ts)"
-  if SWARM_CODER_SKIP_INTEGRATION_BUILD=1 npx vitest run src/providers/google-transport.test.ts \
+  if OPENSWARM_SKIP_INTEGRATION_BUILD=1 npx vitest run src/providers/google-transport.test.ts \
       > /tmp/swc-m4b-o2.log 2>&1; then
     record passed O2 "Google provider — mocked one-turn scenario"
   else
@@ -108,7 +108,7 @@ if ! $LIVE_ONLY; then
   # [O4] DashScope over-cap preflight (7 MB rejection) — same suite, called out explicitly
   echo "[O3] DashScope provider under 6MB (dashscope-transport.test.ts + dashscope-preflight.test.ts)"
   echo "[O4] DashScope over-cap preflight: 7MB request body → request_body_exceeded (covered by same suite)"
-  if SWARM_CODER_SKIP_INTEGRATION_BUILD=1 npx vitest run \
+  if OPENSWARM_SKIP_INTEGRATION_BUILD=1 npx vitest run \
       src/providers/dashscope-transport.test.ts \
       src/providers/dashscope-preflight.test.ts \
       > /tmp/swc-m4b-o34.log 2>&1; then
@@ -121,7 +121,7 @@ if ! $LIVE_ONLY; then
 
   # [O5] Plugin lifecycle (install / enable / disable / update / uninstall)
   echo "[O5] Plugin lifecycle (src/plugins/ + src/cli/plugin.test.ts)"
-  if SWARM_CODER_SKIP_INTEGRATION_BUILD=1 npx vitest run src/plugins/ src/cli/plugin.test.ts \
+  if OPENSWARM_SKIP_INTEGRATION_BUILD=1 npx vitest run src/plugins/ src/cli/plugin.test.ts \
       > /tmp/swc-m4b-o5.log 2>&1; then
     record passed O5 "Plugin lifecycle — install → list → disable → enable → update → uninstall"
   else
@@ -129,17 +129,17 @@ if ! $LIVE_ONLY; then
   fi
 
   # [O6] Codex OAuth mock flow (PKCE + token exchange + persistence)
-  echo "[O6] Codex OAuth mock flow (src/auth/openai-oauth.test.ts)"
-  if SWARM_CODER_SKIP_INTEGRATION_BUILD=1 npx vitest run src/auth/openai-oauth.test.ts \
+  echo "[O6] Codex OAuth mock flow (src/auth/openai-codex-oauth*.test.ts)"
+  if OPENSWARM_SKIP_INTEGRATION_BUILD=1 npx vitest run src/auth/openai-codex-oauth.test.ts src/auth/openai-codex-oauth-shared.test.ts \
       > /tmp/swc-m4b-o6.log 2>&1; then
     record passed O6 "Codex OAuth mock flow — PKCE + token refresh + auth.json persistence"
   else
-    record failed O6 "openai-oauth.test.ts failed (see /tmp/swc-m4b-o6.log)"
+    record failed O6 "openai-codex-oauth tests failed (see /tmp/swc-m4b-o6.log)"
   fi
 
   # [O7] Quirks centralization (temperature strip, max_completion_tokens, etc.)
-  echo "[O7] Quirks centralization (src/providers/quirks.test.ts)"
-  if SWARM_CODER_SKIP_INTEGRATION_BUILD=1 npx vitest run src/providers/quirks.test.ts \
+  echo "[O7] Quirks centralization (experimental/providers/quirks.test.ts)"
+  if OPENSWARM_SKIP_INTEGRATION_BUILD=1 npx vitest run experimental/providers/quirks.test.ts \
       > /tmp/swc-m4b-o7.log 2>&1; then
     record passed O7 "Quirks centralization — model-family quirks applied correctly"
   else
@@ -148,7 +148,7 @@ if ! $LIVE_ONLY; then
 
   # [O8] Framework-filter (removes SwarmHost tools in framework mode)
   echo "[O8] Framework-filter (src/tools/framework-filter.test.ts)"
-  if SWARM_CODER_SKIP_INTEGRATION_BUILD=1 npx vitest run src/tools/framework-filter.test.ts \
+  if OPENSWARM_SKIP_INTEGRATION_BUILD=1 npx vitest run src/tools/framework-filter.test.ts \
       > /tmp/swc-m4b-o8.log 2>&1; then
     record passed O8 "Framework-filter — codex-chatgpt/claude-agent-sdk strips SwarmHost tools"
   else
@@ -157,7 +157,7 @@ if ! $LIVE_ONLY; then
 
   # [O9] Routing M4b additions (xai / gemini / qwen / kimi prefixes)
   echo "[O9] Routing M4b additions (src/providers/routing.test.ts)"
-  if SWARM_CODER_SKIP_INTEGRATION_BUILD=1 npx vitest run src/providers/routing.test.ts \
+  if OPENSWARM_SKIP_INTEGRATION_BUILD=1 npx vitest run src/providers/routing.test.ts \
       > /tmp/swc-m4b-o9.log 2>&1; then
     record passed O9 "Routing M4b additions — grok/gemini/qwen/kimi prefix coverage"
   else

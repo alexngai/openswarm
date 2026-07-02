@@ -48,16 +48,14 @@ export class OpenAICodexAuth implements InteractiveAuth, CodexCredentialSource {
     this.now = opts.now ?? (() => Date.now());
   }
 
-  /** Provider-facing: fresh bearer + account id, refreshing if near expiry. */
+  /**
+   * Provider-facing: fresh bearer + account id, refreshing if near expiry.
+   * The codex Responses transport consumes this directly (Phase 2.3 removed the
+   * unused AuthSource `headers()` method; this is the real credential path).
+   */
   async getCredentials(): Promise<{ token: string; accountId: string }> {
     const tokens = await this.validTokens();
     return { token: tokens.access, accountId: tokens.accountId };
-  }
-
-  /** AuthSource: headers to merge into the outbound request. */
-  async headers(): Promise<Record<string, string>> {
-    const { token, accountId } = await this.getCredentials();
-    return { Authorization: `Bearer ${token}`, "chatgpt-account-id": accountId };
   }
 
   async isAuthenticated(): Promise<boolean> {

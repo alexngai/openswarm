@@ -11,7 +11,7 @@
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import {
-  swarmHarnessSpec,
+  openSwarmSpec,
   harnessOf,
   npmCliInstall,
   type Harness,
@@ -42,7 +42,7 @@ export const LOCAL_SKILLTREE_TARBALL = resolve(REPO_ROOT, "eval", ".artifacts", 
  */
 export function localSwarmHarness(opts: CliHarnessAdapterOptions = {}): Harness {
   return harnessOf(
-    { ...swarmHarnessSpec, install: [], readyCmd: undefined },
+    { ...openSwarmSpec, install: [], readyCmd: undefined },
     { bin: `node ${LOCAL_HARNESS_BIN}`, ...opts },
   );
 }

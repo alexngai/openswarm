@@ -1,5 +1,5 @@
 /**
- * Team `session/load` replay (B1.4, docs/34 §5) — re-project a persisted
+ * Team `session/load` replay (B1.4, docs/archive/34 §5) — re-project a persisted
  * orchestration spine onto ACP `session/update` notifications in wall-clock
  * order. The team analog of Stage A's `history.ts`.
  *

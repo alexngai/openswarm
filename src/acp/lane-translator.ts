@@ -7,7 +7,7 @@
  * member via the roster: the lead (role "lead") narrates; other members'
  * text is suppressed (collapse, docs/31 Q3); every member's tool calls surface
  * `[role]`-prefixed with agentId-namespaced ids. Member/task lifecycle events
- * drive a roster-derived `plan` (the team board). See docs/33 §5.
+ * drive a roster-derived `plan` (the team board). See docs/archive/33 §5.
  *
  * Events are serialized through an internal promise chain so notifications keep
  * wire order despite async `sessionUpdate`. `drain()` awaits the backlog.
@@ -21,7 +21,8 @@ import type {
 import type { AgentId, NormalizedEvent } from "../core/types.js";
 import type { LaneEvent } from "../swarm/events.js";
 import type { MemberInfo } from "../swarm/team-session.js";
-import { emitNormalizedEvent, type OpenTool } from "./normalized-translate.js";
+import { emitNormalizedEvent } from "./normalized-translate.js";
+import { ToolInputAccumulator } from "../core/tool-input.js";
 import { swarmMemberMeta, withSwarmMeta } from "./swarm-meta.js";
 
 const WORKER_ENGINE_TYPES = new Set<string>([
@@ -137,7 +138,7 @@ export function makeLaneTranslator(
   sessionId: string,
   deps: LaneTranslatorDeps,
 ): LaneTranslator {
-  const open = new Map<string, OpenTool>();
+  const open = new ToolInputAccumulator<string>();
   let chain = Promise.resolve();
   let lastPlanKey = "";
   // The coordinator's root emits first; treat the first member seen as the lead

@@ -22,16 +22,15 @@ import {
   isEditTool,
 } from "./tool-kind.js";
 import { withSwarmMeta, type SwarmMeta } from "./swarm-meta.js";
-
-export interface OpenTool {
-  readonly name: string;
-  readonly jsonParts: string[];
-}
+import { ToolInputAccumulator, parseToolInput } from "../core/tool-input.js";
 
 export interface EmitOptions {
   send(update: SessionUpdate): Promise<void>;
-  /** Shared across calls; keyed by the (prefixed) tool-call id. */
-  open: Map<string, OpenTool>;
+  /**
+   * Shared across calls; keyed by the (prefixed) tool-call id. The metadata
+   * payload is the tool name, needed to derive title/kind/diff at end-of-call.
+   */
+  open: ToolInputAccumulator<string>;
   /** message_stop / error resolve the turn stop reason (single-agent only). */
   setStop?: (reason: StopReason) => void;
   /** Prefix for tool-call ids — keeps ids unique across team members. */
@@ -49,15 +48,6 @@ export interface EmitOptions {
    * attached at their own call sites (lane-translator / team-permission).
    */
   meta?: SwarmMeta;
-}
-
-export function parseJson(raw: string): unknown {
-  if (raw.trim().length === 0) return {};
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
 }
 
 export function mapStop(reason: EngineStopReason): StopReason {
@@ -101,7 +91,7 @@ export async function emitNormalizedEvent(
 
     case "tool_use_start": {
       const key = idPrefix + ne.id;
-      open.set(key, { name: ne.name, jsonParts: [] });
+      open.start(key, ne.name);
       if (ne.name === "todo_write" && planFromTodos) return; // -> plan at end
       await send({
         sessionUpdate: "tool_call",
@@ -114,25 +104,26 @@ export async function emitNormalizedEvent(
     }
 
     case "tool_use_input":
-      open.get(idPrefix + ne.id)?.jsonParts.push(ne.jsonDelta);
+      open.append(idPrefix + ne.id, ne.jsonDelta);
       return;
 
     case "tool_use_end": {
       const key = idPrefix + ne.id;
-      const t = open.get(key);
+      const t = open.end(key);
       if (t === undefined) return;
-      const input = parseJson(t.jsonParts.join(""));
-      if (t.name === "todo_write" && planFromTodos) {
+      const name = t.meta;
+      const input = parseToolInput(t.raw, "empty-object");
+      if (name === "todo_write" && planFromTodos) {
         await emitTodoPlan(send, input);
         return;
       }
-      const locations = toolLocations(t.name, input);
-      const content = isEditTool(t.name) ? diffContent(t.name, input) : undefined;
+      const locations = toolLocations(name, input);
+      const content = isEditTool(name) ? diffContent(name, input) : undefined;
       await send({
         sessionUpdate: "tool_call_update",
         toolCallId: key,
         status: "in_progress",
-        title: titlePrefix + toolTitle(t.name, input),
+        title: titlePrefix + toolTitle(name, input),
         rawInput: input,
         ...(locations !== undefined ? { locations } : {}),
         ...(content !== undefined ? { content } : {}),

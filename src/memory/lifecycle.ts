@@ -178,7 +178,8 @@ export interface SessionEndInfo {
 }
 
 export async function onSessionEnd(info: SessionEndInfo): Promise<void> {
-  // Archive the session
+  // Archive the session in the durable archive store (FileArchiveStore when
+  // the file provider installed it; in-memory otherwise).
   archiveSession({
     sessionId: info.sessionId,
     summary: info.summary,
@@ -186,12 +187,34 @@ export async function onSessionEnd(info: SessionEndInfo): Promise<void> {
     toolsUsed: info.toolsUsed,
   });
 
+  const coordinator = getMemoryCoordinator();
+
+  // Phase 3 B2 — fan the session summary out to persistence-capable
+  // providers (minimem persists it via appendToday). Best-effort: a failed
+  // provider write must not block shutdown.
+  try {
+    await coordinator.onMemoryWrite({
+      scope: "project",
+      content: [
+        `Session ${info.sessionId} ended.`,
+        info.summary,
+        info.toolsUsed !== undefined && info.toolsUsed.length > 0
+          ? `Tools used: ${info.toolsUsed.join(", ")}`
+          : "",
+      ]
+        .filter((line) => line.length > 0)
+        .join("\n"),
+      timestamp: new Date().toISOString(),
+    });
+  } catch {
+    // best-effort
+  }
+
   // Cadence-gated, best-effort kick of the cognitive-core consolidation loop.
   // Fire-and-forget: never blocks or fails session shutdown, and no-ops when
   // cognitive-core (`cogcore`) is not installed.
   void maybeAutoConsolidate().catch(() => {});
 
   // Shut down all providers
-  const coordinator = getMemoryCoordinator();
   await coordinator.shutdown();
 }

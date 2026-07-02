@@ -79,4 +79,10 @@ export interface MemoryProvider {
   onMemoryWrite(entry: MemoryEntry): Promise<void>;
   onTurnComplete(turn: CompletedTurn): Promise<void>;
   onCompress(summary: CompressionSummary): Promise<void>;
+  /**
+   * Explicit query search (Phase 3 B2 — backs the `memory_search` tool).
+   * Providers advertising `capabilities.search: true` must implement this;
+   * the coordinator skips providers without it.
+   */
+  search?(query: string, opts?: { readonly limit?: number }): Promise<MemoryFragment[]>;
 }

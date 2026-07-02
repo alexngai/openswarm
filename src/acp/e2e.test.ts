@@ -171,6 +171,14 @@ function gatingRuntime(): AgentRuntime {
 
 const opts = { permissionMode: "workspace-write" } as CommonOpts;
 
+// The gating tests force a mode-deny prompt on `write_file`. Since the gate now
+// checks the LIVE current mode (getCurrentMode → opts.permissionMode) rather
+// than the PermissionEngine's frozen construction mode, the *current* mode must
+// itself deny writes — otherwise the tool fast-path allows and no prompt fires.
+// In production the engine mode and the current mode share one source, so this
+// read-only pairing mirrors a real read-only ACP session.
+const gatingOpts = { permissionMode: "read-only" } as CommonOpts;
+
 // ---------------------------------------------------------------------------
 // Deterministic e2e
 // ---------------------------------------------------------------------------
@@ -229,7 +237,7 @@ describe("ACP e2e (ClientSideConnection <-> AcpAgent)", () => {
       outcome: { outcome: "selected", optionId: "reject" },
     }));
     const { client, dispose } = connect(
-      (conn) => new AcpAgent(conn, gatingRuntime(), opts),
+      (conn) => new AcpAgent(conn, gatingRuntime(), gatingOpts),
       harness,
     );
     try {
@@ -255,7 +263,7 @@ describe("ACP e2e (ClientSideConnection <-> AcpAgent)", () => {
       outcome: { outcome: "selected", optionId: "allow" },
     }));
     const { client, dispose } = connect(
-      (conn) => new AcpAgent(conn, gatingRuntime(), opts),
+      (conn) => new AcpAgent(conn, gatingRuntime(), gatingOpts),
       harness,
     );
     try {

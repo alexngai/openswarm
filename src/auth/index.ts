@@ -2,8 +2,14 @@
  * AuthSource — how credentials are supplied to a Provider.
  *
  * Orthogonal to Provider (docs/03-interfaces.md §1b): the same provider can
- * accept multiple AuthSource implementations. A TransportProvider calls
- * `headers()` before each request to merge auth headers into the outbound call.
+ * accept multiple AuthSource implementations.
+ *
+ * Credential *delivery* is provider-specific and lives on the concrete impls,
+ * not this interface (Phase 2.3 dropped the never-consumed `headers()` method):
+ * env-key transports read their key directly from the environment, and the
+ * codex OAuth source exposes `getCredentials()`. The interface only guarantees
+ * an `isAuthenticated()` check (used by `doctor` and the transport factories)
+ * and an optional `refresh()`.
  *
  * OAuth tokens live in `~/.openswarm/auth.json`, encrypted at rest where the
  * platform supports it. Never write tokens to session logs or git.
@@ -15,20 +21,6 @@ export interface AuthSource {
   readonly kind: AuthKind;
   /** Provider this auth is scoped to: "anthropic" | "openai" | "google" | "xai". */
   readonly providerId: string;
-
-  /**
-   * Called before each request. Returns headers to merge into the outbound call.
-   *
-   * - `api-key`: returns `{ "x-api-key": ... }` or `{ Authorization: "Bearer ..." }`
-   *   depending on provider wire format.
-   * - `oauth-bearer`: returns `{ Authorization: "Bearer ..." }` and any required
-   *   companion headers. Some engines (Agent SDK) may handle the OAuth flow
-   *   internally; in that case the AuthSource returns `{}` and the engine
-   *   reads its own persisted credentials.
-   *
-   * Implementations are expected to refresh expired tokens transparently.
-   */
-  headers(): Promise<Record<string, string>>;
 
   /**
    * Force a credential refresh. Only meaningful for `oauth-bearer` implementations.

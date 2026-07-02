@@ -7,7 +7,7 @@
  * owns compaction internally, and MCP (when wired in Phase 6+) is composed
  * externally.
  *
- * See docs/13-m4a-plan.md §5 for the full specification.
+ * See docs/archive/13-m4a-plan.md §5 for the full specification.
  */
 
 import * as fs from "node:fs/promises";
@@ -50,7 +50,7 @@ import type { ToolRequest } from "../tools/dispatcher.js";
 
 /**
  * Per-turn tool-use buffer entry. Keeps the tool_use id alongside the
- * request — ToolRequest itself carries no id (see docs/13-m4a-plan.md §5.2
+ * request — ToolRequest itself carries no id (see docs/archive/13-m4a-plan.md §5.2
  * / src/tools/dispatcher.ts), so we correlate positionally through a
  * parallel `allowedIds` array and then merge results back in original
  * order via this map.

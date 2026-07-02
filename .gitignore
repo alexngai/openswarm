@@ -13,6 +13,8 @@ dead-letter.jsonl
 .runs/
 # packed local-harness tarballs for sandbox evals
 eval/.artifacts/
+# npm pack artifacts (anywhere in the tree)
+*.tgz
 .claude/
 .omc/
 # local reference checkouts (cloned repos, not tracked as submodules)

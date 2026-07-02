@@ -1,7 +1,7 @@
 /**
  * Map replayed session history (role + text) onto ACP session/update
  * notifications for `session/load`. Pure — returns the notifications to send,
- * in order, so they're easy to test. See docs/32 §10, docs/31 Q4.
+ * in order, so they're easy to test. See docs/archive/32 §10, docs/31 Q4.
  */
 
 import type { SessionNotification } from "@agentclientprotocol/sdk";

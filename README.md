@@ -254,7 +254,7 @@ Then pick **OpenSwarm** in the Agent Panel.
 
 **Single mode (`--single`).** One agent per session: streamed text, tool calls, `todo_write` as a plan, permission prompts, and `session/load` transcript replay + resume.
 
-**Known limits.** `bash` output is delivered when the command finishes (not streamed live), reasoning isn't streamed, and file reads/writes run locally (the editor's unsaved buffers aren't consulted). Team mode is *collapsed* by default — the lead is the single narrating voice and raw member chatter is suppressed (opt into `memberText: "interleave"` for speaker-labeled member text). The agent emits `_meta.swarm` enrichment + a `swarm/steer` ext, so a swarm-aware client re-expands per-member lanes and steers mid-turn; `scripts/acp-rich-client.ts` is the reference one ([docs/35](docs/35-acp-b2-rich-client-plan.md), B2 shipped). Stock clients ignore `_meta` and render collapsed. The convention is a published, versioned spec — [docs/36](docs/36-meta-swarm-convention.md) — so any ACP client can adopt it. Team mode also binds one coordinator team per connection: a second `session/new` on the same connection is rejected — open a new connection for a separate team. The full design lives in [docs/30–36](docs/31-teams-acp-design.md): Stage A ([32](docs/32-acp-implementation-plan.md)), the team stages B0–B2 ([33](docs/33-teams-acp-implementation-plan.md)/[34](docs/34-acp-b1-meta-swarm-plan.md)/[35](docs/35-acp-b2-rich-client-plan.md)), and the published `_meta.swarm` convention ([36](docs/36-meta-swarm-convention.md)).
+**Known limits.** `bash` output is delivered when the command finishes (not streamed live), reasoning isn't streamed, and file reads/writes run locally (the editor's unsaved buffers aren't consulted). Team mode is *collapsed* by default — the lead is the single narrating voice and raw member chatter is suppressed (opt into `memberText: "interleave"` for speaker-labeled member text). The agent emits `_meta.swarm` enrichment + a `swarm/steer` ext, so a swarm-aware client re-expands per-member lanes and steers mid-turn; `scripts/acp-rich-client.ts` is the reference one ([docs/archive/35](docs/archive/35-acp-b2-rich-client-plan.md), B2 shipped). Stock clients ignore `_meta` and render collapsed. The convention is a published, versioned spec — [docs/36](docs/36-meta-swarm-convention.md) — so any ACP client can adopt it. Team mode also binds one coordinator team per connection: a second `session/new` on the same connection is rejected — open a new connection for a separate team. The full design lives in [docs/archive/30–36](docs/31-teams-acp-design.md): Stage A ([32](docs/archive/32-acp-implementation-plan.md)), the team stages B0–B2 ([33](docs/archive/33-teams-acp-implementation-plan.md)/[34](docs/archive/34-acp-b1-meta-swarm-plan.md)/[35](docs/archive/35-acp-b2-rich-client-plan.md)), and the published `_meta.swarm` convention ([36](docs/36-meta-swarm-convention.md)).
 
 ### Subcommands
 
@@ -275,8 +275,13 @@ openswarm --version              # print version
                                Examples: sonnet, opus, grok, gpt-5, kimi
                                See "Models & aliases" below.
 
---framework <name>             Engine framework: claude-agent-sdk (default),
-                               codex-chatgpt (ChatGPT Plus/Pro via Codex CLI)
+--framework <name>             Engine framework. Default: auto (Claude → Agent
+                               SDK; every other model → hardened native engine).
+                               codex-native   ChatGPT-subscription path, primary
+                                              (in-process; no Codex CLI)
+                               codex-chatgpt  ChatGPT via the local Codex CLI
+                                              (team-execution path)
+                               claude-agent-sdk | native | hardened-native
 
 --resume <session-id|latest>   Resume a previous session.
 
@@ -323,9 +328,25 @@ OpenSwarm routes `--model <id>` by prefix to the matching provider transport. Bu
 | `gemini-*` | Google Generative AI | `GOOGLE_GENERATIVE_AI_API_KEY` | (pass-through) |
 | `qwen*`, `kimi*` | DashScope (OpenAI-compatible) | `DASHSCOPE_API_KEY` | `kimi` → `kimi-k2.5` |
 
-### `--framework codex-chatgpt` mode
+### ChatGPT subscription: `codex-native` (primary) vs `codex-chatgpt`
 
-Delegates the agent loop to the locally-installed Codex CLI binary via its App Server (JSON-RPC over stdio). Uses your ChatGPT Plus/Pro subscription quota rather than an API key.
+Two ways to spend ChatGPT Plus/Pro quota instead of an API key:
+
+**`--framework codex-native` — the primary path.** Runs OpenSwarm's own
+`HardenedNativeEngine` against the ChatGPT (codex) Responses backend in-process:
+no Codex CLI dependency, full access to OpenSwarm tools/hooks/compaction, and
+prompt-cache-aware compaction sized to the real context window. Backend accepts
+gpt-5.x only; a non-gpt `--model` is coerced to `gpt-5.5`.
+
+```bash
+openswarm login --provider openai-codex
+openswarm --framework codex-native "explain this codebase"
+```
+
+**`--framework codex-chatgpt` — the team-execution path.** Delegates the agent
+loop to the locally-installed Codex CLI binary via its App Server (JSON-RPC over
+stdio). Kept as the codex path for team members until `codex-native` covers team
+spawns (see `docs/42`).
 
 ```bash
 npm install -g @openai/codex
@@ -333,11 +354,14 @@ codex login
 openswarm --framework codex-chatgpt --model gpt-5.4 "explain this codebase"
 ```
 
-Teams can mix engine frameworks — peers on Claude Max, ChatGPT Plus, and direct API can collaborate in the same team.
+Teams can mix engine frameworks — set `framework` per member
+(`claude-agent-sdk`, `codex-chatgpt`, `codex-native`, `native`,
+`hardened-native`) so peers on Claude Max, ChatGPT Plus, and direct API can
+collaborate in the same team.
 
 ## Tools
 
-Fifteen Tier 0 tools ship built-in. Additional tools are auto-discovered from plugins, skills, and MCP servers at startup.
+Fourteen Tier 0 tools ship built-in. Additional tools are auto-discovered from plugins, skills, and MCP servers at startup.
 
 | Tool | Purpose |
 |------|---------|
@@ -346,16 +370,17 @@ Fifteen Tier 0 tools ship built-in. Additional tools are auto-discovered from pl
 | `write_file` | Write or create files atomically, respecting workspace boundaries |
 | `edit_file` | Replace text in existing files with mandatory uniqueness check |
 | `multi_edit` | Atomic batch edits — all succeed or all fail |
+| `apply_patch` | Apply a multi-file unified patch atomically |
 | `glob` | Find files by pattern (respects `.gitignore`) |
 | `grep` | Search file contents (via bundled ripgrep binary) |
 | `todo_write` | Persistent task list scoped to the session |
 | `shell_exec` | Persistent shell sessions surviving across tool calls |
 | `shell_write` | Send input / signals to a running shell session |
 | `shell_list` | List, inspect, reattach, or close shell sessions |
-| `request_permissions` | Request elevated permissions mid-session |
 | `memory_manage` | Manage curated memory entries that persist across sessions |
 | `memory_search` | Search past session archives and memories |
-| `skill_save` | Save, list, get, or remove reusable procedural skills |
+
+The single-agent REPL and headless paths additionally register `request_permissions`, which lets the model ask to raise the permission mode mid-session (bounded by the CLI ceiling); the user approves via the normal permission prompt. It is not advertised on ACP bridges or swarm workers yet.
 
 **Swarm tools** (available to team members): `agent`, `send_message`, `check_inbox`, `task_create`, `task_update`, `task_list`, `task_get`, `task_pull_next`, `task_stop`, `task_output`, `commit_changes`.
 
@@ -424,6 +449,20 @@ bun run build        # type-check + bundle
 npm test             # vitest suite (2800+ tests)
 bun test src/ui/     # OpenTUI/Solid component tests
 ```
+
+### Package management
+
+Both lockfiles are tracked deliberately:
+
+- **`package-lock.json` is canonical** — CI installs with `npm ci`, and all
+  dependency changes should go through `npm install <pkg>`.
+- **`bun.lock` feeds the compiled-binary build** (`npm run build:compile`),
+  which resolves dependencies with Bun.
+
+After any dependency change, resync the Bun lockfile with
+`bun install --lockfile-only` and commit both files. CI enforces this with a
+`bun install --frozen-lockfile --dry-run` check, so a stale `bun.lock` fails
+the build instead of shipping a binary built from different resolutions.
 
 - File issues at [github.com/alexngai/openswarm/issues](https://github.com/alexngai/openswarm/issues)
 - See [CLAUDE.md](CLAUDE.md) for local development conventions

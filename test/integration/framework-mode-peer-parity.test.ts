@@ -6,8 +6,8 @@
  * Background: prior to v0.4 stage 4G, `filterToolsForFramework` stripped
  * 5 SwarmHost-routed tools (send_message, check_inbox, task_stop,
  * task_output, ask_user_question) from the model's tool surface in
- * framework modes. The Track A spike (docs/26 §Track A,
- * docs/26b-spike-track-b-codex-protocol.md) showed empirically that the
+ * framework modes. The Track A spike (docs/archive/26 §Track A,
+ * docs/archive/26b-spike-track-b-codex-protocol.md) showed empirically that the
  * tools dispatch fine — canUseTool routes the framework's call back to
  * openswarm. This file ports the spike's verifications into the main
  * suite as a regression baseline now that the strip is gone.

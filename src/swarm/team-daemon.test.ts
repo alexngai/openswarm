@@ -12,6 +12,7 @@ import * as net from "node:net";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
+import { Writable } from "node:stream";
 import {
   TeamDaemon,
   type TeamDaemonOrchestrator,
@@ -19,6 +20,7 @@ import {
 } from "./team-daemon.js";
 import type { TeamSpec } from "./team-spec.js";
 import type { TeamResult } from "./topologies-types.js";
+import type { MemberInfo, MemberState, TeamSession } from "./team-session.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -679,6 +681,345 @@ describe("TeamDaemon — events.jsonl writer (5E.5)", () => {
     await daemon.stop();
     daemon = undefined;
     expect(unsubCalled).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 4.1 — status members, drain, config/startup notice
+// ---------------------------------------------------------------------------
+
+/** Build a fake TeamSession exposing a members map + recording handles. */
+function fakeTeamWithMembers(
+  members: Array<{
+    agentId: string;
+    state: MemberState;
+    drain?: () => Promise<void>;
+    wait?: () => Promise<unknown>;
+    kill?: () => Promise<void>;
+  }>,
+): TeamSession {
+  const map = new Map<string, MemberInfo>();
+  for (const m of members) {
+    map.set(m.agentId, {
+      memberId: m.agentId,
+      role: "executor",
+      agentId: m.agentId,
+      state: m.state,
+      handle: {
+        agentId: m.agentId,
+        sessionId: m.agentId,
+        wait: m.wait ?? (async () => ({ status: "success", output: "" })),
+        kill: m.kill ?? (async () => {}),
+        events: async function* () {},
+        runMore: async () => ({}),
+        drain: m.drain ?? (async () => {}),
+      } as unknown as MemberInfo["handle"],
+    });
+  }
+  return { members: map } as unknown as TeamSession;
+}
+
+function orchWithTeam(team: TeamSession | undefined): TeamDaemonOrchestrator {
+  return {
+    runTeam: async () => {
+      await new Promise(() => {});
+      return {
+        succeeded: 0,
+        failed: 0,
+        timeout: 0,
+        cancelled: 0,
+        resultWriteFailures: 0,
+        deadLetterViolation: false,
+        deadLetterWriteFailures: 0,
+      };
+    },
+    getActiveTeam: () => team,
+  };
+}
+
+function captureWritable(): { out: Writable; text: () => string } {
+  let buf = "";
+  const out = new Writable({
+    write(chunk, _enc, cb) {
+      buf += chunk.toString();
+      cb();
+    },
+  });
+  return { out, text: () => buf };
+}
+
+describe("TeamDaemon — Phase 4.1a live status members", () => {
+  let paths: TeamDaemonPaths;
+  let daemon: TeamDaemon | undefined;
+
+  beforeEach(() => {
+    paths = tmpPaths();
+  });
+  afterEach(async () => {
+    if (daemon) {
+      await daemon.stop({ drainTimeoutMs: 0 }).catch(() => {});
+      daemon = undefined;
+    }
+  });
+
+  it("status reports real per-member state from the active team", async () => {
+    const team = fakeTeamWithMembers([
+      { agentId: "a1", state: "running" },
+      { agentId: "a2", state: "idle" },
+      { agentId: "a3", state: "finished" },
+    ]);
+    daemon = new TeamDaemon({
+      spec: fakeSpec({ name: "live" }),
+      paths,
+      orchestrator: orchWithTeam(team),
+      startupOut: captureWritable().out,
+    });
+    await daemon.start();
+
+    const socket = net.createConnection(paths.sockPath);
+    await new Promise<void>((resolve) => socket.once("connect", resolve));
+    socket.write(
+      JSON.stringify({ kind: "request", id: "s1", method: "status", params: {} }) + "\n",
+    );
+    const response = (await readResponse(socket)) as {
+      result?: { members?: Array<{ agentId: string; state: string }> };
+    };
+    const byId = Object.fromEntries(
+      (response.result?.members ?? []).map((m) => [m.agentId, m.state]),
+    );
+    expect(byId).toEqual({ a1: "running", a2: "idle", a3: "finished" });
+    socket.end();
+  });
+
+  it("status reports an empty member list when no team is active", async () => {
+    daemon = new TeamDaemon({
+      spec: fakeSpec(),
+      paths,
+      orchestrator: orchWithTeam(undefined),
+      startupOut: captureWritable().out,
+    });
+    await daemon.start();
+
+    const socket = net.createConnection(paths.sockPath);
+    await new Promise<void>((resolve) => socket.once("connect", resolve));
+    socket.write(
+      JSON.stringify({ kind: "request", id: "s2", method: "status", params: {} }) + "\n",
+    );
+    const response = (await readResponse(socket)) as {
+      result?: { members?: unknown[] };
+    };
+    expect(response.result?.members).toEqual([]);
+    socket.end();
+  });
+});
+
+describe("TeamDaemon — Phase 4.1b worker drain on stop", () => {
+  let paths: TeamDaemonPaths;
+  let daemon: TeamDaemon | undefined;
+
+  beforeEach(() => {
+    paths = tmpPaths();
+  });
+  afterEach(async () => {
+    if (daemon) {
+      await daemon.stop({ drainTimeoutMs: 0 }).catch(() => {});
+      daemon = undefined;
+    }
+  });
+
+  it("drains long-lived members (calls handle.drain) before teardown", async () => {
+    let drained = false;
+    const team = fakeTeamWithMembers([
+      {
+        agentId: "a1",
+        state: "running",
+        drain: async () => {
+          drained = true;
+        },
+      },
+    ]);
+    daemon = new TeamDaemon({
+      spec: fakeSpec(),
+      paths,
+      orchestrator: orchWithTeam(team),
+      startupOut: captureWritable().out,
+    });
+    await daemon.start();
+    await daemon.stop();
+    daemon = undefined;
+    expect(drained).toBe(true);
+  });
+
+  it("falls back to awaiting wait() when a member is not long-lived (drain rejects)", async () => {
+    let waited = false;
+    const team = fakeTeamWithMembers([
+      {
+        agentId: "a1",
+        state: "running",
+        drain: async () => {
+          throw new Error("not long-lived");
+        },
+        wait: async () => {
+          waited = true;
+          return { status: "success", output: "" };
+        },
+      },
+    ]);
+    daemon = new TeamDaemon({
+      spec: fakeSpec(),
+      paths,
+      orchestrator: orchWithTeam(team),
+      startupOut: captureWritable().out,
+    });
+    await daemon.start();
+    await daemon.stop();
+    daemon = undefined;
+    expect(waited).toBe(true);
+  });
+
+  it("force-kills members still live after the drain deadline", async () => {
+    let killed = false;
+    const team = fakeTeamWithMembers([
+      {
+        agentId: "a1",
+        state: "running",
+        drain: () => new Promise<void>(() => {}), // never resolves
+        wait: () => new Promise(() => {}),
+        kill: async () => {
+          killed = true;
+        },
+      },
+    ]);
+    daemon = new TeamDaemon({
+      spec: fakeSpec(),
+      paths,
+      orchestrator: orchWithTeam(team),
+      startupOut: captureWritable().out,
+    });
+    await daemon.start();
+    await daemon.stop({ drainTimeoutMs: 20 });
+    daemon = undefined;
+    expect(killed).toBe(true);
+  });
+
+  it("skips the cooperative drain entirely when drainTimeoutMs is 0 (kill path)", async () => {
+    let drained = false;
+    let waited = false;
+    const team = fakeTeamWithMembers([
+      {
+        agentId: "a1",
+        state: "running",
+        drain: async () => {
+          drained = true;
+        },
+        wait: async () => {
+          waited = true;
+          return { status: "success", output: "" };
+        },
+      },
+    ]);
+    daemon = new TeamDaemon({
+      spec: fakeSpec(),
+      paths,
+      orchestrator: orchWithTeam(team),
+      startupOut: captureWritable().out,
+    });
+    await daemon.start();
+    await daemon.stop({ drainTimeoutMs: 0 });
+    daemon = undefined;
+    expect(drained).toBe(false);
+    expect(waited).toBe(false);
+  });
+
+  it("does not drain members already in a terminal state", async () => {
+    let drained = false;
+    const team = fakeTeamWithMembers([
+      {
+        agentId: "a1",
+        state: "finished",
+        drain: async () => {
+          drained = true;
+        },
+      },
+    ]);
+    daemon = new TeamDaemon({
+      spec: fakeSpec(),
+      paths,
+      orchestrator: orchWithTeam(team),
+      startupOut: captureWritable().out,
+    });
+    await daemon.start();
+    await daemon.stop();
+    daemon = undefined;
+    expect(drained).toBe(false);
+  });
+});
+
+describe("TeamDaemon — Phase 4.1c startup notice", () => {
+  let paths: TeamDaemonPaths;
+  let daemon: TeamDaemon | undefined;
+
+  beforeEach(() => {
+    paths = tmpPaths();
+  });
+  afterEach(async () => {
+    if (daemon) {
+      await daemon.stop({ drainTimeoutMs: 0 }).catch(() => {});
+      daemon = undefined;
+    }
+  });
+
+  it("writes effective permissionMode + concurrency to the startup sink", async () => {
+    const cap = captureWritable();
+    daemon = new TeamDaemon({
+      spec: fakeSpec({ name: "cfg", topology: "peer-team" }),
+      paths,
+      orchestrator: fakeOrch({ neverResolves: true }),
+      permissionMode: "read-only",
+      concurrency: 4,
+      startupOut: cap.out,
+    });
+    await daemon.start();
+    expect(cap.text()).toMatch(
+      /team "cfg" daemon ready.*permissionMode=read-only concurrency=4/,
+    );
+  });
+
+  it("warns when spawn-resolver is selected below danger-full-access", async () => {
+    const cap = captureWritable();
+    daemon = new TeamDaemon({
+      spec: fakeSpec({
+        name: "resolv",
+        members: [
+          {
+            role: "executor",
+            prompt: "p",
+            onConflict: "spawn-resolver",
+          },
+        ],
+      }),
+      paths,
+      orchestrator: fakeOrch({ neverResolves: true }),
+      permissionMode: "workspace-write",
+      startupOut: cap.out,
+    });
+    await daemon.start();
+    expect(cap.text()).toMatch(/spawn-resolver.*below danger-full-access/);
+  });
+
+  it("does not warn about spawn-resolver at danger-full-access", async () => {
+    const cap = captureWritable();
+    daemon = new TeamDaemon({
+      spec: fakeSpec({
+        members: [{ role: "executor", prompt: "p", onConflict: "spawn-resolver" }],
+      }),
+      paths,
+      orchestrator: fakeOrch({ neverResolves: true }),
+      permissionMode: "danger-full-access",
+      startupOut: cap.out,
+    });
+    await daemon.start();
+    expect(cap.text()).not.toMatch(/spawn-resolver/);
   });
 });
 

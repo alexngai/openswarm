@@ -22,7 +22,7 @@ import {
   createBackend,
   LocalResultStore,
   sweBenchmark,
-  swarmHarness,
+  openSwarm,
   buildSweTemplates,
   e2bSafeName,
   loadSweInstances,
@@ -147,7 +147,7 @@ export async function runH1(): Promise<void> {
   const SANDBOX_TIMEOUT_MS = process.env.H1_SANDBOX_TIMEOUT_MS ? Number(process.env.H1_SANDBOX_TIMEOUT_MS) : 1_800_000;
   // Coordinator verified-completion rounds (counters premature termination). Off unless H1_VERIFY_ROUNDS set.
   const VERIFY_ROUNDS = process.env.H1_VERIFY_ROUNDS ? Number(process.env.H1_VERIFY_ROUNDS) : undefined;
-  const harness: Harness = swarmHarness({ env: providerEnv(), timeoutMs: AGENT_TIMEOUT_MS });
+  const harness: Harness = openSwarm({ env: providerEnv(), timeoutMs: AGENT_TIMEOUT_MS });
 
   const limit = process.env.H1_INSTANCE_LIMIT ? Number(process.env.H1_INSTANCE_LIMIT) : undefined;
   const instances = sized(loadSweInstances(INSTANCES_DIR), limit);

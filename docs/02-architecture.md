@@ -67,14 +67,10 @@ src/
     archive.ts       # L3 — session archive with FTS5 search
     coordinator.ts   # L4 — MemoryCoordinator (provider fan-out, deduplication)
     lifecycle.ts     # engine lifecycle hooks (onSessionStart → onSessionEnd)
-    fragment.ts      # ContextFragment for injecting curated memory into system prompt
-    agent-scope.ts   # per-agent memory isolation + shared memory bus
-    state-store.ts   # StateDB adapters (CuratedStore, ArchiveStore)
     providers/
       file-provider.ts    # built-in provider wrapping L1 curated memory
       minimem-provider.ts # optional hybrid vector + BM25 search (graceful degradation)
-  state/             # SQLite-backed state database (sessions, goals, memory, audit log)
-  context/           # composable system prompt fragments with priority ordering
+  state/             # SQLite-backed state database (sessions, memory, audit log)
   session/           # per-worktree JSONL + engine SessionSnapshot
   tools/
     tier0/           # bash, file_ops, search, todo

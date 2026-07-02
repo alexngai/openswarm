@@ -3,7 +3,7 @@
  * Covers happy paths for each TopologyKind/CompletionRule/Aggregator,
  * rejection of malformed inputs, JSON round-trip, and the cc-swarm gsd
  * template's translated shape (the "schema accepts an openteams template's
- * translated form" acceptance check from docs/27 stage 4B).
+ * translated form" acceptance check from docs/archive/27 stage 4B).
  */
 
 import { describe, it, expect } from "vitest";
@@ -57,6 +57,19 @@ describe("MemberSpecSchema", () => {
       framework: "gpt-4",
     });
     expect(r.success).toBe(false);
+  });
+
+  it("accepts the Phase 2.2 worker-validated frameworks", () => {
+    for (const framework of [
+      "claude-agent-sdk",
+      "codex-chatgpt",
+      "codex-native",
+      "native",
+      "hardened-native",
+    ]) {
+      const r = MemberSpecSchema.safeParse({ role: "executor", prompt: "x", framework });
+      expect(r.success, framework).toBe(true);
+    }
   });
 
   it("accepts longLived: true (stage 4E.4 — coordinator root)", () => {

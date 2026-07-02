@@ -202,6 +202,33 @@ describe('PermissionEngine — pure decisions', () => {
 // M0 ignores input argument
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Mode override (Phase 4.1e) — live-mode elevation
+// ---------------------------------------------------------------------------
+
+describe("PermissionEngine — mode override argument", () => {
+  it("checks against the override mode instead of the construction mode", () => {
+    // Engine frozen at read-only, but the caller tracks a live workspace-write
+    // mode (post-elevation): the override wins.
+    const engine = new PermissionEngine("read-only");
+    expect(engine.check(toolWrite, undefined, "workspace-write")).toEqual({
+      allow: true,
+    });
+  });
+
+  it("can also narrow below the construction mode", () => {
+    const engine = new PermissionEngine("danger-full-access");
+    const result = engine.check(toolExec, undefined, "read-only");
+    expect(result.allow).toBe(false);
+    if (!result.allow) expect(result.reason).toContain("read-only");
+  });
+
+  it("falls back to the construction mode when override is omitted", () => {
+    const engine = new PermissionEngine("read-only");
+    expect(engine.check(toolWrite).allow).toBe(false);
+  });
+});
+
 describe('PermissionEngine — input argument ignored (M0)', () => {
   it('decision is identical with and without input', () => {
     const engine = new PermissionEngine("read-only");

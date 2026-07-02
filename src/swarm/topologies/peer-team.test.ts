@@ -174,6 +174,21 @@ interface FakeHostExtras {
     | import("../adapters/git-cascade-branch-policy.js").CascadeRebaseResult
     | null
   >;
+  /** docs/44 P4 / Phase 3 B3 — stub host.enqueueMerge (queue-to-branch landing). */
+  readonly enqueueMerge?: (opts: {
+    streamId: string;
+    targetBranch: string;
+    agentId?: string;
+  }) => Promise<string | null>;
+  /** docs/44 P4 / Phase 3 B3 — stub host.drainMergeQueue (integrator drain). */
+  readonly drainMergeQueue?: (opts: {
+    targetBranch: string;
+    limit?: number;
+    strategy?: string;
+  }) => Promise<
+    | import("../adapters/git-cascade-branch-policy.js").MergeQueueDrainResult
+    | null
+  >;
 }
 
 function fakeHost(
@@ -236,6 +251,10 @@ function fakeHost(
     // docs/44 P3 — present by default (real StandaloneHost always has it); the
     // cascade trigger's real discriminator is member.onParentAdvanced.
     cascadeRebase: vi.fn(extras.cascadeRebase ?? (async () => null)),
+    // docs/44 P4 / Phase 3 B3 — queue surface. Defaults mirror a queue-less
+    // adapter (enqueue → null, drain → null) so existing tests see no change.
+    enqueueMerge: vi.fn(extras.enqueueMerge ?? (async () => null)),
+    drainMergeQueue: vi.fn(extras.drainMergeQueue ?? (async () => null)),
   } as unknown as StandaloneHost;
 
   return {
@@ -1075,7 +1094,7 @@ describe("PeerTeamTopology — coordination.mergeStreams (v0.7 stage 7C)", () =>
     );
     await new PeerTeamTopology().run(spec, ctx);
     const skipNotes = teamNotes(ctx).filter((n) =>
-      /requires a stream-aware adapter; skipping merge/.test(n),
+      /requires a stream-aware adapter.*; skipping merge/.test(n),
     );
     expect(skipNotes).toHaveLength(2); // one per member — proves no early return
     await cleanup();
@@ -1317,6 +1336,153 @@ describe("PeerTeamTopology — coordination.mergeStreams (v0.7 stage 7C)", () =>
     await new PeerTeamTopology().run(spec, ctx);
     expect(captured).toEqual([{ targetStream: "main", strategy: "no-ff" }]);
     await cleanup();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 3 B3 — MemberSpec.landing + integrator drain
+// ---------------------------------------------------------------------------
+
+describe("PeerTeamTopology — MemberSpec.landing (Phase 3 B3)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function notes(ctx: { host: { emit: unknown } }): string[] {
+    const emit = ctx.host.emit as unknown as ReturnType<typeof vi.fn>;
+    return emit.mock.calls
+      .map((c) => c[0] as { type: string; payload?: { note?: string } })
+      .filter((e) => e.type === "team_note")
+      .map((e) => e.payload?.note ?? "");
+  }
+
+  it("queue-to-branch member is enqueued (not merged) and the queue is drained once after the cohort", async () => {
+    const enqueued: string[] = [];
+    const drains: Array<{ targetBranch: string }> = [];
+    const { ctx, harness, cleanup } = await makeCtx({
+      handleOpts: [{ result: successResult("a") }, { result: successResult("b") }],
+      hostExtras: {
+        streamIdFor: (id) => `s-${id}`,
+        mergeStreamToBranchForAgent: async () => ({ success: true }),
+        enqueueMerge: async (opts) => {
+          enqueued.push(opts.streamId);
+          return `entry-${enqueued.length}`;
+        },
+        drainMergeQueue: async (opts) => {
+          drains.push({ targetBranch: opts.targetBranch });
+          return {
+            merged: enqueued.map((s, i) => ({ entryId: `entry-${i + 1}`, streamId: s })),
+            failed: [],
+          } as import("../adapters/git-cascade-branch-policy.js").MergeQueueDrainResult;
+        },
+      },
+    });
+    const spec = peerSpec(
+      [
+        { ...member("a", "p"), landing: "queue-to-branch" },
+        { ...member("b", "p"), landing: "queue-to-branch" },
+      ],
+      { completion: { kind: "all" }, mergeStreams: { targetBranch: "main" } },
+    );
+    await new PeerTeamTopology().run(spec, ctx);
+
+    expect(enqueued).toHaveLength(2);
+    expect(drains).toEqual([{ targetBranch: "main" }]); // exactly one drain
+    // Direct merge must NOT have been called for queued members.
+    const direct = harness.host.mergeStreamToBranchForAgent as unknown as ReturnType<typeof vi.fn>;
+    expect(direct).not.toHaveBeenCalled();
+    expect(notes(ctx).some((n) => /merge queue drained into main: 2 merged, 0 failed/.test(n))).toBe(true);
+    await cleanup();
+  });
+
+  it("mixed landing: default member merges directly, queued member drains", async () => {
+    const directMerges: string[] = [];
+    const enqueued: string[] = [];
+    const { ctx, cleanup } = await makeCtx({
+      handleOpts: [{ result: successResult("a") }, { result: successResult("b") }],
+      hostExtras: {
+        streamIdFor: (id) => `s-${id}`,
+        mergeStreamToBranchForAgent: async (id) => {
+          directMerges.push(id);
+          return { success: true };
+        },
+        enqueueMerge: async (opts) => {
+          enqueued.push(opts.streamId);
+          return "entry-1";
+        },
+        drainMergeQueue: async () =>
+          ({ merged: [{ entryId: "entry-1", streamId: enqueued[0]! }], failed: [] }) as
+            import("../adapters/git-cascade-branch-policy.js").MergeQueueDrainResult,
+      },
+    });
+    const spec = peerSpec(
+      [member("a", "p"), { ...member("b", "p"), landing: "queue-to-branch" }],
+      { completion: { kind: "all" }, mergeStreams: { targetBranch: "main" } },
+    );
+    await new PeerTeamTopology().run(spec, ctx);
+
+    expect(directMerges).toEqual(["agent-1"]);
+    expect(enqueued).toEqual(["s-agent-2"]);
+    await cleanup();
+  });
+
+  it("queue-to-branch against a stream target is skipped with a note (queue lands to branches)", async () => {
+    const { ctx, harness, cleanup } = await makeCtx({
+      handleOpts: [{ result: successResult("a") }],
+      hostExtras: {
+        streamIdFor: () => "s-x",
+        enqueueMerge: async () => "entry-1",
+      },
+    });
+    const spec = peerSpec([{ ...member("a", "p"), landing: "queue-to-branch" }], {
+      completion: { kind: "all" },
+      mergeStreams: { targetStream: "main" },
+    });
+    await new PeerTeamTopology().run(spec, ctx);
+
+    const enqueue = harness.host.enqueueMerge as unknown as ReturnType<typeof vi.fn>;
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(notes(ctx).some((n) => /landing "queue-to-branch" for agent-1 requires/.test(n))).toBe(true);
+    await cleanup();
+  });
+
+  it("drain failures throw only with failOnConflict:true", async () => {
+    const mkExtras = (): FakeHostExtras => ({
+      streamIdFor: () => "s-x",
+      enqueueMerge: async () => "entry-1",
+      drainMergeQueue: async () =>
+        ({
+          merged: [],
+          failed: [{ entryId: "entry-1", streamId: "s-x", error: "conflict on src/a.ts" }],
+        }) as import("../adapters/git-cascade-branch-policy.js").MergeQueueDrainResult,
+    });
+
+    // Without failOnConflict: surfaced as a note, no throw.
+    const soft = await makeCtx({
+      handleOpts: [{ result: successResult("a") }],
+      hostExtras: mkExtras(),
+    });
+    const softSpec = peerSpec([{ ...member("a", "p"), landing: "queue-to-branch" }], {
+      completion: { kind: "all" },
+      mergeStreams: { targetBranch: "main" },
+    });
+    await new PeerTeamTopology().run(softSpec, soft.ctx);
+    expect(notes(soft.ctx).some((n) => /1 failed \(s-x: conflict on src\/a\.ts\)/.test(n))).toBe(true);
+    await soft.cleanup();
+
+    // With failOnConflict: the drain failure fails the topology.
+    const hard = await makeCtx({
+      handleOpts: [{ result: successResult("a") }],
+      hostExtras: mkExtras(),
+    });
+    const hardSpec = peerSpec([{ ...member("a", "p"), landing: "queue-to-branch" }], {
+      completion: { kind: "all" },
+      mergeStreams: { targetBranch: "main", failOnConflict: true },
+    });
+    await expect(new PeerTeamTopology().run(hardSpec, hard.ctx)).rejects.toThrow(
+      /merge-queue drain into main failed/,
+    );
+    await hard.cleanup();
   });
 });
 

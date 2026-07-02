@@ -77,6 +77,42 @@ export class MemoryCoordinator {
     return fragments;
   }
 
+  /** Names of providers that can serve explicit `search()` queries. */
+  get searchProviderNames(): string[] {
+    return this.providers
+      .filter((p) => p.capabilities.search && typeof p.search === "function")
+      .map((p) => p.name);
+  }
+
+  /**
+   * Explicit query search across search-capable providers (Phase 3 B2).
+   * Results are grouped by provider with no cross-provider ranking
+   * (decision Q5) — callers label each group with its source. Failed
+   * providers contribute an empty group; empty groups are dropped.
+   */
+  async search(
+    query: string,
+    opts?: { readonly limit?: number },
+  ): Promise<Array<{ provider: string; fragments: MemoryFragment[] }>> {
+    const searchable = this.providers.filter(
+      (p) => p.capabilities.search && typeof p.search === "function",
+    );
+    if (searchable.length === 0) return [];
+
+    const results = await Promise.allSettled(
+      searchable.map((p) => p.search!(query, opts)),
+    );
+
+    const groups: Array<{ provider: string; fragments: MemoryFragment[] }> = [];
+    for (let i = 0; i < searchable.length; i++) {
+      const result = results[i]!;
+      if (result.status === "fulfilled" && result.value.length > 0) {
+        groups.push({ provider: searchable[i]!.name, fragments: result.value });
+      }
+    }
+    return groups;
+  }
+
   async onMemoryWrite(entry: MemoryEntry): Promise<void> {
     if (this.providers.length === 0) return;
 

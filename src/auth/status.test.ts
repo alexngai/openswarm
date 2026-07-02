@@ -229,12 +229,6 @@ describe("AnthropicEnvAuth", () => {
     expect(auth.providerId).toBe("anthropic");
   });
 
-  it("headers() always returns an empty object", async () => {
-    const auth = new AnthropicEnvAuth();
-
-    expect(await auth.headers()).toEqual({});
-  });
-
   it("isAuthenticated() returns true when detectAuth finds a credential", async () => {
     vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-present");
 

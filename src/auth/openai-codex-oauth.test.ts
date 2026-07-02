@@ -75,10 +75,10 @@ describe("OpenAICodexAuth", () => {
     expect((await auth.getCredentials()).accountId).toBe("acc_1");
   });
 
-  it("headers() returns the bearer + account id", async () => {
+  it("getCredentials() returns the bearer token + account id", async () => {
     seed();
     const auth = new OpenAICodexAuth({ baseDir: dir, now: () => NOW });
-    expect(await auth.headers()).toEqual({ Authorization: "Bearer old-access", "chatgpt-account-id": "acc_1" });
+    expect(await auth.getCredentials()).toEqual({ token: "old-access", accountId: "acc_1" });
   });
 
   it("throws a helpful error when not authenticated", async () => {

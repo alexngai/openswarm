@@ -36,12 +36,43 @@ export interface TeamSessionOptions {
   readonly idleTimeoutMs?: number;
 }
 
+export type MemberState =
+  | "spawning"
+  | "running"
+  | "idle"
+  | "finished"
+  | "failed";
+
 export interface MemberInfo {
   readonly memberId: string;
   readonly role: string;
   readonly agentId: AgentId;
   readonly handle: AgentHandle;
-  readonly state: "spawning" | "running" | "idle" | "finished" | "failed";
+  readonly state: MemberState;
+}
+
+/**
+ * Internal mutable member record. Exposed to the outside only through the
+ * readonly `MemberInfo` view (structurally compatible) so callers can't
+ * mutate `state` behind our back — it's driven off host lane events.
+ */
+interface MutableMemberInfo {
+  readonly memberId: string;
+  readonly role: string;
+  readonly agentId: AgentId;
+  readonly handle: AgentHandle;
+  state: MemberState;
+}
+
+/** Terminal member states never transition back to a live state. */
+function isTerminalState(state: MemberState): boolean {
+  return state === "finished" || state === "failed";
+}
+
+/** Minimal host lane-bus surface (duck-typed; not all test stubs expose it). */
+interface LaneEventBus {
+  on(event: "lane_event", handler: (e: LaneEvent) => void): void;
+  off(event: "lane_event", handler: (e: LaneEvent) => void): void;
 }
 
 export class TeamSession {
@@ -50,14 +81,75 @@ export class TeamSession {
   readonly scope: string;
   private readonly host: StandaloneHost;
   private readonly permissionMode: PermissionMode;
-  private readonly _members = new Map<AgentId, MemberInfo>();
+  private readonly _members = new Map<AgentId, MutableMemberInfo>();
   private disposed = false;
+  private laneEventUnsub: (() => void) | undefined;
 
   constructor(opts: TeamSessionOptions) {
     this.name = opts.name;
     this.scope = `swarm:${opts.name}`;
     this.host = opts.host;
     this.permissionMode = opts.permissionMode;
+    this.subscribeToLaneEvents();
+  }
+
+  /**
+   * Subscribe to the host's lane bus so `MemberInfo.state` reflects real
+   * worker lifecycle (idle / finished / failed) instead of a static
+   * "running". The bus is a private EventEmitter on StandaloneHost, accessed
+   * duck-typed (same pattern as map-bridge.ts / team-daemon.ts); test stubs
+   * that don't expose it simply keep the spawn-time state.
+   */
+  private subscribeToLaneEvents(): void {
+    const bus = (this.host as unknown as { events?: LaneEventBus }).events;
+    if (bus === undefined || typeof bus.on !== "function") return;
+    const handler = (evt: LaneEvent): void => this.onLaneEvent(evt);
+    bus.on("lane_event", handler);
+    this.laneEventUnsub = () => bus.off("lane_event", handler);
+  }
+
+  /**
+   * Map a per-member lane event to a state transition. Only events that
+   * carry a resolvable child agentId are honoured; terminal states are
+   * never regressed. There is no per-child "running" lane event, so a
+   * long-lived worker picking up a new task after idle isn't reflected —
+   * best-effort for the status snapshot.
+   */
+  private onLaneEvent(evt: LaneEvent): void {
+    let agentId: AgentId | undefined;
+    let next: MemberState | undefined;
+    switch (evt.type) {
+      case "worker_idle":
+        agentId = evt.agentId;
+        next = "idle";
+        break;
+      case "worker_drained":
+        // Graceful long-lived exit — terminal from the team's view.
+        agentId = evt.agentId;
+        next = "finished";
+        break;
+      case "worker_exited": {
+        const p = evt.payload as {
+          agentId?: AgentId;
+          exitCode?: number | null;
+        };
+        agentId = p.agentId ?? evt.agentId;
+        next = p.exitCode === 0 ? "finished" : "failed";
+        break;
+      }
+      case "worker_crashed": {
+        const p = evt.payload as { agentId?: AgentId };
+        agentId = p.agentId ?? evt.agentId;
+        next = "failed";
+        break;
+      }
+      default:
+        return;
+    }
+    if (agentId === undefined || next === undefined) return;
+    const info = this._members.get(agentId);
+    if (info === undefined || isTerminalState(info.state)) return;
+    info.state = next;
   }
 
   get members(): ReadonlyMap<AgentId, MemberInfo> {
@@ -104,6 +196,7 @@ export class TeamSession {
       role: spec.role,
       teamScope: this.scope,
       ...(spec.model !== undefined && { model: spec.model }),
+      ...(spec.framework !== undefined && { framework: spec.framework }),
       ...(spec.longLived === true && { longLived: true }),
       ...(spec.cwd !== undefined && { cwd: spec.cwd }),
       ...(spec.sessionSidecarPath !== undefined && {
@@ -127,12 +220,13 @@ export class TeamSession {
       hostWithSetMemberId.setMemberId(handle.agentId, memberId);
     }
 
-    const info: MemberInfo = {
+    const info: MutableMemberInfo = {
       memberId,
       role: spec.role,
       agentId: handle.agentId,
       handle,
-      // Simplification for 4A; full lifecycle states wire in 4D.
+      // Spawn-time state; the lane-bus subscription (subscribeToLaneEvents)
+      // advances this to idle/finished/failed as worker events arrive.
       state: "running",
     };
     this._members.set(handle.agentId, info);
@@ -227,6 +321,10 @@ export class TeamSession {
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
+    if (this.laneEventUnsub !== undefined) {
+      this.laneEventUnsub();
+      this.laneEventUnsub = undefined;
+    }
     await this.kill("dispose");
     this._members.clear();
   }

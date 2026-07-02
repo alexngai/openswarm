@@ -3,7 +3,6 @@ import type {
   SpawnRequest,
   AgentHandle,
   AgentMessage,
-  InboxEvent,
   TaskAPI,
   TaskRecord,
   TaskFilter,
@@ -456,10 +455,6 @@ export class WorkerHost implements SwarmHost {
     if (max <= 0) return [];
     const take = Math.min(max, this.inboxBuffer.length);
     return this.inboxBuffer.splice(0, take);
-  }
-
-  async *inbox(): AsyncIterable<InboxEvent> {
-    return;
   }
 
   /**

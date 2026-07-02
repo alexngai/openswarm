@@ -1,5 +1,5 @@
 /**
- * First-event latency benchmark (docs/33 §9) — gated by SWARM_ACP_BENCH=1.
+ * First-event latency benchmark (docs/archive/33 §9) — gated by OPENSWARM_ACP_BENCH=1.
  *
  * Team-by-default routes every prompt through a spawned root worker (dist/cli.js)
  * + a worker_ready handshake, where --single runs the engine in-process. This
@@ -8,7 +8,7 @@
  * The single path's in-process equivalent is sub-millisecond, so the team number
  * IS approximately the team-vs-single delta.
  *
- *   SWARM_ACP_BENCH=1 npx vitest run test/integration/acp-latency.bench.test.ts
+ *   OPENSWARM_ACP_BENCH=1 npx vitest run test/integration/acp-latency.bench.test.ts
  */
 
 import { describe, it } from "vitest";
@@ -16,7 +16,7 @@ import * as path from "node:path";
 import { createOrchestratorRunner } from "../../src/acp/team-runner.js";
 import { buildCoordinatorSpec } from "../../src/acp/team-config.js";
 
-const BENCH = process.env.SWARM_ACP_BENCH === "1";
+const BENCH = process.env.OPENSWARM_ACP_BENCH === "1";
 const TEXT_FIXTURE = path.resolve(
   process.cwd(),
   "test/fixtures/worker-scripts/text-only.json",
@@ -32,7 +32,7 @@ describe("ACP team first-event latency (bench)", () => {
     "measures runTeam -> first root engine event over N iterations",
     async () => {
       process.env.OPENSWARM_TEST_SCRIPT = TEXT_FIXTURE;
-      const N = Number(process.env.SWARM_ACP_BENCH_N ?? "8");
+      const N = Number(process.env.OPENSWARM_ACP_BENCH_N ?? "8");
       const samples: number[] = [];
 
       for (let i = 0; i < N; i++) {

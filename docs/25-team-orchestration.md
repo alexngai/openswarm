@@ -4,9 +4,9 @@ Design doc for openswarm's team orchestration layer. Companion to [docs/00-visio
 
 **Authoring date:** 2026-05-01.
 **Status:** shipped 2026-05-02 (v0.4). Commits `0bd0f20..<close-out>`. See [§16 v0.4 close-out](#16-v04-close-out) for the per-stage breakdown. Phased plan beyond v0.4 (v0.5–v0.8) per [§13](#13-phased-delivery).
-**Anchor:** [docs/00-vision.md](00-vision.md), [docs/05-swarm-model.md](05-swarm-model.md), [docs/21-roadmap-v0.2-to-v0.4.md § Release v0.4](21-roadmap-v0.2-to-v0.4.md).
+**Anchor:** [docs/00-vision.md](00-vision.md), [docs/05-swarm-model.md](05-swarm-model.md), [docs/archive/21-roadmap-v0.2-to-v0.4.md § Release v0.4](archive/21-roadmap-v0.2-to-v0.4.md).
 **Reviewed against:** v0.3 (commits `b9a13b2..6bf317f`) — Codex App Server FrameworkProvider integration. See [§8a Engine-mode parity for team peers](#8a-engine-mode-parity-for-team-peers).
-**Spike-verified 2026-05-02:** Track A (claude-agent-sdk peers) + Track B (codex DynamicToolCall) both GREEN. Empirical evidence: [docs/26-team-orchestration-spikes.md](26-team-orchestration-spikes.md).
+**Spike-verified 2026-05-02:** Track A (claude-agent-sdk peers) + Track B (codex DynamicToolCall) both GREEN. Empirical evidence: [docs/archive/26-team-orchestration-spikes.md](archive/26-team-orchestration-spikes.md).
 
 ---
 
@@ -538,17 +538,27 @@ The `Topology` interface is exported. Plugin-loaded custom topologies will work 
 
 ## 8a. Engine-mode parity for team peers
 
-Rewritten 2026-05-02 after spike verification. **All three engine modes can serve as team peers**, each via a distinct mechanism. The original draft of this section claimed framework-mode members couldn't be peers — that was wrong on the technical merits. Empirical evidence and per-mode protocols are in [docs/26-team-orchestration-spikes.md](26-team-orchestration-spikes.md).
+Rewritten 2026-05-02 after spike verification. **All three engine modes can serve as team peers**, each via a distinct mechanism. The original draft of this section claimed framework-mode members couldn't be peers — that was wrong on the technical merits. Empirical evidence and per-mode protocols are in [docs/archive/26-team-orchestration-spikes.md](archive/26-team-orchestration-spikes.md).
 
 ### 8a.1 Three paths to peer participation
 
 | Mode | Engine | Mechanism | Empirical status |
 |---|---|---|---|
 | **Transport** (default) | `ClaudeAgentSdkEngine` w/o `--framework`, `NativeEngine` | openswarm owns the loop; Tier 2 tools called natively via `ToolDispatcher`. | Already works ([src/swarm/spawn-integration.test.ts](../src/swarm/spawn-integration.test.ts)). |
-| **`claude-agent-sdk` framework** | `ClaudeAgentSdkEngine` w/ `--framework claude-agent-sdk` | Anthropic Agent SDK owns the loop; openswarm Tier 2 tools registered via the SDK's `tools` parameter. The SDK calls them through `canUseTool` → openswarm's tool implementations → SwarmHost. **Drop the `framework-filter.ts` strip.** | **Track A GREEN** — 8/8 tests pass with strip dropped. See [docs/26 §Track A](26-team-orchestration-spikes.md#track-a--claude-agent-sdk-framework-mode-peer-parity). |
+| **`claude-agent-sdk` framework** | `ClaudeAgentSdkEngine` w/ `--framework claude-agent-sdk` | Anthropic Agent SDK owns the loop; openswarm Tier 2 tools registered via the SDK's `tools` parameter. The SDK calls them through `canUseTool` → openswarm's tool implementations → SwarmHost. **Drop the `framework-filter.ts` strip.** | **Track A GREEN** — 8/8 tests pass with strip dropped. See [docs/archive/26 §Track A](archive/26-team-orchestration-spikes.md#track-a--claude-agent-sdk-framework-mode-peer-parity). |
 | **`codex-chatgpt` framework** | `CodexFrameworkEngine` w/ `--framework codex-chatgpt` | Codex App Server owns the loop; openswarm Tier 2 tools registered via `thread/start.dynamicTools`. Codex sends `item/tool/call` JSON-RPC requests; provider routes to `ToolDispatcher` and replies with `{contentItems, success}`. | **Track B GREEN** — full live round-trip captured at [test/fixtures/codex-app-server/dynamic-tool-call-spike.jsonl](../test/fixtures/codex-app-server/dynamic-tool-call-spike.jsonl). |
 
 All three converge on the same `ToolDispatcher` in the worker process. Different wire formats, identical semantics. A `peer-team` topology with one member per engine mode works because every member dispatches the same `send_message` / `check_inbox` / `task_*` / `ask_user_question` operations through the same `SwarmHost`.
+
+> **Phase 2.1/2.2 update.** Workers now share the CLI's engine selector
+> (`src/cli/select-engine.ts`), so `MemberSpec.framework` accepts the full
+> worker-validated set: `claude-agent-sdk`, `codex-chatgpt`, `codex-native`,
+> `native`, and `hardened-native` (omit for the default `auto`). The value is
+> forwarded verbatim to the spawned worker via `OPENSWARM_FRAMEWORK`. This adds
+> two native transport modes and the in-process `codex-native` path (docs/42)
+> to the three engine modes described above. An explicit `native`/
+> `hardened-native` member paired with a Claude model now fails the spawn
+> instead of silently falling back to the Agent SDK.
 
 ### 8a.2 What changes vs the v0.3 codebase
 
@@ -981,7 +991,7 @@ To resolve before / during implementation. Lifted to a decision log as they clos
 
 **Resolution:** flat siblings. All team members (including the coordinator root) are at the same depth under the orchestrator. `agent` tool gains `team?: "self" | "child"` parameter — `"self"` lands the spawn in the caller's team scope (peer), `"child"` lands it as a sub-agent (today's tree-spawn semantics, preserves backward compat). Default depends on topology: coordinator topology root → `"self"`; non-coordinator contexts → `"child"`.
 
-**Linked:** Q10's team-scope peer-stop is a forced consequence — flat siblings have no ancestry between peers, so authorization must be team-scope-based. See [docs/27-v0.4-teams-implementation-plan.md](27-v0.4-teams-implementation-plan.md) §V0.4.Q1.
+**Linked:** Q10's team-scope peer-stop is a forced consequence — flat siblings have no ancestry between peers, so authorization must be team-scope-based. See [docs/archive/27-v0.4-teams-implementation-plan.md](archive/27-v0.4-teams-implementation-plan.md) §V0.4.Q1.
 
 ### v0.4.Q2 — How does a `peer-team` topology bootstrap N peers without a coordinator?
 
@@ -1034,7 +1044,7 @@ Two orchestrators running on the same host with the same team name → same scop
 
 ### v0.4.Q8 — Codex as team substrate — RESOLVED 2026-05-02
 
-**Resolution:** Codex peers ship in v0.4 via Codex App Server's `DynamicToolCall` mechanism. Track B spike GREEN; full live round-trip captured at [test/fixtures/codex-app-server/dynamic-tool-call-spike.jsonl](../test/fixtures/codex-app-server/dynamic-tool-call-spike.jsonl). The previously-considered alternatives (write a Codex TransportProvider; bridge `Collab*` events) are now both rejected: DynamicToolCall is the right primitive, requires no auth/protocol re-implementation, and works at ~1ms tool round-trip latency. See [§8a.1](#8a1-three-paths-to-peer-participation) and [docs/26 §Track B](26-team-orchestration-spikes.md#track-b--codex-app-server-dynamictoolcall-viability).
+**Resolution:** Codex peers ship in v0.4 via Codex App Server's `DynamicToolCall` mechanism. Track B spike GREEN; full live round-trip captured at [test/fixtures/codex-app-server/dynamic-tool-call-spike.jsonl](../test/fixtures/codex-app-server/dynamic-tool-call-spike.jsonl). The previously-considered alternatives (write a Codex TransportProvider; bridge `Collab*` events) are now both rejected: DynamicToolCall is the right primitive, requires no auth/protocol re-implementation, and works at ~1ms tool round-trip latency. See [§8a.1](#8a1-three-paths-to-peer-participation) and [docs/archive/26 §Track B](archive/26-team-orchestration-spikes.md#track-b--codex-app-server-dynamictoolcall-viability).
 
 ### v0.4.Q9 — Mixed-engine consultant pattern (now supplementary)
 
@@ -1047,11 +1057,11 @@ Originally proposed as the primary mechanism for using Codex from inside a team.
 
 ### v0.4.Q10 — Default peer-stop policy — RESOLVED 2026-05-02
 
-**Resolution:** team-scope-allowed peer-stop. `task_stop.ts` checks `caller.scope === target.scope` first (allow), then falls through to ancestry check for cross-scope (allow if caller is ancestor). Forced by Q1's flat-siblings model — peers have no ancestry relationship between themselves. See [docs/27-v0.4-teams-implementation-plan.md](27-v0.4-teams-implementation-plan.md) §V0.4.Q10.
+**Resolution:** team-scope-allowed peer-stop. `task_stop.ts` checks `caller.scope === target.scope` first (allow), then falls through to ancestry check for cross-scope (allow if caller is ancestor). Forced by Q1's flat-siblings model — peers have no ancestry relationship between themselves. See [docs/archive/27-v0.4-teams-implementation-plan.md](archive/27-v0.4-teams-implementation-plan.md) §V0.4.Q10.
 
 ### v0.4.Q11 — Tool subset to register via Codex `DynamicToolCall` — RESOLVED 2026-05-02
 
-**Resolution:** pragmatic 8 tools — `send_message`, `check_inbox`, `task_stop`, `task_output`, `ask_user_question`, `task_get`, `task_list`, `team_members` (new in v0.4). Skip `agent`, `task_create`, `task_update` (semantic clash with Codex's own product concepts; defer until a real use case forces clarity). See [docs/27-v0.4-teams-implementation-plan.md](27-v0.4-teams-implementation-plan.md) §V0.4.Q11.
+**Resolution:** pragmatic 8 tools — `send_message`, `check_inbox`, `task_stop`, `task_output`, `ask_user_question`, `task_get`, `task_list`, `team_members` (new in v0.4). Skip `agent`, `task_create`, `task_update` (semantic clash with Codex's own product concepts; defer until a real use case forces clarity). See [docs/archive/27-v0.4-teams-implementation-plan.md](archive/27-v0.4-teams-implementation-plan.md) §V0.4.Q11.
 
 ---
 
@@ -1076,7 +1086,7 @@ Originally proposed as the primary mechanism for using Codex from inside a team.
 
 Shipped 2026-05-02. 18 stage commits in `0bd0f20..<close-out>`.
 
-Stage commits — see [docs/27 §13](27-v0.4-teams-implementation-plan.md#stage-breakdown) for the per-stage scope detail:
+Stage commits — see [docs/archive/27 §13](archive/27-v0.4-teams-implementation-plan.md#stage-breakdown) for the per-stage scope detail:
 
 - pre-work — `0bd0f20` — design + spike findings + implementation plan
 - 4A.1 — `929fae5` — data plumbing: scope on `SpawnRequest` + `TaskRecord`
@@ -1112,7 +1122,7 @@ they all converge on the same `SwarmHost` semantics. Track A
 defects closed; Track B's `DynamicToolCall` mechanism wired with the
 8-tool subset per V0.4.Q11.
 
-Deferred to later releases per [docs/27 §13](27-v0.4-teams-implementation-plan.md) phasing:
+Deferred to later releases per [docs/archive/27 §13](archive/27-v0.4-teams-implementation-plan.md) phasing:
 
 - `Committee` + `CriticLoop` topologies → **shipped in v0.5 (5A)**
 - opentasks adapter → **shipped in v0.5 (5B, live-verified against opentasks 0.1.3)**
@@ -1245,4 +1255,4 @@ src/swarm/
 | `team_signal_received` | NEW | `{ teamName, signal, fromAgentId }` |
 | `worker_lifecycle_changed` | EXTEND | new transitions: `running → idle`, `idle → running`, `idle → finished` |
 
-Each gains a typed variant under `TypedLaneEvent` (per the rolling-migration policy in [docs/15-parity-gaps.md A5](15-parity-gaps.md)).
+Each gains a typed variant under `TypedLaneEvent` (per the rolling-migration policy in [docs/archive/15-parity-gaps.md A5](archive/15-parity-gaps.md)).

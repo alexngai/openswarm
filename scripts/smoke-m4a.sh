@@ -2,7 +2,7 @@
 # scripts/smoke-m4a.sh — M4a NativeEngine + provider routing acceptance-criteria gate.
 #
 # Offline strategy: option (b) — run vitest against specific test files.
-# Rationale: SWARM_CODER_FORCE_TEST_ENGINE / ScriptedTestEngine infrastructure exists
+# Rationale: OPENSWARM_FORCE_TEST_ENGINE / ScriptedTestEngine infrastructure exists
 # (src/engine/test-engine.ts) but is not wired into NativeEngine's constructor path;
 # NativeEngine requires a real LanguageModel from Vercel AI SDK at construction time and
 # does not accept an injected mock. Running vitest directly against the NativeEngine,
@@ -94,7 +94,7 @@ if ! $LIVE_ONLY; then
   echo "[O1] Text-only round-trip (NativeEngine MockProvider text_delta → message_stop)"
   echo "[O2] Single tool call (tool_use → tool_result → text_delta → message_stop)"
   echo "[O3] Three parallel tool calls (dispatchBatch fan-out)"
-  if SWARM_CODER_SKIP_INTEGRATION_BUILD=1 npx vitest run src/engine/native.test.ts \
+  if OPENSWARM_SKIP_INTEGRATION_BUILD=1 npx vitest run src/engine/native.test.ts \
       > /tmp/swc-m4a-o123.log 2>&1; then
     record passed O1 "Text-only round-trip — NativeEngine MockProvider"
     record passed O2 "Single tool call — tool_use → tool_result → text_delta"
@@ -108,7 +108,7 @@ if ! $LIVE_ONLY; then
   # [O4] Compactor tool-pair boundary walk-back + [O5] Post-compaction probe
   echo "[O4] Compactor tool-pair boundary walk-back"
   echo "[O5] Post-compaction probe success + failure"
-  if SWARM_CODER_SKIP_INTEGRATION_BUILD=1 npx vitest run src/engine/compactor.test.ts \
+  if OPENSWARM_SKIP_INTEGRATION_BUILD=1 npx vitest run src/engine/compactor.test.ts \
       > /tmp/swc-m4a-o45.log 2>&1; then
     record passed O4 "Compactor tool-pair boundary walk-back"
     record passed O5 "Post-compaction probe success + failure"
@@ -119,7 +119,7 @@ if ! $LIVE_ONLY; then
 
   # [O6] Routing completeness — all known prefixes + unknown
   echo "[O6] Routing completeness — all known prefixes + unknown"
-  if SWARM_CODER_SKIP_INTEGRATION_BUILD=1 npx vitest run src/providers/routing.test.ts \
+  if OPENSWARM_SKIP_INTEGRATION_BUILD=1 npx vitest run src/providers/routing.test.ts \
       > /tmp/swc-m4a-o6.log 2>&1; then
     record passed O6 "Routing completeness — all known prefixes + unknown"
   else
@@ -128,7 +128,7 @@ if ! $LIVE_ONLY; then
 
   # [O7] Alias resolution — built-in, user override, cycle detect
   echo "[O7] Alias resolution — built-in, user override, cycle detect"
-  if SWARM_CODER_SKIP_INTEGRATION_BUILD=1 npx vitest run src/providers/aliases.test.ts \
+  if OPENSWARM_SKIP_INTEGRATION_BUILD=1 npx vitest run src/providers/aliases.test.ts \
       > /tmp/swc-m4a-o7.log 2>&1; then
     record passed O7 "Alias resolution — built-in, user override, cycle detect"
   else
@@ -139,9 +139,9 @@ if ! $LIVE_ONLY; then
   # Exercised by native.test.ts (NativeEngine rejects snapshots from other engines).
   # Re-run targeted to show clearly as a distinct case.
   echo "[O8] Cross-engine resume rejection"
-  if SWARM_CODER_SKIP_INTEGRATION_BUILD=1 npx vitest run src/engine/native.test.ts \
+  if OPENSWARM_SKIP_INTEGRATION_BUILD=1 npx vitest run src/engine/native.test.ts \
       --reporter=verbose 2>/dev/null | grep -q "cross-engine\|resume\|snapshot\|reject\|wrong engine" \
-      || SWARM_CODER_SKIP_INTEGRATION_BUILD=1 npx vitest run src/engine/native.test.ts \
+      || OPENSWARM_SKIP_INTEGRATION_BUILD=1 npx vitest run src/engine/native.test.ts \
          > /tmp/swc-m4a-o8.log 2>&1; then
     record passed O8 "Cross-engine resume rejection (covered by native.test.ts)"
   else

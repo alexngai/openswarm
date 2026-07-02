@@ -5,6 +5,7 @@ import {
   searchArchive,
   type ArchiveSearchResult,
 } from "../../memory/archive.js";
+import { getMemoryCoordinator } from "../../memory/coordinator.js";
 
 const inputSchema = z.object({
   query: z
@@ -58,6 +59,34 @@ async function execute(
   const input: Input = parsed.data;
   const limit = input.limit ?? 5;
 
+  // Phase 3 B2 — fan the query out to the coordinator's search-capable
+  // providers (minimem hybrid search, file session archive). Results are
+  // grouped by provider with source labels, no cross-provider ranking
+  // (decision Q5).
+  const coordinator = getMemoryCoordinator();
+  if (coordinator.searchProviderNames.length > 0) {
+    const groups = await coordinator.search(input.query, { limit });
+    if (groups.length === 0) {
+      return {
+        status: "ok",
+        output: `No memories found matching: ${input.query}`,
+      };
+    }
+    const sections = groups.map((group) => {
+      const items = group.fragments
+        .map((f, i) => `${i + 1}. [${f.source}]\n${f.content}`)
+        .join("\n\n");
+      return `## ${group.provider}\n\n${items}`;
+    });
+    const total = groups.reduce((n, g) => n + g.fragments.length, 0);
+    return {
+      status: "ok",
+      output: `Found ${total} result${total === 1 ? "" : "s"} matching "${input.query}" (grouped by provider):\n\n${sections.join("\n\n")}`,
+    };
+  }
+
+  // No search-capable providers registered (e.g. before session start) —
+  // fall back to the archive store directly.
   const results = searchArchive(input.query, limit);
 
   if (results.length === 0) {

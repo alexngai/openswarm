@@ -29,18 +29,4 @@ describe("OpenAIEnvAuth", () => {
     const auth = new OpenAIEnvAuth();
     expect(await auth.isAuthenticated()).toBe(false);
   });
-
-  it("headers() returns Authorization bearer header", async () => {
-    vi.stubEnv("OPENAI_API_KEY", "sk-my-key");
-    const auth = new OpenAIEnvAuth();
-    const hdrs = await auth.headers();
-    expect(hdrs).toEqual({ Authorization: "Bearer sk-my-key" });
-  });
-
-  it("headers() returns bearer with empty string when key not set", async () => {
-    vi.stubEnv("OPENAI_API_KEY", "");
-    const auth = new OpenAIEnvAuth();
-    const hdrs = await auth.headers();
-    expect(hdrs).toEqual({ Authorization: "Bearer " });
-  });
 });

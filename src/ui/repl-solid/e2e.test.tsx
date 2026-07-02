@@ -123,14 +123,11 @@ describe("App — end-to-end interactive flow", () => {
     close();
   });
 
-  // TODO: skip while bun:test capture omits assistant `<markdown>` content
-  // when streamed via a single text_delta + immediate message_stop. Captured
-  // frame shows only the user entry + status line; the markdown render
-  // happens but doesn't appear in the captured buffer. The longer-running
-  // "assistant markdown renders: heading + bold + fenced code" test covers
-  // this primitive successfully at higher complexity. Re-enable once the
-  // capture race is root-caused.
-  it.skip("full turn: submit → streaming → engine text_delta → assistant text renders", async () => {
+  // Phase 4.2 (D13): re-enabled. The earlier flake was a capture race — a
+  // single `renderOnce()` after message_stop captured before `<markdown>`'s
+  // deferred stream-init had painted. Polling with `waitForContent` (the same
+  // pattern the heading/bold/fenced-code test uses) settles it deterministically.
+  it("full turn: submit → streaming → engine text_delta → assistant text renders", async () => {
     const { events, push, close } = makeEventChannel();
     const submitted: string[] = [];
 
@@ -161,10 +158,10 @@ describe("App — end-to-end interactive flow", () => {
     // and drive the transcript.
     push({ type: "text_delta", text: "world from llm" });
     push({ type: "message_stop" });
-    await flush(80);
-    await renderOnce();
 
-    const frame = captureCharFrame();
+    // `<markdown>` paints its deferred stream-init a tick after message_stop;
+    // poll (renderOnce + flush) until the assistant text lands in the frame.
+    const frame = await waitForContent(captureCharFrame, renderOnce, "world from llm");
     // User entry still visible, plus assistant response.
     expect(frame).toContain("hi");
     expect(frame).toContain("world from llm");
@@ -256,9 +253,9 @@ describe("App — end-to-end interactive flow", () => {
   // Phase 3 width-regression tests (doc 17 Phase 3 design lock P3.Q6).
   // Same markdown sample at two terminal widths; both must render the content
   // and conceal the syntax markers (proves we're hitting <markdown>, not
-  // a plain-text fallback). Drives the App composition because bare
-  // Transcript rendering crashes Bun with SIGBUS (pre-existing, see the
-  // "assistant markdown renders" test above).
+  // a plain-text fallback). Drives the App composition to match real usage;
+  // bare-Transcript rendering also works (see transcript.test.tsx) as long as
+  // capture polls for the deferred <markdown> paint.
   const widthRegressionSample =
     "# Heading\n\n" +
     "Body with **bold** and *italic*.\n\n" +

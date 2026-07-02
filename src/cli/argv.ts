@@ -62,11 +62,11 @@ export interface CommonOpts {
    */
   plan: boolean;
   /**
-   * acp subcommand: force single-agent mode (Stage A). docs/33.
+   * acp subcommand: force single-agent mode (Stage A). docs/archive/33.
    */
   readonly single?: boolean;
   /**
-   * acp subcommand: force team mode (coordinator). docs/33.
+   * acp subcommand: force team mode (coordinator). docs/archive/33.
    */
   readonly team?: boolean;
   /**
@@ -106,6 +106,14 @@ export interface CommonOpts {
    * Skipped for unknown models (only token limit applies).
    */
   readonly maxCostUsd?: number;
+  /**
+   * Maximum number of agent turns (model round-trips) for the run. On exceed the
+   * engine stops (`error_max_turns`) with the work-so-far left on disk. Applies to
+   * single-agent prompt runs — the STEP-budget analog of `--max-tokens`, for
+   * manufacturing step-bounded headroom in evals (aligns a step-economy lever with
+   * a step-denominated budget).
+   */
+  readonly maxTurns?: number;
 }
 
 export type ParsedArgs =
@@ -155,6 +163,12 @@ export type ParsedArgs =
       mapUrl?: string;
       /** v0.5 stage 5E.3: when true, fork the team daemon and return immediately. */
       detach: boolean;
+      /** Ecosystem adapters — same semantics as swarm-run. */
+      opentasks: boolean;
+      opentasksSocket?: string;
+      agentInbox: boolean;
+      gitCascade: boolean;
+      cleanupWorktrees: boolean;
     }
   | {
       kind: "topology";
@@ -171,6 +185,12 @@ export type ParsedArgs =
       model?: string;
       /** Raw lane-event JSONL trace path. */
       traceOutput?: string;
+      /** Ecosystem adapters — same semantics as swarm-run. */
+      opentasks: boolean;
+      opentasksSocket?: string;
+      agentInbox: boolean;
+      gitCascade: boolean;
+      cleanupWorktrees: boolean;
     }
   | { kind: "team-send"; name: string; prompt: string }
   | { kind: "team-list" }
@@ -214,15 +234,14 @@ const SUBCOMMANDS = new Set([
   "host",
 ]);
 
-// v0.4 stage 4K — committee/critic-loop are reserved but unimplemented.
 const SUPPORTED_TOPOLOGY_KINDS = new Set<string>([
   "fanout",
   "pipeline",
   "coordinator",
   "peer-team",
+  "committee",
+  "critic-loop",
 ]);
-
-const DEFERRED_TOPOLOGY_KINDS = new Set<string>(["committee", "critic-loop"]);
 
 const VALID_PERMISSION_MODES = new Set<string>([
   "read-only",
@@ -258,7 +277,7 @@ export function parseArgv(args: string[]): ParsedArgs {
   let dumpTools = false;
   let enableWebSearch = false;
   let plan = false;
-  // acp subcommand mode selectors (docs/33). Default resolves in runAcp.
+  // acp subcommand mode selectors (docs/archive/33). Default resolves in runAcp.
   let acpSingle = false;
   let acpTeam = false;
   let framework: FrameworkChoice = "auto";
@@ -270,6 +289,7 @@ export function parseArgv(args: string[]): ParsedArgs {
   let midTurnCompaction = false;
   let maxTokens: number | undefined;
   let maxCostUsd: number | undefined;
+  let maxTurns: number | undefined;
 
   // Defaults for swarm-run (consumed when subcommand === "swarm").
   let swarmConcurrency = 3;
@@ -428,7 +448,7 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
-    // acp mode selectors (docs/33): --single forces Stage A single-agent;
+    // acp mode selectors (docs/archive/33): --single forces Stage A single-agent;
     // --team forces team mode. Default is resolved in runAcp.
     if (tok === "--single") {
       acpSingle = true;
@@ -739,12 +759,13 @@ export function parseArgv(args: string[]): ParsedArgs {
 
     // --ecosystem shorthand. Enables --map only (when not already set).
     // opentasks/agent-inbox/git-cascade have their own explicit flags on
-    // `swarm run`; print a one-line note so operators don't quietly miss
-    // that --ecosystem does not turn those adapters on.
+    // `swarm run` / `topology` / `team start`; print a one-line note so
+    // operators don't quietly miss that --ecosystem does not turn those
+    // adapters on.
     if (tok === "--ecosystem") {
       ecosystem = true;
       process.stderr.write(
-        "[openswarm] --ecosystem enables MAP only; pass --opentasks/--agent-inbox/--git-cascade explicitly (swarm run).\n",
+        "[openswarm] --ecosystem enables MAP only; pass --opentasks/--agent-inbox/--git-cascade explicitly.\n",
       );
       i++;
       continue;
@@ -764,7 +785,7 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
-    // v0.5 stage 5B: --opentasks for `swarm run`. Boolean.
+    // --opentasks for `swarm run` / `topology` / `team start`. Boolean.
     if (tok === "--opentasks") {
       opentasks = true;
       i++;
@@ -896,6 +917,28 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
+    if (tok === "--max-turns") {
+      const val = expanded[i + 1];
+      if (val === undefined || val.startsWith("-")) {
+        return {
+          kind: "error",
+          message: "--max-turns requires a value",
+          showHelp: true,
+        };
+      }
+      const n = Number.parseInt(val, 10);
+      if (Number.isNaN(n) || n < 1) {
+        return {
+          kind: "error",
+          message: `--max-turns must be a positive integer, got "${val}"`,
+          showHelp: true,
+        };
+      }
+      maxTurns = n;
+      i += 2;
+      continue;
+    }
+
     // v0.7 stage 7D — pass-through subcommands (worktree, plugin) own their
     // own flag parsing. Once we've identified one, capture all remaining
     // tokens (including --flags) as positionals so the sub-CLI can interpret
@@ -966,6 +1009,7 @@ export function parseArgv(args: string[]): ParsedArgs {
     ...(midTurnCompaction ? { midTurnCompaction: true } : {}),
     ...(maxTokens !== undefined ? { maxTokens } : {}),
     ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
+    ...(maxTurns !== undefined ? { maxTurns } : {}),
   };
 
   switch (subcommand) {
@@ -1097,6 +1141,11 @@ export function parseArgv(args: string[]): ParsedArgs {
           permissionMode,
           ...(mapUrl !== undefined && { mapUrl }),
           detach,
+          opentasks,
+          ...(opentasksSocket !== undefined && { opentasksSocket }),
+          agentInbox,
+          gitCascade,
+          cleanupWorktrees,
         };
       }
       if (subSub === "send") {
@@ -1191,17 +1240,10 @@ export function parseArgv(args: string[]): ParsedArgs {
           showHelp: true,
         };
       }
-      if (DEFERRED_TOPOLOGY_KINDS.has(kindStr)) {
-        return {
-          kind: "error",
-          message: `topology "${kindStr}" is deferred to v0.5; v0.4 supports fanout, pipeline, coordinator, peer-team`,
-          showHelp: false,
-        };
-      }
       if (!SUPPORTED_TOPOLOGY_KINDS.has(kindStr)) {
         return {
           kind: "error",
-          message: `unknown topology kind: ${kindStr}. Valid: fanout, pipeline, coordinator, peer-team`,
+          message: `unknown topology kind: ${kindStr}. Valid: fanout, pipeline, coordinator, peer-team, committee, critic-loop`,
           showHelp: true,
         };
       }
@@ -1231,6 +1273,11 @@ export function parseArgv(args: string[]): ParsedArgs {
         ...(maxCostUsd !== undefined && { maxCostUsd }),
         ...(model !== undefined && { model }),
         ...(traceOutput !== undefined && { traceOutput }),
+        opentasks,
+        ...(opentasksSocket !== undefined && { opentasksSocket }),
+        agentInbox,
+        gitCascade,
+        cleanupWorktrees,
       };
     }
 

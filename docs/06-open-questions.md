@@ -133,7 +133,7 @@ All open questions resolved as of 2026-04-20. New questions will be added at the
 
 **Resolution:** Question is **moot** under the v0.3 redesign. Web research surfaced that the official OpenAI integration surface is the **Codex App Server (JSON-RPC over stdio)**, not the private browser-to-backend SSE channel. Phase 6 pivoted: spawn the locally-installed `codex` binary as a subprocess, speak JSON-RPC over stdio, delegate auth to `codex login`. No SSE capture needed; no reverse-engineered endpoint to chase.
 
-**Replacement design:** [docs/24-phase-6-codex-app-server-plan.md](24-phase-6-codex-app-server-plan.md). Categorization changes from `TransportProvider` (custom Vercel AI SDK) to `FrameworkProvider` (delegating the agent loop to Codex). Mirrors the Anthropic Agent SDK pattern for Claude Max subscription auth.
+**Replacement design:** [docs/archive/24-phase-6-codex-app-server-plan.md](archive/24-phase-6-codex-app-server-plan.md). Categorization changes from `TransportProvider` (custom Vercel AI SDK) to `FrameworkProvider` (delegating the agent loop to Codex). Mirrors the Anthropic Agent SDK pattern for Claude Max subscription auth.
 
 **Decision log entry:**
 
@@ -155,7 +155,7 @@ All open questions resolved as of 2026-04-20. New questions will be added at the
 
 ## Q21. OpenAI prompt cache wiring — RESOLVED
 
-**Original question (M4a-era, see `docs/13-m4a-plan.md` §Deferred):** does `@ai-sdk/openai` surface OpenAI's `prompt_cache_key` / `cached_tokens`? If not, ship `ProviderCapabilities.promptCache = false` and follow up.
+**Original question (M4a-era, see `docs/archive/13-m4a-plan.md` §Deferred):** does `@ai-sdk/openai` surface OpenAI's `prompt_cache_key` / `cached_tokens`? If not, ship `ProviderCapabilities.promptCache = false` and follow up.
 
 **Resolution:** Vercel AI SDK's `@ai-sdk/openai` does expose `providerOptions.openai.promptCacheKey`. `ProviderRequest.sessionId` is the engine-agnostic carrier; `openai-transport.ts` forwards it as `promptCacheKey` when the per-model capability catalog (`src/providers/capability-catalog.ts`) reports `promptCache: true` (gpt-4o*, gpt-5*, o-series). `gpt-4` non-vision and older families remain `promptCache: false` and never receive the field.
 

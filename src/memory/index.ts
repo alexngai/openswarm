@@ -42,11 +42,10 @@ export {
   resetMemoryCoordinator,
 } from "./coordinator.js";
 
-export { curatedMemoryFragment } from "./fragment.js";
-
 export {
   getArchiveStore,
   setArchiveStore,
+  installDefaultArchiveStore,
   resetArchiveStore,
   archiveSession,
   searchArchive,
@@ -56,16 +55,16 @@ export {
   type ArchiveSearchResult,
 } from "./archive.js";
 
-export { StateDBCuratedStore, StateDBArchiveStore } from "./state-store.js";
+export { FileArchiveStore } from "./providers/file-archive-store.js";
 
 export {
-  agentScopeKey,
-  publishSharedMemory,
-  getSharedMemory,
-  resetSharedMemory,
-  formatSharedMemory,
-  type SharedMemoryEntry,
-} from "./agent-scope.js";
+  observeTurnEvents,
+  endMemorySession,
+  buildStaticSessionSummary,
+  type TurnRecord,
+  type ObserveTurnOptions,
+  type EndMemorySessionOptions,
+} from "./turn-observer.js";
 
 export { FileMemoryProvider } from "./providers/file-provider.js";
 export { MinimemProvider, type MinimemProviderConfig } from "./providers/minimem-provider.js";

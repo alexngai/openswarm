@@ -32,9 +32,7 @@ import { z, ZodObject, toJSONSchema as zodToJSONSchema } from "zod";
  * at the engine boundary so the rest of the system sees unprefixed names.
  */
 const MCP_PREFIX = "mcp__openswarm__";
-const LEGACY_MCP_PREFIX = "mcp__openswarm__";
 function stripMcpPrefix(name: string): string {
-  if (name.startsWith(LEGACY_MCP_PREFIX)) return name.slice(LEGACY_MCP_PREFIX.length);
   return name.startsWith(MCP_PREFIX) ? name.slice(MCP_PREFIX.length) : name;
 }
 import {
@@ -70,7 +68,7 @@ type SDKPermissionMode =
  * canUseTool restores the validation gate without changing user UX for safe
  * paths (PermissionEngine returns Allow → no prompt fires).
  *
- * See docs/21-roadmap-v0.2-to-v0.4.md §v0.2.Q1 for the full rationale.
+ * See docs/archive/21-roadmap-v0.2-to-v0.4.md §v0.2.Q1 for the full rationale.
  */
 function mapPermissionMode(_mode: PermissionMode): SDKPermissionMode {
   return "default";
@@ -209,7 +207,7 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
 
     // 4. Permission mode. v0.2: always SDK `default` so canUseTool fires
     //    for every tool — bash-validation can Block/Warn in any mode (see
-    //    mapPermissionMode docstring + docs/21-roadmap-v0.2-to-v0.4.md
+    //    mapPermissionMode docstring + docs/archive/21-roadmap-v0.2-to-v0.4.md
     //    §v0.2.Q1). The `allowDangerouslySkipPermissions` flag is dropped
     //    here for the same reason.
     const sdkPermissionMode = mapPermissionMode(config.permissionMode);

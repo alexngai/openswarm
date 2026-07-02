@@ -1,14 +1,15 @@
 /**
- * team.test.ts — argv parsing + dispatch coverage for v0.4 stage 4K.
+ * team.test.ts — argv parsing + dispatch coverage for topology/team commands.
  *
  * Scope:
  *   - argv parsing for `topology <kind> --spec <path>`.
  *   - argv parsing for `team send/list/stop/kill`.
  *   - --ecosystem auto-enables MAP url.
- *   - committee/critic-loop are rejected with a deferred-to-v0.5 message.
+ *   - committee/critic-loop are currently rejected by the parser.
  *   - runTopology happy path: builds a TeamSpec, overrides topology, calls
  *     orch.runTeam(), and writes results.
- *   - Stub functions (runTeamSend/List/Stop/Kill) exit 2 with a clear message.
+ *   - runTeamSend/List/Stop/Kill daemon RPC clients (socket discovery,
+ *     error paths, response handling).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -128,19 +129,72 @@ describe("parseArgv: topology", () => {
     expect(result.mapUrl).toBe("ws://x:9");
   });
 
-  it("topology committee is rejected with deferred-to-v0.5 message", () => {
+  it("topology committee parses like the other kinds", () => {
     const result = parseArgv(["topology", "committee", "--spec", "./s.json"]);
     expect(result).toMatchObject({
-      kind: "error",
-      message: expect.stringContaining("deferred to v0.5"),
+      kind: "topology",
+      topologyKind: "committee",
+      specPath: "./s.json",
     });
   });
 
-  it("topology critic-loop is rejected with deferred-to-v0.5 message", () => {
+  it("topology critic-loop parses like the other kinds", () => {
     const result = parseArgv(["topology", "critic-loop", "--spec", "./s.json"]);
     expect(result).toMatchObject({
-      kind: "error",
-      message: expect.stringContaining("deferred to v0.5"),
+      kind: "topology",
+      topologyKind: "critic-loop",
+      specPath: "./s.json",
+    });
+  });
+
+  it("topology accepts ecosystem adapter flags", () => {
+    const result = parseArgv([
+      "topology",
+      "peer-team",
+      "--spec",
+      "./s.json",
+      "--git-cascade",
+      "--cleanup-worktrees",
+      "--agent-inbox",
+      "--opentasks-socket",
+      "/tmp/ot.sock",
+    ]);
+    expect(result).toMatchObject({
+      kind: "topology",
+      gitCascade: true,
+      cleanupWorktrees: true,
+      agentInbox: true,
+      opentasks: true,
+      opentasksSocket: "/tmp/ot.sock",
+    });
+  });
+
+  it("topology defaults adapter flags to off", () => {
+    const result = parseArgv(["topology", "fanout", "--spec", "./s.json"]);
+    expect(result).toMatchObject({
+      kind: "topology",
+      gitCascade: false,
+      cleanupWorktrees: false,
+      agentInbox: false,
+      opentasks: false,
+    });
+  });
+
+  it("team start accepts ecosystem adapter flags", () => {
+    const result = parseArgv([
+      "team",
+      "start",
+      "review-team",
+      "--git-cascade",
+      "--agent-inbox",
+    ]);
+    expect(result).toMatchObject({
+      kind: "team-start",
+      template: "review-team",
+      gitCascade: true,
+      agentInbox: true,
+      opentasks: false,
+      cleanupWorktrees: false,
     });
   });
 
@@ -300,13 +354,13 @@ describe("parseArgv: --ecosystem", () => {
     expect(result.mapUrl).toBe("ws://explicit:42");
   });
 
-  it("--ecosystem prints a v0.4 limitation note to stderr", () => {
+  it("--ecosystem prints a MAP-only scope note to stderr", () => {
     parseArgv(["team", "start", "gsd", "--ecosystem"]);
     const calls = (stderrSpy.mock.calls as readonly unknown[][]).map(
       (c: readonly unknown[]) => String(c[0]),
     );
     expect(
-      calls.some((s: string) => s.includes("--ecosystem v0.4 enables MAP only")),
+      calls.some((s: string) => s.includes("--ecosystem enables MAP only")),
     ).toBe(true);
   });
 });

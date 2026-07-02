@@ -5,10 +5,26 @@ import {
   slashCommandAllowedInState,
   historyPrev,
   historyNext,
-  createStubSlashRegistry,
+  type SlashCommandRegistry,
   type ReplState,
   type ReplEvent,
 } from "./state.js";
+
+// Minimal stub registry (test-only). The canonical path is
+// `buildDefaultRegistry(deps)` from `src/cli/slash/index.ts`.
+const STUB_COMMANDS = ["help", "exit", "clear", "status"].map((name) => ({
+  name,
+  description: `stub ${name}`,
+  execute: () => ({ kind: "ok" as const }),
+}));
+
+function createStubSlashRegistry(): SlashCommandRegistry {
+  return {
+    list: () =>
+      STUB_COMMANDS.map((c) => ({ name: c.name, description: c.description })),
+    get: (name: string) => STUB_COMMANDS.find((c) => c.name === name),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Helpers

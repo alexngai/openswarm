@@ -29,7 +29,7 @@ benchmarks, LiteLLM-gateway model routing (for heterogeneity), a MAB driver (for
 layer), and paired-CI / pass^k / Pareto statistics.
 
 openswarm is already a **registered harness** in swarmkit-eval
-(`swarmHarness()` → `openswarm --single --headless --output-format json …`), wired as the
+(`openSwarm()` → `openswarm --single --headless --output-format json …`), wired as the
 **single-agent baseline**. Team/heterogeneous arms use `execution: "marble"` (native multi-agent).
 
 ### Local dev-dependency (live-linked)

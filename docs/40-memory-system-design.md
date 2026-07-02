@@ -604,8 +604,8 @@ Environment variable overrides:
 
 | Variable | Purpose |
 |----------|---------|
-| `SWARM_MEMORY_ENABLED` | Enable/disable memory system (`true`/`false`) |
-| `SWARM_MEMORY_PROVIDERS` | Comma-separated provider names to enable |
+| `OPENSWARM_MEMORY_ENABLED` | Enable/disable memory system (`true`/`false`) |
+| `OPENSWARM_MEMORY_PROVIDERS` | Comma-separated provider names to enable |
 | `MINIMEM_EMBEDDING_PROVIDER` | Embedding backend for minimem |
 | `MINIMEM_STORE_PATH` | Storage path for minimem data |
 

@@ -39,7 +39,7 @@ FORCE_OFFLINE=false
 
 run_offline_fallback() {
   echo "→ running captured-trace test (offline protocol contract)..."
-  if SWARM_CODER_SKIP_INTEGRATION_BUILD=1 \
+  if OPENSWARM_SKIP_INTEGRATION_BUILD=1 \
       npx vitest run src/providers/codex-app-server-dynamic-tools.test.ts; then
     echo
     echo "RESULT: PASS (offline)"

@@ -60,7 +60,7 @@ describe("stale-base.check", () => {
     expect(msg).toContain(bogus);
   });
 
-  it("returns { kind: 'no-expected-base' } when neither opts nor .swarm-base provides one", async () => {
+  it("returns { kind: 'no-expected-base' } when neither opts nor .openswarm-base provides one", async () => {
     const dir = await mkRepo();
     const result = await check({ cwd: dir });
     expect(result.kind).toBe("no-expected-base");
@@ -75,10 +75,10 @@ describe("stale-base.check", () => {
     expect(formatWarning(result)).toBeNull();
   });
 
-  it("reads expectedBase from <cwd>/.swarm-base when opts.expectedBase is absent", async () => {
+  it("reads expectedBase from <cwd>/.openswarm-base when opts.expectedBase is absent", async () => {
     const dir = await mkRepo();
     const h = head(dir);
-    await fs.writeFile(path.join(dir, ".swarm-base"), h + "\n");
+    await fs.writeFile(path.join(dir, ".openswarm-base"), h + "\n");
     const result = await check({ cwd: dir });
     expect(result.kind).toBe("matches");
   });

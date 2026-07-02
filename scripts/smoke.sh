@@ -82,7 +82,7 @@ fi
 # smoke.sh already built dist at the top of this script; skip vitest's
 # globalSetup build (see vitest.config.ts) to avoid a redundant tsc run
 # and the occasional parallel-build race that produced flaky failures.
-TEST_OUT=$(SWARM_CODER_SKIP_INTEGRATION_BUILD=1 npx vitest run 2>&1)
+TEST_OUT=$(OPENSWARM_SKIP_INTEGRATION_BUILD=1 npx vitest run 2>&1)
 VITEST_EXIT=$?
 
 if [[ $VITEST_EXIT -eq 0 ]] && echo "$TEST_OUT" | grep -qE 'Tests[[:space:]]+[0-9]+ passed'; then

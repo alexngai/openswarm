@@ -170,6 +170,27 @@ export class MinimemProvider implements MemoryProvider {
     }
   }
 
+  /** Explicit query search (Phase 3 B2 — backs `memory_search`). */
+  async search(
+    query: string,
+    opts?: { readonly limit?: number },
+  ): Promise<MemoryFragment[]> {
+    if (!this.instance) return [];
+    try {
+      const results = await this.instance.search(query, {
+        maxResults: opts?.limit ?? this.config.maxResults ?? 5,
+        minScore: this.config.minScore ?? 0.3,
+      });
+      return results.map((r) => ({
+        source: `minimem:${r.path}`,
+        content: r.snippet,
+        relevance: r.score,
+      }));
+    } catch {
+      return [];
+    }
+  }
+
   async onMemoryWrite(entry: MemoryEntry): Promise<void> {
     if (!this.instance) return;
 

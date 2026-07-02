@@ -153,7 +153,7 @@ export function ApprovalPanel(props: ApprovalPanelProps) {
       <Show when={props.pending.reason !== undefined && props.pending.reason!.length > 0}>
         <text fg={theme.subtle}>reason: {props.pending.reason}</text>
       </Show>
-      <text fg={theme.warning}>[y] approve  [n] deny  {hasHiddenChanges() ? " [ctrl+e] full diff" : ""}</text>
+      <text fg={theme.warning}>[y] approve  [a] always (session)  [n] deny  {hasHiddenChanges() ? " [ctrl+e] full diff" : ""}</text>
     </box>
   );
 }

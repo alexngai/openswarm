@@ -129,7 +129,7 @@ Flexibility milestone. Additional `TransportProvider`s slot in behind the existi
 
 ### M4a — SHIPPED (commit 0abb6d4)
 
-- **NativeEngine** — full turn loop: streaming, tool fan-out via `dispatchBatch`, compaction with tool-pair boundary guard, post-compaction probe, session snapshots, cross-engine resume rejection. See `docs/13-m4a-plan.md`.
+- **NativeEngine** — full turn loop: streaming, tool fan-out via `dispatchBatch`, compaction with tool-pair boundary guard, post-compaction probe, session snapshots, cross-engine resume rejection. See `docs/archive/13-m4a-plan.md`.
 - **OpenAI TransportProvider** (`gpt-*`, `o1/o3/o4/*`) via `@ai-sdk/openai`. Reasoning-model quirks (strip temperature/top_p, use `max_completion_tokens`) handled at provider boundary.
 - **Model-prefix routing** (`claude*` / `grok*` / `openai/` / `gpt-` / `qwen*` / `gemini-*`) — `src/providers/routing.ts`.
 - **Model alias table** — built-in aliases + user-defined extension (`~/.openswarm/settings.json aliases`), cycle detection — `src/providers/aliases.ts`.
