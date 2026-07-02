@@ -33,7 +33,11 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import type { TeamSpec, TopologyKind } from "./team-spec.js";
 
-export const TEAM_CHECKPOINT_SCHEMA_VERSION = 1;
+// v2 (crash-recovery T2): adds `inFlight` — units that were dispatched but had
+// not reached a terminal state when the daemon crashed. A v1 checkpoint (no
+// inFlight) is treated as unreadable and a fresh run starts; there is no
+// production checkpoint data to migrate.
+export const TEAM_CHECKPOINT_SCHEMA_VERSION = 2;
 
 /** Terminal outcome of a single recovery unit, mirrored from ResultLine. */
 export type UnitStatus = "succeeded" | "failed" | "timeout" | "cancelled";
@@ -52,6 +56,21 @@ export interface CompletedUnit {
   readonly completedAt: number;
 }
 
+/**
+ * A unit that has been dispatched to a worker but has not yet reached a
+ * terminal state (crash-recovery T2). Recorded at dispatch time so a restart
+ * can tell "never started" (run fresh) apart from "was mid-flight when we
+ * crashed" (re-dispatch with a verify-then-continue preamble, resuming the
+ * worker's engine session from its per-unit sidecar).
+ */
+export interface InFlightUnit {
+  readonly id: string;
+  /** Per-unit session sidecar the worker (re)writes its engine session id to. */
+  readonly sidecarPath?: string;
+  readonly agentId?: string;
+  readonly dispatchedAt: number;
+}
+
 /** On-disk checkpoint document. */
 export interface TeamCheckpointData {
   readonly schemaVersion: number;
@@ -59,6 +78,7 @@ export interface TeamCheckpointData {
   readonly topology: TopologyKind;
   readonly specHash: string;
   readonly units: readonly CompletedUnit[];
+  readonly inFlight: readonly InFlightUnit[];
   readonly updatedAt: number;
 }
 
@@ -71,10 +91,32 @@ export interface TeamCheckpointStore {
   readonly resumed: boolean;
   /** Number of already-succeeded units carried over from a prior run. */
   readonly resumedUnitCount: number;
+  /**
+   * Number of units that were mid-flight in the prior (crashed) run and will
+   * be re-dispatched this run (crash-recovery T2).
+   */
+  readonly resumedInFlightCount: number;
   /** True if `unitId` previously reached `succeeded` (auto-resume skips it). */
   isDone(unitId: string): boolean;
   /** Look up a prior unit — used to reuse a succeeded unit's output. */
   get(unitId: string): CompletedUnit | undefined;
+  /**
+   * If `unitId` was dispatched-but-not-succeeded in the prior (crashed) run,
+   * returns its prior in-flight record (crash-recovery T2). The topology uses
+   * this to re-dispatch with a verify-then-continue preamble and to resume the
+   * worker's engine session from the same per-unit sidecar. Returns undefined
+   * for units that never started or that already succeeded. Reflects the
+   * prior run's snapshot and is stable for the lifetime of this run.
+   */
+  wasInFlight(unitId: string): InFlightUnit | undefined;
+  /**
+   * Deterministic per-unit session sidecar path (stable across restarts) so a
+   * re-dispatched worker resumes the same engine session. Lives under a
+   * `sessions/` dir next to the checkpoint file.
+   */
+  sidecarPathFor(unitId: string): string;
+  /** Record that a unit has been dispatched (in-flight) and persist. */
+  markDispatched(unit: InFlightUnit): Promise<void>;
   /** Record a terminal unit outcome and persist atomically. */
   record(unit: CompletedUnit): Promise<void>;
   /** Flush pending writes and release resources. Idempotent. */
@@ -150,12 +192,30 @@ export function parseCheckpoint(
     });
   }
 
+  // inFlight is optional-tolerant: a missing/malformed array just means "no
+  // units were mid-flight" so a fresh dispatch happens for everything not done.
+  const inFlight: InFlightUnit[] = [];
+  if (Array.isArray(d.inFlight)) {
+    for (const u of d.inFlight) {
+      if (typeof u !== "object" || u === null) continue;
+      const r = u as Record<string, unknown>;
+      if (typeof r.id !== "string") continue;
+      inFlight.push({
+        id: r.id,
+        dispatchedAt: typeof r.dispatchedAt === "number" ? r.dispatchedAt : 0,
+        ...(typeof r.sidecarPath === "string" && { sidecarPath: r.sidecarPath }),
+        ...(typeof r.agentId === "string" && { agentId: r.agentId }),
+      });
+    }
+  }
+
   return {
     schemaVersion: TEAM_CHECKPOINT_SCHEMA_VERSION,
     teamName: expected.teamName,
     topology: expected.topology,
     specHash: expected.specHash,
     units,
+    inFlight,
     updatedAt: typeof d.updatedAt === "number" ? d.updatedAt : 0,
   };
 }
@@ -189,10 +249,33 @@ export async function openTeamCheckpoint(opts: {
   if (prior !== null) {
     for (const u of prior.units) byId.set(u.id, u);
   }
-  const resumed = prior !== null && byId.size > 0;
-  const resumedUnitCount = resumed
-    ? [...byId.values()].filter((u) => u.status === "succeeded").length
-    : 0;
+
+  // Prior-run in-flight snapshot (T2): units dispatched but not succeeded when
+  // the daemon crashed. Frozen at open so wasInFlight() is stable this run even
+  // as we markDispatched() the same ids again below. A prior unit that also has
+  // a succeeded terminal record is NOT a resume candidate (it finished).
+  const priorInFlight = new Map<string, InFlightUnit>();
+  if (prior !== null) {
+    for (const u of prior.inFlight) {
+      if (byId.get(u.id)?.status === "succeeded") continue;
+      priorInFlight.set(u.id, u);
+    }
+  }
+
+  // Live in-flight set for THIS run (persisted so a crash this run is also
+  // recoverable). markDispatched adds; record (terminal) removes.
+  const inFlightById = new Map<string, InFlightUnit>();
+
+  const resumedUnitCount = [...byId.values()].filter(
+    (u) => u.status === "succeeded",
+  ).length;
+  const resumedInFlightCount = priorInFlight.size;
+  const resumed =
+    prior !== null && (resumedUnitCount > 0 || resumedInFlightCount > 0);
+
+  const sessionsDir = path.join(path.dirname(checkpointPath), "sessions");
+  const sidecarPathFor = (unitId: string): string =>
+    path.join(sessionsDir, `${unitId.replace(/[^a-zA-Z0-9._-]/g, "_")}.session`);
 
   // Serialize atomic writes so parallel record() calls (fanout) don't race.
   let writeChain: Promise<void> = Promise.resolve();
@@ -205,6 +288,7 @@ export async function openTeamCheckpoint(opts: {
       topology: spec.topology,
       specHash,
       units: [...byId.values()],
+      inFlight: [...inFlightById.values()],
       updatedAt: Date.now(),
     };
     await fsp.mkdir(path.dirname(checkpointPath), { recursive: true });
@@ -213,19 +297,38 @@ export async function openTeamCheckpoint(opts: {
     await fsp.rename(tmp, checkpointPath);
   };
 
+  const enqueue = (): Promise<void> => {
+    writeChain = writeChain.then(() =>
+      closed ? Promise.resolve() : persist(),
+    );
+    return writeChain;
+  };
+
   return {
     resumed,
     resumedUnitCount,
+    resumedInFlightCount,
     isDone(unitId: string): boolean {
       return byId.get(unitId)?.status === "succeeded";
     },
     get(unitId: string): CompletedUnit | undefined {
       return byId.get(unitId);
     },
+    wasInFlight(unitId: string): InFlightUnit | undefined {
+      return priorInFlight.get(unitId);
+    },
+    sidecarPathFor,
+    markDispatched(unit: InFlightUnit): Promise<void> {
+      // Already terminal (e.g. a race)? Nothing to mark.
+      if (byId.get(unit.id)?.status === "succeeded") return Promise.resolve();
+      inFlightById.set(unit.id, unit);
+      return enqueue();
+    },
     record(unit: CompletedUnit): Promise<void> {
       byId.set(unit.id, unit);
-      writeChain = writeChain.then(() => (closed ? Promise.resolve() : persist()));
-      return writeChain;
+      // Terminal now — it's no longer in flight.
+      inFlightById.delete(unit.id);
+      return enqueue();
     },
     async close(): Promise<void> {
       await writeChain;

@@ -34,6 +34,19 @@ import type {
 } from "../topologies-types.js";
 import type { ResultLine } from "../orchestrator.js";
 
+/**
+ * Crash-recovery T2 — prepended to the prompt when re-dispatching a unit that
+ * was mid-flight when the daemon crashed. The worker also resumes its prior
+ * engine session (per-unit sidecar), so this frames the resumed conversation.
+ */
+const RESUME_PREAMBLE =
+  "[Resumed after interruption] The team was interrupted and restarted, and " +
+  "you may have already partially completed this task. Before doing anything " +
+  "else, verify the current state of your work (inspect files, git status, " +
+  "and any outputs you already produced). Then continue from where you left " +
+  "off — do not redo steps that are already complete. If the task is already " +
+  "fully done, just report completion.\n\n---\n\n";
+
 export class FanoutTopology implements Topology {
   readonly name = "fanout" as const;
 
@@ -240,6 +253,37 @@ export class FanoutTopology implements Topology {
       cumulativeOutputTokens.set(task.id, 0);
       perAttemptDurations.set(task.id, []);
 
+      // Crash-recovery T2: when a checkpoint is present, give this unit a
+      // stable per-unit session sidecar and mark it in-flight before spawning.
+      // If it was mid-flight in a prior (crashed) run, re-dispatch with a
+      // verify-then-continue preamble; the worker resumes its prior engine
+      // session from the same sidecar.
+      const sidecar = ctx.checkpoint?.sidecarPathFor(task.id);
+      const priorInFlight = ctx.checkpoint?.wasInFlight(task.id);
+      const dispatchTask: TaskPacket =
+        priorInFlight !== undefined
+          ? { ...task, prompt: RESUME_PREAMBLE + task.prompt }
+          : task;
+      if (ctx.checkpoint !== undefined) {
+        if (priorInFlight !== undefined) {
+          ctx.host.emit({
+            type: "team_note",
+            payload: {
+              teamName: spec.name,
+              scope: `swarm:${spec.name}`,
+              note: `task ${task.id} re-dispatching (in-flight at crash; verify then continue)`,
+            },
+          });
+        }
+        await ctx.checkpoint
+          .markDispatched({
+            id: task.id,
+            dispatchedAt: Date.now(),
+            ...(sidecar !== undefined && { sidecarPath: sidecar }),
+          })
+          .catch(() => {});
+      }
+
       let finalResult: AgentResult | undefined;
       let finalHandle: Awaited<ReturnType<StandaloneHost["spawn"]>> | undefined;
 
@@ -257,7 +301,7 @@ export class FanoutTopology implements Topology {
           // TaskRecord is fine; result lines still use `task.id` from the
           // user's input via buildResultLine().
           handle = await ctx.host.spawn({
-            task,
+            task: dispatchTask,
             permissionMode: ctx.permissionMode,
             parentAgentId: ctx.host.agentId,
             ...(task.model !== undefined && { model: task.model }),
@@ -265,6 +309,7 @@ export class FanoutTopology implements Topology {
               role: role.name,
               allowedTools: role.allowedTools,
             }),
+            ...(sidecar !== undefined && { sessionSidecarPath: sidecar }),
           });
           // When a per-attempt ceiling is configured, race wait() against a
           // timer. On timeout, kill the worker and synthesize a timeout

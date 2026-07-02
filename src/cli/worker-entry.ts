@@ -284,6 +284,19 @@ async function executeTurn(
       prompt: task.prompt,
     });
 
+    // Crash-recovery T2: persist the engine session id to the sidecar as soon
+    // as it's known (not just at turn end), so a daemon crash MID-turn still
+    // leaves a resumable session id for the re-dispatched worker.
+    let sidecarPersisted = false;
+    const persistSidecarEarly = (): void => {
+      if (sidecarPersisted || sidecarPath === undefined) return;
+      const sid = engine.getSessionId?.();
+      if (sid !== undefined) {
+        writeSessionSidecar(sidecarPath, sid);
+        sidecarPersisted = true;
+      }
+    };
+
     for await (const evt of engine.run(runConfig)) {
       if (evt.type === "text_delta") {
         finalText += evt.text;
@@ -292,6 +305,7 @@ async function executeTurn(
       } else if (evt.type === "message_stop") {
         usage = evt.usage;
       }
+      persistSidecarEarly();
       // Forward each engine event as a lane_event, preserving its real type so
       // events.jsonl records the semantic spine and the ACP layer can translate
       // member activity (docs/33 B0.2). Events with no lane equivalent are

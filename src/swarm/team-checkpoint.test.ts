@@ -142,6 +142,82 @@ describe("team-checkpoint", () => {
     expect(parsed.units).toHaveLength(10);
   });
 
+  describe("in-flight tracking (crash-recovery T2)", () => {
+    it("markDispatched persists an in-flight unit; resume re-surfaces it", async () => {
+      const spec = makeSpec();
+      const store = await openTeamCheckpoint({ checkpointPath: cpPath, spec });
+      await store.markDispatched({
+        id: "a",
+        sidecarPath: store.sidecarPathFor("a"),
+        dispatchedAt: 100,
+      });
+      await store.close();
+
+      const raw = JSON.parse(await fsp.readFile(cpPath, "utf8"));
+      expect(raw.inFlight).toHaveLength(1);
+      expect(raw.inFlight[0].id).toBe("a");
+
+      // Reopen: "a" was mid-flight (never terminal) → resume candidate.
+      const reopened = await openTeamCheckpoint({ checkpointPath: cpPath, spec });
+      expect(reopened.resumed).toBe(true);
+      expect(reopened.resumedInFlightCount).toBe(1);
+      expect(reopened.wasInFlight("a")?.sidecarPath).toBe(
+        reopened.sidecarPathFor("a"),
+      );
+      expect(reopened.wasInFlight("b")).toBeUndefined();
+      await reopened.close();
+    });
+
+    it("a terminal record clears the in-flight marker", async () => {
+      const spec = makeSpec();
+      const store = await openTeamCheckpoint({ checkpointPath: cpPath, spec });
+      await store.markDispatched({ id: "a", dispatchedAt: 1 });
+      await store.record({ id: "a", status: "succeeded", completedAt: 2 });
+      await store.close();
+
+      const raw = JSON.parse(await fsp.readFile(cpPath, "utf8"));
+      expect(raw.inFlight).toHaveLength(0);
+      expect(raw.units).toHaveLength(1);
+
+      const reopened = await openTeamCheckpoint({ checkpointPath: cpPath, spec });
+      expect(reopened.isDone("a")).toBe(true);
+      expect(reopened.wasInFlight("a")).toBeUndefined();
+      expect(reopened.resumedInFlightCount).toBe(0);
+      await reopened.close();
+    });
+
+    it("a succeeded unit is never a resume candidate even if also in inFlight", async () => {
+      // Simulate a crash after the terminal write but before the in-flight
+      // entry was cleared (belt-and-suspenders: succeeded always wins).
+      const spec = makeSpec();
+      const raw = JSON.stringify({
+        schemaVersion: TEAM_CHECKPOINT_SCHEMA_VERSION,
+        teamName: spec.name,
+        topology: spec.topology,
+        specHash: computeSpecHash(spec),
+        units: [{ id: "a", status: "succeeded", completedAt: 1 }],
+        inFlight: [{ id: "a", dispatchedAt: 1 }],
+        updatedAt: 1,
+      });
+      await fsp.writeFile(cpPath, raw);
+
+      const store = await openTeamCheckpoint({ checkpointPath: cpPath, spec });
+      expect(store.isDone("a")).toBe(true);
+      expect(store.wasInFlight("a")).toBeUndefined();
+      await store.close();
+    });
+
+    it("sidecarPathFor is deterministic and sanitizes the unit id", async () => {
+      const store = await openTeamCheckpoint({ checkpointPath: cpPath, spec: makeSpec() });
+      const p1 = store.sidecarPathFor("a/b:c");
+      const p2 = store.sidecarPathFor("a/b:c");
+      expect(p1).toBe(p2);
+      expect(path.basename(p1)).toBe("a_b_c.session");
+      expect(p1.startsWith(path.join(dir, "sessions"))).toBe(true);
+      await store.close();
+    });
+  });
+
   describe("computeSpecHash", () => {
     it("is stable for equal specs and differs on member changes", () => {
       expect(computeSpecHash(makeSpec())).toBe(computeSpecHash(makeSpec()));

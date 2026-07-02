@@ -412,4 +412,68 @@ describe("FanoutTopology (direct invocation)", () => {
     await deadLetter.close();
     await rm(tmp, { recursive: true, force: true });
   });
+
+  // -----------------------------------------------------------------------
+  // docs/28 — team crash-recovery (T2): in-flight re-dispatch + session resume
+  // -----------------------------------------------------------------------
+
+  it("re-dispatches an in-flight task with a verify-then-continue preamble + per-unit sidecar", async () => {
+    const spawns: Array<{ id: string; prompt: string; sidecar?: string }> = [];
+    const host = fakeHost(async (req) => {
+      spawns.push({
+        id: req.task.id ?? "?",
+        prompt: req.task.prompt,
+        sidecar: (req as { sessionSidecarPath?: string }).sessionSidecarPath,
+      });
+      return makeHandle(successResult("done"));
+    });
+    const pool = new WorkerPool(2);
+    const tmp = await mkdtemp(join(tmpdir(), "fanout-t2-"));
+    const deadLetter = new DeadLetterWriter(join(tmp, "dl.jsonl"));
+    const resultsOut = new PassThrough();
+    resultsOut.resume();
+    const cpPath = join(tmp, "checkpoint.json");
+    const spec = twoMemberSpec();
+
+    // Pre-seed: m1 was dispatched but never reached terminal (crash mid-flight);
+    // m2 never started.
+    const seed = await openTeamCheckpoint({ checkpointPath: cpPath, spec });
+    await seed.markDispatched({
+      id: "m1",
+      sidecarPath: seed.sidecarPathFor("m1"),
+      dispatchedAt: 1,
+    });
+    await seed.close();
+
+    const store = await openTeamCheckpoint({ checkpointPath: cpPath, spec });
+    expect(store.resumed).toBe(true);
+    expect(store.resumedInFlightCount).toBe(1);
+
+    const ctx: TopologyContext = {
+      host,
+      pool,
+      resultsOut,
+      deadLetter,
+      permissionMode: "workspace-write",
+      checkpoint: store,
+    };
+    const summary = await new FanoutTopology().run(spec, ctx);
+    await store.close();
+
+    expect(summary.succeeded).toBe(2);
+    const m1 = spawns.find((s) => s.id === "m1")!;
+    const m2 = spawns.find((s) => s.id === "m2")!;
+    // m1 re-dispatched WITH preamble; m2 fresh WITHOUT preamble.
+    expect(m1.prompt).toContain("[Resumed after interruption]");
+    expect(m1.prompt).toContain("p1");
+    expect(m2.prompt).toBe("p2");
+    // Both get a per-unit sidecar so a future crash is resumable too.
+    expect(m1.sidecar).toBe(store.sidecarPathFor("m1"));
+    expect(m2.sidecar).toBe(store.sidecarPathFor("m2"));
+    // Terminal success clears the in-flight marker.
+    expect(store.isDone("m1")).toBe(true);
+
+    await deadLetter.close();
+    await rm(tmp, { recursive: true, force: true });
+  });
 });
