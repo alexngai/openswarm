@@ -63,6 +63,7 @@ class OpenswarmAgent(BaseInstalledAgent):
         model_override: str | None = None,
         swarm: bool = False,
         install_spec: str = "openswarm@latest",
+        binary_dir: str | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -74,21 +75,43 @@ class OpenswarmAgent(BaseInstalledAgent):
           swarm            if true, drop --single and let openswarm run its coordinator
                            team (multi-agent). Default false = single agent.
           install_spec     npm spec installed by install() (default openswarm@latest)
+          binary_dir       host path to a self-contained compiled build dir
+                           (``openswarm`` + co-located ``claude`` + ``libopentui.*``,
+                           e.g. packages/cli-linux-<arch>/). When set, install()
+                           uploads it into the container and runs that binary instead
+                           of installing from npm — use it to test a local/unpublished
+                           build. The arch must match the container's.
         """
         super().__init__(*args, **kwargs)
         self._permission_mode = permission_mode
         self._model_override = model_override
         self._swarm = swarm
         self._install_spec = install_spec
+        self._binary_dir = binary_dir
+        # Where the openswarm executable lives inside the container.
+        self._remote_bin = "/opt/openswarm/openswarm" if binary_dir else "openswarm"
 
     @staticmethod
     def name() -> str:
         return "openswarm"
 
     def get_version_command(self) -> str | None:
-        return "openswarm --version"
+        return f"{self._remote_bin} --version"
 
     async def install(self, environment: BaseEnvironment) -> None:
+        if self._binary_dir is not None:
+            # Inject a self-contained compiled build (no npm). The bun binary resolves
+            # its co-located `claude`/libopentui next to process.execPath, so uploading
+            # the whole dir keeps them together.
+            await self.exec_as_root(environment, command="mkdir -p /opt/openswarm")
+            await environment.upload_dir(self._binary_dir, "/opt/openswarm")
+            await self.exec_as_root(
+                environment,
+                command="chmod +x /opt/openswarm/openswarm /opt/openswarm/claude",
+            )
+            await self.exec_as_agent(environment, command=f"{self._remote_bin} --version")
+            return
+
         # Node/npm as root (best-effort — many benchmark images already ship node).
         await self.exec_as_root(
             environment,
@@ -129,7 +152,7 @@ class OpenswarmAgent(BaseInstalledAgent):
         if not model:
             raise ValueError("OpenswarmAgent requires a model (Harbor -m or --ak model_override=)")
         parts = [
-            "openswarm",
+            self._remote_bin,
             "prompt",
             shlex.quote(instruction),
             "--headless",
