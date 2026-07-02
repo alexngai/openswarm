@@ -147,49 +147,6 @@ function ensureNativePackage(t: Target): string | null {
   return existsSync(cachedLib) ? cachedLib : null;
 }
 
-// ---------------------------------------------------------------------------
-// Resolve the target platform's claude-agent-sdk native `claude` helper.
-//
-// The SDK spawns this native binary to run the agent. Inside a compiled binary
-// the SDK's own resolver can't find it (node_modules isn't in the embedded fs),
-// so — exactly like libopentui — we ship it next to the executable and the
-// engine points the SDK at `dirname(process.execPath)/claude` at runtime (see
-// resolveColocatedClaudeExecutable in src/engine/claude-agent-sdk.ts). Without
-// this, every agent turn dies with "Claude Code process exited with code 1".
-//
-// Same host-vs-cross-compile strategy as ensureNativePackage: installed package
-// for the host, else `npm pack` (which ignores os/cpu gating) into a cache.
-// ---------------------------------------------------------------------------
-function ensureSdkNativeBinary(t: Target): string | null {
-  const exe = t.platform === "win32" ? "claude.exe" : "claude";
-  const sdkPkg = `@anthropic-ai/claude-agent-sdk-${t.platform}-${t.arch}`;
-
-  // Fast path: installed for the host platform.
-  const installed = resolve(`node_modules/${sdkPkg}`, exe);
-  if (existsSync(installed)) return installed;
-
-  // Cross-compile: fetch + extract the tarball.
-  const cacheDir = resolve(`.build/native/agent-sdk-${t.platform}-${t.arch}`);
-  const cachedBin = resolve(cacheDir, "package", exe);
-  if (existsSync(cachedBin)) return cachedBin;
-
-  console.log(`  Fetching ${sdkPkg}@${SDK_VERSION} native claude helper (cross-compile)…`);
-  mkdirSync(cacheDir, { recursive: true });
-  try {
-    const out = execSync(
-      `npm pack ${sdkPkg}@${SDK_VERSION} --pack-destination ${cacheDir} --json`,
-      { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] },
-    );
-    const filename = (JSON.parse(out) as Array<{ filename: string }>)[0]?.filename;
-    if (!filename) throw new Error("npm pack returned no filename");
-    execSync(`tar -xzf ${resolve(cacheDir, filename)} -C ${cacheDir}`, { stdio: "pipe" });
-  } catch (err) {
-    console.error(`  Failed to fetch ${sdkPkg}. The compiled binary needs its native claude helper.`);
-    throw err;
-  }
-  return existsSync(cachedBin) ? cachedBin : null;
-}
-
 // Emit into the per-platform package dir (mirrors Swarm Runner), so each
 // @openswarm/cli-<platform>-<arch> optional-dep ships its own binary.
 const platformArch = target.bunTarget.replace(/^bun-/, ""); // e.g. darwin-arm64
@@ -198,7 +155,6 @@ const outfile = `${pkgDir}/${target.exe}`;
 mkdirSync(pkgDir, { recursive: true });
 
 const libSrc = ensureNativePackage(target);
-const sdkBinSrc = ensureSdkNativeBinary(target);
 
 console.log(`Building ${outfile} for ${target.bunTarget} (v${PKG_VERSION})…`);
 
@@ -252,16 +208,10 @@ if (target.libName) {
   }
 }
 
-// Step 4: co-locate the claude-agent-sdk native `claude` helper next to the
-// compiled binary. resolveColocatedClaudeExecutable() in the engine points the
-// SDK at dirname(process.execPath)/claude at runtime. cpSync preserves the
-// source's executable mode.
-const sdkExe = target.platform === "win32" ? "claude.exe" : "claude";
-if (sdkBinSrc) {
-  cpSync(sdkBinSrc, `${pkgDir}/${sdkExe}`);
-  console.log(`  Copied ${sdkExe} (claude-agent-sdk native helper) → ${pkgDir}/`);
-} else {
-  console.warn(`  Warning: claude-agent-sdk native binary not found for ${platformArch} — headless/agent runs will fail with "Claude Code process exited with code 1".`);
-}
+// The claude-agent-sdk native `claude` helper is intentionally NOT bundled here:
+// it ships as an optional dependency of @anthropic-ai/claude-agent-sdk, so a
+// normal install already has it in node_modules. resolveClaudeExecutable() in
+// src/engine/claude-agent-sdk.ts finds it there at runtime (the compiled binary
+// can't use the SDK's own require.resolve). Non-Claude engines don't need it.
 
 console.log(`OK. ${outfile}`);

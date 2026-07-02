@@ -1,6 +1,6 @@
 {
   "name": "@openswarm/cli-darwin-arm64",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "description": "OpenSwarm compiled binary for macOS ARM64",
   "license": "MIT",
   "repository": {
@@ -15,8 +15,7 @@
   ],
   "files": [
     "openswarm",
-    "libopentui.dylib",
-    "claude"
+    "libopentui.dylib"
   ],
   "preferUnpacked": true
 }

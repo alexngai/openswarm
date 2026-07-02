@@ -27,28 +27,53 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 /**
- * Resolve the SDK's native `claude` helper when we run as a `bun build --compile`
- * standalone binary.
+ * Resolve the claude-agent-sdk native `claude` helper for the claude-agent-sdk
+ * engine when we run as a `bun build --compile` standalone binary.
  *
  * Inside a compiled binary the SDK's own resolver
- * (`require.resolve("@anthropic-ai/claude-agent-sdk-<plat>/claude")`) can't find
- * the native executable — node_modules isn't in the embedded fs — so `query()`
- * spawns a bad path and the child exits 1 ("Claude Code process exited with
- * code 1"). `scripts/build-binary.ts` co-locates that binary next to the compiled
- * executable (mirroring the libopentui handling), so here we point the SDK at it
- * explicitly via `pathToClaudeCodeExecutable`.
+ * (`require.resolve("@anthropic-ai/claude-agent-sdk-<plat>/claude")`) can't reach
+ * node_modules — it isn't in the embedded fs — so `query()` spawns a bad path and
+ * the child exits 1 ("Claude Code process exited with code 1"). We compute a real
+ * on-disk path instead, relative to `process.execPath`, and pass it to the SDK via
+ * `pathToClaudeCodeExecutable`.
  *
- * Returns `undefined` for dev/node runs, where the file is not next to
- * `process.execPath` and the SDK's built-in auto-resolution already works.
+ * The native binary is NOT bundled into openswarm — it ships as an optional
+ * dependency of `@anthropic-ai/claude-agent-sdk`, so a normal install already has
+ * it at `node_modules/@anthropic-ai/claude-agent-sdk-<plat>-<arch>/claude`. We
+ * search, in order:
+ *   1. co-located next to the executable (bundled / injected builds), then
+ *   2. `node_modules/<sdk-native-pkg>/claude` at each ancestor of the executable
+ *      (covers npm hoisting; tries the glibc and musl linux variants).
+ *
+ * Returns `undefined` for dev/node runs (the SDK's own resolution works) or when
+ * no native binary is present — non-Claude engines (`--framework native`,
+ * `codex-*`, or `auto` with a non-Claude model) don't need it.
  */
-let _colocatedClaude: string | null | undefined;
-function resolveColocatedClaudeExecutable(): string | undefined {
-  if (_colocatedClaude === undefined) {
+function sdkNativePackages(): string[] {
+  const { platform, arch } = process;
+  const base = `@anthropic-ai/claude-agent-sdk-${platform}-${arch}`;
+  // On linux npm installs either the glibc or the musl (Alpine) build.
+  return platform === "linux" ? [base, `${base}-musl`] : [base];
+}
+
+let _claudeExe: string | null | undefined;
+function resolveClaudeExecutable(): string | undefined {
+  if (_claudeExe === undefined) {
     const exe = process.platform === "win32" ? "claude.exe" : "claude";
-    const candidate = join(dirname(process.execPath), exe);
-    _colocatedClaude = existsSync(candidate) ? candidate : null;
+    const execDir = dirname(process.execPath);
+    const pkgs = sdkNativePackages();
+    const candidates: string[] = [join(execDir, exe)]; // 1. co-located
+    // 2. node_modules/<pkg>/claude at each ancestor dir (hoisting-agnostic).
+    let dir = execDir;
+    for (;;) {
+      for (const p of pkgs) candidates.push(join(dir, "node_modules", ...p.split("/"), exe));
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+    _claudeExe = candidates.find((c) => existsSync(c)) ?? null;
   }
-  return _colocatedClaude ?? undefined;
+  return _claudeExe ?? undefined;
 }
 
 /**
@@ -304,7 +329,7 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
     }
 
     // 8. Call query().
-    const colocatedClaude = resolveColocatedClaudeExecutable();
+    const claudeExe = resolveClaudeExecutable();
     const response = query({
       prompt: buildPrompt(),
       options: {
@@ -332,9 +357,9 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
         ...(abortController != null && { abortController }),
         ...(outputFormat != null && { outputFormat }),
         ...(hasHooks && { hooks: sdkHooks }),
-        // In a compiled binary, point the SDK at the co-located native `claude`
-        // (build-binary.ts ships it next to the executable). No-op in dev/node.
-        ...(colocatedClaude != null && { pathToClaudeCodeExecutable: colocatedClaude }),
+        // In a compiled binary, point the SDK at the native `claude` we resolved
+        // from node_modules (or a co-located build). No-op in dev/node.
+        ...(claudeExe != null && { pathToClaudeCodeExecutable: claudeExe }),
       },
     });
 
