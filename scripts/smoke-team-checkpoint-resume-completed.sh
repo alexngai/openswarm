@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# scripts/smoke-team-checkpoint.sh — team crash-recovery T1 live smoke.
+# scripts/smoke-team-checkpoint-resume-completed.sh — crash-recovery live smoke:
+# skip already-completed units.
 #
 # Verifies, end-to-end with REAL worker subprocesses, that a team daemon which
 # crashes mid-topology resumes from `checkpoint.json` on restart: already-
@@ -15,8 +16,8 @@
 # to finish (3 units), then assert the events log shows a resume + skip.
 #
 # Usage:
-#   ./scripts/smoke-team-checkpoint.sh
-#   ./scripts/smoke-team-checkpoint.sh --help
+#   ./scripts/smoke-team-checkpoint-resume-completed.sh
+#   ./scripts/smoke-team-checkpoint-resume-completed.sh --help
 
 set -uo pipefail
 

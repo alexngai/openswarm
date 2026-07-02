@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# scripts/smoke-team-checkpoint-t3.sh — team crash-recovery T3b live smoke
-# (peer-team topology).
+# scripts/smoke-team-checkpoint-resume-parallel.sh — crash-recovery live smoke:
+# batch-spawn (peer-team) topology.
 #
-# T3b extends crash-recovery to the batch-spawn topologies (peer-team,
+# Extends crash-recovery to the batch-spawn topologies (peer-team,
 # committee). This smoke verifies, with REAL worker subprocesses, that a
 # peer-team daemon which crashes WHILE a member is mid-flight resumes it on
 # restart: the member is re-dispatched with a verify-then-continue preamble AND
@@ -21,8 +21,8 @@
 # "RESUMED:" plus the peer-team re-dispatch note.
 #
 # Usage:
-#   ./scripts/smoke-team-checkpoint-t3.sh
-#   ./scripts/smoke-team-checkpoint-t3.sh --help
+#   ./scripts/smoke-team-checkpoint-resume-parallel.sh
+#   ./scripts/smoke-team-checkpoint-resume-parallel.sh --help
 
 set -uo pipefail
 

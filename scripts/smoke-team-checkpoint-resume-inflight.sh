@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# scripts/smoke-team-checkpoint-t2.sh — team crash-recovery T2 live smoke.
+# scripts/smoke-team-checkpoint-resume-inflight.sh — crash-recovery live smoke:
+# re-dispatch an in-flight unit + resume its engine session.
 #
 # Verifies, with REAL worker subprocesses, that a team daemon which crashes
 # WHILE a member is mid-flight resumes it on restart: the unit is re-dispatched
@@ -17,8 +18,8 @@
 # restart, and assert the member's recorded output contains "RESUMED:".
 #
 # Usage:
-#   ./scripts/smoke-team-checkpoint-t2.sh
-#   ./scripts/smoke-team-checkpoint-t2.sh --help
+#   ./scripts/smoke-team-checkpoint-resume-inflight.sh
+#   ./scripts/smoke-team-checkpoint-resume-inflight.sh --help
 
 set -uo pipefail
 
