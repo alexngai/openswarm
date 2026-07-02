@@ -17,6 +17,10 @@ import { join } from "node:path";
 import { CommitteeTopology } from "./committee.js";
 import { WorkerPool } from "../worker-pool.js";
 import { DeadLetterWriter } from "../dead-letter.js";
+import {
+  openTeamCheckpoint,
+  type TeamCheckpointStore,
+} from "../team-checkpoint.js";
 import type { TeamSpec, MemberSpec } from "../team-spec.js";
 import type { TopologyContext } from "../topologies-types.js";
 import type { StandaloneHost } from "../standalone-host.js";
@@ -30,6 +34,7 @@ import type { AgentId, SessionId } from "../../core/types.js";
 interface SpawnLog {
   readonly prompt: string;
   readonly role: string | undefined;
+  readonly sidecar: string | undefined;
 }
 
 function makeHandle(
@@ -62,7 +67,11 @@ function fakeHost(results: readonly AgentResult[]): Harness {
   events.setMaxListeners(50);
 
   const spawn = async (req: SpawnRequest): Promise<AgentHandle> => {
-    spawns.push({ prompt: req.task.prompt, role: req.role });
+    spawns.push({
+      prompt: req.task.prompt,
+      role: req.role,
+      sidecar: (req as { sessionSidecarPath?: string }).sessionSidecarPath,
+    });
     const result = results[i] ?? {
       status: "failure",
       error: "no result configured",
@@ -117,7 +126,10 @@ function committeeSpec(
   };
 }
 
-async function makeCtx(results: readonly AgentResult[]): Promise<{
+async function makeCtx(
+  results: readonly AgentResult[],
+  checkpoint?: TeamCheckpointStore,
+): Promise<{
   ctx: TopologyContext;
   harness: Harness;
   cleanup: () => Promise<void>;
@@ -134,6 +146,7 @@ async function makeCtx(results: readonly AgentResult[]): Promise<{
     resultsOut,
     deadLetter,
     permissionMode: "workspace-write",
+    ...(checkpoint !== undefined && { checkpoint }),
   };
   return {
     ctx,
@@ -311,5 +324,86 @@ describe("CommitteeTopology", () => {
     expect(judgeBPs[0]).toEqual({ kind: "none" });
     await deadLetter.close();
     await rm(tmp, { recursive: true, force: true });
+  });
+
+  // -------------------------------------------------------------------------
+  // Crash-recovery T3b — checkpoint skip + in-flight re-dispatch
+  // -------------------------------------------------------------------------
+
+  it("resume: skips a member that already succeeded (no re-spawn) and reuses its output", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "committee-cp-"));
+    cleanups.push(async () => rm(tmp, { recursive: true, force: true }));
+    const cpPath = join(tmp, "checkpoint.json");
+    const spec = committeeSpec(
+      [member("m1", "p1"), member("m2", "p2")],
+      { completion: { kind: "all" }, aggregator: { kind: "concat" } },
+    );
+
+    // Pre-seed: m1 already succeeded in a prior (crashed) run.
+    const seed = await openTeamCheckpoint({ checkpointPath: cpPath, spec });
+    await seed.record({
+      id: "m1",
+      status: "succeeded",
+      output: "cached-m1",
+      completedAt: 1,
+    });
+    await seed.close();
+
+    const store = await openTeamCheckpoint({ checkpointPath: cpPath, spec });
+    expect(store.resumed).toBe(true);
+    // Only m2 will be spawned this run.
+    const { ctx, harness, cleanup } = await makeCtx([s("fresh-m2")], store);
+    cleanups.push(cleanup);
+
+    const result = await new CommitteeTopology().run(spec, ctx);
+    await store.close();
+
+    expect(harness.spawns).toHaveLength(1);
+    expect(harness.spawns[0]!.prompt).toBe("p2"); // m2 only, no preamble
+    expect(result.succeeded).toBe(2); // m1 (cached) + m2 (fresh)
+    expect(result.aggregateOutput).toContain("cached-m1");
+    expect(result.aggregateOutput).toContain("fresh-m2");
+
+    // m2's terminal outcome was recorded for the next restart.
+    const after = await openTeamCheckpoint({ checkpointPath: cpPath, spec });
+    expect(after.isDone("m2")).toBe(true);
+    await after.close();
+  });
+
+  it("resume: re-dispatches an in-flight member with preamble + per-unit sidecar", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "committee-cp-"));
+    cleanups.push(async () => rm(tmp, { recursive: true, force: true }));
+    const cpPath = join(tmp, "checkpoint.json");
+    const spec = committeeSpec([member("m1", "p1"), member("m2", "p2")]);
+
+    // Pre-seed: m1 was dispatched but never reached terminal (crash mid-flight);
+    // m2 never started.
+    const seed = await openTeamCheckpoint({ checkpointPath: cpPath, spec });
+    await seed.markDispatched({
+      id: "m1",
+      sidecarPath: seed.sidecarPathFor("m1"),
+      dispatchedAt: 1,
+    });
+    await seed.close();
+
+    const store = await openTeamCheckpoint({ checkpointPath: cpPath, spec });
+    expect(store.resumed).toBe(true);
+    expect(store.resumedInFlightCount).toBe(1);
+    const { ctx, harness, cleanup } = await makeCtx([s("o1"), s("o2")], store);
+    cleanups.push(cleanup);
+
+    await new CommitteeTopology().run(spec, ctx);
+    await store.close();
+
+    expect(harness.spawns).toHaveLength(2);
+    const m1 = harness.spawns.find((sp) => sp.sidecar?.includes("m1"))!;
+    const m2 = harness.spawns.find((sp) => sp.sidecar?.includes("m2"))!;
+    // m1 re-dispatched WITH preamble; m2 fresh WITHOUT.
+    expect(m1.prompt).toContain("[Resumed after interruption]");
+    expect(m1.prompt).toContain("p1");
+    expect(m2.prompt).toBe("p2");
+    // Both carry a per-unit sidecar so a future crash is resumable too.
+    expect(m1.sidecar).toBeDefined();
+    expect(m2.sidecar).toBeDefined();
   });
 });

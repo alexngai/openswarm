@@ -23,6 +23,11 @@ import type {
   Aggregator,
 } from "../team-spec.js";
 import { TeamSession } from "../team-session.js";
+import {
+  makeResolvedHandle,
+  planParallelDispatch,
+  recordTerminal,
+} from "./parallel-recovery.js";
 import type {
   Topology,
   TopologyContext,
@@ -96,10 +101,45 @@ export class CommitteeTopology implements Topology {
     try {
       // No teammate-awareness injection — committee members deliberate
       // independently. Spawn members verbatim.
-      const handles = await team.spawnAll(spec.members);
+      //
+      // Crash-recovery T3b: plan per-member dispatch against the checkpoint.
+      // Members that already succeeded in a prior (crashed) run are NOT
+      // re-spawned — a synthetic already-resolved handle stands in for them so
+      // the CompletionRule below counts them as complete without change.
+      // In-flight members are re-dispatched with a verify-then-continue
+      // preamble + per-unit session sidecar. No-op when ctx.checkpoint is
+      // absent (every member is a fresh spawn).
+      const plans = await planParallelDispatch(
+        spec.members,
+        ctx,
+        spec.name,
+        team.scope,
+      );
+      const spawned = await team.spawnAll(
+        plans.filter((p) => !p.skip).map((p) => p.spawnSpec!),
+      );
+      let spawnIdx = 0;
+      const handles: AgentHandle[] = plans.map((p) =>
+        p.skip
+          ? makeResolvedHandle(p.unitId, p.skippedResult!)
+          : spawned[spawnIdx++]!,
+      );
 
       const completionRule = spec.coordination.completion;
       results = await awaitCompletion(team, handles, completionRule, ctx);
+
+      // Record each (re)spawned member's terminal outcome so a restart can
+      // skip it (succeeded) or re-run it (non-success). The CompletionRule has
+      // resolved, so every spawned handle's wait() has settled (losers it
+      // killed included); await the records so they flush before dispose.
+      spawnIdx = 0;
+      await Promise.all(
+        plans.map(async (p) => {
+          if (p.skip) return;
+          const h = spawned[spawnIdx++]!;
+          await recordTerminal(ctx, p.unitId, h.agentId, await h.wait());
+        }),
+      );
 
       // Default aggregator for committee differs from peer-team. Pick
       // `judge` when the spec has a member with role "judge" (so the same

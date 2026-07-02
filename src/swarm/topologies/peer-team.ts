@@ -29,6 +29,11 @@ import type {
   Aggregator,
 } from "../team-spec.js";
 import { TeamSession } from "../team-session.js";
+import {
+  makeResolvedHandle,
+  planParallelDispatch,
+  recordTerminal,
+} from "./parallel-recovery.js";
 import { applyDefaultBranchPolicy } from "./branch-policy-defaults.js";
 import {
   createDefaultLandingRegistry,
@@ -134,13 +139,46 @@ export class PeerTeamTopology implements Topology {
         prompt: this.augmentWithTeammates(m, spec.members, idx),
       }));
 
-      // Spawn all members in parallel into the team scope.
-      const handles = await team.spawnAll(augmented);
+      // Crash-recovery T3b: plan per-member dispatch against the checkpoint
+      // (over the teammate-augmented specs — the resume preamble layers on
+      // top). Already-succeeded members are represented by a synthetic
+      // resolved handle so the CompletionRule counts them without change;
+      // in-flight members are re-dispatched with a verify-then-continue
+      // preamble + per-unit session sidecar (resuming their engine session).
+      // Pure pass-through when ctx.checkpoint is absent.
+      const plans = await planParallelDispatch(
+        augmented,
+        ctx,
+        spec.name,
+        team.scope,
+      );
+      const spawned = await team.spawnAll(
+        plans.filter((p) => !p.skip).map((p) => p.spawnSpec!),
+      );
+      let spawnIdx = 0;
+      const handles: readonly AgentHandle[] = plans.map((p) =>
+        p.skip
+          ? makeResolvedHandle(p.unitId, p.skippedResult!)
+          : spawned[spawnIdx++]!,
+      );
       memberHandles = handles;
 
       // Wait per CompletionRule.
       const completionRule = spec.coordination.completion;
       results = await this.awaitCompletion(team, handles, completionRule, ctx);
+
+      // Record each (re)spawned member's terminal outcome for the next
+      // restart. The CompletionRule has resolved (every spawned handle's
+      // wait() has settled, killed losers included); await records so they
+      // flush before a persistent team's daemon closes the checkpoint.
+      spawnIdx = 0;
+      await Promise.all(
+        plans.map(async (p) => {
+          if (p.skip) return;
+          const h = spawned[spawnIdx++]!;
+          await recordTerminal(ctx, p.unitId, h.agentId, await h.wait());
+        }),
+      );
 
       // Aggregate per Aggregator (default concat for peer-team).
       const aggregator = spec.coordination.aggregator ?? { kind: "concat" as const };

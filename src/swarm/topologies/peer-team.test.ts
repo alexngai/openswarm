@@ -18,6 +18,10 @@ import { PeerTeamTopology } from "./peer-team.js";
 import { WorkerPool } from "../worker-pool.js";
 import { DeadLetterWriter } from "../dead-letter.js";
 import { RecoveryRegistry } from "../recovery/registry.js";
+import {
+  openTeamCheckpoint,
+  type TeamCheckpointStore,
+} from "../team-checkpoint.js";
 import type {
   ConflictContext,
   ConflictResolution,
@@ -128,6 +132,7 @@ interface SpawnLog {
   readonly memberId: string | undefined;
   readonly teamScope: string | undefined;
   readonly role: string | undefined;
+  readonly sidecar: string | undefined;
   readonly spawnedAt: number;
 }
 
@@ -188,6 +193,7 @@ function fakeHost(
       memberId: req.task.id,
       teamScope: req.teamScope,
       role: req.role,
+      sidecar: (req as { sessionSidecarPath?: string }).sessionSidecarPath,
       spawnedAt: Date.now(),
     });
     const opts = handleOpts[i] ?? { result: failureResult("no result configured") };
@@ -271,6 +277,7 @@ interface RigOpts {
   readonly handleOpts: readonly MakeHandleOpts[];
   readonly abort?: AbortSignal;
   readonly hostExtras?: FakeHostExtras;
+  readonly checkpoint?: TeamCheckpointStore;
 }
 
 async function makeCtx(opts: RigOpts): Promise<{
@@ -292,6 +299,7 @@ async function makeCtx(opts: RigOpts): Promise<{
     deadLetter,
     permissionMode: "workspace-write",
     ...(opts.abort !== undefined && { abort: opts.abort }),
+    ...(opts.checkpoint !== undefined && { checkpoint: opts.checkpoint }),
   };
   return {
     ctx,
@@ -1309,5 +1317,95 @@ describe("PeerTeamTopology — coordination.mergeStreams (v0.7 stage 7C)", () =>
     await new PeerTeamTopology().run(spec, ctx);
     expect(captured).toEqual([{ targetStream: "main", strategy: "no-ff" }]);
     await cleanup();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Crash-recovery T3b — checkpoint skip + in-flight re-dispatch (peer-team)
+// ---------------------------------------------------------------------------
+
+describe("PeerTeamTopology crash-recovery (T3b)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("resume: skips a member that already succeeded and reuses its output", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "peer-cp-"));
+    const cpPath = join(tmp, "checkpoint.json");
+    const spec = peerSpec([member("m1", "first"), member("m2", "second")]);
+
+    const seed = await openTeamCheckpoint({ checkpointPath: cpPath, spec });
+    await seed.record({
+      id: "m1",
+      status: "succeeded",
+      output: "cached-m1",
+      completedAt: 1,
+    });
+    await seed.close();
+
+    const store = await openTeamCheckpoint({ checkpointPath: cpPath, spec });
+    expect(store.resumed).toBe(true);
+    // Only m2 is spawned this run.
+    const { ctx, harness, cleanup } = await makeCtx({
+      handleOpts: [{ result: successResult("fresh-m2") }],
+      checkpoint: store,
+    });
+
+    const result = await new PeerTeamTopology().run(spec, ctx);
+    await store.close();
+
+    expect(harness.spawns).toHaveLength(1);
+    expect(harness.spawns[0]!.prompt).toContain("second");
+    expect(harness.spawns[0]!.prompt).not.toContain("[Resumed after interruption]");
+    expect(result.succeeded).toBe(2); // m1 (cached) + m2 (fresh)
+    expect(result.aggregateOutput).toContain("cached-m1");
+    expect(result.aggregateOutput).toContain("fresh-m2");
+
+    const after = await openTeamCheckpoint({ checkpointPath: cpPath, spec });
+    expect(after.isDone("m2")).toBe(true);
+    await after.close();
+    await cleanup();
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  it("resume: re-dispatches an in-flight member with preamble + per-unit sidecar", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "peer-cp-"));
+    const cpPath = join(tmp, "checkpoint.json");
+    const spec = peerSpec([member("m1", "first"), member("m2", "second")]);
+
+    const seed = await openTeamCheckpoint({ checkpointPath: cpPath, spec });
+    await seed.markDispatched({
+      id: "m1",
+      sidecarPath: seed.sidecarPathFor("m1"),
+      dispatchedAt: 1,
+    });
+    await seed.close();
+
+    const store = await openTeamCheckpoint({ checkpointPath: cpPath, spec });
+    expect(store.resumed).toBe(true);
+    expect(store.resumedInFlightCount).toBe(1);
+    const { ctx, harness, cleanup } = await makeCtx({
+      handleOpts: [
+        { result: successResult("o1") },
+        { result: successResult("o2") },
+      ],
+      checkpoint: store,
+    });
+
+    await new PeerTeamTopology().run(spec, ctx);
+    await store.close();
+
+    expect(harness.spawns).toHaveLength(2);
+    const m1 = harness.spawns.find((sp) => sp.sidecar?.includes("m1"))!;
+    const m2 = harness.spawns.find((sp) => sp.sidecar?.includes("m2"))!;
+    // m1 re-dispatched WITH preamble (on top of teammate augmentation); m2 fresh.
+    expect(m1.prompt).toContain("[Resumed after interruption]");
+    expect(m1.prompt).toContain("first");
+    expect(m2.prompt).not.toContain("[Resumed after interruption]");
+    expect(m2.prompt).toContain("second");
+    expect(m1.sidecar).toBeDefined();
+    expect(m2.sidecar).toBeDefined();
+    await cleanup();
+    await rm(tmp, { recursive: true, force: true });
   });
 });
