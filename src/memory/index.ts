@@ -83,3 +83,20 @@ export {
   type TurnCompleteInfo,
   type SessionEndInfo,
 } from "./lifecycle.js";
+
+export {
+  maybeAutoConsolidate,
+  evaluateConsolidationCadence,
+  resolveCadenceOptions,
+  resolveCommand,
+  resolveOnPath,
+  stateFilePath,
+  readState,
+  writeState,
+  resetSpawnClock,
+  type ConsolidateState,
+  type CadenceOptions,
+  type CadenceDecision,
+  type MaybeConsolidateOptions,
+  type MaybeConsolidateResult,
+} from "./auto-consolidate.js";

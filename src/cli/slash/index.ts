@@ -1,10 +1,8 @@
 /**
- * Slash command registry — real 14-command registry for the ink REPL.
+ * Slash command registry for the interactive REPL.
  *
- * Phase 3 canonical path: `buildDefaultRegistry(deps)` returns a registry
- * pre-populated with all 14 commands. The stub registry in
- * `src/ui/repl/state.ts` (`createStubSlashRegistry`) is a Phase 2 fallback
- * used when tests or the App receive no registry.
+ * `buildDefaultRegistry(deps)` returns a registry pre-populated with the
+ * built-in commands (the array below is the source of truth).
  *
  * Each command is a `SlashCommand`; its `execute(ctx)` returns a
  * `SlashCommandResult` that the REPL translates into reducer events and/or
@@ -29,6 +27,7 @@ import { tasksCommand } from "./commands/tasks.js";
 import { stopCommand } from "./commands/stop.js";
 import { compactCommand } from "./commands/compact.js";
 import { pluginCommand } from "./commands/plugin.js";
+import { planCommand } from "./commands/plan.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -56,6 +55,9 @@ export interface SlashCommandContext {
   readonly setModel: (m: string) => void;
   readonly getPermissionMode: () => PermissionMode;
   readonly setPermissionMode: (m: PermissionMode) => void;
+  /** Live plan-mode flag. `/plan` reads/toggles it; defaults to a no-op pair. */
+  readonly getPlanMode: () => boolean;
+  readonly setPlanMode: (on: boolean) => void;
   readonly abort?: AbortController;
   readonly sessionLogPath?: string;
   /** Optional plugin state store. `/plugin` falls back to a default store when absent. */
@@ -87,6 +89,8 @@ export interface BuildDefaultRegistryDeps {
   readonly setModel?: (m: string) => void;
   readonly getPermissionMode?: () => PermissionMode;
   readonly setPermissionMode?: (m: PermissionMode) => void;
+  readonly getPlanMode?: () => boolean;
+  readonly setPlanMode?: (on: boolean) => void;
   readonly host?: SwarmHost;
   readonly sessionLogPath?: string;
   readonly abort?: AbortController;
@@ -101,7 +105,7 @@ const ZERO_USAGE: Usage = {
 };
 
 /**
- * Construct a registry pre-populated with all 14 slash commands.
+ * Construct a registry pre-populated with all built-in slash commands.
  * All `deps` fields are optional; omitted ones fall back to safe defaults
  * (zero usage, identity-no-op setters, etc.).
  */
@@ -122,6 +126,7 @@ export function buildDefaultRegistry(
     stopCommand,
     compactCommand,
     pluginCommand,
+    planCommand,
   ];
 
   const byName = new Map<string, SlashCommand>();
@@ -162,6 +167,8 @@ export function buildSlashContext(
     getPermissionMode:
       deps.getPermissionMode ?? (() => state.permissionMode),
     setPermissionMode: deps.setPermissionMode ?? (() => undefined),
+    getPlanMode: deps.getPlanMode ?? (() => false),
+    setPlanMode: deps.setPlanMode ?? (() => undefined),
     abort: deps.abort,
     sessionLogPath: deps.sessionLogPath,
     pluginStore: deps.pluginStore,

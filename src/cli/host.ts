@@ -40,6 +40,7 @@ function hostedAcpOpts(permissionMode: PermissionMode, model?: string): CommonOp
     hooks: true,
     dumpTools: false,
     enableWebSearch: false,
+    plan: false,
     framework: "auto",
   };
 }

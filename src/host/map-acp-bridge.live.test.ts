@@ -33,6 +33,7 @@ const acpOpts: CommonOpts = {
   hooks: false,
   dumpTools: false,
   enableWebSearch: false,
+  plan: false,
   framework: "auto",
 };
 

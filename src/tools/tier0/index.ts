@@ -8,6 +8,7 @@
 
 import type { ToolImpl } from "../types.js";
 
+import { applyPatchTool } from "./apply_patch.js";
 import { bashTool } from "./bash.js";
 import { editFileTool } from "./edit_file.js";
 import { globTool } from "./glob.js";
@@ -29,6 +30,7 @@ export function buildTier0Tools(): readonly ToolImpl[] {
     writeFileTool,
     editFileTool,
     multiEditTool,
+    applyPatchTool,
     globTool,
     grepTool,
     todoWriteTool,
@@ -43,6 +45,7 @@ export function buildTier0Tools(): readonly ToolImpl[] {
 
 // Named re-exports for direct access where needed.
 export {
+  applyPatchTool,
   bashTool,
   editFileTool,
   globTool,

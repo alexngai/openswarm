@@ -5,6 +5,7 @@ import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { headTailTruncate } from "./internal.js";
 import { getHardenedEnv } from "./process-hardening.js";
 import { spawnSandboxed, type SandboxPolicy } from "./sandbox.js";
+import { cleanOutput } from "./output-cleanse.js";
 
 let _sandboxPolicy: SandboxPolicy = "prefer";
 
@@ -94,8 +95,17 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
       clearTimeout(timer);
       ctx.abort?.removeEventListener("abort", onAbort);
 
-      const stdout = headTailTruncate(Buffer.concat(stdoutChunks));
-      const stderr = headTailTruncate(Buffer.concat(stderrChunks));
+      // Cleanse first (strip ANSI/progress noise, redact secrets, elide long
+      // lines), then head/tail truncate the cleansed bytes. Cleansing before
+      // truncation means the preserved head/tail carry signal, not escape codes.
+      const cleanse = (chunks: Buffer[]): string => {
+        const raw = Buffer.concat(chunks).toString("utf8");
+        const cleaned = cleanOutput(raw, { command: input.command }).text;
+        return headTailTruncate(Buffer.from(cleaned, "utf8"));
+      };
+
+      const stdout = cleanse(stdoutChunks);
+      const stderr = cleanse(stderrChunks);
 
       let output = stdout;
       if (stderr) {

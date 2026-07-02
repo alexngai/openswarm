@@ -5,10 +5,10 @@
  * requestPermission round-trip) rather than calling AcpAgent methods directly.
  *
  * The deterministic cases use a scripted/gating engine and run in CI. The live
- * case (gated by SWARM_ACP_LIVE=1) builds the real runtime and drives an actual
+ * case (gated by OPENSWARM_ACP_LIVE=1) builds the real runtime and drives an actual
  * model turn — run it with a Claude credential available:
  *
- *   SWARM_ACP_LIVE=1 npx vitest run src/acp/e2e.test.ts
+ *   OPENSWARM_ACP_LIVE=1 npx vitest run src/acp/e2e.test.ts
  */
 
 import { describe, it, expect } from "vitest";
@@ -276,10 +276,10 @@ describe("ACP e2e (ClientSideConnection <-> AcpAgent)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Live e2e — gated by SWARM_ACP_LIVE=1 (needs a Claude credential)
+// Live e2e — gated by OPENSWARM_ACP_LIVE=1 (needs a Claude credential)
 // ---------------------------------------------------------------------------
 
-const LIVE = process.env.SWARM_ACP_LIVE === "1";
+const LIVE = process.env.OPENSWARM_ACP_LIVE === "1";
 
 describe("ACP e2e (live model)", () => {
   (LIVE ? it : it.skip)(
@@ -295,6 +295,7 @@ describe("ACP e2e (live model)", () => {
         hooks: false,
         dumpTools: false,
         enableWebSearch: false,
+        plan: false,
         framework: "auto",
       };
       const built = await buildAgentRuntime(liveOpts);

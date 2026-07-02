@@ -280,8 +280,11 @@ export async function buildAgentRuntime(
     return { kind: "exit", code: 0 };
   }
 
-  // 3. Build permission engine.
-  const permEngine = new PermissionEngine(opts.permissionMode);
+  // 3. Build permission engine. Plan mode narrows the effective mode to
+  //    read-only regardless of the user's requested ceiling (headless / ACP
+  //    enforce this here; the REPL additionally tracks it as a mutable local).
+  const effectivePermissionMode = opts.plan ? "read-only" : opts.permissionMode;
+  const permEngine = new PermissionEngine(effectivePermissionMode);
 
   // 4. RunConfig auth source (the Anthropic SDK engine's auth).
   const auth = new AnthropicEnvAuth();
@@ -349,9 +352,8 @@ export async function buildAgentRuntime(
     } else if (opts.framework === "native" || opts.framework === "hardened-native") {
       if (resolved.kind !== "native") {
         process.stderr.write(
-          `error: --framework ${opts.framework} does not support Claude models in M4a.\n` +
-            "Use `--framework auto` (default) or `--framework claude-agent-sdk`.\n" +
-            "Native-via-@ai-sdk/anthropic is scheduled for M4b.\n",
+          `error: --framework ${opts.framework} does not support Claude models.\n` +
+            "Use `--framework auto` (default) or `--framework claude-agent-sdk`.\n",
         );
         return { kind: "exit", code: 2 };
       }

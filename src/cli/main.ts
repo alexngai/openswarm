@@ -43,7 +43,7 @@ import { checkBudget } from "../core/budget.js";
 import type { CommonOpts } from "./argv.js";
 import type { NormalizedEvent } from "../core/types.js";
 import type { RunConfig } from "../engine/index.js";
-import { buildSystemPrompt } from "../engine/default-system-prompt.js";
+import { buildSystemPrompt, applyPlanMode } from "../engine/default-system-prompt.js";
 import { enrichTurnInputs } from "../memory/index.js";
 import { VERSION } from "../index.js";
 
@@ -71,6 +71,8 @@ Flags:
   --resume <session-id|latest>   Resume a previous session
   --permission-mode <mode>       read-only | workspace-write | danger-full-access
                                  (default: workspace-write)
+  --plan                         Read-only plan mode: investigate + design, no edits
+                                 (forces read-only; toggle live with /plan)
   --output-format <fmt>          text | json (default: text)
   --headless                     Force JSONL output even on a TTY
   --no-plugins                   Disable plugin discovery at startup
@@ -92,6 +94,7 @@ Examples:
   openswarm prompt --model sonnet "refactor src/foo.ts"
   openswarm --resume latest "continue where we left off"
   openswarm --permission-mode read-only "what does this code do?"
+  openswarm --plan "design a fix for the flaky auth test"
   openswarm doctor
   openswarm init
   openswarm swarm run tasks.jsonl --concurrency 5 --output out.jsonl
@@ -189,7 +192,11 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   // 9. Build permission gate. The shared body lives in ../permissions/gate.ts.
   // `currentPermissionMode` is the live mutable binding updated by /permissions
   // across turns; the gate reads it fresh on every call.
-  let currentPermissionMode = opts.permissionMode;
+  // Plan mode narrows the effective starting mode to read-only while keeping
+  // opts.permissionMode as the ceiling (so `/plan off` can restore write).
+  let currentPermissionMode = opts.plan ? "read-only" : opts.permissionMode;
+  // Live plan-mode flag (toggled by `/plan`); drives the plan-persona prompt.
+  let currentPlanMode = opts.plan;
   const permissionBridge = new PermissionBridge();
   // Determined up-front so the gate and the UI route share one heuristic.
   // The interactive TUI needs bun (OpenTUI's bun:ffi). When running under plain
@@ -229,7 +236,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     // execute them (batch dispatch no-ops → every tool returns "tool failed").
     dispatcher: rt.dispatcher,
     canUseTool,
-    permissionMode: opts.permissionMode,
+    permissionMode: currentPermissionMode,
     resumeFrom,
     hooks: rt.hooksConfig,
     ...(opts.enableWebSearch ? { enabledBuiltinTools: ["WebSearch"] } : {}),
@@ -251,10 +258,11 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     const enriched = await enrichTurnInputs(config.systemPrompt, config.prompt, {
       query: text,
     });
+    const planned = applyPlanMode(enriched.systemPrompt, enriched.prompt, currentPlanMode);
     const enrichedConfig: RunConfig = {
       ...config,
-      systemPrompt: enriched.systemPrompt,
-      prompt: enriched.prompt,
+      systemPrompt: planned.systemPrompt,
+      prompt: planned.prompt,
     };
     // When budget limits are set, wrap the event stream so we can abort
     // after each event and emit a budget_exceeded JSONL line before exit.
@@ -325,10 +333,11 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
       const enriched = await enrichTurnInputs(config.systemPrompt, prompt, {
         query: prompt,
       });
+      const planned = applyPlanMode(enriched.systemPrompt, enriched.prompt, currentPlanMode);
       return {
         ...config,
-        systemPrompt: enriched.systemPrompt,
-        prompt: enriched.prompt,
+        systemPrompt: planned.systemPrompt,
+        prompt: planned.prompt,
         model: currentModel,
         permissionMode: currentPermissionMode,
         abort: turnAbort.signal,
@@ -351,6 +360,14 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
       getPermissionMode: () => currentPermissionMode,
       setPermissionMode: (m) => {
         currentPermissionMode = clampPermissionMode(m, parentMode);
+      },
+      getPlanMode: () => currentPlanMode,
+      setPlanMode: (on) => {
+        currentPlanMode = on;
+        // Plan on → read-only; plan off → restore the parent ceiling.
+        currentPermissionMode = on
+          ? clampPermissionMode("read-only", parentMode)
+          : parentMode;
       },
       getUsage: () => engine.getCumulativeUsage(),
       abort: turnAbort,

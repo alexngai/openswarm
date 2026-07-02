@@ -17,6 +17,7 @@ import { FileMemoryProvider } from "./providers/file-provider.js";
 import { MinimemProvider } from "./providers/minimem-provider.js";
 import { SkillProvider } from "./providers/skill-provider.js";
 import { archiveSession } from "./archive.js";
+import { maybeAutoConsolidate } from "./auto-consolidate.js";
 
 // ---------------------------------------------------------------------------
 // Session lifecycle
@@ -40,7 +41,7 @@ export async function onSessionStart(opts?: SessionStartOptions): Promise<void> 
   // Register MinimemProvider if not already present and not disabled
   if (
     !coordinator.providerNames.includes("minimem") &&
-    process.env.SWARM_MEMORY_PROVIDERS !== "file"
+    process.env.OPENSWARM_MEMORY_PROVIDERS !== "file"
   ) {
     const minimemProvider = new MinimemProvider();
     try {
@@ -57,7 +58,7 @@ export async function onSessionStart(opts?: SessionStartOptions): Promise<void> 
   // present and not disabled. Only activates when its skills directory exists.
   if (
     !coordinator.providerNames.includes("skills") &&
-    process.env.SWARM_MEMORY_PROVIDERS !== "file"
+    process.env.OPENSWARM_MEMORY_PROVIDERS !== "file"
   ) {
     const skillProvider = new SkillProvider();
     try {
@@ -184,6 +185,11 @@ export async function onSessionEnd(info: SessionEndInfo): Promise<void> {
     tags: info.tags,
     toolsUsed: info.toolsUsed,
   });
+
+  // Cadence-gated, best-effort kick of the cognitive-core consolidation loop.
+  // Fire-and-forget: never blocks or fails session shutdown, and no-ops when
+  // cognitive-core (`cogcore`) is not installed.
+  void maybeAutoConsolidate().catch(() => {});
 
   // Shut down all providers
   const coordinator = getMemoryCoordinator();

@@ -54,6 +54,14 @@ export interface CommonOpts {
    */
   enableWebSearch: boolean;
   /**
+   * Plan mode: read-only investigation + design persona. When true, the
+   * *effective* permission mode is narrowed to `read-only` (in the runtime and
+   * REPL) and the plan-mode persona is appended to the system prompt.
+   * `permissionMode` above remains the user's ceiling so `/plan off` can
+   * restore write access. Toggled live in the REPL via `/plan`.
+   */
+  plan: boolean;
+  /**
    * acp subcommand: force single-agent mode (Stage A). docs/33.
    */
   readonly single?: boolean;
@@ -249,6 +257,7 @@ export function parseArgv(args: string[]): ParsedArgs {
   let hooks = true;
   let dumpTools = false;
   let enableWebSearch = false;
+  let plan = false;
   // acp subcommand mode selectors (docs/33). Default resolves in runAcp.
   let acpSingle = false;
   let acpTeam = false;
@@ -521,6 +530,12 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
+    if (tok === "--plan") {
+      plan = true;
+      i += 1;
+      continue;
+    }
+
     if (tok === "--permission-mode") {
       const val = expanded[i + 1];
       if (val === undefined || val.startsWith("-")) {
@@ -722,14 +737,14 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
-    // v0.4 stage 4K: --ecosystem shorthand. Today only enables --map (when not
-    // already set). Forward-compatible for v0.5+ which will also enable
-    // opentasks/agent-inbox/git-cascade. Print a one-line note documenting
-    // the v0.4 limitation so operators don't quietly miss the partial wiring.
+    // --ecosystem shorthand. Enables --map only (when not already set).
+    // opentasks/agent-inbox/git-cascade have their own explicit flags on
+    // `swarm run`; print a one-line note so operators don't quietly miss
+    // that --ecosystem does not turn those adapters on.
     if (tok === "--ecosystem") {
       ecosystem = true;
       process.stderr.write(
-        "[openswarm] --ecosystem v0.4 enables MAP only; opentasks/agent-inbox/git-cascade land in v0.5+.\n",
+        "[openswarm] --ecosystem enables MAP only; pass --opentasks/--agent-inbox/--git-cascade explicitly (swarm run).\n",
       );
       i++;
       continue;
@@ -929,6 +944,9 @@ export function parseArgv(args: string[]): ParsedArgs {
   const opts: CommonOpts = {
     model,
     resume,
+    // `permissionMode` stays the user's intended ceiling; plan mode narrows the
+    // *effective* mode to read-only downstream (runtime + REPL) so `/plan off`
+    // can restore write access up to this ceiling.
     permissionMode,
     outputFormat,
     headless,
@@ -938,6 +956,7 @@ export function parseArgv(args: string[]): ParsedArgs {
     hooks,
     dumpTools,
     enableWebSearch,
+    plan,
     framework,
     codexTransport,
     dumpEngine,
@@ -1043,8 +1062,8 @@ export function parseArgv(args: string[]): ParsedArgs {
 
     case "team": {
       // team start <template> [--concurrency N] [--output <path>] [--permission-mode <mode>]
-      // v0.4 stage 4K adds stubs for `send/list/stop/kill` that surface a
-      // deferred-to-v0.5 message; long-running team daemons aren't shipped yet.
+      // `send/list/stop/kill` are daemon RPC clients (see cli/team.ts) that
+      // talk to detached team daemons over their Unix sockets.
       const subSub = positionals[0];
       if (subSub === undefined) {
         return {
@@ -1231,8 +1250,8 @@ export function parseArgv(args: string[]): ParsedArgs {
           showHelp: true,
         };
       }
-      // SWARM_MAP_SERVER env is an alias for --map-server (matches cc-swarm).
-      const mapServer = hostMapServer ?? process.env.SWARM_MAP_SERVER;
+      // OPENSWARM_MAP_SERVER env is an alias for --map-server (matches cc-swarm).
+      const mapServer = hostMapServer ?? process.env.OPENSWARM_MAP_SERVER;
       return {
         kind: "host",
         port: hostPort,

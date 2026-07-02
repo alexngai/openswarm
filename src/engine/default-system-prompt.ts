@@ -174,6 +174,7 @@ When referencing files in your response, include the relevant start line:
 - Use \`edit_file\` for targeted edits via exact-string replacement. The replacement string must be unique in the file.
 - Use \`multi_edit\` for multiple replacements in a single file as an atomic operation. Edits chain: each subsequent edit operates on the output of the previous one.
 - Use \`write_file\` to create new files or for complete rewrites of existing files.
+- Use \`apply_patch\` to add, update, delete, or rename several files in one atomic patch (\`*** Begin Patch\` … \`*** End Patch\`); every operation is validated before any is applied.
 - Use \`read_file\` before editing to understand the current file contents. Do not re-read after editing — tool failure indicates an unsuccessful edit.
 - Always use absolute paths when calling file tools.
 
@@ -195,6 +196,25 @@ When referencing files in your response, include the relevant start line:
 - Do not introduce security vulnerabilities (injection, XSS, SSRF, path traversal, etc.).
 - Do not commit secrets, credentials, or API keys.
 - Refuse requests that would cause harm to systems or people.`;
+
+/**
+ * Plan-mode persona. Appended when the agent runs in the read-only "plan"
+ * mode (`--plan` / `/plan`). Pairs with `read-only` permission enforcement:
+ * permissions physically block writes; this suffix reorients the model toward
+ * investigation and design rather than repeatedly bumping into denied edits.
+ */
+export const PLAN_MODE_SUFFIX = `## Plan mode (read-only)
+
+You are in **plan mode**. File edits and mutating commands are disabled by the
+permission layer — do not attempt them; they will be denied.
+
+- Investigate thoroughly: read files, search the codebase, and run read-only
+  commands to understand the current state.
+- Produce a concrete, step-by-step implementation plan: the files you would
+  change, the approach, edge cases, tests, and risks/trade-offs.
+- Do NOT write code to disk or run mutating commands. Present the plan and stop.
+- When the user is satisfied, they will switch you out of plan mode (e.g.
+  \`/plan off\` or a non-read-only permission mode) before you implement.`;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -218,6 +238,12 @@ export interface SystemPromptOptions {
    * working-directory section.
    */
   readonly cwd?: string;
+  /**
+   * When true, append the read-only plan-mode persona (`PLAN_MODE_SUFFIX`)
+   * after everything else. Highest priority — it must land last so plan
+   * constraints win over role/extension guidance.
+   */
+  readonly planMode?: boolean;
 }
 
 /**
@@ -240,7 +266,33 @@ export function buildSystemPrompt(opts?: SystemPromptOptions): string {
     parts.push(opts.roleSuffix);
   }
 
+  if (opts?.planMode) {
+    parts.push(PLAN_MODE_SUFFIX);
+  }
+
   return parts.join("\n\n");
+}
+
+/**
+ * Compose the plan-mode persona onto an existing run config's prompt pair,
+ * engine-agnostically:
+ *   - Native/hardened engines carry a non-empty `systemPrompt` → append the
+ *     persona there.
+ *   - The SDK engine uses an empty `systemPrompt` (the `claude_code` preset);
+ *     writing a system prompt would clobber the preset, so the persona is
+ *     prepended to the user prompt instead (same tactic as memory enrichment).
+ * A no-op when `planMode` is false.
+ */
+export function applyPlanMode(
+  systemPrompt: string,
+  prompt: string,
+  planMode: boolean,
+): { systemPrompt: string; prompt: string } {
+  if (!planMode) return { systemPrompt, prompt };
+  if (systemPrompt.length > 0) {
+    return { systemPrompt: `${systemPrompt}\n\n${PLAN_MODE_SUFFIX}`, prompt };
+  }
+  return { systemPrompt, prompt: `${PLAN_MODE_SUFFIX}\n\n---\n\n${prompt}` };
 }
 
 /**

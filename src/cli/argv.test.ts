@@ -95,6 +95,22 @@ describe("parseArgv", () => {
     expect(result.opts.permissionMode).toBe("danger-full-access");
   });
 
+  it("--plan sets plan mode and defaults are otherwise unchanged", () => {
+    const result = parseArgv(["--plan", "investigate the bug"]);
+    if (result.kind !== "prompt") throw new Error("expected prompt");
+    expect(result.opts.plan).toBe(true);
+    // permissionMode stays the user's ceiling (default) — plan narrows the
+    // *effective* mode to read-only downstream (runtime/REPL), not here.
+    expect(result.opts.permissionMode).toBe("workspace-write");
+    expect(result.text).toBe("investigate the bug");
+  });
+
+  it("plan defaults to false without --plan", () => {
+    const result = parseArgv(["hello"]);
+    if (result.kind !== "prompt") throw new Error("expected prompt");
+    expect(result.opts.plan).toBe(false);
+  });
+
   it("--headless flag sets headless in opts", () => {
     const result = parseArgv(["--headless", "say hi"]);
     if (result.kind !== "prompt") throw new Error("expected prompt");
@@ -660,17 +676,17 @@ describe("parseArgv", () => {
     });
   });
 
-  it("host reads SWARM_MAP_SERVER env as a --map-server alias", () => {
-    const prev = process.env.SWARM_MAP_SERVER;
-    process.env.SWARM_MAP_SERVER = "ws://envhub:7836";
+  it("host reads OPENSWARM_MAP_SERVER env as a --map-server alias", () => {
+    const prev = process.env.OPENSWARM_MAP_SERVER;
+    process.env.OPENSWARM_MAP_SERVER = "ws://envhub:7836";
     try {
       expect(parseArgv(["host", "--port", "9000"])).toMatchObject({
         kind: "host",
         mapServer: "ws://envhub:7836",
       });
     } finally {
-      if (prev !== undefined) process.env.SWARM_MAP_SERVER = prev;
-      else delete process.env.SWARM_MAP_SERVER;
+      if (prev !== undefined) process.env.OPENSWARM_MAP_SERVER = prev;
+      else delete process.env.OPENSWARM_MAP_SERVER;
     }
   });
 });
