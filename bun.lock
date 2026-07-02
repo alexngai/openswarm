@@ -21,7 +21,7 @@
         "git-cascade": "^0.0.7",
         "minimem": "^0.1.3",
         "proper-lockfile": "4.1.2",
-        "sessionlog": "^0.0.8",
+        "sessionlog": "^0.1.0",
         "skill-tree": "^0.3.0",
         "solid-js": "^1.9.11",
         "turndown": "^7.2.4",
@@ -1062,7 +1062,7 @@
 
     "serve-static": ["serve-static@2.2.1", "", { "dependencies": { "encodeurl": "^2.0.0", "escape-html": "^1.0.3", "parseurl": "^1.3.3", "send": "^1.2.0" } }, "sha512-xRXBn0pPqQTVQiC8wyQrKs2MOlX24zQ0POGaj0kultvoOCstBQM5yvOhAVSUwOMjQtTvsPWoNCHfPGwaaQJhTw=="],
 
-    "sessionlog": ["sessionlog@0.0.8", "", { "peerDependencies": { "@opentelemetry/api": "^1.9.0", "@opentelemetry/exporter-logs-otlp-proto": "^0.57.0", "@opentelemetry/exporter-metrics-otlp-proto": "^0.57.0", "@opentelemetry/exporter-trace-otlp-proto": "^0.57.0", "@opentelemetry/resources": "^1.30.0", "@opentelemetry/sdk-logs": "^0.57.0", "@opentelemetry/sdk-metrics": "^1.30.0", "@opentelemetry/sdk-trace-base": "^1.30.0", "@opentelemetry/sdk-trace-node": "^1.30.0" }, "optionalPeers": ["@opentelemetry/api", "@opentelemetry/exporter-logs-otlp-proto", "@opentelemetry/exporter-metrics-otlp-proto", "@opentelemetry/exporter-trace-otlp-proto", "@opentelemetry/resources", "@opentelemetry/sdk-logs", "@opentelemetry/sdk-metrics", "@opentelemetry/sdk-trace-base", "@opentelemetry/sdk-trace-node"], "bin": { "sessionlog": "dist/cli.js" } }, "sha512-36/QPTs89pv768hAfeZzeK0rKZGQFVoHN2wJ2+oqkVo6s65vEUm+cSRhPU0nO/7/t+G4Iw5mrTuxdJwcHeXgIg=="],
+    "sessionlog": ["sessionlog@0.1.0", "", { "peerDependencies": { "@opentelemetry/api": "^1.9.0", "@opentelemetry/exporter-logs-otlp-proto": "^0.57.0", "@opentelemetry/exporter-metrics-otlp-proto": "^0.57.0", "@opentelemetry/exporter-trace-otlp-proto": "^0.57.0", "@opentelemetry/resources": "^1.30.0", "@opentelemetry/sdk-logs": "^0.57.0", "@opentelemetry/sdk-metrics": "^1.30.0", "@opentelemetry/sdk-trace-base": "^1.30.0", "@opentelemetry/sdk-trace-node": "^1.30.0" }, "optionalPeers": ["@opentelemetry/api", "@opentelemetry/exporter-logs-otlp-proto", "@opentelemetry/exporter-metrics-otlp-proto", "@opentelemetry/exporter-trace-otlp-proto", "@opentelemetry/resources", "@opentelemetry/sdk-logs", "@opentelemetry/sdk-metrics", "@opentelemetry/sdk-trace-base", "@opentelemetry/sdk-trace-node"], "bin": { "sessionlog": "dist/cli.js" } }, "sha512-0Kff1jBB5sagJ8lKVwcF/EulYmiK0HjW0kZmKlcdQnPYjAraO/MHdkfHnFUaA5bCA49GRC8AYjWgt1PkDFkRYg=="],
 
     "setprototypeof": ["setprototypeof@1.2.0", "", {}, "sha512-E5LDX7Wrp85Kil5bhZv46j8jOeboKq5JMmYM3gVGdGH8xFpPWXUMsNrlODCrkoxMEeNi/XZIwuRvY4XNwYMJpw=="],
 
