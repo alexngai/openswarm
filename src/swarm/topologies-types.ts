@@ -82,6 +82,14 @@ export interface TopologyContext {
    * testing; dormant until P1 wires recovery dispatch into the landing path.
    */
   readonly recoveryRegistry?: import("./recovery/registry.js").RecoveryRegistry;
+  /**
+   * docs/28 — team crash-recovery (T1). When present, topologies consult it to
+   * skip units that already succeeded in a prior (crashed) run and record each
+   * unit's terminal outcome so a restart resumes mid-topology. Optional:
+   * absent means "no recovery" and topologies behave exactly as before.
+   * Adoption is per-topology; unadopted topologies ignore it.
+   */
+  readonly checkpoint?: import("./team-checkpoint.js").TeamCheckpointStore;
 }
 
 /**

@@ -11,6 +11,7 @@
  *   OPENSWARM_DAEMON_PID     — pid file path
  *   OPENSWARM_DAEMON_EVENTS  — events.jsonl path
  *   OPENSWARM_DAEMON_STATE   — team-state.json path
+ *   OPENSWARM_DAEMON_CHECKPOINT — team-checkpoint.json path (crash-recovery)
  */
 
 import * as fsp from "node:fs/promises";
@@ -23,6 +24,7 @@ const REQUIRED_ENV = [
   "OPENSWARM_DAEMON_PID",
   "OPENSWARM_DAEMON_EVENTS",
   "OPENSWARM_DAEMON_STATE",
+  "OPENSWARM_DAEMON_CHECKPOINT",
 ] as const;
 
 export async function runTeamDaemonEntry(): Promise<number> {
@@ -40,6 +42,7 @@ export async function runTeamDaemonEntry(): Promise<number> {
   const pidPath = process.env.OPENSWARM_DAEMON_PID!;
   const eventsPath = process.env.OPENSWARM_DAEMON_EVENTS!;
   const statePath = process.env.OPENSWARM_DAEMON_STATE!;
+  const checkpointPath = process.env.OPENSWARM_DAEMON_CHECKPOINT!;
 
   let spec: TeamSpec;
   try {
@@ -61,7 +64,7 @@ export async function runTeamDaemonEntry(): Promise<number> {
 
   const daemon = new TeamDaemon({
     spec,
-    paths: { sockPath, pidPath, eventsPath, statePath },
+    paths: { sockPath, pidPath, eventsPath, statePath, checkpointPath },
   });
 
   try {

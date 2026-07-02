@@ -13,6 +13,7 @@ import { PassThrough } from "node:stream";
 import { FanoutTopology } from "./fanout.js";
 import { WorkerPool } from "../worker-pool.js";
 import { DeadLetterWriter } from "../dead-letter.js";
+import { openTeamCheckpoint } from "../team-checkpoint.js";
 import type { TeamSpec } from "../team-spec.js";
 import type { TopologyContext } from "../topologies-types.js";
 import type { StandaloneHost } from "../standalone-host.js";
@@ -312,6 +313,101 @@ describe("FanoutTopology (direct invocation)", () => {
 
     const summary = await new FanoutTopology().run(singleMemberSpec(), ctx);
     expect(summary.cancelled).toBe(1);
+
+    await deadLetter.close();
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  // -----------------------------------------------------------------------
+  // docs/28 — team crash-recovery (T1)
+  // -----------------------------------------------------------------------
+
+  function twoMemberSpec(): TeamSpec {
+    return {
+      name: "fanout-cp",
+      topology: "fanout",
+      members: [
+        { id: "m1", role: "", prompt: "p1", branchPolicy: { kind: "none" }, commitPolicy: { kind: "none" }, escalationPolicy: { kind: "none" } },
+        { id: "m2", role: "", prompt: "p2", branchPolicy: { kind: "none" }, commitPolicy: { kind: "none" }, escalationPolicy: { kind: "none" } },
+      ],
+      coordination: { completion: { kind: "all" } },
+    };
+  }
+
+  it("records each task's terminal outcome into the checkpoint", async () => {
+    const host = fakeHost(async () => makeHandle(successResult("ok")));
+    const pool = new WorkerPool(2);
+    const tmp = await mkdtemp(join(tmpdir(), "fanout-cp-"));
+    const deadLetter = new DeadLetterWriter(join(tmp, "dl.jsonl"));
+    const resultsOut = new PassThrough();
+    resultsOut.resume();
+    const cpPath = join(tmp, "checkpoint.json");
+    const spec = twoMemberSpec();
+    const store = await openTeamCheckpoint({ checkpointPath: cpPath, spec });
+
+    const ctx: TopologyContext = {
+      host,
+      pool,
+      resultsOut,
+      deadLetter,
+      permissionMode: "workspace-write",
+      checkpoint: store,
+    };
+    await new FanoutTopology().run(spec, ctx);
+    await store.close();
+
+    expect(store.isDone("m1")).toBe(true);
+    expect(store.isDone("m2")).toBe(true);
+
+    await deadLetter.close();
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  it("resumes: skips a checkpointed task (no re-spawn) and replays its result line", async () => {
+    let spawnCount = 0;
+    const spawnedIds: string[] = [];
+    const host = fakeHost(async (req) => {
+      spawnCount++;
+      spawnedIds.push(req.task.id ?? "?");
+      return makeHandle(successResult("fresh-m2"));
+    });
+    const pool = new WorkerPool(2);
+    const tmp = await mkdtemp(join(tmpdir(), "fanout-resume-"));
+    const deadLetter = new DeadLetterWriter(join(tmp, "dl.jsonl"));
+    const resultsOut = new PassThrough();
+    const collect = collectJsonl(resultsOut);
+    const cpPath = join(tmp, "checkpoint.json");
+    const spec = twoMemberSpec();
+
+    // Pre-seed: m1 already succeeded in a prior run.
+    const seed = await openTeamCheckpoint({ checkpointPath: cpPath, spec });
+    await seed.record({ id: "m1", status: "succeeded", output: "cached-m1", completedAt: 1 });
+    await seed.close();
+
+    const store = await openTeamCheckpoint({ checkpointPath: cpPath, spec });
+    expect(store.resumed).toBe(true);
+
+    const ctx: TopologyContext = {
+      host,
+      pool,
+      resultsOut,
+      deadLetter,
+      permissionMode: "workspace-write",
+      checkpoint: store,
+    };
+    const summary = await new FanoutTopology().run(spec, ctx);
+    await store.close();
+    resultsOut.end();
+    const lines = (await collect) as Array<{ id: string; status: string; output?: string }>;
+
+    // m1 skipped → only m2 spawned; both counted succeeded.
+    expect(spawnCount).toBe(1);
+    expect(spawnedIds).toEqual(["m2"]);
+    expect(summary.succeeded).toBe(2);
+
+    const byId = new Map(lines.map((l) => [l.id, l]));
+    expect(byId.get("m1")?.output).toBe("cached-m1"); // replayed from checkpoint
+    expect(byId.get("m2")?.output).toBe("fresh-m2");
 
     await deadLetter.close();
     await rm(tmp, { recursive: true, force: true });

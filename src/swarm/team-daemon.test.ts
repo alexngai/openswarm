@@ -34,6 +34,7 @@ function tmpPaths(): TeamDaemonPaths {
     pidPath: path.join(dir, "daemon.pid"),
     eventsPath: path.join(dir, "events.jsonl"),
     statePath: path.join(dir, "state.json"),
+    checkpointPath: path.join(dir, "checkpoint.json"),
   };
 }
 

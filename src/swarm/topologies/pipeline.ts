@@ -78,6 +78,47 @@ export class PipelineTopology implements Topology {
         }
 
         const member = spec.members[i]!;
+        const stageId = member.id ?? `stage-${i + 1}`;
+
+        // Team crash-recovery (T1): if this stage already succeeded in a prior
+        // (crashed) run, replay its stored output — thread it forward and write
+        // its result line — without re-spawning. A non-success prior outcome
+        // never reaches here (the pipeline halts on failure, so only preceding
+        // succeeded stages are checkpointed), so this cleanly resumes at the
+        // first not-yet-succeeded stage.
+        const priorUnit = ctx.checkpoint?.get(stageId);
+        if (priorUnit?.status === "succeeded") {
+          const resumedResult: AgentResult = {
+            status: "success",
+            output: priorUnit.output ?? "",
+            usage: { inputTokens: 0, outputTokens: 0 },
+            wallClockMs: 0,
+          };
+          stageResults.push(resumedResult);
+          counts.succeeded++;
+          prevOutput = priorUnit.output ?? prevOutput;
+          const writeP = writeStageResult(
+            ctx,
+            member,
+            resumedResult,
+            priorUnit.agentId,
+            priorUnit.sessionId,
+            i,
+          );
+          await writeP.catch((e) => {
+            firstResultWriteError ??= e;
+            resultWriteFailures++;
+          });
+          ctx.host.emit({
+            type: "team_note",
+            payload: {
+              teamName: spec.name,
+              scope: team.scope,
+              note: `stage ${stageId} skipped (resumed from checkpoint)`,
+            },
+          });
+          continue;
+        }
 
         // Acquire a pool slot — pipeline is sequential so only one member is
         // ever in flight. Mirrors FanoutTopology's pool acquire pattern; if
@@ -153,6 +194,19 @@ export class PipelineTopology implements Topology {
           firstResultWriteError ??= e;
           resultWriteFailures++;
         });
+
+        // Team crash-recovery (T1): record this stage's terminal outcome so a
+        // restart resumes at the next stage. Best-effort; never fails the run.
+        await ctx.checkpoint
+          ?.record({
+            id: stageId,
+            status: result.status === "success" ? "succeeded" : "failed",
+            agentId: handle?.agentId,
+            sessionId: handle?.sessionId,
+            completedAt: Date.now(),
+            ...(result.status === "success" && { output: result.output }),
+          })
+          .catch(() => {});
 
         if (result.status === "success") {
           counts.succeeded++;

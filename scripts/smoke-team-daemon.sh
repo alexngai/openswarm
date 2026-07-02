@@ -56,6 +56,7 @@ SPEC="$TEAM_DIR/spec.json"
 PID_FILE="$TEAM_DIR/daemon.pid"
 EVENTS="$TEAM_DIR/events.jsonl"
 STATE="$TEAM_DIR/state.json"
+CHECKPOINT="$TEAM_DIR/checkpoint.json"
 LOG="$TEAM_DIR/daemon.log"
 
 # Resolve the (possibly hash-shortened) socket path the same way
@@ -102,6 +103,7 @@ OPENSWARM_DAEMON_SOCK="$SOCK" \
 OPENSWARM_DAEMON_PID="$PID_FILE" \
 OPENSWARM_DAEMON_EVENTS="$EVENTS" \
 OPENSWARM_DAEMON_STATE="$STATE" \
+OPENSWARM_DAEMON_CHECKPOINT="$CHECKPOINT" \
   $BIN --team-daemon > "$LOG" 2>&1 &
 FORKED_PID=$!
 

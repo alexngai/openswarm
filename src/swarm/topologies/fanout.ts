@@ -67,6 +67,29 @@ export class FanoutTopology implements Topology {
 
     // Per-task processing — copy of legacy Orchestrator.run() body.
     const runs = tasks.map(async (task) => {
+      // Team crash-recovery (T1): if this task already succeeded in a prior
+      // (crashed) run, replay its stored result line and skip re-dispatch —
+      // before consuming a pool slot. Non-success prior outcomes fall through
+      // and re-run normally (auto-resume skips proven-good work only).
+      const priorUnit = ctx.checkpoint?.get(task.id);
+      if (priorUnit?.status === "succeeded") {
+        const line = buildResumedResultLine(task, priorUnit, ctx);
+        await writeResult(line, ctx).catch((e) => {
+          firstResultWriteError ??= e;
+          resultWriteFailures++;
+        });
+        counts.succeeded++;
+        ctx.host.emit({
+          type: "team_note",
+          payload: {
+            teamName: spec.name,
+            scope: `swarm:${spec.name}`,
+            note: `task ${task.id} skipped (resumed from checkpoint)`,
+          },
+        });
+        return;
+      }
+
       let token;
       try {
         token = await ctx.pool.acquire();
@@ -489,6 +512,20 @@ export class FanoutTopology implements Topology {
           counts.cancelled++;
           break;
       }
+
+      // Team crash-recovery (T1): record this task's terminal outcome so a
+      // restart can skip it (succeeded) or re-run it (non-success). Best-effort
+      // — a checkpoint write failure must never fail the task.
+      await ctx.checkpoint
+        ?.record({
+          id: task.id,
+          status: line.status,
+          agentId: line.agentId,
+          sessionId: line.sessionId,
+          completedAt: line.completedAt,
+          ...(line.output !== undefined && { output: line.output }),
+        })
+        .catch(() => {});
     });
 
     await Promise.all(runs);
@@ -851,6 +888,26 @@ function buildResultLine(
         ...(stoppedBy !== undefined ? { stoppedBy } : {}),
       };
   }
+}
+
+/**
+ * Reconstruct a succeeded ResultLine from a checkpointed unit so the
+ * results.jsonl stream stays complete when a task is skipped on resume.
+ */
+function buildResumedResultLine(
+  task: TaskPacket,
+  unit: import("../team-checkpoint.js").CompletedUnit,
+  ctx: TopologyContext,
+): ResultLine {
+  return {
+    id: task.id,
+    status: "succeeded",
+    wallClockMs: 0,
+    agentId: unit.agentId ?? ctx.host.agentId,
+    sessionId: unit.sessionId ?? "resumed",
+    completedAt: unit.completedAt,
+    ...(unit.output !== undefined && { output: unit.output }),
+  };
 }
 
 function buildCancelled(

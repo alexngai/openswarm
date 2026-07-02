@@ -23,6 +23,11 @@ import type { LaneEvent } from "./events.js";
 import type { TeamSession } from "./team-session.js";
 import { Orchestrator } from "./orchestrator.js";
 import { StandaloneHost } from "./standalone-host.js";
+import { RoleRegistry, BUILTIN_ROLES, loadCustomRoles } from "./roles.js";
+import {
+  openTeamCheckpoint,
+  type TeamCheckpointStore,
+} from "./team-checkpoint.js";
 import { buildMetadataEvent, isRecordedLaneEvent } from "./wire-protocol.js";
 import {
   SendPromptParamsSchema,
@@ -44,6 +49,8 @@ export interface TeamDaemonPaths {
   readonly pidPath: string;
   readonly eventsPath: string;
   readonly statePath: string;
+  /** Durable per-team progress checkpoint for crash-recovery (docs/28 T1). */
+  readonly checkpointPath: string;
 }
 
 /**
@@ -103,6 +110,7 @@ export class TeamDaemon {
   private stopped = false;
   private eventsStream: fs.WriteStream | undefined;
   private eventsUnsubscribe: (() => void) | undefined;
+  private checkpointStore: TeamCheckpointStore | undefined;
 
   constructor(opts: TeamDaemonOptions) {
     this.opts = opts;
@@ -156,8 +164,29 @@ export class TeamDaemon {
       process.off("SIGINT", onSig);
     };
 
-    // 7. Build orchestrator if not injected.
-    this.orchestrator = this.opts.orchestrator ?? this.buildOrchestrator();
+    // 7. Build orchestrator if not injected. For the default (production)
+    //    orchestrator, open the durable checkpoint first so a restart resumes
+    //    mid-topology (docs/28 crash-recovery T1). Injected orchestrators
+    //    (tests) manage their own recovery, if any.
+    if (this.opts.orchestrator !== undefined) {
+      this.orchestrator = this.opts.orchestrator;
+    } else {
+      this.checkpointStore = await openTeamCheckpoint({
+        checkpointPath: this.opts.paths.checkpointPath,
+        spec: this.opts.spec,
+      });
+      // Resolve member roles the same way the foreground `swarm`/`team` paths
+      // do (built-ins + custom from `.openswarm/roles.json`). Without this the
+      // orchestrator has no registry and every role-bearing member fails with
+      // "unknown role" — so a detached/resumed team could never run.
+      const roles = new RoleRegistry();
+      for (const r of BUILTIN_ROLES) roles.register(r);
+      const custom = await loadCustomRoles(
+        path.join(process.cwd(), ".openswarm", "roles.json"),
+      );
+      for (const r of custom) roles.register(r);
+      this.orchestrator = this.buildOrchestrator(this.checkpointStore, roles);
+    }
 
     // 8. v0.5 stage 5E.5 — open events.jsonl writer + subscribe lane events.
     if (this.orchestrator.subscribeEvents !== undefined) {
@@ -246,6 +275,13 @@ export class TeamDaemon {
       this.eventsStream = undefined;
     }
 
+    // Flush any pending checkpoint writes before we release the socket/pid so
+    // an immediate restart sees a consistent progress record.
+    if (this.checkpointStore !== undefined) {
+      await this.checkpointStore.close().catch(() => {});
+      this.checkpointStore = undefined;
+    }
+
     await this.unlinkIfExists(this.opts.paths.sockPath);
     await this.unlinkIfExists(this.opts.paths.pidPath);
 
@@ -259,7 +295,10 @@ export class TeamDaemon {
   // Private helpers
   // -------------------------------------------------------------------------
 
-  private buildOrchestrator(): TeamDaemonOrchestrator {
+  private buildOrchestrator(
+    checkpoint?: TeamCheckpointStore,
+    roles?: RoleRegistry,
+  ): TeamDaemonOrchestrator {
     // Default production orchestrator. Writes results to a stream sink at
     // statePath (5E.5 will refine this — for now we just need a Writable).
     const resultsOut = fs.createWriteStream(this.opts.paths.statePath, {
@@ -279,6 +318,8 @@ export class TeamDaemon {
       eventsOut: this.opts.eventsOut ?? process.stderr,
       host,
       persistent: true,
+      ...(checkpoint !== undefined && { checkpoint }),
+      ...(roles !== undefined && { roles }),
     });
     // The host has a private `events` EventEmitter (same duck-typed access
     // pattern used by the host→MAP bridge in src/host/map-bridge.ts).

@@ -13,8 +13,8 @@
  * shortened socket location — the CLI client and the daemon agree without
  * needing to communicate the mapping.
  *
- * Other paths (pid, events.jsonl, state.json, daemon.log, spec.json) live
- * in the natural team dir — they have no length constraint.
+ * Other paths (pid, events.jsonl, state.json, daemon.log, spec.json,
+ * checkpoint.json) live in the natural team dir — no length constraint.
  */
 
 import * as crypto from "node:crypto";
@@ -41,6 +41,8 @@ export interface TeamPaths {
   readonly statePath: string;
   readonly logPath: string;
   readonly specPath: string;
+  /** Durable per-team progress checkpoint for crash-recovery (docs/28 T1). */
+  readonly checkpointPath: string;
 }
 
 /**
@@ -71,6 +73,7 @@ export function computeTeamPaths(teamName: string): TeamPaths {
     statePath: path.join(dir, "state.json"),
     logPath: path.join(dir, "daemon.log"),
     specPath: path.join(dir, "spec.json"),
+    checkpointPath: path.join(dir, "checkpoint.json"),
   };
 }
 

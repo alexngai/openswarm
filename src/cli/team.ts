@@ -353,6 +353,7 @@ async function detachAndForkDaemon(spec: TeamSpec): Promise<number> {
         OPENSWARM_DAEMON_PID: paths.pidPath,
         OPENSWARM_DAEMON_EVENTS: paths.eventsPath,
         OPENSWARM_DAEMON_STATE: paths.statePath,
+        OPENSWARM_DAEMON_CHECKPOINT: paths.checkpointPath,
       },
     },
   );

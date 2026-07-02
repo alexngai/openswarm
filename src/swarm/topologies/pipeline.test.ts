@@ -17,6 +17,10 @@ import { join } from "node:path";
 import { PipelineTopology } from "./pipeline.js";
 import { WorkerPool } from "../worker-pool.js";
 import { DeadLetterWriter } from "../dead-letter.js";
+import {
+  openTeamCheckpoint,
+  type TeamCheckpointStore,
+} from "../team-checkpoint.js";
 import type { TeamSpec, MemberSpec } from "../team-spec.js";
 import type { TopologyContext } from "../topologies-types.js";
 import type { StandaloneHost } from "../standalone-host.js";
@@ -128,6 +132,7 @@ function member(id: string, prompt: string): MemberSpec {
 interface RigOpts {
   readonly results: readonly AgentResult[];
   readonly abort?: AbortSignal;
+  readonly checkpoint?: TeamCheckpointStore;
 }
 
 async function makeCtx(opts: RigOpts): Promise<{
@@ -150,6 +155,7 @@ async function makeCtx(opts: RigOpts): Promise<{
     deadLetter,
     permissionMode: "workspace-write",
     ...(opts.abort !== undefined && { abort: opts.abort }),
+    ...(opts.checkpoint !== undefined && { checkpoint: opts.checkpoint }),
   };
   return {
     ctx,
@@ -485,5 +491,75 @@ describe("PipelineTopology (direct invocation)", () => {
     expect(captured[1]).toEqual({ kind: "fork", parentStreamId: "s-fixed" });
     await deadLetter.close();
     await rm(tmp, { recursive: true, force: true });
+  });
+
+  // -----------------------------------------------------------------------
+  // docs/28 — team crash-recovery (T1)
+  // -----------------------------------------------------------------------
+
+  it("records each stage completion into the checkpoint", async () => {
+    const cpDir = await mkdtemp(join(tmpdir(), "pipeline-cp-"));
+    const cpPath = join(cpDir, "checkpoint.json");
+    const spec = pipelineSpec([member("m1", "first"), member("m2", "second")]);
+    const store = await openTeamCheckpoint({ checkpointPath: cpPath, spec });
+
+    const { ctx, cleanup } = await makeCtx({
+      results: [successResult("out-1"), successResult("out-2")],
+      checkpoint: store,
+    });
+    await new PipelineTopology().run(spec, ctx);
+    await store.close();
+
+    expect(store.isDone("m1")).toBe(true);
+    expect(store.isDone("m2")).toBe(true);
+    expect(store.get("m1")?.output).toBe("out-1");
+
+    await cleanup();
+    await rm(cpDir, { recursive: true, force: true });
+  });
+
+  it("resumes: skips a checkpointed stage and threads its stored output forward", async () => {
+    const cpDir = await mkdtemp(join(tmpdir(), "pipeline-resume-"));
+    const cpPath = join(cpDir, "checkpoint.json");
+    const spec = pipelineSpec([
+      member("m1", "first"),
+      member("m2", "second"),
+      member("m3", "third"),
+    ]);
+
+    // Pre-seed a prior run where stage m1 already succeeded.
+    const seed = await openTeamCheckpoint({ checkpointPath: cpPath, spec });
+    await seed.record({
+      id: "m1",
+      status: "succeeded",
+      output: "stage-1-output",
+      completedAt: Date.now(),
+    });
+    await seed.close();
+
+    // Reopen for the resuming run.
+    const store = await openTeamCheckpoint({ checkpointPath: cpPath, spec });
+    expect(store.resumed).toBe(true);
+
+    // Only m2 and m3 actually spawn this run.
+    const { ctx, spawns, cleanup } = await makeCtx({
+      results: [successResult("stage-2-output"), successResult("stage-3-output")],
+      checkpoint: store,
+    });
+    const summary = await new PipelineTopology().run(spec, ctx);
+    await store.close();
+
+    // m1 skipped → only 2 spawns; overall 3 succeeded.
+    expect(spawns).toHaveLength(2);
+    expect(summary.succeeded).toBe(3);
+    expect(summary.aggregateOutput).toBe("stage-3-output");
+
+    // m2 (first actual spawn) sees m1's checkpointed output threaded in.
+    expect(spawns[0]!.prompt).toContain("second");
+    expect(spawns[0]!.prompt).toContain("## Previous stage output");
+    expect(spawns[0]!.prompt).toContain("stage-1-output");
+
+    await cleanup();
+    await rm(cpDir, { recursive: true, force: true });
   });
 });
