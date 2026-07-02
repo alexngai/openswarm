@@ -28,7 +28,9 @@ import { CodexFrameworkEngine } from "../engine/codex-framework.js";
 import { CodexResponsesTransportProvider } from "../providers/codex-responses/index.js";
 import { OpenAICodexAuth } from "../auth/openai-codex-oauth.js";
 import { readCodexTokens } from "../auth/openai-codex-token-store.js";
-import { DEFAULT_COMPACTION } from "../engine/compactor.js";
+import { DEFAULT_COMPACTION, type CompactionConfig } from "../engine/compactor.js";
+import type { RemoteCompactionConfig } from "../engine/compact-remote.js";
+import type { Provider } from "../providers/index.js";
 import { PluginRegistry } from "../plugins/registry.js";
 import { ClaudeCodeSource } from "../plugins/claude-code-source.js";
 import { PluginStateStore } from "../plugins/state.js";
@@ -50,6 +52,36 @@ import type { ToolImpl } from "../tools/types.js";
 import type { HooksConfigFile } from "../hooks/config.js";
 
 export const DEFAULT_MODEL = "claude-sonnet-4-6";
+
+/**
+ * Build the default compaction config for a native/hardened engine.
+ *
+ * Remote (LLM-driven, structured) compaction is ON by default: it produces far
+ * higher-fidelity summaries than the mechanical fallback, and the remote path
+ * already fails safe to mechanical on any error/timeout/validation miss. It
+ * reuses the session's own provider + model (a cheaper summarization model can
+ * be pinned via OPENSWARM_COMPACTION_MODEL). Set OPENSWARM_REMOTE_COMPACTION to
+ * 0/false/off/no to force the mechanical compactor.
+ *
+ * The trigger thresholds (preserveRecentMessages / maxEstimatedTokens) are
+ * unchanged from DEFAULT_COMPACTION — only the summarization method differs.
+ */
+export function defaultCompactionConfig(
+  provider: Provider,
+  modelId: string,
+): CompactionConfig {
+  const flag = (process.env.OPENSWARM_REMOTE_COMPACTION ?? "").toLowerCase();
+  const remoteDisabled = ["0", "false", "off", "no"].includes(flag);
+  if (remoteDisabled) return DEFAULT_COMPACTION;
+
+  const config: RemoteCompactionConfig = {
+    preserveRecentMessages: DEFAULT_COMPACTION.preserveRecentMessages,
+    maxEstimatedTokens: DEFAULT_COMPACTION.maxEstimatedTokens,
+    provider,
+    model: process.env.OPENSWARM_COMPACTION_MODEL ?? modelId,
+  };
+  return config;
+}
 
 /**
  * Build the auth source for a non-Anthropic provider model. Mirrors the prior
@@ -365,14 +397,16 @@ export async function buildAgentRuntime(
           ? await resolved.authFactory()
           : await buildAuthForProvider(providerModelId);
         const provider = await providerFactory(providerAuth, providerModelId);
+        const compactionConfig = defaultCompactionConfig(provider, providerModelId);
         const engine = useHardened
           ? new HardenedNativeEngine({
               provider,
               sessionId,
               eagerToolDispatch: opts.eagerToolDispatch,
               midTurnCompaction: opts.midTurnCompaction,
+              compactionConfig,
             })
-          : new NativeEngine({ provider, sessionId });
+          : new NativeEngine({ provider, sessionId, compactionConfig });
         return { engine, providerId: provider.id };
       };
     } else {
@@ -389,7 +423,11 @@ export async function buildAgentRuntime(
           : await buildAuthForProvider(providerModelId);
           const provider = await providerFactory(providerAuth, providerModelId);
           return {
-            engine: new NativeEngine({ provider, sessionId }),
+            engine: new NativeEngine({
+              provider,
+              sessionId,
+              compactionConfig: defaultCompactionConfig(provider, providerModelId),
+            }),
             providerId: provider.id,
           };
         };

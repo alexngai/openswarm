@@ -15,6 +15,9 @@ import {
   formatCompactSummary,
   getCompactContinuationMessage,
   compactedSummaryPrefixLen,
+  extractLatestTodos,
+  renderTodoProgressBlock,
+  withTodoProgress,
   DEFAULT_COMPACTION,
   type Session,
   type CompactionConfig,
@@ -438,5 +441,124 @@ describe("compactSession — no-op on small session", () => {
     expect(result.summary).toBe("");
     expect(result.boundaryWalkedBack).toBe(false);
     expect(result.compactedSession).toBe(s);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 17. Todo-tree progress section
+// ---------------------------------------------------------------------------
+
+function todoWrite(
+  todos: Array<{ id: string; content: string; status: string }>,
+): ProviderMessage {
+  return assistantToolUse("td", "todo_write", { todos });
+}
+
+describe("extractLatestTodos", () => {
+  it("returns null when no todo_write is present", () => {
+    expect(extractLatestTodos([userText("hi"), assistantText("yo")])).toBeNull();
+  });
+
+  it("returns the most recent snapshot (newest wins)", () => {
+    const msgs = [
+      todoWrite([{ id: "1", content: "old", status: "pending" }]),
+      assistantText("work"),
+      todoWrite([
+        { id: "1", content: "step one", status: "completed" },
+        { id: "2", content: "step two", status: "in_progress" },
+      ]),
+    ];
+    const todos = extractLatestTodos(msgs);
+    expect(todos).not.toBeNull();
+    expect(todos!).toHaveLength(2);
+    expect(todos![0]).toEqual({ content: "step one", status: "completed" });
+    expect(todos![1]).toEqual({ content: "step two", status: "in_progress" });
+  });
+
+  it("ignores malformed todo entries but keeps valid ones", () => {
+    const msgs = [
+      todoWrite([
+        { id: "1", content: "valid", status: "pending" },
+        { id: "2", content: "bad-status", status: "banana" },
+      ] as any),
+    ];
+    const todos = extractLatestTodos(msgs);
+    expect(todos!).toHaveLength(1);
+    expect(todos![0]!.content).toBe("valid");
+  });
+
+  it("returns null when todos array is empty or absent", () => {
+    expect(extractLatestTodos([todoWrite([])])).toBeNull();
+    expect(
+      extractLatestTodos([assistantToolUse("x", "todo_write", {})]),
+    ).toBeNull();
+  });
+});
+
+describe("renderTodoProgressBlock", () => {
+  it("renders a header with the done/total count and status icons", () => {
+    const block = renderTodoProgressBlock([
+      { content: "a", status: "completed" },
+      { content: "b", status: "in_progress" },
+      { content: "c", status: "pending" },
+    ]);
+    expect(block).toContain("## Todos / Progress (1/3 done)");
+    expect(block).toContain("✓ completed: a");
+    expect(block).toContain("▶ in_progress: b");
+    expect(block).toContain("☐ pending: c");
+  });
+});
+
+describe("withTodoProgress", () => {
+  it("inserts the block before the closing </summary> tag", () => {
+    const summary = "<summary>\nConversation summary:\n- x\n</summary>";
+    const out = withTodoProgress(summary, [
+      todoWrite([{ id: "1", content: "finish it", status: "in_progress" }]),
+    ]);
+    expect(out).toContain("## Todos / Progress");
+    expect(out.indexOf("## Todos / Progress")).toBeLessThan(
+      out.indexOf("</summary>"),
+    );
+  });
+
+  it("is a no-op when there are no todos", () => {
+    const summary = "<summary>\nx\n</summary>";
+    expect(withTodoProgress(summary, [userText("hi")])).toBe(summary);
+  });
+
+  it("appends when the summary has no </summary> tag", () => {
+    const out = withTodoProgress("plain summary", [
+      todoWrite([{ id: "1", content: "do", status: "pending" }]),
+    ]);
+    expect(out.startsWith("plain summary")).toBe(true);
+    expect(out).toContain("## Todos / Progress");
+  });
+});
+
+describe("compactSession — carries todo progress across the boundary", () => {
+  it("includes the latest todo snapshot in the compacted summary", () => {
+    const msgs: ProviderMessage[] = [
+      userText("start the plan"),
+      todoWrite([
+        { id: "1", content: "design", status: "completed" },
+        { id: "2", content: "implement", status: "in_progress" },
+      ]),
+      ...Array.from({ length: 8 }, (_, i) =>
+        i % 2 === 0 ? userText("u".repeat(400)) : assistantText("a".repeat(400)),
+      ),
+    ];
+    const result = compactSession(session(msgs), {
+      preserveRecentMessages: 2,
+      maxEstimatedTokens: 100,
+    });
+    expect(result.removedMessageCount).toBeGreaterThan(0);
+    const systemText = (
+      result.compactedSession.messages[0]!.content[0] as {
+        type: "text";
+        text: string;
+      }
+    ).text;
+    expect(systemText).toContain("## Todos / Progress");
+    expect(systemText).toContain("implement");
   });
 });
