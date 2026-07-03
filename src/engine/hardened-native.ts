@@ -44,6 +44,7 @@ import {
   compactSessionReactive,
   isRemoteCompactionConfig,
 } from "./compact-remote.js";
+import type { RecontextualizeFn } from "./compact-rebuild.js";
 import {
   initialCompactionState,
   restoreCompactionState,
@@ -124,6 +125,12 @@ export interface HardenedNativeEngineOptions {
   readonly retryPolicy?: RetryPolicy;
   readonly eagerToolDispatch?: boolean;
   readonly midTurnCompaction?: boolean;
+  /**
+   * F1 hook: returns project-instruction attachments (CLAUDE.md/AGENTS.md) to
+   * re-inject after a full remote compaction (pre-turn, mid-turn, and
+   * reactive overflow paths).
+   */
+  readonly recontextualize?: RecontextualizeFn;
 }
 
 export class HardenedNativeEngine implements AgentEngine {
@@ -137,6 +144,7 @@ export class HardenedNativeEngine implements AgentEngine {
   private readonly retryPolicy: RetryPolicy;
   private readonly eagerToolDispatch: boolean;
   private readonly midTurnCompaction: boolean;
+  private readonly recontextualize?: RecontextualizeFn;
   private cumulativeUsage: Usage = { inputTokens: 0, outputTokens: 0 };
   private retryStats = { totalRetries: 0, retriesThisTurn: 0 };
   private compactionState: CompactionState = initialCompactionState();
@@ -149,6 +157,8 @@ export class HardenedNativeEngine implements AgentEngine {
     this.retryPolicy = opts.retryPolicy ?? DEFAULT_RETRY_POLICY;
     this.eagerToolDispatch = opts.eagerToolDispatch ?? false;
     this.midTurnCompaction = opts.midTurnCompaction ?? false;
+    if (opts.recontextualize !== undefined)
+      this.recontextualize = opts.recontextualize;
 
     const pcap = opts.provider.capabilities;
     this.capabilities = {
@@ -209,7 +219,12 @@ export class HardenedNativeEngine implements AgentEngine {
         { messages },
         this.compactionConfig,
         abort,
-        { contextWindow: this.capabilities.maxContextTokens },
+        {
+          contextWindow: this.capabilities.maxContextTokens,
+          ...(this.recontextualize !== undefined
+            ? { recontextualize: this.recontextualize }
+            : {}),
+        },
       );
       if (result.removedMessageCount > 0) {
         this.compactionState.lastContextTokens = 0;
@@ -277,7 +292,10 @@ export class HardenedNativeEngine implements AgentEngine {
       content: [{ type: "text", text: config.prompt }],
     });
 
-    const maxTurns = config.maxTurns ?? 100;
+    // No default cap: an omitted maxTurns means unbounded (Codex-style),
+    // bounded instead by the model's stop reason, abort, or a budget.
+    const maxTurns = config.maxTurns ?? Number.POSITIVE_INFINITY;
+    const startTime = Date.now();
     let terminated = false;
 
     // Merge retry policy from RunConfig if provided.
@@ -289,6 +307,21 @@ export class HardenedNativeEngine implements AgentEngine {
 
     for (let turn = 0; turn < maxTurns; turn++) {
       if (config.abort !== undefined && config.abort.aborted) return;
+
+      // Wall-clock budget — soft stop at the turn boundary.
+      if (
+        config.maxWallClockMs !== undefined &&
+        Date.now() - startTime >= config.maxWallClockMs
+      ) {
+        yield {
+          type: "message_stop",
+          stopReason: "max_wall_clock",
+          usage: this.cumulativeUsage,
+        };
+        await this.persistSnapshot(messages, turnCount, compactionCount);
+        terminated = true;
+        break;
+      }
 
       this.retryStats.retriesThisTurn = 0;
 
@@ -305,6 +338,9 @@ export class HardenedNativeEngine implements AgentEngine {
               ? { sessionDir: this.sessionDir }
               : {}),
             ...(config.abort !== undefined ? { abort: config.abort } : {}),
+            ...(this.recontextualize !== undefined
+              ? { recontextualize: this.recontextualize }
+              : {}),
           },
         );
         messages = outcome.messages;
@@ -837,6 +873,9 @@ export class HardenedNativeEngine implements AgentEngine {
                 ? { sessionDir: this.sessionDir }
                 : {}),
               ...(config.abort !== undefined ? { abort: config.abort } : {}),
+              ...(this.recontextualize !== undefined
+                ? { recontextualize: this.recontextualize }
+                : {}),
             },
           );
           messages = outcome.messages;
@@ -860,16 +899,16 @@ export class HardenedNativeEngine implements AgentEngine {
       break;
     }
 
-    // 4. maxTurns exceeded without message_stop.
+    // 4. Explicit maxTurns budget exhausted without a natural stop — soft stop
+    // (not an error), mirroring the native engine. Only reachable when maxTurns
+    // is finite (explicitly set).
     if (!terminated) {
       yield {
-        type: "error",
-        error: {
-          code: "invalid_request",
-          message: "maxTurns exceeded without end_turn",
-          retryable: false,
-        },
+        type: "message_stop",
+        stopReason: "max_turns",
+        usage: this.cumulativeUsage,
       };
+      await this.persistSnapshot(messages, turnCount, compactionCount);
     }
   }
 

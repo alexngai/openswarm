@@ -24,6 +24,7 @@ import {
   compactSessionRemote,
   isRemoteCompactionConfig,
 } from "./compact-remote.js";
+import type { RecontextualizeFn } from "./compact-rebuild.js";
 import { microcompactMessages } from "./microcompact.js";
 
 // ---------------------------------------------------------------------------
@@ -179,6 +180,12 @@ export interface CompactionDeps {
   readonly abort?: AbortSignal;
   /** Extra compact_metadata merged into full-compaction events (e.g. midTurn). */
   readonly extraMetadata?: Record<string, unknown>;
+  /**
+   * F1 hook: re-inject project instructions (CLAUDE.md/AGENTS.md) as
+   * attachments after a full remote compaction. Forwarded to
+   * compactSessionRemote; no effect on the mechanical path.
+   */
+  readonly recontextualize?: RecontextualizeFn;
 }
 
 function microcompactEnabled(): boolean {
@@ -369,6 +376,9 @@ async function* runFullCompaction(
         trigger: opts.trigger,
         ...(opts.customInstructions !== undefined
           ? { customInstructions: opts.customInstructions }
+          : {}),
+        ...(deps.recontextualize !== undefined
+          ? { recontextualize: deps.recontextualize }
           : {}),
       },
     );

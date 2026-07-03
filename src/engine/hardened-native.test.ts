@@ -424,8 +424,8 @@ describe("HardenedNativeEngine: three parallel tool calls", () => {
   });
 });
 
-describe("HardenedNativeEngine: maxTurns exceeded", () => {
-  it("emits invalid_request error after maxTurns", async () => {
+describe("HardenedNativeEngine: maxTurns budget", () => {
+  it("soft-stops with stopReason max_turns after an explicit cap is exhausted", async () => {
     const makeToolTurn = (): Script => [
       { type: "tool-call", id: "t", name: "noop", input: {} },
       { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
@@ -446,10 +446,35 @@ describe("HardenedNativeEngine: maxTurns exceeded", () => {
     );
 
     const last = events[events.length - 1]!;
-    expect(last.type).toBe("error");
-    expect(
-      (last as { error: { code: string } }).error.code,
-    ).toBe("invalid_request");
+    expect(last.type).toBe("message_stop");
+    expect((last as { stopReason: string }).stopReason).toBe("max_turns");
+    expect(events.some((e) => e.type === "error")).toBe(false);
+  });
+
+  it("soft-stops with stopReason max_wall_clock when the wall-clock budget elapses", async () => {
+    const makeToolTurn = (): Script => [
+      { type: "tool-call", id: "t", name: "noop", input: {} },
+      { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
+    ];
+    const provider = new MockProvider({
+      scripts: Array.from({ length: 10 }, () => makeToolTurn()),
+    });
+    const dispatcher = new MockDispatcher();
+
+    const engine = new HardenedNativeEngine({ provider });
+    const events = await collect(
+      engine.run(
+        baseConfig({
+          maxWallClockMs: 0,
+          dispatcher: dispatcher as unknown as ToolDispatcher,
+        }),
+      ),
+    );
+
+    const last = events[events.length - 1]!;
+    expect(last.type).toBe("message_stop");
+    expect((last as { stopReason: string }).stopReason).toBe("max_wall_clock");
+    expect(events.some((e) => e.type === "error")).toBe(false);
   });
 });
 

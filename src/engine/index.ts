@@ -151,8 +151,20 @@ export interface RunConfig {
 
   readonly permissionMode: PermissionMode;
 
-  /** Hard cap on turns to prevent runaway loops. */
+  /**
+   * Optional cap on engine turns (model round-trips). When omitted the loop is
+   * unbounded (Codex-style) — termination comes from the model's stop reason,
+   * abort, or another budget. When set, exhausting it produces a soft stop
+   * (`message_stop` with `stopReason: "max_turns"`), not an error.
+   */
   readonly maxTurns?: number;
+  /**
+   * Optional wall-clock budget in milliseconds for a single `run()`. Checked at
+   * each turn boundary; on elapse the engine emits a soft stop
+   * (`message_stop` with `stopReason: "max_wall_clock"`). A long single turn
+   * can overshoot slightly since the check is between turns.
+   */
+  readonly maxWallClockMs?: number;
   /** Hard cap on output tokens per turn. */
   readonly maxOutputTokens?: number;
 

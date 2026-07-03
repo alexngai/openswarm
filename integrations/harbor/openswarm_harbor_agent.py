@@ -80,6 +80,7 @@ class OpenswarmAgent(BaseInstalledAgent):
         swarm: bool = False,
         install_spec: str = "openswarm@latest",
         binary_dir: str | None = None,
+        max_turns: int | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -97,6 +98,11 @@ class OpenswarmAgent(BaseInstalledAgent):
                            uploads it into the container and runs that binary instead
                            of installing from npm — use it to test a local/unpublished
                            build. The arch must match the container's.
+          max_turns        openswarm --max-turns (model round-trips). There is no
+                           default cap — the loop runs unbounded unless this is
+                           set, so long-horizon benchmarks generally leave it
+                           unset (or set a high safety cap). When a cap is set and
+                           exhausted, the run stops cleanly (exit 3), not an error.
         """
         super().__init__(*args, **kwargs)
         self._permission_mode = permission_mode
@@ -104,6 +110,7 @@ class OpenswarmAgent(BaseInstalledAgent):
         self._swarm = swarm
         self._install_spec = install_spec
         self._binary_dir = binary_dir
+        self._max_turns = max_turns
         # Where the openswarm executable lives inside the container.
         self._remote_bin = "/opt/openswarm/openswarm" if binary_dir else "openswarm"
 
@@ -179,6 +186,8 @@ class OpenswarmAgent(BaseInstalledAgent):
             "--permission-mode",
             shlex.quote(self._permission_mode),
         ]
+        if self._max_turns is not None:
+            parts += ["--max-turns", str(self._max_turns)]
         if not self._swarm:
             parts.append("--single")  # single agent, not the coordinator team
         # `|| true`: openswarm can exit nonzero (e.g. budget_exceeded → 3) after having

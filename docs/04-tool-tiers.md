@@ -170,15 +170,23 @@ extracted from the shipped binary):
   modified successfully. Ensure that you continue to use the todo list to track
   your progress. Please proceed with the current tasks if applicable`.
 
-### Known gap: post-compaction memory re-injection (follow-up F1 in doc 48)
+### Post-compaction instruction re-injection (follow-up F1 in doc 48 — done)
 
 Claude Code re-reads CLAUDE.md / memory files after every compaction and
-re-injects them as attachments. Our post-compact rebuild
-(`src/engine/compact-rebuild.ts`) re-injects recently read files and the todo
-snapshot, but **not** CLAUDE.md / AGENTS.md / curated memory — a compacted
-openswarm session silently loses project-memory context until the
-`recontextualize()` runtime callback lands (see
-[48-compaction-design.md](./48-compaction-design.md) follow-up F1).
+re-injects them as attachments. OpenSwarm now matches this:
+
+- **CLAUDE.md / AGENTS.md** are loaded at startup (`src/engine/project-instructions.ts`,
+  CWD→root ancestor walk) into the system prompt, and re-injected after
+  compaction as a `<system-reminder>` attachment via the `recontextualize()`
+  hook (`makeProjectInstructionsRecontextualizer`) threaded into
+  `compactSessionRemote`.
+- **Curated memory** is not re-injected: `enrichTurnInputs` folds it into the
+  system prompt, which is resent every request and untouched by compaction, so
+  it already survives the boundary.
+
+The post-compact rebuild (`src/engine/compact-rebuild.ts`) still handles
+recently read files and the todo snapshot. See
+[48-compaction-design.md](./48-compaction-design.md) "F1 — how it landed".
 
 ## Divergences from claw-code
 

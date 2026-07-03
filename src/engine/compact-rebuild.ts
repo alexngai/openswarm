@@ -28,6 +28,21 @@ import {
   recentReadFiles,
   recordFileRead,
 } from "../tools/tier0/read-state.js";
+import {
+  loadProjectInstructions,
+  formatInstructionsAsReminder,
+} from "./project-instructions.js";
+
+/**
+ * Runtime callback that returns extra attachments to re-inject after
+ * compaction — the F1 `recontextualize()` hook. Called once per full
+ * compaction; returned messages are placed right after the continuation
+ * message (ahead of file/todo attachments). Async so callers can re-read
+ * files or query memory. See docs/48-compaction-design.md follow-up F1.
+ */
+export type RecontextualizeFn = () =>
+  | readonly ProviderMessage[]
+  | Promise<readonly ProviderMessage[]>;
 
 /** CC H$n: number of recently-read files to re-inject. */
 export const POST_COMPACT_FILE_COUNT = 5;
@@ -51,6 +66,25 @@ function userReminder(text: string): ProviderMessage {
     content: [
       { type: "text", text: `<system-reminder>\n${text}\n</system-reminder>` },
     ],
+  };
+}
+
+/**
+ * Build a `recontextualize()` callback that re-reads the project instruction
+ * files (CLAUDE.md / AGENTS.md ancestor walk) and returns them as a
+ * post-compaction attachment — CC re-reads these after every compaction.
+ *
+ * Curated memory is intentionally NOT re-injected here: OpenSwarm folds it
+ * into the system prompt (resent every request, untouched by compaction), so
+ * it already survives the boundary. Re-injecting it would duplicate context.
+ */
+export function makeProjectInstructionsRecontextualizer(
+  cwd: string,
+): RecontextualizeFn {
+  return () => {
+    const instructions = loadProjectInstructions(cwd);
+    const text = formatInstructionsAsReminder(instructions);
+    return text === "" ? [] : [userReminder(text)];
   };
 }
 
@@ -116,10 +150,11 @@ export function buildPostCompactAttachments(
     );
   }
 
-  // TODO(F1): re-inject CLAUDE.md / AGENTS.md / curated memory here via the
-  // recontextualize() runtime callback (docs/48-compaction-design.md follow-up
-  // F1). Until that lands, compacted sessions lose project-memory context that
-  // Claude Code would re-read.
+  // Project instructions (CLAUDE.md / AGENTS.md) are re-injected by the
+  // engine via the recontextualize() hook (see RecontextualizeFn /
+  // makeProjectInstructionsRecontextualizer) rather than here — the hook keeps
+  // this function decoupled from cwd/memory. Curated memory survives via the
+  // system prompt and is deliberately not re-injected (docs/48 §L4, F1).
 
   return attachments;
 }

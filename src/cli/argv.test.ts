@@ -1,5 +1,40 @@
 import { describe, it, expect } from "vitest";
-import { parseArgv } from "./argv.js";
+import { parseArgv, parseDurationToMs } from "./argv.js";
+
+describe("parseDurationToMs", () => {
+  it("parses bare numbers as seconds", () => {
+    expect(parseDurationToMs("90")).toBe(90_000);
+  });
+  it("parses ms/s/m/h suffixes", () => {
+    expect(parseDurationToMs("500ms")).toBe(500);
+    expect(parseDurationToMs("30s")).toBe(30_000);
+    expect(parseDurationToMs("5m")).toBe(300_000);
+    expect(parseDurationToMs("1h")).toBe(3_600_000);
+  });
+  it("supports fractional values", () => {
+    expect(parseDurationToMs("1.5m")).toBe(90_000);
+  });
+  it("returns null on malformed input", () => {
+    expect(parseDurationToMs("abc")).toBeNull();
+    expect(parseDurationToMs("10x")).toBeNull();
+    expect(parseDurationToMs("")).toBeNull();
+  });
+});
+
+describe("parseArgv --max-wall-clock", () => {
+  it("parses a duration into maxWallClockMs (ms)", () => {
+    const r = parseArgv(["--max-wall-clock", "5m", "hi"]);
+    expect(r).toMatchObject({ kind: "prompt", opts: { maxWallClockMs: 300_000 } });
+  });
+  it("rejects a malformed duration", () => {
+    expect(parseArgv(["--max-wall-clock", "nope", "hi"])).toMatchObject({
+      kind: "error",
+    });
+  });
+  it("requires a value", () => {
+    expect(parseArgv(["--max-wall-clock"])).toMatchObject({ kind: "error" });
+  });
+});
 
 describe("parseArgv", () => {
   // ---- Bare positional → prompt -------------------------------------------

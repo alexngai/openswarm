@@ -31,7 +31,12 @@ export type StopReason =
   | "max_tokens"
   | "stop_sequence"
   | "tool_use"
-  | "error";
+  | "error"
+  // Soft-stop budget reasons injected by the engine (not provider-derived).
+  // `max_turns` fires only when an explicit `maxTurns` cap is exhausted;
+  // `max_wall_clock` fires when the optional `maxWallClockMs` budget elapses.
+  | "max_turns"
+  | "max_wall_clock";
 
 /**
  * Branded string for agent identity. Construct via helpers in `src/swarm/`.

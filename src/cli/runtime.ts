@@ -34,6 +34,7 @@ import {
   type CompactionConfig,
 } from "../engine/compactor.js";
 import type { RemoteCompactionConfig } from "../engine/compact-remote.js";
+import { makeProjectInstructionsRecontextualizer } from "../engine/compact-rebuild.js";
 import type { Provider } from "../providers/index.js";
 import { PluginRegistry } from "../plugins/registry.js";
 import { ClaudeCodeSource } from "../plugins/claude-code-source.js";
@@ -422,6 +423,10 @@ export async function buildAgentRuntime(
           : await buildAuthForProvider(providerModelId);
         const provider = await providerFactory(providerAuth, providerModelId);
         const compactionConfig = defaultCompactionConfig(provider, providerModelId);
+        // F1: re-inject CLAUDE.md/AGENTS.md after compaction (CC parity).
+        const recontextualize = makeProjectInstructionsRecontextualizer(
+          process.cwd(),
+        );
         const engine = useHardened
           ? new HardenedNativeEngine({
               provider,
@@ -429,8 +434,14 @@ export async function buildAgentRuntime(
               eagerToolDispatch: opts.eagerToolDispatch,
               midTurnCompaction: opts.midTurnCompaction,
               compactionConfig,
+              recontextualize,
             })
-          : new NativeEngine({ provider, sessionId, compactionConfig });
+          : new NativeEngine({
+              provider,
+              sessionId,
+              compactionConfig,
+              recontextualize,
+            });
         return { engine, providerId: provider.id };
       };
       break;

@@ -43,7 +43,10 @@ import {
   buildCompactSummaryRequest,
   buildRecentCompactSummaryRequest,
 } from "./compact-prompts.js";
-import { buildPostCompactAttachments } from "./compact-rebuild.js";
+import {
+  buildPostCompactAttachments,
+  type RecontextualizeFn,
+} from "./compact-rebuild.js";
 
 // ---------------------------------------------------------------------------
 // Remote compaction config
@@ -82,6 +85,11 @@ export interface CompactOptions {
   readonly customInstructions?: string;
   /** Skip attachment re-injection (tests / reactive path). */
   readonly skipAttachments?: boolean;
+  /**
+   * F1 hook: returns extra attachments (project instructions) to re-inject
+   * after compaction, placed right after the continuation message.
+   */
+  readonly recontextualize?: RecontextualizeFn;
 }
 
 // ---------------------------------------------------------------------------
@@ -239,15 +247,31 @@ export async function compactSessionRemote(
       ? []
       : buildPostCompactAttachments(session.messages);
 
+  // F1: re-inject project instructions (CLAUDE.md/AGENTS.md) ahead of the
+  // file/todo attachments — CC re-reads these after compaction.
+  const recontextual = await runRecontextualize(opts?.recontextualize);
+
   return {
     summary,
     compactedSession: {
-      messages: [continuationMsg, ...attachments, ...heldOut],
+      messages: [continuationMsg, ...recontextual, ...attachments, ...heldOut],
     },
     removedMessageCount: toSummarize.length,
     boundaryWalkedBack: false,
     summarizerFailed,
   };
+}
+
+/** Invoke the recontextualize hook defensively — it must never break compaction. */
+async function runRecontextualize(
+  fn: RecontextualizeFn | undefined,
+): Promise<ProviderMessage[]> {
+  if (fn === undefined) return [];
+  try {
+    return [...(await fn())];
+  } catch {
+    return [];
+  }
 }
 
 function isContinuationMessage(msg: ProviderMessage): boolean {
@@ -366,9 +390,13 @@ export async function compactSessionReactive(
     content: [{ type: "text", text: continuation }],
   };
 
+  const recontextual = await runRecontextualize(opts?.recontextualize);
+
   return {
     summary,
-    compactedSession: { messages: [continuationMsg, ...preserved] },
+    compactedSession: {
+      messages: [continuationMsg, ...recontextual, ...preserved],
+    },
     removedMessageCount: toSummarize.length,
     boundaryWalkedBack: false,
     summarizerFailed,

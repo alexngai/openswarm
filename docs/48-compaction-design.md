@@ -318,21 +318,59 @@ long one.
 
 1. **Reactive path scope** — hardened-engine-only first; NativeEngine keeps
    emergency mechanical recovery. (Decided.)
-2. **CLAUDE.md/context re-injection** — deferred past phase 5, but this is a
-   **load-bearing detail that must not slip**: CC re-reads CLAUDE.md/memory
-   after every compaction, so until the `recontextualize()` runtime callback
-   lands, a compacted openswarm session silently loses its project-memory
-   context while a CC session would not. Tracked in Follow-ups below; phase 5
-   must ship with the gap documented in `04-tool-tiers.md` and a TODO marker at
-   the re-injection site.
-3. **Transcript path** — omit the paragraph when no transcript exists for now.
-   Session-recorder gains single-agent support as a follow-up (below); once it
-   does, single-agent REPL/headless sessions get the transcript-path paragraph
-   too.
+2. **CLAUDE.md/context re-injection** — **resolved (F1, 2026-07-03).** CLAUDE.md
+   / AGENTS.md are now loaded into the system prompt at startup and re-injected
+   as attachments after compaction via the `recontextualize()` hook. Curated
+   memory needs no re-injection: it already lives in the system prompt, which
+   survives compaction. See "F1 — how it landed" below.
+3. **Transcript path** — **resolved (F2, 2026-07-03).** Single-agent
+   REPL/headless sessions now emit `events.jsonl` (when recording is enabled)
+   and set the transcript path, so the continuation message includes the
+   transcript-path paragraph. See "F2 — how it landed" below.
 
 ## Follow-ups (post-implementation)
 
-| # | Item | Why it matters |
-|---|---|---|
-| F1 | `recontextualize()` runtime callback: post-compact re-read of CLAUDE.md / AGENTS.md / curated memory as attachments | CC parity — without it compacted sessions silently drop project-memory context (resolved question 2) |
-| F2 | Session-recorder single-agent support: emit `events.jsonl` for non-swarm REPL/headless sessions, so the continuation message can always include the transcript-path paragraph | CC always has a transcript to point at; models are trained to consult it for pre-compaction details (resolved question 3) |
+| # | Item | Why it matters | Status |
+|---|---|---|---|
+| F1 | `recontextualize()` runtime callback: post-compact re-read of CLAUDE.md / AGENTS.md as attachments | CC parity — compacted sessions must not drop project instructions (resolved question 2) | **done (2026-07-03)** |
+| F2 | Session-recorder single-agent support: emit `events.jsonl` for non-swarm REPL/headless sessions, so the continuation message can always include the transcript-path paragraph | CC always has a transcript to point at; models are trained to consult it for pre-compaction details (resolved question 3) | **done (2026-07-03)** |
+
+### F1 — how it landed (and where it diverged from the plan)
+
+The original plan assumed compaction "silently loses project-memory context."
+Investigation showed that is only half true for openswarm:
+
+- **Curated memory already survives compaction.** `enrichTurnInputs` folds
+  curated memory into the **system prompt**, which is resent on every request
+  and never touched by compaction (compaction only rewrites the messages
+  array). So curated memory is *not* re-injected by `recontextualize()` —
+  doing so would duplicate it. This is a deliberate divergence from CC's
+  "re-read memory" behavior.
+- **The real gap was CLAUDE.md / AGENTS.md**, which native/hardened engines
+  never loaded at all (only the Claude SDK path did, via its own
+  `settingSources`). F1 therefore ships two pieces:
+  1. **Startup load** — `src/engine/project-instructions.ts` walks CWD → root,
+     reads `CLAUDE.md` / `CLAUDE.local.md` / `AGENTS.md` at each level (root
+     first, deepest scope last), dedupes by content hash, and clamps to
+     `4k`/file, `12k` total (claw parity). `main.ts` and `worker-entry.ts` fold
+     the result into the system prompt via `buildSystemPrompt({ extensions })`.
+  2. **Post-compact re-injection** — `makeProjectInstructionsRecontextualizer(cwd)`
+     produces a `RecontextualizeFn` that re-reads the same files and returns
+     them as a `<system-reminder>` user attachment. Threaded
+     engine option → `CompactionDeps.recontextualize` → `compactSessionRemote`
+     (full + reactive paths), placed immediately after the continuation
+     message. The hook is defensive: a throwing callback never breaks
+     compaction.
+
+### F2 — how it landed
+
+`startSessionRecorder` (previously worker-only) is now started for single-agent
+REPL/headless runs in `main.ts` whenever recording is enabled
+(`OPENSWARM_RECORD_SESSIONS=1` or `OPENSWARM_SESSION_DIR`). One recorder spans
+the whole process (REPL is multi-turn); `engine.setTranscriptPath(...)` wires
+the transcript into the continuation message's "read the full transcript at: …"
+paragraph. `recordTurnEvents` maps each `NormalizedEvent` → `LaneEvent` and
+appends it, mirroring the worker loop; the recorder is flushed in
+`finishMemorySession`. Live-verified: a headless run writes
+`.swarm/openswarm/sessions/<id>/events.jsonl` with `turn_start` + streamed
+events.

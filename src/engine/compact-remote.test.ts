@@ -433,6 +433,56 @@ describe("compactSessionRemote", () => {
     expect(result.summary).not.toContain("analysis notes");
   });
 
+  it("injects recontextualize() attachments right after the continuation (F1)", async () => {
+    const messages = makeFiller(15);
+    const attachment: ProviderMessage = {
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: "<system-reminder>\nProject instruction files (re-attached after compaction — these still apply):\n<instructions path=\"/repo/AGENTS.md\">follow these</instructions>\n</system-reminder>",
+        },
+      ],
+    };
+    const recontextualize = vi.fn(() => [attachment]);
+
+    const result = await compactSessionRemote(
+      { messages },
+      remoteConfig(mockProvider(conformingSummary("Work."))),
+      undefined,
+      { recontextualize },
+    );
+
+    expect(recontextualize).toHaveBeenCalledTimes(1);
+    // Continuation is index 0; the re-attached instructions come immediately after.
+    const second = result.compactedSession.messages[1]!;
+    const text = (second.content[0] as { text: string }).text;
+    expect(text).toContain("re-attached after compaction");
+    expect(text).toContain("/repo/AGENTS.md");
+  });
+
+  it("survives a throwing recontextualize() hook (F1)", async () => {
+    const messages = makeFiller(15);
+    const recontextualize = vi.fn(() => {
+      throw new Error("boom");
+    });
+
+    const result = await compactSessionRemote(
+      { messages },
+      remoteConfig(mockProvider(conformingSummary("Work."))),
+      undefined,
+      { recontextualize },
+    );
+
+    expect(recontextualize).toHaveBeenCalledTimes(1);
+    // Compaction still succeeds; the continuation is present.
+    expect(result.removedMessageCount).toBeGreaterThan(0);
+    const first = (
+      result.compactedSession.messages[0]!.content[0] as { text: string }
+    ).text;
+    expect(first).toContain("continued from a previous conversation");
+  });
+
   it("falls back to mechanical when the response lacks required sections after a retry", async () => {
     // Neither attempt conforms → validation fails twice → mechanical fallback.
     const provider = mockProvider("The user was working on a compaction feature.");

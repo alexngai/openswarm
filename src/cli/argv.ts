@@ -22,6 +22,31 @@
 import type { PermissionMode } from "../core/types.js";
 import type { TopologyKind } from "../swarm/team-spec.js";
 
+/**
+ * Parse a duration string to milliseconds. Accepts an optional unit suffix
+ * (`ms`, `s`, `m`, `h`); a bare number is interpreted as seconds. Returns null
+ * on a malformed value.
+ */
+export function parseDurationToMs(value: string): number | null {
+  const match = /^(\d+(?:\.\d+)?)(ms|s|m|h)?$/.exec(value.trim());
+  if (match === null) return null;
+  const n = Number.parseFloat(match[1]!);
+  if (Number.isNaN(n)) return null;
+  switch (match[2]) {
+    case "ms":
+      return Math.round(n);
+    case "h":
+      return Math.round(n * 3_600_000);
+    case "m":
+      return Math.round(n * 60_000);
+    case "s":
+    case undefined:
+      return Math.round(n * 1_000);
+    default:
+      return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -107,13 +132,20 @@ export interface CommonOpts {
    */
   readonly maxCostUsd?: number;
   /**
-   * Maximum number of agent turns (model round-trips) for the run. On exceed the
-   * engine stops (`error_max_turns`) with the work-so-far left on disk. Applies to
-   * single-agent prompt runs — the STEP-budget analog of `--max-tokens`, for
-   * manufacturing step-bounded headroom in evals (aligns a step-economy lever with
-   * a step-denominated budget).
+   * Maximum number of agent turns (model round-trips) for the run. There is NO
+   * default cap — the loop is unbounded (Codex-style) unless this is set. When
+   * set, exhausting it is a soft stop (`stopReason: "max_turns"`, exit 3 in
+   * headless), not an error, with the work-so-far left on disk. Applies to
+   * single-agent prompt runs — the STEP-budget analog of `--max-tokens`.
    */
   readonly maxTurns?: number;
+  /**
+   * Optional wall-clock budget for the run, in milliseconds (parsed from a
+   * duration string like `90s`, `5m`, `1h`). On elapse the engine emits a soft
+   * stop (`stopReason: "max_wall_clock"`, exit 3 in headless). Checked at each
+   * turn boundary, so a long single turn can overshoot slightly.
+   */
+  readonly maxWallClockMs?: number;
   /**
    * GitHub #23 — attach the interactive REPL to an already-running detached
    * team daemon of this name. The REPL tails the daemon's events.jsonl and
@@ -298,6 +330,7 @@ export function parseArgv(args: string[]): ParsedArgs {
   let maxTokens: number | undefined;
   let maxCostUsd: number | undefined;
   let maxTurns: number | undefined;
+  let maxWallClockMs: number | undefined;
 
   // Defaults for swarm-run (consumed when subcommand === "swarm").
   let swarmConcurrency = 3;
@@ -958,6 +991,28 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
+    if (tok === "--max-wall-clock") {
+      const val = expanded[i + 1];
+      if (val === undefined || val.startsWith("-")) {
+        return {
+          kind: "error",
+          message: "--max-wall-clock requires a value (e.g. 90s, 5m, 1h)",
+          showHelp: true,
+        };
+      }
+      const ms = parseDurationToMs(val);
+      if (ms === null || ms <= 0) {
+        return {
+          kind: "error",
+          message: `--max-wall-clock must be a positive duration (e.g. 90s, 5m, 1h), got "${val}"`,
+          showHelp: true,
+        };
+      }
+      maxWallClockMs = ms;
+      i += 2;
+      continue;
+    }
+
     // v0.7 stage 7D — pass-through subcommands (worktree, plugin) own their
     // own flag parsing. Once we've identified one, capture all remaining
     // tokens (including --flags) as positionals so the sub-CLI can interpret
@@ -1029,6 +1084,7 @@ export function parseArgv(args: string[]): ParsedArgs {
     ...(maxTokens !== undefined ? { maxTokens } : {}),
     ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
     ...(maxTurns !== undefined ? { maxTurns } : {}),
+    ...(maxWallClockMs !== undefined ? { maxWallClockMs } : {}),
   };
 
   switch (subcommand) {

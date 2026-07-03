@@ -45,6 +45,7 @@ import {
   makeSnapshot,
   extractNativeSnapshot,
 } from "./native-snapshot.js";
+import type { RecontextualizeFn } from "./compact-rebuild.js";
 import type { ToolRequest } from "../tools/dispatcher.js";
 
 // ---------------------------------------------------------------------------
@@ -95,6 +96,12 @@ export interface NativeEngineOptions {
    * stable for the lifetime of the session.
    */
   readonly sessionId?: string;
+  /**
+   * F1 hook: returns project-instruction attachments (CLAUDE.md/AGENTS.md) to
+   * re-inject after a full remote compaction. See
+   * makeProjectInstructionsRecontextualizer.
+   */
+  readonly recontextualize?: RecontextualizeFn;
 }
 
 export class NativeEngine implements AgentEngine {
@@ -105,6 +112,7 @@ export class NativeEngine implements AgentEngine {
   private readonly compactionConfig: CompactionConfig;
   private readonly sessionDir?: string;
   private readonly sessionId?: string;
+  private readonly recontextualize?: RecontextualizeFn;
   private cumulativeUsage: Usage = { inputTokens: 0, outputTokens: 0 };
   private compactionState: CompactionState = initialCompactionState();
 
@@ -113,6 +121,8 @@ export class NativeEngine implements AgentEngine {
     this.compactionConfig = opts.compactionConfig ?? DEFAULT_COMPACTION;
     if (opts.sessionDir !== undefined) this.sessionDir = opts.sessionDir;
     if (opts.sessionId !== undefined) this.sessionId = opts.sessionId;
+    if (opts.recontextualize !== undefined)
+      this.recontextualize = opts.recontextualize;
 
     const pcap = opts.provider.capabilities;
     this.capabilities = {
@@ -190,7 +200,10 @@ export class NativeEngine implements AgentEngine {
       content: [{ type: "text", text: config.prompt }],
     });
 
-    const maxTurns = config.maxTurns ?? 100;
+    // No default cap: an omitted maxTurns means unbounded (Codex-style),
+    // bounded instead by the model's stop reason, abort, or a budget.
+    const maxTurns = config.maxTurns ?? Number.POSITIVE_INFINITY;
+    const startTime = Date.now();
     let terminated = false;
 
     // -----------------------------------------------------------------
@@ -200,6 +213,21 @@ export class NativeEngine implements AgentEngine {
     for (let turn = 0; turn < maxTurns; turn++) {
       // Honour abort between turns.
       if (config.abort !== undefined && config.abort.aborted) return;
+
+      // Wall-clock budget — soft stop at the turn boundary (docs 48 budgets).
+      if (
+        config.maxWallClockMs !== undefined &&
+        Date.now() - startTime >= config.maxWallClockMs
+      ) {
+        yield {
+          type: "message_stop",
+          stopReason: "max_wall_clock",
+          usage: this.cumulativeUsage,
+        };
+        await this.persistSnapshot(messages, turnCount, compactionCount);
+        terminated = true;
+        break;
+      }
 
       // 3a. Compaction pipeline (L1 trigger → L2 micro → L3–L5 full).
       {
@@ -214,6 +242,9 @@ export class NativeEngine implements AgentEngine {
               ? { sessionDir: this.sessionDir }
               : {}),
             ...(config.abort !== undefined ? { abort: config.abort } : {}),
+            ...(this.recontextualize !== undefined
+              ? { recontextualize: this.recontextualize }
+              : {}),
           },
         );
         messages = outcome.messages;
@@ -495,16 +526,16 @@ export class NativeEngine implements AgentEngine {
       break;
     }
 
-    // 4. maxTurns exceeded without message_stop.
+    // 4. Explicit maxTurns budget exhausted without a natural stop — soft stop
+    // (not an error), so the work so far is preserved and callers can treat it
+    // as a budget limit. Only reachable when maxTurns is finite (explicitly set).
     if (!terminated) {
       yield {
-        type: "error",
-        error: {
-          code: "invalid_request",
-          message: "maxTurns exceeded without end_turn",
-          retryable: false,
-        },
+        type: "message_stop",
+        stopReason: "max_turns",
+        usage: this.cumulativeUsage,
       };
+      await this.persistSnapshot(messages, turnCount, compactionCount);
     }
   }
 
