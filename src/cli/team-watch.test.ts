@@ -128,12 +128,17 @@ const toolStart = (
     payload: { type: "tool_use_start", id, name },
   }) as LaneEvent;
 
-const toolEnd = (agentId: AgentId, id: string, ts: number): LaneEvent =>
+const toolEnd = (
+  agentId: AgentId,
+  id: string,
+  ts: number,
+  input?: unknown,
+): LaneEvent =>
   ({
     ts,
     agentId,
     type: "tool_use_end",
-    payload: { type: "tool_use_end", id },
+    payload: { type: "tool_use_end", id, ...(input !== undefined ? { input } : {}) },
   }) as LaneEvent;
 
 describe("renderEventLogBoard", () => {
@@ -201,6 +206,27 @@ describe("renderEventLogBoard", () => {
         4,
       ),
       toolEnd(I, "t3", 5),
+    ];
+    const text = (await renderEventLogBoard(events)).join("\n");
+    expect(text).toContain("[implementer] Edit src/auth/session.ts");
+    expect(text).toContain("± src/auth/session.ts  +1 -1");
+    expect(text).toContain("- const SESSION_TTL = 3600");
+    expect(text).toContain("+ const SESSION_TTL = 900");
+  });
+
+  it("renders an inline diff from a recorded tool_use_end `input` with NO tool_use_input line (issue #26 live/replay guard)", async () => {
+    const I = "I" as AgentId;
+    // Mirrors the recorded team wire: tool_use_input is stripped as live-only,
+    // so the diff must reconstruct purely from the `input` carried on
+    // tool_use_end.
+    const events: LaneEvent[] = [
+      spawned("I", "implementer"),
+      toolStart(I, "t9", "edit_file", 3),
+      toolEnd(I, "t9", 5, {
+        file_path: "src/auth/session.ts",
+        old_string: "const SESSION_TTL = 3600",
+        new_string: "const SESSION_TTL = 900",
+      }),
     ];
     const text = (await renderEventLogBoard(events)).join("\n");
     expect(text).toContain("[implementer] Edit src/auth/session.ts");

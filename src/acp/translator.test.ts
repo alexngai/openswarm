@@ -76,6 +76,27 @@ describe("makeAcpTranslator", () => {
     expect(last.status).toBe("failed");
   });
 
+  it("prefers a recorded `input` on tool_use_end with an empty accumulator (issue #26)", async () => {
+    const { conn, updates } = recorder();
+    const t = makeAcpTranslator(conn, "s1");
+    // Replay/live shape: tool_use_start is recorded (opening the accumulator
+    // with the tool name) but tool_use_input was stripped, so the buffer is
+    // empty. The diff must come from the `input` on tool_use_end.
+    await t.emit({ type: "tool_use_start", id: "e2", name: "edit_file" });
+    await t.emit({
+      type: "tool_use_end",
+      id: "e2",
+      input: { path: "a.ts", old_string: "x", new_string: "y" },
+    });
+
+    const upd = updates.find(
+      (u) => u.sessionUpdate === "tool_call_update",
+    ) as { content?: unknown };
+    expect(upd.content).toEqual([
+      { type: "diff", path: "a.ts", oldText: "x", newText: "y" },
+    ]);
+  });
+
   it("maps todo_write to a plan, not a tool_call", async () => {
     const { conn, updates } = recorder();
     const t = makeAcpTranslator(conn, "s1");
