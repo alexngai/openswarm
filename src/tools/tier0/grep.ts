@@ -110,6 +110,22 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
     const onAbort = () => child.kill("SIGKILL");
     ctx.abort?.addEventListener("abort", onAbort);
 
+    // Without this handler a spawn failure (e.g. the bundled ripgrep binary is
+    // not present — common in stripped/compiled deployments and sandboxes)
+    // emits an unhandled 'error' event: the promise never resolves and the tool
+    // call hangs/crashes. Resolve to a clear error so the model can immediately
+    // fall back to a shell `grep -rn` instead of thrashing on a broken tool.
+    child.on("error", (err: NodeJS.ErrnoException) => {
+      ctx.abort?.removeEventListener("abort", onAbort);
+      const detail = err.code === "ENOENT" ? "ripgrep binary not found" : err.message;
+      resolve({
+        status: "error",
+        message:
+          `grep unavailable (${detail}). Use the bash tool with ` +
+          `\`grep -rn <pattern> <path>\` instead.`,
+      });
+    });
+
     child.on("close", (code) => {
       ctx.abort?.removeEventListener("abort", onAbort);
 
