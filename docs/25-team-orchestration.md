@@ -855,8 +855,37 @@ openswarm team send <name> <prompt>         # push a new prompt to a team (typic
 2. Project `.openteams/templates/<template>/team.yaml`.
 3. Global `~/.openteams/templates/<template>/team.yaml`.
 4. openteams built-in registry.
+5. **Built-in presets** (`review`, `fix`, `refactor`) — bundled `TeamSpec`s in
+   `src/swarm/openteams/presets.ts`, resolved with **no** local `.yaml` needed.
 
-(Same precedence as cc-swarm's `openteams.resolveTemplateName()`.)
+(Steps 1–4 mirror cc-swarm's `openteams.resolveTemplateName()`.)
+
+#### Built-in presets (no YAML required)
+
+Run a small team without authoring a template:
+
+```bash
+openswarm team start review     # two read-only reviewers (general + security/tests), fanout
+openswarm team start fix        # executor (diagnose+patch) → reviewer (verify), pipeline
+openswarm team start refactor   # executor (scoped refactor) → reviewer (review), pipeline
+```
+
+Resolution lives in `resolveTeamPreset()` (`src/cli/team.ts`) and runs inside
+`runTeamStart`'s existing load path — a bare preset name short-circuits to the
+bundled `TeamSpec` before the openteams loader is consulted.
+
+**Precedence — a local template of the same name always wins.** A bare name
+resolves to the built-in preset **only** when none of the following apply:
+
+- the name looks like a path or a `.yaml`/`.yml` file (always treated as a file);
+- a project-local `./.openteams/templates/<name>/team.yaml` exists (that file is
+  loaded via openteams instead);
+- an explicit fixture dir was supplied (test/local-file seam).
+
+So a user who creates `./.openteams/templates/review/team.yaml` transparently
+overrides the built-in `review` preset. Presets are read-mostly where it matters:
+`review` uses only the read-only `reviewer` role; `fix`/`refactor` pair a
+write-capable `executor` with a read-only `reviewer` verifier.
 
 ### 11.3 New: direct topology entry
 

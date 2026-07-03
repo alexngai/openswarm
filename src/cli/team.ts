@@ -10,10 +10,12 @@ import * as child_process from "node:child_process";
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as net from "node:net";
+import * as path from "node:path";
 import type { PermissionMode } from "../core/types.js";
 import { Orchestrator, type HostObserver } from "../swarm/orchestrator.js";
 import { loadTemplate } from "../swarm/openteams/loader.js";
 import { openteamsToTeamSpec } from "../swarm/openteams/mapping.js";
+import { getPreset } from "../swarm/openteams/presets.js";
 import { createMapSidecar, type MapSidecar } from "../host/map-sidecar.js";
 import { TeamSpecSchema, type TeamSpec, type TopologyKind } from "../swarm/team-spec.js";
 import { StatusResultSchema } from "../swarm/team-daemon-protocol.js";
@@ -72,6 +74,61 @@ function adapterOpts(opts: {
 }
 
 // ---------------------------------------------------------------------------
+// Built-in preset resolution
+// ---------------------------------------------------------------------------
+
+/**
+ * A name is treated as an explicit file/path (never a preset) when it looks
+ * like a path or a YAML file — `./team.yaml`, `/abs/team.yaml`, `a/b`, or
+ * anything ending in `.yaml`/`.yml`. Bare identifiers like `review` are
+ * eligible for preset resolution.
+ */
+function looksLikePath(name: string): boolean {
+  return (
+    name.includes("/") ||
+    name.includes(path.sep) ||
+    name.startsWith(".") ||
+    /\.ya?ml$/i.test(name)
+  );
+}
+
+/**
+ * Resolve a bare template name to a bundled preset {@link TeamSpec}, or
+ * `undefined` to defer to the normal openteams loader.
+ *
+ * PRECEDENCE (documented in docs/25 §5.5): a project-local template with the
+ * same name wins over a same-named built-in preset. We defer to the loader
+ * (return `undefined`) when:
+ *   - the name isn't a known preset;
+ *   - the name looks like an explicit path / `.yaml` file;
+ *   - the caller passed an explicit `fixtureDir` (test/local file seam);
+ *   - a project-local `<cwd>/.openteams/templates/<name>/team.yaml` exists.
+ * Otherwise the built-in preset is returned.
+ *
+ * Exported for unit tests; `cwd` defaults to `process.cwd()`.
+ */
+export function resolveTeamPreset(
+  templateName: string,
+  opts: { readonly cwd?: string; readonly hasFixtureDir?: boolean } = {},
+): TeamSpec | undefined {
+  if (opts.hasFixtureDir === true) return undefined;
+  if (looksLikePath(templateName)) return undefined;
+  const preset = getPreset(templateName);
+  if (preset === undefined) return undefined;
+  // Local project template of the same name takes precedence over the built-in.
+  const cwd = opts.cwd ?? process.cwd();
+  const localPath = path.join(
+    cwd,
+    ".openteams",
+    "templates",
+    templateName,
+    "team.yaml",
+  );
+  if (fs.existsSync(localPath)) return undefined;
+  return preset;
+}
+
+// ---------------------------------------------------------------------------
 // runTeamStart
 // ---------------------------------------------------------------------------
 
@@ -79,31 +136,43 @@ export async function runTeamStart(
   templateName: string,
   opts: TeamStartOptions,
 ): Promise<number> {
-  // 1. Load openteams template.
-  let config;
-  try {
-    config = await loadTemplate(templateName, {
-      ...(opts.openteamsBinary !== undefined && {
-        openteamsBinary: opts.openteamsBinary,
-      }),
-      ...(opts.fixtureDir !== undefined && { fixtureDir: opts.fixtureDir }),
-    });
-  } catch (err) {
+  // 1. Resolve a TeamSpec: a bare built-in preset name (review/fix/refactor)
+  //    resolves to a bundled spec unless a same-named local template exists;
+  //    otherwise load + map an openteams template as before.
+  let spec: TeamSpec;
+  const preset = resolveTeamPreset(templateName, {
+    hasFixtureDir: opts.fixtureDir !== undefined,
+  });
+  if (preset !== undefined) {
     process.stderr.write(
-      `error: failed to load template "${templateName}": ${err instanceof Error ? err.message : String(err)}\n`,
+      `[openswarm] using built-in team preset "${templateName}"\n`,
     );
-    return 2;
-  }
+    spec = preset;
+  } else {
+    let config;
+    try {
+      config = await loadTemplate(templateName, {
+        ...(opts.openteamsBinary !== undefined && {
+          openteamsBinary: opts.openteamsBinary,
+        }),
+        ...(opts.fixtureDir !== undefined && { fixtureDir: opts.fixtureDir }),
+      });
+    } catch (err) {
+      process.stderr.write(
+        `error: failed to load template "${templateName}": ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+      return 2;
+    }
 
-  // 2. Map to TeamSpec.
-  let spec;
-  try {
-    spec = openteamsToTeamSpec(config);
-  } catch (err) {
-    process.stderr.write(
-      `error: failed to map template "${templateName}" to TeamSpec: ${err instanceof Error ? err.message : String(err)}\n`,
-    );
-    return 2;
+    // Map to TeamSpec.
+    try {
+      spec = openteamsToTeamSpec(config);
+    } catch (err) {
+      process.stderr.write(
+        `error: failed to map template "${templateName}" to TeamSpec: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+      return 2;
+    }
   }
 
   // 2a. v0.5 stage 5E.3: detach branch. Fork the per-team daemon and return
