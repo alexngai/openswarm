@@ -16,6 +16,17 @@ export const COMPACT_TOOL_GUARD =
   "CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.\n\n- Do NOT use Read, Bash, Grep, Glob, Edit, Write, or ANY other tool.\n- You already have all the context you need in the conversation above.\n- Tool calls will be REJECTED and will waste your only turn — you will fail the task.\n- Your entire response must be plain text: an <analysis> block followed by a <summary> block.\n\n";
 
 /**
+ * Self-exclusion note (openswarm extension, like the guard): non-Claude
+ * summarizers otherwise treat this very request as part of the conversation —
+ * quoting it under "All user messages" and carrying its TEXT-ONLY constraint
+ * into the summary, which derails the resumed session (the post-compact model
+ * reads the stale no-tools instruction as the user's latest intent and stops
+ * working). Observed live with gpt-5.5 (2026-07-03).
+ */
+export const COMPACT_SELF_EXCLUSION =
+  "IMPORTANT: This summarization request itself is NOT part of the conversation being summarized. Do NOT mention it, do NOT list it under \"All user messages\", and do NOT carry its instructions (including the text-only/no-tools requirement, which applies ONLY to this one response) into the summary as if they were ongoing user constraints. Summarize only the conversation that came before this request, and base \"Current Work\" and \"Optional Next Step\" on the task that was in progress before it.\n\n";
+
+/**
  * Main summarization prompt ("conversation so far") — the full/auto compact
  * path. Nine sections ending 8. Current Work / 9. Optional Next Step.
  */
@@ -36,10 +47,11 @@ export const COMPACT_REMINDER =
 
 /**
  * Build the full-compaction summary request text (Claude Code T$n):
- * guard + main prompt + optional Additional Instructions + reminder.
+ * guard + self-exclusion + main prompt + optional Additional Instructions +
+ * reminder.
  */
 export function buildCompactSummaryRequest(customInstructions?: string): string {
-  let text = COMPACT_TOOL_GUARD + COMPACT_FROM_PROMPT;
+  let text = COMPACT_TOOL_GUARD + COMPACT_SELF_EXCLUSION + COMPACT_FROM_PROMPT;
   if (customInstructions !== undefined && customInstructions.trim() !== "") {
     text += `\n\nAdditional Instructions:\n${customInstructions}`;
   }
@@ -47,11 +59,11 @@ export function buildCompactSummaryRequest(customInstructions?: string): string 
 }
 
 /**
- * Build the reactive (keep-recent) summary request text: RECENT-portion
- * prompt + optional Additional Instructions + reminder.
+ * Build the reactive (keep-recent) summary request text: self-exclusion +
+ * RECENT-portion prompt + optional Additional Instructions + reminder.
  */
 export function buildRecentCompactSummaryRequest(customInstructions?: string): string {
-  let text = COMPACT_RECENT_PROMPT;
+  let text = COMPACT_SELF_EXCLUSION + COMPACT_RECENT_PROMPT;
   if (customInstructions !== undefined && customInstructions.trim() !== "") {
     text += `\n\nAdditional Instructions:\n${customInstructions}`;
   }

@@ -627,9 +627,14 @@ describe("compactSessionRemote — section validation", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildCompactSummaryRequest", () => {
-  it("contains the guard, all required sections, and the reminder", () => {
+  it("contains the guard, self-exclusion, all required sections, and the reminder", () => {
     const request = buildCompactSummaryRequest();
     expect(request).toContain("CRITICAL: Respond with TEXT ONLY.");
+    // Self-exclusion note: keeps non-Claude summarizers from treating this
+    // request as part of the conversation being summarized.
+    expect(request).toContain(
+      "This summarization request itself is NOT part of the conversation",
+    );
     for (const section of REQUIRED_SUMMARY_SECTIONS) {
       expect(request).toContain(section);
     }

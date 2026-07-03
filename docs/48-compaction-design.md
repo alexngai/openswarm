@@ -240,6 +240,14 @@ history now…"), which merely *suggests* compaction. New behavior:
 - **Mechanical fallback summarizer** — CC has no equivalent; we keep it as the
   terminal safety net (headless multi-agent runs must not die on a failed
   summarization call).
+- **Self-exclusion note in the summary request** (`COMPACT_SELF_EXCLUSION`) —
+  CC doesn't need it (Claude models are trained on the request), but live
+  testing with gpt-5.5 showed non-Claude summarizers treating the request as
+  part of the conversation: quoting it under "All user messages" and carrying
+  its TEXT-ONLY constraint forward as the user's latest intent, which derailed
+  the resumed session (the post-compact model produced an `<analysis>` block
+  instead of resuming work). The note tells the summarizer the request itself
+  is not part of the conversation being summarized.
 - **Section validation + corrective retry** — cheap robustness CC lacks.
 - **Snapshot persistence** of compaction state (counts, breakers) — required
   for our resumable engines.
@@ -291,6 +299,20 @@ and the model completed the original task after compaction. Bedrock via the
 LiteLLM gateway not exercised (no `LITELLM_API_KEY` in the environment); the
 transport path is identical (OpenAI-compat), so Azure coverage is considered
 sufficient.
+
+**Live agent verification (2026-07-03, real CLI headless):** end-to-end
+`openswarm prompt --headless --model azureoai/gpt-5.5` in a scratch workspace,
+`OPENSWARM_COMPACT_RESERVE=185000` (threshold = window/2 = 100k), agent asked
+to run a ~15k-token noise command 10 times. Default engine: two auto full
+compactions fired mid-run, the agent kept an accurate count across both
+boundaries and finished with the exact expected reply. Hardened engine
+(`--framework hardened-native --eager-tool-dispatch --mid-turn-compaction`):
+mid-turn compactions fired with `midTurn: true` metadata and the task
+completed. This run also surfaced the summarizer self-inclusion failure that
+motivated `COMPACT_SELF_EXCLUSION` (see divergences above); re-verified green
+after the fix. Note the tool-output cleanser collapses single lines > 500
+chars — forcing context growth in tests requires many short lines, not one
+long one.
 
 ## Resolved questions (2026-07-03)
 
