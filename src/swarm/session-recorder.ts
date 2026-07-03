@@ -21,7 +21,107 @@ import type { LaneEvent } from "./events.js";
 import {
   beginCheckpointedSession,
   type CheckpointedSession,
+  type UsedSkill,
 } from "./session-checkpointer.js";
+
+// ---------------------------------------------------------------------------
+// Skill-use tracking (SkillUse declaration — the *applied* attribution leg)
+// ---------------------------------------------------------------------------
+
+const MAX_TRACKED_SKILL_USES = 100;
+
+/** Skill-loading tools across engines: openswarm's tier-1 `skill` tool
+ *  (input `{id}`) and Claude Code's native `Skill` tool via the
+ *  claude-agent-sdk engine (input `{skill, args}` — the shape sessionlog's
+ *  own claude-code hook parses). Matched case-insensitively. */
+function isSkillTool(toolName: string | undefined): boolean {
+  return toolName !== undefined && toolName.toLowerCase() === "skill";
+}
+
+/**
+ * Observes the lane-event stream for explicit skill tool invocations so
+ * they can be declared to sessionlog as SkillUse events at close (sessionlog
+ * `skillsUsed` → cognitive-core `appliedPlaybookIds`). Reassembles streamed
+ * tool input (tool_use_input jsonDelta) per tool-use id, and drops
+ * invocations whose tool_result reported an error (a failed load is not an
+ * application). Payload key variants are handled for both the NormalizedEvent
+ * spread (`id`/`name`/`jsonDelta`) and typed lane payloads
+ * (`toolUseId`/`toolName`/`partialJson`).
+ */
+export class SkillUseTracker {
+  private readonly pendingInput = new Map<string, string>();
+  private readonly candidates = new Map<string, UsedSkill>();
+  private readonly errored = new Set<string>();
+
+  observe(event: LaneEvent): void {
+    const p = (event.payload ?? {}) as Record<string, unknown>;
+    const toolUseId = str(p.toolUseId) ?? str(p.id);
+    if (toolUseId === undefined) return;
+
+    switch (event.type) {
+      case "tool_use_start": {
+        if (!isSkillTool(str(p.toolName) ?? str(p.name))) return;
+        if (this.candidates.size >= MAX_TRACKED_SKILL_USES) return;
+        this.pendingInput.set(toolUseId, "");
+        // Some engines carry the full input on start already.
+        this.tryFinalize(toolUseId, p.toolInput ?? p.input);
+        return;
+      }
+      case "tool_use_input": {
+        if (!this.pendingInput.has(toolUseId)) return;
+        const delta = str(p.jsonDelta) ?? str(p.partialJson) ?? "";
+        this.pendingInput.set(toolUseId, this.pendingInput.get(toolUseId)! + delta);
+        return;
+      }
+      case "tool_use_end": {
+        if (!this.pendingInput.has(toolUseId)) return;
+        if (p.input !== undefined) {
+          this.tryFinalize(toolUseId, p.input);
+        } else {
+          const raw = this.pendingInput.get(toolUseId)!;
+          try {
+            this.tryFinalize(toolUseId, JSON.parse(raw));
+          } catch {
+            this.pendingInput.delete(toolUseId);
+          }
+        }
+        return;
+      }
+      case "tool_result": {
+        if (p.isError === true) {
+          this.errored.add(toolUseId);
+        }
+        return;
+      }
+      default:
+        return;
+    }
+  }
+
+  /** Successfully-invoked skills, in invocation order. */
+  used(): UsedSkill[] {
+    const result: UsedSkill[] = [];
+    for (const [toolUseId, skill] of this.candidates) {
+      if (!this.errored.has(toolUseId)) result.push(skill);
+    }
+    return result;
+  }
+
+  private tryFinalize(toolUseId: string, input: unknown): void {
+    if (typeof input !== "object" || input === null) return;
+    const obj = input as Record<string, unknown>;
+    // openswarm `skill` tool: {id}; Claude Code `Skill` tool: {skill, args}.
+    const name = str(obj.id) ?? str(obj.skill);
+    if (name === undefined || name.length === 0) return;
+    const args = str(obj.args);
+    this.candidates.set(toolUseId, { name, ...(args !== undefined && { args }) });
+    this.pendingInput.delete(toolUseId);
+  }
+}
+
+function str(v: unknown): string | undefined {
+  return typeof v === "string" ? v : undefined;
+}
 
 /** Recording is opt-in: a session dir or the explicit flag turns it on. */
 export function recordingEnabled(): boolean {
@@ -118,18 +218,30 @@ export async function startSessionRecorder(
         }),
       });
 
+    // Track explicit `skill` tool invocations as events stream through, so
+    // close() can declare them to sessionlog as SkillUse (applied attribution).
+    const skillUses = new SkillUseTracker();
+
     return {
       transcriptPath,
       sessionId: opts.sessionId,
       record(event: LaneEvent): void {
         writeLine(event);
+        try {
+          skillUses.observe(event);
+        } catch {
+          // tracking is additive — never interfere with recording
+        }
       },
       close(): Promise<void> {
         return new Promise((resolve) => {
           // Flush the transcript, then finish the checkpoint (TurnEnd ->
           // SessionEnd). Best-effort: a failed checkpoint never blocks close.
           const finalize = (): void => {
-            void Promise.resolve(checkpoint?.finish()).then(
+            const skillsUsed = skillUses.used();
+            void Promise.resolve(
+              checkpoint?.finish(skillsUsed.length > 0 ? { skillsUsed } : undefined),
+            ).then(
               () => resolve(),
               () => resolve(),
             );
