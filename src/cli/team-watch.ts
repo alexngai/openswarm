@@ -27,7 +27,7 @@ import type {
   AgentSideConnection,
   SessionNotification,
 } from "@agentclientprotocol/sdk";
-import type { LaneEvent } from "../swarm/events.js";
+import type { LaneEvent, TeamUsagePayload } from "../swarm/events.js";
 import { parseTeamEventsLog } from "../swarm/events-log.js";
 import { RichRenderer } from "../acp/rich-view.js";
 import { formatRichView } from "../acp/rich-format.js";
@@ -74,7 +74,23 @@ export async function renderEventLogBoard(
     },
   };
   await replayTeamSpine(conn, "team-watch", events);
-  return formatRichView(renderer.view());
+  return formatRichView(renderer.view(), latestTeamUsage(events));
+}
+
+/**
+ * The most recent `team_usage` (#17) snapshot in the stream, if any. The daemon
+ * emits these periodically/on-demand as cumulative roll-ups, so the last one
+ * wins — earlier snapshots are superseded.
+ */
+function latestTeamUsage(
+  events: readonly LaneEvent[],
+): TeamUsagePayload | undefined {
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i]!.type === "team_usage") {
+      return events[i]!.payload as TeamUsagePayload;
+    }
+  }
+  return undefined;
 }
 
 async function runBoard(

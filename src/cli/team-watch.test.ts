@@ -171,4 +171,108 @@ describe("renderEventLogBoard", () => {
     const lines = await renderEventLogBoard([]);
     expect(lines).toEqual([]);
   });
+
+  const toolInput = (
+    agentId: AgentId,
+    id: string,
+    jsonDelta: string,
+    ts: number,
+  ): LaneEvent =>
+    ({
+      ts,
+      agentId,
+      type: "tool_use_input",
+      payload: { type: "tool_use_input", id, jsonDelta },
+    }) as LaneEvent;
+
+  it("renders an inline diff for an edit tool call from recorded input", async () => {
+    const I = "I" as AgentId;
+    const events: LaneEvent[] = [
+      spawned("I", "implementer"),
+      toolStart(I, "t3", "edit_file", 3),
+      toolInput(
+        I,
+        "t3",
+        JSON.stringify({
+          file_path: "src/auth/session.ts",
+          old_string: "const SESSION_TTL = 3600",
+          new_string: "const SESSION_TTL = 900",
+        }),
+        4,
+      ),
+      toolEnd(I, "t3", 5),
+    ];
+    const text = (await renderEventLogBoard(events)).join("\n");
+    expect(text).toContain("[implementer] Edit src/auth/session.ts");
+    expect(text).toContain("± src/auth/session.ts  +1 -1");
+    expect(text).toContain("- const SESSION_TTL = 3600");
+    expect(text).toContain("+ const SESSION_TTL = 900");
+  });
+
+  it("renders per-member cost and a team total from a team_usage event", async () => {
+    const usage: LaneEvent = {
+      ts: 10,
+      agentId: ORCH,
+      type: "team_usage",
+      payload: {
+        members: [
+          {
+            agentId: "A",
+            memberId: "A",
+            role: "architect",
+            inputTokens: 4200,
+            outputTokens: 1800,
+            cacheReadInputTokens: 0,
+            cacheWriteInputTokens: 0,
+            totalTokens: 6000,
+            costUsd: 0.021,
+          },
+        ],
+        team: {
+          inputTokens: 4200,
+          outputTokens: 1800,
+          cacheReadInputTokens: 0,
+          cacheWriteInputTokens: 0,
+          totalTokens: 6000,
+          costUsd: 0.021,
+        },
+      },
+    } as LaneEvent;
+    const events: LaneEvent[] = [
+      spawned("A", "architect"),
+      toolStart(A, "t1", "read_file", 3),
+      toolEnd(A, "t1", 4),
+      usage,
+    ];
+    const text = (await renderEventLogBoard(events)).join("\n");
+    // Per-member cost suffix on the architect lane header.
+    expect(text).toMatch(/\[architect\].*6\.0k tok · \$0\.021/);
+    // Usage ledger + team total.
+    expect(text).toContain("── usage");
+    expect(text).toContain("Σ team  6.0k tok · $0.021");
+  });
+
+  it("uses the latest team_usage snapshot when several are present", async () => {
+    const mk = (total: number, cost: number): LaneEvent =>
+      ({
+        ts: total,
+        agentId: ORCH,
+        type: "team_usage",
+        payload: {
+          members: [],
+          team: {
+            inputTokens: total,
+            outputTokens: 0,
+            cacheReadInputTokens: 0,
+            cacheWriteInputTokens: 0,
+            totalTokens: total,
+            costUsd: cost,
+          },
+        },
+      }) as LaneEvent;
+    const events: LaneEvent[] = [spawned("A", "architect"), mk(6000, 0.021), mk(17600, 0.063)];
+    const text = (await renderEventLogBoard(events)).join("\n");
+    expect(text).toContain("Σ team  17.6k tok · $0.063");
+    expect(text).not.toContain("$0.021");
+  });
 });
