@@ -361,19 +361,19 @@ Based on `01-requirements.md` v1 list + this research:
 
 Primary sources read:
 
-- `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/rusty-claude-cli/src/main.rs` (12k lines; read heads, targeted sections, and grep'd for flags/verbs/doctor)
-- `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/rusty-claude-cli/src/init.rs`
-- `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/rusty-claude-cli/src/input.rs`
-- `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/rusty-claude-cli/src/render.rs`
-- `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/rusty-claude-cli/tests/cli_flags_and_config_defaults.rs`
-- `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/rusty-claude-cli/tests/resume_slash_commands.rs`
-- `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/commands/src/lib.rs` (~5600 lines; `SlashCommandSpec` table)
-- `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/runtime/src/bootstrap.rs`
-- `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/runtime/src/trust_resolver.rs`
-- `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/runtime/src/recovery_recipes.rs`
-- `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/runtime/src/green_contract.rs`
-- `/Users/alexngai/GitHub/openswarm/references/claw-code/USAGE.md`
-- `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/README.md`
+- `references/claw-code/rust/crates/rusty-claude-cli/src/main.rs` (12k lines; read heads, targeted sections, and grep'd for flags/verbs/doctor)
+- `references/claw-code/rust/crates/rusty-claude-cli/src/init.rs`
+- `references/claw-code/rust/crates/rusty-claude-cli/src/input.rs`
+- `references/claw-code/rust/crates/rusty-claude-cli/src/render.rs`
+- `references/claw-code/rust/crates/rusty-claude-cli/tests/cli_flags_and_config_defaults.rs`
+- `references/claw-code/rust/crates/rusty-claude-cli/tests/resume_slash_commands.rs`
+- `references/claw-code/rust/crates/commands/src/lib.rs` (~5600 lines; `SlashCommandSpec` table)
+- `references/claw-code/rust/crates/runtime/src/bootstrap.rs`
+- `references/claw-code/rust/crates/runtime/src/trust_resolver.rs`
+- `references/claw-code/rust/crates/runtime/src/recovery_recipes.rs`
+- `references/claw-code/rust/crates/runtime/src/green_contract.rs`
+- `references/claw-code/USAGE.md`
+- `references/claw-code/rust/README.md`
 
 Key symbols:
 

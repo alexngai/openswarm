@@ -1,31 +1,54 @@
+/**
+ * read_file — Claude Code-aligned file reader.
+ *
+ * Schema and semantics follow Claude Code's Read tool so trained models
+ * work without fine-tuning (docs/04-tool-tiers.md, schema alignment):
+ *   - canonical param is `file_path` (legacy alias `path` still accepted)
+ *   - `offset` is a 1-based line number ("the line number to start reading
+ *     from"), `limit` caps lines (default 2000)
+ *   - output is cat-n formatted: 6-wide right-aligned line number + tab
+ *   - lines longer than 2000 chars are truncated
+ *   - empty files and out-of-range offsets return <system-reminder> warnings
+ *   - default-cap truncation prepends a "[Truncated: PARTIAL view — ...]"
+ *     system-reminder (Claude Code v2.1.198 shape)
+ * Successful reads are recorded so edit_file/write_file can enforce the
+ * read-before-edit contract.
+ */
+
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { ToolAccesses, type ToolAccesses as ToolAccessesType } from "../access.js";
-import { isUnderCwd } from "./internal.js";
+import { isUnderCwd, aliasParams } from "./internal.js";
+import { recordFileRead } from "./read-state.js";
 
-const inputSchema = z.object({
-  path: z.string(),
+const paramsSchema = z.object({
+  file_path: z.string(),
   offset: z.number().int().nonnegative().optional(),
   limit: z.number().int().positive().optional(),
 });
 
-type Input = z.infer<typeof inputSchema>;
+const inputSchema = z.preprocess(aliasParams({ path: "file_path" }), paramsSchema);
+
+type Input = z.infer<typeof paramsSchema>;
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MiB
 const BINARY_PROBE_BYTES = 8192;
 const DEFAULT_LINE_LIMIT = 2000;
+const MAX_LINE_CHARS = 2000;
 
 const spec: ToolSpec = {
   name: "read_file",
   description:
-    "Read a text file. Path is resolved relative to the working directory. " +
+    "Read a text file. `file_path` may be absolute or relative to the working directory. " +
+    "By default returns up to 2000 lines from the start of the file. " +
+    "`offset` is the line number to start reading from (1-indexed); `limit` caps the number of lines. " +
+    "Output is cat -n formatted (line numbers prefixed). Lines longer than 2000 characters are truncated. " +
     "Binary files (NUL byte in first 8 KiB) and files larger than 10 MiB are rejected. " +
-    "Use `offset` (0-based line index) and `limit` (max lines) to page through large files. " +
-    "Default limit is 2000 lines. Output is cat-n formatted: '  N\\t<line>'.",
-  inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
+    "Call this tool in parallel when reading multiple files.",
+  inputSchema: z.toJSONSchema(paramsSchema) as JsonSchema,
   requiredPermission: "read",
   tier: 0,
 };
@@ -37,14 +60,14 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   }
   const input: Input = parsed.data;
 
-  const resolved = path.resolve(ctx.cwd, input.path);
+  const resolved = path.resolve(ctx.cwd, input.file_path);
 
   // Workspace boundary — read_file honors the same boundary as write-side tools
   // so read-only permission mode is actually confined to the agent's workspace.
   if (!isUnderCwd(resolved, ctx.cwd)) {
     return {
       status: "error",
-      message: `path "${input.path}" resolves outside the workspace boundary`,
+      message: `path "${input.file_path}" resolves outside the workspace boundary`,
     };
   }
   // Symlink-escape guard (only when file exists and is a symlink).
@@ -55,7 +78,7 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
       if (!isUnderCwd(real, ctx.cwd)) {
         return {
           status: "error",
-          message: `path "${input.path}" is a symlink pointing outside the workspace boundary`,
+          message: `path "${input.file_path}" is a symlink pointing outside the workspace boundary`,
         };
       }
     }
@@ -67,9 +90,9 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   let stat: Awaited<ReturnType<typeof fs.stat>>;
   try {
     stat = await fs.stat(resolved);
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return { status: "error", message: `cannot stat file: ${msg}` };
+  } catch {
+    // Claude Code's exact phrasing — trained models recognize it.
+    return { status: "error", message: "File does not exist." };
   }
 
   if (stat.size > MAX_FILE_BYTES) {
@@ -104,17 +127,55 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
     lines.pop();
   }
 
-  const offset = input.offset ?? 0;
+  // `offset` is 1-based (Claude Code convention). Accept 0 leniently as 1.
+  const startLine = Math.max(1, input.offset ?? 1);
   const limit = input.limit ?? DEFAULT_LINE_LIMIT;
-  const slice = lines.slice(offset, offset + limit);
+  const slice = lines.slice(startLine - 1, startLine - 1 + limit);
 
-  const output = slice
+  recordFileRead(resolved);
+
+  // Empty file / offset past EOF: Claude Code's exact system-reminder warnings.
+  if (lines.length === 0) {
+    return {
+      status: "ok",
+      output:
+        "<system-reminder>Warning: the file exists but the contents are empty.</system-reminder>",
+    };
+  }
+  if (slice.length === 0) {
+    return {
+      status: "ok",
+      output:
+        `<system-reminder>Warning: the file exists but is shorter than the provided offset ` +
+        `(${startLine}). The file has ${lines.length} lines.</system-reminder>`,
+    };
+  }
+
+  let output = slice
     .map((line, i) => {
-      const lineNum = offset + i + 1;
-      const padded = String(lineNum).padStart(3, " ");
-      return `${padded}\t${line}`;
+      const lineNum = startLine + i;
+      const shown =
+        line.length > MAX_LINE_CHARS
+          ? line.slice(0, MAX_LINE_CHARS) + `... (line truncated to ${MAX_LINE_CHARS} chars)`
+          : line;
+      return `${String(lineNum).padStart(6, " ")}\t${shown}`;
     })
     .join("\n");
+
+  // When the default cap (no explicit limit) truncated the read, prepend a
+  // Claude Code-style PARTIAL-view reminder so the model pages onward instead
+  // of answering from an incomplete view.
+  const lastShown = startLine + slice.length - 1;
+  if (input.limit === undefined && lastShown < lines.length) {
+    output =
+      `<system-reminder>[Truncated: PARTIAL view \u2014 showing lines ${startLine}-${lastShown} ` +
+      `of ${lines.length} total. Call read_file with offset=${lastShown + 1} for the next page, ` +
+      `or grep to find a specific section. Do NOT answer from this page alone if the answer ` +
+      `may be further in the file.]</system-reminder>\n\n` +
+      output;
+  } else if (lastShown < lines.length) {
+    output += `\n\n(Showing lines ${startLine}-${lastShown} of ${lines.length}. Use offset=${lastShown + 1} to continue.)`;
+  }
 
   return { status: "ok", output };
 }
@@ -122,7 +183,7 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
 function accesses(raw: unknown, ctx: ToolExecutionContext): ToolAccessesType {
   const parsed = inputSchema.safeParse(raw);
   if (!parsed.success) return ToolAccesses.all();
-  return ToolAccesses.readFile(path.resolve(ctx.cwd, parsed.data.path));
+  return ToolAccesses.readFile(path.resolve(ctx.cwd, parsed.data.file_path));
 }
 
 export const readFileTool: ToolImpl = {

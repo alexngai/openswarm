@@ -22,6 +22,31 @@
 import type { PermissionMode } from "../core/types.js";
 import type { TopologyKind } from "../swarm/team-spec.js";
 
+/**
+ * Parse a duration string to milliseconds. Accepts an optional unit suffix
+ * (`ms`, `s`, `m`, `h`); a bare number is interpreted as seconds. Returns null
+ * on a malformed value.
+ */
+export function parseDurationToMs(value: string): number | null {
+  const match = /^(\d+(?:\.\d+)?)(ms|s|m|h)?$/.exec(value.trim());
+  if (match === null) return null;
+  const n = Number.parseFloat(match[1]!);
+  if (Number.isNaN(n)) return null;
+  switch (match[2]) {
+    case "ms":
+      return Math.round(n);
+    case "h":
+      return Math.round(n * 3_600_000);
+    case "m":
+      return Math.round(n * 60_000);
+    case "s":
+    case undefined:
+      return Math.round(n * 1_000);
+    default:
+      return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -107,13 +132,27 @@ export interface CommonOpts {
    */
   readonly maxCostUsd?: number;
   /**
-   * Maximum number of agent turns (model round-trips) for the run. On exceed the
-   * engine stops (`error_max_turns`) with the work-so-far left on disk. Applies to
-   * single-agent prompt runs — the STEP-budget analog of `--max-tokens`, for
-   * manufacturing step-bounded headroom in evals (aligns a step-economy lever with
-   * a step-denominated budget).
+   * Maximum number of agent turns (model round-trips) for the run. There is NO
+   * default cap — the loop is unbounded (Codex-style) unless this is set. When
+   * set, exhausting it is a soft stop (`stopReason: "max_turns"`, exit 3 in
+   * headless), not an error, with the work-so-far left on disk. Applies to
+   * single-agent prompt runs — the STEP-budget analog of `--max-tokens`.
    */
   readonly maxTurns?: number;
+  /**
+   * Optional wall-clock budget for the run, in milliseconds (parsed from a
+   * duration string like `90s`, `5m`, `1h`). On elapse the engine emits a soft
+   * stop (`stopReason: "max_wall_clock"`, exit 3 in headless). Checked at each
+   * turn boundary, so a long single turn can overshoot slightly.
+   */
+  readonly maxWallClockMs?: number;
+  /**
+   * GitHub #23 — attach the interactive REPL to an already-running detached
+   * team daemon of this name. The REPL tails the daemon's events.jsonl and
+   * drives its live AgentTree (Ctrl+A) / TaskBoard (Ctrl+T) views. Set by the
+   * `team attach <name>` verb; the REPL otherwise behaves normally.
+   */
+  readonly attachTeam?: string;
 }
 
 export type ParsedArgs =
@@ -194,10 +233,11 @@ export type ParsedArgs =
     }
   | { kind: "team-send"; name: string; prompt: string }
   | { kind: "team-list" }
+  | { kind: "team-status"; name: string }
   | { kind: "team-stop"; name: string }
   | { kind: "team-kill"; name: string }
   | { kind: "team-logs"; name: string; follow: boolean }
-  | { kind: "team-watch"; name: string }
+  | { kind: "team-watch"; name: string; plain: boolean }
   | {
       // docs/44 P5 — OpenHive-compatible host entrypoint.
       kind: "host";
@@ -290,6 +330,7 @@ export function parseArgv(args: string[]): ParsedArgs {
   let maxTokens: number | undefined;
   let maxCostUsd: number | undefined;
   let maxTurns: number | undefined;
+  let maxWallClockMs: number | undefined;
 
   // Defaults for swarm-run (consumed when subcommand === "swarm").
   let swarmConcurrency = 3;
@@ -329,6 +370,10 @@ export function parseArgv(args: string[]): ParsedArgs {
 
   // v0.5 stage 5E.5 — --follow flag for `team logs`.
   let follow = false;
+
+  // issue #16 — --plain/--raw for `team watch`: fall back to the legacy
+  // one-line-per-event tail instead of the multi-pane board.
+  let plain = false;
 
   // v0.5 stage 5B — opentasks daemon mirror flags for `swarm run`.
   let opentasks = false;
@@ -785,6 +830,13 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
+    // issue #16: --plain/--raw for `team watch`. Boolean; no value.
+    if (tok === "--plain" || tok === "--raw") {
+      plain = true;
+      i++;
+      continue;
+    }
+
     // --opentasks for `swarm run` / `topology` / `team start`. Boolean.
     if (tok === "--opentasks") {
       opentasks = true;
@@ -939,6 +991,28 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
+    if (tok === "--max-wall-clock") {
+      const val = expanded[i + 1];
+      if (val === undefined || val.startsWith("-")) {
+        return {
+          kind: "error",
+          message: "--max-wall-clock requires a value (e.g. 90s, 5m, 1h)",
+          showHelp: true,
+        };
+      }
+      const ms = parseDurationToMs(val);
+      if (ms === null || ms <= 0) {
+        return {
+          kind: "error",
+          message: `--max-wall-clock must be a positive duration (e.g. 90s, 5m, 1h), got "${val}"`,
+          showHelp: true,
+        };
+      }
+      maxWallClockMs = ms;
+      i += 2;
+      continue;
+    }
+
     // v0.7 stage 7D — pass-through subcommands (worktree, plugin) own their
     // own flag parsing. Once we've identified one, capture all remaining
     // tokens (including --flags) as positionals so the sub-CLI can interpret
@@ -1010,6 +1084,7 @@ export function parseArgv(args: string[]): ParsedArgs {
     ...(maxTokens !== undefined ? { maxTokens } : {}),
     ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
     ...(maxTurns !== undefined ? { maxTurns } : {}),
+    ...(maxWallClockMs !== undefined ? { maxWallClockMs } : {}),
   };
 
   switch (subcommand) {
@@ -1200,6 +1275,24 @@ export function parseArgv(args: string[]): ParsedArgs {
         }
         return { kind: "team-kill", name };
       }
+      if (subSub === "status") {
+        const name = positionals[1];
+        if (name === undefined) {
+          return {
+            kind: "error",
+            message: "team status requires a team name",
+            showHelp: true,
+          };
+        }
+        if (positionals.length > 2) {
+          return {
+            kind: "error",
+            message: `unexpected extra positional for team status: ${positionals[2]}`,
+            showHelp: true,
+          };
+        }
+        return { kind: "team-status", name };
+      }
       if (subSub === "logs") {
         const name = positionals[1];
         if (name === undefined) {
@@ -1220,7 +1313,29 @@ export function parseArgv(args: string[]): ParsedArgs {
             showHelp: true,
           };
         }
-        return { kind: "team-watch", name };
+        return { kind: "team-watch", name, plain };
+      }
+      if (subSub === "attach") {
+        // GitHub #23 — launch the interactive REPL wired to a detached daemon
+        // team's live event stream. Routed as a `prompt` command (empty text →
+        // pure interactive session) with `attachTeam` set so runPrompt tails the
+        // daemon's events.jsonl into the swarm views.
+        const name = positionals[1];
+        if (name === undefined) {
+          return {
+            kind: "error",
+            message: "team attach requires a team name",
+            showHelp: true,
+          };
+        }
+        if (positionals.length > 2) {
+          return {
+            kind: "error",
+            message: `unexpected extra positional for team attach: ${positionals[2]}`,
+            showHelp: true,
+          };
+        }
+        return { kind: "prompt", text: "", opts: { ...opts, attachTeam: name } };
       }
       return {
         kind: "error",

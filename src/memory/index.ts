@@ -69,6 +69,11 @@ export {
 export { FileMemoryProvider } from "./providers/file-provider.js";
 export { MinimemProvider, type MinimemProviderConfig } from "./providers/minimem-provider.js";
 export { SkillProvider, resolveSkillsDir, type SkillProviderConfig } from "./providers/skill-provider.js";
+export {
+  CogcorePlaybookProvider,
+  resolveCogcorePlaybooksDir,
+  type CogcorePlaybookProviderConfig,
+} from "./providers/cogcore-playbook-provider.js";
 
 export {
   onSessionStart,

@@ -21,6 +21,7 @@ import {
 import type { TeamSpec } from "./team-spec.js";
 import type { TeamResult } from "./topologies-types.js";
 import type { MemberInfo, MemberState, TeamSession } from "./team-session.js";
+import type { LaneEvent } from "./events.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -1071,5 +1072,149 @@ describe("TeamDaemon — stale-socket + duplicate-name (V0.5.Q5b + Q7)", () => {
     expect(await fileExists(paths.sockPath)).toBe(true);
     const pidStr = await fs.readFile(paths.pidPath, "utf8");
     expect(Number.parseInt(pidStr.trim(), 10)).toBe(process.pid);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GitHub #17 — per-member + team usage in the status snapshot
+// ---------------------------------------------------------------------------
+
+type LaneHandler = (event: LaneEvent) => void;
+
+/** Orchestrator exposing both a live team AND a capturable event stream. */
+function orchWithTeamAndEvents(
+  team: TeamSession,
+  onSubscribe: (handler: LaneHandler) => void,
+): TeamDaemonOrchestrator {
+  return {
+    runTeam: async () => {
+      await new Promise(() => {});
+      return {
+        succeeded: 0,
+        failed: 0,
+        timeout: 0,
+        cancelled: 0,
+        resultWriteFailures: 0,
+        deadLetterViolation: false,
+        deadLetterWriteFailures: 0,
+      };
+    },
+    getActiveTeam: () => team,
+    subscribeEvents: ((handler: LaneHandler) => {
+      onSubscribe(handler);
+      return () => {};
+    }) as TeamDaemonOrchestrator["subscribeEvents"],
+  };
+}
+
+async function requestStatus(sockPath: string): Promise<{
+  members?: Array<{ agentId: string; usage?: { totalTokens: number; costUsd: number } }>;
+  teamUsage?: { totalTokens: number; costUsd: number };
+}> {
+  const socket = net.createConnection(sockPath);
+  await new Promise<void>((resolve) => socket.once("connect", resolve));
+  socket.write(
+    JSON.stringify({ kind: "request", id: "u1", method: "status", params: {} }) + "\n",
+  );
+  const response = (await readResponse(socket)) as {
+    result?: {
+      members?: Array<{ agentId: string; usage?: { totalTokens: number; costUsd: number } }>;
+      teamUsage?: { totalTokens: number; costUsd: number };
+    };
+  };
+  socket.end();
+  return response.result ?? {};
+}
+
+describe("TeamDaemon — GitHub #17 usage aggregation in status", () => {
+  let paths: TeamDaemonPaths;
+  let daemon: TeamDaemon | undefined;
+
+  beforeEach(() => {
+    paths = tmpPaths();
+  });
+  afterEach(async () => {
+    if (daemon) {
+      await daemon.stop({ drainTimeoutMs: 0 }).catch(() => {});
+      daemon = undefined;
+    }
+  });
+
+  it("attaches per-member subtree usage + a team total to the status snapshot", async () => {
+    const team = fakeTeamWithMembers([
+      { agentId: "root", state: "running" },
+      { agentId: "peer", state: "running" },
+    ]);
+    let feed: LaneHandler = () => {};
+    daemon = new TeamDaemon({
+      spec: fakeSpec({ name: "usage" }),
+      paths,
+      orchestrator: orchWithTeamAndEvents(team, (h) => {
+        feed = h;
+      }),
+      startupOut: captureWritable().out,
+    });
+    await daemon.start();
+
+    // Top-level members are announced via worker_spawned (carrying model);
+    // root then spawns a child. Each member + the child reports usage.
+    feed({
+      ts: 0,
+      agentId: "orchestrator" as unknown as LaneEvent["agentId"],
+      type: "worker_spawned",
+      payload: { childAgentId: "root", model: "claude-sonnet-4-6" },
+    });
+    feed({
+      ts: 1,
+      agentId: "root" as unknown as LaneEvent["agentId"],
+      type: "worker_spawned",
+      payload: { childAgentId: "child", parentAgentId: "root", model: "claude-sonnet-4-6" },
+    });
+    feed({
+      ts: 2,
+      agentId: "root" as unknown as LaneEvent["agentId"],
+      type: "message_stop",
+      payload: { usage: { inputTokens: 1000, outputTokens: 0 } },
+    });
+    feed({
+      ts: 3,
+      agentId: "child" as unknown as LaneEvent["agentId"],
+      type: "message_stop",
+      payload: { usage: { inputTokens: 500, outputTokens: 0 } },
+    });
+    feed({
+      ts: 4,
+      agentId: "peer" as unknown as LaneEvent["agentId"],
+      type: "message_stop",
+      payload: { usage: { inputTokens: 200, outputTokens: 0 } },
+    });
+
+    const result = await requestStatus(paths.sockPath);
+    const byId = Object.fromEntries(
+      (result.members ?? []).map((m) => [m.agentId, m.usage]),
+    );
+    // root subtree = root(1000) + child(500)
+    expect(byId["root"]?.totalTokens).toBe(1500);
+    // both priced via sonnet: (1000 + 500) * 3.00 / 1e6
+    expect(byId["root"]?.costUsd).toBeCloseTo(0.0045, 10);
+    // peer only its own usage
+    expect(byId["peer"]?.totalTokens).toBe(200);
+    // team total = 1000 + 500 + 200
+    expect(result.teamUsage?.totalTokens).toBe(1700);
+  });
+
+  it("reports zero usage before any message_stop is observed", async () => {
+    const team = fakeTeamWithMembers([{ agentId: "a1", state: "running" }]);
+    daemon = new TeamDaemon({
+      spec: fakeSpec({ name: "zero" }),
+      paths,
+      orchestrator: orchWithTeamAndEvents(team, () => {}),
+      startupOut: captureWritable().out,
+    });
+    await daemon.start();
+
+    const result = await requestStatus(paths.sockPath);
+    expect(result.members?.[0]?.usage?.totalTokens).toBe(0);
+    expect(result.teamUsage?.totalTokens).toBe(0);
   });
 });

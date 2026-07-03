@@ -1,5 +1,40 @@
 import { describe, it, expect } from "vitest";
-import { parseArgv } from "./argv.js";
+import { parseArgv, parseDurationToMs } from "./argv.js";
+
+describe("parseDurationToMs", () => {
+  it("parses bare numbers as seconds", () => {
+    expect(parseDurationToMs("90")).toBe(90_000);
+  });
+  it("parses ms/s/m/h suffixes", () => {
+    expect(parseDurationToMs("500ms")).toBe(500);
+    expect(parseDurationToMs("30s")).toBe(30_000);
+    expect(parseDurationToMs("5m")).toBe(300_000);
+    expect(parseDurationToMs("1h")).toBe(3_600_000);
+  });
+  it("supports fractional values", () => {
+    expect(parseDurationToMs("1.5m")).toBe(90_000);
+  });
+  it("returns null on malformed input", () => {
+    expect(parseDurationToMs("abc")).toBeNull();
+    expect(parseDurationToMs("10x")).toBeNull();
+    expect(parseDurationToMs("")).toBeNull();
+  });
+});
+
+describe("parseArgv --max-wall-clock", () => {
+  it("parses a duration into maxWallClockMs (ms)", () => {
+    const r = parseArgv(["--max-wall-clock", "5m", "hi"]);
+    expect(r).toMatchObject({ kind: "prompt", opts: { maxWallClockMs: 300_000 } });
+  });
+  it("rejects a malformed duration", () => {
+    expect(parseArgv(["--max-wall-clock", "nope", "hi"])).toMatchObject({
+      kind: "error",
+    });
+  });
+  it("requires a value", () => {
+    expect(parseArgv(["--max-wall-clock"])).toMatchObject({ kind: "error" });
+  });
+});
 
 describe("parseArgv", () => {
   // ---- Bare positional → prompt -------------------------------------------
@@ -337,6 +372,46 @@ describe("parseArgv", () => {
   it("--team-daemon at top level returns team-daemon-entry kind", () => {
     const result = parseArgv(["--team-daemon"]);
     expect(result.kind).toBe("team-daemon-entry");
+  });
+
+  // ---- issue #16 — team watch --plain/--raw ------------------------------
+
+  it("team watch defaults to the multi-pane board (plain=false)", () => {
+    const result = parseArgv(["team", "watch", "alpha"]);
+    if (result.kind !== "team-watch") throw new Error("expected team-watch");
+    expect(result.name).toBe("alpha");
+    expect(result.plain).toBe(false);
+  });
+
+  it("team watch --plain falls back to the one-line tail (plain=true)", () => {
+    const result = parseArgv(["team", "watch", "alpha", "--plain"]);
+    if (result.kind !== "team-watch") throw new Error("expected team-watch");
+    expect(result.plain).toBe(true);
+  });
+
+  it("team watch --raw is an alias for --plain", () => {
+    const result = parseArgv(["team", "watch", "alpha", "--raw"]);
+    if (result.kind !== "team-watch") throw new Error("expected team-watch");
+    expect(result.plain).toBe(true);
+  });
+
+  // ---- issue #23 — team attach -------------------------------------------
+
+  it("team attach <name> → interactive prompt with attachTeam set", () => {
+    const result = parseArgv(["team", "attach", "alpha"]);
+    if (result.kind !== "prompt") throw new Error("expected prompt");
+    expect(result.text).toBe("");
+    expect(result.opts.attachTeam).toBe("alpha");
+  });
+
+  it("team attach without a name is an error", () => {
+    const result = parseArgv(["team", "attach"]);
+    expect(result.kind).toBe("error");
+  });
+
+  it("team attach rejects an extra positional", () => {
+    const result = parseArgv(["team", "attach", "alpha", "beta"]);
+    expect(result.kind).toBe("error");
   });
 
   // ---- v0.6 stage 6A.2 — --agent-inbox -----------------------------------

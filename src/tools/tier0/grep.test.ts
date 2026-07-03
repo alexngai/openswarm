@@ -45,11 +45,21 @@ describe("grep tool — content mode", () => {
     expect(result.output).toContain("hello");
   });
 
-  it("returns empty output when no matches", async () => {
+  it("returns 'No matches found' when no matches", async () => {
     const result = await grepTool.execute({ pattern: "ZZZNOMATCH_XYZ" }, ctx());
     expect(result.status).toBe("ok");
     if (result.status !== "ok") return;
-    expect(result.output).toBe("");
+    expect(result.output).toBe("No matches found");
+  });
+
+  it("returns 'No files found' for files_with_matches mode with no matches", async () => {
+    const result = await grepTool.execute(
+      { pattern: "ZZZNOMATCH_XYZ", output_mode: "files_with_matches" },
+      ctx(),
+    );
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") return;
+    expect(result.output).toBe("No files found");
   });
 
   it("respects case_insensitive flag", async () => {
@@ -98,9 +108,11 @@ describe("grep tool — count mode", () => {
 
     const lines = result.output.split("\n").filter(Boolean);
     expect(lines.length).toBeGreaterThan(0);
-    // Each line should be "path: N"
-    for (const line of lines) {
-      expect(line).toMatch(/: \d+$/);
+    // Raw rg `path:count` lines followed by Claude Code's total summary.
+    const summary = lines[lines.length - 1]!;
+    expect(summary).toMatch(/^Found \d+ total occurrences? across \d+ files?\.$/);
+    for (const line of lines.slice(0, -1)) {
+      expect(line).toMatch(/:\d+$/);
     }
   });
 });
@@ -115,8 +127,8 @@ describe("grep tool — glob filter", () => {
     if (result.status !== "ok") return;
 
     // gamma.txt has 'HELLO' but not lowercase 'hello', so no match
-    // delta.js has no 'hello' — txt filter should produce empty
-    expect(result.output).toBe("");
+    // delta.js has no 'hello' — txt filter should produce no matches
+    expect(result.output).toBe("No matches found");
 
     // Now search with case_insensitive to hit gamma.txt
     const result2 = await grepTool.execute(
@@ -156,6 +168,23 @@ describe("grep tool — head_limit", () => {
     expect(result.status).toBe("ok");
     if (result.status !== "ok") return;
     const lines = result.output.split("\n").filter(Boolean);
-    expect(lines.length).toBeLessThanOrEqual(2);
+    // Claude Code's pagination note tells the model more matches exist.
+    expect(lines[lines.length - 1]).toBe("[Showing results with pagination = limit: 2]");
+    const contentLines = lines.slice(0, -1);
+    expect(contentLines.length).toBeLessThanOrEqual(2);
+  });
+
+  it("supports -C context lines and -i case-insensitive flags", async () => {
+    await writeFile(join(tmpDir, "context.txt"), "one\ntwo\nthree\n");
+    const result = await grepTool.execute(
+      { pattern: "TWO", "-i": true, "-C": 1, glob: "context.txt" },
+      ctx(),
+    );
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") return;
+    // Match line uses `path:line:` separators; context lines use `path-line-`.
+    expect(result.output).toMatch(/:2:two/);
+    expect(result.output).toMatch(/-1-one/);
+    expect(result.output).toMatch(/-3-three/);
   });
 });

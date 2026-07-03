@@ -141,6 +141,39 @@ describe("team-daemon-protocol — result schemas", () => {
     expect(result.success).toBe(true);
   });
 
+  it("StatusResultSchema accepts per-member usage + teamUsage (GitHub #17)", () => {
+    const usage = {
+      inputTokens: 1000,
+      outputTokens: 200,
+      cacheReadInputTokens: 0,
+      cacheWriteInputTokens: 0,
+      totalTokens: 1200,
+      costUsd: 0.006,
+    };
+    const result = StatusResultSchema.safeParse({
+      teamName: "gsd",
+      scope: "swarm:gsd",
+      topology: "peer-team",
+      startedAt: 1746000000000,
+      members: [
+        { memberId: "m-1", role: "architect", agentId: "a-1", state: "running", usage },
+      ],
+      teamUsage: usage,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("StatusResultSchema keeps usage optional (backward compat)", () => {
+    const result = StatusResultSchema.safeParse({
+      teamName: "gsd",
+      scope: "swarm:gsd",
+      topology: "peer-team",
+      startedAt: 1746000000000,
+      members: [{ memberId: "m-1", role: "architect", agentId: "a-1", state: "running" }],
+    });
+    expect(result.success).toBe(true);
+  });
+
   it("StatusResultSchema rejects missing required fields", () => {
     expect(
       StatusResultSchema.safeParse({

@@ -47,7 +47,7 @@ function renderEditPreview(input: unknown): { lines: string[]; hasHidden: boolea
     maxChanges: 8,
   });
   const result: string[] = [];
-  const filePath = getInputField(input, "file_path") ?? "";
+  const filePath = getInputField(input, "file_path") ?? getInputField(input, "path") ?? "";
   if (filePath) result.push(`+${diff.added} -${diff.removed} ${filePath}`);
   for (const dl of compacted) {
     const prefix = dl.kind === "add" ? "+ " : dl.kind === "delete" ? "- " : "  ";
@@ -57,7 +57,7 @@ function renderEditPreview(input: unknown): { lines: string[]; hasHidden: boolea
 }
 
 function renderWritePreview(input: unknown): string[] {
-  const filePath = getInputField(input, "file_path") ?? "";
+  const filePath = getInputField(input, "file_path") ?? getInputField(input, "path") ?? "";
   const content = getInputField(input, "content") ?? "";
   const lines: string[] = [];
   if (filePath) lines.push(`new file: ${filePath}`);
@@ -126,6 +126,7 @@ export function ApprovalPanel(props: ApprovalPanelProps) {
         <text fg={theme.muted}>
           {"  "}
           {getInputField(input(), "file_path") ??
+            getInputField(input(), "path") ??
             getInputField(input(), "command")?.split("\n")[0]?.slice(0, 40) ??
             ""}
         </text>

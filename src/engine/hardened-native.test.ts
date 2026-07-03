@@ -194,6 +194,12 @@ class MockDispatcher {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_USAGE: Usage = { inputTokens: 10, outputTokens: 5 };
+/**
+ * Usage that puts the 200k MockProvider window above the window−13k
+ * auto-compact threshold (docs/48-compaction-design.md §L1) — used by the
+ * mid-turn compaction tests to fire the usage-token trigger.
+ */
+const NEAR_WINDOW_USAGE: Usage = { inputTokens: 185_000, outputTokens: 5_000 };
 
 function baseConfig(overrides: Partial<RunConfig> = {}): RunConfig {
   const c: RunConfig = {
@@ -418,8 +424,8 @@ describe("HardenedNativeEngine: three parallel tool calls", () => {
   });
 });
 
-describe("HardenedNativeEngine: maxTurns exceeded", () => {
-  it("emits invalid_request error after maxTurns", async () => {
+describe("HardenedNativeEngine: maxTurns budget", () => {
+  it("soft-stops with stopReason max_turns after an explicit cap is exhausted", async () => {
     const makeToolTurn = (): Script => [
       { type: "tool-call", id: "t", name: "noop", input: {} },
       { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
@@ -440,10 +446,35 @@ describe("HardenedNativeEngine: maxTurns exceeded", () => {
     );
 
     const last = events[events.length - 1]!;
-    expect(last.type).toBe("error");
-    expect(
-      (last as { error: { code: string } }).error.code,
-    ).toBe("invalid_request");
+    expect(last.type).toBe("message_stop");
+    expect((last as { stopReason: string }).stopReason).toBe("max_turns");
+    expect(events.some((e) => e.type === "error")).toBe(false);
+  });
+
+  it("soft-stops with stopReason max_wall_clock when the wall-clock budget elapses", async () => {
+    const makeToolTurn = (): Script => [
+      { type: "tool-call", id: "t", name: "noop", input: {} },
+      { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
+    ];
+    const provider = new MockProvider({
+      scripts: Array.from({ length: 10 }, () => makeToolTurn()),
+    });
+    const dispatcher = new MockDispatcher();
+
+    const engine = new HardenedNativeEngine({ provider });
+    const events = await collect(
+      engine.run(
+        baseConfig({
+          maxWallClockMs: 0,
+          dispatcher: dispatcher as unknown as ToolDispatcher,
+        }),
+      ),
+    );
+
+    const last = events[events.length - 1]!;
+    expect(last.type).toBe("message_stop");
+    expect((last as { stopReason: string }).stopReason).toBe("max_wall_clock");
+    expect(events.some((e) => e.type === "error")).toBe(false);
   });
 });
 
@@ -1063,14 +1094,16 @@ describe("HardenedNativeEngine: retry", () => {
 // ===========================================================================
 
 describe("HardenedNativeEngine: mid-turn compaction", () => {
-  // T3.1 — Tool results push tokens above threshold → mid-turn compaction fires.
+  // T3.1 — Provider-reported usage crosses the window−13k threshold →
+  // mid-turn compaction fires (usage-token trigger, docs/48 §L1).
   it("T3.1: mid-turn compaction fires when tool results exceed threshold", async () => {
     const bigOutput = "x".repeat(5_000);
     const provider = new MockProvider({
       scripts: [
         [
           { type: "tool-call", id: "t1", name: "read", input: {} },
-          { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
+          // 190k of a 200k window ≥ the 187k auto-compact threshold.
+          { type: "finish", stopReason: "tool_use", usage: NEAR_WINDOW_USAGE },
         ],
         [
           { type: "text-delta", text: "done" },
@@ -1153,7 +1186,7 @@ describe("HardenedNativeEngine: mid-turn compaction", () => {
       scripts: [
         [
           { type: "tool-call", id: "t1", name: "read", input: {} },
-          { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
+          { type: "finish", stopReason: "tool_use", usage: NEAR_WINDOW_USAGE },
         ],
         [
           { type: "text-delta", text: "continued" },
@@ -1216,11 +1249,12 @@ describe("HardenedNativeEngine: mid-turn compaction", () => {
 
     const provider = new MockProvider({
       scripts: [
-        // Turn 1: tool call. After pre-turn compaction, the tool result's
-        // big output pushes context above threshold again.
+        // Turn 1: tool call. The reported usage puts context above the
+        // window−13k threshold, so mid-turn compaction fires after the tool
+        // results land.
         [
           { type: "tool-call", id: "t1", name: "read", input: {} },
-          { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
+          { type: "finish", stopReason: "tool_use", usage: NEAR_WINDOW_USAGE },
         ],
         // Turn 2: final response.
         [

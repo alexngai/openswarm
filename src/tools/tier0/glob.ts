@@ -12,13 +12,20 @@ import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { ToolAccesses, type ToolAccesses as ToolAccessesType } from "../access.js";
+import { aliasParams } from "./internal.js";
 
-const inputSchema = z.object({
-  pattern: z.string(),
-  cwd: z.string().optional(),
+const paramsSchema = z.object({
+  pattern: z.string().describe("The glob pattern to match files against"),
+  path: z
+    .string()
+    .optional()
+    .describe("The directory to search in. Defaults to the working directory."),
 });
 
-type Input = z.infer<typeof inputSchema>;
+// `cwd` is the legacy openswarm spelling of `path`.
+const inputSchema = z.preprocess(aliasParams({ cwd: "path" }), paramsSchema);
+
+type Input = z.infer<typeof paramsSchema>;
 
 const spec: ToolSpec = {
   name: "glob",
@@ -28,7 +35,7 @@ const spec: ToolSpec = {
     "Respects .gitignore. Excludes node_modules, .git, and dist by default. " +
     "Returns newline-separated absolute paths, capped at 1000 entries.",
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
+  inputSchema: z.toJSONSchema(paramsSchema) as JsonSchema,
   requiredPermission: "read",
   tier: 0,
 };
@@ -43,7 +50,7 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   }
   const input: Input = parsed.data;
 
-  const base = input.cwd ?? ctx.cwd;
+  const base = input.path ?? ctx.cwd;
 
   // Bare patterns like "*.ts" should match at any depth — convention from
   // Claude Code / claw. Promote to `**/<pattern>` when the pattern has no
@@ -74,10 +81,16 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   const gitignored = await loadGitignoreFilter(base);
   const kept = gitignored ? matches.filter((p) => !gitignored(p)) : matches;
 
+  // Claude Code's exact empty-result phrasing.
+  if (kept.length === 0) {
+    return { status: "ok", output: "No files found" };
+  }
+
   const capped = kept.slice(0, MAX_RESULTS);
   let output = capped.map((p) => path.resolve(p)).join("\n");
   if (kept.length > MAX_RESULTS) {
-    output += `\n[truncated: ${kept.length - MAX_RESULTS} additional matches]`;
+    // Claude Code's truncation note.
+    output += "\n(Results are truncated. Consider using a more specific path or pattern.)";
   }
 
   return { status: "ok", output };
@@ -167,7 +180,7 @@ function simpleGlobMatch(p: string, pattern: string): boolean {
 function accesses(raw: unknown, ctx: ToolExecutionContext): ToolAccessesType {
   const parsed = inputSchema.safeParse(raw);
   if (!parsed.success) return ToolAccesses.all();
-  const root = path.resolve(ctx.cwd, parsed.data.cwd ?? ".");
+  const root = path.resolve(ctx.cwd, parsed.data.path ?? ".");
   return ToolAccesses.searchTree(root);
 }
 

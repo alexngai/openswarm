@@ -74,6 +74,71 @@ describe("RichRenderer", () => {
     expect(lanes[0]!.tools).toHaveLength(1);
   });
 
+  it("captures inline diffs off an edit tool_call_update's content", () => {
+    const r = new RichRenderer();
+    r.apply(toolCall("A:t1", "[architect] Edit file", ARCH));
+    r.apply(
+      withMeta(
+        {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "A:t1",
+          status: "in_progress",
+          title: "[architect] Edit src/auth/session.ts",
+          content: [
+            {
+              type: "diff",
+              path: "src/auth/session.ts",
+              oldText: "const SESSION_TTL = 3600",
+              newText: "const SESSION_TTL = 900",
+            },
+          ],
+        },
+        ARCH,
+      ),
+    );
+    const arch = r.view().lanes.find((l) => l.memberId === "m-A")!;
+    expect(arch.tools[0]!.diffs).toEqual([
+      {
+        path: "src/auth/session.ts",
+        oldText: "const SESSION_TTL = 3600",
+        newText: "const SESSION_TTL = 900",
+      },
+    ]);
+  });
+
+  it("keeps captured diffs when a later tool_result (text content) arrives", () => {
+    const r = new RichRenderer();
+    r.apply(
+      withMeta(
+        {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "A:t1",
+          status: "in_progress",
+          title: "[architect] Write foo.ts",
+          content: [{ type: "diff", path: "foo.ts", oldText: null, newText: "a\nb" }],
+        },
+        ARCH,
+      ),
+    );
+    // tool_result-style update: content is text, not a diff.
+    r.apply(
+      withMeta(
+        {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "A:t1",
+          status: "completed",
+          content: [{ type: "content", content: { type: "text", text: "ok" } }],
+        },
+        ARCH,
+      ),
+    );
+    const arch = r.view().lanes.find((l) => l.memberId === "m-A")!;
+    expect(arch.tools[0]!.status).toBe("completed");
+    expect(arch.tools[0]!.diffs).toEqual([
+      { path: "foo.ts", oldText: null, newText: "a\nb" },
+    ]);
+  });
+
   it("consumes the real lane translator's output into ≥2 lanes (round-trip)", async () => {
     const updates: SessionUpdate[] = [];
     const conn = {

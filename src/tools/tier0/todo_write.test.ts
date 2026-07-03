@@ -22,9 +22,12 @@ describe("todo_write — basic writes", () => {
     );
     expect(result.status).toBe("ok");
     if (result.status !== "ok") return;
-    expect(result.output).toContain("☐ pending: t1 - Write tests");
-    expect(result.output).toContain("▶ in_progress: t2 - Implement feature");
-    expect(result.output).toContain("✓ completed: t3 - Deploy");
+    // Claude Code's exact TodoWrite acknowledgement string.
+    expect(result.output).toBe(
+      "Todos have been modified successfully. Ensure that you continue to use the todo list " +
+        "to track your progress. Please proceed with the current tasks if applicable",
+    );
+    expect(getCurrentTodos()).toHaveLength(3);
   });
 
   it("clears the list when given an empty array", async () => {
@@ -37,7 +40,7 @@ describe("todo_write — basic writes", () => {
     const result = await todoWriteTool.execute({ todos: [] }, ctx);
     expect(result.status).toBe("ok");
     if (result.status !== "ok") return;
-    expect(result.output).toBe("(no todos)");
+    expect(result.output).toContain("Todos have been modified successfully");
     expect(getCurrentTodos()).toHaveLength(0);
   });
 });
@@ -143,7 +146,7 @@ describe("todo_write — status transitions", () => {
     expect(result.status).toBe("ok");
     expect(getCurrentTodos()[0].status).toBe("completed");
     if (result.status !== "ok") return;
-    expect(result.output).toContain("✓ completed: task - My task");
+    expect(result.output).toContain("Todos have been modified successfully");
   });
 });
 

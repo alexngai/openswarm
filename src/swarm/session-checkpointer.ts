@@ -20,7 +20,25 @@
 
 export interface CheckpointedSession {
   /** Dispatch TurnEnd (the checkpoint) + SessionEnd. Idempotent. */
-  finish(): Promise<void>;
+  finish(opts?: FinishCheckpointOptions): Promise<void>;
+}
+
+export interface FinishCheckpointOptions {
+  /**
+   * Skills the worker explicitly invoked this turn (openswarm's `skill`
+   * tool). Declared to sessionlog as SkillUse events — the *applied* leg of
+   * skill attribution (sessionlog `skillsUsed` → cognitive-core
+   * `appliedPlaybookIds`), stronger evidence than the surfaced-only
+   * SkillsSurfaced declaration. Dispatched just before TurnEnd so they land
+   * inside the turn window and reach the checkpoint metadata.
+   */
+  readonly skillsUsed?: readonly UsedSkill[];
+}
+
+/** One explicit skill invocation (the `skill` tool). */
+export interface UsedSkill {
+  readonly name: string;
+  readonly args?: string;
 }
 
 export interface BeginCheckpointOptions {
@@ -31,6 +49,17 @@ export interface BeginCheckpointOptions {
   readonly prompt: string;
   /** The worker's repo working directory sessionlog operates in. */
   readonly cwd: string;
+  /**
+   * Skills injected into this turn's context (from the memory SkillProvider).
+   * Declared to sessionlog via a SkillsSurfaced event so cognitive-core's
+   * exposure attribution counts this session as guided (its external-exposure
+   * contract maps sessionlog `skillsSurfaced` → surfacedPlaybookIds).
+   */
+  readonly surfacedSkills?: readonly {
+    id: string;
+    name: string;
+    sourceType?: string;
+  }[];
 }
 
 interface SessionRepoConfig {
@@ -81,11 +110,66 @@ export async function beginCheckpointedSession(
       timestamp: new Date(),
     });
 
+    // Declare surfaced skills inside the turn window so they land in the
+    // TurnEnd checkpoint's metadata (`skillsSurfaced`). `upstreamSkillId`
+    // carries the stable skill id; cognitive-core's exposure attribution
+    // matches on both the name and that id. Skipped on sessionlog versions
+    // that predate the SkillsSurfaced event (< 0.0.9).
+    if (
+      opts.surfacedSkills !== undefined &&
+      opts.surfacedSkills.length > 0 &&
+      sl.EventType.SkillsSurfaced !== undefined
+    ) {
+      const surfacedAt = new Date().toISOString();
+      try {
+        await handler.dispatch(agent, {
+          ...base,
+          type: sl.EventType.SkillsSurfaced,
+          timestamp: new Date(),
+          skillsSurfaced: opts.surfacedSkills.map((s) => ({
+            name: s.name,
+            sourceType: s.sourceType ?? "skill-tree",
+            upstreamSkillId: s.id,
+            surfacedAt,
+          })),
+        });
+      } catch {
+        // exposure declaration is additive — never block checkpointing
+      }
+    }
+
     let finished = false;
     return {
-      async finish(): Promise<void> {
+      async finish(finishOpts?: FinishCheckpointOptions): Promise<void> {
         if (finished) return;
         finished = true;
+
+        // Declare explicit skill invocations before TurnEnd so sessionlog's
+        // handleSkillUse records them (`skillsUsed`, with `usedAt`) while the
+        // session is still in its turn window. Skipped on sessionlog versions
+        // that predate the SkillUse event. One event per invocation —
+        // sessionlog appends each to the session's skillsUsed list.
+        if (
+          finishOpts?.skillsUsed !== undefined &&
+          finishOpts.skillsUsed.length > 0 &&
+          sl.EventType.SkillUse !== undefined
+        ) {
+          for (const skill of finishOpts.skillsUsed) {
+            if (skill.name.length === 0) continue;
+            try {
+              await handler.dispatch(agent, {
+                ...base,
+                type: sl.EventType.SkillUse,
+                timestamp: new Date(),
+                skillName: skill.name,
+                ...(skill.args !== undefined && { skillArgs: skill.args }),
+              });
+            } catch {
+              // application declaration is additive — never block checkpointing
+            }
+          }
+        }
+
         try {
           await handler.dispatch(agent, {
             ...base,

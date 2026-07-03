@@ -33,14 +33,18 @@ import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { ToolAccesses, type ToolAccesses as ToolAccessesType } from "../access.js";
-import { isUnderCwd } from "./internal.js";
+import { isUnderCwd, aliasParams } from "./internal.js";
 import { atomicWrite, TocttouError } from "./edit_file.js";
 
-const inputSchema = z.object({
+const paramsSchema = z.object({
   patch: z.string().describe("A patch envelope: *** Begin Patch ... *** End Patch"),
 });
 
-type Input = z.infer<typeof inputSchema>;
+// Codex's JSON function-tool variant of apply_patch names the parameter
+// `input` — accept it as an alias so GPT-family models work unmodified.
+const inputSchema = z.preprocess(aliasParams({ input: "patch" }), paramsSchema);
+
+type Input = z.infer<typeof paramsSchema>;
 
 const spec: ToolSpec = {
   name: "apply_patch",
@@ -51,7 +55,7 @@ const spec: ToolSpec = {
     "`*** Move to: <p>`). Add lines are prefixed `+`; Update hunks use ` ` context, `-` removals, " +
     "`+` additions, and `@@` chunk separators. All operations are validated before any are applied " +
     "(atomic); update chunks must match uniquely.",
-  inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
+  inputSchema: z.toJSONSchema(paramsSchema) as JsonSchema,
   requiredPermission: "write",
   tier: 0,
 };

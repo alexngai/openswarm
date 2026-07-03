@@ -446,7 +446,7 @@ Research notes live in `docs/research/` (7 files, 3,300+ lines).
 ```bash
 bun install          # install dependencies
 bun run build        # type-check + bundle
-npm test             # vitest suite (2800+ tests)
+npm test             # vitest suite (3,500+ tests)
 bun test src/ui/     # OpenTUI/Solid component tests
 ```
 

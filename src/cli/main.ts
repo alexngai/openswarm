@@ -24,6 +24,7 @@ import {
   runTopology,
   runTeamSend,
   runTeamList,
+  runTeamStatus,
   runTeamStop,
   runTeamKill,
 } from "./team.js";
@@ -42,6 +43,16 @@ import {
   clearPermissionRequestHandler,
 } from "../tools/tier0/request_permissions.js";
 import { clampPermissionMode, permissionRank } from "../swarm/permission-order.js";
+import { StandaloneHost } from "../swarm/standalone-host.js";
+import { subscribeSwarmViewEvents } from "../swarm/swarm-view-events.js";
+import { tailDaemonSwarmView } from "../swarm/daemon-swarm-view.js";
+import {
+  startSessionRecorder,
+  type SessionRecorder,
+} from "../swarm/session-recorder.js";
+import { normalizedEventToLaneType } from "../swarm/events.js";
+import { computeTeamPaths } from "./team-paths.js";
+import { combineSwarmSources, type SwarmEventSource } from "../ui/repl-solid/merge-swarm-events.js";
 import type { PendingPermission } from "../ui/repl/state.js";
 import { SessionStore } from "../session/store.js";
 import { runHeadless } from "../ui/headless.js";
@@ -50,9 +61,13 @@ import { checkBudget } from "../core/budget.js";
 // runPrompt only when the TTY path is taken, so its deps don't get pulled into
 // non-TTY paths like `--version`, `--help`, `doctor`, `init`.
 import type { CommonOpts } from "./argv.js";
-import type { NormalizedEvent } from "../core/types.js";
+import type { NormalizedEvent, AgentId } from "../core/types.js";
 import type { RunConfig } from "../engine/index.js";
 import { buildSystemPrompt, applyPlanMode } from "../engine/default-system-prompt.js";
+import {
+  loadProjectInstructions,
+  formatInstructionsForSystemPrompt,
+} from "../engine/project-instructions.js";
 import {
   enrichTurnInputs,
   observeTurnEvents,
@@ -97,6 +112,12 @@ Flags:
   --help, -h                     Show this message
   --version, -V                  Print version
 
+Budget flags (single-agent; on exceed the run stops cleanly, exit 3):
+  --max-tokens <n>               Token budget for the run
+  --max-cost-usd <n>             Cost budget in USD (known models only)
+  --max-turns <n>                Cap on model round-trips (no cap by default)
+  --max-wall-clock <dur>         Wall-clock budget, e.g. 90s, 5m, 1h
+
 swarm run flags:
   --concurrency N                Max parallel workers (default: 3)
   --output <path>                Results JSONL file (default: ./results.jsonl)
@@ -134,19 +155,28 @@ export function printVersion(): void {
  */
 function withErrorTracking(
   source: AsyncIterable<NormalizedEvent>,
-): { events: AsyncIterable<NormalizedEvent>; hadError: () => boolean; hadMaxTurns: () => boolean } {
+): { events: AsyncIterable<NormalizedEvent>; hadError: () => boolean; hadBudgetStop: () => boolean } {
   let sawError = false;
-  let sawMaxTurns = false;
+  let sawBudgetStop = false;
 
   async function* gen(): AsyncGenerator<NormalizedEvent> {
     for await (const evt of source) {
       if (evt.type === "error") {
         sawError = true;
-        // A maxTurns stop is a clean BUDGET limit, not a crash — flag it so the
-        // exit code reflects "hit the turn budget" (exit 3) rather than a generic error.
+        // Claude SDK reports a turn-limit stop as an error (`error_max_turns`).
+        // Treat it as a budget limit (exit 3), not a crash (exit 1).
         const m = (evt.error?.message ?? "").toLowerCase();
         if (m.includes("maxturns") || m.includes("max_turns") || m.includes("max turns")) {
-          sawMaxTurns = true;
+          sawBudgetStop = true;
+        }
+      } else if (evt.type === "message_stop") {
+        // Native/hardened engines emit a SOFT stop for turn / wall-clock
+        // budgets — a clean budget limit, so map it to exit 3.
+        if (
+          evt.stopReason === "max_turns" ||
+          evt.stopReason === "max_wall_clock"
+        ) {
+          sawBudgetStop = true;
         }
       }
       yield evt;
@@ -156,8 +186,37 @@ function withErrorTracking(
   return {
     events: gen(),
     hadError: () => sawError,
-    hadMaxTurns: () => sawMaxTurns,
+    hadBudgetStop: () => sawBudgetStop,
   };
+}
+
+/**
+ * F2 — record a single-agent turn's events to the session transcript
+ * (events.jsonl) while passing them through unchanged. Mirrors the swarm
+ * worker's recording loop: each NormalizedEvent with a lane equivalent is
+ * persisted as a LaneEvent so the transcript carries the semantic spine that
+ * compaction's "read the full transcript at: …" pointer refers to. A no-op
+ * passthrough when recording is disabled (recorder === null).
+ */
+async function* recordTurnEvents(
+  events: AsyncIterable<NormalizedEvent>,
+  recorder: SessionRecorder | null,
+): AsyncGenerator<NormalizedEvent> {
+  const agentId = "root" as AgentId;
+  for await (const evt of events) {
+    if (recorder !== null) {
+      const laneType = normalizedEventToLaneType(evt.type);
+      if (laneType !== undefined) {
+        recorder.record({
+          ts: Date.now(),
+          agentId,
+          type: laneType,
+          payload: evt,
+        });
+      }
+    }
+    yield evt;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -329,9 +388,18 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   // 10. Build RunConfig.
   // SDK engine: empty string → falls back to the `claude_code` preset internally.
   // Native/hardened-native: use our default system prompt (Codex-parity baseline).
+  // Native/hardened engines don't get CLAUDE.md/AGENTS.md from an SDK preset,
+  // so load the project instruction files (ancestor walk) and fold them into
+  // the system prompt. The same files are re-injected after compaction via the
+  // engine's recontextualize() hook (F1).
   const systemPrompt =
     engine.id === "native" || engine.id === "hardened-native"
-      ? buildSystemPrompt({ cwd: process.cwd() })
+      ? buildSystemPrompt({
+          cwd: process.cwd(),
+          extensions: formatInstructionsForSystemPrompt(
+            loadProjectInstructions(process.cwd()),
+          ),
+        })
       : "";
   const config: RunConfig = {
     systemPrompt,
@@ -348,8 +416,12 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     hooks: rt.hooksConfig,
     ...(opts.enableWebSearch ? { enabledBuiltinTools: ["WebSearch"] } : {}),
     // Step budget (model round-trips) — the engine turn loop self-enforces this
-    // (`error_max_turns` on exceed). The step-analog of the maxTokens budget.
+    // (soft `stopReason: "max_turns"` on exhaust). No default cap when omitted.
     ...(opts.maxTurns !== undefined ? { maxTurns: opts.maxTurns } : {}),
+    // Wall-clock budget — engine emits soft `stopReason: "max_wall_clock"`.
+    ...(opts.maxWallClockMs !== undefined
+      ? { maxWallClockMs: opts.maxWallClockMs }
+      : {}),
   };
 
   // 11. Route to UI.
@@ -379,7 +451,30 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
       turns: memoryTurns,
       ...(memorySummarizer !== undefined && { summarize: memorySummarizer }),
     });
+    // F2 — flush the single-agent transcript (best-effort).
+    await sessionRecorder?.close();
   };
+
+  // F2 — single-agent session transcript. When recording is enabled
+  // (OPENSWARM_RECORD_SESSIONS=1 or OPENSWARM_SESSION_DIR), emit an
+  // events.jsonl for this REPL/headless session and point the engine's
+  // compaction continuation at it (the "read the full transcript at: …"
+  // pointer). One recorder spans the whole process (REPL is multi-turn).
+  const sessionRecorder = await startSessionRecorder({
+    sessionId,
+    agentId: "root",
+    prompt: text ?? "",
+    cwd: process.cwd(),
+  });
+  if (sessionRecorder !== null) {
+    (
+      engine as { setTranscriptPath?: (p: string) => void }
+    ).setTranscriptPath?.(sessionRecorder.transcriptPath);
+  }
+  const recordEvents = (
+    events: AsyncIterable<NormalizedEvent>,
+  ): AsyncGenerator<NormalizedEvent> =>
+    recordTurnEvents(events, sessionRecorder);
 
   if (useHeadless) {
     // Headless path: one-shot engine run → JSONL.
@@ -399,12 +494,14 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     const headlessConfig = hasBudgetLimits
       ? { ...enrichedConfig, abort: headlessAbort.signal }
       : enrichedConfig;
-    const rawEvents = observeTurnEvents(engine.run(headlessConfig), {
-      sessionId,
-      turnIndex: 0,
-      onRecord: recordTurn,
-    });
-    const { events, hadError, hadMaxTurns } = withErrorTracking(rawEvents);
+    const rawEvents = recordEvents(
+      observeTurnEvents(engine.run(headlessConfig), {
+        sessionId,
+        turnIndex: 0,
+        onRecord: recordTurn,
+      }),
+    );
+    const { events, hadError, hadBudgetStop } = withErrorTracking(rawEvents);
 
     if (hasBudgetLimits) {
       // Wrap the event stream: after each event, check budget.
@@ -445,10 +542,11 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     }
     // Phase 3 B1/B2 — archive the session (provider fan-out) before exit.
     await finishMemorySession();
-    // A maxTurns stop is a clean budget limit (like --max-tokens' exit 3), not a
-    // generic error — so callers/eval classifiers can tell "hit the turn budget"
-    // (budget-bound, solvable at a higher budget) apart from a real crash (exit 1).
-    if (hadMaxTurns()) return 3;
+    // A turn / wall-clock budget stop is a clean budget limit (like
+    // --max-tokens' exit 3), not a generic error — so callers/eval classifiers
+    // can tell "hit a budget" (solvable at a higher budget) apart from a real
+    // crash (exit 1).
+    if (hadBudgetStop()) return 3;
     return hadError() ? 1 : 0;
   }
 
@@ -464,8 +562,35 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   // resumeFrom for the next turn (set by /resume, cleared after one use).
   let pendingResumeFrom: { engineId: string; data: unknown } | undefined = resumeFrom;
   const turnAbort = new AbortController();
+  // GitHub #15 — give the interactive REPL a live SwarmHost so the `agent`
+  // Tier 2 tool can spawn members, and project member lifecycle into the
+  // AgentTree (Ctrl+A) / TaskBoard (Ctrl+T) views. `parentMode` is the CLI
+  // permission ceiling; the host clamps every spawned child against it. The
+  // host is threaded into each turn's RunConfig (native/hardened engines read
+  // `RunConfig.host` to inject `ctx.host`).
+  const replSwarmHost = new StandaloneHost({ permissionMode: parentMode });
+  const liveSwarmSource: SwarmEventSource = {
+    subscribe: (sink: (evt: NormalizedEvent) => void) =>
+      subscribeSwarmViewEvents(replSwarmHost, sink),
+  };
+  // GitHub #23 — when attaching to a detached daemon team, tail its
+  // events.jsonl and project it into the same AgentTree/TaskBoard, combined
+  // with the local live host so in-session `agent` spawns still render too.
+  let swarmEventSource: SwarmEventSource = liveSwarmSource;
+  if (opts.attachTeam !== undefined) {
+    const eventsPath = computeTeamPaths(opts.attachTeam).eventsPath;
+    const daemonSource: SwarmEventSource = {
+      subscribe: (sink: (evt: NormalizedEvent) => void) =>
+        tailDaemonSwarmView(eventsPath, sink),
+    };
+    swarmEventSource = combineSwarmSources(liveSwarmSource, daemonSource);
+    process.stderr.write(
+      `attached to team "${opts.attachTeam}" — live swarm view (Ctrl+A / Ctrl+T); ${eventsPath}\n`,
+    );
+  }
   await runRepl({
     engine,
+    swarmEvents: swarmEventSource,
     buildRunConfig: async (prompt) => {
       const rf = pendingResumeFrom;
       // Resume applies once — clear after consuming.
@@ -484,6 +609,9 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
         abort: turnAbort.signal,
         dispatcher: rt.dispatcher,
         resumeFrom: rf,
+        // GitHub #15 — scoped to the interactive path (not the shared headless
+        // config) so the `agent`/`task_*` Tier 2 tools resolve a host here.
+        host: replSwarmHost,
       };
     },
     initialPrompt: text,
@@ -514,12 +642,24 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
       abort: turnAbort,
       sessionLogPath: ".openswarm/sessions.log",
       pluginStore: rt.pluginStateStore,
+      // Real /compact control for native/hardened engines (queued, runs at
+      // the next turn boundary). SDK engine has no method → hint fallback.
+      requestCompaction: (customInstructions?: string) => {
+        const target = engine as {
+          requestManualCompaction?: (instr?: string) => void;
+        };
+        if (typeof target.requestManualCompaction !== "function") return false;
+        target.requestManualCompaction(customInstructions);
+        return true;
+      },
     },
     permissionBridge,
     // Phase 3 B1 — memory observer around each REPL turn (onAfterTurn +
     // onCompaction fire inside; records feed the session-end archive).
     wrapTurnEvents: (turn, turnIndex) =>
-      observeTurnEvents(turn, { sessionId, turnIndex, onRecord: recordTurn }),
+      recordEvents(
+        observeTurnEvents(turn, { sessionId, turnIndex, onRecord: recordTurn }),
+      ),
     getTokens: () => {
       const u = engine.getCumulativeUsage();
       // v0.2.Q7: check budget on every token poll. When exceeded, abort the
@@ -645,13 +785,16 @@ export async function main(argv: string[]): Promise<number> {
       return runTeamLogs(parsed.name, { follow: parsed.follow });
 
     case "team-watch":
-      return runTeamWatch(parsed.name);
+      return runTeamWatch(parsed.name, { plain: parsed.plain });
 
     case "team-send":
       return runTeamSend(parsed.name, parsed.prompt);
 
     case "team-list":
       return runTeamList();
+
+    case "team-status":
+      return runTeamStatus(parsed.name);
 
     case "team-stop":
       return runTeamStop(parsed.name);

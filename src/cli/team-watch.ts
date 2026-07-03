@@ -1,25 +1,44 @@
 /**
  * team-watch.ts — `openswarm team watch <name>`.
  *
- * v0.5 stage 5D minimal: single-pane formatted live view of a team
- * daemon's events.jsonl. Builds on the tail logic from `team logs --follow`
- * (5E.5) and adds a compact, color-coded one-line-per-event format. The
- * full multi-pane TUI from docs/25 §13 is deferred to v0.6 — this MVP
- * delivers the operator value (formatted live activity) without the TUI
- * dependency surface.
+ * Default (issue #16): a live multi-pane board of a team daemon's
+ * events.jsonl — per-member lanes (`[role]`-attributed activity) plus a task
+ * board — reusing the shared `RichRenderer` (src/acp/rich-view.ts). The board
+ * is a full re-projection of the recorded spine on each change: the same
+ * `events.jsonl` → lane-translator → RichRenderer pipeline the ACP replay path
+ * (`replayTeamSpine`) already uses, so the watch renders identically to a
+ * `session/load` of the team. See docs/25 §13.
  *
- * Output format: "<HH:MM:SS.mmm> <colored TYPE> <agent-id-prefix> <summary>"
- * — one line per LaneEvent. Colors apply only when stdout is a TTY.
+ * Coarseness (inherited from the recorded-event contract, events-log.ts):
+ * live-only high-frequency deltas (`text_delta` / `tool_use_input` /
+ * `heartbeat`) are filtered out at write time, so lanes surface `[role]`-tagged
+ * tool calls + results rather than streamed narration. Lanes appear for members
+ * with recorded activity; the task board lists every roster member's state.
+ *
+ * `--plain` / `--raw` falls back to the legacy v0.5 stage 5D one-line tail:
+ * "<HH:MM:SS.mmm> <colored TYPE> <agent-id-prefix> <summary>" per LaneEvent.
+ * Colors apply only when stdout is a TTY.
  */
 
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
+import type {
+  AgentSideConnection,
+  SessionNotification,
+} from "@agentclientprotocol/sdk";
+import type { LaneEvent, TeamUsagePayload } from "../swarm/events.js";
+import { parseTeamEventsLog } from "../swarm/events-log.js";
+import { RichRenderer } from "../acp/rich-view.js";
+import { formatRichView } from "../acp/rich-format.js";
+import { replayTeamSpine } from "../acp/team-history.js";
 import { computeTeamPaths } from "./team-paths.js";
 
 export interface TeamWatchOptions {
   /** Disable color output even on a TTY. Useful for piping to a file. */
   readonly noColor?: boolean;
+  /** Legacy one-line-per-event tail instead of the multi-pane board. */
+  readonly plain?: boolean;
 }
 
 export async function runTeamWatch(
@@ -27,18 +46,148 @@ export async function runTeamWatch(
   opts: TeamWatchOptions = {},
 ): Promise<number> {
   const paths = computeTeamPaths(name);
-  const useColor =
-    opts.noColor !== true && (process.stdout.isTTY ?? false);
+  const useColor = opts.noColor !== true && (process.stdout.isTTY ?? false);
+
+  if (opts.plain === true) {
+    return await runPlainTail(name, paths.eventsPath, useColor);
+  }
+  return await runBoard(name, paths.eventsPath, useColor);
+}
+
+// ---------------------------------------------------------------------------
+// Multi-pane board (issue #16) — reuses RichRenderer via the ACP replay path
+// ---------------------------------------------------------------------------
+
+/**
+ * Project a recorded event stream into the shared `RichView` (per-member lanes
+ * + task board), reusing the exact `events.jsonl` → lane-translator →
+ * RichRenderer pipeline as `replayTeamSpine`. Pure: events in, terminal lines
+ * out — the tail loop just repaints these. Exported for tests.
+ */
+export async function renderEventLogBoard(
+  events: readonly LaneEvent[],
+): Promise<string[]> {
+  const renderer = new RichRenderer();
+  const conn: Pick<AgentSideConnection, "sessionUpdate"> = {
+    sessionUpdate: async (n: SessionNotification): Promise<void> => {
+      renderer.apply(n.update);
+    },
+  };
+  await replayTeamSpine(conn, "team-watch", events);
+  return formatRichView(renderer.view(), latestTeamUsage(events));
+}
+
+/**
+ * The most recent `team_usage` (#17) snapshot in the stream, if any. The daemon
+ * emits these periodically/on-demand as cumulative roll-ups, so the last one
+ * wins — earlier snapshots are superseded.
+ */
+function latestTeamUsage(
+  events: readonly LaneEvent[],
+): TeamUsagePayload | undefined {
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i]!.type === "team_usage") {
+      return events[i]!.payload as TeamUsagePayload;
+    }
+  }
+  return undefined;
+}
+
+async function runBoard(
+  name: string,
+  filePath: string,
+  useColor: boolean,
+): Promise<number> {
+  const dir = path.dirname(filePath);
+  const fileName = path.basename(filePath);
+  await fsp.mkdir(dir, { recursive: true });
+
+  let stopped = false;
+  let lastSize = -1;
+  const onSig = (): void => {
+    stopped = true;
+  };
+  process.on("SIGINT", onSig);
+  process.on("SIGTERM", onSig);
+
+  const header = useColor
+    ? `\x1b[1;36mwatching team "${name}" — ${filePath}\x1b[0m`
+    : `watching team "${name}" — ${filePath}`;
+
+  const repaint = async (): Promise<void> => {
+    let stat: fs.Stats;
+    try {
+      stat = await fsp.stat(filePath);
+    } catch {
+      if (lastSize === -1) {
+        lastSize = 0;
+        paint([
+          header,
+          "",
+          "(events.jsonl not yet present; waiting for the daemon…)",
+        ]);
+      }
+      return;
+    }
+    // Repaint on any size change (append or truncation).
+    if (stat.size === lastSize) return;
+    lastSize = stat.size;
+    let content: string;
+    try {
+      content = await fsp.readFile(filePath, "utf8");
+    } catch {
+      return;
+    }
+    const { events } = parseTeamEventsLog(content);
+    const board = await renderEventLogBoard(events);
+    paint([header, "", ...board]);
+  };
+
+  const paint = (lines: string[]): void => {
+    if (useColor) process.stdout.write("\x1b[2J\x1b[H");
+    process.stdout.write(`${lines.join("\n")}\n`);
+  };
+
+  await repaint();
+
+  const watcher = fs.watch(dir);
+  watcher.on("change", (_event, changed) => {
+    if (typeof changed === "string" && changed !== fileName) return;
+    void repaint();
+  });
+  watcher.on("error", () => {
+    stopped = true;
+  });
+
+  while (!stopped) {
+    await new Promise((r) => setTimeout(r, 250));
+    await repaint();
+  }
+  watcher.close();
+  process.off("SIGINT", onSig);
+  process.off("SIGTERM", onSig);
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Legacy one-line tail (`--plain`/`--raw`) — v0.5 stage 5D MVP
+// ---------------------------------------------------------------------------
+
+async function runPlainTail(
+  name: string,
+  filePath: string,
+  useColor: boolean,
+): Promise<number> {
   const fmt = makeFormatter(useColor);
 
   // Print a header so the operator knows what they're watching.
   process.stdout.write(
-    fmt.header(`watching team "${name}" — ${paths.eventsPath}\n`),
+    fmt.header(`watching team "${name}" — ${filePath}\n`),
   );
 
   let initialOffset = 0;
   try {
-    const buf = await fsp.readFile(paths.eventsPath, "utf8");
+    const buf = await fsp.readFile(filePath, "utf8");
     initialOffset = Buffer.byteLength(buf, "utf8");
     for (const line of buf.split("\n")) {
       if (line.length > 0) {
@@ -52,7 +201,7 @@ export async function runTeamWatch(
     );
   }
 
-  return await tailFollow(paths.eventsPath, initialOffset, fmt);
+  return await tailFollow(filePath, initialOffset, fmt);
 }
 
 // ---------------------------------------------------------------------------

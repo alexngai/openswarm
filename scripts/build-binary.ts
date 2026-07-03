@@ -208,4 +208,10 @@ if (target.libName) {
   }
 }
 
+// The claude-agent-sdk native `claude` helper is intentionally NOT bundled here:
+// it ships as an optional dependency of @anthropic-ai/claude-agent-sdk, so a
+// normal install already has it in node_modules. resolveClaudeExecutable() in
+// src/engine/claude-agent-sdk.ts finds it there at runtime (the compiled binary
+// can't use the SDK's own require.resolve). Non-Claude engines don't need it.
+
 console.log(`OK. ${outfile}`);

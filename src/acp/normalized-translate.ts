@@ -112,7 +112,13 @@ export async function emitNormalizedEvent(
       const t = open.end(key);
       if (t === undefined) return;
       const name = t.meta;
-      const input = parseToolInput(t.raw, "empty-object");
+      // Prefer the `input` recorded on the event itself (attached for edit
+      // tools at the team forward loop, src/cli/worker-entry.ts) so diffs
+      // reconstruct on replay/live even when tool_use_input deltas were
+      // stripped and the accumulator buffer is empty (issue #26). Otherwise
+      // fall back to the reassembled streamed buffer.
+      const input =
+        ne.input !== undefined ? ne.input : parseToolInput(t.raw, "empty-object");
       if (name === "todo_write" && planFromTodos) {
         await emitTodoPlan(send, input);
         return;

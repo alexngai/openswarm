@@ -28,7 +28,7 @@ describe("makeAcpTranslator", () => {
     const t = makeAcpTranslator(conn, "s1");
     const seq: NormalizedEvent[] = [
       { type: "tool_use_start", id: "t1", name: "read_file" },
-      { type: "tool_use_input", id: "t1", jsonDelta: '{"path":"a.ts","offset":4}' },
+      { type: "tool_use_input", id: "t1", jsonDelta: '{"file_path":"a.ts","offset":4}' },
       { type: "tool_use_end", id: "t1" },
       { type: "tool_result", toolUseId: "t1", content: "file body", isError: false },
     ];
@@ -44,7 +44,7 @@ describe("makeAcpTranslator", () => {
       sessionUpdate: "tool_call_update",
       toolCallId: "t1",
       status: "in_progress",
-      locations: [{ path: "a.ts", line: 5 }],
+      locations: [{ path: "a.ts", line: 4 }],
     });
     expect(updates[2]).toMatchObject({
       sessionUpdate: "tool_call_update",
@@ -74,6 +74,27 @@ describe("makeAcpTranslator", () => {
     await t.emit({ type: "tool_result", toolUseId: "e1", content: "bad", isError: true });
     const last = updates[updates.length - 1] as { status?: string };
     expect(last.status).toBe("failed");
+  });
+
+  it("prefers a recorded `input` on tool_use_end with an empty accumulator (issue #26)", async () => {
+    const { conn, updates } = recorder();
+    const t = makeAcpTranslator(conn, "s1");
+    // Replay/live shape: tool_use_start is recorded (opening the accumulator
+    // with the tool name) but tool_use_input was stripped, so the buffer is
+    // empty. The diff must come from the `input` on tool_use_end.
+    await t.emit({ type: "tool_use_start", id: "e2", name: "edit_file" });
+    await t.emit({
+      type: "tool_use_end",
+      id: "e2",
+      input: { path: "a.ts", old_string: "x", new_string: "y" },
+    });
+
+    const upd = updates.find(
+      (u) => u.sessionUpdate === "tool_call_update",
+    ) as { content?: unknown };
+    expect(upd.content).toEqual([
+      { type: "diff", path: "a.ts", oldText: "x", newText: "y" },
+    ]);
   });
 
   it("maps todo_write to a plan, not a tool_call", async () => {

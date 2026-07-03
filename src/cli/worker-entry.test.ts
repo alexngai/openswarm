@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { EventEmitter } from "node:events";
-import { composeSystemPrompt } from "./worker-entry.js";
+import { composeSystemPrompt, editInputForToolEnd } from "./worker-entry.js";
 import { WorkerHost } from "../swarm/worker-host.js";
 import type { ParentTransport } from "../swarm/ipc/parent-transport.js";
 import type { AgentId, PermissionMode } from "../core/types.js";
@@ -49,6 +49,86 @@ describe("composeSystemPrompt (M1 regression)", () => {
     );
 
     expect(combined).toBe("Base directives.\n\nTool warmup.\n\nRole overlay.");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #26 — the recorded tool_use_end `input` attached at the team forward
+// loop for edit tools (bounded + secret-redacted); non-edit tools carry none.
+// ---------------------------------------------------------------------------
+
+describe("editInputForToolEnd (issue #26 forward-loop contract)", () => {
+  it("attaches parsed input for an edit tool", () => {
+    const input = editInputForToolEnd(
+      "edit_file",
+      JSON.stringify({
+        file_path: "a.ts",
+        old_string: "const x = 1",
+        new_string: "const x = 2",
+      }),
+    ) as Record<string, unknown>;
+    expect(input).toEqual({
+      file_path: "a.ts",
+      old_string: "const x = 1",
+      new_string: "const x = 2",
+    });
+  });
+
+  it("returns undefined for a non-edit tool (no input forwarded)", () => {
+    expect(
+      editInputForToolEnd("read_file", JSON.stringify({ file_path: "a.ts" })),
+    ).toBeUndefined();
+    expect(
+      editInputForToolEnd("bash", JSON.stringify({ command: "ls" })),
+    ).toBeUndefined();
+    expect(editInputForToolEnd(undefined, "")).toBeUndefined();
+  });
+
+  it("redacts a planted secret in new_string", () => {
+    // A realistic OpenAI-style key embedded in the replacement text.
+    const fakeKey =
+      "sk-" + "A".repeat(20) + "T3BlbkFJ" + "B".repeat(20);
+    const input = editInputForToolEnd(
+      "edit_file",
+      JSON.stringify({
+        file_path: ".env",
+        old_string: "OPENAI_API_KEY=",
+        new_string: `OPENAI_API_KEY=${fakeKey}`,
+      }),
+    ) as Record<string, string>;
+    expect(input.new_string).not.toContain(fakeKey);
+    expect(input.new_string).toContain("[REDACTED:openai-key]");
+  });
+
+  it("also redacts a planted AWS access key", () => {
+    const awsKey = "AKIA" + "ABCDEFGHIJKLMNOP";
+    const input = editInputForToolEnd(
+      "write_file",
+      JSON.stringify({ file_path: "creds.txt", content: `key=${awsKey}` }),
+    ) as Record<string, string>;
+    expect(input.content).not.toContain(awsKey);
+    expect(input.content).toContain("[REDACTED:aws-access-key]");
+  });
+
+  it("size-caps new_string to a sane char limit", () => {
+    const huge = "y".repeat(50_000);
+    const input = editInputForToolEnd(
+      "edit_file",
+      JSON.stringify({ file_path: "a.ts", old_string: "x", new_string: huge }),
+    ) as Record<string, string>;
+    // Capped well below the original 50k (16k cap + a 1-char ellipsis).
+    expect(input.new_string.length).toBeLessThanOrEqual(16_001);
+    expect(input.new_string.endsWith("…")).toBe(true);
+  });
+
+  it("leaves apply_patch `patch` verbatim so it stays parseable", () => {
+    const patch =
+      "*** Begin Patch\n*** Update File: a.ts\n@@\n-old\n+new\n*** End Patch";
+    const input = editInputForToolEnd(
+      "apply_patch",
+      JSON.stringify({ patch }),
+    ) as Record<string, string>;
+    expect(input.patch).toBe(patch);
   });
 });
 

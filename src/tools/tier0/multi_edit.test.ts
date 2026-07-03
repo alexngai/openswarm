@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 import { multiEditTool } from "./multi_edit.js";
+import { recordFileRead, clearReadState } from "./read-state.js";
 
 function ctx(cwd: string) {
   return { cwd };
@@ -13,18 +14,26 @@ describe("multi_edit", () => {
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "multi_edit_test_"));
+    clearReadState();
   });
 
   afterEach(async () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
+  /** Create a file and mark it read (multi_edit requires read-before-edit). */
+  async function writeAndRead(name: string, content: string): Promise<string> {
+    const file = path.join(tmpDir, name);
+    await fs.writeFile(file, content);
+    recordFileRead(file);
+    return file;
+  }
+
   it("applies 3 sequential edits in order", async () => {
-    const file = path.join(tmpDir, "a.txt");
-    await fs.writeFile(file, "alpha beta gamma");
+    const file = await writeAndRead("a.txt", "alpha beta gamma");
     const result = await multiEditTool.execute(
       {
-        path: "a.txt",
+        file_path: "a.txt",
         edits: [
           { old_string: "alpha", new_string: "A" },
           { old_string: "beta", new_string: "B" },
@@ -38,11 +47,10 @@ describe("multi_edit", () => {
   });
 
   it("supports chained edits where edit N+1 targets output of edit N", async () => {
-    const file = path.join(tmpDir, "b.txt");
-    await fs.writeFile(file, "hello world");
+    const file = await writeAndRead("b.txt", "hello world");
     const result = await multiEditTool.execute(
       {
-        path: "b.txt",
+        path: "b.txt", // legacy alias — still accepted
         edits: [
           { old_string: "hello world", new_string: "greetings world" },
           { old_string: "greetings world", new_string: "greetings earth" },
@@ -55,12 +63,11 @@ describe("multi_edit", () => {
   });
 
   it("leaves the file unchanged when one edit fails validation", async () => {
-    const file = path.join(tmpDir, "c.txt");
     const original = "line one\nline two\nline three";
-    await fs.writeFile(file, original);
+    const file = await writeAndRead("c.txt", original);
     const result = await multiEditTool.execute(
       {
-        path: "c.txt",
+        file_path: "c.txt",
         edits: [
           { old_string: "line one", new_string: "LINE ONE" },
           { old_string: "NONEXISTENT", new_string: "x" }, // will fail
@@ -78,13 +85,27 @@ describe("multi_edit", () => {
   });
 
   it("rejects an empty edits array (Zod validation)", async () => {
-    const file = path.join(tmpDir, "d.txt");
-    await fs.writeFile(file, "content");
+    await writeAndRead("d.txt", "content");
     const result = await multiEditTool.execute(
-      { path: "d.txt", edits: [] },
+      { file_path: "d.txt", edits: [] },
       ctx(tmpDir),
     );
     expect(result.status).toBe("error");
+  });
+
+  it("rejects edits to files that have not been read", async () => {
+    await fs.writeFile(path.join(tmpDir, "unread.txt"), "content here");
+    const result = await multiEditTool.execute(
+      {
+        file_path: "unread.txt",
+        edits: [{ old_string: "content", new_string: "CONTENT" }],
+      },
+      ctx(tmpDir),
+    );
+    expect(result.status).toBe("error");
+    expect((result as { status: "error"; message: string }).message).toMatch(
+      /has not been read yet/,
+    );
   });
 
   it("rejects paths outside the workspace boundary", async () => {
@@ -124,11 +145,10 @@ describe("multi_edit", () => {
   });
 
   it("returns error (not panic) when a mid-batch edit has ambiguous old_string", async () => {
-    const file = path.join(tmpDir, "e.txt");
-    await fs.writeFile(file, "x x x\ny\nz");
+    await writeAndRead("e.txt", "x x x\ny\nz");
     const result = await multiEditTool.execute(
       {
-        path: "e.txt",
+        file_path: "e.txt",
         edits: [
           { old_string: "y", new_string: "Y" },
           { old_string: "x", new_string: "X" }, // 'x' appears 3 times

@@ -479,7 +479,17 @@ export function translateEngineEvent(evt: NormalizedEvent): ReplEvent[] {
       ];
     case "compaction": {
       const actions: ReplEvent[] = [];
-      if (evt.payload.phase === "begin") {
+      if (evt.payload.phase === "warn") {
+        const pctLeft = evt.payload.compact_metadata?.pctLeft;
+        actions.push({
+          type: "system-entry",
+          id: `compaction-warn-${Date.now()}`,
+          text:
+            typeof pctLeft === "number"
+              ? `Context low (${pctLeft}% remaining)`
+              : `Context low`,
+        });
+      } else if (evt.payload.phase === "begin") {
         actions.push({
           type: "system-entry",
           id: `compaction-${Date.now()}`,

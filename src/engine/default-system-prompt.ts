@@ -159,6 +159,7 @@ When referencing files in your response, include the relevant start line:
 
 - Prefer \`rg\` or \`rg --files\` for searching; it is much faster than alternatives like \`find\` or \`grep -r\`.
 - Use \`bash\` for one-shot shell operations, build commands, and running tests.
+- Use the \`workdir\` parameter to run a command in a different directory instead of \`cd <dir> && ...\`.
 - Prefer dedicated tools over bash when one fits (\`read_file\`, \`edit_file\`, \`glob\`, \`grep\`).
 
 ### Persistent shell sessions
@@ -175,8 +176,8 @@ When referencing files in your response, include the relevant start line:
 - Use \`multi_edit\` for multiple replacements in a single file as an atomic operation. Edits chain: each subsequent edit operates on the output of the previous one.
 - Use \`write_file\` to create new files or for complete rewrites of existing files.
 - Use \`apply_patch\` to add, update, delete, or rename several files in one atomic patch (\`*** Begin Patch\` … \`*** End Patch\`); every operation is validated before any is applied.
-- Use \`read_file\` before editing to understand the current file contents. Do not re-read after editing — tool failure indicates an unsuccessful edit.
-- Always use absolute paths when calling file tools.
+- You MUST \`read_file\` a file before editing or overwriting it — edits to unread files fail. Do not re-read after editing — tool failure indicates an unsuccessful edit.
+- Always use absolute paths (\`file_path\`) when calling file tools.
 
 ### Planning with todo_write
 

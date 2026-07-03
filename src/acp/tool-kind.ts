@@ -52,9 +52,14 @@ function truncate(s: string, n = 60): string {
   return oneLine.length > n ? oneLine.slice(0, n - 1) + "…" : oneLine;
 }
 
+/** Canonical file param is `file_path` (Claude Code alignment); `path` is the legacy alias. */
+function filePathOf(i: Record<string, unknown>): string | undefined {
+  return str(i.file_path) ?? str(i.path);
+}
+
 export function toolTitle(name: string, input: unknown): string {
   const i = asRecord(input);
-  const p = str(i.path);
+  const p = filePathOf(i);
   if (name === "apply_patch") {
     const patch = str(i.patch);
     const ops = patch ? parsePatch(patch).ops : undefined;
@@ -92,11 +97,12 @@ export function toolLocations(
     if (!ops || ops.length === 0) return undefined;
     return ops.map((op) => ({ path: op.kind === "update" && op.moveTo ? op.moveTo : op.path }));
   }
-  const p = str(i.path);
+  const p = filePathOf(i);
   if (p === undefined) return undefined;
   if (name === "read_file") {
-    // read_file `offset` is a 0-based line index; ACP line is 1-based.
-    const line = typeof i.offset === "number" ? i.offset + 1 : undefined;
+    // read_file `offset` is a 1-based line number (Claude Code alignment),
+    // matching ACP's 1-based line.
+    const line = typeof i.offset === "number" ? Math.max(1, i.offset) : undefined;
     return [{ path: p, ...(line !== undefined ? { line } : {}) }];
   }
   if (isEditTool(name)) {
@@ -133,7 +139,7 @@ export function diffContent(
     }
     return out.length > 0 ? out : undefined;
   }
-  const p = str(i.path);
+  const p = filePathOf(i);
   if (p === undefined) return undefined;
   if (name === "edit_file") {
     return [

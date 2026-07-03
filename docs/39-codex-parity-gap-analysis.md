@@ -165,6 +165,149 @@ and CLI flags but lacks a unified declarative config surface.
 
 ---
 
+## 10. Tool Schema Alignment (Claude Code / MiMoCode / ZCode / Codex)
+
+A July 2026 comparison of tool schemas across four harnesses (Claude Code,
+MiMoCode — an OpenCode fork, ZCode — Z.ai's proprietary Claude Code-compatible
+desktop app, and Codex CLI) drove a schema alignment pass on the tier-0 tools.
+Goal: models trained on those harnesses should work on openswarm without
+fine-tuning. Canonical schemas, aliases, and behavioral contracts are documented
+in [`04-tool-tiers.md`](./04-tool-tiers.md#claude-code-schema-alignment); the
+comparison findings:
+
+**Two tooling philosophies.** Claude Code / MiMoCode / ZCode are tool-centric:
+distinct `Read`/`Edit`/`Write`/`Bash`/`Grep`/`Glob` tools with `file_path`
+params, cat-n read output, and recoverable, precisely-worded error strings that
+trained models pattern-match for self-correction. Codex is shell-centric: a
+unified `exec_command`/`write_stdin` session pair plus a freeform
+grammar-constrained `apply_patch`; models use `rg`/`sed` via the shell instead
+of dedicated read/search tools.
+
+**Divergences we closed (Claude Code-first):**
+
+| # | Divergence | Resolution |
+|---|---|---|
+| 1 | `path` vs `file_path` on file tools | Renamed to `file_path`; `path` kept as alias |
+| 2 | 0-based `offset`, plain-text read output | 1-based `offset`, cat-n output, 2000-char line truncation, continuation hint |
+| 3 | `bash` lacked `description`/`workdir`/`run_in_background`; non-zero exit returned `[exit N]` in ok-result | Params added (`background` aliased); non-zero exit and timeout now return error results (`Exit code N` first, then stderr, then stdout); 120 s default timeout; stdout followed by stderr (not interleaved — see verification-pass entry) |
+| 4 | `grep` lacked `-i`/`-n`/`-A`/`-B`/`-C`/`type` | Added; content mode now emits plain rg formatting (`path:line:text`, `path-line-text` context) |
+| 5 | No read-before-edit contract | Enforced for `edit_file`/`multi_edit`/`write_file`-overwrite with Claude Code's exact error string (`read-state.ts`) |
+| 6 | openswarm-specific edit error phrasing | Claude Code verbatim strings; success returns cat-n snippet of edited region |
+| 7 | `glob` used `cwd` | Renamed to `path`; `cwd` aliased |
+| 8 | `apply_patch` param `patch` vs Codex JSON variant `input` | `input` accepted as alias |
+| 9 | `todo_write` required `id` (Claude Code has none) | `id` optional, auto-filled from array index |
+
+Tool *names* stay snake_case (`read_file`, not `Read`) — engine adapters already
+normalize names per framework, and renames would break existing trajectories,
+role allowlists, and permission maps for marginal gain.
+
+---
+
+## 11. Compaction Behavior Comparison (Claude Code v2.1.198 / Codex / openswarm)
+
+July 2026 audit of context-compaction behavior, extracted byte-for-byte from the
+Claude Code v2.1.198 binary and the current `openai/codex` Rust sources, against
+`engine/compactor.ts` + `engine/compact-remote.ts`.
+
+### Claude Code v2.1.198 ground truth
+
+- **Trigger**: real API token counts (not estimates). Auto-compact fires at
+  `contextWindow − 13_000` tokens; "Context low" warning at `threshold − 20_000`;
+  input blocked at `window − 3_000`. Checked at query setup
+  (`query_autocompact_start`) plus a *reactive* path when the API returns
+  prompt-too-long mid-turn. Two circuit breakers: rapid-refill (3 compactions
+  within <3 turns each) and consecutive-failure (skip future attempts this
+  session).
+- **Summarization**: in-session — appends a user message to the *live
+  conversation* and asks the *main-loop model* for an `<analysis>` block + a
+  9-section `<summary>`: 1. Primary Request and Intent · 2. Key Technical
+  Concepts · 3. Files and Code Sections · 4. Errors and fixes · 5. Problem
+  Solving · 6. All user messages · 7. Pending Tasks · 8. Work Completed ·
+  9. Context for Continuing Work. Guarded by "CRITICAL: Respond with TEXT ONLY.
+  Do NOT call any tools. … Tool calls will be REJECTED and will waste your only
+  turn — you will fail the task." `/compact <text>` appends the text under
+  "Additional Instructions:". The prompt twice demands security-relevant user
+  constraints be preserved *verbatim*. On prompt-too-long the summarization
+  retries up to 3× dropping earlier messages (gap-guided step sizing, marker
+  "[earlier conversation truncated for compaction retry]").
+- **Post-compact history** (full/auto path): `[compact boundary marker,
+  continuation message, re-injected attachments, session-start hook results]` —
+  **no verbatim recent messages**. Instead CC clears `readFileState` and
+  re-injects: up to **5 recently-read files** (token-budgeted), the **todo list**,
+  re-read CLAUDE.md/memory, tool-usage reminders, and MCP instructions. The
+  *reactive* path is group-based: oldest message groups are summarized with a
+  "RECENT portion" prompt variant (sections end 8. Current Work · 9. Optional
+  Next Step) and the newest groups are kept verbatim (`preservedSegment`).
+- **Continuation message**: "This session is being continued from a previous
+  conversation that ran out of context. The summary below covers the earlier
+  portion of the conversation.\n\n{formatted summary}" + "\n\nIf you need
+  specific details from before compaction (like exact code snippets, error
+  messages, or content you generated), read the full transcript at: {path}" +
+  (auto only) "\nContinue the conversation from where it left off without asking
+  the user any further questions. Resume directly — do not acknowledge the
+  summary, do not recap what was happening, do not preface with \"I'll continue\"
+  or similar. Pick up the last task as if the break never happened." Formatting
+  strips `<analysis>`, rewrites `<summary>…</summary>` → `Summary:\n…`, collapses
+  blank lines. Manual `/compact` omits the resume-instruction sentence.
+- **Microcompaction** (separate, cheaper mechanism): on context hints, clears
+  *old tool_result contents* — keeps the **last 5** tool results, requires
+  **≥ 20k tokens saved** to proceed, replaces cleared content with
+  `"[Old tool result content cleared]"` or persists it to disk and points at it
+  ("Tool result saved to: {file}\n\nUse Read to view"). Images/documents in
+  cleared results always become the placeholder. Inserts a
+  `microcompact_boundary` marker.
+- **Hooks**: PreCompact can block ("Compaction blocked by PreCompact hook");
+  session-start hooks re-run post-compact.
+
+### Codex (Rust, July 2026)
+
+Three modes: (a) local compact — model summarization with a short "CONTEXT
+CHECKPOINT COMPACTION" handoff prompt; (b) remote compact v1/v2 — server-side
+summarization via the Responses API, retaining real user messages newest-first
+within a **64k-token budget** (each user message capped at 20k tokens, developer
+/instruction wrappers dropped); (c) token-budget compaction — no summarization,
+installs a fresh context window. Trigger is a per-model `auto_compact_token_limit`
+checked mid-turn. The summary is framed third-person for a *different* model:
+"Another language model started to solve this problem and produced a summary of
+its thinking process. …" — vs CC's first-person "This session is being
+continued…". Emits a long-thread accuracy advisory after compaction.
+
+### openswarm today vs the two
+
+| Aspect | Claude Code v2.1.198 | Codex | openswarm |
+|---|---|---|---|
+| Trigger | tokens ≥ window − 13k (API counts) | per-model token limit, mid-turn | char/4 estimate ≥ 80% of window (runtime default; 10k floor) |
+| Summarizer | main model, in-session, full-fidelity history | server-side (remote) or local model call | separate provider call on re-serialized text, tool I/O truncated to 500 chars |
+| Summary shape | analysis + 9 sections (…8. Work Completed, 9. Context for Continuing Work) | freeform handoff | analysis + 9 sections (…8. Current Work, 9. Optional Next Step) + section validation/retry |
+| Kept verbatim | nothing (full path); newest groups (reactive path) | user messages ≤ 64k budget | last 4 messages always |
+| Post-compact re-injection | 5 recent files + todos + CLAUDE.md + reminders | fresh canonical session context | todo-progress block folded into summary |
+| Continuation preamble | "This session is being continued…" (+ transcript path) | "Another language model started…" | matches CC preamble; **no transcript-path pointer**; resume sentence wording drifts from CC |
+| Fallback | PTL retry ×3 + reactive group compaction + circuit breakers | token-budget fresh-window mode | mechanical `<summary>` stats fallback; emergency compact on context_overflow |
+| Tool-result GC | microcompaction (keep last 5, ≥20k saved, placeholder/persist) | — | — |
+
+**Known divergences to close (Claude Code-first), in priority order:**
+
+1. Resume-instruction string drift — CC ends "do not preface with \"I'll
+   continue\" or similar. Pick up the last task as if the break never happened."
+   openswarm says "and do not preface with continuation text."
+2. Summary section names — CC: "Errors and fixes", "All user messages",
+   "8. Work Completed", "9. Context for Continuing Work" (full path). openswarm
+   uses the older "Errors and Fixes"/"All User Messages"/"Current Work"/
+   "Optional Next Step" set (CC only uses Current Work/Optional Next Step in the
+   reactive RECENT-portion variant).
+3. Transcript-path paragraph missing from the continuation message.
+4. Trigger margin — absolute reserve (window − 13k) tracks CC better than the
+   80% ratio for large windows (967k × 0.8 leaves 193k unused).
+5. Microcompaction of old tool results (keep-recent 5, ≥20k saved,
+   "[Old tool result content cleared]") — biggest bang-for-buck CC mechanism
+   openswarm lacks.
+6. Post-compact re-injection of recently-read files + todo list as attachments
+   (openswarm folds todos into the summary text instead — weaker signal).
+7. `/compact` is an engine hint prompt; CC runs a real compaction and supports
+   custom instructions via "Additional Instructions:".
+
+---
+
 ## Prioritized Plan (draft)
 
 ### Phase A — Safety Foundation (P0, ~3 weeks)
@@ -255,6 +398,18 @@ and commit hash.
 
 ### Decision log
 
+- **2026-07-03 (compaction comparison)** — Audited compaction behavior across
+  Claude Code v2.1.198 (binary extraction), Codex (current Rust sources), and
+  openswarm (`compactor.ts`/`compact-remote.ts`). Findings in §11. Corrected
+  assumptions: CC's full compaction keeps **zero** verbatim messages (re-injects
+  5 recent files + todos instead); the 9-section prompt ends "Work Completed /
+  Context for Continuing Work" (the "Current Work / Optional Next Step" variant
+  is the reactive RECENT-portion prompt only); auto-trigger is window − 13k
+  tokens, not a percentage; CC has a separate microcompaction pass that clears
+  old tool results ("[Old tool result content cleared]", keep last 5, ≥20k
+  tokens saved). No code changed in this pass — divergence list recorded for a
+  future alignment pass.
+
 - **2026-06-05** — Document created from deep-research audit of Codex (130+ crates) vs openswarm. Codex system prompt ported to openswarm default-system-prompt.ts (commits `bf33eee`, `74d6166`, `59813fd`). HardenedNativeEngine shipped (commits `bed3ac5`–`2240667`): retry, eager dispatch, mid-turn compaction, context_overflow recovery.
 - **2026-06-05** — Deep-dive updates: added F11–F15 (interactive sessions / process management, P1), expanded F4 (code mode: V8 tool orchestration), F9 (file watcher: skills hot-reload), H1 (10 vs 5 hook events detail), H4–H6 (hook context injection, trust model, stop hook). Reorganized phased plan: new Phase C (interactive sessions), Phase E (hooks), Phase F (persistence). Process management elevated to P1.
 - **2026-06-05** — F11/F12/F13 implemented (commit `8dd4d64`). Persistent shell sessions (`shell_exec`), interactive stdin (`shell_write`), HeadTailBuffer (`headTailTruncate`). Session lifecycle management (`shell_list`). System prompt updated with persistent shell guidance. 56 tests passing.
@@ -270,4 +425,12 @@ and commit hash.
 - **2026-06-06** — C2+C3+G1: Context fragments (9 built-in types with composable ContextBuilder, priority sorting, register/unregister, singleton). State database (SQLite-backed via better-sqlite3, WAL mode, 4 tables with migrations, full CRUD, memory search). Goals engine (6-state machine, token+cost budget tracking, checkpoint system, GoalRegistry, StateDB serialization). 67 new tests passing.
 - **2026-06-06** — F10: Web search + full browsing parity. `web_search.ts`: pluggable `SearchBackend` interface, DuckDuckGo HTML scraping default, batch `queries` support (up to 5, cross-query dedup), domain filtering, 8-hit cap, `OPENSWARM_WEB_SEARCH_BASE_URL` env override. `web_fetch.ts`: HTTP→HTTPS auto-upgrade (exempts localhost/127.0.0.1/::1), prompt-driven extraction (`"title"` → `<title>` tag, `"summary"` → 900-char preview, custom prompt → labeled content), `find` param for in-page substring search with context lines and match markers. Closes all Codex web-search gaps (Search, OpenPage, FindInPage). 69 tier1 web tests passing.
 - **2026-06-06** — G2: Memory system (cross-session learning). 4-layer architecture: L1 curated bounded memory (project/user scopes, 2500/1500 char caps, add/replace/remove), L2 skills (Markdown + YAML frontmatter, FileSkillStore for disk, tag/keyword search), L3 session archive (FTS5 + LIKE fallback, auto-sync triggers), L4 provider protocol (MemoryCoordinator, FileMemoryProvider, MinimemProvider with graceful degradation). 3 Tier 0 tools: `memory_manage`, `memory_search`, `skill_save`. Per-agent isolation via `agentScopeKey()` + shared memory bus (500-entry cap). StateDB: `curated_memory` + `session_summaries` tables. Lifecycle hooks wired to engine. Context injection via `curatedMemoryFragment` at priority 5. Hardened from 4-agent code review: fragment cap (50), YAML injection protection, store-level size enforcement, `concurrencySafe` on mutating tools. 220+ memory tests passing. Commits `5dedee7`–`790233c`.
+- **2026-07-03** — §10 Tool schema alignment implemented. Tier-0 schemas aligned to Claude Code (params, output formats, error strings, read-before-edit contract) with backward-compatible aliases via `z.preprocess`. New `src/tools/tier0/read-state.ts`. ACP `tool-kind.ts`, REPL UI renderers, approval panel, and default system prompt updated for `file_path` + 1-based offsets. Canonical schema table added to `04-tool-tiers.md`. Full vitest suite + bun UI tests passing.
+- **2026-07-03 (verification pass)** — Ground-truth audit against the shipped Claude Code **v2.1.198** binary (strings extracted from the npm-installed bundle) corrected several assumptions from the first pass:
+  - `bash` does **not** interleave stdout/stderr — result is stdout then stderr joined by newline. Success output is head-truncated at 30,000 chars (`BASH_MAX_OUTPUT_LENGTH`, env-overridable in CC up to 150k) with `... [N lines truncated] ...`; error content is `Exit code N` (no colon, first line) + stderr + stdout, middle-truncated at 10,000 chars with `... [N characters truncated] ...`. Timeout message is humanized (`Command timed out after 2m 0s`); aborts append `<error>Command was aborted before completion</error>`; background returns `Command running in background with ID: … Output is being written to: <file>` (openswarm now streams background output to a temp file to match).
+  - `read_file`: empty-file and offset-past-EOF cases return CC's exact `<system-reminder>Warning: …</system-reminder>` strings; default-cap truncation prepends the `[Truncated: PARTIAL view — …]` system-reminder; missing file error is exactly `File does not exist.`
+  - `edit_file`/`write_file` success messages are sentences (no cat-n snippet in current CC): `The file X has been updated successfully. (file state is current in your context — no need to Read it back)` etc. Stale-file (TOCTTOU) error is CC's `File has been modified since read, either by the user or by a linter. Read it again before attempting to write it.`
+  - `grep`: `No matches found`/`No files found`, `Found N files` header in files mode, `path:count` + `Found N total occurrences across M files.` in count mode (`rg -c -H`), `--max-columns 500`, `[Showing results with pagination = limit: N]`. `glob`: `No files found` / `(Results are truncated. Consider using a more specific path or pattern.)`.
+  - `todo_write` returns CC's canonical `Todos have been modified successfully. …` acknowledgement.
+  - Confirmed current CC Read/Edit param descriptions (`file_path` "The absolute path to the file to read", 1-based `offset`) match §10 as implemented. Current CC Read is token-cap paginated (`CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS`); openswarm keeps the line-cap (2000) with the same PARTIAL-view banner shape.
 - **2026-06-06** — Added §9 "Configuration & UX" with 5 newly identified gaps from deep Codex architecture research: U1 (declarative config system with schema validation, P3/L), U2 (shell environment policy with inherit modes + regex filtering, P3/S), U3 (credentials management with pluggable storage backends, P3/M), U4 (rich TUI — classified 🟦 divergent, openswarm is headless/ACP-first by design), U5 (configurable reasoning effort/personality as first-class knobs, P3/S). All P3 — no P0/P1/P2 gaps remain open.

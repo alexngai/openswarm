@@ -21,12 +21,27 @@ interface SwarmMemberRef {
   readonly role?: string;
 }
 
+/**
+ * One inline edit-diff carried on a tool call (edit/write family), lifted from
+ * the ACP `ToolCallContent` of `type: "diff"` an edit tool emits on its
+ * `tool_call_update`. `oldText === null` marks a whole-file write (no prior
+ * content). A renderer summarises this as file + ± line counts + a bounded
+ * unified snippet.
+ */
+export interface RichDiff {
+  readonly path: string;
+  readonly oldText: string | null;
+  readonly newText: string;
+}
+
 export interface RichTool {
   readonly toolCallId: string;
   title: string;
   kind?: string;
   /** pending | in_progress | completed | failed */
   status: string;
+  /** Inline edit diffs (edit/write family), when the call carried `type:"diff"` content. */
+  diffs?: RichDiff[];
 }
 
 export interface RichLane {
@@ -63,6 +78,33 @@ function chunkText(update: SessionUpdate): string {
 }
 
 /**
+ * Lift inline edit diffs off a tool_call(_update)'s `content` array (the ACP
+ * `type: "diff"` entries an edit tool emits, see acp/tool-kind.ts `diffContent`).
+ * Returns undefined when the update carries no diff content — a `tool_result`
+ * update's `content` is `type:"content"` (text), so it never clobbers diffs.
+ */
+function diffsFromUpdate(update: SessionUpdate): RichDiff[] | undefined {
+  const content = (update as { content?: unknown }).content;
+  if (!Array.isArray(content)) return undefined;
+  const diffs: RichDiff[] = [];
+  for (const c of content) {
+    const d = c as {
+      type?: string;
+      path?: unknown;
+      oldText?: unknown;
+      newText?: unknown;
+    };
+    if (d?.type !== "diff" || typeof d.path !== "string") continue;
+    diffs.push({
+      path: d.path,
+      oldText: typeof d.oldText === "string" ? d.oldText : null,
+      newText: typeof d.newText === "string" ? d.newText : "",
+    });
+  }
+  return diffs.length > 0 ? diffs : undefined;
+}
+
+/**
  * Accumulates a `RichView` from a stream of `session/update` notifications.
  * Drive it with `apply()` per update; read `view()` for the current model.
  */
@@ -89,11 +131,13 @@ export class RichRenderer {
           status?: string;
         };
         if (u.toolCallId === undefined) return;
+        const diffs = diffsFromUpdate(update);
         const tool: RichTool = {
           toolCallId: u.toolCallId,
           title: u.title ?? "",
           ...(u.kind !== undefined && { kind: u.kind }),
           status: u.status ?? "pending",
+          ...(diffs !== undefined && { diffs }),
         };
         this.tools.set(tool.toolCallId, tool);
         this.lane(member?.id ?? "", member).tools.push(tool);
@@ -108,11 +152,15 @@ export class RichRenderer {
           status?: string;
         };
         if (u.toolCallId === undefined) return;
+        const diffs = diffsFromUpdate(update);
         const existing = this.tools.get(u.toolCallId);
         if (existing !== undefined) {
           if (u.title !== undefined) existing.title = u.title;
           if (u.kind !== undefined) existing.kind = u.kind;
           if (u.status !== undefined) existing.status = u.status;
+          // Only overwrite diffs when this update actually carried them, so a
+          // later tool_result (text content) can't wipe the edit's diff.
+          if (diffs !== undefined) existing.diffs = diffs;
         } else {
           // An update with no prior tool_call — start one in this lane.
           const tool: RichTool = {
@@ -120,6 +168,7 @@ export class RichRenderer {
             title: u.title ?? "",
             ...(u.kind !== undefined && { kind: u.kind }),
             status: u.status ?? "in_progress",
+            ...(diffs !== undefined && { diffs }),
           };
           this.tools.set(tool.toolCallId, tool);
           this.lane(member?.id ?? "", member).tools.push(tool);

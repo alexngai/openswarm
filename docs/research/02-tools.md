@@ -358,11 +358,11 @@ Tags: [v0] ship in Tier 0 MVP · [v1] Tier 1-2 · [later] Tier 3-5 · [skip] not
 
 ## 7. File references
 
-- `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/tools/src/lib.rs` — tool registry, `mvp_tool_specs()` (lines 385-1172), `execute_tool` dispatch (lines 1189-1291), all `run_*`/`execute_*` implementations, `classify_bash_permission` (lines 1844-1906), `workspace_test_branch_preflight` (lines 1916-2060), `execute_web_fetch`/`execute_web_search` (2747-3128), `execute_todo_write` (3130-3173), `execute_notebook_edit` (5055-5175), `execute_sleep` (5225-5237), `execute_structured_output` (5475-5485), `execute_repl` (5487-5565)
-- `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/tools/src/pdf_extract.rs` — flate2 + BT/ET operator extractor; module only, not an MVP tool
-- `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/tools/src/lane_completion.rs` — lane-completion detector (out of scope for this slice)
-- `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/runtime/src/bash.rs` — `BashCommandInput`/`Output`, `execute_bash`, `prepare_command`, `prepare_tokio_command`, 16 KiB truncation
-- `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/runtime/src/bash_validation.rs` — full validation pipeline (read-only, destructive, mode, sed, path, semantics) — library code, not wired into `execute_bash`
-- `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/runtime/src/file_ops.rs` — `read_file`, `write_file`, `edit_file`, `glob_search`, `grep_search`, `MAX_READ_SIZE`, `MAX_WRITE_SIZE`, `is_binary_file`, `validate_workspace_boundary`, `is_symlink_escape`, `expand_braces`
-- `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/runtime/src/sandbox.rs` — `SandboxConfig/Request/Status`, `FilesystemIsolationMode`, `detect_container_environment`, `resolve_sandbox_status_for_request`, `build_linux_sandbox_command`, `unshare_user_namespace_works`
-- `/Users/alexngai/GitHub/openswarm/docs/04-tool-tiers.md` — target tier taxonomy this research feeds
+- `references/claw-code/rust/crates/tools/src/lib.rs` — tool registry, `mvp_tool_specs()` (lines 385-1172), `execute_tool` dispatch (lines 1189-1291), all `run_*`/`execute_*` implementations, `classify_bash_permission` (lines 1844-1906), `workspace_test_branch_preflight` (lines 1916-2060), `execute_web_fetch`/`execute_web_search` (2747-3128), `execute_todo_write` (3130-3173), `execute_notebook_edit` (5055-5175), `execute_sleep` (5225-5237), `execute_structured_output` (5475-5485), `execute_repl` (5487-5565)
+- `references/claw-code/rust/crates/tools/src/pdf_extract.rs` — flate2 + BT/ET operator extractor; module only, not an MVP tool
+- `references/claw-code/rust/crates/tools/src/lane_completion.rs` — lane-completion detector (out of scope for this slice)
+- `references/claw-code/rust/crates/runtime/src/bash.rs` — `BashCommandInput`/`Output`, `execute_bash`, `prepare_command`, `prepare_tokio_command`, 16 KiB truncation
+- `references/claw-code/rust/crates/runtime/src/bash_validation.rs` — full validation pipeline (read-only, destructive, mode, sed, path, semantics) — library code, not wired into `execute_bash`
+- `references/claw-code/rust/crates/runtime/src/file_ops.rs` — `read_file`, `write_file`, `edit_file`, `glob_search`, `grep_search`, `MAX_READ_SIZE`, `MAX_WRITE_SIZE`, `is_binary_file`, `validate_workspace_boundary`, `is_symlink_escape`, `expand_braces`
+- `references/claw-code/rust/crates/runtime/src/sandbox.rs` — `SandboxConfig/Request/Status`, `FilesystemIsolationMode`, `detect_container_environment`, `resolve_sandbox_status_for_request`, `build_linux_sandbox_command`, `unshare_user_namespace_works`
+- `docs/04-tool-tiers.md` — target tier taxonomy this research feeds

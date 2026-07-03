@@ -12,7 +12,9 @@ const h = vi.hoisted(() => ({
   enabled: true,
   agent: { name: "openswarm" } as unknown,
   dispatched: [] as string[],
+  events: [] as Record<string, unknown>[],
   onDispatch: undefined as undefined | ((type: string) => void),
+  supportsSkillsSurfaced: true,
 }));
 
 vi.mock("sessionlog", () => ({
@@ -24,14 +26,18 @@ vi.mock("sessionlog", () => ({
   createLifecycleHandler: () => ({
     dispatch: async (_agent: unknown, evt: { type: string }) => {
       h.dispatched.push(evt.type);
+      h.events.push(evt as unknown as Record<string, unknown>);
       h.onDispatch?.(evt.type);
     },
   }),
-  EventType: {
-    SessionStart: "SessionStart",
-    TurnStart: "TurnStart",
-    TurnEnd: "TurnEnd",
-    SessionEnd: "SessionEnd",
+  get EventType() {
+    return {
+      SessionStart: "SessionStart",
+      TurnStart: "TurnStart",
+      TurnEnd: "TurnEnd",
+      SessionEnd: "SessionEnd",
+      ...(h.supportsSkillsSurfaced ? { SkillsSurfaced: "SkillsSurfaced" } : {}),
+    };
   },
 }));
 
@@ -48,7 +54,9 @@ beforeEach(() => {
   h.enabled = true;
   h.agent = { name: "openswarm" };
   h.dispatched = [];
+  h.events = [];
   h.onDispatch = undefined;
+  h.supportsSkillsSurfaced = true;
 });
 
 afterEach(() => {
@@ -92,5 +100,65 @@ describe("beginCheckpointedSession", () => {
       if (type === "TurnEnd") throw new Error("checkpoint write failed");
     };
     await expect(session!.finish()).resolves.toBeUndefined();
+  });
+
+  it("declares surfaced skills via SkillsSurfaced inside the turn window", async () => {
+    await beginCheckpointedSession({
+      ...baseOpts,
+      surfacedSkills: [
+        { id: "sk-1", name: "verify-before-completion" },
+        { id: "pb-2", name: "test-driven-fix", sourceType: "cognitive-core" },
+      ],
+    });
+    expect(h.dispatched).toEqual(["SessionStart", "TurnStart", "SkillsSurfaced"]);
+    const evt = h.events[2] as {
+      skillsSurfaced: { name: string; sourceType: string; upstreamSkillId: string; surfacedAt: string }[];
+    };
+    expect(evt.skillsSurfaced).toHaveLength(2);
+    expect(evt.skillsSurfaced[0]).toMatchObject({
+      name: "verify-before-completion",
+      sourceType: "skill-tree",
+      upstreamSkillId: "sk-1",
+    });
+    expect(evt.skillsSurfaced[1]).toMatchObject({
+      name: "test-driven-fix",
+      sourceType: "cognitive-core",
+      upstreamSkillId: "pb-2",
+    });
+    expect(evt.skillsSurfaced[0].surfacedAt).toBeTruthy();
+  });
+
+  it("skips SkillsSurfaced when no skills were surfaced", async () => {
+    await beginCheckpointedSession({ ...baseOpts, surfacedSkills: [] });
+    expect(h.dispatched).toEqual(["SessionStart", "TurnStart"]);
+  });
+
+  it("skips SkillsSurfaced on sessionlog versions without the event", async () => {
+    h.supportsSkillsSurfaced = false;
+    const session = await beginCheckpointedSession({
+      ...baseOpts,
+      surfacedSkills: [{ id: "sk-1", name: "verify-before-completion" }],
+    });
+    expect(session).not.toBeNull();
+    expect(h.dispatched).toEqual(["SessionStart", "TurnStart"]);
+  });
+
+  it("a failed SkillsSurfaced dispatch does not abort checkpointing", async () => {
+    h.onDispatch = (type) => {
+      if (type === "SkillsSurfaced") throw new Error("old sessionlog");
+    };
+    const session = await beginCheckpointedSession({
+      ...baseOpts,
+      surfacedSkills: [{ id: "sk-1", name: "verify-before-completion" }],
+    });
+    expect(session).not.toBeNull();
+    await session!.finish();
+    expect(h.dispatched).toEqual([
+      "SessionStart",
+      "TurnStart",
+      "SkillsSurfaced",
+      "TurnEnd",
+      "SessionEnd",
+    ]);
   });
 });

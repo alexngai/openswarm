@@ -525,11 +525,11 @@ describe("NativeEngine: parallel fan-out timing", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 6. maxTurns exceeded
+// 6. maxTurns / wall-clock budget (soft stop)
 // ---------------------------------------------------------------------------
 
-describe("NativeEngine: maxTurns exceeded", () => {
-  it("emits invalid_request error after maxTurns of persistent tool_use", async () => {
+describe("NativeEngine: maxTurns budget", () => {
+  it("soft-stops with stopReason max_turns after an explicit cap is exhausted", async () => {
     const makeToolTurn = (): Script => [
       { type: "tool-call", id: "t", name: "noop", input: {} },
       { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
@@ -551,14 +551,66 @@ describe("NativeEngine: maxTurns exceeded", () => {
     );
 
     const last = events[events.length - 1]!;
-    expect(last.type).toBe("error");
-    expect((last as { error: { code: string; message: string } }).error.code).toBe(
-      "invalid_request",
+    expect(last.type).toBe("message_stop");
+    expect((last as { stopReason: string }).stopReason).toBe("max_turns");
+    // Soft stop — no error event.
+    expect(events.some((e) => e.type === "error")).toBe(false);
+  });
+
+  it("does not cap turns when maxTurns is omitted (runs to natural end_turn)", async () => {
+    const makeToolTurn = (): Script => [
+      { type: "tool-call", id: "t", name: "noop", input: {} },
+      { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
+    ];
+    // 200 tool turns then a natural stop — would exceed the old default of 100.
+    const scripts: Script[] = Array.from({ length: 200 }, () => makeToolTurn());
+    scripts.push([
+      { type: "text-delta", text: "done" },
+      { type: "finish", stopReason: "end_turn", usage: DEFAULT_USAGE },
+    ]);
+    const provider = new MockProvider({ scripts });
+    const dispatcher = new MockDispatcher();
+
+    const engine = new NativeEngine({ provider });
+    const events = await collect(
+      engine.run(
+        baseConfig({
+          maxTurns: undefined,
+          dispatcher: dispatcher as unknown as ToolDispatcher,
+        }),
+      ),
     );
-    expect(
-      (last as { error: { message: string } }).error.message,
-    ).toContain("maxTurns");
-    expect(events.some((e) => e.type === "message_stop")).toBe(false);
+
+    const last = events[events.length - 1]!;
+    expect(last.type).toBe("message_stop");
+    expect((last as { stopReason: string }).stopReason).toBe("end_turn");
+  });
+
+  it("soft-stops with stopReason max_wall_clock when the wall-clock budget elapses", async () => {
+    const makeToolTurn = (): Script => [
+      { type: "tool-call", id: "t", name: "noop", input: {} },
+      { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
+    ];
+    const provider = new MockProvider({
+      scripts: Array.from({ length: 10 }, () => makeToolTurn()),
+    });
+    const dispatcher = new MockDispatcher();
+
+    const engine = new NativeEngine({ provider });
+    // 0ms budget → the boundary check fires immediately on the first turn.
+    const events = await collect(
+      engine.run(
+        baseConfig({
+          maxWallClockMs: 0,
+          dispatcher: dispatcher as unknown as ToolDispatcher,
+        }),
+      ),
+    );
+
+    const last = events[events.length - 1]!;
+    expect(last.type).toBe("message_stop");
+    expect((last as { stopReason: string }).stopReason).toBe("max_wall_clock");
+    expect(events.some((e) => e.type === "error")).toBe(false);
   });
 });
 

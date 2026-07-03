@@ -30,6 +30,7 @@ import {
   type TeamCheckpointStore,
 } from "./team-checkpoint.js";
 import { buildMetadataEvent, isRecordedLaneEvent } from "./wire-protocol.js";
+import { SwarmUsageAggregator } from "./usage-aggregator.js";
 import {
   SendPromptParamsSchema,
   StopParamsSchema,
@@ -137,6 +138,12 @@ export class TeamDaemon {
   private eventsStream: fs.WriteStream | undefined;
   private eventsUnsubscribe: (() => void) | undefined;
   private checkpointStore: TeamCheckpointStore | undefined;
+  /**
+   * GitHub #17: rolls up per-member + team-wide token/cost usage from the lane
+   * stream so the `status` RPC can report aggregate usage across the spawn
+   * tree. Fed from the same subscribeEvents handler that writes events.jsonl.
+   */
+  private readonly usage = new SwarmUsageAggregator();
 
   constructor(opts: TeamDaemonOptions) {
     this.opts = opts;
@@ -238,6 +245,10 @@ export class TeamDaemon {
         }
       }
       this.eventsUnsubscribe = this.orchestrator.subscribeEvents((event) => {
+        // GitHub #17: accrue usage from EVERY event (before the recorded
+        // filter below) so `message_stop` samples and `worker_spawned` spawn
+        // edges both reach the aggregator regardless of disk-recording policy.
+        this.usage.record(event);
         // {ts, ...laneEvent} shape per docs/28 §V0.5.Q4. LaneEvent already
         // carries its own ts; we keep it (rather than overwriting) so the
         // emit-time clock is preserved.
@@ -581,6 +592,10 @@ export class TeamDaemon {
       // Topologies that dispose after their run (or test orchestrators that
       // don't expose getActiveTeam) report an empty list.
       const team = this.orchestrator?.getActiveTeam?.();
+      // GitHub #17: attach each member's SUBTREE usage (itself + everything it
+      // spawned) plus a team-wide roll-up, so operators see aggregate token/
+      // cost across the full spawn tree — resolving the "blank cost side"
+      // gap flagged in docs/47. Usage is 0 until the first `message_stop`.
       const members =
         team === undefined
           ? []
@@ -589,6 +604,7 @@ export class TeamDaemon {
               role: m.role,
               agentId: m.agentId,
               state: m.state,
+              usage: this.usage.subtreeUsage(m.agentId),
             }));
       this.sendOk(socket, req.id, {
         teamName: this.opts.spec.name,
@@ -596,6 +612,7 @@ export class TeamDaemon {
         topology: this.opts.spec.topology,
         startedAt: this.startedAt,
         members,
+        teamUsage: this.usage.teamTotal(),
       });
       return;
     }

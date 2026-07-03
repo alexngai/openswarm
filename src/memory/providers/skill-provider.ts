@@ -108,9 +108,14 @@ export class SkillProvider implements MemoryProvider {
     this.config = config as SkillProviderConfig;
     const skillsDir = resolveSkillsDir(this.config.skillsDir);
 
-    // Only activate when the skills directory exists — otherwise the
-    // coordinator skips us (isAvailable() === false). We never create it.
-    if (!fs.existsSync(skillsDir)) return;
+    // Only activate when the directory is actually a skill-tree bank
+    // (`<basePath>/.skilltree` exists). Existence of the basePath alone is
+    // not enough: the adapter's initialize() would mkdir `.skilltree/` inside
+    // it, so activating on a non-bank directory (e.g. OPENSWARM_SKILLS_DIR
+    // mispointed at ~/.claude/skills, which uses a different layout) would
+    // read zero skills AND drop clutter into a user-managed directory.
+    // We never create the bank — publishing (cogcore/openhive) does.
+    if (!fs.existsSync(path.join(skillsDir, ".skilltree"))) return;
 
     const mod = await tryLoadSkillTree();
     if (!mod) return;
@@ -137,10 +142,19 @@ export class SkillProvider implements MemoryProvider {
     const maxResults = this.config.maxResults ?? 3;
 
     try {
-      const results = await this.reader.searchSkills(context.query);
+      // skill-tree's BM25 requires every corpus-present query term to appear
+      // in the same skill (AND semantics). Task prompts are long natural-
+      // language sentences, so as the bank grows past one skill this yields
+      // zero hits (live-validated). Try it first (precise when it hits), then
+      // fall back to local OR-style lexical overlap ranking.
+      let results = await this.reader.searchSkills(context.query);
+      if (results.length === 0) {
+        results = rankByTokenOverlap(await this.reader.listSkills(), context.query);
+      }
       return results.slice(0, maxResults).map((s) => ({
         source: `skill:${s.id}`,
         content: formatSkill(s),
+        skill: { id: s.id, name: s.name, sourceType: "skill-tree" },
       }));
     } catch {
       return [];
@@ -157,4 +171,45 @@ function formatSkill(s: SkillRecord): string {
   const tagLine = s.tags.length > 0 ? ` [${s.tags.join(", ")}]` : "";
   const body = s.instructions.trim() || s.description.trim();
   return `## Skill: ${s.name}${tagLine}\n${body}`;
+}
+
+// ---------------------------------------------------------------------------
+// OR-style fallback ranking (distinct-token overlap, field-weighted)
+// ---------------------------------------------------------------------------
+
+function tokenize(text: string): string[] {
+  return text
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length >= 3);
+}
+
+/**
+ * Rank skills by distinct-token overlap with the query — any shared term
+ * counts (OR semantics), weighted name/tags 3x, description 2x,
+ * instructions 1x. Zero-score skills are dropped.
+ */
+export function rankByTokenOverlap(
+  skills: readonly SkillRecord[],
+  query: string,
+): SkillRecord[] {
+  const queryTokens = new Set(tokenize(query));
+  if (queryTokens.size === 0) return [];
+
+  return skills
+    .map((s) => {
+      const strong = new Set([...tokenize(s.name), ...s.tags.flatMap(tokenize)]);
+      const meta = new Set(tokenize(s.description));
+      const body = new Set(tokenize(s.instructions));
+      let score = 0;
+      for (const token of queryTokens) {
+        if (strong.has(token)) score += 3;
+        else if (meta.has(token)) score += 2;
+        else if (body.has(token)) score += 1;
+      }
+      return { skill: s, score };
+    })
+    .filter((r) => r.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .map((r) => r.skill);
 }

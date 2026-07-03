@@ -544,7 +544,7 @@ Accumulated into `TurnSummary.prompt_cache_events`. Useful for alerting on cache
 
 ## 12. File references
 
-All absolute paths under `/Users/alexngai/GitHub/openswarm/`:
+All paths relative to the repo root:
 
 - `references/claw-code/rust/crates/runtime/src/lib.rs` — module index, public re-exports
 - `references/claw-code/rust/crates/runtime/src/conversation.rs` — `ConversationRuntime`, `ApiClient`, `ToolExecutor`, `AssistantEvent`, `TurnSummary`, `run_turn`

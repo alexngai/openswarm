@@ -712,6 +712,38 @@ export class StandaloneHost implements SwarmHost {
     this.events.emit("lane_event", full);
   }
 
+  /**
+   * Subscribe to every LaneEvent flowing across this host's bus — both
+   * host-originated events (spawn_requested / worker_spawned / worker_exited /
+   * task_*) and worker events forwarded from live subprocesses (text_delta,
+   * tool_use_*, worker_lifecycle_changed, ...). Returns an unsubscribe
+   * function.
+   *
+   * This is the public seam the REPL swarm-view bridge uses to translate
+   * member lifecycle into `agent_spawned`/`agent_status`/`task_update`
+   * NormalizedEvents (see src/swarm/swarm-view-events.ts). Prefer this over
+   * reaching into the private `events` emitter (as the MAP bridge historically
+   * did via a cast).
+   */
+  onLaneEvent(listener: (event: LaneEvent) => void): () => void {
+    this.events.on("lane_event", listener);
+    return () => {
+      this.events.off("lane_event", listener);
+    };
+  }
+
+  /**
+   * Best-effort synchronous task-title (prompt) lookup for observers such as
+   * the REPL swarm-view bridge. `host.task.get` is async (it must be, for
+   * daemon-backed TaskAPI wrappers), but the in-memory registry is the
+   * authoritative synchronous store; reading it directly lets the TaskBoard
+   * label a member's task the instant `worker_spawned` fires. Returns
+   * undefined for unknown ids.
+   */
+  peekTaskTitle(taskId: string): string | undefined {
+    return this.registry.get(taskId)?.prompt;
+  }
+
   async spawn(request: SpawnRequest): Promise<AgentHandle> {
     // AUTHORITATIVE depth: compute from parent's depth in our own map.
     const parentId =
@@ -764,12 +796,31 @@ export class StandaloneHost implements SwarmHost {
       // Omit<TaskPacket,"id">. We strip id.
       const { id: _ignored, ...packetWithoutId } = request.task;
       taskRecord = this.registry.create(packetWithoutId);
+      // GitHub #23: emit a real `task_created` lane event from the default
+      // spawn path (previously the TaskBoard synthesized task state purely from
+      // worker lifecycle). Recorded to the daemon's events.jsonl so the REPL
+      // attach path renders task state from real events. Only the create branch
+      // emits it — a reused task was already announced by its creator.
+      this.emit({
+        type: "task_created",
+        payload: { taskId: taskRecord.id, prompt: taskRecord.prompt },
+      });
     }
     // Populate TaskRecord.owner with the spawned child's agentId so
     // host.task.ownerOf(taskId) resolves to the running worker. Without this,
     // every worker-side `task_stop` would short-circuit to "unknown taskId".
     // Also handles the reuse case (existing record is re-owned by the new child).
     this.registry.update(taskRecord.id, { owner: childAgentId });
+    // GitHub #23: announce the owner assignment + running transition as a real
+    // `task_updated` lane event so the swarm view's task board reflects the
+    // registry, not a worker-lifecycle synthesis.
+    this.emit({
+      type: "task_updated",
+      payload: {
+        taskId: taskRecord.id,
+        patch: { status: "running", owner: childAgentId },
+      },
+    });
 
     // Spawn the subprocess.
     this.emit({
@@ -956,6 +1007,9 @@ export class StandaloneHost implements SwarmHost {
         childAgentId,
         parentAgentId: parentId,
         ...(request.role !== undefined && { role: request.role }),
+        // GitHub #17: carry the child's model so the usage aggregator can
+        // price per-member cost from the same lane-event stream.
+        ...(request.model !== undefined && { model: request.model }),
         taskId: taskRecord.id,
         teamScope: childScope,
         depth: childDepth,
@@ -977,6 +1031,22 @@ export class StandaloneHost implements SwarmHost {
           ...(signal !== null && { signal }),
         },
       });
+      // GitHub #23: finalize the task with a real terminal lane event so the
+      // swarm view's task board (incl. the detached-daemon attach path) reflects
+      // completion from a real event rather than only worker-lifecycle synthesis.
+      this.emit(
+        exitCode === 0
+          ? { type: "task_completed", payload: { taskId: taskRecord.id } }
+          : {
+              type: "task_failed",
+              payload: {
+                taskId: taskRecord.id,
+                error: `worker exited with ${
+                  signal !== null ? `signal ${signal}` : `code ${exitCode ?? "unknown"}`
+                }`,
+              },
+            },
+      );
       // Messaging cleanup on worker exit.
       this.onWorkerExited(childAgentId);
       // If close arrives while a run is still pending, synthesize a failure

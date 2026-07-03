@@ -1,11 +1,29 @@
 /**
- * Remote (model-based) session compactor — modeled on Codex compact_remote.rs
- * and compact_remote_v2.rs.
+ * In-session (model-based) session compactor — Claude Code v2.1.198 mechanism
+ * (docs/48-compaction-design.md §L3–L4).
  *
- * Sends the conversation history to an LLM and asks it to produce a structured
- * summary. Falls back to mechanical compaction on error/timeout. Reuses the
- * same boundary walk-back and continuation message infrastructure from
- * compactor.ts.
+ * Summarization: appends the byte-exact Claude Code summary request as a user
+ * message to the LIVE conversation and runs one no-tools turn against the
+ * session's provider. The model sees the full-fidelity history it has been
+ * working with — nothing re-serialized, nothing truncated — and prompt caching
+ * covers the shared prefix.
+ *
+ * Rebuild (full path): NO verbatim message tail. The compacted history is
+ * `[continuation user message, …re-injected attachments, …held-out pending
+ * prompt]` — CC's shape. Working state survives via attachments (recently
+ * read files, todo snapshot; see compact-rebuild.ts).
+ *
+ * Reactive path (context_overflow recovery, hardened engine): CC's group
+ * compaction — newest user-turn groups are preserved verbatim within a
+ * token budget, older groups are summarized with the RECENT-portion prompt.
+ *
+ * Safety valves (L5):
+ *  - prompt-too-long: retry up to 3× dropping the oldest half of the history,
+ *    marked with `[earlier conversation truncated for compaction retry]`.
+ *  - tool-call rejection: a summarizer response containing tool calls is a
+ *    failed attempt (the request carries CC's no-tools guard).
+ *  - section validation + one corrective retry (openswarm extension).
+ *  - mechanical fallback on any terminal failure (openswarm extension).
  */
 
 import type { Provider, ProviderMessage } from "../providers/index.js";
@@ -13,14 +31,22 @@ import {
   type CompactionConfig,
   type CompactionResult,
   type Session,
-  compactedSummaryPrefixLen,
   extractExistingCompactedSummary,
   getCompactContinuationMessage,
   mergeCompactSummaries,
   summarizeMessages,
   shouldCompact,
-  withTodoProgress,
+  estimateTokens,
+  autoCompactThreshold,
 } from "./compactor.js";
+import {
+  buildCompactSummaryRequest,
+  buildRecentCompactSummaryRequest,
+} from "./compact-prompts.js";
+import {
+  buildPostCompactAttachments,
+  type RecontextualizeFn,
+} from "./compact-rebuild.js";
 
 // ---------------------------------------------------------------------------
 // Remote compaction config
@@ -29,13 +55,13 @@ import {
 export interface RemoteCompactionConfig extends CompactionConfig {
   /** Provider to use for summarization. Can differ from the main session provider. */
   provider: Provider;
-  /** Model to use for summarization (e.g. "gpt-4o-mini", "claude-haiku-4-5-20251001"). */
+  /** Model to use for summarization (e.g. "gpt-5.5", "claude-sonnet-4-6"). */
   model: string;
-  /** Timeout in ms for the summarization call. Default: 30_000 (30s). */
+  /** Timeout in ms for one summarization attempt. Default: 120_000 (2 min). */
   timeoutMs?: number;
-  /** Max output tokens for the summary. Default: 2048. */
+  /** Max output tokens for the summary. Default: 8192. */
   maxSummaryTokens?: number;
-  /** Custom system prompt override. Uses default Codex-style prompt when absent. */
+  /** System prompt for the summarization turn. Defaults to empty. */
   systemPrompt?: string;
 }
 
@@ -45,36 +71,62 @@ export function isRemoteCompactionConfig(
   return "provider" in config && "model" in config;
 }
 
+/** Per-invocation options for compactSessionRemote. */
+export interface CompactOptions {
+  /**
+   * Compact even when the estimator trigger has not fired. Engines pass this
+   * when the usage-token trigger (L1) has already decided — the char/4
+   * estimator systematically underestimates and must not veto.
+   */
+  readonly force?: boolean;
+  /** "auto" (default) appends CC's resume instruction; "manual" omits it. */
+  readonly trigger?: "auto" | "manual";
+  /** /compact <text> — forwarded as CC "Additional Instructions". */
+  readonly customInstructions?: string;
+  /** Skip attachment re-injection (tests / reactive path). */
+  readonly skipAttachments?: boolean;
+  /**
+   * F1 hook: returns extra attachments (project instructions) to re-inject
+   * after compaction, placed right after the continuation message.
+   */
+  readonly recontextualize?: RecontextualizeFn;
+}
+
 // ---------------------------------------------------------------------------
 // Summary section validation
 // ---------------------------------------------------------------------------
 
 /**
- * Required `## …` sections a conforming remote summary must contain (mirrors
- * the structured prompt below). "Optional Next Step" is intentionally excluded
- * — the prompt says to omit it when there's no obvious next action.
+ * Required sections a conforming summary must contain — the Claude Code
+ * v2.1.198 nine-section shape (numbered `N. <name>:` in the prompt example).
+ * "Optional Next Step" is intentionally excluded — the prompt marks it
+ * optional.
  */
 export const REQUIRED_SUMMARY_SECTIONS: readonly string[] = [
   "Primary Request and Intent",
   "Key Technical Concepts",
   "Files and Code Sections",
-  "Errors and Fixes",
+  "Errors and fixes",
   "Problem Solving",
-  "All User Messages",
+  "All user messages",
   "Pending Tasks",
   "Current Work",
 ];
 
 /**
- * Returns the required sections missing from a summary. Matching is on the
- * `## <heading>` marker, case-insensitively, so minor whitespace/casing drift
- * in the model output doesn't spuriously fail an otherwise-complete summary.
+ * Returns the required sections missing from a summary. Matches either the
+ * numbered `N. <section>` form Claude Code's prompt demonstrates or a
+ * markdown `#`-heading form, case-insensitively.
  */
 export function missingSummarySections(summary: string): string[] {
-  const haystack = summary.toLowerCase();
-  return REQUIRED_SUMMARY_SECTIONS.filter(
-    (section) => !haystack.includes(`## ${section.toLowerCase()}`),
-  );
+  return REQUIRED_SUMMARY_SECTIONS.filter((section) => {
+    const escaped = section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const marker = new RegExp(
+      `(?:^|\\n)\\s*(?:\\d+\\.\\s*|#{1,4}\\s*)${escaped}`,
+      "i",
+    );
+    return !marker.test(summary);
+  });
 }
 
 /** Thrown when a remote summary still lacks required sections after a retry. */
@@ -85,130 +137,269 @@ export class RemoteSummaryValidationError extends Error {
   }
 }
 
-// ---------------------------------------------------------------------------
-// System prompt — modeled on Codex compact_remote_v2.rs
-// ---------------------------------------------------------------------------
+/** Claude Code marker inserted where history was cut for a compaction retry. */
+export const COMPACT_TRUNCATION_MARKER =
+  "[earlier conversation truncated for compaction retry]";
 
-const REMOTE_COMPACTION_SYSTEM_PROMPT = `You are a conversation summarizer. Your job is to condense a conversation between a user and an AI assistant into a structured summary that preserves all information needed to continue the conversation seamlessly.
+/** Max prompt-too-long shrink retries for the summarization call (CC: 3). */
+export const MAX_PTL_RETRIES = 3;
 
-## Instructions
+/** Internal sentinel: the summarization request itself overflowed context. */
+class PromptTooLongError extends Error {
+  constructor() {
+    super("summarization prompt too long");
+    this.name = "PromptTooLongError";
+  }
+}
 
-1. Read the full conversation carefully.
-2. Produce output in EXACTLY this format:
-
-<analysis>
-Brief notes on what matters most for continuing this conversation.
-</analysis>
-
-<summary>
-## Primary Request and Intent
-What the user is ultimately trying to accomplish.
-
-## Key Technical Concepts
-Important technical details, patterns, constraints, or decisions that were established.
-
-## Files and Code Sections
-List of significant files discussed or modified, with brief notes on what was done to each.
-
-## Errors and Fixes
-Any errors encountered, their root causes, and how they were resolved.
-
-## Problem Solving
-Key problem-solving approaches and decisions made.
-
-## All User Messages
-Paraphrased list of all user messages in order.
-
-## Pending Tasks
-Unfinished work, next steps, or things the user asked for that haven't been done yet.
-
-## Current Work
-What was being actively worked on when the conversation ended.
-
-## Optional Next Step
-If there's an obvious single next action to take, state it here. Otherwise omit this section.
-</summary>
-
-## Rules
-
-- Be comprehensive but concise — the summary must be shorter than the original conversation.
-- Preserve exact file paths, function names, variable names, error messages, and code snippets that would be needed to continue the work.
-- Preserve the user's stated preferences, constraints, and requirements verbatim.
-- Do NOT fabricate information that wasn't in the conversation.
-- Do NOT include your own opinions or suggestions beyond what was discussed.
-- Focus on WHAT was done/decided and WHY, not play-by-play narration.`;
+/** Internal sentinel: the summarizer called tools despite the guard. */
+class ToolCallInSummaryError extends Error {
+  constructor() {
+    super("summarizer attempted a tool call");
+    this.name = "ToolCallInSummaryError";
+  }
+}
 
 // ---------------------------------------------------------------------------
-// Remote compaction entry point
+// Full-path compaction entry point
 // ---------------------------------------------------------------------------
 
 export async function compactSessionRemote(
   session: Session,
   config: RemoteCompactionConfig,
   abort?: AbortSignal,
+  opts?: CompactOptions,
 ): Promise<CompactionResult> {
   const effectiveConfig: CompactionConfig = {
     preserveRecentMessages: config.preserveRecentMessages,
     maxEstimatedTokens: config.maxEstimatedTokens,
   };
 
-  if (!shouldCompact(session, effectiveConfig)) {
+  if (opts?.force !== true && !shouldCompact(session, effectiveConfig)) {
     return {
       summary: "",
       compactedSession: session,
       removedMessageCount: 0,
       boundaryWalkedBack: false,
+      summarizerFailed: false,
     };
   }
 
-  const existingSummary = extractExistingCompactedSummary(session.messages[0]);
-  const compactedPrefixLen = existingSummary !== null ? 1 : 0;
+  // Hold out a trailing plain-user prompt (the message the engine just
+  // seeded, not yet answered) so the active request survives the boundary —
+  // CC compacts before appending the pending prompt; we compact just after.
+  const last = session.messages[session.messages.length - 1];
+  const holdOutPending =
+    last !== undefined &&
+    last.role === "user" &&
+    last.content.every((b) => b.type === "text") &&
+    !isContinuationMessage(last);
+  const toSummarize = holdOutPending
+    ? session.messages.slice(0, -1)
+    : session.messages;
+  const heldOut = holdOutPending ? [last!] : [];
 
-  // Boundary walk-back — same logic as mechanical compactor
-  const { keepFrom, boundaryWalkedBack } = walkBackBoundary(
-    session.messages,
-    config.preserveRecentMessages,
-    compactedPrefixLen,
-  );
-
-  const removed = session.messages.slice(compactedPrefixLen, keepFrom);
-  const preserved = session.messages.slice(keepFrom);
-
-  // Attempt remote summarization with timeout + fallback
-  let summary: string;
-  try {
-    const remoteSummary = await summarizeRemote(
-      removed,
-      existingSummary,
-      config,
-      abort,
-    );
-    summary = mergeCompactSummaries(existingSummary, remoteSummary);
-  } catch {
-    // Fail-safe: fall back to mechanical summarization
-    summary = mergeCompactSummaries(existingSummary, summarizeMessages(removed));
+  if (toSummarize.length === 0) {
+    return {
+      summary: "",
+      compactedSession: session,
+      removedMessageCount: 0,
+      boundaryWalkedBack: false,
+      summarizerFailed: false,
+    };
   }
 
-  // Fold the latest todo snapshot into whichever summary we ended up with, so
-  // the checklist survives the compaction boundary (matches the mechanical path).
-  summary = withTodoProgress(summary, session.messages);
+  // In-session summarization over the FULL history (including any prior
+  // continuation message — the model folds it into the fresh summary, so no
+  // mechanical merging is needed on this path).
+  let summary: string;
+  let summarizerFailed = false;
+  try {
+    summary = await summarizeInSession(toSummarize, config, opts, abort);
+  } catch {
+    // Fail-safe: mechanical summarization (openswarm extension — headless
+    // multi-agent runs must not die on a failed summarization call).
+    summarizerFailed = true;
+    const existingSummary = extractExistingCompactedSummary(toSummarize[0]);
+    const removedForFallback = toSummarize.slice(existingSummary !== null ? 1 : 0);
+    summary = mergeCompactSummaries(
+      existingSummary,
+      summarizeMessages(removedForFallback),
+    );
+  }
 
   const continuation = getCompactContinuationMessage(
     summary,
-    true,
-    preserved.length > 0,
+    opts?.trigger !== "manual",
+    false, // full path preserves no messages
+    config.transcriptPath,
   );
 
-  const systemMsg: ProviderMessage = {
-    role: "system",
+  // Claude Code ships the continuation as a user message (see compactor.ts).
+  const continuationMsg: ProviderMessage = {
+    role: "user",
     content: [{ type: "text", text: continuation }],
   };
 
+  // Attachment re-injection (recently read files, todo snapshot).
+  const attachments =
+    opts?.skipAttachments === true
+      ? []
+      : buildPostCompactAttachments(session.messages);
+
+  // F1: re-inject project instructions (CLAUDE.md/AGENTS.md) ahead of the
+  // file/todo attachments — CC re-reads these after compaction.
+  const recontextual = await runRecontextualize(opts?.recontextualize);
+
   return {
     summary,
-    compactedSession: { messages: [systemMsg, ...preserved] },
-    removedMessageCount: removed.length,
-    boundaryWalkedBack,
+    compactedSession: {
+      messages: [continuationMsg, ...recontextual, ...attachments, ...heldOut],
+    },
+    removedMessageCount: toSummarize.length,
+    boundaryWalkedBack: false,
+    summarizerFailed,
+  };
+}
+
+/** Invoke the recontextualize hook defensively — it must never break compaction. */
+async function runRecontextualize(
+  fn: RecontextualizeFn | undefined,
+): Promise<ProviderMessage[]> {
+  if (fn === undefined) return [];
+  try {
+    return [...(await fn())];
+  } catch {
+    return [];
+  }
+}
+
+function isContinuationMessage(msg: ProviderMessage): boolean {
+  return extractExistingCompactedSummary(msg) !== null;
+}
+
+// ---------------------------------------------------------------------------
+// Reactive (keep-recent group) compaction — context_overflow recovery
+// ---------------------------------------------------------------------------
+
+export interface ReactiveCompactOptions extends CompactOptions {
+  /** Context window of the model, for the verbatim-tail budget. */
+  readonly contextWindow?: number;
+}
+
+/** MiMoCode verbatim-tail budget: min(8000, max(2000, usable × 0.25)). */
+export function reactiveTailBudgetTokens(contextWindow?: number): number {
+  if (contextWindow === undefined) return 8_000;
+  const usable = autoCompactThreshold(contextWindow);
+  return Math.min(8_000, Math.max(2_000, Math.floor(usable * 0.25)));
+}
+
+/**
+ * Split messages into user-turn groups: each group starts at a plain user
+ * text message (a real user turn, not a tool_result carrier) and runs until
+ * the next one. A leading continuation/tool-result run forms its own group.
+ */
+export function splitIntoTurnGroups(
+  messages: readonly ProviderMessage[],
+): ProviderMessage[][] {
+  const groups: ProviderMessage[][] = [];
+  let current: ProviderMessage[] = [];
+  for (const msg of messages) {
+    const isTurnStart =
+      msg.role === "user" &&
+      msg.content.some((b) => b.type === "text") &&
+      !msg.content.some((b) => b.type === "tool_result");
+    if (isTurnStart && current.length > 0) {
+      groups.push(current);
+      current = [];
+    }
+    current.push(msg);
+  }
+  if (current.length > 0) groups.push(current);
+  return groups;
+}
+
+/**
+ * Reactive compaction (CC group compaction, MiMoCode tail budget): keep the
+ * newest whole turn groups within the tail budget verbatim, summarize
+ * everything older with the RECENT-portion prompt. Used by the hardened
+ * engine when the provider reports context_overflow mid-session.
+ */
+export async function compactSessionReactive(
+  session: Session,
+  config: RemoteCompactionConfig,
+  abort?: AbortSignal,
+  opts?: ReactiveCompactOptions,
+): Promise<CompactionResult> {
+  const groups = splitIntoTurnGroups(session.messages);
+  if (groups.length === 0) {
+    return {
+      summary: "",
+      compactedSession: session,
+      removedMessageCount: 0,
+      boundaryWalkedBack: false,
+      summarizerFailed: false,
+    };
+  }
+
+  // Keep newest whole groups within the tail budget (always < all groups —
+  // reactive compaction must summarize something).
+  const budget = reactiveTailBudgetTokens(opts?.contextWindow);
+  let kept = 0;
+  let tokens = 0;
+  for (let i = groups.length - 1; i > 0; i--) {
+    const groupTokens = groups[i]!.reduce(
+      (sum, m) => sum + estimateTokens(m),
+      0,
+    );
+    if (tokens + groupTokens > budget) break;
+    tokens += groupTokens;
+    kept++;
+  }
+
+  const summarizeGroups = groups.slice(0, groups.length - kept);
+  const preserved = groups.slice(groups.length - kept).flat();
+  const toSummarize = summarizeGroups.flat();
+
+  let summary: string;
+  let summarizerFailed = false;
+  try {
+    summary = await summarizeInSession(
+      toSummarize,
+      config,
+      { ...opts, customInstructions: opts?.customInstructions, recentPortion: true },
+      abort,
+    );
+  } catch {
+    summarizerFailed = true;
+    const existingSummary = extractExistingCompactedSummary(toSummarize[0]);
+    summary = mergeCompactSummaries(
+      existingSummary,
+      summarizeMessages(toSummarize.slice(existingSummary !== null ? 1 : 0)),
+    );
+  }
+
+  const continuation = getCompactContinuationMessage(
+    summary,
+    opts?.trigger !== "manual",
+    preserved.length > 0,
+    config.transcriptPath,
+  );
+  const continuationMsg: ProviderMessage = {
+    role: "user",
+    content: [{ type: "text", text: continuation }],
+  };
+
+  const recontextual = await runRecontextualize(opts?.recontextualize);
+
+  return {
+    summary,
+    compactedSession: {
+      messages: [continuationMsg, ...recontextual, ...preserved],
+    },
+    removedMessageCount: toSummarize.length,
+    boundaryWalkedBack: false,
+    summarizerFailed,
   };
 }
 
@@ -216,70 +407,110 @@ export async function compactSessionRemote(
 // Core summarization call
 // ---------------------------------------------------------------------------
 
-async function summarizeRemote(
+interface SummarizeOptions extends CompactOptions {
+  readonly recentPortion?: boolean;
+}
+
+async function summarizeInSession(
   messages: readonly ProviderMessage[],
-  existingSummary: string | null,
   config: RemoteCompactionConfig,
+  opts: SummarizeOptions | undefined,
   abort?: AbortSignal,
 ): Promise<string> {
-  const timeoutMs = config.timeoutMs ?? 30_000;
-  const maxTokens = config.maxSummaryTokens ?? 2048;
-  const systemPrompt = config.systemPrompt ?? REMOTE_COMPACTION_SYSTEM_PROMPT;
+  const requestText =
+    opts?.recentPortion === true
+      ? buildRecentCompactSummaryRequest(opts?.customInstructions)
+      : buildCompactSummaryRequest(opts?.customInstructions);
 
-  // Build the base user message containing the conversation to summarize.
-  const conversationText = formatConversationForSummary(messages, existingSummary);
+  // The conversation the summarizer sees. Prompt-too-long retries shrink it
+  // from the oldest end, marked with CC's truncation string.
+  let convo: readonly ProviderMessage[] = messages;
+  let ptlAttempts = 0;
+  let toolCallRetries = 0;
+  let correction = "";
+  let validationAttempts = 0;
 
-  // Section validation + one retry (modeled on Codex compact_remote_v2): the
-  // structured prompt asks for a fixed set of `## …` sections. A truncated or
-  // off-format response loses information silently, so we validate the sections
-  // and, if any required one is missing, retry ONCE with a corrective note
-  // enumerating the gaps. If the retry still doesn't conform we throw, which the
-  // caller turns into a mechanical-summary fallback.
-  let userText = conversationText;
-  let lastSummary = "";
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const responseText = await streamSummarization(
-      userText,
-      systemPrompt,
-      config,
-      maxTokens,
-      timeoutMs,
-      abort,
-    );
-    lastSummary = extractSummaryFromResponse(responseText);
+  while (true) {
+    if (abort?.aborted) throw new Error("aborted");
+    try {
+      const responseText = await streamSummarization(
+        convo,
+        requestText + correction,
+        config,
+        abort,
+      );
+      const summary = extractSummaryFromResponse(responseText);
 
-    const missing = missingSummarySections(lastSummary);
-    if (missing.length === 0) {
-      return lastSummary;
+      const missing = missingSummarySections(summary);
+      if (missing.length === 0) {
+        return summary;
+      }
+
+      // Corrective retry (once): re-send with an explicit list of the
+      // sections the previous attempt dropped.
+      validationAttempts++;
+      if (validationAttempts >= 2) {
+        throw new RemoteSummaryValidationError(missing);
+      }
+      correction =
+        `\n\n## Correction Required\n` +
+        `Your previous summary was missing these required sections: ` +
+        `${missing.join(", ")}. Re-emit the FULL summary in the exact ` +
+        `<analysis>…</analysis> then <summary>…</summary> format with every ` +
+        `required section present.`;
+    } catch (err) {
+      if (err instanceof PromptTooLongError && ptlAttempts < MAX_PTL_RETRIES) {
+        ptlAttempts++;
+        convo = truncateForRetry(convo);
+        continue;
+      }
+      if (err instanceof ToolCallInSummaryError && toolCallRetries === 0) {
+        // One plain retry — the guard usually lands on the second attempt.
+        toolCallRetries++;
+        continue;
+      }
+      throw err;
     }
-
-    // Corrective retry: re-send the original conversation plus an explicit
-    // list of the sections the previous attempt dropped.
-    userText =
-      `${conversationText}\n\n## Correction Required\n` +
-      `Your previous summary was missing these required sections: ` +
-      `${missing.join(", ")}. Re-emit the FULL summary in the exact ` +
-      `<summary>…</summary> format with every required section present.`;
   }
+}
 
-  // Still non-conforming after the retry — signal the caller to fall back.
-  throw new RemoteSummaryValidationError(
-    missingSummarySections(lastSummary),
-  );
+/**
+ * Drop the oldest half of the conversation for a prompt-too-long retry,
+ * inserting Claude Code's truncation marker at the cut. Never lets the kept
+ * slice start with an orphaned tool_result.
+ */
+export function truncateForRetry(
+  messages: readonly ProviderMessage[],
+): ProviderMessage[] {
+  const drop = Math.max(1, Math.floor(messages.length / 2));
+  const kept = messages.slice(drop);
+  while (
+    kept.length > 0 &&
+    kept[0]!.role === "user" &&
+    kept[0]!.content[0]?.type === "tool_result"
+  ) {
+    kept.shift();
+  }
+  const marker: ProviderMessage = {
+    role: "user",
+    content: [{ type: "text", text: COMPACT_TRUNCATION_MARKER }],
+  };
+  return [marker, ...kept];
 }
 
 /** Single streaming summarization call with a per-attempt timeout. */
 async function streamSummarization(
-  userText: string,
-  systemPrompt: string,
+  convo: readonly ProviderMessage[],
+  requestText: string,
   config: RemoteCompactionConfig,
-  maxTokens: number,
-  timeoutMs: number,
   abort?: AbortSignal,
 ): Promise<string> {
-  const userMessage: ProviderMessage = {
+  const timeoutMs = config.timeoutMs ?? 120_000;
+  const maxTokens = config.maxSummaryTokens ?? 8_192;
+
+  const requestMessage: ProviderMessage = {
     role: "user",
-    content: [{ type: "text", text: userText }],
+    content: [{ type: "text", text: requestText }],
   };
 
   const timeoutController = new AbortController();
@@ -291,8 +522,8 @@ async function streamSummarization(
   try {
     let responseText = "";
     for await (const event of config.provider.stream({
-      messages: [userMessage],
-      systemPrompt,
+      messages: [...convo, requestMessage],
+      systemPrompt: config.systemPrompt ?? "",
       model: config.model,
       maxOutputTokens: maxTokens,
       abort: combinedAbort,
@@ -300,62 +531,21 @@ async function streamSummarization(
     })) {
       if (event.type === "text-delta") {
         responseText += event.text;
+      } else if (
+        event.type === "tool-call" ||
+        event.type === "tool-input-start"
+      ) {
+        throw new ToolCallInSummaryError();
       } else if (event.type === "error") {
+        if (event.code === "context_overflow") {
+          throw new PromptTooLongError();
+        }
         throw new Error(`Provider error: ${event.message}`);
       }
     }
     return responseText;
   } finally {
     clearTimeout(timer);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Conversation formatting
-// ---------------------------------------------------------------------------
-
-function formatConversationForSummary(
-  messages: readonly ProviderMessage[],
-  existingSummary: string | null,
-): string {
-  const parts: string[] = [];
-
-  if (existingSummary !== null) {
-    parts.push("## Previously Compacted Context\n");
-    parts.push(existingSummary);
-    parts.push("\n\n## New Conversation to Summarize\n");
-  } else {
-    parts.push("## Conversation to Summarize\n");
-  }
-
-  for (const msg of messages) {
-    const role = msg.role.toUpperCase();
-    const blocks = msg.content.map(formatBlock).join("\n");
-    parts.push(`\n### ${role}\n${blocks}`);
-  }
-
-  return parts.join("\n");
-}
-
-function formatBlock(block: ProviderMessage["content"][number]): string {
-  if (block.type === "text") {
-    return block.text;
-  } else if (block.type === "tool_use") {
-    const inputStr = JSON.stringify(block.input, null, 2);
-    if (inputStr.length > 500) {
-      return `[Tool call: ${block.name}(${inputStr.slice(0, 500)}...)]`;
-    }
-    return `[Tool call: ${block.name}(${inputStr})]`;
-  } else if (block.type === "reasoning") {
-    return "[Reasoning]";
-  } else {
-    // tool_result
-    const content = block.content;
-    const prefix = block.is_error ? "[Tool error" : "[Tool result";
-    if (content.length > 500) {
-      return `${prefix}: ${content.slice(0, 500)}...]`;
-    }
-    return `${prefix}: ${content}]`;
   }
 }
 
@@ -377,80 +567,19 @@ function extractSummaryFromResponse(response: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Boundary walk-back (shared with mechanical compactor)
-// ---------------------------------------------------------------------------
-
-interface WalkBackResult {
-  keepFrom: number;
-  boundaryWalkedBack: boolean;
-}
-
-function walkBackBoundary(
-  messages: readonly ProviderMessage[],
-  preserveRecentMessages: number,
-  compactedPrefixLen: number,
-): WalkBackResult {
-  const rawKeepFrom = Math.max(0, messages.length - preserveRecentMessages);
-  let keepFrom = rawKeepFrom;
-  let boundaryWalkedBack = false;
-
-  while (true) {
-    if (keepFrom === 0 || keepFrom <= compactedPrefixLen) {
-      break;
-    }
-    const firstPreserved = messages[keepFrom];
-    const startsWithToolResult =
-      firstPreserved !== undefined &&
-      firstPreserved.role === "user" &&
-      firstPreserved.content[0]?.type === "tool_result";
-
-    if (!startsWithToolResult) {
-      break;
-    }
-
-    const preceding = messages[keepFrom - 1];
-    const precedingHasToolUse =
-      preceding !== undefined &&
-      preceding.role === "assistant" &&
-      preceding.content.some((b) => b.type === "tool_use");
-
-    if (precedingHasToolUse) {
-      keepFrom = keepFrom - 1;
-      boundaryWalkedBack = true;
-      break;
-    }
-
-    keepFrom = keepFrom - 1;
-    boundaryWalkedBack = true;
-  }
-
-  return { keepFrom, boundaryWalkedBack };
-}
-
-// ---------------------------------------------------------------------------
 // Abort signal utilities
 // ---------------------------------------------------------------------------
 
-function combineAbortSignals(
-  ...signals: AbortSignal[]
-): AbortSignal {
+function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
   const controller = new AbortController();
   for (const signal of signals) {
     if (signal.aborted) {
       controller.abort(signal.reason);
       return controller.signal;
     }
-    signal.addEventListener(
-      "abort",
-      () => controller.abort(signal.reason),
-      { once: true },
-    );
+    signal.addEventListener("abort", () => controller.abort(signal.reason), {
+      once: true,
+    });
   }
   return controller.signal;
 }
-
-// ---------------------------------------------------------------------------
-// Export the system prompt for testing / customization
-// ---------------------------------------------------------------------------
-
-export { REMOTE_COMPACTION_SYSTEM_PROMPT };

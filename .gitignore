@@ -16,7 +16,11 @@ eval/.artifacts/
 # npm pack artifacts (anywhere in the tree)
 *.tgz
 .claude/
-.omc/
+.omx/
+.sessionlog/
+# internal audit work products (kept local, not shipped)
+openswarm-audit.md
+openswarm-remediation-plan.md
 # local reference checkouts (cloned repos, not tracked as submodules)
 references/
 # compiled platform binaries (build artifacts)
@@ -24,3 +28,6 @@ packages/*/openswarm
 packages/*/openswarm.exe
 packages/*/libopentui.dylib
 packages/*/libopentui.so
+# claude-agent-sdk native helper, co-located by build-binary.ts (~205MB)
+packages/*/claude
+packages/*/claude.exe

@@ -9,7 +9,10 @@ import { HardenedNativeEngine } from "../engine/hardened-native.js";
 import { ScriptedTestEngine } from "../engine/test-engine.js";
 import { CodexResponsesTransportProvider } from "../providers/codex-responses/index.js";
 import { OpenAICodexAuth } from "../auth/openai-codex-oauth.js";
-import { DEFAULT_COMPACTION } from "../engine/compactor.js";
+import {
+  DEFAULT_COMPACTION,
+  autoCompactThreshold,
+} from "../engine/compactor.js";
 import { filterCodexPeerTools } from "../tools/codex-peer-tools.js";
 import { loadAliases, resolveAlias } from "../providers/aliases.js";
 import { OpenAIEnvAuth } from "../auth/openai-env.js";
@@ -46,10 +49,17 @@ import type {
 } from "../swarm/host.js";
 import type { IpcRequest } from "../swarm/ipc/protocol.js";
 import { RunMoreParamsSchema, IPC_ERROR_CODES } from "../swarm/ipc/protocol.js";
-import type { PermissionMode, Usage } from "../core/types.js";
+import type { PermissionMode, Usage, NormalizedEvent } from "../core/types.js";
+import { ToolInputAccumulator, parseToolInput } from "../core/tool-input.js";
+import { isEditTool } from "../acp/tool-kind.js";
+import { redactSecrets } from "../tools/tier0/secrets.js";
 import type { ToolExecutionContext, ToolImpl } from "../tools/types.js";
 import { readSessionSidecar, writeSessionSidecar } from "./session-sidecar.js";
 import { buildSystemPrompt } from "../engine/default-system-prompt.js";
+import {
+  loadProjectInstructions,
+  formatInstructionsForSystemPrompt,
+} from "../engine/project-instructions.js";
 import {
   buildToolUseWarmupPrompt,
   formatUnknownToolFeedback,
@@ -59,6 +69,66 @@ function parseIntEnv(key: string, fallback: number): number {
   const raw = process.env[key];
   if (raw === undefined || !/^\d+$/.test(raw)) return fallback;
   return Number.parseInt(raw, 10);
+}
+
+/**
+ * Issue #26 — carry a bounded, secret-redacted `input` on the recorded
+ * `tool_use_end` for edit/write tools so `team watch` can reconstruct inline
+ * diffs on live/replay runs. `tool_use_input` deltas are stripped as live-only
+ * before events.jsonl (src/swarm/wire-protocol.ts), so the recorded
+ * `tool_use_end` is the only place a replay consumer can recover the args.
+ */
+
+/** Per-field char cap for the reconstructable diff fields (a few KB each). */
+const MAX_EDIT_INPUT_FIELD_CHARS = 16_000;
+
+/** Fields we size-cap; other strings are redacted but left un-capped. */
+const CAPPED_EDIT_FIELDS = new Set(["old_string", "new_string", "content"]);
+
+/**
+ * Produce a persisted-safe copy of an edit tool's parsed input:
+ *  - run every string field through `redactSecrets` (recursively),
+ *  - cap `old_string` / `new_string` / `content` to a sane char limit,
+ *  - leave `apply_patch`'s `patch` field verbatim so it stays parseable by
+ *    parsePatch (bounding the raw patch is a documented follow-up).
+ */
+/**
+ * Decide the `input` to attach to a forwarded `tool_use_end`. Returns the
+ * bounded + redacted args for edit/write tools, or `undefined` for every
+ * other tool (so non-edit tool_use_end events forward unchanged). Exported so
+ * the redaction/bounding contract can be unit-tested without a live worker.
+ */
+export function editInputForToolEnd(
+  toolName: string | undefined,
+  rawArgs: string,
+): unknown | undefined {
+  if (toolName === undefined || !isEditTool(toolName)) return undefined;
+  return boundAndRedactEditInput(parseToolInput(rawArgs, "empty-object"));
+}
+
+function boundAndRedactEditInput(input: unknown): unknown {
+  if (Array.isArray(input)) {
+    return input.map((v) => boundAndRedactEditInput(v));
+  }
+  if (input === null || typeof input !== "object") return input;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
+    if (k === "patch") {
+      // Deferred (issue #26 follow-up): keep apply_patch `patch` verbatim.
+      out[k] = v;
+    } else if (typeof v === "string") {
+      let s = redactSecrets(v).redacted;
+      if (CAPPED_EDIT_FIELDS.has(k) && s.length > MAX_EDIT_INPUT_FIELD_CHARS) {
+        s = s.slice(0, MAX_EDIT_INPUT_FIELD_CHARS) + "…";
+      }
+      out[k] = s;
+    } else if (v !== null && typeof v === "object") {
+      out[k] = boundAndRedactEditInput(v);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
 }
 
 const DEFAULT_WORKER_MODEL = "claude-sonnet-4-6";
@@ -135,7 +205,11 @@ async function buildCodexNativeWorkerEngine({
     midTurnCompaction: process.env.OPENSWARM_MID_TURN_COMPACTION === "1",
     compactionConfig: {
       preserveRecentMessages: DEFAULT_COMPACTION.preserveRecentMessages,
-      maxEstimatedTokens: Math.floor(provider.capabilities.maxContextTokens * 0.8),
+      // Estimator-fallback threshold, CC-aligned (window − 13k reserve;
+      // the primary trigger is the engine's usage-token check).
+      maxEstimatedTokens: autoCompactThreshold(
+        provider.capabilities.maxContextTokens,
+      ),
     },
   });
 }
@@ -261,8 +335,21 @@ async function executeTurn(
     const envBasePrompt = process.env.OPENSWARM_BASE_SYSTEM_PROMPT;
     const useNativePrompt =
       engine.id === "native" || engine.id === "hardened-native";
+    // Fold CLAUDE.md/AGENTS.md into the worker's system prompt (F1 startup
+    // parity — native/hardened engines don't get them from an SDK preset).
+    const instructionsExt = formatInstructionsForSystemPrompt(
+      loadProjectInstructions(process.cwd()),
+    );
+    const nativeExtensions = [envBasePrompt, instructionsExt]
+      .filter((s): s is string => s !== undefined && s.length > 0)
+      .join("\n\n");
     const basePrompt = useNativePrompt
-      ? buildSystemPrompt({ cwd: process.cwd(), extensions: envBasePrompt ?? undefined })
+      ? buildSystemPrompt({
+          cwd: process.cwd(),
+          ...(nativeExtensions.length > 0
+            ? { extensions: nativeExtensions }
+            : {}),
+        })
       : (envBasePrompt ?? "");
     const toolWarmup =
       process.env.OPENSWARM_TOOL_USE_WARMUP === "1"
@@ -328,7 +415,16 @@ async function executeTurn(
       sessionId: priorSessionId ?? agentId,
       agentId,
       prompt: task.prompt,
+      surfacedSkills: enriched.surfacedSkills,
     });
+
+    // Compaction continuation messages point the model at the live transcript
+    // ("read the full transcript at: …", docs/48-compaction-design.md §L4).
+    if (recorder !== null) {
+      (
+        engine as { setTranscriptPath?: (p: string) => void }
+      ).setTranscriptPath?.(recorder.transcriptPath);
+    }
 
     // Crash-recovery T2: persist the engine session id to the sidecar as soon
     // as it's known (not just at turn end), so a daemon crash MID-turn still
@@ -351,6 +447,10 @@ async function executeTurn(
       agentId,
       onRecord: (record) => ctx.memoryTurns.push(record),
     });
+    // Issue #26: reassemble edit-tool args from the streamed tool_use_input
+    // deltas so we can attach a bounded, redacted `input` on the recorded
+    // tool_use_end. Scoped per turn; tracks toolUseId → toolName.
+    const editInputAcc = new ToolInputAccumulator<string>();
     for await (const evt of observedEvents) {
       if (evt.type === "text_delta") {
         finalText += evt.text;
@@ -360,6 +460,22 @@ async function executeTurn(
         usage = evt.usage;
       }
       persistSidecarEarly();
+      // Issue #26: accumulate streamed edit args, then on tool_use_end attach a
+      // bounded + redacted `input` for edit tools only. Non-edit tools forward
+      // unchanged (no `input`). tool_use_input itself stays live-only.
+      if (evt.type === "tool_use_start") {
+        editInputAcc.start(evt.id, evt.name);
+      } else if (evt.type === "tool_use_input") {
+        editInputAcc.append(evt.id, evt.jsonDelta);
+      }
+      let payload: NormalizedEvent = evt;
+      if (evt.type === "tool_use_end") {
+        const buffered = editInputAcc.end(evt.id);
+        const input = editInputForToolEnd(buffered?.meta, buffered?.raw ?? "");
+        if (input !== undefined) {
+          payload = { ...evt, input };
+        }
+      }
       // Forward each engine event as a lane_event, preserving its real type so
       // events.jsonl records the semantic spine and the ACP layer can translate
       // member activity (docs/archive/33 B0.2). Events with no lane equivalent are
@@ -370,7 +486,7 @@ async function executeTurn(
           ts: Date.now(),
           agentId,
           type: laneType,
-          payload: evt,
+          payload,
           ...(parentToolUseId !== undefined && { parentToolUseId }),
         };
         recorder?.record(laneEvent);

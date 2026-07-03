@@ -16,14 +16,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
+import * as net from "node:net";
 import { parseArgv } from "./argv.js";
 import {
   runTopology,
   runTeamSend,
   runTeamList,
+  runTeamStatus,
   runTeamStop,
   runTeamKill,
 } from "./team.js";
+import { computeTeamPaths } from "./team-paths.js";
 
 // ---------------------------------------------------------------------------
 // argv parsing — topology subcommand
@@ -295,6 +298,19 @@ describe("parseArgv: team send/list/stop/kill", () => {
     expect(result).toMatchObject({
       kind: "error",
       message: expect.stringContaining("team kill requires a team name"),
+    });
+  });
+
+  it("team status <name> → team-status", () => {
+    const result = parseArgv(["team", "status", "my-team"]);
+    expect(result).toMatchObject({ kind: "team-status", name: "my-team" });
+  });
+
+  it("team status without a name errors", () => {
+    const result = parseArgv(["team", "status"]);
+    expect(result).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("team status requires a team name"),
     });
   });
 });
@@ -632,5 +648,91 @@ describe("team daemon RPC client (v0.5 stage 5E.4)", () => {
   it("runTeamKill returns 0 with 'was not running' when no daemon is running", async () => {
     expect(await runTeamKill("nonexistent")).toBe(0);
     expect(stdoutText()).toMatch(/was not running/);
+  });
+
+  it("runTeamStatus returns 2 + prints error when no daemon is running", async () => {
+    expect(await runTeamStatus("nonexistent")).toBe(2);
+    expect(stderrText()).toMatch(/not running|unreachable/);
+  });
+
+  it("runTeamStatus prints the roster snapshot returned by the daemon", async () => {
+    const fsp = await import("node:fs/promises");
+    const name = "status-team";
+    const paths = computeTeamPaths(name);
+    await fsp.mkdir(paths.dir, { recursive: true });
+
+    const statusResult = {
+      teamName: name,
+      scope: "swarm:status-team:123",
+      topology: "coordinator",
+      startedAt: 1_700_000_000_000,
+      members: [
+        { memberId: "m1", role: "lead", agentId: "agent-1", state: "running" },
+        { memberId: "m2", role: "worker", agentId: "agent-2", state: "idle" },
+      ],
+    };
+
+    // Fake daemon: answer one `status` request with the snapshot above.
+    const server = net.createServer((socket) => {
+      let buf = "";
+      socket.on("data", (chunk: Buffer) => {
+        buf += chunk.toString();
+        const idx = buf.indexOf("\n");
+        if (idx < 0) return;
+        const req = JSON.parse(buf.slice(0, idx)) as { id: string; method: string };
+        socket.write(
+          JSON.stringify({
+            kind: "response",
+            id: req.id,
+            ok: true,
+            result: statusResult,
+          }) + "\n",
+        );
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(paths.sockPath, resolve));
+    try {
+      const code = await runTeamStatus(name);
+      expect(code).toBe(0);
+      const out = stdoutText();
+      expect(out).toMatch(/topology=coordinator/);
+      expect(out).toMatch(/m1\tlead\tagent-1\trunning/);
+      expect(out).toMatch(/m2\tworker\tagent-2\tidle/);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("runTeamStatus returns 2 when the daemon returns an error response", async () => {
+    const fsp = await import("node:fs/promises");
+    const name = "status-err-team";
+    const paths = computeTeamPaths(name);
+    await fsp.mkdir(paths.dir, { recursive: true });
+
+    const server = net.createServer((socket) => {
+      let buf = "";
+      socket.on("data", (chunk: Buffer) => {
+        buf += chunk.toString();
+        const idx = buf.indexOf("\n");
+        if (idx < 0) return;
+        const req = JSON.parse(buf.slice(0, idx)) as { id: string };
+        socket.write(
+          JSON.stringify({
+            kind: "response",
+            id: req.id,
+            ok: false,
+            error: { code: "internal_error", message: "boom" },
+          }) + "\n",
+        );
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(paths.sockPath, resolve));
+    try {
+      const code = await runTeamStatus(name);
+      expect(code).toBe(2);
+      expect(stderrText()).toMatch(/team status rejected/);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });

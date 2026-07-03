@@ -6,6 +6,7 @@ import {
   evaluateConsolidationCadence,
   resolveCadenceOptions,
   resolveCommand,
+  resolveSharedBankArg,
   resolveOnPath,
   stateFilePath,
   readState,
@@ -90,8 +91,51 @@ describe("resolveCommand", () => {
     const bin = path.join(dir, "cogcore");
     fs.writeFileSync(bin, "#!/bin/sh\n", { mode: 0o755 });
     try {
-      const cmd = resolveCommand("/repo", { PATH: dir });
+      const cmd = resolveCommand("/repo", { PATH: dir, OPENSWARM_SHARED_SKILL_BANK: "0" });
       expect(cmd).toEqual({ file: bin, args: ["run", "--once", "--repo", "/repo"], shell: false });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("appends --shared-bank when the shared skill bank resolves", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "acbin-"));
+    const bin = path.join(dir, "cogcore");
+    fs.writeFileSync(bin, "#!/bin/sh\n", { mode: 0o755 });
+    try {
+      const cmd = resolveCommand("/repo", {
+        PATH: dir,
+        OPENSWARM_SHARED_SKILL_BANK: "/srv/bank",
+      });
+      expect(cmd).toEqual({
+        file: bin,
+        args: ["run", "--once", "--repo", "/repo", "--shared-bank", "/srv/bank"],
+        shell: false,
+      });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("resolveSharedBankArg", () => {
+  it("is disabled by explicit falsy values", () => {
+    for (const v of ["0", "off", "false", "no"]) {
+      expect(resolveSharedBankArg({ OPENSWARM_SHARED_SKILL_BANK: v })).toBeNull();
+    }
+  });
+
+  it("uses an explicit path even when the directory does not exist yet", () => {
+    expect(resolveSharedBankArg({ OPENSWARM_SHARED_SKILL_BANK: "/srv/bank" })).toBe("/srv/bank");
+  });
+
+  it("defaults to the SkillProvider bank only when it exists", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "acbank-"));
+    try {
+      expect(resolveSharedBankArg({ OPENSWARM_SKILLS_DIR: dir })).toBe(dir);
+      expect(
+        resolveSharedBankArg({ OPENSWARM_SKILLS_DIR: path.join(dir, "missing") }),
+      ).toBeNull();
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

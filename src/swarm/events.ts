@@ -159,6 +159,9 @@ export type LaneEventType =
   | "budget_exceeded"
   /** Swarm aggregate budget limit exceeded — all workers aborted. */
   | "swarm_budget_exceeded"
+  // ---------------- Usage aggregation (GitHub #17) ----------------
+  /** Rolled-up per-member + team-wide token/cost usage across the spawn tree. */
+  | "team_usage"
   // ---------------- Error ----------------
   | "error";
 
@@ -379,6 +382,41 @@ export interface SwarmBudgetExceededPayload {
   readonly modelId?: string;
   /** Number of in-flight workers aborted. */
   readonly workersAborted: number;
+}
+
+// ---------------------------------------------------------------------------
+// GitHub #17 — usage aggregation payload interface
+// ---------------------------------------------------------------------------
+
+/** One member's (subtree) usage roll-up, as carried on a `team_usage` event. */
+export interface MemberUsageEntry {
+  readonly agentId: string;
+  readonly memberId?: string;
+  readonly role?: string;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadInputTokens: number;
+  readonly cacheWriteInputTokens: number;
+  readonly totalTokens: number;
+  readonly costUsd: number;
+}
+
+/**
+ * Payload for `team_usage` events (GitHub #17) — a periodic/on-demand snapshot
+ * of per-member subtree totals plus the team-wide roll-up. Additive to the
+ * spine so a watch renderer (#16) or the daemon status surface can display
+ * aggregate token/cost without re-summing the raw `message_stop` stream.
+ */
+export interface TeamUsagePayload {
+  readonly members: readonly MemberUsageEntry[];
+  readonly team: {
+    readonly inputTokens: number;
+    readonly outputTokens: number;
+    readonly cacheReadInputTokens: number;
+    readonly cacheWriteInputTokens: number;
+    readonly totalTokens: number;
+    readonly costUsd: number;
+  };
 }
 
 // ---------------------------------------------------------------------------

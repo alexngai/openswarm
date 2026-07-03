@@ -18,6 +18,7 @@ import {
   type BuildDefaultRegistryDeps,
 } from "../../cli/slash/index.js";
 import type { PermissionBridge } from "../../permissions/bridge.js";
+import { mergeTurnWithSwarm, type SwarmEventSource } from "./merge-swarm-events.js";
 
 /** Getter returning the current session's token count. */
 export type TokenGetter = () => number;
@@ -43,6 +44,15 @@ export interface RunReplConfig {
     turn: AsyncIterable<NormalizedEvent>,
     turnIndex: number,
   ) => AsyncIterable<NormalizedEvent>;
+  /**
+   * GitHub #15 — optional live swarm event source. When present, each turn's
+   * event stream is merged with `agent_spawned` / `agent_status` /
+   * `task_update` NormalizedEvents translated from the orchestrator's swarm
+   * lane bus (see src/swarm/swarm-view-events.ts), so the AgentTree (Ctrl+A)
+   * and TaskBoard (Ctrl+T) views populate live while a team runs. Omitted for
+   * runs with no swarm host.
+   */
+  readonly swarmEvents?: SwarmEventSource;
 }
 
 /**
@@ -123,7 +133,19 @@ export async function runRepl(config: RunReplConfig): Promise<void> {
     }
   }
 
-  const events = multiTurnEvents();
+  // Merge swarm view events around the WHOLE multi-turn stream (not per-turn),
+  // OUTSIDE wrapTurn so the memory observer only sees real engine events, never
+  // the synthetic agent_spawned/agent_status/task_update projections.
+  //
+  // GitHub #23 — a session-level merge (rather than the former per-turn wrap)
+  // means the swarm subscription + its stateful SwarmViewTranslator live for
+  // the whole session: long-lived members persist across turns in the view, and
+  // events keep flowing while the REPL sits idle between turns (essential for
+  // the detached-daemon attach path, whose team runs independently of turns).
+  const events =
+    config.swarmEvents !== undefined
+      ? mergeTurnWithSwarm(multiTurnEvents(), config.swarmEvents)
+      : multiTurnEvents();
 
   return new Promise<void>((resolve, reject) => {
     let finished = false;

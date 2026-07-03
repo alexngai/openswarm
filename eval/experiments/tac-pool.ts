@@ -14,7 +14,7 @@
  *
  * Typical wrapper usage from swarmkit/src/eval:
  *   TAC_POOL_WORKER_COUNT=8 TAC_POOL_SERVICE_SLICE=gitlab-redis \
- *   TAC_POOL_RUNNER_CMD='cd /Users/alexngai/GitHub/openswarm && RUN_TAC_POOL=1 tsx eval/experiments/tac-pool.ts' \
+ *   TAC_POOL_RUNNER_CMD='cd /path/to/openswarm && RUN_TAC_POOL=1 tsx eval/experiments/tac-pool.ts' \
  *   adapters/tac/scripts/run-ec2-pool.sh
  *
  * No-infra plan validation:

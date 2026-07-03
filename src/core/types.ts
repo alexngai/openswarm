@@ -31,7 +31,12 @@ export type StopReason =
   | "max_tokens"
   | "stop_sequence"
   | "tool_use"
-  | "error";
+  | "error"
+  // Soft-stop budget reasons injected by the engine (not provider-derived).
+  // `max_turns` fires only when an explicit `maxTurns` cap is exhausted;
+  // `max_wall_clock` fires when the optional `maxWallClockMs` budget elapses.
+  | "max_turns"
+  | "max_wall_clock";
 
 /**
  * Branded string for agent identity. Construct via helpers in `src/swarm/`.
@@ -173,7 +178,12 @@ export type NormalizedEvent =
   | {
       readonly type: "compaction";
       readonly payload: {
-        readonly phase: "begin" | "end";
+        /**
+         * "begin"/"end" bracket a compaction (micro or full — see
+         * compact_metadata.micro). "warn" is a standalone context-low notice
+         * (Claude Code's "Context low" level; docs/48-compaction-design.md §L1).
+         */
+        readonly phase: "begin" | "end" | "warn";
         readonly trigger: "auto" | "manual";
         readonly compact_metadata?: Record<string, unknown>;
       };

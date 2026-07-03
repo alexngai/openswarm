@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { writeFileTool } from "./write_file.js";
+import { recordFileRead, clearReadState } from "./read-state.js";
 import type { ToolExecutionContext } from "../types.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -9,6 +10,7 @@ let tmpDir: string;
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "write-file-test-"));
+  clearReadState();
 });
 
 afterEach(() => {
@@ -22,16 +24,42 @@ function ctx(): ToolExecutionContext {
 describe("writeFileTool", () => {
   it("writes a file and content can be re-read", async () => {
     const result = await writeFileTool.execute(
-      { path: "hello.txt", content: "hello world" },
+      { file_path: "hello.txt", content: "hello world" },
       ctx(),
     );
     expect(result.status).toBe("ok");
     if (result.status === "ok") {
-      expect(result.output).toContain("wrote");
+      expect(result.output).toContain("File created successfully");
       expect(result.output).toContain("hello.txt");
     }
     const content = fs.readFileSync(path.join(tmpDir, "hello.txt"), "utf8");
     expect(content).toBe("hello world");
+  });
+
+  it("requires read-before-overwrite for existing files", async () => {
+    const file = path.join(tmpDir, "existing.txt");
+    fs.writeFileSync(file, "original");
+
+    const denied = await writeFileTool.execute(
+      { file_path: "existing.txt", content: "overwritten" },
+      ctx(),
+    );
+    expect(denied.status).toBe("error");
+    if (denied.status === "error") {
+      expect(denied.message).toContain("has not been read yet");
+    }
+    expect(fs.readFileSync(file, "utf8")).toBe("original");
+
+    recordFileRead(file);
+    const allowed = await writeFileTool.execute(
+      { file_path: "existing.txt", content: "overwritten" },
+      ctx(),
+    );
+    expect(allowed.status).toBe("ok");
+    if (allowed.status === "ok") {
+      expect(allowed.output).toContain("has been updated");
+    }
+    expect(fs.readFileSync(file, "utf8")).toBe("overwritten");
   });
 
   it("creates missing parent directories", async () => {

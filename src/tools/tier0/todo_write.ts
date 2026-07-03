@@ -2,8 +2,10 @@ import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 
+// `id` is optional (Claude Code's TodoWrite has no id field; models trained
+// on it omit one). Missing ids are filled with the item's array index.
 const todoSchema = z.object({
-  id: z.string(),
+  id: z.string().optional(),
   content: z.string(),
   status: z.enum(["pending", "in_progress", "completed"]),
   activeForm: z.string().optional(),
@@ -13,7 +15,8 @@ const inputSchema = z.object({
   todos: z.array(todoSchema),
 });
 
-export type Todo = z.infer<typeof todoSchema>;
+/** Stored todo — ids are always present (auto-filled from array index). */
+export type Todo = z.infer<typeof todoSchema> & { id: string };
 type Input = z.infer<typeof inputSchema>;
 
 /** Module-level singleton for M0. Replaced on each execute call. */
@@ -27,19 +30,6 @@ export function getCurrentTodos(): readonly Todo[] {
 /** Exposed for testing — resets the singleton. */
 export function _resetTodos(): void {
   currentTodos = [];
-}
-
-const STATUS_ICON: Record<Todo["status"], string> = {
-  pending: "☐",
-  in_progress: "▶",
-  completed: "✓",
-};
-
-function formatTodos(todos: readonly Todo[]): string {
-  if (todos.length === 0) return "(no todos)";
-  return todos
-    .map((t) => `${STATUS_ICON[t.status]} ${t.status}: ${t.id} - ${t.content}`)
-    .join("\n");
 }
 
 /**
@@ -76,8 +66,16 @@ async function execute(raw: unknown, _ctx: ToolExecutionContext): Promise<ToolRe
     };
   }
 
-  currentTodos = [...input.todos];
-  return { status: "ok", output: formatTodos(currentTodos) };
+  currentTodos = input.todos.map((t, i) => ({ ...t, id: t.id ?? String(i + 1) }));
+  // Claude Code's exact TodoWrite result string — trained models expect this
+  // acknowledgement rather than an echo of the list (the list itself is
+  // already in their context from the tool input).
+  return {
+    status: "ok",
+    output:
+      "Todos have been modified successfully. Ensure that you continue to use the todo list " +
+      "to track your progress. Please proceed with the current tasks if applicable",
+  };
 }
 
 export const todoWriteTool: ToolImpl = {

@@ -3,10 +3,10 @@ import {
   compactSessionRemote,
   isRemoteCompactionConfig,
   missingSummarySections,
-  REMOTE_COMPACTION_SYSTEM_PROMPT,
   REQUIRED_SUMMARY_SECTIONS,
   type RemoteCompactionConfig,
 } from "./compact-remote.js";
+import { buildCompactSummaryRequest } from "./compact-prompts.js";
 import type {
   Provider,
   ProviderMessage,
@@ -262,24 +262,47 @@ describe("compactSessionRemote", () => {
     expect(result.compactedSession.messages.length).toBeLessThan(
       messages.length,
     );
-    // First message is the system continuation
-    expect(result.compactedSession.messages[0]!.role).toBe("system");
+    // Continuation is a user message (Claude Code shape).
+    expect(result.compactedSession.messages[0]!.role).toBe("user");
   });
 
-  it("preserves recent messages", async () => {
+  it("keeps no verbatim tail on the full path (CC shape)", async () => {
     const messages = makeFiller(15);
     const session: Session = { messages };
 
     const result = await compactSessionRemote(
       session,
-      remoteConfig(mockProvider("<summary>ok</summary>")),
+      remoteConfig(mockProvider(conformingSummary())),
     );
 
-    // Should preserve the last 4 messages + 1 system prefix
-    expect(result.compactedSession.messages.length).toBe(5);
+    // Everything summarized; only the continuation message remains.
+    expect(result.compactedSession.messages.length).toBe(1);
+    expect(result.compactedSession.messages[0]!.role).toBe("user");
+    expect(result.removedMessageCount).toBe(messages.length);
   });
 
-  it("walks back boundary for tool pairs", async () => {
+  it("holds out a trailing pending user prompt across the boundary", async () => {
+    const messages: ProviderMessage[] = [
+      ...makeFiller(15),
+      userText("please do the next thing"),
+    ];
+    const session: Session = { messages };
+
+    const result = await compactSessionRemote(
+      session,
+      remoteConfig(mockProvider(conformingSummary())),
+    );
+
+    const compacted = result.compactedSession.messages;
+    const lastText = (
+      compacted[compacted.length - 1]!.content[0] as { text: string }
+    ).text;
+    expect(lastText).toBe("please do the next thing");
+    // The pending prompt was NOT part of what got summarized.
+    expect(result.removedMessageCount).toBe(messages.length - 1);
+  });
+
+  it("never leaves an orphaned tool_result after full compaction", async () => {
     const messages: ProviderMessage[] = [
       ...makeFiller(10),
       assistantToolUse("tu1", "bash", { command: "ls" }),
@@ -289,28 +312,17 @@ describe("compactSessionRemote", () => {
     ];
     const session: Session = { messages };
 
-    const config = remoteConfig(
-      mockProvider("<summary>ok</summary>"),
-      { preserveRecentMessages: 3 },
+    const result = await compactSessionRemote(
+      session,
+      remoteConfig(mockProvider(conformingSummary())),
     );
 
-    const result = await compactSessionRemote(session, config);
-
-    // Boundary should walk back to include the tool_use before tool_result
-    const preserved = result.compactedSession.messages.slice(1);
-    const hasOrphanToolResult = preserved.some(
+    // Full path removes everything — no tool_result can survive unpaired.
+    const hasToolResult = result.compactedSession.messages.some(
       (m) => m.role === "user" && m.content[0]?.type === "tool_result",
     );
-    if (hasOrphanToolResult) {
-      // If tool_result is preserved, tool_use must also be preserved
-      const hasToolUse = preserved.some(
-        (m) =>
-          m.role === "assistant" &&
-          m.content.some((b) => b.type === "tool_use"),
-      );
-      expect(hasToolUse).toBe(true);
-    }
-    expect(result.boundaryWalkedBack).toBe(true);
+    expect(hasToolResult).toBe(false);
+    expect(result.boundaryWalkedBack).toBe(false);
   });
 
   it("falls back to mechanical on provider error", async () => {
@@ -324,7 +336,8 @@ describe("compactSessionRemote", () => {
 
     // Should still compact successfully via fallback
     expect(result.removedMessageCount).toBeGreaterThan(0);
-    expect(result.compactedSession.messages[0]!.role).toBe("system");
+    expect(result.compactedSession.messages[0]!.role).toBe("user");
+    expect(result.summarizerFailed).toBe(true);
     // Mechanical summaries contain "Conversation summary:"
     const systemText = (
       result.compactedSession.messages[0]!.content[0] as {
@@ -420,6 +433,56 @@ describe("compactSessionRemote", () => {
     expect(result.summary).not.toContain("analysis notes");
   });
 
+  it("injects recontextualize() attachments right after the continuation (F1)", async () => {
+    const messages = makeFiller(15);
+    const attachment: ProviderMessage = {
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: "<system-reminder>\nProject instruction files (re-attached after compaction — these still apply):\n<instructions path=\"/repo/AGENTS.md\">follow these</instructions>\n</system-reminder>",
+        },
+      ],
+    };
+    const recontextualize = vi.fn(() => [attachment]);
+
+    const result = await compactSessionRemote(
+      { messages },
+      remoteConfig(mockProvider(conformingSummary("Work."))),
+      undefined,
+      { recontextualize },
+    );
+
+    expect(recontextualize).toHaveBeenCalledTimes(1);
+    // Continuation is index 0; the re-attached instructions come immediately after.
+    const second = result.compactedSession.messages[1]!;
+    const text = (second.content[0] as { text: string }).text;
+    expect(text).toContain("re-attached after compaction");
+    expect(text).toContain("/repo/AGENTS.md");
+  });
+
+  it("survives a throwing recontextualize() hook (F1)", async () => {
+    const messages = makeFiller(15);
+    const recontextualize = vi.fn(() => {
+      throw new Error("boom");
+    });
+
+    const result = await compactSessionRemote(
+      { messages },
+      remoteConfig(mockProvider(conformingSummary("Work."))),
+      undefined,
+      { recontextualize },
+    );
+
+    expect(recontextualize).toHaveBeenCalledTimes(1);
+    // Compaction still succeeds; the continuation is present.
+    expect(result.removedMessageCount).toBeGreaterThan(0);
+    const first = (
+      result.compactedSession.messages[0]!.content[0] as { text: string }
+    ).text;
+    expect(first).toContain("continued from a previous conversation");
+  });
+
   it("falls back to mechanical when the response lacks required sections after a retry", async () => {
     // Neither attempt conforms → validation fails twice → mechanical fallback.
     const provider = mockProvider("The user was working on a compaction feature.");
@@ -442,11 +505,11 @@ describe("compactSessionRemote", () => {
     expect(systemText).toContain("Conversation summary:");
   });
 
-  it("merges with existing summary", async () => {
+  it("folds a prior continuation message into the fresh summary (no mechanical merge)", async () => {
     const existingSummary =
       "<summary>\nConversation summary:\n- Scope: 10 earlier messages compacted.\n</summary>";
-    const systemMsg: ProviderMessage = {
-      role: "system",
+    const priorContinuation: ProviderMessage = {
+      role: "user",
       content: [
         {
           type: "text",
@@ -456,23 +519,28 @@ describe("compactSessionRemote", () => {
     };
 
     const messages: ProviderMessage[] = [
-      systemMsg,
+      priorContinuation,
       ...makeFiller(15),
     ];
 
+    const provider = mockProvider(conformingSummary("More work done."));
+    const streamSpy = vi.spyOn(provider, "stream");
+
     const result = await compactSessionRemote(
       { messages },
-      remoteConfig(mockProvider(conformingSummary("More work done."))),
+      remoteConfig(provider),
     );
 
-    expect(result.removedMessageCount).toBeGreaterThan(0);
-    const text = (
-      result.compactedSession.messages[0]!.content[0] as {
-        type: "text";
-        text: string;
-      }
+    // The prior continuation is part of what the summarizer sees…
+    const callArgs = streamSpy.mock.calls[0]![0];
+    const firstMsgText = (
+      callArgs.messages[0]!.content[0] as { text: string }
     ).text;
-    expect(text).toContain("Previously compacted");
+    expect(firstMsgText).toContain("Scope: 10 earlier messages compacted");
+    // …and the whole history (including it) gets removed.
+    expect(result.removedMessageCount).toBe(messages.length);
+    // The fresh model summary replaces it — no mechanical merge markers.
+    expect(result.summary).toContain("More work done.");
   });
 
   it("respects external abort signal", async () => {
@@ -492,7 +560,7 @@ describe("compactSessionRemote", () => {
     expect(result.removedMessageCount).toBeGreaterThan(0);
   });
 
-  it("formats tool calls in conversation", async () => {
+  it("sends the raw history plus the summary request as the last message", async () => {
     const messages: ProviderMessage[] = [
       userText("read foo.ts"),
       assistantToolUse("t1", "read_file", { path: "/foo.ts" }),
@@ -501,7 +569,7 @@ describe("compactSessionRemote", () => {
       ...makeFiller(10),
     ];
 
-    const provider = mockProvider("<summary>Tools were used.</summary>");
+    const provider = mockProvider(conformingSummary("Tools were used."));
     const streamSpy = vi.spyOn(provider, "stream");
 
     await compactSessionRemote(
@@ -510,9 +578,20 @@ describe("compactSessionRemote", () => {
     );
 
     const callArgs = streamSpy.mock.calls[0]![0];
-    const userMsgText = (callArgs.messages[0]!.content[0] as { text: string }).text;
-    expect(userMsgText).toContain("Tool call: read_file");
-    expect(userMsgText).toContain("Tool result:");
+    // Full-fidelity history: raw tool_use/tool_result blocks, not re-serialized.
+    expect(callArgs.messages.length).toBe(messages.length + 1);
+    expect(callArgs.messages[1]!.content[0]!.type).toBe("tool_use");
+    expect(callArgs.messages[2]!.content[0]!.type).toBe("tool_result");
+    // Last message is the CC summary request (with the no-tools guard).
+    const requestMsg = callArgs.messages[callArgs.messages.length - 1]!;
+    expect(requestMsg.role).toBe("user");
+    const requestText = (requestMsg.content[0] as { text: string }).text;
+    expect(requestText).toContain("CRITICAL: Respond with TEXT ONLY.");
+    expect(requestText).toContain(
+      "Your task is to create a detailed summary of the conversation so far",
+    );
+    // No tools offered to the summarizer.
+    expect(callArgs.tools).toEqual([]);
   });
 });
 
@@ -568,9 +647,11 @@ describe("compactSessionRemote — section validation", () => {
     );
 
     expect(streamSpy).toHaveBeenCalledTimes(2);
-    // The retry prompt must enumerate the missing sections.
+    // The retry prompt (last message = summary request) must enumerate the
+    // missing sections.
+    const retryMessages = streamSpy.mock.calls[1]![0].messages;
     const retryText = (
-      streamSpy.mock.calls[1]![0].messages[0]!.content[0] as { text: string }
+      retryMessages[retryMessages.length - 1]!.content[0] as { text: string }
     ).text;
     expect(retryText).toContain("Correction Required");
     expect(retryText).toContain("Pending Tasks");
@@ -592,16 +673,33 @@ describe("compactSessionRemote — section validation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// System prompt
+// Summary request prompt
 // ---------------------------------------------------------------------------
 
-describe("REMOTE_COMPACTION_SYSTEM_PROMPT", () => {
-  it("contains required sections", () => {
-    expect(REMOTE_COMPACTION_SYSTEM_PROMPT).toContain("Primary Request");
-    expect(REMOTE_COMPACTION_SYSTEM_PROMPT).toContain("Key Technical Concepts");
-    expect(REMOTE_COMPACTION_SYSTEM_PROMPT).toContain("Files and Code Sections");
-    expect(REMOTE_COMPACTION_SYSTEM_PROMPT).toContain("Pending Tasks");
-    expect(REMOTE_COMPACTION_SYSTEM_PROMPT).toContain("<analysis>");
-    expect(REMOTE_COMPACTION_SYSTEM_PROMPT).toContain("<summary>");
+describe("buildCompactSummaryRequest", () => {
+  it("contains the guard, self-exclusion, all required sections, and the reminder", () => {
+    const request = buildCompactSummaryRequest();
+    expect(request).toContain("CRITICAL: Respond with TEXT ONLY.");
+    // Self-exclusion note: keeps non-Claude summarizers from treating this
+    // request as part of the conversation being summarized.
+    expect(request).toContain(
+      "This summarization request itself is NOT part of the conversation",
+    );
+    for (const section of REQUIRED_SUMMARY_SECTIONS) {
+      expect(request).toContain(section);
+    }
+    expect(request).toContain("<analysis>");
+    expect(request).toContain("<summary>");
+    expect(request).toContain("REMINDER: Do NOT call any tools.");
+  });
+
+  it("appends custom instructions between prompt and reminder", () => {
+    const request = buildCompactSummaryRequest("focus on the test failures");
+    const instrIdx = request.indexOf(
+      "Additional Instructions:\nfocus on the test failures",
+    );
+    const reminderIdx = request.indexOf("REMINDER: Do NOT call any tools.");
+    expect(instrIdx).toBeGreaterThan(-1);
+    expect(reminderIdx).toBeGreaterThan(instrIdx);
   });
 });

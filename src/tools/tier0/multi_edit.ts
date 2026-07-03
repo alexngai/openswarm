@@ -16,8 +16,9 @@ import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { ToolAccesses, type ToolAccesses as ToolAccessesType } from "../access.js";
-import { isUnderCwd } from "./internal.js";
-import { atomicWrite, TocttouError } from "./edit_file.js";
+import { isUnderCwd, aliasParams } from "./internal.js";
+import { atomicWrite, TocttouError, STALE_FILE_ERROR } from "./edit_file.js";
+import { hasFileBeenRead, recordFileRead, READ_BEFORE_EDIT_ERROR } from "./read-state.js";
 
 const editSchema = z.object({
   old_string: z.string(),
@@ -25,22 +26,25 @@ const editSchema = z.object({
   replace_all: z.boolean().optional(),
 });
 
-const inputSchema = z.object({
-  path: z.string(),
+const paramsSchema = z.object({
+  file_path: z.string(),
   edits: z.array(editSchema).min(1),
 });
 
-type Input = z.infer<typeof inputSchema>;
+const inputSchema = z.preprocess(aliasParams({ path: "file_path" }), paramsSchema);
+
+type Input = z.infer<typeof paramsSchema>;
 type Edit = z.infer<typeof editSchema>;
 
 const spec: ToolSpec = {
   name: "multi_edit",
   description:
     "Apply multiple exact-string replacements to a single file atomically. " +
+    "You must use the read_file tool at least once before editing — edits to unread files fail. " +
     "All edits are validated before any are written — if any edit fails " +
     "(old_string not found, or ambiguous without replace_all), no changes are applied. " +
     "Edits are applied in order; each subsequent edit operates on the output of the previous.",
-  inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
+  inputSchema: z.toJSONSchema(paramsSchema) as JsonSchema,
   requiredPermission: "write",
   tier: 0,
 };
@@ -61,16 +65,19 @@ function countOccurrences(haystack: string, needle: string): number {
  * Validate a single edit against the current content string.
  * Returns an error message if invalid, or null if valid.
  */
-function validateEdit(content: string, edit: Edit, filePath: string): string | null {
+function validateEdit(content: string, edit: Edit, _filePath: string): string | null {
+  if (edit.old_string === edit.new_string) {
+    return "No changes to make: old_string and new_string are exactly the same.";
+  }
   const count = countOccurrences(content, edit.old_string);
   if (count === 0) {
-    return `old_string not found in ${filePath}`;
+    return `String to replace not found in file.\nString: ${edit.old_string}`;
   }
   if (count > 1 && edit.replace_all !== true) {
     return (
-      `old_string appears ${count} times in ${filePath}; ` +
-      `pass replace_all: true to replace all occurrences, ` +
-      `or narrow old_string to be unique`
+      `Found ${count} matches of the string to replace, but replace_all is false. ` +
+      `To replace all occurrences, set replace_all to true. To replace only one occurrence, ` +
+      `please provide more context to uniquely identify the instance.\nString: ${edit.old_string}`
     );
   }
   return null;
@@ -84,12 +91,12 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   const input: Input = parsed.data;
 
   // Resolve and enforce workspace boundary.
-  const resolved = path.resolve(ctx.cwd, input.path);
+  const resolved = path.resolve(ctx.cwd, input.file_path);
 
   if (!isUnderCwd(resolved, ctx.cwd)) {
     return {
       status: "error",
-      message: `path "${input.path}" resolves outside the workspace boundary`,
+      message: `path "${input.file_path}" resolves outside the workspace boundary`,
     };
   }
   try {
@@ -99,12 +106,17 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
       if (!isUnderCwd(real, ctx.cwd)) {
         return {
           status: "error",
-          message: `path "${input.path}" is a symlink pointing outside the workspace boundary`,
+          message: `path "${input.file_path}" is a symlink pointing outside the workspace boundary`,
         };
       }
     }
   } catch {
     // File doesn't exist yet; fall through — subsequent read will error.
+  }
+
+  // Read-before-edit contract (Claude Code alignment).
+  if (!hasFileBeenRead(resolved)) {
+    return { status: "error", message: READ_BEFORE_EDIT_ERROR };
   }
 
   // Read file once.
@@ -113,7 +125,7 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
     originalContent = await fs.readFile(resolved, "utf8");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return { status: "error", message: `failed to read "${input.path}": ${msg}` };
+    return { status: "error", message: `failed to read "${input.file_path}": ${msg}` };
   }
 
   // Phase 1: validate ALL edits before applying any.
@@ -121,7 +133,7 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   let simulatedContent = originalContent;
   for (let i = 0; i < input.edits.length; i++) {
     const edit = input.edits[i]!;
-    const err = validateEdit(simulatedContent, edit, input.path);
+    const err = validateEdit(simulatedContent, edit, input.file_path);
     if (err !== null) {
       return {
         status: "error",
@@ -141,25 +153,25 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
     await atomicWrite(resolved, simulatedContent, contentHash);
   } catch (err) {
     if (err instanceof TocttouError) {
-      return {
-        status: "error",
-        message: `TOCTTOU: ${err.message}. Re-read the file and retry.`,
-      };
+      return { status: "error", message: STALE_FILE_ERROR };
     }
     const msg = err instanceof Error ? err.message : String(err);
-    return { status: "error", message: `failed to write "${input.path}": ${msg}` };
+    return { status: "error", message: `failed to write "${input.file_path}": ${msg}` };
   }
+
+  // Post-edit content is known to the agent.
+  recordFileRead(resolved);
 
   return {
     status: "ok",
-    output: `applied ${input.edits.length} edits to ${input.path}`,
+    output: `Applied ${input.edits.length} edits to ${input.file_path}`,
   };
 }
 
 function accesses(raw: unknown, ctx: ToolExecutionContext): ToolAccessesType {
   const parsed = inputSchema.safeParse(raw);
   if (!parsed.success) return ToolAccesses.all();
-  return ToolAccesses.writeFile(path.resolve(ctx.cwd, parsed.data.path));
+  return ToolAccesses.writeFile(path.resolve(ctx.cwd, parsed.data.file_path));
 }
 
 export const multiEditTool: ToolImpl = {

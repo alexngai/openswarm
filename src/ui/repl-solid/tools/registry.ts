@@ -122,7 +122,7 @@ const readRenderer: ToolRenderer = {
     return `${countLines(tc.result)} lines`;
   },
   keyArg(tc) {
-    return getArg(tc, "file_path") ?? "";
+    return getArg(tc, "file_path") ?? getArg(tc, "path") ?? "";
   },
   bodyLines(tc) {
     if (tc.result === undefined) return [];
@@ -148,7 +148,7 @@ const editRenderer: ToolRenderer = {
     return parseDiffStats(tc);
   },
   keyArg(tc) {
-    return getArg(tc, "file_path") ?? "";
+    return getArg(tc, "file_path") ?? getArg(tc, "path") ?? "";
   },
   bodyLines(tc) {
     const lines: string[] = [];
@@ -183,7 +183,7 @@ const writeRenderer: ToolRenderer = {
     return `${countLines(content)} lines`;
   },
   keyArg(tc) {
-    return getArg(tc, "file_path") ?? "";
+    return getArg(tc, "file_path") ?? getArg(tc, "path") ?? "";
   },
   bodyLines(tc) {
     const content = getArg(tc, "content") ?? "";
