@@ -85,7 +85,7 @@ The union **plateaus at 2/9** (no growth N=3→5). Instances tier cleanly: **xar
 - **Best-of-N team / cross-family:** a best-of-3 *team* for a fuller pass@k; replicate the ensemble-vs-team comparison on Sonnet.
 - **Power:** multi-seed per arm to move below the current MDE ~0.3.
 - **Finish the corrected 3-way:** the `hetero` arm on GPT-5.5 was also spawn-broken — re-run for completeness.
-- **Token/cost axis:** the coordinator still surfaces no aggregate usage (spawn-tree usage isn't summed) — the cost side of the frontier is blank.
+- **Token/cost axis:** ~~the coordinator still surfaces no aggregate usage (spawn-tree usage isn't summed) — the cost side of the frontier is blank.~~ **Resolved (GitHub #17).** `SwarmUsageAggregator` (`src/swarm/usage-aggregator.ts`) accrues per-agent token usage from the `message_stop` lane stream and rolls it up across the spawn tree (each member's total = itself + every descendant it spawned) plus a team-wide total. Cost is priced from the model carried on `worker_spawned` via `usageCostUsd` (`src/core/budget.ts`, backed by `MODEL_PRICING`); tokens always count and cost falls back to 0 for unpriced models. The team daemon feeds the aggregator from its lane subscription and now exposes per-member `usage` + a top-level `teamUsage` roll-up on the `status` RPC (`StatusResult`, `src/swarm/team-daemon-protocol.ts`). A `team_usage` lane-event type + `TeamUsagePayload` were added to the event spine so a watch renderer (GitHub #16) can surface the numbers live.
 
 ## Reproduction
 

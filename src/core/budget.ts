@@ -102,3 +102,31 @@ export function checkBudget(
 
   return { exceeded: false, usedTokens, usedCostUsd };
 }
+
+// ---------------------------------------------------------------------------
+// usageCostUsd
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute the USD cost of a single usage sample for a given model.
+ *
+ * Returns 0 when the model is unknown (undefined or absent from MODEL_PRICING)
+ * so callers aggregating across a heterogeneous spawn tree never crash on a
+ * member whose model has no pricing entry — the tokens still count, the cost
+ * contribution is simply zero. Mirrors the cost branch of `checkBudget` so the
+ * two never diverge; extracted so the swarm usage aggregator (issue #17) can
+ * price per-member usage without re-implementing the pricing lookup.
+ */
+export function usageCostUsd(
+  usage: BudgetUsage,
+  modelId: string | undefined,
+): number {
+  if (modelId === undefined) return 0;
+  const pricing = MODEL_PRICING[modelId];
+  if (pricing === undefined) return 0;
+  return (
+    (usage.inputTokens * pricing.inputPerMTok +
+      usage.outputTokens * pricing.outputPerMTok) /
+    1_000_000
+  );
+}

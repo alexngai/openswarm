@@ -988,6 +988,9 @@ export class StandaloneHost implements SwarmHost {
         childAgentId,
         parentAgentId: parentId,
         ...(request.role !== undefined && { role: request.role }),
+        // GitHub #17: carry the child's model so the usage aggregator can
+        // price per-member cost from the same lane-event stream.
+        ...(request.model !== undefined && { model: request.model }),
         taskId: taskRecord.id,
         teamScope: childScope,
         depth: childDepth,

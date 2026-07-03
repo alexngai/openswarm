@@ -25,6 +25,7 @@
  */
 
 import { z } from "zod";
+import type { UsageTotals } from "./usage-aggregator.js";
 
 // ---------------------------------------------------------------------------
 // Frame shape
@@ -117,7 +118,29 @@ export function isNotification(f: TeamDaemonFrame): f is TeamDaemonNotification 
 export const StatusParamsSchema = z.object({}).strict();
 export type StatusParams = z.infer<typeof StatusParamsSchema>;
 
-/** result for "status" — daemon's current team snapshot. */
+/**
+ * Rolled-up token/cost usage totals (GitHub #17). Schema is pinned to the
+ * `UsageTotals` shape produced by the swarm usage aggregator via
+ * `z.ZodType<UsageTotals>`, so the wire schema and the producer type can never
+ * silently drift.
+ */
+export const UsageTotalsSchema: z.ZodType<UsageTotals> = z.object({
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  cacheReadInputTokens: z.number(),
+  cacheWriteInputTokens: z.number(),
+  totalTokens: z.number(),
+  costUsd: z.number(),
+});
+
+/**
+ * result for "status" — daemon's current team snapshot.
+ *
+ * GitHub #17: each member optionally carries its subtree `usage` roll-up
+ * (itself + everything it spawned) and the snapshot optionally carries a
+ * team-wide `teamUsage` total. Both are optional so pre-#17 producers (and the
+ * empty-team case before any usage is observed) still validate.
+ */
 export const StatusResultSchema = z.object({
   teamName: z.string(),
   scope: z.string(),
@@ -129,8 +152,10 @@ export const StatusResultSchema = z.object({
       role: z.string(),
       agentId: z.string(),
       state: z.string(),
+      usage: UsageTotalsSchema.optional(),
     }),
   ),
+  teamUsage: UsageTotalsSchema.optional(),
 });
 export type StatusResult = z.infer<typeof StatusResultSchema>;
 
