@@ -18,6 +18,14 @@
  *   forwarded child tool_use  -> agent_status(running, toolCount++)
  *   forwarded child msg_stop  -> agent_status(<phase>, tokenUsage += usage)
  *   worker_exited             -> agent_status(done|failed) + task_update(done|failed)
+ *   task_created              -> task_update(pending)   (GitHub #23, real emission)
+ *   task_updated              -> task_update(<mapped>)  (GitHub #23, real emission)
+ *   task_completed/failed     -> task_update(done|failed)(GitHub #23, real emission)
+ *
+ * The worker_spawned/worker_exited task synthesis is retained (the TaskBoard
+ * reducer keys on taskId, so real + synthesized updates converge idempotently);
+ * the real task_* path is what drives the board for detached daemon teams whose
+ * events.jsonl the REPL attach path (GitHub #23) replays.
  *
  * The translator is stateful (it tracks per-member phase + metrics + the
  * child→task mapping needed to finalize a task on exit) but has no I/O, so it
@@ -25,7 +33,13 @@
  * wires it onto a live host.
  */
 
-import type { AgentId, AgentPhase, NormalizedEvent, Usage } from "../core/types.js";
+import type {
+  AgentId,
+  AgentPhase,
+  NormalizedEvent,
+  TaskStatus,
+  Usage,
+} from "../core/types.js";
 import type { LaneEvent } from "./events.js";
 import type { WorkerLifecycleState } from "./worker-lifecycle.js";
 import type { StandaloneHost } from "./standalone-host.js";
@@ -60,6 +74,33 @@ interface MemberView {
   taskTitle: string;
 }
 
+/** Tracked task, populated from real `task_*` lane events (GitHub #23). */
+interface TaskView {
+  title: string;
+  assignee: string | undefined;
+}
+
+/**
+ * Map a registry TaskStatus (host.ts: pending/running/succeeded/failed/
+ * stopped/timeout) onto the coarse TaskStatus the TaskBoard renders
+ * (pending/active/done/failed). Unknown values fall back to "active".
+ */
+function mapTaskStatus(status: string | undefined): TaskStatus {
+  switch (status) {
+    case "pending":
+      return "pending";
+    case "succeeded":
+      return "done";
+    case "failed":
+    case "stopped":
+    case "timeout":
+      return "failed";
+    case "running":
+    default:
+      return "active";
+  }
+}
+
 export interface SwarmViewTranslatorOptions {
   /**
    * The orchestrator's own agentId. Members spawned directly by the
@@ -83,6 +124,12 @@ export interface SwarmViewTranslatorOptions {
  */
 export class SwarmViewTranslator {
   private readonly members = new Map<AgentId, MemberView>();
+  /**
+   * Tasks tracked from real `task_*` lane events (GitHub #23). Persists the
+   * title (from `task_created`) and assignee so terminal `task_completed`/
+   * `task_failed` events can carry them without re-resolving.
+   */
+  private readonly tasks = new Map<string, TaskView>();
   private readonly orchestratorId?: AgentId;
   private readonly resolveTaskTitle?: (taskId: string) => string | undefined;
 
@@ -104,6 +151,17 @@ export class SwarmViewTranslator {
         return this.onToolUseStart(evt);
       case "message_stop":
         return this.onMessageStop(evt);
+      // GitHub #23 — real task lifecycle emitted by the spawn path (and
+      // recorded to the daemon's events.jsonl, so the attach path sees them).
+      case "task_created":
+        return this.onTaskCreated(evt);
+      case "task_updated":
+        return this.onTaskUpdated(evt);
+      case "task_completed":
+        return this.onTaskTerminal(evt, "done");
+      case "task_failed":
+      case "task_stopped":
+        return this.onTaskTerminal(evt, "failed");
       default:
         return [];
     }
@@ -202,6 +260,62 @@ export class SwarmViewTranslator {
       member.tokenUsage += (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
     }
     return [this.statusEvent(evt.agentId, member)];
+  }
+
+  private onTaskCreated(evt: LaneEvent): NormalizedEvent[] {
+    const p = (evt.payload ?? {}) as { taskId?: string; prompt?: string };
+    if (p.taskId === undefined) return [];
+    const title = this.taskTitle(p.taskId, p.prompt);
+    this.tasks.set(p.taskId, { title, assignee: undefined });
+    return [{ type: "task_update", taskId: p.taskId, title, status: "pending" }];
+  }
+
+  private onTaskUpdated(evt: LaneEvent): NormalizedEvent[] {
+    const p = (evt.payload ?? {}) as {
+      taskId?: string;
+      patch?: { status?: string; owner?: string };
+    };
+    if (p.taskId === undefined) return [];
+    const task = this.tasks.get(p.taskId) ?? {
+      title: this.taskTitle(p.taskId, undefined),
+      assignee: undefined,
+    };
+    if (p.patch?.owner !== undefined) task.assignee = p.patch.owner;
+    this.tasks.set(p.taskId, task);
+    return [this.taskEvent(p.taskId, task, mapTaskStatus(p.patch?.status))];
+  }
+
+  private onTaskTerminal(evt: LaneEvent, status: TaskStatus): NormalizedEvent[] {
+    const p = (evt.payload ?? {}) as { taskId?: string };
+    if (p.taskId === undefined) return [];
+    const task = this.tasks.get(p.taskId) ?? {
+      title: this.taskTitle(p.taskId, undefined),
+      assignee: undefined,
+    };
+    return [this.taskEvent(p.taskId, task, status)];
+  }
+
+  private taskEvent(
+    taskId: string,
+    task: TaskView,
+    status: TaskStatus,
+  ): NormalizedEvent {
+    return {
+      type: "task_update",
+      taskId,
+      title: task.title,
+      status,
+      ...(task.assignee !== undefined ? { assignee: task.assignee } : {}),
+    };
+  }
+
+  /** Best task title: explicit prompt → resolver → short id. */
+  private taskTitle(taskId: string, prompt: string | undefined): string {
+    return (
+      (prompt !== undefined && prompt.length > 0 ? prompt : undefined) ??
+      this.resolveTaskTitle?.(taskId) ??
+      shortId(taskId)
+    );
   }
 
   private statusEvent(agentId: AgentId, member: MemberView): NormalizedEvent {

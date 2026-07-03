@@ -10,13 +10,17 @@
  * must reach the REPL's `App` event pump, which consumes ONE async iterable per
  * turn. This helper merges the swarm source into that per-turn stream.
  *
- * Lifetime: the subscription is scoped to a single turn. Because the `agent`
- * tool blocks the turn until its sub-agents finish (`wait: true` default), all
- * member events fire before the turn's terminal `message_stop`. When the base
- * turn stream ends we drain any already-queued swarm events, then stop and
- * unsubscribe — a still-running background member (rare `wait: false` case)
- * simply stops projecting into a finished turn rather than wedging the merged
- * iterator open.
+ * Lifetime (GitHub #23): the merge is applied ONCE around the whole multi-turn
+ * REPL stream, so the subscription — and the stateful SwarmViewTranslator behind
+ * it — persists for the entire session. Long-lived members therefore persist
+ * across turns in the view, and swarm events keep flowing while the REPL sits
+ * idle between turns (the race below wakes on a swarm event even when the base
+ * stream is blocked awaiting the next prompt). This is what lets the REPL attach
+ * to a detached daemon team whose lifecycle is independent of REPL turns. The
+ * subscription is torn down only when the base stream ends (session exit).
+ *
+ * `turn` is the base stream (a single turn's events, or — post-#23 — the entire
+ * multi-turn stream); the parameter name is retained for continuity.
  */
 
 import type { NormalizedEvent } from "../../core/types.js";
@@ -24,6 +28,25 @@ import type { NormalizedEvent } from "../../core/types.js";
 export interface SwarmEventSource {
   /** Register a sink for translated view events; returns an unsubscribe fn. */
   subscribe(sink: (evt: NormalizedEvent) => void): () => void;
+}
+
+/**
+ * Fan one sink out to several swarm sources (GitHub #23). Used by the REPL
+ * attach path to project BOTH the local live host (in-session `agent` spawns)
+ * and a detached daemon team's `events.jsonl` tail into the same AgentTree /
+ * TaskBoard. Unsubscribing tears down every underlying subscription.
+ */
+export function combineSwarmSources(
+  ...sources: readonly SwarmEventSource[]
+): SwarmEventSource {
+  return {
+    subscribe(sink: (evt: NormalizedEvent) => void): () => void {
+      const unsubs = sources.map((s) => s.subscribe(sink));
+      return () => {
+        for (const u of unsubs) u();
+      };
+    },
+  };
 }
 
 /**

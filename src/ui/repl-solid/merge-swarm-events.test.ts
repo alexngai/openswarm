@@ -7,7 +7,11 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { mergeTurnWithSwarm, type SwarmEventSource } from "./merge-swarm-events.js";
+import {
+  combineSwarmSources,
+  mergeTurnWithSwarm,
+  type SwarmEventSource,
+} from "./merge-swarm-events.js";
 import type { NormalizedEvent } from "../../core/types.js";
 
 /** A controllable async turn stream: push engine events, then end(). */
@@ -122,5 +126,32 @@ describe("mergeTurnWithSwarm", () => {
     expect(collected).toContainEqual(delta("only"));
     expect(collected).toContainEqual(spawned);
     expect(unsubscribed()).toBe(true);
+  });
+});
+
+// GitHub #23 — the attach path fans one sink out to the live host + daemon tail.
+describe("combineSwarmSources", () => {
+  it("forwards events from every source to a single sink", () => {
+    const a = makeSource();
+    const b = makeSource();
+    const combined = combineSwarmSources(a.source, b.source);
+    const seen: NormalizedEvent[] = [];
+    combined.subscribe((e) => seen.push(e));
+    const fromA: NormalizedEvent = { type: "agent_spawned", agentId: "a1", name: "a", role: "a" };
+    const fromB: NormalizedEvent = { type: "agent_spawned", agentId: "b1", name: "b", role: "b" };
+    a.emit(fromA);
+    b.emit(fromB);
+    expect(seen).toContainEqual(fromA);
+    expect(seen).toContainEqual(fromB);
+  });
+
+  it("unsubscribes every underlying source", () => {
+    const a = makeSource();
+    const b = makeSource();
+    const combined = combineSwarmSources(a.source, b.source);
+    const unsub = combined.subscribe(() => {});
+    unsub();
+    expect(a.unsubscribed()).toBe(true);
+    expect(b.unsubscribed()).toBe(true);
   });
 });

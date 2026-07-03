@@ -360,6 +360,25 @@ describe("parseArgv", () => {
     expect(result.plain).toBe(true);
   });
 
+  // ---- issue #23 — team attach -------------------------------------------
+
+  it("team attach <name> → interactive prompt with attachTeam set", () => {
+    const result = parseArgv(["team", "attach", "alpha"]);
+    if (result.kind !== "prompt") throw new Error("expected prompt");
+    expect(result.text).toBe("");
+    expect(result.opts.attachTeam).toBe("alpha");
+  });
+
+  it("team attach without a name is an error", () => {
+    const result = parseArgv(["team", "attach"]);
+    expect(result.kind).toBe("error");
+  });
+
+  it("team attach rejects an extra positional", () => {
+    const result = parseArgv(["team", "attach", "alpha", "beta"]);
+    expect(result.kind).toBe("error");
+  });
+
   // ---- v0.6 stage 6A.2 — --agent-inbox -----------------------------------
 
   it("swarm run --agent-inbox sets agentInbox=true", () => {

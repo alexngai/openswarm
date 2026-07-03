@@ -113,15 +113,6 @@ export async function runRepl(config: RunReplConfig): Promise<void> {
   }
 
   const wrapTurn = config.wrapTurnEvents ?? ((turn) => turn);
-  // Merge swarm view events OUTSIDE wrapTurn so the memory observer only sees
-  // real engine events, never the synthetic agent_spawned/agent_status/
-  // task_update projections.
-  const withSwarm = (
-    turn: AsyncIterable<NormalizedEvent>,
-  ): AsyncIterable<NormalizedEvent> =>
-    config.swarmEvents !== undefined
-      ? mergeTurnWithSwarm(turn, config.swarmEvents)
-      : turn;
 
   async function* multiTurnEvents(): AsyncGenerator<NormalizedEvent> {
     let turnIndex = 0;
@@ -132,17 +123,29 @@ export async function runRepl(config: RunReplConfig): Promise<void> {
       const turn = config.engine.run(
         await config.buildRunConfig(config.initialPrompt),
       );
-      yield* withSwarm(wrapTurn(turn, turnIndex++));
+      yield* wrapTurn(turn, turnIndex++);
     }
     while (true) {
       const prompt = await nextPrompt();
       if (prompt === null) return;
       const turn = config.engine.run(await config.buildRunConfig(prompt));
-      yield* withSwarm(wrapTurn(turn, turnIndex++));
+      yield* wrapTurn(turn, turnIndex++);
     }
   }
 
-  const events = multiTurnEvents();
+  // Merge swarm view events around the WHOLE multi-turn stream (not per-turn),
+  // OUTSIDE wrapTurn so the memory observer only sees real engine events, never
+  // the synthetic agent_spawned/agent_status/task_update projections.
+  //
+  // GitHub #23 — a session-level merge (rather than the former per-turn wrap)
+  // means the swarm subscription + its stateful SwarmViewTranslator live for
+  // the whole session: long-lived members persist across turns in the view, and
+  // events keep flowing while the REPL sits idle between turns (essential for
+  // the detached-daemon attach path, whose team runs independently of turns).
+  const events =
+    config.swarmEvents !== undefined
+      ? mergeTurnWithSwarm(multiTurnEvents(), config.swarmEvents)
+      : multiTurnEvents();
 
   return new Promise<void>((resolve, reject) => {
     let finished = false;

@@ -45,6 +45,9 @@ import {
 import { clampPermissionMode, permissionRank } from "../swarm/permission-order.js";
 import { StandaloneHost } from "../swarm/standalone-host.js";
 import { subscribeSwarmViewEvents } from "../swarm/swarm-view-events.js";
+import { tailDaemonSwarmView } from "../swarm/daemon-swarm-view.js";
+import { computeTeamPaths } from "./team-paths.js";
+import { combineSwarmSources, type SwarmEventSource } from "../ui/repl-solid/merge-swarm-events.js";
 import type { PendingPermission } from "../ui/repl/state.js";
 import { SessionStore } from "../session/store.js";
 import { runHeadless } from "../ui/headless.js";
@@ -474,10 +477,25 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   // host is threaded into each turn's RunConfig (native/hardened engines read
   // `RunConfig.host` to inject `ctx.host`).
   const replSwarmHost = new StandaloneHost({ permissionMode: parentMode });
-  const swarmEventSource = {
+  const liveSwarmSource: SwarmEventSource = {
     subscribe: (sink: (evt: NormalizedEvent) => void) =>
       subscribeSwarmViewEvents(replSwarmHost, sink),
   };
+  // GitHub #23 — when attaching to a detached daemon team, tail its
+  // events.jsonl and project it into the same AgentTree/TaskBoard, combined
+  // with the local live host so in-session `agent` spawns still render too.
+  let swarmEventSource: SwarmEventSource = liveSwarmSource;
+  if (opts.attachTeam !== undefined) {
+    const eventsPath = computeTeamPaths(opts.attachTeam).eventsPath;
+    const daemonSource: SwarmEventSource = {
+      subscribe: (sink: (evt: NormalizedEvent) => void) =>
+        tailDaemonSwarmView(eventsPath, sink),
+    };
+    swarmEventSource = combineSwarmSources(liveSwarmSource, daemonSource);
+    process.stderr.write(
+      `attached to team "${opts.attachTeam}" — live swarm view (Ctrl+A / Ctrl+T); ${eventsPath}\n`,
+    );
+  }
   await runRepl({
     engine,
     swarmEvents: swarmEventSource,

@@ -157,6 +157,55 @@ describe("SwarmViewTranslator", () => {
     expect(t.onLaneEvent(lane("heartbeat", "x", {}))).toEqual([]);
     expect(t.onLaneEvent(lane("message_sent", "x", { from: "a", to: "b", content: "hi" }))).toEqual([]);
   });
+
+  // GitHub #23 — real task_* lane events drive the task board directly.
+  it("task_created → task_update(pending) with the prompt as title", () => {
+    const t = new SwarmViewTranslator({});
+    const out = t.onLaneEvent(
+      lane("task_created", "orch", { taskId: "t1", prompt: "Fix the flaky test" }),
+    );
+    expect(out).toEqual([
+      { type: "task_update", taskId: "t1", title: "Fix the flaky test", status: "pending" },
+    ]);
+  });
+
+  it("task_updated maps registry status→view status and records the owner as assignee", () => {
+    const t = new SwarmViewTranslator({});
+    t.onLaneEvent(lane("task_created", "orch", { taskId: "t1", prompt: "Do a thing" }));
+    const out = t.onLaneEvent(
+      lane("task_updated", "orch", { taskId: "t1", patch: { status: "running", owner: "w1" } }),
+    );
+    expect(out).toEqual([
+      { type: "task_update", taskId: "t1", title: "Do a thing", status: "active", assignee: "w1" },
+    ]);
+  });
+
+  it("task_completed/task_failed reuse the stored title + assignee", () => {
+    const t = new SwarmViewTranslator({});
+    t.onLaneEvent(lane("task_created", "orch", { taskId: "t1", prompt: "Ship it" }));
+    t.onLaneEvent(lane("task_updated", "orch", { taskId: "t1", patch: { owner: "w1" } }));
+    expect(t.onLaneEvent(lane("task_completed", "orch", { taskId: "t1" }))).toEqual([
+      { type: "task_update", taskId: "t1", title: "Ship it", status: "done", assignee: "w1" },
+    ]);
+
+    const t2 = new SwarmViewTranslator({});
+    t2.onLaneEvent(lane("task_created", "orch", { taskId: "t2", prompt: "Break it" }));
+    expect(t2.onLaneEvent(lane("task_failed", "orch", { taskId: "t2", error: "boom" }))).toEqual([
+      { type: "task_update", taskId: "t2", title: "Break it", status: "failed" },
+    ]);
+  });
+
+  it("falls back to the resolver then short id when task_* carries no prompt", () => {
+    const t = new SwarmViewTranslator({
+      resolveTaskTitle: (id) => (id === "known" ? "Resolved title" : undefined),
+    });
+    expect(
+      t.onLaneEvent(lane("task_updated", "orch", { taskId: "known", patch: { status: "running" } })),
+    ).toEqual([{ type: "task_update", taskId: "known", title: "Resolved title", status: "active" }]);
+    expect(
+      t.onLaneEvent(lane("task_completed", "orch", { taskId: "abcdef123456" })),
+    ).toEqual([{ type: "task_update", taskId: "abcdef123456", title: "abcdef12", status: "done" }]);
+  });
 });
 
 describe("lifecycleToPhase", () => {
@@ -251,6 +300,47 @@ describe("subscribeSwarmViewEvents — live StandaloneHost spawn", () => {
     const done = events.find((e) => e.type === "agent_status" && e.phase === "done");
     expect(done).toBeDefined();
     expect(events.find((e) => e.type === "task_update" && e.status === "done")).toBeDefined();
+
+    unsub();
+  });
+
+  it("emits real task_created/task_updated/task_completed lane events from the spawn path (GitHub #23)", async () => {
+    const { child, emitFromWorker } = fakeProcPair();
+    const spawnFn = vi.fn((_args: SpawnWorkerArgs) => child);
+    const host = new StandaloneHost({ maxDepth: 3, spawnWorker: spawnFn });
+
+    const laneTypes: string[] = [];
+    const taskEvents: Array<{ type: string; payload: unknown }> = [];
+    const unsub = host.onLaneEvent((e) => {
+      laneTypes.push(e.type);
+      if (e.type.startsWith("task_")) taskEvents.push({ type: e.type, payload: e.payload });
+    });
+
+    const spawnP = host.spawn({ task: samplePacket(), permissionMode: "workspace-write" });
+    await tick();
+    emitFromWorker({ kind: "notification", method: "worker_ready", params: {} });
+    await tick();
+    emitFromWorker({
+      kind: "notification",
+      method: "task_result",
+      params: { status: "success", output: "done", usage: { inputTokens: 1, outputTokens: 2 }, wallClockMs: 5 },
+    });
+    const handle = await spawnP;
+    await tick();
+
+    // task_created (with the prompt) + task_updated (owner assignment) fired
+    // from the spawn path — not synthesized by the view translator.
+    expect(laneTypes).toContain("task_created");
+    expect(laneTypes).toContain("task_updated");
+    const created = taskEvents.find((e) => e.type === "task_created");
+    expect((created!.payload as { prompt?: string }).prompt).toBe("investigate the flaky test");
+    const updated = taskEvents.find((e) => e.type === "task_updated");
+    expect((updated!.payload as { patch?: { owner?: string } }).patch?.owner).toBe(handle.agentId);
+
+    // Clean exit → real task_completed.
+    child.emit("close", 0, null);
+    await tick();
+    expect(taskEvents.find((e) => e.type === "task_completed")).toBeDefined();
 
     unsub();
   });

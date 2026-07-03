@@ -114,6 +114,13 @@ export interface CommonOpts {
    * a step-denominated budget).
    */
   readonly maxTurns?: number;
+  /**
+   * GitHub #23 — attach the interactive REPL to an already-running detached
+   * team daemon of this name. The REPL tails the daemon's events.jsonl and
+   * drives its live AgentTree (Ctrl+A) / TaskBoard (Ctrl+T) views. Set by the
+   * `team attach <name>` verb; the REPL otherwise behaves normally.
+   */
+  readonly attachTeam?: string;
 }
 
 export type ParsedArgs =
@@ -1251,6 +1258,28 @@ export function parseArgv(args: string[]): ParsedArgs {
           };
         }
         return { kind: "team-watch", name, plain };
+      }
+      if (subSub === "attach") {
+        // GitHub #23 — launch the interactive REPL wired to a detached daemon
+        // team's live event stream. Routed as a `prompt` command (empty text →
+        // pure interactive session) with `attachTeam` set so runPrompt tails the
+        // daemon's events.jsonl into the swarm views.
+        const name = positionals[1];
+        if (name === undefined) {
+          return {
+            kind: "error",
+            message: "team attach requires a team name",
+            showHelp: true,
+          };
+        }
+        if (positionals.length > 2) {
+          return {
+            kind: "error",
+            message: `unexpected extra positional for team attach: ${positionals[2]}`,
+            showHelp: true,
+          };
+        }
+        return { kind: "prompt", text: "", opts: { ...opts, attachTeam: name } };
       }
       return {
         kind: "error",
