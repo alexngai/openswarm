@@ -712,6 +712,12 @@ These are emitted by the orchestrator/SwarmHost and consumed by the TUI event tr
 9. In app.tsx, render active view: `<Show>` switches between Transcript, AgentTree, TaskBoard based on `state.activeView`
 10. Bridge SwarmHost events: orchestrator emits `agent_spawned`/`agent_status` NormalizedEvents when workers spawn/transition; `task_update` when task graph changes
 
+> **Status (GitHub #15 — producer landed):** Steps 1–9 shipped with the original Phase 5 work, but step 10 (the producer) was never wired — the views were dead scaffolding because nothing in production emitted the three events. This is now implemented:
+> - `src/swarm/swarm-view-events.ts` — `SwarmViewTranslator` maps `StandaloneHost` lane events (`worker_spawned` → `agent_spawned` + `task_update(active)`; `worker_lifecycle_changed`/child `tool_use_start`/`message_stop` → `agent_status` with live phase/tool/token metrics; `worker_exited` → `agent_status(done|failed)` + `task_update(done|failed)`). `subscribeSwarmViewEvents(host, sink)` wires it onto a live host; `StandaloneHost.onLaneEvent()` / `peekTaskTitle()` are the public seams.
+> - `src/ui/repl-solid/merge-swarm-events.ts` — `mergeTurnWithSwarm()` interleaves the swarm projection into each REPL turn's engine-event stream (merged outside the memory observer). `runRepl` gained an optional `swarmEvents` source.
+> - `src/cli/main.ts` (interactive path only) now constructs a `StandaloneHost`, threads it as `RunConfig.host` (so the `agent`/`task_*` Tier 2 tools resolve a host), and passes `swarmEvents`. So `npx openswarm` → prompt that spawns sub-agents populates AgentTree (Ctrl+A) / TaskBoard (Ctrl+T) live.
+> - **Deferred:** a dedicated "REPL attaches to an already-running detached team/daemon" UX, cross-turn persistence of long-lived members, and `task_*` lane-event emission from the default spawn path (task lifecycle is currently synthesized from worker lifecycle).
+
 **Tests:**
 - **store.test.ts** (vitest): dispatch `agent-spawned` → assert agent record created; dispatch `agent-status` with phase change → assert updated; dispatch `task-update` → assert task record; dispatch `set-view` → assert `activeView` changes; Esc dispatches `set-view: "transcript"`
 - **views/agent-tree.test.tsx** (bun:test): mount with mock agent hierarchy (parent → 3 children), assert tree structure renders with correct phase badges (✓/↻/◌); test j/k navigation updates selected index

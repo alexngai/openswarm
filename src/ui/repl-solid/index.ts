@@ -18,6 +18,7 @@ import {
   type BuildDefaultRegistryDeps,
 } from "../../cli/slash/index.js";
 import type { PermissionBridge } from "../../permissions/bridge.js";
+import { mergeTurnWithSwarm, type SwarmEventSource } from "./merge-swarm-events.js";
 
 /** Getter returning the current session's token count. */
 export type TokenGetter = () => number;
@@ -43,6 +44,15 @@ export interface RunReplConfig {
     turn: AsyncIterable<NormalizedEvent>,
     turnIndex: number,
   ) => AsyncIterable<NormalizedEvent>;
+  /**
+   * GitHub #15 — optional live swarm event source. When present, each turn's
+   * event stream is merged with `agent_spawned` / `agent_status` /
+   * `task_update` NormalizedEvents translated from the orchestrator's swarm
+   * lane bus (see src/swarm/swarm-view-events.ts), so the AgentTree (Ctrl+A)
+   * and TaskBoard (Ctrl+T) views populate live while a team runs. Omitted for
+   * runs with no swarm host.
+   */
+  readonly swarmEvents?: SwarmEventSource;
 }
 
 /**
@@ -103,6 +113,15 @@ export async function runRepl(config: RunReplConfig): Promise<void> {
   }
 
   const wrapTurn = config.wrapTurnEvents ?? ((turn) => turn);
+  // Merge swarm view events OUTSIDE wrapTurn so the memory observer only sees
+  // real engine events, never the synthetic agent_spawned/agent_status/
+  // task_update projections.
+  const withSwarm = (
+    turn: AsyncIterable<NormalizedEvent>,
+  ): AsyncIterable<NormalizedEvent> =>
+    config.swarmEvents !== undefined
+      ? mergeTurnWithSwarm(turn, config.swarmEvents)
+      : turn;
 
   async function* multiTurnEvents(): AsyncGenerator<NormalizedEvent> {
     let turnIndex = 0;
@@ -113,13 +132,13 @@ export async function runRepl(config: RunReplConfig): Promise<void> {
       const turn = config.engine.run(
         await config.buildRunConfig(config.initialPrompt),
       );
-      yield* wrapTurn(turn, turnIndex++);
+      yield* withSwarm(wrapTurn(turn, turnIndex++));
     }
     while (true) {
       const prompt = await nextPrompt();
       if (prompt === null) return;
       const turn = config.engine.run(await config.buildRunConfig(prompt));
-      yield* wrapTurn(turn, turnIndex++);
+      yield* withSwarm(wrapTurn(turn, turnIndex++));
     }
   }
 

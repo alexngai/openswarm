@@ -712,6 +712,38 @@ export class StandaloneHost implements SwarmHost {
     this.events.emit("lane_event", full);
   }
 
+  /**
+   * Subscribe to every LaneEvent flowing across this host's bus — both
+   * host-originated events (spawn_requested / worker_spawned / worker_exited /
+   * task_*) and worker events forwarded from live subprocesses (text_delta,
+   * tool_use_*, worker_lifecycle_changed, ...). Returns an unsubscribe
+   * function.
+   *
+   * This is the public seam the REPL swarm-view bridge uses to translate
+   * member lifecycle into `agent_spawned`/`agent_status`/`task_update`
+   * NormalizedEvents (see src/swarm/swarm-view-events.ts). Prefer this over
+   * reaching into the private `events` emitter (as the MAP bridge historically
+   * did via a cast).
+   */
+  onLaneEvent(listener: (event: LaneEvent) => void): () => void {
+    this.events.on("lane_event", listener);
+    return () => {
+      this.events.off("lane_event", listener);
+    };
+  }
+
+  /**
+   * Best-effort synchronous task-title (prompt) lookup for observers such as
+   * the REPL swarm-view bridge. `host.task.get` is async (it must be, for
+   * daemon-backed TaskAPI wrappers), but the in-memory registry is the
+   * authoritative synchronous store; reading it directly lets the TaskBoard
+   * label a member's task the instant `worker_spawned` fires. Returns
+   * undefined for unknown ids.
+   */
+  peekTaskTitle(taskId: string): string | undefined {
+    return this.registry.get(taskId)?.prompt;
+  }
+
   async spawn(request: SpawnRequest): Promise<AgentHandle> {
     // AUTHORITATIVE depth: compute from parent's depth in our own map.
     const parentId =

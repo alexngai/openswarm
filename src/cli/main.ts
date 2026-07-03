@@ -24,6 +24,7 @@ import {
   runTopology,
   runTeamSend,
   runTeamList,
+  runTeamStatus,
   runTeamStop,
   runTeamKill,
 } from "./team.js";
@@ -42,6 +43,8 @@ import {
   clearPermissionRequestHandler,
 } from "../tools/tier0/request_permissions.js";
 import { clampPermissionMode, permissionRank } from "../swarm/permission-order.js";
+import { StandaloneHost } from "../swarm/standalone-host.js";
+import { subscribeSwarmViewEvents } from "../swarm/swarm-view-events.js";
 import type { PendingPermission } from "../ui/repl/state.js";
 import { SessionStore } from "../session/store.js";
 import { runHeadless } from "../ui/headless.js";
@@ -464,8 +467,20 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   // resumeFrom for the next turn (set by /resume, cleared after one use).
   let pendingResumeFrom: { engineId: string; data: unknown } | undefined = resumeFrom;
   const turnAbort = new AbortController();
+  // GitHub #15 — give the interactive REPL a live SwarmHost so the `agent`
+  // Tier 2 tool can spawn members, and project member lifecycle into the
+  // AgentTree (Ctrl+A) / TaskBoard (Ctrl+T) views. `parentMode` is the CLI
+  // permission ceiling; the host clamps every spawned child against it. The
+  // host is threaded into each turn's RunConfig (native/hardened engines read
+  // `RunConfig.host` to inject `ctx.host`).
+  const replSwarmHost = new StandaloneHost({ permissionMode: parentMode });
+  const swarmEventSource = {
+    subscribe: (sink: (evt: NormalizedEvent) => void) =>
+      subscribeSwarmViewEvents(replSwarmHost, sink),
+  };
   await runRepl({
     engine,
+    swarmEvents: swarmEventSource,
     buildRunConfig: async (prompt) => {
       const rf = pendingResumeFrom;
       // Resume applies once — clear after consuming.
@@ -484,6 +499,9 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
         abort: turnAbort.signal,
         dispatcher: rt.dispatcher,
         resumeFrom: rf,
+        // GitHub #15 — scoped to the interactive path (not the shared headless
+        // config) so the `agent`/`task_*` Tier 2 tools resolve a host here.
+        host: replSwarmHost,
       };
     },
     initialPrompt: text,
@@ -652,6 +670,9 @@ export async function main(argv: string[]): Promise<number> {
 
     case "team-list":
       return runTeamList();
+
+    case "team-status":
+      return runTeamStatus(parsed.name);
 
     case "team-stop":
       return runTeamStop(parsed.name);
