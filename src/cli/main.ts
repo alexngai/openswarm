@@ -663,7 +663,7 @@ export async function main(argv: string[]): Promise<number> {
       return runTeamLogs(parsed.name, { follow: parsed.follow });
 
     case "team-watch":
-      return runTeamWatch(parsed.name);
+      return runTeamWatch(parsed.name, { plain: parsed.plain });
 
     case "team-send":
       return runTeamSend(parsed.name, parsed.prompt);

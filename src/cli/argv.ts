@@ -198,7 +198,7 @@ export type ParsedArgs =
   | { kind: "team-stop"; name: string }
   | { kind: "team-kill"; name: string }
   | { kind: "team-logs"; name: string; follow: boolean }
-  | { kind: "team-watch"; name: string }
+  | { kind: "team-watch"; name: string; plain: boolean }
   | {
       // docs/44 P5 — OpenHive-compatible host entrypoint.
       kind: "host";
@@ -330,6 +330,10 @@ export function parseArgv(args: string[]): ParsedArgs {
 
   // v0.5 stage 5E.5 — --follow flag for `team logs`.
   let follow = false;
+
+  // issue #16 — --plain/--raw for `team watch`: fall back to the legacy
+  // one-line-per-event tail instead of the multi-pane board.
+  let plain = false;
 
   // v0.5 stage 5B — opentasks daemon mirror flags for `swarm run`.
   let opentasks = false;
@@ -782,6 +786,13 @@ export function parseArgv(args: string[]): ParsedArgs {
     // v0.5 stage 5E.5: --follow for `team logs`. Boolean; no value.
     if (tok === "--follow" || tok === "-f") {
       follow = true;
+      i++;
+      continue;
+    }
+
+    // issue #16: --plain/--raw for `team watch`. Boolean; no value.
+    if (tok === "--plain" || tok === "--raw") {
+      plain = true;
       i++;
       continue;
     }
@@ -1239,7 +1250,7 @@ export function parseArgv(args: string[]): ParsedArgs {
             showHelp: true,
           };
         }
-        return { kind: "team-watch", name };
+        return { kind: "team-watch", name, plain };
       }
       return {
         kind: "error",

@@ -949,7 +949,7 @@ Per Q8: v0.4 = minimum + MAP. Adapters layered after.
 | 5A | `Committee` + `CriticLoop` topologies — **shipped** |
 | 5B | `OpenTasksTaskRegistry` adapter (`--opentasks`) — **shipped** (live-verified against opentasks 0.1.3) |
 | 5C | Pull-protocol for long-lived workers (opt-in) — **shipped** as `task_pull_next` Tier 2 tool + `task.pull_next` IPC + atomic `TaskRegistry.pullNext()`. Pairs with 5B's opentasks adapter for queue-fed workflows. |
-| 5D | `swarm watch` multi-pane TUI — **MVP shipped** as `team watch <name>` (single-pane formatted live tail of events.jsonl). Multi-pane TUI deferred to v0.6. |
+| 5D | `swarm watch` multi-pane board — **shipped** as `team watch <name>`. Default is a live multi-pane board (per-member lanes + task board) that re-projects the daemon's `events.jsonl` through the shared `RichRenderer` (`src/acp/rich-view.ts`) via the same lane-translator pipeline as ACP `replayTeamSpine` — so the watch renders identically to a `session/load` of the team (issue #16). `--plain`/`--raw` falls back to the original single-pane color-coded one-line-per-event tail. Coarseness: because the recorded event contract (events-log.ts) filters live-only `text_delta`/`tool_use_input`, lanes surface `[role]`-attributed tool calls + results rather than streamed narration; the task board lists every roster member's state. A full-fidelity TUI with live narration is deferred. |
 | 5E | Long-lived team daemon (`team start --detach`, `team send`/`list`/`stop`/`kill`/`logs`) — see [docs/28-v0.5-daemon-plan.md](28-v0.5-daemon-plan.md) |
 
 ### v0.6 — agent-inbox + threading
@@ -1127,7 +1127,7 @@ Deferred to later releases per [docs/archive/27 §13](archive/27-v0.4-teams-impl
 - `Committee` + `CriticLoop` topologies → **shipped in v0.5 (5A)**
 - opentasks adapter → **shipped in v0.5 (5B, live-verified against opentasks 0.1.3)**
 - Pull-protocol for long-lived workers → **shipped in v0.5 (5C, `task_pull_next` Tier 2 tool)**
-- `swarm watch` multi-pane TUI → **MVP shipped as `team watch <name>` in v0.5 (5D); multi-pane TUI deferred to v0.6**
+- `swarm watch` multi-pane board → **shipped as `team watch <name>` in v0.5 (5D); the multi-pane per-member-lane + task-board view (reusing `RichRenderer`) is now the default, `--plain`/`--raw` keeps the one-line tail (issue #16)**
 - Long-lived team daemon (`team start --detach` / `send` / `list` / `stop` / `kill` / `logs`) → **shipped in v0.5 (5E.1–5E.7) + path-length follow-up; `send_prompt` for persistent peer-team daemons shipped in v0.6 stage 5F**
 - agent-inbox library integration → **shipped in v0.6 (6A.1 + 6A.2)** — pluggable InboxBackend; agent-inbox library backend with threading + persistence
 - agent-inbox MCP integration (separate from the library wrap) → v0.7+ (depends on whether MCP integration becomes necessary; the library path covers most use cases)

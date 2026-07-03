@@ -7,7 +7,9 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { formatLine } from "./team-watch.js";
+import { formatLine, renderEventLogBoard } from "./team-watch.js";
+import type { LaneEvent } from "../swarm/events.js";
+import type { AgentId } from "../core/types.js";
 
 const noColorFmt = {
   header: (s: string) => s,
@@ -94,5 +96,79 @@ describe("formatLine", () => {
     const out = formatLine(JSON.stringify(event), colorFmt);
     expect(out).toContain("[E]team_aborted[/E]");
     expect(out).toContain("[A]abcdef01[/A]");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Multi-pane board (issue #16)
+// ---------------------------------------------------------------------------
+
+const L = "L" as AgentId;
+const A = "A" as AgentId;
+const ORCH = "orch" as AgentId;
+
+const spawned = (childAgentId: string, role: string): LaneEvent =>
+  ({
+    ts: 1,
+    agentId: ORCH,
+    type: "worker_spawned",
+    payload: { childAgentId, role },
+  }) as LaneEvent;
+
+const toolStart = (
+  agentId: AgentId,
+  id: string,
+  name: string,
+  ts: number,
+): LaneEvent =>
+  ({
+    ts,
+    agentId,
+    type: "tool_use_start",
+    payload: { type: "tool_use_start", id, name },
+  }) as LaneEvent;
+
+const toolEnd = (agentId: AgentId, id: string, ts: number): LaneEvent =>
+  ({
+    ts,
+    agentId,
+    type: "tool_use_end",
+    payload: { type: "tool_use_end", id },
+  }) as LaneEvent;
+
+describe("renderEventLogBoard", () => {
+  it("renders one lane per active member with [role]-attributed tools", async () => {
+    const events: LaneEvent[] = [
+      spawned("L", "lead"),
+      spawned("A", "architect"),
+      toolStart(L, "t1", "read_file", 3),
+      toolEnd(L, "t1", 4),
+      toolStart(A, "t2", "write_file", 5),
+      toolEnd(A, "t2", 6),
+    ];
+    const text = (await renderEventLogBoard(events)).join("\n");
+    // A lane header per member (role-labeled).
+    expect(text).toContain("[lead]");
+    expect(text).toContain("[architect]");
+    // Tool calls surface in their member's lane, [role]-prefixed.
+    expect(text).toContain("[lead] Read file");
+    expect(text).toContain("[architect] Write file");
+  });
+
+  it("renders a task board listing every roster member's state", async () => {
+    const events: LaneEvent[] = [spawned("L", "lead"), spawned("A", "architect")];
+    const lines = await renderEventLogBoard(events);
+    const text = lines.join("\n");
+    // Board pane present with both members even before any tool activity.
+    expect(text).toContain("board");
+    expect(lines.some((l) => l.includes("lead") && l.includes("(L)"))).toBe(true);
+    expect(
+      lines.some((l) => l.includes("architect") && l.includes("(A)")),
+    ).toBe(true);
+  });
+
+  it("returns an empty view for an empty event stream", async () => {
+    const lines = await renderEventLogBoard([]);
+    expect(lines).toEqual([]);
   });
 });

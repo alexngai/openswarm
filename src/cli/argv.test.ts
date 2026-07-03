@@ -339,6 +339,27 @@ describe("parseArgv", () => {
     expect(result.kind).toBe("team-daemon-entry");
   });
 
+  // ---- issue #16 — team watch --plain/--raw ------------------------------
+
+  it("team watch defaults to the multi-pane board (plain=false)", () => {
+    const result = parseArgv(["team", "watch", "alpha"]);
+    if (result.kind !== "team-watch") throw new Error("expected team-watch");
+    expect(result.name).toBe("alpha");
+    expect(result.plain).toBe(false);
+  });
+
+  it("team watch --plain falls back to the one-line tail (plain=true)", () => {
+    const result = parseArgv(["team", "watch", "alpha", "--plain"]);
+    if (result.kind !== "team-watch") throw new Error("expected team-watch");
+    expect(result.plain).toBe(true);
+  });
+
+  it("team watch --raw is an alias for --plain", () => {
+    const result = parseArgv(["team", "watch", "alpha", "--raw"]);
+    if (result.kind !== "team-watch") throw new Error("expected team-watch");
+    expect(result.plain).toBe(true);
+  });
+
   // ---- v0.6 stage 6A.2 — --agent-inbox -----------------------------------
 
   it("swarm run --agent-inbox sets agentInbox=true", () => {
