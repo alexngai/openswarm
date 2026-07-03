@@ -11,12 +11,15 @@
 import type { ProviderMessage } from "../providers/index.js";
 import type { Usage } from "../core/types.js";
 import type { SessionSnapshot } from "./index.js";
+import type { PersistedCompactionState } from "./compaction-runner.js";
 
 export interface NativeSnapshot {
   readonly messages: readonly ProviderMessage[];
   readonly turnCount: number;
   readonly compactionCount: number;
   readonly cumulativeUsage: Usage;
+  /** Compaction trigger/breaker state. Absent in pre-migration snapshots. */
+  readonly compaction?: PersistedCompactionState;
 }
 
 /**
@@ -28,12 +31,14 @@ export function makeSnapshot(
   turnCount: number,
   compactionCount: number,
   cumulativeUsage: Usage,
+  compaction?: PersistedCompactionState,
 ): SessionSnapshot {
   const data: NativeSnapshot = {
     messages,
     turnCount,
     compactionCount,
     cumulativeUsage,
+    ...(compaction !== undefined ? { compaction } : {}),
   };
   return { engineId: "native", data };
 }

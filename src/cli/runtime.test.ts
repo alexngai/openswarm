@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { buildAgentRuntime, defaultCompactionConfig } from "./runtime.js";
 import { isRemoteCompactionConfig } from "../engine/compact-remote.js";
-import { DEFAULT_COMPACTION } from "../engine/compactor.js";
 import type { Provider } from "../providers/index.js";
 import type { CommonOpts } from "./argv.js";
 
-const fakeProvider = { id: "fake" } as unknown as Provider;
+const fakeProvider = {
+  id: "fake",
+  capabilities: { maxContextTokens: 200_000 },
+} as unknown as Provider;
 
 // Keep buildAgentRuntime light (no plugins/skills/mcp/hooks). Scripted mode
 // skips the auth gate; the codex-native branch is selected before the scripted
@@ -73,16 +75,17 @@ describe("defaultCompactionConfig", () => {
     delete process.env.OPENSWARM_COMPACTION_MODEL;
     const config = defaultCompactionConfig(fakeProvider, "gpt-5.5");
     expect(isRemoteCompactionConfig(config)).toBe(true);
-    expect((config as { model: string }).model).toBe("gpt-5.5");
-    // Trigger thresholds unchanged from the mechanical default.
-    expect(config.maxEstimatedTokens).toBe(DEFAULT_COMPACTION.maxEstimatedTokens);
+    expect((config as unknown as { model: string }).model).toBe("gpt-5.5");
+    // Estimator-fallback threshold is CC's absolute reserve (window − 13k),
+    // not the flat 10k DEFAULT_COMPACTION floor or the old 0.8 ratio.
+    expect(config.maxEstimatedTokens).toBe(200_000 - 13_000);
   });
 
   it("honors OPENSWARM_COMPACTION_MODEL as the summarization model", () => {
     delete process.env.OPENSWARM_REMOTE_COMPACTION;
     process.env.OPENSWARM_COMPACTION_MODEL = "gpt-5-mini";
     const config = defaultCompactionConfig(fakeProvider, "gpt-5.5");
-    expect((config as { model: string }).model).toBe("gpt-5-mini");
+    expect((config as unknown as { model: string }).model).toBe("gpt-5-mini");
   });
 
   it("falls back to mechanical when OPENSWARM_REMOTE_COMPACTION is off", () => {

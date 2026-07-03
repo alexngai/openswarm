@@ -29,15 +29,18 @@ import type {
   PermissionDecision,
 } from "./index.js";
 import {
-  shouldCompact,
-  compactSession,
   DEFAULT_COMPACTION,
   type CompactionConfig,
 } from "./compactor.js";
 import {
-  compactSessionRemote,
-  isRemoteCompactionConfig,
-} from "./compact-remote.js";
+  initialCompactionState,
+  restoreCompactionState,
+  persistCompactionState,
+  preTurnCompaction,
+  requestManualCompaction,
+  recordTurnUsage,
+  type CompactionState,
+} from "./compaction-runner.js";
 import {
   makeSnapshot,
   extractNativeSnapshot,
@@ -103,6 +106,7 @@ export class NativeEngine implements AgentEngine {
   private readonly sessionDir?: string;
   private readonly sessionId?: string;
   private cumulativeUsage: Usage = { inputTokens: 0, outputTokens: 0 };
+  private compactionState: CompactionState = initialCompactionState();
 
   constructor(opts: NativeEngineOptions) {
     this.provider = opts.provider;
@@ -125,6 +129,24 @@ export class NativeEngine implements AgentEngine {
 
   getCumulativeUsage(): Usage {
     return this.cumulativeUsage;
+  }
+
+  /**
+   * Queue a manual compaction (slash /compact). Runs at the next turn
+   * boundary with trigger "manual"; optional text becomes CC "Additional
+   * Instructions" for the summarizer.
+   */
+  requestManualCompaction(customInstructions?: string): void {
+    requestManualCompaction(this.compactionState, customInstructions);
+  }
+
+  /**
+   * Set the session transcript path (events.jsonl) — the continuation
+   * message's "read the full transcript at: …" pointer. Callable after
+   * construction because recording starts per-turn (worker-entry).
+   */
+  setTranscriptPath(transcriptPath: string): void {
+    this.compactionConfig.transcriptPath = transcriptPath;
   }
 
   async *run(config: RunConfig): AsyncIterable<NormalizedEvent> {
@@ -154,6 +176,7 @@ export class NativeEngine implements AgentEngine {
       turnCount = snap.turnCount;
       compactionCount = snap.compactionCount;
       this.cumulativeUsage = snap.cumulativeUsage;
+      this.compactionState = restoreCompactionState(snap.compaction);
     } else {
       messages = [];
     }
@@ -178,52 +201,45 @@ export class NativeEngine implements AgentEngine {
       // Honour abort between turns.
       if (config.abort !== undefined && config.abort.aborted) return;
 
-      // 3a. Compaction check + execution.
-      if (shouldCompact({ messages }, this.compactionConfig)) {
-        yield {
-          type: "compaction",
-          payload: { phase: "begin", trigger: "auto" },
-        };
-        const result = isRemoteCompactionConfig(this.compactionConfig)
-            ? await compactSessionRemote(
-                { messages },
-                this.compactionConfig,
-                config.abort,
-              )
-            : compactSession({ messages }, this.compactionConfig);
-        messages = result.compactedSession.messages.slice();
-        yield {
-          type: "compaction",
-          payload: {
-            phase: "end",
-            trigger: "auto",
-            compact_metadata: {
-              removedMessageCount: result.removedMessageCount,
-              boundaryWalkedBack: result.boundaryWalkedBack,
-            },
+      // 3a. Compaction pipeline (L1 trigger → L2 micro → L3–L5 full).
+      {
+        const outcome = yield* preTurnCompaction(
+          this.compactionState,
+          messages,
+          turn,
+          {
+            compactionConfig: this.compactionConfig,
+            contextWindow: this.capabilities.maxContextTokens,
+            ...(this.sessionDir !== undefined
+              ? { sessionDir: this.sessionDir }
+              : {}),
+            ...(config.abort !== undefined ? { abort: config.abort } : {}),
           },
-        };
-        compactionCount++;
+        );
+        messages = outcome.messages;
+        if (outcome.compacted) {
+          compactionCount++;
 
-        // Post-compaction health probe — mirror ClaudeAgentSdkEngine.
-        // Skip silently when no dispatcher is wired.
-        if (config.dispatcher !== undefined) {
-          try {
-            await config.dispatcher.dispatch(
-              "glob",
-              { pattern: "*" },
-              { cwd: process.cwd() },
-            );
-          } catch {
-            yield {
-              type: "error",
-              error: {
-                code: "transport",
-                message: "post-compaction probe failed",
-                retryable: false,
-              },
-            };
-            // Continue the loop — probe failure is observational.
+          // Post-compaction health probe — mirror ClaudeAgentSdkEngine.
+          // Skip silently when no dispatcher is wired.
+          if (config.dispatcher !== undefined) {
+            try {
+              await config.dispatcher.dispatch(
+                "glob",
+                { pattern: "*" },
+                { cwd: process.cwd() },
+              );
+            } catch {
+              yield {
+                type: "error",
+                error: {
+                  code: "transport",
+                  message: "post-compaction probe failed",
+                  retryable: false,
+                },
+              };
+              // Continue the loop — probe failure is observational.
+            }
           }
         }
       }
@@ -299,6 +315,9 @@ export class NativeEngine implements AgentEngine {
             case "finish":
               stopReason = ev.stopReason;
               turnUsage = ev.usage;
+              // L1 trigger signal: real context occupancy for the next
+              // pre-turn compaction check.
+              recordTurnUsage(this.compactionState, ev.usage, messages.length);
               break;
 
             case "error":
@@ -465,8 +484,11 @@ export class NativeEngine implements AgentEngine {
         continue;
       }
 
-      // 3e. Terminal turn — no tool calls.
-      yield { type: "message_stop", stopReason, usage: turnUsage };
+      // 3e. Terminal turn — no tool calls. Emit the run's cumulative usage
+      // (not just this turn's): tool-calling turns never emit a message_stop, so
+      // this single terminal event is the only usage signal headless/eval
+      // consumers receive. cumulativeUsage already includes this turn.
+      yield { type: "message_stop", stopReason, usage: this.cumulativeUsage };
       turnCount++;
       await this.persistSnapshot(messages, turnCount, compactionCount);
       terminated = true;
@@ -501,6 +523,7 @@ export class NativeEngine implements AgentEngine {
       turnCount,
       compactionCount,
       this.cumulativeUsage,
+      persistCompactionState(this.compactionState),
     );
     const snapPath = path.join(this.sessionDir, "native-snapshot.json");
     const tmp = snapPath + ".tmp";

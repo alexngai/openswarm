@@ -8,6 +8,7 @@
 import type { ProviderMessage } from "../providers/index.js";
 import type { Usage } from "../core/types.js";
 import type { SessionSnapshot } from "./index.js";
+import type { PersistedCompactionState } from "./compaction-runner.js";
 
 export interface HardenedNativeSnapshot {
   readonly messages: readonly ProviderMessage[];
@@ -18,6 +19,8 @@ export interface HardenedNativeSnapshot {
     readonly totalRetries: number;
     readonly retriesThisTurn: number;
   };
+  /** Compaction trigger/breaker state. Absent in pre-migration snapshots. */
+  readonly compaction?: PersistedCompactionState;
 }
 
 export function makeHardenedSnapshot(
@@ -26,6 +29,7 @@ export function makeHardenedSnapshot(
   compactionCount: number,
   cumulativeUsage: Usage,
   retryStats: { totalRetries: number; retriesThisTurn: number },
+  compaction?: PersistedCompactionState,
 ): SessionSnapshot {
   const data: HardenedNativeSnapshot = {
     messages,
@@ -33,6 +37,7 @@ export function makeHardenedSnapshot(
     compactionCount,
     cumulativeUsage,
     retryStats,
+    ...(compaction !== undefined ? { compaction } : {}),
   };
   return { engineId: "hardened-native", data };
 }

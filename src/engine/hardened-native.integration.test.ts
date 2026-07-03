@@ -168,6 +168,13 @@ class MockDispatcher {
 
 const DEFAULT_USAGE: Usage = { inputTokens: 10, outputTokens: 5 };
 
+/**
+ * Usage close enough to the 200k window that appended tool results push the
+ * usage-based trigger (window − 13k) over the line — the compaction trigger
+ * runs on real token counts now, not the char/4 estimator.
+ */
+const NEAR_WINDOW_USAGE: Usage = { inputTokens: 185_000, outputTokens: 5_000 };
+
 function baseConfig(overrides: Partial<RunConfig> = {}): RunConfig {
   return {
     systemPrompt: "sys",
@@ -291,7 +298,7 @@ describe("Integration: mid-turn compaction recovery", () => {
       scripts: [
         [
           { type: "tool-call", id: "t1", name: "read", input: {} },
-          { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
+          { type: "finish", stopReason: "tool_use", usage: NEAR_WINDOW_USAGE },
         ],
         [
           { type: "text-delta", text: "after compaction" },
@@ -425,7 +432,7 @@ describe("Integration: all features combined", () => {
         [
           { type: "tool-call", id: "t1", name: "read", input: {} },
           { type: "tool-call", id: "t2", name: "read", input: {} },
-          { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
+          { type: "finish", stopReason: "tool_use", usage: NEAR_WINDOW_USAGE },
         ],
         [
           { type: "text-delta", text: "all done" },
@@ -734,7 +741,7 @@ describe("Parity: compaction algorithm", () => {
       scripts: [
         [
           { type: "tool-call", id: "t1", name: "read", input: {} },
-          { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
+          { type: "finish", stopReason: "tool_use", usage: NEAR_WINDOW_USAGE },
         ],
         [
           { type: "text-delta", text: "mid-turn" },

@@ -203,6 +203,111 @@ role allowlists, and permission maps for marginal gain.
 
 ---
 
+## 11. Compaction Behavior Comparison (Claude Code v2.1.198 / Codex / openswarm)
+
+July 2026 audit of context-compaction behavior, extracted byte-for-byte from the
+Claude Code v2.1.198 binary and the current `openai/codex` Rust sources, against
+`engine/compactor.ts` + `engine/compact-remote.ts`.
+
+### Claude Code v2.1.198 ground truth
+
+- **Trigger**: real API token counts (not estimates). Auto-compact fires at
+  `contextWindow − 13_000` tokens; "Context low" warning at `threshold − 20_000`;
+  input blocked at `window − 3_000`. Checked at query setup
+  (`query_autocompact_start`) plus a *reactive* path when the API returns
+  prompt-too-long mid-turn. Two circuit breakers: rapid-refill (3 compactions
+  within <3 turns each) and consecutive-failure (skip future attempts this
+  session).
+- **Summarization**: in-session — appends a user message to the *live
+  conversation* and asks the *main-loop model* for an `<analysis>` block + a
+  9-section `<summary>`: 1. Primary Request and Intent · 2. Key Technical
+  Concepts · 3. Files and Code Sections · 4. Errors and fixes · 5. Problem
+  Solving · 6. All user messages · 7. Pending Tasks · 8. Work Completed ·
+  9. Context for Continuing Work. Guarded by "CRITICAL: Respond with TEXT ONLY.
+  Do NOT call any tools. … Tool calls will be REJECTED and will waste your only
+  turn — you will fail the task." `/compact <text>` appends the text under
+  "Additional Instructions:". The prompt twice demands security-relevant user
+  constraints be preserved *verbatim*. On prompt-too-long the summarization
+  retries up to 3× dropping earlier messages (gap-guided step sizing, marker
+  "[earlier conversation truncated for compaction retry]").
+- **Post-compact history** (full/auto path): `[compact boundary marker,
+  continuation message, re-injected attachments, session-start hook results]` —
+  **no verbatim recent messages**. Instead CC clears `readFileState` and
+  re-injects: up to **5 recently-read files** (token-budgeted), the **todo list**,
+  re-read CLAUDE.md/memory, tool-usage reminders, and MCP instructions. The
+  *reactive* path is group-based: oldest message groups are summarized with a
+  "RECENT portion" prompt variant (sections end 8. Current Work · 9. Optional
+  Next Step) and the newest groups are kept verbatim (`preservedSegment`).
+- **Continuation message**: "This session is being continued from a previous
+  conversation that ran out of context. The summary below covers the earlier
+  portion of the conversation.\n\n{formatted summary}" + "\n\nIf you need
+  specific details from before compaction (like exact code snippets, error
+  messages, or content you generated), read the full transcript at: {path}" +
+  (auto only) "\nContinue the conversation from where it left off without asking
+  the user any further questions. Resume directly — do not acknowledge the
+  summary, do not recap what was happening, do not preface with \"I'll continue\"
+  or similar. Pick up the last task as if the break never happened." Formatting
+  strips `<analysis>`, rewrites `<summary>…</summary>` → `Summary:\n…`, collapses
+  blank lines. Manual `/compact` omits the resume-instruction sentence.
+- **Microcompaction** (separate, cheaper mechanism): on context hints, clears
+  *old tool_result contents* — keeps the **last 5** tool results, requires
+  **≥ 20k tokens saved** to proceed, replaces cleared content with
+  `"[Old tool result content cleared]"` or persists it to disk and points at it
+  ("Tool result saved to: {file}\n\nUse Read to view"). Images/documents in
+  cleared results always become the placeholder. Inserts a
+  `microcompact_boundary` marker.
+- **Hooks**: PreCompact can block ("Compaction blocked by PreCompact hook");
+  session-start hooks re-run post-compact.
+
+### Codex (Rust, July 2026)
+
+Three modes: (a) local compact — model summarization with a short "CONTEXT
+CHECKPOINT COMPACTION" handoff prompt; (b) remote compact v1/v2 — server-side
+summarization via the Responses API, retaining real user messages newest-first
+within a **64k-token budget** (each user message capped at 20k tokens, developer
+/instruction wrappers dropped); (c) token-budget compaction — no summarization,
+installs a fresh context window. Trigger is a per-model `auto_compact_token_limit`
+checked mid-turn. The summary is framed third-person for a *different* model:
+"Another language model started to solve this problem and produced a summary of
+its thinking process. …" — vs CC's first-person "This session is being
+continued…". Emits a long-thread accuracy advisory after compaction.
+
+### openswarm today vs the two
+
+| Aspect | Claude Code v2.1.198 | Codex | openswarm |
+|---|---|---|---|
+| Trigger | tokens ≥ window − 13k (API counts) | per-model token limit, mid-turn | char/4 estimate ≥ 80% of window (runtime default; 10k floor) |
+| Summarizer | main model, in-session, full-fidelity history | server-side (remote) or local model call | separate provider call on re-serialized text, tool I/O truncated to 500 chars |
+| Summary shape | analysis + 9 sections (…8. Work Completed, 9. Context for Continuing Work) | freeform handoff | analysis + 9 sections (…8. Current Work, 9. Optional Next Step) + section validation/retry |
+| Kept verbatim | nothing (full path); newest groups (reactive path) | user messages ≤ 64k budget | last 4 messages always |
+| Post-compact re-injection | 5 recent files + todos + CLAUDE.md + reminders | fresh canonical session context | todo-progress block folded into summary |
+| Continuation preamble | "This session is being continued…" (+ transcript path) | "Another language model started…" | matches CC preamble; **no transcript-path pointer**; resume sentence wording drifts from CC |
+| Fallback | PTL retry ×3 + reactive group compaction + circuit breakers | token-budget fresh-window mode | mechanical `<summary>` stats fallback; emergency compact on context_overflow |
+| Tool-result GC | microcompaction (keep last 5, ≥20k saved, placeholder/persist) | — | — |
+
+**Known divergences to close (Claude Code-first), in priority order:**
+
+1. Resume-instruction string drift — CC ends "do not preface with \"I'll
+   continue\" or similar. Pick up the last task as if the break never happened."
+   openswarm says "and do not preface with continuation text."
+2. Summary section names — CC: "Errors and fixes", "All user messages",
+   "8. Work Completed", "9. Context for Continuing Work" (full path). openswarm
+   uses the older "Errors and Fixes"/"All User Messages"/"Current Work"/
+   "Optional Next Step" set (CC only uses Current Work/Optional Next Step in the
+   reactive RECENT-portion variant).
+3. Transcript-path paragraph missing from the continuation message.
+4. Trigger margin — absolute reserve (window − 13k) tracks CC better than the
+   80% ratio for large windows (967k × 0.8 leaves 193k unused).
+5. Microcompaction of old tool results (keep-recent 5, ≥20k saved,
+   "[Old tool result content cleared]") — biggest bang-for-buck CC mechanism
+   openswarm lacks.
+6. Post-compact re-injection of recently-read files + todo list as attachments
+   (openswarm folds todos into the summary text instead — weaker signal).
+7. `/compact` is an engine hint prompt; CC runs a real compaction and supports
+   custom instructions via "Additional Instructions:".
+
+---
+
 ## Prioritized Plan (draft)
 
 ### Phase A — Safety Foundation (P0, ~3 weeks)
@@ -292,6 +397,18 @@ When closing a gap, add a decision-log entry below with date, gap ID,
 and commit hash.
 
 ### Decision log
+
+- **2026-07-03 (compaction comparison)** — Audited compaction behavior across
+  Claude Code v2.1.198 (binary extraction), Codex (current Rust sources), and
+  openswarm (`compactor.ts`/`compact-remote.ts`). Findings in §11. Corrected
+  assumptions: CC's full compaction keeps **zero** verbatim messages (re-injects
+  5 recent files + todos instead); the 9-section prompt ends "Work Completed /
+  Context for Continuing Work" (the "Current Work / Optional Next Step" variant
+  is the reactive RECENT-portion prompt only); auto-trigger is window − 13k
+  tokens, not a percentage; CC has a separate microcompaction pass that clears
+  old tool results ("[Old tool result content cleared]", keep last 5, ≥20k
+  tokens saved). No code changed in this pass — divergence list recorded for a
+  future alignment pass.
 
 - **2026-06-05** — Document created from deep-research audit of Codex (130+ crates) vs openswarm. Codex system prompt ported to openswarm default-system-prompt.ts (commits `bf33eee`, `74d6166`, `59813fd`). HardenedNativeEngine shipped (commits `bed3ac5`–`2240667`): retry, eager dispatch, mid-turn compaction, context_overflow recovery.
 - **2026-06-05** — Deep-dive updates: added F11–F15 (interactive sessions / process management, P1), expanded F4 (code mode: V8 tool orchestration), F9 (file watcher: skills hot-reload), H1 (10 vs 5 hook events detail), H4–H6 (hook context injection, trust model, stop hook). Reorganized phased plan: new Phase C (interactive sessions), Phase E (hooks), Phase F (persistence). Process management elevated to P1.

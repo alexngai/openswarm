@@ -9,7 +9,10 @@ import { HardenedNativeEngine } from "../engine/hardened-native.js";
 import { ScriptedTestEngine } from "../engine/test-engine.js";
 import { CodexResponsesTransportProvider } from "../providers/codex-responses/index.js";
 import { OpenAICodexAuth } from "../auth/openai-codex-oauth.js";
-import { DEFAULT_COMPACTION } from "../engine/compactor.js";
+import {
+  DEFAULT_COMPACTION,
+  autoCompactThreshold,
+} from "../engine/compactor.js";
 import { filterCodexPeerTools } from "../tools/codex-peer-tools.js";
 import { loadAliases, resolveAlias } from "../providers/aliases.js";
 import { OpenAIEnvAuth } from "../auth/openai-env.js";
@@ -135,7 +138,11 @@ async function buildCodexNativeWorkerEngine({
     midTurnCompaction: process.env.OPENSWARM_MID_TURN_COMPACTION === "1",
     compactionConfig: {
       preserveRecentMessages: DEFAULT_COMPACTION.preserveRecentMessages,
-      maxEstimatedTokens: Math.floor(provider.capabilities.maxContextTokens * 0.8),
+      // Estimator-fallback threshold, CC-aligned (window − 13k reserve;
+      // the primary trigger is the engine's usage-token check).
+      maxEstimatedTokens: autoCompactThreshold(
+        provider.capabilities.maxContextTokens,
+      ),
     },
   });
 }
@@ -330,6 +337,14 @@ async function executeTurn(
       prompt: task.prompt,
       surfacedSkills: enriched.surfacedSkills,
     });
+
+    // Compaction continuation messages point the model at the live transcript
+    // ("read the full transcript at: …", docs/48-compaction-design.md §L4).
+    if (recorder !== null) {
+      (
+        engine as { setTranscriptPath?: (p: string) => void }
+      ).setTranscriptPath?.(recorder.transcriptPath);
+    }
 
     // Crash-recovery T2: persist the engine session id to the sidecar as soon
     // as it's known (not just at turn end), so a daemon crash MID-turn still

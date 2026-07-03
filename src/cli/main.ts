@@ -550,6 +550,16 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
       abort: turnAbort,
       sessionLogPath: ".openswarm/sessions.log",
       pluginStore: rt.pluginStateStore,
+      // Real /compact control for native/hardened engines (queued, runs at
+      // the next turn boundary). SDK engine has no method → hint fallback.
+      requestCompaction: (customInstructions?: string) => {
+        const target = engine as {
+          requestManualCompaction?: (instr?: string) => void;
+        };
+        if (typeof target.requestManualCompaction !== "function") return false;
+        target.requestManualCompaction(customInstructions);
+        return true;
+      },
     },
     permissionBridge,
     // Phase 3 B1 — memory observer around each REPL turn (onAfterTurn +

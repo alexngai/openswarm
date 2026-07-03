@@ -1,5 +1,7 @@
 /**
- * Mechanical session compactor — ported from claw-code compact.rs (L1–L553).
+ * Mechanical session compactor — originally ported from claw-code compact.rs,
+ * continuation-message strings aligned byte-for-byte with Claude Code v2.1.198
+ * (docs/48-compaction-design.md; docs/39-codex-parity-gap-analysis.md §11).
  *
  * Pure functions only. No side effects, no global state, no lane-event emission.
  * Token estimation: char.length / 4 + 1 (intentionally matches claw, NOT M3b ratio).
@@ -8,14 +10,19 @@
 import type { ProviderMessage } from "../providers/index.js";
 
 // ---------------------------------------------------------------------------
-// String constants (verbatim from claw compact.rs L3–L6)
+// String constants (byte-exact Claude Code v2.1.198)
 // ---------------------------------------------------------------------------
 
 const COMPACT_CONTINUATION_PREAMBLE =
   "This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.\n\n";
 const COMPACT_RECENT_MESSAGES_NOTE = "Recent messages are preserved verbatim.";
+const COMPACT_TRANSCRIPT_NOTE_PREFIX =
+  "If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: ";
 const COMPACT_DIRECT_RESUME_INSTRUCTION =
-  "Continue the conversation from where it left off without asking the user any further questions. Resume directly — do not acknowledge the summary, do not recap what was happening, and do not preface with continuation text.";
+  'Continue the conversation from where it left off without asking the user any further questions. Resume directly — do not acknowledge the summary, do not recap what was happening, do not preface with "I\'ll continue" or similar. Pick up the last task as if the break never happened.';
+
+/** Claude Code's error when a manual compact has nothing to summarize. */
+export const NOT_ENOUGH_MESSAGES_TO_COMPACT = "Not enough messages to compact.";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -24,12 +31,93 @@ const COMPACT_DIRECT_RESUME_INSTRUCTION =
 export interface CompactionConfig {
   preserveRecentMessages: number;
   maxEstimatedTokens: number;
+  /**
+   * Absolute path of the session transcript (events.jsonl). When set, the
+   * continuation message includes Claude Code's "read the full transcript
+   * at: …" pointer so the model can recover pre-compaction details.
+   */
+  transcriptPath?: string;
 }
 
 export const DEFAULT_COMPACTION: CompactionConfig = {
   preserveRecentMessages: 4,
   maxEstimatedTokens: 10_000,
 };
+
+// ---------------------------------------------------------------------------
+// Usage-token trigger thresholds (Claude Code v2.1.198)
+//
+// CC compacts on real API token counts, not estimates: auto-compact fires at
+// contextWindow − 13k, a "context low" warning at threshold − 20k, and input
+// is blocked at contextWindow − 3k. The char/4 estimator below remains as the
+// fallback for providers that do not report usage (and for emergency sizing).
+// ---------------------------------------------------------------------------
+
+/** CC reserve: auto-compact when context tokens reach window − 13k. */
+export const DEFAULT_COMPACT_RESERVE_TOKENS = 13_000;
+/** CC warn margin: "Context low" at threshold − 20k. */
+export const COMPACT_WARN_MARGIN_TOKENS = 20_000;
+/** CC blocked margin: refuse new input at window − 3k. */
+export const COMPACT_BLOCKED_RESERVE_TOKENS = 3_000;
+
+/** Resolve the compact reserve, honouring OPENSWARM_COMPACT_RESERVE. */
+export function compactReserveTokens(): number {
+  const raw = process.env.OPENSWARM_COMPACT_RESERVE;
+  if (raw !== undefined) {
+    const parsed = parseInt(raw, 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return DEFAULT_COMPACT_RESERVE_TOKENS;
+}
+
+/**
+ * The auto-compact threshold for a context window: window − reserve, floored
+ * at half the window so tiny-context models keep a sane margin.
+ */
+export function autoCompactThreshold(contextWindow: number): number {
+  return Math.max(
+    Math.floor(contextWindow / 2),
+    contextWindow - compactReserveTokens(),
+  );
+}
+
+export type ContextUsageLevel = "ok" | "warn" | "compact" | "blocked";
+
+export interface ContextUsageStatus {
+  readonly level: ContextUsageLevel;
+  readonly contextTokens: number;
+  readonly threshold: number;
+  /** Percent of usable window remaining (0–100), CC-style. */
+  readonly pctLeft: number;
+}
+
+/**
+ * Classify current context occupancy against the CC thresholds. `contextTokens`
+ * is the real usage from the provider's last finish event (input + cache read
+ * + cache write + output), i.e. the approximate size of the next request.
+ */
+export function contextUsageStatus(
+  contextTokens: number,
+  contextWindow: number,
+): ContextUsageStatus {
+  const threshold = autoCompactThreshold(contextWindow);
+  const blocked = contextWindow - COMPACT_BLOCKED_RESERVE_TOKENS;
+  const warn = threshold - COMPACT_WARN_MARGIN_TOKENS;
+  const pctLeft = Math.max(
+    0,
+    Math.round(((threshold - contextTokens) / threshold) * 100),
+  );
+  if (contextTokens >= blocked) {
+    return { level: "blocked", contextTokens, threshold, pctLeft };
+  }
+  if (contextTokens >= threshold) {
+    return { level: "compact", contextTokens, threshold, pctLeft };
+  }
+  if (contextTokens >= warn) {
+    return { level: "warn", contextTokens, threshold, pctLeft };
+  }
+  return { level: "ok", contextTokens, threshold, pctLeft };
+}
 
 export interface Session {
   readonly messages: readonly ProviderMessage[];
@@ -40,6 +128,12 @@ export interface CompactionResult {
   readonly compactedSession: Session;
   readonly removedMessageCount: number;
   readonly boundaryWalkedBack: boolean;
+  /**
+   * True when the model-based summarizer failed and the mechanical fallback
+   * produced the summary. Feeds the consecutive-failure circuit breaker
+   * (docs/48-compaction-design.md §L5). Absent on the mechanical path.
+   */
+  readonly summarizerFailed?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -166,15 +260,18 @@ export function compactSession(
   const continuation = getCompactContinuationMessage(
     summary,
     true,
-    preserved.length > 0
+    preserved.length > 0,
+    config.transcriptPath,
   );
 
-  const systemMsg: ProviderMessage = {
-    role: "system",
+  // Claude Code ships the continuation as a *user* message (not system) so
+  // providers that reorder or merge system messages cannot break it.
+  const continuationMsg: ProviderMessage = {
+    role: "user",
     content: [{ type: "text", text: continuation }],
   };
 
-  const compactedMessages: ProviderMessage[] = [systemMsg, ...preserved];
+  const compactedMessages: ProviderMessage[] = [continuationMsg, ...preserved];
 
   return {
     summary,
@@ -427,7 +524,12 @@ export function mergeCompactSummaries(
 export function extractExistingCompactedSummary(
   message: ProviderMessage | undefined
 ): string | null {
-  if (message === undefined || message.role !== "system") {
+  // Continuation messages are user-role (Claude Code shape); accept the old
+  // system-role form too so pre-migration snapshots keep resuming cleanly.
+  if (
+    message === undefined ||
+    (message.role !== "user" && message.role !== "system")
+  ) {
     return null;
   }
 
@@ -441,6 +543,12 @@ export function extractExistingCompactedSummary(
   }
 
   let summary = text.slice(COMPACT_CONTINUATION_PREAMBLE.length);
+
+  const transcriptMarker = `\n\n${COMPACT_TRANSCRIPT_NOTE_PREFIX}`;
+  const transcriptIdx = summary.indexOf(transcriptMarker);
+  if (transcriptIdx !== -1) {
+    summary = summary.slice(0, transcriptIdx);
+  }
 
   const recentNoteMarker = `\n\n${COMPACT_RECENT_MESSAGES_NOTE}`;
   const recentNoteIdx = summary.indexOf(recentNoteMarker);
@@ -485,9 +593,16 @@ export function formatCompactSummary(summary: string): string {
 export function getCompactContinuationMessage(
   summary: string,
   suppressFollowUpQuestions: boolean,
-  recentMessagesPreserved: boolean
+  recentMessagesPreserved: boolean,
+  transcriptPath?: string,
 ): string {
   let base = `${COMPACT_CONTINUATION_PREAMBLE}${formatCompactSummary(summary)}`;
+
+  // Claude Code order: transcript pointer, recent-preserved note, resume
+  // instruction (auto-compact only — manual /compact omits it).
+  if (transcriptPath !== undefined && transcriptPath !== "") {
+    base += `\n\n${COMPACT_TRANSCRIPT_NOTE_PREFIX}${transcriptPath}`;
+  }
 
   if (recentMessagesPreserved) {
     base += `\n\n${COMPACT_RECENT_MESSAGES_NOTE}`;

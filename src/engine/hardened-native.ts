@@ -39,13 +39,20 @@ import {
   compactSession,
   DEFAULT_COMPACTION,
   type CompactionConfig,
-  type Session,
-  type CompactionResult,
 } from "./compactor.js";
 import {
-  compactSessionRemote,
+  compactSessionReactive,
   isRemoteCompactionConfig,
 } from "./compact-remote.js";
+import {
+  initialCompactionState,
+  restoreCompactionState,
+  persistCompactionState,
+  preTurnCompaction,
+  requestManualCompaction,
+  recordTurnUsage,
+  type CompactionState,
+} from "./compaction-runner.js";
 import {
   makeHardenedSnapshot,
   extractHardenedNativeSnapshot,
@@ -132,6 +139,7 @@ export class HardenedNativeEngine implements AgentEngine {
   private readonly midTurnCompaction: boolean;
   private cumulativeUsage: Usage = { inputTokens: 0, outputTokens: 0 };
   private retryStats = { totalRetries: 0, retriesThisTurn: 0 };
+  private compactionState: CompactionState = initialCompactionState();
 
   constructor(opts: HardenedNativeEngineOptions) {
     this.provider = opts.provider;
@@ -161,15 +169,67 @@ export class HardenedNativeEngine implements AgentEngine {
     return this.cumulativeUsage;
   }
 
-  private doCompact(
-    session: Session,
-    compactionConfig: CompactionConfig,
+  /**
+   * Queue a manual compaction (slash /compact). Runs at the next turn
+   * boundary with trigger "manual"; optional text becomes CC "Additional
+   * Instructions" for the summarizer.
+   */
+  requestManualCompaction(customInstructions?: string): void {
+    requestManualCompaction(this.compactionState, customInstructions);
+  }
+
+  /**
+   * Set the session transcript path (events.jsonl) — the continuation
+   * message's "read the full transcript at: …" pointer. Callable after
+   * construction because recording starts per-turn (worker-entry).
+   */
+  setTranscriptPath(transcriptPath: string): void {
+    this.compactionConfig.transcriptPath = transcriptPath;
+  }
+
+  /**
+   * context_overflow recovery — the reactive compaction path
+   * (docs/48-compaction-design.md §L4). With a remote (model-based) config,
+   * runs CC's group compaction: keep the newest user-turn groups verbatim
+   * within the MiMoCode tail budget, summarize the rest with the
+   * RECENT-portion prompt. Falls back to mechanical emergency compaction.
+   * Returns null when there is nothing to compact (caller yields the error).
+   */
+  private async recoverFromOverflow(
+    messages: ProviderMessage[],
     abort?: AbortSignal,
-  ): CompactionResult | Promise<CompactionResult> {
-    if (isRemoteCompactionConfig(compactionConfig)) {
-      return compactSessionRemote(session, compactionConfig, abort);
+  ): Promise<{ messages: ProviderMessage[]; removed: number; walkedBack: boolean } | null> {
+    // Emergency config ignores the token threshold — the server has already
+    // told us the context is too large.
+    const emergencyConfig = { ...this.compactionConfig, maxEstimatedTokens: 0 };
+    if (!shouldCompact({ messages }, emergencyConfig)) return null;
+
+    if (isRemoteCompactionConfig(this.compactionConfig)) {
+      const result = await compactSessionReactive(
+        { messages },
+        this.compactionConfig,
+        abort,
+        { contextWindow: this.capabilities.maxContextTokens },
+      );
+      if (result.removedMessageCount > 0) {
+        this.compactionState.lastContextTokens = 0;
+        this.compactionState.lastUsageMessageCount = 0;
+        return {
+          messages: result.compactedSession.messages.slice(),
+          removed: result.removedMessageCount,
+          walkedBack: result.boundaryWalkedBack,
+        };
+      }
     }
-    return compactSession(session, compactionConfig);
+
+    const result = compactSession({ messages }, emergencyConfig);
+    this.compactionState.lastContextTokens = 0;
+    this.compactionState.lastUsageMessageCount = 0;
+    return {
+      messages: result.compactedSession.messages.slice(),
+      removed: result.removedMessageCount,
+      walkedBack: result.boundaryWalkedBack,
+    };
   }
 
   async *run(config: RunConfig): AsyncIterable<NormalizedEvent> {
@@ -199,6 +259,7 @@ export class HardenedNativeEngine implements AgentEngine {
       turnCount = snap.turnCount;
       compactionCount = snap.compactionCount;
       this.cumulativeUsage = snap.cumulativeUsage;
+      this.compactionState = restoreCompactionState(snap.compaction);
       this.retryStats = {
         totalRetries: snap.retryStats.totalRetries,
         retriesThisTurn: 0,
@@ -231,45 +292,42 @@ export class HardenedNativeEngine implements AgentEngine {
 
       this.retryStats.retriesThisTurn = 0;
 
-      // 3a. Pre-turn compaction check.
-      if (shouldCompact({ messages }, this.compactionConfig)) {
-        yield {
-          type: "compaction",
-          payload: { phase: "begin", trigger: "auto" },
-        };
-        const result = await this.doCompact(
-          { messages }, this.compactionConfig, config.abort,
-        );
-        messages = result.compactedSession.messages.slice();
-        yield {
-          type: "compaction",
-          payload: {
-            phase: "end",
-            trigger: "auto",
-            compact_metadata: {
-              removedMessageCount: result.removedMessageCount,
-              boundaryWalkedBack: result.boundaryWalkedBack,
-            },
+      // 3a. Pre-turn compaction pipeline (L1 trigger → L2 micro → L3–L5 full).
+      {
+        const outcome = yield* preTurnCompaction(
+          this.compactionState,
+          messages,
+          turn,
+          {
+            compactionConfig: this.compactionConfig,
+            contextWindow: this.capabilities.maxContextTokens,
+            ...(this.sessionDir !== undefined
+              ? { sessionDir: this.sessionDir }
+              : {}),
+            ...(config.abort !== undefined ? { abort: config.abort } : {}),
           },
-        };
-        compactionCount++;
+        );
+        messages = outcome.messages;
+        if (outcome.compacted) {
+          compactionCount++;
 
-        if (config.dispatcher !== undefined) {
-          try {
-            await config.dispatcher.dispatch(
-              "glob",
-              { pattern: "*" },
-              { cwd: process.cwd() },
-            );
-          } catch {
-            yield {
-              type: "error",
-              error: {
-                code: "transport",
-                message: "post-compaction probe failed",
-                retryable: false,
-              },
-            };
+          if (config.dispatcher !== undefined) {
+            try {
+              await config.dispatcher.dispatch(
+                "glob",
+                { pattern: "*" },
+                { cwd: process.cwd() },
+              );
+            } catch {
+              yield {
+                type: "error",
+                error: {
+                  code: "transport",
+                  message: "post-compaction probe failed",
+                  retryable: false,
+                },
+              };
+            }
           }
         }
       }
@@ -440,6 +498,13 @@ export class HardenedNativeEngine implements AgentEngine {
               case "finish":
                 stopReason = ev.stopReason;
                 turnUsage = ev.usage;
+                // L1 trigger signal: real context occupancy for the next
+                // pre-turn compaction check.
+                recordTurnUsage(
+                  this.compactionState,
+                  ev.usage,
+                  messages.length,
+                );
                 break;
 
               case "error": {
@@ -482,11 +547,11 @@ export class HardenedNativeEngine implements AgentEngine {
             deferredStreamError !== undefined &&
             deferredStreamError.code === "context_overflow"
           ) {
-            const emergencyConfig = {
-              ...this.compactionConfig,
-              maxEstimatedTokens: 0,
-            };
-            if (shouldCompact({ messages }, emergencyConfig)) {
+            const recovered = await this.recoverFromOverflow(
+              messages,
+              config.abort,
+            );
+            if (recovered !== null) {
               yield {
                 type: "compaction",
                 payload: {
@@ -495,11 +560,7 @@ export class HardenedNativeEngine implements AgentEngine {
                   compact_metadata: { contextOverflowRecovery: true },
                 },
               };
-              const compResult = compactSession(
-                { messages },
-                emergencyConfig,
-              );
-              messages = compResult.compactedSession.messages.slice();
+              messages = recovered.messages;
               yield {
                 type: "compaction",
                 payload: {
@@ -507,8 +568,8 @@ export class HardenedNativeEngine implements AgentEngine {
                   trigger: "auto" as const,
                   compact_metadata: {
                     contextOverflowRecovery: true,
-                    removedMessageCount: compResult.removedMessageCount,
-                    boundaryWalkedBack: compResult.boundaryWalkedBack,
+                    removedMessageCount: recovered.removed,
+                    boundaryWalkedBack: recovered.walkedBack,
                   },
                 },
               };
@@ -540,8 +601,11 @@ export class HardenedNativeEngine implements AgentEngine {
           // Emergency config ignores token threshold — the server has
           // already told us the context is too large.
           if (providerError.code === "context_overflow") {
-            const emergencyConfig = { ...this.compactionConfig, maxEstimatedTokens: 0 };
-            if (shouldCompact({ messages }, emergencyConfig)) {
+            const recovered = await this.recoverFromOverflow(
+              messages,
+              config.abort,
+            );
+            if (recovered !== null) {
               yield {
                 type: "compaction",
                 payload: {
@@ -550,11 +614,7 @@ export class HardenedNativeEngine implements AgentEngine {
                   compact_metadata: { contextOverflowRecovery: true },
                 },
               };
-              const result = compactSession(
-                { messages },
-                emergencyConfig,
-              );
-              messages = result.compactedSession.messages.slice();
+              messages = recovered.messages;
               yield {
                 type: "compaction",
                 payload: {
@@ -562,8 +622,8 @@ export class HardenedNativeEngine implements AgentEngine {
                   trigger: "auto" as const,
                   compact_metadata: {
                     contextOverflowRecovery: true,
-                    removedMessageCount: result.removedMessageCount,
-                    boundaryWalkedBack: result.boundaryWalkedBack,
+                    removedMessageCount: recovered.removed,
+                    boundaryWalkedBack: recovered.walkedBack,
                   },
                 },
               };
@@ -762,31 +822,25 @@ export class HardenedNativeEngine implements AgentEngine {
           });
         }
 
-        // 3e. Mid-turn compaction — maps to Codex turn.rs:268-321
-        if (
-          this.midTurnCompaction &&
-          shouldCompact({ messages }, this.compactionConfig)
-        ) {
-          yield {
-            type: "compaction",
-            payload: { phase: "begin", trigger: "auto" as const,
-              compact_metadata: { midTurn: true } },
-          };
-          const result = await this.doCompact({ messages }, this.compactionConfig, config.abort);
-          messages = result.compactedSession.messages.slice();
-          yield {
-            type: "compaction",
-            payload: {
-              phase: "end",
-              trigger: "auto" as const,
-              compact_metadata: {
-                midTurn: true,
-                removedMessageCount: result.removedMessageCount,
-                boundaryWalkedBack: result.boundaryWalkedBack,
-              },
+        // 3e. Mid-turn compaction — maps to Codex turn.rs:268-321. Runs the
+        // same pipeline as the pre-turn site (trigger + micro + full).
+        if (this.midTurnCompaction) {
+          const outcome = yield* preTurnCompaction(
+            this.compactionState,
+            messages,
+            turn,
+            {
+              compactionConfig: this.compactionConfig,
+              contextWindow: this.capabilities.maxContextTokens,
+              extraMetadata: { midTurn: true },
+              ...(this.sessionDir !== undefined
+                ? { sessionDir: this.sessionDir }
+                : {}),
+              ...(config.abort !== undefined ? { abort: config.abort } : {}),
             },
-          };
-          compactionCount++;
+          );
+          messages = outcome.messages;
+          if (outcome.compacted) compactionCount++;
         }
 
         turnCount++;
@@ -794,8 +848,12 @@ export class HardenedNativeEngine implements AgentEngine {
         continue;
       }
 
-      // 3f. Terminal turn — no tool calls.
-      yield { type: "message_stop", stopReason, usage: turnUsage };
+      // 3f. Terminal turn — no tool calls. Report the run's cumulative usage
+      // (not just this turn's), since tool-calling turns never emit a
+      // message_stop — so this single terminal event is the only usage signal
+      // headless/eval consumers get. cumulativeUsage already includes this turn
+      // (updated in step 3c above).
+      yield { type: "message_stop", stopReason, usage: this.cumulativeUsage };
       turnCount++;
       await this.persistSnapshot(messages, turnCount, compactionCount);
       terminated = true;
@@ -827,6 +885,7 @@ export class HardenedNativeEngine implements AgentEngine {
       compactionCount,
       this.cumulativeUsage,
       this.retryStats,
+      persistCompactionState(this.compactionState),
     );
     const snapPath = path.join(
       this.sessionDir,

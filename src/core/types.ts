@@ -173,7 +173,12 @@ export type NormalizedEvent =
   | {
       readonly type: "compaction";
       readonly payload: {
-        readonly phase: "begin" | "end";
+        /**
+         * "begin"/"end" bracket a compaction (micro or full — see
+         * compact_metadata.micro). "warn" is a standalone context-low notice
+         * (Claude Code's "Context low" level; docs/48-compaction-design.md §L1).
+         */
+        readonly phase: "begin" | "end" | "warn";
         readonly trigger: "auto" | "manual";
         readonly compact_metadata?: Record<string, unknown>;
       };

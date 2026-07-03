@@ -191,8 +191,8 @@ describe("compactSession — clean boundary", () => {
     expect(result.removedMessageCount).toBeGreaterThan(0);
     expect(result.boundaryWalkedBack).toBe(false);
     expect(result.summary).not.toBe("");
-    // compacted session: [system summary] + last 4 messages
-    expect(result.compactedSession.messages[0].role).toBe("system");
+    // compacted session: [user continuation (CC shape)] + last 4 messages
+    expect(result.compactedSession.messages[0].role).toBe("user");
     expect(result.compactedSession.messages.length).toBe(5); // 1 system + 4 preserved
   });
 });

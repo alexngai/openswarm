@@ -28,7 +28,11 @@ import { CodexFrameworkEngine } from "../engine/codex-framework.js";
 import { CodexResponsesTransportProvider } from "../providers/codex-responses/index.js";
 import { OpenAICodexAuth } from "../auth/openai-codex-oauth.js";
 import { readCodexTokens } from "../auth/openai-codex-token-store.js";
-import { DEFAULT_COMPACTION, type CompactionConfig } from "../engine/compactor.js";
+import {
+  DEFAULT_COMPACTION,
+  autoCompactThreshold,
+  type CompactionConfig,
+} from "../engine/compactor.js";
 import type { RemoteCompactionConfig } from "../engine/compact-remote.js";
 import type { Provider } from "../providers/index.js";
 import { PluginRegistry } from "../plugins/registry.js";
@@ -64,20 +68,35 @@ export const DEFAULT_MODEL = "claude-sonnet-4-6";
  * be pinned via OPENSWARM_COMPACTION_MODEL). Set OPENSWARM_REMOTE_COMPACTION to
  * 0/false/off/no to force the mechanical compactor.
  *
- * The trigger thresholds (preserveRecentMessages / maxEstimatedTokens) are
- * unchanged from DEFAULT_COMPACTION — only the summarization method differs.
+ * The primary trigger is the engines' usage-token threshold
+ * (window − 13k reserve; docs/48-compaction-design.md §L1). maxEstimatedTokens
+ * here only sizes the char/4 estimator FALLBACK, used before the provider has
+ * reported real usage — so it mirrors the same absolute-reserve threshold.
  */
 export function defaultCompactionConfig(
   provider: Provider,
   modelId: string,
 ): CompactionConfig {
+  // CC-aligned absolute reserve (window − 13k, floored at window/2), replacing
+  // the old 0.8 ratio that stranded ~20% of large context windows. Math.max
+  // keeps the 10k floor for tiny-context models.
+  const maxEstimatedTokens = Math.max(
+    DEFAULT_COMPACTION.maxEstimatedTokens,
+    autoCompactThreshold(provider.capabilities.maxContextTokens),
+  );
+
   const flag = (process.env.OPENSWARM_REMOTE_COMPACTION ?? "").toLowerCase();
   const remoteDisabled = ["0", "false", "off", "no"].includes(flag);
-  if (remoteDisabled) return DEFAULT_COMPACTION;
+  if (remoteDisabled) {
+    return {
+      preserveRecentMessages: DEFAULT_COMPACTION.preserveRecentMessages,
+      maxEstimatedTokens,
+    };
+  }
 
   const config: RemoteCompactionConfig = {
     preserveRecentMessages: DEFAULT_COMPACTION.preserveRecentMessages,
-    maxEstimatedTokens: DEFAULT_COMPACTION.maxEstimatedTokens,
+    maxEstimatedTokens,
     provider,
     model: process.env.OPENSWARM_COMPACTION_MODEL ?? modelId,
   };

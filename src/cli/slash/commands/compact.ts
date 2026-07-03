@@ -1,18 +1,17 @@
 /**
- * /compact — hint the engine to compact the conversation.
+ * /compact [instructions] — compact the conversation.
  *
- * Round-trip flow (Phase 5):
- *   1. User types `/compact` → this command returns `{ kind: "engine-hint", prompt: HINT }`.
- *   2. `applySlashResult` in app.tsx dispatches `{ type: "submit" }` and calls
- *      `onSubmit(HINT)`, injecting the hint as the next user turn.
- *   3. The engine receives the hint prompt and the SDK internally triggers compaction.
- *   4. The SDK emits an `SDKCompactBoundaryMessage` (type "system", subtype
- *      "compact_boundary") with `compact_metadata.trigger === "manual"`.
- *   5. `translateSdkMessage` in event-translator.ts maps this to two `compaction`
- *      NormalizedEvents: `{ phase: "begin" }` then `{ phase: "end" }`.
- *   6. `translateEngineEvent` in app.tsx maps begin → `compact-begin` reducer event
- *      (+ system transcript entry) and end → `compact-end` reducer event.
- *   7. The REPL reducer drives: streaming → compact (on begin) → streaming (on end).
+ * Native/hardened engines (docs/48-compaction-design.md §"/compact rework"):
+ * a real compaction control request via `ctx.requestCompaction`. The engine
+ * queues it and runs the full in-session compaction (trigger "manual" — no
+ * resume-instruction sentence in the continuation message, matching Claude
+ * Code) at the next turn boundary. Optional trailing text is forwarded as
+ * Claude Code "Additional Instructions" for the summarizer.
+ *
+ * SDK engine (no `requestCompaction` wired): falls back to the engine-hint
+ * prompt — the SDK triggers its own compaction internally and emits an
+ * SDKCompactBoundaryMessage that the event translator maps to `compaction`
+ * events.
  */
 
 import type { SlashCommand } from "../index.js";
@@ -22,8 +21,23 @@ const HINT =
 
 export const compactCommand: SlashCommand = {
   name: "compact",
-  description: "Ask the engine to compact the conversation",
-  execute() {
+  description: "Compact the conversation (optional: /compact <instructions>)",
+  execute(ctx) {
+    const instructions = ctx.args.join(" ").trim();
+    if (ctx.requestCompaction !== undefined) {
+      const accepted = ctx.requestCompaction(
+        instructions === "" ? undefined : instructions,
+      );
+      if (accepted) {
+        return {
+          kind: "message",
+          text:
+            instructions === ""
+              ? "Compaction queued — runs at the start of the next turn."
+              : `Compaction queued with instructions: ${instructions}`,
+        };
+      }
+    }
     return { kind: "engine-hint", prompt: HINT };
   },
 };

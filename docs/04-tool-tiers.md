@@ -170,6 +170,16 @@ extracted from the shipped binary):
   modified successfully. Ensure that you continue to use the todo list to track
   your progress. Please proceed with the current tasks if applicable`.
 
+### Known gap: post-compaction memory re-injection (follow-up F1 in doc 48)
+
+Claude Code re-reads CLAUDE.md / memory files after every compaction and
+re-injects them as attachments. Our post-compact rebuild
+(`src/engine/compact-rebuild.ts`) re-injects recently read files and the todo
+snapshot, but **not** CLAUDE.md / AGENTS.md / curated memory — a compacted
+openswarm session silently loses project-memory context until the
+`recontextualize()` runtime callback lands (see
+[48-compaction-design.md](./48-compaction-design.md) follow-up F1).
+
 ## Divergences from claw-code
 
 Research (see `research/02-tools.md`) surfaced behaviors we explicitly **change** when porting:

@@ -62,6 +62,12 @@ export interface SlashCommandContext {
   readonly sessionLogPath?: string;
   /** Optional plugin state store. `/plugin` falls back to a default store when absent. */
   readonly pluginStore?: PluginStateStore;
+  /**
+   * Real engine compaction control (native/hardened engines). Returns true
+   * when the engine accepted the request; /compact falls back to the
+   * engine-hint prompt otherwise (SDK engine compacts via its own hint).
+   */
+  readonly requestCompaction?: (customInstructions?: string) => boolean;
 }
 
 export interface SlashCommand {
@@ -95,6 +101,7 @@ export interface BuildDefaultRegistryDeps {
   readonly sessionLogPath?: string;
   readonly abort?: AbortController;
   readonly pluginStore?: PluginStateStore;
+  readonly requestCompaction?: (customInstructions?: string) => boolean;
 }
 
 const ZERO_USAGE: Usage = {
@@ -172,6 +179,9 @@ export function buildSlashContext(
     abort: deps.abort,
     sessionLogPath: deps.sessionLogPath,
     pluginStore: deps.pluginStore,
+    ...(deps.requestCompaction !== undefined
+      ? { requestCompaction: deps.requestCompaction }
+      : {}),
   };
 }
 

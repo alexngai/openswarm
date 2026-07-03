@@ -194,6 +194,12 @@ class MockDispatcher {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_USAGE: Usage = { inputTokens: 10, outputTokens: 5 };
+/**
+ * Usage that puts the 200k MockProvider window above the window−13k
+ * auto-compact threshold (docs/48-compaction-design.md §L1) — used by the
+ * mid-turn compaction tests to fire the usage-token trigger.
+ */
+const NEAR_WINDOW_USAGE: Usage = { inputTokens: 185_000, outputTokens: 5_000 };
 
 function baseConfig(overrides: Partial<RunConfig> = {}): RunConfig {
   const c: RunConfig = {
@@ -1063,14 +1069,16 @@ describe("HardenedNativeEngine: retry", () => {
 // ===========================================================================
 
 describe("HardenedNativeEngine: mid-turn compaction", () => {
-  // T3.1 — Tool results push tokens above threshold → mid-turn compaction fires.
+  // T3.1 — Provider-reported usage crosses the window−13k threshold →
+  // mid-turn compaction fires (usage-token trigger, docs/48 §L1).
   it("T3.1: mid-turn compaction fires when tool results exceed threshold", async () => {
     const bigOutput = "x".repeat(5_000);
     const provider = new MockProvider({
       scripts: [
         [
           { type: "tool-call", id: "t1", name: "read", input: {} },
-          { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
+          // 190k of a 200k window ≥ the 187k auto-compact threshold.
+          { type: "finish", stopReason: "tool_use", usage: NEAR_WINDOW_USAGE },
         ],
         [
           { type: "text-delta", text: "done" },
@@ -1153,7 +1161,7 @@ describe("HardenedNativeEngine: mid-turn compaction", () => {
       scripts: [
         [
           { type: "tool-call", id: "t1", name: "read", input: {} },
-          { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
+          { type: "finish", stopReason: "tool_use", usage: NEAR_WINDOW_USAGE },
         ],
         [
           { type: "text-delta", text: "continued" },
@@ -1216,11 +1224,12 @@ describe("HardenedNativeEngine: mid-turn compaction", () => {
 
     const provider = new MockProvider({
       scripts: [
-        // Turn 1: tool call. After pre-turn compaction, the tool result's
-        // big output pushes context above threshold again.
+        // Turn 1: tool call. The reported usage puts context above the
+        // window−13k threshold, so mid-turn compaction fires after the tool
+        // results land.
         [
           { type: "tool-call", id: "t1", name: "read", input: {} },
-          { type: "finish", stopReason: "tool_use", usage: DEFAULT_USAGE },
+          { type: "finish", stopReason: "tool_use", usage: NEAR_WINDOW_USAGE },
         ],
         // Turn 2: final response.
         [
