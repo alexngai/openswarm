@@ -44,6 +44,22 @@ _FORWARDED_ENV = (
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_MODEL",
+    # Azure OpenAI DIRECT (azureoai/<deployment>) — the in-sandbox transport reads these
+    # (AzureTransportProvider: AZURE_API_BASE|AZURE_OPENAI_ENDPOINT + AZURE_OPENAI_API_KEY
+    # + optional AZURE_OPENAI_API_VERSION). Needed because the sandbox can't reach a gateway.
+    "AZURE_API_BASE",
+    "AZURE_OPENAI_ENDPOINT",
+    "AZURE_OPENAI_API_KEY",
+    "AZURE_OPENAI_API_VERSION",
+    # LiteLLM gateway route (litellm/|gateway/|bedrock/|azure/ prefixes).
+    "LITELLM_API_KEY",
+    "LITELLM_BASE_URL",
+    # Amazon Bedrock direct (Claude Agent SDK / inference-profile model ids).
+    "CLAUDE_CODE_USE_BEDROCK",
+    "AWS_REGION",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
 )
 
 _DEFAULT_PERMISSION_MODE = "danger-full-access"
