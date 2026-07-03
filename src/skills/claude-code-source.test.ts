@@ -230,6 +230,68 @@ This is the body.
     expect(loaded!.body.startsWith("\n")).toBe(false);
   });
 
+  it("parses literal block-scalar descriptions (skill-tree style)", async () => {
+    const skillsDir = path.join(root, ".claude", "skills");
+    // Exactly what skill-tree's serializer writes for mirrored skills.
+    const content = `---
+name: reuse-existing-helpers
+description: |
+  Adding a function variant that transforms existing output.
+  Use when "uppercase", "reuse", "wrapper function".
+version: 1.0.0
+tags:
+  - javascript
+---
+
+Body.
+`;
+    writeSkill(skillsDir, "reuse-existing-helpers", content, true);
+
+    const src = new ClaudeCodeSource({
+      cwd: root,
+      homedir: root,
+      envOverrides: {},
+      maxAncestorDepth: 0,
+    });
+
+    const manifests = await src.discover();
+    expect(manifests).toHaveLength(1);
+    expect(manifests[0]!.description).toBe(
+      'Adding a function variant that transforms existing output.\nUse when "uppercase", "reuse", "wrapper function".',
+    );
+    // Keys after the block still parse.
+    expect(manifests[0]!.triggers).toBeUndefined();
+  });
+
+  it("parses folded block scalars and chomping variants", async () => {
+    const skillsDir = path.join(root, ".claude", "skills");
+    const content = `---
+name: folded-skill
+description: >-
+  A folded description
+  that spans lines.
+
+  Second paragraph.
+---
+
+Body.
+`;
+    writeSkill(skillsDir, "folded-skill", content, true);
+
+    const src = new ClaudeCodeSource({
+      cwd: root,
+      homedir: root,
+      envOverrides: {},
+      maxAncestorDepth: 0,
+    });
+
+    const manifests = await src.discover();
+    expect(manifests).toHaveLength(1);
+    expect(manifests[0]!.description).toBe(
+      "A folded description that spans lines.\nSecond paragraph.",
+    );
+  });
+
   it("load() returns undefined for unknown skill id", async () => {
     const src = new ClaudeCodeSource({
       cwd: root,

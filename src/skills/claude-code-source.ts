@@ -60,12 +60,17 @@ interface ParsedFrontmatter {
 
 /**
  * Parse YAML-like frontmatter. Supports:
- *   - string scalars:  key: value
- *   - boolean:         key: true / false
- *   - arrays:          key:\n  - item1\n  - item2
+ *   - string scalars:      key: value
+ *   - boolean:             key: true / false
+ *   - arrays:              key:\n  - item1\n  - item2
+ *   - block scalars:       key: |  /  key: >  (with optional -/+ chomping)
+ *     Literal (|) preserves line breaks; folded (>) joins lines with spaces
+ *     and keeps blank lines as paragraph breaks. Trailing newlines are
+ *     always trimmed (chomping indicators are accepted but not
+ *     distinguished — manifests only need the text).
  *
- * Does NOT support multi-line block scalars (| or >). Returns null if
- * parsing fails.
+ * skill-tree serializes multi-line descriptions as `description: |`, so
+ * block-scalar support keeps mirrored/copied SKILL.md files readable here.
  */
 function parseFrontmatter(raw: string): ParsedFrontmatter | null {
   const result: ParsedFrontmatter = {};
@@ -110,13 +115,32 @@ function parseFrontmatter(raw: string): ParsedFrontmatter | null {
       continue;
     }
 
-    // Block scalar indicators are unsupported — skip key.
-    if (rest === "|" || rest === ">" || rest === "|-" || rest === ">-") {
-      // Skip the block — advance past indented continuation lines.
+    // Block scalar: collect indented continuation lines.
+    const blockMatch = rest.match(/^([|>])[+-]?$/);
+    if (blockMatch) {
+      const isFolded = blockMatch[1] === ">";
+      const blockLines: string[] = [];
+      let indent: number | null = null;
       i++;
-      while (i < lines.length && /^\s/.test(lines[i]!)) {
+      while (i < lines.length) {
+        const blockLine = lines[i]!;
+        if (blockLine.trim() === "") {
+          blockLines.push("");
+          i++;
+          continue;
+        }
+        const lineIndent = blockLine.match(/^\s*/)![0].length;
+        if (lineIndent === 0) break; // back at top level — block ended
+        if (indent === null) indent = lineIndent;
+        blockLines.push(blockLine.slice(Math.min(indent, lineIndent)));
         i++;
       }
+      // Drop trailing blank lines (they belong to the chomping indicator,
+      // which we don't distinguish).
+      while (blockLines.length > 0 && blockLines[blockLines.length - 1] === "") {
+        blockLines.pop();
+      }
+      result[key] = isFolded ? foldBlockLines(blockLines) : blockLines.join("\n");
       continue;
     }
 
@@ -138,6 +162,27 @@ function parseFrontmatter(raw: string): ParsedFrontmatter | null {
   }
 
   return result;
+}
+
+/**
+ * Fold block-scalar lines YAML `>`-style: adjacent non-blank lines join
+ * with a space; blank lines become paragraph breaks (newline).
+ */
+function foldBlockLines(lines: readonly string[]): string {
+  const paragraphs: string[] = [];
+  let current: string[] = [];
+  for (const line of lines) {
+    if (line === "") {
+      if (current.length > 0) {
+        paragraphs.push(current.join(" "));
+        current = [];
+      }
+    } else {
+      current.push(line);
+    }
+  }
+  if (current.length > 0) paragraphs.push(current.join(" "));
+  return paragraphs.join("\n");
 }
 
 /**
