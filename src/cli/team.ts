@@ -16,6 +16,7 @@ import { loadTemplate } from "../swarm/openteams/loader.js";
 import { openteamsToTeamSpec } from "../swarm/openteams/mapping.js";
 import { createMapSidecar, type MapSidecar } from "../host/map-sidecar.js";
 import { TeamSpecSchema, type TeamSpec, type TopologyKind } from "../swarm/team-spec.js";
+import { StatusResultSchema } from "../swarm/team-daemon-protocol.js";
 import { computeTeamPaths, teamsBaseDir } from "./team-paths.js";
 import { buildAdapterHost, type AdapterHostOptions } from "./adapter-host.js";
 import { attachLaneTrace } from "./trace-output.js";
@@ -592,6 +593,53 @@ export async function runTeamList(): Promise<number> {
   process.stdout.write("NAME\tPID\n");
   for (const { name, pid } of live) {
     process.stdout.write(`${name}\t${pid}\n`);
+  }
+  return 0;
+}
+
+/**
+ * `team status <name>` — issue the daemon's `status` RPC and print the roster
+ * snapshot (member id / role / agentId / state). Mirrors the transport +
+ * not-running handling of the other daemon-client verbs.
+ */
+export async function runTeamStatus(name: string): Promise<number> {
+  const { sockPath } = teamPaths(name);
+  const resp = await rpcOnce(sockPath, {
+    kind: "request",
+    id: `cli-status-${Date.now()}`,
+    method: "status",
+    params: {},
+  });
+  if (resp === null) {
+    process.stderr.write(
+      `error: team "${name}" not running, or daemon unreachable at ${sockPath}.\n`,
+    );
+    return 2;
+  }
+  if (!resp.ok) {
+    process.stderr.write(
+      `error: team status rejected (${resp.error.code}): ${resp.error.message}\n`,
+    );
+    return 2;
+  }
+  const parsed = StatusResultSchema.safeParse(resp.result);
+  if (!parsed.success) {
+    process.stderr.write(
+      `error: team "${name}" returned a malformed status result: ${parsed.error.message}\n`,
+    );
+    return 2;
+  }
+  const status = parsed.data;
+  process.stdout.write(
+    `team "${status.teamName}"\ttopology=${status.topology}\tscope=${status.scope}\tstarted=${new Date(status.startedAt).toISOString()}\n`,
+  );
+  process.stdout.write("MEMBER\tROLE\tAGENT\tSTATE\n");
+  if (status.members.length === 0) {
+    process.stdout.write("(no members)\n");
+  } else {
+    for (const m of status.members) {
+      process.stdout.write(`${m.memberId}\t${m.role}\t${m.agentId}\t${m.state}\n`);
+    }
   }
   return 0;
 }

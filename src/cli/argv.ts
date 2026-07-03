@@ -194,6 +194,7 @@ export type ParsedArgs =
     }
   | { kind: "team-send"; name: string; prompt: string }
   | { kind: "team-list" }
+  | { kind: "team-status"; name: string }
   | { kind: "team-stop"; name: string }
   | { kind: "team-kill"; name: string }
   | { kind: "team-logs"; name: string; follow: boolean }
@@ -1199,6 +1200,24 @@ export function parseArgv(args: string[]): ParsedArgs {
           };
         }
         return { kind: "team-kill", name };
+      }
+      if (subSub === "status") {
+        const name = positionals[1];
+        if (name === undefined) {
+          return {
+            kind: "error",
+            message: "team status requires a team name",
+            showHelp: true,
+          };
+        }
+        if (positionals.length > 2) {
+          return {
+            kind: "error",
+            message: `unexpected extra positional for team status: ${positionals[2]}`,
+            showHelp: true,
+          };
+        }
+        return { kind: "team-status", name };
       }
       if (subSub === "logs") {
         const name = positionals[1];

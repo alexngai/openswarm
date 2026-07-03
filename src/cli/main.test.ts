@@ -156,6 +156,7 @@ vi.mock("./team.js", () => ({
   runTopology: vi.fn().mockResolvedValue(0),
   runTeamSend: vi.fn().mockResolvedValue(0),
   runTeamList: vi.fn().mockResolvedValue(0),
+  runTeamStatus: vi.fn().mockResolvedValue(0),
   runTeamStop: vi.fn().mockResolvedValue(0),
   runTeamKill: vi.fn().mockResolvedValue(0),
 }));
@@ -482,6 +483,16 @@ describe("main", () => {
 
     expect(code).toBe(0);
     expect(runTeamSend).toHaveBeenCalledWith("sprint", "do the thing");
+  });
+
+  it("team status <name> → delegates to runTeamStatus with the team name", async () => {
+    const { main } = await import("./main.js");
+    const { runTeamStatus } = await import("./team.js");
+
+    const code = await main(["team", "status", "sprint"]);
+
+    expect(code).toBe(0);
+    expect(runTeamStatus).toHaveBeenCalledWith("sprint");
   });
 
   it("host --port → dynamically imports and delegates to runHost with the port", async () => {
