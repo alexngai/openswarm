@@ -26,6 +26,7 @@
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { spawn as nodeSpawn } from "node:child_process";
+import { resolveSkillsDir } from "./providers/skill-provider.js";
 
 const SPAWN_GAP_MS = 10_000;
 const DEFAULT_INTERVAL_HOURS = 24;
@@ -135,6 +136,30 @@ export function resolveOnPath(bin: string, env: NodeJS.ProcessEnv = process.env)
   return null;
 }
 
+/**
+ * Resolve the shared skill-tree bank path to pass to `cogcore run` as
+ * `--shared-bank`, or null when mirroring should be off.
+ *
+ * With a shared bank, cogcore mirrors playbooks it graduates into the same
+ * filesystem store the SkillProvider reads (`~/.skill-tree` by default) — the
+ * publish leg openhive's materialization bridge would otherwise provide, so
+ * the cross-repo loop closes with no openhive running.
+ *
+ * `OPENSWARM_SHARED_SKILL_BANK`: "0"/"off"/"false"/"no" disables, a path
+ * forces that bank (created if missing). Unset: use the SkillProvider's bank
+ * (`OPENSWARM_SKILLS_DIR` or `~/.skill-tree`) only when it already exists —
+ * we never create a machine-global store unprompted.
+ */
+export function resolveSharedBankArg(env: NodeJS.ProcessEnv = process.env): string | null {
+  const raw = env.OPENSWARM_SHARED_SKILL_BANK?.trim();
+  if (raw !== undefined && raw.length > 0) {
+    if (isDisabled(raw)) return null;
+    return raw;
+  }
+  const skillsDir = resolveSkillsDir(env.OPENSWARM_SKILLS_DIR);
+  return fs.existsSync(skillsDir) ? skillsDir : null;
+}
+
 /** Resolve the consolidation command. Returns null when nothing is runnable. */
 export function resolveCommand(
   cwd: string,
@@ -148,7 +173,10 @@ export function resolveCommand(
   // the bare name against a (possibly different) child PATH.
   const resolved = resolveOnPath(DEFAULT_BIN, env);
   if (!resolved) return null;
-  return { file: resolved, args: ["run", "--once", "--repo", cwd], shell: false };
+  const args = ["run", "--once", "--repo", cwd];
+  const sharedBank = resolveSharedBankArg(env);
+  if (sharedBank !== null) args.push("--shared-bank", sharedBank);
+  return { file: resolved, args, shell: false };
 }
 
 export type SpawnFn = typeof nodeSpawn;
