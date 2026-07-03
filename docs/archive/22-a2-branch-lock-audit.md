@@ -190,12 +190,12 @@ The full implementation already exceeds claw-parity in the two areas where swarm
 
 | File | Lines | Role |
 |---|---|---|
-| `/Users/alexngai/GitHub/openswarm/src/swarm/git/branch-lock.ts` | 331 | Layer A: collision detector (claw port) + Layer B: atomic file lock (new) |
-| `/Users/alexngai/GitHub/openswarm/src/swarm/git/branch-lock.test.ts` | 307 | Tests for both layers |
-| `/Users/alexngai/GitHub/openswarm/src/swarm/git/stale-base.ts` | 77 | HEAD vs expected-base comparison |
-| `/Users/alexngai/GitHub/openswarm/src/swarm/git/stale-base.test.ts` | 86 | Real-git-repo tests |
-| `/Users/alexngai/GitHub/openswarm/src/swarm/git/stale-branch.ts` | 191 | Branch freshness + policy application |
-| `/Users/alexngai/GitHub/openswarm/src/swarm/git/stale-branch.test.ts` | 306 | Pure policy + mocked git tests |
-| `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/runtime/src/branch_lock.rs` | 145 | Claw reference: collision detector only |
-| `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/runtime/src/stale_base.rs` | 430 | Claw reference: base-commit check |
-| `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/runtime/src/stale_branch.rs` | 418 | Claw reference: freshness + policy |
+| `src/swarm/git/branch-lock.ts` | 331 | Layer A: collision detector (claw port) + Layer B: atomic file lock (new) |
+| `src/swarm/git/branch-lock.test.ts` | 307 | Tests for both layers |
+| `src/swarm/git/stale-base.ts` | 77 | HEAD vs expected-base comparison |
+| `src/swarm/git/stale-base.test.ts` | 86 | Real-git-repo tests |
+| `src/swarm/git/stale-branch.ts` | 191 | Branch freshness + policy application |
+| `src/swarm/git/stale-branch.test.ts` | 306 | Pure policy + mocked git tests |
+| `references/claw-code/rust/crates/runtime/src/branch_lock.rs` | 145 | Claw reference: collision detector only |
+| `references/claw-code/rust/crates/runtime/src/stale_base.rs` | 430 | Claw reference: base-commit check |
+| `references/claw-code/rust/crates/runtime/src/stale_branch.rs` | 418 | Claw reference: freshness + policy |

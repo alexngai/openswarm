@@ -21,8 +21,7 @@ multi-agent literature on openswarm, then show structural fixes overcome them (d
 
 ## Engine: `swarmkit-eval`
 
-We don't build a bespoke harness — we depend on
-[`swarmkit-eval`](https://github.com/alexngai/swarmkit/tree/main/src/eval), which already provides the
+We don't build a bespoke harness — we depend on the `swarmkit-eval` npm package, which already provides the
 `(task × arm × model × seed)` matrix runner with **ground-truth grading**, sandboxed backends
 (in-process / docker / e2b / modal / ec2), the SWE-bench / GAIA(HAL) / **MARBLE multi-agent**
 benchmarks, LiteLLM-gateway model routing (for heterogeneity), a MAB driver (for the H4 learned-priors
@@ -38,8 +37,8 @@ openswarm is already a **registered harness** in swarmkit-eval
 without reinstalling (per the multi-repo convention):
 
 ```sh
-ln -sfn /Users/alexngai/GitHub/swarmkit/src/eval node_modules/swarmkit-eval
-ls -la node_modules/swarmkit-eval   # → … -> /Users/alexngai/GitHub/swarmkit/src/eval
+ln -sfn ../swarmkit/src/eval node_modules/swarmkit-eval   # adjust to your swarmkit checkout path
+ls -la node_modules/swarmkit-eval   # → … -> <path-to-swarmkit>/src/eval
 ```
 
 If you change the sibling's source, rebuild its `dist/` (`cd …/swarmkit/src/eval && npm run build`) —

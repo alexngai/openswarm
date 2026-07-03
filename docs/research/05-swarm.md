@@ -310,17 +310,17 @@ This is the biggest gap vs. what the 04-tool-tiers.md doc describes (`send_messa
 
 Slice files (all absolute):
 
-- /Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/runtime/src/task_registry.rs
-- /Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/runtime/src/task_packet.rs
-- /Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/runtime/src/team_cron_registry.rs
-- /Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/runtime/src/worker_boot.rs
-- /Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/runtime/src/lane_events.rs
-- /Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/runtime/src/branch_lock.rs
-- /Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/runtime/src/stale_base.rs
-- /Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/runtime/src/stale_branch.rs
-- /Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/runtime/src/remote.rs (upstream proxy bootstrap; not agent-RPC)
+- references/claw-code/rust/crates/runtime/src/task_registry.rs
+- references/claw-code/rust/crates/runtime/src/task_packet.rs
+- references/claw-code/rust/crates/runtime/src/team_cron_registry.rs
+- references/claw-code/rust/crates/runtime/src/worker_boot.rs
+- references/claw-code/rust/crates/runtime/src/lane_events.rs
+- references/claw-code/rust/crates/runtime/src/branch_lock.rs
+- references/claw-code/rust/crates/runtime/src/stale_base.rs
+- references/claw-code/rust/crates/runtime/src/stale_branch.rs
+- references/claw-code/rust/crates/runtime/src/remote.rs (upstream proxy bootstrap; not agent-RPC)
 
-Tool sections in `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/crates/tools/src/lib.rs`:
+Tool sections in `references/claw-code/rust/crates/tools/src/lib.rs`:
 
 - Agent tool spec: L572–587; input struct L2305–2312; `execute_agent_with_spawn` L3481–3559; thread spawn L3561–3586; allowlists L3642–3721
 - AskUserQuestion: spec L729–745; impl L1327–1375; input L2404–2409
@@ -338,4 +338,4 @@ Tool sections in `/Users/alexngai/GitHub/openswarm/references/claw-code/rust/cra
 - Dispatch table: L1230–1284
 
 Out of slice but flagged:
-- /Users/alexngai/GitHub/openswarm/references/claw-code/src/remote_runtime.py — Python, skipped
+- references/claw-code/src/remote_runtime.py — Python, skipped

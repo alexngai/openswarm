@@ -180,7 +180,7 @@ Our local `test/fixtures/codex-app-server/v2/ThreadStartParams.ts` does NOT cont
   "method": "thread/start",
   "params": {
     "model": "gpt-5.4",
-    "cwd": "/Users/alexngai/GitHub/openswarm",
+    "cwd": "/tmp/openswarm-test",
     "approvalPolicy": "never",
     "sandbox": "danger-full-access",
     "experimentalRawEvents": false,
@@ -415,7 +415,7 @@ The Python SDK at `sdk/python/src/codex_app_server/` (in the upstream codex repo
 Re-run the probe at any time with:
 
 ```bash
-cd /Users/alexngai/Github/openswarm
+cd /path/to/openswarm
 node scripts/codex-app-server-dynamic-tool-spike.mjs
 # expect: VERDICT: PASS (GREEN) at the bottom
 # fixture overwritten at: test/fixtures/codex-app-server/dynamic-tool-call-spike.jsonl
