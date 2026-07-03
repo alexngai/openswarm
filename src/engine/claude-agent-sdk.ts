@@ -49,29 +49,67 @@ import { dirname, join } from "node:path";
  * no native binary is present — non-Claude engines (`--framework native`,
  * `codex-*`, or `auto` with a non-Claude model) don't need it.
  */
-function sdkNativePackages(): string[] {
-  const { platform, arch } = process;
+function sdkNativePackages(platform: NodeJS.Platform, arch: string): string[] {
   const base = `@anthropic-ai/claude-agent-sdk-${platform}-${arch}`;
   // On linux npm installs either the glibc or the musl (Alpine) build.
   return platform === "linux" ? [base, `${base}-musl`] : [base];
 }
 
+/**
+ * Compute the ordered on-disk search path for the SDK native `claude` helper,
+ * given the runtime `execPath` and target `platform`/`arch`. Pure + injectable
+ * so the resolution can be unit-tested without spawning or touching the real fs
+ * (the compiled-binary bug this guards against only reproduces from a packed
+ * binary — see resolveClaudeExecutable docstring).
+ *
+ * Order: co-located next to the executable first, then
+ * `node_modules/<sdk-native-pkg>/claude` at every ancestor of the executable
+ * dir (hoisting-agnostic; walks up to the fs root).
+ */
+export function claudeExecutableCandidates(
+  execPath: string,
+  platform: NodeJS.Platform,
+  arch: string,
+): string[] {
+  const exe = platform === "win32" ? "claude.exe" : "claude";
+  const execDir = dirname(execPath);
+  const pkgs = sdkNativePackages(platform, arch);
+  const candidates: string[] = [join(execDir, exe)]; // 1. co-located
+  // 2. node_modules/<pkg>/claude at each ancestor dir (hoisting-agnostic).
+  let dir = execDir;
+  for (;;) {
+    for (const p of pkgs) candidates.push(join(dir, "node_modules", ...p.split("/"), exe));
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return candidates;
+}
+
+/**
+ * Pure form of {@link resolveClaudeExecutable}: returns the first candidate that
+ * `exists`, or `undefined` when none do (dev/node runs, where the SDK's own
+ * require.resolve works). Injectable `exists` keeps it testable.
+ */
+export function resolveClaudeExecutablePath(
+  execPath: string,
+  exists: (candidate: string) => boolean,
+  platform: NodeJS.Platform,
+  arch: string,
+): string | undefined {
+  return claudeExecutableCandidates(execPath, platform, arch).find(exists);
+}
+
 let _claudeExe: string | null | undefined;
 function resolveClaudeExecutable(): string | undefined {
   if (_claudeExe === undefined) {
-    const exe = process.platform === "win32" ? "claude.exe" : "claude";
-    const execDir = dirname(process.execPath);
-    const pkgs = sdkNativePackages();
-    const candidates: string[] = [join(execDir, exe)]; // 1. co-located
-    // 2. node_modules/<pkg>/claude at each ancestor dir (hoisting-agnostic).
-    let dir = execDir;
-    for (;;) {
-      for (const p of pkgs) candidates.push(join(dir, "node_modules", ...p.split("/"), exe));
-      const parent = dirname(dir);
-      if (parent === dir) break;
-      dir = parent;
-    }
-    _claudeExe = candidates.find((c) => existsSync(c)) ?? null;
+    _claudeExe =
+      resolveClaudeExecutablePath(
+        process.execPath,
+        existsSync,
+        process.platform,
+        process.arch,
+      ) ?? null;
   }
   return _claudeExe ?? undefined;
 }

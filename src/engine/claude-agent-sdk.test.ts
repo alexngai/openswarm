@@ -59,7 +59,11 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => {
 // Now import the engine (after mock is established).
 // ---------------------------------------------------------------------------
 
-import { ClaudeAgentSdkEngine } from "./claude-agent-sdk.js";
+import {
+  ClaudeAgentSdkEngine,
+  claudeExecutableCandidates,
+  resolveClaudeExecutablePath,
+} from "./claude-agent-sdk.js";
 import type { RunConfig } from "./index.js";
 
 // ---------------------------------------------------------------------------
@@ -95,6 +99,103 @@ async function collectEvents(config: RunConfig): Promise<NormalizedEvent[]> {
   }
   return events;
 }
+
+// ---------------------------------------------------------------------------
+// Scenario 0: native `claude` executable resolution (compiled-binary spawn bug)
+//
+// Regression guard for the "Claude Code process exited with code 1" launch
+// blocker: inside a `bun build --compile` standalone binary the SDK's own
+// require.resolve can't see node_modules (embedded fs), so query() spawned a
+// bad path and the child died. resolveClaudeExecutablePath() must compute a
+// REAL on-disk path (co-located, else node_modules at any ancestor) so we can
+// hand it to the SDK via pathToClaudeCodeExecutable. Pure + fs-injected so it
+// runs without spawning or a packed binary.
+// ---------------------------------------------------------------------------
+
+describe("Scenario 0: native claude executable resolution", () => {
+  it("orders candidates: co-located first, then node_modules up every ancestor", () => {
+    const cands = claudeExecutableCandidates(
+      "/opt/openswarm/openswarm",
+      "darwin",
+      "arm64",
+    );
+    expect(cands[0]).toBe("/opt/openswarm/claude"); // co-located wins
+    expect(cands).toContain(
+      "/opt/openswarm/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude",
+    );
+    // walks to the fs root
+    expect(cands).toContain(
+      "/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude",
+    );
+  });
+
+  it("linux includes both glibc and musl native package names", () => {
+    const cands = claudeExecutableCandidates("/app/openswarm", "linux", "x64");
+    expect(cands).toContain(
+      "/app/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude",
+    );
+    expect(cands).toContain(
+      "/app/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64-musl/claude",
+    );
+  });
+
+  it("win32 resolves claude.exe", () => {
+    const cands = claudeExecutableCandidates(
+      "C:\\tools\\openswarm\\openswarm.exe",
+      "win32",
+      "x64",
+    );
+    expect(cands.some((c) => c.endsWith("claude.exe"))).toBe(true);
+    expect(cands.some((c) => c.endsWith("/claude") || c.endsWith("\\claude"))).toBe(
+      false,
+    );
+  });
+
+  it("compiled binary: resolves the node_modules native claude (the fix)", () => {
+    // Co-located `claude` absent (fix stopped bundling it); the SDK native
+    // optional-dep binary lives in node_modules alongside the packed binary.
+    const nativePath =
+      "/opt/openswarm/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude";
+    const exists = (p: string) => p === nativePath;
+    expect(
+      resolveClaudeExecutablePath(
+        "/opt/openswarm/openswarm",
+        exists,
+        "darwin",
+        "arm64",
+      ),
+    ).toBe(nativePath);
+  });
+
+  it("npm global layout: finds native claude at a sibling node_modules ancestor", () => {
+    // <g>/node_modules/@openswarm/cli-darwin-arm64/openswarm spawns; native dep
+    // hoisted to <g>/node_modules/@anthropic-ai/...
+    const nativePath =
+      "/usr/local/lib/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude";
+    const exists = (p: string) => p === nativePath;
+    expect(
+      resolveClaudeExecutablePath(
+        "/usr/local/lib/node_modules/@openswarm/cli-darwin-arm64/openswarm",
+        exists,
+        "darwin",
+        "arm64",
+      ),
+    ).toBe(nativePath);
+  });
+
+  it("dev/node run: returns undefined so the SDK's own resolution takes over", () => {
+    // Nothing on disk next to a global node → undefined (SDK require.resolve
+    // works in dev because node_modules is on the real fs).
+    expect(
+      resolveClaudeExecutablePath(
+        "/usr/bin/node",
+        () => false,
+        "darwin",
+        "arm64",
+      ),
+    ).toBeUndefined();
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Scenario 1: Simple text-only response

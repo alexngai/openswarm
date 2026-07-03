@@ -77,21 +77,32 @@ kwargs/env — no swarmkit code change is needed. In a `sweAtlasHarborArms` arm:
 ```
 
 and add this directory to the Harbor command env so it's importable, e.g. set
-`PYTHONPATH=/Users/alexngai/GitHub/openswarm/integrations/harbor` on the Harbor process
+`PYTHONPATH=/path/to/openswarm/integrations/harbor` on the Harbor process
 (alongside the existing `HARBOR_COMMAND_JSON` setup), and pass creds via `agentEnv`
 (`--ae`). Token usage lands on `TrialResult.agent_result.n_input_tokens/…`, which the
 swe-atlas driver already reads.
 
-## ⚠️ Live-run blocker (must fix before a real eval)
+## ✅ Live-run blocker — RESOLVED (v0.3.7 / current v0.3.8)
 
-As of 2026-07-02, `openswarm prompt --headless` fails in-process with
-`transport: Claude Code process exited with code 1`: openswarm's engine
-(`src/engine/claude-agent-sdk.ts`, the SDK `query()`) spawns the bundled `claude` and
-that child exits 1 — **even though the same bundled binary
-(`node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude`, v2.1.116) runs fine
-when invoked directly** with `-p`. Auth is fine (`openswarm doctor` → keychain pass). So
-it's an openswarm engine-spawn bug, not CLI shape or auth. This blocks *any* live
-openswarm run (Harbor or the swarmkit HAL bridge) until fixed.
+**Historical (≤ v0.3.5):** `openswarm prompt --headless` failed in-process with
+`transport: Claude Code process exited with code 1`. Inside a `bun build --compile`
+standalone binary the Claude Agent SDK's own resolver
+(`require.resolve("@anthropic-ai/claude-agent-sdk-<plat>/claude")`) can't see
+`node_modules` (it isn't in the embedded fs), so `query()` spawned a bad path and the
+child died at startup **before emitting any `result`** — hence the bare exit-1 (distinct
+from an auth failure, which surfaces as `Claude Code returned an error result: …`).
+
+**Fix (`3d4be49`, v0.3.7):** `src/engine/claude-agent-sdk.ts` now computes a real
+on-disk path (`resolveClaudeExecutablePath`) — co-located next to the executable, else
+`node_modules/@anthropic-ai/claude-agent-sdk-<plat>-<arch>/claude` at any ancestor — and
+hands it to the SDK via `pathToClaudeCodeExecutable`. Regression-tested in
+`src/engine/claude-agent-sdk.test.ts` (Scenario 0).
+
+Verified on the current tree (v0.3.8) with the compiled darwin-arm64 binary
+(`packages/cli-darwin-arm64/openswarm`): `prompt --headless --output-format json` emits a
+valid JSONL stream (`text_delta` → `message_stop` with usage, exit 0) against real
+keychain auth. A dummy key now cleanly yields the auth-error result rather than a spawn
+crash.
 
 Everything in this directory is validated offline: the parser tests pass, and the agent
 class instantiates + runs end-to-end against the real Harbor `BaseInstalledAgent` /
