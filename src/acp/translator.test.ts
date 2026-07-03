@@ -28,7 +28,7 @@ describe("makeAcpTranslator", () => {
     const t = makeAcpTranslator(conn, "s1");
     const seq: NormalizedEvent[] = [
       { type: "tool_use_start", id: "t1", name: "read_file" },
-      { type: "tool_use_input", id: "t1", jsonDelta: '{"path":"a.ts","offset":4}' },
+      { type: "tool_use_input", id: "t1", jsonDelta: '{"file_path":"a.ts","offset":4}' },
       { type: "tool_use_end", id: "t1" },
       { type: "tool_result", toolUseId: "t1", content: "file body", isError: false },
     ];
@@ -44,7 +44,7 @@ describe("makeAcpTranslator", () => {
       sessionUpdate: "tool_call_update",
       toolCallId: "t1",
       status: "in_progress",
-      locations: [{ path: "a.ts", line: 5 }],
+      locations: [{ path: "a.ts", line: 4 }],
     });
     expect(updates[2]).toMatchObject({
       sessionUpdate: "tool_call_update",

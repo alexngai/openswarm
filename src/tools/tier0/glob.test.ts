@@ -49,13 +49,13 @@ describe("glob", () => {
     expect(lines.every((l) => l.endsWith(".ts"))).toBe(true);
   });
 
-  it("returns empty output when no files match", async () => {
+  it("returns 'No files found' when no files match", async () => {
     await fs.writeFile(path.join(tmpDir, "a.js"), "");
 
     const result = await globTool.execute({ pattern: "*.ts" }, ctx(tmpDir));
     expect(result.status).toBe("ok");
     const output = (result as { status: "ok"; output: string }).output;
-    expect(output.trim()).toBe("");
+    expect(output).toBe("No files found");
   });
 
   it("respects .gitignore patterns", async () => {

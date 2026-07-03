@@ -1,15 +1,13 @@
 /**
  * edit_file — exact-string replacement with mandatory uniqueness check.
  *
- * CRITICAL DIVERGENCE FROM CLAW-CODE:
- * claw-code's Edit tool silently replaces only the first occurrence of
- * `old_string` when multiple matches exist. This tool rejects ambiguous
- * replacements: if `old_string` appears more than once and `replace_all`
- * is not true, the call fails with an actionable error. The caller must
- * either narrow `old_string` to be unique or pass `replace_all: true`.
- *
- * This is intentional. Silent first-match behavior hides bugs when the
- * model issues a replacement that matches the wrong site.
+ * Schema and error strings follow Claude Code's Edit tool (canonical
+ * `file_path` param, "String to replace not found in file." / "Found N
+ * matches…" errors, read-before-edit enforcement) so trained models
+ * recognize the contract and self-correct without fine-tuning. Like Claude
+ * Code, ambiguous replacements are rejected: if `old_string` appears more
+ * than once and `replace_all` is not true, the call fails with an
+ * actionable error.
  */
 
 import * as fs from "node:fs/promises";
@@ -20,25 +18,29 @@ import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { ToolAccesses, type ToolAccesses as ToolAccessesType } from "../access.js";
-import { isUnderCwd } from "./internal.js";
+import { isUnderCwd, aliasParams } from "./internal.js";
+import { hasFileBeenRead, recordFileRead, READ_BEFORE_EDIT_ERROR } from "./read-state.js";
 
-const inputSchema = z.object({
-  path: z.string(),
+const paramsSchema = z.object({
+  file_path: z.string(),
   old_string: z.string(),
   new_string: z.string(),
   replace_all: z.boolean().optional(),
 });
 
-type Input = z.infer<typeof inputSchema>;
+const inputSchema = z.preprocess(aliasParams({ path: "file_path" }), paramsSchema);
+
+type Input = z.infer<typeof paramsSchema>;
 
 const spec: ToolSpec = {
   name: "edit_file",
   description:
-    "Replace an exact string in a file. " +
-    "If old_string appears more than once and replace_all is not true, the call fails — " +
-    "narrow old_string to be unique or pass replace_all: true. " +
+    "Performs exact string replacements in files. " +
+    "You must use the read_file tool at least once before editing — edits to unread files fail. " +
+    "The edit fails if old_string is not found, or if it is found multiple times and replace_all is not true — " +
+    "provide more surrounding context to make old_string unique, or pass replace_all: true. " +
     "Uses atomic write (temp file + rename) so partial writes never corrupt the target.",
-  inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
+  inputSchema: z.toJSONSchema(paramsSchema) as JsonSchema,
   requiredPermission: "write",
   tier: 0,
 };
@@ -115,6 +117,21 @@ export class TocttouError extends Error {
   }
 }
 
+/**
+ * Claude Code's success-message suffix: tells the model the post-edit file
+ * state is already in context, suppressing wasteful read-backs.
+ */
+export const FILE_STATE_CURRENT_SUFFIX =
+  " (file state is current in your context \u2014 no need to Read it back)";
+
+/**
+ * Claude Code's stale-file error: the model responds by re-reading and
+ * retrying the edit.
+ */
+export const STALE_FILE_ERROR =
+  "File has been modified since read, either by the user or by a linter. " +
+  "Read it again before attempting to write it.";
+
 async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolResult> {
   const parsed = inputSchema.safeParse(raw);
   if (!parsed.success) {
@@ -122,14 +139,21 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   }
   const input: Input = parsed.data;
 
+  if (input.old_string === input.new_string) {
+    return {
+      status: "error",
+      message: "No changes to make: old_string and new_string are exactly the same.",
+    };
+  }
+
   // Resolve and enforce workspace boundary.
-  const resolved = path.resolve(ctx.cwd, input.path);
+  const resolved = path.resolve(ctx.cwd, input.file_path);
 
   // Also check that the resolved path is not a symlink escaping the workspace.
   if (!isUnderCwd(resolved, ctx.cwd)) {
     return {
       status: "error",
-      message: `path "${input.path}" resolves outside the workspace boundary`,
+      message: `path "${input.file_path}" resolves outside the workspace boundary`,
     };
   }
   try {
@@ -139,12 +163,18 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
       if (!isUnderCwd(real, ctx.cwd)) {
         return {
           status: "error",
-          message: `path "${input.path}" is a symlink pointing outside the workspace boundary`,
+          message: `path "${input.file_path}" is a symlink pointing outside the workspace boundary`,
         };
       }
     }
   } catch {
     // File doesn't exist; fall through — read below will error naturally.
+  }
+
+  // Read-before-edit contract (Claude Code alignment): the model must have
+  // read the file this session so the edit operates on known content.
+  if (!hasFileBeenRead(resolved)) {
+    return { status: "error", message: READ_BEFORE_EDIT_ERROR };
   }
 
   // Read existing content.
@@ -153,7 +183,7 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
     content = await fs.readFile(resolved, "utf8");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return { status: "error", message: `failed to read "${input.path}": ${msg}` };
+    return { status: "error", message: `failed to read "${input.file_path}": ${msg}` };
   }
 
   // Uniqueness check.
@@ -162,7 +192,7 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   if (count === 0) {
     return {
       status: "error",
-      message: `old_string not found in ${input.path}`,
+      message: `String to replace not found in file.\nString: ${input.old_string}`,
     };
   }
 
@@ -170,9 +200,9 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
     return {
       status: "error",
       message:
-        `old_string appears ${count} times in ${input.path}; ` +
-        `pass replace_all: true to replace all occurrences, ` +
-        `or narrow old_string to be unique`,
+        `Found ${count} matches of the string to replace, but replace_all is false. ` +
+        `To replace all occurrences, set replace_all to true. To replace only one occurrence, ` +
+        `please provide more context to uniquely identify the instance.\nString: ${input.old_string}`,
     };
   }
 
@@ -186,25 +216,29 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
     await atomicWrite(resolved, newContent, contentHash);
   } catch (err) {
     if (err instanceof TocttouError) {
-      return {
-        status: "error",
-        message: `TOCTTOU: ${err.message}. Re-read the file and retry.`,
-      };
+      return { status: "error", message: STALE_FILE_ERROR };
     }
     const msg = err instanceof Error ? err.message : String(err);
-    return { status: "error", message: `failed to write "${input.path}": ${msg}` };
+    return { status: "error", message: `failed to write "${input.file_path}": ${msg}` };
   }
 
+  // Post-edit content is known to the agent.
+  recordFileRead(resolved);
+
+  // Claude Code's exact success sentences (v2.1.198).
   return {
     status: "ok",
-    output: `replaced ${count} occurrence(s) in ${input.path}`,
+    output:
+      input.replace_all === true
+        ? `The file ${input.file_path} has been updated. All occurrences were successfully replaced.${FILE_STATE_CURRENT_SUFFIX}`
+        : `The file ${input.file_path} has been updated successfully.${FILE_STATE_CURRENT_SUFFIX}`,
   };
 }
 
 function accesses(raw: unknown, ctx: ToolExecutionContext): ToolAccessesType {
   const parsed = inputSchema.safeParse(raw);
   if (!parsed.success) return ToolAccesses.all();
-  return ToolAccesses.writeFile(path.resolve(ctx.cwd, parsed.data.path));
+  return ToolAccesses.writeFile(path.resolve(ctx.cwd, parsed.data.file_path));
 }
 
 export const editFileTool: ToolImpl = {

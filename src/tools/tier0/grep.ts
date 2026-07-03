@@ -14,54 +14,46 @@ import * as path from "node:path";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { ToolAccesses, type ToolAccesses as ToolAccessesType } from "../access.js";
+import { aliasParams } from "./internal.js";
 
-const inputSchema = z.object({
-  pattern: z.string(),
-  path: z.string().optional(),
-  glob: z.string().optional(),
-  case_insensitive: z.boolean().optional(),
+const paramsSchema = z.object({
+  pattern: z.string().describe("The regular expression pattern to search for in file contents"),
+  path: z.string().optional().describe("File or directory to search in. Defaults to the working directory."),
+  glob: z.string().optional().describe('Glob pattern to filter files (e.g. "*.js", "*.{ts,tsx}")'),
+  type: z.string().optional().describe("File type to search (rg --type), e.g. js, py, rust"),
+  "-i": z.boolean().optional().describe("Case insensitive search"),
+  "-n": z
+    .boolean()
+    .optional()
+    .describe("Show line numbers in output (default true for content mode)"),
+  "-A": z.number().int().nonnegative().optional().describe("Lines to show after each match (content mode)"),
+  "-B": z.number().int().nonnegative().optional().describe("Lines to show before each match (content mode)"),
+  "-C": z.number().int().nonnegative().optional().describe("Lines to show before and after each match (content mode)"),
   output_mode: z.enum(["content", "files_with_matches", "count"]).optional(),
   head_limit: z.number().int().positive().optional(),
   multiline: z.boolean().optional(),
 });
 
-type Input = z.infer<typeof inputSchema>;
+// `case_insensitive` is the legacy openswarm spelling of `-i`.
+const inputSchema = z.preprocess(aliasParams({ case_insensitive: "-i" }), paramsSchema);
+
+type Input = z.infer<typeof paramsSchema>;
 
 const DEFAULT_HEAD_LIMIT = 250;
 
 const spec: ToolSpec = {
   name: "grep",
   description:
-    "Search file contents using ripgrep. Supports regex patterns, glob filters, and multiple output modes. " +
-    "Automatically respects .gitignore. " +
-    "output_mode: 'content' (default) shows matching lines as path:line: text; " +
+    "Search file contents using ripgrep. Supports full regex syntax, glob/type filters, " +
+    "context lines (-A/-B/-C), and multiple output modes. Automatically respects .gitignore. " +
+    "output_mode: 'content' (default) shows matching lines as path:line: text " +
+    "(context lines use path-line- prefixes); " +
     "'files_with_matches' lists file paths; 'count' shows match counts per file. " +
     "head_limit caps output lines (default 250).",
-  inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
+  inputSchema: z.toJSONSchema(paramsSchema) as JsonSchema,
   requiredPermission: "read",
   tier: 0,
 };
-
-/** Ripgrep JSON message types we care about. */
-interface RgBegin {
-  type: "begin";
-  data: { path: { text: string } };
-}
-interface RgMatch {
-  type: "match";
-  data: {
-    path: { text: string };
-    lines: { text: string };
-    line_number: number;
-    submatches: unknown[];
-  };
-}
-interface RgEnd {
-  type: "end";
-  data: { path: { text: string }; stats: { matches: number } };
-}
-
-type RgMessage = RgBegin | RgMatch | RgEnd | { type: string; data: unknown };
 
 async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolResult> {
   const parsed = inputSchema.safeParse(raw);
@@ -74,25 +66,37 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   const mode = input.output_mode ?? "content";
   const headLimit = input.head_limit ?? DEFAULT_HEAD_LIMIT;
 
-  // --json only works for content mode; files_with_matches and count produce plain text output
-  const useJson = mode === "content";
-  const args: string[] = useJson ? ["--json"] : [];
-  args.push(input.pattern, searchPath);
+  const args: string[] = [];
+  if (mode === "content") {
+    // Plain rg output: `path:line:text` matches, `path-line-text` context
+    // lines — the format models trained on Claude Code / rg expect.
+    // --max-columns matches Claude Code's long-line elision.
+    args.push("--with-filename", "--max-columns", "500");
+    if (input["-n"] !== false) args.push("--line-number");
+    const after = input["-A"] ?? input["-C"];
+    const before = input["-B"] ?? input["-C"];
+    if (after !== undefined) args.push("-A", String(after));
+    if (before !== undefined) args.push("-B", String(before));
+  } else if (mode === "files_with_matches") {
+    args.push("--files-with-matches");
+  } else {
+    // -c -H: per-file count of matching lines (Claude Code's count mode).
+    args.push("-c", "-H");
+  }
 
   if (input.glob) {
     args.push("-g", input.glob);
   }
-  if (input.case_insensitive) {
+  if (input.type) {
+    args.push("--type", input.type);
+  }
+  if (input["-i"]) {
     args.push("-i");
   }
   if (input.multiline) {
     args.push("-U", "--multiline-dotall");
   }
-  if (mode === "files_with_matches") {
-    args.push("--files-with-matches");
-  } else if (mode === "count") {
-    args.push("--count-matches");
-  }
+  args.push("--", input.pattern, searchPath);
 
   return new Promise<ToolResult>((resolve) => {
     const child = spawn(rgPath, args, { stdio: ["ignore", "pipe", "pipe"] });
@@ -117,56 +121,47 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
       }
 
       const rawOutput = Buffer.concat(stdoutChunks).toString("utf8");
+      const allLines = rawOutput.split("\n").filter((l) => l.trim());
 
-      if (!rawOutput.trim()) {
-        resolve({ status: "ok", output: "" });
+      // Empty results use Claude Code's exact phrasing per mode.
+      if (allLines.length === 0) {
+        resolve({
+          status: "ok",
+          output: mode === "files_with_matches" ? "No files found" : "No matches found",
+        });
         return;
       }
 
-      const lines = rawOutput.split("\n").filter((l) => l.trim());
-      const resultLines: string[] = [];
+      const capped = allLines.slice(0, headLimit);
+      const limitApplied = allLines.length > headLimit;
 
       if (mode === "content") {
-        for (const line of lines) {
-          if (resultLines.length >= headLimit) break;
-          let msg: RgMessage;
-          try {
-            msg = JSON.parse(line) as RgMessage;
-          } catch {
-            continue;
-          }
-          if (msg.type === "match") {
-            const m = msg as RgMatch;
-            const filePath = m.data.path.text;
-            const lineNum = m.data.line_number;
-            const text = m.data.lines.text.replace(/\n$/, "");
-            resultLines.push(`${filePath}:${lineNum}: ${text}`);
-          }
+        // Plain rg output; when head_limit kicked in, append Claude Code's
+        // pagination note so the model knows results continue.
+        let output = capped.join("\n");
+        if (limitApplied) {
+          output += `\n\n[Showing results with pagination = limit: ${headLimit}]`;
         }
+        resolve({ status: "ok", output });
       } else if (mode === "files_with_matches") {
-        // Plain text: one file path per line
-        for (const line of lines) {
-          if (resultLines.length >= headLimit) break;
-          if (line.trim()) resultLines.push(line.trim());
-        }
+        // Claude Code shape: "Found N files" header, then one path per line.
+        const n = capped.length;
+        const header = `Found ${n} ${n === 1 ? "file" : "files"}${limitApplied ? ` (limit: ${headLimit})` : ""}`;
+        resolve({ status: "ok", output: `${header}\n${capped.join("\n")}` });
       } else {
-        // count mode: plain text "path:count" per line
-        for (const line of lines) {
-          if (resultLines.length >= headLimit) break;
-          if (!line.trim()) continue;
-          // ripgrep outputs "path:N" — reformat to "path: N"
+        // count mode: raw `path:count` lines plus Claude Code's total summary.
+        let totalMatches = 0;
+        for (const line of capped) {
           const colonIdx = line.lastIndexOf(":");
-          if (colonIdx !== -1) {
-            const filePath = line.slice(0, colonIdx);
-            const count = line.slice(colonIdx + 1).trim();
-            resultLines.push(`${filePath}: ${count}`);
-          } else {
-            resultLines.push(line.trim());
-          }
+          const n = colonIdx === -1 ? NaN : Number(line.slice(colonIdx + 1));
+          if (Number.isFinite(n)) totalMatches += n;
         }
+        const files = capped.length;
+        const summary =
+          `\n\nFound ${totalMatches} total ${totalMatches === 1 ? "occurrence" : "occurrences"} ` +
+          `across ${files} ${files === 1 ? "file" : "files"}.${limitApplied ? ` with pagination = limit: ${headLimit}` : ""}`;
+        resolve({ status: "ok", output: capped.join("\n") + summary });
       }
-
-      resolve({ status: "ok", output: resultLines.join("\n") });
     });
 
     child.on("error", (err) => {

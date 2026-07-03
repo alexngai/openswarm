@@ -165,6 +165,44 @@ and CLI flags but lacks a unified declarative config surface.
 
 ---
 
+## 10. Tool Schema Alignment (Claude Code / MiMoCode / ZCode / Codex)
+
+A July 2026 comparison of tool schemas across four harnesses (Claude Code,
+MiMoCode — an OpenCode fork, ZCode — Z.ai's proprietary Claude Code-compatible
+desktop app, and Codex CLI) drove a schema alignment pass on the tier-0 tools.
+Goal: models trained on those harnesses should work on openswarm without
+fine-tuning. Canonical schemas, aliases, and behavioral contracts are documented
+in [`04-tool-tiers.md`](./04-tool-tiers.md#claude-code-schema-alignment); the
+comparison findings:
+
+**Two tooling philosophies.** Claude Code / MiMoCode / ZCode are tool-centric:
+distinct `Read`/`Edit`/`Write`/`Bash`/`Grep`/`Glob` tools with `file_path`
+params, cat-n read output, and recoverable, precisely-worded error strings that
+trained models pattern-match for self-correction. Codex is shell-centric: a
+unified `exec_command`/`write_stdin` session pair plus a freeform
+grammar-constrained `apply_patch`; models use `rg`/`sed` via the shell instead
+of dedicated read/search tools.
+
+**Divergences we closed (Claude Code-first):**
+
+| # | Divergence | Resolution |
+|---|---|---|
+| 1 | `path` vs `file_path` on file tools | Renamed to `file_path`; `path` kept as alias |
+| 2 | 0-based `offset`, plain-text read output | 1-based `offset`, cat-n output, 2000-char line truncation, continuation hint |
+| 3 | `bash` lacked `description`/`workdir`/`run_in_background`; non-zero exit returned `[exit N]` in ok-result | Params added (`background` aliased); non-zero exit and timeout now return error results (`Exit code N` first, then stderr, then stdout); 120 s default timeout; stdout followed by stderr (not interleaved — see verification-pass entry) |
+| 4 | `grep` lacked `-i`/`-n`/`-A`/`-B`/`-C`/`type` | Added; content mode now emits plain rg formatting (`path:line:text`, `path-line-text` context) |
+| 5 | No read-before-edit contract | Enforced for `edit_file`/`multi_edit`/`write_file`-overwrite with Claude Code's exact error string (`read-state.ts`) |
+| 6 | openswarm-specific edit error phrasing | Claude Code verbatim strings; success returns cat-n snippet of edited region |
+| 7 | `glob` used `cwd` | Renamed to `path`; `cwd` aliased |
+| 8 | `apply_patch` param `patch` vs Codex JSON variant `input` | `input` accepted as alias |
+| 9 | `todo_write` required `id` (Claude Code has none) | `id` optional, auto-filled from array index |
+
+Tool *names* stay snake_case (`read_file`, not `Read`) — engine adapters already
+normalize names per framework, and renames would break existing trajectories,
+role allowlists, and permission maps for marginal gain.
+
+---
+
 ## Prioritized Plan (draft)
 
 ### Phase A — Safety Foundation (P0, ~3 weeks)
@@ -270,4 +308,12 @@ and commit hash.
 - **2026-06-06** — C2+C3+G1: Context fragments (9 built-in types with composable ContextBuilder, priority sorting, register/unregister, singleton). State database (SQLite-backed via better-sqlite3, WAL mode, 4 tables with migrations, full CRUD, memory search). Goals engine (6-state machine, token+cost budget tracking, checkpoint system, GoalRegistry, StateDB serialization). 67 new tests passing.
 - **2026-06-06** — F10: Web search + full browsing parity. `web_search.ts`: pluggable `SearchBackend` interface, DuckDuckGo HTML scraping default, batch `queries` support (up to 5, cross-query dedup), domain filtering, 8-hit cap, `OPENSWARM_WEB_SEARCH_BASE_URL` env override. `web_fetch.ts`: HTTP→HTTPS auto-upgrade (exempts localhost/127.0.0.1/::1), prompt-driven extraction (`"title"` → `<title>` tag, `"summary"` → 900-char preview, custom prompt → labeled content), `find` param for in-page substring search with context lines and match markers. Closes all Codex web-search gaps (Search, OpenPage, FindInPage). 69 tier1 web tests passing.
 - **2026-06-06** — G2: Memory system (cross-session learning). 4-layer architecture: L1 curated bounded memory (project/user scopes, 2500/1500 char caps, add/replace/remove), L2 skills (Markdown + YAML frontmatter, FileSkillStore for disk, tag/keyword search), L3 session archive (FTS5 + LIKE fallback, auto-sync triggers), L4 provider protocol (MemoryCoordinator, FileMemoryProvider, MinimemProvider with graceful degradation). 3 Tier 0 tools: `memory_manage`, `memory_search`, `skill_save`. Per-agent isolation via `agentScopeKey()` + shared memory bus (500-entry cap). StateDB: `curated_memory` + `session_summaries` tables. Lifecycle hooks wired to engine. Context injection via `curatedMemoryFragment` at priority 5. Hardened from 4-agent code review: fragment cap (50), YAML injection protection, store-level size enforcement, `concurrencySafe` on mutating tools. 220+ memory tests passing. Commits `5dedee7`–`790233c`.
+- **2026-07-03** — §10 Tool schema alignment implemented. Tier-0 schemas aligned to Claude Code (params, output formats, error strings, read-before-edit contract) with backward-compatible aliases via `z.preprocess`. New `src/tools/tier0/read-state.ts`. ACP `tool-kind.ts`, REPL UI renderers, approval panel, and default system prompt updated for `file_path` + 1-based offsets. Canonical schema table added to `04-tool-tiers.md`. Full vitest suite + bun UI tests passing.
+- **2026-07-03 (verification pass)** — Ground-truth audit against the shipped Claude Code **v2.1.198** binary (strings extracted from the npm-installed bundle) corrected several assumptions from the first pass:
+  - `bash` does **not** interleave stdout/stderr — result is stdout then stderr joined by newline. Success output is head-truncated at 30,000 chars (`BASH_MAX_OUTPUT_LENGTH`, env-overridable in CC up to 150k) with `... [N lines truncated] ...`; error content is `Exit code N` (no colon, first line) + stderr + stdout, middle-truncated at 10,000 chars with `... [N characters truncated] ...`. Timeout message is humanized (`Command timed out after 2m 0s`); aborts append `<error>Command was aborted before completion</error>`; background returns `Command running in background with ID: … Output is being written to: <file>` (openswarm now streams background output to a temp file to match).
+  - `read_file`: empty-file and offset-past-EOF cases return CC's exact `<system-reminder>Warning: …</system-reminder>` strings; default-cap truncation prepends the `[Truncated: PARTIAL view — …]` system-reminder; missing file error is exactly `File does not exist.`
+  - `edit_file`/`write_file` success messages are sentences (no cat-n snippet in current CC): `The file X has been updated successfully. (file state is current in your context — no need to Read it back)` etc. Stale-file (TOCTTOU) error is CC's `File has been modified since read, either by the user or by a linter. Read it again before attempting to write it.`
+  - `grep`: `No matches found`/`No files found`, `Found N files` header in files mode, `path:count` + `Found N total occurrences across M files.` in count mode (`rg -c -H`), `--max-columns 500`, `[Showing results with pagination = limit: N]`. `glob`: `No files found` / `(Results are truncated. Consider using a more specific path or pattern.)`.
+  - `todo_write` returns CC's canonical `Todos have been modified successfully. …` acknowledgement.
+  - Confirmed current CC Read/Edit param descriptions (`file_path` "The absolute path to the file to read", 1-based `offset`) match §10 as implemented. Current CC Read is token-cap paginated (`CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS`); openswarm keeps the line-cap (2000) with the same PARTIAL-view banner shape.
 - **2026-06-06** — Added §9 "Configuration & UX" with 5 newly identified gaps from deep Codex architecture research: U1 (declarative config system with schema validation, P3/L), U2 (shell environment policy with inherit modes + regex filtering, P3/S), U3 (credentials management with pluggable storage backends, P3/M), U4 (rich TUI — classified 🟦 divergent, openswarm is headless/ACP-first by design), U5 (configurable reasoning effort/personality as first-class knobs, P3/S). All P3 — no P0/P1/P2 gaps remain open.

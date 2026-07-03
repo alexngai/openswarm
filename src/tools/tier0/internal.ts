@@ -92,3 +92,30 @@ export function isUnderCwd(resolved: string, cwd: string): boolean {
   const cwdWithSep = cwd.endsWith("/") ? cwd : cwd + "/";
   return resolved === cwd || resolved.startsWith(cwdWithSep);
 }
+
+/**
+ * Build a z.preprocess normalizer that maps legacy/alias parameter names to
+ * the canonical (Claude Code-aligned) name before validation.
+ *
+ * Canonical schemas advertise only the primary name (e.g. `file_path`), but
+ * older openswarm trajectories and non-Claude models may emit the alias
+ * (e.g. `path`). When only the alias is present it is renamed to the
+ * primary; when both are present the primary wins.
+ */
+export function aliasParams(
+  aliases: Record<string, string>,
+): (raw: unknown) => unknown {
+  return (raw: unknown): unknown => {
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return raw;
+    const obj = raw as Record<string, unknown>;
+    let out: Record<string, unknown> | undefined;
+    for (const [alias, primary] of Object.entries(aliases)) {
+      if (alias in obj && !(primary in obj)) {
+        out ??= { ...obj };
+        out[primary] = out[alias];
+        delete out[alias];
+      }
+    }
+    return out ?? raw;
+  };
+}

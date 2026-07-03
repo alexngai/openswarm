@@ -5,26 +5,32 @@ import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { ToolAccesses, type ToolAccesses as ToolAccessesType } from "../access.js";
-import { isUnderCwd } from "./internal.js";
+import { isUnderCwd, aliasParams } from "./internal.js";
+import { hasFileBeenRead, recordFileRead, READ_BEFORE_EDIT_ERROR } from "./read-state.js";
+import { FILE_STATE_CURRENT_SUFFIX } from "./edit_file.js";
 
-const inputSchema = z.object({
-  path: z.string(),
+const paramsSchema = z.object({
+  file_path: z.string(),
   content: z.string(),
 });
 
-type Input = z.infer<typeof inputSchema>;
+const inputSchema = z.preprocess(aliasParams({ path: "file_path" }), paramsSchema);
+
+type Input = z.infer<typeof paramsSchema>;
 
 const MAX_CONTENT_BYTES = 10 * 1024 * 1024; // 10 MiB
 
 const spec: ToolSpec = {
   name: "write_file",
   description:
-    "Write content to a file. Path is resolved relative to the working directory. " +
+    "Write content to a file. `file_path` may be absolute or relative to the working directory. " +
+    "Overwriting an existing file requires reading it first with the read_file tool. " +
+    "ALWAYS prefer editing existing files; use this for new files or complete rewrites. " +
     "The resolved path must remain inside the workspace (cwd); path-traversal attempts are rejected. " +
     "Symlinks that point outside the workspace are also rejected. " +
     "Content must not exceed 10 MiB. Parent directories are created if missing. " +
     "Writes are atomic (temp-file + rename).",
-  inputSchema: z.toJSONSchema(inputSchema) as JsonSchema,
+  inputSchema: z.toJSONSchema(paramsSchema) as JsonSchema,
   requiredPermission: "write",
   tier: 0,
 };
@@ -36,7 +42,7 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   }
   const input: Input = parsed.data;
 
-  const resolved = path.resolve(ctx.cwd, input.path);
+  const resolved = path.resolve(ctx.cwd, input.file_path);
 
   // Workspace boundary check.
   if (!isUnderCwd(resolved, ctx.cwd)) {
@@ -44,9 +50,12 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   }
 
   // Symlink-escape guard: if the path already exists as a symlink,
-  // follow it to its real target and re-check.
+  // follow it to its real target and re-check. Also detect existence for
+  // the read-before-overwrite contract below.
+  let fileExists = false;
   try {
     const lstat = await fs.lstat(resolved);
+    fileExists = true;
     if (lstat.isSymbolicLink()) {
       const real = await fs.realpath(resolved);
       if (!isUnderCwd(real, ctx.cwd)) {
@@ -55,6 +64,12 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
     }
   } catch {
     // File doesn't exist yet — that's fine, we'll create it.
+  }
+
+  // Read-before-overwrite contract (Claude Code alignment): overwriting an
+  // existing file requires the agent to have read it this session.
+  if (fileExists && !hasFileBeenRead(resolved)) {
+    return { status: "error", message: READ_BEFORE_EDIT_ERROR };
   }
 
   // Content size check (UTF-8 byte length).
@@ -100,13 +115,23 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
     return { status: "error", message: `write failed: ${msg}` };
   }
 
-  return { status: "ok", output: `wrote ${contentBytes} bytes to ${resolved}` };
+  // Post-write content is known to the agent.
+  recordFileRead(resolved);
+
+  // Claude Code's exact success sentences (v2.1.198) — both variants carry
+  // the "file state is current" suffix that suppresses read-backs.
+  return {
+    status: "ok",
+    output: fileExists
+      ? `The file ${resolved} has been updated successfully.${FILE_STATE_CURRENT_SUFFIX}`
+      : `File created successfully at: ${resolved}${FILE_STATE_CURRENT_SUFFIX}`,
+  };
 }
 
 function accesses(raw: unknown, ctx: ToolExecutionContext): ToolAccessesType {
   const parsed = inputSchema.safeParse(raw);
   if (!parsed.success) return ToolAccesses.all();
-  return ToolAccesses.writeFile(path.resolve(ctx.cwd, parsed.data.path));
+  return ToolAccesses.writeFile(path.resolve(ctx.cwd, parsed.data.file_path));
 }
 
 export const writeFileTool: ToolImpl = {

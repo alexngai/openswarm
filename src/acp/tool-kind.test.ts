@@ -18,9 +18,12 @@ describe("tool-kind", () => {
     expect(toolKind("nonexistent")).toBe("other");
   });
 
-  it("builds read locations with a 1-based line from the 0-based offset", () => {
+  it("builds read locations from the 1-based offset", () => {
     expect(toolLocations("read_file", { path: "a.ts", offset: 4 })).toEqual([
-      { path: "a.ts", line: 5 },
+      { path: "a.ts", line: 4 },
+    ]);
+    expect(toolLocations("read_file", { file_path: "a.ts", offset: 4 })).toEqual([
+      { path: "a.ts", line: 4 },
     ]);
     expect(toolLocations("read_file", { path: "a.ts" })).toEqual([
       { path: "a.ts" },
