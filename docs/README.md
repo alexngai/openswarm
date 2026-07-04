@@ -4,6 +4,8 @@ Design capture for openswarm — a TypeScript agent harness where the atomic uni
 
 Numbering is chronological and stable: numbers are never reused, and archived docs keep their numbers. Historical plans and build records live in [`archive/`](./archive/).
 
+For end-user CLI reference (flags, model routing, tools, limitations, architecture), see [USAGE.md](./USAGE.md).
+
 ## Foundations (design of record)
 
 - [00-vision.md](./00-vision.md) — project intent, what openswarm is, relationship to claw-code
