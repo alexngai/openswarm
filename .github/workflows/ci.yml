@@ -16,7 +16,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        include:
+          - os: ubuntu-latest
+            compile_script: build:compile:linux-x64
+          - os: macos-latest
+            compile_script: build:compile:darwin-arm64
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -56,10 +60,11 @@ jobs:
         # keeps them importable against the live src/ they depend on.
         run: npx tsc -p experimental/tsconfig.json --noEmit
 
-      - name: Build compiled binary (linux-x64)
-        # Build the binary before running tests so the PTY e2e suite has
-        # a `dist/openswarm` to spawn. node-pty runs under Node/vitest.
-        run: npm run build:compile:linux-x64
+      - name: Build compiled binary (host platform)
+        # Build the host-matching binary before running tests so the PTY e2e
+        # suite has a packages/cli-<platform>-<arch>/openswarm to spawn.
+        # node-pty runs under Node/vitest. Target is per-OS via the matrix.
+        run: npm run ${{ matrix.compile_script }}
 
       - name: Run vitest suite (unit + integration + PTY)
         env:

@@ -108,6 +108,68 @@ describe("reducer — transitions", () => {
     expect(s1.pendingPermission).toBeUndefined();
   });
 
+  it("view-select moves the selected index and clamps at 0; set-view resets it", () => {
+    const s0 = reduce(idle(), { type: "set-view", view: "agents" });
+    expect(s0.viewSelectedIndex).toBe(0);
+    const down1 = reduce(s0, { type: "view-select", direction: "down" });
+    expect(down1.viewSelectedIndex).toBe(1);
+    const down2 = reduce(down1, { type: "view-select", direction: "down" });
+    expect(down2.viewSelectedIndex).toBe(2);
+    const up1 = reduce(down2, { type: "view-select", direction: "up" });
+    expect(up1.viewSelectedIndex).toBe(1);
+    // Clamp at 0.
+    const upFloor = reduce(reduce(up1, { type: "view-select", direction: "up" }), {
+      type: "view-select",
+      direction: "up",
+    });
+    expect(upFloor.viewSelectedIndex).toBe(0);
+    // Switching views resets selection.
+    const reset = reduce(down2, { type: "set-view", view: "tasks" });
+    expect(reset.viewSelectedIndex).toBe(0);
+  });
+
+  it("toggle-approval-expand flips approvalExpanded only while awaiting-permission", () => {
+    // No-op outside awaiting-permission.
+    expect(reduce(idle(), { type: "toggle-approval-expand" }).approvalExpanded).toBe(false);
+
+    const s0 = runEvents(idle(), [
+      { type: "submit", text: "hi" },
+      {
+        type: "permission-request",
+        request: {
+          toolName: "edit_file",
+          input: {},
+          currentMode: "workspace-write",
+          requiredPermission: "write",
+        },
+      },
+    ]);
+    expect(s0.approvalExpanded).toBe(false);
+    const s1 = reduce(s0, { type: "toggle-approval-expand" });
+    expect(s1.approvalExpanded).toBe(true);
+    const s2 = reduce(s1, { type: "toggle-approval-expand" });
+    expect(s2.approvalExpanded).toBe(false);
+  });
+
+  it("approvalExpanded resets on the next permission-request and on response", () => {
+    const s0 = runEvents(idle(), [
+      { type: "submit", text: "hi" },
+      {
+        type: "permission-request",
+        request: {
+          toolName: "edit_file",
+          input: {},
+          currentMode: "workspace-write",
+          requiredPermission: "write",
+        },
+      },
+      { type: "toggle-approval-expand" },
+    ]);
+    expect(s0.approvalExpanded).toBe(true);
+    const resolved = reduce(s0, { type: "permission-response", decision: "approve" });
+    expect(resolved.approvalExpanded).toBe(false);
+  });
+
   it("awaiting-permission --(permission-response deny)--> streaming", () => {
     const s0 = runEvents(idle(), [
       { type: "submit", text: "hi" },

@@ -139,14 +139,29 @@ describe("loadHooksConfig", () => {
     ).rejects.toThrow(/not valid JSON/);
   });
 
-  it("throws on schema mismatch (missing required 'command' field)", async () => {
-    writeJson(path.join(cwd, ".openswarm"), "hooks.json", {
-      PreToolUse: [{ matcher: "bash" }],
+  it("throws a friendly, path-annotated message on schema mismatch (not a raw ZodError dump)", async () => {
+    const p = writeJson(path.join(cwd, ".openswarm"), "hooks.json", {
+      PreToolUse: [{ matcher: "bash", command: 123 }],
+      PostToolUse: "not-an-array",
     });
 
-    await expect(
-      loadHooksConfig({ cwd, homedir: homeDir, envOverrides: {} }),
-    ).rejects.toThrow(/schema validation failed/);
+    const err = await loadHooksConfig({
+      cwd,
+      homedir: homeDir,
+      envOverrides: {},
+    }).catch((e: unknown) => e as Error);
+
+    expect(err).toBeInstanceOf(Error);
+    const msg = (err as Error).message;
+
+    // One-line human summary with path + problem count.
+    expect(msg).toContain(`Ignoring invalid hooks config at ${p}: 2 problem(s)`);
+    // Bullet list keyed by the offending field path.
+    expect(msg).toContain("  - PreToolUse.0.command:");
+    expect(msg).toContain("  - PostToolUse:");
+    // Must NOT leak the raw ZodError JSON blob.
+    expect(msg).not.toContain('"code"');
+    expect(msg).not.toContain("ZodError");
   });
 });
 

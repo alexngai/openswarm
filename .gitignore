@@ -31,3 +31,6 @@ packages/*/libopentui.so
 # claude-agent-sdk native helper, co-located by build-binary.ts (~205MB)
 packages/*/claude
 packages/*/claude.exe
+
+# Downloaded Tree-sitter grammar assets (doc 49, run 'npm run grammars:update')
+assets/grammars/

@@ -4,6 +4,8 @@ Design capture for openswarm — a TypeScript agent harness where the atomic uni
 
 Numbering is chronological and stable: numbers are never reused, and archived docs keep their numbers. Historical plans and build records live in [`archive/`](./archive/).
 
+For end-user CLI reference (flags, model routing, tools, limitations, architecture), see [USAGE.md](./USAGE.md).
+
 ## Foundations (design of record)
 
 - [00-vision.md](./00-vision.md) — project intent, what openswarm is, relationship to claw-code
@@ -47,6 +49,7 @@ All ACP stages are shipped; the staged build records are archived. The living re
 ## TUI
 
 - [41-tui-redesign.md](./41-tui-redesign.md) — OpenTUI/Solid REPL redesign (active)
+- [49-tui-parity-plan.md](./49-tui-parity-plan.md) — parity plan vs Claude Code/Codex/opencode: syntax highlighting, `<diff>`/`<code>` adoption, transcript ergonomics, half-wired feature fixes (plan)
 
 ## Archive
 

@@ -15,11 +15,15 @@
 
 import { For, Show } from "solid-js";
 import type { PendingPermission } from "../repl/state.js";
-import { computeDiff, compactDiff } from "./diff/compute.js";
+import { computeDiff, compactDiff, toUnifiedDiff } from "./diff/compute.js";
 import { theme } from "./theme.js";
+import { codeSyntaxStyle, filetypeFromPath, treeSitterClient } from "./syntax.js";
+import { validateDestructive } from "../../tools/tier0/bash-validation/destructive.js";
 
 export interface ApprovalPanelProps {
   readonly pending: PendingPermission;
+  /** Show full diff / uncapped preview (Ctrl+E, doc 49 Phase D2). */
+  readonly expanded?: boolean;
 }
 
 function getInputField(input: unknown, key: string): string | undefined {
@@ -56,31 +60,38 @@ function renderEditPreview(input: unknown): { lines: string[]; hasHidden: boolea
   return { lines: result, hasHidden: hiddenChanges > 0 };
 }
 
-function renderWritePreview(input: unknown): string[] {
+function renderWritePreview(input: unknown, expanded: boolean): string[] {
   const filePath = getInputField(input, "file_path") ?? getInputField(input, "path") ?? "";
   const content = getInputField(input, "content") ?? "";
   const lines: string[] = [];
   if (filePath) lines.push(`new file: ${filePath}`);
   const contentLines = content.split("\n");
-  const preview = contentLines.slice(0, 10);
+  const cap = expanded ? contentLines.length : 10;
+  const preview = contentLines.slice(0, cap);
   lines.push(...preview.map((l) => `+ ${l}`));
-  if (contentLines.length > 10) {
-    lines.push(`  … ${contentLines.length - 10} more lines`);
+  if (contentLines.length > cap) {
+    lines.push(`  … ${contentLines.length - cap} more lines`);
   }
   return lines;
 }
 
-function renderGenericPreview(toolName: string, input: unknown): string[] {
+function renderGenericPreview(
+  toolName: string,
+  input: unknown,
+  expanded: boolean,
+): string[] {
   const lines: string[] = [];
   if (input !== null && typeof input === "object") {
     const entries = Object.entries(input as Record<string, unknown>);
-    for (const [key, val] of entries.slice(0, 3)) {
+    const cap = expanded ? entries.length : 3;
+    for (const [key, val] of entries.slice(0, cap)) {
       const valStr = typeof val === "string" ? val : JSON.stringify(val);
-      const truncated = valStr.length > 80 ? valStr.slice(0, 80) + "…" : valStr;
+      const limit = expanded ? 400 : 80;
+      const truncated = valStr.length > limit ? valStr.slice(0, limit) + "…" : valStr;
       lines.push(`${key}: ${truncated}`);
     }
-    if (entries.length > 3) {
-      lines.push(`… ${entries.length - 3} more fields`);
+    if (entries.length > cap) {
+      lines.push(`… ${entries.length - cap} more fields`);
     }
   }
   return lines;
@@ -89,6 +100,27 @@ function renderGenericPreview(toolName: string, input: unknown): string[] {
 export function ApprovalPanel(props: ApprovalPanelProps) {
   const toolName = () => props.pending.toolName;
   const input = () => props.pending.input;
+  const expanded = () => props.expanded ?? false;
+  const isEdit = () => toolName() === "edit_file" || toolName() === "multi_edit";
+
+  // Full unified diff for the expanded edit view (doc 49 Phase D2), rendered
+  // via <diff> for line numbers + syntax highlighting.
+  const editDiff = (): string | undefined => {
+    if (!isEdit()) return undefined;
+    const oldStr =
+      getInputField(input(), "old_string") ?? getInputField(input(), "old_str") ?? "";
+    const newStr =
+      getInputField(input(), "new_string") ?? getInputField(input(), "new_str") ?? "";
+    if (oldStr.length === 0 && newStr.length === 0) return undefined;
+    const path = getInputField(input(), "file_path") ?? getInputField(input(), "path");
+    return toUnifiedDiff(oldStr, newStr, path);
+  };
+  const editFiletype = () =>
+    filetypeFromPath(
+      getInputField(input(), "file_path") ?? getInputField(input(), "path"),
+    );
+  const tsClient = treeSitterClient();
+  const useDiff = () => expanded() && isEdit() && (editDiff()?.length ?? 0) > 0;
 
   const previewLines = (): string[] => {
     const name = toolName();
@@ -99,9 +131,9 @@ export function ApprovalPanel(props: ApprovalPanelProps) {
       return renderEditPreview(input()).lines;
     }
     if (name === "write_file") {
-      return renderWritePreview(input());
+      return renderWritePreview(input(), expanded());
     }
-    return renderGenericPreview(name, input());
+    return renderGenericPreview(name, input(), expanded());
   };
 
   const hasHiddenChanges = (): boolean => {
@@ -110,6 +142,22 @@ export function ApprovalPanel(props: ApprovalPanelProps) {
       return renderEditPreview(input()).hasHidden;
     }
     return false;
+  };
+
+  // Ctrl+E is offered whenever there is more to show (hidden edit changes) or
+  // an edit that can render as a full diff; and always shown while expanded so
+  // the user can collapse again.
+  const offersExpand = () => hasHiddenChanges() || isEdit();
+
+  // Destructive-command warning for bash approvals (doc 49 Phase D5), reusing
+  // the bash gate's always-warn classifier so the label matches enforcement.
+  const bashDanger = (): string | undefined => {
+    const name = toolName();
+    if (name !== "bash" && name !== "shell_exec") return undefined;
+    const cmd = getInputField(input(), "command");
+    if (cmd === undefined) return undefined;
+    const result = validateDestructive(cmd);
+    return result.kind === "warn" ? result.message : undefined;
   };
 
   return (
@@ -131,30 +179,53 @@ export function ApprovalPanel(props: ApprovalPanelProps) {
             ""}
         </text>
       </box>
-      <text />
-      <Show when={previewLines().length > 0}>
-        <box flexDirection="column">
-          <For each={previewLines()}>
-            {(line) => {
-              const fg =
-                line.startsWith("+ ") ? theme.diffAdd
-                : line.startsWith("- ") ? theme.diffRemove
-                : line.startsWith("$ ") ? theme.accent
-                : theme.muted;
-              return <text fg={fg}>{line}</text>;
-            }}
-          </For>
-        </box>
+      <Show when={bashDanger() !== undefined}>
+        <text fg={theme.warning} bold>⚠ destructive · {bashDanger()}</text>
       </Show>
-      <Show when={hasHiddenChanges()}>
-        <text fg={theme.subtle}>  … more changes (ctrl+e to expand)</text>
+      <text />
+      <Show
+        when={useDiff()}
+        fallback={
+          <>
+            <Show when={previewLines().length > 0}>
+              <box flexDirection="column">
+                <For each={previewLines()}>
+                  {(line) => {
+                    const fg =
+                      line.startsWith("+ ") ? theme.diffAdd
+                      : line.startsWith("- ") ? theme.diffRemove
+                      : line.startsWith("$ ") ? theme.accent
+                      : theme.muted;
+                    return <text fg={fg}>{line}</text>;
+                  }}
+                </For>
+              </box>
+            </Show>
+            <Show when={hasHiddenChanges() && !expanded()}>
+              <text fg={theme.subtle}>  … more changes (ctrl+e to expand)</text>
+            </Show>
+          </>
+        }
+      >
+        <box flexDirection="column">
+          <diff
+            diff={editDiff()!}
+            view="unified"
+            showLineNumbers={true}
+            syntaxStyle={codeSyntaxStyle()}
+            addedSignColor={theme.diffAdd}
+            removedSignColor={theme.diffRemove}
+            {...(editFiletype() !== undefined ? { filetype: editFiletype()! } : {})}
+            {...(tsClient !== undefined ? { treeSitterClient: tsClient } : {})}
+          />
+        </box>
       </Show>
       <text />
       <text fg={theme.muted}>mode: {props.pending.currentMode}</text>
       <Show when={props.pending.reason !== undefined && props.pending.reason!.length > 0}>
         <text fg={theme.subtle}>reason: {props.pending.reason}</text>
       </Show>
-      <text fg={theme.warning}>[y] approve  [a] always (session)  [n] deny  {hasHiddenChanges() ? " [ctrl+e] full diff" : ""}</text>
+      <text fg={theme.warning}>[y] approve  [a] always (session)  [n] deny{offersExpand() ? (expanded() ? "  [ctrl+e] collapse" : "  [ctrl+e] full diff") : ""}</text>
     </box>
   );
 }

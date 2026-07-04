@@ -1,0 +1,47 @@
+{"type":"_metadata","protocol_version":"1.0","created_at":1746318300000,"producer":"team-daemon"}
+{"ts":1746318301000,"agentId":"orchestrator","type":"team_started","payload":{"teamName":"review"}}
+{"ts":1746318302000,"agentId":"orchestrator","type":"worker_spawned","payload":{"childAgentId":"lead-01","role":"lead"}}
+{"ts":1746318303000,"agentId":"orchestrator","type":"worker_spawned","payload":{"childAgentId":"arch-02","role":"architect"}}
+{"ts":1746318304000,"agentId":"orchestrator","type":"worker_spawned","payload":{"childAgentId":"rev-03","role":"reviewer"}}
+{"ts":1746318305000,"agentId":"orchestrator","type":"worker_spawned","payload":{"childAgentId":"impl-04","role":"implementer"}}
+{"ts":1746318306000,"agentId":"lead-01","type":"text_delta","payload":{"type":"text_delta","text":"swarm online — reviewing the new auth module\n"}}
+{"ts":1746318307000,"agentId":"arch-02","type":"tool_use_start","payload":{"type":"tool_use_start","id":"t1","name":"read_file"}}
+{"ts":1746318308000,"agentId":"arch-02","type":"tool_use_end","payload":{"type":"tool_use_end","id":"t1"}}
+{"ts":1746318309000,"agentId":"arch-02","type":"tool_result","payload":{"type":"tool_result","toolUseId":"t1","content":"142 lines"}}
+{"ts":1746318310000,"agentId":"lead-01","type":"text_delta","payload":{"type":"text_delta","text":"↳ architect mapping the auth surface\n"}}
+{"ts":1746318311000,"agentId":"arch-02","type":"tool_use_start","payload":{"type":"tool_use_start","id":"t2","name":"grep"}}
+{"ts":1746318312000,"agentId":"arch-02","type":"tool_use_end","payload":{"type":"tool_use_end","id":"t2"}}
+{"ts":1746318313000,"agentId":"arch-02","type":"tool_result","payload":{"type":"tool_result","toolUseId":"t2","content":"3 matches in 2 files"}}
+{"ts":1746318314000,"agentId":"lead-01","type":"text_delta","payload":{"type":"text_delta","text":"usage: 6.1k tok · $0.02\n"}}
+{"ts":1746318315000,"agentId":"impl-04","type":"tool_use_start","payload":{"type":"tool_use_start","id":"t3","name":"edit_file"}}
+{"ts":1746318316000,"agentId":"impl-04","type":"tool_use_end","payload":{"type":"tool_use_end","id":"t3","input":{"file_path":"src/auth/session.ts","old_string":"const SESSION_TTL = 3600","new_string":"const SESSION_TTL = 900 // tighten session lifetime"}}}
+{"ts":1746318317000,"agentId":"impl-04","type":"tool_result","payload":{"type":"tool_result","toolUseId":"t3","content":"1 edit applied"}}
+{"ts":1746318318000,"agentId":"lead-01","type":"text_delta","payload":{"type":"text_delta","text":"↳ implementer tightened session TTL (3600→900s)\n"}}
+{"ts":1746318319000,"agentId":"rev-03","type":"tool_use_start","payload":{"type":"tool_use_start","id":"t4","name":"read_file"}}
+{"ts":1746318320000,"agentId":"rev-03","type":"tool_use_end","payload":{"type":"tool_use_end","id":"t4"}}
+{"ts":1746318321000,"agentId":"rev-03","type":"tool_result","payload":{"type":"tool_result","toolUseId":"t4","content":"142 lines"}}
+{"ts":1746318322000,"agentId":"rev-03","type":"tool_use_start","payload":{"type":"tool_use_start","id":"t5","name":"grep"}}
+{"ts":1746318323000,"agentId":"rev-03","type":"tool_use_end","payload":{"type":"tool_use_end","id":"t5"}}
+{"ts":1746318324000,"agentId":"rev-03","type":"tool_result","payload":{"type":"tool_result","toolUseId":"t5","content":"1 match"}}
+{"ts":1746318325000,"agentId":"lead-01","type":"text_delta","payload":{"type":"text_delta","text":"↳ reviewer scanning for issues\n"}}
+{"ts":1746318326000,"agentId":"lead-01","type":"text_delta","payload":{"type":"text_delta","text":"usage: 11.4k tok · $0.04\n"}}
+{"ts":1746318327000,"agentId":"orchestrator","type":"worker_exited","payload":{"agentId":"arch-02"}}
+{"ts":1746318328000,"agentId":"orchestrator","type":"worker_exited","payload":{"agentId":"impl-04"}}
+{"ts":1746318329000,"agentId":"orchestrator","type":"team_usage","payload":{"members":[{"agentId":"arch-02","memberId":"arch-02","role":"architect","inputTokens":4200,"outputTokens":1800,"cacheReadInputTokens":0,"cacheWriteInputTokens":0,"totalTokens":6000,"costUsd":0.021},{"agentId":"impl-04","memberId":"impl-04","role":"implementer","inputTokens":5100,"outputTokens":2600,"cacheReadInputTokens":0,"cacheWriteInputTokens":0,"totalTokens":7700,"costUsd":0.028},{"agentId":"rev-03","memberId":"rev-03","role":"reviewer","inputTokens":1900,"outputTokens":700,"cacheReadInputTokens":0,"cacheWriteInputTokens":0,"totalTokens":2600,"costUsd":0.009},{"agentId":"lead-01","memberId":"lead-01","role":"lead","inputTokens":900,"outputTokens":400,"cacheReadInputTokens":0,"cacheWriteInputTokens":0,"totalTokens":1300,"costUsd":0.005}],"team":{"inputTokens":12100,"outputTokens":5500,"cacheReadInputTokens":0,"cacheWriteInputTokens":0,"totalTokens":17600,"costUsd":0.063}}}
+{"ts":1746318330000,"agentId":"lead-01","type":"text_delta","payload":{"type":"text_delta","text":"architect + implementer done ✓\n"}}
+{"ts":1746318331000,"agentId":"lead-01","type":"text_delta","payload":{"type":"text_delta","text":"\n▸ steer received: also check error handling\n"},"provenance":"steer"}
+{"ts":1746318332000,"agentId":"rev-03","type":"tool_use_start","payload":{"type":"tool_use_start","id":"t6","name":"grep"},"provenance":"steer"}
+{"ts":1746318333000,"agentId":"rev-03","type":"tool_use_end","payload":{"type":"tool_use_end","id":"t6"},"provenance":"steer"}
+{"ts":1746318334000,"agentId":"rev-03","type":"tool_result","payload":{"type":"tool_result","toolUseId":"t6","content":"7 matches"},"provenance":"steer"}
+{"ts":1746318335000,"agentId":"lead-01","type":"text_delta","payload":{"type":"text_delta","text":"↳ reviewer auditing error paths\n"},"provenance":"steer"}
+{"ts":1746318336000,"agentId":"impl-04","type":"tool_use_start","payload":{"type":"tool_use_start","id":"t7","name":"edit_file"},"provenance":"steer"}
+{"ts":1746318337000,"agentId":"impl-04","type":"tool_use_end","payload":{"type":"tool_use_end","id":"t7","input":{"file_path":"src/auth/session.ts","old_string":"return verify(token)","new_string":"try { return verify(token) } catch (e) { logAuthFailure(e); throw e }"}},"provenance":"steer"}
+{"ts":1746318338000,"agentId":"impl-04","type":"tool_result","payload":{"type":"tool_result","toolUseId":"t7","content":"1 edit applied"},"provenance":"steer"}
+{"ts":1746318339000,"agentId":"lead-01","type":"text_delta","payload":{"type":"text_delta","text":"↳ implementer wrapped verify() in try/catch\n"},"provenance":"steer"}
+{"ts":1746318340000,"agentId":"lead-01","type":"text_delta","payload":{"type":"text_delta","text":"reviewer: error handling ✓\n"},"provenance":"steer"}
+{"ts":1746318341000,"agentId":"orchestrator","type":"worker_exited","payload":{"agentId":"rev-03"},"provenance":"steer"}
+{"ts":1746318342000,"agentId":"orchestrator","type":"worker_exited","payload":{"agentId":"impl-04"},"provenance":"steer"}
+{"ts":1746318343000,"agentId":"orchestrator","type":"team_usage","payload":{"members":[{"agentId":"arch-02","memberId":"arch-02","role":"architect","inputTokens":4200,"outputTokens":1800,"cacheReadInputTokens":0,"cacheWriteInputTokens":0,"totalTokens":6000,"costUsd":0.021},{"agentId":"impl-04","memberId":"impl-04","role":"implementer","inputTokens":7300,"outputTokens":3900,"cacheReadInputTokens":0,"cacheWriteInputTokens":0,"totalTokens":11200,"costUsd":0.041},{"agentId":"rev-03","memberId":"rev-03","role":"reviewer","inputTokens":3400,"outputTokens":1300,"cacheReadInputTokens":0,"cacheWriteInputTokens":0,"totalTokens":4700,"costUsd":0.017},{"agentId":"lead-01","memberId":"lead-01","role":"lead","inputTokens":1500,"outputTokens":700,"cacheReadInputTokens":0,"cacheWriteInputTokens":0,"totalTokens":2200,"costUsd":0.008}],"team":{"inputTokens":16400,"outputTokens":7700,"cacheReadInputTokens":0,"cacheWriteInputTokens":0,"totalTokens":24100,"costUsd":0.087}},"provenance":"steer"}
+{"ts":1746318344000,"agentId":"lead-01","type":"text_delta","payload":{"type":"text_delta","text":"usage: 15.8k tok · $0.06 — review complete ✓\n"},"provenance":"steer"}
+{"ts":1746318345000,"agentId":"orchestrator","type":"worker_exited","payload":{"agentId":"lead-01"},"provenance":"steer"}
+{"ts":1746318346000,"agentId":"orchestrator","type":"team_completed","payload":{"teamName":"review","completion":"success"},"provenance":"steer"}

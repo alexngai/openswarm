@@ -171,4 +171,137 @@ describe("Input component", () => {
     expect(keys).toContain("up");
     expect(keys).toContain("down");
   });
+
+  // --- Key-forwarding fix (doc 49): global chords must reach onKey ---------
+
+  it("forwards allowlisted global Ctrl chords (o/s/t/r/g) to onKey", async () => {
+    const keys: import("../repl/state.js").KeyEvent[] = [];
+    const { mockInput, renderOnce } = await testRender(
+      () => (
+        <Input value="" onChange={() => {}} onSubmit={() => {}} onKey={(k) => keys.push(k)} disabled={false} />
+      ),
+      { width: 60, height: 5 },
+    );
+    await renderOnce();
+
+    for (const name of ["o", "s", "t", "r", "g"]) {
+      mockInput.pressKey(name, { ctrl: true });
+      await renderOnce();
+    }
+
+    const seen = keys.filter((k) => k.ctrl === true).map((k) => k.name);
+    expect(seen).toContain("o");
+    expect(seen).toContain("s");
+    expect(seen).toContain("t");
+    expect(seen).toContain("r");
+    expect(seen).toContain("g");
+  });
+
+  it("forwards Shift+Tab and Escape to onKey", async () => {
+    const keys: import("../repl/state.js").KeyEvent[] = [];
+    const { mockInput, renderOnce } = await testRender(
+      () => (
+        <Input value="" onChange={() => {}} onSubmit={() => {}} onKey={(k) => keys.push(k)} disabled={false} />
+      ),
+      { width: 60, height: 5 },
+    );
+    await renderOnce();
+
+    mockInput.pressTab({ shift: true });
+    await renderOnce();
+    mockInput.pressEscape();
+    await renderOnce();
+    // ESC is buffered by the parser (it may start a longer sequence); let it flush.
+    await new Promise<void>((r) => setTimeout(r, 60));
+    await renderOnce();
+
+    expect(keys.some((k) => k.name === "tab" && k.shift === true)).toBe(true);
+    expect(keys.some((k) => k.name === "escape")).toBe(true);
+  });
+
+  it("does NOT forward a non-allowlisted Ctrl chord (Ctrl+K stays with the textarea)", async () => {
+    const keys: import("../repl/state.js").KeyEvent[] = [];
+    const { mockInput, renderOnce } = await testRender(
+      () => (
+        <Input value="" onChange={() => {}} onSubmit={() => {}} onKey={(k) => keys.push(k)} disabled={false} />
+      ),
+      { width: 60, height: 5 },
+    );
+    await renderOnce();
+
+    mockInput.pressKey("k", { ctrl: true });
+    await renderOnce();
+
+    expect(keys.some((k) => k.ctrl === true && k.name === "k")).toBe(false);
+  });
+
+  it("during awaitingPermission forwards keys to onKey and blocks typing", async () => {
+    const keys: import("../repl/state.js").KeyEvent[] = [];
+    const changes: string[] = [];
+    const { mockInput, renderOnce } = await testRender(
+      () => (
+        <Input
+          value=""
+          onChange={(v) => changes.push(v)}
+          onSubmit={() => {}}
+          onKey={(k) => keys.push(k)}
+          disabled={true}
+          awaitingPermission={true}
+        />
+      ),
+      { width: 60, height: 5 },
+    );
+    await renderOnce();
+
+    mockInput.pressKey("y");
+    await renderOnce();
+    mockInput.pressKey("e", { ctrl: true });
+    await renderOnce();
+
+    // 'y' reached the parent as a printable; Ctrl+E reached it as a chord.
+    expect(keys.some((k) => k.printable === "y")).toBe(true);
+    expect(keys.some((k) => k.ctrl === true && k.name === "e")).toBe(true);
+    // The textarea never mutated (no onChange fired).
+    expect(changes.length).toBe(0);
+  });
+
+  it("forwards j/k to onKey when viewActive, but types them normally otherwise", async () => {
+    const keys: import("../repl/state.js").KeyEvent[] = [];
+    const changes: string[] = [];
+
+    // viewActive=true → j/k are navigation, not text.
+    {
+      const { mockInput, renderOnce } = await testRender(
+        () => (
+          <Input value="" onChange={(v) => changes.push(v)} onSubmit={() => {}} onKey={(k) => keys.push(k)} disabled={false} viewActive={true} />
+        ),
+        { width: 60, height: 5 },
+      );
+      await renderOnce();
+      mockInput.pressKey("j");
+      await renderOnce();
+      mockInput.pressKey("k");
+      await renderOnce();
+    }
+    expect(keys.some((k) => k.printable === "j" || k.name === "j")).toBe(true);
+    expect(keys.some((k) => k.printable === "k" || k.name === "k")).toBe(true);
+    expect(changes.length).toBe(0);
+
+    // viewActive=false → j types into the textarea (onChange fires, not onKey).
+    const keys2: import("../repl/state.js").KeyEvent[] = [];
+    const changes2: string[] = [];
+    {
+      const { mockInput, renderOnce } = await testRender(
+        () => (
+          <Input value="" onChange={(v) => changes2.push(v)} onSubmit={() => {}} onKey={(k) => keys2.push(k)} disabled={false} />
+        ),
+        { width: 60, height: 5 },
+      );
+      await renderOnce();
+      await mockInput.typeText("j");
+      await renderOnce();
+    }
+    expect(changes2.some((v) => v.includes("j"))).toBe(true);
+    expect(keys2.some((k) => k.printable === "j")).toBe(false);
+  });
 });

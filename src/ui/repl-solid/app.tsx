@@ -1,7 +1,7 @@
 /**
  * app.tsx — Solid root for the OpenTUI REPL.
  *
- * Composes Transcript, Input, Status, Spinner, Dropdown. Drives the store
+ * Composes Transcript, Input, Footer, Spinner, Dropdown. Drives the store
  * from engine events; handles SIGINT → shutdown; routes slash-prefixed
  * submits through the existing `dispatchSlashLine` pipeline and applies
  * the resulting `SlashCommandResult` back into the store.
@@ -13,7 +13,9 @@
  */
 
 import { Show, onMount, onCleanup, createEffect, createMemo, untrack } from "solid-js";
+import { useRenderer } from "@opentui/solid";
 import { createReplStore } from "./store.js";
+import { serializeTranscript, saveTranscript } from "./transcript-export.js";
 import { Transcript } from "./transcript.js";
 import { Input } from "./input.js";
 import { Footer } from "./footer.js";
@@ -24,6 +26,10 @@ import { MessageQueue } from "./message-queue.js";
 import { AgentTree } from "./views/agent-tree.js";
 import { TaskBoard } from "./views/task-board.js";
 import { extractMentionPrefix, getFileCandidates, applyMention } from "./file-mention.js";
+import { buildMentionContext } from "./mention-context.js";
+import { runBangCommand } from "./bash-mode.js";
+import { editTextInEditor, type SuspendableRenderer } from "./external-editor.js";
+import type { TextareaRenderable } from "@opentui/core";
 import { dispatchSlashLine } from "../../cli/slash/dispatcher.js";
 import { loadHistory, appendHistoryEntry } from "../history.js";
 import type {
@@ -42,6 +48,73 @@ export function App(props: AppProps) {
   const { state, dispatch } = createReplStore({
     permissionMode: props.permissionMode,
   });
+
+  // Renderer handle for Ctrl+R scrollback dump (doc 49 Phase C1). Under
+  // testRender this is a TestRenderer without suspend/resume — guarded below.
+  let renderer: unknown;
+  try {
+    renderer = useRenderer();
+  } catch {
+    renderer = undefined;
+  }
+
+  // Textarea handle for the Ctrl+G external editor (doc 49 Phase E2).
+  let inputTextarea: TextareaRenderable | undefined;
+
+  // Ctrl+G — edit the current prompt in $VISUAL/$EDITOR, then load the result
+  // back into the input (doc 49 Phase E2).
+  const openExternalEditor = (): void => {
+    const current = inputTextarea?.plainText ?? state.input.value;
+    const result = editTextInEditor(current, renderer as SuspendableRenderer);
+    if ("error" in result) {
+      dispatch({
+        type: "system-entry",
+        id: `editor-${Date.now()}`,
+        text: `external editor: ${result.error}`,
+      });
+      return;
+    }
+    // Editors commonly append a trailing newline; drop a single one.
+    const value = result.value.replace(/\n$/, "");
+    inputTextarea?.setText(value);
+    dispatch({ type: "input-changed", value, cursor: value.length });
+  };
+
+  // Ctrl+R — dump the conversation to native terminal scrollback (searchable
+  // with the terminal's own find / tmux copy-mode) and save a temp-file copy.
+  const exportTranscript = (): void => {
+    const text = serializeTranscript(state.transcript, state.toolCalls);
+    let toScrollback = false;
+    try {
+      const r = renderer as
+        | { suspend?: () => void; resume?: () => void }
+        | undefined;
+      if (r && typeof r.suspend === "function" && typeof r.resume === "function") {
+        r.suspend();
+        process.stdout.write(`\n${text}\n`);
+        r.resume();
+        toScrollback = true;
+      }
+    } catch {
+      // Fall back to the file-only path below.
+    }
+    try {
+      const file = saveTranscript(text);
+      dispatch({
+        type: "system-entry",
+        id: `export-${Date.now()}`,
+        text: toScrollback
+          ? `transcript dumped to scrollback · saved to ${file}`
+          : `transcript saved to ${file}`,
+      });
+    } catch (err) {
+      dispatch({
+        type: "system-entry",
+        id: `export-err-${Date.now()}`,
+        text: `transcript export failed: ${err}`,
+      });
+    }
+  };
 
   // Phase 2 — attach the permission bridge's dispatch so `canUseTool` can
   // drive the state machine when it needs to prompt. Detach on unmount so
@@ -128,6 +201,35 @@ export function App(props: AppProps) {
       dispatch({ type: "queue-message", text: line });
       return;
     }
+    // Bash mode: `!cmd` runs a local shell command; output goes to the
+    // transcript, not the model (doc 49 Phase E1).
+    if (line.startsWith("!") && line.trim().length > 1) {
+      const cmd = line.slice(1).trim();
+      try {
+        appendHistoryEntry(line);
+      } catch {
+        /* history best-effort */
+      }
+      dispatch({ type: "system-entry", id: `bash-${Date.now()}`, text: `$ ${cmd}` });
+      void runBangCommand(cmd)
+        .then((res) => {
+          const body = res.output.length > 0 ? res.output : "(no output)";
+          const suffix = res.code !== 0 ? `\n[exit ${res.code}]` : "";
+          dispatch({
+            type: "system-entry",
+            id: `bash-out-${Date.now()}`,
+            text: `${body}${suffix}`,
+          });
+        })
+        .catch((err) => {
+          dispatch({
+            type: "system-entry",
+            id: `bash-err-${Date.now()}`,
+            text: `bash failed: ${err}`,
+          });
+        });
+      return;
+    }
     if (line.startsWith("/") && props.registry !== undefined) {
       const registry = props.registry;
       void (async () => {
@@ -141,6 +243,8 @@ export function App(props: AppProps) {
       })();
       return;
     }
+    // Capture @-mentioned files BEFORE dispatch — `submit` clears them (D1).
+    const mentioned = state.mentionedFiles;
     // Persist before dispatch — history is durable even if dispatch errors.
     try {
       appendHistoryEntry(line);
@@ -148,7 +252,11 @@ export function App(props: AppProps) {
       process.stderr.write(`openswarm: failed to persist history: ${err}\n`);
     }
     dispatch({ type: "submit", text: line });
-    props.onSubmit?.(line);
+    // The transcript shows the raw line (with @path); the engine gets the line
+    // plus the referenced files' contents appended (doc 49 Phase D1).
+    const augmented =
+      mentioned.length > 0 ? `${line}${buildMentionContext(mentioned)}` : line;
+    props.onSubmit?.(augmented);
   };
 
   const getTokens = (): number => props.getTokens?.() ?? 0;
@@ -246,6 +354,16 @@ export function App(props: AppProps) {
       dispatch({ type: "toggle-expand" });
       return;
     }
+    // Ctrl+R: dump the conversation to native scrollback + a temp file.
+    if (key.ctrl === true && key.name === "r") {
+      exportTranscript();
+      return;
+    }
+    // Ctrl+G: edit the prompt in an external editor.
+    if (key.ctrl === true && key.name === "g") {
+      openExternalEditor();
+      return;
+    }
     // Shift+Tab: toggle plan mode.
     if (key.shift === true && (key.name === "tab" || key.printable === "\t")) {
       dispatch({ type: "toggle-plan-mode" });
@@ -264,9 +382,25 @@ export function App(props: AppProps) {
       dispatch({ type: "set-view", view: "tasks" });
       return;
     }
+    // Agent/Task view navigation: ↑/k = up, ↓/j = down (doc 49 Phase D3).
+    if (state.activeView !== "transcript") {
+      if (key.upArrow === true || key.printable === "k" || key.name === "k") {
+        dispatch({ type: "view-select", direction: "up" });
+        return;
+      }
+      if (key.downArrow === true || key.printable === "j" || key.name === "j") {
+        dispatch({ type: "view-select", direction: "down" });
+        return;
+      }
+    }
     if (state.name === "awaiting-permission") {
       if (key.ctrl === true && key.name === "c") {
         respondPermission(false);
+        return;
+      }
+      // Ctrl+E: toggle full-diff / uncapped preview (doc 49 Phase D2).
+      if (key.ctrl === true && key.name === "e") {
+        dispatch({ type: "toggle-approval-expand" });
         return;
       }
       if (key.return === true) {
@@ -339,12 +473,24 @@ export function App(props: AppProps) {
       </box>
       <box flexGrow={1} height={state.activeView === "agents" ? undefined : 0}>
         {state.activeView === "agents" ? (
-          <AgentTree agents={state.agents} />
+          <AgentTree
+            agents={state.agents}
+            selectedIndex={Math.min(
+              state.viewSelectedIndex,
+              Math.max(0, Object.keys(state.agents).length - 1),
+            )}
+          />
         ) : <text />}
       </box>
       <box flexGrow={1} height={state.activeView === "tasks" ? undefined : 0}>
         {state.activeView === "tasks" ? (
-          <TaskBoard tasks={state.tasks} />
+          <TaskBoard
+            tasks={state.tasks}
+            selectedIndex={Math.min(
+              state.viewSelectedIndex,
+              Math.max(0, Object.keys(state.tasks).length - 1),
+            )}
+          />
         ) : <text />}
       </box>
       <Show when={state.name === "streaming"}>
@@ -356,7 +502,7 @@ export function App(props: AppProps) {
           state.pendingPermission !== undefined
         }
       >
-        <ApprovalPanel pending={state.pendingPermission!} />
+        <ApprovalPanel pending={state.pendingPermission!} expanded={state.approvalExpanded} />
       </Show>
       <Show when={state.name !== "shutdown"}>
         <Input
@@ -369,6 +515,11 @@ export function App(props: AppProps) {
           disabled={
             state.name === "compact" || state.name === "awaiting-permission"
           }
+          awaitingPermission={state.name === "awaiting-permission"}
+          viewActive={state.activeView !== "transcript"}
+          onTextareaReady={(r) => {
+            inputTextarea = r;
+          }}
         />
       </Show>
       <Show when={state.messageQueue.length > 0}>

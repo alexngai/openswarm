@@ -10,8 +10,9 @@
  */
 
 import type { ToolCallState } from "../../repl/state.js";
-import { computeDiff, compactDiff } from "../diff/compute.js";
+import { computeDiff, compactDiff, toUnifiedDiff } from "../diff/compute.js";
 import { getStreamingArg } from "./streaming.js";
+import { filetypeFromPath } from "../filetype.js";
 
 export interface ToolRenderer {
   /** Numeric/status suffix for the chip header line. */
@@ -20,6 +21,19 @@ export interface ToolRenderer {
   keyArg(tc: ToolCallState): string;
   /** Body lines for expanded view. Returns empty array to suppress body. */
   bodyLines(tc: ToolCallState): readonly string[];
+  /**
+   * Tree-sitter filetype for the body content, when the body is source code
+   * that should be syntax-highlighted via <code> (doc 49 Phase A2/A3). Returns
+   * undefined for non-source bodies (bash/grep/glob output, JSON args) so the
+   * chip falls back to plain <text>.
+   */
+  bodyFiletype?(tc: ToolCallState): string | undefined;
+  /**
+   * Unified-diff text for edit-style tools, rendered via <diff> when the chip is
+   * expanded (doc 49 Phase B2) for line numbers + syntax-highlighted hunks.
+   * Returns undefined/"" for non-edit tools so the chip uses body lines instead.
+   */
+  diffText?(tc: ToolCallState): string | undefined;
 }
 
 function getArg(tc: ToolCallState, key: string): string | undefined {
@@ -130,6 +144,11 @@ const readRenderer: ToolRenderer = {
     if (lines.length <= 30) return lines;
     return [...lines.slice(0, 30), `… ${lines.length - 30} more lines`];
   },
+  bodyFiletype(tc) {
+    return filetypeFromPath(
+      getArg(tc, "file_path") ?? getArg(tc, "path"),
+    );
+  },
 };
 
 function parseDiffStats(tc: ToolCallState): string {
@@ -174,6 +193,16 @@ const editRenderer: ToolRenderer = {
     }
     return lines;
   },
+  bodyFiletype(tc) {
+    return filetypeFromPath(getArg(tc, "file_path") ?? getArg(tc, "path"));
+  },
+  diffText(tc) {
+    const oldStr = getArg(tc, "old_string") ?? getArg(tc, "old_str") ?? "";
+    const newStr = getArg(tc, "new_string") ?? getArg(tc, "new_str") ?? "";
+    if (oldStr.length === 0 && newStr.length === 0) return undefined;
+    const path = getArg(tc, "file_path") ?? getArg(tc, "path");
+    return toUnifiedDiff(oldStr, newStr, path, { isIncomplete: tc.pending });
+  },
 };
 
 const writeRenderer: ToolRenderer = {
@@ -191,6 +220,11 @@ const writeRenderer: ToolRenderer = {
     const lines = content.split("\n");
     if (lines.length <= 30) return lines;
     return [...lines.slice(0, 30), `… ${lines.length - 30} more lines`];
+  },
+  bodyFiletype(tc) {
+    return filetypeFromPath(
+      getArg(tc, "file_path") ?? getArg(tc, "path"),
+    );
   },
 };
 
