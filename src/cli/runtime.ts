@@ -181,8 +181,10 @@ export async function buildAgentRuntime(
     try {
       hooksConfig = await loadHooksConfig({ cwd: process.cwd() });
     } catch (err) {
+      // Hooks are optional — degrade gracefully: warn to stderr, skip the bad
+      // config, and continue with an empty hooks map (hooksConfig stays {}).
       process.stderr.write(
-        `[openswarm] hooks config error: ${err instanceof Error ? err.message : String(err)}\n`,
+        `[openswarm] ${err instanceof Error ? err.message : String(err)}\n`,
       );
     }
     const n = countMatchers(hooksConfig.config);

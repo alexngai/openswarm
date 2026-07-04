@@ -92,6 +92,33 @@ export interface LoadedHooksConfig {
 }
 
 // ---------------------------------------------------------------------------
+// Error formatting
+// ---------------------------------------------------------------------------
+
+/**
+ * Collapse a Zod validation failure for a hooks config file into a concise,
+ * human-readable warning instead of dumping the raw `ZodError` blob.
+ *
+ * Example:
+ *   Ignoring invalid hooks config at /path/hooks.json: 2 problem(s)
+ *     - PreToolUse.0.command: Invalid input: expected string, received number
+ *     - PostToolUse: Invalid input: expected array, received string
+ */
+export function formatHooksConfigError(
+  configPath: string,
+  error: z.ZodError,
+): string {
+  const issues = error.issues;
+  const bullets = issues
+    .map((issue) => {
+      const field = issue.path.length > 0 ? issue.path.join(".") : "(root)";
+      return `  - ${field}: ${issue.message}`;
+    })
+    .join("\n");
+  return `Ignoring invalid hooks config at ${configPath}: ${issues.length} problem(s)\n${bullets}`;
+}
+
+// ---------------------------------------------------------------------------
 // Resolver
 // ---------------------------------------------------------------------------
 
@@ -177,9 +204,7 @@ export async function loadHooksConfig(
   if (candidate.isSettingsJson) {
     const result = SettingsFileSchema.safeParse(parsed);
     if (!result.success) {
-      throw new Error(
-        `hooks config: ${candidate.path} schema validation failed: ${result.error.message}`,
-      );
+      throw new Error(formatHooksConfigError(candidate.path, result.error));
     }
     const hooks = result.data.hooks ?? {};
     return { config: hooks as HooksConfigFile, resolvedPath: candidate.path };
@@ -187,9 +212,7 @@ export async function loadHooksConfig(
 
   const result = HooksMapSchema.safeParse(parsed);
   if (!result.success) {
-    throw new Error(
-      `hooks config: ${candidate.path} schema validation failed: ${result.error.message}`,
-    );
+    throw new Error(formatHooksConfigError(candidate.path, result.error));
   }
   return { config: result.data as HooksConfigFile, resolvedPath: candidate.path };
 }
