@@ -33,7 +33,7 @@ export interface RunReplConfig {
   readonly getTokens?: TokenGetter;
   readonly slashDeps?: BuildDefaultRegistryDeps;
   readonly onSessionId?: (sessionId: string) => void;
-  /** Phase 2 — approval bridge. See PermissionPrompt + canUseTool wiring. */
+  /** Phase 2 — approval bridge. See ApprovalPanel + canUseTool wiring. */
   readonly permissionBridge?: PermissionBridge;
   /**
    * Phase 3 B1 — per-turn event-stream wrapper. The CLI supplies the memory

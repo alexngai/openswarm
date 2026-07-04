@@ -30,6 +30,19 @@ export const theme = {
   diffAdd: "#4ade80",
   diffRemove: "#f87171",
   diffGutter: "#6b7280",
+
+  // Code syntax tokens (doc 49 Phase A4) — used by codeSyntaxStyle() for
+  // highlighting tool output bodies (<code>) and diff hunks (<diff>). Kept
+  // coherent with the markdown palette in syntax.ts.
+  codeKeyword: "#c084fc",
+  codeString: "#4ade80",
+  codeComment: "#6b7280",
+  codeNumber: "#fbbf24",
+  codeFunction: "#60a5fa",
+  codeType: "#5eead4",
+  codeConstant: "#fbbf24",
+  codePunctuation: "#9ca3af",
+  codeVariable: "#e5e7eb",
   // Background is terminal default; components should generally not set bg.
 } as const;
 

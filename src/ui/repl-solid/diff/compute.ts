@@ -97,6 +97,54 @@ export function computeDiff(
 }
 
 /**
+ * Render old/new text as a standard unified-diff string (doc 49 Phase B1).
+ *
+ * Consumed by OpenTUI's <diff> (DiffRenderable), which parses with jsdiff's
+ * parsePatch and renders syntax-highlighted hunks with line numbers. We emit a
+ * single hunk covering the whole snippet — for edit_file the old/new strings are
+ * already just the changed region, so line numbers are snippet-relative (1-based),
+ * which is still far more useful than none.
+ *
+ * Returns "" when there is no change (empty → <diff> renders nothing), so callers
+ * can fall back to a plain preview.
+ */
+export function toUnifiedDiff(
+  oldText: string,
+  newText: string,
+  filePath?: string,
+  options?: { isIncomplete?: boolean },
+): string {
+  const { lines } = computeDiff(oldText, newText, options);
+  if (lines.length === 0) return "";
+
+  let oldCount = 0;
+  let newCount = 0;
+  const body: string[] = [];
+  for (const dl of lines) {
+    if (dl.kind === "add") {
+      body.push(`+${dl.text}`);
+      newCount++;
+    } else if (dl.kind === "delete") {
+      body.push(`-${dl.text}`);
+      oldCount++;
+    } else {
+      body.push(` ${dl.text}`);
+      oldCount++;
+      newCount++;
+    }
+  }
+
+  const p = filePath !== undefined && filePath.length > 0 ? filePath : "file";
+  // git convention: a side with zero lines starts at 0, otherwise 1.
+  const oldStart = oldCount === 0 ? 0 : 1;
+  const newStart = newCount === 0 ? 0 : 1;
+  const header =
+    `--- a/${p}\n+++ b/${p}\n` +
+    `@@ -${oldStart},${oldCount} +${newStart},${newCount} @@`;
+  return `${header}\n${body.join("\n")}\n`;
+}
+
+/**
  * Compact a diff for display: show only changed lines plus context around them.
  * Returns a subset of the full diff lines suitable for collapsed view.
  */

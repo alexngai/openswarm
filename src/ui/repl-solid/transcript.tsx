@@ -34,69 +34,12 @@
  */
 
 import { For, Show, createMemo } from "solid-js";
-import {
-  SyntaxStyle,
-  TreeSitterClient,
-  getTreeSitterClient,
-  type ThemeTokenStyle,
-} from "@opentui/core";
 import type { TranscriptEntry, ToolCallState } from "../repl/state.js";
-import { entryColor, theme } from "./theme.js";
+import { entryColor } from "./theme.js";
+import { markdownSyntaxStyle, treeSitterClient } from "./syntax.js";
 import { ToolChip } from "./entries/tool-chip.js";
 import { ToolGroup } from "./entries/tool-group.js";
 import { groupTranscriptEntries, type TranscriptItem } from "./entries/group.js";
-
-/**
- * Markdown scope → palette mapping. Scope names are the ones OpenTUI's
- * <markdown> emits internally for marked tokens (verified against
- * `node_modules/@opentui/core/index-*.js`):
- *   markup.heading, markup.strong, markup.italic, markup.strikethrough,
- *   markup.raw (inline code), markup.raw.block (fenced code),
- *   markup.link / markup.link.label / markup.link.url
- *
- * We register a small set so common markup gets palette-aligned colors.
- * Unmapped scopes fall back to OpenTUI's default — fine for now (doc 17
- * P3.Q3 explicitly defers a per-language Tree-sitter palette to later).
- */
-const markdownTheme: ThemeTokenStyle[] = [
-  { scope: ["markup.heading"], style: { foreground: theme.accent, bold: true } },
-  { scope: ["markup.strong"], style: { foreground: theme.text, bold: true } },
-  { scope: ["markup.italic"], style: { foreground: theme.text, italic: true } },
-  { scope: ["markup.strikethrough"], style: { foreground: theme.muted, dim: true } },
-  { scope: ["markup.raw", "markup.raw.block"], style: { foreground: theme.success } },
-  { scope: ["markup.link", "markup.link.label"], style: { foreground: theme.accent, underline: true } },
-  { scope: ["markup.link.url"], style: { foreground: theme.muted, underline: true } },
-];
-
-let _markdownSyntaxStyle: SyntaxStyle | null = null;
-function markdownSyntaxStyle(): SyntaxStyle {
-  if (_markdownSyntaxStyle === null) {
-    _markdownSyntaxStyle = SyntaxStyle.fromTheme(markdownTheme);
-  }
-  return _markdownSyntaxStyle;
-}
-
-// `undefined` = not yet attempted; client instance = success or pending init;
-// `null` = attempted and failed terminally — don't retry.
-let _treeSitterClient: TreeSitterClient | null | undefined = undefined;
-function treeSitterClient(): TreeSitterClient | undefined {
-  if (process.env.OPENSWARM_DISABLE_TREE_SITTER === "1") return undefined;
-  if (_treeSitterClient !== undefined) return _treeSitterClient ?? undefined;
-  try {
-    const client = getTreeSitterClient();
-    // Fire-and-forget: the renderer queues highlight requests against the
-    // client and they resolve once init completes. If init throws (worker
-    // unavailable, WASM load failure, init timeout), drop to no-highlighting.
-    void client.initialize().catch(() => {
-      _treeSitterClient = null;
-    });
-    _treeSitterClient = client;
-    return client;
-  } catch {
-    _treeSitterClient = null;
-    return undefined;
-  }
-}
 
 export interface TranscriptProps {
   readonly entries: readonly TranscriptEntry[];

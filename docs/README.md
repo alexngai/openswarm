@@ -49,6 +49,7 @@ All ACP stages are shipped; the staged build records are archived. The living re
 ## TUI
 
 - [41-tui-redesign.md](./41-tui-redesign.md) — OpenTUI/Solid REPL redesign (active)
+- [49-tui-parity-plan.md](./49-tui-parity-plan.md) — parity plan vs Claude Code/Codex/opencode: syntax highlighting, `<diff>`/`<code>` adoption, transcript ergonomics, half-wired feature fixes (plan)
 
 ## Archive
 

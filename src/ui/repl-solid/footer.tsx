@@ -28,6 +28,9 @@ const TIPS = [
   { text: "shift+enter for newline", weight: 1 },
   { text: "/cost for token usage", weight: 1 },
   { text: "/compact to save context", weight: 1 },
+  { text: "ctrl+r dump to scrollback", weight: 1 },
+  { text: "ctrl+g edit in $EDITOR", weight: 1 },
+  { text: "!cmd runs a shell command", weight: 1 },
 ];
 
 function shortSession(id: string | undefined): string {

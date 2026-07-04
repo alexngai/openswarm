@@ -16,6 +16,7 @@ import { Show, For, createSignal, onMount, onCleanup } from "solid-js";
 import type { ToolCallState } from "../../repl/state.js";
 import { getRenderer } from "../tools/registry.js";
 import { theme } from "../theme.js";
+import { codeSyntaxStyle, treeSitterClient } from "../syntax.js";
 
 const BRAILLE_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
@@ -59,6 +60,20 @@ export function ToolChip(props: ToolChipProps) {
   const keyArg = () => renderer().keyArg(props.tc);
   const bodyLines = () => renderer().bodyLines(props.tc);
 
+  // Syntax-highlight source-code bodies (read_file / write_file) via <code>
+  // when the renderer supplies a filetype and a Tree-sitter client is live
+  // (doc 49 Phase A2). Edit-style tools render a full <diff> (line numbers +
+  // highlighted hunks, doc 49 Phase B2). Both fall back to the plain text loop.
+  const tsClient = treeSitterClient();
+  const bodyFiletype = () => renderer().bodyFiletype?.(props.tc);
+  const diffText = () => renderer().diffText?.(props.tc);
+  const useDiff = () => {
+    const d = diffText();
+    return d !== undefined && d.length > 0;
+  };
+  const useCode = () =>
+    !useDiff() && bodyFiletype() !== undefined && tsClient !== undefined;
+
   const headerText = () => {
     const parts = [verb(), props.tc.name];
     const ka = keyArg();
@@ -74,17 +89,47 @@ export function ToolChip(props: ToolChipProps) {
         <text fg={bulletColor()}>{bullet()} </text>
         <text fg={theme.text}>{headerText()}</text>
       </box>
-      <Show when={props.expanded && !props.tc.pending && bodyLines().length > 0}>
+      <Show when={props.expanded && !props.tc.pending && (useDiff() || bodyLines().length > 0)}>
         <box flexDirection="column" paddingLeft={3}>
-          <For each={bodyLines() as string[]}>
-            {(line) => {
-              const fg =
-                line.startsWith("+ ") ? theme.diffAdd
-                : line.startsWith("- ") ? theme.diffRemove
-                : theme.muted;
-              return <text fg={fg}>{line}</text>;
-            }}
-          </For>
+          <Show
+            when={useDiff()}
+            fallback={
+              <Show
+                when={useCode()}
+                fallback={
+                  <For each={bodyLines() as string[]}>
+                    {(line) => {
+                      const fg =
+                        line.startsWith("+ ") ? theme.diffAdd
+                        : line.startsWith("- ") ? theme.diffRemove
+                        : theme.muted;
+                      return <text fg={fg}>{line}</text>;
+                    }}
+                  </For>
+                }
+              >
+                <code
+                  content={(bodyLines() as string[]).join("\n")}
+                  filetype={bodyFiletype()!}
+                  syntaxStyle={codeSyntaxStyle()}
+                  treeSitterClient={tsClient!}
+                  conceal={false}
+                  drawUnstyledText={true}
+                />
+              </Show>
+            }
+          >
+            <diff
+              diff={diffText()!}
+              view="unified"
+              showLineNumbers={true}
+              syntaxStyle={codeSyntaxStyle()}
+              addedSignColor={theme.diffAdd}
+              removedSignColor={theme.diffRemove}
+              {...(bodyFiletype() !== undefined ? { filetype: bodyFiletype()! } : {})}
+              {...(tsClient !== undefined ? { treeSitterClient: tsClient } : {})}
+            />
+          </Show>
         </box>
       </Show>
     </box>

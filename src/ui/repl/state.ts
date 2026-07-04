@@ -126,6 +126,12 @@ export interface ReplState {
   readonly permissionMode: PermissionMode;
   readonly sessionId: string | undefined;
   readonly pendingPermission: PendingPermission | undefined;
+  /**
+   * When true, the approval panel shows the full diff / uncapped preview
+   * instead of the compact one. Toggled by Ctrl+E while awaiting-permission
+   * (doc 49 Phase D2). Reset on each new permission request.
+   */
+  readonly approvalExpanded: boolean;
   /** Id of the assistant transcript entry currently being streamed into. */
   readonly streamingEntryId: string | undefined;
   /**
@@ -151,6 +157,11 @@ export interface ReplState {
   readonly planMode: boolean;
   /** Files mentioned via @ in the input, attached as context (Phase 6). */
   readonly mentionedFiles: readonly string[];
+  /**
+   * Selected row in the agent/task views (j/k or ↑/↓ navigation, doc 49
+   * Phase D3). Reset to 0 on view switch; clamped against the list at render.
+   */
+  readonly viewSelectedIndex: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -172,6 +183,7 @@ export type ReplEvent =
   | { readonly type: "steer"; readonly text: string }
   // Permission
   | { readonly type: "permission-request"; readonly request: PendingPermission }
+  | { readonly type: "toggle-approval-expand" }
   | {
       readonly type: "permission-response";
       readonly decision: "approve" | "deny";
@@ -200,6 +212,7 @@ export type ReplEvent =
   | { readonly type: "agent-status"; readonly id: string; readonly phase: AgentPhase; readonly toolCount?: number; readonly tokenUsage?: number }
   | { readonly type: "task-update"; readonly id: string; readonly title: string; readonly status: TaskStatus; readonly assignee?: string }
   | { readonly type: "set-view"; readonly view: ActiveView }
+  | { readonly type: "view-select"; readonly direction: "up" | "down" }
   // Input enhancements (Phase 6)
   | { readonly type: "toggle-plan-mode" }
   | { readonly type: "add-mentioned-file"; readonly filePath: string }
@@ -260,6 +273,7 @@ export function createInitialState(opts?: InitialStateOptions): ReplState {
     permissionMode: opts?.permissionMode ?? "workspace-write",
     sessionId: opts?.sessionId,
     pendingPermission: undefined,
+    approvalExpanded: false,
     streamingEntryId: undefined,
     dropdownIndex: 0,
     toolCalls: {},
@@ -270,6 +284,7 @@ export function createInitialState(opts?: InitialStateOptions): ReplState {
     activeView: "transcript",
     planMode: false,
     mentionedFiles: [],
+    viewSelectedIndex: 0,
   };
 }
 
@@ -420,7 +435,13 @@ export function reduce(state: ReplState, event: ReplEvent): ReplState {
         ...state,
         name: "awaiting-permission",
         pendingPermission: event.request,
+        approvalExpanded: false,
       };
+    }
+
+    case "toggle-approval-expand": {
+      if (state.name !== "awaiting-permission") return state;
+      return { ...state, approvalExpanded: !state.approvalExpanded };
     }
 
     case "permission-response": {
@@ -429,6 +450,7 @@ export function reduce(state: ReplState, event: ReplEvent): ReplState {
         ...state,
         name: "streaming",
         pendingPermission: undefined,
+        approvalExpanded: false,
       };
     }
 
@@ -594,7 +616,17 @@ export function reduce(state: ReplState, event: ReplEvent): ReplState {
     }
 
     case "set-view": {
-      return { ...state, activeView: event.view };
+      return { ...state, activeView: event.view, viewSelectedIndex: 0 };
+    }
+
+    case "view-select": {
+      // Lower-bounded here; the upper bound is clamped at render against the
+      // current agent/task list length (the reducer doesn't know it).
+      const next =
+        event.direction === "up"
+          ? Math.max(0, state.viewSelectedIndex - 1)
+          : state.viewSelectedIndex + 1;
+      return { ...state, viewSelectedIndex: next };
     }
 
     case "toggle-plan-mode": {

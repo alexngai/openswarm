@@ -48,6 +48,24 @@ export interface InputProps {
   readonly onSubmit: (value: string) => void;
   readonly onKey: (key: KeyEvent) => void;
   readonly disabled: boolean;
+  /**
+   * When true (awaiting a permission decision), forward ALL keys to onKey and
+   * block the textarea from mutating (doc 49 Phase D2/key-forwarding fix). The
+   * parent's handleKey consumes y/n/a/Enter/Esc/Ctrl+E/Ctrl+C and swallows the
+   * rest, so nothing edits the buffer during a prompt.
+   */
+  readonly awaitingPermission?: boolean;
+  /**
+   * When true (a non-transcript view is active), forward j/k to onKey for list
+   * navigation instead of typing them (doc 49 Phase D3). Arrows already forward.
+   */
+  readonly viewActive?: boolean;
+  /**
+   * Called once with the underlying textarea so the parent can imperatively read
+   * / set its content (Ctrl+G external editor, doc 49 Phase E2). The textarea is
+   * otherwise uncontrolled — state.input is derived from it via onChange.
+   */
+  readonly onTextareaReady?: (textarea: TextareaRenderable) => void;
 }
 
 /**
@@ -96,6 +114,9 @@ function translateCoreKey(e: CoreKeyEvent): KeyEvent | null {
   // Escape.
   if (name === "escape") return { name: "escape" };
 
+  // Tab / Shift+Tab (plan-mode toggle, dropdown accept).
+  if (name === "tab") return { name: "tab", shift: e.shift };
+
   // Printable characters.
   if (name.length === 1 && !e.ctrl && !e.meta) {
     return { printable: name };
@@ -105,6 +126,26 @@ function translateCoreKey(e: CoreKeyEvent): KeyEvent | null {
   if (name === "return") return { return: true };
 
   return null;
+}
+
+/**
+ * Global chords the parent's handleKey consumes (and returns on), so forwarding
+ * them can't desync the reducer buffer. Excludes textarea editing chords
+ * (Ctrl+A/E/K/U/W, meta motions) which the KeyBinding system owns.
+ *
+ * Ctrl+A doubles as textarea line-home AND the parent's "agents view"; the
+ * parent intercepts it, so forwarding is safe (view switch hides the input).
+ */
+const GLOBAL_CTRL_CHORDS = new Set(["s", "o", "a", "t", "r", "g"]);
+
+function isGlobalChord(e: CoreKeyEvent): boolean {
+  const name = (e.name ?? "").toLowerCase();
+  if (name === "escape") return true;
+  if (name === "tab" && e.shift === true) return true;
+  if (e.ctrl === true && e.meta !== true && GLOBAL_CTRL_CHORDS.has(name)) {
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -138,6 +179,7 @@ export const Input: Component<InputProps> = (props) => {
     textareaRef = r;
     // Focus immediately on mount so key events are routed here.
     r.focus();
+    props.onTextareaReady?.(r);
     // Wrap handlePaste to normalize CRLF line endings before the default
     // handler runs. OpenTUI preserves bytes verbatim (P4.Q5).
     const originalHandlePaste = r.handlePaste.bind(r);
@@ -165,12 +207,35 @@ export const Input: Component<InputProps> = (props) => {
   }
 
   function handleKeyDown(e: CoreKeyEvent) {
+    // While a permission prompt is up, the parent owns every keystroke: forward
+    // all keys and block the textarea from mutating (doc 49 key-forwarding fix).
+    if (props.awaitingPermission === true) {
+      const keyEvent = translateCoreKey(e);
+      if (keyEvent) props.onKey(keyEvent);
+      e.preventDefault();
+      return;
+    }
+
     if (props.disabled) {
       e.preventDefault();
       return;
     }
 
     const name = e.name ?? "";
+
+    // While an agent/task view is active, j/k drive list navigation (doc 49
+    // Phase D3) — forward and block them from typing into the input.
+    if (
+      props.viewActive === true &&
+      e.ctrl !== true &&
+      e.meta !== true &&
+      (name === "j" || name === "k")
+    ) {
+      const keyEvent = translateCoreKey(e);
+      if (keyEvent) props.onKey(keyEvent);
+      e.preventDefault();
+      return;
+    }
 
     // Arrow keys: let the textarea do its default cursor movement, but also
     // forward to onKey so the parent can do history navigation.
@@ -181,9 +246,18 @@ export const Input: Component<InputProps> = (props) => {
       return;
     }
 
-    // All other keys are handled by the KeyBinding system or textarea natively.
-    // We don't need to forward them here as the reducer-side is driven by
-    // onContentChange (which fires after the buffer updates).
+    // Global chords (Ctrl+O/S/A/T/R/G, Shift+Tab, Esc): forward to the parent's
+    // handleKey and block the textarea so they don't insert text. Every chord
+    // here is consumed by handleKey, so the reducer buffer can't desync.
+    if (isGlobalChord(e)) {
+      const keyEvent = translateCoreKey(e);
+      if (keyEvent) props.onKey(keyEvent);
+      e.preventDefault();
+      return;
+    }
+
+    // All other keys are handled by the KeyBinding system or textarea natively;
+    // the reducer buffer is kept in sync by onContentChange after the edit.
   }
 
   return (

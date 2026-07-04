@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeDiff, compactDiff } from "./compute.js";
+import { computeDiff, compactDiff, toUnifiedDiff } from "./compute.js";
 
 describe("computeDiff", () => {
   it("identical texts produce only context lines", () => {
@@ -123,5 +123,47 @@ describe("compactDiff", () => {
     const diff = computeDiff(old, nw);
     const { hiddenChanges } = compactDiff(diff, { maxChanges: 4 });
     expect(hiddenChanges).toBeGreaterThan(0);
+  });
+});
+
+describe("toUnifiedDiff", () => {
+  it("returns empty string when there is no content", () => {
+    expect(toUnifiedDiff("", "")).toBe("");
+  });
+
+  it("emits file headers and a hunk header", () => {
+    const out = toUnifiedDiff("a\nb\nc", "a\nx\nc", "src/foo.ts");
+    expect(out).toContain("--- a/src/foo.ts");
+    expect(out).toContain("+++ b/src/foo.ts");
+    expect(out).toMatch(/@@ -1,\d+ \+1,\d+ @@/);
+    expect(out).toContain("-b");
+    expect(out).toContain("+x");
+    expect(out).toContain(" a");
+    expect(out).toContain(" c");
+  });
+
+  it("uses 0 old-start for a pure addition (new file)", () => {
+    const out = toUnifiedDiff("", "line1\nline2", "new.txt");
+    expect(out).toMatch(/@@ -0,0 \+1,2 @@/);
+    expect(out).toContain("+line1");
+    expect(out).toContain("+line2");
+  });
+
+  it("falls back to a placeholder path when none given", () => {
+    const out = toUnifiedDiff("a", "b");
+    expect(out).toContain("--- a/file");
+    expect(out).toContain("+++ b/file");
+  });
+
+  it("hunk counts match the number of prefixed lines", () => {
+    const out = toUnifiedDiff("a\nb", "a\nb\nc", "f.txt");
+    const m = out.match(/@@ -(\d+),(\d+) \+(\d+),(\d+) @@/);
+    expect(m).not.toBeNull();
+    const [, , oldCount, , newCount] = m!.map(Number) as unknown as number[];
+    const bodyLines = out.trimEnd().split("\n").slice(3);
+    const olds = bodyLines.filter((l) => l.startsWith("-") || l.startsWith(" ")).length;
+    const news = bodyLines.filter((l) => l.startsWith("+") || l.startsWith(" ")).length;
+    expect(olds).toBe(oldCount);
+    expect(news).toBe(newCount);
   });
 });
