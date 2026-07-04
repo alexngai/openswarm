@@ -6,7 +6,6 @@
   <a href="https://www.npmjs.com/package/openswarm"><img alt="npm" src="https://img.shields.io/npm/v/openswarm?style=flat-square" /></a>
   <a href="#license"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" /></a>
   <img alt="Node >= 22" src="https://img.shields.io/badge/node-%3E%3D22-brightgreen?style=flat-square" />
-  <img alt="3,500+ tests" src="https://img.shields.io/badge/tests-3%2C500%2B-brightgreen?style=flat-square" />
 </p>
 
 <p align="center">
