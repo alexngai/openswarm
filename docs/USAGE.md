@@ -166,7 +166,7 @@ The single-agent REPL and headless paths additionally register `request_permissi
 - **Cron scheduler** — `CronRegistry` is in-memory; scheduled tasks don't persist across restarts.
 - **Auto-mode cascade rebase** — the primitive exists but Pipeline topology doesn't auto-invoke it yet.
 - **Merge conflict resolution** — conflicts during `mergeStreams` emit lane events but have no interactive resolution UX.
-- **Windows** — macOS-first; Linux works but is less tested. No Windows support.
+- **Windows** — macOS-first; Linux works but is less tested. No native Windows support: run under **WSL2** (Ubuntu recommended), where the Linux install path and prebuilt `linux-x64` binary work. Install Node.js ≥ 22 inside the WSL distro, then follow the standard npm install.
 
 ## Architecture
 
