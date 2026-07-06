@@ -191,6 +191,11 @@ export async function bootSwarmHost(
       host: bindHost,
       ...(opts.swarmId !== undefined && { name: opts.swarmId }),
       additionalHandlers: macro.handlers,
+      // docs/44 P7 — serve ACP over the INBOUND MAP server (the one OpenHive's
+      // MAPClientManager dials for chat). Each incoming ACP stream gets an
+      // on-demand coordinator team. Enabled whenever hosted ACP team opts are
+      // present (same condition as the outbound sidecar's ACP wiring below).
+      ...(opts.acpTeamOpts !== undefined && { acp: { acpOpts: opts.acpTeamOpts } }),
       onConnection: (router) => {
         registerCascadeActions(router, {
           host: standalone,
