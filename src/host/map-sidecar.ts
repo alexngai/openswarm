@@ -73,6 +73,13 @@ export async function createMapSidecar(
     role: "sidecar",
     scopes: [opts.scope],
     capabilities: {
+      // ACP-over-MAP is wired on this outbound connection (boot.ts wires
+      // `wireAcpOverMap` whenever `acpTeamOpts` is set, which the `host` entry
+      // always does), so the hub can open live chat/dispatch streams over it.
+      // Advertise the `acp` protocol so OpenHive's ACP discovery
+      // (`findAcpAgentInfo`, which keys on `capabilities.protocols`) routes to
+      // us for chat instead of falling back to mail-only.
+      protocols: ["acp"],
       messaging: { canSend: true, canReceive: true },
       lifecycle: { canObserve: true },
       // We drive cascade actions on real git (P8) — advertise canAct.

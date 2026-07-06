@@ -17,6 +17,12 @@ import { WebSocketServer, WebSocket } from "ws";
 import { MAPServer } from "@multi-agent-protocol/sdk/server";
 import type { Stream, AnyMessage } from "@multi-agent-protocol/sdk";
 import type { CascadeRouter } from "./cascade-actions.js";
+import {
+  createInboundAcpBridge,
+  isACPEnvelope,
+  type InboundAcpBridge,
+} from "./inbound-acp-bridge.js";
+import type { CommonOpts } from "../cli/argv.js";
 
 export interface MapServer {
   /** `ws://<host>:<port>/map` */
@@ -24,6 +30,8 @@ export interface MapServer {
   readonly port: number;
   /** The underlying MAP SDK server (agent registry, event bus, etc.). */
   readonly map: MAPServer;
+  /** ACP-over-MAP bridge for inbound streams (present when `acp` was enabled). */
+  readonly acpBridge?: InboundAcpBridge;
   /** Live inbound MAP client connection count. */
   connectionCount(): number;
   close(): Promise<void>;
@@ -50,6 +58,12 @@ export interface CreateMapServerOptions {
    * actions arrive as `x-cascade/request.*` notifications).
    */
   readonly onConnection?: (router: CascadeRouter) => void;
+  /**
+   * Enable ACP-over-MAP on the inbound server (docs/44 P7). When set, incoming
+   * ACP streams (from OpenHive's `MAPClientManager.createACPStream`) are served
+   * by an on-demand coordinator team. `acpOpts` carries the hosted team config.
+   */
+  readonly acp?: { readonly acpOpts: CommonOpts };
   readonly log?: (msg: string) => void;
 }
 
@@ -117,6 +131,96 @@ export async function createMapServer(
     }),
   });
 
+  // ── ACP-over-MAP server plumbing (docs/44 P7) ──────────────────────────────
+  // Access the SDK server internals the ACP path needs (not on the public type).
+  const mapInternals = map as unknown as {
+    eventBus?: { on(evt: string, cb: (e: unknown) => void): void; emit(e: unknown): void };
+    subscriptions?: { matchesFilter?: (event: unknown, filter: unknown) => boolean };
+  };
+
+  // The SDK's matchesFilter() throws on an undefined filter (a bare
+  // client.subscribe() with no args — which ACP streams use). Treat a missing
+  // filter as "match all" so ACP subscriptions receive events. (macro-agent parity.)
+  if (mapInternals.subscriptions?.matchesFilter) {
+    const orig = mapInternals.subscriptions.matchesFilter.bind(mapInternals.subscriptions);
+    mapInternals.subscriptions.matchesFilter = (event, filter) =>
+      filter == null ? true : orig(event, filter);
+  }
+
+  // Per-client delivery state, used to push ACP responses back to a specific
+  // client as `map/event` subscription notifications (what the client's
+  // ACPStreamConnection listens on). Populated by parsing the server's outgoing
+  // responses in the connection handler below.
+  const clientWebSockets = new Map<string, WebSocket>();
+  const clientSubscriptions = new Map<string, string[]>();
+  const subscriptionSequence = new Map<string, number>();
+  const originalSends = new Map<WebSocket, (data: unknown, ...a: unknown[]) => void>();
+  let eventSeq = 0;
+
+  function sendRawToClient(clientId: string, rawEvent: unknown): void {
+    const ws = clientWebSockets.get(clientId);
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const rawSend = originalSends.get(ws) ?? (ws.send.bind(ws) as (d: unknown, ...a: unknown[]) => void);
+    const subIds = clientSubscriptions.get(clientId) ?? [];
+    const evt = (rawEvent as { params?: { event?: unknown } })?.params?.event ?? rawEvent;
+    const evtId = (evt as { id?: string })?.id ?? `acp-evt-${(eventSeq = (eventSeq + 1) & 0x7fffffff).toString(36)}`;
+    for (const subId of subIds) {
+      // sequenceNumber must be a per-subscription monotonic counter incrementing
+      // by exactly 1 — the SDK warns on any gap. Never use a clock here.
+      const nextSeq = (subscriptionSequence.get(subId) ?? 0) + 1;
+      subscriptionSequence.set(subId, nextSeq);
+      rawSend(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          method: "map/event",
+          params: {
+            subscriptionId: subId,
+            sequenceNumber: nextSeq,
+            eventId: evtId,
+            timestamp: Date.now(),
+            event: evt,
+          },
+        }),
+      );
+    }
+  }
+
+  // The inbound ACP bridge + the event-bus hook that feeds it. ACP envelopes
+  // addressed to our (server-side registered) agents don't resolve to a MAP
+  // connection, so the SDK fires message.sent/queued rather than delivering —
+  // we intercept there.
+  let acpBridge: InboundAcpBridge | undefined;
+  if (opts.acp) {
+    acpBridge = createInboundAcpBridge({
+      acpOpts: opts.acp.acpOpts,
+      sendRawToClient,
+      emitEvent: (e) => {
+        try {
+          mapInternals.eventBus?.emit(e);
+        } catch {
+          /* best effort */
+        }
+      },
+      log,
+    });
+    const bridge = acpBridge;
+    const handleMessageEvent = (event: unknown): void => {
+      const message = (event as { data?: { message?: unknown } })?.data?.message;
+      if (!message || !isACPEnvelope((message as { payload?: unknown }).payload)) return;
+      // Defer so the map/send ACK goes out before the ACP response (protocol
+      // ordering — the eventBus fires synchronously inside send handling).
+      setImmediate(() => {
+        try {
+          bridge.handleDelivery(message);
+        } catch (err) {
+          log(`[inbound-acp] handleDelivery failed: ${(err as Error).message}`);
+        }
+      });
+    };
+    mapInternals.eventBus?.on("message.sent", handleMessageEvent);
+    mapInternals.eventBus?.on("message.queued", handleMessageEvent);
+  }
+
   const httpServer = http.createServer((_req, res) => {
     res.writeHead(426, { "content-type": "text/plain" });
     res.end("Upgrade Required: connect to this port over WebSocket");
@@ -130,6 +234,61 @@ export async function createMapServer(
 
   wss.on("connection", (ws: WebSocket) => {
     sockets.add(ws);
+
+    // ACP delivery needs to push events to specific clients. Learn this client's
+    // subscription ids + identity by parsing the server's OUTGOING responses
+    // (openswarm's webSocketStream writes via `ws.send`, so wrapping it captures
+    // them), and drop subscriptions on unsubscribe. (macro-agent parity.)
+    if (opts.acp) {
+      const rawSend = ws.send.bind(ws) as (data: unknown, ...a: unknown[]) => void;
+      originalSends.set(ws, rawSend);
+      const subIds: string[] = [];
+      (ws as unknown as { send: (d: unknown, ...a: unknown[]) => unknown }).send = (
+        data: unknown,
+        ...args: unknown[]
+      ) => {
+        try {
+          const msg = typeof data === "string" ? JSON.parse(data) : null;
+          const result = msg?.result;
+          if (typeof result?.subscriptionId === "string") subIds.push(result.subscriptionId);
+          for (const id of [
+            result?.agent?.id,
+            result?.connection?.participantId,
+            result?.sessionId,
+          ]) {
+            if (typeof id === "string") {
+              clientWebSockets.set(id, ws);
+              clientSubscriptions.set(id, subIds);
+            }
+          }
+        } catch {
+          /* non-JSON frame — ignore */
+        }
+        return rawSend(data, ...args);
+      };
+      ws.on("message", (data: Buffer | ArrayBuffer | Buffer[]) => {
+        try {
+          const text = Array.isArray(data)
+            ? Buffer.concat(data).toString("utf-8")
+            : data.toString();
+          const msg = JSON.parse(text);
+          if (msg?.method === "map/unsubscribe" && typeof msg?.params?.subscriptionId === "string") {
+            const subId = msg.params.subscriptionId as string;
+            const idx = subIds.indexOf(subId);
+            if (idx >= 0) subIds.splice(idx, 1);
+            subscriptionSequence.delete(subId);
+          }
+        } catch {
+          /* ignore */
+        }
+      });
+      ws.once("close", () => {
+        for (const subId of subIds) subscriptionSequence.delete(subId);
+        for (const [id, sock] of clientWebSockets) if (sock === ws) clientWebSockets.delete(id);
+        originalSends.delete(ws);
+      });
+    }
+
     // OpenHive connects as a MAP client (observes + controls); the swarm's own
     // agents are registered server-side by the bridge, not over this socket.
     const router = map.accept(webSocketStream(ws), { role: "client" });
@@ -165,8 +324,10 @@ export async function createMapServer(
     url: `ws://${host}:${port}${wsPath}`,
     port,
     map,
+    ...(acpBridge !== undefined && { acpBridge }),
     connectionCount: () => sockets.size,
     close: async () => {
+      if (acpBridge !== undefined) await acpBridge.close().catch(() => {});
       for (const ws of sockets) {
         try {
           ws.close();
