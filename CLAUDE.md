@@ -6,7 +6,7 @@ OpenSwarm is a TypeScript multi-agent coding CLI: one orchestrator coordinating 
 
 ```bash
 bun install                                        # install dependencies
-npm run build                                      # type-check + bundle
+npm run build                                      # type-check + compile (tsc)
 npm test                                           # vitest suite
 bun test src/ui/repl-solid/                        # OpenTUI/Solid UI tests (bun test, not vitest)
 npx tsc -p eval/tsconfig.json --noEmit             # type-check eval/ tree
