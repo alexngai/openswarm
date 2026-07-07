@@ -153,6 +153,18 @@ export interface CommonOpts {
    * `team attach <name>` verb; the REPL otherwise behaves normally.
    */
   readonly attachTeam?: string;
+  /**
+   * Full REPLACEMENT of the single-agent base system prompt (native/hardened-native).
+   * When set, `buildSystemPrompt()`'s default is NOT used — this text becomes the base
+   * system prompt (project CLAUDE.md/AGENTS.md extensions are dropped). A value of the
+   * form `@<path>` is read from that file at runtime. Applies to prompt/acp runs.
+   */
+  readonly systemPromptOverride?: string;
+  /**
+   * ADDITION appended after the base system prompt (or after an override). `@<path>` is
+   * read from that file at runtime. Layer guidance without discarding the default.
+   */
+  readonly appendSystemPrompt?: string;
 }
 
 export type ParsedArgs =
@@ -330,6 +342,8 @@ export function parseArgv(args: string[]): ParsedArgs {
   let maxTokens: number | undefined;
   let maxCostUsd: number | undefined;
   let maxTurns: number | undefined;
+  let systemPromptOverride: string | undefined;
+  let appendSystemPrompt: string | undefined;
   let maxWallClockMs: number | undefined;
 
   // Defaults for swarm-run (consumed when subcommand === "swarm").
@@ -563,6 +577,34 @@ export function parseArgv(args: string[]): ParsedArgs {
         };
       }
       model = val;
+      i += 2;
+      continue;
+    }
+
+    if (tok === "--system-prompt") {
+      const val = expanded[i + 1];
+      if (val === undefined) {
+        return {
+          kind: "error",
+          message: "--system-prompt requires a value (text, or @<path> to read from a file)",
+          showHelp: true,
+        };
+      }
+      systemPromptOverride = val;
+      i += 2;
+      continue;
+    }
+
+    if (tok === "--append-system-prompt") {
+      const val = expanded[i + 1];
+      if (val === undefined) {
+        return {
+          kind: "error",
+          message: "--append-system-prompt requires a value (text, or @<path> to read from a file)",
+          showHelp: true,
+        };
+      }
+      appendSystemPrompt = val;
       i += 2;
       continue;
     }
@@ -1077,6 +1119,8 @@ export function parseArgv(args: string[]): ParsedArgs {
     framework,
     codexTransport,
     dumpEngine,
+    ...(systemPromptOverride !== undefined ? { systemPromptOverride } : {}),
+    ...(appendSystemPrompt !== undefined ? { appendSystemPrompt } : {}),
     ...(acpSingle ? { single: true } : {}),
     ...(acpTeam ? { team: true } : {}),
     ...(eagerToolDispatch ? { eagerToolDispatch: true } : {}),
