@@ -238,6 +238,9 @@ export interface TeamCoordination {
    *  tier when a tier's confidence is below τ. Default 1 (escalate unless a tier
    *  signals a full solve). Sweeping τ traces the cost/quality frontier. */
   readonly escalationTau?: number;
+  /** docs/50 G3 — name of the benchmark-specific escalation evaluator to resolve
+   *  from the TopologyContext registry. Absent ⇒ self-report sentinel fallback. */
+  readonly escalationEvaluator?: string;
   /** V0.4.Q7 — explicit shared MAP scope override. */
   readonly mapScope?: string;
   /** V0.4.Q4 — `team send` routing entry point. */
@@ -288,6 +291,7 @@ export const TeamCoordinationSchema = z.object({
   idleTimeoutMs: z.number().int().positive().optional(),
   verifiedCompletion: z.object({ maxRounds: z.number().int().positive() }).optional(),
   escalationTau: z.number().min(0).max(1).optional(),
+  escalationEvaluator: z.string().min(1).optional(),
   mapScope: z.string().min(1).optional(),
   entryPoint: z
     .union([

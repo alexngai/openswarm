@@ -13,7 +13,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { CascadeTopology, parseConfidence } from "./cascade.js";
+import { CascadeTopology } from "./cascade.js";
+import { EvaluatorRegistry } from "../escalation-evaluator.js";
 import { WorkerPool } from "../worker-pool.js";
 import { DeadLetterWriter } from "../dead-letter.js";
 import type { TeamSpec, MemberSpec } from "../team-spec.js";
@@ -90,7 +91,11 @@ function member(id: string, prompt: string, model?: string): MemberSpec {
   };
 }
 
-function cascadeSpec(members: readonly MemberSpec[], escalationTau?: number): TeamSpec {
+function cascadeSpec(
+  members: readonly MemberSpec[],
+  escalationTau?: number,
+  escalationEvaluator?: string,
+): TeamSpec {
   return {
     name: "cascade-test",
     topology: "cascade",
@@ -98,13 +103,14 @@ function cascadeSpec(members: readonly MemberSpec[], escalationTau?: number): Te
     coordination: {
       completion: { kind: "until_signal", signal: "DONE" },
       ...(escalationTau !== undefined && { escalationTau }),
+      ...(escalationEvaluator !== undefined && { escalationEvaluator }),
     },
   };
 }
 
 async function makeCtx(
   results: readonly AgentResult[],
-  opts: { aborted?: boolean } = {},
+  opts: { aborted?: boolean; escalation?: TopologyContext["escalation"] } = {},
 ): Promise<{ ctx: TopologyContext; harness: Harness; cleanup: () => Promise<void> }> {
   const harness = fakeHost(results);
   const pool = new WorkerPool(8);
@@ -119,6 +125,7 @@ async function makeCtx(
     deadLetter,
     permissionMode: "workspace-write",
     ...(opts.aborted === true && { abort: AbortSignal.abort() }),
+    ...(opts.escalation !== undefined && { escalation: opts.escalation }),
   };
   return {
     ctx,
@@ -140,22 +147,6 @@ function ok(output: string): AgentResult {
 function fail(error = "boom"): AgentResult {
   return { status: "failure", error, wallClockMs: 1 };
 }
-
-describe("parseConfidence", () => {
-  it("CASCADE_SOLVED → 1", () => {
-    expect(parseConfidence("all good\nCASCADE_SOLVED", "success")).toEqual({ confidence: 1, failed: false });
-  });
-  it("CASCADE_CONFIDENCE: n → clamped n", () => {
-    expect(parseConfidence("CASCADE_CONFIDENCE: 0.7", "success").confidence).toBeCloseTo(0.7, 6);
-    expect(parseConfidence("CASCADE_CONFIDENCE: 1.5", "success").confidence).toBe(1);
-  });
-  it("no signal → 0 (escalate)", () => {
-    expect(parseConfidence("just some text", "success")).toEqual({ confidence: 0, failed: false });
-  });
-  it("non-success status → failed, confidence 0", () => {
-    expect(parseConfidence("", "failure")).toEqual({ confidence: 0, failed: true });
-  });
-});
 
 describe("CascadeTopology", () => {
   const cleanups: Array<() => Promise<void>> = [];
@@ -233,6 +224,27 @@ describe("CascadeTopology", () => {
     expect(harness.spawns).toHaveLength(0);
     expect(result.cancelled).toBe(2);
     expect(result.succeeded).toBe(0);
+  });
+
+  it("uses an injected benchmark evaluator's graded confidence (not the sentinel)", async () => {
+    // outputs carry NO sentinel — proving the evaluator, not parseSelfReport, drives the gate
+    const reg = new EvaluatorRegistry().register({ name: "graded", evaluate: () => Promise.resolve(0.5) });
+
+    const hi = await makeCtx([ok("attempt one"), ok("attempt two")], { escalation: { registry: reg } });
+    cleanups.push(hi.cleanup);
+    await new CascadeTopology().run(
+      cascadeSpec([member("8b", "x"), member("30b", "x")], 0.6, "graded"),
+      hi.ctx,
+    );
+    expect(hi.harness.spawns).toHaveLength(2); // 0.5 < 0.6 → escalated
+
+    const lo = await makeCtx([ok("attempt one"), ok("attempt two")], { escalation: { registry: reg } });
+    cleanups.push(lo.cleanup);
+    await new CascadeTopology().run(
+      cascadeSpec([member("8b", "x"), member("30b", "x")], 0.4, "graded"),
+      lo.ctx,
+    );
+    expect(lo.harness.spawns).toHaveLength(1); // 0.5 ≥ 0.4 → kept the cheap tier
   });
 
   it("rejects an empty tier list", async () => {

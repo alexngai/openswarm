@@ -10,13 +10,14 @@
  * solve). The accepted tier's output is the team result; the escalation count is
  * emitted as a `team_note` for cost/ROI analysis (docs/50 §2).
  *
- * Confidence (v1) is SELF-REPORTED via a sentinel the tier is asked to emit:
- * `CASCADE_SOLVED` (⇒ 1) or `CASCADE_CONFIDENCE: <0..1>`. A hard failure (non-success
- * status) reads as confidence 0 and always escalates. The principled graded signal —
- * an in-loop test pass-rate / cross-validation verdict (docs/50 §9.3) — is a future
- * evaluator that replaces `parseConfidence`; the self-report keeps this runnable and
- * unit-testable today. Prior (cheaper) attempts are threaded into each escalated
- * tier's prompt as an improvement preamble.
+ * The confidence signal is a pluggable `EscalationEvaluator`
+ * (src/swarm/escalation-evaluator.ts), resolved by name from `ctx.escalation.registry`
+ * via `coordination.escalationEvaluator` and defaulting to the self-report evaluator
+ * (sentinel `CASCADE_SOLVED` / `CASCADE_CONFIDENCE: n`). Benchmark-specific signals —
+ * a SWE pytest pass-rate, a fixit checkpoint score, a TEX cross-validation verdict
+ * (docs/50 §9.3) — register their own evaluator. A hard failure (non-success status)
+ * reads as confidence 0 and always escalates. Prior (cheaper) attempts are threaded
+ * into each escalated tier's prompt as an improvement preamble.
  *
  * Failure semantics mirror the other topologies: an accepted tier that hard-failed
  * counts as a team failure; escalations themselves are the cascade working, not
@@ -27,6 +28,7 @@ import type { TeamSpec, MemberSpec } from "../team-spec.js";
 import { TeamSession } from "../team-session.js";
 import type { Topology, TopologyContext, TeamResult } from "../topologies-types.js";
 import { runCascade, type CascadeTier } from "../escalation-gate.js";
+import { SelfReportEvaluator } from "../escalation-evaluator.js";
 
 /** Default τ: escalate unless a tier reports full confidence (`CASCADE_SOLVED`). */
 const DEFAULT_TAU = 1;
@@ -36,23 +38,6 @@ const SIGNAL_INSTRUCTIONS =
   "`CASCADE_SOLVED`. If you could not fully solve it, instead end with " +
   "`CASCADE_CONFIDENCE: <0-1>` estimating how complete your solution is (lower = " +
   "please escalate to a stronger model).";
-
-/** Derive a confidence in [0,1] and a hard-failure flag from a tier's result. */
-export function parseConfidence(
-  output: string,
-  status: string,
-): { confidence: number; failed: boolean } {
-  if (status !== "success") return { confidence: 0, failed: true };
-  const m = /CASCADE_CONFIDENCE:\s*([0-9]*\.?[0-9]+)/i.exec(output);
-  if (m !== null) {
-    const v = Number(m[1]);
-    const confidence = Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0;
-    return { confidence, failed: false };
-  }
-  if (/CASCADE_SOLVED/i.test(output)) return { confidence: 1, failed: false };
-  // No clear signal ⇒ treat as low confidence so an ungated attempt escalates.
-  return { confidence: 0, failed: false };
-}
 
 function zeroResult(cancelled: number): TeamResult {
   return {
@@ -74,6 +59,11 @@ export class CascadeTopology implements Topology {
       throw new Error("CascadeTopology: requires at least one member (tier)");
     }
     const tau = spec.coordination.escalationTau ?? DEFAULT_TAU;
+    // Benchmark-specific confidence signal, resolved by name from the injected
+    // registry; falls back to the self-report sentinel when none is wired.
+    const evaluator =
+      ctx.escalation?.registry?.select(spec.coordination.escalationEvaluator) ??
+      new SelfReportEvaluator();
 
     const team = new TeamSession({
       name: spec.name,
@@ -118,8 +108,18 @@ export class CascadeTopology implements Topology {
         const handle = await team.spawnMember({ ...tier.payload, prompt });
         spawnCount++;
         const result = await handle.wait();
-        const output = result.status === "success" ? result.output ?? "" : "";
-        const { confidence, failed } = parseConfidence(output, result.status);
+        const failed = result.status !== "success";
+        const output = failed ? "" : result.output ?? "";
+        // Evaluators grade only a tier that terminated successfully; a crash is
+        // confidence 0 + failed (always escalates if a higher tier remains).
+        const confidence = failed
+          ? 0
+          : await evaluator.evaluate({
+              result,
+              index: cctx.index,
+              ...(ctx.escalation?.exec !== undefined && { exec: ctx.escalation.exec }),
+              ...(ctx.escalation?.task !== undefined && { task: ctx.escalation.task }),
+            });
         return { confidence, value: output, failed };
       });
 
