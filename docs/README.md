@@ -24,6 +24,7 @@ For end-user CLI reference (flags, model routing, tools, limitations, architectu
 - [29-v0.7-git-cascade-plan.md](./29-v0.7-git-cascade-plan.md) — git-cascade integration design (design lock)
 - [45-adaptive-orchestration-design.md](./45-adaptive-orchestration-design.md) — adaptive orchestration design spike (draft)
 - [47-h1-experimental-findings.md](./47-h1-experimental-findings.md) — H1 single-vs-team experimental findings (eval results)
+- [50-heterogeneous-cost-scaling.md](./50-heterogeneous-cost-scaling.md) — heterogeneous cost/throughput Pareto study: does compute-optimal allocation (small-model swarm + dynamic escalation) expand the frontier? (draft; extends 45/47)
 - [48-compaction-design.md](./48-compaction-design.md) — Claude Code-aligned compaction redesign (trigger, microcompaction, in-session summarization, post-compact rebuild). Implemented (phases 1–6); follow-ups F1/F2 open
 
 ## Engines & parity
