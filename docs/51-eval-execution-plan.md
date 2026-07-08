@@ -49,7 +49,7 @@ Same benchmark, two grader configs. The visible/held-out split is the only per-b
 
 | Benchmark | Visible grader (confidence) | Scoring grader (outcome) |
 |---|---|---|
-| **fixit** | a **visible SUBSET** of checkpoints (CheckpointGrader over the subset) — graded | full CheckpointGrader (sealed post-agent checks) |
+| **fixit** | the agent's **public `tests/`** (`pytest -q`) — already agent-visible, and *identical content* to the sealed grader tests ⇒ confidence ≈ score (near-perfect signal) | full CheckpointGrader (re-runs the same tests from `.grader/`) |
 | **SWE** | **new** graded visible-regression grader: run repo tests w/o hidden patch → fraction of `PASS_TO_PASS` holding (+ optional authored repro test) | `SweGrader` (installs hidden `FAIL_TO_PASS` patch) |
 | open-ended (GAIA) | verifier / self-consistency `ScoreFn` (no execution signal) | benchmark-native / self-score |
 
@@ -120,12 +120,14 @@ Each stage is a small delta on a proven pipeline; each has an exit gate.
 - [ ] **B6 — vLLM serving + GPU-seconds emission** — self-host Qwen tiers; stamp `gpuSeconds` onto samples so `SelfHostCostModel` lights up. *(Stage 2; G2 self-host half)*
 - [ ] **B7 — power calc → confirmatory N** — from Stage-1 σ_d. *(Stage 2; docs/50 §3.1 G-power)*
 
-## 9. Open questions
+## 9. Resolved design decisions (2026-07-08)
 
-1. **Per-tier workspace handoff.** Does tier₁ build on tier₀'s filesystem (same worktree, iterative) or start fresh with tier₀'s output as context (current topology behaviour)? Iterative is more realistic but complicates the visible-grader (which workspace state to grade). *Lean: fresh + output-context for v1; iterative as an ablation.*
-2. **Confidence-trace persistence.** `RawRun.submission` is the channel swarmkit already reads for cost/steps — confirm it round-trips arbitrary per-tier arrays, or add a dedicated artifact.
-3. **fixit visible/held-out split.** Which checkpoints are "visible"? Needs a principled rule (e.g. the module's own unit tests visible, the behavioral/integration checks held out) so the confidence signal is honest.
-4. **best-of-N as an arm vs a post-hoc union.** `mono-30B-bestN` can be N independent cells unioned offline (cheaper, reuses seeds) rather than an in-cell arm. *Lean: post-hoc union over seeds.*
+1. **Workspace handoff — fresh + output-context.** Each tier re-attempts from the initial task workspace with the prior tier's output prepended as an improvement preamble (the topology's current behaviour); the confidence grader runs on each tier's *own* final workspace. Iterative (tier₁ edits tier₀'s files in place) is a later ablation.
+2. **Persistence — `RawRun.submission`.** The adapter writes `submission = { patch?, costUsd, steps, perTier:[{model, in/out tokens, gpuSeconds?}], escalations, acceptedTier, confidenceTrace }`. swarmkit already reads `submission.{costUsd,steps,patch}`; the extra arrays ride into the cell JSON. B3 verifies they round-trip; else a dedicated artifact.
+3. **fixit confidence — its own public tests (no contrived split).** fixit already seeds `tests/test_<mod>.py` (agent-visible; the prompt says *"run `pytest -q`"*), and the sealed grader test is *identical content*. So the honest signal is "run the visible tests → pass fraction" — no leakage (the agent has them), no subset needed. **Consequence: on fixit, confidence ≈ score (near-perfect signal).** Ideal for Stage-0 plumbing (predictable escalation); but it means **fixit does NOT stress-test signal imperfection — that is SWE's job** (`PASS_TO_PASS` ≠ `FAIL_TO_PASS`, Stage 1). *Optional Stage-0.5 ablation:* run only *k*-of-*N* modules' tests for confidence (modules are independent) to synthesize an imperfect signal cheaply before SWE.
+4. **best-of-N — post-hoc union over seeds.** No new arm: run `mono-30B` for S seeds; best-of-N solves an instance iff *any* of N seeds did, unioned offline in G2. Cost = N × single-seed.
+
+**Staging implication:** RO4 (signal-validity — does the cheap signal predict correctness?) is a **Stage-1 (SWE) result, not Stage 0**. fixit's perfect signal validates the *plumbing*; SWE's imperfect signal validates the *thesis*.
 
 ## 10. Sources / cross-refs
 
