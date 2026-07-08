@@ -43,6 +43,7 @@ import {
   CommitteeTopology,
   CriticLoopTopology,
   CoordinatorTopology,
+  CascadeTopology,
 } from "./topologies/index.js";
 
 // Re-export AgentResult/Usage so legacy import sites keep working without
@@ -323,5 +324,7 @@ function pickTopology(kind: TopologyKind): Topology {
       return new CommitteeTopology();
     case "critic-loop":
       return new CriticLoopTopology();
+    case "cascade":
+      return new CascadeTopology();
   }
 }
