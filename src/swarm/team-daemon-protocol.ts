@@ -131,6 +131,11 @@ export const UsageTotalsSchema: z.ZodType<UsageTotals> = z.object({
   cacheWriteInputTokens: z.number(),
   totalTokens: z.number(),
   costUsd: z.number(),
+  gpuSeconds: z.number(),
+  flops: z.number(),
+  costUsdComplete: z.boolean(),
+  gpuSecondsComplete: z.boolean(),
+  flopsComplete: z.boolean(),
 });
 
 /**

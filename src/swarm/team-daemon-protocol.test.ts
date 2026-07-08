@@ -142,6 +142,8 @@ describe("team-daemon-protocol — result schemas", () => {
   });
 
   it("StatusResultSchema accepts per-member usage + teamUsage (GitHub #17)", () => {
+    // A priced frontier member: $ known, but no GPU measurement and no
+    // params-based FLOPs (docs/50 G1 — the `*Complete` flags carry that).
     const usage = {
       inputTokens: 1000,
       outputTokens: 200,
@@ -149,6 +151,11 @@ describe("team-daemon-protocol — result schemas", () => {
       cacheWriteInputTokens: 0,
       totalTokens: 1200,
       costUsd: 0.006,
+      gpuSeconds: 0,
+      flops: 0,
+      costUsdComplete: true,
+      gpuSecondsComplete: false,
+      flopsComplete: false,
     };
     const result = StatusResultSchema.safeParse({
       teamName: "gsd",

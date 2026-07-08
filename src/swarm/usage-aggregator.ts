@@ -1,6 +1,6 @@
 /**
- * usage-aggregator.ts — sum per-member and team-wide token/cost usage across
- * the swarm spawn tree (GitHub #17).
+ * usage-aggregator.ts — sum per-member and team-wide token/cost/compute usage
+ * across the swarm spawn tree (GitHub #17; pluggable cost model docs/50 §5.1 / G1).
  *
  * Background (docs/47 H1): individual worker/member token usage already rides
  * on lane events — a child's `message_stop` carries `usage`, and issue #15's
@@ -13,8 +13,8 @@
  * stream (`worker_spawned` for the parent→child edges + optional model, and
  * `message_stop` for the usage samples) and answers two questions:
  *
- *   - per member (across its FULL subtree): how many tokens / how much cost has
- *     this member and everything it spawned consumed?
+ *   - per member (across its FULL subtree): how many tokens / how much cost /
+ *     how much compute has this member and everything it spawned consumed?
  *   - team total: sum across every agent that produced usage.
  *
  * It is pure and stateful with no I/O, so it unit-tests directly against
@@ -22,21 +22,28 @@
  * the team daemon feeds it a live stream; the daemon then joins the per-agent
  * subtree totals onto the roster it returns from the `status` RPC.
  *
- * Cost: computed via the existing model-pricing table (`usageCostUsd` in
- * src/core/budget.ts). The model is learned from the `worker_spawned` payload
- * (`model`, threaded from the spawn request in standalone-host). When a model
- * is unknown/unpriced the cost contribution is 0 but tokens still count, so the
- * aggregate never crashes on a heterogeneous tree.
+ * Cost/compute: each agent's sample is priced through a pluggable `CostModel`
+ * (src/core/cost-model.ts) — dollars from the pricing table, FLOPs from model
+ * params, and GPU-seconds when the serving layer stamps them onto the sample.
+ * The default backend is `ApiCostModel` ($ + FLOPs, no hardware); the team daemon
+ * injects `defaultCostModel()` so `OPENSWARM_USD_PER_GPU_HOUR` selects self-host
+ * GPU accounting (docs/50 §4.2). When an axis can't be determined for a sample
+ * (unpriced model, unknown params, no GPU measurement) the numeric total still
+ * adds 0 but the matching `*Complete` flag flips false — so a roll-up reports the
+ * figure AND whether it is whole. "Unpriced" is never silently "$0".
  */
 
 import type { AgentId, Usage } from "../core/types.js";
-import { usageCostUsd } from "../core/budget.js";
+import { ApiCostModel } from "../core/cost-model.js";
+import type { CostModel, CostSample } from "../core/cost-model.js";
 import type { LaneEvent } from "./events.js";
 
 /**
  * Rolled-up usage numbers for one agent's subtree, or for the whole team.
- * `totalTokens` is the sum of all four token categories; `costUsd` is priced
- * from input/output tokens via the model-pricing table (0 when unpriced).
+ * `totalTokens` sums all four token categories. `costUsd`/`gpuSeconds`/`flops`
+ * are priced via the injected CostModel (0 when the axis is unavailable); the
+ * paired `*Complete` flags are false when ANY contributing sample lacked that
+ * axis, so the figure is flagged as a lower bound rather than mistaken for exact.
  */
 export interface UsageTotals {
   readonly inputTokens: number;
@@ -45,6 +52,16 @@ export interface UsageTotals {
   readonly cacheWriteInputTokens: number;
   readonly totalTokens: number;
   readonly costUsd: number;
+  /** GPU-seconds; 0 until the serving layer stamps samples (docs/50 G2). */
+  readonly gpuSeconds: number;
+  /** Estimated forward-pass FLOPs; 0 when model params are unknown. */
+  readonly flops: number;
+  /** False when any contributing sample had an unpriced model (costUsd is a lower bound). */
+  readonly costUsdComplete: boolean;
+  /** False when any contributing sample carried no GPU-seconds measurement. */
+  readonly gpuSecondsComplete: boolean;
+  /** False when any contributing sample had unknown params (flops is a lower bound). */
+  readonly flopsComplete: boolean;
 }
 
 /**
@@ -56,7 +73,9 @@ export interface UsageSnapshot {
   readonly team: UsageTotals;
 }
 
-/** Zero totals — the identity used for empty agents and as a fold seed. */
+/** Zero totals — the identity used for empty agents and as a fold seed. The
+ * `*Complete` flags are `true` (vacuously — nothing incomplete) so folding them
+ * with `&&` is an identity that never spuriously marks a real total partial. */
 export const ZERO_USAGE: UsageTotals = {
   inputTokens: 0,
   outputTokens: 0,
@@ -64,6 +83,11 @@ export const ZERO_USAGE: UsageTotals = {
   cacheWriteInputTokens: 0,
   totalTokens: 0,
   costUsd: 0,
+  gpuSeconds: 0,
+  flops: 0,
+  costUsdComplete: true,
+  gpuSecondsComplete: true,
+  flopsComplete: true,
 };
 
 /** Raw per-agent accumulator (cost is derived lazily, so model can arrive late). */
@@ -72,6 +96,7 @@ interface AgentAcc {
   outputTokens: number;
   cacheReadInputTokens: number;
   cacheWriteInputTokens: number;
+  gpuSeconds: number;
   model?: string;
 }
 
@@ -81,17 +106,21 @@ function newAcc(): AgentAcc {
     outputTokens: 0,
     cacheReadInputTokens: 0,
     cacheWriteInputTokens: 0,
+    gpuSeconds: 0,
   };
 }
 
 /**
- * Accumulates token/cost usage per agent from a lane-event stream and rolls it
- * up across the spawn tree. One instance per team/host subscription.
+ * Accumulates token/cost/compute usage per agent from a lane-event stream and
+ * rolls it up across the spawn tree. One instance per team/host subscription.
  */
 export class SwarmUsageAggregator {
   private readonly accs = new Map<string, AgentAcc>();
   /** childAgentId → parentAgentId, learned from `worker_spawned`. */
   private readonly parents = new Map<string, string>();
+
+  /** @param costModel prices each sample; defaults to $-table + FLOPs (ApiCostModel). */
+  constructor(private readonly costModel: CostModel = new ApiCostModel()) {}
 
   /** Feed one lane event. Ignores events that carry no usage or spawn edge. */
   record(evt: LaneEvent): void {
@@ -130,6 +159,9 @@ export class SwarmUsageAggregator {
     acc.outputTokens += usage.outputTokens ?? 0;
     acc.cacheReadInputTokens += usage.cacheReadInputTokens ?? 0;
     acc.cacheWriteInputTokens += usage.cacheWriteInputTokens ?? 0;
+    // GPU-seconds ride on the sample once the serving layer stamps them (docs/50
+    // G2); until then this reads 0 and `gpuSecondsComplete` reports the gap.
+    acc.gpuSeconds += (usage as { gpuSeconds?: number }).gpuSeconds ?? 0;
   }
 
   private ensure(agentId: string): AgentAcc {
@@ -154,7 +186,7 @@ export class SwarmUsageAggregator {
   /** This agent's own direct usage, excluding anything it spawned. */
   directUsage(agentId: AgentId | string): UsageTotals {
     const acc = this.accs.get(agentId);
-    return acc === undefined ? ZERO_USAGE : accToTotals(acc);
+    return acc === undefined ? ZERO_USAGE : accToTotals(acc, this.costModel);
   }
 
   /**
@@ -166,7 +198,7 @@ export class SwarmUsageAggregator {
     let total = ZERO_USAGE;
     for (const id of this.subtreeIds(agentId)) {
       const acc = this.accs.get(id);
-      if (acc !== undefined) total = addTotals(total, accToTotals(acc));
+      if (acc !== undefined) total = addTotals(total, accToTotals(acc, this.costModel));
     }
     return total;
   }
@@ -174,7 +206,7 @@ export class SwarmUsageAggregator {
   /** Team-wide total: sum of every agent's direct usage (no double counting). */
   teamTotal(): UsageTotals {
     let total = ZERO_USAGE;
-    for (const acc of this.accs.values()) total = addTotals(total, accToTotals(acc));
+    for (const acc of this.accs.values()) total = addTotals(total, accToTotals(acc, this.costModel));
     return total;
   }
 
@@ -218,28 +250,34 @@ export class SwarmUsageAggregator {
   }
 }
 
-function accToTotals(acc: AgentAcc): UsageTotals {
+function accToTotals(acc: AgentAcc, costModel: CostModel): UsageTotals {
   const totalTokens =
     acc.inputTokens +
     acc.outputTokens +
     acc.cacheReadInputTokens +
     acc.cacheWriteInputTokens;
-  const costUsd = usageCostUsd(
-    {
-      inputTokens: acc.inputTokens,
-      outputTokens: acc.outputTokens,
-      cacheReadInputTokens: acc.cacheReadInputTokens,
-      cacheWriteInputTokens: acc.cacheWriteInputTokens,
-    },
-    acc.model,
-  );
+  const sample: CostSample = {
+    model: acc.model,
+    inputTokens: acc.inputTokens,
+    outputTokens: acc.outputTokens,
+    cacheReadInputTokens: acc.cacheReadInputTokens,
+    cacheWriteInputTokens: acc.cacheWriteInputTokens,
+    // Only surface a measured GPU figure; 0 means "no measurement", not "0s".
+    gpuSeconds: acc.gpuSeconds > 0 ? acc.gpuSeconds : undefined,
+  };
+  const cost = costModel.cost(sample);
   return {
     inputTokens: acc.inputTokens,
     outputTokens: acc.outputTokens,
     cacheReadInputTokens: acc.cacheReadInputTokens,
     cacheWriteInputTokens: acc.cacheWriteInputTokens,
     totalTokens,
-    costUsd,
+    costUsd: cost.usd ?? 0,
+    gpuSeconds: cost.gpuSeconds ?? 0,
+    flops: cost.flops ?? 0,
+    costUsdComplete: cost.usd !== undefined,
+    gpuSecondsComplete: cost.gpuSeconds !== undefined,
+    flopsComplete: cost.flops !== undefined,
   };
 }
 
@@ -251,5 +289,10 @@ function addTotals(a: UsageTotals, b: UsageTotals): UsageTotals {
     cacheWriteInputTokens: a.cacheWriteInputTokens + b.cacheWriteInputTokens,
     totalTokens: a.totalTokens + b.totalTokens,
     costUsd: a.costUsd + b.costUsd,
+    gpuSeconds: a.gpuSeconds + b.gpuSeconds,
+    flops: a.flops + b.flops,
+    costUsdComplete: a.costUsdComplete && b.costUsdComplete,
+    gpuSecondsComplete: a.gpuSecondsComplete && b.gpuSecondsComplete,
+    flopsComplete: a.flopsComplete && b.flopsComplete,
   };
 }

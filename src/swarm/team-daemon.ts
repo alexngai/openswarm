@@ -31,6 +31,7 @@ import {
 } from "./team-checkpoint.js";
 import { buildMetadataEvent, isRecordedLaneEvent } from "./wire-protocol.js";
 import { SwarmUsageAggregator } from "./usage-aggregator.js";
+import { defaultCostModel } from "../core/cost-model.js";
 import {
   SendPromptParamsSchema,
   StopParamsSchema,
@@ -143,7 +144,9 @@ export class TeamDaemon {
    * stream so the `status` RPC can report aggregate usage across the spawn
    * tree. Fed from the same subscribeEvents handler that writes events.jsonl.
    */
-  private readonly usage = new SwarmUsageAggregator();
+  // CostModel from the env (OPENSWARM_USD_PER_GPU_HOUR → self-host GPU accounting;
+  // else $-table + FLOPs). docs/50 §4.2 dual-axis.
+  private readonly usage = new SwarmUsageAggregator(defaultCostModel());
 
   constructor(opts: TeamDaemonOptions) {
     this.opts = opts;
