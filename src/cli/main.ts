@@ -11,6 +11,7 @@
  */
 
 import * as crypto from "node:crypto";
+import { readFileSync } from "node:fs";
 import { parseArgv } from "./argv.js";
 import { runDoctor } from "./doctor.js";
 import { runInit } from "./init.js";
@@ -104,6 +105,8 @@ Flags:
   --plan                         Read-only plan mode: investigate + design, no edits
                                  (forces read-only; toggle live with /plan)
   --output-format <fmt>          text | json (default: text)
+  --system-prompt <text|@file>   Replace the single-agent base system prompt (@file reads a file)
+  --append-system-prompt <t|@f>  Append guidance to the system prompt (@file reads a file)
   --headless                     Force JSONL output even on a TTY
   --no-plugins                   Disable plugin discovery at startup
   --no-skills                    Disable skill discovery at startup
@@ -392,15 +395,30 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   // so load the project instruction files (ancestor walk) and fold them into
   // the system prompt. The same files are re-injected after compaction via the
   // engine's recontextualize() hook (F1).
-  const systemPrompt =
-    engine.id === "native" || engine.id === "hardened-native"
-      ? buildSystemPrompt({
-          cwd: process.cwd(),
-          extensions: formatInstructionsForSystemPrompt(
-            loadProjectInstructions(process.cwd()),
-          ),
-        })
-      : "";
+  // A value of the form `@<path>` is read from that file; anything else is literal text.
+  const resolvePromptValue = (v: string): string =>
+    v.startsWith("@") ? readFileSync(v.slice(1), "utf8") : v;
+  // `--system-prompt` fully REPLACES the default base prompt; `--append-system-prompt`
+  // layers onto it (or onto the default). Lets an evaluator/optimizer treat the system
+  // prompt as a tunable lever (e.g. inject a test-driven reproduce→edit→verify loop).
+  const baseSystemPrompt =
+    opts.systemPromptOverride !== undefined
+      ? resolvePromptValue(opts.systemPromptOverride)
+      : engine.id === "native" || engine.id === "hardened-native"
+        ? buildSystemPrompt({
+            cwd: process.cwd(),
+            extensions: formatInstructionsForSystemPrompt(
+              loadProjectInstructions(process.cwd()),
+            ),
+          })
+        : "";
+  const appendText =
+    opts.appendSystemPrompt !== undefined ? resolvePromptValue(opts.appendSystemPrompt) : "";
+  const systemPrompt = appendText
+    ? baseSystemPrompt
+      ? `${baseSystemPrompt}\n\n${appendText}`
+      : appendText
+    : baseSystemPrompt;
   const config: RunConfig = {
     systemPrompt,
     prompt: text,

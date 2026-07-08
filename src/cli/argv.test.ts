@@ -36,6 +36,40 @@ describe("parseArgv --max-wall-clock", () => {
   });
 });
 
+describe("parseArgv --system-prompt / --append-system-prompt", () => {
+  it("captures a system-prompt override (text or @file, resolved at runtime)", () => {
+    expect(parseArgv(["--system-prompt", "@/tmp/sp.txt", "hi"])).toMatchObject({
+      kind: "prompt",
+      opts: { systemPromptOverride: "@/tmp/sp.txt" },
+    });
+    expect(parseArgv(["--system-prompt", "be terse", "hi"])).toMatchObject({
+      kind: "prompt",
+      opts: { systemPromptOverride: "be terse" },
+    });
+  });
+  it("captures an append-system-prompt addition", () => {
+    expect(parseArgv(["--append-system-prompt", "run tests each turn", "hi"])).toMatchObject({
+      kind: "prompt",
+      opts: { appendSystemPrompt: "run tests each turn" },
+    });
+  });
+  it("override and append coexist", () => {
+    expect(
+      parseArgv(["--system-prompt", "@base.md", "--append-system-prompt", "extra", "hi"]),
+    ).toMatchObject({ kind: "prompt", opts: { systemPromptOverride: "@base.md", appendSystemPrompt: "extra" } });
+  });
+  it("each requires a value", () => {
+    expect(parseArgv(["--system-prompt"])).toMatchObject({ kind: "error" });
+    expect(parseArgv(["--append-system-prompt"])).toMatchObject({ kind: "error" });
+  });
+  it("omitted → fields absent (default system prompt preserved)", () => {
+    const r = parseArgv(["hi"]);
+    expect(r).toMatchObject({ kind: "prompt" });
+    expect((r as { opts: Record<string, unknown> }).opts.systemPromptOverride).toBeUndefined();
+    expect((r as { opts: Record<string, unknown> }).opts.appendSystemPrompt).toBeUndefined();
+  });
+});
+
 describe("parseArgv", () => {
   // ---- Bare positional → prompt -------------------------------------------
 
