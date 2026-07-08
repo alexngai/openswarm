@@ -11,6 +11,7 @@ import {
   parsePytestPassRate,
   CommandEvaluator,
   CompositeEvaluator,
+  ScoreEvaluator,
   EvaluatorRegistry,
   defaultEvaluatorRegistry,
 } from "./escalation-evaluator.js";
@@ -89,6 +90,26 @@ describe("CompositeEvaluator", () => {
   });
   it("no children → 0", async () => {
     expect(await new CompositeEvaluator("empty", []).evaluate(ctx(""))).toBe(0);
+  });
+});
+
+describe("ScoreEvaluator (swarmkit-eval bridge)", () => {
+  it("confidence = Score.partial (the graded score / RLVR reward)", async () => {
+    const e = new ScoreEvaluator("swe-visible", () => Promise.resolve({ partial: 0.75 }));
+    expect(await e.evaluate(ctx(""))).toBeCloseTo(0.75, 6);
+  });
+  it("null score (can't grade) → 0, escalate", async () => {
+    expect(await new ScoreEvaluator("x", () => Promise.resolve(null)).evaluate(ctx(""))).toBe(0);
+  });
+  it("clamps an out-of-range partial", async () => {
+    expect(await new ScoreEvaluator("x", () => Promise.resolve({ partial: 2 })).evaluate(ctx(""))).toBe(1);
+    expect(await new ScoreEvaluator("x", () => Promise.resolve({ partial: -0.5 })).evaluate(ctx(""))).toBe(0);
+  });
+  it("registers/selects like any other evaluator", () => {
+    const reg = new EvaluatorRegistry().register(
+      new ScoreEvaluator("swe-visible", () => Promise.resolve({ partial: 1 })),
+    );
+    expect(reg.select("swe-visible")?.name).toBe("swe-visible");
   });
 });
 

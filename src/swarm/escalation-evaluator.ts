@@ -144,6 +144,49 @@ export class CommandEvaluator implements EscalationEvaluator {
 }
 
 // ---------------------------------------------------------------------------
+// Graded-score signal (swarmkit-eval bridge)
+// ---------------------------------------------------------------------------
+
+/**
+ * A graded score in the swarmkit-eval sense — only the `partial ∈ [0,1]` field is
+ * needed here. Matches `Score` from swarmkit-eval structurally (no import, so `src`
+ * keeps zero eval dependency); `Score.partial = 0.5·(earned/total) + 0.5·(full)`.
+ */
+export interface GradedScore {
+  readonly partial: number;
+}
+
+/**
+ * Produce a graded score for a tier attempt, or null when it can't be graded.
+ * Benchmark-specific and wired by the harness — typically a closure that runs a
+ * swarmkit-eval `Grader` (VISIBLE-only) over the tier workspace and returns its `Score`.
+ */
+export type ScoreFn = (ctx: EscalationContext) => Promise<GradedScore | null>;
+
+/**
+ * The production confidence signal: `confidence = Score.partial` from a graded score.
+ * This is the swarmkit-eval / chorus alignment — the same scalar swarmkit reports as
+ * `S_partial` and chorus uses as its RLVR reward. The `score` fn MUST run a
+ * VISIBLE-ONLY grader (never the sealed scoring grader — §8.1); null ⇒ 0 (escalate).
+ * SelfReport/Command are the dependency-free fallbacks; this is the real signal.
+ */
+export class ScoreEvaluator implements EscalationEvaluator {
+  readonly name: string;
+  private readonly score: ScoreFn;
+
+  constructor(name: string, score: ScoreFn) {
+    this.name = name;
+    this.score = score;
+  }
+
+  async evaluate(ctx: EscalationContext): Promise<Confidence> {
+    const s = await this.score(ctx);
+    if (s === null) return 0;
+    return Math.max(0, Math.min(1, s.partial));
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Composition
 // ---------------------------------------------------------------------------
 
