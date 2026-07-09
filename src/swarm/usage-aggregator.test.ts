@@ -169,4 +169,16 @@ describe("SwarmUsageAggregator — cost pricing", () => {
     agg.setModel("a1", "claude-sonnet-4-6");
     expect(agg.directUsage("a1").costUsd).toBeCloseTo(0.003, 10);
   });
+
+  it("byModel groups direct usage by the model each agent ran (per-tier breakdown)", () => {
+    const agg = new SwarmUsageAggregator();
+    agg.record(spawned("tier0", undefined, "qwen3-8b"));
+    agg.record(spawned("tier1", "tier0", "qwen3-30b"));
+    agg.record(messageStop("tier0", { inputTokens: 100, outputTokens: 10 }));
+    agg.record(messageStop("tier1", { inputTokens: 200, outputTokens: 20 }));
+    const bm = agg.byModel();
+    expect(bm["qwen3-8b"]?.totalTokens).toBe(110);
+    expect(bm["qwen3-30b"]?.totalTokens).toBe(220);
+    expect(Object.keys(bm).sort()).toEqual(["qwen3-30b", "qwen3-8b"]);
+  });
 });

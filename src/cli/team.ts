@@ -22,6 +22,16 @@ import { StatusResultSchema } from "../swarm/team-daemon-protocol.js";
 import { computeTeamPaths, teamsBaseDir } from "./team-paths.js";
 import { buildAdapterHost, type AdapterHostOptions } from "./adapter-host.js";
 import { attachLaneTrace } from "./trace-output.js";
+import {
+  EvaluatorRegistry,
+  CommandEvaluator,
+  parsePytestPassRate,
+  type ExecFn,
+} from "../swarm/escalation-evaluator.js";
+import { SwarmUsageAggregator } from "../swarm/usage-aggregator.js";
+import { defaultCostModel } from "../core/cost-model.js";
+import type { LaneEvent } from "../swarm/events.js";
+import type { EventEmitter } from "node:events";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -396,6 +406,45 @@ export async function runTopology(opts: TopologyRunOptions): Promise<number> {
   const host = hostResult.host!;
   const resultsOut = fs.createWriteStream(opts.output, { flags: "a" });
   const traceRecorder = attachLaneTrace(host, opts.traceOutput);
+  // B3 (docs/51): accrue per-model spawn-tree usage off the same lane bus, so a
+  // cascade cell surfaces its per-tier token cost. Emitted to --output after the run.
+  const usageAgg = new SwarmUsageAggregator(defaultCostModel());
+  const laneBus = (host as unknown as { readonly events: EventEmitter }).events;
+  const usageHandler = (e: LaneEvent): void => usageAgg.record(e);
+  laneBus.on("lane_event", usageHandler);
+  // docs/51 — build the CascadeTopology confidence evaluator from the spec's
+  // `escalationCommand` (a shell command run in the tier workspace → visible-test
+  // pass-rate). Pairs with `escalationEvaluator` (the registry key the topology
+  // resolves); absent ⇒ the cascade uses the self-report fallback.
+  const shellExec: ExecFn = (command, execOpts) =>
+    new Promise((resolve) => {
+      child_process.exec(
+        command,
+        { cwd: execOpts?.cwd, timeout: execOpts?.timeoutMs, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
+        (err, stdout, stderr) => {
+          const code =
+            err && typeof (err as { code?: unknown }).code === "number"
+              ? (err as { code: number }).code
+              : err
+                ? 1
+                : 0;
+          resolve({ exitCode: code, stdout: stdout ?? "", stderr: stderr ?? "" });
+        },
+      );
+    });
+  let escalation: { registry: EvaluatorRegistry; exec: ExecFn } | undefined;
+  if (spec.coordination.escalationCommand !== undefined) {
+    const evalName = spec.coordination.escalationEvaluator ?? "command";
+    const registry = new EvaluatorRegistry().register(
+      new CommandEvaluator({
+        name: evalName,
+        command: spec.coordination.escalationCommand,
+        parse: parsePytestPassRate,
+      }),
+    );
+    escalation = { registry, exec: shellExec };
+  }
+
   const orch = new Orchestrator({
     concurrency: opts.concurrency,
     permissionMode: opts.permissionMode,
@@ -403,6 +452,7 @@ export async function runTopology(opts: TopologyRunOptions): Promise<number> {
     eventsOut: process.stderr,
     host,
     ...(observer !== undefined && { observer }),
+    ...(escalation !== undefined && { escalation }),
   });
 
   // 4. Run.
@@ -413,6 +463,11 @@ export async function runTopology(opts: TopologyRunOptions): Promise<number> {
     result = await orch.runTeam(spec);
     elapsed = Date.now() - startedAt;
   } finally {
+    laneBus.off("lane_event", usageHandler);
+    // Per-tier (per-model) + team-total usage → --output, for the CascadeAdapter/G2.
+    resultsOut.write(
+      JSON.stringify({ type: "team_usage", byModel: usageAgg.byModel(), team: usageAgg.teamTotal() }) + "\n",
+    );
     await traceRecorder?.close();
     await new Promise<void>((resolve) => resultsOut.end(resolve));
   }

@@ -211,6 +211,22 @@ export class SwarmUsageAggregator {
   }
 
   /**
+   * Per-model token/cost totals — direct usage grouped by the model each agent ran.
+   * For a heterogeneous cascade (each tier a distinct model) this is the per-tier
+   * cost breakdown the frontier needs (docs/51 B3); tokens are the durable signal,
+   * a downstream CostModel can re-price them. Agents with no observed model group
+   * under "(unknown)".
+   */
+  byModel(): Record<string, UsageTotals> {
+    const out: Record<string, UsageTotals> = {};
+    for (const acc of this.accs.values()) {
+      const key = acc.model ?? "(unknown)";
+      out[key] = addTotals(out[key] ?? ZERO_USAGE, accToTotals(acc, this.costModel));
+    }
+    return out;
+  }
+
+  /**
    * Build a snapshot. When `rootAgentIds` is given, `perAgent` reports each
    * root's SUBTREE total (the per-member roll-up the daemon roster wants);
    * otherwise it reports every observed agent's DIRECT usage. `team` is always

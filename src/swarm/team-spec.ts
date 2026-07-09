@@ -241,6 +241,11 @@ export interface TeamCoordination {
   /** docs/50 G3 — name of the benchmark-specific escalation evaluator to resolve
    *  from the TopologyContext registry. Absent ⇒ self-report sentinel fallback. */
   readonly escalationEvaluator?: string;
+  /** docs/51 — shell command a CascadeTopology's confidence evaluator runs in the
+   *  tier workspace (e.g. `python3 -m pytest -q`) to grade visible tests → escalation
+   *  confidence. `runTopology` wires it into a CommandEvaluator registered under
+   *  `escalationEvaluator`. Absent ⇒ self-report fallback. */
+  readonly escalationCommand?: string;
   /** V0.4.Q7 — explicit shared MAP scope override. */
   readonly mapScope?: string;
   /** V0.4.Q4 — `team send` routing entry point. */
@@ -292,6 +297,7 @@ export const TeamCoordinationSchema = z.object({
   verifiedCompletion: z.object({ maxRounds: z.number().int().positive() }).optional(),
   escalationTau: z.number().min(0).max(1).optional(),
   escalationEvaluator: z.string().min(1).optional(),
+  escalationCommand: z.string().min(1).optional(),
   mapScope: z.string().min(1).optional(),
   entryPoint: z
     .union([

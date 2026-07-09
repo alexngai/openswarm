@@ -116,6 +116,18 @@ export interface OrchestratorOptions {
    * callers omit it (no recovery).
    */
   readonly checkpoint?: import("./team-checkpoint.js").TeamCheckpointStore;
+  /**
+   * docs/50 G3 / docs/51 — escalation-signal injection for CascadeTopology,
+   * threaded onto `TopologyContext.escalation`. `registry` resolves the
+   * evaluator named by `coordination.escalationEvaluator`; `exec` runs the
+   * confidence command in the tier workspace; `task` is opaque metadata. The
+   * CLI (`runTopology`) builds this from `coordination.escalationCommand`.
+   */
+  readonly escalation?: {
+    readonly registry?: import("./escalation-evaluator.js").EvaluatorRegistry;
+    readonly exec?: import("./escalation-evaluator.js").ExecFn;
+    readonly task?: unknown;
+  };
 }
 
 /**
@@ -271,6 +283,9 @@ export class Orchestrator extends EventEmitter {
         ...(this.opts.persistent === true && { persistent: true }),
         ...(this.opts.checkpoint !== undefined && {
           checkpoint: this.opts.checkpoint,
+        }),
+        ...(this.opts.escalation !== undefined && {
+          escalation: this.opts.escalation,
         }),
         onTeamCreated: (team) => {
           this.activeTeam = team;
