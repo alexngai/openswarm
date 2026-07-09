@@ -1,0 +1,185 @@
+/**
+ * cascade-adapter.ts — the CascadeTopology as one eval cell (docs/51 B1).
+ *
+ * Writes a cascade TeamSpec (ordered cheap→expensive tiers, each its own model, plus
+ * the escalation gate τ and the visible-test confidence COMMAND) into the workspace,
+ * invokes `openswarm topology cascade`, and returns a RawRun. Per-tier token cost
+ * (`byModel`) + the escalation count ride out on `submission.cascade` for the
+ * CostModel / G2 frontier; the SCORE is workspace-based (the benchmark's scoring
+ * grader runs after, on the finished workspace).
+ *
+ * The confidence signal is IN-PROCESS: `escalationCommand` (e.g. `python3 -m pytest -q`)
+ * is run by the topology in the tier workspace → a visible-test pass-rate (docs/51 §1).
+ * It MUST be VISIBLE-only — never the held-out scoring tests (docs/50 §8.1 leakage).
+ */
+import {
+  openSwarmParse,
+  shq,
+  type ExecutionAdapter,
+  type PublicCell,
+  type RunContext,
+  type RawRun,
+} from "swarmkit-eval";
+
+export interface CascadeTierSpec {
+  /** The model this tier runs (the heterogeneity). Cheapest tier first. */
+  readonly model: string;
+  readonly role?: string;
+  /** Prompt override; defaults to the task prompt. */
+  readonly prompt?: string;
+}
+
+export interface CascadeAdapterOptions {
+  /** Ordered tiers, cheap → expensive. */
+  readonly tiers: ReadonlyArray<CascadeTierSpec>;
+  /** Escalation gate τ ∈ [0,1]: escalate when a tier's confidence is below τ. */
+  readonly tau: number;
+  /** VISIBLE-only confidence command run in the tier workspace (→ pass-rate). */
+  readonly escalationCommand: string;
+  readonly env?: Record<string, string>;
+  readonly permissionMode?: string;
+  readonly timeoutMs?: number;
+  readonly bin?: string;
+  readonly name?: string;
+}
+
+/** Shape of a `UsageTotals` line (matches src/swarm/usage-aggregator.ts). */
+interface UsageTotalsLine {
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadInputTokens: number;
+  readonly cacheWriteInputTokens: number;
+  readonly totalTokens: number;
+  readonly costUsd: number;
+}
+interface TeamUsageLine {
+  readonly type: "team_usage";
+  readonly byModel: Record<string, UsageTotalsLine>;
+  readonly team: UsageTotalsLine;
+}
+
+export class CascadeAdapter implements ExecutionAdapter {
+  readonly id = "cascade";
+  readonly placement = "backend" as const;
+
+  constructor(private readonly opts: CascadeAdapterOptions) {
+    if (opts.tiers.length === 0) throw new Error("CascadeAdapter: at least one tier is required");
+  }
+
+  async run(cell: PublicCell, ctx: RunContext): Promise<RawRun> {
+    const ws = ctx.workspace;
+    if (!ws) throw new Error("CascadeAdapter requires a backend-provisioned workspace");
+    const bin = this.opts.bin ?? "openswarm";
+    const permissionMode = this.opts.permissionMode ?? "danger-full-access";
+    const agentId = ctx.env?.AGENT_ID ?? "agent";
+    const dir = `.sbx/${agentId.replace(/[^\w.-]/g, "_")}`;
+
+    const members = this.opts.tiers.map((t, i) => ({
+      id: `tier-${i}`,
+      role: t.role ?? "worker",
+      prompt: t.prompt ?? cell.task.prompt,
+      model: t.model,
+    }));
+    const spec = {
+      name: this.opts.name ?? "cascade",
+      topology: "cascade",
+      members,
+      coordination: {
+        completion: { kind: "all" },
+        escalationTau: this.opts.tau,
+        escalationEvaluator: "command",
+        escalationCommand: this.opts.escalationCommand,
+      },
+    };
+    await ws.writeFiles([{ path: `${dir}/team.json`, content: JSON.stringify(spec, null, 2) }]);
+
+    const resultsPath = `${dir}/results.jsonl`;
+    const traceOutputPath = `${dir}/trace.jsonl`;
+    const cmd =
+      `${bin} topology cascade --spec ${dir}/team.json --output ${resultsPath} ` +
+      `--trace-output ${traceOutputPath} --model ${shq(this.opts.tiers[0]!.model)} ` +
+      `--permission-mode ${permissionMode} --headless --output-format json`;
+    const env: Record<string, string> = {
+      NO_COLOR: "1",
+      DISABLE_OMC: "1",
+      OMC_SKIP_HOOKS: "1",
+      ...this.opts.env,
+      ...(cell.arm.scaffold.env ?? {}),
+      ...(ctx.env ?? {}),
+      AGENT_ID: agentId,
+    };
+
+    const start = Date.now();
+    const r = await ws.run(cmd, { env, timeoutMs: this.opts.timeoutMs ?? 1_800_000 });
+    const parsed = openSwarmParse(r.stdout);
+
+    const teamUsage = await readTeamUsage(ws, resultsPath);
+    const escalations = await readEscalations(ws, traceOutputPath);
+    const usage = teamUsage
+      ? {
+          inputTokens: teamUsage.team.inputTokens,
+          outputTokens: teamUsage.team.outputTokens,
+          cacheReadTokens: teamUsage.team.cacheReadInputTokens,
+          cacheCreationTokens: teamUsage.team.cacheWriteInputTokens,
+          totalTokens: teamUsage.team.totalTokens,
+        }
+      : (parsed.usage ?? {
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
+          totalTokens: 0,
+        });
+
+    return {
+      output: parsed.output || r.stdout.slice(0, 2000),
+      workdir: ws.root,
+      usage,
+      trajectory: parsed.trajectory,
+      durationMs: Date.now() - start,
+      // Per-tier cost + escalation count for the CostModel/G2 frontier (docs/51 §5).
+      submission: {
+        cascade: {
+          tiers: this.opts.tiers.map((t) => t.model),
+          tau: this.opts.tau,
+          ...(escalations !== undefined && { escalations }),
+          perModel: teamUsage?.byModel ?? {},
+        },
+      },
+    };
+  }
+}
+
+/** Read the `{type:"team_usage", byModel, team}` line runTopology writes to --output. */
+export async function readTeamUsage(
+  ws: { readFile(path: string): Promise<string | null> },
+  resultsPath: string,
+): Promise<TeamUsageLine | undefined> {
+  const content = await ws.readFile(resultsPath).catch(() => null);
+  if (!content) return undefined;
+  for (const line of content.split("\n").reverse()) {
+    const s = line.trim();
+    if (!s.startsWith("{")) continue;
+    try {
+      const obj = JSON.parse(s) as { type?: string };
+      if (obj.type === "team_usage") return obj as TeamUsageLine;
+    } catch {
+      /* skip non-JSON */
+    }
+  }
+  return undefined;
+}
+
+/** Escalation count from the cascade's team_note lane event ("… after N escalation(s) …"). */
+export async function readEscalations(
+  ws: { readFile(path: string): Promise<string | null> },
+  traceOutputPath: string,
+): Promise<number | undefined> {
+  const content = await ws.readFile(traceOutputPath).catch(() => null);
+  if (!content) return undefined;
+  for (const line of content.split("\n")) {
+    const m = /after (\d+) escalation/.exec(line);
+    if (m) return Number(m[1]);
+  }
+  return undefined;
+}

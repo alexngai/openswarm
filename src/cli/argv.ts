@@ -293,6 +293,7 @@ const SUPPORTED_TOPOLOGY_KINDS = new Set<string>([
   "peer-team",
   "committee",
   "critic-loop",
+  "cascade",
 ]);
 
 const VALID_PERMISSION_MODES = new Set<string>([
@@ -1402,7 +1403,7 @@ export function parseArgv(args: string[]): ParsedArgs {
       if (!SUPPORTED_TOPOLOGY_KINDS.has(kindStr)) {
         return {
           kind: "error",
-          message: `unknown topology kind: ${kindStr}. Valid: fanout, pipeline, coordinator, peer-team, committee, critic-loop`,
+          message: `unknown topology kind: ${kindStr}. Valid: fanout, pipeline, coordinator, peer-team, committee, critic-loop, cascade`,
           showHelp: true,
         };
       }
