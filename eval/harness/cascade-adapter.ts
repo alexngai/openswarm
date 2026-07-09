@@ -34,8 +34,9 @@ export interface CascadeAdapterOptions {
   readonly tiers: ReadonlyArray<CascadeTierSpec>;
   /** Escalation gate τ ∈ [0,1]: escalate when a tier's confidence is below τ. */
   readonly tau: number;
-  /** VISIBLE-only confidence command run in the tier workspace (→ pass-rate). */
-  readonly escalationCommand: string;
+  /** VISIBLE-only confidence command run in the tier workspace (→ pass-rate). Omit for
+   *  single-tier (mono) arms, which never escalate. */
+  readonly escalationCommand?: string;
   readonly env?: Record<string, string>;
   readonly permissionMode?: string;
   readonly timeoutMs?: number;
@@ -87,8 +88,10 @@ export class CascadeAdapter implements ExecutionAdapter {
       coordination: {
         completion: { kind: "all" },
         escalationTau: this.opts.tau,
-        escalationEvaluator: "command",
-        escalationCommand: this.opts.escalationCommand,
+        ...(this.opts.escalationCommand !== undefined && {
+          escalationEvaluator: "command",
+          escalationCommand: this.opts.escalationCommand,
+        }),
       },
     };
     await ws.writeFiles([{ path: `${dir}/team.json`, content: JSON.stringify(spec, null, 2) }]);
