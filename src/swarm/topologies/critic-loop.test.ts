@@ -222,6 +222,33 @@ describe("CriticLoopTopology", () => {
     );
   });
 
+  it("criticMaxIterations caps the loop when the critic never approves", async () => {
+    // Without the cap this would run the default 10 rounds (20 spawns). With
+    // criticMaxIterations=2 it stops at 2 rounds = 4 spawns, unapproved → failed.
+    // This is the `advisor` arm's cost bound (docs/50 §10.4).
+    const { ctx, harness, cleanup } = await makeCtx([
+      s("draft v1"), // exec 1
+      s("still not quite right"), // critic 1 (no signal)
+      s("draft v2"), // exec 2
+      s("closer, but no"), // critic 2 (no signal)
+    ]);
+    cleanups.push(cleanup);
+    const spec: TeamSpec = {
+      name: "critic-loop-test",
+      topology: "critic-loop",
+      members: [member("exec", "implement feature"), member("crit", "review")],
+      coordination: {
+        completion: { kind: "until_signal", signal: "APPROVED" },
+        criticMaxIterations: 2,
+      },
+    };
+    const result = await new CriticLoopTopology().run(spec, ctx);
+    expect(harness.spawns).toHaveLength(4); // 2 rounds, not the default 10
+    expect(result.succeeded).toBe(0);
+    expect(result.failed).toBe(1);
+    expect(result.aggregateOutput).toBe("draft v2"); // last executor output retained
+  });
+
   it("executor failure halts the loop with failed=1", async () => {
     const { ctx, harness, cleanup } = await makeCtx([
       f("LLM call failed"), // executor turn 1 fails

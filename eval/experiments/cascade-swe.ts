@@ -32,14 +32,18 @@ import {
   type EvalConfig,
   type Arm,
   type SweInstance,
+  type ExecutionAdapter,
 } from "swarmkit-eval";
 import { CascadeAdapter } from "../harness/cascade-adapter.js";
+import { CriticLoopAdapter } from "../harness/critic-loop-adapter.js";
 import { sandboxInstallLocalHarness, LOCAL_HARNESS_TARBALL, LOCAL_SKILLTREE_TARBALL } from "../harness/local.js";
 
 const SMALL = process.env.CS_MODEL_SMALL ?? "us.anthropic.claude-haiku-4-5-20251001-v1:0";
 const LARGE = process.env.CS_MODEL_LARGE ?? "azureoai/gpt-5.5";
 const TAUS = (process.env.CS_TAUS ?? "0.5").split(",").map((s) => Number(s.trim()));
 const SEEDS = (process.env.CS_SEEDS ?? "1").split(",").map((s) => Number(s.trim()));
+/** advise-don't-redo arm (docs/50 §10.4): executor↔critic round cap. Low bounds cost. */
+const ADVISOR_ITERS = Number(process.env.CS_ADVISOR_ITERS ?? 3);
 // The sandbox `openswarm` launcher prefers a STALE published platform binary (no `cascade`);
 // invoke the installed dist/cli.js directly (its dist IS current). $(…) is evaluated by the
 // sandbox's `bash -c`. Override with CS_BIN if the global path differs.
@@ -137,7 +141,7 @@ export async function runCascadeSwe(): Promise<void> {
   });
   const store = new LocalResultStore(".eval-runs");
 
-  const arms: Array<{ arm: Arm; adapter: CascadeAdapter }> = [
+  const arms: Array<{ arm: Arm; adapter: ExecutionAdapter }> = [
     { arm: { id: "mono-small", label: `mono ${SMALL}`, scaffold: {} },
       adapter: new CascadeAdapter({ tiers: [{ model: SMALL }], tau: 1, env, timeoutMs: AGENT_TIMEOUT_MS, bin: BIN }) },
     { arm: { id: "mono-large", label: `mono ${LARGE}`, scaffold: {} },
@@ -154,6 +158,20 @@ export async function runCascadeSwe(): Promise<void> {
         bin: BIN,
       }),
     })),
+    // advise-don't-redo (docs/50 §10.4): cheap executor + bounded read-only critic
+    // (reviewer role). The strong model advises, never authors — the Advisor-tool
+    // economics, reproduced cross-provider via the critic-loop topology.
+    {
+      arm: { id: "advisor", label: `advisor exec=${SMALL} critic=${LARGE}`, scaffold: {} },
+      adapter: new CriticLoopAdapter({
+        executorModel: SMALL,
+        criticModel: LARGE,
+        maxIterations: ADVISOR_ITERS,
+        env,
+        timeoutMs: AGENT_TIMEOUT_MS,
+        bin: BIN,
+      }),
+    },
   ];
 
   const armIds = process.env.CS_ARM ? [process.env.CS_ARM] : arms.map((a) => a.arm.id);

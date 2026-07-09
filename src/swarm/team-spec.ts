@@ -234,6 +234,9 @@ export interface TeamCoordination {
   /** Coordinator-only: after the root declares done, force up to maxRounds verification-continuation
    *  turns (root must run tests + confirm the task is fully resolved) before the team terminates. */
   readonly verifiedCompletion?: { readonly maxRounds: number };
+  /** docs/50 §10.4 — CriticLoopTopology executor↔critic round cap. Default 10.
+   *  The `advisor` arm sets this low (≈3) to bound advise-don't-redo cost. */
+  readonly criticMaxIterations?: number;
   /** docs/50 G3 — CascadeTopology escalation gate τ ∈ [0,1]: escalate to the next
    *  tier when a tier's confidence is below τ. Default 1 (escalate unless a tier
    *  signals a full solve). Sweeping τ traces the cost/quality frontier. */
@@ -295,6 +298,7 @@ export const TeamCoordinationSchema = z.object({
   communication: TeamCommunicationRulesSchema.optional(),
   idleTimeoutMs: z.number().int().positive().optional(),
   verifiedCompletion: z.object({ maxRounds: z.number().int().positive() }).optional(),
+  criticMaxIterations: z.number().int().positive().optional(),
   escalationTau: z.number().min(0).max(1).optional(),
   escalationEvaluator: z.string().min(1).optional(),
   escalationCommand: z.string().min(1).optional(),

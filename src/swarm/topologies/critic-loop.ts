@@ -6,8 +6,8 @@
  * critic's reply contains the configured approval signal (default
  * "APPROVED"), the loop terminates and the executor's last output is the
  * team result. Otherwise the critic's reply becomes feedback context for
- * the next executor iteration. Loops up to MAX_ITERATIONS (configurable
- * via the spec's aggregateBudget escape hatch).
+ * the next executor iteration. Loops up to MAX_ITERATIONS (default 10;
+ * override via coordination.criticMaxIterations — the `advisor` arm ≈3).
  *
  * Failure semantics (docs/25 §9.5):
  *  - Executor failure → team fails immediately.
@@ -57,7 +57,8 @@ export class CriticLoopTopology implements Topology {
       spec.coordination.completion.kind === "until_signal"
         ? spec.coordination.completion.signal
         : DEFAULT_SIGNAL;
-    const maxIterations = DEFAULT_MAX_ITERATIONS;
+    const maxIterations =
+      spec.coordination.criticMaxIterations ?? DEFAULT_MAX_ITERATIONS;
 
     ctx.host.emit({
       type: "team_started",
