@@ -6,6 +6,9 @@ import {
   onCompaction,
   onSessionEnd,
   formatMemoryFragments,
+  budgetFragments,
+  enrichTurnInputs,
+  resetMemoryInjectionState,
 } from "./lifecycle.js";
 import {
   getMemoryCoordinator,
@@ -34,6 +37,7 @@ afterEach(async () => {
   resetCuratedMemoryStore();
   resetCuratedMemoryLimits();
   resetArchiveStore();
+  resetMemoryInjectionState();
 });
 
 // ---------------------------------------------------------------------------
@@ -104,6 +108,119 @@ describe("formatMemoryFragments", () => {
     ];
     const result = formatMemoryFragments(fragments);
     expect(result).toBe("Fact A\n\nFact B");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// budgetFragments (docs/53 TE-1)
+// ---------------------------------------------------------------------------
+
+describe("budgetFragments", () => {
+  it("keeps the most relevant fragments until the byte budget is exhausted", () => {
+    const fragments: MemoryFragment[] = [
+      { source: "low", content: "x".repeat(40), relevance: 0.2 },
+      { source: "high", content: "y".repeat(40), relevance: 0.9 },
+      { source: "mid", content: "z".repeat(40), relevance: 0.5 },
+    ];
+    const { kept, droppedCount, droppedBytes } = budgetFragments(fragments, 100);
+    expect(kept.map((f) => f.source)).toEqual(["high", "mid"]);
+    expect(droppedCount).toBe(1);
+    expect(droppedBytes).toBe(40);
+  });
+
+  it("preserves provider order among equal relevance (stable)", () => {
+    const fragments: MemoryFragment[] = [
+      { source: "first", content: "a" },
+      { source: "second", content: "b" },
+    ];
+    const { kept } = budgetFragments(fragments, 100);
+    expect(kept.map((f) => f.source)).toEqual(["first", "second"]);
+  });
+
+  it("truncates rather than drops when the top fragment alone exceeds budget", () => {
+    const fragments: MemoryFragment[] = [
+      { source: "big", content: "m".repeat(500), relevance: 1 },
+    ];
+    const { kept, droppedCount } = budgetFragments(fragments, 100);
+    expect(kept).toHaveLength(1);
+    expect(Buffer.byteLength(kept[0]!.content, "utf8")).toBeLessThanOrEqual(100);
+    expect(kept[0]!.content).toContain("[memory fragment truncated");
+    expect(droppedCount).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// enrichTurnInputs (docs/53 TE-1/TE-2)
+// ---------------------------------------------------------------------------
+
+describe("enrichTurnInputs", () => {
+  it("injects memory into the USER prompt, never the system prompt", async () => {
+    executeCuratedAction({
+      action: "add",
+      scope: "project",
+      scopeIdentifier: "/repo",
+      entry: "Uses Vitest",
+    });
+    const enriched = await enrichTurnInputs("You are an agent.", "Fix the bug.", {
+      projectRoot: "/repo",
+      sessionId: "s-place",
+    });
+    // System prompt is byte-stable (prompt-cache prefix stays intact).
+    expect(enriched.systemPrompt).toBe("You are an agent.");
+    expect(enriched.prompt).toContain("<memory-context>");
+    expect(enriched.prompt).toContain("Uses Vitest");
+    expect(enriched.prompt).toContain("</memory-context>");
+    expect(enriched.prompt).toContain("# Task\nFix the bug.");
+  });
+
+  it("skips re-injection when the block is unchanged (still reports skills)", async () => {
+    executeCuratedAction({
+      action: "add",
+      scope: "project",
+      scopeIdentifier: "/repo",
+      entry: "Uses Vitest",
+    });
+    const ctx = { projectRoot: "/repo", sessionId: "s-dedup" };
+    const first = await enrichTurnInputs("sys", "turn one", ctx);
+    expect(first.prompt).toContain("<memory-context>");
+
+    const second = await enrichTurnInputs("sys", "turn two", ctx);
+    expect(second.prompt).toBe("turn two"); // unchanged block → no re-injection
+  });
+
+  it("re-injects with a replacement notice when memory changes", async () => {
+    executeCuratedAction({
+      action: "add",
+      scope: "project",
+      scopeIdentifier: "/repo",
+      entry: "Uses Vitest",
+    });
+    const ctx = { projectRoot: "/repo", sessionId: "s-change" };
+    await enrichTurnInputs("sys", "turn one", ctx);
+
+    executeCuratedAction({
+      action: "add",
+      scope: "project",
+      scopeIdentifier: "/repo",
+      entry: "Dual lockfiles are deliberate",
+    });
+    const second = await enrichTurnInputs("sys", "turn two", ctx);
+    expect(second.prompt).toContain("<memory-context>");
+    expect(second.prompt).toContain("Dual lockfiles");
+    expect(second.prompt).toContain("replaces all previously provided memory context");
+  });
+
+  it("tracks injection state per (session, agent) key", async () => {
+    executeCuratedAction({
+      action: "add",
+      scope: "project",
+      scopeIdentifier: "/repo",
+      entry: "Uses Vitest",
+    });
+    await enrichTurnInputs("sys", "p", { projectRoot: "/repo", sessionId: "s-A" });
+    // A different session still gets the block.
+    const other = await enrichTurnInputs("sys", "p", { projectRoot: "/repo", sessionId: "s-B" });
+    expect(other.prompt).toContain("<memory-context>");
   });
 });
 
