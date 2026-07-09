@@ -58,6 +58,10 @@ const REPRO_PREFIX =
   "module and assert the CORRECT behaviour). Then edit the source so the test passes; " +
   "verify with `python3 -m pytest repro_test.py -q`. Do NOT delete or weaken the test to " +
   "make it pass.\n\n--- Issue to resolve ---";
+/** Compile-gate (docs/50 §10.4 step 3): every changed .py must still byte-compile. Exit≠0 ⇒
+ *  confidence 0 (escalate). Cheap syntax guard, composited weakest-link with the repro. */
+const COMPILE_CMD =
+  "cd /testbed 2>/dev/null; git diff --name-only -- '*.py' | xargs -r -n1 python3 -m py_compile";
 
 /** Bedrock (haiku) + Azure (gpt-5.5) creds forwarded to the sandbox for the cross-provider cascade. */
 function providerEnv(): Record<string, string> {
@@ -107,8 +111,11 @@ export async function runCascadeSwe(): Promise<void> {
     );
   }
   const env = providerEnv();
-  const AGENT_TIMEOUT_MS = Number(process.env.CS_AGENT_TIMEOUT_MS ?? 1_200_000);
-  const SANDBOX_TIMEOUT_MS = Number(process.env.CS_SANDBOX_TIMEOUT_MS ?? 1_800_000);
+  // docs/50 §10.4 step 2: 20-min agent cap lost a successful-but-slow advisor rescue
+  // (pytest-6197, exit 124). Raise to 40 min agent / 45 min sandbox; the periodic team_usage
+  // flush (team.ts) now also salvages cost from any run that still gets killed.
+  const AGENT_TIMEOUT_MS = Number(process.env.CS_AGENT_TIMEOUT_MS ?? 2_400_000);
+  const SANDBOX_TIMEOUT_MS = Number(process.env.CS_SANDBOX_TIMEOUT_MS ?? 2_700_000);
 
   const instances = loadSweInstances(INSTANCES_DIR);
   if (instances.length === 0) {
@@ -151,7 +158,9 @@ export async function runCascadeSwe(): Promise<void> {
       adapter: new CascadeAdapter({
         tiers: [{ model: SMALL }, { model: LARGE }],
         tau,
-        escalationCommand: REPRO_CMD,
+        // Composite gate (docs/50 §10.4 step 3): escalate unless the fix compiles AND its
+        // authored repro passes — weakest-link, so a broken patch can't clear the gate.
+        escalationCommands: [COMPILE_CMD, REPRO_CMD],
         promptPrefix: REPRO_PREFIX,
         env,
         timeoutMs: AGENT_TIMEOUT_MS,
@@ -160,13 +169,17 @@ export async function runCascadeSwe(): Promise<void> {
     })),
     // advise-don't-redo (docs/50 §10.4): cheap executor + bounded read-only critic
     // (reviewer role). The strong model advises, never authors — the Advisor-tool
-    // economics, reproduced cross-provider via the critic-loop topology.
+    // economics, reproduced cross-provider via the critic-loop topology. Step 1: the
+    // executor authors a repro; when it passes, the loop STOPS on green so the critic
+    // can't regress a correct fix (the django-12708 failure) — the critic fires only on red.
     {
       arm: { id: "advisor", label: `advisor exec=${SMALL} critic=${LARGE}`, scaffold: {} },
       adapter: new CriticLoopAdapter({
         executorModel: SMALL,
         criticModel: LARGE,
         maxIterations: ADVISOR_ITERS,
+        executorPromptPrefix: REPRO_PREFIX,
+        greenCommand: REPRO_CMD,
         env,
         timeoutMs: AGENT_TIMEOUT_MS,
         bin: BIN,

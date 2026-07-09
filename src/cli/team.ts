@@ -25,6 +25,7 @@ import { attachLaneTrace } from "./trace-output.js";
 import {
   EvaluatorRegistry,
   CommandEvaluator,
+  CompositeEvaluator,
   parsePytestPassRate,
   type ExecFn,
 } from "../swarm/escalation-evaluator.js";
@@ -412,6 +413,17 @@ export async function runTopology(opts: TopologyRunOptions): Promise<number> {
   const laneBus = (host as unknown as { readonly events: EventEmitter }).events;
   const usageHandler = (e: LaneEvent): void => usageAgg.record(e);
   laneBus.on("lane_event", usageHandler);
+  // Per-tier (per-model) + team-total usage → --output for the CascadeAdapter/G2.
+  const writeTeamUsage = (): void => {
+    resultsOut.write(
+      JSON.stringify({ type: "team_usage", byModel: usageAgg.byModel(), team: usageAgg.teamTotal() }) + "\n",
+    );
+  };
+  // Flush partial usage periodically so a HARD-KILLED run (agent timeout, exit 124) still
+  // reports per-tier cost — readTeamUsage takes the LAST team_usage line, so the final
+  // write in `finally` wins on a clean exit (docs/50 §10.4 step 2).
+  const usageFlush = setInterval(writeTeamUsage, 20_000);
+  if (typeof usageFlush.unref === "function") usageFlush.unref();
   // docs/51 — build the CascadeTopology confidence evaluator from the spec's
   // `escalationCommand` (a shell command run in the tier workspace → visible-test
   // pass-rate). Pairs with `escalationEvaluator` (the registry key the topology
@@ -432,17 +444,24 @@ export async function runTopology(opts: TopologyRunOptions): Promise<number> {
         },
       );
     });
-  let escalation: { registry: EvaluatorRegistry; exec: ExecFn } | undefined;
-  if (spec.coordination.escalationCommand !== undefined) {
-    const evalName = spec.coordination.escalationEvaluator ?? "command";
+  // A CascadeTopology reads `escalation.registry`; a CriticLoopTopology's stop-on-green
+  // reads only `escalation.exec`. `escalationCommands` (composite, weakest-link — ALL must
+  // clear τ) supersedes `escalationCommand`; a bare `greenCommand` still needs the exec.
+  let escalation: { registry?: EvaluatorRegistry; exec: ExecFn } | undefined;
+  const evalName = spec.coordination.escalationEvaluator ?? "command";
+  if (spec.coordination.escalationCommands !== undefined && spec.coordination.escalationCommands.length > 0) {
+    const children = spec.coordination.escalationCommands.map(
+      (command, i) => new CommandEvaluator({ name: `${evalName}-${i}`, command, parse: parsePytestPassRate }),
+    );
+    const registry = new EvaluatorRegistry().register(new CompositeEvaluator(evalName, children));
+    escalation = { registry, exec: shellExec };
+  } else if (spec.coordination.escalationCommand !== undefined) {
     const registry = new EvaluatorRegistry().register(
-      new CommandEvaluator({
-        name: evalName,
-        command: spec.coordination.escalationCommand,
-        parse: parsePytestPassRate,
-      }),
+      new CommandEvaluator({ name: evalName, command: spec.coordination.escalationCommand, parse: parsePytestPassRate }),
     );
     escalation = { registry, exec: shellExec };
+  } else if (spec.coordination.greenCommand !== undefined) {
+    escalation = { exec: shellExec }; // critic-loop green check needs only the workspace exec
   }
 
   const orch = new Orchestrator({
@@ -463,11 +482,9 @@ export async function runTopology(opts: TopologyRunOptions): Promise<number> {
     result = await orch.runTeam(spec);
     elapsed = Date.now() - startedAt;
   } finally {
+    clearInterval(usageFlush);
     laneBus.off("lane_event", usageHandler);
-    // Per-tier (per-model) + team-total usage → --output, for the CascadeAdapter/G2.
-    resultsOut.write(
-      JSON.stringify({ type: "team_usage", byModel: usageAgg.byModel(), team: usageAgg.teamTotal() }) + "\n",
-    );
+    writeTeamUsage(); // final, authoritative usage line (wins as the last one)
     await traceRecorder?.close();
     await new Promise<void>((resolve) => resultsOut.end(resolve));
   }

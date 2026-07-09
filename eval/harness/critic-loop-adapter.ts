@@ -37,6 +37,12 @@ export interface CriticLoopAdapterOptions {
   readonly executorPromptPrefix?: string;
   /** The critic's standing instruction; the executor output is appended by the topology. */
   readonly criticInstruction?: string;
+  /** Visible-correctness command (docs/50 §10.4 step 1): when it passes the loop approves and
+   *  STOPS before the critic can regress a passing fix. Pairs with executorPromptPrefix telling
+   *  the executor to author the test it runs. Omit ⇒ pure critic-driven approval. */
+  readonly greenCommand?: string;
+  /** Pass-rate threshold for greenCommand (default 1 = all pass). */
+  readonly greenThreshold?: number;
   readonly env?: Record<string, string>;
   readonly permissionMode?: string;
   readonly timeoutMs?: number;
@@ -82,6 +88,10 @@ export class CriticLoopAdapter implements ExecutionAdapter {
       coordination: {
         completion: { kind: "all" },
         criticMaxIterations: this.opts.maxIterations ?? 3,
+        ...(this.opts.greenCommand !== undefined && {
+          greenCommand: this.opts.greenCommand,
+          ...(this.opts.greenThreshold !== undefined && { greenThreshold: this.opts.greenThreshold }),
+        }),
       },
     };
     await ws.writeFiles([{ path: `${dir}/team.json`, content: JSON.stringify(spec, null, 2) }]);

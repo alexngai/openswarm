@@ -16,6 +16,7 @@
 
 import type { TeamSpec } from "../team-spec.js";
 import { TeamSession } from "../team-session.js";
+import { parsePytestPassRate } from "../escalation-evaluator.js";
 import type {
   Topology,
   TopologyContext,
@@ -122,6 +123,28 @@ export class CriticLoopTopology implements Topology {
           executorFailed = true;
           totalFailed++;
           break;
+        }
+
+        // ---- Stop-on-green (docs/50 §10.4) ----
+        // If a visible-correctness command passes, APPROVE and stop before the critic can
+        // push a passing fix into a regression (the django-12708 failure). The critic then
+        // only runs when the fix is RED — advise-when-needed, which also cuts its cost.
+        const greenCommand = spec.coordination.greenCommand;
+        if (greenCommand !== undefined && ctx.escalation?.exec !== undefined) {
+          const gr = await ctx.escalation.exec(greenCommand).catch(() => undefined);
+          const passRate = gr !== undefined ? parsePytestPassRate(gr) : 0;
+          if (gr !== undefined && passRate >= (spec.coordination.greenThreshold ?? 1)) {
+            approved = true;
+            ctx.host.emit({
+              type: "team_note",
+              payload: {
+                teamName: spec.name,
+                scope: team.scope,
+                note: `critic-loop approved on green (pass-rate ${passRate.toFixed(2)}) after iteration ${iterations}`,
+              },
+            });
+            break; // skip the critic; no more rounds → the green state is final
+          }
         }
 
         // ---- Critic turn ----

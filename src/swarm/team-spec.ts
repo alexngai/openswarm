@@ -249,6 +249,17 @@ export interface TeamCoordination {
    *  confidence. `runTopology` wires it into a CommandEvaluator registered under
    *  `escalationEvaluator`. Absent ⇒ self-report fallback. */
   readonly escalationCommand?: string;
+  /** docs/50 §10.4 — multiple visible-check commands for a CascadeTopology gate, combined
+   *  weakest-link (ALL must clear τ): e.g. [compile-gate, authored-repro]. Takes precedence
+   *  over `escalationCommand` when both are set. */
+  readonly escalationCommands?: readonly string[];
+  /** docs/50 §10.4 — CriticLoopTopology visible-correctness gate: a shell command run in the
+   *  workspace after each executor turn. When its pass-rate ≥ `greenThreshold` the loop
+   *  APPROVES and STOPS immediately (skipping the critic), so a later round can't regress a
+   *  fix that already passes (the django-12708 failure). Absent ⇒ pure critic-driven approval. */
+  readonly greenCommand?: string;
+  /** Pass-rate threshold for `greenCommand` (default 1 = all visible tests pass). */
+  readonly greenThreshold?: number;
   /** V0.4.Q7 — explicit shared MAP scope override. */
   readonly mapScope?: string;
   /** V0.4.Q4 — `team send` routing entry point. */
@@ -302,6 +313,9 @@ export const TeamCoordinationSchema = z.object({
   escalationTau: z.number().min(0).max(1).optional(),
   escalationEvaluator: z.string().min(1).optional(),
   escalationCommand: z.string().min(1).optional(),
+  escalationCommands: z.array(z.string().min(1)).optional(),
+  greenCommand: z.string().min(1).optional(),
+  greenThreshold: z.number().min(0).max(1).optional(),
   mapScope: z.string().min(1).optional(),
   entryPoint: z
     .union([

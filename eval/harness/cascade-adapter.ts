@@ -37,6 +37,9 @@ export interface CascadeAdapterOptions {
   /** VISIBLE-only confidence command run in the tier workspace (→ pass-rate). Omit for
    *  single-tier (mono) arms, which never escalate. */
   readonly escalationCommand?: string;
+  /** Composite gate (docs/50 §10.4 step 3): several visible checks (e.g. [compile-gate,
+   *  authored-repro]) combined weakest-link — ALL must clear τ. Supersedes escalationCommand. */
+  readonly escalationCommands?: readonly string[];
   readonly env?: Record<string, string>;
   readonly permissionMode?: string;
   readonly timeoutMs?: number;
@@ -91,10 +94,12 @@ export class CascadeAdapter implements ExecutionAdapter {
       coordination: {
         completion: { kind: "all" },
         escalationTau: this.opts.tau,
-        ...(this.opts.escalationCommand !== undefined && {
-          escalationEvaluator: "command",
-          escalationCommand: this.opts.escalationCommand,
-        }),
+        ...(this.opts.escalationCommands !== undefined && this.opts.escalationCommands.length > 0
+          ? { escalationEvaluator: "command", escalationCommands: this.opts.escalationCommands }
+          : this.opts.escalationCommand !== undefined && {
+              escalationEvaluator: "command",
+              escalationCommand: this.opts.escalationCommand,
+            }),
       },
     };
     await ws.writeFiles([{ path: `${dir}/team.json`, content: JSON.stringify(spec, null, 2) }]);

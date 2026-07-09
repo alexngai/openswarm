@@ -119,7 +119,10 @@ function criticLoopSpec(
   };
 }
 
-async function makeCtx(results: readonly AgentResult[]): Promise<{
+async function makeCtx(
+  results: readonly AgentResult[],
+  exec?: (cmd: string) => Promise<{ exitCode: number; stdout: string; stderr: string }>,
+): Promise<{
   ctx: TopologyContext;
   harness: Harness;
   cleanup: () => Promise<void>;
@@ -136,6 +139,7 @@ async function makeCtx(results: readonly AgentResult[]): Promise<{
     resultsOut,
     deadLetter,
     permissionMode: "workspace-write",
+    ...(exec !== undefined && { escalation: { exec } }),
   };
   return {
     ctx,
@@ -262,6 +266,51 @@ describe("CriticLoopTopology", () => {
     const spec = criticLoopSpec([member("exec", "implement feature"), member("crit", "review")]);
     const result = await new CriticLoopTopology().run(spec, ctx);
     expect(harness.spawns).toHaveLength(4); // looped — did NOT stop at round 1
+    expect(result.succeeded).toBe(1);
+    expect(result.aggregateOutput).toBe("draft v2");
+  });
+
+  it("stop-on-green: approves and skips the critic when greenCommand passes", async () => {
+    // docs/50 §10.4 step 1 — a passing visible check ends the loop before the critic can
+    // regress a correct fix (the django-12708 failure). Only the executor should spawn.
+    const { ctx, harness, cleanup } = await makeCtx(
+      [s("draft v1 (correct)")],
+      async () => ({ exitCode: 0, stdout: "1 passed", stderr: "" }),
+    );
+    cleanups.push(cleanup);
+    const spec: TeamSpec = {
+      name: "critic-loop-test",
+      topology: "critic-loop",
+      members: [member("exec", "implement feature"), member("crit", "review")],
+      coordination: { completion: { kind: "until_signal", signal: "APPROVED" }, greenCommand: "pytest repro_test.py -q" },
+    };
+    const result = await new CriticLoopTopology().run(spec, ctx);
+    expect(harness.spawns).toHaveLength(1); // executor only — the critic never ran
+    expect(result.succeeded).toBe(1);
+    expect(result.aggregateOutput).toBe("draft v1 (correct)");
+  });
+
+  it("stop-on-green: runs the critic while red, then stops once green", async () => {
+    let greenCalls = 0;
+    const { ctx, harness, cleanup } = await makeCtx(
+      [s("draft v1"), s("fix the import"), s("draft v2")],
+      async () => {
+        greenCalls++;
+        return greenCalls === 1
+          ? { exitCode: 1, stdout: "1 failed", stderr: "" } // red after round 1 → critic runs
+          : { exitCode: 0, stdout: "1 passed", stderr: "" }; // green after round 2 → stop
+      },
+    );
+    cleanups.push(cleanup);
+    const spec: TeamSpec = {
+      name: "critic-loop-test",
+      topology: "critic-loop",
+      members: [member("exec", "implement feature"), member("crit", "review")],
+      coordination: { completion: { kind: "until_signal", signal: "APPROVED" }, greenCommand: "pytest repro_test.py -q" },
+    };
+    const result = await new CriticLoopTopology().run(spec, ctx);
+    expect(harness.spawns).toHaveLength(3); // exec, critic, exec — critic fired only while red
+    expect(greenCalls).toBe(2);
     expect(result.succeeded).toBe(1);
     expect(result.aggregateOutput).toBe("draft v2");
   });
