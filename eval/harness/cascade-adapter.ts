@@ -138,7 +138,10 @@ export class CascadeAdapter implements ExecutionAdapter {
       trajectory: parsed.trajectory,
       durationMs: Date.now() - start,
       // Per-tier cost + escalation count for the CostModel/G2 frontier (docs/51 §5).
-      submission: {
+      // `metadata` (not `submission`): swarmkit-eval persists raw.metadata onto the
+      // cached cell result (orchestrator.ts), whereas submission is grader-only and
+      // not stored — so the frontier analyzer can read this back per cell.
+      metadata: {
         cascade: {
           tiers: this.opts.tiers.map((t) => t.model),
           tau: this.opts.tau,

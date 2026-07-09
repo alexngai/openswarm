@@ -9,6 +9,7 @@ import {
   parseCell,
   aggregate,
   pairedSigmaD,
+  tauSweep,
   ANALYSIS_PRICING,
   type CellRow,
 } from "./cost-frontier.js";
@@ -131,5 +132,59 @@ describe("pairedSigmaD", () => {
   it("no cross-arm pairs → empty", () => {
     const only = [parseCell(raw({ arm: "single" }), "b__t__single__gpt-5.5__seed1@a.json", costModel)!];
     expect(pairedSigmaD(only, "single")).toHaveLength(0);
+  });
+});
+
+describe("parseCell — cascade cells (B4)", () => {
+  const cascadeRaw = (tau: number, escalations: number, seed = 1) => ({
+    taskId: "fixit-n8",
+    armId: `cascade@${tau}`,
+    model: "qwen3-8b",
+    seed,
+    status: "success",
+    durationMs: 5000,
+    score: { earned: 8, total: 8 },
+    usage: { inputTokens: 300, outputTokens: 30, totalTokens: 330 },
+    metadata: {
+      cascade: {
+        tiers: ["qwen3-8b", "qwen3-30b"],
+        tau,
+        escalations,
+        perModel: {
+          "qwen3-8b": { inputTokens: 100, outputTokens: 10, totalTokens: 110 },
+          "qwen3-30b": { inputTokens: 200, outputTokens: 20, totalTokens: 220 },
+        },
+      },
+    },
+  });
+
+  it("reads metadata.cascade → tau, escalations, per-tier cost", () => {
+    const row = parseCell(cascadeRaw(0.5, 1), "swarm__fixit-n8__cascade@0.5__qwen3-8b__seed1@x.json", costModel)!;
+    expect(row.tau).toBe(0.5);
+    expect(row.escalations).toBe(1);
+    expect(Object.keys(row.perModelCost!).sort()).toEqual(["qwen3-30b", "qwen3-8b"]);
+    // qwen3-8b is in the params registry → FLOPs = 2·8e9·(100+10)
+    expect(row.perModelCost!["qwen3-8b"]!.flops).toBe(2 * 8e9 * 110);
+    // qwen3-30b is NOT in the registry → no FLOPs for that tier (honest coverage)
+    expect(row.perModelCost!["qwen3-30b"]!.flops).toBeUndefined();
+  });
+
+  it("tauSweep groups cascade cells by τ (the sweep curve)", () => {
+    const cells: CellRow[] = [
+      parseCell({ ...cascadeRaw(0.5, 1, 1), score: { earned: 4, total: 8 } }, "b__fixit-n8__cascade@0.5__qwen3-8b__seed1@a.json", costModel)!,
+      parseCell({ ...cascadeRaw(0.5, 1, 2), score: { earned: 6, total: 8 } }, "b__fixit-n8__cascade@0.5__qwen3-8b__seed2@b.json", costModel)!,
+      parseCell({ ...cascadeRaw(0.7, 2, 1), score: { earned: 8, total: 8 } }, "b__fixit-n8__cascade@0.7__qwen3-8b__seed1@c.json", costModel)!,
+    ];
+    const sweep = tauSweep(cells);
+    expect(sweep.map((p) => p.tau)).toEqual([0.5, 0.7]); // sorted by τ
+    const t05 = sweep.find((p) => p.tau === 0.5)!;
+    expect(t05.n).toBe(2);
+    expect(t05.meanQuality).toBeCloseTo(0.625, 6); // (4/8 + 6/8)/2
+    expect(t05.meanEscalations).toBe(1);
+  });
+
+  it("non-cascade cells are ignored by tauSweep", () => {
+    const mono = parseCell(raw({ arm: "mono-30B" }), "b__t__mono-30B__gpt-5.5__seed1@a.json", costModel)!;
+    expect(tauSweep([mono])).toHaveLength(0);
   });
 });
