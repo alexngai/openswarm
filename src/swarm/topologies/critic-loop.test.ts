@@ -14,7 +14,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { CriticLoopTopology } from "./critic-loop.js";
+import { CriticLoopTopology, hasApprovalSignal } from "./critic-loop.js";
 import { WorkerPool } from "../worker-pool.js";
 import { DeadLetterWriter } from "../dead-letter.js";
 import type { TeamSpec, MemberSpec } from "../team-spec.js";
@@ -249,6 +249,23 @@ describe("CriticLoopTopology", () => {
     expect(result.aggregateOutput).toBe("draft v2"); // last executor output retained
   });
 
+  it('does not false-approve on a negated signal ("NOT APPROVED")', async () => {
+    // Regression (docs/50 §10.4): plain .includes("APPROVED") would read the caps
+    // rejection as approval and stop at round 1 with an unreviewed fix.
+    const { ctx, harness, cleanup } = await makeCtx([
+      s("draft v1"), // exec 1
+      s("This is NOT APPROVED — fix the import."), // critic 1: caps negation
+      s("draft v2"), // exec 2
+      s("APPROVED"), // critic 2: real approval
+    ]);
+    cleanups.push(cleanup);
+    const spec = criticLoopSpec([member("exec", "implement feature"), member("crit", "review")]);
+    const result = await new CriticLoopTopology().run(spec, ctx);
+    expect(harness.spawns).toHaveLength(4); // looped — did NOT stop at round 1
+    expect(result.succeeded).toBe(1);
+    expect(result.aggregateOutput).toBe("draft v2");
+  });
+
   it("executor failure halts the loop with failed=1", async () => {
     const { ctx, harness, cleanup } = await makeCtx([
       f("LLM call failed"), // executor turn 1 fails
@@ -366,5 +383,23 @@ describe("CriticLoopTopology", () => {
     expect(crit?.bp).toEqual({ kind: "none" });
     await deadLetter.close();
     await rm(tmp, { recursive: true, force: true });
+  });
+});
+
+describe("hasApprovalSignal", () => {
+  const S = "APPROVED";
+  it("matches a standalone or trailing signal", () => {
+    expect(hasApprovalSignal("APPROVED", S)).toBe(true);
+    expect(hasApprovalSignal("looks good — APPROVED", S)).toBe(true);
+    expect(hasApprovalSignal("APPROVED.", S)).toBe(true);
+  });
+  it("rejects negated signals (the real bug)", () => {
+    expect(hasApprovalSignal("NOT APPROVED", S)).toBe(false);
+    expect(hasApprovalSignal("This is not APPROVED yet", S)).toBe(false);
+    expect(hasApprovalSignal("cannot be APPROVED", S)).toBe(false);
+  });
+  it("is case-sensitive to the literal signal (ignores lowercase prose)", () => {
+    expect(hasApprovalSignal("I approved the earlier change", S)).toBe(false);
+    expect(hasApprovalSignal("Not approved", S)).toBe(false);
   });
 });

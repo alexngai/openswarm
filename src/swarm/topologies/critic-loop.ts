@@ -141,7 +141,7 @@ export class CriticLoopTopology implements Topology {
         }
         totalSucceeded++;
 
-        if (criticResult.output.includes(signal)) {
+        if (hasApprovalSignal(criticResult.output, signal)) {
           approved = true;
           // team_signal_received doesn't exist as a typed event yet —
           // emit a team_note so the signal acknowledgement still surfaces
@@ -200,4 +200,32 @@ export class CriticLoopTopology implements Topology {
       ...(executorOutput !== undefined && { aggregateOutput: executorOutput }),
     };
   }
+}
+
+const NEGATORS = new Set([
+  "not", "no", "never", "cannot", "can't", "isn't", "aren't", "don't",
+  "doesn't", "won't", "wouldn't", "without", "n't",
+]);
+
+/**
+ * True iff `signal` appears in `output` as a standalone token that is NOT immediately
+ * negated. Plain `output.includes(signal)` mis-reads a critic's "NOT APPROVED" as
+ * approval (the signal is a substring), silently ending the loop on a rejected fix.
+ * Case-sensitive: the critic is told to emit the literal signal (docs/50 §10.4).
+ */
+export function hasApprovalSignal(output: string, signal: string): boolean {
+  const esc = signal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  for (const m of output.matchAll(new RegExp(`\\b${esc}\\b`, "g"))) {
+    // Scan only the clause leading up to this occurrence — bounded by the last sentence
+    // or line break — so "cannot be APPROVED" is caught but "…could not read it. APPROVED"
+    // (negator in a prior sentence) still approves.
+    const before = output.slice(0, m.index).toLowerCase();
+    const bound = Math.max(
+      before.lastIndexOf("."), before.lastIndexOf("!"), before.lastIndexOf("?"),
+      before.lastIndexOf("\n"), before.lastIndexOf(":"), before.lastIndexOf(";"),
+    );
+    const words = before.slice(bound + 1).match(/[a-z']+/g) ?? [];
+    if (!words.some((w) => NEGATORS.has(w))) return true; // un-negated occurrence in its clause
+  }
+  return false;
 }
