@@ -291,12 +291,14 @@ describe("CriticLoopTopology", () => {
   });
 
   it("stop-on-green: runs the critic while red, then stops once green", async () => {
-    let greenCalls = 0;
+    let greenChecks = 0;
     const { ctx, harness, cleanup } = await makeCtx(
       [s("draft v1"), s("fix the import"), s("draft v2")],
-      async () => {
-        greenCalls++;
-        return greenCalls === 1
+      async (cmd: string) => {
+        // docs/52: the critic prompt also runs a `git diff` capture — distinguish it.
+        if (cmd.includes("git")) return { exitCode: 0, stdout: "diff --git a/f b/f\n+fix", stderr: "" };
+        greenChecks++;
+        return greenChecks === 1
           ? { exitCode: 1, stdout: "1 failed", stderr: "" } // red after round 1 → critic runs
           : { exitCode: 0, stdout: "1 passed", stderr: "" }; // green after round 2 → stop
       },
@@ -310,9 +312,15 @@ describe("CriticLoopTopology", () => {
     };
     const result = await new CriticLoopTopology().run(spec, ctx);
     expect(harness.spawns).toHaveLength(3); // exec, critic, exec — critic fired only while red
-    expect(greenCalls).toBe(2);
+    expect(greenChecks).toBe(2);
     expect(result.succeeded).toBe(1);
     expect(result.aggregateOutput).toBe("draft v2");
+    // docs/52 Phase A — the critic reviews the ACTUAL diff + the failing check, not just prose.
+    const criticPrompt = harness.spawns[1]!.prompt;
+    expect(criticPrompt).toContain("The change under review");
+    expect(criticPrompt).toContain("diff --git a/f b/f");
+    expect(criticPrompt).toContain("Failing check output");
+    expect(criticPrompt).toContain("1 failed");
   });
 
   it("executor failure halts the loop with failed=1", async () => {

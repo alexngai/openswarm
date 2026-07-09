@@ -180,6 +180,28 @@ describe("CascadeTopology", () => {
     expect(harness.spawns[1]!.prompt).toContain("partial");
   });
 
+  it("docs/52 Phase A: escalation prompt carries the cheap tier's applied diff + reason", async () => {
+    const exec = async (cmd: string): Promise<{ exitCode: number; stdout: string; stderr: string }> => ({
+      exitCode: 0,
+      stdout: cmd.includes("git") ? "diff --git a/src.py b/src.py\n+    return sqrt(5)" : "",
+      stderr: "",
+    });
+    const { ctx, harness, cleanup } = await makeCtx(
+      [ok("partial\nCASCADE_CONFIDENCE: 0.3"), ok("done\nCASCADE_SOLVED")],
+      { escalation: { exec } },
+    );
+    cleanups.push(cleanup);
+    const spec = cascadeSpec([member("8b", "solve the bug"), member("30b", "solve the bug")]);
+    const result = await new CascadeTopology().run(spec, ctx);
+    expect(harness.spawns).toHaveLength(2);
+    expect(result.succeeded).toBe(1);
+    const escPrompt = harness.spawns[1]!.prompt;
+    expect(escPrompt).toContain("Its applied changes (git diff)");
+    expect(escPrompt).toContain("diff --git a/src.py b/src.py"); // the real patch, not prose
+    expect(escPrompt).toContain("Build on its work");
+    expect(escPrompt).toContain("below the escalation gate"); // the reason block
+  });
+
   it("τ-sweep: identical outputs, escalation count moves with τ", async () => {
     const results = [ok("CASCADE_CONFIDENCE: 0.5"), ok("CASCADE_SOLVED")];
     const lo = await makeCtx(results);

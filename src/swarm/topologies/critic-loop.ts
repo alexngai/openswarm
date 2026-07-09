@@ -17,6 +17,7 @@
 import type { TeamSpec } from "../team-spec.js";
 import { TeamSession } from "../team-session.js";
 import { parsePytestPassRate } from "../escalation-evaluator.js";
+import { captureWorkspaceDiff, diffBlock } from "../handoff.js";
 import type {
   Topology,
   TopologyContext,
@@ -130,6 +131,7 @@ export class CriticLoopTopology implements Topology {
         // push a passing fix into a regression (the django-12708 failure). The critic then
         // only runs when the fix is RED — advise-when-needed, which also cuts its cost.
         const greenCommand = spec.coordination.greenCommand;
+        let redCheckOutput: string | undefined;
         if (greenCommand !== undefined && ctx.escalation?.exec !== undefined) {
           const gr = await ctx.escalation.exec(greenCommand).catch(() => undefined);
           const passRate = gr !== undefined ? parsePytestPassRate(gr) : 0;
@@ -145,12 +147,19 @@ export class CriticLoopTopology implements Topology {
             });
             break; // skip the critic; no more rounds → the green state is final
           }
+          // Red: keep the failing-check output for the critic (docs/52 — free, already run).
+          if (gr !== undefined) redCheckOutput = `${gr.stdout}\n${gr.stderr}`.trim().slice(-1500);
         }
 
-        // ---- Critic turn ----
+        // ---- Critic turn (docs/52 Phase A: review the real diff, not a prose summary) ----
+        const diff = await captureWorkspaceDiff(ctx.escalation?.exec);
         const criticPrompt =
-          `${criticSpec.prompt}\n\n## Executor output (iteration ${iterations})\n\n${executorOutput}\n\n` +
-          `Reply with the literal text "${signal}" if you approve. Otherwise provide concrete feedback the executor can act on.`;
+          `${criticSpec.prompt}\n\n` +
+          `## The change under review (git diff)\n${diffBlock(diff)}\n\n` +
+          (redCheckOutput !== undefined ? `## Failing check output\n\`\`\`\n${redCheckOutput}\n\`\`\`\n\n` : "") +
+          `## Executor's own summary (iteration ${iterations})\n${executorOutput}\n\n` +
+          `Review the DIFF above against the repository. Reply with the literal text "${signal}" ` +
+          `if the fix is correct and complete; otherwise give concrete, actionable feedback the executor can act on.`;
         const criticHandle = await team.spawnMember({
           ...criticSpec,
           prompt: criticPrompt,

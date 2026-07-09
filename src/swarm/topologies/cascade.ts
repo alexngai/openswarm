@@ -29,6 +29,7 @@ import { TeamSession } from "../team-session.js";
 import type { Topology, TopologyContext, TeamResult } from "../topologies-types.js";
 import { runCascade, type CascadeTier } from "../escalation-gate.js";
 import { SelfReportEvaluator } from "../escalation-evaluator.js";
+import { captureWorkspaceDiff, diffBlock } from "../handoff.js";
 
 /** Default τ: escalate unless a tier reports full confidence (`CASCADE_SOLVED`). */
 const DEFAULT_TAU = 1;
@@ -96,15 +97,23 @@ export class CascadeTopology implements Topology {
     }));
 
     let spawnCount = 0;
+    // docs/52 Phase A — per-tier handoff record ({diff, reason}) captured after each tier
+    // runs, so the NEXT tier builds on the applied change instead of a prose summary.
+    const handoff: Array<{ diff?: string; reason: string }> = [];
     try {
       const run = await runCascade<MemberSpec, string>(tiers, { tau }, async (tier, cctx) => {
         const prior = cctx.priorAttempts[cctx.priorAttempts.length - 1];
+        const priorH = cctx.index > 0 ? handoff[cctx.index - 1] : undefined;
         const base = tier.payload.prompt;
         const prompt =
           prior === undefined
             ? `${base}\n\n${SIGNAL_INSTRUCTIONS}`
-            : `${base}\n\n## A cheaper tier attempted this and was not accepted:\n\n` +
-              `${prior.outcome.value}\n\nImprove on it and fully resolve the task.\n\n${SIGNAL_INSTRUCTIONS}`;
+            : `${base}\n\n` +
+              `## A cheaper tier attempted this and was rejected. Build on its work — do not restart from scratch; its changes are already applied to the workspace.\n\n` +
+              `### Its applied changes (git diff)\n${diffBlock(priorH?.diff)}\n\n` +
+              `### Why it was rejected\n${priorH?.reason ?? "its confidence was below the escalation gate."}\n\n` +
+              `### Its own summary\n${prior.outcome.value || "(none)"}\n\n` +
+              `Fix what's missing and fully resolve the task.\n\n${SIGNAL_INSTRUCTIONS}`;
         const handle = await team.spawnMember({ ...tier.payload, prompt });
         spawnCount++;
         const result = await handle.wait();
@@ -120,6 +129,13 @@ export class CascadeTopology implements Topology {
               ...(ctx.escalation?.exec !== undefined && { exec: ctx.escalation.exec }),
               ...(ctx.escalation?.task !== undefined && { task: ctx.escalation.task }),
             });
+        // Capture this tier's applied state for the NEXT tier's lossless handoff (docs/52).
+        handoff[cctx.index] = {
+          diff: await captureWorkspaceDiff(ctx.escalation?.exec),
+          reason: failed
+            ? `The tier hard-failed (status=${result.status}) — no usable solution.`
+            : `Its confidence ${confidence.toFixed(2)} was below the escalation gate τ=${tau} (the visible checks did not pass).`,
+        };
         return { confidence, value: output, failed };
       });
 
