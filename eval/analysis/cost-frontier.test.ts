@@ -189,6 +189,19 @@ describe("parseCell — cascade cells (B4)", () => {
     expect(row.perModelCost!["qwen3-30b"]!.flops).toBeUndefined();
   });
 
+  it("reads advisor rounds/approvedAtRound from metadata.cascade (no tau)", () => {
+    const raw = {
+      taskId: "sympy-1", armId: "advisor", model: "cascade", seed: 1, status: "success",
+      durationMs: 1000, score: { full: true },
+      usage: { inputTokens: 100, outputTokens: 10, totalTokens: 110 },
+      metadata: { cascade: { tiers: ["haiku", "gpt-5.5"], rounds: 2, approvedAtRound: 2, perModel: {} } },
+    };
+    const row = parseCell(raw, "critic-loop__sympy-1__advisor__cascade__seed1@x.json", costModel)!;
+    expect(row.rounds).toBe(2);
+    expect(row.approvedAtRound).toBe(2);
+    expect(row.tau).toBeUndefined(); // advisor is not a τ-gated cascade
+  });
+
   it("tauSweep groups cascade cells by τ (the sweep curve)", () => {
     const cells: CellRow[] = [
       parseCell({ ...cascadeRaw(0.5, 1, 1), score: { earned: 4, total: 8 } }, "b__fixit-n8__cascade@0.5__qwen3-8b__seed1@a.json", costModel)!,

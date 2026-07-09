@@ -43,6 +43,9 @@ interface CascadeMeta {
   tiers?: string[];
   tau?: number;
   escalations?: number;
+  /** Advisor arm (critic-loop): executor↔critic rounds + the iteration the critic approved. */
+  rounds?: number;
+  approvedAtRound?: number;
   /** Per-tier (per-model) usage — the heterogeneous cost breakdown. */
   perModel?: Record<string, { inputTokens?: number; outputTokens?: number; totalTokens?: number }>;
 }
@@ -86,6 +89,9 @@ export interface CellRow {
   tau?: number;
   escalations?: number;
   perModelCost?: Record<string, CostBreakdown>;
+  /** Advisor cells only (critic-loop): executor↔critic rounds + approval iteration. */
+  rounds?: number;
+  approvedAtRound?: number;
 }
 
 /** Graded quality in [0,1]: earned/total when checkpoint-graded, else binary `full`. */
@@ -151,6 +157,8 @@ export function parseCell(raw: RawCell, file: string, costModel: CostModel): Cel
     cost,
     ...(cascade?.tau !== undefined && { tau: cascade.tau }),
     ...(cascade?.escalations !== undefined && { escalations: cascade.escalations }),
+    ...(cascade?.rounds !== undefined && { rounds: cascade.rounds }),
+    ...(cascade?.approvedAtRound !== undefined && { approvedAtRound: cascade.approvedAtRound }),
     ...(perModelCost !== undefined && { perModelCost }),
   };
 }
@@ -372,6 +380,20 @@ function main(): void {
         g.cost.usdComplete ? "$" : "$?",
       ].join(" "),
     );
+  }
+
+  // Advise-don't-redo consult log (docs/50 §10.4): per-cell executor↔critic rounds — the
+  // over/under-consulting signal. approvedAt=—(cap) ⇒ never approved (hit criticMaxIterations).
+  const advisorCells = real.filter((c) => c.rounds !== undefined);
+  if (advisorCells.length > 0) {
+    console.log("\nADVISOR CONSULT LOG (critic-loop rounds vs approval):");
+    for (const c of advisorCells) {
+      console.log(
+        `  ${pad(c.taskId, 20)} ${pad(c.arm, 8)} seed${c.seed}  rounds=${c.rounds}  ` +
+          `${c.approvedAtRound !== undefined ? `approvedAt=${c.approvedAtRound}` : "approvedAt=—(cap)"}  ` +
+          `qual=${c.quality.toFixed(2)}  ${c.cost.usd !== undefined ? `$${c.cost.usd.toFixed(3)}` : "—"}`,
+      );
+    }
   }
 
   console.log("\nPAIRED σ_d (quality diff vs `single`, per task+model+seed):");

@@ -133,6 +133,11 @@ export class CriticLoopAdapter implements ExecutionAdapter {
       }).catch((e: unknown) => console.error(`[critic-loop] transcript extraction failed: ${String(e)}`));
     }
 
+    // Compact audit signal (docs/50 §10.4 step 1): how many executor↔critic rounds ran
+    // and when the critic approved — parsed from the same lane trace, persisted per cell so
+    // over/under-consulting is visible across a run without un-tarring each transcript.
+    const summary = await readCriticLoopSummary(ws, traceOutputPath).catch(() => undefined);
+
     return {
       output: parsed.output || r.stdout.slice(0, 2000) || `[exit ${r.exitCode}] ${r.stderr.slice(-2000)}`,
       workdir: ws.root,
@@ -147,6 +152,10 @@ export class CriticLoopAdapter implements ExecutionAdapter {
           tiers: [this.opts.executorModel, this.opts.criticModel],
           perModel: teamUsage?.byModel ?? {},
           exitCode: r.exitCode,
+          ...(summary && {
+            rounds: summary.rounds,
+            ...(summary.approvedAtRound !== null && { approvedAtRound: summary.approvedAtRound }),
+          }),
           ...(r.exitCode !== 0 && { stderrTail: r.stderr.slice(-2000) }),
         },
       },
@@ -192,4 +201,43 @@ async function extractSandboxTranscripts(
     const b64 = tar?.stdout?.trim();
     if (b64) writeFileSync(join(outDir, "sandbox-transcripts.tgz"), Buffer.from(b64, "base64"));
   }
+}
+
+/**
+ * `{rounds, approvedAtRound}` from a critic-loop lane trace. `rounds` counts executor
+ * turns; `approvedAtRound` is the iteration the critic emitted APPROVED (null ⇒ never —
+ * hit the cap or the executor failed). Pure so it can be tested on an extracted trace.
+ */
+export function parseCriticLoopSummary(traceText: string): { rounds: number; approvedAtRound: number | null } {
+  let rounds = 0;
+  let approvedAtRound: number | null = null;
+  for (const line of traceText.split("\n")) {
+    const s = line.trim();
+    if (!s.startsWith("{")) continue;
+    let o: { type?: string; payload?: { role?: string; note?: string } };
+    try {
+      o = JSON.parse(s) as typeof o;
+    } catch {
+      continue;
+    }
+    if (o.type === "worker_spawned" && o.payload?.role === "executor") rounds++;
+    else if (o.type === "team_note") {
+      const m = /after iteration (\d+)/.exec(o.payload?.note ?? "");
+      if (m) approvedAtRound = Number(m[1]);
+    }
+  }
+  return { rounds, approvedAtRound };
+}
+
+/** Grep the critic-loop lifecycle lines out of the sandbox trace and summarise them (cheap:
+ *  transfers only the worker_spawned/team_note lines, not the full message stream). */
+export async function readCriticLoopSummary(
+  ws: { run(cmd: string, opts?: { timeoutMs?: number }): Promise<{ stdout: string }> },
+  traceOutputPath: string,
+): Promise<{ rounds: number; approvedAtRound: number | null } | undefined> {
+  const grep = `grep -aE '"type":"(worker_spawned|team_note)"' ${shq(traceOutputPath)} 2>/dev/null || true`;
+  const r = await ws.run(`bash -lc ${shq(grep)}`, { timeoutMs: 30_000 }).catch(() => null);
+  if (r?.stdout === undefined) return undefined;
+  const sum = parseCriticLoopSummary(r.stdout);
+  return sum.rounds > 0 ? sum : undefined;
 }
