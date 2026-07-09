@@ -22,6 +22,11 @@ const { platform, arch } = process;
 const exe = platform === "win32" ? "openswarm.exe" : "openswarm";
 
 function resolvePlatformBinary() {
+  // Escape hatch: force the node bundle (dist/cli.js) instead of a possibly-STALE
+  // compiled platform binary. Needed when running working-tree changes whose features
+  // (e.g. a new `topology cascade`) aren't in the published @openswarm/cli-* binary —
+  // the eval harness sets this in sandboxes. See docs/51.
+  if (process.env.OPENSWARM_NODE_CLI === "1") return null;
   const pkgName = `@openswarm/cli-${platform}-${arch}`;
   // Production: the installed optional-dependency package.
   try {

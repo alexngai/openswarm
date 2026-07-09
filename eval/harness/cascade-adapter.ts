@@ -42,6 +42,8 @@ export interface CascadeAdapterOptions {
   readonly timeoutMs?: number;
   readonly bin?: string;
   readonly name?: string;
+  /** Prepended to every tier's prompt (e.g. the "write a repro test, then fix" instruction). */
+  readonly promptPrefix?: string;
 }
 
 /** Shape of a `UsageTotals` line (matches src/swarm/usage-aggregator.ts). */
@@ -75,10 +77,11 @@ export class CascadeAdapter implements ExecutionAdapter {
     const agentId = ctx.env?.AGENT_ID ?? "agent";
     const dir = `.sbx/${agentId.replace(/[^\w.-]/g, "_")}`;
 
+    const prefix = this.opts.promptPrefix ? `${this.opts.promptPrefix}\n\n` : "";
     const members = this.opts.tiers.map((t, i) => ({
       id: `tier-${i}`,
       role: t.role ?? "worker",
-      prompt: t.prompt ?? cell.task.prompt,
+      prompt: `${prefix}${t.prompt ?? cell.task.prompt}`,
       model: t.model,
     }));
     const spec = {
@@ -135,7 +138,9 @@ export class CascadeAdapter implements ExecutionAdapter {
         });
 
     return {
-      output: parsed.output || r.stdout.slice(0, 2000),
+      // Fall back to the command's stderr tail so a failed `topology cascade` is diagnosable
+      // (the topology command's real error goes to stderr, not stdout).
+      output: parsed.output || r.stdout.slice(0, 2000) || `[exit ${r.exitCode}] ${r.stderr.slice(-2000)}`,
       workdir: ws.root,
       usage,
       trajectory: parsed.trajectory,
@@ -150,6 +155,8 @@ export class CascadeAdapter implements ExecutionAdapter {
           tau: this.opts.tau,
           ...(escalations !== undefined && { escalations }),
           perModel: teamUsage?.byModel ?? {},
+          exitCode: r.exitCode,
+          ...(r.exitCode !== 0 && { stderrTail: r.stderr.slice(-2000) }),
         },
       },
     };
