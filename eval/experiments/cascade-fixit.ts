@@ -25,27 +25,38 @@ import {
   type EvalConfig,
   type Arm,
 } from "swarmkit-eval";
+import { fileURLToPath } from "node:url";
 import { CascadeAdapter } from "../harness/cascade-adapter.js";
 
-const SMALL = process.env.CF_MODEL_SMALL ?? "us.anthropic.claude-haiku-4-5-20251001-v1:0";
-const LARGE = process.env.CF_MODEL_LARGE ?? "us.anthropic.claude-sonnet-4-5-20250929-v1:0";
+const SMALL = process.env.CF_MODEL_SMALL ?? "haiku";
+const LARGE = process.env.CF_MODEL_LARGE ?? "sonnet";
+// The `openswarm` PATH binary can be a STALE compiled binary (the smoke caught this);
+// default to the freshly-built local CLI. For E2B (Stage 1) set CF_BIN=openswarm.
+const BIN = process.env.CF_BIN ?? `node ${fileURLToPath(new URL("../../dist/cli.js", import.meta.url))}`;
 const SEEDS = (process.env.CF_SEEDS ?? "1,2").split(",").map((s) => Number(s.trim()));
 const N = process.env.CF_N ? Number(process.env.CF_N) : 8;
 const TAUS = (process.env.CF_TAUS ?? "0.3,0.6,0.9").split(",").map((s) => Number(s.trim()));
 /** fixit's VISIBLE tests (the agent's own `tests/`) → pass-rate confidence (docs/51 §9.3). */
 const PYTEST = "python3 -m pytest tests/ -q";
 
-/** Bedrock env forwarded to the in-sandbox openswarm process AND its spawned tiers. */
+/**
+ * Model env for the openswarm process + spawned tiers. Uses Bedrock only when AWS
+ * creds are present; otherwise leaves it unset so the Claude Agent SDK engine uses
+ * the logged-in session (aliases like `haiku`/`sonnet` — the smoke's working path).
+ */
 function providerEnv(): Record<string, string> {
-  const env: Record<string, string> = { CLAUDE_CODE_USE_BEDROCK: "1" };
-  for (const k of [
-    "AWS_REGION", "AWS_DEFAULT_REGION", "AWS_BEARER_TOKEN_BEDROCK",
-    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
-  ]) {
-    const v = process.env[k];
-    if (v) env[k] = v;
+  const env: Record<string, string> = {};
+  if (process.env.AWS_BEARER_TOKEN_BEDROCK || process.env.AWS_ACCESS_KEY_ID) {
+    env.CLAUDE_CODE_USE_BEDROCK = "1";
+    for (const k of [
+      "AWS_REGION", "AWS_DEFAULT_REGION", "AWS_BEARER_TOKEN_BEDROCK",
+      "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+    ]) {
+      const v = process.env[k];
+      if (v) env[k] = v;
+    }
+    if (!env.AWS_REGION && !env.AWS_DEFAULT_REGION) env.AWS_REGION = "us-east-1";
   }
-  if (!env.AWS_REGION && !env.AWS_DEFAULT_REGION) env.AWS_REGION = "us-east-1";
   return env;
 }
 
@@ -71,12 +82,12 @@ export async function runCascadeFixit(): Promise<void> {
 
   const arms: Array<{ arm: Arm; adapter: CascadeAdapter }> = [
     { arm: { id: "mono-small", label: `mono ${SMALL}`, scaffold: {} },
-      adapter: new CascadeAdapter({ tiers: [{ model: SMALL }], tau: 1, env }) },
+      adapter: new CascadeAdapter({ tiers: [{ model: SMALL }], tau: 1, env, bin: BIN }) },
     { arm: { id: "mono-large", label: `mono ${LARGE}`, scaffold: {} },
-      adapter: new CascadeAdapter({ tiers: [{ model: LARGE }], tau: 1, env }) },
+      adapter: new CascadeAdapter({ tiers: [{ model: LARGE }], tau: 1, env, bin: BIN }) },
     ...TAUS.map((tau) => ({
       arm: { id: `cascade-tau${tau}`, label: `cascade τ=${tau}`, scaffold: {} } as Arm,
-      adapter: new CascadeAdapter({ tiers: [{ model: SMALL }, { model: LARGE }], tau, escalationCommand: PYTEST, env }),
+      adapter: new CascadeAdapter({ tiers: [{ model: SMALL }, { model: LARGE }], tau, escalationCommand: PYTEST, env, bin: BIN }),
     })),
   ];
 
