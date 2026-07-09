@@ -51,6 +51,9 @@ export interface UsageTotals {
   readonly cacheReadInputTokens: number;
   readonly cacheWriteInputTokens: number;
   readonly totalTokens: number;
+  /** Number of usage samples (`message_stop` events) — i.e. LLM calls. Divides
+   * the token axes into per-call means (docs/53 TE-14: context-per-turn). */
+  readonly calls: number;
   readonly costUsd: number;
   /** GPU-seconds; 0 until the serving layer stamps samples (docs/50 G2). */
   readonly gpuSeconds: number;
@@ -82,6 +85,7 @@ export const ZERO_USAGE: UsageTotals = {
   cacheReadInputTokens: 0,
   cacheWriteInputTokens: 0,
   totalTokens: 0,
+  calls: 0,
   costUsd: 0,
   gpuSeconds: 0,
   flops: 0,
@@ -96,6 +100,7 @@ interface AgentAcc {
   outputTokens: number;
   cacheReadInputTokens: number;
   cacheWriteInputTokens: number;
+  calls: number;
   gpuSeconds: number;
   model?: string;
 }
@@ -106,6 +111,7 @@ function newAcc(): AgentAcc {
     outputTokens: 0,
     cacheReadInputTokens: 0,
     cacheWriteInputTokens: 0,
+    calls: 0,
     gpuSeconds: 0,
   };
 }
@@ -159,6 +165,7 @@ export class SwarmUsageAggregator {
     acc.outputTokens += usage.outputTokens ?? 0;
     acc.cacheReadInputTokens += usage.cacheReadInputTokens ?? 0;
     acc.cacheWriteInputTokens += usage.cacheWriteInputTokens ?? 0;
+    acc.calls += 1;
     // GPU-seconds ride on the sample once the serving layer stamps them (docs/50
     // G2); until then this reads 0 and `gpuSecondsComplete` reports the gap.
     acc.gpuSeconds += (usage as { gpuSeconds?: number }).gpuSeconds ?? 0;
@@ -288,6 +295,7 @@ function accToTotals(acc: AgentAcc, costModel: CostModel): UsageTotals {
     cacheReadInputTokens: acc.cacheReadInputTokens,
     cacheWriteInputTokens: acc.cacheWriteInputTokens,
     totalTokens,
+    calls: acc.calls,
     costUsd: cost.usd ?? 0,
     gpuSeconds: cost.gpuSeconds ?? 0,
     flops: cost.flops ?? 0,
@@ -297,6 +305,27 @@ function accToTotals(acc: AgentAcc, costModel: CostModel): UsageTotals {
   };
 }
 
+/**
+ * Mean context (prompt) tokens per LLM call — the Databricks "context per turn"
+ * metric (docs/53 TE-14). Counts everything sent as input: fresh input tokens
+ * plus cache reads/writes. Undefined when no calls were observed.
+ */
+export function contextTokensPerCall(t: UsageTotals): number | undefined {
+  if (t.calls <= 0) return undefined;
+  return (t.inputTokens + t.cacheReadInputTokens + t.cacheWriteInputTokens) / t.calls;
+}
+
+/**
+ * Fraction of input-side tokens served from the prompt cache (docs/53 TE-14).
+ * Low values on multi-turn work signal a churning prefix (e.g. a system prompt
+ * that changes every turn). Undefined when no input-side tokens were observed.
+ */
+export function cacheReadFraction(t: UsageTotals): number | undefined {
+  const denom = t.inputTokens + t.cacheReadInputTokens + t.cacheWriteInputTokens;
+  if (denom <= 0) return undefined;
+  return t.cacheReadInputTokens / denom;
+}
+
 function addTotals(a: UsageTotals, b: UsageTotals): UsageTotals {
   return {
     inputTokens: a.inputTokens + b.inputTokens,
@@ -304,6 +333,7 @@ function addTotals(a: UsageTotals, b: UsageTotals): UsageTotals {
     cacheReadInputTokens: a.cacheReadInputTokens + b.cacheReadInputTokens,
     cacheWriteInputTokens: a.cacheWriteInputTokens + b.cacheWriteInputTokens,
     totalTokens: a.totalTokens + b.totalTokens,
+    calls: a.calls + b.calls,
     costUsd: a.costUsd + b.costUsd,
     gpuSeconds: a.gpuSeconds + b.gpuSeconds,
     flops: a.flops + b.flops,

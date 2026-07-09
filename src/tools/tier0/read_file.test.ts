@@ -182,4 +182,41 @@ describe("readFileTool", () => {
     const result = await readFileTool.execute({ file_path: 123 }, ctx());
     expect(result.status).toBe("error");
   });
+
+  it("caps aggregate output at 50KB even under the line limit (docs/53 TE-5)", async () => {
+    // 100 lines × ~1000 chars ≈ 100KB — far under 2000 lines, over the byte cap.
+    const content = Array.from(
+      { length: 100 },
+      (_, i) => `line ${i + 1} ${"x".repeat(990)}`,
+    ).join("\n");
+    write("wide.txt", content);
+    const result = await readFileTool.execute({ file_path: "wide.txt" }, ctx());
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      // ~51 lines of ~1001 bytes fit in 50KB; the rest is cut at a line boundary.
+      expect(result.output).toContain("\tline 40 ");
+      expect(result.output).not.toContain("\tline 60 ");
+      expect(result.output).toContain("KB output cap");
+      // Continuation offset points at the first uncut line.
+      expect(result.output).toMatch(/offset=\d+/);
+    }
+  });
+
+  it("byte cap applies to explicitly-limited reads too, with continuation hint", async () => {
+    const content = Array.from(
+      { length: 100 },
+      (_, i) => `line ${i + 1} ${"x".repeat(990)}`,
+    ).join("\n");
+    write("wide2.txt", content);
+    const result = await readFileTool.execute(
+      { file_path: "wide2.txt", offset: 1, limit: 90 },
+      ctx(),
+    );
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.output).not.toContain("\tline 90 ");
+      expect(result.output).toContain("KB output cap");
+      expect(result.output).toContain("Use offset=");
+    }
+  });
 });

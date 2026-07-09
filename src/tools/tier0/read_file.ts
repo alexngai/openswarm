@@ -38,13 +38,42 @@ const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MiB
 const BINARY_PROBE_BYTES = 8192;
 const DEFAULT_LINE_LIMIT = 2000;
 const MAX_LINE_CHARS = 2000;
+/**
+ * Aggregate output byte cap (docs/53 TE-5, pi's dual-limit shape): the line
+ * cap alone admits 2000 lines × 2000 chars ≈ 4MB into context. Whichever
+ * limit hits first wins; truncation is always at a line boundary and the
+ * notice carries the continuation offset. Override: OPENSWARM_READ_MAX_BYTES.
+ */
+const MAX_OUTPUT_BYTES = (() => {
+  const env = Number(process.env.OPENSWARM_READ_MAX_BYTES);
+  return Number.isFinite(env) && env > 0 ? env : 50 * 1024;
+})();
+
+/**
+ * Cap `slice` (in place) so raw content stays within `maxBytes`, cutting at a
+ * line boundary. Always keeps at least one line — MAX_LINE_CHARS bounds a
+ * rendered line well below any sane byte cap. Returns true when it cut.
+ */
+function capSliceBytes(slice: string[], maxBytes: number): boolean {
+  let used = 0;
+  for (let i = 0; i < slice.length; i++) {
+    const lineBytes = Buffer.byteLength(slice[i]!, "utf8") + 1; // +1 newline
+    if (i > 0 && used + lineBytes > maxBytes) {
+      slice.length = i;
+      return true;
+    }
+    used += lineBytes;
+  }
+  return false;
+}
 
 const spec: ToolSpec = {
   name: "read_file",
   description:
     "Read a text file. `file_path` may be absolute or relative to the working directory. " +
-    "By default returns up to 2000 lines from the start of the file. " +
+    "By default returns up to 2000 lines (and at most ~50KB) from the start of the file. " +
     "`offset` is the line number to start reading from (1-indexed); `limit` caps the number of lines. " +
+    "When output is truncated, continue with the offset given in the truncation notice. " +
     "Output is cat -n formatted (line numbers prefixed). Lines longer than 2000 characters are truncated. " +
     "Binary files (NUL byte in first 8 KiB) and files larger than 10 MiB are rejected. " +
     "Call this tool in parallel when reading multiple files.",
@@ -131,6 +160,9 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   const startLine = Math.max(1, input.offset ?? 1);
   const limit = input.limit ?? DEFAULT_LINE_LIMIT;
   const slice = lines.slice(startLine - 1, startLine - 1 + limit);
+  // Dual limit (TE-5): the byte cap cuts even explicitly-limited reads — the
+  // continuation notice below tells the model where to resume.
+  const byteCapped = capSliceBytes(slice, MAX_OUTPUT_BYTES);
 
   recordFileRead(resolved);
 
@@ -166,15 +198,16 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   // Claude Code-style PARTIAL-view reminder so the model pages onward instead
   // of answering from an incomplete view.
   const lastShown = startLine + slice.length - 1;
+  const capNote = byteCapped ? ` (${Math.round(MAX_OUTPUT_BYTES / 1024)}KB output cap)` : "";
   if (input.limit === undefined && lastShown < lines.length) {
     output =
       `<system-reminder>[Truncated: PARTIAL view \u2014 showing lines ${startLine}-${lastShown} ` +
-      `of ${lines.length} total. Call read_file with offset=${lastShown + 1} for the next page, ` +
+      `of ${lines.length} total${capNote}. Call read_file with offset=${lastShown + 1} for the next page, ` +
       `or grep to find a specific section. Do NOT answer from this page alone if the answer ` +
       `may be further in the file.]</system-reminder>\n\n` +
       output;
   } else if (lastShown < lines.length) {
-    output += `\n\n(Showing lines ${startLine}-${lastShown} of ${lines.length}. Use offset=${lastShown + 1} to continue.)`;
+    output += `\n\n(Showing lines ${startLine}-${lastShown} of ${lines.length}${capNote}. Use offset=${lastShown + 1} to continue.)`;
   }
 
   return { status: "ok", output };

@@ -47,7 +47,19 @@ interface CascadeMeta {
   rounds?: number;
   approvedAtRound?: number;
   /** Per-tier (per-model) usage — the heterogeneous cost breakdown. */
-  perModel?: Record<string, { inputTokens?: number; outputTokens?: number; totalTokens?: number }>;
+  perModel?: Record<
+    string,
+    {
+      inputTokens?: number;
+      outputTokens?: number;
+      cacheReadInputTokens?: number;
+      cacheWriteInputTokens?: number;
+      totalTokens?: number;
+      calls?: number;
+    }
+  >;
+  /** Team-wide LLM-call count (docs/53 TE-14) — divides tokens into per-call means. */
+  teamCalls?: number;
 }
 
 interface RawCell {
@@ -63,6 +75,8 @@ interface RawCell {
     outputTokens?: number;
     cacheReadTokens?: number;
     cacheWriteTokens?: number;
+    /** The adapters persist cache writes under this name (RawRun usage shape). */
+    cacheCreationTokens?: number;
     totalTokens?: number;
   };
   metadata?: { cascade?: CascadeMeta };
@@ -89,6 +103,12 @@ export interface CellRow {
   tau?: number;
   escalations?: number;
   perModelCost?: Record<string, CostBreakdown>;
+  /** LLM calls in the cell (docs/53 TE-14); from teamCalls, else summed per-tier calls. */
+  calls?: number;
+  /** Mean prompt tokens per LLM call — fresh input + cache read/write (TE-14). */
+  contextTokensPerCall?: number;
+  /** Fraction of input-side tokens served from prompt cache (TE-14). */
+  cacheReadFraction?: number;
   /** Advisor cells only (critic-loop): executor↔critic rounds + approval iteration. */
   rounds?: number;
   approvedAtRound?: number;
@@ -110,12 +130,16 @@ export function parseCell(raw: RawCell, file: string, costModel: CostModel): Cel
   const usage = raw.usage ?? {};
   const inputTokens = usage.inputTokens ?? 0;
   const outputTokens = usage.outputTokens ?? 0;
+  // Adapters persist cache writes as `cacheCreationTokens` (RawRun usage shape);
+  // accept the legacy `cacheWriteTokens` name too so older cells still price.
+  const cacheReadTokens = usage.cacheReadTokens ?? 0;
+  const cacheWriteTokens = usage.cacheWriteTokens ?? usage.cacheCreationTokens ?? 0;
   const sample: CostSample = {
     model,
     inputTokens,
     outputTokens,
-    cacheReadInputTokens: usage.cacheReadTokens ?? 0,
-    cacheWriteInputTokens: usage.cacheWriteTokens ?? 0,
+    cacheReadInputTokens: cacheReadTokens,
+    cacheWriteInputTokens: cacheWriteTokens,
   };
 
   // Cascade cells price per TIER (each model separately) — more accurate than pricing
@@ -123,13 +147,25 @@ export function parseCell(raw: RawCell, file: string, costModel: CostModel): Cel
   const cascade = raw.metadata?.cascade;
   let cost = costModel.cost(sample);
   let perModelCost: Record<string, CostBreakdown> | undefined;
+  let perModelCalls = 0;
+  let sawPerModelCalls = false;
   if (cascade?.perModel !== undefined) {
     perModelCost = {};
     const parts: CostBreakdown[] = [];
     for (const [m, u] of Object.entries(cascade.perModel)) {
-      const bd = costModel.cost({ model: m, inputTokens: u.inputTokens ?? 0, outputTokens: u.outputTokens ?? 0 });
+      const bd = costModel.cost({
+        model: m,
+        inputTokens: u.inputTokens ?? 0,
+        outputTokens: u.outputTokens ?? 0,
+        cacheReadInputTokens: u.cacheReadInputTokens ?? 0,
+        cacheWriteInputTokens: u.cacheWriteInputTokens ?? 0,
+      });
       perModelCost[m] = bd;
       parts.push(bd);
+      if (u.calls !== undefined) {
+        perModelCalls += u.calls;
+        sawPerModelCalls = true;
+      }
     }
     const summed = sumCosts(parts);
     cost = {
@@ -138,6 +174,14 @@ export function parseCell(raw: RawCell, file: string, costModel: CostModel): Cel
       ...(summed.flopsComplete && { flops: summed.flops }),
     };
   }
+
+  // TE-14 per-call metrics (docs/53): context tokens sent per LLM call, and the
+  // cache-served fraction of the input side. Only for cells recorded after the
+  // harness started counting calls.
+  const calls = cascade?.teamCalls ?? (sawPerModelCalls ? perModelCalls : undefined);
+  const inputSide = inputTokens + cacheReadTokens + cacheWriteTokens;
+  const contextTokensPerCall = calls !== undefined && calls > 0 ? inputSide / calls : undefined;
+  const cacheReadFraction = inputSide > 0 ? cacheReadTokens / inputSide : undefined;
 
   return {
     file,
@@ -160,6 +204,9 @@ export function parseCell(raw: RawCell, file: string, costModel: CostModel): Cel
     ...(cascade?.rounds !== undefined && { rounds: cascade.rounds }),
     ...(cascade?.approvedAtRound !== undefined && { approvedAtRound: cascade.approvedAtRound }),
     ...(perModelCost !== undefined && { perModelCost }),
+    ...(calls !== undefined && { calls }),
+    ...(contextTokensPerCall !== undefined && { contextTokensPerCall }),
+    ...(cacheReadFraction !== undefined && { cacheReadFraction }),
   };
 }
 
@@ -194,6 +241,10 @@ export interface GroupStats {
   cost: CostTotal;
   /** Mean $/cell when every cell was priced, else undefined (partial coverage). */
   meanUsd?: number;
+  /** Mean context tokens per LLM call across cells that recorded calls (TE-14). */
+  meanContextTokensPerCall?: number;
+  /** Mean cache-served input fraction across cells that recorded it (TE-14). */
+  meanCacheReadFraction?: number;
 }
 
 export function aggregate(cells: CellRow[]): GroupStats[] {
@@ -214,6 +265,8 @@ export function aggregate(cells: CellRow[]): GroupStats[] {
     const first = cs[0]!;
     const n = cs.length;
     const cost = sumCosts(cs.map((c) => c.cost));
+    const ctx = cs.map((c) => c.contextTokensPerCall).filter((v): v is number => v !== undefined);
+    const cache = cs.map((c) => c.cacheReadFraction).filter((v): v is number => v !== undefined);
     stats.push({
       benchmark: first.benchmark,
       taskId: first.taskId,
@@ -225,6 +278,8 @@ export function aggregate(cells: CellRow[]): GroupStats[] {
       meanDurationMs: mean(cs.map((c) => c.durationMs)),
       cost,
       meanUsd: cost.usdComplete ? cost.usd / n : undefined,
+      ...(ctx.length > 0 && { meanContextTokensPerCall: mean(ctx) }),
+      ...(cache.length > 0 && { meanCacheReadFraction: mean(cache) }),
     });
   }
   return stats.sort(
@@ -364,7 +419,8 @@ function main(): void {
   const groups = aggregate(cells).filter((g) => g.meanTotalTokens > 0);
   const H = [
     pad("benchmark", 16), pad("task", 14), pad("arm", 7), pad("model", 20),
-    pad("n", 3), pad("qual", 6), pad("tokens", 9), pad("$/cell", 9), pad("lat(s)", 7), "cov",
+    pad("n", 3), pad("qual", 6), pad("tokens", 9), pad("$/cell", 9),
+    pad("ctx/call", 9), pad("cache%", 6), pad("lat(s)", 7), "cov",
   ].join(" ");
   console.log("REAL-TOKEN CELLS — cost/latency (quality = earned/total):");
   console.log(H);
@@ -376,6 +432,18 @@ function main(): void {
         pad(String(g.n), 3), pad(g.meanQuality.toFixed(3), 6),
         pad(Math.round(g.meanTotalTokens).toLocaleString(), 9),
         pad(g.meanUsd !== undefined ? `$${g.meanUsd.toFixed(4)}` : "—", 9),
+        pad(
+          g.meanContextTokensPerCall !== undefined
+            ? Math.round(g.meanContextTokensPerCall).toLocaleString()
+            : "—",
+          9,
+        ),
+        pad(
+          g.meanCacheReadFraction !== undefined
+            ? `${(g.meanCacheReadFraction * 100).toFixed(0)}%`
+            : "—",
+          6,
+        ),
         pad((g.meanDurationMs / 1000).toFixed(1), 7),
         g.cost.usdComplete ? "$" : "$?",
       ].join(" "),

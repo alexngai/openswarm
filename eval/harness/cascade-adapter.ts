@@ -56,6 +56,8 @@ interface UsageTotalsLine {
   readonly cacheReadInputTokens: number;
   readonly cacheWriteInputTokens: number;
   readonly totalTokens: number;
+  /** LLM calls (docs/53 TE-14) — present once the harness records it. */
+  readonly calls?: number;
   readonly costUsd: number;
 }
 interface TeamUsageLine {
@@ -160,6 +162,8 @@ export class CascadeAdapter implements ExecutionAdapter {
           tau: this.opts.tau,
           ...(escalations !== undefined && { escalations }),
           perModel: teamUsage?.byModel ?? {},
+          // Team-wide LLM-call count → context-per-call in the frontier (docs/53 TE-14).
+          ...(teamUsage?.team.calls !== undefined && { teamCalls: teamUsage.team.calls }),
           exitCode: r.exitCode,
           ...(r.exitCode !== 0 && { stderrTail: r.stderr.slice(-2000) }),
         },

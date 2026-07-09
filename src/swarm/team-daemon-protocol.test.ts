@@ -150,6 +150,7 @@ describe("team-daemon-protocol — result schemas", () => {
       cacheReadInputTokens: 0,
       cacheWriteInputTokens: 0,
       totalTokens: 1200,
+      calls: 3,
       costUsd: 0.006,
       gpuSeconds: 0,
       flops: 0,

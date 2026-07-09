@@ -161,6 +161,8 @@ export class CriticLoopAdapter implements ExecutionAdapter {
         cascade: {
           tiers: [this.opts.executorModel, this.opts.criticModel],
           perModel: teamUsage?.byModel ?? {},
+          // Team-wide LLM-call count → context-per-call in the frontier (docs/53 TE-14).
+          ...(teamUsage?.team.calls !== undefined && { teamCalls: teamUsage.team.calls }),
           exitCode: r.exitCode,
           ...(summary && {
             rounds: summary.rounds,

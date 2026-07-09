@@ -398,6 +398,8 @@ export interface MemberUsageEntry {
   readonly cacheReadInputTokens: number;
   readonly cacheWriteInputTokens: number;
   readonly totalTokens: number;
+  /** LLM calls (usage samples) in this member's subtree (docs/53 TE-14). */
+  readonly calls?: number;
   readonly costUsd: number;
 }
 
@@ -415,6 +417,8 @@ export interface TeamUsagePayload {
     readonly cacheReadInputTokens: number;
     readonly cacheWriteInputTokens: number;
     readonly totalTokens: number;
+    /** LLM calls (usage samples) team-wide (docs/53 TE-14). */
+    readonly calls?: number;
     readonly costUsd: number;
   };
 }

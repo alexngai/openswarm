@@ -9,7 +9,12 @@
 import { describe, it, expect } from "vitest";
 import type { AgentId, Usage } from "../core/types.js";
 import type { LaneEvent } from "./events.js";
-import { SwarmUsageAggregator, ZERO_USAGE } from "./usage-aggregator.js";
+import {
+  SwarmUsageAggregator,
+  ZERO_USAGE,
+  cacheReadFraction,
+  contextTokensPerCall,
+} from "./usage-aggregator.js";
 
 function spawned(
   child: string,
@@ -49,6 +54,29 @@ describe("SwarmUsageAggregator — per-agent accrual", () => {
     expect(u.inputTokens).toBe(120);
     expect(u.outputTokens).toBe(60);
     expect(u.totalTokens).toBe(180);
+  });
+
+  it("counts LLM calls and derives per-call context metrics (docs/53 TE-14)", () => {
+    const agg = new SwarmUsageAggregator();
+    agg.record(
+      messageStop("a1", {
+        inputTokens: 100,
+        outputTokens: 50,
+        cacheReadInputTokens: 300,
+        cacheWriteInputTokens: 100,
+      }),
+    );
+    agg.record(messageStop("a1", { inputTokens: 200, outputTokens: 10 }));
+
+    const u = agg.directUsage("a1");
+    expect(u.calls).toBe(2);
+    // (100 + 300 + 100 + 200) / 2 calls
+    expect(contextTokensPerCall(u)).toBe(350);
+    // 300 cache-read of 700 input-side tokens
+    expect(cacheReadFraction(u)).toBeCloseTo(300 / 700);
+    // No calls / no tokens → undefined, not 0 or NaN.
+    expect(contextTokensPerCall(ZERO_USAGE)).toBeUndefined();
+    expect(cacheReadFraction(ZERO_USAGE)).toBeUndefined();
   });
 
   it("counts cache-read/write tokens in totalTokens", () => {
