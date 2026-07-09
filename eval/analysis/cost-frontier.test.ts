@@ -105,6 +105,26 @@ describe("aggregate", () => {
     // same group, both priced → complete
     expect(aggregate(cells)[0]!.cost.usdComplete).toBe(true);
   });
+
+  it("drops zero-token infra-failure cells but keeps real failed cells", () => {
+    const cells = [
+      // real run that FAILED the task (tokens > 0, quality 0) → a valid ($>0, q=0) point
+      parseCell(raw({ arm: "a", seed: 1, full: false, inputTokens: 1000, outputTokens: 100 }), "b__t__a__gpt-5.5__seed1@a.json", costModel)!,
+      // real run that SOLVED it
+      parseCell(raw({ arm: "a", seed: 2, full: true, inputTokens: 1000, outputTokens: 100 }), "b__t__a__gpt-5.5__seed2@b.json", costModel)!,
+      // INFRA failure (0 tokens — the agent never ran); must NOT poison the mean
+      parseCell(raw({ arm: "a", seed: 3, full: false, inputTokens: 0, outputTokens: 0 }), "b__t__a__gpt-5.5__seed3@c.json", costModel)!,
+    ];
+    const g = aggregate(cells);
+    expect(g).toHaveLength(1);
+    expect(g[0]!.n).toBe(2); // the 0-token cell is excluded
+    expect(g[0]!.meanQuality).toBeCloseTo(0.5, 6); // (0 + 1)/2, not (0 + 1 + 0)/3
+  });
+
+  it("a group of only zero-token cells produces no frontier point", () => {
+    const cells = [parseCell(raw({ arm: "a", inputTokens: 0, outputTokens: 0 }), "b__t__a__gpt-5.5__seed1@a.json", costModel)!];
+    expect(aggregate(cells)).toHaveLength(0);
+  });
 });
 
 describe("pairedSigmaD", () => {
@@ -186,5 +206,18 @@ describe("parseCell — cascade cells (B4)", () => {
   it("non-cascade cells are ignored by tauSweep", () => {
     const mono = parseCell(raw({ arm: "mono-30B" }), "b__t__mono-30B__gpt-5.5__seed1@a.json", costModel)!;
     expect(tauSweep([mono])).toHaveLength(0);
+  });
+
+  it("tauSweep excludes zero-token (crashed) cascade cells", () => {
+    const good = parseCell(cascadeRaw(0.5, 1, 1), "b__fixit-n8__cascade@0.5__qwen3-8b__seed1@a.json", costModel)!;
+    const crashed = parseCell(
+      { ...cascadeRaw(0.5, 1, 2), status: "failure", usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 } },
+      "b__fixit-n8__cascade@0.5__qwen3-8b__seed2@b.json",
+      costModel,
+    )!;
+    const sweep = tauSweep([good, crashed]);
+    expect(sweep).toHaveLength(1);
+    expect(sweep[0]!.n).toBe(1); // only the real cell
+    expect(sweep[0]!.meanQuality).toBe(1); // not dragged down by the crash
   });
 });
