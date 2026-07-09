@@ -14,6 +14,8 @@
  * tier at its own model's rate). No `tau` ⇒ the τ-sweep correctly ignores the advisor
  * arm, but it still lands on the cost/quality frontier with no analyzer change.
  */
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   openSwarmParse,
   shq,
@@ -40,6 +42,10 @@ export interface CriticLoopAdapterOptions {
   readonly timeoutMs?: number;
   readonly bin?: string;
   readonly name?: string;
+  /** Diagnostic (docs/50 §10.4): copy the sandbox's lane trace + per-agent transcripts
+   *  to this LOCAL dir before teardown — the only way to audit the executor↔critic
+   *  exchange after the E2B sandbox dies. Falls back to $CL_EXTRACT_DIR. */
+  readonly extractDir?: string;
 }
 
 const DEFAULT_CRITIC_INSTRUCTION =
@@ -117,6 +123,16 @@ export class CriticLoopAdapter implements ExecutionAdapter {
           totalTokens: 0,
         });
 
+    // Diagnostic: pull transcripts OUT of the sandbox before the core tears it down.
+    const extractDir = this.opts.extractDir ?? process.env.CL_EXTRACT_DIR;
+    if (extractDir) {
+      await extractSandboxTranscripts(ws, join(extractDir, sanitizeName(`${cell.task.id}__${agentId}`)), dir, {
+        "trace.jsonl": traceOutputPath,
+        "results.jsonl": resultsPath,
+        "team.json": `${dir}/team.json`,
+      }).catch((e: unknown) => console.error(`[critic-loop] transcript extraction failed: ${String(e)}`));
+    }
+
     return {
       output: parsed.output || r.stdout.slice(0, 2000) || `[exit ${r.exitCode}] ${r.stderr.slice(-2000)}`,
       workdir: ws.root,
@@ -135,5 +151,45 @@ export class CriticLoopAdapter implements ExecutionAdapter {
         },
       },
     };
+  }
+}
+
+const sanitizeName = (s: string): string => s.replace(/[^\w.-]/g, "_").slice(0, 120);
+
+/** Minimal Workspace surface the extractor needs. */
+interface ExtractWs {
+  readFile(path: string): Promise<string | null>;
+  run(cmd: string, opts?: { timeoutMs?: number }): Promise<{ stdout: string }>;
+}
+
+/**
+ * Copy the sandbox's transcripts to a LOCAL dir before teardown (docs/50 §10.4).
+ * `known` files are read directly; then every session/event `*.jsonl` the run wrote
+ * (per-agent engine transcripts, event logs) is discovered and tar'd out as one blob —
+ * the executor↔critic exchange is otherwise unrecoverable once E2B kills the sandbox.
+ */
+async function extractSandboxTranscripts(
+  ws: ExtractWs,
+  outDir: string,
+  workDir: string,
+  known: Record<string, string>,
+): Promise<void> {
+  mkdirSync(outDir, { recursive: true });
+  for (const [name, path] of Object.entries(known)) {
+    const c = await ws.readFile(path).catch(() => null);
+    if (c !== null) writeFileSync(join(outDir, name), c);
+  }
+  // Discover every transcript file the run wrote (workspace + the engine's ~/.openswarm),
+  // list them for provenance, then tar+base64 them through stdout.
+  const roots = [workDir, "$HOME/.openswarm", "/root/.openswarm", "/home/user/.openswarm", "/tmp/openswarm"].join(" ");
+  const find = `find ${roots} -type f \\( -name '*.jsonl' -o -name '*.ndjson' -o -name 'events*.json' -o -name '*.session.json' \\) 2>/dev/null | sort -u`;
+  const listing = await ws.run(`bash -lc ${shq(find)}`, { timeoutMs: 60_000 }).catch(() => null);
+  if (listing?.stdout?.trim()) {
+    writeFileSync(join(outDir, "FILES.txt"), listing.stdout);
+    const tar = await ws
+      .run(`bash -lc ${shq(`tar czf - $(${find}) 2>/dev/null | base64 -w0`)}`, { timeoutMs: 120_000 })
+      .catch(() => null);
+    const b64 = tar?.stdout?.trim();
+    if (b64) writeFileSync(join(outDir, "sandbox-transcripts.tgz"), Buffer.from(b64, "base64"));
   }
 }
