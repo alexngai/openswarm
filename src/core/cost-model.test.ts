@@ -94,6 +94,18 @@ describe("ApiCostModel", () => {
     expect(api.cost(sample("litellm/claude-sonnet-4-6", 100, 10)).usd).toBeCloseTo(0.00045, 8);
   });
 
+  it("prices the cross-provider swarm ids the eval records verbatim in byModel (docs/53)", () => {
+    // Regression: the SWE eval's small tier is a Bedrock inference-profile id (no gateway
+    // prefix — must match MODEL_PRICING as-is) and the large tier is `azureoai/gpt-5.5`
+    // (normalizes to `gpt-5.5`). Both once resolved to $0, blanking `team_usage.costUsd`.
+    // 100 in * $0.80 + 10 out * $4.00 = (80 + 40)/1e6 = $0.00012
+    expect(
+      api.cost(sample("us.anthropic.claude-haiku-4-5-20251001-v1:0", 100, 10)).usd,
+    ).toBeCloseTo(0.00012, 8);
+    // 100 in * $10 + 10 out * $40 = (1000 + 400)/1e6 = $0.0014
+    expect(api.cost(sample("azureoai/gpt-5.5", 100, 10)).usd).toBeCloseTo(0.0014, 8);
+  });
+
   it("passes through gpuSeconds when a sample carries it", () => {
     expect(api.cost(sample(PRICED_MODEL, 10, 10, { gpuSeconds: 3.5 })).gpuSeconds).toBe(3.5);
   });
