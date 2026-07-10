@@ -18,7 +18,15 @@
  *   bash eval/scripts/prep-swe-subset.sh <instance-ids…>
  *   RUN_CASCADE_SWE=1 HARNESS=local SWE_INSTANCES_DIR=eval/.artifacts/swe-subset \
  *     SWE_PYTHON_BIN=<swebench-python> tsx eval/experiments/cascade-swe.ts
+ *
+ * BACKEND=docker (self-hosted x86 box, no E2B): same recipe minus E2B_API_KEY; the per-instance
+ * bake runs locally via `docker build` (eval/scripts/bake-swe-docker-image.sh) instead of E2B's
+ * server-side buildSweTemplates. Bedrock/Azure creds are forwarded into each container. The default
+ * (BACKEND unset ⇒ e2b) path is unchanged.
  */
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import {
   runEval,
   buildReport,
@@ -28,6 +36,7 @@ import {
   sweBenchmark,
   buildSweTemplates,
   e2bSafeName,
+  swebenchImageName,
   loadSweInstances,
   type EvalConfig,
   type Arm,
@@ -81,8 +90,38 @@ function providerEnv(): Record<string, string> {
   return env;
 }
 
+/**
+ * Backend switch (default `e2b` — the E2B path is byte-identical when BACKEND≠docker). `docker` runs
+ * the same bake on a self-hosted x86 box: instead of E2B's server-side `buildSweTemplates`, we
+ * `docker build` a per-instance image locally (see `bakeDockerImage`) and drive `createBackend("docker")`.
+ */
+const BACKEND = (process.env.BACKEND ?? "e2b").toLowerCase();
+
 /** Namespaced template — never clobber the shared `swe-<id>` templates (docs/47 E2B etiquette). */
 const templateName = (i: SweInstance): string => e2bSafeName(`cs-${i.instanceId}`);
+
+/** The local docker tag the bake produces for an instance (mirrors `templateName`'s namespacing). */
+const dockerTag = (i: SweInstance): string => `cs-${e2bSafeName(i.instanceId)}:baked`;
+
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const BAKE_SCRIPT = resolve(REPO_ROOT, "eval", "scripts", "bake-swe-docker-image.sh");
+
+/**
+ * Pre-bake one local docker image reproducing the E2B `installCommands`/`copyFiles`/`readyCmd` bake:
+ * FROM the swebench per-instance image (ships no node) → node + the two local tarballs + `openswarm`
+ * symlink. Delegates to `eval/scripts/bake-swe-docker-image.sh`, whose RUN steps are copied verbatim
+ * from swarmkit-eval `npmCliInstall`. Bake-once (fast N containers) over per-cell initCommands.
+ */
+function bakeDockerImage(i: SweInstance): void {
+  const base = i.image ?? swebenchImageName(i.instanceId);
+  const tag = dockerTag(i);
+  console.error(`[bake] ${i.instanceId}: FROM ${base} → ${tag}`);
+  execFileSync("bash", [BAKE_SCRIPT, i.instanceId, base, tag], {
+    stdio: ["ignore", "inherit", "inherit"],
+    // The swebench x86_64 images run under emulation on arm64 dev hosts; on x86 EC2 leave unset.
+    env: process.env,
+  });
+}
 
 function config(arms: Arm[]): EvalConfig {
   return {
@@ -92,7 +131,7 @@ function config(arms: Arm[]): EvalConfig {
     arms,
     models: [{ name: "cascade" }], // model axis unused — tiers live in the adapter
     seeds: SEEDS,
-    backend: "e2b",
+    backend: BACKEND === "docker" ? "docker" : "e2b",
     concurrency: {
       cells: process.env.CS_CONCURRENCY ? Number(process.env.CS_CONCURRENCY) : 2,
       modelConnections: process.env.CS_CONCURRENCY ? Number(process.env.CS_CONCURRENCY) : 2,
@@ -102,8 +141,9 @@ function config(arms: Arm[]): EvalConfig {
 }
 
 export async function runCascadeSwe(): Promise<void> {
+  const docker = BACKEND === "docker";
   const apiKey = process.env.E2B_API_KEY;
-  if (!apiKey) throw new Error("runCascadeSwe: set E2B_API_KEY (source ~/.zshrc)");
+  if (!docker && !apiKey) throw new Error("runCascadeSwe: set E2B_API_KEY (source ~/.zshrc)");
   if (process.env.HARNESS !== "local") {
     throw new Error(
       "runCascadeSwe: HARNESS=local required — the cascade topology only exists in the working-tree CLI; " +
@@ -122,30 +162,42 @@ export async function runCascadeSwe(): Promise<void> {
     throw new Error(`runCascadeSwe: no instances in ${INSTANCES_DIR} — run eval/scripts/prep-swe-subset.sh`);
   }
 
-  const SANDBOX_TGZ = "/opt/openswarm-local.tgz";
-  const SANDBOX_ST = "/opt/skill-tree-local.tgz";
-  await buildSweTemplates(instances, {
-    apiKey,
-    nameOf: templateName,
-    memoryMB: process.env.CS_BUILD_MEM ? Number(process.env.CS_BUILD_MEM) : 8192,
-    cpuCount: 2,
-    log: (m) => console.error(`[tmpl] ${m}`),
-    readyCmd: "/opt/node/bin/openswarm --version",
-    installCommands: sandboxInstallLocalHarness(SANDBOX_TGZ, [SANDBOX_ST]),
-    copyFiles: [
-      { src: LOCAL_SKILLTREE_TARBALL, dest: SANDBOX_ST },
-      { src: LOCAL_HARNESS_TARBALL, dest: SANDBOX_TGZ },
-    ],
-  });
+  if (docker) {
+    // Self-hosted x86 path: skip E2B's server-side `buildSweTemplates`; instead `docker build` a
+    // per-instance image locally (same node + tarballs + `openswarm` symlink bake). Bake-once so the
+    // N containers the eval spins up are cheap. imageOf → the baked tag; the docker backend forwards
+    // providerEnv() into every container so the agents' Bedrock/Azure calls work from inside.
+    for (const i of instances) bakeDockerImage(i);
+  } else {
+    const SANDBOX_TGZ = "/opt/openswarm-local.tgz";
+    const SANDBOX_ST = "/opt/skill-tree-local.tgz";
+    await buildSweTemplates(instances, {
+      apiKey,
+      nameOf: templateName,
+      memoryMB: process.env.CS_BUILD_MEM ? Number(process.env.CS_BUILD_MEM) : 8192,
+      cpuCount: 2,
+      log: (m) => console.error(`[tmpl] ${m}`),
+      readyCmd: "/opt/node/bin/openswarm --version",
+      installCommands: sandboxInstallLocalHarness(SANDBOX_TGZ, [SANDBOX_ST]),
+      copyFiles: [
+        { src: LOCAL_SKILLTREE_TARBALL, dest: SANDBOX_ST },
+        { src: LOCAL_HARNESS_TARBALL, dest: SANDBOX_TGZ },
+      ],
+    });
+  }
 
   const benchmark = sweBenchmark({
     instances,
-    imageOf: templateName,
+    imageOf: docker ? dockerTag : templateName,
     graderPythonBin: process.env.SWE_PYTHON_BIN ?? "python3",
   });
-  const backend = await createBackend("e2b", {
-    e2b: { apiKey, user: "root", root: "/testbed", timeoutMs: SANDBOX_TIMEOUT_MS },
-  });
+  const backend = docker
+    ? await createBackend("docker", {
+        docker: { root: "/testbed", env, execTimeoutMs: SANDBOX_TIMEOUT_MS },
+      })
+    : await createBackend("e2b", {
+        e2b: { apiKey, user: "root", root: "/testbed", timeoutMs: SANDBOX_TIMEOUT_MS },
+      });
   const store = new LocalResultStore(".eval-runs");
 
   const arms: Array<{ arm: Arm; adapter: ExecutionAdapter }> = [
