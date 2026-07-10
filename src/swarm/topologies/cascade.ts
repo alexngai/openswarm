@@ -29,7 +29,7 @@ import { TeamSession } from "../team-session.js";
 import type { Topology, TopologyContext, TeamResult } from "../topologies-types.js";
 import { runCascade, type CascadeTier } from "../escalation-gate.js";
 import { SelfReportEvaluator } from "../escalation-evaluator.js";
-import { captureWorkspaceDiff, diffBlock } from "../handoff.js";
+import { captureWorkspaceDiff, captureCheckOutput, diffBlock, trajectoryBlock } from "../handoff.js";
 
 /** Default τ: escalate unless a tier reports full confidence (`CASCADE_SOLVED`). */
 const DEFAULT_TAU = 1;
@@ -60,6 +60,11 @@ export class CascadeTopology implements Topology {
       throw new Error("CascadeTopology: requires at least one member (tier)");
     }
     const tau = spec.coordination.escalationTau ?? DEFAULT_TAU;
+    // The visible checks that gate escalation — re-run (compute-only) to quote the failing
+    // output into the handoff reason (docs/52 Phase B ③), only when a tier escalates.
+    const checkCommands =
+      spec.coordination.escalationCommands ??
+      (spec.coordination.escalationCommand !== undefined ? [spec.coordination.escalationCommand] : []);
     // Benchmark-specific confidence signal, resolved by name from the injected
     // registry; falls back to the self-report sentinel when none is wired.
     const evaluator =
@@ -99,7 +104,7 @@ export class CascadeTopology implements Topology {
     let spawnCount = 0;
     // docs/52 Phase A — per-tier handoff record ({diff, reason}) captured after each tier
     // runs, so the NEXT tier builds on the applied change instead of a prose summary.
-    const handoff: Array<{ diff?: string; reason: string }> = [];
+    const handoff: Array<{ diff?: string; reason: string; trajectory?: string[] }> = [];
     try {
       const run = await runCascade<MemberSpec, string>(tiers, { tau }, async (tier, cctx) => {
         const prior = cctx.priorAttempts[cctx.priorAttempts.length - 1];
@@ -111,12 +116,23 @@ export class CascadeTopology implements Topology {
             : `${base}\n\n` +
               `## A cheaper tier attempted this and was rejected. Build on its work — do not restart from scratch; its changes are already applied to the workspace.\n\n` +
               `### Its applied changes (git diff)\n${diffBlock(priorH?.diff)}\n\n` +
+              `### What it tried\n${trajectoryBlock(priorH?.trajectory)}\n\n` +
               `### Why it was rejected\n${priorH?.reason ?? "its confidence was below the escalation gate."}\n\n` +
               `### Its own summary\n${prior.outcome.value || "(none)"}\n\n` +
               `Fix what's missing and fully resolve the task.\n\n${SIGNAL_INSTRUCTIONS}`;
         const handle = await team.spawnMember({ ...tier.payload, prompt });
         spawnCount++;
+        // docs/52 Phase B ② — collect this tier's tool sequence off the lane bus (what it TRIED),
+        // for the next tier's handoff. Filtered to this agent; unsubscribed after the turn.
+        const toolTrail: string[] = [];
+        const unsub = ctx.host.onLaneEvent?.((e) => {
+          if (e.agentId === handle.agentId && e.type === "tool_use_start") {
+            const name = (e.payload as { name?: string }).name;
+            if (name !== undefined) toolTrail.push(name);
+          }
+        });
         const result = await handle.wait();
+        unsub?.();
         const failed = result.status !== "success";
         const output = failed ? "" : result.output ?? "";
         // Evaluators grade only a tier that terminated successfully; a crash is
@@ -129,13 +145,19 @@ export class CascadeTopology implements Topology {
               ...(ctx.escalation?.exec !== undefined && { exec: ctx.escalation.exec }),
               ...(ctx.escalation?.task !== undefined && { task: ctx.escalation.task }),
             });
-        // Capture this tier's applied state for the NEXT tier's lossless handoff (docs/52).
-        handoff[cctx.index] = {
-          diff: await captureWorkspaceDiff(ctx.escalation?.exec),
-          reason: failed
-            ? `The tier hard-failed (status=${result.status}) — no usable solution.`
-            : `Its confidence ${confidence.toFixed(2)} was below the escalation gate τ=${tau} (the visible checks did not pass).`,
-        };
+        // Capture the handoff for the NEXT tier — only when this tier will actually escalate
+        // (below τ / hard-fail) and a stronger tier remains, so we never re-run checks needlessly
+        // (docs/52 Phase A diff + B ③ failing-check output).
+        if ((failed || confidence < tau) && cctx.index < tiers.length - 1) {
+          handoff[cctx.index] = {
+            diff: await captureWorkspaceDiff(ctx.escalation?.exec),
+            trajectory: toolTrail,
+            reason: failed
+              ? `The tier hard-failed (status=${result.status}) — no usable solution.`
+              : `Its confidence ${confidence.toFixed(2)} was below the escalation gate τ=${tau}.` +
+                (await captureCheckOutput(ctx.escalation?.exec, checkCommands)),
+          };
+        }
         return { confidence, value: output, failed };
       });
 

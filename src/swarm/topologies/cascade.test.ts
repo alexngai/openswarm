@@ -199,6 +199,7 @@ describe("CascadeTopology", () => {
     expect(escPrompt).toContain("Its applied changes (git diff)");
     expect(escPrompt).toContain("diff --git a/src.py b/src.py"); // the real patch, not prose
     expect(escPrompt).toContain("Build on its work");
+    expect(escPrompt).toContain("What it tried"); // ② trajectory section (empty here → placeholder)
     expect(escPrompt).toContain("below the escalation gate"); // the reason block
   });
 

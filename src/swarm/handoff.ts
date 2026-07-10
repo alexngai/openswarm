@@ -34,3 +34,30 @@ export function diffBlock(diff: string | undefined): string {
     ? `\`\`\`diff\n${diff}\n\`\`\``
     : "(no diff captured — inspect the working tree directly)";
 }
+
+/**
+ * Re-run the visible checks and quote their output tail — the "why it was rejected" evidence
+ * for an escalation handoff (docs/52 Phase B ③). Best-effort and compute-only (no tokens):
+ * only invoked when a tier is actually escalating. Returns "" when unavailable.
+ */
+export async function captureCheckOutput(
+  exec: ExecFn | undefined,
+  commands: readonly string[],
+): Promise<string> {
+  if (exec === undefined || commands.length === 0) return "";
+  const parts: string[] = [];
+  for (const cmd of commands) {
+    const r = await exec(cmd, { timeoutMs: 60_000 }).catch(() => undefined);
+    if (r !== undefined) parts.push(`$ ${cmd}\n${`${r.stdout}\n${r.stderr}`.trim().slice(-1200)}`);
+  }
+  return parts.length > 0 ? `\n\nFailing check output:\n${parts.join("\n\n")}` : "";
+}
+
+/** Render a tier's tool-call sequence — "what it tried" — for a handoff (docs/52 Phase B ②),
+ *  so a stronger tier sees the path taken, not just the end-state diff. */
+export function trajectoryBlock(tools: readonly string[] | undefined): string {
+  if (tools === undefined || tools.length === 0) return "(no tool activity recorded)";
+  const capped = tools.slice(0, 60);
+  const more = tools.length > capped.length ? `, … (+${tools.length - capped.length} more)` : "";
+  return `${tools.length} tool calls: ${capped.join(" → ")}${more}`;
+}
