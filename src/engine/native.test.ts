@@ -226,7 +226,12 @@ describe("NativeEngine: text-only turn", () => {
     expect(events).toEqual([
       { type: "text_delta", text: "hello" },
       { type: "text_delta", text: " world" },
-      { type: "message_stop", stopReason: "end_turn", usage: DEFAULT_USAGE },
+      {
+        type: "message_stop",
+        stopReason: "end_turn",
+        // The cumulative tally always carries the cache axes (docs/53 TE-17).
+        usage: { ...DEFAULT_USAGE, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 },
+      },
     ]);
   });
 });
@@ -877,10 +882,49 @@ describe("NativeEngine: resume from NativeSnapshot", () => {
       expect(snap2.data.cumulativeUsage).toEqual({
         inputTokens: 5,
         outputTokens: 7,
+        cacheReadInputTokens: 0,
+        cacheWriteInputTokens: 0,
       });
     } finally {
       await fs.rm(tmp, { recursive: true, force: true });
     }
+  });
+
+  it("cumulative usage sums cache read/write tokens across turns (docs/53 TE-17)", async () => {
+    const provider = new MockProvider({
+      scripts: [
+        [
+          { type: "text-delta", text: "a" },
+          {
+            type: "finish",
+            stopReason: "end_turn",
+            usage: { inputTokens: 10, outputTokens: 1, cacheReadInputTokens: 100, cacheWriteInputTokens: 5 },
+          },
+        ],
+        [
+          { type: "text-delta", text: "b" },
+          {
+            type: "finish",
+            stopReason: "end_turn",
+            usage: { inputTokens: 2, outputTokens: 1, cacheReadInputTokens: 200 },
+          },
+        ],
+      ],
+    });
+    const engine = new NativeEngine({ provider });
+    await collect(engine.run(baseConfig({ prompt: "one" })));
+    const events = await collect(engine.run(baseConfig({ prompt: "two" })));
+    const stop = events.filter((e) => e.type === "message_stop").at(-1) as {
+      usage: Usage;
+    };
+    // Cache traffic must survive the cumulative tally — this ledger is the ONLY
+    // usage subprocess workers forward (the eval telemetry path).
+    expect(stop.usage).toEqual({
+      inputTokens: 12,
+      outputTokens: 2,
+      cacheReadInputTokens: 300,
+      cacheWriteInputTokens: 5,
+    });
   });
 });
 
@@ -968,11 +1012,15 @@ describe("NativeEngine: cumulative usage", () => {
     expect(engine.getCumulativeUsage()).toEqual({
       inputTokens: 10,
       outputTokens: 5,
+      cacheReadInputTokens: 0,
+      cacheWriteInputTokens: 0,
     });
     await collect(engine.run(baseConfig()));
     expect(engine.getCumulativeUsage()).toEqual({
       inputTokens: 17,
       outputTokens: 8,
+      cacheReadInputTokens: 0,
+      cacheWriteInputTokens: 0,
     });
   });
 });

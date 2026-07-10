@@ -59,6 +59,12 @@ First measurement result (2026-07-09, existing cache): `cache%` reveals the mono
 
 Re-baseline note: TE-16/TE-17 change what the `$` and `totalTokens` axes MEAN for cache-heavy arms. The existing 91-cell cache remains valid for quality pairing and cache%-before, but its cost numbers are not comparable to post-fix runs. Known follow-up: `usageCostUsd`/`checkBudget` in `src/core/budget.ts` still price input+output only (budget enforcement slightly overestimates spend on cached traffic — conservative direction, acceptable).
 
+| ID | Improvement | Where | Expected effect | Risk | Status |
+|----|-------------|-------|-----------------|------|--------|
+| TE-18 | Engine cumulative-usage tally summed only input+output, dropping cache read/write tokens. Root cause of the 2026-07-09 re-baseline's mono-large 0% cache%: a wire-inspecting proxy inside the E2B sandbox proved Azure served ~95% cache hits on repeat turns (stable `prompt_cache_key`, byte-identical prefixes — TE-16 working), and the SDK parsed them (`cacheReadTokens: 6784`/turn), but the engine tally zeroed them before the worker's single final `message_stop` — the only usage ledger the eval sees. Fixed in both engines (hardened fix by the parallel eval-infra session; native mirrored) | `src/engine/native.ts` (`cumulativeUsage`), `src/engine/hardened-native.ts` | Cache telemetry (cache%, honest $ per TE-17b) finally correct end-to-end on the subprocess-worker path | Recorded fresh-input/output tokens in the 2026-07-09 run remain CORRECT (fresh = sum of per-turn non-cached); only cache reads were invisible, so its `$` understates by the unpriced 0.1× cache-read term. Re-run after this lands for true cache% | landed (native); hardened landed by parallel session |
+
+Known telemetry caveat (TE-14 scope): on the subprocess-worker path the worker forwards ONE final cumulative `message_stop`, so `calls` counts workers (not LLM calls) and `ctx/call` reads as context-per-worker. Real per-call counts need a per-turn call counter in the engine tally — follow-up.
+
 ## Eval plan
 
 Harness: existing swarmkit-eval cost-frontier pipeline (docs/51), discrimination set (9 SWE-bench instances) for iteration speed, full set for confirmation.
