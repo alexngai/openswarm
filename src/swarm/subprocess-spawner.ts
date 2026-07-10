@@ -94,6 +94,13 @@ export interface SpawnWorkerArgs {
    * `OPENSWARM_SESSION_SIDECAR`.
    */
   readonly sessionSidecarPath?: string;
+  /**
+   * Scratchpad root for this worker, exported via `OPENSWARM_SCRATCHPAD_DIR`.
+   * Usually unnecessary — the orchestrator's own scratchpad env is inherited
+   * through the `process.env` spread and the worker carves a per-agent subdir
+   * (see engine/scratchpad.ts). Set to point a worker at a different root.
+   */
+  readonly scratchpadDir?: string;
 }
 
 export function spawnWorker(args: SpawnWorkerArgs): ChildProcess {
@@ -145,6 +152,9 @@ export function spawnWorker(args: SpawnWorkerArgs): ChildProcess {
   }
   if (args.sessionSidecarPath !== undefined) {
     env.OPENSWARM_SESSION_SIDECAR = args.sessionSidecarPath;
+  }
+  if (args.scratchpadDir !== undefined) {
+    env.OPENSWARM_SCRATCHPAD_DIR = args.scratchpadDir;
   }
   // Per-worker prompt-cache routing key is derived inside worker-entry from
   // OPENSWARM_AGENT_ID. We don't propagate the parent's session id here:

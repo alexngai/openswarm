@@ -11,6 +11,7 @@ import { classifyCommand } from "./intent.js";
 import { WRITE_COMMANDS, STATE_MODIFYING_COMMANDS } from "./constants.js";
 
 import { extractFirstCommand } from "./utils.js";
+import { stripScratchpadPaths } from "./scratchpad.js";
 
 const SUBMODULE = "mode";
 
@@ -42,8 +43,12 @@ function commandTargetsOutsideWorkspace(command: string): boolean {
     (STATE_MODIFYING_COMMANDS as readonly string[]).includes(first);
   if (!isWriteCmd) return false;
 
+  // The session scratchpad lives under the system temp dir (e.g.
+  // /var/folders/... on macOS) and is permission-exempt — strip its paths
+  // so writes into it don't read as system-path writes.
+  const sanitized = stripScratchpadPaths(command);
   for (const sysPath of SYSTEM_PATHS) {
-    if (command.includes(sysPath)) return true;
+    if (sanitized.includes(sysPath)) return true;
   }
   return false;
 }

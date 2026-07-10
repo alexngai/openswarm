@@ -9,6 +9,7 @@
 
 import * as nodePath from "node:path";
 import type { ValidationResult } from "./types.js";
+import { stripScratchpadPaths } from "./scratchpad.js";
 
 const SUBMODULE = "path";
 
@@ -58,9 +59,14 @@ export function validatePath(command: string, cwd: string): ValidationResult {
     }
   }
 
+  // Warn heuristics run with scratchpad-rooted paths stripped: the session
+  // scratchpad lives under the system temp dir and is permission-exempt.
+  // Hot-file blocking above deliberately saw the original command.
+  const sanitized = stripScratchpadPaths(command);
+
   // Check for system paths that warrant a warning.
   for (const sysPath of WARN_SYSTEM_PATHS) {
-    if (command.includes(sysPath)) {
+    if (sanitized.includes(sysPath)) {
       return {
         kind: "warn",
         message: `Command references system path '${sysPath}' — verify this is intentional`,
@@ -70,7 +76,7 @@ export function validatePath(command: string, cwd: string): ValidationResult {
   }
 
   // Check for home directory references that could escape workspace.
-  if (command.includes("~/") || command.includes("$HOME")) {
+  if (sanitized.includes("~/") || sanitized.includes("$HOME")) {
     return {
       kind: "warn",
       message:
@@ -80,11 +86,11 @@ export function validatePath(command: string, cwd: string): ValidationResult {
   }
 
   // Check for directory traversal via ../
-  if (command.includes("../")) {
+  if (sanitized.includes("../")) {
     // Heuristic: if the cwd appears in the command, traversal likely resolves
     // within the workspace. Otherwise warn.
     const normalizedCwd = nodePath.normalize(cwd);
-    if (!command.includes(normalizedCwd)) {
+    if (!sanitized.includes(normalizedCwd)) {
       return {
         kind: "warn",
         message:
