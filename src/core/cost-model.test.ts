@@ -54,6 +54,18 @@ describe("ApiCostModel", () => {
     expect(usd).toBeCloseTo(0.00045, 8);
   });
 
+  it("prices cache traffic: reads at 0.1× input, writes at 1.25× input (docs/53)", () => {
+    // 100 in * $3 + 10 out * $15 + 1000 cacheRead * $0.30 + 100 cacheWrite * $3.75
+    // = (300 + 150 + 300 + 375)/1e6 = $0.001125
+    const { usd } = api.cost(
+      sample(PRICED_MODEL, 100, 10, {
+        cacheReadInputTokens: 1000,
+        cacheWriteInputTokens: 100,
+      }),
+    );
+    expect(usd).toBeCloseTo(0.001125, 8);
+  });
+
   it("UNPRICED model → usd undefined, not 0 (the key semantics change)", () => {
     const { usd } = api.cost(sample(UNPRICED_MODEL, 1000, 500));
     expect(usd).toBeUndefined();

@@ -107,20 +107,35 @@ export function estimateForwardFlops(
 /**
  * USD from the pricing table, or `undefined` when the model has no entry. Tries an
  * exact key first (back-compat with `usageCostUsd` keys), then the normalized id, so
- * "litellm/gpt-4o-2024-11-20" resolves to the "gpt-4o-2024-11-20" price. Prices only
- * input+output (mirrors `usageCostUsd`/`checkBudget`; cache-token pricing is a TODO).
+ * "litellm/gpt-4o-2024-11-20" resolves to the "gpt-4o-2024-11-20" price. Prices
+ * input, output, AND cache traffic (docs/53): cache reads default to 0.1× the
+ * input rate (Anthropic's cache-read rate; OpenAI's ~90%-off cached input is the
+ * same ballpark) and cache writes to 1.25× (Anthropic 5-minute-TTL write rate;
+ * OpenAI-style APIs report no separate write tokens, so the term is 0 there).
+ * Override per model via `cacheReadPerMTok` / `cacheWritePerMTok`.
  */
+export interface ModelPricing {
+  readonly inputPerMTok: number;
+  readonly outputPerMTok: number;
+  readonly cacheReadPerMTok?: number;
+  readonly cacheWritePerMTok?: number;
+}
+
 function priceUsd(
   sample: CostSample,
-  table: Readonly<Record<string, { inputPerMTok: number; outputPerMTok: number }>>,
+  table: Readonly<Record<string, ModelPricing>>,
 ): number | undefined {
   const pricing =
     (sample.model !== undefined ? table[sample.model] : undefined) ??
     table[normalizeModelId(sample.model)];
   if (pricing === undefined) return undefined;
+  const cacheReadRate = pricing.cacheReadPerMTok ?? pricing.inputPerMTok * 0.1;
+  const cacheWriteRate = pricing.cacheWritePerMTok ?? pricing.inputPerMTok * 1.25;
   return (
     (sample.inputTokens * pricing.inputPerMTok +
-      sample.outputTokens * pricing.outputPerMTok) /
+      sample.outputTokens * pricing.outputPerMTok +
+      (sample.cacheReadInputTokens ?? 0) * cacheReadRate +
+      (sample.cacheWriteInputTokens ?? 0) * cacheWriteRate) /
     1_000_000
   );
 }
@@ -131,7 +146,7 @@ function priceUsd(
 
 export interface ApiCostModelOptions {
   /** Pricing table override (defaults to MODEL_PRICING). */
-  readonly pricing?: Readonly<Record<string, { inputPerMTok: number; outputPerMTok: number }>>;
+  readonly pricing?: Readonly<Record<string, ModelPricing>>;
   /** Active-params (B) by normalized model id (defaults to MODEL_ACTIVE_PARAMS_B). */
   readonly params?: Readonly<Record<string, number>>;
 }
@@ -142,7 +157,7 @@ export interface ApiCostModelOptions {
  * them. The working default for P0 (re-pricing existing traces without hardware).
  */
 export class ApiCostModel implements CostModel {
-  private readonly pricing: Readonly<Record<string, { inputPerMTok: number; outputPerMTok: number }>>;
+  private readonly pricing: Readonly<Record<string, ModelPricing>>;
   private readonly params: Readonly<Record<string, number>>;
 
   constructor(opts: ApiCostModelOptions = {}) {

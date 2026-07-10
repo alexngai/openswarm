@@ -36,6 +36,7 @@ import type {
 import type { StopReason } from "../core/types.js";
 import { providerMessagesToVercel } from "./message-replay.js";
 import { toolSpecsToVercelTools } from "./tool-translation.js";
+import { mapVercelUsage } from "./vercel-usage.js";
 import { classifyProviderError } from "./error-classifier.js";
 
 const DEFAULT_API_VERSION = "2024-08-01-preview";
@@ -44,7 +45,12 @@ const DEFAULT_API_VERSION = "2024-08-01-preview";
 function defaultCapabilities(): ProviderCapabilities {
   return {
     streaming: true,
-    promptCache: false,
+    // Azure OpenAI caches prompts and reports `cached_tokens`, but ONLY reliably
+    // when `prompt_cache_key` routes repeat prefixes to the same replica — probed
+    // 2026-07-09 on gpt-5.5: identical back-to-back requests hit 0% without the
+    // key and ~92% with it (docs/53). promptCache: false here silently disabled
+    // the key and made every mono-large eval token full-price.
+    promptCache: true,
     parallelToolUse: true,
     vision: false,
     reasoning: false,
@@ -162,12 +168,21 @@ export class AzureTransportProvider implements TransportProvider {
     if (req.temperature !== undefined) extraOptions["temperature"] = req.temperature;
     if (req.topP !== undefined) extraOptions["topP"] = req.topP;
 
+    // Prompt-cache routing hint (mirrors openai-transport): a per-session stable
+    // key keeps repeat prefixes on the same replica. Without it this deployment's
+    // hit rate is ~0 (see defaultCapabilities note).
+    const providerOptions =
+      req.sessionId !== undefined && this.capabilities.promptCache
+        ? { openai: { promptCacheKey: req.sessionId } }
+        : undefined;
+
     const result = streamText({
       model: this.model,
       messages: providerMessagesToVercel(req.messages),
       ...(systemPrompt !== undefined ? { system: systemPrompt } : {}),
       tools: toolSpecsToVercelTools(req.tools ?? []),
       ...(req.abort !== undefined ? { abortSignal: req.abort } : {}),
+      ...(providerOptions !== undefined ? { providerOptions } : {}),
       ...extraOptions,
     });
 
@@ -193,13 +208,7 @@ export class AzureTransportProvider implements TransportProvider {
           yield {
             type: "finish",
             stopReason: mapFinishReason(part.finishReason),
-            usage: {
-              inputTokens: usage.inputTokens ?? 0,
-              outputTokens: usage.outputTokens ?? 0,
-              ...(usage.inputTokenDetails?.cacheReadTokens !== undefined
-                ? { cacheReadInputTokens: usage.inputTokenDetails.cacheReadTokens }
-                : {}),
-            },
+            usage: mapVercelUsage(usage),
           };
           break;
         }

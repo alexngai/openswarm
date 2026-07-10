@@ -52,6 +52,13 @@ Status legend: `todo` / `in-progress` / `landed` / `evaluated` / `rejected`.
 
 First measurement result (2026-07-09, existing cache): `cache%` reveals the mono-large arm at **0% cache-read** on astropy/django SWE cells while mono-small runs 96–98% — the expensive tier pays full price for every input token. Investigate provider-side caching for the large-tier path before drawing frontier conclusions from those arms.
 
+| ID | Improvement | Where | Expected effect | Risk | Status |
+|----|-------------|-------|-----------------|------|--------|
+| TE-16 | Azure prompt-cache routing fix. Live probe (2026-07-09, gpt-5.5 deployment): identical back-to-back requests hit **0% cache without `prompt_cache_key`** and **~92% with it** — replica routing needs the key. The transport hardcoded `promptCache: false`, so the key was never sent → the eval's mono-large 0% was a real all-misses, not a reporting gap. Fix: `promptCache: true` + per-session `promptCacheKey` (mirrors openai-transport). Verified end-to-end through the transport: repeat stream reports `cacheReadInputTokens: 1280/1578` | `src/providers/azure-transport.ts` | Mono-large input tokens ~90% cheaper on repeat prefixes; invalidates prior mono-large cost baselines (re-baseline REQUIRED before frontier conclusions) | Low | landed |
+| TE-17 | Usage-convention normalization + cache-aware pricing. (a) OpenAI-style APIs report `cached_tokens` as a SUBSET of prompt tokens; OpenSwarm's convention (Anthropic path) is DISJOINT — all six AI-SDK transports now normalize via shared `mapVercelUsage` (fresh = `noCacheTokens`), else `totalTokens` double-counts cache reads. (b) `priceUsd` now prices cache reads (default 0.1× input) and writes (1.25× input), overridable per model — previously cache traffic priced at $0, understating cache-heavy arms' cost | `src/providers/vercel-usage.ts` (new), six transports, `src/core/cost-model.ts` (`ModelPricing`) | Honest $ axis for the frontier; without this, TE-16 would make mono-large look ~free | Historical cells recorded under old conventions — compare within-run, not across the fix boundary | landed |
+
+Re-baseline note: TE-16/TE-17 change what the `$` and `totalTokens` axes MEAN for cache-heavy arms. The existing 91-cell cache remains valid for quality pairing and cache%-before, but its cost numbers are not comparable to post-fix runs. Known follow-up: `usageCostUsd`/`checkBudget` in `src/core/budget.ts` still price input+output only (budget enforcement slightly overestimates spend on cached traffic — conservative direction, acceptable).
+
 ## Eval plan
 
 Harness: existing swarmkit-eval cost-frontier pipeline (docs/51), discrimination set (9 SWE-bench instances) for iteration speed, full set for confirmation.
