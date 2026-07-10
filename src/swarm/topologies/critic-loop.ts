@@ -109,6 +109,20 @@ export class CriticLoopTopology implements Topology {
     const resident = spec.coordination.residentDialogue === true;
     const execRef: { h: AgentHandle | undefined } = { h: undefined };
     const critRef: { h: AgentHandle | undefined } = { h: undefined };
+    // docs/52 — feed each worker's authoritative result usage into the team
+    // aggregator. The async `message_stop` lane bus intermittently drops EVERY
+    // worker's usage for this topology (~22% of advisor cells reported $0 while
+    // clearly making calls); the awaited result carries it deterministically.
+    const recordUsage = (
+      h: AgentHandle,
+      member: MemberSpec,
+      r: AgentResult,
+    ): AgentResult => {
+      if (r.status !== "killed" && r.usage !== undefined) {
+        ctx.recordUsage?.(h.agentId, member.model, r.usage);
+      }
+      return r;
+    };
     const runTurn = async (
       ref: { h: AgentHandle | undefined },
       member: MemberSpec,
@@ -116,7 +130,7 @@ export class CriticLoopTopology implements Topology {
     ): Promise<AgentResult> => {
       if (resident && ref.h !== undefined) {
         try {
-          return await ref.h.runMore(prompt);
+          return recordUsage(ref.h, member, await ref.h.runMore(prompt));
         } catch {
           ref.h = undefined; // worker died → cold-spawn fallback below
         }
@@ -124,7 +138,7 @@ export class CriticLoopTopology implements Topology {
       ref.h = await team.spawnMember(
         resident ? { ...member, prompt, longLived: true } : { ...member, prompt },
       );
-      return ref.h.wait();
+      return recordUsage(ref.h, member, await ref.h.wait());
     };
 
     try {

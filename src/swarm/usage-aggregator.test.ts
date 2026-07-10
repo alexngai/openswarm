@@ -210,3 +210,46 @@ describe("SwarmUsageAggregator — cost pricing", () => {
     expect(Object.keys(bm).sort()).toEqual(["qwen3-30b", "qwen3-8b"]);
   });
 });
+
+// docs/52 — deterministic usage from awaited AgentResults. Multi-worker topologies
+// intermittently drop every worker's async `message_stop`; the topology feeds the
+// result usage here so the cell's team_usage can never spuriously read $0.
+describe("SwarmUsageAggregator — setDirectUsage (authoritative result usage)", () => {
+  it("records per-model usage with NO message_stop event at all (the dropped-bus case)", () => {
+    const agg = new SwarmUsageAggregator();
+    // executor + critic complete; their async message_stop never arrives.
+    agg.setDirectUsage("exec", "haiku", { inputTokens: 100, outputTokens: 50 });
+    agg.setDirectUsage("critic", "gpt-5.5", { inputTokens: 200, outputTokens: 20 });
+    expect(agg.teamTotal().totalTokens).toBe(370);
+    const bm = agg.byModel();
+    expect(bm["haiku"]?.totalTokens).toBe(150);
+    expect(bm["gpt-5.5"]?.totalTokens).toBe(220);
+  });
+
+  it("ignores a message_stop that arrives AFTER setDirectUsage (no double-count)", () => {
+    const agg = new SwarmUsageAggregator();
+    agg.setDirectUsage("a1", "haiku", { inputTokens: 100, outputTokens: 50 });
+    agg.record(messageStop("a1", { inputTokens: 100, outputTokens: 50 })); // late duplicate
+    expect(agg.directUsage("a1").totalTokens).toBe(150); // not 300
+  });
+
+  it("overwrites a message_stop that arrived BEFORE (authoritative value wins)", () => {
+    const agg = new SwarmUsageAggregator();
+    agg.record(spawned("a1", undefined, "haiku"));
+    agg.record(messageStop("a1", { inputTokens: 999, outputTokens: 999 })); // stale/partial
+    agg.setDirectUsage("a1", "haiku", { inputTokens: 100, outputTokens: 50 });
+    expect(agg.directUsage("a1").totalTokens).toBe(150); // overwritten, not summed
+    expect(agg.byModel()["haiku"]?.totalTokens).toBe(150);
+  });
+
+  it("keeps cache tokens in the authoritative total", () => {
+    const agg = new SwarmUsageAggregator();
+    agg.setDirectUsage("a1", "haiku", {
+      inputTokens: 27,
+      outputTokens: 609,
+      cacheReadInputTokens: 16031,
+      cacheWriteInputTokens: 7862,
+    });
+    expect(agg.directUsage("a1").totalTokens).toBe(27 + 609 + 16031 + 7862);
+  });
+});

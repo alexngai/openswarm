@@ -472,6 +472,10 @@ export async function runTopology(opts: TopologyRunOptions): Promise<number> {
     host,
     ...(observer !== undefined && { observer }),
     ...(escalation !== undefined && { escalation }),
+    // docs/52 — deterministic per-model usage: topologies feed each worker's
+    // awaited result usage here, so a dropped async `message_stop` can't zero
+    // the cell's team_usage (the lane-bus race hit ~22% of advisor cells).
+    recordUsage: (agentId, model, usage) => usageAgg.setDirectUsage(agentId, model, usage),
   });
 
   // 4. Run.

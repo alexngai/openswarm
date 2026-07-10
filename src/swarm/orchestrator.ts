@@ -128,6 +128,16 @@ export interface OrchestratorOptions {
     readonly exec?: import("./escalation-evaluator.js").ExecFn;
     readonly task?: unknown;
   };
+  /**
+   * docs/52 — authoritative usage sink, threaded onto `TopologyContext.recordUsage`.
+   * The CLI wires this to `SwarmUsageAggregator.setDirectUsage` so multi-worker
+   * topologies report deterministic per-model usage from awaited results.
+   */
+  readonly recordUsage?: (
+    agentId: string,
+    model: string | undefined,
+    usage: import("../core/types.js").Usage,
+  ) => void;
 }
 
 /**
@@ -286,6 +296,9 @@ export class Orchestrator extends EventEmitter {
         }),
         ...(this.opts.escalation !== undefined && {
           escalation: this.opts.escalation,
+        }),
+        ...(this.opts.recordUsage !== undefined && {
+          recordUsage: this.opts.recordUsage,
         }),
         onTeamCreated: (team) => {
           this.activeTeam = team;

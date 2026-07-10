@@ -133,6 +133,12 @@ export class CascadeTopology implements Topology {
         });
         const result = await handle.wait();
         unsub?.();
+        // docs/52 — feed the authoritative per-tier usage from the awaited result;
+        // the async `message_stop` lane event is intermittently dropped (~9% of
+        // cascade cells), which would zero the cell's team_usage.
+        if (result.status !== "killed" && result.usage !== undefined) {
+          ctx.recordUsage?.(handle.agentId, tier.payload.model, result.usage);
+        }
         const failed = result.status !== "success";
         const output = failed ? "" : result.output ?? "";
         // Evaluators grade only a tier that terminated successfully; a crash is

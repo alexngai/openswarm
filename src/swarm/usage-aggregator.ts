@@ -103,6 +103,13 @@ interface AgentAcc {
   calls: number;
   gpuSeconds: number;
   model?: string;
+  /**
+   * Set once {@link SwarmUsageAggregator.setDirectUsage} records this agent's
+   * authoritative final usage (from its awaited AgentResult). Later async
+   * `message_stop` lane events for the agent are then ignored — the deterministic
+   * result value wins and can't be double-counted (docs/52).
+   */
+  authoritative?: boolean;
 }
 
 function newAcc(): AgentAcc {
@@ -161,6 +168,10 @@ export class SwarmUsageAggregator {
     const usage = (evt.payload as { usage?: Usage } | undefined)?.usage;
     if (usage === undefined) return;
     const acc = this.ensure(evt.agentId);
+    // The topology already recorded this agent's authoritative result usage;
+    // ignore the (possibly duplicate, possibly late) async event so it can't
+    // double-count or clobber the deterministic value (docs/52).
+    if (acc.authoritative === true) return;
     acc.inputTokens += usage.inputTokens ?? 0;
     acc.outputTokens += usage.outputTokens ?? 0;
     acc.cacheReadInputTokens += usage.cacheReadInputTokens ?? 0;
@@ -183,6 +194,33 @@ export class SwarmUsageAggregator {
   /** Record/override a model for cost pricing (e.g. from a member spec). */
   setModel(agentId: string, model: string): void {
     this.ensure(agentId).model = model;
+  }
+
+  /**
+   * Record an agent's AUTHORITATIVE final usage from its awaited AgentResult,
+   * bypassing the async lane-bus `message_stop`. Multi-worker topologies
+   * (critic-loop, cascade) intermittently drop EVERY worker's `message_stop`
+   * before it reaches this aggregator — measured ~22% of advisor cells reporting
+   * $0 while the run clearly made calls (docs/52). The awaited result carries the
+   * cumulative usage deterministically, so the topology feeds it here.
+   *
+   * Idempotent and order-independent: overwrites the per-agent token tally with
+   * the result's cumulative usage and marks the agent authoritative so any
+   * later `message_stop` for it is ignored. A `message_stop` that already
+   * accumulated is simply overwritten (its call count is preserved).
+   */
+  setDirectUsage(agentId: string, model: string | undefined, usage: Usage): void {
+    const acc = this.ensure(agentId);
+    if (model !== undefined) acc.model = model;
+    acc.inputTokens = usage.inputTokens ?? 0;
+    acc.outputTokens = usage.outputTokens ?? 0;
+    acc.cacheReadInputTokens = usage.cacheReadInputTokens ?? 0;
+    acc.cacheWriteInputTokens = usage.cacheWriteInputTokens ?? 0;
+    acc.gpuSeconds = (usage as { gpuSeconds?: number }).gpuSeconds ?? acc.gpuSeconds;
+    // Preserve a real observed call count if `message_stop` beat us here; else
+    // the result itself proves ≥1 call happened.
+    if (acc.calls === 0) acc.calls = 1;
+    acc.authoritative = true;
   }
 
   /** Every agentId the aggregator has observed usage or a spawn edge for. */

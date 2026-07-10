@@ -547,6 +547,25 @@ async function executeTurn(
     }
   }
 
+  // docs/52 — usage source of truth. The `usage` scraped above is only the LAST
+  // `message_stop` event's payload; on a multi-turn agentic run that undercounts,
+  // and when the final stop carries no tokens it reads 0 — which is how long
+  // executor runs reported $0 despite doing real work (the message_stop loss was
+  // in the engine→worker capture, not the lane bus). The engine keeps an
+  // authoritative cumulative tally across every turn of the run; prefer it
+  // whenever it has data, never downgrading a good scrape to 0.
+  try {
+    const engineUsage = engine.getCumulativeUsage();
+    const engineTotal =
+      engineUsage.inputTokens +
+      engineUsage.outputTokens +
+      (engineUsage.cacheReadInputTokens ?? 0) +
+      (engineUsage.cacheWriteInputTokens ?? 0);
+    if (engineTotal > 0) usage = engineUsage;
+  } catch {
+    /* engine can't report cumulative usage → keep the scraped value */
+  }
+
   const wallClockMs = Date.now() - startedAt;
   const result: AgentResult = errMsg
     ? { status: "failure", error: errMsg, wallClockMs, ...(usage && { usage }) }
