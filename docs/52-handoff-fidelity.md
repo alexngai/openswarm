@@ -87,6 +87,71 @@ cascade's escalation gets *cheaper* (the strong tier builds on the applied diff 
 and the advisor's critic makes better accept/reject calls (it sees the diff). Only after this is the
 mono-vs-multi comparison a fair test of coordination value.
 
+## Phase B — design (resident dialogue + bus trajectory + evaluator detail)
+
+Phase A upgraded the handoff *content* (diff + reason) but still delivers it as a one-shot prompt to a
+**cold** agent re-spawned each round — the same lossy shape the whole field uses. Phase B makes the
+agents **resident** so they accumulate context and coordinate, the capability the external baseline
+found none of Claude Code / OpenCode / Codex have. Three pieces; ① is the flagship.
+
+### ① Resident executor↔critic dialogue (the differentiator)
+
+**Mechanism (already in OpenSwarm).** A member spawned `longLived: true` stays alive after each turn and
+takes its next prompt via `AgentHandle.runMore(prompt)` on the **same subprocess**
+([host.ts:287,317](../src/swarm/host.ts)) — exactly the "addressable, resumable handle" the external
+baseline flagged as valuable for advise loops. Today the critic-loop re-spawns a **cold** executor and a
+**cold** critic every round: the critic has no memory of what it flagged last round, and both re-read
+the repo from scratch.
+
+**Design.** Spawn the executor and critic **once** as `longLived`, and drive the loop with `runMore`:
+- round 1: `executor.runMore(task)` → green check → if red, `critic.runMore(diff + failing-check + review)`.
+- round N: `executor.runMore(critic feedback)` — the executor *remembers its own edits + reasoning*; then
+  `critic.runMore(new diff)` — the critic *remembers its prior feedback and sees how the executor
+  responded*.
+- on approve / cap: `drain()` both (`idleTimeoutMs` auto-drains a stall).
+
+The critic becomes a persistent advisor with cross-round memory (stops repeating itself, tracks whether
+its advice was applied); the executor keeps its reasoning in-context instead of re-deriving from a prose
+blob. With prompt caching the growing session prefix is cheap, so resident should cost *less* than cold
+re-spawn (which re-reads everything uncached each round) — a measurable prediction.
+
+**Config + as an experiment.** Gate behind `coordination.residentDialogue?: boolean` (default false →
+today's cold-spawn stays, and is the graceful fallback). This makes the coordination-fidelity effect
+**measurable**: `advisor-cold` vs `advisor-resident` become two arms on the same instances, isolating
+whether persistent dialogue actually helps — Phase B becomes an experiment, not just a change.
+
+**Failure modes:** `runMore` throws if the worker died → catch, fall back to a cold spawn for that round;
+a resident session that outgrows the context window needs a compaction/clip guard (defer — 3 rounds
+rarely hits it).
+
+**runMore vs the bus.** This is *topology-mediated* residence (the loop drives turns), not autonomous
+peer messaging. A fuller **①b** — executor and critic as concurrent peers messaging directly over the
+bus (`team.send`/`check_inbox`, the peer-team pattern), topology just awaiting the approval signal — is
+more autonomous and more differentiated, but a bigger rewrite with new deadlock/timing risk. Recommend
+①a first; ①b only if ①a proves the value.
+
+### ② Lane-bus trajectory into the cascade handoff
+
+`AgentHandle.events()` ([host.ts:309](../src/swarm/host.ts)) is a tier's lane-event substream. Collect
+its `tool_use_*` events (files edited, commands run) during the run and summarize them into the escalated
+tier's prompt alongside Phase A's diff — so the strong tier sees *what was tried*, not just the end-state
+diff, and skips the cheap tier's dead ends. (Pattern: peer-team subscribes to the bus at
+[peer-team.ts:366](../src/swarm/topologies/peer-team.ts).)
+
+### ③ Evaluator detail threading (small)
+
+Phase A's cascade reason is just "confidence < τ." Widen `EscalationEvaluator.evaluate` to return
+`{confidence, detail?}` (the Command/Composite evaluators already hold the `ExecResult` —
+[escalation-evaluator.ts:136](../src/swarm/escalation-evaluator.ts)); thread `detail` into the reason
+block so the *actual failing-check output* flows through with **no re-run**.
+
+### Testing + rollout
+- Unit: the resident loop drives `runMore` (not re-spawn) across rounds; falls back to a cold spawn on
+  `runMore` failure; `residentDialogue:false` preserves today's behavior (existing tests stay green).
+- Empirical: add `advisor-resident` as an arm next to cold `advisor` on the discrimination set — the
+  direct A/B of coordination fidelity.
+- Rollout order: ③ (tiny) + ② (additive) first; ①a behind the flag with the cold-spawn fallback; ①b later.
+
 ## References
 - docs/50 §10.4 (advisor / advise-don't-redo), docs/51 (eval execution plan).
 - External baseline + OpenSwarm-primitives reports (session scratchpad: `handoff-baseline-external.md`,
