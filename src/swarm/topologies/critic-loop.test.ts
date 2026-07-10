@@ -94,6 +94,53 @@ function fakeHost(results: readonly AgentResult[]): Harness {
   return { host, spawns };
 }
 
+/** Resident fake (docs/52 Phase B ①a): each member (keyed by role) has its own result queue;
+ *  spawn/wait serve the first, runMore serves the next. Records longLived spawns + runMore calls. */
+function residentFakeHost(queues: { executor: AgentResult[]; critic: AgentResult[] }): {
+  host: StandaloneHost;
+  spawns: Array<{ role: string | undefined; longLived: boolean }>;
+  runMore: { executor: number; critic: number };
+} {
+  const spawns: Array<{ role: string | undefined; longLived: boolean }> = [];
+  const runMore = { executor: 0, critic: 0 };
+  const events = new EventEmitter();
+  const kindOf = (role: string | undefined): "executor" | "critic" => (role === "reviewer" ? "critic" : "executor");
+  const drained: AgentResult = { status: "failure", error: "drained", wallClockMs: 0 };
+  const spawn = async (req: SpawnRequest): Promise<AgentHandle> => {
+    const kind = kindOf(req.role);
+    spawns.push({ role: req.role, longLived: (req as { longLived?: boolean }).longLived === true });
+    const first = queues[kind].shift() ?? drained;
+    return {
+      agentId: `${kind}-agent` as AgentId,
+      sessionId: `${kind}-session` as SessionId,
+      wait: () => Promise.resolve(first),
+      kill: () => Promise.resolve(),
+      events: async function* () {
+        return;
+      },
+      runMore: () => {
+        runMore[kind]++;
+        return Promise.resolve(queues[kind].shift() ?? drained);
+      },
+      drain: () => Promise.resolve(),
+    };
+  };
+  const host = {
+    mode: "standalone",
+    agentId: "host" as AgentId,
+    depth: 0,
+    spawn,
+    emit: vi.fn(),
+    send: vi.fn(),
+    inbox: async function* () {
+      return;
+    },
+    task: {} as StandaloneHost["task"],
+    events,
+  } as unknown as StandaloneHost;
+  return { host, spawns, runMore };
+}
+
 function member(id: string, prompt: string, role = "worker"): MemberSpec {
   return {
     id,
@@ -321,6 +368,42 @@ describe("CriticLoopTopology", () => {
     expect(criticPrompt).toContain("diff --git a/f b/f");
     expect(criticPrompt).toContain("Failing check output");
     expect(criticPrompt).toContain("1 failed");
+  });
+
+  it("resident dialogue: spawns each member once, drives later rounds via runMore", async () => {
+    // docs/52 Phase B ①a — executor + critic stay resident; round 2 uses runMore, not re-spawn.
+    const rh = residentFakeHost({
+      executor: [s("draft v1"), s("draft v2")],
+      critic: [s("needs the import fix"), s("APPROVED")],
+    });
+    const pool = new WorkerPool(8);
+    const tmp = await mkdtemp(join(tmpdir(), "critic-loop-res-"));
+    const deadLetter = new DeadLetterWriter(join(tmp, "dl.jsonl"));
+    const resultsOut = new PassThrough();
+    resultsOut.resume();
+    cleanups.push(async () => {
+      await deadLetter.close();
+      await rm(tmp, { recursive: true, force: true });
+    });
+    const ctx: TopologyContext = {
+      host: rh.host,
+      pool,
+      resultsOut,
+      deadLetter,
+      permissionMode: "workspace-write",
+    };
+    const spec: TeamSpec = {
+      name: "critic-loop-test",
+      topology: "critic-loop",
+      members: [member("exec", "implement feature", "executor"), member("crit", "review", "reviewer")],
+      coordination: { completion: { kind: "until_signal", signal: "APPROVED" }, residentDialogue: true },
+    };
+    const result = await new CriticLoopTopology().run(spec, ctx);
+    expect(rh.spawns.filter((sp) => sp.longLived)).toHaveLength(2); // executor + critic spawned once each
+    expect(rh.runMore.executor).toBe(1); // round-2 executor via runMore, not a re-spawn
+    expect(rh.runMore.critic).toBe(1); // round-2 critic via runMore
+    expect(result.succeeded).toBe(1);
+    expect(result.aggregateOutput).toBe("draft v2");
   });
 
   it("executor failure halts the loop with failed=1", async () => {

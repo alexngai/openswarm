@@ -43,6 +43,9 @@ export interface CriticLoopAdapterOptions {
   readonly greenCommand?: string;
   /** Pass-rate threshold for greenCommand (default 1 = all pass). */
   readonly greenThreshold?: number;
+  /** docs/52 Phase B ①a — keep executor + critic resident (longLived + runMore) across rounds
+   *  so both accumulate context, instead of a cold re-spawn each round. Default false. */
+  readonly residentDialogue?: boolean;
   readonly env?: Record<string, string>;
   readonly permissionMode?: string;
   readonly timeoutMs?: number;
@@ -88,6 +91,7 @@ export class CriticLoopAdapter implements ExecutionAdapter {
       coordination: {
         completion: { kind: "all" },
         criticMaxIterations: this.opts.maxIterations ?? 3,
+        ...(this.opts.residentDialogue === true && { residentDialogue: true }),
         ...(this.opts.greenCommand !== undefined && {
           greenCommand: this.opts.greenCommand,
           ...(this.opts.greenThreshold !== undefined && { greenThreshold: this.opts.greenThreshold }),

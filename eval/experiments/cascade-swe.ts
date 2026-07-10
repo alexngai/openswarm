@@ -185,6 +185,31 @@ export async function runCascadeSwe(): Promise<void> {
         bin: BIN,
       }),
     },
+    // docs/52 Phase B ①a — advisor with RESIDENT dialogue (executor + critic stay alive across
+    // rounds via runMore, accumulating context). The A/B vs cold `advisor` isolates the
+    // coordination-fidelity effect. Opt-in (CS_RESIDENT=1) so the default run's cost is unchanged.
+    ...(process.env.CS_RESIDENT === "1"
+      ? [
+          {
+            arm: {
+              id: "advisor-resident",
+              label: `advisor-resident exec=${SMALL} critic=${LARGE}`,
+              scaffold: {},
+            } as Arm,
+            adapter: new CriticLoopAdapter({
+              executorModel: SMALL,
+              criticModel: LARGE,
+              maxIterations: ADVISOR_ITERS,
+              executorPromptPrefix: REPRO_PREFIX,
+              greenCommand: REPRO_CMD,
+              residentDialogue: true,
+              env,
+              timeoutMs: AGENT_TIMEOUT_MS,
+              bin: BIN,
+            }),
+          },
+        ]
+      : []),
   ];
 
   const armIds = process.env.CS_ARM ? [process.env.CS_ARM] : arms.map((a) => a.arm.id);

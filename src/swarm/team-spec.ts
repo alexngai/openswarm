@@ -237,6 +237,11 @@ export interface TeamCoordination {
   /** docs/50 §10.4 — CriticLoopTopology executor↔critic round cap. Default 10.
    *  The `advisor` arm sets this low (≈3) to bound advise-don't-redo cost. */
   readonly criticMaxIterations?: number;
+  /** docs/52 Phase B ①a — CriticLoopTopology: keep the executor + critic RESIDENT
+   *  (`longLived` + `runMore`) across rounds so both accumulate context (the critic
+   *  remembers its prior feedback) instead of a cold re-spawn each round. Default false
+   *  (cold spawn). Falls back to a cold spawn if `runMore` fails. */
+  readonly residentDialogue?: boolean;
   /** docs/50 G3 — CascadeTopology escalation gate τ ∈ [0,1]: escalate to the next
    *  tier when a tier's confidence is below τ. Default 1 (escalate unless a tier
    *  signals a full solve). Sweeping τ traces the cost/quality frontier. */
@@ -310,6 +315,7 @@ export const TeamCoordinationSchema = z.object({
   idleTimeoutMs: z.number().int().positive().optional(),
   verifiedCompletion: z.object({ maxRounds: z.number().int().positive() }).optional(),
   criticMaxIterations: z.number().int().positive().optional(),
+  residentDialogue: z.boolean().optional(),
   escalationTau: z.number().min(0).max(1).optional(),
   escalationEvaluator: z.string().min(1).optional(),
   escalationCommand: z.string().min(1).optional(),
