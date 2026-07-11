@@ -21,6 +21,7 @@ import type {
 import type { StopReason } from "../core/types.js";
 import { providerMessagesToVercel } from "./message-replay.js";
 import { toolSpecsToVercelTools } from "./tool-translation.js";
+import { mapVercelUsage } from "./vercel-usage.js";
 import { classifyProviderError } from "./error-classifier.js";
 import { getXaiModelCapability } from "./capability-catalog.js";
 
@@ -180,13 +181,7 @@ export class XaiTransportProvider implements TransportProvider {
           yield {
             type: "finish",
             stopReason,
-            usage: {
-              inputTokens: usage.inputTokens ?? 0,
-              outputTokens: usage.outputTokens ?? 0,
-              ...(usage.inputTokenDetails?.cacheReadTokens !== undefined
-                ? { cacheReadInputTokens: usage.inputTokenDetails.cacheReadTokens }
-                : {}),
-            },
+            usage: mapVercelUsage(usage),
           };
           break;
         }

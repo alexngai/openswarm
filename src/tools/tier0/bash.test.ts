@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { bashTool, formatDuration, truncateOutput } from "./bash.js";
 import type { ToolExecutionContext } from "../types.js";
+import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -113,7 +114,7 @@ describe("bashTool", () => {
     }
   });
 
-  it("long stdout is head-truncated with a lines-truncated marker", async () => {
+  it("long stdout keeps head+tail with a spill-file marker (docs/53 TE-6)", async () => {
     // 2000 lines x ~30 chars ≈ 60k chars > 30k cap.
     const result = await bashTool.execute(
       { command: `seq 1 2000 | sed 's/^/line-with-some-padding-here-/'` },
@@ -121,11 +122,18 @@ describe("bashTool", () => {
     );
     expect(result.status).toBe("ok");
     if (result.status === "ok") {
-      expect(result.output.length).toBeLessThan(31_000);
-      expect(result.output).toContain("line-with-some-padding-here-1");
-      expect(result.output).toMatch(/\.\.\. \[\d+ lines truncated\] \.\.\./);
-      // Head truncation: the tail of the stream must be gone.
-      expect(result.output).not.toContain("line-with-some-padding-here-2000");
+      expect(result.output.length).toBeLessThan(32_000);
+      // Head survives…
+      expect(result.output).toContain("line-with-some-padding-here-1\n");
+      // …and so does the tail (where test verdicts/errors live).
+      expect(result.output).toContain("line-with-some-padding-here-2000");
+      // The middle is elided, with the full output spilled to a named file.
+      expect(result.output).not.toContain("line-with-some-padding-here-1000\n");
+      const m = /\[\d+ lines truncated; full output: (.+?)\] \.\.\./.exec(result.output);
+      expect(m).not.toBeNull();
+      const full = fs.readFileSync(m![1]!, "utf8");
+      expect(full).toContain("line-with-some-padding-here-1000\n");
+      fs.rmSync(m![1]!, { force: true });
     }
   }, 10_000);
 
@@ -172,10 +180,17 @@ describe("truncateOutput", () => {
     expect(truncateOutput("hello", 30_000)).toBe("hello");
   });
 
-  it("head-truncates and counts remaining lines", () => {
+  it("keeps head AND tail, counting truncated middle lines (docs/53 TE-6)", () => {
     const text = Array.from({ length: 100 }, (_, i) => `line${i}`).join("\n");
     const out = truncateOutput(text, 50);
-    expect(out.startsWith(text.slice(0, 50))).toBe(true);
-    expect(out).toMatch(/\.\.\. \[\d+ lines truncated\] \.\.\.$/);
+    expect(out.startsWith(text.slice(0, 25))).toBe(true);
+    expect(out.endsWith(text.slice(-25))).toBe(true);
+    expect(out).toMatch(/\.\.\. \[\d+ lines truncated\] \.\.\./);
+  });
+
+  it("names the spilled full-output path in the marker when provided", () => {
+    const text = Array.from({ length: 100 }, (_, i) => `line${i}`).join("\n");
+    const out = truncateOutput(text, 50, "/tmp/full.out");
+    expect(out).toContain("full output: /tmp/full.out");
   });
 });

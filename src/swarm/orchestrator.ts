@@ -43,6 +43,7 @@ import {
   CommitteeTopology,
   CriticLoopTopology,
   CoordinatorTopology,
+  CascadeTopology,
 } from "./topologies/index.js";
 
 // Re-export AgentResult/Usage so legacy import sites keep working without
@@ -115,6 +116,28 @@ export interface OrchestratorOptions {
    * callers omit it (no recovery).
    */
   readonly checkpoint?: import("./team-checkpoint.js").TeamCheckpointStore;
+  /**
+   * docs/50 G3 / docs/51 — escalation-signal injection for CascadeTopology,
+   * threaded onto `TopologyContext.escalation`. `registry` resolves the
+   * evaluator named by `coordination.escalationEvaluator`; `exec` runs the
+   * confidence command in the tier workspace; `task` is opaque metadata. The
+   * CLI (`runTopology`) builds this from `coordination.escalationCommand`.
+   */
+  readonly escalation?: {
+    readonly registry?: import("./escalation-evaluator.js").EvaluatorRegistry;
+    readonly exec?: import("./escalation-evaluator.js").ExecFn;
+    readonly task?: unknown;
+  };
+  /**
+   * docs/52 — authoritative usage sink, threaded onto `TopologyContext.recordUsage`.
+   * The CLI wires this to `SwarmUsageAggregator.setDirectUsage` so multi-worker
+   * topologies report deterministic per-model usage from awaited results.
+   */
+  readonly recordUsage?: (
+    agentId: string,
+    model: string | undefined,
+    usage: import("../core/types.js").Usage,
+  ) => void;
 }
 
 /**
@@ -271,6 +294,12 @@ export class Orchestrator extends EventEmitter {
         ...(this.opts.checkpoint !== undefined && {
           checkpoint: this.opts.checkpoint,
         }),
+        ...(this.opts.escalation !== undefined && {
+          escalation: this.opts.escalation,
+        }),
+        ...(this.opts.recordUsage !== undefined && {
+          recordUsage: this.opts.recordUsage,
+        }),
         onTeamCreated: (team) => {
           this.activeTeam = team;
         },
@@ -323,5 +352,7 @@ function pickTopology(kind: TopologyKind): Topology {
       return new CommitteeTopology();
     case "critic-loop":
       return new CriticLoopTopology();
+    case "cascade":
+      return new CascadeTopology();
   }
 }

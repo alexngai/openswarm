@@ -57,6 +57,12 @@ import type { ToolExecutionContext, ToolImpl } from "../tools/types.js";
 import { readSessionSidecar, writeSessionSidecar } from "./session-sidecar.js";
 import { buildSystemPrompt } from "../engine/default-system-prompt.js";
 import {
+  ensureScratchpadDir,
+  formatScratchpadForSystemPrompt,
+  resolveWorkerScratchpadDir,
+  SCRATCHPAD_ENV_VAR,
+} from "../engine/scratchpad.js";
+import {
   loadProjectInstructions,
   formatInstructionsForSystemPrompt,
 } from "../engine/project-instructions.js";
@@ -340,7 +346,25 @@ async function executeTurn(
     const instructionsExt = formatInstructionsForSystemPrompt(
       loadProjectInstructions(process.cwd()),
     );
-    const nativeExtensions = [envBasePrompt, instructionsExt]
+    // Session scratchpad: inherit the orchestrator's root (env, spread by the
+    // subprocess spawner) and carve a per-agent subdir to avoid write
+    // collisions between workers; standalone workers allocate a fresh one.
+    // The bash-validation exemption keys off OPENSWARM_SCRATCHPAD_DIR, which
+    // prefix-covers the per-agent subdir. Failure is non-fatal.
+    let scratchpadExt = "";
+    try {
+      const scratchpadDir = ensureScratchpadDir(
+        resolveWorkerScratchpadDir(process.cwd(), agentId),
+      );
+      const envRoot = process.env[SCRATCHPAD_ENV_VAR];
+      if (envRoot === undefined || envRoot.length === 0) {
+        process.env[SCRATCHPAD_ENV_VAR] = scratchpadDir;
+      }
+      scratchpadExt = formatScratchpadForSystemPrompt(scratchpadDir);
+    } catch {
+      scratchpadExt = "";
+    }
+    const nativeExtensions = [envBasePrompt, instructionsExt, scratchpadExt]
       .filter((s): s is string => s !== undefined && s.length > 0)
       .join("\n\n");
     const basePrompt = useNativePrompt
@@ -521,6 +545,25 @@ async function executeTurn(
         // trajectory reporting must never fail the turn
       }
     }
+  }
+
+  // docs/52 — usage source of truth. The `usage` scraped above is only the LAST
+  // `message_stop` event's payload; on a multi-turn agentic run that undercounts,
+  // and when the final stop carries no tokens it reads 0 — which is how long
+  // executor runs reported $0 despite doing real work (the message_stop loss was
+  // in the engine→worker capture, not the lane bus). The engine keeps an
+  // authoritative cumulative tally across every turn of the run; prefer it
+  // whenever it has data, never downgrading a good scrape to 0.
+  try {
+    const engineUsage = engine.getCumulativeUsage();
+    const engineTotal =
+      engineUsage.inputTokens +
+      engineUsage.outputTokens +
+      (engineUsage.cacheReadInputTokens ?? 0) +
+      (engineUsage.cacheWriteInputTokens ?? 0);
+    if (engineTotal > 0) usage = engineUsage;
+  } catch {
+    /* engine can't report cumulative usage → keep the scraped value */
   }
 
   const wallClockMs = Date.now() - startedAt;

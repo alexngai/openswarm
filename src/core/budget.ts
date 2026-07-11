@@ -47,6 +47,14 @@ export const MODEL_PRICING: Record<string, { inputPerMTok: number; outputPerMTok
   // OpenAI (as of 2026-04-30)
   "gpt-4o-2024-11-20":  { inputPerMTok: 2.50,  outputPerMTok: 10.00 },
   "gpt-5-2025-08-07":   { inputPerMTok: 10.00, outputPerMTok: 40.00 },
+  "gpt-5.5":            { inputPerMTok: 10.00, outputPerMTok: 40.00 }, // gpt-5 tier
+
+  // Provider-specific ids the cross-provider swarm records verbatim in `byModel`
+  // (the spec's model string). `ApiCostModel` keys on `normalizeModelId`, so
+  // `azureoai/gpt-5.5` → `gpt-5.5` (above); the Bedrock inference-profile id has no
+  // gateway prefix and must match as-is, else `team_usage.costUsd` reads $0 and
+  // budget enforcement under-counts real spend (docs/53).
+  "us.anthropic.claude-haiku-4-5-20251001-v1:0": { inputPerMTok: 0.80, outputPerMTok: 4.00 },
 };
 
 // ---------------------------------------------------------------------------

@@ -126,8 +126,15 @@ async function makeStream(
   git(repo, `worktree remove --force ${JSON.stringify(swt)}`);
 }
 
+// The drain tests spawn ~25 git subprocesses each. Inside a vitest fork
+// worker a subprocess spawn costs 10-20x its standalone price when the
+// suite's other forks load the machine (~150-450ms/call observed), so the
+// default 15s testTimeout is too tight a budget under a full parallel run.
+// The generous per-test timeout only matters on a genuine hang.
+const DRAIN_TEST_TIMEOUT = 60_000;
+
 describe("merge queue drain (real git)", () => {
-  it("drains in priority/FIFO order, merging each stream into the target", async () => {
+  it("drains in priority/FIFO order, merging each stream into the target", { timeout: DRAIN_TEST_TIMEOUT }, async () => {
     const base = git(repo, "rev-parse HEAD");
     await makeStream("sA", base, "a.txt", "aA\n");
     await makeStream("sB", base, "b.txt", "bB\n");
@@ -144,7 +151,7 @@ describe("merge queue drain (real git)", () => {
     expect(git(repo, "show main:b.txt")).toBe("bB");
   });
 
-  it("surfaces a conflicting stream as failed and keeps draining the rest", async () => {
+  it("surfaces a conflicting stream as failed and keeps draining the rest", { timeout: DRAIN_TEST_TIMEOUT }, async () => {
     const base = git(repo, "rev-parse HEAD");
     // main advances shared.txt; sC also edits it from base → conflict.
     fs.writeFileSync(path.join(repo, "shared.txt"), "MAIN\n");

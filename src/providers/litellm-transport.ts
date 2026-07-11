@@ -27,6 +27,7 @@ import type {
 import type { StopReason } from "../core/types.js";
 import { providerMessagesToVercel } from "./message-replay.js";
 import { toolSpecsToVercelTools } from "./tool-translation.js";
+import { mapVercelUsage } from "./vercel-usage.js";
 import { classifyProviderError } from "./error-classifier.js";
 
 /** Generic capabilities — the gateway model is arbitrary, so assume the common SWE-agent baseline. */
@@ -191,13 +192,7 @@ export class LiteLLMTransportProvider implements TransportProvider {
           yield {
             type: "finish",
             stopReason: mapFinishReason(part.finishReason),
-            usage: {
-              inputTokens: usage.inputTokens ?? 0,
-              outputTokens: usage.outputTokens ?? 0,
-              ...(usage.inputTokenDetails?.cacheReadTokens !== undefined
-                ? { cacheReadInputTokens: usage.inputTokenDetails.cacheReadTokens }
-                : {}),
-            },
+            usage: mapVercelUsage(usage),
           };
           break;
         }

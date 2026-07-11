@@ -134,7 +134,8 @@ export type TopologyKind =
   | "coordinator"
   | "peer-team"
   | "committee"
-  | "critic-loop";
+  | "critic-loop"
+  | "cascade";
 
 export const TopologyKindSchema = z.enum([
   "fanout",
@@ -143,6 +144,7 @@ export const TopologyKindSchema = z.enum([
   "peer-team",
   "committee",
   "critic-loop",
+  "cascade",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -232,6 +234,37 @@ export interface TeamCoordination {
   /** Coordinator-only: after the root declares done, force up to maxRounds verification-continuation
    *  turns (root must run tests + confirm the task is fully resolved) before the team terminates. */
   readonly verifiedCompletion?: { readonly maxRounds: number };
+  /** docs/50 §10.4 — CriticLoopTopology executor↔critic round cap. Default 10.
+   *  The `advisor` arm sets this low (≈3) to bound advise-don't-redo cost. */
+  readonly criticMaxIterations?: number;
+  /** docs/52 Phase B ①a — CriticLoopTopology: keep the executor + critic RESIDENT
+   *  (`longLived` + `runMore`) across rounds so both accumulate context (the critic
+   *  remembers its prior feedback) instead of a cold re-spawn each round. Default false
+   *  (cold spawn). Falls back to a cold spawn if `runMore` fails. */
+  readonly residentDialogue?: boolean;
+  /** docs/50 G3 — CascadeTopology escalation gate τ ∈ [0,1]: escalate to the next
+   *  tier when a tier's confidence is below τ. Default 1 (escalate unless a tier
+   *  signals a full solve). Sweeping τ traces the cost/quality frontier. */
+  readonly escalationTau?: number;
+  /** docs/50 G3 — name of the benchmark-specific escalation evaluator to resolve
+   *  from the TopologyContext registry. Absent ⇒ self-report sentinel fallback. */
+  readonly escalationEvaluator?: string;
+  /** docs/51 — shell command a CascadeTopology's confidence evaluator runs in the
+   *  tier workspace (e.g. `python3 -m pytest -q`) to grade visible tests → escalation
+   *  confidence. `runTopology` wires it into a CommandEvaluator registered under
+   *  `escalationEvaluator`. Absent ⇒ self-report fallback. */
+  readonly escalationCommand?: string;
+  /** docs/50 §10.4 — multiple visible-check commands for a CascadeTopology gate, combined
+   *  weakest-link (ALL must clear τ): e.g. [compile-gate, authored-repro]. Takes precedence
+   *  over `escalationCommand` when both are set. */
+  readonly escalationCommands?: readonly string[];
+  /** docs/50 §10.4 — CriticLoopTopology visible-correctness gate: a shell command run in the
+   *  workspace after each executor turn. When its pass-rate ≥ `greenThreshold` the loop
+   *  APPROVES and STOPS immediately (skipping the critic), so a later round can't regress a
+   *  fix that already passes (the django-12708 failure). Absent ⇒ pure critic-driven approval. */
+  readonly greenCommand?: string;
+  /** Pass-rate threshold for `greenCommand` (default 1 = all visible tests pass). */
+  readonly greenThreshold?: number;
   /** V0.4.Q7 — explicit shared MAP scope override. */
   readonly mapScope?: string;
   /** V0.4.Q4 — `team send` routing entry point. */
@@ -281,6 +314,14 @@ export const TeamCoordinationSchema = z.object({
   communication: TeamCommunicationRulesSchema.optional(),
   idleTimeoutMs: z.number().int().positive().optional(),
   verifiedCompletion: z.object({ maxRounds: z.number().int().positive() }).optional(),
+  criticMaxIterations: z.number().int().positive().optional(),
+  residentDialogue: z.boolean().optional(),
+  escalationTau: z.number().min(0).max(1).optional(),
+  escalationEvaluator: z.string().min(1).optional(),
+  escalationCommand: z.string().min(1).optional(),
+  escalationCommands: z.array(z.string().min(1)).optional(),
+  greenCommand: z.string().min(1).optional(),
+  greenThreshold: z.number().min(0).max(1).optional(),
   mapScope: z.string().min(1).optional(),
   entryPoint: z
     .union([

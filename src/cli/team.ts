@@ -22,6 +22,17 @@ import { StatusResultSchema } from "../swarm/team-daemon-protocol.js";
 import { computeTeamPaths, teamsBaseDir } from "./team-paths.js";
 import { buildAdapterHost, type AdapterHostOptions } from "./adapter-host.js";
 import { attachLaneTrace } from "./trace-output.js";
+import {
+  EvaluatorRegistry,
+  CommandEvaluator,
+  CompositeEvaluator,
+  parsePytestPassRate,
+  type ExecFn,
+} from "../swarm/escalation-evaluator.js";
+import { SwarmUsageAggregator } from "../swarm/usage-aggregator.js";
+import { defaultCostModel } from "../core/cost-model.js";
+import type { LaneEvent } from "../swarm/events.js";
+import type { EventEmitter } from "node:events";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -396,6 +407,63 @@ export async function runTopology(opts: TopologyRunOptions): Promise<number> {
   const host = hostResult.host!;
   const resultsOut = fs.createWriteStream(opts.output, { flags: "a" });
   const traceRecorder = attachLaneTrace(host, opts.traceOutput);
+  // B3 (docs/51): accrue per-model spawn-tree usage off the same lane bus, so a
+  // cascade cell surfaces its per-tier token cost. Emitted to --output after the run.
+  const usageAgg = new SwarmUsageAggregator(defaultCostModel());
+  const laneBus = (host as unknown as { readonly events: EventEmitter }).events;
+  const usageHandler = (e: LaneEvent): void => usageAgg.record(e);
+  laneBus.on("lane_event", usageHandler);
+  // Per-tier (per-model) + team-total usage → --output for the CascadeAdapter/G2.
+  const teamUsageLine = (): string =>
+    JSON.stringify({ type: "team_usage", byModel: usageAgg.byModel(), team: usageAgg.teamTotal() }) + "\n";
+  const writeTeamUsage = (): void => {
+    resultsOut.write(teamUsageLine());
+  };
+  // Flush partial usage periodically so a HARD-KILLED run (agent timeout, exit 124) still
+  // reports per-tier cost — readTeamUsage takes the LAST team_usage line, so the final
+  // write in `finally` wins on a clean exit (docs/50 §10.4 step 2).
+  const usageFlush = setInterval(writeTeamUsage, 20_000);
+  if (typeof usageFlush.unref === "function") usageFlush.unref();
+  // docs/51 — build the CascadeTopology confidence evaluator from the spec's
+  // `escalationCommand` (a shell command run in the tier workspace → visible-test
+  // pass-rate). Pairs with `escalationEvaluator` (the registry key the topology
+  // resolves); absent ⇒ the cascade uses the self-report fallback.
+  const shellExec: ExecFn = (command, execOpts) =>
+    new Promise((resolve) => {
+      child_process.exec(
+        command,
+        { cwd: execOpts?.cwd, timeout: execOpts?.timeoutMs, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
+        (err, stdout, stderr) => {
+          const code =
+            err && typeof (err as { code?: unknown }).code === "number"
+              ? (err as { code: number }).code
+              : err
+                ? 1
+                : 0;
+          resolve({ exitCode: code, stdout: stdout ?? "", stderr: stderr ?? "" });
+        },
+      );
+    });
+  // A CascadeTopology reads `escalation.registry`; a CriticLoopTopology's stop-on-green
+  // reads only `escalation.exec`. `escalationCommands` (composite, weakest-link — ALL must
+  // clear τ) supersedes `escalationCommand`; a bare `greenCommand` still needs the exec.
+  let escalation: { registry?: EvaluatorRegistry; exec: ExecFn } | undefined;
+  const evalName = spec.coordination.escalationEvaluator ?? "command";
+  if (spec.coordination.escalationCommands !== undefined && spec.coordination.escalationCommands.length > 0) {
+    const children = spec.coordination.escalationCommands.map(
+      (command, i) => new CommandEvaluator({ name: `${evalName}-${i}`, command, parse: parsePytestPassRate }),
+    );
+    const registry = new EvaluatorRegistry().register(new CompositeEvaluator(evalName, children));
+    escalation = { registry, exec: shellExec };
+  } else if (spec.coordination.escalationCommand !== undefined) {
+    const registry = new EvaluatorRegistry().register(
+      new CommandEvaluator({ name: evalName, command: spec.coordination.escalationCommand, parse: parsePytestPassRate }),
+    );
+    escalation = { registry, exec: shellExec };
+  } else if (spec.coordination.greenCommand !== undefined) {
+    escalation = { exec: shellExec }; // critic-loop green check needs only the workspace exec
+  }
+
   const orch = new Orchestrator({
     concurrency: opts.concurrency,
     permissionMode: opts.permissionMode,
@@ -403,6 +471,11 @@ export async function runTopology(opts: TopologyRunOptions): Promise<number> {
     eventsOut: process.stderr,
     host,
     ...(observer !== undefined && { observer }),
+    ...(escalation !== undefined && { escalation }),
+    // docs/52 — deterministic per-model usage: topologies feed each worker's
+    // awaited result usage here, so a dropped async `message_stop` can't zero
+    // the cell's team_usage (the lane-bus race hit ~22% of advisor cells).
+    recordUsage: (agentId, model, usage) => usageAgg.setDirectUsage(agentId, model, usage),
   });
 
   // 4. Run.
@@ -413,8 +486,20 @@ export async function runTopology(opts: TopologyRunOptions): Promise<number> {
     result = await orch.runTeam(spec);
     elapsed = Date.now() - startedAt;
   } finally {
+    clearInterval(usageFlush);
+    laneBus.off("lane_event", usageHandler);
     await traceRecorder?.close();
     await new Promise<void>((resolve) => resultsOut.end(resolve));
+    // Final, authoritative team_usage line — written SYNCHRONOUSLY, after the async
+    // stream is closed, so it is guaranteed on disk before `process.exit`. The async
+    // stream's last write could be dropped when its flush raced process teardown,
+    // leaving readers with a stale/empty last line and a $0 cell (docs/52). This
+    // wins as the last line; a periodic line remains as fallback if it throws.
+    try {
+      fs.appendFileSync(opts.output, teamUsageLine());
+    } catch {
+      /* best-effort */
+    }
   }
 
   process.stderr.write(

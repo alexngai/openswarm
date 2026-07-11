@@ -66,6 +66,12 @@ import type { NormalizedEvent, AgentId } from "../core/types.js";
 import type { RunConfig } from "../engine/index.js";
 import { buildSystemPrompt, applyPlanMode } from "../engine/default-system-prompt.js";
 import {
+  ensureScratchpadDir,
+  formatScratchpadForSystemPrompt,
+  resolveScratchpadDir,
+  SCRATCHPAD_ENV_VAR,
+} from "../engine/scratchpad.js";
+import {
   loadProjectInstructions,
   formatInstructionsForSystemPrompt,
 } from "../engine/project-instructions.js";
@@ -401,15 +407,36 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   // `--system-prompt` fully REPLACES the default base prompt; `--append-system-prompt`
   // layers onto it (or onto the default). Lets an evaluator/optimizer treat the system
   // prompt as a tunable lever (e.g. inject a test-driven reproduce→edit→verify loop).
+  // Session scratchpad (Claude Code parity): a session-scoped temp dir the
+  // agent is steered toward for throwaway files. Created eagerly; exported
+  // via OPENSWARM_SCRATCHPAD_DIR so bash validation exempts it and spawned
+  // workers inherit it (the subprocess spawner spreads process.env).
+  // Allocation failure is non-fatal — the run proceeds without a scratchpad.
+  let scratchpadDir: string | undefined;
+  try {
+    scratchpadDir = ensureScratchpadDir(
+      resolveScratchpadDir(process.cwd(), sessionId),
+    );
+    process.env[SCRATCHPAD_ENV_VAR] = scratchpadDir;
+  } catch {
+    scratchpadDir = undefined;
+  }
   const baseSystemPrompt =
     opts.systemPromptOverride !== undefined
       ? resolvePromptValue(opts.systemPromptOverride)
       : engine.id === "native" || engine.id === "hardened-native"
         ? buildSystemPrompt({
             cwd: process.cwd(),
-            extensions: formatInstructionsForSystemPrompt(
-              loadProjectInstructions(process.cwd()),
-            ),
+            extensions: [
+              formatInstructionsForSystemPrompt(
+                loadProjectInstructions(process.cwd()),
+              ),
+              scratchpadDir !== undefined
+                ? formatScratchpadForSystemPrompt(scratchpadDir)
+                : "",
+            ]
+              .filter((s) => s.length > 0)
+              .join("\n\n"),
           })
         : "";
   const appendText =

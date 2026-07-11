@@ -8,6 +8,7 @@
  *     peers dynamically via `agent({team: "self", ...})`
  *   - `CommitteeTopology` — parallel drafts, then a judge selects/merges
  *   - `CriticLoopTopology` — author/critic revision loop
+ *   - `CascadeTopology` — ordered cheap→expensive tiers, escalate below gate τ
  */
 
 export { FanoutTopology } from "./fanout.js";
@@ -16,3 +17,4 @@ export { PeerTeamTopology } from "./peer-team.js";
 export { CoordinatorTopology } from "./coordinator.js";
 export { CommitteeTopology } from "./committee.js";
 export { CriticLoopTopology } from "./critic-loop.js";
+export { CascadeTopology } from "./cascade.js";

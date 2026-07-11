@@ -713,12 +713,21 @@ export class HardenedNativeEngine implements AgentEngine {
       if (fatalError) return;
       if (streamErrored) return;
 
-      // 3c. Post-turn bookkeeping.
+      // 3c. Post-turn bookkeeping. Accumulate the cache fields too — dropping them
+      // here made the headless `message_stop` usage (the only ledger eval harnesses
+      // see) structurally report 0 cache reads, so the TE-16 prompt-cache fix was
+      // unverifiable from eval telemetry (docs/53 TE-17).
       this.cumulativeUsage = {
         inputTokens:
           this.cumulativeUsage.inputTokens + turnUsage.inputTokens,
         outputTokens:
           this.cumulativeUsage.outputTokens + turnUsage.outputTokens,
+        cacheReadInputTokens:
+          (this.cumulativeUsage.cacheReadInputTokens ?? 0) +
+          (turnUsage.cacheReadInputTokens ?? 0),
+        cacheWriteInputTokens:
+          (this.cumulativeUsage.cacheWriteInputTokens ?? 0) +
+          (turnUsage.cacheWriteInputTokens ?? 0),
       };
 
       const mergedContent: AssistantBlock[] = [];

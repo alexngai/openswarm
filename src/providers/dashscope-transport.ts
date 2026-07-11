@@ -23,6 +23,7 @@ import type {
 import type { StopReason, ProviderError } from "../core/types.js";
 import { providerMessagesToVercel } from "./message-replay.js";
 import { toolSpecsToVercelTools } from "./tool-translation.js";
+import { mapVercelUsage } from "./vercel-usage.js";
 import { dashscopePreflight } from "./dashscope-preflight.js";
 import { classifyProviderError } from "./error-classifier.js";
 import { getDashScopeModelCapability } from "./capability-catalog.js";
@@ -198,13 +199,7 @@ export class DashScopeTransportProvider implements TransportProvider {
           yield {
             type: "finish",
             stopReason,
-            usage: {
-              inputTokens: usage.inputTokens ?? 0,
-              outputTokens: usage.outputTokens ?? 0,
-              ...(usage.inputTokenDetails?.cacheReadTokens !== undefined
-                ? { cacheReadInputTokens: usage.inputTokenDetails.cacheReadTokens }
-                : {}),
-            },
+            usage: mapVercelUsage(usage),
           };
           break;
         }

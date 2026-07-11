@@ -249,7 +249,11 @@ describe("HardenedNativeEngine: text-only turn", () => {
     expect(events).toEqual([
       { type: "text_delta", text: "hello" },
       { type: "text_delta", text: " world" },
-      { type: "message_stop", stopReason: "end_turn", usage: DEFAULT_USAGE },
+      {
+        type: "message_stop",
+        stopReason: "end_turn",
+        usage: { ...DEFAULT_USAGE, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 },
+      },
     ]);
   });
 });
@@ -570,11 +574,47 @@ describe("HardenedNativeEngine: cumulative usage", () => {
     expect(engine.getCumulativeUsage()).toEqual({
       inputTokens: 10,
       outputTokens: 5,
+      cacheReadInputTokens: 0,
+      cacheWriteInputTokens: 0,
     });
     await collect(engine.run(baseConfig()));
     expect(engine.getCumulativeUsage()).toEqual({
       inputTokens: 17,
       outputTokens: 8,
+      cacheReadInputTokens: 0,
+      cacheWriteInputTokens: 0,
+    });
+  });
+
+  it("accumulates cacheRead/cacheWrite tokens across turns (TE-17: the headless ledger must see cache hits)", async () => {
+    const provider = new MockProvider({
+      scripts: [
+        [
+          { type: "text-delta", text: "a" },
+          {
+            type: "finish",
+            stopReason: "end_turn",
+            usage: { inputTokens: 10, outputTokens: 5, cacheReadInputTokens: 100, cacheWriteInputTokens: 20 },
+          },
+        ],
+        [
+          { type: "text-delta", text: "b" },
+          {
+            type: "finish",
+            stopReason: "end_turn",
+            usage: { inputTokens: 7, outputTokens: 3, cacheReadInputTokens: 50 },
+          },
+        ],
+      ],
+    });
+    const engine = new HardenedNativeEngine({ provider });
+    await collect(engine.run(baseConfig()));
+    await collect(engine.run(baseConfig()));
+    expect(engine.getCumulativeUsage()).toEqual({
+      inputTokens: 17,
+      outputTokens: 8,
+      cacheReadInputTokens: 150,
+      cacheWriteInputTokens: 20,
     });
   });
 });
@@ -854,6 +894,8 @@ describe("HardenedNativeEngine: retry", () => {
     expect(engine.getCumulativeUsage()).toEqual({
       inputTokens: 10,
       outputTokens: 5,
+      cacheReadInputTokens: 0,
+      cacheWriteInputTokens: 0,
     });
   });
 

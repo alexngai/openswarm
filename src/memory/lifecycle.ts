@@ -10,6 +10,7 @@
  * - onSessionEnd: archive session and shut down providers
  */
 
+import * as crypto from "node:crypto";
 import type { AgentId } from "../core/types.js";
 import type {
   MemoryFragment,
@@ -119,19 +120,115 @@ export function formatMemoryFragments(fragments: MemoryFragment[]): string | nul
   return sections.join("\n\n");
 }
 
+// ---------------------------------------------------------------------------
+// Injection budget + change tracking (docs/53 TE-1 / TE-2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Aggregate byte budget for the injected memory block. The coordinator caps
+ * fragment COUNT (50) but not bytes — a single curated-memory file rides in
+ * whole, so without this the block is unbounded. Override:
+ * OPENSWARM_MEMORY_MAX_BYTES.
+ */
+const MEMORY_MAX_BYTES = (() => {
+  const env = Number(process.env.OPENSWARM_MEMORY_MAX_BYTES);
+  return Number.isFinite(env) && env > 0 ? env : 16 * 1024;
+})();
+
+const FRAGMENT_TRUNCATION_MARKER = "\n[memory fragment truncated to fit budget]";
+
+export interface BudgetedFragments {
+  readonly kept: MemoryFragment[];
+  readonly droppedCount: number;
+  readonly droppedBytes: number;
+}
+
+/**
+ * Keep fragments in relevance order (stable — providers' own order breaks
+ * ties) until the byte budget is exhausted; drop the rest. If the single most
+ * relevant fragment alone exceeds the budget it is truncated rather than
+ * dropped, so memory never silently disappears entirely.
+ */
+export function budgetFragments(
+  fragments: MemoryFragment[],
+  maxBytes: number = MEMORY_MAX_BYTES,
+): BudgetedFragments {
+  const ranked = fragments
+    .map((fragment, i) => ({ fragment, i }))
+    .sort(
+      (a, b) =>
+        (b.fragment.relevance ?? 0) - (a.fragment.relevance ?? 0) || a.i - b.i,
+    )
+    .map((r) => r.fragment);
+
+  const kept: MemoryFragment[] = [];
+  let used = 0;
+  let droppedCount = 0;
+  let droppedBytes = 0;
+  for (const fragment of ranked) {
+    const bytes = Buffer.byteLength(fragment.content, "utf8");
+    if (used + bytes <= maxBytes) {
+      kept.push(fragment);
+      used += bytes;
+    } else if (kept.length === 0) {
+      // Top fragment alone exceeds the budget — truncate, don't drop.
+      const sliced =
+        fragment.content.slice(0, Math.max(0, maxBytes - FRAGMENT_TRUNCATION_MARKER.length)) +
+        FRAGMENT_TRUNCATION_MARKER;
+      kept.push({ ...fragment, content: sliced });
+      used = maxBytes;
+    } else {
+      droppedCount++;
+      droppedBytes += bytes;
+    }
+  }
+  return { kept, droppedCount, droppedBytes };
+}
+
+/**
+ * Last-injected memory-block hash per (session, agent) — the change-dedup
+ * that stops re-injecting an unchanged block every turn (docs/53 TE-2; the
+ * Codex world-state pattern, minus history surgery). Bounded LRU-ish: oldest
+ * entry evicted past 256 keys.
+ */
+const lastInjectedHash = new Map<string, string>();
+const LAST_INJECTED_MAX_KEYS = 256;
+
+function injectionKey(context: TurnContext): string {
+  return `${context.sessionId ?? ""}|${String(context.agentId ?? "")}`;
+}
+
+function blockHash(block: string): string {
+  return crypto.createHash("sha1").update(block).digest("hex");
+}
+
+/** Test seam: forget change-dedup state (e.g. between simulated sessions). */
+export function resetMemoryInjectionState(): void {
+  lastInjectedHash.clear();
+}
+
 /**
  * Surface memory into a turn's inputs — the single seam used by every
  * engine-run site (worker + orchestrator). Registers providers (idempotent),
- * runs enrichTurn, then folds the memory block into the system prompt when it
- * is non-empty, else prepends it to the user prompt (the SDK-preset path uses
- * an empty system prompt, so writing there would clobber the preset).
+ * runs enrichTurn, budgets the fragments (docs/53 TE-1), then prepends the
+ * block to the USER prompt — never the system prompt (docs/53 TE-2): a
+ * memory block that varies turn-to-turn in the system prompt invalidates the
+ * provider prompt cache for the whole static prefix (system prompt + tool
+ * definitions) on every call of every worker.
+ *
+ * Change-dedup: an unchanged block is injected once per (session, agent) and
+ * skipped on subsequent turns — it is already in the conversation history.
+ * When the block CHANGES, the new one carries a replacement notice (the Codex
+ * world-state pattern).
  *
  * Best-effort: returns the inputs unchanged on any failure, so memory never
  * blocks a turn. Set OPENSWARM_MEMORY_DEBUG=1 to log what was injected.
  *
- * `surfacedSkills` reports the skills injected into this turn so callers that
- * record sessions can declare the exposure to sessionlog (`SkillsSurfaced`) —
- * cognitive-core's exposure attribution depends on that declaration.
+ * `surfacedSkills` reports the skills present in this turn's context so
+ * callers that record sessions can declare the exposure to sessionlog
+ * (`SkillsSurfaced`) — cognitive-core's exposure attribution depends on it.
+ * Skills in a previously-injected (deduped) block are still reported: they
+ * remain in context even when no new block is injected this turn.
  */
 export interface EnrichedTurnInputs {
   readonly systemPrompt: string;
@@ -154,27 +251,47 @@ export async function enrichTurnInputs(
     return { systemPrompt, prompt, surfacedSkills: [] };
   }
 
-  const surfacedSkills = fragments
+  const { kept, droppedCount, droppedBytes } = budgetFragments(fragments);
+
+  // Exposure attribution reflects what actually enters context — kept only.
+  const surfacedSkills = kept
     .map((f) => f.skill)
     .filter((s): s is SurfacedSkill => s !== undefined);
 
-  const block = formatMemoryFragments(fragments);
+  const block = formatMemoryFragments(kept);
   if (!block) return { systemPrompt, prompt, surfacedSkills };
+
+  // Unchanged since the last injection for this (session, agent) → the block
+  // is already in history; skip re-injection (docs/53 TE-2).
+  const key = injectionKey(context);
+  const hash = blockHash(block);
+  const previous = lastInjectedHash.get(key);
+  if (previous === hash) {
+    return { systemPrompt, prompt, surfacedSkills };
+  }
+  if (lastInjectedHash.size >= LAST_INJECTED_MAX_KEYS && !lastInjectedHash.has(key)) {
+    const oldest = lastInjectedHash.keys().next().value;
+    if (oldest !== undefined) lastInjectedHash.delete(oldest);
+  }
+  lastInjectedHash.set(key, hash);
 
   if (process.env.OPENSWARM_MEMORY_DEBUG === "1") {
     process.stderr.write(
-      `[memory] injected ${fragments.length} fragment(s): ${fragments
-        .map((f) => f.source)
-        .join(", ")}\n`,
+      `[memory] injected ${kept.length} fragment(s)` +
+        (droppedCount > 0 ? ` (dropped ${droppedCount}, ${droppedBytes} bytes over budget)` : "") +
+        `: ${kept.map((f) => f.source).join(", ")}\n`,
     );
   }
 
-  if (systemPrompt.trim().length > 0) {
-    return { systemPrompt: `${systemPrompt}\n\n${block}`, prompt, surfacedSkills };
-  }
+  const replaceNotice =
+    previous !== undefined
+      ? "This memory context replaces all previously provided memory context.\n\n"
+      : "";
+  const wrapped =
+    `<memory-context>\n# Relevant memory\n${replaceNotice}${block}\n</memory-context>`;
   return {
     systemPrompt,
-    prompt: `# Relevant memory\n${block}\n\n# Task\n${prompt}`,
+    prompt: `${wrapped}\n\n# Task\n${prompt}`,
     surfacedSkills,
   };
 }

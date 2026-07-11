@@ -389,12 +389,22 @@ export class NativeEngine implements AgentEngine {
 
       if (streamErrored) return;
 
-      // 3c. Post-turn bookkeeping.
+      // 3c. Post-turn bookkeeping. Sum ALL four token categories — dropping the
+      // cache fields here made the final `message_stop` usage (the only ledger
+      // subprocess workers forward) structurally report 0 cache reads, hiding
+      // real provider cache hits from eval telemetry (docs/53 TE-17; mirrors
+      // the hardened engine's tally).
       this.cumulativeUsage = {
         inputTokens:
           this.cumulativeUsage.inputTokens + turnUsage.inputTokens,
         outputTokens:
           this.cumulativeUsage.outputTokens + turnUsage.outputTokens,
+        cacheReadInputTokens:
+          (this.cumulativeUsage.cacheReadInputTokens ?? 0) +
+          (turnUsage.cacheReadInputTokens ?? 0),
+        cacheWriteInputTokens:
+          (this.cumulativeUsage.cacheWriteInputTokens ?? 0) +
+          (turnUsage.cacheWriteInputTokens ?? 0),
       };
 
       // Merge consecutive text blocks for a tidy assistant message.

@@ -389,7 +389,10 @@ describe("stream()", () => {
       type: "finish",
       stopReason: "max_tokens",
       usage: {
-        inputTokens: 100,
+        // OpenAI reports cached tokens as a SUBSET of prompt tokens; OpenSwarm's
+        // Usage convention is DISJOINT categories (docs/53), so 100 total with
+        // 30 cached normalizes to 70 fresh + 30 cache-read.
+        inputTokens: 70,
         outputTokens: 50,
         cacheReadInputTokens: 30,
       },

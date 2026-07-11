@@ -6,11 +6,14 @@
  *   - stdout and stderr are collected separately; the result is stdout
  *     (leading blank lines stripped, trailing whitespace trimmed) followed
  *     by stderr on its own line — not interleaved, not labeled.
- *   - stdout is head-truncated at 30,000 chars with a
- *     "... [N lines truncated] ..." marker (BASH_MAX_OUTPUT_LENGTH).
+ *   - stdout is truncated at 30,000 chars (BASH_MAX_OUTPUT_LENGTH), keeping
+ *     head AND tail with a middle "... [N lines truncated] ..." marker —
+ *     deliberate deviation from Claude Code's head-only shape (docs/53 TE-6):
+ *     test/build verdicts live at the END of long output. The full output is
+ *     spilled to a temp file the marker points at, so nothing is lost.
  *   - non-zero exit is an error whose message is "Exit code N" first, then
  *     stderr, then stdout, middle-truncated at 10,000 chars with
- *     "... [N characters truncated] ...".
+ *     "... [N characters truncated] ..." (also spilled when truncated).
  *   - timeouts surface as "Command timed out after 2m 0s" (humanized).
  *   - aborts append "<error>Command was aborted before completion</error>".
  *   - background commands stream to an output file and return
@@ -74,7 +77,9 @@ const spec: ToolSpec = {
   description:
     "Run a one-shot shell command via /bin/bash. " +
     "Use `workdir` to run in a different directory instead of `cd <dir> && ...`. " +
-    `If the output exceeds ${MAX_OUTPUT_CHARS} characters, output will be truncated before being returned to you. ` +
+    `If the output exceeds ${MAX_OUTPUT_CHARS} characters, the middle is truncated (start and end kept) ` +
+    "and the complete output is saved to a file whose path appears in the truncation marker — " +
+    "read or grep that file instead of re-running the command. " +
     "Default timeout is 120000 ms (2 minutes); override with `timeout` (ms, max 600000). " +
     "Commands that time out or exit non-zero return an error result that includes " +
     "the exit code and command output. " +
@@ -103,30 +108,58 @@ export function formatDuration(ms: number): string {
 }
 
 /**
- * Head truncation at `max` chars with a trailing lines-truncated marker —
- * Claude Code's stdout truncation shape.
+ * Head+tail truncation at `max` chars with a middle lines-truncated marker.
+ * Keeps the start (command banner/context) AND the end (errors, test verdicts)
+ * of long output — docs/53 TE-6; pi keeps the tail for the same reason. When
+ * `fullOutputPath` is set the marker names it so the elided middle is
+ * recoverable without re-running the command.
  */
-export function truncateOutput(text: string, max: number = MAX_OUTPUT_CHARS): string {
+export function truncateOutput(
+  text: string,
+  max: number = MAX_OUTPUT_CHARS,
+  fullOutputPath?: string,
+): string {
   if (text.length <= max) return text;
-  const head = text.slice(0, max);
+  const keep = Math.floor(max / 2);
+  const head = text.slice(0, keep);
+  const tail = text.slice(-keep);
   let truncatedLines = 1;
-  for (let i = max; i < text.length; i++) {
+  for (let i = keep; i < text.length - keep; i++) {
     if (text[i] === "\n") truncatedLines++;
   }
-  return `${head}\n\n... [${truncatedLines} lines truncated] ...`;
+  const where = fullOutputPath !== undefined ? `; full output: ${fullOutputPath}` : "";
+  return `${head}\n\n... [${truncatedLines} lines truncated${where}] ...\n\n${tail}`;
 }
 
 /**
  * Middle truncation for error content: first 5000 + last 5000 chars with a
- * chars-truncated marker — Claude Code's error formatting shape.
+ * chars-truncated marker — Claude Code's error formatting shape. The optional
+ * `fullOutputPath` names the spilled complete content (docs/53 TE-6).
  */
-function truncateErrorContent(text: string): string {
+function truncateErrorContent(text: string, fullOutputPath?: string): string {
   if (text.length <= MAX_ERROR_CHARS) return text;
   const keep = MAX_ERROR_CHARS / 2;
   const head = text.slice(0, keep);
   const tail = text.slice(-keep);
   const omitted = text.length - head.length - tail.length;
-  return `${head}\n\n... [${omitted} characters truncated] ...\n\n${tail}`;
+  const where = fullOutputPath !== undefined ? `; full output: ${fullOutputPath}` : "";
+  return `${head}\n\n... [${omitted} characters truncated${where}] ...\n\n${tail}`;
+}
+
+/**
+ * Best-effort spill of full (cleansed) output to a temp file so truncation is
+ * lossless. Returns undefined when the write fails — the marker then simply
+ * omits the path.
+ */
+function spillFullOutput(text: string): string | undefined {
+  try {
+    const rand = crypto.randomBytes(4).toString("hex");
+    const p = path.join(os.tmpdir(), `openswarm-bash-${rand}.out`);
+    fsSync.writeFileSync(p, text);
+    return p;
+  } catch {
+    return undefined;
+  }
 }
 
 /** stdout normalization: strip leading blank lines, trim trailing whitespace. */
@@ -212,17 +245,23 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
       // so the preserved head carries signal, not escape codes.
       const rawStdout = Buffer.concat(stdoutChunks).toString("utf8");
       const rawStderr = Buffer.concat(stderrChunks).toString("utf8");
-      const stdout = truncateOutput(
-        normalizeStdout(cleanOutput(rawStdout, { command: input.command }).text),
+      const cleanedStdout = normalizeStdout(
+        cleanOutput(rawStdout, { command: input.command }).text,
       );
+      // Spill BEFORE truncating so the elided middle stays recoverable (TE-6).
+      const stdoutSpill =
+        cleanedStdout.length > MAX_OUTPUT_CHARS ? spillFullOutput(cleanedStdout) : undefined;
+      const stdout = truncateOutput(cleanedStdout, MAX_OUTPUT_CHARS, stdoutSpill);
       let stderr = cleanOutput(rawStderr, { command: input.command }).text.trim();
 
       if (timedOut) {
         stderr = `${stderr ? `${stderr}\n` : ""}Command timed out after ${formatDuration(timeoutMs)}`;
+        const content = [stderr, stdout].filter(Boolean).join("\n");
         resolve({
           status: "error",
           message: truncateErrorContent(
-            [stderr, stdout].filter(Boolean).join("\n"),
+            content,
+            content.length > MAX_ERROR_CHARS ? spillFullOutput(content) : undefined,
           ),
         });
         return;
@@ -243,7 +282,13 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
         const content =
           [`Exit code ${code}`, stderr, stdout].filter(Boolean).join("\n").trim() ||
           "Command failed with no output";
-        resolve({ status: "error", message: truncateErrorContent(content) });
+        resolve({
+          status: "error",
+          message: truncateErrorContent(
+            content,
+            content.length > MAX_ERROR_CHARS ? spillFullOutput(content) : undefined,
+          ),
+        });
         return;
       }
 

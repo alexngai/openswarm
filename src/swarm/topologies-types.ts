@@ -90,6 +90,31 @@ export interface TopologyContext {
    * Adoption is per-topology; unadopted topologies ignore it.
    */
   readonly checkpoint?: import("./team-checkpoint.js").TeamCheckpointStore;
+  /**
+   * docs/50 G3 — escalation-signal injection for CascadeTopology. `registry`
+   * resolves `coordination.escalationEvaluator` to a benchmark-specific evaluator;
+   * `exec` lets execution-based evaluators run commands in the tier workspace;
+   * `task` is opaque per-task metadata the evaluator understands. All optional —
+   * absent ⇒ the cascade falls back to the self-report evaluator.
+   */
+  readonly escalation?: {
+    readonly registry?: import("./escalation-evaluator.js").EvaluatorRegistry;
+    readonly exec?: import("./escalation-evaluator.js").ExecFn;
+    readonly task?: unknown;
+  };
+  /**
+   * docs/52 — authoritative usage sink. Multi-worker topologies call this with
+   * each worker's awaited AgentResult usage `(agentId, model, usage)`, so the
+   * team's per-model token tally comes from the deterministic result rather than
+   * the async lane-bus `message_stop` (which they intermittently drop entirely).
+   * Wired by the CLI to `SwarmUsageAggregator.setDirectUsage`; absent in contexts
+   * with no aggregator (topologies simply skip the call).
+   */
+  readonly recordUsage?: (
+    agentId: string,
+    model: string | undefined,
+    usage: import("../core/types.js").Usage,
+  ) => void;
 }
 
 /**
