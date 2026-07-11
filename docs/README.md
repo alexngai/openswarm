@@ -28,6 +28,7 @@ For end-user CLI reference (flags, model routing, tools, limitations, architectu
 - [51-eval-execution-plan.md](./51-eval-execution-plan.md) — operational plan for running the docs/50 study on swarmkit-eval: cascade-as-one-cell, the two-grader architecture, arms/measurement contract, staged fixit-local → SWE-E2B → vLLM (draft; extends 50)
 - [52-handoff-fidelity.md](./52-handoff-fidelity.md) — lossless multi-agent handoffs (diff + reason + trajectory) so a fair mono-vs-multi test is possible: external baseline (CC/OpenCode/Codex are all lossy-prose), OpenSwarm-primitive mapping, phased plan; Phase A landed (draft; extends 50/51)
 - [53-token-efficiency-plan.md](./53-token-efficiency-plan.md) — token-efficiency improvement tracker (TE-1…TE-15) + eval plan: memory-injection rework, pi-parity output caps, topology token budgets, tool-surface trims; measured against the cost-frontier harness (draft; extends 50/51)
+- [54-hard-slice-findings.md](./54-hard-slice-findings.md) — hard-slice eval findings: haiku↔gpt-5.5 capability gap ≈ 0 on Verified's 1–4h bucket (both 0.31), cascades tie at lower tokens (escalation = cost lever, not quality lever), one coordination-rescue cell (scikit-25102), advisor-resident malfunction; TE-16/18 cache fix validated at 88–95% (eval results; extends 50/52/53)
 - [48-compaction-design.md](./48-compaction-design.md) — Claude Code-aligned compaction redesign (trigger, microcompaction, in-session summarization, post-compact rebuild). Implemented (phases 1–6); follow-ups F1/F2 open
 
 ## Engines & parity
