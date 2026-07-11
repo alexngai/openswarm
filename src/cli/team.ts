@@ -414,10 +414,10 @@ export async function runTopology(opts: TopologyRunOptions): Promise<number> {
   const usageHandler = (e: LaneEvent): void => usageAgg.record(e);
   laneBus.on("lane_event", usageHandler);
   // Per-tier (per-model) + team-total usage → --output for the CascadeAdapter/G2.
+  const teamUsageLine = (): string =>
+    JSON.stringify({ type: "team_usage", byModel: usageAgg.byModel(), team: usageAgg.teamTotal() }) + "\n";
   const writeTeamUsage = (): void => {
-    resultsOut.write(
-      JSON.stringify({ type: "team_usage", byModel: usageAgg.byModel(), team: usageAgg.teamTotal() }) + "\n",
-    );
+    resultsOut.write(teamUsageLine());
   };
   // Flush partial usage periodically so a HARD-KILLED run (agent timeout, exit 124) still
   // reports per-tier cost — readTeamUsage takes the LAST team_usage line, so the final
@@ -488,9 +488,18 @@ export async function runTopology(opts: TopologyRunOptions): Promise<number> {
   } finally {
     clearInterval(usageFlush);
     laneBus.off("lane_event", usageHandler);
-    writeTeamUsage(); // final, authoritative usage line (wins as the last one)
     await traceRecorder?.close();
     await new Promise<void>((resolve) => resultsOut.end(resolve));
+    // Final, authoritative team_usage line — written SYNCHRONOUSLY, after the async
+    // stream is closed, so it is guaranteed on disk before `process.exit`. The async
+    // stream's last write could be dropped when its flush raced process teardown,
+    // leaving readers with a stale/empty last line and a $0 cell (docs/52). This
+    // wins as the last line; a periodic line remains as fallback if it throws.
+    try {
+      fs.appendFileSync(opts.output, teamUsageLine());
+    } catch {
+      /* best-effort */
+    }
   }
 
   process.stderr.write(

@@ -74,7 +74,16 @@ const COMPILE_CMD =
 
 /** Bedrock (haiku) + Azure (gpt-5.5) creds forwarded to the sandbox for the cross-provider cascade. */
 function providerEnv(): Record<string, string> {
-  const env: Record<string, string> = { CLAUDE_CODE_USE_BEDROCK: "1", OPENSWARM_TOOL_USE_WARMUP: "1" };
+  // OPENSWARM_NODE_CLI=1 forces the launcher (bin/openswarm.mjs) to run the freshly
+  // built `dist/cli.js` instead of a STALE bun-compiled platform binary. Without it,
+  // every sandbox ran old code that predated the usage-capture fixes, so team_usage
+  // reported $0/empty regardless of the tarball — the entire heterogeneity study's
+  // cost axis was measuring the wrong binary (docs/52).
+  const env: Record<string, string> = {
+    CLAUDE_CODE_USE_BEDROCK: "1",
+    OPENSWARM_TOOL_USE_WARMUP: "1",
+    OPENSWARM_NODE_CLI: "1",
+  };
   for (const k of [
     "AWS_BEARER_TOKEN_BEDROCK", "AWS_REGION", "AWS_DEFAULT_REGION",
     "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
@@ -264,7 +273,11 @@ export async function runCascadeSwe(): Promise<void> {
       : []),
   ];
 
-  const armIds = process.env.CS_ARM ? [process.env.CS_ARM] : arms.map((a) => a.arm.id);
+  // CS_ARM filters to a subset — accepts a single id or a comma list (e.g. a
+  // dual mono screen: CS_ARM=mono-small,mono-large). Empty ⇒ all arms.
+  const armIds = process.env.CS_ARM
+    ? process.env.CS_ARM.split(",").map((s) => s.trim()).filter(Boolean)
+    : arms.map((a) => a.arm.id);
   const all: Awaited<ReturnType<typeof runEval>> = [];
   for (const { arm, adapter } of arms) {
     if (!armIds.includes(arm.id)) continue;

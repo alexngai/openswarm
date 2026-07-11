@@ -252,4 +252,18 @@ describe("SwarmUsageAggregator — setDirectUsage (authoritative result usage)",
     });
     expect(agg.directUsage("a1").totalTokens).toBe(27 + 609 + 16031 + 7862);
   });
+
+  it("a ZERO worker result does NOT clobber accumulated message_stop usage", () => {
+    // Regression: the worker occasionally fails to capture usage and reports {0,0};
+    // that must not wipe what the streaming message_stop path already recorded, nor
+    // mark the agent authoritative (which would ignore later real usage).
+    const agg = new SwarmUsageAggregator();
+    agg.record(spawned("a1", undefined, "haiku"));
+    agg.record(messageStop("a1", { inputTokens: 100, outputTokens: 50 }));
+    agg.setDirectUsage("a1", "haiku", { inputTokens: 0, outputTokens: 0 });
+    expect(agg.directUsage("a1").totalTokens).toBe(150); // preserved, not zeroed
+    // a later real message_stop still accumulates (agent not locked authoritative)
+    agg.record(messageStop("a1", { inputTokens: 10, outputTokens: 5 }));
+    expect(agg.directUsage("a1").totalTokens).toBe(165);
+  });
 });

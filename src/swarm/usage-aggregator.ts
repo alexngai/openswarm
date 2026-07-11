@@ -212,6 +212,18 @@ export class SwarmUsageAggregator {
   setDirectUsage(agentId: string, model: string | undefined, usage: Usage): void {
     const acc = this.ensure(agentId);
     if (model !== undefined) acc.model = model;
+    const total =
+      (usage.inputTokens ?? 0) +
+      (usage.outputTokens ?? 0) +
+      (usage.cacheReadInputTokens ?? 0) +
+      (usage.cacheWriteInputTokens ?? 0);
+    // A zero result means the worker never captured usage (e.g. the engine surfaced
+    // no final message_stop). Do NOT overwrite — that would clobber whatever the
+    // streaming `message_stop` path already accumulated — and do NOT mark the agent
+    // authoritative, which would then make onMessageStop ignore the real usage.
+    // Keep only the model (for pricing). This is why a bad worker result no longer
+    // zeroes a cell (docs/52).
+    if (total === 0) return;
     acc.inputTokens = usage.inputTokens ?? 0;
     acc.outputTokens = usage.outputTokens ?? 0;
     acc.cacheReadInputTokens = usage.cacheReadInputTokens ?? 0;
