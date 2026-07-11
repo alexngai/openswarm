@@ -117,7 +117,24 @@ export class CriticLoopAdapter implements ExecutionAdapter {
     };
 
     const start = Date.now();
-    const r = await ws.run(cmd, { env, timeoutMs: this.opts.timeoutMs ?? 1_800_000 });
+    // Contain sandbox deaths (e.g. E2B "terminated" mid-run): one dying cell must
+    // not crash the whole sweep. A zero-token failed RawRun is recorded instead —
+    // aggregate()'s infra-failure guard already excludes it from frontier means.
+    let r: Awaited<ReturnType<typeof ws.run>>;
+    try {
+      r = await ws.run(cmd, { env, timeoutMs: this.opts.timeoutMs ?? 1_800_000 });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`[critic-loop] sandbox died for ${cell.task.id}: ${msg}`);
+      return {
+        output: `[env-error] sandbox died: ${msg.slice(0, 300)}`,
+        workdir: ws.root,
+        usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, totalTokens: 0 },
+        trajectory: [],
+        durationMs: Date.now() - start,
+        metadata: { cascade: { tiers: [this.opts.executorModel, this.opts.criticModel], perModel: {}, exitCode: -1, stderrTail: msg.slice(0, 500) } },
+      };
+    }
     const parsed = openSwarmParse(r.stdout);
 
     const teamUsage = await readTeamUsage(ws, resultsPath);
