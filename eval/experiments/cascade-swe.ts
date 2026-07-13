@@ -82,8 +82,11 @@ function providerEnv(): Record<string, string> {
   const env: Record<string, string> = {
     CLAUDE_CODE_USE_BEDROCK: "1",
     OPENSWARM_TOOL_USE_WARMUP: "1",
-    OPENSWARM_NODE_CLI: "1",
   };
+  // A/B toggle (docs/52): CS_STALE_BINARY=1 omits OPENSWARM_NODE_CLI so the sandbox launcher
+  // falls back to the STALE published platform binary (no usage capture) — reproducing the
+  // pre-fix path on identical infra to quantify the fix's effect. Default: fresh dist/cli.js.
+  if (process.env.CS_STALE_BINARY !== "1") env.OPENSWARM_NODE_CLI = "1";
   for (const k of [
     "AWS_BEARER_TOKEN_BEDROCK", "AWS_REGION", "AWS_DEFAULT_REGION",
     "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
