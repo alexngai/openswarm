@@ -193,6 +193,33 @@ function microcompactEnabled(): boolean {
   return !["0", "false", "off", "no"].includes(flag);
 }
 
+/**
+ * Microcompaction policy from env, for tuning the tool-result eviction lever
+ * without a rebuild. `OPENSWARM_MICROCOMPACT_KEEP_RECENT` overrides how many of
+ * the most-recent tool results are preserved (lower = more aggressive eviction,
+ * frees context but busts more of the prompt-cache prefix). `_MIN_SAVINGS`
+ * overrides the token-savings gate (lower = eviction fires on smaller sessions).
+ * Unset/invalid values fall back to the CC defaults inside microcompactMessages.
+ */
+export function microcompactPolicyFromEnv(): {
+  keepRecent?: number;
+  minSavingsTokens?: number;
+} {
+  const out: { keepRecent?: number; minSavingsTokens?: number } = {};
+  // NB: Number("") === 0, so guard empty/whitespace explicitly — an unset or blank
+  // knob must fall back to the CC default, not silently pin keepRecent to 0.
+  const parse = (raw: string | undefined): number | undefined => {
+    if (raw === undefined || raw.trim() === "") return undefined;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : undefined;
+  };
+  const kr = parse(process.env.OPENSWARM_MICROCOMPACT_KEEP_RECENT);
+  if (kr !== undefined) out.keepRecent = kr;
+  const ms = parse(process.env.OPENSWARM_MICROCOMPACT_MIN_SAVINGS);
+  if (ms !== undefined) out.minSavingsTokens = ms;
+  return out;
+}
+
 export interface PreTurnCompactionOutcome {
   readonly messages: ProviderMessage[];
   /** True when a full compaction ran (not micro/warn) — snapshot counter. */
@@ -261,6 +288,7 @@ export async function* preTurnCompaction(
   if (microcompactEnabled()) {
     const micro = microcompactMessages(messages, {
       ...(deps.sessionDir !== undefined ? { stateDir: deps.sessionDir } : {}),
+      ...microcompactPolicyFromEnv(),
     });
     if (micro !== null) {
       yield {
