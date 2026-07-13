@@ -80,7 +80,11 @@ export class CascadeAdapter implements ExecutionAdapter {
     const bin = this.opts.bin ?? "openswarm";
     const permissionMode = this.opts.permissionMode ?? "danger-full-access";
     const agentId = ctx.env?.AGENT_ID ?? "agent";
-    const dir = `.sbx/${agentId.replace(/[^\w.-]/g, "_")}`;
+    // Scratch (team.json + results.jsonl + trace.jsonl) MUST live OUTSIDE the workspace git repo:
+    // a tier that runs a `git clean`-style reset in /testbed would delete an in-repo `.sbx/` output
+    // before readTeamUsage reads it, silently zeroing the cell's cost (the advisor arm hit exactly
+    // this — docs/52). An absolute /tmp path is immune to /testbed git operations.
+    const dir = `/tmp/os-eval/${agentId.replace(/[^\w.-]/g, "_")}`;
 
     const prefix = this.opts.promptPrefix ? `${this.opts.promptPrefix}\n\n` : "";
     const members = this.opts.tiers.map((t, i) => ({
