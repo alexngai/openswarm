@@ -123,6 +123,24 @@ export class CriticLoopTopology implements Topology {
       }
       return r;
     };
+    // docs/54 F6 — a long-lived worker that CLOSES before emitting its
+    // `task_result` makes `wait()`/`runMore()` resolve via the host's
+    // close-failure synthesis: {status:"failure", wallClockMs:0, no usage,
+    // error:"…before emitting task_result"} (standalone-host.ts). In resident
+    // mode that silently aborts the whole loop with empty output and $0 usage —
+    // the exact F6 no-op signature. The `runMore` path already cold-spawns on a
+    // THROWN death, but the initial long-lived spawn (and a runMore that RESOLVES
+    // to a close-failure rather than throwing) had no equivalent guard. Detect
+    // precisely that close-failure and retry the turn ONCE as a cold
+    // (non-long-lived) spawn — which runs to completion and exits — so a
+    // transient worker death degrades gracefully to cold instead of no-oping the
+    // cell. Scoped to the close signature: a genuine task failure is still
+    // surfaced, never masked.
+    const isWorkerCloseFailure = (r: AgentResult): boolean =>
+      r.status === "failure" &&
+      r.wallClockMs === 0 &&
+      r.usage === undefined &&
+      r.error.includes("before emitting task_result");
     const runTurn = async (
       ref: { h: AgentHandle | undefined },
       member: MemberSpec,
@@ -130,15 +148,25 @@ export class CriticLoopTopology implements Topology {
     ): Promise<AgentResult> => {
       if (resident && ref.h !== undefined) {
         try {
-          return recordUsage(ref.h, member, await ref.h.runMore(prompt));
+          const r = recordUsage(ref.h, member, await ref.h.runMore(prompt));
+          if (!isWorkerCloseFailure(r)) return r;
         } catch {
-          ref.h = undefined; // worker died → cold-spawn fallback below
+          /* worker threw → fall through to re-spawn below */
         }
+        ref.h = undefined; // worker died → cold-spawn fallback below
       }
       ref.h = await team.spawnMember(
         resident ? { ...member, prompt, longLived: true } : { ...member, prompt },
       );
-      return recordUsage(ref.h, member, await ref.h.wait());
+      const r = recordUsage(ref.h, member, await ref.h.wait());
+      if (resident && isWorkerCloseFailure(r)) {
+        // The long-lived worker closed before its first task_result. Retry the
+        // turn once as a cold spawn so the cell recovers rather than silently
+        // no-oping (docs/54 F6). Subsequent rounds re-spawn as usual.
+        ref.h = await team.spawnMember({ ...member, prompt });
+        return recordUsage(ref.h, member, await ref.h.wait());
+      }
+      return r;
     };
 
     try {

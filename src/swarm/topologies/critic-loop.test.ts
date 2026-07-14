@@ -406,6 +406,56 @@ describe("CriticLoopTopology", () => {
     expect(result.aggregateOutput).toBe("draft v2");
   });
 
+  it("resident dialogue: recovers via cold spawn when the long-lived worker closes before task_result (docs/54 F6)", async () => {
+    // A long-lived worker that exits BEFORE its first task_result makes wait()
+    // resolve via the host's close-failure synthesis ({status:"failure",
+    // wallClockMs:0, no usage, error:"…before emitting task_result"}). Pre-fix
+    // that silently aborted the whole cell with empty output + $0 usage — the
+    // F6 no-op signature. The executor's first (long-lived) spawn close-fails;
+    // the loop must retry the turn as a cold spawn and recover.
+    const closeFailure: AgentResult = {
+      status: "failure",
+      error: "worker exited (code=1) before emitting task_result",
+      wallClockMs: 0,
+    };
+    const rh = residentFakeHost({
+      executor: [closeFailure, s("recovered draft")],
+      critic: [s("APPROVED")],
+    });
+    const pool = new WorkerPool(8);
+    const tmp = await mkdtemp(join(tmpdir(), "critic-loop-f6-"));
+    const deadLetter = new DeadLetterWriter(join(tmp, "dl.jsonl"));
+    const resultsOut = new PassThrough();
+    resultsOut.resume();
+    cleanups.push(async () => {
+      await deadLetter.close();
+      await rm(tmp, { recursive: true, force: true });
+    });
+    const ctx: TopologyContext = {
+      host: rh.host,
+      pool,
+      resultsOut,
+      deadLetter,
+      permissionMode: "workspace-write",
+    };
+    const spec: TeamSpec = {
+      name: "critic-loop-test",
+      topology: "critic-loop",
+      members: [member("exec", "implement feature", "executor"), member("crit", "review", "reviewer")],
+      coordination: { completion: { kind: "until_signal", signal: "APPROVED" }, residentDialogue: true },
+    };
+    const result = await new CriticLoopTopology().run(spec, ctx);
+    // Executor spawned twice: the long-lived spawn that close-failed, then the
+    // cold retry that recovered. Critic spawned once (long-lived) and approved.
+    const execSpawns = rh.spawns.filter((sp) => sp.role === "executor");
+    expect(execSpawns).toHaveLength(2);
+    expect(execSpawns[0]!.longLived).toBe(true); // initial long-lived spawn
+    expect(execSpawns[1]!.longLived).toBe(false); // cold-spawn fallback
+    expect(result.succeeded).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(result.aggregateOutput).toBe("recovered draft");
+  });
+
   it("executor failure halts the loop with failed=1", async () => {
     const { ctx, harness, cleanup } = await makeCtx([
       f("LLM call failed"), // executor turn 1 fails
