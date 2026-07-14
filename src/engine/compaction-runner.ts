@@ -235,6 +235,19 @@ export function compactContextWindowFromEnv(fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+/**
+ * When `OPENSWARM_DISABLE_FULL_COMPACTION` is truthy, the AUTO full (summarizing) compaction is
+ * skipped — micro-eviction becomes the ONLY context-management mechanism. Used with a fake-low
+ * `OPENSWARM_COMPACT_CONTEXT_WINDOW` to exercise the tool-result eviction lever IN ISOLATION (no
+ * summarization confound, no summarizer model call): the low window triggers micro, and the real
+ * provider window is not actually exceeded so skipping the summary is safe. Manual /compact is
+ * unaffected.
+ */
+export function fullCompactionDisabled(): boolean {
+  const flag = (process.env.OPENSWARM_DISABLE_FULL_COMPACTION ?? "").toLowerCase();
+  return ["1", "true", "on", "yes"].includes(flag);
+}
+
 export interface PreTurnCompactionOutcome {
   readonly messages: ProviderMessage[];
   /** True when a full compaction ran (not micro/warn) — snapshot counter. */
@@ -365,6 +378,12 @@ export async function* preTurnCompaction(
   // Blocked-level compactions bypass the breaker — refusing would wedge the
   // session entirely.
   if (state.breakerTripped && level !== "blocked") {
+    return { messages, compacted: false };
+  }
+
+  // Isolate the eviction lever: skip AUTO full (summarizing) compaction when disabled, so
+  // micro-eviction is the only mechanism (see fullCompactionDisabled). Micro above already ran.
+  if (fullCompactionDisabled()) {
     return { messages, compacted: false };
   }
 

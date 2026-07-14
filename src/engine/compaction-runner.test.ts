@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   compactContextWindowFromEnv,
+  fullCompactionDisabled,
   microcompactPolicyFromEnv,
 } from "./compaction-runner.js";
 
@@ -65,6 +66,30 @@ describe("compactContextWindowFromEnv", () => {
     for (const bad of ["0", "-1", "abc"]) {
       vi.stubEnv("OPENSWARM_COMPACT_CONTEXT_WINDOW", bad);
       expect(compactContextWindowFromEnv(200_000)).toBe(200_000);
+    }
+  });
+});
+
+// Isolate the eviction lever: OPENSWARM_DISABLE_FULL_COMPACTION skips auto summarizing compaction.
+describe("fullCompactionDisabled", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("is false by default / unset", () => {
+    vi.stubEnv("OPENSWARM_DISABLE_FULL_COMPACTION", "");
+    expect(fullCompactionDisabled()).toBe(false);
+  });
+
+  it("is true for truthy flags", () => {
+    for (const on of ["1", "true", "on", "yes"]) {
+      vi.stubEnv("OPENSWARM_DISABLE_FULL_COMPACTION", on);
+      expect(fullCompactionDisabled()).toBe(true);
+    }
+  });
+
+  it("is false for falsy / other values", () => {
+    for (const off of ["0", "false", "off", "no", "maybe"]) {
+      vi.stubEnv("OPENSWARM_DISABLE_FULL_COMPACTION", off);
+      expect(fullCompactionDisabled()).toBe(false);
     }
   });
 });
