@@ -220,6 +220,21 @@ export function microcompactPolicyFromEnv(): {
   return out;
 }
 
+/**
+ * Effective compaction context window. `OPENSWARM_COMPACT_CONTEXT_WINDOW` overrides the
+ * provider's real window used to CLASSIFY context pressure (the microcompaction/full-compaction
+ * trigger). Lowering it (e.g. 40000) makes compaction fire on shorter conversations — the induced
+ * "context pressure" regime that ACTIVATES the tool-result eviction lever (whose keepRecent knob is
+ * otherwise inert, since gpt-5.5's real 200k window is rarely crossed on these tasks). It shrinks
+ * only the trigger, not the model's actual window. Unset/invalid → the real provider window.
+ */
+export function compactContextWindowFromEnv(fallback: number): number {
+  const raw = process.env.OPENSWARM_COMPACT_CONTEXT_WINDOW;
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 export interface PreTurnCompactionOutcome {
   readonly messages: ProviderMessage[];
   /** True when a full compaction ran (not micro/warn) — snapshot counter. */
@@ -244,10 +259,11 @@ export async function* preTurnCompaction(
   // ---- L1: classify --------------------------------------------------------
   let level: ContextUsageLevel;
   const contextTokens = effectiveContextTokens(state, messages);
+  const contextWindow = compactContextWindowFromEnv(deps.contextWindow);
   let threshold: number;
   let pctLeft = 100;
   if (contextTokens > 0) {
-    const status = contextUsageStatus(contextTokens, deps.contextWindow);
+    const status = contextUsageStatus(contextTokens, contextWindow);
     level = status.level;
     threshold = status.threshold;
     pctLeft = status.pctLeft;

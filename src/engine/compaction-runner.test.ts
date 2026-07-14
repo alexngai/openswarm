@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { microcompactPolicyFromEnv } from "./compaction-runner.js";
+import {
+  compactContextWindowFromEnv,
+  microcompactPolicyFromEnv,
+} from "./compaction-runner.js";
 
 // The tool-result eviction lever: OPENSWARM_MICROCOMPACT_KEEP_RECENT / _MIN_SAVINGS override the
 // microcompaction policy from env (delivered via the harness scaffold.env at run time, no rebuild).
@@ -40,5 +43,28 @@ describe("microcompactPolicyFromEnv", () => {
       keepRecent: 10,
       minSavingsTokens: 5000,
     });
+  });
+});
+
+// The trigger-window override that ACTIVATES the eviction lever (induced context pressure):
+// OPENSWARM_COMPACT_CONTEXT_WINDOW shrinks the window used to classify compaction pressure.
+describe("compactContextWindowFromEnv", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("returns the provider fallback when unset/blank", () => {
+    vi.stubEnv("OPENSWARM_COMPACT_CONTEXT_WINDOW", "");
+    expect(compactContextWindowFromEnv(200_000)).toBe(200_000);
+  });
+
+  it("overrides with a positive value (lower trigger → fires sooner)", () => {
+    vi.stubEnv("OPENSWARM_COMPACT_CONTEXT_WINDOW", "40000");
+    expect(compactContextWindowFromEnv(200_000)).toBe(40_000);
+  });
+
+  it("ignores zero / negative / non-numeric (keeps the real window)", () => {
+    for (const bad of ["0", "-1", "abc"]) {
+      vi.stubEnv("OPENSWARM_COMPACT_CONTEXT_WINDOW", bad);
+      expect(compactContextWindowFromEnv(200_000)).toBe(200_000);
+    }
   });
 });
