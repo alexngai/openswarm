@@ -58,6 +58,7 @@ import type { PendingPermission } from "../ui/repl/state.js";
 import { SessionStore } from "../session/store.js";
 import { runHeadless } from "../ui/headless.js";
 import { checkBudget } from "../core/budget.js";
+import { ApiCostModel } from "../core/cost-model.js";
 // Note: the OpenTUI/Solid REPL (`src/ui/repl-solid/`) is lazy-loaded inside
 // runPrompt only when the TTY path is taken, so its deps don't get pulled into
 // non-TTY paths like `--version`, `--help`, `doctor`, `init`.
@@ -723,9 +724,39 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   });
   // Phase 3 B1/B2 — REPL exited; archive the session (provider fan-out).
   await finishMemorySession();
+  // Session efficiency footer (docs/55 TE-19): one comparable line per session
+  // — total tokens, cache-read share of the input side, honest $ (n/a when the
+  // model has no MODEL_PRICING entry and something was spent). Guarded: test
+  // stubs may provide a partial engine.
+  if (typeof engine.getCumulativeUsage === "function") {
+    printSessionEfficiency(engine.getCumulativeUsage(), rt.resolvedModelId);
+  }
   // Exit code 3 if budget was exceeded (abort signal was fired by budget check).
   if (hasBudgetLimits && turnAbort.signal.aborted) return 3;
   return 0;
+}
+
+function printSessionEfficiency(
+  u: { inputTokens: number; outputTokens: number; cacheReadInputTokens?: number; cacheWriteInputTokens?: number },
+  model: string,
+): void {
+  const cacheRead = u.cacheReadInputTokens ?? 0;
+  const cacheWrite = u.cacheWriteInputTokens ?? 0;
+  const total = u.inputTokens + u.outputTokens + cacheRead + cacheWrite;
+  if (total === 0) return;
+  const inputSide = u.inputTokens + cacheRead;
+  const cachePct = inputSide > 0 ? Math.round((cacheRead / inputSide) * 100) : 0;
+  const { usd } = new ApiCostModel().cost({
+    model,
+    inputTokens: u.inputTokens,
+    outputTokens: u.outputTokens,
+    cacheReadInputTokens: cacheRead,
+    cacheWriteInputTokens: cacheWrite,
+  });
+  const cost = usd !== undefined ? `$${usd.toFixed(4)}` : "n/a (unpriced model)";
+  process.stderr.write(
+    `[openswarm] session efficiency: ${total} tokens (in ${u.inputTokens} · out ${u.outputTokens} · cache read ${cacheRead} · cache write ${cacheWrite}) · cache: ${cachePct}% · cost: ${cost}\n`,
+  );
 }
 
 // ---------------------------------------------------------------------------

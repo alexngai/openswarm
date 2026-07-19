@@ -610,7 +610,14 @@ export function translateEngineEvent(evt: NormalizedEvent): ReplEvent[] {
         },
       ];
     case "message_stop":
-      return [{ type: "stream-end" }];
+      // Usage rides every turn boundary on both engine paths (native engines
+      // report their cumulative tally; the SDK path reports the run's usage) —
+      // feed it to the store so the footer's cache%/cost stay live (docs/55
+      // TE-20). Typed as required, but guarded: test harnesses and partial
+      // engine stubs push message_stop without usage.
+      return evt.usage != null
+        ? [{ type: "usage-update", usage: evt.usage }, { type: "stream-end" }]
+        : [{ type: "stream-end" }];
     case "error":
       return [
         {
@@ -653,8 +660,9 @@ export function translateEngineEvent(evt: NormalizedEvent): ReplEvent[] {
       return actions;
     }
     case "cache_hit":
+      return [{ type: "cache-signal", kind: "hit" }];
     case "cache_miss":
-      return [];
+      return [{ type: "cache-signal", kind: "miss" }];
     case "info":
       return [];
     case "retry":

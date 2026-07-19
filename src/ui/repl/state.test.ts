@@ -687,3 +687,51 @@ describe("transcript entries", () => {
     expect(s.sessionId).toBe("sess-abc");
   });
 });
+
+describe("usage / cache telemetry (docs/55 TE-19/20)", () => {
+  it("usage-update stores the snapshot and counts turns", () => {
+    let s = reduce(idle(), {
+      type: "usage-update",
+      usage: { inputTokens: 100, outputTokens: 20, cacheReadInputTokens: 900 },
+    });
+    expect(s.usageStats).toEqual({
+      inputTokens: 100,
+      outputTokens: 20,
+      cacheReadInputTokens: 900,
+      cacheWriteInputTokens: 0,
+      turns: 1,
+    });
+    s = reduce(s, {
+      type: "usage-update",
+      usage: { inputTokens: 250, outputTokens: 60, cacheReadInputTokens: 1800 },
+    });
+    expect(s.usageStats?.turns).toBe(2);
+    expect(s.usageStats?.inputTokens).toBe(250);
+  });
+
+  it("cache-signal marks the last turn and usage-update preserves it", () => {
+    let s = reduce(idle(), { type: "cache-signal", kind: "hit" });
+    expect(s.usageStats?.lastTurnCache).toBe("hit");
+    // The lane signal arrives just before message_stop — the usage-update
+    // that follows must not erase this turn's marker.
+    s = reduce(s, {
+      type: "usage-update",
+      usage: { inputTokens: 10, outputTokens: 5 },
+    });
+    expect(s.usageStats?.lastTurnCache).toBe("hit");
+    expect(s.usageStats?.turns).toBe(1);
+  });
+
+  it("submit clears the previous turn's cache marker", () => {
+    let s = reduce(idle(), { type: "cache-signal", kind: "miss" });
+    s = reduce(s, {
+      type: "usage-update",
+      usage: { inputTokens: 10, outputTokens: 5 },
+    });
+    s = reduce(s, { type: "submit", text: "next question" });
+    expect(s.usageStats?.lastTurnCache).toBeUndefined();
+    // The cumulative numbers survive the new turn.
+    expect(s.usageStats?.inputTokens).toBe(10);
+    expect(s.usageStats?.turns).toBe(1);
+  });
+});

@@ -27,7 +27,7 @@
  *   shutdown            : none
  */
 
-import type { PermissionMode, RequiredPermission, AgentPhase, TaskStatus } from "../../core/types.js";
+import type { PermissionMode, RequiredPermission, AgentPhase, TaskStatus, Usage } from "../../core/types.js";
 
 // ---------------------------------------------------------------------------
 // State types
@@ -106,6 +106,27 @@ export interface TaskState {
 
 export type ActiveView = "transcript" | "agents" | "tasks";
 
+/**
+ * Cumulative usage as last reported by the engine at a turn boundary, plus a
+ * turn counter and the most recent cache lane signal. Feeds the footer's
+ * cache% / cost display and `/status`'s ctx-per-turn line (docs/55 TE-19/20).
+ * The token fields mirror the engine's cumulative tally verbatim; `turns`
+ * counts `usage-update` dispatches (one per message_stop).
+ */
+export interface UsageStats {
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadInputTokens: number;
+  readonly cacheWriteInputTokens: number;
+  readonly turns: number;
+  /**
+   * Most recent cache_hit/cache_miss lane signal. Only the SDK-engine path
+   * emits these events today; on native engines the field stays undefined and
+   * consumers fall back to the running ratio alone.
+   */
+  readonly lastTurnCache?: "hit" | "miss";
+}
+
 export interface InputBuffer {
   readonly value: string;
   readonly cursor: number;
@@ -162,6 +183,8 @@ export interface ReplState {
    * Phase D3). Reset to 0 on view switch; clamped against the list at render.
    */
   readonly viewSelectedIndex: number;
+  /** Cumulative usage snapshot for the footer/status surfaces (docs/55 TE-19/20). */
+  readonly usageStats: UsageStats | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -191,6 +214,10 @@ export type ReplEvent =
   // Compaction
   | { readonly type: "compact-begin" }
   | { readonly type: "compact-end" }
+  // Usage / cache telemetry (docs/55 TE-19/20) — dispatched from message_stop
+  // (cumulative engine usage) and the cache_hit/cache_miss lane events.
+  | { readonly type: "usage-update"; readonly usage: Usage }
+  | { readonly type: "cache-signal"; readonly kind: "hit" | "miss" }
   // Tool use (legacy flat entry — kept for backward compat, no longer emitted by translateEngineEvent)
   | {
       readonly type: "tool-entry";
@@ -285,6 +312,7 @@ export function createInitialState(opts?: InitialStateOptions): ReplState {
     planMode: false,
     mentionedFiles: [],
     viewSelectedIndex: 0,
+    usageStats: undefined,
   };
 }
 
@@ -376,6 +404,12 @@ export function reduce(state: ReplState, event: ReplEvent): ReplState {
         historyDraft: "",
         streamingEntryId: assistantId,
         mentionedFiles: [],
+        // A new turn's cache outcome is unknown until its lane signal (or
+        // absence thereof) arrives — drop the previous turn's marker.
+        usageStats:
+          state.usageStats?.lastTurnCache !== undefined
+            ? { ...state.usageStats, lastTurnCache: undefined }
+            : state.usageStats,
       };
     }
 
@@ -409,6 +443,38 @@ export function reduce(state: ReplState, event: ReplEvent): ReplState {
         name: "idle",
         streamingEntryId: undefined,
       };
+    }
+
+    // Valid in any state: usage arrives at turn boundaries regardless of how
+    // the turn ended (normal stop, error, abort during permission wait).
+    case "usage-update": {
+      const u = event.usage;
+      return {
+        ...state,
+        usageStats: {
+          inputTokens: u.inputTokens,
+          outputTokens: u.outputTokens,
+          cacheReadInputTokens: u.cacheReadInputTokens ?? 0,
+          cacheWriteInputTokens: u.cacheWriteInputTokens ?? 0,
+          turns: (state.usageStats?.turns ?? 0) + 1,
+          // The lane signal (when present) arrives just before message_stop;
+          // keep it so the usage-update doesn't erase this turn's marker.
+          ...(state.usageStats?.lastTurnCache !== undefined
+            ? { lastTurnCache: state.usageStats.lastTurnCache }
+            : {}),
+        },
+      };
+    }
+
+    case "cache-signal": {
+      const prev = state.usageStats ?? {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadInputTokens: 0,
+        cacheWriteInputTokens: 0,
+        turns: 0,
+      };
+      return { ...state, usageStats: { ...prev, lastTurnCache: event.kind } };
     }
 
     case "steer": {
