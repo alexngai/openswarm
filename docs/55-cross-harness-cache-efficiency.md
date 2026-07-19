@@ -1,6 +1,6 @@
 # 55 — Cross-harness cache efficiency: lessons from DeepSeek-Reasonix
 
-Status: **draft / plan**. Extends [53 (token-efficiency tracker)](./53-token-efficiency-plan.md) and [48 (compaction design)](./48-compaction-design.md). New tracker IDs continue the `TE-N` scheme from 53 (last landed: TE-18) — this doc opens **TE-19…TE-24**.
+Status: **draft / plan**. Extends [53 (token-efficiency tracker)](./53-token-efficiency-plan.md) and [48 (compaction design)](./48-compaction-design.md). New tracker IDs continue the `TE-N` scheme from 53 (last landed: TE-18) — this doc opens **TE-19…TE-27** (a measurement/visibility track first, then improvements).
 
 Owner: engine
 
@@ -34,46 +34,78 @@ Mapping Reasonix's playbook to landed OpenSwarm work, so this plan doesn't dupli
 | Prefix+tools fingerprint, tools sorted, schema excluded | `prompt-cache.ts` FNV-1a fingerprint | landed (analytics-only) |
 | Cache read/write token accounting | TE-14/16/17/18 | landed |
 | Graduated compaction thresholds | L1 ok→warn→microcompact→compact→blocked | landed (48) |
+| Per-arm cache% / ctx-per-call comparison | `eval/analysis/cost-frontier.ts` (`cacheReadFraction`, `contextTokensPerCall`) | landed (53) |
+| Session cost/usage command | `/cost`, `/status` slash commands | landed (partial — see gaps) |
 
-## Remaining delta — tracker (TE-19…TE-24)
+## Current visibility surfaces & their gaps
+
+Before adding *improvements*, we need to be able to *see and compare* the effect. The measurement primitives from 53 (TE-14) exist, but the comparison surfaces have concrete gaps:
+
+| Surface | State today | Gap for comparison |
+|---|---|---|
+| `SwarmUsageAggregator` | Records `cacheReadInputTokens`, `cacheWriteInputTokens`, `calls`, `contextTokensPerCall`, `cacheReadFraction` per member/team (TE-14) | Data exists but has no session-end report or per-turn timeline surface |
+| `cache_hit` / `cache_miss` lane events | Emitted by `event-translator.ts` on every turn's usage | **Dropped in the TUI** (`app.tsx` → `return []`) — no live cache signal to a user |
+| `/cost` command | Cumulative tokens + cache-hit ratio + estimated $ | Uses **hardcoded opus/sonnet/haiku placeholder pricing**; wrong $ for native providers (DeepSeek/OpenAI/xAI/Google) — exactly where cache exposure is highest. A real `ApiCostModel`/`ModelPricing` already exists in `cost-model.ts`, unwired to the command |
+| `/status` command | Model, permission, total tokens | No cache%, no context-per-turn |
+| `cost-frontier` eval | Cross-arm `cache%` + `ctx/call` columns | Full eval only — no lightweight local before/after loop for iterating a single change |
+| Cache-miss cause | — | No attribution anywhere: a cache% drop is unexplained (Reasonix's `PrefixShape` names the culprit) |
+
+## Tracker (TE-19…TE-27)
 
 Status legend (per 53): `todo` / `in-progress` / `landed` / `evaluated` / `rejected`.
 
+### Track A — Measurement & visibility (prerequisite; no behavior change)
+
+Land this first, exactly as 53 landed TE-14/15 before any efficiency change. You cannot compare what you cannot see, and three of these gaps (dropped cache events, fake pricing, no attribution) mean today's live surfaces actively *mislead* on the native path.
+
 | ID | Improvement | Where | Expected effect | Risk | Status |
 |----|-------------|-------|-----------------|------|--------|
-| TE-19 | **Native-path request-prefix byte-stability guard.** Assert the *actually serialized* request prefix (system + tool defs + leading messages) is byte-identical across two consecutive turns with unchanged inputs, for the AI-SDK transports. Today `prompt-cache.test.ts` only checks the analytics *fingerprint* is deterministic — it does not exercise the real assembled request. Reasonix's boot-level `TestBuildComposesByteStableSystemPrompt` is the model. | `src/providers/*-transport.ts`, new `src/providers/prefix-stability.test.ts` | Catches the "silent cold-start on every non-Anthropic provider" class before it ships; converts an untested property into a regression-guarded one | Low (test-only) | todo |
-| TE-20 | **Cache-miss attribution.** Extend the fingerprint from one opaque hash to per-component hashes (system / tools / message-prefix / rewrite-version), and record which component changed on a cache-miss turn. Reasonix's `PrefixShape` + `CompareShape` name the culprit (`["system","tools","log_rewrite"]`) instead of leaving a miss unexplained. Complements the TE-14 telemetry. | `src/engine/prompt-cache.ts`, `src/swarm/usage-aggregator.ts` | Turns "cache% dropped" into "cache% dropped *because tools changed on turn N*" — makes TE-19 failures and future regressions diagnosable in eval logs | Low | todo |
-| TE-21 | **Self-calibrated tokens-per-char.** Derive the chars/token ratio from the previous turn's real `prompt_tokens` instead of the fixed char/4 (compactor) and char/2.5 (preflight) constants. Reasonix's `tokPerChar()` tracks the provider tokenizer without shipping one, adapting to CJK/code density. Falls back to the current constant before any usage is seen. | `src/engine/compactor.ts`, `src/engine/token-preflight.ts` | More accurate trigger sizing on non-Anthropic providers where server `count_tokens` is unavailable (Claude Max/OAuth users always hit the estimate path today) | Low — bound the ratio to a sane range, keep the constant fallback | todo |
-| TE-22 | **Pin user-stated constraints through full compaction.** Our L4 rebuild (48) keeps *zero* messages verbatim and reconstructs working state from disk (recent files + todos) — excellent for code state, but a durable user rule stated only in conversation ("never touch X", a chosen key, a naming decision) can be lost if the summary drops it. Reasonix keeps small user turns verbatim and forces a `## Standing facts & constraints` summary heading. Add: (a) a "standing constraints" section to the L3 summary prompt, and (b) optional verbatim pinning of small user turns. | `src/engine/compact-prompts.ts`, `src/engine/compactor.ts`, `src/engine/compact-rebuild.ts` | Fewer post-compaction regressions where the agent violates an earlier user constraint; directly targets handoff-fidelity (52) failure modes | Medium — changes summary shape; keep CC-parity preamble, add section without breaking it. Needs an eval arm | todo |
-| TE-23 | **Per-tool snip geometry for microcompaction.** Microcompact currently replaces cleared results with a flat placeholder / disk pointer (max savings, zero inline signal). Reasonix keeps a tuned head/tail inline (read-only tools: long head; side-effecting: both ends, to preserve a trailing build error), via a per-tool `SnipHint`. Optional middle-ground: keep a short head/tail for side-effecting tools so a cleared bash failure still shows its error without a re-read. | `src/engine/microcompact.ts`, tool specs | Fewer paid re-reads to recover an error that was one line of a cleared result | Low–Medium — deviates from CC byte-exact placeholder (parity call, cf. TE-6 precedent) | todo (evaluate necessity) |
-| TE-24 | **CI cache-impact gate (process).** Reasonix fails any PR touching cache-sensitive paths unless the body carries `Cache-impact:` / `Cache-guard:` lines, plus a byte-stability guard test in CI. Adopt a lightweight version: a `scripts/check-cache-impact` that flags PRs touching `src/engine/{prompt-cache,default-system-prompt,microcompact,compact*}`, `src/providers/*-transport`, or `src/tools/**` specs, and require TE-19's guard test to run on those PRs. | `scripts/`, `.github/workflows/` | Keeps the TE-19 invariant from silently rotting as the prompt/tool surface evolves | Low — process overhead; scope the path list tightly to avoid noise | todo (optional; land after TE-19) |
+| TE-19 | **Accurate live cost + session efficiency summary.** Replace `/cost`'s hardcoded opus/sonnet/haiku placeholder pricing with the real `ApiCostModel`/`ModelPricing` from `cost-model.ts` (already prices cache read/write, per TE-17) so live $ is correct for native providers. Add `cache%` + `ctx/turn` to `/status`, and emit a one-line end-of-session efficiency summary (total in/out, cache-read fraction, ctx/turn, $) from the aggregator. | `src/cli/slash/commands/cost.ts`, `status.ts`, `src/swarm/usage-aggregator.ts` | The live $ and cache numbers stop lying on DeepSeek/OpenAI/xAI/Google; a session ends with a comparable one-line efficiency footer | Low | todo |
+| TE-20 | **Surface cache_hit/cache_miss live.** The events are already emitted by `event-translator.ts` but the TUI drops them (`app.tsx` → `return []`). Render a compact status-line cache indicator (running cache% + this-turn hit/miss) so cache behavior is visible during a session, not just in post-hoc eval. | `src/ui/repl-solid/app.tsx`, status line component | Cache regressions become visible the moment they happen instead of surfacing only in a later eval run | Low | todo |
+| TE-21 | **Cache-miss attribution.** Extend the `prompt-cache.ts` fingerprint from one opaque hash to per-component hashes (system / tools / message-prefix), and on a cache-miss turn record which component changed. Reasonix's `PrefixShape`+`CompareShape` name the culprit (`["system","tools",…]`). Surfaced through TE-20 (live) and TE-19 (session summary). | `src/engine/prompt-cache.ts`, `src/engine/event-translator.ts`, `src/swarm/usage-aggregator.ts` | Turns "cache% dropped" into "cache% dropped *because tools changed on turn N*" — the diagnostic that makes TE-23 failures and future regressions legible | Low | todo |
+| TE-22 | **Local A/B efficiency harness.** A script that runs a fixed scripted task twice — baseline vs. HEAD, or a flag on/off — and diffs `cache%`, `ctx/turn`, `totalTokens`, and `$` in a small table, reusing the aggregator + `cost-frontier` column math. The fast inner loop for iterating TE-23…TE-25 without a full swarmkit-eval run. | `scripts/` (new `cache-ab.ts`), `eval/analysis/cost-frontier.ts` (shared math) | A <2-minute local before/after signal for every efficiency change; makes "did this help?" answerable without booking eval time | Low | todo |
+
+### Track B — Efficiency improvements (each measurable via Track A)
+
+| ID | Improvement | Where | Expected effect | Risk | Status |
+|----|-------------|-------|-----------------|------|--------|
+| TE-23 | **Native-path request-prefix byte-stability guard.** Assert the *actually serialized* request prefix (system + tool defs + leading messages) is byte-identical across two consecutive turns with unchanged inputs, for the AI-SDK transports. Today `prompt-cache.test.ts` only checks the analytics *fingerprint* is deterministic — it does not exercise the real assembled request. Reasonix's boot-level `TestBuildComposesByteStableSystemPrompt` is the model. | `src/providers/*-transport.ts`, new `src/providers/prefix-stability.test.ts` | Catches the "silent cold-start on every non-Anthropic provider" class before it ships; converts an untested property into a regression-guarded one | Low (test-only) | todo |
+| TE-24 | **Self-calibrated tokens-per-char.** Derive the chars/token ratio from the previous turn's real `prompt_tokens` instead of the fixed char/4 (compactor) and char/2.5 (preflight) constants. Reasonix's `tokPerChar()` tracks the provider tokenizer without shipping one, adapting to CJK/code density. Falls back to the current constant before any usage is seen. | `src/engine/compactor.ts`, `src/engine/token-preflight.ts` | More accurate trigger sizing on non-Anthropic providers where server `count_tokens` is unavailable (Claude Max/OAuth users always hit the estimate path today) | Low — bound the ratio to a sane range, keep the constant fallback | todo |
+| TE-25 | **Pin user-stated constraints through full compaction.** Our L4 rebuild (48) keeps *zero* messages verbatim and reconstructs working state from disk (recent files + todos) — excellent for code state, but a durable user rule stated only in conversation ("never touch X", a chosen key, a naming decision) can be lost if the summary drops it. Reasonix keeps small user turns verbatim and forces a `## Standing facts & constraints` summary heading. Add: (a) a "standing constraints" section to the L3 summary prompt, and (b) optional verbatim pinning of small user turns. | `src/engine/compact-prompts.ts`, `src/engine/compactor.ts`, `src/engine/compact-rebuild.ts` | Fewer post-compaction regressions where the agent violates an earlier user constraint; directly targets handoff-fidelity (52) failure modes | Medium — changes summary shape; keep CC-parity preamble, add section without breaking it. Needs an eval arm | todo |
+| TE-26 | **Per-tool snip geometry for microcompaction.** Microcompact currently replaces cleared results with a flat placeholder / disk pointer (max savings, zero inline signal). Reasonix keeps a tuned head/tail inline (read-only tools: long head; side-effecting: both ends, to preserve a trailing build error), via a per-tool `SnipHint`. Optional middle-ground: keep a short head/tail for side-effecting tools so a cleared bash failure still shows its error without a re-read. | `src/engine/microcompact.ts`, tool specs | Fewer paid re-reads to recover an error that was one line of a cleared result | Low–Medium — deviates from CC byte-exact placeholder (parity call, cf. TE-6 precedent) | todo (evaluate necessity) |
+| TE-27 | **CI cache-impact gate (process).** Reasonix fails any PR touching cache-sensitive paths unless the body carries `Cache-impact:` / `Cache-guard:` lines, plus a byte-stability guard test in CI. Adopt a lightweight version: a `scripts/check-cache-impact` that flags PRs touching `src/engine/{prompt-cache,default-system-prompt,microcompact,compact*}`, `src/providers/*-transport`, or `src/tools/**` specs, and require TE-23's guard test to run on those PRs. | `scripts/`, `.github/workflows/` | Keeps the TE-23 invariant from silently rotting as the prompt/tool surface evolves | Low — process overhead; scope the path list tightly to avoid noise | todo (optional; land after TE-23) |
 
 ## Phasing
 
-Ordered by payoff-to-risk, dependency-aware:
+Ordered by payoff-to-risk, dependency-aware. Track A is Phase 0 — nothing in Track B can be *evaluated* without it.
 
-**Phase 1 — Guard the invariant we already have (TE-19, TE-20).** Pure measurement/test, no behavior change (mirrors 53's "land TE-14/15 first" discipline). TE-19 is the highest-leverage item in this doc: it converts our biggest untested property into a guarded one. TE-20 makes any failure legible. Ship together; no eval arm needed (test + telemetry only).
+**Phase 0 — Measurement & visibility (TE-19…TE-22).** Pure telemetry/UI, no model behavior change. TE-19 + TE-20 are the cheapest and fix actively-misleading surfaces (fake pricing, dropped events) — land them first. TE-21 (attribution) plugs into both. TE-22 (A/B harness) is the tool every later phase uses to prove its delta. No eval arm needed for the track itself.
 
-**Phase 2 — Estimator accuracy (TE-21).** Self-contained, low-risk, improves trigger timing on native providers. Verify against a session with known real usage; no quality eval needed, but re-check compaction-trigger timing doesn't regress on the discrimination set.
+**Phase 1 — Guard the invariant (TE-23).** The highest-leverage improvement: converts our biggest untested property into a regression-guarded one. Test-only, no behavior change. Verify with the TE-22 harness that a repeat-prefix run reports high `cache%`.
 
-**Phase 3 — Compaction fidelity (TE-22).** The one with a real quality question, so it gets a dedicated eval arm per 53's methodology (Group-D-style): baseline vs. constraints-pinned, measured on tasks with early user constraints. Accept only if quality improves or holds AND token cost stays within noise.
+**Phase 2 — Estimator accuracy (TE-24).** Self-contained, low-risk, improves trigger timing on native providers. Verify against a session with known real usage; re-check compaction-trigger timing doesn't regress.
 
-**Phase 4 — Optional (TE-23, TE-24).** Evaluate whether TE-23 pays for itself (may not, given the re-read path is cheap); land TE-24 only after TE-19 exists to enforce.
+**Phase 3 — Compaction fidelity (TE-25).** The one with a real quality question, so it gets a dedicated eval arm per 53's methodology (Group-D-style): baseline vs. constraints-pinned, on tasks with early user constraints. Accept only if quality improves or holds AND token cost stays within noise.
 
-## Eval hooks
+**Phase 4 — Optional (TE-26, TE-27).** Evaluate whether TE-26 pays for itself (may not, given the re-read path is cheap); land TE-27 only after TE-23 exists to enforce.
 
-Reuse the swarmkit-eval cost-frontier harness (51) and the TE-14 telemetry:
+## Eval / measurement hooks
 
-- **TE-19/20:** unit + integration tests; assert `cacheReadFraction` stays ≥ baseline on a repeat-prefix arm (regression signal if TE-19 ever fails silently).
-- **TE-21:** offline — compare estimated vs. real `prompt_tokens` across a recorded session; target < 10% mean error vs. the fixed-constant baseline.
-- **TE-22:** dedicated arm on tasks seeded with an early user constraint; metric = constraint-violation rate post-compaction + `meanQuality` guardrail + `meanTotalTokens`. Accept per the 53 rule (≥10% improvement or hold, quality within σ_D).
+Reuse the swarmkit-eval cost-frontier harness (51), the TE-14 telemetry, and the new TE-22 local harness:
+
+- **Track A (TE-19…22):** unit tests for the pricing/attribution math; manual smoke that `/cost`, `/status`, and the live indicator show correct numbers on a native-provider session; TE-22 self-checks by diffing two identical runs (delta ≈ 0).
+- **TE-23:** unit/integration test is the deliverable; additionally assert via TE-22 that `cacheReadFraction` stays ≥ baseline on a repeat-prefix run (the regression signal if the guard ever silently fails).
+- **TE-24:** offline — compare estimated vs. real `prompt_tokens` across a recorded session; target < 10% mean error vs. the fixed-constant baseline.
+- **TE-25:** dedicated eval arm on tasks seeded with an early user constraint; metric = constraint-violation rate post-compaction + `meanQuality` guardrail + `meanTotalTokens`. Accept per the 53 rule (≥10% improvement or hold, quality within σ_D).
 
 ## Open questions
 
-- **TE-19 scope:** guard all six AI-SDK transports, or a representative one (openai) plus a shared assembly-layer test? Leaning shared assembly test + one transport smoke, since the prefix assembly is mostly shared.
-- **TE-22 verbatim pinning:** pin small user turns (Reasonix) *and* add the summary section, or the summary section alone? The section is lower-risk and CC-parity-preserving; pinning is stronger but changes the zero-verbatim rebuild contract (48 L4). Recommend section-first, evaluate pinning as a follow-up.
-- **TE-23 necessity:** does the flat-placeholder + `read_file` recovery path already cost little enough that per-tool geometry isn't worth the CC-parity deviation? Decide from Phase 3 eval logs (how often the agent re-reads a cleared result to recover an error).
-- **TE-24:** is a PR-body gate worth the friction on a smaller team, or is the CI guard test (TE-19 in CI) sufficient on its own? Leaning "guard test in CI is enough; skip the PR-body ritual."
+- **TE-19 pricing source of truth:** `/cost`'s placeholder table vs. `cost-model.ts` `ModelPricing` vs. the config-level pricing used by the eval — pick one canonical table so live `/cost` and eval `$` can't diverge. Leaning: `cost-model.ts` is canonical; `/cost` and eval both consume it.
+- **TE-20 surface:** a persistent status-line % (always visible) vs. a per-turn transient line (only on change)? Leaning persistent %, since the value of the indicator is spotting a *drop* live.
+- **TE-22 fixture:** a synthetic scripted task (deterministic, fast, no real model spend if replayed) vs. a real short SWE task (realistic but costs tokens each run)? Leaning: a replayable recorded session for the determinism self-check, plus one real short task for true cache behavior.
+- **TE-23 scope:** guard all six AI-SDK transports, or a representative one (openai) plus a shared assembly-layer test? Leaning shared assembly test + one transport smoke, since the prefix assembly is mostly shared.
+- **TE-25 verbatim pinning:** pin small user turns (Reasonix) *and* add the summary section, or the summary section alone? The section is lower-risk and CC-parity-preserving; pinning is stronger but changes the zero-verbatim rebuild contract (48 L4). Recommend section-first, evaluate pinning as a follow-up.
+- **TE-27:** is a PR-body gate worth the friction on a smaller team, or is the CI guard test (TE-23 in CI) sufficient on its own? Leaning "guard test in CI is enough; skip the PR-body ritual."
 
 ## Non-goals
 
