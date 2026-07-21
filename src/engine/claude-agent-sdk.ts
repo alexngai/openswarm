@@ -15,7 +15,11 @@ import {
   tool,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { fingerprintSystemPrompt } from "./prompt-cache.js";
+import {
+  capturePrefixShape,
+  comparePrefixShapes,
+  type PrefixShape,
+} from "./prompt-cache.js";
 import type {
   AgentEngine,
   EngineCapabilities,
@@ -190,6 +194,13 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
   /** Latest SDK session id, captured from the message stream (see run()). */
   private _sessionId: string | undefined;
 
+  /**
+   * Prefix shape of the previous run() — the engine instance lives for the
+   * whole session (one run per turn), so comparing shapes across runs names
+   * what changed when a cache miss follows (docs/55 TE-21).
+   */
+  private _lastPrefixShape: PrefixShape | undefined;
+
   getCumulativeUsage(): import("../core/types.js").Usage {
     return this._cumulativeUsage;
   }
@@ -322,11 +333,20 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
       systemPrompt = { type: "preset", preset: "claude_code" } as const;
     }
 
-    // Compute fingerprint for cache analytics (used in cache_hit/cache_miss events).
-    const fingerprint = fingerprintSystemPrompt(
+    // Capture the prefix shape for cache analytics (cache_hit/cache_miss lane
+    // events) and compare against the previous run so a miss can name which
+    // component changed (docs/55 TE-21). The combined `hash` is byte-compatible
+    // with the old fingerprintSystemPrompt() value.
+    const prefixShape = capturePrefixShape(
       Array.isArray(basePrefix) ? basePrefix.join("") : basePrefix,
       config.tools.map((t) => t.spec),
     );
+    const changedComponents =
+      this._lastPrefixShape !== undefined
+        ? comparePrefixShapes(this._lastPrefixShape, prefixShape)
+        : [];
+    this._lastPrefixShape = prefixShape;
+    const fingerprint = { hash: prefixShape.hash, version: prefixShape.version };
 
     // 6. Abort controller: wrap config.abort if present.
     let abortController: AbortController | undefined;
@@ -408,7 +428,7 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
     //    — callers (ink UI, headless JSONL) always see a clean end of stream.
     //    The translator strips the MCP prefix from tool names so outer code
     //    sees bare names everywhere (matches canUseTool wrapper).
-    const state = makeTranslatorState(MCP_PREFIX, fingerprint);
+    const state = makeTranslatorState(MCP_PREFIX, fingerprint, changedComponents);
     let textBuffer = "";
     const bufferingEnabled = config.structuredOutput != null;
     // Track whether this run resumed a prior session and whether the SDK handed

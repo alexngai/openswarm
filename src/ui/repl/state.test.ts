@@ -734,4 +734,30 @@ describe("usage / cache telemetry (docs/55 TE-19/20)", () => {
     expect(s.usageStats?.inputTokens).toBe(10);
     expect(s.usageStats?.turns).toBe(1);
   });
+
+  it("an attributed miss carries reasons through usage-update and clears on submit (TE-21)", () => {
+    let s = reduce(idle(), {
+      type: "cache-signal",
+      kind: "miss",
+      reasons: ["tools"],
+    });
+    expect(s.usageStats?.lastMissReasons).toEqual(["tools"]);
+    s = reduce(s, {
+      type: "usage-update",
+      usage: { inputTokens: 10, outputTokens: 5 },
+    });
+    expect(s.usageStats?.lastMissReasons).toEqual(["tools"]);
+    s = reduce(s, { type: "submit", text: "again" });
+    expect(s.usageStats?.lastMissReasons).toBeUndefined();
+  });
+
+  it("a hit signal never records reasons", () => {
+    const s = reduce(idle(), {
+      type: "cache-signal",
+      kind: "hit",
+      reasons: ["system"],
+    });
+    expect(s.usageStats?.lastTurnCache).toBe("hit");
+    expect(s.usageStats?.lastMissReasons).toBeUndefined();
+  });
 });

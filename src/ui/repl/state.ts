@@ -125,6 +125,11 @@ export interface UsageStats {
    * consumers fall back to the running ratio alone.
    */
   readonly lastTurnCache?: "hit" | "miss";
+  /**
+   * On an attributed miss: which prefix components changed since the previous
+   * run (docs/55 TE-21), e.g. ["tools"]. Absent for unattributed misses.
+   */
+  readonly lastMissReasons?: readonly string[];
 }
 
 export interface InputBuffer {
@@ -214,10 +219,15 @@ export type ReplEvent =
   // Compaction
   | { readonly type: "compact-begin" }
   | { readonly type: "compact-end" }
-  // Usage / cache telemetry (docs/55 TE-19/20) — dispatched from message_stop
-  // (cumulative engine usage) and the cache_hit/cache_miss lane events.
+  // Usage / cache telemetry (docs/55 TE-19/20/21) — dispatched from message_stop
+  // (cumulative engine usage) and the cache_hit/cache_miss lane events. A miss
+  // may carry the prefix components that changed since the previous run.
   | { readonly type: "usage-update"; readonly usage: Usage }
-  | { readonly type: "cache-signal"; readonly kind: "hit" | "miss" }
+  | {
+      readonly type: "cache-signal";
+      readonly kind: "hit" | "miss";
+      readonly reasons?: readonly string[];
+    }
   // Tool use (legacy flat entry — kept for backward compat, no longer emitted by translateEngineEvent)
   | {
       readonly type: "tool-entry";
@@ -407,8 +417,10 @@ export function reduce(state: ReplState, event: ReplEvent): ReplState {
         // A new turn's cache outcome is unknown until its lane signal (or
         // absence thereof) arrives — drop the previous turn's marker.
         usageStats:
-          state.usageStats?.lastTurnCache !== undefined
-            ? { ...state.usageStats, lastTurnCache: undefined }
+          state.usageStats !== undefined &&
+          (state.usageStats.lastTurnCache !== undefined ||
+            state.usageStats.lastMissReasons !== undefined)
+            ? { ...state.usageStats, lastTurnCache: undefined, lastMissReasons: undefined }
             : state.usageStats,
       };
     }
@@ -462,6 +474,9 @@ export function reduce(state: ReplState, event: ReplEvent): ReplState {
           ...(state.usageStats?.lastTurnCache !== undefined
             ? { lastTurnCache: state.usageStats.lastTurnCache }
             : {}),
+          ...(state.usageStats?.lastMissReasons !== undefined
+            ? { lastMissReasons: state.usageStats.lastMissReasons }
+            : {}),
         },
       };
     }
@@ -474,7 +489,16 @@ export function reduce(state: ReplState, event: ReplEvent): ReplState {
         cacheWriteInputTokens: 0,
         turns: 0,
       };
-      return { ...state, usageStats: { ...prev, lastTurnCache: event.kind } };
+      return {
+        ...state,
+        usageStats: {
+          ...prev,
+          lastTurnCache: event.kind,
+          ...(event.kind === "miss" && event.reasons !== undefined && event.reasons.length > 0
+            ? { lastMissReasons: event.reasons }
+            : {}),
+        },
+      };
     }
 
     case "steer": {

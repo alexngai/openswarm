@@ -61,14 +61,25 @@ export function formatCost(usage: UsageStats | undefined, model: string): string
 /**
  * Running cache-read share of the input side: read / (read + fresh input),
  * annotated with the last turn's cache_hit/cache_miss lane signal when the
- * engine path emits one (docs/55 TE-20). Empty until usage flows.
+ * engine path emits one (docs/55 TE-20). An attributed miss names the prefix
+ * components that changed, e.g. "(miss: tools)" (TE-21). Empty until usage
+ * flows.
  */
 export function formatCache(usage: UsageStats | undefined): string {
   if (usage === undefined) return "";
   const denom = usage.cacheReadInputTokens + usage.inputTokens;
   if (denom === 0) return "";
   const pct = Math.round((usage.cacheReadInputTokens / denom) * 100);
-  const marker = usage.lastTurnCache !== undefined ? ` (${usage.lastTurnCache})` : "";
+  let marker = "";
+  if (usage.lastTurnCache !== undefined) {
+    const reasons =
+      usage.lastTurnCache === "miss" &&
+      usage.lastMissReasons !== undefined &&
+      usage.lastMissReasons.length > 0
+        ? `: ${usage.lastMissReasons.join("+")}`
+        : "";
+    marker = ` (${usage.lastTurnCache}${reasons})`;
+  }
   return ` · cache: ${pct}%${marker}`;
 }
 

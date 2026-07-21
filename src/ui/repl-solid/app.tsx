@@ -662,7 +662,17 @@ export function translateEngineEvent(evt: NormalizedEvent): ReplEvent[] {
     case "cache_hit":
       return [{ type: "cache-signal", kind: "hit" }];
     case "cache_miss":
-      return [{ type: "cache-signal", kind: "miss" }];
+      // An attributed miss names the prefix components that changed since the
+      // previous run (docs/55 TE-21); unattributed misses carry no reasons.
+      return [
+        {
+          type: "cache-signal",
+          kind: "miss",
+          ...(evt.payload.changedComponents !== undefined
+            ? { reasons: evt.payload.changedComponents }
+            : {}),
+        },
+      ];
     case "info":
       return [];
     case "retry":

@@ -59,4 +59,14 @@ describe("formatCache", () => {
     });
     expect(formatCache(s)).toBe(" · cache: 50% (hit)");
   });
+
+  it("names the changed prefix components on an attributed miss (TE-21)", () => {
+    const s = stats({
+      inputTokens: 5_000,
+      cacheReadInputTokens: 5_000,
+      lastTurnCache: "miss",
+      lastMissReasons: ["system", "tools"],
+    });
+    expect(formatCache(s)).toBe(" · cache: 50% (miss: system+tools)");
+  });
 });
