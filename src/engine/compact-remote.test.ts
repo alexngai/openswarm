@@ -6,7 +6,11 @@ import {
   REQUIRED_SUMMARY_SECTIONS,
   type RemoteCompactionConfig,
 } from "./compact-remote.js";
-import { buildCompactSummaryRequest } from "./compact-prompts.js";
+import {
+  buildCompactSummaryRequest,
+  buildRecentCompactSummaryRequest,
+  standingConstraintsEnabled,
+} from "./compact-prompts.js";
 import type {
   Provider,
   ProviderMessage,
@@ -91,6 +95,22 @@ function mockProvider(response: string): Provider {
           };
         },
       };
+    },
+  };
+}
+
+/**
+ * Captures the messages the summarizer receives so a test can assert what the
+ * real compaction path actually sent (TE-25). Returns a conforming summary so
+ * compaction succeeds.
+ */
+function capturingProvider(captured: ProviderRequest[]): Provider {
+  const base = mockProvider(conformingSummary());
+  return {
+    ...base,
+    stream(request: ProviderRequest): AsyncIterable<ProviderEvent> {
+      captured.push(request);
+      return base.stream(request);
     },
   };
 }
@@ -701,5 +721,94 @@ describe("buildCompactSummaryRequest", () => {
     const reminderIdx = request.indexOf("REMINDER: Do NOT call any tools.");
     expect(instrIdx).toBeGreaterThan(-1);
     expect(reminderIdx).toBeGreaterThan(instrIdx);
+  });
+
+  // TE-25 (docs/55): standing-constraints section is an opt-in addendum.
+  it("omits the standing-constraints section by default (byte-exact CC core)", () => {
+    expect(buildCompactSummaryRequest()).not.toContain("Standing facts & constraints");
+    expect(buildRecentCompactSummaryRequest()).not.toContain("Standing facts & constraints");
+  });
+
+  it("adds the standing-constraints section when enabled, before any custom instructions", () => {
+    const request = buildCompactSummaryRequest("focus on tests", {
+      standingConstraints: true,
+    });
+    const sectionIdx = request.indexOf("Standing facts & constraints");
+    const instrIdx = request.indexOf("Additional Instructions:\nfocus on tests");
+    const reminderIdx = request.indexOf("REMINDER: Do NOT call any tools.");
+    expect(sectionIdx).toBeGreaterThan(-1);
+    // core prompt … standing section … custom instructions … reminder
+    expect(sectionIdx).toBeLessThan(instrIdx);
+    expect(instrIdx).toBeLessThan(reminderIdx);
+    // Preserves the byte-exact core.
+    expect(request).toContain("CRITICAL: Respond with TEXT ONLY.");
+    for (const section of REQUIRED_SUMMARY_SECTIONS) {
+      expect(request).toContain(section);
+    }
+  });
+
+  it("adds the section to the reactive (keep-recent) variant too", () => {
+    const request = buildRecentCompactSummaryRequest(undefined, {
+      standingConstraints: true,
+    });
+    expect(request).toContain("Standing facts & constraints");
+  });
+});
+
+describe("standing-constraints wiring through compactSessionRemote (TE-25)", () => {
+  const FLAG = "OPENSWARM_COMPACT_STANDING_CONSTRAINTS";
+
+  async function capturedSummaryRequest(flag: string | undefined): Promise<string> {
+    const saved = process.env[FLAG];
+    if (flag === undefined) delete process.env[FLAG];
+    else process.env[FLAG] = flag;
+    try {
+      const captured: ProviderRequest[] = [];
+      const session: Session = {
+        messages: [
+          userText("Never touch src/legacy/ — vendored."),
+          assistantText("Understood."),
+          ...makeFiller(8),
+        ],
+      };
+      await compactSessionRemote(session, remoteConfig(capturingProvider(captured)), undefined, {
+        force: true,
+      });
+      // The summarizer request is the last user message of the summarize call.
+      const req = captured[0]!;
+      const last = req.messages[req.messages.length - 1]!;
+      return last.content.map((b) => ("text" in b ? b.text : "")).join("");
+    } finally {
+      if (saved === undefined) delete process.env[FLAG];
+      else process.env[FLAG] = saved;
+    }
+  }
+
+  it("sends the standing-constraints section when enabled (default)", async () => {
+    const text = await capturedSummaryRequest(undefined);
+    expect(text).toContain("Standing facts & constraints");
+  });
+
+  it("omits the section on the baseline arm (flag off)", async () => {
+    const text = await capturedSummaryRequest("0");
+    expect(text).not.toContain("Standing facts & constraints");
+    // Byte-exact CC core still present.
+    expect(text).toContain("CRITICAL: Respond with TEXT ONLY.");
+  });
+});
+
+describe("standingConstraintsEnabled", () => {
+  it("defaults on (the TE-25 improvement ships enabled)", () => {
+    expect(standingConstraintsEnabled({})).toBe(true);
+  });
+
+  it("is disabled by falsy flag values (eval baseline arm)", () => {
+    for (const v of ["0", "false", "off", "no", "OFF", "False"]) {
+      expect(standingConstraintsEnabled({ OPENSWARM_COMPACT_STANDING_CONSTRAINTS: v })).toBe(false);
+    }
+  });
+
+  it("stays on for any other value", () => {
+    expect(standingConstraintsEnabled({ OPENSWARM_COMPACT_STANDING_CONSTRAINTS: "1" })).toBe(true);
   });
 });

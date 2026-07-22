@@ -42,6 +42,7 @@ import {
 import {
   buildCompactSummaryRequest,
   buildRecentCompactSummaryRequest,
+  standingConstraintsEnabled,
 } from "./compact-prompts.js";
 import {
   buildPostCompactAttachments,
@@ -417,10 +418,11 @@ async function summarizeInSession(
   opts: SummarizeOptions | undefined,
   abort?: AbortSignal,
 ): Promise<string> {
+  const summaryOpts = { standingConstraints: standingConstraintsEnabled() };
   const requestText =
     opts?.recentPortion === true
-      ? buildRecentCompactSummaryRequest(opts?.customInstructions)
-      : buildCompactSummaryRequest(opts?.customInstructions);
+      ? buildRecentCompactSummaryRequest(opts?.customInstructions, summaryOpts)
+      : buildCompactSummaryRequest(opts?.customInstructions, summaryOpts);
 
   // The conversation the summarizer sees. Prompt-too-long retries shrink it
   // from the oldest end, marked with CC's truncation string.
