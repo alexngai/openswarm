@@ -193,6 +193,61 @@ function microcompactEnabled(): boolean {
   return !["0", "false", "off", "no"].includes(flag);
 }
 
+/**
+ * Microcompaction policy from env, for tuning the tool-result eviction lever
+ * without a rebuild. `OPENSWARM_MICROCOMPACT_KEEP_RECENT` overrides how many of
+ * the most-recent tool results are preserved (lower = more aggressive eviction,
+ * frees context but busts more of the prompt-cache prefix). `_MIN_SAVINGS`
+ * overrides the token-savings gate (lower = eviction fires on smaller sessions).
+ * Unset/invalid values fall back to the CC defaults inside microcompactMessages.
+ */
+export function microcompactPolicyFromEnv(): {
+  keepRecent?: number;
+  minSavingsTokens?: number;
+} {
+  const out: { keepRecent?: number; minSavingsTokens?: number } = {};
+  // NB: Number("") === 0, so guard empty/whitespace explicitly — an unset or blank
+  // knob must fall back to the CC default, not silently pin keepRecent to 0.
+  const parse = (raw: string | undefined): number | undefined => {
+    if (raw === undefined || raw.trim() === "") return undefined;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : undefined;
+  };
+  const kr = parse(process.env.OPENSWARM_MICROCOMPACT_KEEP_RECENT);
+  if (kr !== undefined) out.keepRecent = kr;
+  const ms = parse(process.env.OPENSWARM_MICROCOMPACT_MIN_SAVINGS);
+  if (ms !== undefined) out.minSavingsTokens = ms;
+  return out;
+}
+
+/**
+ * Effective compaction context window. `OPENSWARM_COMPACT_CONTEXT_WINDOW` overrides the
+ * provider's real window used to CLASSIFY context pressure (the microcompaction/full-compaction
+ * trigger). Lowering it (e.g. 40000) makes compaction fire on shorter conversations — the induced
+ * "context pressure" regime that ACTIVATES the tool-result eviction lever (whose keepRecent knob is
+ * otherwise inert, since gpt-5.5's real 200k window is rarely crossed on these tasks). It shrinks
+ * only the trigger, not the model's actual window. Unset/invalid → the real provider window.
+ */
+export function compactContextWindowFromEnv(fallback: number): number {
+  const raw = process.env.OPENSWARM_COMPACT_CONTEXT_WINDOW;
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/**
+ * When `OPENSWARM_DISABLE_FULL_COMPACTION` is truthy, the AUTO full (summarizing) compaction is
+ * skipped — micro-eviction becomes the ONLY context-management mechanism. Used with a fake-low
+ * `OPENSWARM_COMPACT_CONTEXT_WINDOW` to exercise the tool-result eviction lever IN ISOLATION (no
+ * summarization confound, no summarizer model call): the low window triggers micro, and the real
+ * provider window is not actually exceeded so skipping the summary is safe. Manual /compact is
+ * unaffected.
+ */
+export function fullCompactionDisabled(): boolean {
+  const flag = (process.env.OPENSWARM_DISABLE_FULL_COMPACTION ?? "").toLowerCase();
+  return ["1", "true", "on", "yes"].includes(flag);
+}
+
 export interface PreTurnCompactionOutcome {
   readonly messages: ProviderMessage[];
   /** True when a full compaction ran (not micro/warn) — snapshot counter. */
@@ -217,10 +272,11 @@ export async function* preTurnCompaction(
   // ---- L1: classify --------------------------------------------------------
   let level: ContextUsageLevel;
   const contextTokens = effectiveContextTokens(state, messages);
+  const contextWindow = compactContextWindowFromEnv(deps.contextWindow);
   let threshold: number;
   let pctLeft = 100;
   if (contextTokens > 0) {
-    const status = contextUsageStatus(contextTokens, deps.contextWindow);
+    const status = contextUsageStatus(contextTokens, contextWindow);
     level = status.level;
     threshold = status.threshold;
     pctLeft = status.pctLeft;
@@ -261,6 +317,7 @@ export async function* preTurnCompaction(
   if (microcompactEnabled()) {
     const micro = microcompactMessages(messages, {
       ...(deps.sessionDir !== undefined ? { stateDir: deps.sessionDir } : {}),
+      ...microcompactPolicyFromEnv(),
     });
     if (micro !== null) {
       yield {
@@ -321,6 +378,12 @@ export async function* preTurnCompaction(
   // Blocked-level compactions bypass the breaker — refusing would wedge the
   // session entirely.
   if (state.breakerTripped && level !== "blocked") {
+    return { messages, compacted: false };
+  }
+
+  // Isolate the eviction lever: skip AUTO full (summarizing) compaction when disabled, so
+  // micro-eviction is the only mechanism (see fullCompactionDisabled). Micro above already ran.
+  if (fullCompactionDisabled()) {
     return { messages, compacted: false };
   }
 
