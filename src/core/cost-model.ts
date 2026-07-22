@@ -72,6 +72,11 @@ export const MODEL_ACTIVE_PARAMS_B: Readonly<Record<string, number>> = {
   "qwen3-14b": 14,
   "qwen3-32b": 32,
   "qwen3-30b-a3b": 3, // 30B total, ~3B active/token (MoE)
+  "qwen3-coder-30b-a3b-instruct": 3, // coder variant of qwen3-30b-a3b (same MoE, ~3B active)
+  "qwen2.5-coder-32b-instruct": 32, // dense 32B coder (alt small tier)
+  // Bedrock inference-profile ids (normalizeModelId strips the awsbedrock/ prefix → the bare id).
+  "us.meta.llama3-1-8b-instruct-v1:0": 8, // Llama 3.1 8B (dense) — native-Bedrock small tier
+  "meta.llama3-1-8b-instruct-v1:0": 8,
 };
 
 /** Strip a provider/gateway prefix ("litellm/…", "azureoai/…") and lowercase. */

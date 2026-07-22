@@ -92,6 +92,9 @@ function providerEnv(): Record<string, string> {
     "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
     "AZURE_API_BASE", "AZURE_OPENAI_ENDPOINT", "AZURE_API_KEY",
     "AZURE_OPENAI_API_KEY", "AZURE_API_VERSION", "AZURE_OPENAI_API_VERSION",
+    // DashScope (Qwen small tier, docs/50 §4.2): agents call the DashScope OpenAI-compat
+    // endpoint from INSIDE the sandbox, so the key must be forwarded like the AWS/Azure creds.
+    "DASHSCOPE_API_KEY",
   ]) {
     const v = process.env[k];
     if (v) env[k] = v;
