@@ -119,6 +119,29 @@ describe("resolveProvider", () => {
     expect(result.modelId).toBe(deployment);
   });
 
+  // AWS Bedrock DIRECT: awsbedrock/<id> → native Converse transport, distinct from the bedrock/
+  // gateway prefix. The inference-profile model id is the prefix-stripped value; authFactory supplies
+  // AWS_BEARER_TOKEN_BEDROCK (providerId "bedrock").
+  it.each([
+    ["awsbedrock/us.meta.llama3-1-8b-instruct-v1:0", "us.meta.llama3-1-8b-instruct-v1:0"],
+    ["awsbedrock/us.amazon.nova-lite-v1:0", "us.amazon.nova-lite-v1:0"],
+  ])('%s → native bedrock transport, modelId "%s", authFactory present', async (id, cleanId) => {
+    const result = resolveProvider(id);
+    expect(result.kind).toBe("native");
+    expect(typeof result.providerFactory).toBe("function");
+    expect(typeof result.authFactory).toBe("function");
+    expect(result.modelId).toBe(cleanId);
+    const auth = await result.authFactory!();
+    expect(auth.providerId).toBe("bedrock");
+  });
+
+  // awsbedrock/ must NOT be swallowed by the litellm bedrock/ gateway regex.
+  it("bedrock/ still routes to the LiteLLM gateway (unchanged), not the native transport", () => {
+    const result = resolveProvider("bedrock/claude-sonnet-4-6");
+    expect(result.kind).toBe("native");
+    expect(result.modelId).toBe("claude-sonnet-4-6");
+  });
+
   // azure/ must STILL route to the LiteLLM gateway (not the direct Azure transport).
   it('azure/gpt-4o → native litellm gateway (unchanged), modelId "gpt-4o"', () => {
     const result = resolveProvider("azure/gpt-4o");
