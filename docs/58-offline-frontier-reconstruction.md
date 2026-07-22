@@ -88,6 +88,27 @@ Measure Q1/Q2 cleanly on a **cheap, single-shot, graded, code-relevant** surface
 
 This isolates the mechanism: the small model only writes one function, so "can it drive the loop" stops masking "is there signal," and test-execution is local and free.
 
+### 4.1 Phase 1 results — the first positive signal
+
+Ran `eval/experiments/humaneval-signal.ts` on all 164 HumanEval, llama-3.1-8b (cheap) vs gpt-5.5 (large), 1 seed, single-shot.
+
+| | resolve | mean fresh tok/problem | sig_visible AUC |
+|---|--:|--:|--:|
+| Llama-3.1-8B | 0.604 (99/164) | 234 | **0.874** |
+| gpt-5.5 | 0.970 (159/164) | 394 | 0.951 |
+
+Structure: both-solve=98, llama-only=1, **gpt-only=61**, neither=4. Oracle-cascade quality = 0.976.
+
+**F5 — the first Goldilocks pair.** Unlike every SWE pairing (haiku too strong / Nova too weak), the small tier solves the **majority** (0.60) with a real gap to the large (0.97). Llama-8B clears the easy slice; the 61 gpt-only tasks are the exploitable gap.
+
+**F6 — the escalation signal works (Q2 answered positively for the first time).** `sig_visible` AUC = **0.874** on Llama-8B — the cheap docstring-example signal discriminates its correct completions from its wrong ones, so a cascade can route on it. (Coverage 72/164 — only problems with `>>>` examples; self-test / self-consistency signals would extend the other 56%.)
+
+**F7 — frontier expansion on the honest compute axis, not token-count.** On raw token COUNT the cascade loses (single-shot tokens are ~equal; oracle 418 > gpt 394 — you always run the cheap tier then escalate). But on **FLOPs (params × tokens)** — the iso-compute axis (§8.1) — Llama-8B (8B params) is ~10–50× cheaper per token, so the oracle cascade Pareto-dominates mono-gpt at every plausible gpt-5.5 size: same 0.976 quality at **~2× fewer FLOPs** (gpt≈70B: 15k vs 28k; gpt≈400B: 75k vs 157k). The win lives entirely on the compute axis — exactly what the honest-cost mandate predicts, and the opposite of the SWE pairings where the oracle inequality failed on *both* axes (F1).
+
+**Why it worked where SWE didn't:** single-shot removes the agentic token bloat that erased haiku's compute advantage (docs/57), and Llama-8B is a genuinely small open-weight model — a real param gap → a real FLOPs gap the cheap tier can bank on the easy slice.
+
+**Caveats (what Phase 1 does *not* yet show):** (a) the FLOPs win uses an *estimated* gpt-5.5 param count (proprietary) — the clean claim needs two **open-weight** models with known params (Phase 1.5: e.g. Qwen-Coder-7B vs 32B, or Llama-8B vs 70B). (b) The signal covers 44% of problems. (c) Single-shot code-gen, not agentic SWE — transfer is Phase 2.
+
 ## 5. Phase 2 — transfer to agentic SWE (only if Phase 1 signal is good)
 
 Reuse the existing SWE harness, but run each model **once** and do the **offline** policy sweep instead of live per-policy runs; log the escalation signal we already build (authored-repro + compile gate). Same cost as one screen (~$40–100), then every τ/router is free — and the live-vs-offline cost gap directly quantifies handoff bloat (§2 decomposition).
