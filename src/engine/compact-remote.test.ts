@@ -4,6 +4,9 @@ import {
   isRemoteCompactionConfig,
   missingSummarySections,
   REQUIRED_SUMMARY_SECTIONS,
+  pinUserTurnsEnabled,
+  selectPinnedUserTurns,
+  renderPinnedUserTurns,
   type RemoteCompactionConfig,
 } from "./compact-remote.js";
 import {
@@ -794,6 +797,90 @@ describe("standing-constraints wiring through compactSessionRemote (TE-25)", () 
     expect(text).not.toContain("Standing facts & constraints");
     // Byte-exact CC core still present.
     expect(text).toContain("CRITICAL: Respond with TEXT ONLY.");
+  });
+});
+
+describe("verbatim user-turn pinning (TE-25b)", () => {
+  it("pinUserTurnsEnabled defaults off, enables on truthy flag", () => {
+    expect(pinUserTurnsEnabled({})).toBe(false);
+    for (const v of ["1", "true", "on", "yes", "YES"]) {
+      expect(pinUserTurnsEnabled({ OPENSWARM_COMPACT_PIN_USER_TURNS: v })).toBe(true);
+    }
+    expect(pinUserTurnsEnabled({ OPENSWARM_COMPACT_PIN_USER_TURNS: "0" })).toBe(false);
+  });
+
+  it("selects small text-only user turns, skipping assistant/tool/large turns", () => {
+    const messages: ProviderMessage[] = [
+      userText("Never touch src/legacy/."),
+      assistantText("ok"),
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "x", is_error: false }] },
+      userText("y".repeat(9_000)), // pasted content — over per-turn budget
+      userText("Pin React to 18.2.0."),
+    ];
+    const pinned = selectPinnedUserTurns(messages);
+    const texts = pinned.map((m) => m.content.map((b) => ("text" in b ? b.text : "")).join(""));
+    expect(texts).toEqual(["Never touch src/legacy/.", "Pin React to 18.2.0."]);
+  });
+
+  it("honors the total char budget (later turns beyond budget drop)", () => {
+    const messages: ProviderMessage[] = [
+      userText("a".repeat(400)),
+      userText("b".repeat(400)),
+      userText("c".repeat(400)),
+    ];
+    const pinned = selectPinnedUserTurns(messages, 1_000, 800);
+    expect(pinned).toHaveLength(2); // 400 + 400 fits; third would exceed 800
+  });
+
+  it("renders pinned turns verbatim inside a marker; undefined when none", () => {
+    expect(renderPinnedUserTurns([])).toBeUndefined();
+    const block = renderPinnedUserTurns([userText("Never touch src/legacy/.")]);
+    expect(block?.role).toBe("user");
+    const text = block!.content.map((b) => ("text" in b ? b.text : "")).join("");
+    expect(text).toContain("<pinned-user-messages>");
+    expect(text).toContain("Never touch src/legacy/."); // verbatim
+    expect(text).toContain("</pinned-user-messages>");
+  });
+
+  it("injects the pinned block after the summary only when the flag is on", async () => {
+    const FLAG = "OPENSWARM_COMPACT_PIN_USER_TURNS";
+    const saved = process.env[FLAG];
+    const session: Session = {
+      messages: [
+        userText("Never touch src/legacy/ — vendored."),
+        assistantText("Understood."),
+        ...makeFiller(8),
+      ],
+    };
+    try {
+      process.env[FLAG] = "1";
+      const on = await compactSessionRemote(
+        session,
+        remoteConfig(mockProvider(conformingSummary())),
+        undefined,
+        { force: true, skipAttachments: true },
+      );
+      const onText = on.compactedSession.messages
+        .flatMap((m) => m.content.map((b) => ("text" in b ? b.text : "")))
+        .join("\n");
+      expect(onText).toContain("<pinned-user-messages>");
+      expect(onText).toContain("Never touch src/legacy/ — vendored.");
+
+      process.env[FLAG] = "0";
+      const off = await compactSessionRemote(
+        session,
+        remoteConfig(mockProvider(conformingSummary())),
+        undefined,
+        { force: true, skipAttachments: true },
+      );
+      const offText = off.compactedSession.messages
+        .flatMap((m) => m.content.map((b) => ("text" in b ? b.text : "")))
+        .join("\n");
+      expect(offText).not.toContain("<pinned-user-messages>");
+    } finally {
+      if (saved === undefined) delete process.env[FLAG];
+      else process.env[FLAG] = saved;
+    }
   });
 });
 

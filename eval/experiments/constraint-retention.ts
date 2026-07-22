@@ -41,11 +41,24 @@ interface Arm {
   readonly env: Record<string, string>;
 }
 
-// Flags the compaction path reads. TE-25b will add its own pinning flag here.
+// Flags the compaction path reads (TE-25a section, TE-25b verbatim pinning).
 const ARMS: readonly Arm[] = [
-  { label: "baseline", env: { OPENSWARM_COMPACT_STANDING_CONSTRAINTS: "0" } },
-  { label: "section", env: { OPENSWARM_COMPACT_STANDING_CONSTRAINTS: "1" } },
+  {
+    label: "baseline",
+    env: { OPENSWARM_COMPACT_STANDING_CONSTRAINTS: "0", OPENSWARM_COMPACT_PIN_USER_TURNS: "0" },
+  },
+  {
+    label: "section",
+    env: { OPENSWARM_COMPACT_STANDING_CONSTRAINTS: "1", OPENSWARM_COMPACT_PIN_USER_TURNS: "0" },
+  },
+  {
+    label: "verbatim",
+    env: { OPENSWARM_COMPACT_STANDING_CONSTRAINTS: "1", OPENSWARM_COMPACT_PIN_USER_TURNS: "1" },
+  },
 ];
+
+const PIN_FLAG = "OPENSWARM_COMPACT_PIN_USER_TURNS";
+const SECTION_FLAG = "OPENSWARM_COMPACT_STANDING_CONSTRAINTS";
 
 function applyEnv(overlay: Record<string, string>): void {
   for (const [k, v] of Object.entries(overlay)) process.env[k] = v;
@@ -135,8 +148,10 @@ async function main(): Promise<void> {
       results.push(await runArm(arm, provider, model, runsPerFixture));
     }
   } finally {
-    process.env["OPENSWARM_COMPACT_STANDING_CONSTRAINTS"] =
-      saved["OPENSWARM_COMPACT_STANDING_CONSTRAINTS"];
+    for (const flag of [SECTION_FLAG, PIN_FLAG]) {
+      if (saved[flag] === undefined) delete process.env[flag];
+      else process.env[flag] = saved[flag];
+    }
   }
 
   console.log(`\n# TE-25 constraint retention (model: ${model}, ${runsPerFixture} run(s)/fixture, best-of)\n`);
