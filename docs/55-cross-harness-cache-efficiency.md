@@ -1,8 +1,38 @@
 # 55 — Cross-harness cache efficiency: lessons from DeepSeek-Reasonix
 
-Status: **draft / plan**. Extends [53 (token-efficiency tracker)](./53-token-efficiency-plan.md) and [48 (compaction design)](./48-compaction-design.md). New tracker IDs continue the `TE-N` scheme from 53 (last landed: TE-18) — this doc opens **TE-19…TE-27** (a measurement/visibility track first, then improvements).
+Status: **in progress**. Extends [53 (token-efficiency tracker)](./53-token-efficiency-plan.md) and [48 (compaction design)](./48-compaction-design.md). New tracker IDs continue the `TE-N` scheme from 53 (last landed: TE-18) — this doc opens **TE-19…TE-27** (a measurement/visibility track first, then improvements).
 
 Owner: engine
+
+## Status (2026-07-22)
+
+Landed and pushed on `claude/deepseek-reasonix-token-efficiency-tnpi9s`:
+
+| ID | What | Status |
+|----|------|--------|
+| TE-19 | Real `/cost` pricing + `/status` cache%/ctx-turn + session efficiency footer | landed |
+| TE-20 | Live cache indicator in the TUI footer | landed |
+| TE-21 | Cache-miss attribution (per-component prefix hashes) | landed |
+| TE-22 | Local A/B efficiency harness (`scripts/cache-ab.ts`) | landed |
+| TE-23 | Native-path request-prefix byte-stability guard | landed |
+| TE-24 | Self-calibrated tokens-per-char in the compaction estimator | landed |
+| TE-25a | Standing-constraints summary section (default on) | landed |
+| TE-25b | Verbatim user-turn pinning (gated off) | landed |
+| TE-25-eval | Constraint-retention instrument (grader + fixtures + runner) | landed; **live numbers pending a model run** |
+| TE-26 | Per-tool snip geometry for microcompaction | not started (optional) |
+| TE-27 | CI cache-impact gate | not started (optional) |
+
+**Blocked on environment, not code:** the TE-25 live comparison (baseline vs section vs verbatim) needs a native-transport model key, which the dev sandbox lacks. See [Handoff: running the live eval](#handoff-running-the-live-constraint-retention-eval) below and the standalone runbook in [`55-live-eval-handoff.md`](./55-live-eval-handoff.md).
+
+### New runtime flags (this work)
+
+| Env var | Default | Effect |
+|---------|---------|--------|
+| `OPENSWARM_COMPACT_STANDING_CONSTRAINTS` | on | Emit the `Standing facts & constraints` summary section (TE-25a). Set `0`/`false`/`off`/`no` for the eval baseline arm |
+| `OPENSWARM_COMPACT_PIN_USER_TURNS` | off | Pin small user turns verbatim through compaction (TE-25b). Set `1`/`true`/`on`/`yes` for the eval verbatim arm |
+| `OPENSWARM_EVAL_MODEL` | `gpt-5.5` | Native-transport model the constraint-retention runner uses |
+| `OPENSWARM_EVAL_RUNS` | `2` | Runs per fixture per arm (best-of-N over model nondeterminism) |
+| `OPENSWARM_EVAL_ARMS` | all | Comma-separated arm subset, e.g. `baseline,section` |
 
 ## Motivation
 
@@ -99,6 +129,37 @@ Reuse the swarmkit-eval cost-frontier harness (51), the TE-14 telemetry, and the
 - **TE-23:** unit/integration test is the deliverable; additionally assert via TE-22 that `cacheReadFraction` stays ≥ baseline on a repeat-prefix run (the regression signal if the guard ever silently fails).
 - **TE-24:** offline — compare estimated vs. real `prompt_tokens` across a recorded session; target < 10% mean error vs. the fixed-constant baseline.
 - **TE-25:** the constraint-retention instrument (`eval/harness/constraint-retention.ts` + runner) is the dedicated arm — seeds an early user constraint, forces compaction, grades verbatim identifier survival. Metric = non-security retention rate per arm (baseline vs section vs verbatim). Grader is deterministic + unit-tested; live rates need a model run. Accept section-only if non-security retention rises materially over baseline with no summary-quality regression; escalate to verbatim (TE-25b) if the section alone leaves a gap.
+
+## Handoff: running the live constraint-retention eval
+
+The TE-25 decision (is the section enough, or is verbatim pinning needed?) is the
+one open measurement. Everything is built and tested; it just needs a native
+model. Standalone runbook: [`55-live-eval-handoff.md`](./55-live-eval-handoff.md).
+
+```bash
+# 1. fresh clone of the branch, then:
+npm ci && npm run build
+
+# 2. run the three arms (needs OPENAI_API_KEY or another native-transport key)
+OPENAI_API_KEY=sk-...  OPENSWARM_EVAL_MODEL=gpt-5.5  OPENSWARM_EVAL_RUNS=3 \
+  bun eval/experiments/constraint-retention.ts
+```
+
+The runner prints a markdown table of **non-security retention** per arm
+(`baseline` / `section` / `verbatim`) plus a per-fixture loss list.
+
+**Decision rule** (feeds the TE-25 tracker rows):
+- If `section` non-security retention is materially above `baseline` (target: ≥
+  baseline + a clear margin, ideally ~100%) → the default-on section is
+  sufficient; leave `OPENSWARM_COMPACT_PIN_USER_TURNS` off.
+- If `section` still drops constraints that `verbatim` keeps → promote verbatim
+  pinning toward default (flip the default, keep the flag as an escape hatch),
+  and note the token cost verbatim adds (the pinned block is extra prefix).
+- Record the numbers back into this doc's TE-25 rows and the open question below.
+
+Deterministic pre-checks (no model, already green in CI):
+`npx vitest run -c eval/vitest.config.ts eval/harness/constraint-retention.test.ts`
+(grader) and `npx vitest run src/engine/compact-remote.test.ts` (flag wiring).
 
 ## Open questions
 
