@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   CONSTRAINT_FIXTURES,
+  HARD_CONSTRAINT_FIXTURES,
+  FIXTURE_SETS,
+  selectFixtureSet,
   gradeConstraintRetention,
   summarizeArm,
   renderRetentionReport,
@@ -11,6 +14,13 @@ function fixtureById(id: string): ConstraintFixture {
   const f = CONSTRAINT_FIXTURES.find((x) => x.id === id);
   if (f === undefined) throw new Error(`no fixture ${id}`);
   return f;
+}
+
+function allText(f: ConstraintFixture): string {
+  return f.messages
+    .flatMap((m) => m.content.map((b) => ("text" in b ? b.text : "")))
+    .join(" ")
+    .toLowerCase();
 }
 
 describe("fixtures", () => {
@@ -31,6 +41,59 @@ describe("fixtures", () => {
     for (const f of CONSTRAINT_FIXTURES) {
       expect(f.messages.length).toBeGreaterThan(10);
     }
+  });
+});
+
+describe("hard fixtures (discriminating set)", () => {
+  // Well-formedness across BOTH sets: a mustContain token the fixture never
+  // states is un-gradeable (the grader could never pass), silently zeroing the
+  // arm. This guards every set the runner can select.
+  it("state every mustContain token verbatim somewhere in their own messages", () => {
+    for (const f of [...CONSTRAINT_FIXTURES, ...HARD_CONSTRAINT_FIXTURES]) {
+      const hay = allText(f);
+      for (const c of f.constraints) {
+        for (const tok of c.mustContain) {
+          expect(hay, `${f.id}/${c.id} missing "${tok}"`).toContain(tok.toLowerCase());
+        }
+      }
+    }
+  });
+
+  it("state the constraint in passing — NOT in the first user turn (unlike the default set)", () => {
+    // At least one hard fixture must bury its identifier past the opening turn;
+    // that's the property the default set lacks and this set exists to test.
+    const buriedPastFirstTurn = HARD_CONSTRAINT_FIXTURES.some((f) => {
+      const firstUser = f.messages.find((m) => m.role === "user");
+      const firstText = (firstUser?.content ?? [])
+        .map((b) => ("text" in b ? b.text : ""))
+        .join(" ")
+        .toLowerCase();
+      return f.constraints.some((c) => c.mustContain.some((t) => !firstText.includes(t.toLowerCase())));
+    });
+    expect(buriedPastFirstTurn).toBe(true);
+  });
+
+  it("include at least one fixture with multiple constraints", () => {
+    expect(HARD_CONSTRAINT_FIXTURES.some((f) => f.constraints.length > 1)).toBe(true);
+  });
+
+  it("are all non-security (they isolate the non-security retention gap)", () => {
+    for (const f of HARD_CONSTRAINT_FIXTURES) {
+      for (const c of f.constraints) expect(c.securityCovered ?? false).toBe(false);
+    }
+  });
+});
+
+describe("selectFixtureSet", () => {
+  it("resolves named sets", () => {
+    expect(selectFixtureSet("default")).toBe(FIXTURE_SETS.default);
+    expect(selectFixtureSet("hard")).toBe(FIXTURE_SETS.hard);
+    expect(selectFixtureSet("all")).toBe(FIXTURE_SETS.all);
+  });
+  it("is case/space-insensitive and defaults on unknown/empty", () => {
+    expect(selectFixtureSet("  HARD ")).toBe(FIXTURE_SETS.hard);
+    expect(selectFixtureSet("bogus")).toBe(CONSTRAINT_FIXTURES);
+    expect(selectFixtureSet(undefined)).toBe(CONSTRAINT_FIXTURES);
   });
 });
 

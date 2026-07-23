@@ -28,10 +28,11 @@ import { compactSessionRemote } from "../../src/engine/compact-remote.js";
 import type { RemoteCompactionConfig } from "../../src/engine/compact-remote.js";
 import type { Provider } from "../../src/providers/index.js";
 import {
-  CONSTRAINT_FIXTURES,
+  selectFixtureSet,
   gradeConstraintRetention,
   renderRetentionReport,
   type ArmRetention,
+  type ConstraintFixture,
   type FixtureGrade,
 } from "../harness/constraint-retention.js";
 
@@ -82,10 +83,11 @@ async function runArm(
   provider: Provider,
   model: string,
   runsPerFixture: number,
+  fixtures: readonly ConstraintFixture[],
 ): Promise<ArmRetention> {
   applyEnv(arm.env);
   const grades: FixtureGrade[] = [];
-  for (const fixture of CONSTRAINT_FIXTURES) {
+  for (const fixture of fixtures) {
     // Best-of-N over model nondeterminism: a constraint counts as retained if
     // it survives in ANY run (the resumed model only needs one good summary).
     // Report the best grade so a single unlucky sample doesn't dominate.
@@ -126,6 +128,8 @@ async function main(): Promise<void> {
     .map((s) => s.trim())
     .filter(Boolean);
   const arms = armFilter.length > 0 ? ARMS.filter((a) => armFilter.includes(a.label)) : ARMS;
+  const fixtureSet = process.env.OPENSWARM_EVAL_FIXTURES ?? "default";
+  const fixtures = selectFixtureSet(fixtureSet);
 
   let provider: Provider;
   try {
@@ -145,7 +149,7 @@ async function main(): Promise<void> {
   try {
     for (const arm of arms) {
       process.stderr.write(`\n[constraint-retention] arm: ${arm.label}\n`);
-      results.push(await runArm(arm, provider, model, runsPerFixture));
+      results.push(await runArm(arm, provider, model, runsPerFixture, fixtures));
     }
   } finally {
     for (const flag of [SECTION_FLAG, PIN_FLAG]) {
@@ -154,7 +158,10 @@ async function main(): Promise<void> {
     }
   }
 
-  console.log(`\n# TE-25 constraint retention (model: ${model}, ${runsPerFixture} run(s)/fixture, best-of)\n`);
+  console.log(
+    `\n# TE-25 constraint retention (model: ${model}, fixtures: ${fixtureSet}, ` +
+      `${runsPerFixture} run(s)/fixture, best-of)\n`,
+  );
   console.log(renderRetentionReport(results));
 }
 

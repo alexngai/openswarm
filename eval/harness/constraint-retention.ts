@@ -172,6 +172,134 @@ export const CONSTRAINT_FIXTURES: readonly ConstraintFixture[] = [
   },
 ];
 
+/**
+ * HARD fixtures — the discriminating set (docs/55). The default fixtures state
+ * each rule prominently in the first user turn around a single distinctive
+ * identifier, a shape gpt-5.5 preserved at 100% even with reasoning disabled
+ * (baseline saturated → the arms couldn't be told apart). These deliberately
+ * stress the summary's tendency to drop non-prominent detail:
+ *
+ *   - stated *in passing*, mid-session, woven into a larger work message (not a
+ *     standalone "Hard requirement:"),
+ *   - *multiple* constraints per fixture,
+ *   - *paraphrasable* identifiers (a summary that keeps the sense but rewords —
+ *     `snake_case`→"snake case", `enable_new_checkout`→"the checkout flag" —
+ *     scores a loss, which is the whole point),
+ *   - buried under more filler.
+ *
+ * Numeric tokens stay clear of the filler's step/module counters (which only go
+ * up to ~12) so a bare number can't false-positive.
+ */
+export const HARD_CONSTRAINT_FIXTURES: readonly ConstraintFixture[] = [
+  {
+    id: "aside-config-field",
+    messages: [
+      ...fillerTurns(2),
+      user(
+        "For the metrics work: add the p99 latency panel, wire it to the existing Grafana datasource, and — while you're editing that config — leave the `legacyTimeoutMs` default alone; a few old clients still depend on it being `15000`. Then add the alerting rule.",
+      ),
+      assistant(
+        "Will do — p99 panel on the existing datasource, alerting rule added, and I'll leave legacyTimeoutMs at 15000 untouched.",
+      ),
+      ...fillerTurns(8),
+    ],
+    constraints: [
+      {
+        id: "legacy-timeout",
+        description: "Don't change the legacyTimeoutMs default (15000).",
+        mustContain: ["legacyTimeoutMs", "15000"],
+      },
+    ],
+  },
+  {
+    id: "in-passing-ground-rules",
+    messages: [
+      ...fillerTurns(3),
+      user(
+        "Before you scaffold the endpoint — a few ground rules I keep forgetting to write down: use `snake_case` for all the new API response fields, put the migration under `db/migrations/2024/`, and cap the import batch size at `500` rows so we don't blow the memory limit. Otherwise proceed however you like.",
+      ),
+      assistant(
+        "Noted — snake_case response fields, migration in db/migrations/2024/, import batches capped at 500 rows.",
+      ),
+      ...fillerTurns(8),
+    ],
+    constraints: [
+      { id: "field-casing", description: "New API fields use snake_case.", mustContain: ["snake_case"] },
+      {
+        id: "migration-path",
+        description: "Migration goes under db/migrations/2024/.",
+        mustContain: ["db/migrations/2024/"],
+      },
+      { id: "batch-cap", description: "Import batch size capped at 500 rows.", mustContain: ["500"] },
+    ],
+  },
+  {
+    id: "paraphrasable-flag",
+    messages: [
+      ...fillerTurns(3),
+      user(
+        "Then gate the rollout behind a feature flag. Name it exactly `enable_new_checkout` — marketing keyed their launch dashboards to that literal string, so it can't be renamed, prefixed, or namespaced.",
+      ),
+      assistant("Understood — the flag will be exactly enable_new_checkout, no prefix or namespace."),
+      ...fillerTurns(8),
+    ],
+    constraints: [
+      {
+        id: "flag-name",
+        description: "Feature flag must be literally enable_new_checkout.",
+        mustContain: ["enable_new_checkout"],
+      },
+    ],
+  },
+  {
+    id: "buried-bucket",
+    messages: [
+      user(
+        "Real quick before we dig in: any test uploads go to the staging bucket `acme-staging-uploads`, never the prod bucket. Okay — now onto the actual task, which is the bigger refactor below.",
+      ),
+      assistant("Got it — test uploads only to acme-staging-uploads, never prod. Starting the refactor."),
+      ...fillerTurns(11),
+    ],
+    constraints: [
+      {
+        id: "staging-bucket",
+        description: "Test uploads go to acme-staging-uploads, not prod.",
+        mustContain: ["acme-staging-uploads"],
+      },
+    ],
+  },
+  {
+    id: "casual-version-pin",
+    messages: [
+      ...fillerTurns(4),
+      user(
+        "Also — not urgent, just don't let a lockfile refresh drag it forward — we're staying on Node `20.11.1` for now; the newer releases break our native addon build.",
+      ),
+      assistant("Understood — Node stays at 20.11.1; I won't let a lockfile refresh bump it."),
+      ...fillerTurns(7),
+    ],
+    constraints: [
+      {
+        id: "node-pin",
+        description: "Stay on Node 20.11.1 (don't bump).",
+        mustContain: ["20.11.1"],
+      },
+    ],
+  },
+];
+
+/** Named fixture sets the runner can select via OPENSWARM_EVAL_FIXTURES. */
+export const FIXTURE_SETS: Record<string, readonly ConstraintFixture[]> = {
+  default: CONSTRAINT_FIXTURES,
+  hard: HARD_CONSTRAINT_FIXTURES,
+  all: [...CONSTRAINT_FIXTURES, ...HARD_CONSTRAINT_FIXTURES],
+};
+
+/** Resolve a fixture-set name (default when unknown/empty). */
+export function selectFixtureSet(name: string | undefined): readonly ConstraintFixture[] {
+  return FIXTURE_SETS[(name ?? "").trim().toLowerCase()] ?? CONSTRAINT_FIXTURES;
+}
+
 // ---------------------------------------------------------------------------
 // Grader
 // ---------------------------------------------------------------------------
