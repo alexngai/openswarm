@@ -1,5 +1,17 @@
 # 55 — Live-eval handoff: TE-25 constraint retention
 
+> **✅ RAN 2026-07-22 on `azureoai/gpt-5.5`** (Azure OpenAI direct transport,
+> best-of-3). Result: **baseline / section / verbatim all 100% overall + 100%
+> non-security, 45/45 runs clean.** Baseline saturated → verbatim pinning stays
+> gated off, no code change; section stays default-on as (unmeasured) defense.
+> Full table + decision + saturation caveat live in
+> [`55-cross-harness-cache-efficiency.md` → Live result](./55-cross-harness-cache-efficiency.md#live-result-2026-07-22-te-25-constraint-retention).
+> This runbook is kept for **re-running on a weaker summarizer** (the real
+> discriminating test, since gpt-5.5 saturated). Note: with Azure creds in
+> `~/.zshrc`, set `OPENSWARM_EVAL_MODEL=azureoai/gpt-5.5` and export
+> `AZURE_OPENAI_API_VERSION` (the transport reads that name; `.zshrc` sets
+> `AZURE_API_VERSION`).
+
 **Purpose.** Everything for the cross-harness cache-efficiency work (docs/55,
 TE-19…TE-25b) is landed and tested on branch
 `claude/deepseek-reasonix-token-efficiency-tnpi9s`, **except one measurement that

@@ -18,11 +18,15 @@ Landed and pushed on `claude/deepseek-reasonix-token-efficiency-tnpi9s`:
 | TE-24 | Self-calibrated tokens-per-char in the compaction estimator | landed |
 | TE-25a | Standing-constraints summary section (default on) | landed |
 | TE-25b | Verbatim user-turn pinning (gated off) | landed |
-| TE-25-eval | Constraint-retention instrument (grader + fixtures + runner) | landed; **live numbers pending a model run** |
+| TE-25-eval | Constraint-retention instrument (grader + fixtures + runner) | landed; **live run done (2026-07-22, azureoai/gpt-5.5): all arms 100%, baseline saturates** — see [Live result](#live-result-2026-07-22-te-25-constraint-retention) |
 | TE-26 | Per-tool snip geometry for microcompaction | not started (optional) |
 | TE-27 | CI cache-impact gate | not started (optional) |
 
-**Blocked on environment, not code:** the TE-25 live comparison (baseline vs section vs verbatim) needs a native-transport model key, which the dev sandbox lacks. See [Handoff: running the live eval](#handoff-running-the-live-constraint-retention-eval) below and the standalone runbook in [`55-live-eval-handoff.md`](./55-live-eval-handoff.md).
+**TE-25 live comparison — done (2026-07-22).** Ran the three arms on
+`azureoai/gpt-5.5` (best-of-3): **all arms 100% non-security retention; baseline
+already saturates**, so verbatim pinning stays gated off (no code change). Full
+table, decision, and the saturation caveat in [Live result](#live-result-2026-07-22-te-25-constraint-retention).
+Runbook: [`55-live-eval-handoff.md`](./55-live-eval-handoff.md).
 
 ### New runtime flags (this work)
 
@@ -33,6 +37,76 @@ Landed and pushed on `claude/deepseek-reasonix-token-efficiency-tnpi9s`:
 | `OPENSWARM_EVAL_MODEL` | `gpt-5.5` | Native-transport model the constraint-retention runner uses |
 | `OPENSWARM_EVAL_RUNS` | `2` | Runs per fixture per arm (best-of-N over model nondeterminism) |
 | `OPENSWARM_EVAL_ARMS` | all | Comma-separated arm subset, e.g. `baseline,section` |
+| `OPENSWARM_REASONING_EFFORT` | unset | **Azure transport** (native reasoning models): pins `reasoning_effort` (`none`/`low`/`medium`/`high`/`xhigh`; `none` = reasoning off — the lowest gpt-5.5 accepts). Unset → not sent, request byte-identical to before (TE-23 guard intact). Added for the TE-25 weak-summarizer run; the OpenAI transport is a trivial mirror if ever needed |
+
+## Live result (2026-07-22): TE-25 constraint retention
+
+Run on **`azureoai/gpt-5.5`** (Azure OpenAI direct transport, api-version
+`2025-04-01-preview`), **3 runs/fixture/arm, best-of-N**, driving REAL compaction
+over all five seeded-constraint fixtures. Deterministic pre-checks green first
+(grader 8/8, flag-wiring 40/40).
+
+| arm | overall retention | non-security retention | retained/total | per-run losses |
+|-----|-------------------|------------------------|----------------|----------------|
+| baseline | 100% | 100% | 5/5 | none (15/15 runs 100%) |
+| section  | 100% | 100% | 5/5 | none (15/15 runs 100%) |
+| verbatim | 100% | 100% | 5/5 | none (15/15 runs 100%) |
+
+Every one of the **45 runs retained every constraint verbatim** — including the
+four non-security identifiers (`src/legacy/`, `audit_events`, `18.2.0`, `zod`)
+the section/verbatim arms exist to protect. No arm ever dropped a constraint on
+any single run, so best-of-N vs. single-run makes no difference here.
+
+**Decision — rule 3 ("no arm meaningfully beats baseline"):** on gpt-5.5 the
+byte-exact CC baseline summary *already* preserves all five constraints, so
+TE-25a (section) and TE-25b (verbatim pinning) add **no measurable retention** on
+this model/fixture set. Actions taken:
+
+- **No code change.** `OPENSWARM_COMPACT_PIN_USER_TURNS` stays **off** — decision
+  rule 2 (promote verbatim) was *not* triggered: the section arm lost nothing for
+  verbatim to recover. TE-25b remains an escape-hatch flag, not a default; its
+  per-turn `<pinned-user-messages>` prefix cost is unjustified by the data.
+- **TE-25a section stays default-on.** It's additive and *one-shot in the L3
+  summary prompt* (not the per-turn request prefix), so it carries no cache/TE-23
+  exposure — cheap defense-in-depth for the cases this run can't stress.
+
+**Caveat — the instrument saturated.** Baseline hitting 100% means the eval
+cannot *discriminate* the arms on this model/fixture set; it shows the additions
+aren't *needed* for gpt-5.5, not that they're worthless. Each fixture states its
+constraint prominently in the very first user turn around a single distinctive
+identifier — exactly what a strong summarizer keeps unprompted. The discriminating
+test TE-25a/b were built for (a weaker/smaller summarizer, or many/subtler
+constraints stated in passing) is the real follow-up if we want data justifying
+the section's existence; noted in [Open questions](#open-questions). Raw run:
+`bun eval/experiments/constraint-retention.ts` with the arms/knobs above.
+
+### Follow-up — weak-summarizer run (`reasoning_effort=none`)
+
+To reach the discriminating case the default run couldn't, we re-ran all three
+arms with gpt-5.5's **reasoning disabled** — `OPENSWARM_REASONING_EFFORT=none`,
+the lowest effort gpt-5.5 accepts (`minimal` is rejected; supported: `none`,
+`low`, `medium`, `high`, `xhigh`). This needed a new **env-gated passthrough** in
+the Azure transport (`providerOptions.openai.reasoningEffort`), verified on the
+wire (request body carries `reasoning_effort:"none"`; unset → not sent, so the
+default path stays byte-identical and the TE-23 guard is unaffected — regression
+tests 44/44 green).
+
+| arm (effort=none) | overall retention | non-security retention | retained/total | per-run losses |
+|-----|-------------------|------------------------|----------------|----------------|
+| baseline | 100% | 100% | 5/5 | none (15/15 runs 100%) |
+| section  | 100% | 100% | 5/5 | none (15/15 runs 100%) |
+| verbatim | 100% | 100% | 5/5 | none (15/15 runs 100%) |
+
+**Still a clean 45/45 sweep.** Even a non-reasoning gpt-5.5 keeps every
+constraint under the baseline prompt — so **reasoning budget is not the lever;
+the fixtures are.** Each states its rule prominently in the very first user turn
+around a single distinctive identifier, a shape any competent summarizer
+preserves with or without reasoning. The definitive discriminating test is
+therefore *harder fixtures* (constraints stated in passing mid-session, multiple
+per fixture, less-distinctive or paraphrasable identifiers) — **not** a weaker
+model or lower effort, both of which we've now shown don't move the needle. The
+new `OPENSWARM_REASONING_EFFORT` knob is a useful capability regardless (native
+reasoning-effort control the transports previously lacked).
 
 ## Motivation
 
@@ -101,9 +175,9 @@ Land this first, exactly as 53 landed TE-14/15 before any efficiency change. You
 |----|-------------|-------|-----------------|------|--------|
 | TE-23 | **Native-path request-prefix byte-stability guard.** Assert the *actually serialized* request prefix (system + tool defs + leading messages) is byte-identical across two consecutive turns with unchanged inputs, for the AI-SDK transports. Today `prompt-cache.test.ts` only checks the analytics *fingerprint* is deterministic — it does not exercise the real assembled request. Reasonix's boot-level `TestBuildComposesByteStableSystemPrompt` is the model. | `src/providers/prefix-stability.test.ts` (new) | Catches the "silent cold-start on every non-Anthropic provider" class before it ships; converts an untested property into a regression-guarded one | Low (test-only) | landed — guards at the streamText() boundary (the full output of the assembly code we own: system join, message replay, tool translation, provider options) with real tier-0 tool specs; four properties: non-vacuous schema bytes, identical-request determinism (with a >1ms gap so ms-granularity timestamps can't slip through), append-only prefix across turns, and tool_result round-trip stability. Sensitivity verified by fault injection: an injected `Math.random()`/delayed `Date.now()` in the transport fails the guard; clean code passes. The AI SDK's own HTTP-body construction from identical args is the SDK's contract (out of scope); tool schemas convert from Zod once at module load |
 | TE-24 | **Self-calibrated tokens-per-char.** Derive the chars/token ratio from the previous turn's real `prompt_tokens` instead of the fixed char/4 (compactor) and char/2.5 (preflight) constants. Reasonix's `tokPerChar()` tracks the provider tokenizer without shipping one, adapting to CJK/code density. Falls back to the current constant before any usage is seen. | `src/engine/compactor.ts` (`calibrateTokensPerChar`, `messageChars`, `estimateTokens` ratio param), `src/engine/compaction-runner.ts` (`effectiveContextTokens`) | More accurate trigger sizing on non-Anthropic providers where server `count_tokens` is unavailable (Claude Max/OAuth users always hit the estimate path today) | Low — bound the ratio to a sane range, keep the constant fallback | landed — `effectiveContextTokens` (the live trigger hot path) now sizes the appended tail with a ratio calibrated from the last real usage over the covered message chars, bounded to [0.05, 2] with char/4 fallback; `estimateTokens` gained an optional ratio param whose default (0.25) is byte-for-byte the prior char/4. **Scope note:** `token-preflight.localEstimate` (char/2.5) was left as-is — it's the SDK's pre-call fallback with no per-session usage in scope (the accurate path there is the server `count_tokens` call), so calibrating it from an unrelated turn adds risk for no gain |
-| TE-25a | **Standing-constraints summary section (section-only).** Our L4 rebuild (48) keeps *zero* messages verbatim and reconstructs working state from disk (recent files + todos) — excellent for code state, but a durable user rule stated only in conversation ("never touch X", a chosen key, a naming decision) can be lost if the summary drops it. The byte-exact CC prompt preserves only *security-relevant* constraints. Add a `Standing facts & constraints` addendum to the L3 summary prompt (composed like the guard/self-exclusion, not a reword) instructing a top-of-summary verbatim section for ALL durable constraints. | `src/engine/compact-prompts.ts` (`COMPACT_STANDING_CONSTRAINTS`, builder opt, `standingConstraintsEnabled`), `src/engine/compact-remote.ts` | Fewer post-compaction regressions where the agent violates an earlier user constraint; directly targets handoff-fidelity (52) failure modes | Low — additive addendum, CC core untouched | landed — default on; env-gated (`OPENSWARM_COMPACT_STANDING_CONSTRAINTS=0` for the eval baseline arm); end-to-end wiring proven by a capturing-provider test (section present with flag on, absent + CC core intact with flag off) |
-| TE-25-eval | **Constraint-retention measurement instrument.** A pure grader + fixtures (five constraint classes: never-touch path, chosen name, version pin, library choice, and a security control the CC baseline already covers) that scores whether a produced summary preserves a constraint's load-bearing identifiers verbatim; plus a runner that drives REAL compaction per arm (baseline/section/verbatim via env flags) and prints a retention comparison table. | `eval/harness/constraint-retention.ts` (+ `.test.ts`), `eval/experiments/constraint-retention.ts` | Turns "does TE-25 help?" into a number; reusable to compare section-only vs verbatim | Low | landed — grader deterministic + unit-tested (8); runner drives native-transport models, best-of-N over model nondeterminism, degrades cleanly without a key (no fabricated result). **Live numbers pending a model run** (needs OPENAI_API_KEY / a native model in the environment) |
-| TE-25b | **Verbatim user-turn pinning through compaction.** Pin small user turns verbatim through full compaction so the user's exact words survive regardless of summary quality (stronger than TE-25a; changes doc 48's zero-verbatim L4 contract). Compared against section-only via the TE-25 eval. | `src/engine/compact-remote.ts` (`selectPinnedUserTurns`, `renderPinnedUserTurns`, `pinUserTurnsEnabled`) | Strongest constraint retention; the durable contract is never at the mercy of the summarizer | Medium — changes the L4 rebuild contract; gated + eval-compared against section-only | landed — gated OFF by default (`OPENSWARM_COMPACT_PIN_USER_TURNS=1`); selects small text-only user turns (≤6k chars/turn, ≤20k total so it can't starve the window), skips assistant/tool/continuation/pasted turns, re-injects them verbatim in a `<pinned-user-messages>` block right after the summary; eval "verbatim" arm wired. **Live comparison vs section pending a model run** |
+| TE-25a | **Standing-constraints summary section (section-only).** Our L4 rebuild (48) keeps *zero* messages verbatim and reconstructs working state from disk (recent files + todos) — excellent for code state, but a durable user rule stated only in conversation ("never touch X", a chosen key, a naming decision) can be lost if the summary drops it. The byte-exact CC prompt preserves only *security-relevant* constraints. Add a `Standing facts & constraints` addendum to the L3 summary prompt (composed like the guard/self-exclusion, not a reword) instructing a top-of-summary verbatim section for ALL durable constraints. | `src/engine/compact-prompts.ts` (`COMPACT_STANDING_CONSTRAINTS`, builder opt, `standingConstraintsEnabled`), `src/engine/compact-remote.ts` | Fewer post-compaction regressions where the agent violates an earlier user constraint; directly targets handoff-fidelity (52) failure modes | Low — additive addendum, CC core untouched | landed — default on; env-gated (`OPENSWARM_COMPACT_STANDING_CONSTRAINTS=0` for the eval baseline arm); end-to-end wiring proven by a capturing-provider test (section present with flag on, absent + CC core intact with flag off). **Live (2026-07-22, gpt-5.5): 100% non-security retention — but so did baseline (saturated), so no measured lift on this model/fixture set; stays default-on as low-cost defense-in-depth, see [Live result](#live-result-2026-07-22-te-25-constraint-retention)** |
+| TE-25-eval | **Constraint-retention measurement instrument.** A pure grader + fixtures (five constraint classes: never-touch path, chosen name, version pin, library choice, and a security control the CC baseline already covers) that scores whether a produced summary preserves a constraint's load-bearing identifiers verbatim; plus a runner that drives REAL compaction per arm (baseline/section/verbatim via env flags) and prints a retention comparison table. | `eval/harness/constraint-retention.ts` (+ `.test.ts`), `eval/experiments/constraint-retention.ts` | Turns "does TE-25 help?" into a number; reusable to compare section-only vs verbatim | Low | landed — grader deterministic + unit-tested (8); runner drives native-transport models, best-of-N over model nondeterminism, degrades cleanly without a key (no fabricated result). **Live run done (2026-07-22, azureoai/gpt-5.5, 3 runs/arm): baseline / section / verbatim all 100% overall + non-security, 45/45 runs clean — [Live result](#live-result-2026-07-22-te-25-constraint-retention)** |
+| TE-25b | **Verbatim user-turn pinning through compaction.** Pin small user turns verbatim through full compaction so the user's exact words survive regardless of summary quality (stronger than TE-25a; changes doc 48's zero-verbatim L4 contract). Compared against section-only via the TE-25 eval. | `src/engine/compact-remote.ts` (`selectPinnedUserTurns`, `renderPinnedUserTurns`, `pinUserTurnsEnabled`) | Strongest constraint retention; the durable contract is never at the mercy of the summarizer | Medium — changes the L4 rebuild contract; gated + eval-compared against section-only | landed — gated OFF by default (`OPENSWARM_COMPACT_PIN_USER_TURNS=1`); selects small text-only user turns (≤6k chars/turn, ≤20k total so it can't starve the window), skips assistant/tool/continuation/pasted turns, re-injects them verbatim in a `<pinned-user-messages>` block right after the summary; eval "verbatim" arm wired. **Live comparison done (2026-07-22, gpt-5.5): verbatim 100% = section 100% = baseline 100% (all saturated), so verbatim recovers nothing section missed → stays gated OFF; the per-turn `<pinned-user-messages>` prefix cost isn't justified. Escalate only if a discriminating eval (weaker summarizer / subtler constraints) shows a section gap — see [Live result](#live-result-2026-07-22-te-25-constraint-retention)** |
 | TE-26 | **Per-tool snip geometry for microcompaction.** Microcompact currently replaces cleared results with a flat placeholder / disk pointer (max savings, zero inline signal). Reasonix keeps a tuned head/tail inline (read-only tools: long head; side-effecting: both ends, to preserve a trailing build error), via a per-tool `SnipHint`. Optional middle-ground: keep a short head/tail for side-effecting tools so a cleared bash failure still shows its error without a re-read. | `src/engine/microcompact.ts`, tool specs | Fewer paid re-reads to recover an error that was one line of a cleared result | Low–Medium — deviates from CC byte-exact placeholder (parity call, cf. TE-6 precedent) | todo (evaluate necessity) |
 | TE-27 | **CI cache-impact gate (process).** Reasonix fails any PR touching cache-sensitive paths unless the body carries `Cache-impact:` / `Cache-guard:` lines, plus a byte-stability guard test in CI. Adopt a lightweight version: a `scripts/check-cache-impact` that flags PRs touching `src/engine/{prompt-cache,default-system-prompt,microcompact,compact*}`, `src/providers/*-transport`, or `src/tools/**` specs, and require TE-23's guard test to run on those PRs. | `scripts/`, `.github/workflows/` | Keeps the TE-23 invariant from silently rotting as the prompt/tool surface evolves | Low — process overhead; scope the path list tightly to avoid noise | todo (optional; land after TE-23) |
 
@@ -126,14 +200,16 @@ Ordered by payoff-to-risk, dependency-aware. Track A is Phase 0 — nothing in T
 Reuse the swarmkit-eval cost-frontier harness (51), the TE-14 telemetry, and the new TE-22 local harness:
 
 - **Track A (TE-19…22):** unit tests for the pricing/attribution math; manual smoke that `/cost`, `/status`, and the live indicator show correct numbers on a native-provider session; TE-22 self-checks by diffing two identical runs (delta ≈ 0).
-- **TE-23:** unit/integration test is the deliverable; additionally assert via TE-22 that `cacheReadFraction` stays ≥ baseline on a repeat-prefix run (the regression signal if the guard ever silently fails).
+- **TE-23:** unit/integration test is the deliverable; additionally assert via TE-22 that `cacheReadFraction` stays ≥ baseline on a repeat-prefix run (the regression signal if the guard ever silently fails). **Live smoke (2026-07-22, `scripts/cache-ab.ts`, azureoai/gpt-5.5): a multi-turn run reported 71% cache-read (43.5k cached tokens) — the assembled append-only prefix is byte-stable and cache-eligible in practice.** (The second cache-ab run showed 0% because each run is a fresh session with its own `promptCacheKey`; Azure's keyed routing doesn't reuse a prior process's cache — a session-isolation artifact, not a guard failure. Intra-session multi-turn is the repeat-prefix signal here.)
 - **TE-24:** offline — compare estimated vs. real `prompt_tokens` across a recorded session; target < 10% mean error vs. the fixed-constant baseline.
-- **TE-25:** the constraint-retention instrument (`eval/harness/constraint-retention.ts` + runner) is the dedicated arm — seeds an early user constraint, forces compaction, grades verbatim identifier survival. Metric = non-security retention rate per arm (baseline vs section vs verbatim). Grader is deterministic + unit-tested; live rates need a model run. Accept section-only if non-security retention rises materially over baseline with no summary-quality regression; escalate to verbatim (TE-25b) if the section alone leaves a gap.
+- **TE-25:** the constraint-retention instrument (`eval/harness/constraint-retention.ts` + runner) is the dedicated arm — seeds an early user constraint, forces compaction, grades verbatim identifier survival. Metric = non-security retention rate per arm (baseline vs section vs verbatim). Grader is deterministic + unit-tested. **Live rates (2026-07-22, azureoai/gpt-5.5, best-of-3): baseline = section = verbatim = 100% non-security.** Baseline saturated, so the accept/escalate gate never fired — section stays default-on as (unmeasured) defense-in-depth, verbatim stays gated off. A discriminating re-run (weaker summarizer / subtler constraints) is the follow-up to actually exercise the gate.
 
 ## Handoff: running the live constraint-retention eval
 
-The TE-25 decision (is the section enough, or is verbatim pinning needed?) is the
-one open measurement. Everything is built and tested; it just needs a native
+**RESOLVED 2026-07-22** — ran on `azureoai/gpt-5.5` (best-of-3): all arms 100%
+non-security retention, baseline saturates, verbatim stays gated off (no code
+change). See [Live result](#live-result-2026-07-22-te-25-constraint-retention).
+The runbook below is retained for re-running on a different (ideally weaker)
 model. Standalone runbook: [`55-live-eval-handoff.md`](./55-live-eval-handoff.md).
 
 ```bash
@@ -167,7 +243,8 @@ Deterministic pre-checks (no model, already green in CI):
 - ~~**TE-20 surface**~~ — RESOLVED: persistent footer % (line 2), annotated with a per-turn `(hit)`/`(miss)` marker when the SDK-path lane events flow; the marker resets on each submit.
 - ~~**TE-22 fixture**~~ — RESOLVED: both. The scripted engine (`OPENSWARM_TEST_SCRIPT` + a JSON fixture) gives a deterministic, zero-spend self-check of the harness plumbing; real cache behavior is measured by pointing the same harness at a live short task (`--model` + provider auth).
 - ~~**TE-23 scope**~~ — RESOLVED: one transport smoke (openai) that exercises the shared assembly modules (`message-replay.ts`, `tool-translation.ts`) through the real path. The other five AI-SDK transports consume the same modules; a per-transport sweep adds runtime without new coverage. Revisit if a transport grows its own assembly logic. Cross-*process* schema byte-stability (two fresh module loads producing identical `z.toJSONSchema` output) is not covered — would need a spawned-process snapshot test à la Reasonix's persisted environment snapshots; noted as a follow-up, low priority while Zod v4 conversion is deterministic.
-- **TE-25 verbatim pinning:** decided — ship section-first (TE-25a, landed) AND build verbatim pinning (TE-25b) so the eval can compare them head-to-head, per the user's request. Section-only is the reversible default; verbatim pinning is gated and measured against it before becoming the default.
+- ~~**TE-25 verbatim pinning**~~ — RESOLVED (2026-07-22): shipped section-first (TE-25a, default-on) AND built verbatim pinning (TE-25b, gated) so the eval could compare them head-to-head. Live run on `azureoai/gpt-5.5` (best-of-3): **baseline = section = verbatim = 100%** non-security retention — baseline saturated, so verbatim recovers nothing and stays gated off; section stays the reversible default. See [Live result](#live-result-2026-07-22-te-25-constraint-retention).
+- **TE-25 discriminating re-run (new, open):** both live runs saturated at baseline 100% — default effort *and* `reasoning_effort=none` (gpt-5.5 with reasoning disabled), so we've shown the section/verbatim additions aren't *needed* on this model at any effort, but still can't measure their *value*. **Weakening the model didn't move the needle → the fixtures are the limiting factor, not the summarizer.** The remaining lever is **harder fixtures**: constraints stated in passing mid-session (not a prominent first-turn "Hard requirement:"), multiple constraints per fixture, and less-distinctive/paraphrasable identifiers. If baseline drops on those while section/verbatim hold, that's the evidence justifying TE-25a's default and possibly flipping TE-25b. (A genuinely smaller model — `gpt-4.1` or a small open model via `litellm/…` — is a secondary angle, but effort=none already approximates a weak summarizer.) Low priority — the additions are cheap and already shipped; this only affects whether we can *defend* them with data.
 - **TE-27:** is a PR-body gate worth the friction on a smaller team, or is the CI guard test (TE-23 in CI) sufficient on its own? Leaning "guard test in CI is enough; skip the PR-body ritual."
 
 ## Non-goals
