@@ -70,6 +70,24 @@ export function azureApiVersionFromEnv(env: NodeJS.ProcessEnv = process.env): st
   return env["AZURE_OPENAI_API_VERSION"]?.trim() || DEFAULT_API_VERSION;
 }
 
+/** Effort levels the OpenAI/Azure reasoning models accept (gpt-5.x / o-series). */
+const REASONING_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
+
+/**
+ * Optional reasoning-effort override for native reasoning models, read from
+ * `OPENSWARM_REASONING_EFFORT`. Unset (the default) → `undefined`: no key is
+ * added and the request stays byte-identical to the prior path, so the TE-23
+ * prefix-stability guard is unaffected. Set to a supported level (`none` is the
+ * lowest gpt-5.5 accepts — reasoning disabled) it rides `providerOptions.openai
+ * .reasoningEffort`. Used by the TE-25 constraint-retention eval to run gpt-5.5
+ * as a weak (effort=none) summarizer; unknown values are ignored.
+ */
+export function reasoningEffortFromEnv(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const raw = env["OPENSWARM_REASONING_EFFORT"]?.trim().toLowerCase();
+  if (!raw) return undefined;
+  return REASONING_EFFORTS.has(raw) ? raw : undefined;
+}
+
 /**
  * Wrap fetch so every request carries `?api-version=...` (Azure requires it as a
  * query param) and the `api-key` header (Azure's auth wire format — not a Bearer
@@ -170,11 +188,17 @@ export class AzureTransportProvider implements TransportProvider {
 
     // Prompt-cache routing hint (mirrors openai-transport): a per-session stable
     // key keeps repeat prefixes on the same replica. Without it this deployment's
-    // hit rate is ~0 (see defaultCapabilities note).
-    const providerOptions =
-      req.sessionId !== undefined && this.capabilities.promptCache
-        ? { openai: { promptCacheKey: req.sessionId } }
-        : undefined;
+    // hit rate is ~0 (see defaultCapabilities note). Optionally pin reasoning
+    // effort via OPENSWARM_REASONING_EFFORT (native reasoning models only) — both
+    // ride providerOptions.openai. When neither applies the block stays undefined,
+    // so the request is byte-identical to the default path (TE-23 guard intact).
+    const openaiOpts: Record<string, string> = {};
+    if (req.sessionId !== undefined && this.capabilities.promptCache) {
+      openaiOpts["promptCacheKey"] = req.sessionId;
+    }
+    const reasoningEffort = reasoningEffortFromEnv();
+    if (reasoningEffort !== undefined) openaiOpts["reasoningEffort"] = reasoningEffort;
+    const providerOptions = Object.keys(openaiOpts).length > 0 ? { openai: openaiOpts } : undefined;
 
     const result = streamText({
       model: this.model,
