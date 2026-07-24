@@ -3,7 +3,7 @@
 Power openswarm's **in-process** native engine with **ChatGPT subscription
 plans** (Plus / Pro / Max) by speaking the Codex backend Responses protocol
 directly — no `codex` subprocess. This is the production ("own the protocol")
-path, modeled on `references/openclaw`, in contrast to the existing
+path, modeled on a reference implementation, in contrast to the existing
 `--framework codex-chatgpt` path which delegates to the `codex` App Server
 binary.
 
@@ -24,7 +24,7 @@ Two ways to reach ChatGPT-subscription billing exist today and after this work:
 | Path | Transport | Owner of protocol | Engine features |
 |------|-----------|-------------------|-----------------|
 | `--framework codex-chatgpt` (shipped, doc 24) | `codex app-server` subprocess (JSON-RPC) | OpenAI `codex` binary | No MCP, no resume, no parallel tools, no hardened loop |
-| **`--framework codex-native` (this doc)** | in-process HTTPS + SSE | **us** (ported from openclaw) | Full `HardenedNativeEngine`: retry, eager tool dispatch, mid-turn compaction, swarmkit |
+| **`--framework codex-native` (this doc)** | in-process HTTPS + SSE | **us** (ported from a reference implementation) | Full `HardenedNativeEngine`: retry, eager tool dispatch, mid-turn compaction, swarmkit |
 
 The win: ChatGPT-plan economics with the full native-engine feature set. The
 cost: we own an unofficial, codex-CLI-shaped backend protocol and its OAuth.
@@ -48,7 +48,7 @@ entirely here.
    `Provider.stream()` with its own `fetch` + SSE parser. Does **not** use
    `LanguageModel` / `streamText`.
 3. **Request builder / SSE parser / event mapper / error classifier** — ported
-   from openclaw, enforcing the codex backend's quirks (`store:false`,
+   from a reference implementation, enforcing the codex backend's quirks (`store:false`,
    `instructions`, encrypted reasoning).
 4. **CLI wiring** — `--framework codex-native`, `login`/`logout`, `doctor`.
 5. **Model handling** — default `gpt-5.5`, pass-through, surface backend `400`
@@ -113,10 +113,10 @@ shared-surface footprint of the feature.
 
 | File | Ports from | Responsibility |
 |------|-----------|----------------|
-| `openai-codex-oauth.ts` | opencode `plugin/codex.ts` loader; openclaw identity | `AuthSource`(`kind:"oauth-bearer"`, `providerId:"openai"`) + `InteractiveAuth`. `headers()` → `{Authorization, chatgpt-account-id}`; `refresh()` keyed on JWT `exp`; `isAuthenticated()` |
+| `openai-codex-oauth.ts` | opencode `plugin/codex.ts` loader; the reference implementation's identity | `AuthSource`(`kind:"oauth-bearer"`, `providerId:"openai"`) + `InteractiveAuth`. `headers()` → `{Authorization, chatgpt-account-id}`; `refresh()` keyed on JWT `exp`; `isAuthenticated()` |
 | `openai-codex-pkce.ts` | opencode `codex.ts:248-358,91-130` | PKCE codes, loopback server (port 1455), `buildAuthorizeUrl`, code→token exchange |
 | `openai-codex-device.ts` | opencode `codex.ts:515-595` | device-code flow (`login --device`) |
-| `openai-codex-jwt.ts` | openclaw `openai-chatgpt-auth-identity.ts` | `resolveCodexAuthIdentity` (accountId, plan, email), `resolveCodexAccessTokenExpiry` from JWT `exp` |
+| `openai-codex-jwt.ts` | the reference implementation | `resolveCodexAuthIdentity` (accountId, plan, email), `resolveCodexAccessTokenExpiry` from JWT `exp` |
 | `token-store.ts` | — | read/write `~/.openswarm/auth.json` (location already named in `src/auth/index.ts:8`); 0600 perms |
 
 OAuth constants (reuse Codex's so the subscription entitlement applies):
@@ -127,12 +127,12 @@ scope `openid profile email offline_access`, redirect `http://localhost:1455/aut
 
 | File | Ports from | Responsibility |
 |------|-----------|----------------|
-| `index.ts` (`CodexResponsesTransportProvider`) | openclaw `openai-chatgpt-responses.ts` | implements `TransportProvider`; `stream()` = build → POST → parse SSE → map → yield `ProviderEvent`; `capabilities`; optional `preflight` |
-| `request-builder.ts` | openclaw `convertResponsesMessages` + body builder | `ProviderMessage[]` → Responses body. Enforces: `store:false`, `stream:true`, `instructions`=systemPrompt, `include:["reasoning.encrypted_content"]`, reasoning-effort map, tools→Responses tool shape |
-| `headers.ts` | openclaw `buildSSEHeaders` (`:1604`) | `Authorization`, `chatgpt-account-id`, `originator:"openswarm"`, `OpenAI-Beta: responses=experimental`, `accept: text/event-stream`, `content-type`, `session_id`/`x-client-request-id` |
-| `sse.ts` | openclaw `parseSSE` | SSE line reader → raw codex event objects |
-| `events.ts` | openclaw `mapCodexEvents` / `processResponsesStream` | codex event → `ProviderEvent` union (`text-delta`, `reasoning-delta`, `tool-input-*`, `tool-call`, `finish`, `error`) |
-| `errors.ts` | openclaw `parseErrorResponse` (`:1521`) | classify `usage_limit_reached`/`rate_limit_exceeded`/429 → friendly "hit ChatGPT limit (plan), retry in ~N min" via `resets_at` |
+| `index.ts` (`CodexResponsesTransportProvider`) | the reference implementation | implements `TransportProvider`; `stream()` = build → POST → parse SSE → map → yield `ProviderEvent`; `capabilities`; optional `preflight` |
+| `request-builder.ts` | the reference implementation's `convertResponsesMessages` + body builder | `ProviderMessage[]` → Responses body. Enforces: `store:false`, `stream:true`, `instructions`=systemPrompt, `include:["reasoning.encrypted_content"]`, reasoning-effort map, tools→Responses tool shape |
+| `headers.ts` | the reference implementation's `buildSSEHeaders` | `Authorization`, `chatgpt-account-id`, `originator:"openswarm"`, `OpenAI-Beta: responses=experimental`, `accept: text/event-stream`, `content-type`, `session_id`/`x-client-request-id` |
+| `sse.ts` | the reference implementation's `parseSSE` | SSE line reader → raw codex event objects |
+| `events.ts` | the reference implementation's `mapCodexEvents` / `processResponsesStream` | codex event → `ProviderEvent` union (`text-delta`, `reasoning-delta`, `tool-input-*`, `tool-call`, `finish`, `error`) |
+| `errors.ts` | the reference implementation's `parseErrorResponse` | classify `usage_limit_reached`/`rate_limit_exceeded`/429 → friendly "hit ChatGPT limit (plan), retry in ~N min" via `resets_at` |
 
 ### Edits — wiring (surgical)
 
@@ -160,23 +160,21 @@ openswarm --framework codex-native --model gpt-5.4 "say hi"
 ## 5  Wire protocol (the ported quirks)
 
 The codex backend is **not** spec-compatible with the standard OpenAI Responses
-API. The non-obvious rules ported from openclaw:
+API. The non-obvious rules ported from a reference implementation:
 
 1. **`store: false` is mandatory** — backend rejects `store:true`
-   ("Store must be set to false"; openclaw `:1436,1452`).
-2. **System prompt → `instructions`** field, not a system message
-   (openclaw `:491`).
+   ("Store must be set to false").
+2. **System prompt → `instructions`** field, not a system message.
 3. **`include: ["reasoning.encrypted_content"]`** — required to carry reasoning
-   across turns, since `store:false` means no server-side state
-   (openclaw `:494`).
-4. **Headers** (openclaw `:1594-1619`): `Authorization: Bearer`,
+   across turns, since `store:false` means no server-side state.
+4. **Headers**: `Authorization: Bearer`,
    `chatgpt-account-id`, `originator`, `OpenAI-Beta: responses=experimental`,
    `accept: text/event-stream`, `content-type: application/json`, plus
    `session_id`/`x-client-request-id` for cache affinity.
-5. **Identity from JWT** (openclaw `auth-identity.ts`): account id at
+5. **Identity from JWT**: account id at
    `https://api.openai.com/auth.chatgpt_account_id`, plan at
    `chatgpt_plan_type`, expiry at `exp`.
-6. **Limit errors** (openclaw `:1541-1551`): parse `usage_limit_reached` /
+6. **Limit errors**: parse `usage_limit_reached` /
    `rate_limit_exceeded` / 429, surface a plan-aware message with reset ETA.
 
 ## 6  Known design wrinkles — validated by live spike
@@ -195,11 +193,10 @@ optimization, not a correctness requirement.**
 
 Consequence: **Phase 1 skips reasoning replay entirely** — no change to
 `ProviderMessage`, `ProviderEvent`, or the engines. If we later want continuity
-for quality, adopt openclaw's mechanism (Option A) in Phase 2:
-`openai-responses-shared.ts:699` stores the whole reasoning item as a JSON
-signature on the assistant `thinking` block; `:266-273` deserializes and
-re-injects it into `input[]` in original order. That's the durable design when
-we want it; it is not needed for a correct v1.
+for quality, adopt the reference implementation's mechanism (Option A) in Phase 2:
+store the whole reasoning item as a JSON signature on the assistant `thinking`
+block, then deserialize and re-inject it into `input[]` in original order. That's
+the durable design when we want it; it is not needed for a correct v1.
 
 ### 6.2  Resource conservation — SSE caching works with a pinned session (spike-confirmed)
 
@@ -228,7 +225,7 @@ The SSE event schema is standard OpenAI Responses streaming
 (`response.created`, `response.in_progress`, `response.output_item.added`,
 `response.function_call_arguments.delta`/`done`, `response.content_part.added`,
 `response.output_text.delta`/`done`, `response.output_item.done`,
-`response.completed`), so openclaw's event mapper ports directly. Drift
+`response.completed`), so the reference implementation's event mapper ports directly. Drift
 mitigation: freeze these as SSE fixtures + a flagged live smoke test.
 
 ### 6.4  Model gating — server-side, plan-dependent, and DRIFTING (spike-confirmed)
@@ -244,7 +241,7 @@ using Codex with a ChatGPT account."`
 Implications:
 
 - **Do NOT hardcode an allowlist** (reverses the earlier Q7 decision and
-  openclaw's `ALLOWED_MODELS`, which is already stale). Instead: **default to
+  the reference implementation's `ALLOWED_MODELS`, which is already stale). Instead: **default to
   `gpt-5.5`**, pass the requested model through, and **surface the backend's
   `detail` message verbatim** on `400`. The server is the source of truth and it
   is plan-dependent.
@@ -289,7 +286,7 @@ resource-efficient v1.
 > (`minimem` installed). Live-proven end-to-end incl. a multi-turn tool loop.
 >
 > **Phase 2 COMPLETE.** #7 TLS preflight + #8 usage windows (both folded into
-> `doctor`), #6.1 reasoning continuity (openclaw Option A — live-validated 2-turn
+> `doctor`), #6.1 reasoning continuity (the reference implementation's Option A — live-validated 2-turn
 > replay), and #9 the WebSocket "cached" transport (`--codex-transport
 > websocket|auto`, connection reuse + delta/`previous_response_id`, SSE
 > auto-fallback) — **live-validated**: turn 2 continues on the same socket via a
@@ -302,16 +299,16 @@ optional → `gpt-5.5` default + `400` pass-through → **pin `session_id`/
 (fixtures from §6.3) → live smoke. **No reasoning-replay work** (§6.1).
 
 **Phase 2** (hardening): TLS preflight doctor; usage HUD; reasoning continuity
-(openclaw Option A) for quality; WebSocket transport for latency on large
+(the reference implementation's Option A) for quality; WebSocket transport for latency on large
 sessions (latency-only — caching already conserves tokens).
 
 ## 9  References
 
-- `references/openclaw/src/llm/providers/openai-chatgpt-responses.ts` — provider,
-  request builder, SSE, headers, error handling.
-- `references/openclaw/extensions/openai/openai-chatgpt-auth-identity.ts` — JWT.
-- `references/openclaw/extensions/openai/base-url.ts` — endpoint constants.
-- `references/openclaw/src/plugins/provider-openai-chatgpt-oauth-tls.ts` — TLS preflight (Phase 2).
-- `references/openclaw/src/infra/provider-usage.fetch.codex.ts` — usage windows (Phase 2).
+- The reference implementation's ChatGPT Responses provider — request builder,
+  SSE, headers, error handling.
+- The reference implementation's JWT identity extraction.
+- The reference implementation's endpoint constants.
+- The reference implementation's TLS preflight (Phase 2).
+- The reference implementation's usage windows (Phase 2).
 - `references/opencode/packages/opencode/src/plugin/codex.ts` — compact PKCE + device-code OAuth reference.
 - Existing: doc 24 (codex App Server subprocess path), doc 37/38 (HardenedNativeEngine).

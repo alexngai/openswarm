@@ -4,7 +4,7 @@
  * Detects `sed -i` or `sed --in-place` without an explicit backup-extension
  * argument, which silently modifies files in-place.
  *
- * Corresponds to claw's `validate_sed` (bash_validation.rs:336-350).
+ * Validates in-place `sed` edits.
  */
 
 import type { ValidationResult } from "./types.js";

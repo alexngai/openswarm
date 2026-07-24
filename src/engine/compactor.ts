@@ -1,10 +1,10 @@
 /**
- * Mechanical session compactor — originally ported from claw-code compact.rs,
+ * Mechanical session compactor — originally derived from a reference implementation (since evolved independently);
  * continuation-message strings aligned byte-for-byte with Claude Code v2.1.198
  * (docs/48-compaction-design.md; docs/39-codex-parity-gap-analysis.md §11).
  *
  * Pure functions only. No side effects, no global state, no lane-event emission.
- * Token estimation: char.length / 4 + 1 (intentionally matches claw, NOT M3b ratio).
+ * Token estimation: char.length / 4 + 1 (intentionally matches the reference estimator, NOT the M3b ratio).
  */
 
 import type { ProviderMessage } from "../providers/index.js";
@@ -142,7 +142,7 @@ export interface CompactionResult {
 
 /**
  * Tokens-per-character used by the char-based estimator. The default is char/4
- * (claw parity) — the fallback before any real usage is available to calibrate
+ * (the historical default) — the fallback before any real usage is available to calibrate
  * against. `calibrateTokensPerChar` derives a live ratio from the last turn's
  * real prompt-token count so estimates track the provider's tokenizer (CJK and
  * dense code trend well off 4 chars/token) without shipping one (docs/55 TE-24,
@@ -257,7 +257,7 @@ export function shouldCompact(
 }
 
 // ---------------------------------------------------------------------------
-// compactSession — orchestration (claw compact.rs L96–L183)
+// compactSession — orchestration
 // ---------------------------------------------------------------------------
 
 export function compactSession(
@@ -282,7 +282,6 @@ export function compactSession(
   );
 
   // Boundary walk-back: ensure we don't split a tool-use / tool-result pair.
-  // Port of claw compact.rs L121–L158.
   let keepFrom = rawKeepFrom;
   let boundaryWalkedBack = false;
 
@@ -452,7 +451,7 @@ export function withTodoProgress(
 }
 
 // ---------------------------------------------------------------------------
-// compactedSummaryPrefixLen (claw L185–L193)
+// compactedSummaryPrefixLen
 // ---------------------------------------------------------------------------
 
 export function compactedSummaryPrefixLen(session: Session): number {
@@ -460,7 +459,7 @@ export function compactedSummaryPrefixLen(session: Session): number {
 }
 
 // ---------------------------------------------------------------------------
-// summarizeMessages (claw L195–L280)
+// summarizeMessages
 // ---------------------------------------------------------------------------
 
 export function summarizeMessages(
@@ -470,14 +469,14 @@ export function summarizeMessages(
   const assistantMessages = messages.filter(
     (m) => m.role === "assistant"
   ).length;
-  // claw has a "tool" role; in our ProviderMessage shape tool results are user
+  // The reference implementation has a "tool" role; in our ProviderMessage shape tool results are user
   // messages — count them separately as tool_result turns
   const toolMessages = messages.filter(
     (m) =>
       m.role === "user" && m.content[0]?.type === "tool_result"
   ).length;
 
-  // Collect tool names from tool_use blocks (assistant messages) — dedup preserving sort order (claw sorts)
+  // Collect tool names from tool_use blocks (assistant messages) — dedup preserving sort order
   const toolNamesRaw: string[] = [];
   for (const msg of messages) {
     if (msg.role === "assistant") {
@@ -488,7 +487,7 @@ export function summarizeMessages(
       }
     }
   }
-  // claw: sort_unstable + dedup (dedup after sort removes consecutive dupes)
+  // sort + dedup (removes consecutive duplicates after sorting)
   const toolNamesSorted = [...toolNamesRaw].sort();
   const toolNames = toolNamesSorted.filter(
     (name, i) => i === 0 || toolNamesSorted[i - 1] !== name
@@ -544,7 +543,7 @@ export function summarizeMessages(
 }
 
 // ---------------------------------------------------------------------------
-// mergeCompactSummaries (claw L282–L315)
+// mergeCompactSummaries
 // ---------------------------------------------------------------------------
 
 export function mergeCompactSummaries(
@@ -588,7 +587,7 @@ export function mergeCompactSummaries(
 }
 
 // ---------------------------------------------------------------------------
-// extractExistingCompactedSummary (claw L494–L508)
+// extractExistingCompactedSummary
 // ---------------------------------------------------------------------------
 
 export function extractExistingCompactedSummary(
@@ -636,7 +635,7 @@ export function extractExistingCompactedSummary(
 }
 
 // ---------------------------------------------------------------------------
-// formatCompactSummary (claw L54–L67)
+// formatCompactSummary
 // ---------------------------------------------------------------------------
 
 export function formatCompactSummary(summary: string): string {
@@ -657,7 +656,7 @@ export function formatCompactSummary(summary: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// getCompactContinuationMessage (claw L70–L92)
+// getCompactContinuationMessage
 // ---------------------------------------------------------------------------
 
 export function getCompactContinuationMessage(

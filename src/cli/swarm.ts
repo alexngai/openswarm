@@ -138,7 +138,7 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
       );
       if (isPolicyParseError(parsed.error.message)) {
         process.stderr.write(
-          `[openswarm] TaskPacket policies are now discriminated unions — see docs/archive/11-m3a-plan.md §Policy migration\n`,
+          `[openswarm] TaskPacket policies are now discriminated unions\n`,
         );
       }
       return 2;

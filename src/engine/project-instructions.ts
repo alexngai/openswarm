@@ -1,7 +1,7 @@
 /**
  * Project instruction file loading — CLAUDE.md / AGENTS.md ancestor walk.
  *
- * Claude Code (and claw) include the contents of instruction files from the
+ * Claude Code (and similar agents) include the contents of instruction files from the
  * repo root down to the CWD "with the developer message". OpenSwarm's native /
  * hardened engines never loaded these (only the Claude SDK path did, via the
  * SDK's own `settingSources`), so native-model sessions silently ran without
@@ -15,8 +15,7 @@
  * Discovery walks CWD upward to the filesystem root; at each level it reads a
  * fixed set of filenames. Results are ordered root → CWD so the deepest
  * (most specific) scope appears last, deduped by a content hash, and clamped
- * to per-file / total budgets (matches claw's prompt.rs; see
- * docs/research/03-runtime.md §7).
+ * to per-file / total budgets.
  */
 
 import * as fs from "node:fs";
@@ -30,9 +29,9 @@ export const INSTRUCTION_FILENAMES: readonly string[] = [
   "AGENTS.md",
 ];
 
-/** claw MAX_INSTRUCTION_FILE_CHARS — per-file content budget. */
+/** MAX_INSTRUCTION_FILE_CHARS — per-file content budget. */
 export const MAX_INSTRUCTION_FILE_CHARS = 4_000;
-/** claw MAX_TOTAL_INSTRUCTION_CHARS — combined budget across all files. */
+/** MAX_TOTAL_INSTRUCTION_CHARS — combined budget across all files. */
 export const MAX_TOTAL_INSTRUCTION_CHARS = 12_000;
 
 const TRUNCATION_MARKER = "\n\n[truncated]";

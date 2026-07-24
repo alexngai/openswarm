@@ -1,7 +1,7 @@
 /**
  * store.ts — Solid binding over the pure REPL reducer.
  *
- * Phase 0 migration (docs/archive/16-parity-plan.md): replaces the React `useReducer`
+ * Phase 0 migration: replaces the React `useReducer`
  * binding in src/ui/repl/app.tsx with a Solid `createStore` that preserves the
  * exact reducer semantics. The reducer itself (../repl/state.ts) is
  * framework-agnostic and is not rewritten — this file only adapts it to

@@ -1,7 +1,7 @@
 /**
  * grep tool — ripgrep-backed file content search.
  *
- * Divergence from claw: this tool invokes the bundled @vscode/ripgrep binary
+ * This tool invokes the bundled @vscode/ripgrep binary
  * rather than a walkdir+regex approach. This means .gitignore is respected
  * automatically (ripgrep's default behavior), binary files are skipped, and
  * search is significantly faster on large trees.

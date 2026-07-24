@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 0.4.0 — 2026-07-24
+
+### Breaking — plugin/skill compatibility surface removed
+
+- Skill discovery no longer scans `.claw/skills` directories (`.claude`,
+  `.codex`, and `.omc` are still scanned).
+- Shell plugins no longer receive the `CLAWD_PLUGIN_ID` / `CLAWD_TOOL_NAME` /
+  `CLAWD_TOOL_INPUT` / `CLAWD_CWD` environment variables. Tool input is still
+  delivered as JSON on the plugin's stdin, so the core contract is unchanged.
+
+### Changed — public-release preparation
+
+- Removed internal research notes and dated milestone/build-record plans from
+  `docs/`; `docs/README.md` is now a categorized index of the active design
+  docs. Provenance comments across the source tree describe an anonymous
+  "reference implementation" rather than a named internal tool, and no longer
+  cite its source files. Public projects (OpenAI Codex, opencode) keep their
+  attribution.
+
 ### Breaking — environment variable and path renames (pre-1.0 hard cut, no fallbacks)
 
 Renamed legacy `SWARM_*` names to the `OPENSWARM_*` namespace:
@@ -161,12 +180,10 @@ follows). **Phase 2 (later)** flips the fresh-create defaults to `.openswarm`;
 
 ### Changed — docs reorganization
 
-- 26 historical docs (milestone plans 08–24, team spikes 26/26b/27, ACP build
-  records 30/32–35, hardened-engine plan 38) moved to `docs/archive/`. Numbers
-  are stable and never reused; all intra-repo links and `docs/NN` code-comment
-  citations were updated. External links to the old `docs/` paths will 404.
-- `docs/README.md` rewritten as a full categorized index (previously 24 docs
-  were unlisted).
+- Historical milestone plans, spikes, build records, and reference-extraction
+  research notes were removed from the published tree; only the active design
+  docs (Foundations 00–07 and the current subsystem docs) ship in `docs/`.
+- `docs/README.md` rewritten as a categorized index of the active design docs.
 
 ### Build & CI
 

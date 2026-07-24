@@ -1,5 +1,5 @@
 /**
- * First-event latency benchmark (docs/archive/33 §9) — gated by OPENSWARM_ACP_BENCH=1.
+ * First-event latency benchmark — gated by OPENSWARM_ACP_BENCH=1.
  *
  * Team-by-default routes every prompt through a spawned root worker (dist/cli.js)
  * + a worker_ready handshake, where --single runs the engine in-process. This

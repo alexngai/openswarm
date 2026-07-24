@@ -5,7 +5,7 @@
  * NEW input items + `previous_response_id` (the server holds prior context
  * connection-scoped, since store:false disables cross-request reuse). This
  * avoids re-uploading the full prefix each turn — a latency win on large
- * sessions. Ported from openclaw `openai-chatgpt-responses.ts`.
+ * sessions. Adapted from a reference implementation.
  *
  * Correctness is guaranteed by a JSON prefix-equality check: the delta is only
  * sent when the current request provably continues the last one; otherwise we
@@ -237,7 +237,7 @@ function bodyKey(body: CodexRequestBody): string {
 /**
  * Compute the delta body for a continuation turn, or return the full body when
  * the request does not provably continue the last one (prefix mismatch, changed
- * system/tools, shrunk history). Faithful to openclaw getCachedWebSocketInputDelta.
+ * system/tools, shrunk history). Faithful to the reference cached-input-delta behavior.
  */
 export function buildWsTurnBody(
   body: CodexRequestBody,

@@ -2,14 +2,14 @@
  * makeCanUseTool — factory for the engine's `canUseTool` permission gate.
  *
  * Extracted verbatim from runPrompt (src/cli/main.ts) so the single-agent CLI,
- * the ACP adapter (docs/archive/30, docs/archive/32), and any other engine driver share one
+ * the ACP adapter, and any other engine driver share one
  * gate implementation instead of duplicating the bash-gate + mode-check logic.
  *
  * The two prompt points — the bash-validation Warn prompt and the mode-deny
  * prompt — route through the injected `bridge` (TTY) or `readHeadlessApproval`
  * (headless). An ACP driver supplies a `PermissionBridge` subclass whose
  * `request()` forwards to `client.requestPermission` and sets
- * `useHeadless: false`, so this body is reused unchanged (docs/archive/32 §8).
+ * `useHeadless: false`, so this body is reused unchanged.
  *
  * Ordering (doc 17 "Phase 2 — design lock" + Phase 5 stage A bash gate):
  *   1. Unknown tool → hard deny.

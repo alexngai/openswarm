@@ -2,7 +2,7 @@
  * PluginStateStore — persists plugin enable/disable state, installed versions,
  * and install sources under a root directory (default: `~/.openswarm/plugins/`).
  *
- * Phase 1 / doc 17 Q1: two-file schema matching claw's shape.
+ * Phase 1 / doc 17 Q1: two-file on-disk schema.
  *   - `settings.json`  — enable map `{ [pluginId]: boolean }`.
  *   - `installed.json` — manifest registry `{ schemaVersion, plugins: { [id]: { version, installSource } } }`.
  *
@@ -32,7 +32,7 @@ const DEFAULT_ROOT = path.join(os.homedir(), ".openswarm", "plugins");
 // Internal file shapes
 // ---------------------------------------------------------------------------
 
-/** settings.json shape — matches claw's `{plugin_id: true|false}` map. */
+/** settings.json shape — a `{plugin_id: true|false}` enable map. */
 type SettingsFileShape = Record<string, boolean>;
 
 /** installed.json shape — manifest registry owned by openswarm. */

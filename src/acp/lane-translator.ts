@@ -7,7 +7,7 @@
  * member via the roster: the lead (role "lead") narrates; other members'
  * text is suppressed (collapse, docs/31 Q3); every member's tool calls surface
  * `[role]`-prefixed with agentId-namespaced ids. Member/task lifecycle events
- * drive a roster-derived `plan` (the team board). See docs/archive/33 §5.
+ * drive a roster-derived `plan` (the team board).
  *
  * Events are serialized through an internal promise chain so notifications keep
  * wire order despite async `sessionUpdate`. `drain()` awaits the backlog.

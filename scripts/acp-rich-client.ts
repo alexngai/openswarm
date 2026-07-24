@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * acp-rich-client — the reference swarm-aware ACP client (B2.2, docs/archive/35 §3).
+ * acp-rich-client — the reference swarm-aware ACP client (B2.2).
  *
  * Spawns `acp` (a coordinator team), connects as an ACP ClientSideConnection,
  * and renders per-member lanes from `_meta.swarm` (RichClient + formatter). It

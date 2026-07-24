@@ -2,7 +2,7 @@
  * Bash command validation — read-only mode submodule.
  *
  * Blocks write-like commands when the permission mode is "read-only".
- * Corresponds to claw's `validate_read_only` (bash_validation.rs:99-160).
+ * Validates a command against read-only mode.
  */
 
 import type { PermissionMode } from "../../../core/types.js";

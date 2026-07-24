@@ -48,7 +48,7 @@ export interface TranscriptProps {
    * when no stream is active. Passed through to the matching entry's
    * `streaming` prop so OpenTUI can finalise trailing-block parsing once
    * streaming completes (doc 17 Phase 3 design lock P3.Q4 — relies on
-   * OpenTUI's contract at Markdown.d.ts:62-72; no port of claw's
+   * OpenTUI's contract at Markdown.d.ts:62-72; no port of the reference implementation's
    * find_stream_safe_boundary needed unless that contract proves leaky).
    */
   readonly streamingEntryId?: string | undefined;

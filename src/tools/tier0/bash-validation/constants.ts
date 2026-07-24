@@ -1,10 +1,8 @@
 /**
  * Bash command validation — constant tables.
  *
- * Ported verbatim from claw-code's bash_validation.rs. Source line references
- * are included on each table so future syncs are mechanical.
- *
- * claw source: rust/crates/runtime/src/bash_validation.rs
+ * Originally derived from a reference bash-validation implementation and
+ * since maintained independently.
  */
 
 // ---------------------------------------------------------------------------
@@ -13,8 +11,6 @@
 
 /**
  * Commands that perform write operations and should be blocked in read-only mode.
- *
- * claw source: bash_validation.rs:52
  */
 export const WRITE_COMMANDS = [
   "cp", "mv", "rm", "mkdir", "rmdir", "touch", "chmod", "chown", "chgrp",
@@ -23,8 +19,6 @@ export const WRITE_COMMANDS = [
 
 /**
  * Commands that modify system state and should be blocked in read-only mode.
- *
- * claw source: bash_validation.rs:58
  */
 export const STATE_MODIFYING_COMMANDS = [
   "apt",
@@ -66,15 +60,11 @@ export const STATE_MODIFYING_COMMANDS = [
 
 /**
  * Shell redirection operators that indicate writes.
- *
- * claw source: bash_validation.rs:97
  */
 export const WRITE_REDIRECTIONS = [">", ">>", ">&"] as const;
 
 /**
  * Git subcommands that are read-only safe.
- *
- * claw source: bash_validation.rs:163
  */
 export const GIT_READ_ONLY_SUBCOMMANDS = [
   "status",
@@ -101,8 +91,6 @@ export const GIT_READ_ONLY_SUBCOMMANDS = [
 /**
  * Patterns that indicate potentially destructive commands.
  * Each entry is a [pattern, message] tuple.
- *
- * claw source: bash_validation.rs:206
  */
 export const DESTRUCTIVE_PATTERNS: ReadonlyArray<readonly [string, string]> = [
   ["rm -rf /", "Recursive forced deletion at root — this will destroy the system"],
@@ -119,15 +107,11 @@ export const DESTRUCTIVE_PATTERNS: ReadonlyArray<readonly [string, string]> = [
 
 /**
  * Commands that are always destructive regardless of arguments.
- *
- * claw source: bash_validation.rs:235
  */
 export const ALWAYS_DESTRUCTIVE_COMMANDS = ["shred", "wipefs"] as const;
 
 /**
  * Commands that are read-only (no filesystem or state modification).
- *
- * claw source: bash_validation.rs:389
  */
 export const SEMANTIC_READ_ONLY_COMMANDS = [
   "ls",
@@ -201,8 +185,6 @@ export const SEMANTIC_READ_ONLY_COMMANDS = [
 
 /**
  * Commands that perform network operations.
- *
- * claw source: bash_validation.rs:460
  */
 export const NETWORK_COMMANDS = [
   "curl",
@@ -230,8 +212,6 @@ export const NETWORK_COMMANDS = [
 
 /**
  * Commands that manage processes.
- *
- * claw source: bash_validation.rs:485
  */
 export const PROCESS_COMMANDS = [
   "kill", "pkill", "killall", "ps", "top", "htop", "bg", "fg", "jobs",
@@ -240,8 +220,6 @@ export const PROCESS_COMMANDS = [
 
 /**
  * Commands that manage packages.
- *
- * claw source: bash_validation.rs:491
  */
 export const PACKAGE_COMMANDS = [
   "apt", "apt-get", "yum", "dnf", "pacman", "brew", "pip", "pip3", "npm",
@@ -251,7 +229,7 @@ export const PACKAGE_COMMANDS = [
 /**
  * Commands that require system administrator privileges.
  *
- * Note: claw's bash_validation.rs names this SYSTEM_ADMIN_COMMANDS internally;
+ * Note: the reference implementation names this SYSTEM_ADMIN_COMMANDS internally;
  * exported here as SYSTEM_ADMIN_COMMANDS for use by intent.ts.
  */
 export const SYSTEM_ADMIN_COMMANDS = [

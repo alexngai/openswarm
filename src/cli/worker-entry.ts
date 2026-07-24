@@ -383,7 +383,7 @@ async function executeTurn(
 
     // Long-lived workers resume the prior turn's session so conversation
     // context carries across run_more (the engine tracks its latest session id).
-    // undefined on the first turn -> a fresh conversation (docs/archive/33 B0.5).
+    // undefined on the first turn -> a fresh conversation.
     // B1.4: on the first turn (no in-memory id) fall back to the session sidecar
     // so a freshly-spawned root resumes the prior conversation across processes
     // (ACP session/load live resume).
@@ -502,7 +502,7 @@ async function executeTurn(
       }
       // Forward each engine event as a lane_event, preserving its real type so
       // events.jsonl records the semantic spine and the ACP layer can translate
-      // member activity (docs/archive/33 B0.2). Events with no lane equivalent are
+      // member activity. Events with no lane equivalent are
       // dropped (they were never usefully consumed).
       const laneType = normalizedEventToLaneType(evt.type);
       if (laneType !== undefined) {

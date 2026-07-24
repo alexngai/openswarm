@@ -3,7 +3,7 @@
  * Covers happy paths for each TopologyKind/CompletionRule/Aggregator,
  * rejection of malformed inputs, JSON round-trip, and the cc-swarm gsd
  * template's translated shape (the "schema accepts an openteams template's
- * translated form" acceptance check from docs/archive/27 stage 4B).
+ * translated form" acceptance check).
  */
 
 import { describe, it, expect } from "vitest";

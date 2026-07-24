@@ -5,7 +5,7 @@
  * No renderer imports. This file is intentionally renderer-agnostic so we
  * can unit-test every transition without spinning up a UI.
  *
- * Transition table (authoritative — docs/archive/10-m2-plan.md Phase 2):
+ * Transition table (authoritative):
  *
  *   idle                --(input-changed)-----> idle
  *   idle                --(submit)-------------> streaming
@@ -72,7 +72,7 @@ export interface ToolCallState {
 
 /**
  * PendingPermission — the payload shown to the user when a tool call needs
- * approval. Phase 2 design lock (doc 17 P2.Q3): no `toolUseId` — claw doesn't
+ * approval. Phase 2 design lock (doc 17 P2.Q3): no `toolUseId` — the reference implementation doesn't
  * capture one and the SDK's CanUseTool callback doesn't pass one. One prompt
  * at a time; there is no concurrent queue to correlate.
  */

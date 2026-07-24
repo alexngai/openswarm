@@ -87,11 +87,11 @@ export interface CommonOpts {
    */
   plan: boolean;
   /**
-   * acp subcommand: force single-agent mode (Stage A). docs/archive/33.
+   * acp subcommand: force single-agent mode (Stage A).
    */
   readonly single?: boolean;
   /**
-   * acp subcommand: force team mode (coordinator). docs/archive/33.
+   * acp subcommand: force team mode (coordinator).
    */
   readonly team?: boolean;
   /**
@@ -330,7 +330,7 @@ export function parseArgv(args: string[]): ParsedArgs {
   let dumpTools = false;
   let enableWebSearch = false;
   let plan = false;
-  // acp subcommand mode selectors (docs/archive/33). Default resolves in runAcp.
+  // acp subcommand mode selectors. Default resolves in runAcp.
   let acpSingle = false;
   let acpTeam = false;
   let framework: FrameworkChoice = "auto";
@@ -508,7 +508,7 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
-    // acp mode selectors (docs/archive/33): --single forces Stage A single-agent;
+    // acp mode selectors: --single forces Stage A single-agent;
     // --team forces team mode. Default is resolved in runAcp.
     if (tok === "--single") {
       acpSingle = true;

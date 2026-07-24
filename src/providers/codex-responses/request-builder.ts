@@ -44,7 +44,7 @@ function joinSystemPrompt(sp: string | readonly string[] | undefined): string {
  * requires a function_call input item to carry an `id` starting with `fc_`; our
  * single id slot holds the `call_id` (what tool_results reference), so we
  * synthesize a deterministic item id from it. With store:false the server keeps
- * no item state, so a synthesized id is accepted (mirrors openclaw).
+ * no item state, so a synthesized id is accepted (mirrors the reference behavior).
  */
 function foreignFunctionCallId(callId: string): string {
   if (callId.startsWith("fc_")) return callId.slice(0, 64);
@@ -53,7 +53,7 @@ function foreignFunctionCallId(callId: string): string {
 
 /**
  * Parse a persisted reasoning signature (the JSON-serialized codex reasoning
- * item) back into a replay input item. Mirrors openclaw: drop the item `id`
+ * item) back into a replay input item. Mirrors the reference behavior: drop the item `id`
  * (store:false keeps no server item state) and ensure `summary` is an array.
  * Returns undefined for a malformed/empty signature.
  */

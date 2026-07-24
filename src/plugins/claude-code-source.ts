@@ -239,21 +239,13 @@ export class ClaudeCodeSource implements PluginSource {
 
       const shellCommand = command ?? toolName;
 
-      // Environment: inherit process.env, overlay plugin contract vars.
-      // NOTE: ctx fields are NOT forwarded to shell plugins in Phase 6.
-      // The plugin receives context via env vars only. Full ctx forwarding
-      // (e.g. abort signal, timeoutMs) is deferred to a later phase.
-      const env: Record<string, string> = {
-        ...Object.fromEntries(
-          Object.entries(process.env).filter(
-            (e): e is [string, string] => e[1] !== undefined,
-          ),
+      // Environment: inherit process.env only. The plugin receives its tool
+      // input as JSON on stdin (below); no extra context env vars are set.
+      const env: Record<string, string> = Object.fromEntries(
+        Object.entries(process.env).filter(
+          (e): e is [string, string] => e[1] !== undefined,
         ),
-        CLAWD_PLUGIN_ID: manifest.id,
-        CLAWD_TOOL_NAME: toolName,
-        CLAWD_TOOL_INPUT: JSON.stringify(input),
-        CLAWD_CWD: process.cwd(),
-      };
+      );
 
       return new Promise<PluginToolResult>((resolve) => {
         const TIMEOUT_MS = 30_000;
@@ -263,10 +255,9 @@ export class ClaudeCodeSource implements PluginSource {
           resolve({ status: "error", message: "plugin timed out after 30s" });
         }, TIMEOUT_MS);
 
-        // Use `bash -c` for shell compatibility — matches claw-code's contract.
+        // Use `bash -c` for shell compatibility.
         // cwd: pluginDir so the manifest's `command` can use paths relative
-        // to its own directory (e.g., "./run.sh"). CLAWD_CWD still carries
-        // the host's project cwd per the claw-code env contract.
+        // to its own directory (e.g., "./run.sh").
         const child = cp.spawn("bash", ["-c", shellCommand], {
           env,
           stdio: ["pipe", "pipe", "pipe"],

@@ -4,7 +4,7 @@
  * Detects commands that touch files outside the workspace or reference
  * sensitive system paths.
  *
- * Corresponds to claw's `validate_paths` (bash_validation.rs:356-381).
+ * Validates path arguments against the workspace policy.
  */
 
 import * as nodePath from "node:path";
