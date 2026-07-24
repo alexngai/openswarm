@@ -92,3 +92,36 @@ jobs:
             exit 0
           fi
           scripts/smoke-opentui.sh
+
+  cache-impact:
+    name: Cache-impact guard (TE-27)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history so the gate can diff HEAD against the PR base.
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache-impact gate
+        # Reasonix's cache-as-invariant discipline (docs/55 TE-27): a no-op unless the
+        # diff touches a cache-sensitive path (transports, compaction, tool specs, the
+        # system-prompt/prompt-cache sources); then it re-proves the TE-23 byte-stability
+        # and TE-22 cache-accounting guards, so the cacheable prefix can't silently rot.
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha || 'origin/main' }}
+        run: bun scripts/check-cache-impact.ts
