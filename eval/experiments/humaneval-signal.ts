@@ -65,7 +65,7 @@ async function generate(provider: Provider, modelId: string, p: Problem, tempera
   let usage: Record<string, number> = {};
   for await (const ev of provider.stream(req)) {
     if (ev.type === "text-delta") text += ev.text;
-    else if (ev.type === "finish") usage = (ev.usage as Record<string, number>) ?? {};
+    else if (ev.type === "finish") usage = (ev.usage as unknown as Record<string, number>) ?? {};
     else if (ev.type === "error") throw new Error(`gen error: ${ev.message}`);
   }
   return { text, usage };
