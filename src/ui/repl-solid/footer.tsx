@@ -2,13 +2,14 @@
  * footer.tsx — two-line status footer replacing status.tsx.
  *
  * Line 1: [state-badge] model · permission-mode · session {id}   [tip]
- * Line 2: context: XX% (tokens/max) · cost: $X.XX
+ * Line 2: context: XX% (tokens/max) · cache: YY% · cost: $X.XX
  *
  * Inspired by Kimi Code's footer.ts with rotating tips.
  */
 
 import { createMemo, createSignal, onMount, onCleanup } from "solid-js";
-import type { ReplState } from "../repl/state.js";
+import type { ReplState, UsageStats } from "../repl/state.js";
+import { ApiCostModel } from "../../core/cost-model.js";
 import { stateColor, theme } from "./theme.js";
 
 export type TokenGetter = () => number;
@@ -38,14 +39,48 @@ function shortSession(id: string | undefined): string {
   return id.length > 8 ? id.slice(0, 8) : id;
 }
 
-function formatCost(tokens: number, model: string): string {
-  const m = model.toLowerCase();
-  let inputRate = 3; // default sonnet-ish
-  if (m.includes("opus")) inputRate = 15;
-  else if (m.includes("haiku")) inputRate = 0.8;
-  const cost = (tokens / 1_000_000) * inputRate;
-  if (cost < 0.01) return "$0.00";
-  return `$${cost.toFixed(2)}`;
+// Prices via MODEL_PRICING (the canonical table — docs/55 TE-19), including
+// cache read/write traffic. Honest by design: an unpriced model shows "n/a"
+// rather than a made-up rate. Exported for tests.
+const COST_MODEL = new ApiCostModel();
+
+export function formatCost(usage: UsageStats | undefined, model: string): string {
+  if (usage === undefined) return "$0.00";
+  const { usd } = COST_MODEL.cost({
+    model,
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    cacheReadInputTokens: usage.cacheReadInputTokens,
+    cacheWriteInputTokens: usage.cacheWriteInputTokens,
+  });
+  if (usd === undefined) return "n/a";
+  if (usd < 0.01) return "$0.00";
+  return `$${usd.toFixed(2)}`;
+}
+
+/**
+ * Running cache-read share of the input side: read / (read + fresh input),
+ * annotated with the last turn's cache_hit/cache_miss lane signal when the
+ * engine path emits one (docs/55 TE-20). An attributed miss names the prefix
+ * components that changed, e.g. "(miss: tools)" (TE-21). Empty until usage
+ * flows.
+ */
+export function formatCache(usage: UsageStats | undefined): string {
+  if (usage === undefined) return "";
+  const denom = usage.cacheReadInputTokens + usage.inputTokens;
+  if (denom === 0) return "";
+  const pct = Math.round((usage.cacheReadInputTokens / denom) * 100);
+  let marker = "";
+  if (usage.lastTurnCache !== undefined) {
+    const reasons =
+      usage.lastTurnCache === "miss" &&
+      usage.lastMissReasons !== undefined &&
+      usage.lastMissReasons.length > 0
+        ? `: ${usage.lastMissReasons.join("+")}`
+        : "";
+    marker = ` (${usage.lastTurnCache}${reasons})`;
+  }
+  return ` · cache: ${pct}%${marker}`;
 }
 
 export function Footer(props: FooterProps) {
@@ -83,7 +118,9 @@ export function Footer(props: FooterProps) {
   });
 
   const line2 = createMemo(
-    () => `context: ${contextPct()}% (${formatTokens(tokens())}/${formatTokens(contextWindow())}) · cost: ${formatCost(tokens(), props.model)}`,
+    // Reading state.usageStats makes this memo recompute at every turn
+    // boundary (usage-update), which also refreshes the polled token count.
+    () => `context: ${contextPct()}% (${formatTokens(tokens())}/${formatTokens(contextWindow())})${formatCache(props.state.usageStats)} · cost: ${formatCost(props.state.usageStats, props.model)}`,
   );
 
   const combined = createMemo(() => `${line1()}\n${line2()}`);

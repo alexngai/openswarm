@@ -18,6 +18,7 @@ import {
   shouldCompact,
   compactSession,
   estimateTokens,
+  calibrateTokensPerChar,
   NOT_ENOUGH_MESSAGES_TO_COMPACT,
 } from "./compactor.js";
 import {
@@ -152,18 +153,29 @@ export function recordTurnUsage(
 }
 
 /**
- * Effective context occupancy: the provider-reported tokens plus the char/4
+ * Effective context occupancy: the provider-reported tokens plus a calibrated
  * estimate of messages appended since that report (tool results, prompts).
  * 0 when no usage has been reported yet (estimator-fallback regime).
+ *
+ * The estimate for the appended tail uses a tokens-per-char ratio calibrated
+ * from the last real usage (docs/55 TE-24) rather than a fixed char/4, so the
+ * high-water mark tracks the provider's tokenizer — the appended messages are
+ * the same kind of content (same session, same language mix) the ratio was
+ * measured on.
  */
 export function effectiveContextTokens(
   state: CompactionState,
   messages: readonly ProviderMessage[],
 ): number {
   if (state.lastContextTokens <= 0) return 0;
+  const tokensPerChar = calibrateTokensPerChar(
+    state.lastContextTokens,
+    messages,
+    state.lastUsageMessageCount,
+  );
   let extra = 0;
   for (let i = state.lastUsageMessageCount; i < messages.length; i++) {
-    extra += estimateTokens(messages[i]!);
+    extra += estimateTokens(messages[i]!, tokensPerChar);
   }
   return state.lastContextTokens + extra;
 }

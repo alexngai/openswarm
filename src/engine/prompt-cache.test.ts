@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { fingerprintSystemPrompt } from "./prompt-cache.js";
+import {
+  fingerprintSystemPrompt,
+  capturePrefixShape,
+  comparePrefixShapes,
+} from "./prompt-cache.js";
 import type { ToolSpec } from "../core/types.js";
 
 function makeTool(name: string): ToolSpec {
@@ -87,5 +91,48 @@ describe("fingerprintSystemPrompt", () => {
     const fp1 = fingerprintSystemPrompt("prefix", [tool1]);
     const fp2 = fingerprintSystemPrompt("prefix", [tool2]);
     expect(fp1.hash).not.toBe(fp2.hash);
+  });
+});
+
+describe("capturePrefixShape / comparePrefixShapes (docs/55 TE-21)", () => {
+  it("combined hash is byte-compatible with fingerprintSystemPrompt", () => {
+    const tools = [makeTool("a"), makeTool("b")];
+    const shape = capturePrefixShape("prefix", tools);
+    const fp = fingerprintSystemPrompt("prefix", tools);
+    expect(shape.hash).toBe(fp.hash);
+    expect(shape.version).toBe("v1");
+  });
+
+  it("is deterministic per component", () => {
+    const tools = [makeTool("a")];
+    const s1 = capturePrefixShape("prefix", tools);
+    const s2 = capturePrefixShape("prefix", tools);
+    expect(s1).toEqual(s2);
+  });
+
+  it("names 'system' when only the prompt changed", () => {
+    const tools = [makeTool("a")];
+    const prev = capturePrefixShape("prefix v1", tools);
+    const cur = capturePrefixShape("prefix v2", tools);
+    expect(comparePrefixShapes(prev, cur)).toEqual(["system"]);
+  });
+
+  it("names 'tools' when only the tool surface changed", () => {
+    const prev = capturePrefixShape("prefix", [makeTool("a")]);
+    const cur = capturePrefixShape("prefix", [makeTool("a"), makeTool("b")]);
+    expect(comparePrefixShapes(prev, cur)).toEqual(["tools"]);
+  });
+
+  it("names both when both changed, empty when nothing changed", () => {
+    const prev = capturePrefixShape("prefix v1", [makeTool("a")]);
+    const cur = capturePrefixShape("prefix v2", [makeTool("b")]);
+    expect(comparePrefixShapes(prev, cur)).toEqual(["system", "tools"]);
+    expect(comparePrefixShapes(prev, prev)).toEqual([]);
+  });
+
+  it("tool reorder does not change the tools hash (sorted internally)", () => {
+    const prev = capturePrefixShape("prefix", [makeTool("a"), makeTool("b")]);
+    const cur = capturePrefixShape("prefix", [makeTool("b"), makeTool("a")]);
+    expect(comparePrefixShapes(prev, cur)).toEqual([]);
   });
 });

@@ -898,6 +898,27 @@ describe("result message / cache_hit and cache_miss events", () => {
     expect(events[2]).toMatchObject({ type: "message_stop" });
   });
 
+  it("attributes a miss with changedComponents when the state carries them (TE-21)", () => {
+    const state = makeTranslatorState("", undefined, ["tools"]);
+    const result = translateSdkMessage(msg(makeResultMsg({ cacheWrite: 33 })), state);
+    const events = result as NormalizedEvent[];
+    const miss = events.find((e) => e.type === "cache_miss");
+    expect(miss).toBeDefined();
+    if (miss?.type === "cache_miss") {
+      expect(miss.payload.changedComponents).toEqual(["tools"]);
+    }
+  });
+
+  it("omits changedComponents on an unattributed miss (first run / stable prefix)", () => {
+    const state = makeTranslatorState("", undefined, []);
+    const result = translateSdkMessage(msg(makeResultMsg({ cacheWrite: 33 })), state);
+    const events = result as NormalizedEvent[];
+    const miss = events.find((e) => e.type === "cache_miss");
+    if (miss?.type === "cache_miss") {
+      expect(miss.payload.changedComponents).toBeUndefined();
+    }
+  });
+
   it("does NOT emit cache_hit or cache_miss when both are 0 or absent", () => {
     const state = makeState();
     const result = translateSdkMessage(msg(makeResultMsg({})), state);

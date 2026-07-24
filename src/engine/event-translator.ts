@@ -38,13 +38,20 @@ export interface TranslatorState {
   stripPrefix: string;
   /** Fingerprint of the system-prompt prefix + tool surface for cache analytics. */
   fingerprint?: PromptCacheFingerprint;
+  /**
+   * Prefix components that changed vs. the previous run (docs/55 TE-21) —
+   * rides the cache_miss payload so a miss names its cause. Empty/undefined
+   * when nothing in the fingerprinted surface changed.
+   */
+  changedComponents?: readonly ("system" | "tools")[];
 }
 
 export function makeTranslatorState(
   stripPrefix = "",
   fingerprint?: PromptCacheFingerprint,
+  changedComponents?: readonly ("system" | "tools")[],
 ): TranslatorState {
-  return { openToolUseIds: [], stripPrefix, fingerprint };
+  return { openToolUseIds: [], stripPrefix, fingerprint, changedComponents };
 }
 
 function stripToolName(name: string, prefix: string): string {
@@ -241,6 +248,9 @@ function handleResultMessage(
         payload: {
           tokens: usage.cacheWriteInputTokens,
           fingerprint: state.fingerprint?.hash,
+          ...(state.changedComponents != null && state.changedComponents.length > 0
+            ? { changedComponents: state.changedComponents }
+            : {}),
         },
       } as unknown as NormalizedEvent);
     }

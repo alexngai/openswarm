@@ -7,6 +7,9 @@ import { describe, it, expect } from "vitest";
 import {
   estimateTokens,
   estimateSessionTokens,
+  messageChars,
+  calibrateTokensPerChar,
+  DEFAULT_TOKENS_PER_CHAR,
   shouldCompact,
   compactSession,
   summarizeMessages,
@@ -97,6 +100,63 @@ describe("estimateTokens", () => {
     };
     // Was a real undercount: a reasoning block used to contribute 0 tokens.
     expect(estimateTokens(msg)).toBe(Math.floor(8000 / 4) + 1);
+  });
+
+  it("default ratio is byte-for-byte the prior char/4 behavior (TE-24)", () => {
+    const msg = userText("y".repeat(9_999));
+    expect(estimateTokens(msg, DEFAULT_TOKENS_PER_CHAR)).toBe(estimateTokens(msg));
+    expect(estimateTokens(msg, 0.25)).toBe(Math.floor(9_999 / 4) + 1);
+  });
+
+  it("scales with a calibrated ratio (denser tokenizer → more tokens)", () => {
+    const msg = userText("z".repeat(4_000));
+    // char/4 → 1001; a CJK-ish 1 token/char ratio → 4001.
+    expect(estimateTokens(msg, 0.25)).toBe(1_001);
+    expect(estimateTokens(msg, 1.0)).toBe(4_001);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 1b. tokens-per-char calibration (TE-24)
+// ---------------------------------------------------------------------------
+
+describe("messageChars", () => {
+  it("counts the same fields estimateTokens divides", () => {
+    expect(messageChars(userText("x".repeat(100)))).toBe(100);
+    const tr = toolResult("tu-1", "y".repeat(50));
+    // tool_use_id ("tu-1" = 4) + content (50) = 54
+    expect(messageChars(tr)).toBe(54);
+  });
+});
+
+describe("calibrateTokensPerChar", () => {
+  const msgs = [userText("a".repeat(1_000)), userText("b".repeat(1_000))];
+
+  it("derives tokens/char from real usage over covered message chars", () => {
+    // 1000 tokens over 2000 covered chars → 0.5 tokens/char.
+    expect(calibrateTokensPerChar(1_000, msgs, 2)).toBeCloseTo(0.5);
+  });
+
+  it("only counts messages up to the covered high-water mark", () => {
+    // Covered=1 → 1000 chars; 800 tokens → 0.8.
+    expect(calibrateTokensPerChar(800, msgs, 1)).toBeCloseTo(0.8);
+  });
+
+  it("falls back to the default with no usage signal or empty coverage", () => {
+    expect(calibrateTokensPerChar(0, msgs, 2)).toBe(DEFAULT_TOKENS_PER_CHAR);
+    expect(calibrateTokensPerChar(1_000, msgs, 0)).toBe(DEFAULT_TOKENS_PER_CHAR);
+  });
+
+  it("rejects absurd ratios (garbled usage report) and falls back", () => {
+    // 5000 tokens / 2000 chars = 2.5 > max → default.
+    expect(calibrateTokensPerChar(5_000, msgs, 2)).toBe(DEFAULT_TOKENS_PER_CHAR);
+    // 50 tokens / 2000 chars = 0.025 < min → default.
+    expect(calibrateTokensPerChar(50, msgs, 2)).toBe(DEFAULT_TOKENS_PER_CHAR);
+  });
+
+  it("clamps the covered count to the message array length", () => {
+    // coveredCount beyond messages.length must not read past the end.
+    expect(calibrateTokensPerChar(1_000, msgs, 99)).toBeCloseTo(0.5);
   });
 });
 
