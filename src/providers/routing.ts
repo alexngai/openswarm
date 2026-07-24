@@ -8,6 +8,7 @@
  * grok*                          → XaiTransportProvider (M4b)
  * gemini-*                       → GoogleTransportProvider (M4b)
  * qwen*, qwen/*, kimi*, kimi/*   → DashScopeTransportProvider (M4b)
+ * awsbedrock/*                   → BedrockTransportProvider (native Converse, bearer token)
  * everything else                → error (unknown prefix)
  */
 
@@ -16,7 +17,7 @@ import type { ResolvedProvider, Provider } from "./index.js";
 import { ClaudeAgentSdkEngine } from "../engine/claude-agent-sdk.js";
 import { OpenAICompatApiKeyAuth } from "../auth/openai-compat-api-key.js";
 
-const KNOWN_PREFIXES = "claude*, gpt*, o1*, o3*, o4*, grok*, gemini-*, qwen*, kimi*, litellm/*, gateway/*, bedrock/*, azure/*, azureoai/*";
+const KNOWN_PREFIXES = "claude*, gpt*, o1*, o3*, o4*, grok*, gemini-*, qwen*, kimi*, litellm/*, gateway/*, bedrock/*, azure/*, azureoai/*, awsbedrock/*";
 
 export function resolveProvider(modelId: string): ResolvedProvider {
   // litellm/ | gateway/ | bedrock/ | azure/ → the LiteLLM gateway (OpenAI-compat). One endpoint, the
@@ -50,6 +51,24 @@ export function resolveProvider(modelId: string): ResolvedProvider {
       },
       authFactory: () => new OpenAICompatApiKeyAuth("AZURE_OPENAI_API_KEY", "azure"),
       modelId: deployment,
+    };
+  }
+
+  // awsbedrock/<id> → AWS Bedrock DIRECT via the native Converse API (open-weight Llama / Nova).
+  // Distinct from the bedrock/ prefix above (which routes to the LiteLLM gateway). The stripped value
+  // is the Bedrock inference-profile model id (e.g. us.meta.llama3-1-8b-instruct-v1:0). Auth is the
+  // bearer token AWS_BEARER_TOKEN_BEDROCK (no AWS SigV4 keys required).
+  const awsBedrock = /^awsbedrock\/(.+)$/i.exec(modelId);
+  if (awsBedrock) {
+    const cleanId = awsBedrock[1]!;
+    return {
+      kind: "native",
+      providerFactory: async (auth: AuthSource, _id: string): Promise<Provider> => {
+        const { BedrockTransportProvider } = await import("./bedrock-transport.js");
+        return await BedrockTransportProvider.create(auth, cleanId);
+      },
+      authFactory: () => new OpenAICompatApiKeyAuth("AWS_BEARER_TOKEN_BEDROCK", "bedrock"),
+      modelId: cleanId,
     };
   }
 

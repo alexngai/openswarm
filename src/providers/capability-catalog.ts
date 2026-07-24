@@ -303,3 +303,60 @@ const DASHSCOPE_CATALOG: readonly CatalogRow[] = [
 export function getDashScopeModelCapability(modelId: string): ModelCapability {
   return resolveCatalog(DASHSCOPE_CATALOG, modelId);
 }
+
+// ---------------------------------------------------------------------------
+// AWS Bedrock (open-weight: Meta Llama, Amazon Nova)
+// ---------------------------------------------------------------------------
+
+// Model ids carry an inference-profile region prefix (e.g.
+// "us.meta.llama3-1-8b-instruct-v1:0", "us.amazon.nova-lite-v1:0"), so the
+// family patterns match on the vendor segment rather than anchoring at start.
+const BEDROCK_CATALOG: readonly CatalogRow[] = [
+  // Amazon Nova family (nova-lite / nova-micro / nova-pro). ~300K context.
+  {
+    match: /amazon\.nova/,
+    capability: {
+      imageIn: false,
+      videoIn: false,
+      audioIn: false,
+      thinking: false,
+      parallelToolUse: true,
+      promptCache: false,
+      maxContextTokens: 300_000,
+      maxOutputTokens: 4_096,
+    },
+  },
+  // Meta Llama 3.x family. ~128K context.
+  {
+    match: /meta\.llama/,
+    capability: {
+      imageIn: false,
+      videoIn: false,
+      audioIn: false,
+      thinking: false,
+      parallelToolUse: true,
+      promptCache: false,
+      maxContextTokens: 128_000,
+      maxOutputTokens: 4_096,
+    },
+  },
+  // Generic Bedrock open-weight fallback — sane defaults instead of the
+  // zero-token UNKNOWN sentinel.
+  {
+    match: /.*/,
+    capability: {
+      imageIn: false,
+      videoIn: false,
+      audioIn: false,
+      thinking: false,
+      parallelToolUse: true,
+      promptCache: false,
+      maxContextTokens: 128_000,
+      maxOutputTokens: 4_096,
+    },
+  },
+];
+
+export function getBedrockModelCapability(modelId: string): ModelCapability {
+  return resolveCatalog(BEDROCK_CATALOG, modelId);
+}
