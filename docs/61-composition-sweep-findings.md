@@ -1,10 +1,10 @@
-# 57 — Composition sweep: the cascade win doesn't replicate on a random slice
+# 61 — Composition sweep: the cascade win doesn't replicate on a random slice
 
-**Status:** findings (eval results). The workload-composition sweep docs/56 §5 called for.
-Extends 50 (cost-frontier study), 54 (hard-slice), 55 (powered), 56 (gap-regime).
+**Status:** findings (eval results). The workload-composition sweep docs/60 §5 called for.
+Extends 50 (cost-frontier study), 54 (hard-slice), 59 (powered), 60 (gap-regime).
 **Run:** 2026-07-21, cascade-swe on the docker backend (m7i.4xlarge), harness at `01730a7`. Two 5-arm ×
 5-seed pools of 4 tasks each = **200 cells** (98% real-token): a "cheap-solvable" pool
-(django-12858, matplotlib-14623, scikit-25931, sympy-24213) + the reused docs/56 gap pool.
+(django-12858, matplotlib-14623, scikit-25931, sympy-24213) + the reused docs/60 gap pool.
 
 ## 1. Design and the methodological catch
 
@@ -12,7 +12,7 @@ Goal: trace cascade-vs-mono-large cost as a function of the cheap-solvable fract
 is exactly linear in composition, so the plan was to measure two endpoints — a reliably-cheap pool
 (`f=0`) and the gap pool (`f=1`) — and re-weight.
 
-**It didn't separate.** The pools were selected by the docs/56 **1-seed** screen, but at 5 seeds the
+**It didn't separate.** The pools were selected by the docs/60 **1-seed** screen, but at 5 seeds the
 "cheap-solvable" tasks scored `mono-small` **0.30** and the "gap" tasks **0.475** — nearly inverted.
 `mono-small`'s per-task resolve-rate on this bucket is ~0.4 with large seed variance; **no task is
 reliably cheap-solvable** (all ≤ 0.6, median 0.40). So the composition axis is truncated to the
@@ -42,7 +42,7 @@ median 0.40, high seed variance. haiku is a coin-flip, not a dependable cheap ti
 rarely gets a clean "small tier solves it cheaply, skip the big model" win.
 
 **F2 — cascade-τ0.5 does NOT beat mono-large on the random sample.** Aggregate q0.95 vs 1.00 (≈ equal,
-one hard task) at **~6% higher cost** ($1.51 vs $1.42). It is weakly **dominated**. **docs/55's
+one hard task) at **~6% higher cost** ($1.51 vs $1.42). It is weakly **dominated**. **docs/59's
 dominance (equal quality, ~15% cheaper) did NOT replicate** — that result was favorable task selection
 (the continuity holdovers), not a robust property.
 
@@ -50,7 +50,7 @@ dominance (equal quality, ~15% cheaper) did NOT replicate** — that result was 
 −$1.07 to +$1.34 with no clean correlation to `mono-small`'s rate. When `mono-small` burns tokens and
 fails, the escalated large tier inherits its whole diff+trajectory (docs/52 handoff) — so on
 matplotlib and scikit the escalated tier cost **~2× a cold mono-large**. **Escalation can cost more
-than just starting with the big model.** The handoff that helped in docs/56 F3 (roughly cancelling the
+than just starting with the big model.** The handoff that helped in docs/60 F3 (roughly cancelling the
 wasted cheap attempt) can invert into a net penalty when the cheap tier did a lot of futile work.
 
 **F4 — the cascade needs a small tier that reliably solves a meaningful fraction; haiku doesn't.** This
@@ -62,10 +62,10 @@ docs/50 §9.4) — not more routing tuning.
 ## 4. Implications for the study
 
 - **H2.1 (cascade Pareto-expands vs monolith): NOT robustly supported.** The evidence across three runs:
-  dominant on a favorable holdover mix (docs/55), tied on a 1-seed-selected gap slice (docs/56),
+  dominant on a favorable holdover mix (docs/59), tied on a 1-seed-selected gap slice (docs/60),
   tied-to-dominated on a random bucket sample (here). The honest position: **the cascade expands the
   frontier only when the small tier reliably solves a meaningful fraction AND its handoff doesn't bloat
-  — neither holds for haiku on SWE-bench Verified.** The docs/55 headline is tempered accordingly.
+  — neither holds for haiku on SWE-bench Verified.** The docs/59 headline is tempered accordingly.
 - **Method:** difficulty screening needs **≥3 seeds**; 1-seed labels are noise at this variance.
 
 ## 5. Next steps

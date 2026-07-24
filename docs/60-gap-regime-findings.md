@@ -1,7 +1,7 @@
-# 56 — Gap-regime findings: where the cascade advantage comes from (and where it doesn't)
+# 60 — Gap-regime findings: where the cascade advantage comes from (and where it doesn't)
 
-**Status:** findings (eval results). The gap-selected decisive run docs/54 §5 / docs/55 §5 called for.
-Extends 50/51 (cost-frontier study), 54 (hard-slice), 55 (powered frontier).
+**Status:** findings (eval results). The gap-selected decisive run docs/54 §5 / docs/59 §5 called for.
+Extends 50/51 (cost-frontier study), 54 (hard-slice), 59 (powered frontier).
 **Run:** 2026-07-16/18, cascade-swe on the docker backend (m7i.4xlarge, native x86), harness at `5544eac`.
 Two stages: (1) a **gap screen** of 15 randomly-sampled "15 min–1 hour" Verified instances (both monos ×
 1 seed), (2) a **decisive run** of 5 arms × 5 seeds on the resulting gap slice. `CS_TAUS=0.5 CS_RESIDENT=1`.
@@ -38,7 +38,7 @@ django-16938 was hardest for the swarm arms (cascade 0.6, advisor 0.0); the othe
 non-dominated frontier is just **mono-small (cheap, 0.475) → mono-large (1.00)**, with cascade sitting
 on top of mono-large rather than below it.
 
-**F2 — this is the mirror image of docs/55 F1, and the two together are the real result.** In the
+**F2 — this is the mirror image of docs/59 F1, and the two together are the real result.** In the
 powered run (a *mixed* slice) cascade **dominated** mono-large (equal quality, ~15% cheaper). On a
 *pure-gap* slice it merely ties. The difference is the task mix: on gap tasks the cheap tier **always**
 fails, so its attempt is near-pure overhead — a handoff to the large tier that only offsets its own
@@ -53,7 +53,7 @@ cancelling the wasted cheap-tier tokens. So the downside of routing on a mis-sel
 is ~zero, not a penalty — a useful robustness property for a policy that can't perfectly predict
 difficulty.
 
-**F4 — resident coordination > cold, again (docs/55 F3 holds).** advisor-resident 0.500 > advisor cold
+**F4 — resident coordination > cold, again (docs/59 F3 holds).** advisor-resident 0.500 > advisor cold
 0.388 on the gap slice. But both critic-loop arms are weak here (well below mono-large): advise-don't-redo
 struggles when the cheap executor can't get close enough for review to rescue — the critic can only
 advise, not author. The advisor family's value, like the cascade's, is regime-dependent.
@@ -61,11 +61,11 @@ advise, not author. The advisor family's value, like the cascade's, is regime-de
 ## 4. Implications for docs/50
 
 - **H2.1 (cascade Pareto-expands vs monolith):** supported **conditionally** — true on a realistic mix
-  (docs/55), a tie on a pure-gap slice (F1). The honest statement: routing expands the frontier in
+  (docs/59), a tie on a pure-gap slice (F1). The honest statement: routing expands the frontier in
   proportion to the cheap-solvable fraction, and never loses (F3). "Mono is better" is false on a mix
   and a wash on pure-hard.
 - The gap slice is the **adversarial** case for routing (all overhead, no cheap wins) and cascade still
-  breaks even — the stronger evidence is that the mixed-slice win (docs/55) is real and the downside is bounded.
+  breaks even — the stronger evidence is that the mixed-slice win (docs/59) is real and the downside is bounded.
 
 ## 5. Next steps
 

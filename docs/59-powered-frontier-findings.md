@@ -1,4 +1,4 @@
-# 55 — Powered frontier findings: the cost axis, fixed
+# 59 — Powered frontier findings: the cost axis, fixed
 
 **Status:** findings (eval results). The seed-replicated re-run docs/54 §5 called for, now on an
 honest cost axis. Extends 50/51 (cost-frontier study), 52 (handoff fidelity), 54 (hard-slice).

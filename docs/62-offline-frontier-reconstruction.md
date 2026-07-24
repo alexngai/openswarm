@@ -1,17 +1,17 @@
-# 58 — Offline frontier reconstruction + escalation-signal AUC
+# 62 — Offline frontier reconstruction + escalation-signal AUC
 
-**Status:** methodology proposal + Phase 0 results (retroactive validation). Extends 50 (the thesis), 54/55/56/57 (the live-experiment line that reached "H2.1 not robustly supported").
+**Status:** methodology proposal + Phase 0 results (retroactive validation). Extends 50 (the thesis), 54/59/60/61 (the live-experiment line that reached "H2.1 not robustly supported").
 
 ## 1. Why a new methodology
 
-docs/54–57 tested H2.1 (a heterogeneous cascade Pareto-expands the cost/quality frontier vs the monolith) with **live, end-to-end, per-policy** runs on SWE-bench Verified, and landed on *not robustly supported*. The approach is expensive and, worse, **confounded** — a single run entangles four independent things and reports the noisiest possible output:
+docs/54, 59–61 tested H2.1 (a heterogeneous cascade Pareto-expands the cost/quality frontier vs the monolith) with **live, end-to-end, per-policy** runs on SWE-bench Verified, and landed on *not robustly supported*. The approach is expensive and, worse, **confounded** — a single run entangles four independent things and reports the noisiest possible output:
 
 1. **Model capability** — is there exploitable task structure at all?
 2. **Escalation-signal quality** — can a cheap signal tell *when* the small tier is wrong?
 3. **Agentic-loop competence** — can the small model even drive tools? (Nova-Lite: 0/14; it drove loops but solved nothing.)
 4. **Cost axis** — cross-provider `$` vs honest compute (the §8.1 "local is free" trap).
 
-...measured as **binary resolve at n=1**, which docs/57 confirms is too noisy to even classify task difficulty. Every full policy run costs $-and-hours, and you need many of them (τ-sweep × seeds × model pairs).
+...measured as **binary resolve at n=1**, which docs/61 confirms is too noisy to even classify task difficulty. Every full policy run costs $-and-hours, and you need many of them (τ-sweep × seeds × model pairs).
 
 **Reframe.** H2.1 reduces to two measurable questions that don't require running any policy live:
 
@@ -45,7 +45,7 @@ Everything below is free arithmetic over the table:
 
 **Cost decomposition.** The offline cascade cost uses *cold* C and *cold* E (each run once), so it excludes handoff bloat. That makes the three losses separable:
 `live cascade cost = [oracle structural cost] + [signal loss: AUC<1] + [handoff bloat: live E > cold E]`.
-docs/57's "escalation costs ~2× a cold monolith" is the third term; Phase 0 below shows the *first* term already fails, before signal or handoff even enter.
+docs/61's "escalation costs ~2× a cold monolith" is the third term; Phase 0 below shows the *first* term already fails, before signal or handoff even enter.
 
 ## 3. Phase 0 — retroactive validation (free, from existing cells)
 
@@ -69,13 +69,13 @@ Computed the oracle-cascade frontier on the mono cells already in `.eval-runs/ca
 
 ### Findings
 
-**F1 — Both pairs are structurally dead; the oracle inequality fails on *both* cost axes.** For neither pair does the oracle cascade Pareto-dominate mono-large — provable from two mono runs, with no signal, no τ-sweep, no seed-selected slice. This one check would have pre-empted the entire docs/54–57 effort.
+**F1 — Both pairs are structurally dead; the oracle inequality fails on *both* cost axes.** For neither pair does the oracle cascade Pareto-dominate mono-large — provable from two mono runs, with no signal, no τ-sweep, no seed-selected slice. This one check would have pre-empted the entire docs/54, 59–61 effort.
 
 **F2 — On honest compute, the small tier is not cheaper.** haiku uses ~the *same* fresh compute as gpt-5.5 (0.07M vs 0.06M) at *lower* quality → it is **Pareto-dominated**, so there is no cost reason to route to it. Its apparent 3× cheapness (1.91M vs 0.64M total) is **96% cache-reads** — a $-price artifact of haiku's long cache-heavy trajectories, exactly the §8.1 "local is free" confound. Nova-Pro is worse: **28× the fresh compute** for near-zero quality.
 
 **F3 — The cheap tier solves ~nothing *uniquely*.** small-only = 1 (haiku) and 0 (Nova). Frontier expansion requires the cheap tier to *own* a real slice of tasks it solves cheaply; here it owns essentially none. haiku's failures are a superset of gpt-5.5's; Nova solves a strict subset of ~nothing.
 
-**F4 — The method reproduces *and explains* the negatives.** docs/57 found "cascade tied-to-dominated; cost driven by handoff bloat." Phase 0 shows the structural cost already loses before handoff bloat is added — the cheap tier costs more than it saves even when run cold and escalated by an oracle. Handoff bloat is a second, additive problem, not the root cause.
+**F4 — The method reproduces *and explains* the negatives.** docs/61 found "cascade tied-to-dominated; cost driven by handoff bloat." Phase 0 shows the structural cost already loses before handoff bloat is added — the cheap tier costs more than it saves even when run cold and escalated by an oracle. Handoff bloat is a second, additive problem, not the root cause.
 
 ## 4. Phase 1 — the real experiment: single-shot code-gen + test signal
 
@@ -105,7 +105,7 @@ Structure: both-solve=98, llama-only=1, **gpt-only=61**, neither=4. Oracle-casca
 
 **F7 — frontier expansion on the honest compute axis, not token-count.** On raw token COUNT the cascade loses (single-shot tokens are ~equal; oracle 418 > gpt 394 — you always run the cheap tier then escalate). But on **FLOPs (params × tokens)** — the iso-compute axis (§8.1) — Llama-8B (8B params) is ~10–50× cheaper per token, so the oracle cascade Pareto-dominates mono-gpt at every plausible gpt-5.5 size: same 0.976 quality at **~2× fewer FLOPs** (gpt≈70B: 15k vs 28k; gpt≈400B: 75k vs 157k). The win lives entirely on the compute axis — exactly what the honest-cost mandate predicts, and the opposite of the SWE pairings where the oracle inequality failed on *both* axes (F1).
 
-**Why it worked where SWE didn't:** single-shot removes the agentic token bloat that erased haiku's compute advantage (docs/57), and Llama-8B is a genuinely small open-weight model — a real param gap → a real FLOPs gap the cheap tier can bank on the easy slice.
+**Why it worked where SWE didn't:** single-shot removes the agentic token bloat that erased haiku's compute advantage (docs/61), and Llama-8B is a genuinely small open-weight model — a real param gap → a real FLOPs gap the cheap tier can bank on the easy slice.
 
 **Caveats (what Phase 1 does *not* yet show):** (a) the FLOPs win uses an *estimated* gpt-5.5 param count (proprietary) — the clean claim needs two **open-weight** models with known params (Phase 1.5: e.g. Qwen-Coder-7B vs 32B, or Llama-8B vs 70B). (b) The signal covers 44% of problems. (c) Single-shot code-gen, not agentic SWE — transfer is Phase 2.
 
