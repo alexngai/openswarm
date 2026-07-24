@@ -190,6 +190,45 @@ on-target future run is the real **Claude** summarizer (the CC prompt is Claude'
 own) via Bedrock — which needs the LiteLLM *gateway* (`litellm/claude-haiku`,
 requires the gateway's own key) or extending the runner to drive the SDK path.
 
+### Follow-up — on-target Claude summarizer (Bedrock Claude Haiku 4.5 via gateway)
+
+gpt-oss-20b was a *proxy* weak model; the most relevant summarizer is Claude (the
+CC compaction prompt is Claude's own). Reached the real thing through the swarmkit
+LiteLLM **gateway** — `litellm/claude-haiku` →
+`bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0` (LiteLLM's native Bedrock
+provider, signed from `AWS_BEARER_TOKEN_BEDROCK`). The gateway's earlier
+all-500s were a **red herring**: `litellm[proxy]` was installed without `prisma`,
+so its auth-error handler crashes on `import prisma` and mangles every
+*auth-failure* into a 500 — a correctly-keyed request never hits that path and
+routes fine. All fixtures, best-of-3, 90 runs:
+
+| arm (Claude Haiku 4.5) | best-of-3 non-security | hard-fixture **per-run** |
+|-----|----|----|
+| baseline | 100% (12/12) | 15/15 |
+| section  | 100% (12/12) | 15/15 |
+| verbatim | 100% (12/12) | 15/15 |
+
+**Zero drops — Claude Haiku saturates like gpt-5.5.** The smallest current Claude
+holds every constraint at baseline, *including* `aside-config-field` (the
+in-passing `legacyTimeoutMs`/`15000` rule) that gpt-oss-20b folded 1/3 times. So
+across every model tested, the **only** measured drop was on the weak *non-Claude*
+gpt-oss-20b.
+
+**Final TE-25 picture (~450 constraint-runs across 4 model configs):**
+- On the **native path with a weak/non-Claude summarizer** (gpt-oss-20b), the
+  **section (TE-25a) demonstrably helps** — it recovered the one in-passing
+  constraint baseline dropped. That is exactly the exposure docs/55 targets (the
+  native path we own), so the default-on section is **justified insurance**.
+- On **Claude itself** (Haiku → gpt-5.5), baseline already saturates, so the
+  section is invisible-but-harmless — the CC byte-exact prompt does its job for the
+  family it was written for.
+- **Verbatim pinning (TE-25b) never beat the section on any model** → stays gated
+  off; its per-turn `<pinned-user-messages>` prefix cost buys nothing over the
+  cheaper section.
+
+Models exercised: gpt-5.5 (Azure), gpt-5.5 `effort=none`, gpt-oss-20b (Bedrock),
+Claude Haiku 4.5 (Bedrock direct via gateway). **TE-25 is settled.**
+
 ## Motivation
 
 We studied [`esengine/DeepSeek-Reasonix`](https://github.com/esengine/DeepSeek-Reasonix) (a Go coding agent purpose-built around DeepSeek's automatic prefix cache) as an external reference for harness-level token efficiency, the same way 53 studied pi / Codex / Claude Code. Reasonix is unusually disciplined about prompt-cache stability — it treats the cacheable prefix as a hard, tested, CI-enforced invariant rather than a best-effort property.
@@ -327,7 +366,7 @@ Deterministic pre-checks (no model, already green in CI):
 - ~~**TE-23 scope**~~ — RESOLVED: one transport smoke (openai) that exercises the shared assembly modules (`message-replay.ts`, `tool-translation.ts`) through the real path. The other five AI-SDK transports consume the same modules; a per-transport sweep adds runtime without new coverage. Revisit if a transport grows its own assembly logic. Cross-*process* schema byte-stability (two fresh module loads producing identical `z.toJSONSchema` output) is not covered — would need a spawned-process snapshot test à la Reasonix's persisted environment snapshots; noted as a follow-up, low priority while Zod v4 conversion is deterministic.
 - ~~**TE-25 verbatim pinning**~~ — RESOLVED (2026-07-22): shipped section-first (TE-25a, default-on) AND built verbatim pinning (TE-25b, gated) so the eval could compare them head-to-head. Live run on `azureoai/gpt-5.5` (best-of-3): **baseline = section = verbatim = 100%** non-security retention — baseline saturated, so verbatim recovers nothing and stays gated off; section stays the reversible default. See [Live result](#live-result-2026-07-22-te-25-constraint-retention).
 - ~~**TE-25 discriminating re-run**~~ — RESOLVED (2026-07-23): gpt-5.5 saturated at baseline 100% across {default, hard} fixtures × {default, `reasoning_effort=none`} (180 runs), ruling out reasoning effort and fixture difficulty. The last lever — a genuinely weaker summarizer — was pulled via **Bedrock `gpt-oss-20b`** (20B open model through the `litellm/` transport). It produced the **first drop in ~360 runs**: baseline folded an in-passing constraint on 1/3 runs (hard-fixture per-run 14/15) while **section and verbatim held all 3 (15/15)**. Conclusion: **TE-25a section justified (default-on), TE-25b verbatim matched-not-beaten (stays gated off) — decision rule 1**. See [Live result → weak-model follow-up](#follow-up--weak-model-bedrock-gpt-oss-20b-the-first-signal).
-- **TE-25 on-target Claude run (new, low priority):** the most relevant summarizer is **Claude** (the CC compaction prompt is Claude's own). gpt-oss-20b is a proxy weak model, not Claude. Bedrock's OpenAI-compat endpoint doesn't serve current Claude 4.x, so an on-target run needs either the LiteLLM **gateway** (`litellm/claude-haiku`, requires the gateway's master key) or extending the constraint-retention runner to drive the Claude Agent **SDK** compaction path. Would confirm the gpt-oss-20b signal on the real target; not blocking (the mechanism is already demonstrated).
+- ~~**TE-25 on-target Claude run**~~ — RESOLVED (2026-07-24): ran the real Claude summarizer, **Bedrock Claude Haiku 4.5** via the swarmkit LiteLLM gateway (`litellm/claude-haiku`, native Bedrock provider). All arms 100%, 90/90 runs clean, baseline 15/15 on hard fixtures — **Claude Haiku saturates like gpt-5.5**, holding even the in-passing constraint gpt-oss-20b dropped. Conclusion: the section's measured benefit is specific to weak/non-Claude native-path summarizers; on Claude the CC byte-exact prompt already suffices. TE-25 settled — section default-on (justified insurance), verbatim gated off. See [on-target follow-up](#follow-up--on-target-claude-summarizer-bedrock-claude-haiku-45-via-gateway).
 - **TE-27:** is a PR-body gate worth the friction on a smaller team, or is the CI guard test (TE-23 in CI) sufficient on its own? Leaning "guard test in CI is enough; skip the PR-body ritual."
 
 ## Non-goals
