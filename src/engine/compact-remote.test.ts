@@ -4,9 +4,16 @@ import {
   isRemoteCompactionConfig,
   missingSummarySections,
   REQUIRED_SUMMARY_SECTIONS,
+  pinUserTurnsEnabled,
+  selectPinnedUserTurns,
+  renderPinnedUserTurns,
   type RemoteCompactionConfig,
 } from "./compact-remote.js";
-import { buildCompactSummaryRequest } from "./compact-prompts.js";
+import {
+  buildCompactSummaryRequest,
+  buildRecentCompactSummaryRequest,
+  standingConstraintsEnabled,
+} from "./compact-prompts.js";
 import type {
   Provider,
   ProviderMessage,
@@ -91,6 +98,22 @@ function mockProvider(response: string): Provider {
           };
         },
       };
+    },
+  };
+}
+
+/**
+ * Captures the messages the summarizer receives so a test can assert what the
+ * real compaction path actually sent (TE-25). Returns a conforming summary so
+ * compaction succeeds.
+ */
+function capturingProvider(captured: ProviderRequest[]): Provider {
+  const base = mockProvider(conformingSummary());
+  return {
+    ...base,
+    stream(request: ProviderRequest): AsyncIterable<ProviderEvent> {
+      captured.push(request);
+      return base.stream(request);
     },
   };
 }
@@ -701,5 +724,178 @@ describe("buildCompactSummaryRequest", () => {
     const reminderIdx = request.indexOf("REMINDER: Do NOT call any tools.");
     expect(instrIdx).toBeGreaterThan(-1);
     expect(reminderIdx).toBeGreaterThan(instrIdx);
+  });
+
+  // TE-25 (docs/55): standing-constraints section is an opt-in addendum.
+  it("omits the standing-constraints section by default (byte-exact CC core)", () => {
+    expect(buildCompactSummaryRequest()).not.toContain("Standing facts & constraints");
+    expect(buildRecentCompactSummaryRequest()).not.toContain("Standing facts & constraints");
+  });
+
+  it("adds the standing-constraints section when enabled, before any custom instructions", () => {
+    const request = buildCompactSummaryRequest("focus on tests", {
+      standingConstraints: true,
+    });
+    const sectionIdx = request.indexOf("Standing facts & constraints");
+    const instrIdx = request.indexOf("Additional Instructions:\nfocus on tests");
+    const reminderIdx = request.indexOf("REMINDER: Do NOT call any tools.");
+    expect(sectionIdx).toBeGreaterThan(-1);
+    // core prompt … standing section … custom instructions … reminder
+    expect(sectionIdx).toBeLessThan(instrIdx);
+    expect(instrIdx).toBeLessThan(reminderIdx);
+    // Preserves the byte-exact core.
+    expect(request).toContain("CRITICAL: Respond with TEXT ONLY.");
+    for (const section of REQUIRED_SUMMARY_SECTIONS) {
+      expect(request).toContain(section);
+    }
+  });
+
+  it("adds the section to the reactive (keep-recent) variant too", () => {
+    const request = buildRecentCompactSummaryRequest(undefined, {
+      standingConstraints: true,
+    });
+    expect(request).toContain("Standing facts & constraints");
+  });
+});
+
+describe("standing-constraints wiring through compactSessionRemote (TE-25)", () => {
+  const FLAG = "OPENSWARM_COMPACT_STANDING_CONSTRAINTS";
+
+  async function capturedSummaryRequest(flag: string | undefined): Promise<string> {
+    const saved = process.env[FLAG];
+    if (flag === undefined) delete process.env[FLAG];
+    else process.env[FLAG] = flag;
+    try {
+      const captured: ProviderRequest[] = [];
+      const session: Session = {
+        messages: [
+          userText("Never touch src/legacy/ — vendored."),
+          assistantText("Understood."),
+          ...makeFiller(8),
+        ],
+      };
+      await compactSessionRemote(session, remoteConfig(capturingProvider(captured)), undefined, {
+        force: true,
+      });
+      // The summarizer request is the last user message of the summarize call.
+      const req = captured[0]!;
+      const last = req.messages[req.messages.length - 1]!;
+      return last.content.map((b) => ("text" in b ? b.text : "")).join("");
+    } finally {
+      if (saved === undefined) delete process.env[FLAG];
+      else process.env[FLAG] = saved;
+    }
+  }
+
+  it("sends the standing-constraints section when enabled (default)", async () => {
+    const text = await capturedSummaryRequest(undefined);
+    expect(text).toContain("Standing facts & constraints");
+  });
+
+  it("omits the section on the baseline arm (flag off)", async () => {
+    const text = await capturedSummaryRequest("0");
+    expect(text).not.toContain("Standing facts & constraints");
+    // Byte-exact CC core still present.
+    expect(text).toContain("CRITICAL: Respond with TEXT ONLY.");
+  });
+});
+
+describe("verbatim user-turn pinning (TE-25b)", () => {
+  it("pinUserTurnsEnabled defaults off, enables on truthy flag", () => {
+    expect(pinUserTurnsEnabled({})).toBe(false);
+    for (const v of ["1", "true", "on", "yes", "YES"]) {
+      expect(pinUserTurnsEnabled({ OPENSWARM_COMPACT_PIN_USER_TURNS: v })).toBe(true);
+    }
+    expect(pinUserTurnsEnabled({ OPENSWARM_COMPACT_PIN_USER_TURNS: "0" })).toBe(false);
+  });
+
+  it("selects small text-only user turns, skipping assistant/tool/large turns", () => {
+    const messages: ProviderMessage[] = [
+      userText("Never touch src/legacy/."),
+      assistantText("ok"),
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "x", is_error: false }] },
+      userText("y".repeat(9_000)), // pasted content — over per-turn budget
+      userText("Pin React to 18.2.0."),
+    ];
+    const pinned = selectPinnedUserTurns(messages);
+    const texts = pinned.map((m) => m.content.map((b) => ("text" in b ? b.text : "")).join(""));
+    expect(texts).toEqual(["Never touch src/legacy/.", "Pin React to 18.2.0."]);
+  });
+
+  it("honors the total char budget (later turns beyond budget drop)", () => {
+    const messages: ProviderMessage[] = [
+      userText("a".repeat(400)),
+      userText("b".repeat(400)),
+      userText("c".repeat(400)),
+    ];
+    const pinned = selectPinnedUserTurns(messages, 1_000, 800);
+    expect(pinned).toHaveLength(2); // 400 + 400 fits; third would exceed 800
+  });
+
+  it("renders pinned turns verbatim inside a marker; undefined when none", () => {
+    expect(renderPinnedUserTurns([])).toBeUndefined();
+    const block = renderPinnedUserTurns([userText("Never touch src/legacy/.")]);
+    expect(block?.role).toBe("user");
+    const text = block!.content.map((b) => ("text" in b ? b.text : "")).join("");
+    expect(text).toContain("<pinned-user-messages>");
+    expect(text).toContain("Never touch src/legacy/."); // verbatim
+    expect(text).toContain("</pinned-user-messages>");
+  });
+
+  it("injects the pinned block after the summary only when the flag is on", async () => {
+    const FLAG = "OPENSWARM_COMPACT_PIN_USER_TURNS";
+    const saved = process.env[FLAG];
+    const session: Session = {
+      messages: [
+        userText("Never touch src/legacy/ — vendored."),
+        assistantText("Understood."),
+        ...makeFiller(8),
+      ],
+    };
+    try {
+      process.env[FLAG] = "1";
+      const on = await compactSessionRemote(
+        session,
+        remoteConfig(mockProvider(conformingSummary())),
+        undefined,
+        { force: true, skipAttachments: true },
+      );
+      const onText = on.compactedSession.messages
+        .flatMap((m) => m.content.map((b) => ("text" in b ? b.text : "")))
+        .join("\n");
+      expect(onText).toContain("<pinned-user-messages>");
+      expect(onText).toContain("Never touch src/legacy/ — vendored.");
+
+      process.env[FLAG] = "0";
+      const off = await compactSessionRemote(
+        session,
+        remoteConfig(mockProvider(conformingSummary())),
+        undefined,
+        { force: true, skipAttachments: true },
+      );
+      const offText = off.compactedSession.messages
+        .flatMap((m) => m.content.map((b) => ("text" in b ? b.text : "")))
+        .join("\n");
+      expect(offText).not.toContain("<pinned-user-messages>");
+    } finally {
+      if (saved === undefined) delete process.env[FLAG];
+      else process.env[FLAG] = saved;
+    }
+  });
+});
+
+describe("standingConstraintsEnabled", () => {
+  it("defaults on (the TE-25 improvement ships enabled)", () => {
+    expect(standingConstraintsEnabled({})).toBe(true);
+  });
+
+  it("is disabled by falsy flag values (eval baseline arm)", () => {
+    for (const v of ["0", "false", "off", "no", "OFF", "False"]) {
+      expect(standingConstraintsEnabled({ OPENSWARM_COMPACT_STANDING_CONSTRAINTS: v })).toBe(false);
+    }
+  });
+
+  it("stays on for any other value", () => {
+    expect(standingConstraintsEnabled({ OPENSWARM_COMPACT_STANDING_CONSTRAINTS: "1" })).toBe(true);
   });
 });

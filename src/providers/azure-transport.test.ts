@@ -16,6 +16,7 @@ import {
   azureApiBaseFromEnv,
   azureApiVersionFromEnv,
   azureFetch,
+  reasoningEffortFromEnv,
 } from "./azure-transport.js";
 import type { AuthSource } from "../auth/index.js";
 import type { ProviderRequest } from "./index.js";
@@ -66,6 +67,19 @@ describe("azureApiVersionFromEnv", () => {
     expect(azureApiVersionFromEnv({ AZURE_OPENAI_API_VERSION: "2025-01-01" })).toBe(
       "2025-01-01",
     );
+  });
+});
+
+describe("reasoningEffortFromEnv", () => {
+  it("returns undefined when unset", () => {
+    expect(reasoningEffortFromEnv({})).toBeUndefined();
+  });
+  it("passes through a supported level (trimmed, lowercased)", () => {
+    expect(reasoningEffortFromEnv({ OPENSWARM_REASONING_EFFORT: " None " })).toBe("none");
+    expect(reasoningEffortFromEnv({ OPENSWARM_REASONING_EFFORT: "HIGH" })).toBe("high");
+  });
+  it("ignores an unsupported value", () => {
+    expect(reasoningEffortFromEnv({ OPENSWARM_REASONING_EFFORT: "turbo" })).toBeUndefined();
   });
 });
 
@@ -182,5 +196,22 @@ describe("AzureTransportProvider.stream()", () => {
     const events = [];
     for await (const e of p.stream(makeReq())) events.push(e);
     expect(events[0]).toMatchObject({ type: "error" });
+  });
+
+  it("omits providerOptions when no cache key and no reasoning-effort override", async () => {
+    (streamText as ReturnType<typeof vi.fn>).mockReturnValue({ fullStream: asyncIterOf([finishPart]) });
+    const p = await AzureTransportProvider.create(authOk, "gpt-4.1");
+    for await (const _ of p.stream(makeReq())) { /* drain */ }
+    expect((streamText as ReturnType<typeof vi.fn>).mock.calls[0]![0].providerOptions).toBeUndefined();
+  });
+
+  it("forwards OPENSWARM_REASONING_EFFORT to streamText as providerOptions.openai.reasoningEffort", async () => {
+    vi.stubEnv("OPENSWARM_REASONING_EFFORT", "none");
+    (streamText as ReturnType<typeof vi.fn>).mockReturnValue({ fullStream: asyncIterOf([finishPart]) });
+    const p = await AzureTransportProvider.create(authOk, "gpt-4.1");
+    for await (const _ of p.stream(makeReq())) { /* drain */ }
+    expect((streamText as ReturnType<typeof vi.fn>).mock.calls[0]![0].providerOptions).toEqual({
+      openai: { reasoningEffort: "none" },
+    });
   });
 });

@@ -140,24 +140,94 @@ export interface CompactionResult {
 // Token estimation
 // ---------------------------------------------------------------------------
 
-export function estimateTokens(msg: ProviderMessage): number {
+/**
+ * Tokens-per-character used by the char-based estimator. The default is char/4
+ * (claw parity) — the fallback before any real usage is available to calibrate
+ * against. `calibrateTokensPerChar` derives a live ratio from the last turn's
+ * real prompt-token count so estimates track the provider's tokenizer (CJK and
+ * dense code trend well off 4 chars/token) without shipping one (docs/55 TE-24,
+ * modeled on DeepSeek-Reasonix's tokPerChar). The bounds reject absurd ratios
+ * (a truncated/garbled usage report) and keep the estimator conservative.
+ */
+export const DEFAULT_TOKENS_PER_CHAR = 0.25;
+const MIN_TOKENS_PER_CHAR = 0.05;
+const MAX_TOKENS_PER_CHAR = 2;
+
+export function estimateTokens(
+  msg: ProviderMessage,
+  tokensPerChar: number = DEFAULT_TOKENS_PER_CHAR,
+): number {
+  // At the default 0.25, `len * 0.25` and `len / 4` floor identically, so an
+  // uncalibrated call is byte-for-byte the prior char/4 behavior.
   let total = 0;
   for (const block of msg.content) {
     if (block.type === "text") {
-      total += Math.floor(block.text.length / 4) + 1;
+      total += Math.floor(block.text.length * tokensPerChar) + 1;
     } else if (block.type === "tool_use") {
       const inputStr = JSON.stringify(block.input);
-      total += Math.floor((block.name.length + inputStr.length) / 4) + 1;
+      total += Math.floor((block.name.length + inputStr.length) * tokensPerChar) + 1;
     } else if (block.type === "tool_result") {
       total +=
-        Math.floor((block.tool_use_id.length + block.content.length) / 4) + 1;
+        Math.floor((block.tool_use_id.length + block.content.length) * tokensPerChar) + 1;
     } else if (block.type === "reasoning") {
       // The encrypted reasoning blob is real wire payload (often KBs) and is
       // replayed on the codex path — count it so compaction triggers on time.
-      total += Math.floor(block.signature.length / 4) + 1;
+      total += Math.floor(block.signature.length * tokensPerChar) + 1;
     }
   }
   return total;
+}
+
+/**
+ * Characters of a message that ride to the provider — the same fields
+ * `estimateTokens` divides. Shared with `calibrateTokensPerChar` so the
+ * calibration denominator matches what the estimate later scales.
+ */
+export function messageChars(msg: ProviderMessage): number {
+  let n = 0;
+  for (const block of msg.content) {
+    if (block.type === "text") {
+      n += block.text.length;
+    } else if (block.type === "tool_use") {
+      n += block.name.length + JSON.stringify(block.input).length;
+    } else if (block.type === "tool_result") {
+      n += block.tool_use_id.length + block.content.length;
+    } else if (block.type === "reasoning") {
+      n += block.signature.length;
+    }
+  }
+  return n;
+}
+
+/**
+ * Derive a tokens-per-character ratio from a real prompt-token count and the
+ * character count of the messages it covered. Returns the default when there
+ * is no usable signal (no usage yet, empty coverage) or the ratio lands
+ * outside the sane band — so a bad usage report can never distort sizing.
+ *
+ * The token count spans system prompt + tools + messages while the char count
+ * covers only the messages, so the ratio slightly over-attributes prefix
+ * overhead to message chars. That is the conservative direction (estimates a
+ * touch high → compaction triggers marginally early) and matches Reasonix's
+ * deliberately imprecise per-message ratio.
+ */
+export function calibrateTokensPerChar(
+  contextTokens: number,
+  messages: readonly ProviderMessage[],
+  coveredCount: number,
+): number {
+  if (contextTokens <= 0) return DEFAULT_TOKENS_PER_CHAR;
+  const covered = Math.min(coveredCount, messages.length);
+  let chars = 0;
+  for (let i = 0; i < covered; i++) {
+    chars += messageChars(messages[i]!);
+  }
+  if (chars <= 0) return DEFAULT_TOKENS_PER_CHAR;
+  const ratio = contextTokens / chars;
+  if (ratio < MIN_TOKENS_PER_CHAR || ratio > MAX_TOKENS_PER_CHAR) {
+    return DEFAULT_TOKENS_PER_CHAR;
+  }
+  return ratio;
 }
 
 export function estimateSessionTokens(session: Session): number {

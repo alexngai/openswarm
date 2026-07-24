@@ -202,6 +202,14 @@ export type NormalizedEvent =
       readonly payload: {
         readonly tokens: number;
         readonly fingerprint?: string;
+        /**
+         * Which prefix components changed since the previous run (docs/55
+         * TE-21). Present only when a prior run exists AND something in the
+         * fingerprinted surface differs — an attributed miss. Absent on the
+         * first run of a session and on misses whose cause is outside the
+         * fingerprint (history rewrite, provider routing, cache TTL).
+         */
+        readonly changedComponents?: readonly ("system" | "tools")[];
       };
     }
   /**

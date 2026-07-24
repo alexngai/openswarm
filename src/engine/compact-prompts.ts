@@ -41,17 +41,51 @@ export const COMPACT_FROM_PROMPT =
 export const COMPACT_RECENT_PROMPT =
   "Your task is to create a detailed summary of the RECENT portion of the conversation — the messages that follow earlier retained context. The earlier messages are being kept intact and do NOT need to be summarized. Focus your summary on what was discussed, learned, and accomplished in the recent messages only.\n\nBefore providing your final summary, wrap your analysis in <analysis> tags to organize your thoughts and ensure you've covered all necessary points. In your analysis process:\n\n1. Analyze the recent messages chronologically. For each section thoroughly identify:\n   - The user's explicit requests and intents\n   - Your approach to addressing the user's requests\n   - Key decisions, technical concepts and code patterns\n   - Specific details like:\n     - file names\n     - full code snippets\n     - function signatures\n     - file edits\n   - Errors that you ran into and how you fixed them\n   - Pay special attention to specific user feedback that you received, especially if the user told you to do something differently.\n   - Note any security-relevant instructions or constraints the user stated (e.g., sensitive files or data to avoid, operations that must not be performed, credential or secret handling rules). These MUST be preserved verbatim in the summary so they continue to apply after compaction.\n2. Double-check for technical accuracy and completeness, addressing each required element thoroughly.\n\nYour summary should include the following sections:\n\n1. Primary Request and Intent: Capture the user's explicit requests and intents from the recent messages\n2. Key Technical Concepts: List important technical concepts, technologies, and frameworks discussed recently.\n3. Files and Code Sections: Enumerate specific files and code sections examined, modified, or created. Include full code snippets where applicable and include a summary of why this file read or edit is important.\n4. Errors and fixes: List errors encountered and how they were fixed.\n5. Problem Solving: Document problems solved and any ongoing troubleshooting efforts.\n6. All user messages: List ALL user messages from the recent portion that are not tool results. Preserve any security-relevant instructions or constraints verbatim so they remain in effect after compaction.\n7. Pending Tasks: Outline any pending tasks from the recent messages.\n8. Current Work: Describe precisely what was being worked on immediately before this summary request.\n9. Optional Next Step: List the next step related to the most recent work. Include direct quotes from the most recent conversation.\n\nHere's an example of how your output should be structured:\n\n<example>\n<analysis>\n[Your thought process, ensuring all points are covered thoroughly and accurately]\n</analysis>\n\n<summary>\n1. Primary Request and Intent:\n   [Detailed description]\n\n2. Key Technical Concepts:\n   - [Concept 1]\n   - [Concept 2]\n\n3. Files and Code Sections:\n   - [File Name 1]\n      - [Summary of why this file is important]\n      - [Important Code Snippet]\n\n4. Errors and fixes:\n    - [Error description]:\n      - [How you fixed it]\n\n5. Problem Solving:\n   [Description]\n\n6. All user messages:\n    - [Detailed non tool use user message]\n\n7. Pending Tasks:\n   - [Task 1]\n\n8. Current Work:\n   [Precise description of current work]\n\n9. Optional Next Step:\n   [Optional Next step to take]\n\n</summary>\n</example>\n\nPlease provide your summary based on the RECENT messages only (after the retained earlier context), following this structure and ensuring precision and thoroughness in your response.\n";
 
+/**
+ * Standing-constraints section (openswarm extension, TE-25 / docs/55). The
+ * byte-exact Claude Code prompt preserves user constraints only where they are
+ * *security-relevant* (see the analysis note and section 6). But a durable
+ * non-security rule stated once in conversation — "never touch X", a chosen
+ * name/path/version, a library decision, a stated preference — can still be
+ * dropped when its originating message folds, and the resumed model then
+ * violates it. This block adds a dedicated, easy-to-find section at the TOP of
+ * the summary that captures ALL such standing constraints verbatim, so the
+ * durable contract survives compaction regardless of where it was stated.
+ *
+ * Placed as an addendum after the main structure prompt (like the guard and
+ * self-exclusion notes) rather than reworded into it, keeping the RLVR-trained
+ * core byte-exact. Composed only when enabled (default on; see callers).
+ */
+export const COMPACT_STANDING_CONSTRAINTS =
+  "\n\nADDITIONAL REQUIRED SECTION (openswarm): At the TOP of your <summary>, before section 1, add a section titled \"Standing facts & constraints\". In it, list — verbatim, in the user's own words — every durable instruction the user has stated that still governs the work, wherever in the conversation it was said: hard rules (\"never do X\", \"always Y\"), decisions and choices already made (names, paths, IDs, versions, library/API/tooling choices), stated preferences, and any credential/secret-handling or safety constraints. Be exhaustive and prefer over- to under-including — this is the durable contract that must keep applying after older messages are dropped. Preserve identifiers and wording exactly; do not paraphrase a constraint into something weaker. If the user has stated no such constraints, write \"(none stated)\".\n";
+
 /** Trailing reminder appended after the prompt (and custom instructions). */
 export const COMPACT_REMINDER =
   "\n\nREMINDER: Do NOT call any tools. Respond with plain text only — an <analysis> block followed by a <summary> block. Tool calls will be rejected and you will fail the task.";
 
+/** Options controlling openswarm extensions to the byte-exact CC prompt. */
+export interface CompactSummaryOptions {
+  /**
+   * Emit the "Standing facts & constraints" section (TE-25). Default off at
+   * this layer; the engine caller resolves the env flag and passes the result
+   * so the eval can A/B it without an env dependency in the pure builder.
+   */
+  readonly standingConstraints?: boolean;
+}
+
 /**
  * Build the full-compaction summary request text (Claude Code T$n):
- * guard + self-exclusion + main prompt + optional Additional Instructions +
- * reminder.
+ * guard + self-exclusion + main prompt [+ standing-constraints addendum]
+ * + optional Additional Instructions + reminder.
  */
-export function buildCompactSummaryRequest(customInstructions?: string): string {
+export function buildCompactSummaryRequest(
+  customInstructions?: string,
+  opts?: CompactSummaryOptions,
+): string {
   let text = COMPACT_TOOL_GUARD + COMPACT_SELF_EXCLUSION + COMPACT_FROM_PROMPT;
+  if (opts?.standingConstraints === true) {
+    text += COMPACT_STANDING_CONSTRAINTS;
+  }
   if (customInstructions !== undefined && customInstructions.trim() !== "") {
     text += `\n\nAdditional Instructions:\n${customInstructions}`;
   }
@@ -60,12 +94,32 @@ export function buildCompactSummaryRequest(customInstructions?: string): string 
 
 /**
  * Build the reactive (keep-recent) summary request text: self-exclusion +
- * RECENT-portion prompt + optional Additional Instructions + reminder.
+ * RECENT-portion prompt [+ standing-constraints addendum] + optional
+ * Additional Instructions + reminder.
  */
-export function buildRecentCompactSummaryRequest(customInstructions?: string): string {
+export function buildRecentCompactSummaryRequest(
+  customInstructions?: string,
+  opts?: CompactSummaryOptions,
+): string {
   let text = COMPACT_SELF_EXCLUSION + COMPACT_RECENT_PROMPT;
+  if (opts?.standingConstraints === true) {
+    text += COMPACT_STANDING_CONSTRAINTS;
+  }
   if (customInstructions !== undefined && customInstructions.trim() !== "") {
     text += `\n\nAdditional Instructions:\n${customInstructions}`;
   }
   return text + COMPACT_REMINDER;
+}
+
+/**
+ * Resolve whether the standing-constraints section is enabled from the
+ * environment. Default ON (the TE-25 improvement); disable with a falsy
+ * `OPENSWARM_COMPACT_STANDING_CONSTRAINTS` value (0/false/off/no) — the eval
+ * baseline arm uses this to compare against the pre-TE-25 summary.
+ */
+export function standingConstraintsEnabled(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  const flag = (env["OPENSWARM_COMPACT_STANDING_CONSTRAINTS"] ?? "").toLowerCase();
+  return !["0", "false", "off", "no"].includes(flag);
 }

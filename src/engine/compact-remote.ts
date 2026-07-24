@@ -42,6 +42,7 @@ import {
 import {
   buildCompactSummaryRequest,
   buildRecentCompactSummaryRequest,
+  standingConstraintsEnabled,
 } from "./compact-prompts.js";
 import {
   buildPostCompactAttachments,
@@ -251,10 +252,19 @@ export async function compactSessionRemote(
   // file/todo attachments — CC re-reads these after compaction.
   const recontextual = await runRecontextualize(opts?.recontextualize);
 
+  // TE-25b: optionally pin small user turns verbatim right after the summary,
+  // so the user's exact words survive regardless of summary quality. Gated OFF
+  // by default (changes the zero-verbatim L4 contract); compared to TE-25a's
+  // section via the constraint-retention eval.
+  const pinnedMsg = pinUserTurnsEnabled()
+    ? renderPinnedUserTurns(selectPinnedUserTurns(toSummarize))
+    : undefined;
+  const pinned = pinnedMsg !== undefined ? [pinnedMsg] : [];
+
   return {
     summary,
     compactedSession: {
-      messages: [continuationMsg, ...recontextual, ...attachments, ...heldOut],
+      messages: [continuationMsg, ...pinned, ...recontextual, ...attachments, ...heldOut],
     },
     removedMessageCount: toSummarize.length,
     boundaryWalkedBack: false,
@@ -276,6 +286,99 @@ async function runRecontextualize(
 
 function isContinuationMessage(msg: ProviderMessage): boolean {
   return extractExistingCompactedSummary(msg) !== null;
+}
+
+// ---------------------------------------------------------------------------
+// Verbatim user-turn pinning (TE-25b, docs/55)
+// ---------------------------------------------------------------------------
+//
+// The strongest form of constraint retention: rather than trusting the summary
+// to preserve durable user rules (TE-25a), keep the user's small text turns
+// verbatim across the fold, wrapped in a marker. This changes doc 48's L4
+// zero-verbatim contract, so it is gated OFF by default and compared against
+// section-only via the constraint-retention eval. Reasonix pins the first user
+// turn (and prior digests) in place; our L4 rebuild is summary-based, so we
+// re-inject the pinned turns as one block right after the continuation.
+
+/** ~1500 tokens: larger user turns are pasted content and stay foldable. */
+const DEFAULT_PIN_MAX_TURN_CHARS = 6_000;
+/** Total pin budget so verbatim pinning can never starve the window. */
+const DEFAULT_PIN_MAX_TOTAL_CHARS = 20_000;
+
+const PINNED_OPEN = "<pinned-user-messages>";
+const PINNED_CLOSE = "</pinned-user-messages>";
+
+/**
+ * Enabled by a truthy `OPENSWARM_COMPACT_PIN_USER_TURNS` (default OFF — the
+ * experimental stronger variant; the eval's "verbatim" arm sets it on).
+ */
+export function pinUserTurnsEnabled(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  const flag = (env["OPENSWARM_COMPACT_PIN_USER_TURNS"] ?? "").toLowerCase();
+  return ["1", "true", "on", "yes"].includes(flag);
+}
+
+function userTurnChars(msg: ProviderMessage): number {
+  return msg.content.reduce((n, b) => n + (b.type === "text" ? b.text.length : 0), 0);
+}
+
+/** A small, text-only user turn that isn't a continuation/summary artifact. */
+function isPinnableUserTurn(msg: ProviderMessage, maxTurnChars: number): boolean {
+  return (
+    msg.role === "user" &&
+    msg.content.length > 0 &&
+    msg.content.every((b) => b.type === "text") &&
+    !isContinuationMessage(msg) &&
+    userTurnChars(msg) > 0 &&
+    userTurnChars(msg) <= maxTurnChars
+  );
+}
+
+/**
+ * Select the user turns to pin from the folded region, oldest→newest, until
+ * the total char budget is exhausted (later turns beyond the budget drop —
+ * they are the ones the summary still covers). Pure; exported for tests.
+ */
+export function selectPinnedUserTurns(
+  messages: readonly ProviderMessage[],
+  maxTurnChars: number = DEFAULT_PIN_MAX_TURN_CHARS,
+  maxTotalChars: number = DEFAULT_PIN_MAX_TOTAL_CHARS,
+): ProviderMessage[] {
+  const pinned: ProviderMessage[] = [];
+  let total = 0;
+  for (const msg of messages) {
+    if (!isPinnableUserTurn(msg, maxTurnChars)) continue;
+    const chars = userTurnChars(msg);
+    if (total + chars > maxTotalChars) break;
+    total += chars;
+    pinned.push(msg);
+  }
+  return pinned;
+}
+
+/**
+ * Render the pinned turns as one synthetic user message, verbatim, wrapped in a
+ * marker that tells the resumed model these are preserved earlier statements
+ * (durable instructions may live here) — not the current turn. Returns
+ * undefined when nothing qualifies.
+ */
+export function renderPinnedUserTurns(
+  turns: readonly ProviderMessage[],
+): ProviderMessage | undefined {
+  if (turns.length === 0) return undefined;
+  const body = turns
+    .map((m) => m.content.map((b) => (b.type === "text" ? b.text : "")).join(""))
+    .map((t) => `- ${t.replace(/\n/g, "\n  ")}`)
+    .join("\n");
+  const text =
+    `${PINNED_OPEN}\n` +
+    "Earlier user messages, preserved verbatim across compaction because they may " +
+    "carry durable instructions or constraints. Treat them as still in effect; they " +
+    "are NOT the current request.\n" +
+    body +
+    `\n${PINNED_CLOSE}`;
+  return { role: "user", content: [{ type: "text", text }] };
 }
 
 // ---------------------------------------------------------------------------
@@ -417,10 +520,11 @@ async function summarizeInSession(
   opts: SummarizeOptions | undefined,
   abort?: AbortSignal,
 ): Promise<string> {
+  const summaryOpts = { standingConstraints: standingConstraintsEnabled() };
   const requestText =
     opts?.recentPortion === true
-      ? buildRecentCompactSummaryRequest(opts?.customInstructions)
-      : buildCompactSummaryRequest(opts?.customInstructions);
+      ? buildRecentCompactSummaryRequest(opts?.customInstructions, summaryOpts)
+      : buildCompactSummaryRequest(opts?.customInstructions, summaryOpts);
 
   // The conversation the summarizer sees. Prompt-too-long retries shrink it
   // from the oldest end, marked with CC's truncation string.
