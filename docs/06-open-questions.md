@@ -20,11 +20,11 @@ Each question has a provisional **Lean**. Nothing is locked until we pick a v0 s
 
 ## 2. ~~Subprocess vs. in-process atomic agents~~ — RESOLVED
 
-**Decision:** Subprocess first. Reinforced by research/05-swarm.md — claw's thread-based `Agent` tool is exactly the pattern we're diverging from (shared mutable state, no crash isolation, can't cross machine boundaries). In-process mode stays on the table as an optimization behind the same `SwarmHost` interface.
+**Decision:** Subprocess first. The reference implementation's thread-based `Agent` tool is exactly the pattern we're diverging from (shared mutable state, no crash isolation, can't cross machine boundaries). In-process mode stays on the table as an optimization behind the same `SwarmHost` interface.
 
 ## 3. ~~Session format~~ — RESOLVED
 
-**Decision:** Match claw's JSONL format (`session_meta` header + interleaved `message` / `compaction` / `prompt_history` records, append-on-push, atomic-rename snapshots — research/03-runtime.md §3). **Add per-worktree isolation** at `.openswarm/sessions/<fnv1a(cwd)>/` — non-negotiable for multi-agent, prevents "phantom completions" where multiple workers stomp shared state. Swarm-coder extensions live under a `swarm:` namespace key.
+**Decision:** Match the reference implementation's JSONL format (`session_meta` header + interleaved `message` / `compaction` / `prompt_history` records, append-on-push, atomic-rename snapshots). **Add per-worktree isolation** at `.openswarm/sessions/<fnv1a(cwd)>/` — non-negotiable for multi-agent, prevents "phantom completions" where multiple workers stomp shared state. Swarm-coder extensions live under a `swarm:` namespace key.
 
 ## 4. ~~v0 swarm scope~~ — RESOLVED
 
@@ -32,7 +32,7 @@ Each question has a provisional **Lean**. Nothing is locked until we pick a v0 s
 
 ## 5. ~~Config file layout~~ — RESOLVED
 
-**Decision:** `~/.openswarm/` for our own state. Read-only discovery over Claude-Code-shaped paths (`~/.claude/plugins`, `~/.claude/skills`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `.claude`, `.codex`, `.claw`, `.omc`) via `PluginSource` / `SkillSource` impls (research/04-integrations.md §3). We never mutate Claude Code's installation.
+**Decision:** `~/.openswarm/` for our own state. Read-only discovery over Claude-Code-shaped paths (`~/.claude/plugins`, `~/.claude/skills`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `.claude`, `.codex`, `.claw`, `.omc`) via `PluginSource` / `SkillSource` impls. We never mutate Claude Code's installation.
 
 ## 6. ~~Name and framing~~ — RESOLVED
 
@@ -52,7 +52,7 @@ Each question has a provisional **Lean**. Nothing is locked until we pick a v0 s
 
 ## 10. ~~Streaming markdown renderer — port or library?~~ — RESOLVED
 
-**Decision:** Off-the-shelf. Try `ink-markdown` first; fall back to `marked` + custom ink components if it's abandoned or underpowered. **Do not port claw's `MarkdownStreamState.push` pipeline** (~200 LOC of pulldown-cmark + syntect + ANSI state). Revisit only if stream-safe rendering misbehaves in real use.
+**Decision:** Off-the-shelf. Try `ink-markdown` first; fall back to `marked` + custom ink components if it's abandoned or underpowered. **Do not port the reference implementation's `MarkdownStreamState.push` pipeline** (~200 LOC of pulldown-cmark + syntect + ANSI state). Revisit only if stream-safe rendering misbehaves in real use.
 
 ## 11. ~~Ripgrep dependency strategy~~ — RESOLVED
 
@@ -68,11 +68,11 @@ Dynamic (mid-session) tool registration deferred to M5 — needed only if users 
 
 ## 13. ~~WorkerRegistry-style tool family~~ — RESOLVED
 
-**Decision:** Skip entirely. Claw's 9-tool family exists to drive external Claude Code via tmux screen scraping — a workaround for not having an SDK. We have the SDK; our `agent` tool covers spawn, lane events cover observation. We lift the **atomic state-file pattern** (write `.openswarm/workers/<agentId>.json` on lifecycle transitions) per `05-swarm-model.md`; we do not port the tool surface.
+**Decision:** Skip entirely. The reference implementation's 9-tool family exists to drive external Claude Code via tmux screen scraping — a workaround for not having an SDK. We have the SDK; our `agent` tool covers spawn, lane events cover observation. We lift the **atomic state-file pattern** (write `.openswarm/workers/<agentId>.json` on lifecycle transitions) per `05-swarm-model.md`; we do not port the tool surface.
 
 ## 14. ~~Compaction strategy~~ — RESOLVED
 
-**Decision:** Mechanical compaction, port claw's approach (research/03-runtime.md §7). Tool-use / tool-result boundary guard is load-bearing for M4 cross-provider compatibility — OpenAI-compat providers 400 on orphan tool results after a sloppy compaction. Post-compaction `glob` health probe confirms tool transport is alive. No LLM-driven compaction in any milestone.
+**Decision:** Mechanical compaction, port the reference implementation's approach. Tool-use / tool-result boundary guard is load-bearing for M4 cross-provider compatibility — OpenAI-compat providers 400 on orphan tool results after a sloppy compaction. Post-compaction `glob` health probe confirms tool transport is alive. No LLM-driven compaction in any milestone.
 
 ## 15. ~~AskUserQuestion UX in headless mode~~ — RESOLVED
 
@@ -82,7 +82,7 @@ Dynamic (mid-session) tool registration deferred to M5 — needed only if users 
 
 **Question:** For users on a Claude Max subscription, do we (a) reimplement OAuth + send impersonating headers (`user-agent: claude-code/…`, `anthropic-beta: claude-code-20250219`) directly through Vercel AI SDK, or (b) delegate to the Agent SDK as a `FrameworkProvider`?
 
-**Decision:** (b) Delegate to Agent SDK. Validated by research spike — path (a) is technically viable (claw-code does it) but (i) requires impersonating Claude Code in user-agent, (ii) reportedly conflicts with Anthropic's Feb 2026 policy tightening on third-party OAuth proxying, (iii) exposes us to silent API changes since the flow is undocumented. (b) keeps Max users on Anthropic's supported path.
+**Decision:** (b) Delegate to Agent SDK. Validated by research spike — path (a) is technically viable (the reference implementation does it) but (i) requires impersonating Claude Code in user-agent, (ii) reportedly conflicts with Anthropic's Feb 2026 policy tightening on third-party OAuth proxying, (iii) exposes us to silent API changes since the flow is undocumented. (b) keeps Max users on Anthropic's supported path.
 
 **Cost accepted:** In `--framework claude-agent-sdk` mode, swarm features are constrained — Agent SDK owns the loop, permissions, session, and tool execution, so our `SwarmHost`-routed tools (`send_message`, `check_inbox`, lane events for Tier 2 coordination) either degrade or don't function. Documented tradeoff.
 
@@ -92,7 +92,7 @@ Dynamic (mid-session) tool registration deferred to M5 — needed only if users 
 
 **Question:** Is subscription-quota auth achievable for OpenAI models, and if so, how?
 
-**Decision:** Yes, via a **custom Vercel AI SDK provider** targeting `https://chatgpt.com/backend-api/codex/responses` using the Codex App Server OAuth flow. `@ai-sdk/openai` cannot be reused (different base URL, different auth header shape). Flow is partially documented at `developers.openai.com/codex/app-server`; client ID `app_EMoamEEZ73f0CkXaXp7hrann` is in production third-party use (Cline, OpenClaw, opencode) but unregistered as an independent developer program.
+**Decision:** Yes, via a **custom Vercel AI SDK provider** targeting `https://chatgpt.com/backend-api/codex/responses` using the Codex App Server OAuth flow. `@ai-sdk/openai` cannot be reused (different base URL, different auth header shape). Flow is partially documented at `developers.openai.com/codex/app-server`; client ID `app_EMoamEEZ73f0CkXaXp7hrann` is in production third-party use (Cline, the reference implementation, opencode) but unregistered as an independent developer program.
 
 **Deferred to M4.** Out of scope for M0–M3. Gate behind `--framework codex-chatgpt` or a provider flag; handled like a `FrameworkProvider` since it bypasses the standard OpenAI Messages surface.
 
@@ -107,8 +107,8 @@ Dynamic (mid-session) tool registration deferred to M5 — needed only if users 
 | Date | Question | Decision | Rationale |
 |---|---|---|---|
 | 2026-04-20 | Q1 Agent SDK vs. raw SDK | Hybrid: Vercel AI SDK primary + Agent SDK as optional FrameworkProvider | Multi-provider from day 1; Agent SDK only for Max subscription where policy requires it |
-| 2026-04-20 | Q2 Subprocess vs. in-process | Subprocess | Crash isolation + claw's thread model is what we're diverging from |
-| 2026-04-20 | Q3 Session format | claw JSONL + per-worktree isolation | Compat for `/resume` + prevents phantom completions |
+| 2026-04-20 | Q2 Subprocess vs. in-process | Subprocess | Crash isolation + the reference implementation's thread model is what we're diverging from |
+| 2026-04-20 | Q3 Session format | the reference implementation's JSONL + per-worktree isolation | Compat for `/resume` + prevents phantom completions |
 | 2026-04-20 | Q4 v0 swarm scope | Task fanout only | Proves the atomic-unit contract before adding coordination |
 | 2026-04-20 | Q5 Config layout | `~/.openswarm/` + read-only Claude Code sources | Keeps our state separate; user's existing plugins/skills light up free |
 | 2026-04-20 | Q8 Headless permission prompts | `permission_prompt` lane event, no blocking | Unblocks orchestrator; matches async swarm model |
@@ -118,11 +118,11 @@ Dynamic (mid-session) tool registration deferred to M5 — needed only if users 
 | 2026-04-20 | Q6 Name | Keep `openswarm` | Cheap to rename later; no alternative surfaced |
 | 2026-04-20 | Q7 Ink strategy | Ink v5, TTY-gated at entry, no mid-run swap | Simplest correct behavior |
 | 2026-04-20 | Q9 multi_edit in Tier 0 | Yes | Single-turn beats N sequential edit calls |
-| 2026-04-20 | Q10 Markdown renderer | `ink-markdown` first, `marked` fallback; don't port claw pipeline | Ink-native libs exist; claw's 200-LOC pipeline not worth replicating |
+| 2026-04-20 | Q10 Markdown renderer | `ink-markdown` first, `marked` fallback; don't port the reference implementation's pipeline | Ink-native libs exist; the reference implementation's 200-LOC pipeline not worth replicating |
 | 2026-04-20 | Q11 Ripgrep | Bundle `@vscode/ripgrep` unconditionally | Predictable cross-env behavior |
 | 2026-04-20 | Q12 MCP first-class tools | First-class at startup in M2; dynamic in M5 | Near-free over generic dispatcher; model can plan by name |
-| 2026-04-20 | Q13 Worker 9-tool family | Skip | Claw's family is screen-scraping workaround we don't need |
-| 2026-04-20 | Q14 Compaction | Mechanical (port claw approach) | Boundary guard is load-bearing for M4 multi-provider |
+| 2026-04-20 | Q13 Worker 9-tool family | Skip | The reference implementation's family is screen-scraping workaround we don't need |
+| 2026-04-20 | Q14 Compaction | Mechanical (port the reference implementation's approach) | Boundary guard is load-bearing for M4 multi-provider |
 | 2026-04-20 | Q15 AskUserQuestion headless | Lane event `question_asked` / `answer_received` | Consistent with Q8 permission-prompt pattern |
 
 All open questions resolved as of 2026-04-20. New questions will be added at the bottom as they arise during M0+.
@@ -133,7 +133,7 @@ All open questions resolved as of 2026-04-20. New questions will be added at the
 
 **Resolution:** Question is **moot** under the v0.3 redesign. Web research surfaced that the official OpenAI integration surface is the **Codex App Server (JSON-RPC over stdio)**, not the private browser-to-backend SSE channel. Phase 6 pivoted: spawn the locally-installed `codex` binary as a subprocess, speak JSON-RPC over stdio, delegate auth to `codex login`. No SSE capture needed; no reverse-engineered endpoint to chase.
 
-**Replacement design:** [docs/archive/24-phase-6-codex-app-server-plan.md](archive/24-phase-6-codex-app-server-plan.md). Categorization changes from `TransportProvider` (custom Vercel AI SDK) to `FrameworkProvider` (delegating the agent loop to Codex). Mirrors the Anthropic Agent SDK pattern for Claude Max subscription auth.
+**Replacement design:** categorization changes from `TransportProvider` (custom Vercel AI SDK) to `FrameworkProvider` (delegating the agent loop to Codex). Mirrors the Anthropic Agent SDK pattern for Claude Max subscription auth.
 
 **Decision log entry:**
 
@@ -155,7 +155,7 @@ All open questions resolved as of 2026-04-20. New questions will be added at the
 
 ## Q21. OpenAI prompt cache wiring — RESOLVED
 
-**Original question (M4a-era, see `docs/archive/13-m4a-plan.md` §Deferred):** does `@ai-sdk/openai` surface OpenAI's `prompt_cache_key` / `cached_tokens`? If not, ship `ProviderCapabilities.promptCache = false` and follow up.
+**Original question (M4a-era):** does `@ai-sdk/openai` surface OpenAI's `prompt_cache_key` / `cached_tokens`? If not, ship `ProviderCapabilities.promptCache = false` and follow up.
 
 **Resolution:** Vercel AI SDK's `@ai-sdk/openai` does expose `providerOptions.openai.promptCacheKey`. `ProviderRequest.sessionId` is the engine-agnostic carrier; `openai-transport.ts` forwards it as `promptCacheKey` when the per-model capability catalog (`src/providers/capability-catalog.ts`) reports `promptCache: true` (gpt-4o*, gpt-5*, o-series). `gpt-4` non-vision and older families remain `promptCache: false` and never receive the field.
 

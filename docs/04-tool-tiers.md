@@ -188,11 +188,11 @@ The post-compact rebuild (`src/engine/compact-rebuild.ts`) still handles
 recently read files and the todo snapshot. See
 [48-compaction-design.md](./48-compaction-design.md) "F1 — how it landed".
 
-## Divergences from claw-code
+## Divergences from the reference implementation
 
-Research (see `research/02-tools.md`) surfaced behaviors we explicitly **change** when porting:
+Research surfaced behaviors we explicitly **change** when porting:
 
-| Tool | Claw behavior | Our behavior | Why |
+| Tool | Reference-implementation behavior | Our behavior | Why |
 |---|---|---|---|
 | `edit_file` | Silent first-match when `replace_all=false` | Reject ambiguous matches | Alignment with Claude Code proper; prevents subtle bugs |
 | `grep` | `walkdir` + `regex`, no gitignore | Real ripgrep binary | Name should match behavior; gitignore respected |
@@ -202,12 +202,12 @@ Research (see `research/02-tools.md`) surfaced behaviors we explicitly **change*
 
 ## Tools NOT in our catalog
 
-Claw-code has these; we deliberately skip:
+The reference implementation has these; we deliberately skip:
 
-- `SendUserMessage` / `Brief` — host-level send-to-user, unclear delivery semantics in claw
+- `SendUserMessage` / `Brief` — host-level send-to-user, unclear delivery semantics in the reference implementation
 - `Config` — settings get/set better handled via `/config` slash command
 - `PowerShell` — Windows twin of bash; if we support Windows, use `bash` with WSL detection
-- `ToolSearch` — claw's deferred-schema discovery mechanism; our tier model handles this architecturally
+- `ToolSearch` — the reference implementation's deferred-schema discovery mechanism; our tier model handles this architecturally
 - `WorkerCreate/Get/Observe/ResolveTrust/AwaitReady/SendPrompt/Restart/Terminate/ObserveCompletion` — 9-tool family for driving external Claude Code via screen-scraping. We have the SDK; our `agent` + lane events cover this ground.
 - `RunTaskPacket` — collapses into `task_create` with a richer input variant
 - `TestingPermission` — test-only stub

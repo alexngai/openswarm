@@ -12,8 +12,8 @@ See [`07-implementation-plan.md`](./07-implementation-plan.md) for milestone-by-
 - Tier 0 tools with concrete behavior:
   - `bash` — timeout handling, 16 KiB stdout/stderr truncation on UTF-8 boundaries, background PID return
   - `read_file` — 10 MiB cap, NUL-in-first-8-KiB binary detection, offset/limit
-  - `write_file` — 10 MiB cap, canonical workspace boundary check enforced (not left as helper lib like claw)
-  - `edit_file` — **mandatory uniqueness check** (reject ambiguous matches; fixes claw's silent first-match bug)
+  - `write_file` — 10 MiB cap, canonical workspace boundary check enforced (not left as helper lib like the reference implementation)
+  - `edit_file` — **mandatory uniqueness check** (reject ambiguous matches; fixes the reference implementation's silent first-match bug)
   - `glob` — gitignore-respecting
   - `grep` — real ripgrep binary (not walkdir+regex)
   - `todo_write` — in-memory + session-persisted
@@ -31,7 +31,7 @@ See [`07-implementation-plan.md`](./07-implementation-plan.md) for milestone-by-
 - Tier 2 subset: `agent` (spawn sub-agent via SwarmHost), `task_create`, `task_update`, `task_get`, `task_list`
 - `SwarmHost` interface with `StandaloneHost` (in-process) and `WorkerHost` (JSONL-over-stdio to parent)
 - Subprocess spawn inherits `ANTHROPIC_API_KEY`; sets `OPENSWARM_AGENT_ID`, `OPENSWARM_PARENT_PID`, `OPENSWARM_SESSION_ID`
-- Lane event stream with event-name catalog + failure taxonomy + fingerprint dedup (ported from claw's `lane_events.rs`)
+- Lane event stream with event-name catalog + failure taxonomy + fingerprint dedup (ported from the reference implementation)
 - Orchestrator: `openswarm swarm run tasks.jsonl --concurrency N` → `results.jsonl`
 
 ## Functional — v1 (M2 + M3)
@@ -50,7 +50,7 @@ See [`07-implementation-plan.md`](./07-implementation-plan.md) for milestone-by-
 ### M3 — orchestration depth + Claude Max subscription
 
 - Tier 2 remainder: `send_message`, `check_inbox`, `task_stop`, `task_output`
-- Git coordination: `branch_lock`, `stale_base`, `stale_branch` (ported near-verbatim from claw)
+- Git coordination: `branch_lock`, `stale_base`, `stale_branch` (ported near-verbatim from the reference implementation)
 - `TaskPacket` with `branch_policy` / `commit_policy` / `escalation_policy` as **enums, not free-form strings**
 - Orchestrator retry policies (fixed count, exponential backoff, dead-letter)
 - Team roles: architect / executor / reviewer (system-prompt overlay + tool allowlist)
@@ -68,7 +68,7 @@ See [`07-implementation-plan.md`](./07-implementation-plan.md) for milestone-by-
 
 - xAI, Google, DashScope TransportProviders via Vercel AI SDK wrappers (with 6 MB DashScope request-body cap at preflight)
 - Model-prefix routing (`claude*`/`grok*`/`openai/`/`gpt-`/`qwen*`/`gemini-*`) over env-var sniffing
-- Cross-provider stream translation handled inside Vercel AI SDK — we don't port claw's translator
+- Cross-provider stream translation handled inside Vercel AI SDK — we don't port the reference implementation's translator
 - Model-family quirks (`gpt-5*` max_completion_tokens, reasoning-model param stripping, Kimi `is_error` rejection) at provider boundary
 - **`CodexChatGPTProvider` (FrameworkProvider) for ChatGPT Plus/Pro subscription** — custom provider targeting `chatgpt.com/backend-api/codex` + Codex App Server OAuth; policy-tolerated not contracted
 - Plugin install / enable / disable / update / uninstall
@@ -76,7 +76,7 @@ See [`07-implementation-plan.md`](./07-implementation-plan.md) for milestone-by-
 
 ### M5+ — deferred tiers
 
-- Tier 3: real cron scheduler (not claw's storage-only stub), team persistence, remote agent triggers
+- Tier 3: real cron scheduler (not the reference implementation's storage-only stub), team persistence, remote agent triggers
 - Tier 4: LSP full protocol, MCP first-class tools via deferred schema registration
 - Tier 5: `plan_mode`, `sandbox` (Linux `unshare`), `pdf_extract`, `repl`, full hooks runtime
 - In-process atomic-agent mode as a spawn optimization
@@ -93,7 +93,7 @@ See [`07-implementation-plan.md`](./07-implementation-plan.md) for milestone-by-
 
 ## Out of scope
 
-- Full claw-code tool surface (40 tools)
+- Full tool surface of the reference implementation (40 tools)
 - Non-TypeScript runtime components
 - Hosted service / multi-tenant deployment
 - Claude subscription auth

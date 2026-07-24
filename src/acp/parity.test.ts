@@ -1,5 +1,5 @@
 /**
- * Stage A / team parity guard (docs/archive/33 §9). Both prompt paths funnel through
+ * Stage A / team parity guard. Both prompt paths funnel through
  * emitNormalizedEvent, so for the same engine events the single-agent translator
  * and the team lane translator must emit the SAME standard-field session/updates
  * — the team path adds only enrichment: a `[role]` title prefix, an `agentId:`

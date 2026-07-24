@@ -352,7 +352,7 @@ Investigation showed that is only half true for openswarm:
   1. **Startup load** — `src/engine/project-instructions.ts` walks CWD → root,
      reads `CLAUDE.md` / `CLAUDE.local.md` / `AGENTS.md` at each level (root
      first, deepest scope last), dedupes by content hash, and clamps to
-     `4k`/file, `12k` total (claw parity). `main.ts` and `worker-entry.ts` fold
+     `4k`/file, `12k` total (parity). `main.ts` and `worker-entry.ts` fold
      the result into the system prompt via `buildSystemPrompt({ extensions })`.
   2. **Post-compact re-injection** — `makeProjectInstructionsRecontextualizer(cwd)`
      produces a `RecontextualizeFn` that re-reads the same files and returns

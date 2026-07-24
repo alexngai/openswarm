@@ -6,7 +6,7 @@
 
 /**
  * Permission modes control what a tool call is allowed to do.
- * Evaluation order (see docs/03-interfaces.md, docs/research/03-runtime.md §4):
+ * Evaluation order (see docs/03-interfaces.md):
  *   deny rules → hook override → ask rule → mode-required → prompt → deny
  */
 export type PermissionMode = "read-only" | "workspace-write" | "danger-full-access";

@@ -161,12 +161,10 @@ follows). **Phase 2 (later)** flips the fresh-create defaults to `.openswarm`;
 
 ### Changed — docs reorganization
 
-- 26 historical docs (milestone plans 08–24, team spikes 26/26b/27, ACP build
-  records 30/32–35, hardened-engine plan 38) moved to `docs/archive/`. Numbers
-  are stable and never reused; all intra-repo links and `docs/NN` code-comment
-  citations were updated. External links to the old `docs/` paths will 404.
-- `docs/README.md` rewritten as a full categorized index (previously 24 docs
-  were unlisted).
+- Historical milestone plans, spikes, build records, and reference-extraction
+  research notes were removed from the published tree; only the active design
+  docs (Foundations 00–07 and the current subsystem docs) ship in `docs/`.
+- `docs/README.md` rewritten as a categorized index of the active design docs.
 
 ### Build & CI
 

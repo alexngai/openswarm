@@ -1,5 +1,5 @@
 /**
- * NativeEngine test suite — ≥ 15 tests per docs/archive/13-m4a-plan.md §5.6.
+ * NativeEngine test suite — ≥ 15 tests.
  *
  * Uses MockProvider (scripted ProviderEvent yields) and MockDispatcher
  * (recorded dispatchBatch calls with scripted results). Neither speaks to

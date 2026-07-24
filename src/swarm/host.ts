@@ -65,14 +65,14 @@ export interface PermissionDecisionResponse {
 /**
  * Orchestrator-side handler for worker escalations (ask_user_question and
  * permission requests). The ACP layer injects one that routes to the client;
- * absent, the orchestrator denies. See docs/archive/33 §4.
+ * absent, the orchestrator denies.
  */
 export interface InteractionHandler {
   requestPermission(
     req: PermissionRequest,
   ): Promise<PermissionDecisionResponse>;
   /**
-   * Optional (docs/archive/33 §9): route a member's `ask_user_question` to the operator
+   * Optional: route a member's `ask_user_question` to the operator
    * (the ACP client) instead of erroring headless. Multiple-choice only — ACP
    * has no free-form text input, so an option list is required.
    */

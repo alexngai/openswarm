@@ -53,7 +53,7 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   const base = input.path ?? ctx.cwd;
 
   // Bare patterns like "*.ts" should match at any depth — convention from
-  // Claude Code / claw. Promote to `**/<pattern>` when the pattern has no
+  // Claude Code. Promote to `**/<pattern>` when the pattern has no
   // path separators and no explicit `**`.
   const normalized =
     input.pattern.includes("/") || input.pattern.includes("**")

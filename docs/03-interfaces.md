@@ -85,7 +85,7 @@ Opaque per-engine state, stored alongside our per-worktree JSONL log. `--resume`
 
 ## 2. Provider (inner layer, M4a shipped)
 
-Finer-grained LLM transport. Lives *inside* `NativeEngine`. Not consumed by outer code. Shipped in M4a — see `docs/archive/13-m4a-plan.md` for implementation detail.
+Finer-grained LLM transport. Lives *inside* `NativeEngine`. Not consumed by outer code. Shipped in M4a.
 
 ```ts
 export interface Provider {
@@ -147,7 +147,7 @@ Shipped in M4a: `openai` (`@ai-sdk/openai`). Shipped in M4b: `google` (`@ai-sdk/
 
 **Login path (works today):** `openswarm login --provider codex-chatgpt` runs the OAuth PKCE flow end-to-end and persists tokens to `~/.openswarm/auth.json`. End-to-end model turns require Phase 5 to land.
 
-**Risk note:** OpenAI can revoke the shared Codex App Server client id at any time. If the login flow starts returning 4xx, the feature is unavailable until OpenAI restores it or we find an alternative OAuth path. No auto-fallback. See `src/auth/openai-oauth.ts` top-of-file comment. This arrangement is policy-tolerated, not contracted — the client id is in production use by other tools (Cline, OpenClaw, opencode) but carries no formal third-party agreement.
+**Risk note:** OpenAI can revoke the shared Codex App Server client id at any time. If the login flow starts returning 4xx, the feature is unavailable until OpenAI restores it or we find an alternative OAuth path. No auto-fallback. See `src/auth/openai-oauth.ts` top-of-file comment. This arrangement is policy-tolerated, not contracted — the client id is in production use by other tools (Cline, the reference implementation, opencode) but carries no formal third-party agreement.
 
 Model-prefix routing (`claude*` / `grok*` / `openai/` / `gpt-` / `qwen*` / `gemini-*`) and alias resolution live in `src/providers/routing.ts` and `src/providers/aliases.ts`.
 
@@ -184,7 +184,7 @@ export interface InteractiveAuth extends AuthSource {
 | `XaiApiKeyAuth` | api-key | xai | M4 |
 | `OpenAICompatApiKeyAuth` | api-key | openai-compat | M4 |
 
-**Note on Claude Max OAuth:** `AnthropicOAuthAuth.login()` delegates to the Agent SDK (or reimplements the flow from claw-code's `oauth.rs`). Under `ClaudeAgentSdkEngine`, the engine reads its persisted credentials directly — `headers()` may return `{}`. Decision Q16 in `06-open-questions.md`.
+**Note on Claude Max OAuth:** `AnthropicOAuthAuth.login()` delegates to the Agent SDK (or reimplements the flow from the reference implementation). Under `ClaudeAgentSdkEngine`, the engine reads its persisted credentials directly — `headers()` may return `{}`. Decision Q16 in `06-open-questions.md`.
 
 **Storage:** tokens live in `~/.openswarm/auth.json`, encrypted at rest where the platform supports it. Never in git, never in session logs.
 
@@ -194,7 +194,7 @@ Where plugins and skills come from. Plugins are JSON-manifest subprocesses that 
 
 ```ts
 export interface PluginSource {
-  readonly id: string;                    // "claude-code" | "claw" | …
+  readonly id: string;                    // "claude-code" | …
   discover(): Promise<PluginManifest[]>;
   load(id: string): Promise<LoadedPlugin>;
 }
@@ -228,7 +228,7 @@ export interface SwarmHost {
 }
 ```
 
-**M3a additions (Phase 6):** `SpawnRequest.role` and `SpawnRequest.allowedTools` are now load-bearing — the orchestrator populates them from the resolved `Role` object, the subprocess spawner propagates `OPENSWARM_ROLE` to the child, and the worker entry wires them into `RunConfig.systemPrompt` + `RunConfig.allowedTools`. The `BranchPolicy`, `CommitPolicy`, and `EscalationPolicy` fields on `TaskPacket` are discriminated-kind records (not flat strings); Zod schemas live in `src/swarm/policies.ts`. See `docs/archive/11-m3a-plan.md` for the migration path from legacy flat strings.
+**M3a additions (Phase 6):** `SpawnRequest.role` and `SpawnRequest.allowedTools` are now load-bearing — the orchestrator populates them from the resolved `Role` object, the subprocess spawner propagates `OPENSWARM_ROLE` to the child, and the worker entry wires them into `RunConfig.systemPrompt` + `RunConfig.allowedTools`. The `BranchPolicy`, `CommitPolicy`, and `EscalationPolicy` fields on `TaskPacket` are discriminated-kind records (not flat strings); Zod schemas live in `src/swarm/policies.ts`.
 
 **M3b additions:**
 - `SwarmHost.askUser(question, options?): Promise<AskUserResponse>` (Phase 6) — routes through the host, so Tier 2 `ask_user_question` works identically in standalone (TTY readline fallback) and worker (IPC → orchestrator) modes. `AskUserResponse = { status: "answered"; answer } | { status: "cancelled" | "timed-out" } | { status: "error"; message }`.

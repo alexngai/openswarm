@@ -2,7 +2,7 @@
  * PluginSource — where plugins come from.
  *
  * Plugins in Claude Code are JSON-manifest-declared packages that bring
- * tools, commands, and optional hooks (docs/research/04-integrations.md §2).
+ * tools, commands, and optional hooks.
  * They execute tools as subprocesses with a specific env contract.
  *
  * v0 ships a single `claude-code` source (read-only discovery).
@@ -20,7 +20,7 @@ import type { JsonSchema, RequiredPermission } from "../core/types.js";
 // ---------------------------------------------------------------------------
 
 export interface PluginSource {
-  /** Stable source id — "claude-code" | "claw" | … */
+  /** Stable source id — "claude-code" | … */
   readonly id: string;
 
   /** Enumerate available plugins without loading them. */

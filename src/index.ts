@@ -5,8 +5,7 @@
  * (`node dist/cli.js`); library consumers can import the types and classes
  * below to build custom harnesses.
  *
- * See docs/03-interfaces.md for abstraction boundaries and docs/archive/08-m0-plan.md
- * for M0 scope.
+ * See docs/03-interfaces.md for abstraction boundaries.
  */
 
 import { createRequire } from "node:module";

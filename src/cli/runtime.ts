@@ -2,15 +2,13 @@
  * runtime.ts — shared single-agent runtime assembly.
  *
  * Extracted from runPrompt (src/cli/main.ts) so the single-agent CLI and the
- * ACP adapter (docs/archive/30, docs/archive/32) build the same auth + hooks + dispatcher +
+ * ACP adapter build the same auth + hooks + dispatcher +
  * tools + permission engine + engine selection from one place. Behavior is
  * identical to the prior inline assembly; the only structural change is that
  * engine construction is deferred to `makeEngine(sessionId)` so ACP can build
  * one engine per `session/new` (NativeEngine keys its prompt cache off the
  * sessionId). Session *resolution* (--resume) stays in the CLI — ACP supplies
  * its own session ids.
- *
- * See docs/archive/32-acp-implementation-plan.md §3.
  */
 
 import * as path from "node:path";

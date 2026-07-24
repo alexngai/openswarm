@@ -3,7 +3,7 @@
  * (single-agent mode; team mode lives in team-agent.ts).
  *
  * Owns session lifecycle + initialize, runs the prompt turn through the
- * engine→session/update translator (docs/archive/32 §6, §9), and trips the
+ * engine→session/update translator, and trips the
  * per-session AbortController on cancel.
  *
  * The `conn` (AgentSideConnection) is the client-facing handle —

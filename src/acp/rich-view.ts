@@ -1,5 +1,5 @@
 /**
- * Rich view (B2.1, docs/archive/35 §2) — the reusable core of the swarm-aware client.
+ * Rich view (B2.1) — the reusable core of the swarm-aware client.
  *
  * Folds the collapsed `session/update` stream a client receives into per-member
  * **lanes** (member voices + lane-grouped tool calls) plus a **task board**,

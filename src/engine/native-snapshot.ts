@@ -4,8 +4,6 @@
  * The snapshot is the resume-optimized blob NativeEngine writes after each
  * turn boundary. The JSONL event log remains the authoritative record;
  * this file just lets `--resume` rebuild the message buffer without replay.
- *
- * See docs/archive/13-m4a-plan.md §5.3 / §5.4.
  */
 
 import type { ProviderMessage } from "../providers/index.js";

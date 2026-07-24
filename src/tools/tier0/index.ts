@@ -3,7 +3,7 @@
  *
  * Build the full set via `buildTier0Tools()` and register them on a `ToolDispatcher`.
  *
- * See docs/04-tool-tiers.md §"Tier 0" and docs/archive/08-m0-plan.md §"Phase 2".
+ * See docs/04-tool-tiers.md §"Tier 0".
  */
 
 import type { ToolImpl } from "../types.js";

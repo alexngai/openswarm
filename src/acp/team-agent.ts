@@ -1,5 +1,5 @@
 /**
- * AcpTeamAgent — a team-mode ACP session bound to a coordinator team (docs/archive/33).
+ * AcpTeamAgent — a team-mode ACP session bound to a coordinator team.
  *
  * The first prompt runs the coordinator team, spawning a long-lived root that
  * persists (B0.5: the coordinator honors `persistent`). Subsequent prompts steer

@@ -1,5 +1,5 @@
 /**
- * Terminal formatter for a RichView (B2.2, docs/archive/35 §2) — pure: RichView -> lines.
+ * Terminal formatter for a RichView (B2.2) — pure: RichView -> lines.
  *
  * Renders the swarm-aware client's per-member lanes stacked with `[role]`
  * headers, each lane's narration + its tool calls (with a bounded inline diff

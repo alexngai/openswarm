@@ -1028,7 +1028,7 @@ describe("StandaloneHost.askUser", () => {
     }
   });
 
-  it("headless: routes to interactionHandler.askUserQuestion when present (docs/archive/33 §9)", async () => {
+  it("headless: routes to interactionHandler.askUserQuestion when present", async () => {
     const restore = withIsTTY(false);
     try {
       const seen: Array<{ q: string; options?: readonly string[] }> = [];

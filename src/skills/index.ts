@@ -2,7 +2,7 @@
  * SkillSource — where skills come from.
  *
  * Skills in Claude Code are `SKILL.md` files with optional YAML
- * frontmatter (docs/research/04-integrations.md §3). Invocation is not
+ * frontmatter. Invocation is not
  * subprocess execution — it returns the skill's prompt text so the model
  * can apply its instructions in-turn.
  *
@@ -19,7 +19,7 @@
 // ---------------------------------------------------------------------------
 
 export interface SkillSource {
-  /** Stable source id — "claude-code" | "claw" | … */
+  /** Stable source id — "claude-code" | … */
   readonly id: string;
 
   /** Enumerate available skills without reading their bodies. */

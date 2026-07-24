@@ -5,7 +5,7 @@
  * No renderer imports. This file is intentionally renderer-agnostic so we
  * can unit-test every transition without spinning up a UI.
  *
- * Transition table (authoritative — docs/archive/10-m2-plan.md Phase 2):
+ * Transition table (authoritative):
  *
  *   idle                --(input-changed)-----> idle
  *   idle                --(submit)-------------> streaming

@@ -12,7 +12,7 @@
  * model on both the single-agent CLI and swarm workers (Phase 2.1), and the
  * only engine behind `--framework hardened-native` and `codex-native`.
  *
- * See docs/37-hardened-engine-design.md and docs/archive/38-hardened-engine-implementation-plan.md.
+ * See docs/37-hardened-engine-design.md.
  */
 
 import * as fs from "node:fs/promises";
