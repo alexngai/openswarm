@@ -103,8 +103,7 @@ export interface LoadedPlugin {
   /**
    * Execute one of the plugin's tools.
    * The subprocess receives tool input as JSON on stdin and writes its
-   * result to stdout. Environment variables follow the plugin env contract:
-   *   CLAWD_PLUGIN_ID, CLAWD_TOOL_NAME, CLAWD_TOOL_INPUT, etc.
+   * result to stdout.
    */
   executeTool(
     toolName: string,
