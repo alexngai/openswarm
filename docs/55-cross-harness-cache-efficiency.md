@@ -1,12 +1,15 @@
 # 55 — Cross-harness cache efficiency: lessons from DeepSeek-Reasonix
 
-Status: **in progress**. Extends [53 (token-efficiency tracker)](./53-token-efficiency-plan.md) and [48 (compaction design)](./48-compaction-design.md). New tracker IDs continue the `TE-N` scheme from 53 (last landed: TE-18) — this doc opens **TE-19…TE-27** (a measurement/visibility track first, then improvements).
+Status: **complete** (validated live 2026-07-24; TE-26 deferred as optional). Extends [53 (token-efficiency tracker)](./53-token-efficiency-plan.md) and [48 (compaction design)](./48-compaction-design.md). New tracker IDs continue the `TE-N` scheme from 53 (last landed: TE-18) — this doc opens **TE-19…TE-27** (a measurement/visibility track first, then improvements).
 
 Owner: engine
 
-## Status (2026-07-22)
+## Status (2026-07-24)
 
-Landed and pushed on `claude/deepseek-reasonix-token-efficiency-tnpi9s`:
+All of TE-19…TE-27 landed on `claude/deepseek-reasonix-token-efficiency-tnpi9s`; the
+efficiency and retention claims are validated on live native-provider sessions
+(TE-24 estimator 0.7% error; multi-turn cache 63% mean/77% peak; TE-25 settled
+across 4 model configs). Only TE-26 (optional) is deferred.
 
 | ID | What | Status |
 |----|------|--------|
@@ -18,8 +21,8 @@ Landed and pushed on `claude/deepseek-reasonix-token-efficiency-tnpi9s`:
 | TE-24 | Self-calibrated tokens-per-char in the compaction estimator | landed |
 | TE-25a | Standing-constraints summary section (default on) | landed |
 | TE-25b | Verbatim user-turn pinning (gated off) | landed |
-| TE-25-eval | Constraint-retention instrument (grader + fixtures + runner) | landed; **live run done (2026-07-22, azureoai/gpt-5.5): all arms 100%, baseline saturates** — see [Live result](#live-result-2026-07-22-te-25-constraint-retention) |
-| TE-26 | Per-tool snip geometry for microcompaction | not started (optional) |
+| TE-25-eval | Constraint-retention instrument (grader + fixtures + runner) | landed; **settled across 4 model configs — section justified default-on (recovered the one drop a weak model showed), verbatim gated off** — see [Live result](#live-result-2026-07-22-te-25-constraint-retention) |
+| TE-26 | Per-tool snip geometry for microcompaction | **deferred (optional)** — the flat placeholder + `read_file` recovery is cheap; revisit only if re-read cost of cleared results shows up in practice |
 | TE-27 | CI cache-impact gate | landed — `scripts/check-cache-impact.ts` + `cache-impact` CI job re-prove TE-23/TE-22 on cache-sensitive diffs |
 
 **TE-25 live comparison — done (2026-07-22).** Ran the three arms on
