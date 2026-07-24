@@ -28,6 +28,15 @@ already saturates**, so verbatim pinning stays gated off (no code change). Full
 table, decision, and the saturation caveat in [Live result](#live-result-2026-07-22-te-25-constraint-retention).
 Runbook: [`55-live-eval-handoff.md`](./55-live-eval-handoff.md).
 
+**Efficiency validated live (2026-07-24).** Beyond the retention work (a quality
+guardrail), the two core *token-efficiency* claims are now confirmed on real
+native-provider sessions rather than unit tests alone: **TE-24**'s calibrated
+estimator predicts real `prompt_tokens` at **0.7% mean error** (vs. 2.1% for the
+fixed char/4; target <10%), and a **multi-turn agent session sustains 63%
+mean cache-read (77% peak)** — the byte-stable native prefix (**TE-23**) is
+cache-eligible across many real turns, not just a 2-turn smoke. Details in
+[Eval / measurement hooks](#eval--measurement-hooks).
+
 ### New runtime flags (this work)
 
 | Env var | Default | Effect |
@@ -321,8 +330,8 @@ Ordered by payoff-to-risk, dependency-aware. Track A is Phase 0 — nothing in T
 Reuse the swarmkit-eval cost-frontier harness (51), the TE-14 telemetry, and the new TE-22 local harness:
 
 - **Track A (TE-19…22):** unit tests for the pricing/attribution math; manual smoke that `/cost`, `/status`, and the live indicator show correct numbers on a native-provider session; TE-22 self-checks by diffing two identical runs (delta ≈ 0).
-- **TE-23:** unit/integration test is the deliverable; additionally assert via TE-22 that `cacheReadFraction` stays ≥ baseline on a repeat-prefix run (the regression signal if the guard ever silently fails). **Live smoke (2026-07-22, `scripts/cache-ab.ts`, azureoai/gpt-5.5): a multi-turn run reported 71% cache-read (43.5k cached tokens) — the assembled append-only prefix is byte-stable and cache-eligible in practice.** (The second cache-ab run showed 0% because each run is a fresh session with its own `promptCacheKey`; Azure's keyed routing doesn't reuse a prior process's cache — a session-isolation artifact, not a guard failure. Intra-session multi-turn is the repeat-prefix signal here.)
-- **TE-24:** offline — compare estimated vs. real `prompt_tokens` across a recorded session; target < 10% mean error vs. the fixed-constant baseline.
+- **TE-23:** unit/integration test is the deliverable; additionally assert via TE-22 that `cacheReadFraction` stays ≥ baseline on a repeat-prefix run (the regression signal if the guard ever silently fails). **Live smoke (2026-07-22, `scripts/cache-ab.ts`, azureoai/gpt-5.5): a multi-turn run reported 71% cache-read (43.5k cached tokens) — the assembled append-only prefix is byte-stable and cache-eligible in practice.** (The second cache-ab run showed 0% because each run is a fresh session with its own `promptCacheKey`; Azure's keyed routing doesn't reuse a prior process's cache — a session-isolation artifact, not a guard failure. Intra-session multi-turn is the repeat-prefix signal here.) **Multi-turn agent session (2026-07-24, 4 sequential file reads, ~5 turns): 63% mean cache-read, 77% peak — the prefix sustains high cache% across many real turns, not just two. The 49% low run is Azure replica-routing variance (a cold replica starts at 0%), so cache% is provider-routing-dependent, not a guaranteed floor — but the byte-stable prefix is consistently cache-eligible.**
+- **TE-24:** offline — compare estimated vs. real `prompt_tokens` across a recorded session; target < 10% mean error vs. the fixed-constant baseline. **Validated live (2026-07-24, azureoai/gpt-5.5, 8-turn code-heavy session): the shipped `effectiveContextTokens` (calibrated) tracked real `prompt_tokens` at 0.7% mean abs error vs. 2.1% for the fixed char/4 — beats the constant AND well under the 10% target. Per-turn error never exceeded 1.8%.**
 - **TE-25:** the constraint-retention instrument (`eval/harness/constraint-retention.ts` + runner) is the dedicated arm — seeds an early user constraint, forces compaction, grades verbatim identifier survival. Metric = non-security retention rate per arm (baseline vs section vs verbatim). Grader is deterministic + unit-tested. **Live rates (2026-07-22, azureoai/gpt-5.5, best-of-3): baseline = section = verbatim = 100% non-security.** Baseline saturated, so the accept/escalate gate never fired — section stays default-on as (unmeasured) defense-in-depth, verbatim stays gated off. A discriminating re-run (weaker summarizer / subtler constraints) is the follow-up to actually exercise the gate.
 
 ## Handoff: running the live constraint-retention eval
