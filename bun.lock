@@ -41,9 +41,9 @@
         "vitest": "^4.1.4",
       },
       "optionalDependencies": {
-        "@openswarm/cli-darwin-arm64": "0.3.9",
-        "@openswarm/cli-darwin-x64": "0.3.9",
-        "@openswarm/cli-linux-x64": "0.3.9",
+        "@openswarm/cli-darwin-arm64": "0.4.0",
+        "@openswarm/cli-darwin-x64": "0.4.0",
+        "@openswarm/cli-linux-x64": "0.4.0",
       },
     },
   },
@@ -357,12 +357,6 @@
     "@octokit/rest": ["@octokit/rest@21.1.1", "", { "dependencies": { "@octokit/core": "^6.1.4", "@octokit/plugin-paginate-rest": "^11.4.2", "@octokit/plugin-request-log": "^5.3.1", "@octokit/plugin-rest-endpoint-methods": "^13.3.0" } }, "sha512-sTQV7va0IUVZcntzy1q3QqPm/r8rWtDCqpRAmb8eXXnKkjoQEtFe3Nt5GTVsHft+R6jJoHeSiVLcgcvhtue/rg=="],
 
     "@octokit/types": ["@octokit/types@14.1.0", "", { "dependencies": { "@octokit/openapi-types": "^25.1.0" } }, "sha512-1y6DgTy8Jomcpu33N+p5w58l6xyt55Ar2I91RPiIA0xCJBXyUAhXCcmZaDWSANiha7R9a6qJJ2CRomGPZ6f46g=="],
-
-    "@openswarm/cli-darwin-arm64": ["@openswarm/cli-darwin-arm64@0.3.9", "", { "os": "darwin", "cpu": "arm64" }, "sha512-L76fA2HQlmLxCYv27NAvJXljUZJRwVMcx6qiJ4mhQl5WvzNMzhlGOW0qfOCjMhdiUQs5pIQUv/hJdWankmNVFg=="],
-
-    "@openswarm/cli-darwin-x64": ["@openswarm/cli-darwin-x64@0.3.9", "", { "os": "darwin", "cpu": "x64" }, "sha512-eQx86XCtSY2GPCWCZA4XQAElCIO+6PXnNTphyKli+VNkrD1ysgfUGWP80ATyF0BKQGgu4iFNmX7Qy7tRu7E/0Q=="],
-
-    "@openswarm/cli-linux-x64": ["@openswarm/cli-linux-x64@0.3.9", "", { "os": "linux", "cpu": "x64" }, "sha512-akZYoo6xhBUYMD6p1gKTrBDXu7R83tVg7PAG1xOMp7fiyspP8wfkTg9QtLU8b3GT9S0mbbPYBYkP/xSGJCZ/cg=="],
 
     "@opentelemetry/api": ["@opentelemetry/api@1.9.0", "", {}, "sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg=="],
 
