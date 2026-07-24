@@ -353,8 +353,8 @@ export type AgentResult =
 // ---------------------------------------------------------------------------
 
 /**
- * Structured task format. Claw ships policy fields as free-form strings;
- * ours are enums, runtime-enforced (docs/05-swarm-model.md).
+ * Structured task format. A reference implementation ships policy fields as
+ * free-form strings; ours are enums, runtime-enforced (docs/05-swarm-model.md).
  */
 export interface TaskPacket {
   readonly id: string;

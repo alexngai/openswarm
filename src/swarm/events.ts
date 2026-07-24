@@ -1,9 +1,9 @@
 /**
  * Lane event schema — the wire format between a worker and its orchestrator.
  *
- * Ported near-verbatim from claw-code's `rust/crates/runtime/src/lane_events.rs`
- * (docs/research/05-swarm.md §5). Keeping names and failure classes aligned
- * preserves interop with claw-ecosystem observers.
+ * Originally derived from a reference lane-event schema and since evolved
+ * independently. Keeping event names and failure classes stable preserves
+ * interop with existing lane-event observers.
  *
  * Transport: JSONL over stdio in the default subprocess topology.
  * One event per line. Events are strictly additive — never remove or rename.

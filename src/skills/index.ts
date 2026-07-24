@@ -1,7 +1,7 @@
 /**
  * SkillSource — where skills come from.
  *
- * Skills in claw/Claude Code are `SKILL.md` files with optional YAML
+ * Skills in Claude Code are `SKILL.md` files with optional YAML
  * frontmatter (docs/research/04-integrations.md §3). Invocation is not
  * subprocess execution — it returns the skill's prompt text so the model
  * can apply its instructions in-turn.

@@ -306,8 +306,8 @@ export function App(props: AppProps) {
 
   // Phase 2 — when awaiting a permission decision, the prompt owns keystrokes.
   // y / Y              → approve
-  // Enter / n / N / Esc → deny (matches claw's default-deny semantics)
-  // Ctrl-C             → deny (claw `main.rs:7406-7408` — stdin read error
+  // Enter / n / N / Esc → deny (default-deny semantics)
+  // Ctrl-C             → deny (stdin read error
   //                      becomes Deny; engine continues to the next tool)
   // Everything else is swallowed so the input buffer can't mutate.
   const respondPermission = (allow: boolean, alwaysAllow = false): void => {

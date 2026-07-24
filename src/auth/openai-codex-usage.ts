@@ -2,7 +2,7 @@
  * Fetch ChatGPT (codex) plan usage / rate-limit windows.
  *
  * Hits `backend-api/wham/usage` and parses the primary + secondary rate-limit
- * windows and plan. Ported from openclaw `src/infra/provider-usage.fetch.codex.ts`.
+ * windows and plan. Adapted from a reference implementation.
  * Injectable fetch → unit-testable.
  */
 

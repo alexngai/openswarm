@@ -4,7 +4,7 @@
  * Homebrew Node/OpenSSL on macOS frequently cannot validate auth.openai.com's
  * certificate chain (missing CA bundle), which makes the OAuth browser flow
  * fail with an opaque error. Probe ahead of time and emit actionable fix hints.
- * Ported from openclaw `src/plugins/provider-openai-chatgpt-oauth-tls.ts`.
+ * Adapted from a reference implementation.
  *
  * Pure logic + an injectable fetch — unit-testable without real network.
  */

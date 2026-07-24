@@ -126,7 +126,7 @@ describe("PluginStateStore", () => {
     await expect(store.read()).rejects.toThrow(/schemaVersion/);
   });
 
-  // 9. settings.json + installed.json layout is on-disk (claw schema)
+  // 9. settings.json + installed.json layout is on-disk
   it("writes settings.json and installed.json under the root dir", async () => {
     const { store, dir } = await makeTmpStore();
     await store.record("plugin-a", "1.0.0", LOCAL_SOURCE);

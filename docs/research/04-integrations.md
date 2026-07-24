@@ -173,7 +173,7 @@ Then (from env vars, added in this order):
 - `$HOME/.config/opencode/skills`
 - `$HOME/.claude/skills/omc-learned`
 - `$CLAUDE_CONFIG_DIR/skills`, `$CLAUDE_CONFIG_DIR/skills/omc-learned`, `$CLAUDE_CONFIG_DIR/commands`
-- Two hard-coded deployment paths: `/home/bellman/.claw/skills`, `/home/bellman/.codex/skills` (deployment-specific cruft; should not port)
+- Two hard-coded deployment paths: `/home/<user>/.claw/skills`, `/home/<user>/.codex/skills` (deployment-specific cruft; should not port)
 
 Two directory shapes are supported:
 
@@ -334,7 +334,7 @@ Tool surface (`run_lsp`): a single generic `lsp` tool takes `{ action, path?, li
 - [v1] Claude-Code-contract rejection for unsupported fields (`skills` / `mcpServers` / `agents` / directory-glob commands / non-standard hook names) — with clear error messages.
 - [v1] Multiple `PluginSource` registry (ordered, first match wins on load, union on discover).
 - [later] GitUrl `PluginInstallSource`; remote marketplaces.
-- [skip] Bespoke `/home/bellman/...` deploy paths.
+- [skip] Bespoke `/home/<user>/...` deploy paths.
 
 ### Skills
 
@@ -347,7 +347,7 @@ Tool surface (`run_lsp`): a single generic `lsp` tool takes `{ action, path?, li
 - [v0] First-match-wins across ordered sources.
 - [v1] Multiple `SkillSource`s stacked with source-id disambiguation.
 - [later] Discovery caching with inotify-style invalidation (claw re-walks every call).
-- [skip] Hard-coded deploy paths (`/home/bellman/...`).
+- [skip] Hard-coded deploy paths (`/home/<user>/...`).
 
 ### MCP (Tier 4)
 

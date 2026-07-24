@@ -1,14 +1,14 @@
 /**
  * Tests for the destructive command warning submodule.
  *
- * Ported from claw's bash_validation.rs tests + openswarm-specific cases.
+ * Test cases originally derived from a reference implementation, plus openswarm-specific cases.
  */
 
 import { describe, it, expect } from "vitest";
 import { validateDestructive } from "./destructive.js";
 
 describe("validateDestructive", () => {
-  // --- claw-ported cases ---
+  // --- reference-derived cases ---
 
   it("warns on rm -rf /", () => {
     const result = validateDestructive("rm -rf /");

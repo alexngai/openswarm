@@ -72,7 +72,7 @@ export interface ToolCallState {
 
 /**
  * PendingPermission — the payload shown to the user when a tool call needs
- * approval. Phase 2 design lock (doc 17 P2.Q3): no `toolUseId` — claw doesn't
+ * approval. Phase 2 design lock (doc 17 P2.Q3): no `toolUseId` — the reference implementation doesn't
  * capture one and the SDK's CanUseTool callback doesn't pass one. One prompt
  * at a time; there is no concurrent queue to correlate.
  */

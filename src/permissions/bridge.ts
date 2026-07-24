@@ -3,16 +3,16 @@
  * callback and the REPL store / headless stdin reader.
  *
  * Phase 2 design lock (doc 17 "Phase 2 — design lock 2026-04-22"):
- *   - Strictly serial. At most one pending request at a time. Claw's tool
- *     dispatch is a serial for-loop (`conversation.rs:400`) and the SDK's
+ *   - Strictly serial. At most one pending request at a time. The reference implementation's tool
+ *     dispatch is a serial for-loop and the SDK's
  *     canUseTool is one-call-per-tool-use, so there's never concurrency.
  *   - The bridge knows nothing about the UI shape. The REPL attaches a
  *     dispatch function that routes `permission-request` / `permission-response`
  *     reducer events; headless callers attach no dispatcher and drive the
  *     decision from stdin.
  *   - On deny, the returned PermissionDecision carries a reason the engine
- *     feeds to the model as a tool_result error — matching claw's
- *     `PermissionOutcome::Deny { reason }` (`permissions.rs`).
+ *     feeds to the model as a tool_result error — matching the reference implementation's
+ *     structured deny outcome.
  */
 
 import type { PendingPermission, ReplEvent } from "../ui/repl/state.js";

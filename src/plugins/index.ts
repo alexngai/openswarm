@@ -1,13 +1,13 @@
 /**
  * PluginSource — where plugins come from.
  *
- * Plugins in claw/Claude Code are JSON-manifest-declared packages that bring
+ * Plugins in Claude Code are JSON-manifest-declared packages that bring
  * tools, commands, and optional hooks (docs/research/04-integrations.md §2).
  * They execute tools as subprocesses with a specific env contract.
  *
  * v0 ships a single `claude-code` source (read-only discovery).
  * M4 adds install/enable/disable/update/uninstall lifecycle.
- * Additional sources (e.g. `claw`, remote registries) can register later
+ * Additional sources (e.g. remote registries) can register later
  * without breaking consumers.
  *
  * Separate from SkillSource — manifest, invocation, and lifecycle differ.
@@ -59,7 +59,7 @@ export interface PluginManifest {
 
   /**
    * Execution mode for this plugin's tools.
-   * - "shell": tools are spawned as subprocesses (default claw behavior).
+   * - "shell": tools are spawned as subprocesses (the default behavior).
    * - "in-process": tools are loaded from `entryModule` and called directly.
    */
   readonly execMode: "shell" | "in-process";
@@ -103,7 +103,7 @@ export interface LoadedPlugin {
   /**
    * Execute one of the plugin's tools.
    * The subprocess receives tool input as JSON on stdin and writes its
-   * result to stdout. Environment variables follow claw's contract:
+   * result to stdout. Environment variables follow the plugin env contract:
    *   CLAWD_PLUGIN_ID, CLAWD_TOOL_NAME, CLAWD_TOOL_INPUT, etc.
    */
   executeTool(
@@ -162,7 +162,7 @@ export type PluginInstallSource =
 /**
  * Persisted plugin state — unified view over two files under
  * `~/.openswarm/plugins/` (doc 17 Q1):
- *   - `settings.json`  — enable map `{ [pluginId]: boolean }` (claw's shape).
+ *   - `settings.json`  — enable map `{ [pluginId]: boolean }`.
  *   - `installed.json` — `{ schemaVersion, plugins: { [id]: { version, installSource } } }`.
  *
  * PluginStateStore.read() merges both files into this flat shape for callers.

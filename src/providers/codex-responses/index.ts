@@ -75,7 +75,7 @@ export interface CodexResponsesProviderOptions {
   readonly wsConnectImpl?: WsConnectFn;
 }
 
-// gpt-5.5 on a ChatGPT plan (docs/42). Limits per openclaw's catalog.
+// gpt-5.5 on a ChatGPT plan (docs/42). Limits per the reference catalog.
 function codexCapabilities(): ProviderCapabilities {
   return {
     streaming: true,

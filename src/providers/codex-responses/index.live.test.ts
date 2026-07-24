@@ -163,7 +163,7 @@ describe.runIf(live)("CodexResponsesTransportProvider (live)", () => {
 
   it("replays reasoning + tool_use across turns without rejection (#6.1 pairing)", async () => {
     // openswarm synthesizes an fc_* id after a reasoning item (it omits
-    // openclaw's previousReplayItemWasReasoning id-pairing avoidance). This is
+    // the reference id-pairing avoidance). This is
     // the agent hot path; a 400 here would mean the backend enforces pairing.
     const tool: ToolSpec = {
       name: "get_weather",

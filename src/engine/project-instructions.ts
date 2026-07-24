@@ -15,7 +15,7 @@
  * Discovery walks CWD upward to the filesystem root; at each level it reads a
  * fixed set of filenames. Results are ordered root → CWD so the deepest
  * (most specific) scope appears last, deduped by a content hash, and clamped
- * to per-file / total budgets (matches claw's prompt.rs; see
+ * to per-file / total budgets (see
  * docs/research/03-runtime.md §7).
  */
 
@@ -30,9 +30,9 @@ export const INSTRUCTION_FILENAMES: readonly string[] = [
   "AGENTS.md",
 ];
 
-/** claw MAX_INSTRUCTION_FILE_CHARS — per-file content budget. */
+/** MAX_INSTRUCTION_FILE_CHARS — per-file content budget. */
 export const MAX_INSTRUCTION_FILE_CHARS = 4_000;
-/** claw MAX_TOTAL_INSTRUCTION_CHARS — combined budget across all files. */
+/** MAX_TOTAL_INSTRUCTION_CHARS — combined budget across all files. */
 export const MAX_TOTAL_INSTRUCTION_CHARS = 12_000;
 
 const TRUNCATION_MARKER = "\n\n[truncated]";

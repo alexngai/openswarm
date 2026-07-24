@@ -2,7 +2,7 @@
  * PermissionEngine — mode-only gating for M0.
  *
  * Evaluates whether a tool call is allowed under the active PermissionMode.
- * M0 does not implement claw's full rule grammar (tool(subject:*) patterns);
+ * M0 does not implement the reference implementation's full rule grammar (tool(subject:*) patterns);
  * that lands in M2 alongside hooks. For M0 we gate purely by the tool's
  * declared requiredPermission level.
  *

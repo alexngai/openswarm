@@ -263,10 +263,10 @@ export class ClaudeCodeSource implements PluginSource {
           resolve({ status: "error", message: "plugin timed out after 30s" });
         }, TIMEOUT_MS);
 
-        // Use `bash -c` for shell compatibility — matches claw-code's contract.
+        // Use `bash -c` for shell compatibility — matches the plugin env contract.
         // cwd: pluginDir so the manifest's `command` can use paths relative
         // to its own directory (e.g., "./run.sh"). CLAWD_CWD still carries
-        // the host's project cwd per the claw-code env contract.
+        // the host's project cwd per the plugin env contract.
         const child = cp.spawn("bash", ["-c", shellCommand], {
           env,
           stdio: ["pipe", "pipe", "pipe"],
