@@ -75,7 +75,12 @@ export class CriticLoopAdapter implements ExecutionAdapter {
     const bin = this.opts.bin ?? "openswarm";
     const permissionMode = this.opts.permissionMode ?? "danger-full-access";
     const agentId = ctx.env?.AGENT_ID ?? "agent";
-    const dir = `.sbx/${agentId.replace(/[^\w.-]/g, "_")}`;
+    // Scratch (team.json + results.jsonl + trace.jsonl) MUST live OUTSIDE the workspace git repo.
+    // The executor, following the repro-first prompt, runs a `git clean`-style reset in /testbed
+    // that deletes untracked files — which silently wiped the in-repo `.sbx/` output before the
+    // adapter could read the flushed team_usage line, so every advisor cell reported $0 despite
+    // usage being captured correctly (docs/52). An absolute /tmp path is immune to /testbed git ops.
+    const dir = `/tmp/os-eval/${agentId.replace(/[^\w.-]/g, "_")}`;
 
     const prefix = this.opts.executorPromptPrefix ? `${this.opts.executorPromptPrefix}\n\n` : "";
     // Member 0 = executor (full tools, authors the fix). Member 1 = critic (reviewer role
