@@ -8,8 +8,10 @@
 > breaking the attribution that cognitive-core learns from or the fixed-config precondition that
 > swarmkit-eval measures under.
 >
-> Two designs, one dependency: **the `HarnessDelta` artifact** (§3) and **the measurement
-> precondition** (§4). It is **not** a design lock. Extends [docs/63](63-live-harness-adjustment.md).
+> Three designs: **the `HarnessDelta` artifact** (§3), **the measurement precondition** (§4), and
+> **invalidation via the `MachineryStamp`** (§5) — the last of which also prices flywheel destruction
+> into autonomation's gate, which nothing in the ecosystem currently does. It is **not** a design lock.
+> Extends [docs/63](63-live-harness-adjustment.md).
 
 ---
 
@@ -133,8 +135,8 @@ export interface HarnessDelta {
     proposedAtStep: number;
     proposedBy: 'agent' | 'operator';
     rationale: string;
-    /** Machinery version this delta was synthesized against — see §5. */
-    machineryVersion: string;
+    /** Machinery this delta was synthesized against — structured, not a single hash. See §5.3. */
+    machineryVersion: MachineryStamp;
   };
 
   /** What it survived — reuses cognitive-core's fidelity ladder (§2.1). */
@@ -277,22 +279,128 @@ covariate** so cells can be stratified rather than blindly averaged.
 
 ---
 
-## 5. The invalidation gap (`machineryVersion`) — currently unowned
+## 5. Design 3 — invalidation and the `MachineryStamp`
 
 L2 changes the machinery — a tool schema, the compaction policy, a dispatch path. L1's playbooks were
 learned under the old machinery; L0's guards were *synthesized against the old schema*. **Nothing
-invalidates them.** autonomation's `stateful()` model explicitly carries state across cohorts, which is
-precisely when this bites, and no layer currently owns the problem.
+invalidates them today**, and autonomation's `stateful()` model explicitly carries state across
+cohorts, which is precisely when this bites. No layer currently owns the problem.
 
-Minimum viable ownership, and the reason `provenance.machineryVersion` is in the §3.1 type:
+### 5.1 The split that makes it tractable
 
-- Every delta is stamped with the **machinery version** it was synthesized against — at minimum a hash
-  over `{tool schemas, dispatch contract, permission model}`.
-- On an L2 machinery change, deltas whose stamp no longer matches are **invalidated, not deleted** —
-  demoted to `validation.status: 'pending'` and required to re-earn their gate.
-- Same discipline should eventually extend to L1 playbooks; out of scope here, flagged as OQ3.
+"Staleness" is two failure modes wearing one name, and they want opposite treatments:
 
-This is deliberately conservative: invalidation is cheap, silent staleness is not.
+| | **Referential staleness** | **Semantic staleness** |
+|---|---|---|
+| What | the artifact *names something that changed or vanished* | everything it references exists; the *advice* is no longer good |
+| Detect | **statically — free and exact** (§4.2 of [docs/63](63-live-harness-adjustment.md): the free/exact reward class) | only evidence can tell you |
+| Treatment | **lazy check at load** | **re-earn the gate**, and only when something triggers suspicion |
+
+Most anxiety about invalidation is really about the referential kind — which turns out to be cheap.
+
+### 5.2 Lazy-at-load, not eager-on-change
+
+**Validity is computed by the *consumer* at load time, never written by the producer on change.** Three
+independent reasons, the second decisive:
+
+1. **It needs no writer.** openswarm computes validity when it loads an artifact. Nobody reaches into
+   cognitive-core's `stateful()` subtree, so the cross-layer-write violation (§3.4, framework §6.3)
+   never arises — the problem dissolves rather than acquiring a policy.
+2. **It is reversible; eager deletion is not.** A machinery change is *itself* a candidate subject to
+   autonomation's held-out `gate()` — **it can be rejected and rolled back.** Eager invalidation would
+   have destroyed the delta bank on the way in, for a change that never shipped. Lazy validation simply
+   re-matches when the machinery reverts. **Invalidation must be at least as reversible as the change
+   that triggered it.**
+3. **No cost on change.** No sweep, no migration, no `O(artifacts)` work when L2 flips a config.
+
+### 5.3 `MachineryStamp` — dependencies discovered, not declared
+
+A single coarse hash over `{tool schemas, dispatch contract, permission model}` invalidates *everything*
+on any change: a one-tool tweak nukes guards for unrelated tools, and the flywheel resets constantly.
+Hand-declared dependency graphs are the other extreme — author burden and drift.
+
+For guards the dependency set is **mechanically discoverable at validation time**: the predicate *runs*
+against real tool inputs, so a `Proxy` around the schema during the validation run records which fields
+it actually reads.
+
+```ts
+export interface MachineryStamp {
+  /** Coarse fallback: hash over the whole machinery surface. */
+  surfaceHash: string;
+  /** Fine-grained, DISCOVERED during the delta's own validation run — never declared. */
+  touched: Array<{ surface: string; fieldPath?: string; hash: string }>;
+}
+```
+
+**Provenance-by-execution rather than declaration** — the validation run *is* the dependency-discovery
+pass, so there is no extra machinery and no author burden.
+
+This yields a principled asymmetry: **stamp precision scales with blast radius.** Guards are *enforced*
+(hard invariant, silent-failure risk) → precise `touched` stamps. Fragments are *advisory* (worst case:
+bad advice) → coarse `surfaceHash` suffices, and prose cannot be traced anyway.
+
+**Honest limitation.** A `Proxy` records only fields read on the branches actually executed; untaken
+branches go unrecorded → **under-invalidation**. Mitigations: union the touched-set across *all*
+validation runs, and fall back to `surfaceHash` for deltas with low branch coverage. Stated rather than
+papered over — the mechanism is good, not total.
+
+### 5.4 Three states, not two
+
+Binary valid/invalid forces a choice between over- and under-invalidating. Three states do not:
+
+| State | Trigger | Behavior |
+|---|---|---|
+| **`fresh`** | stamp matches | loads normally |
+| **`suspect`** | coarse surface changed, or a mention-scan hit, but no referential break | **still loads**, flagged; re-validation prioritized; **confidence updates discounted** |
+| **`stale`** | referential check fails — names something gone or reshaped | does not load; **retained** as a re-synthesis seed (§5.5) |
+
+`suspect` carries the value: the system keeps operating on probably-fine artifacts while marking them
+for cheap re-validation, instead of hitting a cliff. Discounting confidence updates for `suspect`
+artifacts is the same move as §3.3's clean-cell isolation — do not learn confidently from a
+possibly-confounded observation.
+
+> **`fresh` means *referentially* valid, not *correct*.** Necessary, not sufficient. Semantic validity
+> remains the gate's job, and the state machine must not imply otherwise.
+
+### 5.5 Invalidated ≠ garbage — stale deltas are re-synthesis seeds
+
+A `stale` delta still carries its `failureSignature`, `rationale`, and prior `body`. Re-expressing that
+intent against a new schema is *dramatically* cheaper than rediscovering the failure — the entire
+discovery phase is skipped. So invalidation has three fates:
+
+1. **Dead** — the guarded thing no longer exists → archive.
+2. **Repairable** — schema shifted, intent survives → **cheap re-synthesis, seeded by the old delta.**
+3. **Re-validatable** — everything exists; it just needs to re-earn its gate.
+
+This reframes a machinery change from *flywheel reset* to **flywheel migration**, which materially
+lowers the cost term in §5.6.
+
+### 5.6 Invalidation must be priced into the L2 gate
+
+Today a machinery change that lifts task success 2% while invalidating 80% of the accumulated delta
+bank **reads as a clean win**. It is not — it spent a compounding asset to buy a one-time gain.
+
+> **Ask: invalidation count, weighted by each artifact's earned confidence, becomes a reported cost on
+> any L2 variant.**
+
+This follows directly from [docs/63](63-live-harness-adjustment.md) §6.1 — the flywheel is precisely
+what survives model upgrades — and from the general principle that **if an optimizer can destroy an
+asset for free, it will.** Nothing in the ecosystem currently prices this; §6 lists it as an
+autonomation ask.
+
+### 5.7 What transfers to L1 playbooks
+
+Partially, and the gap is worth stating plainly:
+
+- **Referential checking half-works.** A playbook saying *"use `multi_edit` for batched changes"* can be
+  mention-scanned against changed surfaces. Crude, but it catches the obvious cases at no cost.
+- **Semantic staleness is the real exposure**, and cognitive-core's compression is *access-frequency*
+  based (Hot/Warm/Cold/Evicted), not validity-based — so a **stale-but-popular playbook survives
+  indefinitely**.
+- The fix is not invalidation but **suspicion**: on a machinery change, playbooks mentioning affected
+  surfaces are flagged `suspect` → re-validation priority bump, confidence updates discounted. Their
+  `appliedSuccessRate` *will* catch semantic drift eventually; the point is to stop waiting on slow,
+  confounded decay when there is a concrete reason to check now.
 
 ---
 
@@ -300,9 +408,9 @@ This is deliberately conservative: invalidation is cheap, silent staleness is no
 
 | Repo | Change | Size |
 |---|---|---|
-| **openswarm** | `HarnessDelta` type (§3.1); guard evaluation in `ToolDispatcher.dispatch`; emit deltas into the session record so they survive to `cogcore run` | the docs/63 P0 |
-| **cognitive-core** | `'harnessDelta'` artifact type; populate `credit[]`; `TaskAnnotation.harnessDeltasApplied`; `appliedSuccessRateCleanCells` | small, additive |
-| **autonomation** | `selfHarness.*` as overlay Variables; the three eval modes as arms; seeded-proposal (CRN) requirement | config + arm plumbing |
+| **openswarm** | `HarnessDelta` type (§3.1); guard evaluation in `ToolDispatcher.dispatch`; emit deltas into the session record so they survive to `cogcore run`; **`Proxy` touch-recording during validation (§5.3) and lazy stamp check at load (§5.2)** | the docs/63 P0 |
+| **cognitive-core** | `'harnessDelta'` artifact type; populate `credit[]`; `TaskAnnotation.harnessDeltasApplied`; `appliedSuccessRateCleanCells`; **`fresh`/`suspect`/`stale` artifact state + mention-scan suspicion (§5.4, §5.7)** | small, additive |
+| **autonomation** | `selfHarness.*` as overlay Variables; the three eval modes as arms; seeded-proposal (CRN) requirement; **confidence-weighted invalidation count as a reported gate cost (§5.6)** | config + arm plumbing + one gate term |
 | **swarmkit-eval** | per-cell delta isolation (H2); delta-fired rate as a logged covariate | small |
 
 Every change is **additive and degrades to today's behavior when L0 is off** — no repo has to move
@@ -318,11 +426,22 @@ first, and `frozen` mode is exactly the current system.
 2. **Credit weight source.** Heuristic co-occurrence is the §3.3 default. When does a delta warrant a
    judge call, and does the `blast_radius`/`reversibility` policy from autonomation §9 transfer
    unchanged?
-3. **Invalidation scope (§5).** Should `machineryVersion` invalidation extend to L1 playbooks, and who
-   owns the stamp — the substrate adapter or the runtime?
-4. **Snapshot granularity.** Is the `warm`-mode snapshot per-repo, per-task-class, or global? Too
+3. **Who owns the machinery hash (§5.3).** The *consumer* (openswarm at load) computes validity, but
+   the authoritative hash of the machinery surface has to originate somewhere. The substrate adapter is
+   the natural home — it is already where autonomation models the surface — but that puts an L2 concept
+   on openswarm's hot load path. Alternative: openswarm derives it locally from its own tool registry
+   and the adapter merely *reads* it.
+4. **Does `suspect` need an expiry (§5.4)?** An artifact that sits `suspect` forever — never
+   re-validated because it is never prioritized — is a slow-motion `stale` with extra steps. Options: a
+   TTL, a forced re-validation quota per maintenance cycle, or decay of its confidence toward the prior
+   until it re-earns the gate.
+5. **Is mention-scanning enough for playbooks (§5.7)?** Prose references are fuzzy ("run the build
+   first" names no symbol). Accepting that some semantic staleness is only ever caught by
+   `appliedSuccessRate` decay may be the honest answer — but then the decay rate matters, and it is
+   currently access-frequency driven, not validity driven.
+6. **Snapshot granularity.** Is the `warm`-mode snapshot per-repo, per-task-class, or global? Too
    global and deltas from unrelated work pollute; too narrow and the flywheel never spins up.
-5. **Does `warm` beat `live` beat `frozen`?** The empirical question the whole design exists to ask.
+7. **Does `warm` beat `live` beat `frozen`?** The empirical question the whole design exists to ask.
    If `live` ≈ `frozen`, L0 is not paying for itself and docs/63's P0 should stop at guards.
 
 ---
