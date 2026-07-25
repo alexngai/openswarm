@@ -1,6 +1,6 @@
 # 62 — Offline frontier reconstruction + escalation-signal AUC
 
-**Status:** methodology + Phase 0/1/1.5 results — first positive frontier expansion, confirmed on a clean known-params pair and replicated across HumanEval + MBPP (§4.2, F5–F11). Extends 50 (the thesis), 54/59/60/61 (the live-experiment line that reached "H2.1 not robustly supported").
+**Status:** methodology + Phase 0/1/1.5/2 results. First positive frontier expansion on a clean known-params pair, replicated across HumanEval + MBPP (§4.2, F5–F11); Phase 2 (§5.2, F12–F13) shows the oracle pre-check **transfers to agentic SWE** (Qwen-Coder 3B/35B, FAIL→PASS vs the dead haiku/Nova pairs) — directionally positive but modest on a hard 18-task slice. Extends 50 (the thesis), 54/59/60/61 (the live-experiment line that reached "H2.1 not robustly supported").
 
 ## 1. Why a new methodology
 
@@ -150,6 +150,25 @@ Reuse the existing SWE harness, but run each model **once** and do the **offline
 The clean Phase-1.5 Llama-8B/70B pair **cannot** be used agentically: Llama-3.1-8B is streaming-tool-use-blocked on Bedrock in our stack (commit 239cb4e), so the cheap tier can't drive the tool loop; and the only keyless tool-capable pairs already captured (haiku↔gpt-5.5, Nova↔gpt-5.5) are structurally dead (§3). Enumerating the Bedrock catalog surfaced a better option **with no new credential**: **Qwen3-Coder is on Bedrock on-demand** (`awsbedrock/qwen.qwen3-coder-30b-a3b-v1:0`, 3B active — and `…-480b-a35b-v1:0`, 35B active) — same-family agentic coders, a ~12× active-param FLOPs gap.
 
 Gate results (all pass): both models stream via the `awsbedrock/` transport; **both drive tool-use** (`eval/scripts/bedrock-toolcheck.ts` — `tool-input-start → tool-call → finish`, valid parsed args) — the Llama-8B blocker is gone; and single-shot HumanEval confirms a Goldilocks pair — mono-C 0.811, mono-E 0.933, **oracle 0.945 @ 3.46× fewer FLOPs**, oracle pre-check PASS (1.6 < 0.811·19.4 TFLOP). (Small-tier resolve is understated by ~15 fence-extraction SyntaxErrors — a single-shot harness artifact the agentic loop doesn't share.) → cleared for the agentic offline-once run.
+
+### 5.2 Phase 2 results — agentic SWE, the pre-check transfers (2026-07-24)
+
+Ran the Qwen-Coder pair agentically on **18 baked SWE-bench-Verified instances** (self-hosted docker on the EC2 box, `CS_ARM=mono-small,mono-large`, 1 seed, `us-west-2`). Each model once; the offline oracle frontier + FLOPs pre-check via `eval/analysis/swe-cells-to-rows.ts` → `humaneval-frontier.ts` (SWE cell fresh tokens × active params — the honest axis `offline-frontier.ts` lacks).
+
+| Qwen3-Coder 3B-A3B (C) / 480B-A35B (E) | value |
+|---|---|
+| resolve C / E | 0.333 / 0.333 (6/18 each) |
+| mean FLOPs/task C / E | 3.46 / 74.6 TFLOP (**21.5×** — 12× params × ~1.85× agentic tokens) |
+| oracle cascade | 0.389 @ 53.7 TFLOP |
+| structure | both=5, small-only=1, large-only=1, **neither=11** |
+| oracle pre-check (FLOPs) | **PASS** (3.46 < 0.333·74.6 = 24.9) |
+| oracle dominates mono-large | YES (0.389 ≥ 0.333 at **1.4× fewer FLOPs**) |
+
+**F12 — the oracle pre-check transfers to agentic SWE (FAIL→PASS vs the dead pairs).** haiku↔gpt-5.5 and Nova↔gpt-5.5 FAILED the pre-check on SWE (F1, structurally dead); the Qwen-Coder pair **PASSES** on the same agentic surface — a genuinely small tier (3B active) with a real FLOPs gap flips the inequality. First positive transfer of H2.1 beyond single-shot, and the agentic-loop pipeline itself works end-to-end for a small open-weight tool-driver (both tiers real usage, real scores; the Bedrock tool-use gate was the enabler).
+
+**F13 — but the magnitude is modest and the slice is hard.** Only 7/18 instances are solved by anyone (**neither=11** — the baked slice skews hard); the oracle gain is **+1 task** (django-16032, large-only) and the small tier owns just 1 unique task (xarray-2905). The 1.4× FLOPs expansion is far below single-shot's 3.46×, because agentic escalation pays the large tier on 12/18 tasks — 11 of which fail anyway, wasting the compute. And this is the **oracle ceiling**: no deployable escalation signal yet (the SWE repro/compile-gate isn't extracted into the rows; `sig_visible=null` ⇒ the τ-sweep degenerates to the oracle).
+
+**Still open after Phase 2:** (a) a larger, less-hard slice (neither=11 wastes most of the sample) to firm up structure + magnitude; (b) extract the SWE repro/compile-gate as the deployable signal — turn the oracle ceiling into a real cascade; (c) ≥3 seeds; (d) the offline cold-E cost excludes live handoff bloat (docs/61 F3), so a live cascade would cost more — bound it. The transfer is directionally positive but not yet decisive.
 
 ## 6. Build + cost
 
