@@ -79,6 +79,9 @@ export const MODEL_ACTIVE_PARAMS_B: Readonly<Record<string, number>> = {
   "meta.llama3-1-8b-instruct-v1:0": 8,
   "us.meta.llama3-3-70b-instruct-v1:0": 70, // Llama 3.3 70B (dense) — native-Bedrock large tier (docs/62 Phase 1.5, known-params pair)
   "meta.llama3-3-70b-instruct-v1:0": 70,
+  // Qwen3-Coder on Bedrock (on-demand) — the docs/62 Phase 2 agentic coder pair (MoE active params).
+  "qwen.qwen3-coder-30b-a3b-v1:0": 3, // Qwen3-Coder 30B total, ~3B active/token — small agentic-coder tier
+  "qwen.qwen3-coder-480b-a35b-v1:0": 35, // Qwen3-Coder 480B total, ~35B active/token — large agentic-coder tier
 };
 
 /** Strip a provider/gateway prefix ("litellm/…", "azureoai/…") and lowercase. */

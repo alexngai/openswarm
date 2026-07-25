@@ -145,6 +145,12 @@ Structure: both-solve=95, small-only=**3**, large-only=41, neither=25. `sig_visi
 
 Reuse the existing SWE harness, but run each model **once** and do the **offline** policy sweep instead of live per-policy runs; log the escalation signal we already build (authored-repro + compile gate). Same cost as one screen (~$40–100), then every τ/router is free — and the live-vs-offline cost gap directly quantifies handoff bloat (§2 decomposition).
 
+### 5.1 Phase 2 pair selection + agentic gate (2026-07-24)
+
+The clean Phase-1.5 Llama-8B/70B pair **cannot** be used agentically: Llama-3.1-8B is streaming-tool-use-blocked on Bedrock in our stack (commit 239cb4e), so the cheap tier can't drive the tool loop; and the only keyless tool-capable pairs already captured (haiku↔gpt-5.5, Nova↔gpt-5.5) are structurally dead (§3). Enumerating the Bedrock catalog surfaced a better option **with no new credential**: **Qwen3-Coder is on Bedrock on-demand** (`awsbedrock/qwen.qwen3-coder-30b-a3b-v1:0`, 3B active — and `…-480b-a35b-v1:0`, 35B active) — same-family agentic coders, a ~12× active-param FLOPs gap.
+
+Gate results (all pass): both models stream via the `awsbedrock/` transport; **both drive tool-use** (`eval/scripts/bedrock-toolcheck.ts` — `tool-input-start → tool-call → finish`, valid parsed args) — the Llama-8B blocker is gone; and single-shot HumanEval confirms a Goldilocks pair — mono-C 0.811, mono-E 0.933, **oracle 0.945 @ 3.46× fewer FLOPs**, oracle pre-check PASS (1.6 < 0.811·19.4 TFLOP). (Small-tier resolve is understated by ~15 fence-extraction SyntaxErrors — a single-shot harness artifact the agentic loop doesn't share.) → cleared for the agentic offline-once run.
+
 ## 6. Build + cost
 
 - **Reuse:** the transports, cost telemetry (per-model tokens + cache%, TE-14/15), E2B/local backends.
