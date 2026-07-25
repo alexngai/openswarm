@@ -1,7 +1,13 @@
 # 63 — Live Harness Adjustment: agents that author and revise their own running harness
 
 **Status:** Draft for discussion (design spike) · **Author:** (design spike) · **Date:** 2026-07-25
-(rev. 2 — reframed around the reward signal as the binding constraint)
+(rev. 2 — reframed around the reward signal as the binding constraint; rev. 3 — corrected for the
+three-repo ecosystem, see [docs/64](64-harness-delta-and-measurement.md))
+
+> **Read [docs/64](64-harness-delta-and-measurement.md) alongside this.** This doc treats openswarm as
+> the whole world; it is not. cognitive-core (cross-episode learning) and autonomation (cross-cohort
+> optimization) already implement the layers this doc reaches toward, and two claims here are
+> corrected as a result: the **rung-3 promotion target** (§4.3) and **OQ1** (§9).
 
 > Goal: explore whether openswarm can become a harness whose agents make **on-the-fly
 > adjustments to their own running harness** — tools, prompts, verification rules, control
@@ -334,16 +340,29 @@ ladder**, and openswarm is the rare runtime that can span the whole thing:
 ```
 rung 1  EPHEMERAL   in-flight edit, this episode only          ← Schema (world-model program)
 rung 2  VALIDATED   survived an in-loop gate (reality/verifier)
-rung 3  DURABLE     promoted to memory/skills, persists         ← Self-Harness (regression-gated)
+rung 3  DURABLE     promoted, persists across episodes          ← Self-Harness (regression-gated)
+rung 4  OPTIMIZED   survived a held-out gate across cohorts     ← autonomation `gate()`
 ```
 
 Schema lives on rungs 1–2 (mutate a world-model program against a free reality gate, fresh each
 episode). Self-Harness *is* rung 3 (offline, regression-gated edit to the persistent harness).
-openswarm already has the **rung-3 machinery** (`memory_manage`, disk-backed skills) and the
-**rung-2 machinery** (isolated verifiers). The missing middle is a **rung-1 mutation surface**.
-Build that, and a live edit that survives the isolated-verifier gate can *graduate* into a durable
-harness improvement via primitives that already exist. **That promotion path is the thing neither
-paper had, and it is openswarm's natural edge.**
+The missing middle is a **rung-1 mutation surface** — build that, and a live edit that survives the
+in-loop gate can *graduate* into a durable harness improvement.
+
+> **⚠️ Correction (rev. 3) — the rung-3 target is cognitive-core, not `memory_manage`.**
+> An earlier revision claimed openswarm "already has the rung-3 machinery (`memory_manage`,
+> disk-backed skills)." In the three-repo ecosystem that is wrong, and consequentially so:
+> `memory_manage` is a small curated fact/preference buffer (2500 char project / 1500 user) with **no
+> consolidation, no attribution, and no confidence tracking**. Durable harness knowledge belongs in
+> **cognitive-core**, which already implements rung 3 properly (`MutationGate` — a GEPA
+> `StrictImprovementAcceptance` port — plus a `candidate-created → promoted | rejected` lifecycle and
+> playbook lineage), and **rung 4 is autonomation's held-out `gate()`**. The promotion path is
+> therefore an *inter-repo protocol*, not an openswarm-internal one. See
+> [docs/64](64-harness-delta-and-measurement.md) §3.4.
+>
+> This also dissolves the "three-writer" hazard: cognitive-core's playbook store already had two
+> writers and solved it by routing **every** write through `MutationGate`. L0 must be a **proposer,
+> not a writer** — a third proposer into an existing gated path.
 
 ### 4.4 Two axes: altitude × durability
 
@@ -539,7 +558,9 @@ Sequenced by §5.1 — *start where the reward is free, climb only as fast as re
   AutoHarness's preconditions already hold. Concretely: a `define_guard` tool that lets an agent
   synthesize a **pre-hoc predicate evaluated in `ToolDispatcher.dispatch`** (`src/tools/dispatcher.ts`)
   before a tool call executes — seeded by the failure it just hit, validated by replaying against the
-  free/exact signals in §4.2, **ephemeral by default**, promotable to durable via `memory_manage`.
+  free/exact signals in §4.2, **ephemeral by default**, and promotable as a *candidate* into
+  cognitive-core's `MutationGate` (**not** `memory_manage` — see §4.3 and
+  [docs/64](64-harness-delta-and-measurement.md) §3.4).
   Deliberately pinned to the **constrained end of AutoHarness's dial** (§2.4): a conditioning function
   that vetoes bad calls, *never* code-as-policy. Pair with #2 (advisory fragments) so P0 exercises the
   full ladder (§4.3) at two altitudes. Deliverable: a measurable claim — *"agent-synthesized guards cut
@@ -557,10 +578,11 @@ Sequenced by §5.1 — *start where the reward is free, climb only as fast as re
 - **P5 — Runtime topology (#7).** Speculative. Conductor emits a live `TeamSpec`, framed as
   best-of-N/ensemble-select, measured against the single baseline.
 
-The promotion ladder is threaded throughout: any P0–P5 edit that survives its in-loop gate can be
-written to `memory_manage`/skills to become durable (rung 3), which is the openswarm-native version
-of Self-Harness — **earned online, kept offline** — and is the compounding asset §6.1 argues survives
-model upgrades.
+The promotion ladder is threaded throughout: any P0–P5 edit that survives its in-loop gate is emitted
+as a **candidate** into cognitive-core's `MutationGate` (rung 3) and, if it survives autonomation's
+held-out `gate()`, becomes rung 4 — the ecosystem's version of Self-Harness, **earned online, kept
+offline**, and the compounding asset §6.1 argues survives model upgrades. See
+[docs/64](64-harness-delta-and-measurement.md) §3.4 for the protocol.
 
 ---
 
@@ -609,6 +631,15 @@ a self-harnessing score is never confounded with a hidden hand-tuned scaffold.
    once validated, **the isolated verifier as a cheap learned reward model**, and DemoEvolve-style
    **densification from demonstrations** ([2605.24539](https://arxiv.org/abs/2605.24539)). Solving this
    converts #1 and much of the altitude chain from speculation into engineering.
+   > **Update (rev. 3) — this has a framework in the ecosystem.** autonomation's **ladder of
+   > learnability** (`design/ladder-of-learnability.md`) is a formal treatment of exactly this
+   > question: five rungs (`bias-search → gate → dense-shape → learned-reward → RL`), a routing rule
+   > (**ADR-0004**: *telemetry guides freely; scores only under control*), and — the key mechanism —
+   > **reification**, replaying a flagged trajectory into a *controlled* eval instance so a soft
+   > observational signal **earns the right to gate**. §4.2's reward table is best read as a
+   > domain-specific instance of that ladder. OQ1 is therefore an **integration**, not open research;
+   > what remains genuinely open is CRN determinism ([docs/64](64-harness-delta-and-measurement.md)
+   > §7 OQ1), which decides whether L0 signals may ever *score* rather than only *guide*.
 2. **World-model register representation (#1).** Free-form `repl` module vs. a typed
    state+transition schema the harness can introspect and diff. The typed form enables a cleaner
    reality gate but constrains what the model can express.
