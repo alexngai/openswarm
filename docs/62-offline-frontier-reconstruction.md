@@ -109,6 +109,19 @@ Structure: both-solve=98, llama-only=1, **gpt-only=61**, neither=4. Oracle-casca
 
 **Caveats (what Phase 1 does *not* yet show):** (a) the FLOPs win uses an *estimated* gpt-5.5 param count (proprietary) — the clean claim needs two **open-weight** models with known params (Phase 1.5: e.g. Qwen-Coder-7B vs 32B, or Llama-8B vs 70B). (b) The signal covers 44% of problems. (c) Single-shot code-gen, not agentic SWE — transfer is Phase 2.
 
+### 4.3 Signal comparison — a 100%-coverage deployable signal (2026-07-25)
+
+Caveat (b) resolved. Comparing oracle-free signals on Llama-8B × 164 HumanEval (`HE_SIGNALS=1`; each signal computed from the model's own output, no oracle):
+
+| signal | AUC | coverage |
+|---|--:|--:|
+| `sig_visible` (docstring `>>>` examples) | 0.896 | 43% |
+| **`sig_selftests`** (model writes asserts for its own function → run them) | **0.841** | **100%** |
+| `sig_judge` (model self-scores P(correct)) | 0.662 | 100% |
+| **combined** (visible where available, else self-tests) | **0.876** | **100%** |
+
+**F15 — self-authored tests are a full-coverage deployable signal.** `sig_selftests` — the single-shot analog of the agentic **authored-repro** gate — discriminates the cheap tier's correct completions from its wrong ones at AUC 0.841 over *every* problem (0.812 even on the 57% with no docstring). The combined signal reaches 0.876 at 100% coverage, ≈ `sig_visible`'s 0.896 but everywhere. `sig_judge` is weak — the model is overconfident about its own code, so self-assessment barely beats chance. This validates the authored-test mechanism for the Phase 2 §5.2 deployable-signal work (open item a): route on the model's own test outcomes, not its self-rated confidence.
+
 ### 4.2 Phase 1.5 results — the clean known-params pair
 
 Phase 1's FLOPs win rested on an *estimated* gpt-5.5 param count (§4.1 caveat a). Phase 1.5 removes it: both tiers are open-weight with **known** params — **Llama-3.1-8B** (C, 8B) vs **Llama-3.3-70B** (E, 70B), same `awsbedrock/` transport, all 164 HumanEval, single-shot, 1 seed. Analyzer: `eval/analysis/humaneval-frontier.ts` (durable + unit-tested; the §4.1 numbers had lived only in an ephemeral script).
