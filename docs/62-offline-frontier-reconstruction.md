@@ -1,6 +1,6 @@
 # 62 — Offline frontier reconstruction + escalation-signal AUC
 
-**Status:** methodology proposal + Phase 0 results (retroactive validation). Extends 50 (the thesis), 54/59/60/61 (the live-experiment line that reached "H2.1 not robustly supported").
+**Status:** methodology + Phase 0/1/1.5 results — first positive frontier expansion, confirmed on a clean known-params pair and replicated across HumanEval + MBPP (§4.2, F5–F11). Extends 50 (the thesis), 54/59/60/61 (the live-experiment line that reached "H2.1 not robustly supported").
 
 ## 1. Why a new methodology
 
@@ -108,6 +108,38 @@ Structure: both-solve=98, llama-only=1, **gpt-only=61**, neither=4. Oracle-casca
 **Why it worked where SWE didn't:** single-shot removes the agentic token bloat that erased haiku's compute advantage (docs/61), and Llama-8B is a genuinely small open-weight model — a real param gap → a real FLOPs gap the cheap tier can bank on the easy slice.
 
 **Caveats (what Phase 1 does *not* yet show):** (a) the FLOPs win uses an *estimated* gpt-5.5 param count (proprietary) — the clean claim needs two **open-weight** models with known params (Phase 1.5: e.g. Qwen-Coder-7B vs 32B, or Llama-8B vs 70B). (b) The signal covers 44% of problems. (c) Single-shot code-gen, not agentic SWE — transfer is Phase 2.
+
+### 4.2 Phase 1.5 results — the clean known-params pair
+
+Phase 1's FLOPs win rested on an *estimated* gpt-5.5 param count (§4.1 caveat a). Phase 1.5 removes it: both tiers are open-weight with **known** params — **Llama-3.1-8B** (C, 8B) vs **Llama-3.3-70B** (E, 70B), same `awsbedrock/` transport, all 164 HumanEval, single-shot, 1 seed. Analyzer: `eval/analysis/humaneval-frontier.ts` (durable + unit-tested; the §4.1 numbers had lived only in an ephemeral script).
+
+| | resolve | mean FLOPs/task | mean fresh tok/task |
+|---|--:|--:|--:|
+| mono-C (Llama-8B) | 0.598 | 3.8 TFLOP | 236 |
+| mono-E (Llama-70B) | 0.829 | 40.0 TFLOP | 286 |
+| oracle cascade | 0.848 | 21.3 TFLOP | — |
+
+Structure: both-solve=95, small-only=**3**, large-only=41, neither=25. `sig_visible` AUC = **0.887** (72/164 coverage). (2 cheap-tier cells were test-exec ETIMEDOUTs scored `correct=0` — a conservative bias *against* the cheap tier, so it can't inflate the result.)
+
+**F8 — the oracle pre-check PASSES on a clean known-params pair.** `cost(C) 3.8 < resolve_C(0.598)·cost(E) 40.0 = 23.9 TFLOP`: the always-paid cheap compute is well under the expected large-tier compute it saves. The gate that killed both SWE pairs (F1) clears here with **no estimated param** — the FLOPs ratio is the exact 8/70. The oracle cascade Pareto-dominates mono-large (0.848 ≥ 0.829 at **1.88× fewer FLOPs**).
+
+**F9 — the *deployable* signal cascade also Pareto-dominates mono-large, not just the oracle.** Sweeping τ on `sig_visible` (null signal ⇒ escalate), the real cascade reaches **0.835 quality @ 20.0 TFLOP** (τ≈0.25) — *above* mono-E's 0.829 and at ~half its 40.0 TFLOP. Phase 1 demonstrated only the oracle ceiling; here a signal you can compute at runtime wins outright. Escalation rate is 65%, inflated by the 56% of tasks with no doctest signal (all force-escalated) — so this is a floor, not the best achievable.
+
+**F10 — unique ownership is not the mechanism; a real compute gap on the shared easy slice is.** small-only=3: the cheap tier owns almost nothing uniquely — the same signature as the dead SWE haiku pair (small-only=1, F3). Yet this pair expands the frontier, because Llama-8B is a genuine ~10× FLOPs discount on the **95 both-solve** tasks, whereas haiku's *fresh compute wasn't actually lower* (F2), so routing the shared slice to it saved nothing. The frontier win comes from cheaply clearing the easy slice, not from owning a unique one.
+
+**MBPP replication (427 tasks) — the result holds and strengthens at scale.** Same pair, same harness, on the sanitized MBPP set (`eval/experiments/mbpp-signal.ts` + `mbpp_exec.py`; each problem's `test_list` is split — the first assert is shown to the model and becomes the signal, the rest are held out as the hidden oracle, so signal coverage is ~100% vs HumanEval's 44%).
+
+| Llama-8B (C) / Llama-70B (E) | HumanEval (164) | MBPP (427) |
+|---|--:|--:|
+| resolve C / E | 0.598 / 0.829 | 0.677 / 0.838 |
+| sig_visible AUC (on C) | 0.887 (44% cov) | 0.886 (**100% cov**) |
+| oracle cascade | 0.848 @ 21.3 TFLOP (1.88×) | 0.869 @ 11.2 TFLOP (**2.23×**) |
+| deployable signal cascade | 0.835 @ 20.0 TFLOP | **0.838 @ 9.5 TFLOP (2.63×)** |
+| oracle pre-check | PASS | PASS |
+
+**F11 — the positive replicates on a second benchmark; the *deployable* cascade matches mono-large quality at 2.6× less compute.** The cheap-tier signal AUC is essentially identical across benchmarks (0.886 vs 0.887) — it generalizes. With MBPP's ~100% signal coverage the deployable cascade (escalate iff the completion fails its one shown assert; the binary signal makes every τ∈(0,1] identical) recovers **mono-large's exact quality 0.838 at 9.5 TFLOP — 2.63× fewer FLOPs than the 24.9 TFLOP monolith**, escalating only 27%. Structure both=276, small-only=13, large-only=82, neither=56 — the same shape as HumanEval (cheap tier owns little uniquely, wins by clearing the shared easy slice cheaply, F10). 4/854 cells were exec ETIMEDOUT/SyntaxError, scored `correct=0` (conservative).
+
+**Still open after 1.5:** (a) the large tier in this pair (Llama-70B, 0.83–0.84) is weaker than gpt-5.5 (0.970) — the *structural* claim now holds on clean known-params across two benchmarks, but a strong-large known-params pairing (Qwen-Coder 7B vs 32B) would pin both ends. (b) The 44%-coverage limit is resolved on MBPP (split-assert ⇒ ~100%), but the MBPP signal is *binary* (one shown assert) — a multi-assert or self-test signal would give a finer τ-curve and let more borderline cheap wins stay cheap. (c) Still single-shot, not agentic (Phase 2). (d) 1 seed; ≥3 seeds would harden the per-task labels.
 
 ## 5. Phase 2 — transfer to agentic SWE (only if Phase 1 signal is good)
 

@@ -77,6 +77,8 @@ export const MODEL_ACTIVE_PARAMS_B: Readonly<Record<string, number>> = {
   // Bedrock inference-profile ids (normalizeModelId strips the awsbedrock/ prefix → the bare id).
   "us.meta.llama3-1-8b-instruct-v1:0": 8, // Llama 3.1 8B (dense) — native-Bedrock small tier
   "meta.llama3-1-8b-instruct-v1:0": 8,
+  "us.meta.llama3-3-70b-instruct-v1:0": 70, // Llama 3.3 70B (dense) — native-Bedrock large tier (docs/62 Phase 1.5, known-params pair)
+  "meta.llama3-3-70b-instruct-v1:0": 70,
 };
 
 /** Strip a provider/gateway prefix ("litellm/…", "azureoai/…") and lowercase. */
