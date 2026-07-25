@@ -9,10 +9,12 @@
 > spike: a mapping from external evidence onto openswarm's real seams, plus a phased,
 > eval-gated plan. It is **not** a design lock.
 
-This doc consolidates three external threads — **Schema** (Impossible Research), **Self-Harness**
-(arXiv 2606.09498), and the **Continual/self-evolving harness** line — and grounds them in the
-current code, using a file-level inventory of every openswarm primitive that already lets an agent
-change its own operating environment at runtime.
+This doc consolidates a fast-moving external literature — **Schema** (Impossible Research),
+**Self-Harness** (arXiv 2606.09498), **AutoHarness** (Google DeepMind, arXiv 2603.03329), the
+**adaptive/continual auto-harness** line (A-Evolve, GEPA, Meta-Harness, SIA, DemoEvolve), and Lilian
+Weng's **Harness Engineering for Self-Improvement** survey — and grounds it in the current code, using
+a file-level inventory of every openswarm primitive that already lets an agent change its own
+operating environment at runtime.
 
 ---
 
@@ -37,7 +39,7 @@ structure, and (b) not destabilize the loop it is **currently running inside** w
 Schema sidesteps (b) entirely — it holds the harness rigid and mutates only a **world-model
 program** (a data artifact), never its own tooling. That separation is the whole trick.
 
-A control-theoretic framing makes the three reference points fall into place:
+A control-theoretic framing places the main reference points on one axis:
 
 | | What is mutated | When | Feedback |
 |---|---|---|---|
@@ -80,7 +82,53 @@ agent learns hidden dynamics during the run. Numbers are early and far below Sch
 direction (online, in-episode adaptation) is exactly this doc's target, and the results are a
 sober reminder that the online regime is hard.
 
-### 2.4 The critique — and why self-authoring answers it
+### 2.4 AutoHarness — the harness as a synthesized *code constraint*
+(Google DeepMind, [arXiv 2603.03329](https://arxiv.org/abs/2603.03329).) The sharpest single mechanism
+in this literature for us. The motivating failure is not bad strategy but *illegal actions*: in Kaggle
+GameArena chess, **78% of Gemini-2.5-Flash losses were illegal moves.** AutoHarness has the model
+**synthesize a code harness** — runtime constraints that make prohibited actions impossible — by
+framing harness synthesis as **search over program space**: a REx **tree search with Thompson
+sampling**, the LLM acting as a **mutation operator** that refines candidate harness code, and
+**environment feedback** (legal-action accuracy) as the reward. ~14.5 iterations to a 100% legal rate
+across **145 TextArena games**. The headline: a *smaller* model plus a self-synthesized harness
+**beats larger models** (Gemini-2.5-Pro, GPT-5.2-High) at lower cost — and a *code-as-policy* variant
+lets the harness *replace* the policy outright.
+
+Three ideas transfer directly:
+1. **A harness is most powerful as a *code guard*, not a prompt.** The strongest self-edit is one that
+   makes a class of mistakes *impossible*, not one that advises against them. (Sharpens §5 #4.)
+2. **Self-improvement is a search with a cheap reward.** LLM-as-mutation-operator + a free environment
+   signal + Thompson-sampling selection is a concrete algorithm for *how* to generate and pick harness
+   edits — the disciplined form of best-of-N. (Feeds §4.3.)
+3. **A cheap model can write the harness a run then executes**, connecting to openswarm's heterogeneous
+   cost-scaling work ([docs/50](50-heterogeneous-cost-scaling.md)): synthesis is a cheap-tier job,
+   execution need not be. (Feeds LH6.)
+
+### 2.5 The broader family, and Weng's optimization chain
+The space is moving fast and worth situating. **Adaptive Auto-Harness**
+([arXiv 2606.01770](https://arxiv.org/abs/2606.01770)) pushes self-improvement across *open-ended task
+streams* (continual, not one task) and names the evolutionary optimizers **A-Evolve, GEPA,
+Meta-Harness**. **SIA** ([arXiv 2605.27276](https://arxiv.org/abs/2605.27276)) co-updates *harness and
+weights* — the boundary openswarm deliberately does not cross (frozen weights is a
+[non-goal](00-vision.md); we stay harness-only). **DemoEvolve**
+([arXiv 2605.24539](https://arxiv.org/abs/2605.24539)) attacks the *sparse-feedback* problem in harness
+evolution by densifying the reward with demonstrations — relevant to our gate-budget question (§9).
+
+Lilian Weng's **Harness Engineering for Self-Improvement** (Lil'Log, 2026-07-04, ~35 papers) supplies
+the organizing frame we adopt in §4.2: a harness is *"code that programs how prompts, tool calls,
+subagents, control flow, memory, and workflow logic work together"* — the model's **external execution
+system** — and self-improvement is a **progressive optimization chain**:
+
+```
+prompt → structured context → workflow → harness code → optimizer code
+```
+
+Each step up the chain unlocks a strictly larger design space than the last; the endpoint (the agent
+editing the code that *optimizes* the agent) is recursive self-improvement **without touching
+weights**. That is the openswarm-native reframing of the whole idea: not a model rewriting its weights,
+but the model **authoring the system around it**.
+
+### 2.6 The critique — and why self-authoring answers it
 The strongest live objection to Schema (Kamradt and others): *how much human intelligence is baked
 into the harness vs. the model?* A harness the model **authors at runtime** is the clean rebuttal —
 if the scaffold is written by the model, in-flight, the intelligence is provably the model's, not
@@ -182,6 +230,34 @@ Build that, and a live edit that survives the isolated-verifier gate can *gradua
 harness improvement via primitives that already exist. **That promotion path is the thing neither
 paper had, and it is openswarm's natural edge.**
 
+### 4.2 Two axes: altitude × durability
+
+The ladder in §4.1 is one axis — *durability* (how long an edit lives). Weng's chain (§2.5) is the
+orthogonal axis — *altitude* (what the edit targets). Every capability in §5 plots on the grid:
+
+| altitude ↓  /  durability → | ephemeral | validated → durable |
+|---|---|---|
+| **prompt / context** | live fragments (#2) | curated memory (#6) — *ships today* |
+| **workflow / control flow** | verification contracts (#4) | isolated-verifier promotion |
+| **harness code** (tools, guards) | world-model register (#1), action guards (#4b) | agent-authored tools (#3) |
+| **optimizer code** | — *out of scope for this spike* — | — |
+
+The grid makes the roadmap legible: openswarm already occupies the *prompt/context* row (ephemeral
+fragments are cheap to add; durable memory ships today); the frontier is **climbing to harness code**
+while holding altitude-appropriate gates. We deliberately stop below *optimizer code* — that is the
+SIA/RSI regime (§2.5) and out of scope here.
+
+### 4.3 The edit loop is a search
+
+Generating a good self-edit is not one shot; it is a **search over harness variants with the model as
+the mutation operator and the in-loop gate as the reward** — AutoHarness's Thompson-sampling REx
+(§2.4) and Weng's "harness code as a search space" (§2.5). openswarm already has the substrate:
+parallel subprocess workers give *breadth* (sample *K* candidate harnesses at once), the
+reality/verifier gates give *reward*, and best-of-N selection (the
+[docs/45](45-adaptive-orchestration-design.md) §6b.4 ensemble finding — the one place multi-agent
+*did* add value) gives *selection*. The open pieces are the **selection policy** (Thompson sampling
+vs. plain best-of-N vs. evolutionary) and its **budget** — §9.
+
 ---
 
 ## 5. Capability menu (ranked), each mapped to seam + gate + failure
@@ -191,7 +267,7 @@ paper had, and it is openswarm's natural edge.**
 | 1 | World-model register | executable model of the task/env | `repl` + scratch module | **reality** (free) | none catastrophic | med |
 | 2 | Live harness fragments | task-specific playbook text | skills disk re-scan + `enrichTurn` | **advisory** | bad instruction | **low** |
 | 3 | Agent-authored tools | the tool catalog | `ToolDispatcher.register` + `tool_search` | reality (dry-run) + permission tier | new capability escapes gate | high |
-| 4 | Runtime verification contracts | the completion rule | `verifiedCompletion` + `agent` | **isolated verifier** | over-strict → non-termination | med |
+| 4 | Verification contracts **& action guards** | completion rule + pre-action code guard | `verifiedCompletion` + `agent` + guard in dispatch | **isolated verifier** / **reality** | over-strict → non-termination | med |
 | 5 | Loop / context controls | context runway, budget | `requestManualCompaction`, budget soft-stops | bounded/idempotent | thrash | low |
 | 6 | Generalized self-elevation broker | tools / budget / model grants | `PermissionRequestHandler` | operator approval + ceiling clamp | over-asking | med |
 | 7 | Runtime topology mutation | the `TeamSpec` | Conductor → `TeamSpec` | isolated verifier + ensemble-select | §6b coordination overhead | high |
@@ -227,6 +303,14 @@ Seam: `verifiedCompletion` gate + `agent` spawn. Gate: **isolated verifier.** Hi
 capability — the in-flight version of Self-Harness's regression gate and the structural fix for the
 premature-termination mode the codebase already diagnosed.
 
+**4b. Action guards (the AutoHarness move).** Sharper still: alongside the *post-hoc* completion gate,
+let the agent **synthesize a *pre-hoc* code guard** — a check in the tool-dispatch path
+(`ToolDispatcher.dispatch`, `src/tools/dispatcher.ts`) that makes an illegal tool call *impossible*,
+validated by the free **reality** gate the way AutoHarness (§2.4) reaches a 100% legal-action rate in
+~14 iterations. Guard-before-act is strictly safer than verify-after-act for the failure classes it
+covers, and it is the natural fence for capability #3 (an agent-authored tool ships *with* the guard
+that bounds it).
+
 **5. Agent-steerable loop / context controls.** `requestManualCompaction()` (`native.ts:147`)
 already exists but is wired *only* to the user's `/compact`. Expose a bounded agent tool for it,
 plus "extend my budget by N turns with justification." Seam: the manual-compaction queue + budget
@@ -261,7 +345,7 @@ diverse self-configured attempts**, not as smarter coordination.
   **single-agent superpower first, a swarm feature second.** Capabilities 1–5 all land on the
   single-agent path; the swarm items (6 tail, 7) are the speculative edge. Do not let "self-adjusting
   harness" become a back door to re-litigating homogeneous multi-agent teams.
-- **"How much intelligence is baked in?"** A self-authored harness is the clean rebuttal (§2.4) —
+- **"How much intelligence is baked in?"** A self-authored harness is the clean rebuttal (§2.6) —
   and we make it *measurable* with an agent-authored vs. hand-authored ablation, not a claim.
 - **Safety of self-authored capability (item 3).** Agent-registered tools are the sharpest edge.
   Keep them inside the existing permission engine and the worktree sandbox; start as saved macros
@@ -304,11 +388,15 @@ criterion.
 | **LH3** | Runtime verification contracts (#4) reduce premature termination without harming resolve | with/without agent-declared gate | The §6b fix, generalized |
 | **LH4** | A live edit promoted to durable memory transfers to future runs on the same repo | measure run N+1 after run N's promotion | The promotion ladder pays off |
 | **LH5** | Agent-authored tools (#3) reduce steps/tokens without new failure modes | with/without `define_tool`, MAST-judged | Capability-growth is net-positive & safe |
+| **LH6** | A *cheap* model synthesizing the harness a run executes beats the big model run directly, at lower cost | cheap-synth + execute vs. big-model-direct | AutoHarness's cost result, ties [docs/50](50-heterogeneous-cost-scaling.md) |
 
 Disciplines carried over from [docs/45](45-adaptive-orchestration-design.md) §6: always report
 against the **strong single-agent baseline**; primary metric = terminal task success, secondary =
 tokens / wall-clock / $; MAST 14-mode judge over traces to see *which failure mode* each capability
-moves. LH1/LH2 are the headline; LH3 is the safety proof; LH4 is the differentiator.
+moves. LH1/LH2 are the headline; LH3 is the safety proof; LH4 is the differentiator. Per *Stop
+Comparing LLM Agents Without Disclosing the Harness* ([arXiv 2605.23950](https://arxiv.org/abs/2605.23950)),
+every arm records the exact harness (fixed vs. the agent-authored delta) as a first-class artifact, so
+a self-harnessing score is never confounded with a hidden hand-tuned scaffold.
 
 ---
 
@@ -328,6 +416,10 @@ moves. LH1/LH2 are the headline; LH3 is the safety proof; LH4 is the differentia
    isolated-verifier pass, N passes, or an offline regression confirmation on the next idle cycle?
 6. **Interaction with compaction.** A durable harness edit must survive compaction like curated
    memory does (`compact-rebuild.ts:76`); an ephemeral one must *not* leak past the episode.
+7. **Selection policy for the edit search (§4.3).** Thompson-sampling REx (AutoHarness), plain
+   best-of-N ([docs/45](45-adaptive-orchestration-design.md) §6b.4), or an evolutionary optimizer
+   (GEPA / A-Evolve)? And what breadth *K* of parallel variant-harnesses is net-positive against the
+   gate budget (OQ 4)?
 
 ---
 
@@ -338,6 +430,18 @@ moves. LH1/LH2 are the headline; LH3 is the safety proof; LH4 is the differentia
   ([HN 48935905](https://news.ycombinator.com/item?id=48935905)). Results self-reported on the public
   set, not independently verified by ARC Prize.
 - **Self-Harness: Harnesses That Improve Themselves** — [arXiv 2606.09498](https://arxiv.org/abs/2606.09498).
+- **AutoHarness: improving LLM agents by automatically synthesizing a code harness** — Google DeepMind,
+  [arXiv 2603.03329](https://arxiv.org/abs/2603.03329) (Thompson-sampling/REx search over harness code;
+  ~100% legal actions across 145 TextArena games; small-model-synthesis beats larger models at lower cost).
+- **Adaptive Auto-Harness** ([arXiv 2606.01770](https://arxiv.org/abs/2606.01770)) and the evolutionary
+  optimizers it surveys (A-Evolve, GEPA, Meta-Harness); **SIA** — self-improving harness *and* weights
+  ([arXiv 2605.27276](https://arxiv.org/abs/2605.27276), the boundary this spike does not cross);
+  **DemoEvolve** — demonstrations for sparse-feedback harness evolution
+  ([arXiv 2605.24539](https://arxiv.org/abs/2605.24539)).
+- **Harness Engineering for Self-Improvement** — Lilian Weng, Lil'Log 2026-07-04 (~35-paper survey; the
+  `prompt → context → workflow → harness code → optimizer code` chain adopted in §4.2). **Stop Comparing
+  LLM Agents Without Disclosing the Harness** — [arXiv 2605.23950](https://arxiv.org/abs/2605.23950)
+  (the disclosure discipline behind LH2 / §8).
 - **Continual Harness** — reset-free self-improving agents on ARC‑AGI‑3
   ([sethkarten.substack.com](https://sethkarten.substack.com/p/continual-harness-an-efficient-self)); **SEAGym**
   self-evolving-agent evaluation ([arXiv 2606.17546](https://arxiv.org/abs/2606.17546)).
