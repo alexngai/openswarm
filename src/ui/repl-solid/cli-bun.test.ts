@@ -62,25 +62,39 @@ async function runCli(
   return { exitCode, stdout, stderr };
 }
 
-describe("CLI under Bun runtime", () => {
-  test("--help prints usage", async () => {
-    const { exitCode, stdout } = await runCli(["--help"], { timeoutMs: 15_000 });
-    expect(exitCode).toBe(0);
-    expect(stdout).toContain("openswarm");
-    expect(stdout).toContain("swarm run flags");
-  });
+// Both cases spawn a cold CLI subprocess, which takes ~1.3s idle but has been
+// seen to exceed bun's 5s default when the whole suite runs in parallel under
+// emulation. `runCli`'s own 15s budget does not raise the test-level timeout,
+// so state it explicitly rather than leaving 4x headroom to contention.
+const SPAWN_TIMEOUT_MS = 20_000;
 
-  test("doctor runs all checks", async () => {
-    const { exitCode, stdout } = await runCli(["doctor"], { timeoutMs: 15_000 });
-    // doctor reports a failing check by exiting nonzero, and a credential-free
-    // environment (CI, a container) legitimately fails the auth check. Assert
-    // that every check ran and reported rather than that this particular
-    // machine is fully configured.
-    expect([0, 1]).toContain(exitCode);
-    for (const check of ["auth:", "config:", "install:", "workspace:"]) {
-      expect(stdout).toContain(check);
-    }
-  });
+describe("CLI under Bun runtime", () => {
+  test(
+    "--help prints usage",
+    async () => {
+      const { exitCode, stdout } = await runCli(["--help"], { timeoutMs: 15_000 });
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain("openswarm");
+      expect(stdout).toContain("swarm run flags");
+    },
+    SPAWN_TIMEOUT_MS,
+  );
+
+  test(
+    "doctor runs all checks",
+    async () => {
+      const { exitCode, stdout } = await runCli(["doctor"], { timeoutMs: 15_000 });
+      // doctor reports a failing check by exiting nonzero, and a credential-free
+      // environment (CI, a container) legitimately fails the auth check. Assert
+      // that every check ran and reported rather than that this particular
+      // machine is fully configured.
+      expect([0, 1]).toContain(exitCode);
+      for (const check of ["auth:", "config:", "install:", "workspace:"]) {
+        expect(stdout).toContain(check);
+      }
+    },
+    SPAWN_TIMEOUT_MS,
+  );
 });
 
 describe.skipIf(!runLive)("CLI live agent under Bun", () => {
