@@ -9,7 +9,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { CodexFrameworkEngine } from "./codex-framework.js";
 import type { NormalizedEvent, Usage } from "../core/types.js";
 import type { RunConfig } from "./index.js";
-import type { CodexAppServerProvider } from "../providers/codex-app-server.js";
+import type {
+  CodexAppServerProvider,
+  DynamicToolCallHandler,
+} from "../providers/codex-app-server.js";
+import type { DynamicToolCallResponse } from "../providers/codex-app-server-types.js";
+import type { ToolImpl } from "../tools/types.js";
 
 // ---------------------------------------------------------------------------
 // Minimal RunConfig helper
@@ -271,6 +276,125 @@ describe("CodexFrameworkEngine", () => {
       const usage = engine.getCumulativeUsage();
       expect(usage.inputTokens).toBe(10);
       expect(usage.outputTokens).toBe(5);
+    });
+  });
+
+  describe("dynamic tool calls are gated by canUseTool", () => {
+    /**
+     * Builds an engine whose provider calls the dynamic-tool handler in the
+     * middle of a turn, which is when a real Codex tool call arrives and the
+     * only time the run's gate is published.
+     */
+    function makeGatedEngine(execute: ToolImpl["execute"]) {
+      const tool: ToolImpl = {
+        spec: {
+          name: "probe",
+          description: "test tool",
+          inputSchema: { type: "object", properties: {} } as ToolImpl["spec"]["inputSchema"],
+          requiredPermission: "write",
+          tier: 2,
+        },
+        execute,
+      };
+
+      let handler: DynamicToolCallHandler | undefined;
+      let response: DynamicToolCallResponse | undefined;
+
+      const mock = makeMockProvider({
+        runTurn: vi.fn().mockReturnValue(
+          (async function* () {
+            yield { type: "text_delta", text: "calling" } as NormalizedEvent;
+            response = await handler!("probe", { n: 1 }, {} as never);
+            yield {
+              type: "message_stop",
+              stopReason: "end_turn",
+              usage: { inputTokens: 1, outputTokens: 1 },
+            } as NormalizedEvent;
+          })(),
+        ),
+      });
+
+      const engine = new CodexFrameworkEngine({
+        tools: [tool],
+        providerFactory: (args) => {
+          handler = args.onDynamicToolCall;
+          return mock as unknown as CodexAppServerProvider;
+        },
+      });
+
+      return {
+        engine,
+        getHandler: () => handler,
+        getResponse: () => response,
+      };
+    }
+
+    it("executes the tool when the gate allows it", async () => {
+      const execute = vi.fn().mockResolvedValue({ status: "ok", output: "ran" });
+      const { engine, getResponse } = makeGatedEngine(execute);
+
+      for await (const _ of engine.run(makeConfig())) { /* drain */ }
+
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(getResponse()?.success).toBe(true);
+    });
+
+    it("does not execute the tool when the gate denies it", async () => {
+      const execute = vi.fn().mockResolvedValue({ status: "ok", output: "ran" });
+      const { engine, getResponse } = makeGatedEngine(execute);
+
+      const config = makeConfig({
+        canUseTool: async () => ({ allow: false, reason: "denied by policy" }),
+      });
+      for await (const _ of engine.run(config)) { /* drain */ }
+
+      expect(execute).not.toHaveBeenCalled();
+      const response = getResponse();
+      expect(response?.success).toBe(false);
+      expect(JSON.stringify(response?.contentItems)).toContain("denied by policy");
+    });
+
+    it("passes the gate's updatedInput to the tool", async () => {
+      const execute = vi.fn().mockResolvedValue({ status: "ok", output: "ran" });
+      const { engine } = makeGatedEngine(execute);
+
+      const config = makeConfig({
+        canUseTool: async () => ({ allow: true, updatedInput: { n: 99 } }),
+      });
+      for await (const _ of engine.run(config)) { /* drain */ }
+
+      expect(execute).toHaveBeenCalledWith({ n: 99 }, expect.anything());
+    });
+
+    it("denies rather than executes when the gate itself throws", async () => {
+      const execute = vi.fn().mockResolvedValue({ status: "ok", output: "ran" });
+      const { engine, getResponse } = makeGatedEngine(execute);
+
+      const config = makeConfig({
+        canUseTool: async () => {
+          throw new Error("bridge unavailable");
+        },
+      });
+      for await (const _ of engine.run(config)) { /* drain */ }
+
+      expect(execute).not.toHaveBeenCalled();
+      expect(getResponse()?.success).toBe(false);
+      expect(JSON.stringify(getResponse()?.contentItems)).toContain("bridge unavailable");
+    });
+
+    it("denies a call that arrives outside a run, and retires the gate afterwards", async () => {
+      const execute = vi.fn().mockResolvedValue({ status: "ok", output: "ran" });
+      const { engine, getHandler } = makeGatedEngine(execute);
+
+      for await (const _ of engine.run(makeConfig())) { /* drain */ }
+      execute.mockClear();
+
+      // The turn is over; a late tool call has no gate to consult.
+      const late = await getHandler()!("probe", { n: 2 }, {} as never);
+
+      expect(execute).not.toHaveBeenCalled();
+      expect(late.success).toBe(false);
+      expect(JSON.stringify(late.contentItems)).toContain("outside a run");
     });
   });
 });

@@ -8,6 +8,7 @@
 import type {
   AgentEngine,
   EngineCapabilities,
+  PermissionGate,
   RunConfig,
 } from "./index.js";
 import type { NormalizedEvent, Usage } from "../core/types.js";
@@ -115,16 +116,27 @@ function toolImplToCodexTool(impl: ToolImpl): Tool {
  * Build the onDynamicToolCall handler that routes codex agent tool calls
  * back to the openswarm tool implementations.
  *
- * Unknown-tool requests, validation errors, and execution exceptions are
- * all wrapped into a `{success: false}` response — the handler never throws.
+ * Unknown-tool requests, denials, validation errors, and execution exceptions
+ * are all wrapped into a `{success: false}` response — the handler never throws.
  * The returned tool's text output is sent verbatim as `inputText` content.
+ *
+ * `getGate` reads the gate from the run in progress rather than closing over
+ * one, because the handler is built at construction and `canUseTool` arrives
+ * per-run. A call that arrives with no run in flight is denied: the AgentEngine
+ * contract is that a tool executes only after the gate passes, so an absent
+ * gate is an unanswerable request, not an unrestricted one.
  */
 function buildDynamicToolCallHandler(
   tools: readonly ToolImpl[],
   cwd: string,
   host: SwarmHost | undefined,
+  getGate: () => PermissionGate | undefined,
 ): DynamicToolCallHandler {
   const byName = new Map<string, ToolImpl>(tools.map((t) => [t.spec.name, t]));
+  const refuse = (text: string): DynamicToolCallResponse => ({
+    contentItems: [{ type: "inputText", text }],
+    success: false,
+  });
   return async (
     toolName: string,
     args: unknown,
@@ -132,19 +144,33 @@ function buildDynamicToolCallHandler(
   ): Promise<DynamicToolCallResponse> => {
     const impl = byName.get(toolName);
     if (impl === undefined) {
-      return {
-        contentItems: [
-          { type: "inputText", text: `unknown tool: ${toolName}` },
-        ],
-        success: false,
-      };
+      return refuse(`unknown tool: ${toolName}`);
     }
+
+    const gate = getGate();
+    if (gate === undefined) {
+      return refuse(`permission denied: ${toolName} was called outside a run`);
+    }
+    let effectiveArgs = args;
+    try {
+      const decision = await gate(toolName, args);
+      if (!decision.allow) {
+        return refuse(`permission denied: ${decision.reason}`);
+      }
+      if (decision.updatedInput !== undefined) {
+        effectiveArgs = decision.updatedInput;
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return refuse(`permission check failed: ${msg}`);
+    }
+
     const ctx: ToolExecutionContext = {
       cwd,
       ...(host !== undefined && { host }),
     };
     try {
-      const result = await impl.execute(args, ctx);
+      const result = await impl.execute(effectiveArgs, ctx);
       if (result.status === "ok") {
         return {
           contentItems: [{ type: "inputText", text: result.output }],
@@ -193,13 +219,20 @@ export class CodexFrameworkEngine implements AgentEngine {
   private cumulativeUsage: Usage = { inputTokens: 0, outputTokens: 0 };
   /** Set to true when any error event is yielded. Subsequent run() calls fail fast (Defect 4). */
   private dead = false;
+  /** Gate belonging to the run in flight; read by the dynamic-tool handler. */
+  private currentGate: PermissionGate | undefined;
 
   constructor(opts: CodexFrameworkEngineOptions = {}) {
     const tools = opts.tools ?? [];
     const dynamicTools = tools.map(toolImplToCodexTool);
     const onDynamicToolCall =
       tools.length > 0
-        ? buildDynamicToolCallHandler(tools, opts.cwd ?? process.cwd(), opts.host)
+        ? buildDynamicToolCallHandler(
+            tools,
+            opts.cwd ?? process.cwd(),
+            opts.host,
+            () => this.currentGate,
+          )
         : undefined;
 
     if (opts.providerFactory !== undefined) {
@@ -221,6 +254,9 @@ export class CodexFrameworkEngine implements AgentEngine {
   }
 
   async *run(config: RunConfig): AsyncIterable<NormalizedEvent> {
+    // Publish this run's gate before anything can call a dynamic tool.
+    this.currentGate = config.canUseTool;
+
     // Fail fast if a previous turn errored — the engine is in a failed state
     // and the Codex thread may be unusable (Defect 4).
     if (this.dead) {
@@ -297,6 +333,9 @@ export class CodexFrameworkEngine implements AgentEngine {
         },
       };
       return;
+    } finally {
+      // Retire the gate with the turn so a late call cannot reuse it.
+      this.currentGate = undefined;
     }
 
     // Sync cumulative usage from provider after each turn.
