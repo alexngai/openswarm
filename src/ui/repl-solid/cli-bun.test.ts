@@ -72,9 +72,14 @@ describe("CLI under Bun runtime", () => {
 
   test("doctor runs all checks", async () => {
     const { exitCode, stdout } = await runCli(["doctor"], { timeoutMs: 15_000 });
-    expect(exitCode).toBe(0);
-    // Doctor emits ✓ / ⚠ / ✗ markers for each check.
-    expect(stdout).toMatch(/auth|config|install|workspace/);
+    // doctor reports a failing check by exiting nonzero, and a credential-free
+    // environment (CI, a container) legitimately fails the auth check. Assert
+    // that every check ran and reported rather than that this particular
+    // machine is fully configured.
+    expect([0, 1]).toContain(exitCode);
+    for (const check of ["auth:", "config:", "install:", "workspace:"]) {
+      expect(stdout).toContain(check);
+    }
   });
 });
 
