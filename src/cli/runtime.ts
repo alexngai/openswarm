@@ -18,6 +18,7 @@ import { detectAuth } from "../auth/status.js";
 import { AnthropicEnvAuth } from "../auth/anthropic-env-auth.js";
 import { ToolDispatcher } from "../tools/dispatcher.js";
 import { GuardRegistry } from "../harness/guards.js";
+import { FailureRecurrenceTracker } from "../harness/recurrence.js";
 import { buildTier0Tools } from "../tools/tier0/index.js";
 import { PermissionEngine } from "../permissions/index.js";
 import { NativeEngine } from "../engine/native.js";
@@ -128,6 +129,11 @@ export interface AgentRuntime {
    * `summary()` for the compliance-failure metric at session end.
    */
   readonly guards: GuardRegistry;
+  /**
+   * Repeated-failure detector wired into `dispatcher`; exposed so the CLI can
+   * fold its roll-up into the session record beside the guard summary.
+   */
+  readonly recurrence: FailureRecurrenceTracker;
   /** Tier0 + tier1 + plugin + MCP tools, filtered for the active framework. */
   readonly tools: readonly ToolImpl[];
   readonly permEngine: PermissionEngine;
@@ -207,8 +213,12 @@ export async function buildAgentRuntime(
   // reach. Guards are restrictive-only, so an empty registry is exactly
   // today's behaviour.
   const guards = new GuardRegistry();
+  // The trigger for the above: without it, guards only get installed if the
+  // model spontaneously notices a repeated failure across many turns — the
+  // very recall-under-pressure behaviour guards exist to fix.
+  const recurrence = new FailureRecurrenceTracker();
 
-  const dispatcher = new ToolDispatcher({ hooks: hookRuntime, guards });
+  const dispatcher = new ToolDispatcher({ hooks: hookRuntime, guards, recurrence });
   for (const tool of buildTier0Tools()) {
     dispatcher.register(tool);
   }
@@ -477,6 +487,7 @@ export async function buildAgentRuntime(
     runtime: {
       dispatcher,
       guards,
+      recurrence,
       tools,
       permEngine,
       auth,

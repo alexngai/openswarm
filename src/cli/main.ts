@@ -511,12 +511,16 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     // compliance-failure count (LH1) reaches downstream learning. Only emitted
     // when at least one guard was installed, to keep clean sessions unchanged.
     const guardSummary = rt.guards.summary();
-    if (guardSummary.guardCount > 0) {
+    const recurrenceSummary = rt.recurrence.summary();
+    // Emitted when the session had either a guard or a repeated failure — the
+    // latter matters even with zero guards, since "N failures recurred and the
+    // agent installed nothing" is the control observation for LH1.
+    if (guardSummary.guardCount > 0 || recurrenceSummary.repeatedFailures > 0) {
       sessionRecorder?.record({
         ts: Date.now(),
         agentId: "root" as AgentId,
         type: "harness_guard_summary",
-        payload: guardSummary,
+        payload: { guards: guardSummary, recurrence: recurrenceSummary },
         provenance: "cli/main",
       });
     }

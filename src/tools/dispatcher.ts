@@ -2,6 +2,10 @@ import type { ToolSpec } from "../core/types.js";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "./types.js";
 import type { HookRuntime } from "../hooks/runtime.js";
 import type { GuardRegistry } from "../harness/guards.js";
+import {
+  recurrenceNudge,
+  type FailureRecurrenceTracker,
+} from "../harness/recurrence.js";
 import { ToolAccesses, type ToolAccesses as ToolAccessesType } from "./access.js";
 import { ToolScheduler } from "./scheduler.js";
 import {
@@ -53,6 +57,14 @@ export interface ToolDispatcherOptions {
    * may do, so an absent registry is always the more permissive configuration.
    */
   readonly guards?: GuardRegistry;
+  /**
+   * Optional failure-recurrence tracker (docs/63 P0 trigger). When present,
+   * post-execute tool failures are counted by normalised signature and a
+   * repeated failure gets an in-band nudge appended suggesting `define_guard`.
+   * Observation happens only after `execute()`, so guard blocks and schema
+   * errors — both of which return earlier — are structurally excluded.
+   */
+  readonly recurrence?: FailureRecurrenceTracker;
 }
 
 /**
@@ -71,6 +83,8 @@ export class ToolDispatcher {
   private readonly allowedTools?: ReadonlySet<string>;
   /** Agent-synthesized compliance guards (docs/63 P0). Optional. */
   private readonly guards?: GuardRegistry;
+  /** Repeated-failure detector that triggers guard synthesis. Optional. */
+  private readonly recurrence?: FailureRecurrenceTracker;
 
   constructor(options: ToolDispatcherOptions = {}) {
     if (options.hooks !== undefined) this.hooks = options.hooks;
@@ -80,6 +94,7 @@ export class ToolDispatcher {
       this.allowedTools = new Set(options.allowedTools);
     }
     if (options.guards !== undefined) this.guards = options.guards;
+    if (options.recurrence !== undefined) this.recurrence = options.recurrence;
   }
 
   /**
@@ -213,6 +228,25 @@ export class ToolDispatcher {
         status: "error",
         message: err instanceof Error ? err.message : String(err),
       };
+    }
+
+    // Failure-recurrence trigger (docs/63 P0). Observed here — after execute —
+    // so guard blocks and schema errors, which both return earlier, are never
+    // counted. Counting a guard block would be a feedback loop; nudging on a
+    // schema error would be useless advice, since a guard cannot pre-empt
+    // validation. Best-effort: a tracker fault must not change the result.
+    if (this.recurrence !== undefined && result.status === "error") {
+      try {
+        const obs = this.recurrence.observe(name, result.message);
+        if (obs.shouldPrompt) {
+          result = {
+            status: "error",
+            message: result.message + recurrenceNudge(name, obs.count),
+          };
+        }
+      } catch {
+        // swallow — recurrence tracking is observational
+      }
     }
 
     // PostToolUse hook — best-effort; errors don't alter the tool result.
