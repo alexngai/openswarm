@@ -43,6 +43,11 @@ import {
   setPermissionRequestHandler,
   clearPermissionRequestHandler,
 } from "../tools/tier0/request_permissions.js";
+import {
+  defineGuardTool,
+  setGuardRegistry,
+  clearGuardRegistry,
+} from "../tools/tier0/define_guard.js";
 import { clampPermissionMode, permissionRank } from "../swarm/permission-order.js";
 import { StandaloneHost } from "../swarm/standalone-host.js";
 import { subscribeSwarmViewEvents } from "../swarm/swarm-view-events.js";
@@ -393,7 +398,16 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   // the handler is live. Kept out of buildTier0Tools() (which the ACP/worker
   // paths share) precisely so it's only offered where the seam is wired.
   rt.dispatcher.register(requestPermissionsTool);
-  const engineTools = [...rt.tools, requestPermissionsTool];
+
+  // 9b. docs/63 P0 — wire the harness-guard seam on the same paths. Like
+  // request_permissions this mutates the running harness, so it is kept out of
+  // buildTier0Tools() and registered only where the registry is live. Guards
+  // are restrictive-only: installing one can never grant capability, so this
+  // widens nothing even though it lets the model edit its own harness.
+  setGuardRegistry(rt.guards);
+  rt.dispatcher.register(defineGuardTool);
+
+  const engineTools = [...rt.tools, requestPermissionsTool, defineGuardTool];
 
   // 10. Build RunConfig.
   // SDK engine: empty string → falls back to the `claude_code` preset internally.
@@ -492,6 +506,20 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     // Phase 4.1e — drop the module-level escalation handler so it can't leak
     // into a subsequent run (e.g. tests, or a later ACP session in-process).
     clearPermissionRequestHandler();
+    clearGuardRegistry();
+    // docs/63 P0 — emit the guard roll-up before the transcript closes, so the
+    // compliance-failure count (LH1) reaches downstream learning. Only emitted
+    // when at least one guard was installed, to keep clean sessions unchanged.
+    const guardSummary = rt.guards.summary();
+    if (guardSummary.guardCount > 0) {
+      sessionRecorder?.record({
+        ts: Date.now(),
+        agentId: "root" as AgentId,
+        type: "harness_guard_summary",
+        payload: guardSummary,
+        provenance: "cli/main",
+      });
+    }
     await endMemorySession({
       sessionId,
       turns: memoryTurns,

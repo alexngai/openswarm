@@ -17,6 +17,7 @@ import { filterToolsForFramework } from "../tools/framework-filter.js";
 import { detectAuth } from "../auth/status.js";
 import { AnthropicEnvAuth } from "../auth/anthropic-env-auth.js";
 import { ToolDispatcher } from "../tools/dispatcher.js";
+import { GuardRegistry } from "../harness/guards.js";
 import { buildTier0Tools } from "../tools/tier0/index.js";
 import { PermissionEngine } from "../permissions/index.js";
 import { NativeEngine } from "../engine/native.js";
@@ -121,6 +122,12 @@ export type MakeEngine = (
 
 export interface AgentRuntime {
   readonly dispatcher: ToolDispatcher;
+  /**
+   * Episode-scoped harness guards (docs/63 P0). Wired into `dispatcher`;
+   * exposed so the CLI can hand it to `setGuardRegistry` and read
+   * `summary()` for the compliance-failure metric at session end.
+   */
+  readonly guards: GuardRegistry;
   /** Tier0 + tier1 + plugin + MCP tools, filtered for the active framework. */
   readonly tools: readonly ToolImpl[];
   readonly permEngine: PermissionEngine;
@@ -194,7 +201,14 @@ export async function buildAgentRuntime(
   }
   const hookRuntime = new HookRuntime(hooksConfig.config);
 
-  const dispatcher = new ToolDispatcher({ hooks: hookRuntime });
+  // Episode-scoped harness guards (docs/63 P0). The registry is always
+  // constructed — it is empty and inert until an agent installs a guard via
+  // `define_guard`, which only the paths that wire `setGuardRegistry` can
+  // reach. Guards are restrictive-only, so an empty registry is exactly
+  // today's behaviour.
+  const guards = new GuardRegistry();
+
+  const dispatcher = new ToolDispatcher({ hooks: hookRuntime, guards });
   for (const tool of buildTier0Tools()) {
     dispatcher.register(tool);
   }
@@ -462,6 +476,7 @@ export async function buildAgentRuntime(
     kind: "runtime",
     runtime: {
       dispatcher,
+      guards,
       tools,
       permEngine,
       auth,

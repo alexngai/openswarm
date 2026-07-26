@@ -162,6 +162,15 @@ export type LaneEventType =
   // ---------------- Usage aggregation (GitHub #17) ----------------
   /** Rolled-up per-member + team-wide token/cost usage across the spawn tree. */
   | "team_usage"
+  // ---------------- Harness self-adjustment (docs/63 P0) ----------------
+  /**
+   * End-of-session roll-up of agent-synthesized compliance guards: how many
+   * were installed and how many tool calls they blocked. This is the LH1
+   * compliance-failure metric (docs/64 §8) and the signal downstream learning
+   * (cognitive-core) needs in order to attribute an outcome to a harness delta
+   * rather than to a playbook (docs/64 §3.2).
+   */
+  | "harness_guard_summary"
   // ---------------- Error ----------------
   | "error";
 
