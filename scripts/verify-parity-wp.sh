@@ -130,6 +130,16 @@ run_check() {
     "$id" "$(json_escape "$desc")" "$status" "$dur" "$rc" "${log#"$REPO_ROOT"/}")")
 }
 
+# Records a fixture that the work package requires but has not implemented yet.
+# Counts as a failure so a partially built work package cannot report green.
+pending_check() {
+  local id="$1" desc="$2"
+  FAIL=$((FAIL + 1))
+  printf '  %-4s %-52s PENDING\n' "$id" "$desc"
+  CHECKS_JSON+=("$(printf '{"id":"%s","description":"%s","status":"PENDING","duration_s":0,"exit_code":null,"log":null}' \
+    "$id" "$(json_escape "$desc")")")
+}
+
 ensure_deps() {
   # The container masks node_modules with its own volume, so the first run in
   # a fresh volume installs. Later runs reuse it.
@@ -176,6 +186,29 @@ case "$WP" in
         npm test
       run_check B6 "bun test (OpenTUI/Solid components)" \
         bun test src/ui/repl-solid/
+    fi
+    ;;
+
+  WP-00)
+    # Effect-transaction walking skeleton. Threshold (docs/63): the durability
+    # invariant passes, and the encrypted 90-day default plus secure-key-missing
+    # ephemeral behaviour are explicit.
+    FIXTURES="FX-EFFECT-001,FX-CRASH-001,FX-STORAGE-DEFAULT-001"
+    if ! ensure_deps; then
+      RESULT="error"
+      FAIL=$((FAIL + 1))
+    else
+      run_check E1 "frozen contracts type-check" \
+        npx tsc -p tsconfig.build.json --noEmit
+      run_check E2 "FX-EFFECT-001 durability order and write CAS" \
+        npx vitest run src/kernel/effect-runtime.test.ts
+      run_check E3 "FX-EFFECT-001 canonical path authority" \
+        npx vitest run src/kernel/workspace-authority.test.ts
+      run_check E4 "FX-CRASH-001 journal commit and torn-write recovery" \
+        npx vitest run src/kernel/event-store.test.ts
+      run_check E5 "discriminated policy and grant scoping" \
+        npx vitest run src/kernel/policy-engine.test.ts
+      pending_check E6 "FX-STORAGE-DEFAULT-001 encryption and retention contracts"
     fi
     ;;
 

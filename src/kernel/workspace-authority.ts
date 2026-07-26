@@ -1,0 +1,170 @@
+/**
+ * Canonical path authority (docs/63 §A4, WP-00).
+ *
+ * Today every tier-0 file tool re-derives its own answer to "is this path
+ * allowed?": `path.resolve`, then `isUnderCwd`, then a `realpath` only when the
+ * leaf itself is a symlink. That last condition is the gap — a path whose
+ * *parent* is a symlink out of the workspace passes the check, because nothing
+ * resolves the ancestor chain. Only `write_file` realpaths its parent, and only
+ * after mkdir.
+ *
+ * Centralizing it here means resolution and containment happen once, before any
+ * policy decision is recorded, so a decision and the path it authorized cannot
+ * disagree. Tools receive an already-canonical path and must not re-resolve it.
+ *
+ * Containment is checked against the resolved ancestor chain, so it holds for
+ * paths that do not exist yet — the case a create has to get right.
+ */
+
+import * as crypto from "node:crypto";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import type { CanonicalPath, FileIdentity } from "./contracts.js";
+
+/** Raised when a path resolves outside the workspace, or cannot be resolved. */
+export class PathEscapeError extends Error {
+  constructor(
+    readonly requested: string,
+    readonly resolved: string,
+    readonly workspaceRoot: string,
+  ) {
+    super(
+      `path ${JSON.stringify(requested)} resolves to ${JSON.stringify(resolved)}, ` +
+        `outside workspace ${JSON.stringify(workspaceRoot)}`,
+    );
+    this.name = "PathEscapeError";
+  }
+}
+
+/** True when `candidate` is the root itself or genuinely beneath it. */
+function isWithin(candidate: string, root: string): boolean {
+  if (candidate === root) return true;
+  const rel = path.relative(root, candidate);
+  // path.relative gives ".." or an absolute path when candidate escapes.
+  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+}
+
+export class WorkspaceAuthority {
+  /** Set by init(); the symlink-resolved workspace root. */
+  private root: string | undefined;
+  private currentGeneration = 1;
+
+  constructor(private readonly declaredRoot: string) {}
+
+  /**
+   * Resolves the workspace root itself. Required before any canonicalization,
+   * because containment is meaningless if the root is a symlink whose target we
+   * never resolved (on macOS /tmp is exactly that).
+   */
+  async init(): Promise<void> {
+    this.root = await fs.realpath(this.declaredRoot);
+  }
+
+  get workspaceRoot(): string {
+    if (this.root === undefined) {
+      throw new Error("WorkspaceAuthority.init() must run before use");
+    }
+    return this.root;
+  }
+
+  /** Workspace generation; bumped by each committed mutation. */
+  get generation(): number {
+    return this.currentGeneration;
+  }
+
+  /**
+   * Advances the generation. Called by the effect runtime after a mutation
+   * commits, so a ReadSet formed earlier can be detected as stale.
+   */
+  bumpGeneration(): number {
+    this.currentGeneration += 1;
+    return this.currentGeneration;
+  }
+
+  /**
+   * Resolves a caller-supplied path and proves it stays in the workspace.
+   *
+   * Walks up to the deepest ancestor that exists, resolves *that* through
+   * realpath, then re-attaches the remaining segments. A symlinked ancestor is
+   * therefore followed and judged on its target, and a path that does not exist
+   * yet still gets a trustworthy answer.
+   */
+  async canonicalize(requested: string): Promise<CanonicalPath> {
+    const root = this.workspaceRoot;
+
+    if (requested.includes("\0")) {
+      throw new PathEscapeError(requested, requested, root);
+    }
+
+    const absolute = path.resolve(root, requested);
+
+    // Find the deepest existing ancestor. Anything below it cannot be a
+    // symlink, because it does not exist.
+    let existing = absolute;
+    const trailing: string[] = [];
+    for (;;) {
+      try {
+        existing = await fs.realpath(existing);
+        break;
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== "ENOENT" && code !== "ENOTDIR") throw err;
+        const parent = path.dirname(existing);
+        if (parent === existing) {
+          // Walked to the filesystem root without finding anything real.
+          throw new PathEscapeError(requested, absolute, root);
+        }
+        trailing.unshift(path.basename(existing));
+        existing = parent;
+      }
+    }
+
+    const canonical = trailing.length === 0 ? existing : path.join(existing, ...trailing);
+
+    if (!isWithin(canonical, root)) {
+      throw new PathEscapeError(requested, canonical, root);
+    }
+
+    const relative = canonical === root ? "" : path.relative(root, canonical);
+    return {
+      canonical,
+      workspaceRoot: root,
+      relative: relative.split(path.sep).join("/"),
+    };
+  }
+
+  /**
+   * Observes a path's current state. An absent file yields all-null fields,
+   * which is a usable expectation ("create only if still absent") rather than
+   * an error.
+   */
+  async identify(target: CanonicalPath): Promise<FileIdentity> {
+    try {
+      const bytes = await fs.readFile(target.canonical);
+      const stat = await fs.stat(target.canonical);
+      return {
+        path: target,
+        contentHash: crypto.createHash("sha256").update(bytes).digest("hex"),
+        sizeBytes: stat.size,
+        mtimeMs: stat.mtimeMs,
+      };
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "EISDIR") {
+        return { path: target, contentHash: null, sizeBytes: null, mtimeMs: null };
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Whether a file still matches a previously observed identity. This is the
+   * compare-and-swap predicate: the runtime refuses a write whose expectation
+   * no longer holds, turning a concurrent modification into a clean conflict
+   * instead of a lost update.
+   */
+  async matches(expected: FileIdentity): Promise<boolean> {
+    const actual = await this.identify(expected.path);
+    return actual.contentHash === expected.contentHash;
+  }
+}
