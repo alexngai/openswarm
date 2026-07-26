@@ -208,7 +208,8 @@ case "$WP" in
         npx vitest run src/kernel/event-store.test.ts
       run_check E5 "discriminated policy and grant scoping" \
         npx vitest run src/kernel/policy-engine.test.ts
-      pending_check E6 "FX-STORAGE-DEFAULT-001 encryption and retention contracts"
+      run_check E6 "FX-STORAGE-DEFAULT-001 encryption, retention, key fallback" \
+        npx vitest run src/kernel/storage-policy.test.ts
     fi
     ;;
 
