@@ -33,6 +33,7 @@ import {
 } from "../memory/index.js";
 import { buildTier2Tools } from "../tools/tier2/index.js";
 import { PermissionEngine } from "../permissions/index.js";
+import { makePathContainment } from "../permissions/path-containment.js";
 import { AnthropicEnvAuth } from "../auth/anthropic-env-auth.js";
 import {
   BUILTIN_ROLES,
@@ -267,18 +268,25 @@ interface TurnContext {
 }
 
 /**
- * Build a worker's `canUseTool` gate. Mode-based first; when a tool is denied
- * under the current mode AND escalation is enabled (an `escalate` callback is
- * provided — the ACP team path), the denied call is routed to the orchestrator
- * (which forwards it to the ACP client). Without `escalate`, a mode denial is
- * returned directly — identical to the prior behavior. Exported for testing.
+ * Build a worker's `canUseTool` gate. Workspace containment first, then the
+ * mode check; when a tool is denied under the current mode AND escalation is
+ * enabled (an `escalate` callback is provided — the ACP team path), the denied
+ * call is routed to the orchestrator (which forwards it to the ACP client).
+ * Without `escalate`, a mode denial is returned directly — identical to the
+ * prior behavior. Exported for testing.
+ *
+ * Containment is never escalated. An operator approving a path outside the
+ * worker's workspace is not a decision the escalation protocol is meant to
+ * carry, and a worker asking for one is a bug worth surfacing as a denial.
  */
 export function buildWorkerCanUseTool(deps: {
   dispatcher: ToolDispatcher;
   permissionEngine: PermissionEngine;
   permissionMode: PermissionMode;
+  cwd: string;
   escalate?: (req: PermissionRequest) => Promise<PermissionDecisionResponse>;
 }): (toolName: string, input: unknown) => Promise<PermissionDecision> {
+  const checkContainment = makePathContainment(deps.cwd);
   return async (toolName, input) => {
     const tool = deps.dispatcher.get(toolName);
     if (tool === undefined) {
@@ -287,6 +295,9 @@ export function buildWorkerCanUseTool(deps: {
         reason: formatUnknownToolFeedback(toolName, deps.dispatcher.list()),
       };
     }
+    const escape = await checkContainment(tool, input);
+    if (escape !== null) return escape;
+
     const decision = deps.permissionEngine.check(tool.spec);
     if (decision.allow || deps.escalate === undefined) {
       return decision;
@@ -422,6 +433,7 @@ async function executeTurn(
         dispatcher,
         permissionEngine,
         permissionMode,
+        cwd: process.cwd(),
         // Escalate denied calls to the orchestrator only when the ACP team path
         // enabled it (env flag set on the spawned worker); else deny directly.
         ...(process.env.OPENSWARM_PERMISSION_ESCALATION === "1"

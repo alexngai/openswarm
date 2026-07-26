@@ -13,15 +13,18 @@
  *
  * Ordering (doc 17 "Phase 2 — design lock" + Phase 5 stage A bash gate):
  *   1. Unknown tool → hard deny.
- *   2. Bash-validation gate fires first. Block → deny. Warn → prompt;
+ *   2. Declared paths that escape the workspace → hard deny, before any prompt.
+ *      An out-of-workspace path is not something to ask about.
+ *   3. Bash-validation gate fires next. Block → deny. Warn → prompt;
  *      approve falls through (or, when validationApproved, fast-allows to avoid
  *      a second prompt for the same call). Non-bash tools return null → fall through.
- *   3. Mode allows → fast-path allow.
- *   4. Mode denies → dispatch a prompt (headless stdin or bridge).
+ *   4. Mode allows → fast-path allow.
+ *   5. Mode denies → dispatch a prompt (headless stdin or bridge).
  */
 
 import { bashValidationGate } from "./bash-gate.js";
 import { readHeadlessApproval } from "./headless-prompt.js";
+import { makePathContainment } from "./path-containment.js";
 import type { PermissionBridge } from "./bridge.js";
 import type { SessionAllowRules } from "./session-rules.js";
 import type { PermissionEngine } from "./index.js";
@@ -58,12 +61,19 @@ export interface CanUseToolDeps {
 export function makeCanUseTool(deps: CanUseToolDeps): PermissionGate {
   const { dispatcher, permEngine, bridge, useHeadless, getCurrentMode, cwd } = deps;
   const emitLaneEvent = deps.emitLaneEvent ?? (() => {});
+  const checkContainment = makePathContainment(cwd);
 
   return async (toolName, input) => {
     const toolImpl = dispatcher.get(toolName);
     if (toolImpl === undefined) {
       return { allow: false, reason: `unknown tool: ${toolName}` };
     }
+
+    // Containment precedes every prompt. A path outside the workspace is
+    // refused rather than escalated: no permission mode grants it, so asking
+    // would only offer the user a choice they do not have.
+    const escape = await checkContainment(toolImpl, input);
+    if (escape !== null) return escape;
 
     const currentMode = getCurrentMode();
 
