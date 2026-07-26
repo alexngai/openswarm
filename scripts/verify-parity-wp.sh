@@ -246,11 +246,8 @@ case "$WP" in
         npx vitest run src/permissions/gate.test.ts src/kernel/policy-engine.test.ts
       run_check A7 "approval scope reflects what the user chose" \
         npx vitest run src/permissions/policy-broker.test.ts
-      # Per-tool containment is still five copies of resolve + isUnderCwd +
-      # leaf-only lstat. The gate now decides containment correctly, but the
-      # tool-level checks remain both duplicated and wrong about symlinked
-      # parents.
-      pending_check A8 "per-tool containment consolidated onto one helper"
+      run_check A8 "per-tool containment consolidated onto one helper" \
+        npx vitest run src/tools/workspace-path.test.ts
     fi
     ;;
 

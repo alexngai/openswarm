@@ -16,7 +16,8 @@ import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { ToolAccesses, type ToolAccesses as ToolAccessesType } from "../access.js";
-import { isUnderCwd, aliasParams } from "./internal.js";
+import { aliasParams } from "./internal.js";
+import { resolveInWorkspace } from "../workspace-path.js";
 import { atomicWrite, TocttouError, STALE_FILE_ERROR } from "./edit_file.js";
 import { hasFileBeenRead, recordFileRead, READ_BEFORE_EDIT_ERROR } from "./read-state.js";
 
@@ -91,28 +92,11 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   const input: Input = parsed.data;
 
   // Resolve and enforce workspace boundary.
-  const resolved = path.resolve(ctx.cwd, input.file_path);
-
-  if (!isUnderCwd(resolved, ctx.cwd)) {
-    return {
-      status: "error",
-      message: `path "${input.file_path}" resolves outside the workspace boundary`,
-    };
+  const contained = await resolveInWorkspace(input.file_path, ctx.cwd);
+  if (!contained.ok) {
+    return { status: "error", message: contained.message };
   }
-  try {
-    const lstat = await fs.lstat(resolved);
-    if (lstat.isSymbolicLink()) {
-      const real = await fs.realpath(resolved);
-      if (!isUnderCwd(real, ctx.cwd)) {
-        return {
-          status: "error",
-          message: `path "${input.file_path}" is a symlink pointing outside the workspace boundary`,
-        };
-      }
-    }
-  } catch {
-    // File doesn't exist yet; fall through — subsequent read will error.
-  }
+  const resolved = contained.path;
 
   // Read-before-edit contract (Claude Code alignment).
   if (!hasFileBeenRead(resolved)) {

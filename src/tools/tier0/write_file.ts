@@ -6,6 +6,7 @@ import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { ToolAccesses, type ToolAccesses as ToolAccessesType } from "../access.js";
 import { isUnderCwd, aliasParams } from "./internal.js";
+import { resolveInWorkspace } from "../workspace-path.js";
 import { hasFileBeenRead, recordFileRead, READ_BEFORE_EDIT_ERROR } from "./read-state.js";
 import { FILE_STATE_CURRENT_SUFFIX } from "./edit_file.js";
 
@@ -42,26 +43,18 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   }
   const input: Input = parsed.data;
 
-  const resolved = path.resolve(ctx.cwd, input.file_path);
-
-  // Workspace boundary check.
-  if (!isUnderCwd(resolved, ctx.cwd)) {
-    return { status: "error", message: `path escapes workspace: ${resolved}` };
+  // Workspace boundary check, including any symlink along the way.
+  const contained = await resolveInWorkspace(input.file_path, ctx.cwd);
+  if (!contained.ok) {
+    return { status: "error", message: contained.message };
   }
+  const resolved = contained.path;
 
-  // Symlink-escape guard: if the path already exists as a symlink,
-  // follow it to its real target and re-check. Also detect existence for
-  // the read-before-overwrite contract below.
+  // Existence drives the read-before-overwrite contract below.
   let fileExists = false;
   try {
-    const lstat = await fs.lstat(resolved);
+    await fs.lstat(resolved);
     fileExists = true;
-    if (lstat.isSymbolicLink()) {
-      const real = await fs.realpath(resolved);
-      if (!isUnderCwd(real, ctx.cwd)) {
-        return { status: "error", message: `path escapes workspace: ${resolved}` };
-      }
-    }
   } catch {
     // File doesn't exist yet — that's fine, we'll create it.
   }

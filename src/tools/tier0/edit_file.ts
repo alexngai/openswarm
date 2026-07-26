@@ -18,7 +18,8 @@ import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { ToolAccesses, type ToolAccesses as ToolAccessesType } from "../access.js";
-import { isUnderCwd, aliasParams } from "./internal.js";
+import { aliasParams } from "./internal.js";
+import { resolveInWorkspace } from "../workspace-path.js";
 import { hasFileBeenRead, recordFileRead, READ_BEFORE_EDIT_ERROR } from "./read-state.js";
 
 const paramsSchema = z.object({
@@ -147,29 +148,11 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   }
 
   // Resolve and enforce workspace boundary.
-  const resolved = path.resolve(ctx.cwd, input.file_path);
-
-  // Also check that the resolved path is not a symlink escaping the workspace.
-  if (!isUnderCwd(resolved, ctx.cwd)) {
-    return {
-      status: "error",
-      message: `path "${input.file_path}" resolves outside the workspace boundary`,
-    };
+  const contained = await resolveInWorkspace(input.file_path, ctx.cwd);
+  if (!contained.ok) {
+    return { status: "error", message: contained.message };
   }
-  try {
-    const lstat = await fs.lstat(resolved);
-    if (lstat.isSymbolicLink()) {
-      const real = await fs.realpath(resolved);
-      if (!isUnderCwd(real, ctx.cwd)) {
-        return {
-          status: "error",
-          message: `path "${input.file_path}" is a symlink pointing outside the workspace boundary`,
-        };
-      }
-    }
-  } catch {
-    // File doesn't exist; fall through — read below will error naturally.
-  }
+  const resolved = contained.path;
 
   // Read-before-edit contract (Claude Code alignment): the model must have
   // read the file this session so the edit operates on known content.
