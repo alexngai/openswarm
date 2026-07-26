@@ -3,6 +3,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
+import type { ToolAccesses as ToolAccessesType } from "../access.js";
+import { ToolAccesses } from "../access.js";
 import { isUnderCwd } from "../tier0/internal.js";
 
 const inputSchema = z.object({
@@ -251,8 +253,15 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   };
 }
 
+function accesses(raw: unknown, ctx: ToolExecutionContext): ToolAccessesType {
+  const parsed = inputSchema.safeParse(raw);
+  if (!parsed.success) return ToolAccesses.all();
+  return ToolAccesses.readWriteFile(path.resolve(ctx.cwd, parsed.data.notebook_path));
+}
+
 export const notebookEditTool: ToolImpl = {
   spec,
   execute,
   zodSchema: inputSchema,
+  accesses,
 };

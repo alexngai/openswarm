@@ -28,6 +28,7 @@ import * as crypto from "node:crypto";
 import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
+import { ToolAccesses } from "../access.js";
 import { aliasParams } from "./internal.js";
 import { getHardenedEnv } from "./process-hardening.js";
 import { spawnSandboxed, type SandboxPolicy } from "./sandbox.js";
@@ -314,4 +315,7 @@ export const bashTool: ToolImpl = {
   spec,
   execute,
   zodSchema: inputSchema,
+  // An arbitrary command's side effects cannot be described in terms of files,
+  // so bash is a global barrier rather than something to schedule around.
+  accesses: () => ToolAccesses.all(),
 };

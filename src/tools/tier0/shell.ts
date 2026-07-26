@@ -16,6 +16,7 @@
 import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
+import { ToolAccesses } from "../access.js";
 import { ShellSessionManager, type ShellState } from "./shell-session.js";
 import { cleanOutput } from "./output-cleanse.js";
 
@@ -150,6 +151,8 @@ export const shellExecTool: ToolImpl = {
   spec: shellExecSpec,
   execute: shellExecExecute,
   zodSchema: shellExecSchema,
+  // A shell command's side effects cannot be described in terms of files.
+  accesses: () => ToolAccesses.all(),
 };
 
 // ---------------------------------------------------------------------------
@@ -228,6 +231,8 @@ export const shellWriteTool: ToolImpl = {
   spec: shellWriteSpec,
   execute: shellWriteExecute,
   zodSchema: shellWriteSchema,
+  // Input sent to a live session runs as a command; same reasoning as above.
+  accesses: () => ToolAccesses.all(),
 };
 
 // ---------------------------------------------------------------------------
