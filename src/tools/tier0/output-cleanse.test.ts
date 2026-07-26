@@ -96,16 +96,37 @@ describe("createPipeline / cleanOutput", () => {
     expect(result.text).toContain("…<elided");
   });
 
-  it("never-worse guard reverts when output would not shrink", () => {
+  it("never-worse guard reverts cosmetic passes when output would not shrink", () => {
     const clean = "already clean short output";
     const result = cleanOutput(clean);
     expect(result.text).toBe(clean);
-    // A short secret expands to its marker (net-longer) → guard reverts.
+  });
+
+  it("never-worse guard keeps redaction even when masking grows the text", () => {
+    // Masking is longer than the secret it replaces, so the chain fails to
+    // shrink and the guard trips. Reverting to the raw text would hand the
+    // credential straight back to the model.
     const tiny = "AKIAIOSFODNN7EXAMPLE";
     const r2 = cleanOutput(tiny);
     expect(r2.degraded).toBe(true);
-    expect(r2.text).toBe(tiny);
-    expect(r2.bytesOut).toBe(r2.bytesIn);
+    expect(r2.text).not.toContain(tiny);
+    expect(r2.text).toContain("[REDACTED:");
+  });
+
+  it("redacts a stderr stream with nothing else to strip", () => {
+    // Real shape from a shell with no controlling TTY: bash warns about job
+    // control and echoes the command back, and there are no ANSI escapes to
+    // remove. Redaction is then the only transform, so it grows the text and
+    // trips the guard. This leaked an AWS key into model-facing output.
+    const command = "printf 'red key=AKIAIOSFODNN7EXAMPLE\\n'";
+    const stderr = [
+      "bash: cannot set terminal process group (7): Inappropriate ioctl for device",
+      "bash: no job control in this shell",
+      command,
+    ].join("\n");
+    const result = cleanOutput(stderr, { command });
+    expect(result.text).not.toContain("AKIAIOSFODNN7EXAMPLE");
+    expect(result.text).toContain("[REDACTED:");
   });
 
   it("respects the never-worse margin", () => {

@@ -8,7 +8,10 @@
  * A Pipeline is composed from CleanPlugin instances. Each plugin is a single
  * pass over the text; `createPipeline` chains them and wraps the chain with a
  * "never-worse" guard — if the cleaned output is not strictly shorter than the
- * original, the original is returned unchanged (degraded=true).
+ * original, the cosmetic passes are reverted (degraded=true). Passes marked
+ * `mandatory` survive that revert: redaction grows the text, so it is often
+ * the reason the chain fails to shrink, and reverting it would put the raw
+ * secret back into model-facing output.
  *
  * Default plugin chain — order matters:
  *   progress  fold \r-redrawn lines, keep only the last rendered frame
@@ -76,6 +79,12 @@ export interface CleanResult {
 
 export interface CleanPlugin {
   readonly name: string;
+  /**
+   * Marks a pass the never-worse guard may not revert. Cosmetic passes exist
+   * to save tokens and are safe to undo; a security pass is not, because
+   * undoing it puts the raw secret back in model-facing output.
+   */
+  readonly mandatory?: boolean;
   apply(text: string, ctx: CleanOptions): string;
 }
 
@@ -135,6 +144,7 @@ export function ansiPlugin(): CleanPlugin {
 export function redactPlugin(): CleanPlugin {
   return {
     name: "redact",
+    mandatory: true,
     apply(text) {
       if (process.env.OPENSWARM_OUTPUT_NO_REDACT === "1") return text;
       return redactSecrets(text).redacted;
@@ -189,7 +199,18 @@ export function createPipeline(plugins: CleanPlugin[] = defaultPlugins()): Clean
       const out = plugins.reduce((acc, plugin) => plugin.apply(acc, options), text);
       const bytesOut = Buffer.byteLength(out, "utf8");
       if (bytesOut + tunables().neverWorseMargin >= bytesIn) {
-        return { text, bytesIn, bytesOut: bytesIn, degraded: true };
+        // Degrading to the raw text would un-redact any secret the chain
+        // masked, because masking grows the text and can be the very reason
+        // the chain failed to shrink. Fall back to mandatory passes only.
+        const safe = plugins
+          .filter((plugin) => plugin.mandatory)
+          .reduce((acc, plugin) => plugin.apply(acc, options), text);
+        return {
+          text: safe,
+          bytesIn,
+          bytesOut: Buffer.byteLength(safe, "utf8"),
+          degraded: true,
+        };
       }
       return { text: out, bytesIn, bytesOut, degraded: false };
     },
