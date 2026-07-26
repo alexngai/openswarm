@@ -1,6 +1,7 @@
 import type { ToolSpec } from "../core/types.js";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "./types.js";
 import type { HookRuntime } from "../hooks/runtime.js";
+import type { GuardRegistry } from "../harness/guards.js";
 import { ToolAccesses, type ToolAccesses as ToolAccessesType } from "./access.js";
 import { ToolScheduler } from "./scheduler.js";
 import {
@@ -44,6 +45,14 @@ export interface ToolDispatcherOptions {
    * (M3a Phase 6) writes this from the worker entry.
    */
   readonly allowedTools?: readonly string[];
+  /**
+   * Optional agent-synthesized guard registry (docs/63 P0, docs/64 §3.1).
+   * When present, `dispatch()` evaluates guards registered for the target tool
+   * *after* schema validation and *before* `execute()`; a firing guard blocks
+   * the call. Guards are restrictive-only — they can never widen what a tool
+   * may do, so an absent registry is always the more permissive configuration.
+   */
+  readonly guards?: GuardRegistry;
 }
 
 /**
@@ -60,6 +69,8 @@ export class ToolDispatcher {
    * allowlist. `undefined` means "no filtering" (prior behaviour).
    */
   private readonly allowedTools?: ReadonlySet<string>;
+  /** Agent-synthesized compliance guards (docs/63 P0). Optional. */
+  private readonly guards?: GuardRegistry;
 
   constructor(options: ToolDispatcherOptions = {}) {
     if (options.hooks !== undefined) this.hooks = options.hooks;
@@ -68,6 +79,7 @@ export class ToolDispatcher {
     if (options.allowedTools !== undefined) {
       this.allowedTools = new Set(options.allowedTools);
     }
+    if (options.guards !== undefined) this.guards = options.guards;
   }
 
   /**
@@ -166,6 +178,25 @@ export class ToolDispatcher {
             inputSchema: tool.spec.inputSchema,
             validationMessage: result.error.message,
           }),
+        };
+      }
+    }
+
+    // Agent-synthesized compliance guards (docs/63 P0, docs/64 §3.1).
+    // Evaluated AFTER schema validation — so a guard predicate may assume
+    // well-formed input and does not duplicate the free/exact schema check —
+    // and BEFORE execute, so a blocked call has no side effects. A firing
+    // guard returns early without PostToolUse, matching the hook-deny path
+    // above: the tool never ran, so there is no result to post about.
+    if (this.guards !== undefined) {
+      const verdict = this.guards.evaluate(name, effectiveInput);
+      if (verdict.blocked) {
+        return {
+          status: "error",
+          message:
+            verdict.message !== undefined
+              ? `Blocked by harness guard ${verdict.guardId}: ${verdict.message}`
+              : `Blocked by harness guard ${verdict.guardId}`,
         };
       }
     }
