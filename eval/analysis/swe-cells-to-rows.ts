@@ -37,13 +37,16 @@ function main(argv: string[]): number {
     const model = modelOf(cell, arm!);
     if (model === "unknown") continue;
     const fresh = freshTokens(cell);
+    // Deployable escalation signal (docs/62 §5.2): the compile/authored-repro confidence
+    // logged by CS_SIGNAL=1 runs. null when the cell predates the signal instrumentation.
+    const conf = (cell as { metadata?: { cascade?: { confidence?: number } } }).metadata?.cascade?.confidence;
     process.stdout.write(
       JSON.stringify({
         task_id: inst,
         model,
         seed: Number(seed),
         correct: isCorrect(cell) ? 1 : 0,
-        sig_visible: null,
+        sig_visible: typeof conf === "number" ? conf : null,
         tok_in: 0,
         tok_out: fresh,
         tok_total: fresh,
