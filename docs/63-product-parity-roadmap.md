@@ -585,6 +585,27 @@ Recommended adjustments:
 
 Net effect on the R1 budget is approximately neutral: `WP-00` and `WP-07` both shrink, and the new adoption package absorbs the difference. The schedule risk is not the totals but the ordering, because the adoption package is on the critical path of every enforcement package that follows it.
 
+### `WP-00a` Production adoption of the frozen contracts — 4 person-weeks, A+C
+
+The package the re-estimate recommends, now underway. Gate: `./scripts/verify-parity-wp.sh WP-00a <cell>`. Fixtures `FX-ESCAPE-001` (containment corpus, including the symlinked-parent case) and `FX-GATE-001` (every engine gates tool calls).
+
+Mapping the production surface corrected the re-estimate on three points.
+
+**Three chokepoints, not two.** Alongside `ToolDispatcher` and the Claude SDK MCP handler there is a third: `CodexFrameworkEngine`'s dynamic-tool handler, which called `impl.execute` directly. The three are not ordered by strictness — the dispatcher validates input and runs hooks but delegates permissions to the engine, the SDK path checks permissions but skips validation and hooks, and the Codex path did none of the three — so no path can simply adopt the strictest.
+
+**Collapsing them is the wrong first move.** Routing the SDK path through `ToolDispatcher` would fire every user `PreToolUse` hook twice, once from the SDK's own hook mechanism and once from the dispatcher's. The cheaper seam is `canUseTool`: all four engines already call it before executing anything, and its two implementations — `makeCanUseTool` and `buildWorkerCanUseTool` — already resolve the tool through `dispatcher.get`, so both can read a tool's `accesses` declaration. Making the gate resource-aware reaches every engine without touching one. Uniform hooks and validation remain a defect, but a separable one.
+
+**Two more findings, both containment.** `notebook_edit` and `view_image` resolved absolute paths straight through with no boundary check, reaching any file on the host; `notebook_edit` is the write side and `view_image` contradicts the invariant `read_file` enforces explicitly. Separately, `bash`, `shell_exec`, and `shell_write` declared neither `accesses` nor `concurrencySafe: false`, so the scheduler's optimistic default made an arbitrary shell command eligible to run in parallel with a write to any path it might touch. This is the third pass to surface findings no audit named, which continues to argue the remediation allocation is a floor.
+
+Sequencing, as gated by `A1`–`A8`:
+
+- Declare resource access honestly on every tool that touches files or runs commands (`A1`). The scheduler's optimistic default is correct for scheduling and unsafe for authorization, so the declarations are fixed rather than the default inverted.
+- Decide containment once, in the gate, through `WorkspaceAuthority` (`A2`, `A4`). This closes the symlinked-parent gap for every tool and every engine at once.
+- Gate the Codex path (`A3`).
+- Authorize through the discriminated `PolicyEngine`, back `ApprovalBroker` with the existing TUI, headless, and ACP bridges, then retire the thirteen per-tool `isUnderCwd` checks (`A6`–`A8`, outstanding).
+
+Until `A6` lands, a tool that declares `all()` or declares nothing is still judged by tool name alone. That is the status quo rather than a regression, but it is why the per-tool checks stay for now: central containment has no opinion on a resource it cannot name.
+
 ## Six staged releases
 
 ### R1 — Contained foundation, weeks 1–9

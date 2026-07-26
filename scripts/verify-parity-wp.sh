@@ -34,10 +34,15 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
-# Work packages defined in docs/63. Only `baseline` has an implemented gate;
-# the rest are declared so --list stays honest about what remains.
+# Work packages defined in docs/63, plus WP-00a — the adoption package the
+# WP-00 re-estimate recommends inserting before WP-03, which moves the
+# production path onto the frozen contracts. Packages without an implemented
+# gate are still declared so --list stays honest about what remains.
 KNOWN_WPS=(baseline)
-for n in $(seq -w 0 33); do KNOWN_WPS+=("WP-$n"); done
+for n in $(seq -w 0 33); do
+  KNOWN_WPS+=("WP-$n")
+  [[ "$n" == "00" ]] && KNOWN_WPS+=("WP-00a")
+done
 
 usage() {
   sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
@@ -46,9 +51,13 @@ usage() {
 list_targets() {
   echo "Implemented gates:"
   echo "  baseline   existing repository suite (mirrors .github/workflows/ci.yml)"
+  echo "  WP-00      effect-transaction walking skeleton"
+  echo "  WP-00a     production adoption of the frozen contracts (partial)"
   echo
   echo "Declared but not yet implemented (exit 2):"
-  printf '  %s\n' "${KNOWN_WPS[@]:1}" | paste -sd' ' - | fold -sw 76 | sed 's/^/  /'
+  printf '%s\n' "${KNOWN_WPS[@]:1}" \
+    | grep -vx -e 'WP-00' -e 'WP-00a' \
+    | paste -sd' ' - | fold -sw 76 | sed 's/^/  /'
   echo
   echo "See docs/63-product-parity-roadmap.md for each gate's fixtures and threshold."
 }
@@ -210,6 +219,35 @@ case "$WP" in
         npx vitest run src/kernel/policy-engine.test.ts
       run_check E6 "FX-STORAGE-DEFAULT-001 encryption, retention, key fallback" \
         npx vitest run src/kernel/storage-policy.test.ts
+    fi
+    ;;
+
+  WP-00a)
+    # Production adoption of the frozen contracts. WP-00 proved the kernel in
+    # isolation; this gate asks whether the code users actually run goes
+    # through it. Threshold: every engine gates tool calls, every tool declares
+    # what it touches, and containment is decided in one place.
+    FIXTURES="FX-ESCAPE-001,FX-GATE-001"
+    if ! ensure_deps; then
+      RESULT="error"
+      FAIL=$((FAIL + 1))
+    else
+      run_check A1 "resource-access declarations are honest" \
+        npx vitest run src/tools/access-contract.test.ts
+      run_check A2 "FX-ESCAPE-001 central containment, incl. symlinked parent" \
+        npx vitest run src/permissions/path-containment.test.ts
+      run_check A3 "FX-GATE-001 every engine gates tool calls" \
+        npx vitest run src/engine/codex-framework.test.ts
+      run_check A4 "tier-1 file tools confined" \
+        npx vitest run src/tools/tier1/notebook_edit.test.ts src/tools/tier1/view_image.test.ts
+      run_check A5 "permission gate suite intact" \
+        npx vitest run src/permissions/
+      # Phase B2/C/D. Until authorization is discriminated, a tool that
+      # declares all() or declares nothing is still judged by tool name alone,
+      # and the per-tool isUnderCwd checks cannot be retired.
+      pending_check A6 "discriminated authorization via PolicyEngine"
+      pending_check A7 "approval broker backs TUI, headless, and ACP grants"
+      pending_check A8 "per-tool isUnderCwd checks retired"
     fi
     ;;
 
