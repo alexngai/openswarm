@@ -587,7 +587,7 @@ Net effect on the R1 budget is approximately neutral: `WP-00` and `WP-07` both s
 
 ### `WP-00a` Production adoption of the frozen contracts — 4 person-weeks, A+C
 
-The package the re-estimate recommends, now underway. Gate: `./scripts/verify-parity-wp.sh WP-00a <cell>`. Fixtures `FX-ESCAPE-001` (containment corpus, including the symlinked-parent case) and `FX-GATE-001` (every engine gates tool calls).
+The package the re-estimate recommends. Gate: `./scripts/verify-parity-wp.sh WP-00a <cell>`, `A1`–`A8` passing. Fixtures `FX-ESCAPE-001` (containment corpus, including the symlinked-parent case) and `FX-GATE-001` (every engine gates tool calls). Delivered in well under the 4 person-weeks estimated, for a reason worth carrying forward: the estimate assumed the chokepoints had to be collapsed, and they did not.
 
 Mapping the production surface corrected the re-estimate on three points.
 
@@ -597,14 +597,15 @@ Mapping the production surface corrected the re-estimate on three points.
 
 **Two more findings, both containment.** `notebook_edit` and `view_image` resolved absolute paths straight through with no boundary check, reaching any file on the host; `notebook_edit` is the write side and `view_image` contradicts the invariant `read_file` enforces explicitly. Separately, `bash`, `shell_exec`, and `shell_write` declared neither `accesses` nor `concurrencySafe: false`, so the scheduler's optimistic default made an arbitrary shell command eligible to run in parallel with a write to any path it might touch. This is the third pass to surface findings no audit named, which continues to argue the remediation allocation is a floor.
 
-Sequencing, as gated by `A1`–`A8`:
+What landed, as gated by `A1`–`A8`:
 
-- Declare resource access honestly on every tool that touches files or runs commands (`A1`). The scheduler's optimistic default is correct for scheduling and unsafe for authorization, so the declarations are fixed rather than the default inverted.
-- Decide containment once, in the gate, through `WorkspaceAuthority` (`A2`, `A4`). This closes the symlinked-parent gap for every tool and every engine at once.
-- Gate the Codex path (`A3`).
-- Authorize through the discriminated `PolicyEngine`, back `ApprovalBroker` with the existing TUI, headless, and ACP bridges, then retire the thirteen per-tool `isUnderCwd` checks (`A6`–`A8`, outstanding).
+- Resource access is declared honestly by every tool that touches files or runs commands (`A1`). The scheduler's optimistic default is correct for scheduling and unsafe for authorization, so the declarations were fixed rather than the default inverted.
+- Containment is decided once, in the gate, through `WorkspaceAuthority` (`A2`, `A4`), closing the symlinked-parent gap for every tool and every engine at once.
+- The Codex path is gated (`A3`).
+- Calls that name their paths are authorized through the discriminated `PolicyEngine`, with `ApprovalBroker` backed by the existing TUI, headless, and ACP bridges (`A6`, `A7`). An approval now binds to a canonical resource, so it can be remembered; `rulesForMode` keeps the operation-class model in exact agreement with `PermissionMode` for the classes derived today, so the change is to when a decision is remembered rather than to whether it is allowed.
+- The seven per-tool containment checks are consolidated onto one helper (`A8`).
 
-Until `A6` lands, a tool that declares `all()` or declares nothing is still judged by tool name alone. That is the status quo rather than a regression, but it is why the per-tool checks stay for now: central containment has no opinion on a resource it cannot name.
+Two limits are deliberate and carry into `WP-03`. A tool that declares `all()` or declares nothing — `bash`, plugin tools, MCP tools — is still judged by tool name alone, because central containment has no opinion on a resource it cannot name; expressing "unknown resource" as something other than silence is the remaining work. And the per-tool checks were consolidated rather than deleted: `canUseTool` decides before execution, and a path can change in between, so a second check at write time closes a race that one up-front check cannot.
 
 ## Six staged releases
 
