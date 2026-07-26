@@ -84,11 +84,21 @@ export function resourceOf(request: OperationRequest): string {
 export class PolicyEngine {
   /** Session-scoped grants, keyed by `class\0resource`. */
   private readonly sessionGrants = new Set<string>();
+  private readonly rulesOf: () => PolicyRules;
 
+  /**
+   * `rules` may be a function so a caller whose policy changes mid-session —
+   * the CLI's `/permissions` and `request_permissions` elevation both do — is
+   * read fresh per call rather than frozen at construction. Grants outlive a
+   * rule change on purpose: they were approved for an exact resource, and a
+   * later widening of the standing rules does not invalidate that consent.
+   */
   constructor(
-    private readonly rules: PolicyRules,
+    rules: PolicyRules | (() => PolicyRules),
     private readonly broker?: ApprovalBroker,
-  ) {}
+  ) {
+    this.rulesOf = typeof rules === "function" ? rules : () => rules;
+  }
 
   private static key(operationClass: OperationClass, resource: string): string {
     return `${operationClass}\0${resource}`;
@@ -97,7 +107,7 @@ export class PolicyEngine {
   async authorize(request: OperationRequest): Promise<PolicyDecision> {
     const operationClass = request.kind;
     const resource = resourceOf(request);
-    const rule = this.rules[operationClass];
+    const rule = this.rulesOf()[operationClass];
 
     if (rule === "allow") {
       return { allowed: true, source: `rule:${operationClass}=allow` };

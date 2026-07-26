@@ -242,12 +242,15 @@ case "$WP" in
         npx vitest run src/tools/tier1/notebook_edit.test.ts src/tools/tier1/view_image.test.ts
       run_check A5 "permission gate suite intact" \
         npx vitest run src/permissions/
-      # Phase B2/C/D. Until authorization is discriminated, a tool that
-      # declares all() or declares nothing is still judged by tool name alone,
-      # and the per-tool isUnderCwd checks cannot be retired.
-      pending_check A6 "discriminated authorization via PolicyEngine"
-      pending_check A7 "approval broker backs TUI, headless, and ACP grants"
-      pending_check A8 "per-tool isUnderCwd checks retired"
+      run_check A6 "discriminated authorization binds grants to a resource" \
+        npx vitest run src/permissions/gate.test.ts src/kernel/policy-engine.test.ts
+      run_check A7 "approval scope reflects what the user chose" \
+        npx vitest run src/permissions/policy-broker.test.ts
+      # Per-tool containment is still five copies of resolve + isUnderCwd +
+      # leaf-only lstat. The gate now decides containment correctly, but the
+      # tool-level checks remain both duplicated and wrong about symlinked
+      # parents.
+      pending_check A8 "per-tool containment consolidated onto one helper"
     fi
     ;;
 

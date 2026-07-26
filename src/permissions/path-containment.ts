@@ -32,7 +32,9 @@
  * can express "unknown resource" as something other than silence.
  */
 
+import { randomUUID } from "node:crypto";
 import { WorkspaceAuthority, PathEscapeError } from "../kernel/workspace-authority.js";
+import type { OperationRequest } from "../kernel/contracts.js";
 import type { ToolImpl } from "../tools/types.js";
 import type { ToolFileAccess } from "../tools/access.js";
 import type { PermissionDecision } from "../engine/index.js";
@@ -45,6 +47,25 @@ export type PathContainmentCheck = (
   toolImpl: ToolImpl,
   input: unknown,
 ) => Promise<PermissionDecision | null>;
+
+/**
+ * What a tool call's declaration amounts to once its paths are canonicalized.
+ *
+ * `unknown` is deliberately distinct from an empty request list. A tool that
+ * declares `none()` genuinely touches no files; a tool that declares `all()`
+ * or nothing at all touches an unknowable set. Collapsing the two would let
+ * the second be authorized as though it were the first.
+ */
+export type DerivedRequests =
+  | { readonly kind: "denied"; readonly decision: PermissionDecision }
+  | { readonly kind: "unknown" }
+  | { readonly kind: "requests"; readonly requests: readonly OperationRequest[] };
+
+/** Canonicalizes a tool call's declared resources into policy requests. */
+export type ResourceDeriver = (
+  toolImpl: ToolImpl,
+  input: unknown,
+) => Promise<DerivedRequests>;
 
 /** Human-readable operation label for a denial message. */
 function operationLabel(access: ToolFileAccess): string {
@@ -60,16 +81,21 @@ function operationLabel(access: ToolFileAccess): string {
   }
 }
 
-export function makePathContainment(cwd: string): PathContainmentCheck {
+/** A declared file operation that mutates, versus one that only observes. */
+function isWrite(access: ToolFileAccess): boolean {
+  return access.operation === "write" || access.operation === "readwrite";
+}
+
+export function makeResourceDeriver(cwd: string): ResourceDeriver {
   const authority = new WorkspaceAuthority(cwd);
   // The workspace root is realpath'd once. Containment is meaningless against
-  // an unresolved root — on macOS /tmp is itself a symlink — so every check
+  // an unresolved root — on macOS /tmp is itself a symlink — so every call
   // waits on the same initialization.
   let ready: Promise<void> | undefined;
   const init = (): Promise<void> => (ready ??= authority.init());
 
   return async (toolImpl, input) => {
-    if (toolImpl.accesses === undefined) return null;
+    if (toolImpl.accesses === undefined) return { kind: "unknown" };
 
     let declared;
     try {
@@ -78,30 +104,71 @@ export function makePathContainment(cwd: string): PathContainmentCheck {
       // A declaration that throws on its own input is a bug in the tool, not a
       // statement about paths. The dispatcher treats this as `all()`; matching
       // that keeps one interpretation of a broken declaration.
-      return null;
+      return { kind: "unknown" };
     }
 
+    if (declared.some((a) => a.kind === "all")) return { kind: "unknown" };
+
     const files = declared.filter((a): a is ToolFileAccess => a.kind === "file");
-    if (files.length === 0) return null;
+    if (files.length === 0) return { kind: "requests", requests: [] };
 
     await init();
 
+    const requests: OperationRequest[] = [];
     for (const access of files) {
+      let path;
       try {
-        await authority.canonicalize(access.path);
+        path = await authority.canonicalize(access.path);
       } catch (err) {
         if (err instanceof PathEscapeError) {
           return {
-            allow: false,
-            reason:
-              `${toolImpl.spec.name} would ${operationLabel(access)} ` +
-              `${JSON.stringify(access.path)}, which resolves outside the workspace`,
+            kind: "denied",
+            decision: {
+              allow: false,
+              reason:
+                `${toolImpl.spec.name} would ${operationLabel(access)} ` +
+                `${JSON.stringify(access.path)}, which resolves outside the workspace`,
+            },
           };
         }
         throw err;
       }
+
+      // operationId is assigned per authorization attempt rather than per
+      // effect: nothing is executed here, so this identifies the decision.
+      const operationId = randomUUID();
+      requests.push(
+        isWrite(access)
+          ? {
+              kind: "file.write",
+              operationId,
+              idempotency: "mutating",
+              toolName: toolImpl.spec.name,
+              path,
+              expected: await authority.identify(path),
+            }
+          : {
+              kind: "file.read",
+              operationId,
+              idempotency: "idempotent",
+              toolName: toolImpl.spec.name,
+              path,
+            },
+      );
     }
 
-    return null;
+    return { kind: "requests", requests };
+  };
+}
+
+/**
+ * Containment-only view of the deriver, for callers that need the boundary
+ * enforced but are not yet authorizing per resource.
+ */
+export function makePathContainment(cwd: string): PathContainmentCheck {
+  const derive = makeResourceDeriver(cwd);
+  return async (toolImpl, input) => {
+    const derived = await derive(toolImpl, input);
+    return derived.kind === "denied" ? derived.decision : null;
   };
 }
