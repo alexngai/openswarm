@@ -1,0 +1,8 @@
+# Dockerfile.parity is a toolchain-only image: it COPYs nothing, because
+# compose.parity.yml bind-mounts the working tree at run time. Excluding the
+# whole context keeps `docker compose build` from uploading a multi-gigabyte
+# node_modules/packages tree it would never read.
+#
+# If a future stage genuinely needs to COPY something, un-ignore that path
+# explicitly with a `!` rule rather than deleting this one.
+*
