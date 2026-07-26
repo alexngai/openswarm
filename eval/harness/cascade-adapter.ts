@@ -157,15 +157,27 @@ export class CascadeAdapter implements ExecutionAdapter {
     // real cascade would route on. Oracle-free (repro is the tier's own test, not the SWE
     // hidden test). Gate errors count as fail.
     let confidence: number | undefined;
+    let signalDetail: { gateExits: number[]; reproExists: boolean } | undefined;
     if (this.opts.signalCommands?.length) {
       let passed = 0;
+      const gateExits: number[] = [];
       for (const sc of this.opts.signalCommands) {
         try {
           const g = await ws.run(sc, { env, timeoutMs: 120_000 });
+          gateExits.push(g.exitCode);
           if (g.exitCode === 0) passed++;
-        } catch { /* gate errored → fail */ }
+        } catch { gateExits.push(-1); /* gate errored → fail */ }
       }
       confidence = passed / this.opts.signalCommands.length;
+      // Diagnostic (F16): did the tier actually author a surviving repro? Distinguishes a
+      // git-cleaned/never-authored repro (repro gate fails for a plumbing/capability reason)
+      // from a genuinely-failing one.
+      let reproExists = false;
+      try {
+        const rx = await ws.run("test -f /testbed/repro_test.py && echo YES || echo NO", { env, timeoutMs: 30_000 });
+        reproExists = rx.stdout.includes("YES");
+      } catch { /* ignore */ }
+      signalDetail = { gateExits, reproExists };
     }
 
     const teamUsage = await readTeamUsage(ws, resultsPath);
@@ -208,6 +220,7 @@ export class CascadeAdapter implements ExecutionAdapter {
           ...(teamUsage?.team.calls !== undefined && { teamCalls: teamUsage.team.calls }),
           exitCode: r.exitCode,
           ...(confidence !== undefined && { confidence }),
+          ...(signalDetail !== undefined && { signalDetail }),
           ...(r.exitCode !== 0 && { stderrTail: r.stderr.slice(-2000) }),
         },
       },
