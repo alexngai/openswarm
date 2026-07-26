@@ -561,7 +561,29 @@ Dependency- and owner-constrained schedule:
 
 The four-engineer 39-week and two-engineer 75-week figures are capacity-only bounds, not approved dependency schedules. Either staffing variant requires its own resource-constrained schedule before commitment.
 
-The estimates are hypotheses. `WP-00` produces a bottom-up re-estimate. Rebaseline when committed work exceeds 102 person-weeks, quality allocation falls below 36, an owner exceeds phase capacity, or the third engineer is unavailable by R2.
+The estimates are hypotheses. `WP-00` produces a bottom-up re-estimate; see the next section for its findings. Rebaseline when committed work exceeds 102 person-weeks, quality allocation falls below 36, an owner exceeds phase capacity, or the third engineer is unavailable by R2.
+
+### `WP-00` re-estimate
+
+The walking skeleton is built and its gate passes: `compose.parity.yml`, `scripts/verify-parity-wp.sh`, the frozen contracts, a durable journal, canonical path authority, discriminated policy, the effect transaction with write compare-and-swap, the seven-point fault matrix, and the storage/encryption contracts. The architecture review of the transaction ordering remains outstanding, and is the one part of the gate a test cannot discharge.
+
+Four findings change the estimates.
+
+**The journal was an unlisted prerequisite.** `WP-00` specifies "durably append `AttemptPrepared`" as though an append primitive existed. None did. All four existing lane-event writers use `createWriteStream` with no flush discipline, and `session-recorder` opens with `flags: "w"`, truncating per session. Telemetry survives that; an attempt journal does not, because "did this effect already run?" must be answerable after a hard kill. A store with explicit commit semantics was therefore part of `WP-00` rather than of `WP-07`. Consolidating the four existing writers onto it is real work that no package currently owns.
+
+**The estimate priced design, and the cost is adoption.** The contracts and skeleton are greenfield with zero integration, and landed well inside 4 person-weeks. That is not evidence the program is cheaper than budgeted. Nothing in `src/tools/` or `src/engine/` uses the new contracts yet: the skeleton runs beside `ToolDispatcher` and `canUseTool`, not inside them. The expensive work is migrating the six tier-0 tools that carry duplicated `path.resolve` + `isUnderCwd` logic and routing the permission gate through the discriminated `PolicyEngine` — none of which `WP-00` claimed, and all of which later packages assume is already done.
+
+**There are two tool-execution chokepoints, not one.** `WP-03`, `WP-04`, and `WP-09` are written as though authorization and execution funnel through `ToolDispatcher`. The Claude Agent SDK path does not: its MCP handler calls `toolImpl.execute` directly, bypassing the dispatcher's hooks and dispatch-time validation. Any package that enforces policy at the dispatcher enforces it for one engine family and not the other. Each of those three packages needs a second wiring path, or an earlier package has to collapse the two.
+
+**The audit-derived P0 list is incomplete.** Surveying the path helpers for `WP-00` surfaced a containment bug that no audit finding named: `isUnderCwd` resolves symlinks only when the leaf is a symlink, so a path through a symlinked parent directory escapes the workspace, and only `write_file` realpaths its parent. The kernel authority closes this; every tier-0 tool still carries it. Expect comparable findings during adoption, and treat the remediation allocation as a floor rather than an estimate.
+
+Recommended adjustments:
+
+- Add an adoption package between `WP-00` and `WP-03` that moves the production path onto the frozen contracts and consolidates the event writers. Estimate 4 person-weeks, A+C. Nothing downstream that assumes a single canonicalization or policy chokepoint is real until it lands.
+- Re-scope `WP-07` to exclude journal construction, which is done, and to include migrating the existing writers.
+- Add the second SDK wiring path to `WP-03`, `WP-04`, and `WP-09`, or make collapsing the two chokepoints an explicit goal of the adoption package.
+
+Net effect on the R1 budget is approximately neutral: `WP-00` and `WP-07` both shrink, and the new adoption package absorbs the difference. The schedule risk is not the totals but the ordering, because the adoption package is on the critical path of every enforcement package that follows it.
 
 ## Six staged releases
 
