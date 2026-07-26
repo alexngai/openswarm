@@ -275,3 +275,89 @@ describe("notebookEditTool", () => {
     expect(ids[ids.length - 1]).toBe("cell-4");
   });
 });
+
+describe("notebookEditTool workspace boundary", () => {
+  it("refuses an absolute path outside the workspace and leaves it untouched", async () => {
+    const dir = setupTmp();
+    const outside = fs.mkdtempSync(path.join(fs.realpathSync("/tmp"), "nb-outside-"));
+    try {
+      const target = writeTmpNotebook(outside, "victim.ipynb", [
+        { id: "cell-1", cell_type: "code", source: "original", metadata: {} },
+      ]);
+      const before = fs.readFileSync(target, "utf8");
+
+      const result = await notebookEditTool.execute(
+        { notebook_path: target, cell_id: "cell-1", new_source: "pwned", edit_mode: "replace" },
+        ctx(dir),
+      );
+
+      expect(result.status).toBe("error");
+      expect(fs.readFileSync(target, "utf8")).toBe(before);
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a relative path that traverses out of the workspace", async () => {
+    const dir = setupTmp();
+    const outside = fs.mkdtempSync(path.join(fs.realpathSync("/tmp"), "nb-outside-"));
+    try {
+      const target = writeTmpNotebook(outside, "victim.ipynb", [
+        { id: "cell-1", cell_type: "code", source: "original", metadata: {} },
+      ]);
+      const before = fs.readFileSync(target, "utf8");
+
+      const result = await notebookEditTool.execute(
+        {
+          notebook_path: path.relative(dir, target),
+          cell_id: "cell-1",
+          new_source: "pwned",
+          edit_mode: "replace",
+        },
+        ctx(dir),
+      );
+
+      expect(result.status).toBe("error");
+      expect(fs.readFileSync(target, "utf8")).toBe(before);
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a symlink inside the workspace that points outside it", async () => {
+    const dir = setupTmp();
+    const outside = fs.mkdtempSync(path.join(fs.realpathSync("/tmp"), "nb-outside-"));
+    try {
+      const target = writeTmpNotebook(outside, "victim.ipynb", [
+        { id: "cell-1", cell_type: "code", source: "original", metadata: {} },
+      ]);
+      const before = fs.readFileSync(target, "utf8");
+      const link = path.join(dir, "link.ipynb");
+      fs.symlinkSync(target, link);
+
+      const result = await notebookEditTool.execute(
+        { notebook_path: link, cell_id: "cell-1", new_source: "pwned", edit_mode: "replace" },
+        ctx(dir),
+      );
+
+      expect(result.status).toBe("error");
+      expect(fs.readFileSync(target, "utf8")).toBe(before);
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("still edits a notebook addressed by an absolute path inside the workspace", async () => {
+    const dir = setupTmp();
+    const result = await notebookEditTool.execute(
+      {
+        notebook_path: path.join(dir, "simple.ipynb"),
+        new_source: "z = 1",
+        cell_type: "code",
+        edit_mode: "insert",
+      },
+      ctx(dir),
+    );
+    expect(result.status).toBe("ok");
+  });
+});

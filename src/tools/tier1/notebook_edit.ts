@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
+import { isUnderCwd } from "../tier0/internal.js";
 
 const inputSchema = z.object({
   notebook_path: z.string().endsWith(".ipynb"),
@@ -85,9 +86,31 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   const input: Input = parsed.data;
 
   // Resolve path
-  const notebookPath = path.isAbsolute(input.notebook_path)
-    ? input.notebook_path
-    : path.resolve(ctx.cwd, input.notebook_path);
+  const notebookPath = path.resolve(ctx.cwd, input.notebook_path);
+
+  // Workspace boundary — this tool writes, so an absolute path must not be
+  // able to reach a notebook outside the agent's workspace.
+  if (!isUnderCwd(notebookPath, ctx.cwd)) {
+    return {
+      status: "error",
+      message: `path "${input.notebook_path}" resolves outside the workspace boundary`,
+    };
+  }
+  // Symlink-escape guard (only when the notebook exists and is a symlink).
+  try {
+    const lstat = await fs.promises.lstat(notebookPath);
+    if (lstat.isSymbolicLink()) {
+      const real = await fs.promises.realpath(notebookPath);
+      if (!isUnderCwd(real, ctx.cwd)) {
+        return {
+          status: "error",
+          message: `path "${input.notebook_path}" is a symlink pointing outside the workspace boundary`,
+        };
+      }
+    }
+  } catch {
+    // Absent file — the read below produces the appropriate error.
+  }
 
   // Read file
   let raw_content: string;

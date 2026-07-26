@@ -11,6 +11,7 @@ import * as path from "node:path";
 import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
+import { isUnderCwd } from "../tier0/internal.js";
 
 const inputSchema = z.object({
   path: z.string().describe("Absolute or relative path to the image file"),
@@ -49,9 +50,29 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   }
   const input: Input = parsed.data;
 
-  const resolved = path.isAbsolute(input.path)
-    ? input.path
-    : path.resolve(ctx.cwd, input.path);
+  const resolved = path.resolve(ctx.cwd, input.path);
+
+  // Workspace boundary — read_file enforces the same one so that read-only mode
+  // is genuinely confined to the workspace; an image is no less exfiltrable.
+  if (!isUnderCwd(resolved, ctx.cwd)) {
+    return {
+      status: "error",
+      message: `path "${input.path}" resolves outside the workspace boundary`,
+    };
+  }
+  try {
+    if (fs.lstatSync(resolved).isSymbolicLink()) {
+      const real = fs.realpathSync(resolved);
+      if (!isUnderCwd(real, ctx.cwd)) {
+        return {
+          status: "error",
+          message: `path "${input.path}" is a symlink pointing outside the workspace boundary`,
+        };
+      }
+    }
+  } catch {
+    // Absent file — the stat below produces the appropriate error.
+  }
 
   const ext = path.extname(resolved).toLowerCase();
   const mime = SUPPORTED_EXTENSIONS.get(ext);
