@@ -62,6 +62,11 @@ All ACP stages are shipped. The living references:
 - [41-tui-redesign.md](./41-tui-redesign.md) — OpenTUI/Solid REPL redesign (active)
 - [49-tui-parity-plan.md](./49-tui-parity-plan.md) — parity plan vs Claude Code/Codex/opencode: syntax highlighting, `<diff>`/`<code>` adoption, transcript ergonomics, half-wired feature fixes (plan)
 
+## Product audits & roadmap
+
+- [58-coding-agent-product-review.md](./58-coding-agent-product-review.md) — honest coding-agent product review versus Claude Code, Codex, OpenCode, and Reasonix; source-audited launch blockers, empirical claim boundary, positioning decision, and prioritized roadmap
+- [63-product-parity-roadmap.md](./63-product-parity-roadmap.md) — 50-week capability-based product-parity program: resolved storage/trust/certification/privacy defaults, effect-transaction walking skeleton, 34 work packages, mixed-corpus non-inferiority gates, migration, and P0/P1 traceability
+
 ## Status
 
 Foundations (00–07) are the design of record; resolved open questions migrate to the decision log at the bottom of `06-open-questions.md`.
