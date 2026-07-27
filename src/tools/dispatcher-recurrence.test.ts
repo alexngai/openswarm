@@ -142,4 +142,22 @@ describe("ToolDispatcher × recurrence", () => {
     expect(recurrence.summary().prompted).toBe(1);
     expect(guards.summary().guardCount).toBe(0);
   });
+
+  it("control arm (recurrenceNudge:false) counts failures but appends no nudge", async () => {
+    const recurrence = new FailureRecurrenceTracker();
+    const d = new ToolDispatcher({ recurrence, recurrenceNudge: false });
+    d.register(failingTool(() => "File does not exist: /tmp/a.ts"));
+
+    const first = await d.dispatch("edit_file", { file_path: "a.ts" }, ctx);
+    const second = await d.dispatch("edit_file", { file_path: "b.ts" }, ctx);
+    // No nudge on either call...
+    expect(first.status === "error" && first.message).not.toContain("define_guard");
+    expect(second.status === "error" && second.message).not.toContain("define_guard");
+    // ...but the failure IS still counted, so the LH1 metric is identical to the
+    // treatment arm.
+    const s = recurrence.summary();
+    expect(s.totalFailures).toBe(2);
+    expect(s.repeatedFailures).toBe(1);
+    expect(s.prompted).toBe(1); // the tracker still marks it prompt-worthy; the dispatcher just didn't emit
+  });
 });

@@ -404,10 +404,17 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   // buildTier0Tools() and registered only where the registry is live. Guards
   // are restrictive-only: installing one can never grant capability, so this
   // widens nothing even though it lets the model edit its own harness.
-  setGuardRegistry(rt.guards);
-  rt.dispatcher.register(defineGuardTool);
+  // Skipped in the LH1 control arm (OPENSWARM_DISABLE_GUARDS): the agent then
+  // has no self-harnessing tool and no nudge, but the recurrence tracker still
+  // counts failures so the compliance-failure metric is measured either way.
+  if (!rt.guardsDisabled) {
+    setGuardRegistry(rt.guards);
+    rt.dispatcher.register(defineGuardTool);
+  }
 
-  const engineTools = [...rt.tools, requestPermissionsTool, defineGuardTool];
+  const engineTools = rt.guardsDisabled
+    ? [...rt.tools, requestPermissionsTool]
+    : [...rt.tools, requestPermissionsTool, defineGuardTool];
 
   // 10. Build RunConfig.
   // SDK engine: empty string → falls back to the `claude_code` preset internally.

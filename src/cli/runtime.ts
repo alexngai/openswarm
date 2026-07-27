@@ -134,6 +134,12 @@ export interface AgentRuntime {
    * fold its roll-up into the session record beside the guard summary.
    */
   readonly recurrence: FailureRecurrenceTracker;
+  /**
+   * Self-harnessing off (OPENSWARM_DISABLE_GUARDS) — the LH1 control arm. When
+   * true the CLI must not register `define_guard`; the nudge is already
+   * suppressed in the dispatcher.
+   */
+  readonly guardsDisabled: boolean;
   /** Tier0 + tier1 + plugin + MCP tools, filtered for the active framework. */
   readonly tools: readonly ToolImpl[];
   readonly permEngine: PermissionEngine;
@@ -218,7 +224,20 @@ export async function buildAgentRuntime(
   // very recall-under-pressure behaviour guards exist to fix.
   const recurrence = new FailureRecurrenceTracker();
 
-  const dispatcher = new ToolDispatcher({ hooks: hookRuntime, guards, recurrence });
+  // Control-arm switch for the LH1 A/B (docs/63 §8): OPENSWARM_DISABLE_GUARDS
+  // turns off self-harnessing — no `define_guard` tool (skipped in main.ts) and
+  // no recurrence nudge — while the recurrence tracker still COUNTS failures, so
+  // the compliance-failure metric is measured identically in both arms.
+  const guardsDisabled = /^(1|true|on|yes)$/i.test(
+    process.env.OPENSWARM_DISABLE_GUARDS ?? "",
+  );
+
+  const dispatcher = new ToolDispatcher({
+    hooks: hookRuntime,
+    guards,
+    recurrence,
+    recurrenceNudge: !guardsDisabled,
+  });
   for (const tool of buildTier0Tools()) {
     dispatcher.register(tool);
   }
@@ -488,6 +507,7 @@ export async function buildAgentRuntime(
       dispatcher,
       guards,
       recurrence,
+      guardsDisabled,
       tools,
       permEngine,
       auth,

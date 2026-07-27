@@ -65,6 +65,14 @@ export interface ToolDispatcherOptions {
    * errors — both of which return earlier — are structurally excluded.
    */
   readonly recurrence?: FailureRecurrenceTracker;
+  /**
+   * Whether a repeated failure appends the `define_guard` nudge to the result.
+   * Default true. Set false for the guards-disabled control arm
+   * (OPENSWARM_DISABLE_GUARDS): the tracker still COUNTS failures — so the LH1
+   * compliance-failure metric is measured identically in both arms — but the
+   * agent is not prompted toward self-harnessing.
+   */
+  readonly recurrenceNudge?: boolean;
 }
 
 /**
@@ -85,6 +93,8 @@ export class ToolDispatcher {
   private readonly guards?: GuardRegistry;
   /** Repeated-failure detector that triggers guard synthesis. Optional. */
   private readonly recurrence?: FailureRecurrenceTracker;
+  /** Whether repeated failures append the `define_guard` nudge (default true). */
+  private readonly recurrenceNudgeEnabled: boolean = true;
 
   constructor(options: ToolDispatcherOptions = {}) {
     if (options.hooks !== undefined) this.hooks = options.hooks;
@@ -95,6 +105,9 @@ export class ToolDispatcher {
     }
     if (options.guards !== undefined) this.guards = options.guards;
     if (options.recurrence !== undefined) this.recurrence = options.recurrence;
+    if (options.recurrenceNudge !== undefined) {
+      this.recurrenceNudgeEnabled = options.recurrenceNudge;
+    }
   }
 
   /**
@@ -246,7 +259,9 @@ export class ToolDispatcher {
     if (this.recurrence !== undefined && result.status === "error") {
       try {
         const obs = this.recurrence.observe(name, result.message);
-        if (obs.shouldPrompt) {
+        // Always count (obs recorded above); only append the nudge when enabled.
+        // The control arm counts identically but never prompts toward guards.
+        if (obs.shouldPrompt && this.recurrenceNudgeEnabled) {
           result = {
             status: "error",
             message: result.message + recurrenceNudge(name, obs.count),
