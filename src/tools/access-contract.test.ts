@@ -2,17 +2,17 @@
  * Contract tests for resource-access declarations.
  *
  * `ToolAccesses` has two consumers with opposite failure modes. The scheduler
- * reads it to decide what may run in parallel, and its default for an
- * undeclared tool is optimistic: "conflicts with nothing". The permission gate
- * reads it to learn which resources a call will touch, and there an undeclared
- * tool must be treated pessimistically instead.
+ * reads it to decide what may run in parallel; the permission gate reads it to
+ * learn which resources a call will touch, so a grant can bind to a path or a
+ * host instead of to a tool name.
  *
- * The optimistic default is why these tests exist. A tool that can touch
- * arbitrary paths but declares nothing is not merely unscheduled — it is
- * declared conflict-free, so the scheduler will happily run it alongside a
- * write to the same file. Nothing about the tool's own code reveals the
- * omission, and nothing fails until two calls race. So the expectation is
- * pinned here by name.
+ * `ToolImpl.accesses` is required, so "declares nothing" is now a compile
+ * error rather than a silent optimistic default. What the type cannot check is
+ * whether the declaration is *true*, which is what the rest of this file is
+ * for: a tool that runs commands must say `all()`, and a tool that touches a
+ * path must name the resolved path. Both are wrong in ways nothing fails on
+ * until two calls race or an approval turns out to be broader than the user
+ * thought.
  *
  * Adding a tool that reads or writes files, or that runs a command, means
  * adding it to one of the lists below.
@@ -75,6 +75,27 @@ const FILE_TOOLS: ReadonlyArray<{
   { name: "view_image", input: { path: "a.png" }, writes: false },
 ];
 
+describe("every registered tool declares its accesses", () => {
+  // The type makes this unrepresentable in TypeScript. It is still worth
+  // asserting at runtime, because tools also arrive from places the compiler
+  // does not see them constructed — the MCP bridge, the plugin registry, and
+  // anything registered from plain JS.
+  it("no tool reaches the registry undeclared", () => {
+    const undeclared = allTools()
+      .filter((t) => t.accesses === undefined)
+      .map((t) => t.spec.name);
+    expect(undeclared).toEqual([]);
+  });
+
+  it("no declaration throws on empty input", () => {
+    // A declaration that throws is treated as `all()`, which is safe but
+    // silently serializes the tool forever. Better to catch it here.
+    for (const tool of allTools()) {
+      expect(() => tool.accesses?.({}, ctx), `${tool.spec.name} threw`).not.toThrow();
+    }
+  });
+});
+
 describe("tools that run commands declare a global barrier", () => {
   for (const name of OPAQUE_SIDE_EFFECT_TOOLS) {
     it(`${name} declares all()`, () => {
@@ -82,15 +103,27 @@ describe("tools that run commands declare a global barrier", () => {
       expect(accesses).toEqual([{ kind: "all" }]);
     });
   }
+});
 
-  it("none of them rely on the scheduler's optimistic default", () => {
-    for (const name of OPAQUE_SIDE_EFFECT_TOOLS) {
-      const tool = byName(name);
-      // Either an explicit declaration or concurrencySafe:false would do; the
-      // bug this guards against is neither being present.
-      const guarded = tool.accesses !== undefined || tool.spec.concurrencySafe === false;
-      expect(guarded, `${name} is scheduled as conflict-free`).toBe(true);
-    }
+describe("tools that reach the network name the host a grant binds to", () => {
+  it("web_fetch names the requested URL, not the tool", () => {
+    const accesses = declared("web_fetch", { url: "https://example.com/a/b" });
+    expect(accesses).toEqual([
+      { kind: "network", method: "GET", url: "https://example.com/a/b" },
+    ]);
+  });
+
+  it("web_fetch degrades to all() on unparseable input", () => {
+    expect(declared("web_fetch", { nonsense: true })).toEqual([{ kind: "all" }]);
+  });
+
+  it("web_search names the search endpoint", () => {
+    const accesses = declared("web_search", { query: "anything" });
+    expect(accesses).toHaveLength(1);
+    const access = accesses[0]!;
+    expect(access.kind).toBe("network");
+    if (access.kind !== "network") return;
+    expect(new URL(access.url).host).toBe("html.duckduckgo.com");
   });
 });
 

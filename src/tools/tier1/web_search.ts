@@ -1,6 +1,7 @@
 import { z } from "zod";
 import TurndownService from "turndown";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
+import { ToolAccesses } from "../access.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { getNetworkPolicy } from "../tier0/network-policy.js";
 
@@ -32,6 +33,15 @@ export interface SearchBackend {
 
 const DEFAULT_BASE_URL = "https://html.duckduckgo.com/html/";
 const MAX_HITS = 8;
+
+/**
+ * The endpoint a search will actually hit. The access declaration and the
+ * backend both read it, so an approval is bound to the host that gets
+ * contacted rather than to the compiled-in default.
+ */
+function defaultSearchEndpoint(): string {
+  return process.env.OPENSWARM_WEB_SEARCH_BASE_URL ?? DEFAULT_BASE_URL;
+}
 
 function decodeDuckDuckGoRedirect(href: string): string | null {
   if (!href.startsWith("/l/?")) return null;
@@ -119,10 +129,7 @@ export class DuckDuckGoBackend implements SearchBackend {
   private baseUrl: string;
 
   constructor(baseUrl?: string) {
-    this.baseUrl =
-      baseUrl ??
-      process.env.OPENSWARM_WEB_SEARCH_BASE_URL ??
-      DEFAULT_BASE_URL;
+    this.baseUrl = baseUrl ?? defaultSearchEndpoint();
   }
 
   async search(query: string, options: SearchOptions): Promise<SearchHit[]> {
@@ -364,4 +371,8 @@ export const webSearchTool: ToolImpl = {
   spec,
   execute,
   zodSchema: inputSchema,
+  // Only the search endpoint is contacted here. Result pages are returned as
+  // links for the model to fetch separately, and each of those fetches is
+  // authorized against its own host when it happens.
+  accesses: () => ToolAccesses.network(defaultSearchEndpoint(), "GET"),
 };

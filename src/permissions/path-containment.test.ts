@@ -11,7 +11,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { makePathContainment } from "./path-containment.js";
+import { makePathContainment, makeResourceDeriver } from "./path-containment.js";
+import { resourceOf } from "../kernel/policy-engine.js";
 import { ToolAccesses } from "../tools/access.js";
 import type { ToolImpl, ToolExecutionContext } from "../tools/types.js";
 import type { ToolSpec } from "../core/types.js";
@@ -152,8 +153,15 @@ describe("calls this cannot judge fall through", () => {
   });
 
   it("has no opinion on a tool with no accesses callback", async () => {
+    // `ToolImpl.accesses` is required, so this shape can only arrive from
+    // outside the type system — a tool registered from plain JS. Containment
+    // still declines rather than denying; the pessimism for that case lives in
+    // the scheduler, which treats an absent declaration as `all()`.
     const check = makePathContainment(workspace);
-    const bare: ToolImpl = { spec, execute: async () => ({ status: "ok", output: "" }) };
+    const bare = {
+      spec,
+      execute: async () => ({ status: "ok", output: "" }),
+    } as unknown as ToolImpl;
     expect(await check(bare, {})).toBeNull();
   });
 
@@ -168,6 +176,79 @@ describe("calls this cannot judge fall through", () => {
       throw new Error("bad declaration");
     });
     expect(await check(broken, {})).toBeNull();
+  });
+});
+
+describe("network accesses become authorizable requests", () => {
+  it("derives a network.request carrying method and url", async () => {
+    const derive = makeResourceDeriver(workspace);
+    const derived = await derive(
+      toolDeclaring(() => ToolAccesses.network("https://example.com/a", "POST")),
+      {},
+    );
+
+    expect(derived.kind).toBe("requests");
+    if (derived.kind !== "requests") return;
+    expect(derived.requests).toHaveLength(1);
+    const req = derived.requests[0]!;
+    expect(req.kind).toBe("network.request");
+    if (req.kind !== "network.request") return;
+    expect(req.method).toBe("POST");
+    expect(req.url).toBe("https://example.com/a");
+  });
+
+  it("binds every path on one host to a single grant identity", () => {
+    // Two fetches, one approval. `resourceOf` is what collapses them, so the
+    // grant cache sees one key rather than one per URL.
+    const a = resourceOf({
+      kind: "network.request",
+      operationId: "1",
+      idempotency: "unknown",
+      toolName: "web_fetch",
+      method: "GET",
+      url: "https://example.com/a",
+    });
+    const b = resourceOf({
+      kind: "network.request",
+      operationId: "2",
+      idempotency: "unknown",
+      toolName: "web_fetch",
+      method: "GET",
+      url: "https://example.com/b?q=1",
+    });
+    expect(a).toBe(b);
+    expect(a).toBe("example.com");
+  });
+
+  it("gives an MCP server a grant identity of its own", async () => {
+    const derive = makeResourceDeriver(workspace);
+    const derived = await derive(toolDeclaring(() => ToolAccesses.mcpServer("my server")), {});
+
+    if (derived.kind !== "requests") throw new Error("expected requests");
+    // The name is escaped into the URL, so a server name with a space or a
+    // slash cannot be confused for a different one.
+    expect(resourceOf(derived.requests[0]!)).toBe("my%20server");
+  });
+
+  it("keeps two plugins from sharing one approval", async () => {
+    const derive = makeResourceDeriver(workspace);
+    const one = await derive(toolDeclaring(() => ToolAccesses.plugin("alpha")), {});
+    const two = await derive(toolDeclaring(() => ToolAccesses.plugin("beta")), {});
+
+    if (one.kind !== "requests" || two.kind !== "requests") throw new Error("expected requests");
+    expect(resourceOf(one.requests[0]!)).not.toBe(resourceOf(two.requests[0]!));
+  });
+
+  it("still denies a path escape when the tool also reaches the network", async () => {
+    const derive = makeResourceDeriver(workspace);
+    const derived = await derive(
+      toolDeclaring(() => [
+        ...ToolAccesses.network("https://example.com"),
+        ...ToolAccesses.writeFile("/etc/passwd"),
+      ]),
+      {},
+    );
+    expect(derived.kind).toBe("denied");
   });
 });
 

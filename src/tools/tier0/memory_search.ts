@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
+import { ToolAccesses } from "../access.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import {
   searchArchive,
@@ -107,4 +108,7 @@ export const memorySearchTool: ToolImpl = {
   spec,
   execute,
   zodSchema: inputSchema,
+  // Reads the memory store, which lives outside the workspace and is not a
+  // resource any other tool writes. Nothing in a batch can race it.
+  accesses: () => ToolAccesses.none(),
 };

@@ -9,6 +9,7 @@
 
 import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
+import { ToolAccesses } from "../access.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { requireHost } from "./require-host.js";
 
@@ -62,4 +63,5 @@ export const askUserQuestionTool: ToolImpl = {
   spec,
   execute,
   zodSchema: inputSchema,
+  accesses: () => ToolAccesses.all(),
 };

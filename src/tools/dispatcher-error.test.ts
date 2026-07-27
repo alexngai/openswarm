@@ -9,6 +9,7 @@
 import { describe, it, expect } from "vitest";
 import { ToolDispatcher } from "./dispatcher.js";
 import type { ToolImpl, ToolExecutionContext } from "./types.js";
+import { ToolAccesses } from "./access.js";
 
 const ctx: ToolExecutionContext = { cwd: "/tmp" };
 
@@ -24,6 +25,7 @@ function makeThrowingTool(name: string, error: unknown): ToolImpl {
     execute: async () => {
       throw error;
     },
+    accesses: () => ToolAccesses.none(),
   };
 }
 
@@ -77,6 +79,7 @@ describe("ToolDispatcher — execute() throws (v0.4 stage 4I Defect 2)", () => {
         status: "error",
         message: "structured failure",
       }),
+      accesses: () => ToolAccesses.none(),
     });
 
     const result = await dispatcher.dispatch("structured-error", {}, ctx);

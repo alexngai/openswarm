@@ -1,6 +1,7 @@
 import { z } from "zod";
 import TurndownService from "turndown";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
+import { ToolAccesses } from "../access.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { getNetworkPolicy } from "../tier0/network-policy.js";
 
@@ -248,6 +249,14 @@ export const webFetchTool: ToolImpl = {
   spec,
   execute,
   zodSchema: inputSchema,
+  // Naming the URL is what lets an approval bind to one host instead of to
+  // "web_fetch, any argument". Approving example.com covers every later page
+  // on example.com and nothing else.
+  accesses: (raw) => {
+    const parsed = inputSchema.safeParse(raw);
+    if (!parsed.success) return ToolAccesses.all();
+    return ToolAccesses.network(parsed.data.url, "GET");
+  },
 };
 
 export { upgradeToHttps, extractTitle, findInContent };

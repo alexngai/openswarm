@@ -13,6 +13,7 @@
 
 import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
+import { ToolAccesses } from "../access.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { requireHost } from "./require-host.js";
 import { TaskResolveConflictParamsSchema } from "../../swarm/ipc/protocol.js";
@@ -69,4 +70,5 @@ export const resolveConflictTool: ToolImpl = {
   spec,
   execute,
   zodSchema: inputSchema,
+  accesses: () => ToolAccesses.all(),
 };

@@ -69,6 +69,7 @@ import {
   type ToolAccesses as ToolAccessesType,
 } from "../tools/access.js";
 import type { ToolRequest } from "../tools/dispatcher.js";
+import { accessesFor } from "../tools/dispatcher.js";
 import type { ToolResult } from "../tools/types.js";
 
 // ---------------------------------------------------------------------------
@@ -487,23 +488,13 @@ export class HardenedNativeEngine implements AgentEngine {
                         : {}),
                     };
 
-                    // Compute accesses for ToolScheduler conflict detection.
-                    let accesses: ToolAccessesType = ToolAccesses.none();
+                    // Same resolution the batch dispatcher uses, so a tool
+                    // cannot serialize there and fan out here.
                     const toolImpl =
                       typeof config.dispatcher!.get === "function"
                         ? config.dispatcher!.get(ev.name)
                         : undefined;
-                    if (toolImpl !== undefined) {
-                      if (toolImpl.accesses !== undefined) {
-                        try {
-                          accesses = toolImpl.accesses(dispatchInput, ctx);
-                        } catch {
-                          accesses = ToolAccesses.all();
-                        }
-                      } else if (toolImpl.spec.concurrencySafe === false) {
-                        accesses = ToolAccesses.all();
-                      }
-                    }
+                    const accesses = accessesFor(toolImpl, dispatchInput, ctx);
 
                     inFlight.set(
                       ev.id,

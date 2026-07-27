@@ -19,24 +19,21 @@
  * Resources come from the tool's `accesses` declaration rather than from
  * re-parsing tool input here, so this stays correct as tools change shape.
  *
- * Two cases yield no opinion, and both fall through to the checks that already
- * exist rather than denying:
+ * One case yields no opinion and falls through to the checks that already
+ * exist rather than denying: a tool that declares `all()` names no path to
+ * canonicalize. `bash` is the example, and it has its own validation gate.
  *
- *   - A tool that declares `all()` names no path to canonicalize. `bash` is the
- *     example, and it has its own validation gate.
- *   - A tool with no `accesses` callback. Plugin and MCP tools cannot predict
- *     their paths, and denying them here would break every one of them.
- *
- * Neither case is a hole this module opens; both are the status quo it leaves
- * in place. Closing them is the job of the discriminated policy engine, which
- * can express "unknown resource" as something other than silence.
+ * Plugin and MCP tools used to reach here undeclared, which was the same
+ * silence for a different reason. They now declare a `network` access naming
+ * their server, so they authorize as `network.request` against that identity
+ * instead of arriving with nothing to bind a grant to.
  */
 
 import { randomUUID } from "node:crypto";
 import { WorkspaceAuthority, PathEscapeError } from "../kernel/workspace-authority.js";
 import type { OperationRequest } from "../kernel/contracts.js";
 import type { ToolImpl } from "../tools/types.js";
-import type { ToolFileAccess } from "../tools/access.js";
+import type { ToolFileAccess, ToolNetworkAccess } from "../tools/access.js";
 import type { PermissionDecision } from "../engine/index.js";
 
 /**
@@ -110,11 +107,32 @@ export function makeResourceDeriver(cwd: string): ResourceDeriver {
     if (declared.some((a) => a.kind === "all")) return { kind: "unknown" };
 
     const files = declared.filter((a): a is ToolFileAccess => a.kind === "file");
-    if (files.length === 0) return { kind: "requests", requests: [] };
+    const networks = declared.filter((a): a is ToolNetworkAccess => a.kind === "network");
+    if (files.length === 0 && networks.length === 0) {
+      return { kind: "requests", requests: [] };
+    }
+
+    const requests: OperationRequest[] = [];
+
+    // Network requests need no workspace: the grant binds to the host, which
+    // `resourceOf` reads straight off the URL. Deriving them before `init()`
+    // keeps a purely-remote tool from waiting on a realpath of the workspace
+    // root it never touches.
+    for (const access of networks) {
+      requests.push({
+        kind: "network.request",
+        operationId: randomUUID(),
+        idempotency: "unknown",
+        toolName: toolImpl.spec.name,
+        method: access.method,
+        url: access.url,
+      });
+    }
+
+    if (files.length === 0) return { kind: "requests", requests };
 
     await init();
 
-    const requests: OperationRequest[] = [];
     for (const access of files) {
       let path;
       try {
