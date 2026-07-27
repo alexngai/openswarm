@@ -565,6 +565,10 @@ Sequenced by §5.1 — *start where the reward is free, climb only as fast as re
   that vetoes bad calls, *never* code-as-policy. Pair with #2 (advisory fragments) so P0 exercises the
   full ladder (§4.3) at two altitudes. Deliverable: a measurable claim — *"agent-synthesized guards cut
   compliance failures without harming resolve."*
+  **Update (§10):** the live run forced the **in-loop validation gate** from a nicety into a P0
+  requirement — a synthesized guard must be dry-run against the session's recent *successful* calls and
+  rejected if it would block them, *before* it enforces (a weak model's over-broad guard was otherwise
+  net-harmful). This is landing now.
 - **P1 — Verification contracts (#4).** Agent-declarable completion gates backed by isolated verifiers;
   the prerequisite fence for anything touching control flow, so it lands before the riskier rungs.
 - **P2 — Context self-management (#5) + generalized broker (#6).** Expose `requestManualCompaction`
@@ -662,6 +666,101 @@ a self-harnessing score is never confounded with a hidden hand-tuned scaffold.
    only). Is there ever a case for *code-as-policy* in a coding harness — a fully compiled, LLM-free
    sub-loop for a recurring mechanical task — or does that forfeit the adaptivity that motivates the
    whole program?
+10. **Catching a mis-diagnosed guard (§10.4).** The recent-successes gate misses the observed
+    failure: a guard installed right after failures, whose clause blocks lines that are legitimately
+    editable but have only *failed* so far, and whose `message`/`failureSignature` give wrong advice
+    (Nova Pro: "use `replace_all`" when the fix was a unique anchor). A relevance check ("blocks ≥1
+    recent failure of its signature") does not help — the guard *did* block the failures; it also
+    blocked the fix. This likely needs an **isolated-verifier review** of the candidate guard
+    (doc-64 §3.3), i.e. the promotion gate, not a dry-run. Open: is there a cheap structural signal
+    (e.g. the guard's `message` contradicting the actual error text) that flags misdiagnosis without a
+    verifier call?
+
+---
+
+## 10. Live validation (2026-07-27)
+
+First live runs of the shipped P0 (`define_guard` + recurrence trigger) against real models
+(Azure gpt-5.5; Bedrock Nova Lite / Nova Pro / Llama-3.3-70B via the native engine). Scenario: a small
+file with N identical lines requiring *distinct* edits, so `replace_all` is useless and a short anchor
+is ambiguous — the exact compliance trap `edit_file` rejects (docs/04). Method note: the first live
+call also caught a real bug — `define_guard`'s input was a `z.discriminatedUnion`, which serialises to
+a root `anyOf` and Azure rejects (`parameters` must be `type: object`); fixed to a flat object. Offline
+tests never serialised the tool through a provider's function-calling validator.
+
+### 10.1 The mechanism works end-to-end — measured, not asserted
+
+On **Nova Pro** (the one model found in the target band, see §10.3) the **entire loop fired with a live
+model**: 3 real `Found N matches` failures → the recurrence detector clustered them by signature and
+**fired the nudge** at threshold 2 → the model **read the nudge and called `define_guard`** with a
+well-formed predicate → the guard **installed and enforced** (evaluated 35×, **fired 10×**). The
+`harness_guard_summary` was captured off **stderr** (the §-added sandbox-observability channel), proving
+that path too. Every mechanical component of P0 is validated live.
+
+### 10.2 …but the weak model's guard was net-harmful — the risk in §6.1/§4.1 is real
+
+The guard Nova Pro wrote was **mis-diagnosed**, and it harmed the run through two mechanisms:
+
+```
+block edit_file when ANY of:
+  field_matches replace_all "false"          ← matches the model's EXPLICIT replace_all:false edits
+  field_matches old_string "statuses.push(0);"  ← matches edits to the very lines the task must change
+failure_signature: "multi-replace-without-replace_all"   ← wrong: the fix is a unique anchor, not replace_all
+message: "…set replace_all to true or provide more context…"
+```
+
+1. **It blocked the model's own legitimate edits.** Nova Pro set `replace_all` explicitly on every call
+   (12 × `false`, 25 × `true`; never omitted — so the `false` clause was not the near-universal match a
+   naive reading suggests, it matched the explicit-`false` edits), and the `old_string` clause matched
+   edits to the target lines. The guard fired 10×, blocking work the task required.
+2. **Its mis-diagnosis gave harmful advice.** The `failure_signature` and message blamed "not using
+   `replace_all`" — wrong; the real fix is a *unique anchor*. Following that advice, the model issued
+   `replace_all: true` against a **non-unique** anchor (`old_string="statuses.push(0);"`), rewriting
+   **all six** lines at once → the file collapsed to a single value (final state: all `401`).
+
+Final state: **task failed**, 19 total failures, 37 flailing `edit_file` calls. **A weak proposer,
+correctly nudged, authored a guard that made things worse** — through misdiagnosis and self-harmful
+advice, not raw over-breadth. This is exactly the doc-63 §6.1 "crutch" hazard and the doc-64 §3.3
+weak-proposer concern, now observed. (An earlier draft of this section mis-stated the mechanism as
+"blocks almost every edit because `replace_all` defaults to false" — corrected here after reading the
+trace: `field_matches` returns false on an *absent* field, so the harm was misdiagnosis + the
+`old_string` clause, not default-field over-breadth.)
+
+**The safety invariant held, though:** the guard only ever *blocked* — `effect: "restrictive"` (§3.1) is
+a literal type, so even a wrong guard could not grant capability. The blast radius was **over-blocking**,
+not danger. "Narrow, never widen" contained a bad guard.
+
+### 10.3 The target regime is a narrow model band
+
+| Model | Drives the tool loop? | Enters the guard regime? |
+|---|---|---|
+| Azure gpt-5.5 | yes | **no** — too capable; 0 compliance failures across 5 runs (incl. a resolved 590s SWE-bench-Verified instance) |
+| Bedrock Nova Lite | **no** — emits text, never calls tools | too weak to act (docs/45's gpt-4.1 failure mode) |
+| Bedrock Llama-3.3-70B | errors — *"tool use in streaming mode"* unsupported on Bedrock Converse | n/a |
+| **Bedrock Nova Pro** | **yes** | **yes** — fumbled the trap and triggered the full loop |
+
+Confirms HarnessX's "smaller models benefit most" **with a sharp refinement: benefit is not
+automatic.** The band that (a) reliably drives tools *and* (b) repeatedly fumbles compliance is narrow,
+and inside it a self-authored guard can be net-negative without a quality gate.
+
+### 10.4 What this forces — the in-loop validation gate is now a P0 prerequisite
+
+P0 as shipped installs a synthesized guard **unconditionally** and enforces it immediately. §10.2 shows
+that is unsafe-for-utility (not unsafe-for-capability): the fix is the in-loop gate this doc deferred
+(§4.1). The **minimal, cheap** form: before a guard is allowed to enforce, **dry-run it against the
+session's recent *successful* calls to its target tool; reject it if it would have blocked them** — and
+hand the blocked sample back so the model can *narrow* it. That is the "does not block good calls" half
+of the gate; it is being implemented now (see §7 P0, updated).
+
+Honest limitation, straight from this trace: the recent-successes gate would **not** have caught *this*
+guard. Nova Pro installed it right after the ambiguous *failures*, so there was no successful edit to
+the target lines to dry-run against — and its harmful `old_string` clause matched exactly those
+lines, which at that point had only *failed*. The gate catches over-restriction once good calls exist;
+it cannot catch a guard that blocks lines which are legitimately editable but have not yet been edited
+successfully, nor one whose *advice* (message / `failure_signature`) is wrong. Those need richer
+validation — an isolated-verifier review of the candidate guard (doc-64 §3.3's promotion gate), not a
+cheap dry-run — and are logged as OQ 10. The recent-successes gate remains worth shipping: it is the
+cheapest correct check and catches the common "agent tightens too far after things were working" case.
 
 ---
 
