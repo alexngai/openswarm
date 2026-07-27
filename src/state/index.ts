@@ -8,6 +8,11 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createRequire } from "node:module";
+
+// Robust `require` for this ESM module — used to load the optional native
+// backend and the built-in `node:sqlite` fallback synchronously.
+const nodeRequire = createRequire(import.meta.url);
 
 // better-sqlite3 types (subset used by StateDB)
 interface BetterSqliteDB {
@@ -23,6 +28,74 @@ interface BetterSqliteStatement {
   run(...params: unknown[]): unknown;
   get(...params: unknown[]): unknown;
   all(...params: unknown[]): unknown[];
+}
+
+/**
+ * Open the state database, preferring the native `better-sqlite3` driver and
+ * falling back to Node's built-in `node:sqlite` (stable in Node ≥22) when the
+ * native binding isn't built. The fallback needs no compile toolchain, so
+ * StateDB works in environments where `better-sqlite3` was never built (e.g. a
+ * fresh checkout on a new Node with no Xcode CLT) — while CI/prod that DO have
+ * the native binding keep using it unchanged.
+ */
+function openStateDatabase(dbPath: string): BetterSqliteDB {
+  try {
+    const Database = nodeRequire("better-sqlite3");
+    return new Database(dbPath) as BetterSqliteDB;
+  } catch {
+    return makeNodeSqliteAdapter(dbPath);
+  }
+}
+
+/**
+ * Adapt `node:sqlite`'s `DatabaseSync` to the small `better-sqlite3` surface
+ * StateDB uses. Differences bridged: `.pragma()` → `exec("PRAGMA …")`;
+ * `.transaction(fn)` → a BEGIN/COMMIT/ROLLBACK wrapper (StateDB's use is
+ * single-level and immediately invoked); `.open` (boolean) ← `.isOpen`.
+ * node:sqlite binds are strict (only null/number/bigint/string/Uint8Array), so
+ * booleans/undefined are coerced — StateDB already passes `?? null`, this just
+ * keeps the adapter robust for future callers.
+ */
+function makeNodeSqliteAdapter(dbPath: string): BetterSqliteDB {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { DatabaseSync } = nodeRequire("node:sqlite") as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db: any = new DatabaseSync(dbPath);
+  const coerce = (params: unknown[]): unknown[] =>
+    params.map((p) =>
+      typeof p === "boolean" ? (p ? 1 : 0) : p === undefined ? null : p,
+    );
+  return {
+    pragma: (source: string) => db.exec(`PRAGMA ${source}`),
+    prepare: (source: string): BetterSqliteStatement => {
+      const stmt = db.prepare(source);
+      return {
+        run: (...params: unknown[]) => stmt.run(...coerce(params)),
+        get: (...params: unknown[]) => stmt.get(...coerce(params)),
+        all: (...params: unknown[]) => stmt.all(...coerce(params)) as unknown[],
+      };
+    },
+    exec: (source: string) => {
+      db.exec(source);
+    },
+    transaction: <T,>(fn: () => T): (() => T) => {
+      return () => {
+        db.exec("BEGIN");
+        try {
+          const result = fn();
+          db.exec("COMMIT");
+          return result;
+        } catch (err) {
+          db.exec("ROLLBACK");
+          throw err;
+        }
+      };
+    },
+    close: () => db.close(),
+    get open(): boolean {
+      return db.isOpen;
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -186,9 +259,7 @@ export class StateDB {
       fs.mkdirSync(dir, { recursive: true });
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const Database = require("better-sqlite3");
-    this.db = new Database(dbPath) as BetterSqliteDB;
+    this.db = openStateDatabase(dbPath);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
     this.applyMigrations();
