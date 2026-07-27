@@ -27,12 +27,38 @@ export class PathEscapeError extends Error {
     readonly requested: string,
     readonly resolved: string,
     readonly workspaceRoot: string,
+    /** Present when the path could not be resolved at all. */
+    readonly reason?: string,
   ) {
     super(
-      `path ${JSON.stringify(requested)} resolves to ${JSON.stringify(resolved)}, ` +
-        `outside workspace ${JSON.stringify(workspaceRoot)}`,
+      reason !== undefined
+        ? `path ${JSON.stringify(requested)} cannot be proven inside workspace ` +
+          `${JSON.stringify(workspaceRoot)}: ${reason}`
+        : `path ${JSON.stringify(requested)} resolves to ${JSON.stringify(resolved)}, ` +
+          `outside workspace ${JSON.stringify(workspaceRoot)}`,
     );
     this.name = "PathEscapeError";
+  }
+}
+
+/**
+ * Cap on links followed by hand while resolving a broken chain. Matches the
+ * usual kernel MAXSYMLINKS; realpath enforces its own limit for links that
+ * resolve, so this only bounds the dangling case.
+ */
+const MAX_LINK_HOPS = 40;
+
+/**
+ * The link target if `candidate` is a symbolic link, else null. Used only on
+ * the ENOENT path, to tell a broken link apart from an absent name.
+ */
+async function readLinkTarget(candidate: string): Promise<string | null> {
+  try {
+    const stat = await fs.lstat(candidate);
+    if (!stat.isSymbolicLink()) return null;
+    return await fs.readlink(candidate);
+  } catch {
+    return null;
   }
 }
 
@@ -88,12 +114,24 @@ export class WorkspaceAuthority {
    * realpath, then re-attaches the remaining segments. A symlinked ancestor is
    * therefore followed and judged on its target, and a path that does not exist
    * yet still gets a trustworthy answer.
+   *
+   * A *broken* link needs care, because realpath reports ENOENT for it exactly
+   * as it does for a name that was never there. Reading that as "does not exist
+   * yet" is what let `link -> /outside/absent` pass: the link is judged at its
+   * own in-workspace location, and the write then follows it out. So an ENOENT
+   * is only believed once lstat agrees nothing is there; a link is followed to
+   * its target by hand and the target is what gets judged.
+   *
+   * Anything else — a cycle, an unreadable ancestor, a name too long — means
+   * containment cannot be established, and that refuses rather than throws.
+   * The caller's question is "may I touch this?", and "I could not tell" has
+   * only one safe answer.
    */
   async canonicalize(requested: string): Promise<CanonicalPath> {
     const root = this.workspaceRoot;
 
     if (requested.includes("\0")) {
-      throw new PathEscapeError(requested, requested, root);
+      throw new PathEscapeError(requested, requested, root, "path contains a null byte");
     }
 
     const absolute = path.resolve(root, requested);
@@ -102,17 +140,32 @@ export class WorkspaceAuthority {
     // symlink, because it does not exist.
     let existing = absolute;
     const trailing: string[] = [];
+    let hops = 0;
     for (;;) {
       try {
         existing = await fs.realpath(existing);
         break;
       } catch (err) {
         const code = (err as NodeJS.ErrnoException).code;
-        if (code !== "ENOENT" && code !== "ENOTDIR") throw err;
+        if (code !== "ENOENT" && code !== "ENOTDIR") {
+          throw new PathEscapeError(requested, absolute, root, `cannot resolve (${code})`);
+        }
+
+        if (code === "ENOENT") {
+          const target = await readLinkTarget(existing);
+          if (target !== null) {
+            if (++hops > MAX_LINK_HOPS) {
+              throw new PathEscapeError(requested, absolute, root, "too many symbolic links");
+            }
+            existing = path.resolve(path.dirname(existing), target);
+            continue;
+          }
+        }
+
         const parent = path.dirname(existing);
         if (parent === existing) {
           // Walked to the filesystem root without finding anything real.
-          throw new PathEscapeError(requested, absolute, root);
+          throw new PathEscapeError(requested, absolute, root, "no existing ancestor");
         }
         trailing.unshift(path.basename(existing));
         existing = parent;

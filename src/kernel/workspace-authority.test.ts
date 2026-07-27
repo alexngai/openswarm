@@ -102,6 +102,67 @@ describe("WorkspaceAuthority", () => {
     });
   });
 
+  describe("broken links", () => {
+    it("rejects a dangling link whose target is outside the workspace", async () => {
+      // realpath answers ENOENT here exactly as it does for a name that was
+      // never there. Believing that let the link be judged at its own
+      // in-workspace location, and a write through it then landed outside.
+      await fs.symlink(path.join(outside, "absent.txt"), path.join(root, "dangling.txt"));
+
+      await expect(authority.canonicalize("dangling.txt")).rejects.toThrow(PathEscapeError);
+    });
+
+    it("rejects a file under a dangling directory link pointing out", async () => {
+      await fs.symlink(path.join(outside, "absent-dir"), path.join(root, "hop"));
+
+      await expect(authority.canonicalize("hop/file.txt")).rejects.toThrow(PathEscapeError);
+    });
+
+    it("rejects a chain of dangling links that ends outside", async () => {
+      await fs.symlink(path.join(root, "second"), path.join(root, "first"));
+      await fs.symlink(path.join(root, "third"), path.join(root, "second"));
+      await fs.symlink(path.join(outside, "absent.txt"), path.join(root, "third"));
+
+      await expect(authority.canonicalize("first")).rejects.toThrow(PathEscapeError);
+    });
+
+    it("allows a dangling link whose target stays inside, and names the target", async () => {
+      // Creating through this link is legitimate: the file it would make lands
+      // in the workspace. The canonical form is the target, not the link.
+      await fs.symlink(path.join(root, "not-yet.txt"), path.join(root, "pending.txt"));
+
+      expect((await authority.canonicalize("pending.txt")).relative).toBe("not-yet.txt");
+    });
+
+    it("rejects a relative dangling link that climbs out", async () => {
+      await fs.symlink("../outside/absent.txt", path.join(root, "climb.txt"));
+
+      await expect(authority.canonicalize("climb.txt")).rejects.toThrow(PathEscapeError);
+    });
+
+    it("rejects a symlink cycle rather than throwing a raw errno", async () => {
+      // ELOOP is not ENOENT, so the ancestor walk cannot interpret it. Refusing
+      // keeps the caller's contract: an unprovable path is a denied path.
+      await fs.symlink(path.join(root, "b"), path.join(root, "a"));
+      await fs.symlink(path.join(root, "a"), path.join(root, "b"));
+
+      await expect(authority.canonicalize("a")).rejects.toThrow(PathEscapeError);
+    });
+
+    it("rejects a self-referential link", async () => {
+      await fs.symlink(path.join(root, "self"), path.join(root, "self"));
+
+      await expect(authority.canonicalize("self")).rejects.toThrow(PathEscapeError);
+    });
+
+    it("explains why an unresolvable path was refused", async () => {
+      await fs.symlink(path.join(root, "b"), path.join(root, "a"));
+      await fs.symlink(path.join(root, "a"), path.join(root, "b"));
+
+      await expect(authority.canonicalize("a")).rejects.toThrow(/cannot be proven inside/);
+    });
+  });
+
   describe("identity and compare-and-swap", () => {
     it("hashes an existing file", async () => {
       await fs.writeFile(path.join(root, "a.txt"), "hello");
