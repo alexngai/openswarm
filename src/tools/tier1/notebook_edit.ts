@@ -1,11 +1,17 @@
 import { z } from "zod";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import type { ToolAccesses as ToolAccessesType } from "../access.js";
 import { ToolAccesses } from "../access.js";
-import { resolveInWorkspace } from "../workspace-path.js";
+import { resolveInWorkspace, atomicWriteInWorkspace } from "../workspace-path.js";
+import {
+  hasFileBeenRead,
+  recordFileRead,
+  READ_BEFORE_EDIT_ERROR,
+} from "../tier0/read-state.js";
 
 const inputSchema = z.object({
   notebook_path: z.string().endsWith(".ipynb"),
@@ -95,6 +101,14 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   }
   const notebookPath = contained.path;
 
+  // Read-before-edit, matching edit_file and write_file. A notebook is edited
+  // by cell id against a structure the agent has to have seen to address
+  // correctly, so editing one sight-unseen is a guess even more than it is for
+  // a plain file.
+  if (!hasFileBeenRead(notebookPath)) {
+    return { status: "error", message: READ_BEFORE_EDIT_ERROR };
+  }
+
   // Read file
   let raw_content: string;
   try {
@@ -103,6 +117,8 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
     const msg = err instanceof Error ? err.message : String(err);
     return { status: "error", message: `failed to read notebook: ${msg}` };
   }
+  // Guards the write below against another writer landing in between.
+  const originalHash = crypto.createHash("sha256").update(raw_content).digest("hex");
 
   // Parse JSON
   let notebook: Notebook;
@@ -216,8 +232,27 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
     }
   }
 
-  // Write back
-  await fs.promises.writeFile(notebookPath, JSON.stringify(notebook, null, 1) + "\n", "utf8");
+  // Write back. A plain writeFile truncates first, so an interrupted write
+  // left a half-serialized notebook that no longer parses — the whole document
+  // lost for one edited cell. Staging and renaming makes the replacement
+  // all-or-nothing, and the hash refuses an edit computed against content
+  // someone else has since changed.
+  const written = await atomicWriteInWorkspace(
+    notebookPath,
+    JSON.stringify(notebook, null, 1) + "\n",
+    ctx.cwd,
+    originalHash,
+  );
+  if (!written.ok) {
+    return {
+      status: "error",
+      message:
+        written.reason === "stale"
+          ? `${written.message}. Re-read the notebook and retry.`
+          : written.message,
+    };
+  }
+  recordFileRead(notebookPath);
 
   return {
     status: "ok",

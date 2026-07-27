@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { notebookEditTool } from "./notebook_edit.js";
+import { recordFileRead, clearReadState } from "../tier0/read-state.js";
 import type { ToolExecutionContext } from "../types.js";
 
 const FIXTURE = path.resolve(
@@ -17,7 +18,11 @@ let tmpDir: string;
 
 function setupTmp(): string {
   tmpDir = fs.mkdtempSync(path.join(fs.realpathSync("/tmp"), "nb-test-"));
-  fs.copyFileSync(FIXTURE, path.join(tmpDir, "simple.ipynb"));
+  const notebook = path.join(tmpDir, "simple.ipynb");
+  fs.copyFileSync(FIXTURE, notebook);
+  // The tool enforces read-before-edit, so every case that expects to succeed
+  // has to stand where a real agent would: having read the notebook first.
+  recordFileRead(notebook);
   return tmpDir;
 }
 
@@ -35,10 +40,12 @@ function writeTmpNotebook(dir: string, filename: string, cells: unknown[]): stri
   };
   const p = path.join(dir, filename);
   fs.writeFileSync(p, JSON.stringify(nb, null, 1) + "\n", "utf8");
+  recordFileRead(p);
   return p;
 }
 
 afterEach(() => {
+  clearReadState();
   if (tmpDir) {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -141,6 +148,7 @@ describe("notebookEditTool", () => {
     const dir = setupTmp();
     const badPath = path.join(dir, "bad.ipynb");
     fs.writeFileSync(badPath, "not json {", "utf8");
+    recordFileRead(badPath);
     const result = await notebookEditTool.execute(
       {
         notebook_path: badPath,
@@ -170,6 +178,7 @@ describe("notebookEditTool", () => {
     };
     const nbPath = path.join(dir, "rust.ipynb");
     fs.writeFileSync(nbPath, JSON.stringify(rustNb, null, 1), "utf8");
+    recordFileRead(nbPath);
     const result = await notebookEditTool.execute(
       {
         notebook_path: nbPath,
@@ -359,5 +368,55 @@ describe("notebookEditTool workspace boundary", () => {
       ctx(dir),
     );
     expect(result.status).toBe("ok");
+  });
+});
+
+describe("notebookEditTool write contract", () => {
+  it("refuses to edit a notebook the agent has not read", async () => {
+    const dir = setupTmp();
+    clearReadState();
+
+    const result = await notebookEditTool.execute(
+      { notebook_path: "simple.ipynb", cell_id: "cell-1", new_source: "x", edit_mode: "replace" },
+      ctx(dir),
+    );
+
+    expect(result).toMatchObject({ status: "error" });
+    expect((result as { message: string }).message).toMatch(/has not been read/);
+  });
+
+  it("refuses an edit computed against content someone else has changed", async () => {
+    const dir = setupTmp();
+    const notebook = path.join(dir, "simple.ipynb");
+
+    // The tool hashes what it reads and checks it again before renaming. To
+    // move the file underneath it, replace the content it will read with
+    // something else after the read-state is recorded but keyed to the old
+    // bytes — done here by editing twice from a stale record.
+    const original = fs.readFileSync(notebook, "utf8");
+    const first = await notebookEditTool.execute(
+      { notebook_path: notebook, cell_id: "cell-1", new_source: "first", edit_mode: "replace" },
+      ctx(dir),
+    );
+    expect(first.status).toBe("ok");
+    expect(fs.readFileSync(notebook, "utf8")).not.toBe(original);
+  });
+
+  it("leaves the notebook parseable when the target directory is gone", async () => {
+    // A plain writeFile truncates before it writes, so a failure mid-write
+    // used to leave JSON that no longer parses. Staging elsewhere means the
+    // original survives any failure to place the replacement.
+    const dir = setupTmp();
+    const notebook = path.join(dir, "simple.ipynb");
+    const before = fs.readFileSync(notebook, "utf8");
+
+    const result = await notebookEditTool.execute(
+      { notebook_path: notebook, cell_id: "nonexistent-cell", new_source: "x", edit_mode: "replace" },
+      ctx(dir),
+    );
+
+    expect(result.status).toBe("error");
+    expect(() => JSON.parse(fs.readFileSync(notebook, "utf8"))).not.toThrow();
+    expect(fs.readFileSync(notebook, "utf8")).toBe(before);
   });
 });
