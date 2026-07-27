@@ -63,7 +63,7 @@ async function readLinkTarget(candidate: string): Promise<string | null> {
 }
 
 /** True when `candidate` is the root itself or genuinely beneath it. */
-function isWithin(candidate: string, root: string): boolean {
+export function isWithin(candidate: string, root: string): boolean {
   if (candidate === root) return true;
   const rel = path.relative(root, candidate);
   // path.relative gives ".." or an absolute path when candidate escapes.
