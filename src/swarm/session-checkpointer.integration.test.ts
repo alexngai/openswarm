@@ -130,8 +130,20 @@ describe("session checkpointer (integration)", () => {
       rec!.record(ev("tool_result", { toolUseId: "t2", content: "not found", isError: true }));
       await rec!.close();
 
-      // sessionlog session state carries both attribution legs.
-      const stateFile = path.join(repo, ".git", "sessionlog-sessions", "sess2.json");
+      // sessionlog session state carries both attribution legs. Resolve WHERE
+      // sessionlog actually stores session state rather than assuming the local
+      // `.git/sessionlog-sessions/` — a machine with a global ~/.sessionlog
+      // "centralized session repo" config redirects it under ~/.sessionlog/repos/…,
+      // so a hardcoded local path is brittle. Fall back to the local default when
+      // no centralized repo is configured (CI).
+      const repoCfg = (await (
+        sl as unknown as {
+          resolveSessionRepoConfig?: (cwd: string) => Promise<{ sessionsDir?: string }>;
+        }
+      ).resolveSessionRepoConfig?.(repo)) ?? {};
+      const sessionsDir =
+        repoCfg.sessionsDir ?? path.join(repo, ".git", "sessionlog-sessions");
+      const stateFile = path.join(sessionsDir, "sess2.json");
       expect(fs.existsSync(stateFile), "session state file should exist").toBe(true);
       const state = JSON.parse(fs.readFileSync(stateFile, "utf8")) as {
         skillsUsed?: { name: string; usedAt?: string }[];
