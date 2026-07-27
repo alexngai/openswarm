@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { buildAgentRuntime, defaultCompactionConfig } from "./runtime.js";
+import { inheritedTrust } from "../trust/gate.js";
 import { isRemoteCompactionConfig } from "../engine/compact-remote.js";
 import type { Provider } from "../providers/index.js";
 import type { CommonOpts } from "./argv.js";
@@ -39,7 +40,7 @@ describe("buildAgentRuntime — codex-native branch", () => {
   });
 
   it("defaults a non-gpt model to gpt-5.5 and builds a HardenedNativeEngine via openai-codex", async () => {
-    const built = await buildAgentRuntime(codexOpts());
+    const built = await buildAgentRuntime(codexOpts(), inheritedTrust(process.cwd()));
     expect(built.kind).toBe("runtime");
     if (built.kind !== "runtime") return;
     // B3: the effective model is reflected on the runtime (drives budget/cost).
@@ -50,7 +51,10 @@ describe("buildAgentRuntime — codex-native branch", () => {
   });
 
   it("passes an explicit gpt model through unchanged", async () => {
-    const built = await buildAgentRuntime(codexOpts({ model: "gpt-5.5" }));
+    const built = await buildAgentRuntime(
+      codexOpts({ model: "gpt-5.5" }),
+      inheritedTrust(process.cwd()),
+    );
     if (built.kind !== "runtime") throw new Error(`build failed (exit ${built.code})`);
     expect(built.runtime.resolvedModelId).toBe("gpt-5.5");
     const { providerId } = await built.runtime.makeEngine("s");

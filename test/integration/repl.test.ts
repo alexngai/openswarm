@@ -147,6 +147,10 @@ describe("B: plugin discovery registers shell + node plugin tools", () => {
           OPENSWARM_PLUGINS_DIR: PLUGINS_FIXTURES,
           // Isolate from user-level MCP / hooks config during this test.
           OPENSWARM_CONFIG_DIR: path.join(os.tmpdir(), "swc-empty-config"),
+          // The fixture tree lives inside this repository, so loading a plugin
+          // from it means importing in-workspace code — which the trust gate
+          // refuses by default. These fixtures are ours.
+          OPENSWARM_TRUST_WORKSPACE: "1",
         },
       },
     );
@@ -273,7 +277,13 @@ describe("E: hook config resolution emits startup log", () => {
           "noop",
         ],
         {
-          env: { OPENSWARM_TEST_SCRIPT: WORKER_SCRIPT },
+          // The fixture authored this hook config a few lines up, so it is
+          // trusted by construction. Without saying so the trust gate refuses
+          // it, which is the correct behaviour for a repository nobody vetted.
+          env: {
+            OPENSWARM_TEST_SCRIPT: WORKER_SCRIPT,
+            OPENSWARM_TRUST_WORKSPACE: "1",
+          },
           cwd: tmp,
         },
       );

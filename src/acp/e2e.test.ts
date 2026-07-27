@@ -36,6 +36,7 @@ import { AcpAgent } from "./agent.js";
 import { RichRenderer } from "./rich-view.js";
 import { acpSessionDir } from "./spine.js";
 import { buildAgentRuntime } from "../cli/runtime.js";
+import { inheritedTrust } from "../trust/gate.js";
 import { PermissionEngine } from "../permissions/index.js";
 import type { AgentRuntime } from "../cli/runtime.js";
 import type { AgentEngine, RunConfig } from "../engine/index.js";
@@ -306,7 +307,7 @@ describe("ACP e2e (live model)", () => {
         plan: false,
         framework: "auto",
       };
-      const built = await buildAgentRuntime(liveOpts);
+      const built = await buildAgentRuntime(liveOpts, inheritedTrust(process.cwd()));
       if (built.kind !== "runtime") {
         throw new Error(`runtime build failed (exit ${built.code})`);
       }
