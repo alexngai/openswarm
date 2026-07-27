@@ -1,6 +1,6 @@
 # 63 — Complementary-specialist routing (diversity, not just cost-tiering)
 
-**Status:** design / proposal. Extends 50 (thesis), 62 (offline method + the honest-compute pre-check + §8 attribution). Opens hypothesis **H3**.
+**Status:** design + results (§9) — **H3 not supported**. Single-shot MBPP: diverse competent models are substitutable (κ=0.058). Agentic SWE: degenerate/harness-contaminated (only the agentic-coder-tuned model functions; Δacc=0). Extends 50 (thesis), 62 (offline method + honest-compute pre-check + §8 attribution).
 
 ## 1. Why — the gap docs/62 leaves open
 
@@ -66,3 +66,13 @@ On easy tasks strong models all succeed (κ→0 by saturation); on impossibly-ha
 ## 8. What would make H3 *decisive*
 
 Accuracy: oracle-router Δacc > 0 with CI excluding 0 at ≥3 seeds, *and* a deployable router that captures a real fraction of it (not just the oracle). Efficiency: router matches the best single model's accuracy at strictly lower FLOPs. Both on the honest compute axis, offline-vs-live gap acknowledged (docs/62 §8.4). Failure is also informative: κ ≈ 0 across diverse families would say code-task competence is *scalar* (all models fail the same hard tasks) — diversity buys nothing, and only cost-tiering (docs/62) helps.
+
+## 9. Results (2026-07-27) — H3 not supported
+
+**Phase A — single-shot MBPP (5 models, 1 seed): diverse competent models are substitutable.** Swarm Qwen-Coder-30B / gpt-oss-20b / Gemma-12B / Ministral-8B (resolve 0.73–0.87) vs DeepSeek-V3 (0.88). **κ = 0.058** — ~374/397 solved tasks are solved by ≥2 members; only 23 uniquely owned. Oracle router 0.932 (Δacc **+0.061** over the best single) @ 9.2× fewer FLOPs than DeepSeek — **but that's cost-tiering + an oracle ceiling, not diversity**: a single small model (gpt-oss) already ~matches DeepSeek at ~3× cheaper, and the router's low FLOPs use cheapest-*solver* hindsight (a deployable router would be far worse). On MBPP, code competence is ~scalar — diversity buys ~nothing; the lever is cost (docs/62).
+
+**Phase B — agentic SWE (easy-16, 4 tool-capable models, 1 seed): degenerate + harness-contaminated.** Only **Qwen-Coder** (purpose-built agentic coder) works (0.50, 8/16); gpt-oss (1/16), Ministral (1/16), and **DeepSeek-V3 (0/16)** solve ~nothing — despite all running full trajectories (94k–578k fresh tok/task, 0 env-errors, so not a $0 failure). **κ = 0.875 but that is one-model-dominance, not complementarity** (Δacc = **0.000** — the others contribute zero). **DeepSeek's 0/16 is a harness-fit red flag:** a strong model burning ~94k tok/task yet solving nothing means the scaffold (repro-first prompt + cascade tool-protocol) suits Qwen but not the others — so the non-Qwen results are **contaminated** (capability vs harness-fit is inseparable here).
+
+**Verdict:** H3 not supported on the testable surfaces. Single-shot: substitutable (κ≈0.06). Agentic: degenerated to "only the agentic-coder-tuned model functions in this harness" — a statement about *model-specialization + harness-fit*, not clean task-complementarity. No diversity gain observed either way.
+
+**Methodological lesson (docs/62 §8.3 recurring):** gate on *full agentic competence per model* (a per-model pilot confirming each solves some), not a toy tool-use check — a model can pass `get_weather` yet fail the real SWE loop (DeepSeek 0/16). And the agentic finding *is* real in one sense: a heterogeneous agentic swarm is hard because **most models can't drive the loop well** — agentic-SWE membership is a narrow, specialization-dependent set, which is itself a constraint on the docs/50 thesis. Tools: `eval/analysis/router-frontier.ts`, `eval/experiments/mbpp-signal.ts` (multi-model), `bedrock-toolcheck.ts`.
