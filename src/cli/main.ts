@@ -34,6 +34,8 @@ import { logoutMain } from "./logout.js";
 import { loginMain } from "./login.js";
 import { runAcp } from "./acp.js";
 import { buildAgentRuntime } from "./runtime.js";
+import { resolveTrust, explainDenial, propagateTrust } from "../trust/gate.js";
+import { makeTrustPrompt, canPrompt } from "./trust-prompt.js";
 import { makeCanUseTool } from "../permissions/gate.js";
 import { PermissionBridge } from "../permissions/bridge.js";
 import { SessionAllowRules } from "../permissions/session-rules.js";
@@ -276,10 +278,26 @@ function buildSubagentSummarizer(
 // ---------------------------------------------------------------------------
 
 async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
+  // 0. Resolve workspace trust. This must precede runtime assembly, which
+  // spawns MCP subprocesses and imports plugin modules — see the ordering
+  // CVEs cited in src/trust/gate.ts.
+  const trust = await resolveTrust({
+    cwd: process.cwd(),
+    ...(canPrompt() && { prompt: makeTrustPrompt() }),
+  });
+  if (trust.reason === "declined") {
+    process.stderr.write("[openswarm] workspace not trusted; exiting.\n");
+    return 1;
+  }
+  if (!trust.allowWorkspaceConfig && !trust.provenance.inert) {
+    process.stderr.write(explainDenial(trust));
+  }
+  propagateTrust(trust);
+
   // 1–6. Shared runtime assembly (auth, hooks, tools, permission engine,
   // engine plan). Short-circuits for auth failure (1), --dump-tools (0), and
   // engine/framework mismatch (2).
-  const built = await buildAgentRuntime(opts);
+  const built = await buildAgentRuntime(opts, trust);
   if (built.kind === "exit") return built.code;
   const rt = built.runtime;
 

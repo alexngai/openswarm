@@ -79,7 +79,7 @@ export function resolveProvider(modelId: string): ResolvedProvider {
   if (/^claude/i.test(modelId) || /anthropic\.claude/i.test(modelId)) {
     return {
       kind: "sdk",
-      engineFactory: () => new ClaudeAgentSdkEngine(),
+      engineFactory: (opts) => new ClaudeAgentSdkEngine(opts),
       modelId,
     };
   }

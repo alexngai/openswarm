@@ -3,6 +3,7 @@ import type { AgentId } from "../core/types.js";
 import { ParentTransport } from "../swarm/ipc/parent-transport.js";
 import { WorkerHost } from "../swarm/worker-host.js";
 import { ClaudeAgentSdkEngine } from "../engine/claude-agent-sdk.js";
+import { resolveTrust } from "../trust/gate.js";
 import { CodexFrameworkEngine } from "../engine/codex-framework.js";
 import { NativeEngine } from "../engine/native.js";
 import { HardenedNativeEngine } from "../engine/hardened-native.js";
@@ -737,7 +738,13 @@ export async function runWorkerEntry(): Promise<number> {
       engine = new ScriptedTestEngine();
       break;
     case "claude-sdk":
-      engine = new ClaudeAgentSdkEngine();
+      // Inherited from the parent, which resolved trust for this workspace
+      // before spawning us. Absent that inheritance this is false, so a worker
+      // reached by some other route does not read project settings.
+      engine = new ClaudeAgentSdkEngine({
+        allowWorkspaceConfig: (await resolveTrust({ cwd: process.cwd() }))
+          .allowWorkspaceConfig,
+      });
       break;
     case "codex-chatgpt": {
       // V0.4.Q11: register the 8-tool peer subset with the codex agent as
