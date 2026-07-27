@@ -675,6 +675,11 @@ a self-harnessing score is never confounded with a hidden hand-tuned scaffold.
     (doc-64 §3.3), i.e. the promotion gate, not a dry-run. Open: is there a cheap structural signal
     (e.g. the guard's `message` contradicting the actual error text) that flags misdiagnosis without a
     verifier call?
+11. **A fair LH1 substrate (§10.5).** The intrinsic-ambiguity trap floors resolve at 0 and its correct
+    fix (a unique anchor) is not a clean guardable predicate, so guards never fire — the A/B could not
+    measure "cut failures without harming resolve." Design a task that is solvable, has a *recurring*
+    compliance failure, and admits a *simple correct guard that fires* (e.g. a tool rejecting a specific
+    tempting-but-wrong argument shape). Until then LH1 remains unmeasured, not refuted.
 
 ---
 
@@ -761,6 +766,42 @@ successfully, nor one whose *advice* (message / `failure_signature`) is wrong. T
 validation — an isolated-verifier review of the candidate guard (doc-64 §3.3's promotion gate), not a
 cheap dry-run — and are logged as OQ 10. The recent-successes gate remains worth shipping: it is the
 cheapest correct check and catches the common "agent tightens too far after things were working" case.
+
+### 10.5 The first controlled A/B — guards did not help (and the scenario was wrong for the question)
+
+To move past single-run anecdotes, a 5-seed A/B on Nova Pro: **treatment** (self-harnessing on) vs.
+**control** (`OPENSWARM_DISABLE_GUARDS` — no `define_guard`, no nudge, but the recurrence tracker still
+counts failures so the metric is identical in both arms). Same intrinsic-ambiguity scenario as §10.1.
+Metrics recomputed from saved run artifacts (the live aggregator had a `grep -c || echo 0` bug).
+
+| arm | n | resolve | mean ambig-fails | median | guard fires | `define_guard` calls |
+|---|--:|--:|--:|--:|--:|--:|
+| treatment (guards on) | 5 | **0/5** | 4.2 | 1 | **0** | 62 |
+| control (guards off) | 5 | **0/5** | 14.2 | 10 | 0 | 0 |
+
+Four findings, most important first:
+
+1. **Both arms resolved 0/5 — the scenario is too hard**, so LH1's *"without harming resolve"* is
+   unmeasurable here (floor effect). The earlier §10.1 "success" was a lucky draw; across 10 fresh runs,
+   zero solves.
+2. **The installed guards never fired** (0 fires across all 5 treatment runs) — the model's predicates
+   never matched a real call, so guards gave **no actual blocking benefit**.
+3. **`define_guard` introduced a distraction failure mode**: one treatment run called it **45 times**,
+   made zero edits, and abandoned the task. The tool can consume the turn budget.
+4. **The lower ambig-fail count in treatment is confounded, not a win** — partly because distracted runs
+   never attempted edits — and variance is enormous at n=5 (treat 6,0,0,14,1; ctrl 37,2,10,16,6).
+
+**Bottom line:** this A/B does **not** support "guards help." On an adversarial ambiguity trap,
+`define_guard` by a weak model was net-neutral-to-harmful (guards inert, plus a distraction mode). With
+§10.2 (harmful guard) and §10.3 (helpful-but-inert guard) this completes a consistent picture: **a weak
+proposer's self-authored guard is unreliable, and the ambiguity trap is the wrong substrate** — its
+correct fix is a *unique anchor*, which is not a clean guardable predicate, and the guard doesn't fire.
+
+**What LH1 actually needs (scenario redesign):** a task that is (a) *solvable* by the model (resolve not
+floored), (b) has a *recurring* compliance failure, and (c) where a *correct, simple* guard exists that
+the model can write **and that will fire** — e.g. a tool that rejects a specific tempting-but-wrong
+argument shape, on a task the model can still complete. The intrinsic-ambiguity trap fails (a) and (c).
+Logged as OQ 11.
 
 ---
 
