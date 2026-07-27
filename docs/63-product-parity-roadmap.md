@@ -762,7 +762,27 @@ Depends on `WP-01`.
 - Disable eager execution for unsafe tools.
 - Record `outcome_unknown` when completion cannot be proven.
 
-Gate: fault injection around dispatch never duplicates a mutating call.
+Delivered. Gate: `./scripts/verify-parity-wp.sh WP-05 <cell>`, `R1`–`R5` passing, over `FX-RETRY-001..010`. Fault injection around dispatch never duplicates a mutating call.
+
+**The duplicate was live, and eager dispatch is what made it reachable.** Eager dispatch starts a tool the moment the provider announces the call, before the stream announcing it has finished. When that stream failed, the engine retried it, the retried stream announced the same calls, and they ran again. A test already covered the adjacent half of this — resetting the in-flight map so a failed attempt's *results* are not drained — which reads as though the case were handled; forgetting a promise does not unmake what it did. Measured before the change, one racing retry turned one announced write into two dispatches.
+
+Two mechanisms now hold independently, which is deliberate: each has its own fixtures, and disabling either leaves the other detecting the duplicate.
+
+Nothing that can leave a trace is speculated on at all. A call's idempotency is read from the resource accesses it already declares for the scheduler, rather than from a second annotation that could disagree with the first, and only `idempotent` calls start during streaming. Everything else waits for the stream to succeed and runs on a deferred path, so a turn abandoned before it finishes leaves the workspace untouched. This costs the overlap between streaming and mutating tool execution, which is the trade the package name implies.
+
+The ledger accounts for whatever did start. Identity has to be computed rather than taken from the provider, because a retry is a fresh sampling request whose `tool_use` ids are its own; what corresponds across attempts is position, so the id is a digest over the turn, the tool, the canonical arguments, and how many times that exact call has already appeared in the turn. That last term is load-bearing: `echo x >> log` twice in one turn is two appends, and identifying operations by argument equality alone would silently drop the second one on every turn.
+
+Three findings beyond the listed scope.
+
+**A returned failure and a thrown one are not the same fact.** A tool that reports failure has said what happened; a dispatcher that throws has not, and the effect may well have landed. The ledger records the first as proven and the second as `outcome_unknown`, and only the proven one can answer a re-announced call. Collapsing them is how a half-applied write comes back as a confident "that failed".
+
+**Cancellation was reported before it happened.** Aborting returned out of the generator with tool calls still running, so the effects continued and landed after the turn everyone believed was over, with nothing recording that they might. There is now a barrier that waits for outstanding work to report. It is bounded, because a tool that ignores its abort signal must not hold cancellation open forever, and anything still running when the grace period ends is recorded as unknown — which is the accurate description, since it may yet succeed and no one will find out.
+
+**The refusal has to produce a result.** A suppressed duplicate that returns nothing leaves the model with a `tool_use` it never got an answer to, which reads from the transcript as though the call were never made — so the model asks again. Every replay decision, including the refusal, yields a result, and the refusal's text says what to do instead rather than only that something was denied.
+
+The batch path deliberately has no ledger. It runs only once a stream has succeeded, so a retry can never have executed any of it; eager dispatch is what makes replay possible, and that is where the ledger sits. The kernel's journal (`WP-00`) records the same distinctions durably for crashes across process restarts; this is the same vocabulary applied in-memory at the one place a retry actually happens, and the two share terms rather than storage.
+
+Nothing consumes the recorded uncertainty yet — surfacing and reconciling it is `WP-12`. It is kept rather than discarded in the meantime, because "we do not know whether this happened" is a fact about the workspace that outlives the turn that produced it.
 
 #### `WP-06` Atomic task transitions and safe target CAS — 2 person-weeks, C
 
@@ -1140,7 +1160,7 @@ Security:
 
 `WP-00 → WP-00a → WP-01 → WP-02/WP-03 → WP-04 → WP-09 → WP-13 → WP-14 → WP-25 → WP-29 → WP-30 → WP-32 → WP-33`
 
-The first six are delivered: `WP-00`, `WP-00a`, `WP-01`, `WP-02`, `WP-03`, and `WP-04`. `WP-09` is now the head of this path, but it sits in R2 and depends on nothing further in R1, so the security path has no remaining R1 work. `WP-06` heads the swarm-correctness path below and `WP-05` the sessions path; both depended only on `WP-01`, so the two remaining R1 packages are unblocked and can proceed in parallel. `bun scripts/parity-ready.ts` derives this from the manifest rather than from this paragraph.
+The first seven are delivered: `WP-00`, `WP-00a`, `WP-01`, `WP-02`, `WP-03`, `WP-04`, and `WP-05`. The security path has no remaining R1 work — `WP-09` heads it but sits in R2 — and the sessions path's R1 requirement is met, leaving `WP-06` as the only R1 package still open. `bun scripts/parity-ready.ts` derives this from the manifest rather than from this paragraph.
 
 Sessions:
 

@@ -57,10 +57,12 @@ list_targets() {
   echo "  WP-02      repository trust and configuration provenance"
   echo "  WP-03      canonical path authorization"
   echo "  WP-04      process broker and fail-closed shell baseline"
+  echo "  WP-05      retry operation ledger and cancellation barrier"
   echo
   echo "Declared but not yet implemented (exit 2):"
   printf '%s\n' "${KNOWN_WPS[@]:1}" \
     | grep -vx -e 'WP-00' -e 'WP-00a' -e 'WP-01' -e 'WP-02' -e 'WP-03' -e 'WP-04' \
+    -e 'WP-05' \
     | paste -sd' ' - | fold -sw 76 | sed 's/^/  /'
   echo
   echo "See docs/63-product-parity-roadmap.md for each gate's fixtures and threshold."
@@ -367,6 +369,33 @@ case "$WP" in
         npx vitest run src/tools/tier0/bash.test.ts src/tools/tier0/shell.test.ts src/tools/tier0/sandbox.test.ts
       run_check C8 "hooks, MCP, and plugins still behave through the broker" \
         npx vitest run src/hooks/ src/mcp/ src/plugins/
+    fi
+    ;;
+
+  WP-05)
+    # Retry operation ledger and cancellation barrier. Threshold (docs/63):
+    # fault injection around dispatch never duplicates a mutating call.
+    #
+    # R1 is the load-bearing check. Two independent mechanisms have to hold —
+    # nothing that can leave a trace is speculated on, and the ledger accounts
+    # for whatever did start — and R1 is what fails if either weakens, because
+    # it counts dispatches rather than reading back results. A duplicated write
+    # is invisible in the result the model finally sees.
+    FIXTURES="FX-RETRY-001..010"
+    if ! ensure_deps; then
+      RESULT="error"
+      FAIL=$((FAIL + 1))
+    else
+      run_check R1 "FX-RETRY-001..010 a retried turn performs no effect twice" \
+        npx vitest run src/engine/retry-duplication.test.ts
+      run_check R2 "operation identity survives a retry and separates distinct calls" \
+        npx vitest run src/engine/operation-ledger.test.ts
+      run_check R3 "retry, eager dispatch, and abort behave as before" \
+        npx vitest run src/engine/hardened-native.test.ts
+      run_check R4 "the unhardened engine and the dispatcher are unaffected" \
+        npx vitest run src/engine/native.test.ts src/tools/dispatcher.test.ts
+      run_check R5 "the kernel's own durability order still holds" \
+        npx vitest run src/kernel/effect-runtime.test.ts src/kernel/event-store.test.ts
     fi
     ;;
 

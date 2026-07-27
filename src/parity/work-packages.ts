@@ -84,7 +84,7 @@ export const WORK_PACKAGES: readonly WorkPackage[] = [
     dependsOn: ["WP-01"],
     cells: ["linux-x64"],
     fixtures: ["FX-RETRY-001..010"],
-    gateImplemented: false,
+    gateImplemented: true,
   },
   {
     id: "WP-06",
