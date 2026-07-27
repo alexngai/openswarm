@@ -15,15 +15,19 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { attemptFlops, type Row } from "./humaneval-frontier.js";
 
+/** A row may carry an `arm` tag (docs/63 H4 loadouts of one model). */
+type RouterRow = Row & { arm?: string };
 const mean = (xs: number[]): number => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 
 interface Agg { p: number; flops: number; n: number }
-/** Per (model, task): mean correctness + mean FLOPs over seeds. */
-function aggregate(rows: Row[]): Map<string, Map<string, Agg>> {
+/** Per (member, task): mean correctness + mean FLOPs over seeds. `member` = model, or the
+ *  loadout arm when byArm — FLOPs always come from the real model (attemptFlops). */
+function aggregate(rows: RouterRow[], byArm: boolean): Map<string, Map<string, Agg>> {
+  const key = (r: RouterRow) => (byArm ? r.arm ?? r.model : r.model);
   const acc = new Map<string, Map<string, { nc: number; n: number; flops: number }>>();
   for (const r of rows) {
-    const bt = acc.get(r.model) ?? new Map();
-    acc.set(r.model, bt);
+    const bt = acc.get(key(r)) ?? new Map();
+    acc.set(key(r), bt);
     const a = bt.get(r.task_id) ?? { nc: 0, n: 0, flops: 0 };
     a.nc += r.correct; a.n += 1; a.flops += attemptFlops(r);
     bt.set(r.task_id, a);
@@ -51,8 +55,8 @@ export interface RouterReport {
   baselineStat?: { resolve: number; flops: number };
 }
 
-export function analyzeRouter(rows: Row[], swarm: string[], baseline?: string): RouterReport {
-  const agg = aggregate(rows);
+export function analyzeRouter(rows: RouterRow[], swarm: string[], baseline?: string, byArm = false): RouterReport {
+  const agg = aggregate(rows, byArm);
   for (const m of [...swarm, ...(baseline ? [baseline] : [])]) {
     if (!agg.has(m)) throw new Error(`no rows for model "${m}" (have: ${[...agg.keys()].join(", ")})`);
   }
@@ -123,9 +127,10 @@ function main(argv: string[]): number {
   const path = argv[0]!;
   const swarmArg = argv[argv.indexOf("--swarm") + 1];
   const baseArg = argv.includes("--baseline") ? argv[argv.indexOf("--baseline") + 1] : undefined;
-  if (!path || !swarmArg) { console.error("usage: router-frontier.ts rows.jsonl --swarm m1,m2,m3 [--baseline mB]"); return 1; }
-  const rows: Row[] = readFileSync(path, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
-  printRouter(analyzeRouter(rows, swarmArg.split(","), baseArg));
+  const byArm = argv.includes("--by") && argv[argv.indexOf("--by") + 1] === "arm";
+  if (!path || !swarmArg) { console.error("usage: router-frontier.ts rows.jsonl --swarm m1,m2,m3 [--baseline mB] [--by arm]"); return 1; }
+  const rows: RouterRow[] = readFileSync(path, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  printRouter(analyzeRouter(rows, swarmArg.split(","), baseArg, byArm));
   return 0;
 }
 
