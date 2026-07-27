@@ -14,7 +14,9 @@ import type {
   DynamicToolCallHandler,
 } from "../providers/codex-app-server.js";
 import type { DynamicToolCallResponse } from "../providers/codex-app-server-types.js";
+import type { SandboxMode } from "../providers/codex-app-server.js";
 import type { ToolImpl } from "../tools/types.js";
+import { ToolAccesses } from "../tools/access.js";
 
 // ---------------------------------------------------------------------------
 // Minimal RunConfig helper
@@ -113,6 +115,40 @@ describe("CodexFrameworkEngine", () => {
 
       expect(mock.start).toHaveBeenCalledTimes(1);
       expect(mock.startThread).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("WP-04: the session's permission mode governs codex's own tooling", () => {
+    // Codex runs its file and shell tools in its own process, so they never
+    // reach canUseTool and openswarm's containment does not apply. The sandbox
+    // mode is the only lever, which makes an omitted permission mode a
+    // fully-privileged agent unless the default is the restrictive end.
+    function sandboxFor(opts: ConstructorParameters<typeof CodexFrameworkEngine>[0]) {
+      let seen: SandboxMode | undefined;
+      new CodexFrameworkEngine({
+        ...opts,
+        providerFactory: (args) => {
+          seen = args.sandbox;
+          return makeMockProvider() as unknown as CodexAppServerProvider;
+        },
+      });
+      return seen;
+    }
+
+    it.each([
+      ["read-only", "read-only"],
+      ["workspace-write", "workspace-write"],
+      ["danger-full-access", "danger-full-access"],
+    ] as const)("maps permission mode %s onto codex sandbox %s", (mode, expected) => {
+      expect(sandboxFor({ permissionMode: mode })).toBe(expected);
+    });
+
+    it("falls back to read-only when no permission mode is given", () => {
+      expect(sandboxFor({})).toBe("read-only");
+    });
+
+    it("never leaves the sandbox for codex to choose", () => {
+      expect(sandboxFor({})).not.toBeUndefined();
     });
   });
 
@@ -295,6 +331,7 @@ describe("CodexFrameworkEngine", () => {
           tier: 2,
         },
         execute,
+        accesses: () => ToolAccesses.none(),
       };
 
       let handler: DynamicToolCallHandler | undefined;

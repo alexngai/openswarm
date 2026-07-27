@@ -11,7 +11,7 @@ import type {
   PermissionGate,
   RunConfig,
 } from "./index.js";
-import type { NormalizedEvent, Usage } from "../core/types.js";
+import type { NormalizedEvent, PermissionMode, Usage } from "../core/types.js";
 import type {
   SandboxMode,
   AskForApproval,
@@ -35,9 +35,23 @@ export interface CodexFrameworkEngineOptions {
   readonly codexBinary?: string;
   /** Working directory forwarded to the App Server subprocess. */
   readonly cwd?: string;
-  /** Sandbox policy. Defaults to "danger-full-access". */
-  readonly sandbox?: SandboxMode;
-  /** Approval policy. Defaults to "never". */
+  /**
+   * openswarm permission mode governing Codex's own built-in tooling.
+   *
+   * Codex runs its file and shell tools inside its own process, so they never
+   * reach `canUseTool` and none of openswarm's containment applies to them.
+   * Forwarding the session's permission mode as Codex's sandbox mode is the
+   * only way a Codex-backed run honours the mode the user selected. The two
+   * vocabularies are identical by construction; see `codexSandboxFor`.
+   *
+   * Defaults to `"read-only"` when omitted, so a caller that forgets to pass
+   * one gets the restrictive end rather than the permissive one.
+   */
+  readonly permissionMode?: PermissionMode;
+  /**
+   * Approval policy. Defaults to `"never"`, meaning "enforce the sandbox
+   * without escalation" — no approval channel exists to escalate to.
+   */
   readonly approvalPolicy?: AskForApproval;
   /**
    * Tier 2 tool implementations to register with the codex agent as host
@@ -57,17 +71,39 @@ export interface CodexFrameworkEngineOptions {
    * CodexAppServerProvider is constructed from the other options.
    *
    * Receives the resolved `dynamicTools` + `onDynamicToolCall` so factories
-   * can wire the same dynamic-tools pipeline as the production path.
+   * can wire the same dynamic-tools pipeline as the production path, and the
+   * resolved `sandbox` so tests can assert the mode a real provider would be
+   * built with without spawning codex.
    */
   readonly providerFactory?: (args: {
     dynamicTools: readonly Tool[];
     onDynamicToolCall: DynamicToolCallHandler | undefined;
+    sandbox: SandboxMode;
   }) => CodexAppServerProvider;
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Map an openswarm permission mode onto Codex's sandbox mode.
+ *
+ * The two enumerations happen to share all three names, but they are separate
+ * types owned by separate projects, so this stays an explicit total mapping
+ * rather than a cast: if either side adds a variant, the compiler reports it
+ * here instead of silently widening what Codex is allowed to do.
+ */
+export function codexSandboxFor(mode: PermissionMode): SandboxMode {
+  switch (mode) {
+    case "read-only":
+      return "read-only";
+    case "workspace-write":
+      return "workspace-write";
+    case "danger-full-access":
+      return "danger-full-access";
+  }
+}
 
 /**
  * Default model used when --framework codex-chatgpt is selected without a
@@ -235,13 +271,15 @@ export class CodexFrameworkEngine implements AgentEngine {
           )
         : undefined;
 
+    const sandbox = codexSandboxFor(opts.permissionMode ?? "read-only");
+
     if (opts.providerFactory !== undefined) {
-      this.provider = opts.providerFactory({ dynamicTools, onDynamicToolCall });
+      this.provider = opts.providerFactory({ dynamicTools, onDynamicToolCall, sandbox });
     } else {
       this.provider = new CodexAppServerProvider({
         codexBinary: opts.codexBinary,
         cwd: opts.cwd,
-        sandbox: opts.sandbox,
+        sandbox,
         approvalPolicy: opts.approvalPolicy,
         ...(dynamicTools.length > 0 && { dynamicTools }),
         ...(onDynamicToolCall !== undefined && { onDynamicToolCall }),

@@ -310,6 +310,81 @@ describe("CodexAppServerProvider — Stage 3B", () => {
   });
 
   // -------------------------------------------------------------------------
+  // WP-04 / FX-PROC: the sandbox mode must reach the wire
+  //
+  // Codex enforces this over its own built-in file and shell tools, which run
+  // inside the codex process and never reach openswarm's canUseTool gate. If
+  // `sandbox` is absent from thread/start the server picks, and its pick is
+  // permissive — so an omitted field is an unrestricted agent, not a default.
+  // These assert the field is present and correct, which no test did while
+  // the constructor stored a sandbox option that startThread never read.
+  // -------------------------------------------------------------------------
+
+  /** Boot, call startThread, and return the thread/start params sent to codex. */
+  async function captureThreadStart(
+    provider: CodexAppServerProvider,
+    opts: Parameters<CodexAppServerProvider["startThread"]>[0] = {},
+  ): Promise<Record<string, unknown>> {
+    const written: string[] = [];
+    pair.child.stdin!.on("data", (chunk: Buffer | string) => {
+      written.push(typeof chunk === "string" ? chunk : chunk.toString("utf8"));
+    });
+
+    void provider.startThread(opts).catch(() => { /* never answered */ });
+    await new Promise<void>((r) => setImmediate(r));
+
+    const line = written
+      .join("")
+      .split("\n")
+      .filter(Boolean)
+      .find((l) => l.includes('"thread/start"'));
+    expect(line).toBeDefined();
+    return (JSON.parse(line!) as { params: Record<string, unknown> }).params;
+  }
+
+  it("thread/start carries read-only when no sandbox is configured", async () => {
+    const provider = await bootProvider(pair, spawnMock);
+    const params = await captureThreadStart(provider);
+
+    expect(params.sandbox).toBe("read-only");
+    expect(params.approvalPolicy).toBe("never");
+
+    await provider.dispose();
+  });
+
+  it("thread/start carries the sandbox given to the constructor", async () => {
+    const provider = new CodexAppServerProvider({
+      spawn: spawnMock as never,
+      sandbox: "workspace-write",
+    });
+    const startPromise = provider.start();
+    await new Promise<void>((r) => setImmediate(r));
+    pair.emitLine({ id: 1, result: { userAgent: "ua" } });
+    await startPromise;
+
+    const params = await captureThreadStart(provider);
+    expect(params.sandbox).toBe("workspace-write");
+
+    await provider.dispose();
+  });
+
+  it("a per-call sandbox overrides the constructed one", async () => {
+    const provider = new CodexAppServerProvider({
+      spawn: spawnMock as never,
+      sandbox: "danger-full-access",
+    });
+    const startPromise = provider.start();
+    await new Promise<void>((r) => setImmediate(r));
+    pair.emitLine({ id: 1, result: { userAgent: "ua" } });
+    await startPromise;
+
+    const params = await captureThreadStart(provider, { sandbox: "read-only" });
+    expect(params.sandbox).toBe("read-only");
+
+    await provider.dispose();
+  });
+
+  // -------------------------------------------------------------------------
   // Test 3B-2: runTurn sends turn/start with the right shape
   // -------------------------------------------------------------------------
 
