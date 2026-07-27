@@ -107,10 +107,13 @@ async function judge(provider: Provider, modelId: string, p: Problem, completion
   return Math.max(0, Math.min(100, Number(m[0]))) / 100;
 }
 
-/** Strip markdown fences / keep the code body. */
+/** Extract the code body, robust to reasoning models: strip <think> blocks, then prefer
+ *  the LAST fenced code block (reasoning models emit scratch code mid-thought, final last). */
 function extractCode(raw: string): string {
-  const fence = raw.match(/```(?:python)?\s*\n?([\s\S]*?)```/);
-  return (fence ? fence[1]! : raw).trim();
+  const noThink = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/<\/?think>/gi, "");
+  const fences = [...noThink.matchAll(/```(?:python)?\s*\n?([\s\S]*?)```/g)];
+  if (fences.length) return fences[fences.length - 1]![1]!.trim();
+  return noThink.trim();
 }
 
 interface ExecOut { hidden: boolean; dt_attempt: number; dt_fail: number; st_attempt: number; st_fail: number; err?: string }
