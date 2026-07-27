@@ -236,10 +236,14 @@ async function relayAcrossDevice(
  *
  * Elsewhere the sequence falls back to names, and the residual is real: a swap
  * landing between the last check and the rename can place the file outside.
- * That case is detected and undone, so the guarantee off Linux is about what
- * persists rather than what momentarily exists. Removing it entirely needs
- * `openat2(RESOLVE_BENEATH)` or kernel-level containment, which belongs with
- * the sandbox work rather than here.
+ * That case is always detected and the write always refused, but repair is
+ * best effort, and the guarantee off Linux is correspondingly narrower — no
+ * content chosen here survives outside the workspace, while an empty file may,
+ * at a path an attacker chose. Removal is attempted first and usually works;
+ * emptying the file through the still-open descriptor is what remains when the
+ * redirect has reverted and the file no longer has a name. Preventing the
+ * escape needs `openat2(RESOLVE_BENEATH)` or kernel-level containment, which
+ * belongs with the sandbox work rather than here.
  */
 export async function atomicWriteInWorkspace(
   target: string,
@@ -310,74 +314,132 @@ export async function atomicWriteInWorkspace(
     return { ok: false, reason: "io", message: `write failed: ${msg}` };
   }
 
-  // Before any content exists, confirm the empty file is where it belongs.
-  const placed = await locate(tmp);
-  try {
-    if (!placed.inside) return fail("escaped", swapped, placed.real);
-    await handle.writeFile(content, "utf8");
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return fail("io", `write failed: ${msg}`, placed.real);
-  } finally {
-    await handle.close().catch(() => undefined);
-  }
+  // Identity of the staged file, taken from the descriptor rather than from a
+  // name. If a swap carries this file outside, the inode is the only thing
+  // that still identifies it: unlinking a path that merely looks right would
+  // delete whatever the attacker happens to have left there instead.
+  const ours = await handle.stat().then(
+    (st) => st.ino,
+    () => null,
+  );
 
-  if (expectedHash !== undefined) {
+  /** Unlink `p`, but only if `p` is the file staged above. */
+  const unlinkIfOurs = async (p: string): Promise<boolean> => {
     try {
-      const current = await fs.readFile(target, "utf8");
-      const hash = crypto.createHash("sha256").update(current).digest("hex");
-      if (hash !== expectedHash) {
-        return fail(
-          "stale",
-          `file ${JSON.stringify(target)} was modified between read and write ` +
-            `(expected hash ${expectedHash.slice(0, 12)}…, got ${hash.slice(0, 12)}…)`,
-        );
-      }
+      const st = await fs.lstat(p);
+      if (ours === null || st.ino !== ours) return false;
+      await fs.unlink(p);
+      return true;
     } catch {
-      // Deleted between read and write. Unusual, but not a stale-content edit.
+      return false;
     }
-  }
+  };
 
-  // Narrow the window as far as a name-based check can be narrowed.
-  if (!(await locate(dir)).inside) return fail("escaped", swapped, placed.real);
+  /**
+   * Dispose of a file a swap placed outside the workspace: remove it, or
+   * failing that empty it.
+   *
+   * Removal needs a name, and a name is what the swap just proved unreliable.
+   * Once the redirect reverts, `target` resolves back inside and the escaped
+   * file has no name this process can compute — which is why undoing by name
+   * alone silently left finished, attacker-named files outside, reporting the
+   * refusal correctly while the bytes stayed put.
+   *
+   * The descriptor opened above still refers to the file, because a descriptor
+   * follows the inode through a rename. So when no name reaches it, truncating
+   * through the handle is the one thing that does. That cannot unlink it, so an
+   * empty file may persist at a path an attacker chose, and a pre-existing file
+   * there is already destroyed by the rename either way. What it does buy is
+   * that no content chosen here survives outside the workspace. Preventing the
+   * escape rather than repairing it needs an anchor the platform does not
+   * offer, which is `WP-25`.
+   */
+  const discardEscaped = async (real: string | null): Promise<void> => {
+    if (real !== null && (await unlinkIfOurs(real))) return;
+    // The redirect may be back in place even though the name resolved inside a
+    // moment ago, in which case the parent names the file once more.
+    const parent = await fs.realpath(dir).catch(() => null);
+    if (parent !== null && !isUnderCwd(parent, root)) {
+      if (await unlinkIfOurs(path.join(parent, path.basename(target)))) return;
+    }
+    await handle.truncate(0).catch(() => undefined);
+  };
 
-  const anchor = await anchorDirectory(dir, root);
-  if (anchor.kind === "unpinnable") {
-    await anchor.release();
-    return fail("escaped", swapped, placed.real);
-  }
-
+  // The handle stays open until the bytes are known to have landed inside,
+  // because it is the fallback `discardEscaped` relies on. Holding a write
+  // descriptor across the rename is safe on posix, and native Windows is
+  // rejected outright rather than partially supported.
   try {
-    // With an anchor this resolves through the descriptor, so a swap of the
-    // directory's *name* after this point cannot redirect it.
-    await fs.rename(tmp, anchor.kind === "anchored" ? anchor.join(target) : target);
-  } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException).code === "EXDEV") {
-      // A separate mount inside the workspace, so the staged file cannot be
-      // renamed across. Copying keeps the write atomic at the destination.
-      const relayed = await relayAcrossDevice(tmp, target);
-      if (!relayed.ok) {
-        await anchor.release();
-        return fail("io", relayed.message, tmp);
-      }
-    } else {
-      await anchor.release();
+    // Before any content exists, confirm the empty file is where it belongs.
+    const placed = await locate(tmp);
+    if (!placed.inside) return fail("escaped", swapped, placed.real);
+
+    try {
+      await handle.writeFile(content, "utf8");
+    } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       return fail("io", `write failed: ${msg}`, placed.real);
     }
-  }
 
-  // Verify through the anchor too. Checking the name here would misreport a
-  // correct write as a failure whenever the name happens to point elsewhere
-  // at this instant, even though the file went to the verified directory.
-  const landed = await locate(anchor.kind === "anchored" ? anchor.join(target) : target);
-  await anchor.release();
-  if (!landed.inside) {
-    // The swap won the race. The file exists outside, so remove it rather than
-    // report a success that put chosen content at a chosen path.
-    await fs.unlink(landed.real ?? target).catch(() => undefined);
-    return { ok: false, reason: "escaped", message: swapped };
-  }
+    if (expectedHash !== undefined) {
+      try {
+        const current = await fs.readFile(target, "utf8");
+        const hash = crypto.createHash("sha256").update(current).digest("hex");
+        if (hash !== expectedHash) {
+          return fail(
+            "stale",
+            `file ${JSON.stringify(target)} was modified between read and write ` +
+              `(expected hash ${expectedHash.slice(0, 12)}…, got ${hash.slice(0, 12)}…)`,
+          );
+        }
+      } catch {
+        // Deleted between read and write. Unusual, but not a stale-content edit.
+      }
+    }
 
-  return { ok: true };
+    // Narrow the window as far as a name-based check can be narrowed.
+    if (!(await locate(dir)).inside) return fail("escaped", swapped, placed.real);
+
+    const anchor = await anchorDirectory(dir, root);
+    if (anchor.kind === "unpinnable") {
+      await anchor.release();
+      return fail("escaped", swapped, placed.real);
+    }
+
+    try {
+      // With an anchor this resolves through the descriptor, so a swap of the
+      // directory's *name* after this point cannot redirect it.
+      await fs.rename(tmp, anchor.kind === "anchored" ? anchor.join(target) : target);
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === "EXDEV") {
+        // A separate mount inside the workspace, so the staged file cannot be
+        // renamed across. Copying keeps the write atomic at the destination.
+        const relayed = await relayAcrossDevice(tmp, target);
+        if (!relayed.ok) {
+          await anchor.release();
+          return fail("io", relayed.message, tmp);
+        }
+      } else {
+        await anchor.release();
+        const msg = err instanceof Error ? err.message : String(err);
+        return fail("io", `write failed: ${msg}`, placed.real);
+      }
+    }
+
+    // Verify through the anchor too. Checking the name here would misreport a
+    // correct write as a failure whenever the name happens to point elsewhere
+    // at this instant, even though the file went to the verified directory.
+    const landed = await locate(anchor.kind === "anchored" ? anchor.join(target) : target);
+    await anchor.release();
+    if (!landed.inside) {
+      // The swap won the race, so refuse rather than report a success that put
+      // chosen content at a chosen path, and take the content back.
+      await discardEscaped(landed.real);
+      return { ok: false, reason: "escaped", message: swapped };
+    }
+
+    return { ok: true };
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
 }

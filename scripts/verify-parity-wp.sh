@@ -299,7 +299,9 @@ case "$WP" in
         npx vitest run src/tools/workspace-path.test.ts
       run_check P3 "FX-PATH-001..020 generated corpus grants no unauthorized access" \
         npx vitest run src/tools/path-escape-corpus.test.ts
-      run_check P4 "swap race leaves nothing outside the workspace" \
+      # Asserts nothing outside the workspace where renames anchor, and no
+      # chosen content outside where they do not. See WP-25 for prevention.
+      run_check P4 "swap race leaves no chosen content outside the workspace" \
         npx vitest run src/tools/path-swap-race.test.ts
       run_check P5 "notebook writes are atomic and read-gated" \
         npx vitest run src/tools/tier1/notebook_edit.test.ts

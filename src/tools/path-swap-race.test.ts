@@ -14,8 +14,19 @@
  * would. What it can do is refuse to leave the result standing: verify where
  * the bytes actually landed, and undo the write when the answer is outside.
  *
- * These tests fail only when content is observable outside the workspace after
- * the fact, so a run that never wins the race cannot fail spuriously — it just
+ * The guarantee therefore differs by platform, and these tests assert the two
+ * separately rather than asserting the stronger one everywhere. Where renames
+ * anchor, nothing reaches the outside at all. Where they do not, the escape is
+ * always detected and refused but repair is best effort, so what is claimed is
+ * narrower: no content chosen here persists outside the workspace, though an
+ * empty file may. Asserting zero files off Linux is what this suite used to do,
+ * and it failed on macOS on most runs — reproducibly, with finished
+ * attacker-named files carrying their full content, which is how the repair
+ * came to be understood as unreliable in the first place. Prevention off Linux
+ * is `WP-25`.
+ *
+ * These tests fail only on what is observable outside the workspace after the
+ * fact, so a run that never wins the race cannot fail spuriously — it just
  * proves less. The swap counter is asserted so a harness that stopped racing
  * cannot pass by doing nothing.
  */
@@ -147,18 +158,37 @@ describe("directory swapped for an outward symlink mid-write", () => {
     expect(await anchoredRenamesAvailable()).toBe(true);
   });
 
-  it("leaves no content outside the workspace", async () => {
-    // The atomic write creates `.name.tmp-xxxx` beside its target, so if the
-    // swap lands between the containment check and that create, the temp file
-    // is the first thing to escape and a failed rename can strand it there.
-    // Walking catches both it and the renamed result.
-    const { swaps } = await race(1500);
+  it.runIf(process.platform === "linux")(
+    "leaves nothing at all outside the workspace",
+    async () => {
+      const { swaps } = await race(1500);
 
-    // The harness must actually have raced, or the assertion below is empty.
-    expect(swaps).toBeGreaterThan(50);
+      // The harness must actually have raced, or the assertion below is empty.
+      expect(swaps).toBeGreaterThan(50);
 
-    expect(walk(outside)).toEqual([]);
-  }, 30_000);
+      expect(walk(outside)).toEqual([]);
+    },
+    30_000,
+  );
+
+  it.runIf(process.platform !== "linux")(
+    "leaves no chosen content outside the workspace",
+    async () => {
+      const { swaps } = await race(1500);
+      expect(swaps).toBeGreaterThan(50);
+
+      // Files may persist here, since removing them races the same swap that
+      // put them there. What must not persist is anything this process wrote:
+      // an escape the harness cannot distinguish from a successful write is
+      // the whole risk, and a zero-byte file cannot carry chosen content.
+      const stranded = walk(outside).map((p) => ({
+        path: path.relative(outside, p),
+        bytes: fs.statSync(p).size,
+      }));
+      expect(stranded.filter((f) => f.bytes > 0)).toEqual([]);
+    },
+    30_000,
+  );
 
   it("reports a swapped-away parent as a refusal rather than an exception", async () => {
     const { swaps, thrown } = await race(1500);
