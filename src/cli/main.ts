@@ -533,6 +533,14 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
         process.stdout.write(
           JSON.stringify({ type: "harness_guard_summary", payload }) + "\n",
         );
+        // And a compact one-line copy on stderr. Sandboxed evals (E2B) parse the
+        // stdout JSONL for the result and discard unknown line types, and they
+        // persist only a HEAD slice of stdout — so an end-of-run summary line is
+        // lost on any non-trivial run. openswarm's stderr is sparse, so the same
+        // slice reliably captures a stderr line. Prefix is grep-friendly.
+        process.stderr.write(
+          `[openswarm-guard] ${JSON.stringify(payload)}\n`,
+        );
       }
     }
     await endMemorySession({
