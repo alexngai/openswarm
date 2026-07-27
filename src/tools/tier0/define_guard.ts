@@ -44,41 +44,43 @@ export function clearGuardRegistry(): void {
 // Schema
 // ---------------------------------------------------------------------------
 
-const defineSchema = z.object({
-  action: z.literal("define"),
+// A single top-level object, NOT a discriminated union. OpenAI/Azure function
+// calling requires the root `parameters` schema to be `type: "object"`; a Zod
+// discriminated union serialises to a root `anyOf` with no `type`, which Azure
+// rejects with `invalid_function_parameters` ("got type None"). Per-action
+// required fields are therefore validated in `execute` rather than by the
+// schema. (Caught only under a live provider — the offline tests parsed the
+// union fine.)
+const inputSchema = z.object({
+  action: z
+    .enum(["define", "remove", "list"])
+    .describe(
+      "define: install a guard · remove: delete one by id · list: show installed guards.",
+    ),
   target_tool: z
     .string()
     .min(1)
-    .describe("The tool whose calls this guard gates, e.g. \"edit_file\"."),
-  predicate: guardPredicateSchema.describe(
-    "Block the call when this evaluates true. Combine with all/any/not.",
-  ),
+    .optional()
+    .describe("define: the tool whose calls this guard gates, e.g. \"edit_file\"."),
+  predicate: guardPredicateSchema
+    .optional()
+    .describe("define: block the call when this evaluates true. Combine with all/any/not."),
   message: z
     .string()
     .min(1)
+    .optional()
     .describe(
-      "Shown to you when the guard blocks a call. State how to comply, not just what went wrong.",
+      "define: shown to you when the guard blocks a call. State how to comply, not just what went wrong.",
     ),
   failure_signature: z
     .string()
     .min(1)
+    .optional()
     .describe(
-      "Short stable slug for the failure this prevents, e.g. \"stale-lockfile\". Used for attribution.",
+      "define: short stable slug for the failure this prevents, e.g. \"stale-lockfile\". Used for attribution.",
     ),
+  guard_id: z.string().min(1).optional().describe("remove: the id of the guard to remove."),
 });
-
-const removeSchema = z.object({
-  action: z.literal("remove"),
-  guard_id: z.string().min(1),
-});
-
-const listSchema = z.object({ action: z.literal("list") });
-
-const inputSchema = z.discriminatedUnion("action", [
-  defineSchema,
-  removeSchema,
-  listSchema,
-]);
 
 const spec: ToolSpec = {
   name: "define_guard",
@@ -136,10 +138,28 @@ async function execute(
   }
 
   if (input.action === "remove") {
+    if (input.guard_id === undefined) {
+      return { status: "error", message: "remove requires guard_id." };
+    }
     const removed = _registry.remove(input.guard_id);
     return removed
       ? { status: "ok", output: `Guard ${input.guard_id} removed.` }
       : { status: "error", message: `No guard with id ${input.guard_id}.` };
+  }
+
+  // action === "define" — the fields the union used to guarantee are now
+  // optional at the schema level, so validate them here.
+  if (
+    input.target_tool === undefined ||
+    input.predicate === undefined ||
+    input.message === undefined ||
+    input.failure_signature === undefined
+  ) {
+    return {
+      status: "error",
+      message:
+        "define requires target_tool, predicate, message, and failure_signature.",
+    };
   }
 
   const id = guardId(input.target_tool, input.predicate);
