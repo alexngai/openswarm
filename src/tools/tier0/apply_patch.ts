@@ -347,7 +347,7 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   try {
     for (const w of writes) {
       await fs.mkdir(path.dirname(w.resolved), { recursive: true });
-      await atomicWrite(w.resolved, w.content, w.expectedHash);
+      await atomicWrite(w.resolved, w.content, ctx.cwd, w.expectedHash);
     }
     for (const d of deletes) {
       await fs.unlink(d.resolved);

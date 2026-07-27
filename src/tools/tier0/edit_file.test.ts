@@ -196,7 +196,7 @@ describe("edit_file", () => {
     const wrongHash = crypto.createHash("sha256").update("different content").digest("hex");
     await fs.writeFile(file, "current content");
     try {
-      await atomicWrite(file, "new content", wrongHash);
+      await atomicWrite(file, "new content", tmpDir, wrongHash);
       expect.fail("should have thrown TocttouError");
     } catch (err) {
       expect(err).toBeInstanceOf(TocttouError);

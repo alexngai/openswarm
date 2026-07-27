@@ -134,7 +134,7 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   const contentHash = crypto.createHash("sha256").update(originalContent).digest("hex");
 
   try {
-    await atomicWrite(resolved, simulatedContent, contentHash);
+    await atomicWrite(resolved, simulatedContent, ctx.cwd, contentHash);
   } catch (err) {
     if (err instanceof TocttouError) {
       return { status: "error", message: STALE_FILE_ERROR };

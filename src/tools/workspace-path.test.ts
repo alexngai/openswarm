@@ -79,6 +79,78 @@ describe("resolveInWorkspace", () => {
   });
 });
 
+describe("dangling links", () => {
+  it("refuses a link to a file that does not exist yet outside the workspace", async () => {
+    // The escape a leaf-only or realpath-only check cannot see: nothing at the
+    // target means realpath reports ENOENT, which reads as "new file here"
+    // rather than "existing link to there".
+    const target = path.join(outside, "absent.txt");
+    fs.symlinkSync(target, path.join(workspace, "dangling.txt"));
+
+    const result = await resolveInWorkspace("dangling.txt", workspace);
+    expect(result.ok).toBe(false);
+  });
+
+  it("allows a dangling link whose target stays inside", async () => {
+    fs.symlinkSync(path.join(workspace, "not-yet.txt"), path.join(workspace, "pending.txt"));
+
+    expect((await resolveInWorkspace("pending.txt", workspace)).ok).toBe(true);
+  });
+
+  it("refuses a symlink cycle instead of surfacing a raw errno", async () => {
+    fs.symlinkSync(path.join(workspace, "b"), path.join(workspace, "a"));
+    fs.symlinkSync(path.join(workspace, "a"), path.join(workspace, "b"));
+
+    // Previously ELOOP escaped the helper as an unhandled error, so a cycle
+    // crashed the tool rather than being denied by it.
+    await expect(resolveInWorkspace("a", workspace)).resolves.toMatchObject({ ok: false });
+  });
+
+  it("write_file does not create a file outside through a dangling link", async () => {
+    const target = path.join(outside, "planted.txt");
+    fs.symlinkSync(target, path.join(workspace, "dangling.txt"));
+
+    const result = await writeFileTool.execute(
+      { file_path: path.join(workspace, "dangling.txt"), content: "pwned" },
+      { cwd: workspace },
+    );
+
+    expect(result.status).toBe("error");
+    expect(fs.existsSync(target)).toBe(false);
+  });
+
+  it("write_file does not create a file under a dangling directory link", async () => {
+    fs.symlinkSync(path.join(outside, "absent-dir"), path.join(workspace, "hop"));
+
+    const result = await writeFileTool.execute(
+      { file_path: path.join(workspace, "hop", "planted.txt"), content: "pwned" },
+      { cwd: workspace },
+    );
+
+    expect(result.status).toBe("error");
+    expect(fs.existsSync(path.join(outside, "absent-dir"))).toBe(false);
+  });
+
+  it("write_file allows a dangling link that stays inside", async () => {
+    // Both ends are in the workspace, so there is nothing to refuse. The
+    // read-before-overwrite contract must not fire either: lstat would see the
+    // link and demand a prior read that read_file can never supply, because it
+    // follows the link and finds nothing there.
+    const named = path.join(workspace, "pending.txt");
+    fs.symlinkSync(path.join(workspace, "not-yet.txt"), named);
+
+    const result = await writeFileTool.execute(
+      { file_path: named, content: "fine" },
+      { cwd: workspace },
+    );
+
+    expect(result.status).not.toBe("error");
+    // The atomic rename replaces the link rather than writing through it, which
+    // is what makes the write atomic; either way the bytes stay inside.
+    expect(fs.readFileSync(named, "utf8")).toBe("fine");
+  });
+});
+
 describe("every file tool refuses a symlinked parent", () => {
   // The gap that survived in six of seven per-tool checks: the leaf is an
   // ordinary file, so a leaf-only lstat sees nothing to follow.
