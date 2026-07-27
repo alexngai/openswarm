@@ -54,11 +54,12 @@ list_targets() {
   echo "  WP-00      effect-transaction walking skeleton"
   echo "  WP-00a     production adoption of the frozen contracts (partial)"
   echo "  WP-01      capability manifest and evidence harness"
+  echo "  WP-02      repository trust and configuration provenance"
   echo "  WP-03      canonical path authorization"
   echo
   echo "Declared but not yet implemented (exit 2):"
   printf '%s\n' "${KNOWN_WPS[@]:1}" \
-    | grep -vx -e 'WP-00' -e 'WP-00a' -e 'WP-01' -e 'WP-03' \
+    | grep -vx -e 'WP-00' -e 'WP-00a' -e 'WP-01' -e 'WP-02' -e 'WP-03' \
     | paste -sd' ' - | fold -sw 76 | sed 's/^/  /'
   echo
   echo "See docs/63-product-parity-roadmap.md for each gate's fixtures and threshold."
@@ -303,6 +304,33 @@ case "$WP" in
         npx vitest run src/tools/tier1/notebook_edit.test.ts
       run_check P6 "every file tool still agrees with the shared helper" \
         npx vitest run src/tools/tier0/ src/tools/access-contract.test.ts
+    fi
+    ;;
+
+  WP-02)
+    # Repository trust and configuration provenance. Threshold (docs/63):
+    # malicious-clone fixtures cause zero process, network, or secret activity
+    # before trust. T2 is the one that actually establishes that — it runs the
+    # built CLI in a hostile repository and looks for evidence, rather than
+    # asking each loader whether it behaved.
+    FIXTURES="FX-TRUST-001..006"
+    if ! ensure_deps; then
+      RESULT="error"
+      FAIL=$((FAIL + 1))
+    else
+      run_check T1 "FX-TRUST-001..006 a malicious clone activates nothing" \
+        npx vitest run src/trust/malicious-clone.test.ts
+      # Needs dist/: the probe runs the real entry point, not an import of it.
+      run_check T2 "opening a hostile repository leaves no evidence behind" \
+        sh -c "npm run build && npx vitest run src/trust/startup-activation.test.ts"
+      run_check T3 "an untrusted workspace keeps the user's own configuration" \
+        npx vitest run src/hooks/ src/mcp/
+      run_check T4 "the SDK is not handed project settings before trust" \
+        npx vitest run src/engine/claude-agent-sdk.test.ts
+      run_check T5 "skill discovery honours the trust decision" \
+        npx vitest run src/skills/
+      run_check T6 "runtime assembly cannot be reached without a decision" \
+        npx vitest run src/cli/runtime.test.ts
     fi
     ;;
 

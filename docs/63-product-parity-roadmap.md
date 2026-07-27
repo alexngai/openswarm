@@ -535,7 +535,7 @@ Calendar duration and person-week loading are separate. Package gates include pa
 
 | Release | Weeks | Package estimates (person-weeks) | Feature A/B/C | Quality A/B/C | Total | Capacity | Slack |
 |---|---:|---|---:|---:|---:|---:|---:|
-| R1 | 1–9 | `00` 4 ✔; `00a` 4 ✔; `01` 1 ✔; `02` 2; `03` 1 ✔; `04` 2; `05` 2; `06` 2 | 7/4/7 | 2/5/2 | 27 | 27 | 0 |
+| R1 | 1–9 | `00` 4 ✔; `00a` 4 ✔; `01` 1 ✔; `02` 2 ✔; `03` 1 ✔; `04` 2; `05` 2; `06` 2 | 7/4/7 | 2/5/2 | 27 | 27 | 0 |
 | R2 | 10–17 | `07` 3; `08` 3; `09` 1; `10` 2; `11` 3; `12` 2 | 3/6/5 | 3/1/2 | 20 | 24 | 4 |
 | R3 | 18–27 | `13`–`18` 3 each | 6/6/6 | 3/3/3 | 27 | 30 | 3 |
 | R4 | 28–35 | `19` 3; `20` 3; `21` 4; `22` 3; `23` 3; `24` 3 | 5/7/7 | 3/1/1 | 24 | 24 | 0 |
@@ -561,7 +561,7 @@ Dependency- and owner-constrained schedule:
 
 | Release | Feature schedule | Cross-package quality schedule | Slack |
 |---|---|---|---|
-| R1 | `WP-00` B/C w1–2 ✔; `00a` A/C w3–4 ✔; `01` C w5 ✔; `02` A w5–6; `03` A w7 ✔; `04` A w8–9; `05` B w4–5; `06` C w6–7 | A w1–2; B w3,w6–9; C w8–9 | none |
+| R1 | `WP-00` B/C w1–2 ✔; `00a` A/C w3–4 ✔; `01` C w5 ✔; `02` A w5–6 ✔; `03` A w7 ✔; `04` A w8–9; `05` B w4–5; `06` C w6–7 | A w1–2; B w3,w6–9; C w8–9 | none |
 | R2 | `WP-07` B w10–12; `08` B w13–15; `09` A w10; `11` C w10 + A w12–13; `12` C w14–15; `10` C w16–17 | A w14–16; B w16; C w11–12 | A w11,w17; B w17; C w13 |
 | R3 | `WP-13` A w18–20; `16` B w18–20; `14` C w21 + A w21–22; `15` C w23 + B w23–24; `17` C w24–26; `18` A/B/C w27 | A w23–25; B w21–22,w25; C w18–20 | A/B w26; C w22 |
 | R4 | `WP-19` B w28–29 + C w28; `20` A w28–29 + C w29; `21` A/B w30–31; `22` C w30 + B w32–33; `23` C w31 + A w32 + B w34; `24` C w32–34 | A w33–35; B/C w35 | none |
@@ -668,17 +668,31 @@ What encoding the contract found: three release exit gates claimed capabilities 
 
 #### `WP-02` Repository trust and configuration provenance — 2 person-weeks, A
 
-Depends on `WP-01`.
+Depends on `WP-01`. Delivered.
 
-- Canonical repository identity.
-- Trust record bound to root and executable configuration hashes.
+- Canonical repository identity, symlink-resolved, so one workspace is one decision.
+- Trust record bound to root and executable configuration hashes, at `~/.openswarm/trust.json`.
 - Trust invalidation on relevant configuration change.
 - Disable Claude SDK project `settingSources` before trust.
-- Include workspace skills, instructions, hooks, MCP, plugins, and LSP configuration in provenance/trust.
+- Include workspace skills, instructions, hooks, MCP, plugins, and LSP configuration in provenance/trust. LSP has no reader yet; `WP-21` adds one to an existing gate rather than a new one.
 - Preserve user-level trust independently from workspace trust.
 - No hook, MCP, plugin, or LSP activation before trust.
 
-Gate: malicious-clone fixtures cause zero process, network, or secret activity before trust.
+Gate: `./scripts/verify-parity-wp.sh WP-02 <cell>`, `T1`–`T6` passing, over `FX-TRUST-001..006`.
+
+**There was no prior art to copy, which is itself the finding.** The design decision was to follow OpenCode, and OpenCode has no workspace trust: the report is [sst/opencode#6361](https://github.com/sst/opencode/issues/6361), which describes this exact vulnerability and was closed by a stale bot after ninety days rather than by a fix, over an objection that it was an open security report. The follow-up request was closed by its own author. What OpenCode does ship is `OPENCODE_DISABLE_PROJECT_CONFIG`, an all-or-nothing switch. The dialog below is the one proposed in that thread and never built.
+
+Claude Code is the only agent shipping a trust gate, and it has published two CVEs against it. Both are ordering, not policy. `CVE-2025-59536` executed project code before the dialog was accepted. `CVE-2026-33068` read the repository's `.claude/settings.json` first, so a repo setting `defaultMode: bypassPermissions` put the session in a permissive mode and the permissive mode caused the dialog to be skipped — the repository argued its way out of the check meant to vet it. Both fixes moved the gate earlier and changed nothing else. `FX-TRUST-003` and `FX-TRUST-004` are regressions against that second one.
+
+That evidence reframed the package. The bullets above read as checks to add; the cost is in *where the decision happens*. MCP servers were spawned inside `buildAgentRuntime`, so a malicious `.openswarm/mcp.json` got its subprocess before any prompt existed to refuse it. An OpenCode contributor hit the identical wall in that thread — "config and plugins loaded before any gui, how do we get around that?" — which is good evidence the shape is inherent to the architecture rather than to either codebase.
+
+Two properties keep the CVEs out. The gate reads only the user-level trust store and the *hashes* of workspace files, never their settings, so no repository-supplied value lies on the path to the decision. And its result is inert data — a `TrustDecision`, not a mode — that `buildAgentRuntime` takes as a required argument, so a runtime cannot be assembled without one. The gate cannot be skipped by forgetting it; it has to be passed something.
+
+An untrusted workspace is degraded, not dead: repository configuration is dropped while the user's own is kept, because a hostile clone should not also cost someone the hooks they configured themselves. Nothing is prompted for when a workspace contains nothing executable, which is what keeps the dialog rare enough to be read. Two deviations from Claude Code are deliberate. Their trust verification is disabled entirely under `-p`, leaving piped and CI invocations unprotected; here a non-interactive run loads no repository configuration and says so, matching the headless deny-by-default position taken above, with `OPENSWARM_TRUST_WORKSPACE` as the opt-in. And the prompt lists what would be activated, including the permission mode a repository asks for, since a dialog naming no specifics is one people dismiss.
+
+The gate's own threshold is proven by running the built CLI in a hostile repository and looking for evidence, not by asking each loader whether it behaved: every fixture payload writes a marker file, and `T2` asserts the directory stays empty. Each refusal is paired with a positive control that grants trust and watches the same payload fire, so a corpus that stopped exercising the attack cannot report success. Wiring the gate also surfaced two live in-repository activations that the survey's file-by-file reading had not connected: this repository's own plugin fixtures load through `OPENSWARM_PLUGINS_DIR` pointing inside the workspace, and its integration suite authors a hook config and expects it honoured. Both now state their trust explicitly.
+
+Residual, carried rather than claimed closed: on the `claude-sdk` engine the SDK reads project settings itself, so the only available lever is whether `settingSources` is passed at all — OpenSwarm cannot filter that file, only decline it wholesale.
 
 #### `WP-03` Canonical path authorization — 1 person-week, A
 
@@ -1104,7 +1118,7 @@ Security:
 
 `WP-00 → WP-00a → WP-01 → WP-02/WP-03 → WP-04 → WP-09 → WP-13 → WP-14 → WP-25 → WP-29 → WP-30 → WP-32 → WP-33`
 
-The first three are delivered, and so is `WP-03`. `WP-02` is now the sole head of this path, `WP-06` of the swarm-correctness path below, and `WP-05` of the sessions path; each depended only on `WP-01`, so R1's remaining four packages are unblocked and can proceed in parallel across all three owners. `WP-04` is the only R1 package still blocked, waiting on `WP-02`.
+The first five are delivered: `WP-00`, `WP-00a`, `WP-01`, `WP-02`, and `WP-03`. `WP-04` is now the head of this path, and its blocking dependency is cleared. `WP-06` heads the swarm-correctness path below and `WP-05` the sessions path; both depended only on `WP-01`, so all three remaining R1 packages are unblocked and can proceed in parallel across all three owners. `bun scripts/parity-ready.ts` derives this from the manifest rather than from this paragraph.
 
 Sessions:
 
