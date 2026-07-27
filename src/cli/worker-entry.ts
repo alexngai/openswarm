@@ -4,6 +4,7 @@ import { ParentTransport } from "../swarm/ipc/parent-transport.js";
 import { WorkerHost } from "../swarm/worker-host.js";
 import { ClaudeAgentSdkEngine } from "../engine/claude-agent-sdk.js";
 import { resolveTrust } from "../trust/gate.js";
+import { getProcessBroker } from "../process/broker.js";
 import { CodexFrameworkEngine } from "../engine/codex-framework.js";
 import { NativeEngine } from "../engine/native.js";
 import { HardenedNativeEngine } from "../engine/hardened-native.js";
@@ -603,6 +604,13 @@ export async function runWorkerEntry(): Promise<number> {
   const transport = new ParentTransport({ agentId, heartbeatIntervalMs });
   const permissionMode = (process.env.OPENSWARM_PERMISSION_MODE ??
     "workspace-write") as PermissionMode;
+  // Inherited from the root, which resolved it from --sandbox or the
+  // environment. A worker confines its children the same way the root does,
+  // or the policy only holds for whichever agent the user happened to type at.
+  const sandbox = process.env.OPENSWARM_SANDBOX;
+  if (sandbox === "require" || sandbox === "prefer" || sandbox === "off") {
+    getProcessBroker().setPolicy(sandbox);
+  }
   // v0.4 stage 4M.7: WorkerHost reads team scope from env so its scopeOf()
   // can resolve the worker's own scope when the agent tool spawns a peer
   // via team: "self". Falls back to "swarm:default" when unset.
@@ -753,7 +761,11 @@ export async function runWorkerEntry(): Promise<number> {
       // team scope as a claude-agent-sdk worker would.
       const tier2 = buildTier2Tools();
       const codexPeerTools = filterCodexPeerTools(tier2);
-      engine = new CodexFrameworkEngine({ tools: codexPeerTools, host });
+      engine = new CodexFrameworkEngine({
+        tools: codexPeerTools,
+        host,
+        permissionMode,
+      });
       break;
     }
     case "codex-native":

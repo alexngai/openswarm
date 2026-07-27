@@ -25,6 +25,7 @@ const LIVE = process.env.OPENSWARM_LIVE_ACP_MAP === "1";
 
 const acpOpts: CommonOpts = {
   permissionMode: "danger-full-access",
+  sandbox: "prefer",
   outputFormat: "json",
   headless: true,
   plugins: false,

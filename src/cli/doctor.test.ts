@@ -89,6 +89,65 @@ describe("runDoctor", () => {
     expect(code).toBe(0);
   });
 
+  // WP-04: isolation used to be silent about being unavailable, which made
+  // "openswarm sandboxes shell commands" indistinguishable, from outside, from
+  // a host where it does nothing of the kind. doctor has to say which it is.
+  describe("sandbox check", () => {
+    async function runAndCapture(): Promise<string> {
+      const detectAuth = await getDetectAuth();
+      detectAuth.mockResolvedValue({ state: "env-api-key", source: "ANTHROPIC_API_KEY" });
+
+      const fs = await getFsMock();
+      (fs.access as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+      (fs.writeFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+      (fs.unlink as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+      const chunks: string[] = [];
+      const origWrite = process.stdout.write.bind(process.stdout);
+      vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+        chunks.push(String(chunk));
+        return true;
+      });
+
+      const { runDoctor } = await import("./doctor.js");
+      await runDoctor("json", process.cwd());
+      process.stdout.write = origWrite;
+      return chunks.join("");
+    }
+
+    it("always reports the sandbox, whatever the answer is", async () => {
+      const { getProcessBroker } = await import("../process/broker.js");
+      getProcessBroker().setPolicy("prefer");
+
+      const report = JSON.parse(await runAndCapture()) as {
+        checks: { name: string; status: string; message: string }[];
+      };
+      const check = report.checks.find((c) => c.name === "sandbox");
+
+      expect(check).toBeDefined();
+      // pass where isolation exists, warn where it does not — never absent.
+      expect(["pass", "warn"]).toContain(check!.status);
+      if (check!.status === "warn") {
+        expect(check!.message).toMatch(/unconfined/);
+      }
+    });
+
+    it("names --sandbox off as the reason when the user disabled it", async () => {
+      const { getProcessBroker } = await import("../process/broker.js");
+      getProcessBroker().setPolicy("off");
+
+      const report = JSON.parse(await runAndCapture()) as {
+        checks: { name: string; status: string; message: string }[];
+      };
+      const check = report.checks.find((c) => c.name === "sandbox");
+
+      expect(check!.status).toBe("warn");
+      expect(check!.message).toContain("--sandbox off");
+
+      getProcessBroker().setPolicy("prefer");
+    });
+  });
+
   it("text format: prints ✗ for auth failure and returns 1", async () => {
     const detectAuth = await getDetectAuth();
     detectAuth.mockResolvedValue({ state: "none" });
@@ -136,7 +195,7 @@ describe("runDoctor", () => {
     expect(parsed).toHaveProperty("checks");
     expect(parsed).toHaveProperty("overall");
     expect(Array.isArray(parsed.checks)).toBe(true);
-    expect(parsed.checks).toHaveLength(8);
+    expect(parsed.checks).toHaveLength(9);
     expect(["pass", "fail"]).toContain(parsed.overall);
   });
 

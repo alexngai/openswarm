@@ -10,6 +10,7 @@
  *   --model <str>
  *   --resume <session-id | "latest">
  *   --permission-mode <read-only | workspace-write | danger-full-access>
+ *   --sandbox <require | prefer | off>
  *   --output-format <text | json>
  *   --headless
  *   --help / -h
@@ -20,6 +21,7 @@
  */
 
 import type { PermissionMode } from "../core/types.js";
+import type { SandboxPolicy } from "../tools/tier0/sandbox.js";
 import type { TopologyKind } from "../swarm/team-spec.js";
 
 /**
@@ -57,6 +59,13 @@ export interface CommonOpts {
   model?: string;
   resume?: string;
   permissionMode: PermissionMode;
+  /**
+   * OS-level isolation policy for untrusted children (shell, hooks, MCP,
+   * plugins). Distinct from `permissionMode`, which governs what openswarm's
+   * own tools may do: a command openswarm permits can still be confined, and
+   * "require" refuses to run anything the host cannot confine.
+   */
+  sandbox: SandboxPolicy;
   outputFormat: "text" | "json";
   headless: boolean;
   /** When false, plugin discovery is disabled at startup. Default: true. */
@@ -210,6 +219,7 @@ export type ParsedArgs =
       concurrency: number;
       output: string;
       permissionMode: PermissionMode;
+      sandbox: SandboxPolicy;
       /** When set, the CLI attaches a MAP-sidecar observer dialing this hub URL. */
       mapUrl?: string;
       /** v0.5 stage 5E.3: when true, fork the team daemon and return immediately. */
@@ -228,6 +238,7 @@ export type ParsedArgs =
       concurrency: number;
       output: string;
       permissionMode: PermissionMode;
+      sandbox: SandboxPolicy;
       /** When set, the CLI attaches a MAP-sidecar observer dialing this hub URL. */
       mapUrl?: string;
       maxTokens?: number;
@@ -261,6 +272,7 @@ export type ParsedArgs =
       mapScope?: string;
       onboardToken?: string;
       permissionMode: PermissionMode;
+      sandbox: SandboxPolicy;
       model?: string;
     }
   | { kind: "error"; message: string; showHelp: boolean };
@@ -302,6 +314,21 @@ const VALID_PERMISSION_MODES = new Set<string>([
   "danger-full-access",
 ]);
 
+const VALID_SANDBOX_POLICIES = new Set<string>(["require", "prefer", "off"]);
+
+/**
+ * Sandbox policy from the environment, for CI and for hosts that want the
+ * choice made once rather than on every invocation. An unrecognised value is
+ * ignored rather than fatal: a typo in a shell profile should not make the
+ * CLI unusable, and the flag remains available to be explicit.
+ */
+function envSandboxPolicy(): SandboxPolicy | undefined {
+  const raw = process.env.OPENSWARM_SANDBOX?.trim();
+  return raw !== undefined && VALID_SANDBOX_POLICIES.has(raw)
+    ? (raw as SandboxPolicy)
+    : undefined;
+}
+
 const VALID_OUTPUT_FORMATS = new Set<string>(["text", "json"]);
 
 // ---------------------------------------------------------------------------
@@ -321,6 +348,10 @@ export function parseArgv(args: string[]): ParsedArgs {
   let model: string | undefined;
   let resume: string | undefined;
   let permissionMode: PermissionMode = "workspace-write";
+  // "prefer" preserves today's behaviour: isolate where the host can, run
+  // anyway where it cannot. Changing this default is a WP-25 decision, since
+  // "require" is currently unsatisfiable on macOS and Windows.
+  let sandbox: SandboxPolicy = envSandboxPolicy() ?? "prefer";
   let outputFormat: "text" | "json" = "text";
   let headless = false;
   let plugins = true;
@@ -661,6 +692,27 @@ export function parseArgv(args: string[]): ParsedArgs {
         };
       }
       permissionMode = val as PermissionMode;
+      i += 2;
+      continue;
+    }
+
+    if (tok === "--sandbox") {
+      const val = expanded[i + 1];
+      if (val === undefined || val.startsWith("-")) {
+        return {
+          kind: "error",
+          message: "--sandbox requires a value",
+          showHelp: true,
+        };
+      }
+      if (!VALID_SANDBOX_POLICIES.has(val)) {
+        return {
+          kind: "error",
+          message: `invalid --sandbox "${val}". Valid values: require, prefer, off`,
+          showHelp: true,
+        };
+      }
+      sandbox = val as SandboxPolicy;
       i += 2;
       continue;
     }
@@ -1108,6 +1160,7 @@ export function parseArgv(args: string[]): ParsedArgs {
     // *effective* mode to read-only downstream (runtime + REPL) so `/plan off`
     // can restore write access up to this ceiling.
     permissionMode,
+    sandbox,
     outputFormat,
     headless,
     plugins,
@@ -1259,6 +1312,7 @@ export function parseArgv(args: string[]): ParsedArgs {
           concurrency: swarmConcurrency,
           output: swarmOutput,
           permissionMode,
+          sandbox,
           ...(mapUrl !== undefined && { mapUrl }),
           detach,
           opentasks,
@@ -1428,6 +1482,7 @@ export function parseArgv(args: string[]): ParsedArgs {
         concurrency: swarmConcurrency,
         output: swarmOutput,
         permissionMode,
+        sandbox,
         ...(mapUrl !== undefined && { mapUrl }),
         ...(maxTokens !== undefined && { maxTokens }),
         ...(maxCostUsd !== undefined && { maxCostUsd }),
@@ -1468,6 +1523,7 @@ export function parseArgv(args: string[]): ParsedArgs {
         ...(hostMapScope !== undefined && { mapScope: hostMapScope }),
         ...(hostOnboardToken !== undefined && { onboardToken: hostOnboardToken }),
         permissionMode,
+        sandbox,
         ...(model !== undefined && { model }),
       };
     }

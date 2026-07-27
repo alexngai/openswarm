@@ -21,6 +21,7 @@ import type { CommonOpts } from "../cli/argv.js";
 
 const acpOpts: CommonOpts = {
   permissionMode: "workspace-write",
+  sandbox: "prefer",
   outputFormat: "json",
   headless: true,
   plugins: true,

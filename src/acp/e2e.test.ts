@@ -296,6 +296,7 @@ describe("ACP e2e (live model)", () => {
     async () => {
       const liveOpts: CommonOpts = {
         permissionMode: "read-only",
+        sandbox: "prefer",
         outputFormat: "json",
         headless: true,
         plugins: false,

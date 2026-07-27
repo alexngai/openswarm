@@ -113,6 +113,11 @@ Flags:
                                  (default: workspace-write)
   --plan                         Read-only plan mode: investigate + design, no edits
                                  (forces read-only; toggle live with /plan)
+  --sandbox <policy>             OS isolation for shell, hooks, MCP and plugins:
+                                 require | prefer | off (default: prefer;
+                                 env: OPENSWARM_SANDBOX). "require" refuses to
+                                 run anything this host cannot confine — see
+                                 "openswarm doctor" for what it can.
   --output-format <fmt>          text | json (default: text)
   --system-prompt <text|@file>   Replace the single-agent base system prompt (@file reads a file)
   --append-system-prompt <t|@f>  Append guidance to the system prompt (@file reads a file)

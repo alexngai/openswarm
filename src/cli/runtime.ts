@@ -19,6 +19,7 @@ import { AnthropicEnvAuth } from "../auth/anthropic-env-auth.js";
 import { ToolDispatcher } from "../tools/dispatcher.js";
 import { buildTier0Tools } from "../tools/tier0/index.js";
 import { PermissionEngine } from "../permissions/index.js";
+import { getProcessBroker } from "../process/broker.js";
 import { NativeEngine } from "../engine/native.js";
 import { HardenedNativeEngine } from "../engine/hardened-native.js";
 import { ScriptedTestEngine } from "../engine/test-engine.js";
@@ -157,6 +158,13 @@ export async function buildAgentRuntime(
   trust: TrustDecision,
 ): Promise<BuildRuntimeResult> {
   const allowWorkspaceConfig = trust.allowWorkspaceConfig;
+  // Set before anything can spawn: the broker applies this to every untrusted
+  // child, and a child launched before the policy lands would get the default.
+  getProcessBroker().setPolicy(opts.sandbox);
+  // Exported so workers inherit it. A worker runs the same tools against the
+  // same workspace, so it has to confine them the same way; without this a
+  // --sandbox chosen on the command line would stop at the root process.
+  process.env.OPENSWARM_SANDBOX = opts.sandbox;
   // 1. Validate auth. Scripted-test mode skips the check (the scripted engine
   // never calls the API).
   const scriptedMode = !!process.env.OPENSWARM_TEST_SCRIPT;
@@ -394,7 +402,10 @@ export async function buildAgentRuntime(
       break;
     case "codex-chatgpt":
       makeEngine = async () => ({
-        engine: new CodexFrameworkEngine({ cwd: process.cwd() }),
+        engine: new CodexFrameworkEngine({
+          cwd: process.cwd(),
+          permissionMode: effectivePermissionMode,
+        }),
       });
       break;
     case "codex-native": {
