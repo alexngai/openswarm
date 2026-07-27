@@ -54,10 +54,11 @@ list_targets() {
   echo "  WP-00      effect-transaction walking skeleton"
   echo "  WP-00a     production adoption of the frozen contracts (partial)"
   echo "  WP-01      capability manifest and evidence harness"
+  echo "  WP-03      canonical path authorization"
   echo
   echo "Declared but not yet implemented (exit 2):"
   printf '%s\n' "${KNOWN_WPS[@]:1}" \
-    | grep -vx -e 'WP-00' -e 'WP-00a' -e 'WP-01' \
+    | grep -vx -e 'WP-00' -e 'WP-00a' -e 'WP-01' -e 'WP-03' \
     | paste -sd' ' - | fold -sw 76 | sed 's/^/  /'
   echo
   echo "See docs/63-product-parity-roadmap.md for each gate's fixtures and threshold."
@@ -277,6 +278,31 @@ case "$WP" in
       # prove the checks work; this proves they currently pass on this tree.
       run_check M6 "manifest gate passes against the real documents" \
         bun scripts/check-parity-manifest.ts
+    fi
+    ;;
+
+  WP-03)
+    # Canonical path authorization. Threshold (docs/63): the generated and
+    # swap-race escape corpus reports zero unauthorized access. WP-00a
+    # delivered the design half — one central check, one shared helper — so
+    # what remains is the part that can only be established by attacking it.
+    FIXTURES="FX-PATH-001..020,generated-corpus"
+    if ! ensure_deps; then
+      RESULT="error"
+      FAIL=$((FAIL + 1))
+    else
+      run_check P1 "broken links resolve to their target, not their own location" \
+        npx vitest run src/kernel/workspace-authority.test.ts
+      run_check P2 "an unprovable path is a denied path, not a raw errno" \
+        npx vitest run src/tools/workspace-path.test.ts
+      run_check P3 "FX-PATH-001..020 generated corpus grants no unauthorized access" \
+        npx vitest run src/tools/path-escape-corpus.test.ts
+      run_check P4 "swap race leaves nothing outside the workspace" \
+        npx vitest run src/tools/path-swap-race.test.ts
+      run_check P5 "notebook writes are atomic and read-gated" \
+        npx vitest run src/tools/tier1/notebook_edit.test.ts
+      run_check P6 "every file tool still agrees with the shared helper" \
+        npx vitest run src/tools/tier0/ src/tools/access-contract.test.ts
     fi
     ;;
 

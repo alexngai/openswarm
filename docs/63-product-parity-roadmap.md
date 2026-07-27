@@ -535,7 +535,7 @@ Calendar duration and person-week loading are separate. Package gates include pa
 
 | Release | Weeks | Package estimates (person-weeks) | Feature A/B/C | Quality A/B/C | Total | Capacity | Slack |
 |---|---:|---|---:|---:|---:|---:|---:|
-| R1 | 1–9 | `00` 4 ✔; `00a` 4 ✔; `01` 1 ✔; `02` 2; `03` 1; `04` 2; `05` 2; `06` 2 | 7/4/7 | 2/5/2 | 27 | 27 | 0 |
+| R1 | 1–9 | `00` 4 ✔; `00a` 4 ✔; `01` 1 ✔; `02` 2; `03` 1 ✔; `04` 2; `05` 2; `06` 2 | 7/4/7 | 2/5/2 | 27 | 27 | 0 |
 | R2 | 10–17 | `07` 3; `08` 3; `09` 1; `10` 2; `11` 3; `12` 2 | 3/6/5 | 3/1/2 | 20 | 24 | 4 |
 | R3 | 18–27 | `13`–`18` 3 each | 6/6/6 | 3/3/3 | 27 | 30 | 3 |
 | R4 | 28–35 | `19` 3; `20` 3; `21` 4; `22` 3; `23` 3; `24` 3 | 5/7/7 | 3/1/1 | 24 | 24 | 0 |
@@ -561,7 +561,7 @@ Dependency- and owner-constrained schedule:
 
 | Release | Feature schedule | Cross-package quality schedule | Slack |
 |---|---|---|---|
-| R1 | `WP-00` B/C w1–2 ✔; `00a` A/C w3–4 ✔; `01` C w5 ✔; `02` A w5–6; `03` A w7; `04` A w8–9; `05` B w4–5; `06` C w6–7 | A w1–2; B w3,w6–9; C w8–9 | none |
+| R1 | `WP-00` B/C w1–2 ✔; `00a` A/C w3–4 ✔; `01` C w5 ✔; `02` A w5–6; `03` A w7 ✔; `04` A w8–9; `05` B w4–5; `06` C w6–7 | A w1–2; B w3,w6–9; C w8–9 | none |
 | R2 | `WP-07` B w10–12; `08` B w13–15; `09` A w10; `11` C w10 + A w12–13; `12` C w14–15; `10` C w16–17 | A w14–16; B w16; C w11–12 | A w11,w17; B w17; C w13 |
 | R3 | `WP-13` A w18–20; `16` B w18–20; `14` C w21 + A w21–22; `15` C w23 + B w23–24; `17` C w24–26; `18` A/B/C w27 | A w23–25; B w21–22,w25; C w18–20 | A/B w26; C w22 |
 | R4 | `WP-19` B w28–29 + C w28; `20` A w28–29 + C w29; `21` A/B w30–31; `22` C w30 + B w32–33; `23` C w31 + A w32 + B w34; `24` C w32–34 | A w33–35; B/C w35 | none |
@@ -690,14 +690,19 @@ Delivered by `WP-00a`:
 - Parent-symlink, nearest-existing-ancestor, and external-path handling, via `WorkspaceAuthority.canonicalize`.
 - Permission decisions carry canonical path arguments, as `OperationRequest.path`.
 
-Remaining:
+Delivered by `WP-03`. Gate: `./scripts/verify-parity-wp.sh WP-03 <cell>`, `P1`–`P6` passing, over `FX-PATH-001..020` and a generated corpus.
 
-- Broken-link handling, which no current test covers.
-- Race handling. Containment is checked twice, at authorization and at write, which narrows the window but has not been shown to close it.
-- The escape corpus. This is now the bulk of the package and is verification rather than design work.
-- Atomic `notebook_edit` writes and a read-before-edit contract. `WP-00a` fixed its containment only; it still rewrites the whole file with a plain `writeFile` and, alone among the write tools, does not require a prior read. Until this lands the risk register's "disable by default" position stands.
+Both remaining items were live vulnerabilities rather than gaps in coverage, which is the fourth pass in a row to surface a finding no audit named.
 
-Gate: generated and swap-race escape corpus reports zero unauthorized access.
+**A broken link pointing outside was treated as a new file inside.** `realpath` answers `ENOENT` for a dangling link exactly as it does for a name that was never there, and `canonicalize` believed it — so `link → /outside/absent` was judged at the link's own in-workspace location, and a write through it created the file outside with chosen content. Both containment layers shared the reasoning, so both passed it. An `ENOENT` is now only believed once `lstat` agrees nothing is there; a link is followed to its target by hand and the target is judged. Related: a symlink cycle raised `ELOOP`, which the ancestor walk could not interpret and rethrew, crashing the tool instead of denying the path. An unprovable path is now a denied path.
+
+**The swap race was open, and measurably so.** Against a thread doing nothing but replacing a directory with an outward symlink, 400 writes put finished, attacker-controlled files outside the workspace. Checking twice narrowed the window; it did not close it, because both checks resolve by name and a name can mean something else by the next syscall. Three changes close it. Staged files are created at the workspace root rather than beside the target, so nothing is ever created outside — a temp file that escapes cannot be cleaned up afterwards, since by the time the escape is noticed the name points back inside and the unlink misses. The rename is anchored to a directory descriptor through `/proc/self/fd`, which the kernel resolves straight to the open file description; where the platform offers that, failing to pin refuses rather than falling back, because a directory that cannot be opened is usually one being swapped. Where it does not — macOS, Windows — the sequence falls back to names and the residual is real, detected and undone rather than prevented. Removing it there needs `openat2(RESOLVE_BENEATH)` or kernel-level containment, so it is carried as a dependency on `WP-25` rather than claimed here.
+
+Two contract fixes came with them. `write_file` threw rather than returned when a racing swap broke its `mkdir`, handing callers an exception where a refusal belongs; and its read-before-overwrite check used `lstat`, so a dangling link demanded a prior read that `read_file` could never supply, since it follows the link and finds nothing.
+
+`notebook_edit` now stages and renames like every other write tool, guards on a content hash, and requires a prior read. A plain `writeFile` truncates before it writes, so an interrupted edit left JSON that no longer parsed — a whole notebook lost for one cell. This clears the risk register's "disable by default" position.
+
+Four writers had four atomic-write implementations; they now share one, which is where the containment and race handling live.
 
 #### `WP-04` Process broker and fail-closed shell baseline — 2 person-weeks, A
 
@@ -972,7 +977,7 @@ R4 exit:
 
 Depends on `WP-03`, `WP-04`, `WP-13`, and `WP-14`.
 
-- macOS Seatbelt.
+- macOS Seatbelt. This carries `WP-03`'s one open residual: the swap race between a containment check and the rename that follows it is closed on Linux by anchoring to a directory descriptor through `/proc/self/fd`, and macOS and Windows have no equivalent, so they detect and undo an escape rather than preventing it. Seatbelt is where prevention becomes available off Linux.
 - Linux x64/arm64 packaging and isolation.
 - WSL2/container bootstrap, path mapping, signal handling, and cleanup.
 - Explicit native Windows rejection.
@@ -1099,7 +1104,7 @@ Security:
 
 `WP-00 → WP-00a → WP-01 → WP-02/WP-03 → WP-04 → WP-09 → WP-13 → WP-14 → WP-25 → WP-29 → WP-30 → WP-32 → WP-33`
 
-The first three are delivered. `WP-02` and `WP-03` are now the joint head of this path, and `WP-06` of the swarm-correctness path below; all three depended only on `WP-01`, so R1's remaining five packages are unblocked and can proceed in parallel across their owners.
+The first three are delivered, and so is `WP-03`. `WP-02` is now the sole head of this path, `WP-06` of the swarm-correctness path below, and `WP-05` of the sessions path; each depended only on `WP-01`, so R1's remaining four packages are unblocked and can proceed in parallel across all three owners. `WP-04` is the only R1 package still blocked, waiting on `WP-02`.
 
 Sessions:
 
@@ -1409,7 +1414,7 @@ Each work package updates its subsystem’s design-of-record in the same change.
 | Worker parity | `WP-09`, `WP-14`, `WP-17` |
 | Budgets/errors | `WP-12`, `WP-16`, `WP-18` |
 | Task authorization | `WP-06`, `WP-17` |
-| Notebook safety | `WP-03`, `WP-04`. Containment fixed in `WP-00a`; still disable by default pending atomic writes and a read-before-edit contract |
+| Notebook safety | Closed. Containment fixed in `WP-00a`; atomic writes, a content-hash guard, and a read-before-edit contract landed in `WP-03` |
 | Worktree mode | `WP-11`, `WP-20` |
 | Documentation drift | `WP-01`, `WP-32` |
 

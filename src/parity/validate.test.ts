@@ -86,7 +86,7 @@ describe("the shipped manifest", () => {
     const built = WORK_PACKAGES.filter((wp) => wp.gateImplemented).map(
       (wp) => wp.id,
     );
-    expect(built).toEqual(["WP-00", "WP-00a", "WP-01"]);
+    expect(built).toEqual(["WP-00", "WP-00a", "WP-01", "WP-03"]);
   });
 
   it("records the three capabilities whose evidence lands after the release that claimed them", () => {
