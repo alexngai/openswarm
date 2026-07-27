@@ -1,6 +1,6 @@
 # 63 — Complementary-specialist routing (diversity, not just cost-tiering)
 
-**Status:** design + results (§9) — **H3 not supported**. Single-shot MBPP: diverse competent models are substitutable (κ=0.058). Agentic SWE: degenerate/harness-contaminated (only the agentic-coder-tuned model functions; Δacc=0). Extends 50 (thesis), 62 (offline method + honest-compute pre-check + §8 attribution).
+**Status:** design + results — **diversity not supported (H3 + H4)**. Model diversity: substitutable single-shot (κ=0.058), harness-fit-contaminated agentic (§9). Loadout diversity: κ=0 at 3 seeds — the best loadout (plan-first) dominates; the 1-seed probe's κ=0.67 was noise (§10). Loadout is a *quality* lever (+0.19), not a diversity lever. Extends 50 (thesis), 62 (offline method + honest-compute pre-check + §8 attribution).
 
 ## 1. Why — the gap docs/62 leaves open
 
@@ -76,3 +76,22 @@ Accuracy: oracle-router Δacc > 0 with CI excluding 0 at ≥3 seeds, *and* a dep
 **Verdict:** H3 not supported on the testable surfaces. Single-shot: substitutable (κ≈0.06). Agentic: degenerated to "only the agentic-coder-tuned model functions in this harness" — a statement about *model-specialization + harness-fit*, not clean task-complementarity. No diversity gain observed either way.
 
 **Methodological lesson (docs/62 §8.3 recurring):** gate on *full agentic competence per model* (a per-model pilot confirming each solves some), not a toy tool-use check — a model can pass `get_weather` yet fail the real SWE loop (DeepSeek 0/16). And the agentic finding *is* real in one sense: a heterogeneous agentic swarm is hard because **most models can't drive the loop well** — agentic-SWE membership is a narrow, specialization-dependent set, which is itself a constraint on the docs/50 thesis. Tools: `eval/analysis/router-frontier.ts`, `eval/experiments/mbpp-signal.ts` (multi-model), `bedrock-toolcheck.ts`.
+
+## 10. H4 — loadout diversity (same model, different loadouts): also not supported
+
+Since model diversity failed, test **configuration diversity**: one working model (Qwen-Coder-30B) in k loadouts. A free 1-seed probe (plain vs repro-first on easy-16) *suggested* complementarity (κ=0.67, oracle +2 tasks) — but the proper test falsifies it.
+
+**4 loadouts (direct / repro-first / explore-first / plan-first) × easy-16 × 3 seeds** (`CS_LOADOUTS`, arm-per-loadout; analyzed `router-frontier --by arm`):
+
+| loadout | resolve (p≥0.5 over 3 seeds) | unique-solves |
+|---|--:|--:|
+| direct | 0.438 | 0 |
+| repro-first | 0.438 | 0 |
+| explore-first | 0.500 | 0 |
+| **plan-first** | **0.625** | 0 |
+
+**κ = 0.000, Δacc = 0.000.** The best loadout (plan-first) solves a **strict superset** — all 10 tasks any loadout solves (union=plan=10, non-plan-solves-plan-misses=0). No loadout complements it. **The 1-seed probe's κ=0.67 was seed noise:** apparent "unique solves" were single-seed flukes that wash out over 3 seeds — exactly the 1-seed hazard of docs/57 (5-seed inversion) and §8.4. A clean vindication of the ≥3-seed discipline.
+
+**But loadout is a real *quality* lever, not a diversity lever:** plan-first (0.625) > explore (0.500) > direct = repro (0.438) — **+0.19 resolve from prompt strategy alone**. So loadout/prompt engineering meaningfully improves the *single* agent; the win is "find and use the best loadout," not "run a swarm of diverse loadouts."
+
+**Diversity investigation closed (H3 + H4).** Neither **model diversity** (substitutable single-shot κ=0.06; harness-fit-contaminated agentic) nor **loadout diversity** (κ=0 at 3 seeds; best loadout dominates) produces exploitable complementarity on code tasks. The frontier-expanding levers are **cost-tiering with a genuinely small tier** (docs/62, ~1.3–3.5× FLOPs) and **single-agent loadout quality** (plan-first, +0.19) — not complementarity-based swarming.
