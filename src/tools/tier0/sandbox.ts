@@ -585,7 +585,8 @@ export async function spawnSandboxed(
     );
   }
 
-  // policy === "prefer" — fall through with warning
+  // policy === "prefer" — no isolation is available and the caller tolerates
+  // that. Callers that need to tell the user should ask effectiveIsolation().
   return spawn(command, [...args], {
     ...spawnOpts,
     env: envWithProxy(spawnOpts.env, sandboxConfig),
@@ -593,42 +594,16 @@ export async function spawnSandboxed(
 }
 
 /**
- * Synchronous version for cases where async isn't possible.
- * Uses cached detection results; falls back to unsandboxed if detection
- * hasn't run yet.
+ * There is deliberately no synchronous variant.
+ *
+ * One existed and read the detection cache directly, treating "detection has
+ * not run yet" as "no sandbox available" and spawning unconfined — including
+ * under policy "require", because the cache check preceded the policy check.
+ * Since detection was only ever triggered by this async path, any caller that
+ * reached the sync one first was unconfined by construction. Awaiting
+ * detectSandboxMode() is the only correct way to learn the mode, so spawning
+ * sandboxed is async, and callers are async with it.
  */
-export function spawnSandboxedSync(
-  command: string,
-  args: readonly string[],
-  spawnOpts: SpawnOptions,
-  sandboxConfig: SandboxConfig,
-): ChildProcess {
-  const policy = sandboxConfig.policy ?? "prefer";
-
-  if (policy === "off" || _detectedMode === undefined) {
-    return spawn(command, [...args], {
-      ...spawnOpts,
-      env: envWithProxy(spawnOpts.env, sandboxConfig),
-    });
-  }
-
-  if (_detectedMode === "bwrap" && _detectedBwrapPath) {
-    return spawnWithBwrap(_detectedBwrapPath, command, args, spawnOpts, sandboxConfig);
-  }
-
-  if (_detectedMode === "landlock" && _landlockHelperPath) {
-    return spawnWithLandlock(_landlockHelperPath, command, args, spawnOpts, sandboxConfig);
-  }
-
-  if (policy === "require") {
-    throw new Error("Sandbox required but not available");
-  }
-
-  return spawn(command, [...args], {
-    ...spawnOpts,
-    env: envWithProxy(spawnOpts.env, sandboxConfig),
-  });
-}
 
 // ---------------------------------------------------------------------------
 // bwrap spawn

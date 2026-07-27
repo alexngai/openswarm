@@ -1,8 +1,9 @@
 /**
- * McpStdioClient — wraps @modelcontextprotocol/sdk's Client + StdioClientTransport.
+ * McpStdioClient — wraps @modelcontextprotocol/sdk's Client over a brokered
+ * stdio transport.
  *
  * Responsibilities:
- *   - Spawn a subprocess (via StdioClientTransport) for a configured MCP server.
+ *   - Launch a subprocess (via the process broker) for a configured MCP server.
  *   - Perform the initialize handshake with a 10s timeout.
  *   - Expose listTools / callTool / listResources / readResource.
  *   - Graceful close: close transport, then best-effort terminate.
@@ -15,7 +16,7 @@
  */
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { BrokeredStdioTransport } from "./broker-transport.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -52,7 +53,7 @@ export class McpStdioClient {
 
   private readonly _config: McpServerConfig;
   private _client: Client | undefined;
-  private _transport: StdioClientTransport | undefined;
+  private _transport: BrokeredStdioTransport | undefined;
   private _connected = false;
 
   constructor(config: McpServerConfig) {
@@ -71,13 +72,16 @@ export class McpStdioClient {
   async connect(): Promise<void> {
     if (this._connected) return;
 
-    const transport = new StdioClientTransport({
+    // Brokered rather than the SDK's StdioClientTransport: an MCP server is
+    // third-party code launched on a repository's say-so, so it belongs under
+    // the same isolation, cancellation, and registry as any other untrusted
+    // child. The SDK's transport spawns it out of reach of all three.
+    const transport = new BrokeredStdioTransport({
+      serverName: this.serverName,
       command: this._config.command,
-      args: this._config.args ? Array.from(this._config.args) : undefined,
-      env: this._config.env ? { ...this._config.env } : undefined,
-      cwd: this._config.cwd,
-      // Inherit stderr so server error messages surface to the parent.
-      stderr: "inherit",
+      ...(this._config.args !== undefined && { args: Array.from(this._config.args) }),
+      ...(this._config.env !== undefined && { env: { ...this._config.env } }),
+      ...(this._config.cwd !== undefined && { cwd: this._config.cwd }),
     });
 
     const client = new Client(

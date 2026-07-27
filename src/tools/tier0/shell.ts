@@ -112,7 +112,7 @@ async function shellExecExecute(
     mgr.setLastCommand(sessionId, input.command);
     mgr.writeStdin(sessionId, input.command + "\n");
   } else {
-    const session = mgr.create(ctx.cwd, input.command);
+    const session = await mgr.create(ctx.cwd, input.command);
     sessionId = session.id;
   }
 
@@ -405,6 +405,9 @@ export const shellListTool: ToolImpl = {
   spec: shellListSpec,
   execute: shellListExecute,
   zodSchema: shellListSchema,
+  // Unlike its siblings this one runs nothing: it reports the session
+  // registry. Listing races neither a command nor a workspace file.
+  accesses: () => ToolAccesses.none(),
 };
 
 // ---------------------------------------------------------------------------

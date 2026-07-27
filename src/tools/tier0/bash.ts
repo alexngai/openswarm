@@ -30,11 +30,11 @@ import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { ToolAccesses } from "../access.js";
 import { aliasParams } from "./internal.js";
+import { BoundedOutput, DEFAULT_RETAIN_BYTES } from "./bounded-output.js";
 import { getHardenedEnv } from "./process-hardening.js";
-import { spawnSandboxed, type SandboxPolicy } from "./sandbox.js";
+import type { SandboxPolicy } from "./sandbox.js";
+import { getProcessBroker } from "../../process/broker.js";
 import { cleanOutput } from "./output-cleanse.js";
-
-let _sandboxPolicy: SandboxPolicy = "prefer";
 
 const paramsSchema = z.object({
   command: z.string().describe("The command to execute"),
@@ -168,6 +168,25 @@ function normalizeStdout(text: string): string {
   return text.replace(/^(\s*\n)+/, "").trimEnd();
 }
 
+/**
+ * A note describing what the read path discarded, or "" when it kept
+ * everything.
+ *
+ * Appended rather than inserted at the seam because the seam is in the middle,
+ * and the middle is exactly what the later truncation removes — a note there
+ * would describe a loss using text that gets lost. At the end it survives into
+ * the tail, and into the spilled file, so the "full output" the truncation
+ * marker promises is qualified in the same place it is offered.
+ */
+function dropNote(buf: BoundedOutput, stream: "stdout" | "stderr"): string {
+  if (!buf.truncated) return "";
+  return (
+    `\n\n... [${buf.droppedBytes} bytes of ${stream} discarded while reading; ` +
+    `${buf.totalBytes} bytes were produced, and ${DEFAULT_RETAIN_BYTES} bytes ` +
+    `from each end were kept] ...`
+  );
+}
+
 async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolResult> {
   const parsed = inputSchema.safeParse(raw);
   if (!parsed.success) {
@@ -178,11 +197,14 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   const cwd = input.workdir !== undefined ? path.resolve(ctx.cwd, input.workdir) : ctx.cwd;
   const timeoutMs = Math.min(input.timeout ?? DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS);
 
-  const sandboxConfig = {
-    writableRoots: [] as string[],
+  const broker = getProcessBroker();
+  const request = {
+    kind: "shell" as const,
+    command: "/bin/bash",
+    args: ["-c", input.command],
     cwd,
     env: getHardenedEnv(),
-    policy: _sandboxPolicy,
+    label: input.command,
   };
 
   // Background mode: stream combined output to a file and return immediately
@@ -191,18 +213,20 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
     const rand = crypto.randomBytes(4).toString("hex");
     const outFile = path.join(os.tmpdir(), `openswarm-bash-${rand}.out`);
     const fd = fsSync.openSync(outFile, "w");
-    const child = await spawnSandboxed(
-      "/bin/bash",
-      ["-c", input.command],
-      { cwd, detached: true, stdio: ["ignore", fd, fd] },
-      sandboxConfig,
-    );
-    fsSync.closeSync(fd);
-    child.unref();
+    let bg;
+    try {
+      bg = await broker.spawn({ ...request, stdio: ["ignore", fd, fd] });
+    } finally {
+      fsSync.closeSync(fd);
+    }
+    // unref so a backgrounded command does not hold the event loop open; the
+    // broker's registry, not the handle, is what keeps it reachable and gets
+    // it reaped at exit.
+    bg.child.unref();
     return {
       status: "ok",
       output:
-        `Command running in background with ID: ${child.pid}. ` +
+        `Command running in background with ID: ${bg.child.pid}. ` +
         `Output is being written to: ${outFile}. ` +
         `To check interim output, read that file (e.g. \`tail ${outFile}\`).`,
     };
@@ -211,30 +235,32 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   return new Promise<ToolResult>(async (resolve) => {
     // stdout and stderr are collected separately (Claude Code behavior):
     // the tool result is stdout followed by stderr, not an interleaved stream.
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
+    //
+    // Bounded on the read path rather than at close. Truncating at close bounds
+    // what the model sees but not what the command can make us hold, and a
+    // command that outruns its own exit exhausts memory before that truncation
+    // ever runs. The retained window is far wider than the result cap, so any
+    // output that would have survived truncation survives this unchanged.
+    const stdoutBuf = new BoundedOutput();
+    const stderrBuf = new BoundedOutput();
 
-    const child = await spawnSandboxed(
-      "/bin/bash",
-      ["-c", input.command],
-      { cwd, stdio: ["ignore", "pipe", "pipe"] },
-      sandboxConfig,
-    );
+    const proc = await broker.spawn({ ...request, stdio: ["ignore", "pipe", "pipe"] });
+    const child = proc.child;
 
-    child.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
-    child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+    child.stdout?.on("data", (chunk: Buffer) => stdoutBuf.push(chunk));
+    child.stderr?.on("data", (chunk: Buffer) => stderrBuf.push(chunk));
 
     let timedOut = false;
 
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGKILL");
+      proc.kill();
     }, timeoutMs);
 
     // Honor abort signal.
     const onAbort = () => {
       clearTimeout(timer);
-      child.kill("SIGKILL");
+      proc.kill();
     };
     ctx.abort?.addEventListener("abort", onAbort);
 
@@ -244,8 +270,8 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
 
       // Cleanse (strip ANSI/progress noise, redact secrets) before truncating
       // so the preserved head carries signal, not escape codes.
-      const rawStdout = Buffer.concat(stdoutChunks).toString("utf8");
-      const rawStderr = Buffer.concat(stderrChunks).toString("utf8");
+      const rawStdout = stdoutBuf.text() + dropNote(stdoutBuf, "stdout");
+      const rawStderr = stderrBuf.text() + dropNote(stderrBuf, "stderr");
       const cleanedStdout = normalizeStdout(
         cleanOutput(rawStdout, { command: input.command }).text,
       );
@@ -307,8 +333,13 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   });
 }
 
+/**
+ * @deprecated The sandbox policy belongs to the broker, which applies it to
+ * every untrusted child rather than to bash alone. Kept as a forwarder so the
+ * name does not silently become a no-op for any caller still holding it.
+ */
 export function setBashSandboxPolicy(policy: SandboxPolicy): void {
-  _sandboxPolicy = policy;
+  getProcessBroker().setPolicy(policy);
 }
 
 export const bashTool: ToolImpl = {
