@@ -56,10 +56,11 @@ list_targets() {
   echo "  WP-01      capability manifest and evidence harness"
   echo "  WP-02      repository trust and configuration provenance"
   echo "  WP-03      canonical path authorization"
+  echo "  WP-04      process broker and fail-closed shell baseline"
   echo
   echo "Declared but not yet implemented (exit 2):"
   printf '%s\n' "${KNOWN_WPS[@]:1}" \
-    | grep -vx -e 'WP-00' -e 'WP-00a' -e 'WP-01' -e 'WP-02' -e 'WP-03' \
+    | grep -vx -e 'WP-00' -e 'WP-00a' -e 'WP-01' -e 'WP-02' -e 'WP-03' -e 'WP-04' \
     | paste -sd' ' - | fold -sw 76 | sed 's/^/  /'
   echo
   echo "See docs/63-product-parity-roadmap.md for each gate's fixtures and threshold."
@@ -331,6 +332,39 @@ case "$WP" in
         npx vitest run src/skills/
       run_check T6 "runtime assembly cannot be reached without a decision" \
         npx vitest run src/cli/runtime.test.ts
+    fi
+    ;;
+
+  WP-04)
+    # Process broker and fail-closed shell baseline. Threshold (docs/63): zero
+    # direct untrusted spawns, and an unavailable `require` executes nothing.
+    #
+    # C1 is the load-bearing check and the only one that can observe the
+    # package's actual claim. Every other check here asks one caller whether it
+    # behaves; C1 intercepts `node:child_process` and asks the process what was
+    # launched, which is the question a newly added caller silently answers
+    # wrong.
+    FIXTURES="FX-PROC-001..012"
+    if ! ensure_deps; then
+      RESULT="error"
+      FAIL=$((FAIL + 1))
+    else
+      run_check C1 "FX-PROC-001..012 nothing launches outside the broker" \
+        npx vitest run src/process/spawn-corpus.test.ts
+      run_check C2 "broker registry, cancellation, and require refusal" \
+        npx vitest run src/process/broker.test.ts
+      run_check C3 "killing a child reaps its process tree" \
+        npx vitest run src/process/tree.test.ts
+      run_check C4 "the session's permission mode governs codex's own tooling" \
+        npx vitest run src/engine/codex-framework.test.ts src/providers/codex-app-server.test.ts
+      run_check C5 "isolation is selectable and reported honestly" \
+        npx vitest run src/cli/argv.test.ts src/cli/doctor.test.ts
+      run_check C6 "output is bounded while reading, not at close" \
+        npx vitest run src/tools/tier0/bounded-output.test.ts src/tools/tier0/shell-session.test.ts
+      run_check C7 "shell tools still behave through the broker" \
+        npx vitest run src/tools/tier0/bash.test.ts src/tools/tier0/shell.test.ts src/tools/tier0/sandbox.test.ts
+      run_check C8 "hooks, MCP, and plugins still behave through the broker" \
+        npx vitest run src/hooks/ src/mcp/ src/plugins/
     fi
     ;;
 

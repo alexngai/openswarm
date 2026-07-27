@@ -729,7 +729,29 @@ Depends on `WP-02` and `WP-03`.
 - For plugin and MCP tools specifically, the nameable resource is the **server or plugin identity**, not the paths the call happens to touch. Such a tool keeps declaring `ToolAccesses.all()` and is authorized as one `network.request` against that identity, so consent is granted once per server rather than once per call. Per-call authorization was considered and rejected: a remote tool cannot predict its own paths, so a per-call prompt asks the user to approve something neither side can describe, and the resulting prompt volume trains people to approve without reading. Making `accesses` mandatory on `ToolImpl`, with the missing-declaration default inverted from `none()` to `all()`, belongs here too — the current optional field means a new tool is parallel-safe and unrestricted by omission.
 - Replace `CodexFrameworkEngine`'s `danger-full-access` and `approvalPolicy: "never"` defaults. `WP-00a` gated OpenSwarm's own tools on that path, but Codex's built-in tooling is unrestricted and OpenSwarm never sees it, so a Codex-backed worker currently has full filesystem access regardless of permission mode.
 
-Gate: no untrusted child can launch outside the broker; unavailable required isolation runs nothing.
+Delivered. Gate: `./scripts/verify-parity-wp.sh WP-04 <cell>`, `C1`–`C8` passing, over `FX-PROC-001..012`. No untrusted child can launch outside the broker; unavailable required isolation runs nothing.
+
+Three of the listed items were live vulnerabilities rather than gaps in coverage, and all three were reachable in a default install.
+
+**Codex ran unconfined at every permission mode.** `CodexFrameworkEngine` never passed a sandbox setting to the provider, and `CodexAppServerProvider` stored the option without sending it on `thread/start`, so Codex's own file and shell tools defaulted to `danger-full-access` no matter what the session's mode said. Read-only meant read-only for OpenSwarm's tools and nothing at all for Codex's. The session's `PermissionMode` now maps to a Codex `SandboxMode`, defaulting to `read-only`, and both layers are covered by tests that assert the value reaches the wire rather than that it was stored.
+
+**The synchronous spawn path failed open.** `spawnSandboxedSync` could not await sandbox detection, so it read a cache and treated "not detected yet" as "no isolation available" — spawning unconfined even under a `require` policy, and only on the first call, which is why it never showed up in a warm process. There is now no synchronous variant at all: the one caller, `ShellSessionManager.create`, became async.
+
+**Cancellation orphaned grandchildren.** Foreground `bash` was not detached, so it shared OpenSwarm's process group and `child.kill()` reached only the immediate child; a timeout left the actual work running. Background commands were `unref`'d with no handle at all, so nothing could reap them and nothing knew they existed. Every brokered child now leads its own process group and is signalled as a tree.
+
+Beyond the listed scope, four things were found while doing it.
+
+**Isolation was unreachable and unreported.** `setBashSandboxPolicy` existed but was never called in production, so the policy was effectively hard-coded to `prefer` and `require` could not be requested at all — the fail-closed baseline this package is named for had no way to be switched on. There is now a `--sandbox require|prefer|off` flag with an `OPENSWARM_SANDBOX` fallback, inherited by workers, and `openswarm doctor` reports the isolation actually in force. That report is deliberately blunt on macOS and Windows, where the answer is that shells, hooks, MCP servers, and plugins run unconfined. That was already true; it was simply never said.
+
+**There were two schedulers, not one.** The hardened-native engine's eager-dispatch path computed resource accesses with its own copy of the dispatcher's logic, so a tool could serialize under one engine and run concurrently under the other. Both now call one helper.
+
+**Output was bounded at close, which is the wrong end.** Truncating at 30,000 characters bounds what the model sees, not what a command can make the harness hold: `stdout` accumulated in an unbounded array, so a command that outran its own exit exhausted memory before the truncation meant to protect against it ever ran. Persistent shell sessions were worse — draining advanced a cursor but left the bytes in place, so a session's buffers never shrank for its entire lifetime, under ordinary use. Both now bound on the read path, retaining far more than any caller can observe so nothing visible changed.
+
+**Brokers leaked exit listeners.** Each broker installed its own `process.once("exit")` reaper, so replacing the process-wide broker left the old listener installed for good. One shared listener now reaps them all.
+
+The estimate held at 2 person-weeks, but the shape was wrong in an instructive way: the three listed items were the smaller half. The larger half was making the package's own gate meaningful — "unavailable required isolation runs nothing" could not be tested at all until `require` became reachable, which nothing in the original scope called for.
+
+`FX-PROC-001..012` is deliberately not built on the broker's own bookkeeping. It intercepts `node:child_process` and compares what the process launched against what the broker launched, because the failure this package guards against is a *new* caller spawning directly — which every test written against the broker would pass. The corpus includes a case that bypasses the broker on purpose, so an interceptor that quietly stopped observing cannot be mistaken for a clean run.
 
 #### `WP-05` Retry operation ledger and cancellation barrier — 2 person-weeks, B
 
@@ -1118,7 +1140,7 @@ Security:
 
 `WP-00 → WP-00a → WP-01 → WP-02/WP-03 → WP-04 → WP-09 → WP-13 → WP-14 → WP-25 → WP-29 → WP-30 → WP-32 → WP-33`
 
-The first five are delivered: `WP-00`, `WP-00a`, `WP-01`, `WP-02`, and `WP-03`. `WP-04` is now the head of this path, and its blocking dependency is cleared. `WP-06` heads the swarm-correctness path below and `WP-05` the sessions path; both depended only on `WP-01`, so all three remaining R1 packages are unblocked and can proceed in parallel across all three owners. `bun scripts/parity-ready.ts` derives this from the manifest rather than from this paragraph.
+The first six are delivered: `WP-00`, `WP-00a`, `WP-01`, `WP-02`, `WP-03`, and `WP-04`. `WP-09` is now the head of this path, but it sits in R2 and depends on nothing further in R1, so the security path has no remaining R1 work. `WP-06` heads the swarm-correctness path below and `WP-05` the sessions path; both depended only on `WP-01`, so the two remaining R1 packages are unblocked and can proceed in parallel. `bun scripts/parity-ready.ts` derives this from the manifest rather than from this paragraph.
 
 Sessions:
 
