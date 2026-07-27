@@ -56,16 +56,19 @@ describe("guard wiring: define_guard → dispatcher", () => {
     dispatcher.register(makeWriteTool(calls));
     dispatcher.register(defineGuardTool);
 
-    // Before: the write succeeds.
+    // Before: a normal source-file write succeeds. (It must NOT match the guard
+    // installed below, or the validation gate (§10.4) would reject that guard for
+    // blocking a call already seen to succeed — which is the gate working correctly.)
     const before = await dispatcher.dispatch(
       "write_file",
-      { file_path: "a.generated.ts", content: "x" },
+      { file_path: "src/app.ts", content: "x" },
       ctx,
     );
     expect(before.status).toBe("ok");
     expect(calls).toHaveLength(1);
 
-    // The agent notices it keeps editing generated files and installs a guard.
+    // The agent installs a guard against writing to generated files (a pattern that has
+    // NOT succeeded this session, so the gate admits it).
     const install = await dispatcher.dispatch(
       "define_guard",
       {
@@ -79,7 +82,7 @@ describe("guard wiring: define_guard → dispatcher", () => {
     );
     expect(install.status).toBe("ok");
 
-    // After: the same call is blocked, and the tool never runs.
+    // After: a matching write is blocked, and the tool never runs.
     const after = await dispatcher.dispatch(
       "write_file",
       { file_path: "a.generated.ts", content: "x" },
@@ -90,7 +93,7 @@ describe("guard wiring: define_guard → dispatcher", () => {
     expect(calls).toHaveLength(1); // unchanged — no side effect
 
     // A non-matching write still works: the guard narrowed, it did not close the tool.
-    const ok = await dispatcher.dispatch("write_file", { file_path: "a.ts", content: "x" }, ctx);
+    const ok = await dispatcher.dispatch("write_file", { file_path: "b.ts", content: "x" }, ctx);
     expect(ok.status).toBe("ok");
     expect(calls).toHaveLength(2);
   });
@@ -139,5 +142,45 @@ describe("guard wiring: define_guard → dispatcher", () => {
     );
     expect(res.status).toBe("ok");
     expect(calls).toHaveLength(1);
+  });
+
+  it("validation gate: a successful dispatch records a success that rejects a later over-broad guard", async () => {
+    // Reproduces the Nova Pro pathology end-to-end through the dispatcher.
+    const calls: unknown[] = [];
+    const guards = new GuardRegistry();
+    setGuardRegistry(guards);
+    const dispatcher = new ToolDispatcher({ guards });
+    dispatcher.register(makeWriteTool(calls));
+    dispatcher.register(defineGuardTool);
+
+    // A normal successful write (no replace_all field) — the dispatcher records it.
+    const ok = await dispatcher.dispatch(
+      "write_file",
+      { file_path: "a.ts", content: "hello" },
+      ctx,
+    );
+    expect(ok.status).toBe("ok");
+
+    // Now try to install an over-broad guard (blocks any write with non-empty content).
+    const install = await dispatcher.dispatch(
+      "define_guard",
+      {
+        action: "define",
+        target_tool: "write_file",
+        predicate: { kind: "field_matches", field: "content", pattern: "." },
+        message: "too restrictive",
+        failure_signature: "over-broad",
+      },
+      ctx,
+    );
+    // The gate rejects it because it would have blocked the recorded successful write.
+    expect(install.status).toBe("error");
+    expect(install.status === "error" && install.message).toContain("too broad");
+    expect(guards.list()).toHaveLength(0);
+
+    // And the tool still works — the over-broad guard never took effect.
+    const after = await dispatcher.dispatch("write_file", { file_path: "b.ts", content: "y" }, ctx);
+    expect(after.status).toBe("ok");
+    expect(calls).toHaveLength(2);
   });
 });

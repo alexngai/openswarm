@@ -214,3 +214,57 @@ describe("GuardRegistry", () => {
     expect(reg.evidenceFor(second.id)?.evaluated).toBe(0);
   });
 });
+
+describe("GuardRegistry validation gate (docs/63 §10.4)", () => {
+  // An unambiguously over-broad guard: matches any edit with a non-empty old_string,
+  // i.e. essentially every edit. (`field_matches` returns false on an ABSENT field, so a
+  // guard must key on a field the successful calls actually carry to be caught — that
+  // property is itself a finding: docs/63 §10.2.)
+  const overBroad = (): HarnessGuard =>
+    guard({
+      predicate: { kind: "field_matches", field: "old_string", pattern: "." },
+      message: "too restrictive",
+      failureSignature: "over-broad",
+    });
+
+  it("passes a guard when there are no recorded successes (can't judge → allow)", () => {
+    const reg = new GuardRegistry();
+    expect(reg.validate(overBroad()).ok).toBe(true);
+  });
+
+  it("rejects a guard that would block a recorded successful call", () => {
+    const reg = new GuardRegistry();
+    // A normal, successful edit omits replace_all → stringifies to "false" → the over-broad guard matches.
+    reg.recordSuccess("edit_file", { file_path: "a.ts", old_string: "abc", new_string: "xyz" });
+    const v = reg.validate(overBroad());
+    expect(v.ok).toBe(false);
+    expect(v.blockedCount).toBe(1);
+    expect(v.sample).toMatchObject({ file_path: "a.ts" });
+  });
+
+  it("passes a narrow guard that only matches the failing case", () => {
+    const reg = new GuardRegistry();
+    reg.recordSuccess("edit_file", { file_path: "a.ts", old_string: "unique anchor", new_string: "y" });
+    // Narrow: only blocks the specific ambiguous anchor, not ordinary edits.
+    const narrow = guard({
+      predicate: { kind: "field_matches", field: "old_string", pattern: "^statuses\\.push\\(0\\);$" },
+    });
+    expect(reg.validate(narrow).ok).toBe(true);
+  });
+
+  it("only considers successes for the guard's own target tool", () => {
+    const reg = new GuardRegistry();
+    reg.recordSuccess("write_file", { file_path: "a.ts", content: "x" }); // different tool
+    // Over-broad edit_file guard, but the only success is a write_file → nothing to block.
+    expect(reg.validate(overBroad()).ok).toBe(true);
+  });
+
+  it("bounds the success ring buffer", () => {
+    const reg = new GuardRegistry();
+    for (let i = 0; i < 40; i++) reg.recordSuccess("edit_file", { old_string: `s${i}`, replace_all: false });
+    // Over-broad guard still matches recent ones; the point is it doesn't grow unbounded — validate still works.
+    const v = reg.validate(overBroad());
+    expect(v.ok).toBe(false);
+    expect((v.checkedSamples ?? 0)).toBeLessThanOrEqual(25);
+  });
+});

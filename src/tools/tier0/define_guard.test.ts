@@ -127,4 +127,45 @@ describe("define_guard", () => {
     ).toBe(true);
     expect(reg.evaluate("edit_file", { file_path: "a.ts", old_string: "x" }).blocked).toBe(false);
   });
+
+  it("rejects an over-broad guard that would block a recent successful call (§10.4 gate)", async () => {
+    const reg = new GuardRegistry();
+    setGuardRegistry(reg);
+    // A normal successful edit happened earlier this session.
+    reg.recordSuccess("edit_file", { file_path: "a.ts", old_string: "abc", new_string: "xyz" });
+
+    // An over-broad guard: matches any edit with a non-empty old_string.
+    const res = await defineGuardTool.execute(
+      {
+        action: "define",
+        target_tool: "edit_file",
+        predicate: { kind: "field_matches", field: "old_string", pattern: "." },
+        message: "too restrictive",
+        failure_signature: "over-broad",
+      },
+      ctx,
+    );
+
+    expect(res.status).toBe("error");
+    expect(res.status === "error" && res.message).toContain("too broad");
+    expect(res.status === "error" && res.message).toContain("Narrow the predicate");
+    // Critically: it was NOT installed.
+    expect(reg.list()).toHaveLength(0);
+  });
+
+  it("installs a narrow guard even when successes exist", async () => {
+    const reg = new GuardRegistry();
+    setGuardRegistry(reg);
+    reg.recordSuccess("edit_file", { file_path: "a.ts", old_string: "unique", new_string: "y" });
+
+    const res = await defineGuardTool.execute(
+      {
+        ...defineInput,
+        predicate: { kind: "field_matches", field: "old_string", pattern: "^statuses\\.push\\(0\\);$" },
+      },
+      ctx,
+    );
+    expect(res.status).toBe("ok");
+    expect(reg.list()).toHaveLength(1);
+  });
 });

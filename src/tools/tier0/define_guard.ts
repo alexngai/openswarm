@@ -171,6 +171,25 @@ async function execute(
     failureSignature: input.failure_signature,
     effect: "restrictive",
   };
+
+  // Validation gate (docs/63 §10.4): reject an over-broad guard BEFORE it can
+  // enforce. A guard that would have blocked a call already seen to succeed
+  // this session is too broad — installing it would harm legitimate work (the
+  // Nova Pro `replace_all`-default pathology). Hand the blocked sample back so
+  // the agent can narrow the predicate and retry.
+  const verdict = _registry.validate(guard);
+  if (!verdict.ok) {
+    return {
+      status: "error",
+      message:
+        `Guard rejected: it would block ${verdict.blockedCount} of ` +
+        `${verdict.checkedSamples ?? verdict.blockedCount} recent successful ${input.target_tool} ` +
+        `call(s) this session — it is too broad and would break legitimate work. ` +
+        `Example blocked call: ${JSON.stringify(verdict.sample)}. ` +
+        `Narrow the predicate so it matches only the failing case, then retry.`,
+    };
+  }
+
   const added = _registry.register(guard);
   const touched = touchedFields(input.predicate);
   const fields = touched.length > 0 ? touched.join(", ") : "(none)";

@@ -230,6 +230,14 @@ export class ToolDispatcher {
       };
     }
 
+    // Feed the guard validation gate (docs/63 §10.4): record inputs of calls
+    // that SUCCEEDED, so a later synthesized guard can be rejected if it would
+    // have blocked one of them (over-broad). Same `effectiveInput` the guards
+    // see, so the dry-run is faithful.
+    if (this.guards !== undefined && result.status === "ok") {
+      this.guards.recordSuccess(name, effectiveInput);
+    }
+
     // Failure-recurrence trigger (docs/63 P0). Observed here — after execute —
     // so guard blocks and schema errors, which both return earlier, are never
     // counted. Counting a guard block would be a feedback loop; nudging on a

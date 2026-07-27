@@ -110,6 +110,18 @@ export interface GuardVerdict {
   readonly message?: string;
 }
 
+/** Result of the validation gate (docs/63 §10.4) run at guard-install time. */
+export interface GuardValidation {
+  /** True when the candidate blocks no recent successful call (safe to install). */
+  readonly ok: boolean;
+  /** How many recent successful calls the candidate would have blocked. */
+  readonly blockedCount: number;
+  /** How many recent successful calls were checked (context for the `ok` verdict). */
+  readonly checkedSamples?: number;
+  /** A representative blocked input, handed back so the proposer can narrow the guard. */
+  readonly sample?: unknown;
+}
+
 // ---------------------------------------------------------------------------
 // Field access + evaluation
 // ---------------------------------------------------------------------------
@@ -224,6 +236,15 @@ export class GuardRegistry {
   private readonly evidence = new Map<string, GuardEvidence>();
   /** Guards indexed by target tool, so dispatch does no scanning. */
   private readonly byTool = new Map<string, string[]>();
+  /**
+   * Recent *successful* tool inputs per tool, newest last. The validation gate
+   * (docs/63 §10.4) dry-runs a candidate guard against these: a guard that
+   * would have blocked a call already seen to succeed is over-broad and is
+   * rejected before it can enforce. Bounded ring buffer — only recent behaviour
+   * is relevant, and this keeps an episode's memory flat.
+   */
+  private readonly successSamples = new Map<string, unknown[]>();
+  private static readonly MAX_SUCCESS_SAMPLES = 25;
 
   /**
    * Register a guard. Idempotent by content-address: re-registering the same
@@ -263,6 +284,42 @@ export class GuardRegistry {
   evidenceFor(id: string): GuardEvidence | undefined {
     const e = this.evidence.get(id);
     return e === undefined ? undefined : { ...e };
+  }
+
+  /**
+   * Record a successful call to `toolName` (the same input the guards see at
+   * dispatch). Feeds the validation gate. Bounded ring buffer.
+   */
+  recordSuccess(toolName: string, input: unknown): void {
+    const arr = this.successSamples.get(toolName) ?? [];
+    arr.push(input);
+    if (arr.length > GuardRegistry.MAX_SUCCESS_SAMPLES) arr.shift();
+    this.successSamples.set(toolName, arr);
+  }
+
+  /**
+   * The validation gate (docs/63 §10.4): would this candidate guard block a
+   * call that already succeeded this session? If so it is over-broad — reject
+   * it and hand back the blocked sample so the proposer can *narrow* it.
+   *
+   * `ok: true` when it blocks none (including the no-samples case — with no
+   * evidence of over-breadth we do not reject; this is the necessary-not-
+   * sufficient limitation logged as docs/63 OQ 10). Never throws — a malformed
+   * predicate fails open (evaluatePredicate already does).
+   */
+  validate(guard: HarnessGuard): GuardValidation {
+    const samples = this.successSamples.get(guard.targetTool) ?? [];
+    let blockedCount = 0;
+    let sample: unknown;
+    for (const s of samples) {
+      if (evaluatePredicate(guard.predicate, s)) {
+        blockedCount++;
+        if (sample === undefined) sample = s;
+      }
+    }
+    return blockedCount === 0
+      ? { ok: true, blockedCount: 0 }
+      : { ok: false, blockedCount, checkedSamples: samples.length, sample };
   }
 
   /**
