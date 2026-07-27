@@ -198,3 +198,15 @@ Ran the Qwen-Coder pair agentically on **18 baked SWE-bench-Verified instances**
 ## 7. The reusable contribution: the oracle pre-check gate
 
 Independent of the frontier study: **before any cascade/routing study on a model pair, run the two monoliths once and check the oracle inequality `cost(C) < p_C · cost(E)` on an honest compute axis.** If it fails, the pair cannot support frontier expansion — stop before spending on signals, τ-sweeps, or seeds. Phase 0 shows this would have diagnosed both haiku↔gpt-5.5 and Nova↔gpt-5.5 immediately.
+
+## 8. Threats to validity & attribution
+
+Two honest questions about what these results *mean*: how much is **membership** (weak/ill-chosen models) vs a real heterogeneity effect, and how much is **setup/bug** vs signal?
+
+**8.1 Membership drove the negatives — and detecting that is the contribution.** docs/54–61's "not robustly supported" was **mis-selected membership**, not a refutation: haiku isn't genuinely cheap (its 3× "cheapness" was 96% cache-reads; no real FLOPs gap → pre-check FAIL), Nova-Pro is too weak (solves ~nothing → owns no tasks). When membership had a genuine compute gap (Llama-8B/70B, Qwen-Coder 3B/480B) the frontier expanded. The oracle pre-check (§7) *is* the "are these proper members?" test.
+
+**8.2 But this is *cost-tiering*, not *diversity*.** Every winning pair was a **same-family scale ladder**, and `small-only` was tiny across *every* pair (1–3 tasks). The wins came from **routing the shared easy slice cheaply**, not from the small tier owning tasks the large couldn't. Mechanically these are routing/cost-tiering wins, **not complementarity wins**. Genuine diversity — models with *different* strengths covering *different* tasks — is **untested here**, and the near-zero `small-only` mildly suggests it's absent for scale ladders. Testing it is the docs/63 program (H3).
+
+**8.3 Setup/bug vs signal.** Several *early* results were bugs, caught and corrected: the advisor-$0 scratch-wipe (39125f7, re-run clean), a **false "Nova-Pro 0/14"** from cache-mixing (model not in the cache key — caught, fresh `CS_CONFIG_VERSION` since), and docs/56's cheap/gap split that **inverted at 5 seeds** (docs/57). The surviving conclusions rest on clean post-fix data (the powered docs/59 run; single-shot reproduced HumanEval+MBPP; easy-16 from a clean run after the disk-thrash recovery, which cost time but contaminated no data). The F16 deployable-signal negative was specifically **diagnosed** as capability, not a bug (`reproExists=true`, repro fails even on the correct fix).
+
+**8.4 Residual, unresolved caveats (real threats to the numbers).** (a) **All agentic slices are 1-seed** — and §8.3's 5-seed inversion is direct evidence 1-seed can flip a conclusion, so the ~1.3× agentic magnitude is under-powered; ≥3 seeds is the first fix. (b) **Offline ≠ live** — the offline frontier excludes handoff bloat (docs/61: escalation can cost ~2× a cold monolith), so a live cascade costs more than these numbers. (c) The single-shot Phase-1 FLOPs used an *estimated* gpt-5.5 param count (superseded by the known-params Llama/Qwen pairs).
