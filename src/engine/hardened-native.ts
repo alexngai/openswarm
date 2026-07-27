@@ -70,6 +70,14 @@ import {
 } from "../tools/access.js";
 import type { ToolRequest } from "../tools/dispatcher.js";
 import { accessesFor } from "../tools/dispatcher.js";
+import {
+  TurnLedger,
+  decideReplay,
+  idempotencyOf,
+  replayResult,
+  settleOutstanding,
+  type OperationRecord,
+} from "./operation-ledger.js";
 import type { ToolResult } from "../tools/types.js";
 
 // ---------------------------------------------------------------------------
@@ -132,6 +140,16 @@ export interface HardenedNativeEngineOptions {
    * reactive overflow paths).
    */
   readonly recontextualize?: RecontextualizeFn;
+  /**
+   * How long a cancelled turn waits for operations already under way to report
+   * what they did, before recording them as unknown and returning.
+   *
+   * The trade-off is which lie to avoid. Waiting forever lets a tool that
+   * ignores its abort signal hold the cancellation open; not waiting at all
+   * reports a turn as stopped while its writes are still landing. Defaults to
+   * five seconds, which is long enough for a killed subprocess to be reaped.
+   */
+  readonly cancellationGraceMs?: number;
 }
 
 export class HardenedNativeEngine implements AgentEngine {
@@ -146,9 +164,35 @@ export class HardenedNativeEngine implements AgentEngine {
   private readonly eagerToolDispatch: boolean;
   private readonly midTurnCompaction: boolean;
   private readonly recontextualize?: RecontextualizeFn;
+  private readonly cancellationGraceMs: number;
   private cumulativeUsage: Usage = { inputTokens: 0, outputTokens: 0 };
   private retryStats = { totalRetries: 0, retriesThisTurn: 0 };
   private compactionState: CompactionState = initialCompactionState();
+
+  /**
+   * Operations from abandoned turns whose outcome was never proven.
+   *
+   * Kept because "we do not know whether this happened" is a fact about the
+   * workspace that outlives the turn that produced it, and discarding it is how
+   * a half-applied change becomes indistinguishable from one that never
+   * started. Nothing consumes this yet — surfacing and reconciling it is
+   * `WP-12` — but it is recorded rather than lost in the meantime.
+   */
+  private readonly unresolved: OperationRecord[] = [];
+
+  /** Operations this engine could not account for, oldest first. */
+  unresolvedOperations(): readonly OperationRecord[] {
+    return [...this.unresolved];
+  }
+
+  /**
+   * Stop a turn without pretending its work stopped with it: wait for what is
+   * running to say what it did, then keep whatever could not be accounted for.
+   */
+  private async abandonTurn(ledger: TurnLedger, reason: string): Promise<void> {
+    await settleOutstanding(ledger, reason, this.cancellationGraceMs);
+    this.unresolved.push(...ledger.unresolved());
+  }
 
   constructor(opts: HardenedNativeEngineOptions) {
     this.provider = opts.provider;
@@ -158,6 +202,7 @@ export class HardenedNativeEngine implements AgentEngine {
     this.retryPolicy = opts.retryPolicy ?? DEFAULT_RETRY_POLICY;
     this.eagerToolDispatch = opts.eagerToolDispatch ?? false;
     this.midTurnCompaction = opts.midTurnCompaction ?? false;
+    this.cancellationGraceMs = opts.cancellationGraceMs ?? 5_000;
     if (opts.recontextualize !== undefined)
       this.recontextualize = opts.recontextualize;
 
@@ -392,6 +437,57 @@ export class HardenedNativeEngine implements AgentEngine {
         ? new ToolScheduler<ToolResult>()
         : undefined;
 
+      // Outlives the retry loop below, which is the point: it is what lets a
+      // re-announced call be answered from what the failed attempt already did
+      // rather than performed a second time (docs/63 WP-05).
+      const ledger = new TurnLedger(turn);
+
+      /**
+       * Run a call the eager path declined to speculate on.
+       *
+       * This is where everything that can leave a trace runs: after the stream
+       * that asked for it has finished, so the turn is known to exist, and past
+       * the ledger, so an earlier attempt's work is reused or reported rather
+       * than repeated. It shares the attempt's scheduler, because two mutations
+       * of the same file still have to be ordered.
+       */
+      const runDeferred = async (req: {
+        readonly id: string;
+        readonly name: string;
+        readonly input: unknown;
+      }): Promise<ToolResult> => {
+        const decision = await config.canUseTool(req.name, req.input);
+        if (!decision.allow) {
+          return { status: "error", message: decision.reason };
+        }
+        const input =
+          decision.updatedInput !== undefined ? decision.updatedInput : req.input;
+        const ctx = {
+          cwd: process.cwd(),
+          abort: config.abort,
+          ...(config.host !== undefined ? { host: config.host } : {}),
+        };
+        const toolImpl =
+          typeof config.dispatcher!.get === "function"
+            ? config.dispatcher!.get(req.name)
+            : undefined;
+        const accesses = accessesFor(toolImpl, input, ctx);
+        const idempotency = idempotencyOf(accesses);
+        const id = ledger.identify(req.name, input);
+        const replay = decideReplay(ledger.get(id), idempotency);
+
+        return replayResult(replay, () =>
+          eagerScheduler!.add({
+            accesses,
+            start: async () => ({
+              result: ledger.start(id, idempotency, () =>
+                config.dispatcher!.dispatch(req.name, input, ctx),
+              ),
+            }),
+          }),
+        );
+      };
+
       const buildRequest = (): ProviderRequest => ({
         messages,
         tools: config.tools.map((t) => t.spec),
@@ -417,15 +513,21 @@ export class HardenedNativeEngine implements AgentEngine {
         turnUsage = { inputTokens: 0, outputTokens: 0 };
         stopReason = "end_turn";
         // Reset eager dispatch state so stale promises from a failed
-        // attempt are not drained after a successful retry.
+        // attempt are not drained after a successful retry. Forgetting the
+        // promises is not the same as undoing what they did, which is what the
+        // ledger is for; it keeps its records and only restarts its counting.
         inFlight = new Map<string, Promise<ToolResult>>();
+        ledger.beginAttempt();
         if (eagerDispatch) {
           eagerScheduler = new ToolScheduler<ToolResult>();
         }
 
         try {
           for await (const ev of this.provider.stream(buildRequest())) {
-            if (config.abort !== undefined && config.abort.aborted) return;
+            if (config.abort !== undefined && config.abort.aborted) {
+              await this.abandonTurn(ledger, "the turn was cancelled mid-stream");
+              return;
+            }
 
             switch (ev.type) {
               case "text-delta":
@@ -470,53 +572,77 @@ export class HardenedNativeEngine implements AgentEngine {
 
                 // Eager dispatch — start tool execution during streaming.
                 // Maps to Codex handle_tool_call_with_source (parallel.rs:81-178).
+                //
+                // Only calls that are free to repeat start here. Eager dispatch
+                // is speculation on a stream that has not finished and may yet
+                // fail, and a mutation performed on a failed attempt cannot be
+                // taken back — so anything that is not idempotent waits for the
+                // stream to succeed and runs on the deferred path below. The
+                // gate is deliberately not consulted for those: it must run
+                // exactly once per call, and that will be where they run.
                 if (eagerDispatch) {
-                  const decision = await config.canUseTool(
-                    ev.name,
-                    ev.input,
-                  );
-                  if (decision.allow) {
-                    const dispatchInput =
-                      decision.updatedInput !== undefined
-                        ? decision.updatedInput
-                        : ev.input;
-                    const ctx = {
-                      cwd: process.cwd(),
-                      abort: config.abort,
-                      ...(config.host !== undefined
-                        ? { host: config.host }
-                        : {}),
-                    };
+                  const ctx = {
+                    cwd: process.cwd(),
+                    abort: config.abort,
+                    ...(config.host !== undefined ? { host: config.host } : {}),
+                  };
+                  // Same resolution the batch dispatcher uses, so a tool
+                  // cannot serialize there and fan out here.
+                  const toolImpl =
+                    typeof config.dispatcher!.get === "function"
+                      ? config.dispatcher!.get(ev.name)
+                      : undefined;
+                  const speculative = accessesFor(toolImpl, ev.input, ctx);
 
-                    // Same resolution the batch dispatcher uses, so a tool
-                    // cannot serialize there and fan out here.
-                    const toolImpl =
-                      typeof config.dispatcher!.get === "function"
-                        ? config.dispatcher!.get(ev.name)
-                        : undefined;
-                    const accesses = accessesFor(toolImpl, dispatchInput, ctx);
+                  if (idempotencyOf(speculative) === "idempotent") {
+                    const decision = await config.canUseTool(ev.name, ev.input);
+                    if (decision.allow) {
+                      const dispatchInput =
+                        decision.updatedInput !== undefined
+                          ? decision.updatedInput
+                          : ev.input;
+                      // Re-derived: the gate may have rewritten the input, and
+                      // the accesses of the call that actually runs are the
+                      // ones the scheduler has to order.
+                      const accesses = accessesFor(toolImpl, dispatchInput, ctx);
+                      // Re-classified from the accesses of the call that will
+                      // actually run, rather than assumed to be idempotent
+                      // because the check above let it through. The check and
+                      // the ledger then agree independently, so weakening one
+                      // does not quietly disarm the other.
+                      const idempotency = idempotencyOf(accesses);
+                      const id = ledger.identify(ev.name, dispatchInput);
+                      const replay = decideReplay(ledger.get(id), idempotency);
 
-                    inFlight.set(
-                      ev.id,
-                      eagerScheduler!.add({
-                        accesses,
-                        start: async () => ({
-                          result: config.dispatcher!.dispatch(
-                            ev.name,
-                            dispatchInput,
-                            ctx,
-                          ),
+                      // A retry can re-announce a call the failed attempt is
+                      // still making. Joining it is both cheaper and more
+                      // consistent than racing a second copy of it.
+                      inFlight.set(
+                        ev.id,
+                        replayResult(replay, () =>
+                          eagerScheduler!.add({
+                            accesses,
+                            start: async () => ({
+                              result: ledger.start(id, idempotency, () =>
+                                config.dispatcher!.dispatch(
+                                  ev.name,
+                                  dispatchInput,
+                                  ctx,
+                                ),
+                              ),
+                            }),
+                          }),
+                        ),
+                      );
+                    } else {
+                      inFlight.set(
+                        ev.id,
+                        Promise.resolve({
+                          status: "error" as const,
+                          message: decision.reason,
                         }),
-                      }),
-                    );
-                  } else {
-                    inFlight.set(
-                      ev.id,
-                      Promise.resolve({
-                        status: "error" as const,
-                        message: decision.reason,
-                      }),
-                    );
+                      );
+                    }
                   }
                 }
                 break;
@@ -697,7 +823,13 @@ export class HardenedNativeEngine implements AgentEngine {
           };
 
           const sleptFull = await abortableSleep(delayMs, config.abort);
-          if (!sleptFull) return;
+          if (!sleptFull) {
+            // Cancelled while waiting to retry. The failed attempt's calls may
+            // still be running, and the whole reason we are here is that the
+            // stream broke before it could say what they did.
+            await this.abandonTurn(ledger, "the turn was cancelled before its retry");
+            return;
+          }
         }
       }
 
@@ -750,33 +882,41 @@ export class HardenedNativeEngine implements AgentEngine {
           isError: boolean;
         }> = [];
 
-        if (
-          eagerDispatch &&
-          config.dispatcher !== undefined &&
-          inFlight.size > 0
-        ) {
-          // ── Eager path: drain in-flight promises ──
+        if (eagerDispatch && config.dispatcher !== undefined) {
+          // ── Eager path: drain what was speculated, run what was not ──
           // Maps to Codex drain_in_flight (turn.rs:1739-1763).
-          // inFlight is insertion-ordered (ES2015 Map guarantee) so results
-          // are emitted in the order the model produced tool_use blocks,
-          // regardless of completion order.
-          for (const [id, promise] of inFlight) {
+          //
+          // Driven by the announced calls rather than by the in-flight map,
+          // because the two are no longer the same set: anything that could
+          // leave a trace was deliberately not started during streaming, so it
+          // has no promise here and iterating the map would drop it from the
+          // turn without a result. Buffer order is the order the model produced
+          // the tool_use blocks, which is the order results must come back in.
+          for (const req of toolUseBuffer) {
+            const started = inFlight.get(req.id);
             let r: ToolResult;
-            try {
-              r = await promise;
-            } catch {
-              r = { status: "error", message: "tool execution aborted" };
+            if (started !== undefined) {
+              try {
+                r = await started;
+              } catch {
+                r = { status: "error", message: "tool execution aborted" };
+              }
+            } else {
+              r = await runDeferred(req);
             }
-            const content =
-              r.status === "ok" ? r.output : r.message;
+            const content = r.status === "ok" ? r.output : r.message;
             resolvedResults.push({
-              id,
+              id: req.id,
               content,
               isError: r.status !== "ok",
             });
           }
         } else {
           // ── Batch path: gate + dispatch after stream ──
+          // No ledger here, and none needed: this path runs only once the
+          // stream has succeeded, so a retry can never have executed any of it.
+          // Eager dispatch is what makes replay possible, and that is where the
+          // ledger sits.
           const allowedRequests: ToolRequest[] = [];
           const allowedIds: string[] = [];
           const decisions = new Map<string, PermissionDecision>();
