@@ -48,9 +48,9 @@ The release target is a **parity beta**, not a compatibility-stable 1.0. Depende
 
 The fixed scope requires:
 
-- 102 core person-weeks of feature/work-package delivery;
+- 104 core person-weeks of feature/work-package delivery;
 - 36 person-weeks explicitly allocated to integration, tests, migration, documentation, remediation, and release quality;
-- 12 person-weeks of true contingency;
+- 10 person-weeks of true contingency;
 - an external security review;
 - periodic UX/QA support around the alpha, preview, and beta gates.
 
@@ -69,6 +69,8 @@ Dates move before mandatory safety, session, support-matrix, or verification gat
 ## Capability contract
 
 Every mandatory capability has a stable ID, comparator version, supported matrix, owner, automated evidence, and release gate. A weighted average cannot hide a failed safety or correctness capability.
+
+This contract is also encoded as data in `src/parity/capabilities.ts`, and `bun scripts/check-parity-manifest.ts` fails when the two disagree on any ID, outcome, or evidence statement. The tables below are therefore checked, not merely reviewed — which is how `DDP-SWM-05` came to exist: `WP-17` was three person-weeks of work that no capability had asked for, while the scope boundary separately promised a uniform runtime contract with no ID to hold it.
 
 ### Daily-driver core
 
@@ -124,6 +126,7 @@ Every mandatory capability has a stable ID, comparator version, supported matrix
 | `DDP-SWM-02` | Safe shared workspace | One writer; overlapping reader output is provisional, generation-stamped, automatically revalidated, and terminal only when verified |
 | `DDP-SWM-03` | Safe isolated writers | Worktree writers overlap; landing is serialized and target-SHA compare-and-swap safe |
 | `DDP-SWM-04` | Supervision and bounded resources | Quotas, heartbeats, queues, cancellation, cleanup, and budgets survive an eight-hour soak |
+| `DDP-SWM-05` | One authoritative runtime contract across root agents, workers, and daemons | Root and worker capability manifests match; unauthorized cross-process task transitions are zero; daemon transport identity is authenticated |
 | `DDP-REL-01` | Retry-safe side effects | Committed or ambiguous mutating calls are never blindly replayed |
 | `DDP-PLAT-01` | Focused platform matrix | All five platform targets pass release suites; native Windows shell execution is rejected |
 | `DDP-EVAL-01` | Evidence-backed claims | Mixed-corpus paired evaluation clears the −5-point 95% confidence bound plus 1.25× latency and 1.15× cost guardrails; every claim links to evidence |
@@ -532,17 +535,23 @@ Calendar duration and person-week loading are separate. Package gates include pa
 
 | Release | Weeks | Package estimates (person-weeks) | Feature A/B/C | Quality A/B/C | Total | Capacity | Slack |
 |---|---:|---|---:|---:|---:|---:|---:|
-| R1 | 1–9 | `00` 4; `01` 1; `02` 2; `03` 2; `04` 2; `05` 2; `06` 2 | 6/4/5 | 3/3/3 | 24 | 27 | 3 |
-| R2 | 10–17 | `07` 3; `08` 3; `09` 2; `10` 2; `11` 3; `12` 2 | 4/6/5 | 3/1/2 | 21 | 24 | 3 |
+| R1 | 1–9 | `00` 4 ✔; `00a` 4 ✔; `01` 1 ✔; `02` 2; `03` 1; `04` 2; `05` 2; `06` 2 | 7/4/7 | 2/5/2 | 27 | 27 | 0 |
+| R2 | 10–17 | `07` 3; `08` 3; `09` 1; `10` 2; `11` 3; `12` 2 | 3/6/5 | 3/1/2 | 20 | 24 | 4 |
 | R3 | 18–27 | `13`–`18` 3 each | 6/6/6 | 3/3/3 | 27 | 30 | 3 |
 | R4 | 28–35 | `19` 3; `20` 3; `21` 4; `22` 3; `23` 3; `24` 3 | 5/7/7 | 3/1/1 | 24 | 24 | 0 |
 | R5 | 36–43 | `25` 6; `26` 4; `27` 3; `28` 4; `29` 2 | 6/7/6 | 2/1/2 | 24 | 24 | 0 |
 | R6 | 44–50 | `30` 6; `31` 4; `32` 3; `33` 3 | 5/6/5 | 1/0/1 | 18 | 21 | 3 |
-| **Total** | **50** |  | **32/36/34** | **15/9/12** | **138** | **150** | **12** |
+| **Total** | **50** |  | **32/36/36** | **14/11/11** | **140** | **150** | **10** |
+
+✔ marks delivered work. Inserting `WP-00a` added 4 person-weeks and the `WP-03`/`WP-09` re-scopes returned 2, so committed work rises from 138 to 140 and true contingency falls from twelve to ten. That crosses the rebaseline trigger below, and it does so on the first inserted package — which is the signal the pre-mortem asked for, not a surprise to absorb quietly.
+
+`WP-00a` is A+C work, and both owners were already loaded to exactly nine person-weeks across R1's nine weeks, so the insertion put each at ten. R1's total still fits in 27 because owner B had two weeks spare, so R1's cross-package quality allocation is rebalanced from 3/3/3 to 2/5/2 and the release-wide quality split becomes 14/11/11, unchanged at 36 in total. This works only because quality work is reassignable; the package work is not. R1 now has zero slack in every owner, so any further insertion has to move a package out.
+
+The forward exposure is smaller than these rows suggest, since both packages carrying the increase are already delivered. The rows are kept at plan values rather than measured ones deliberately: the work was done by an agent in hours, and recording that as a person-week figure would corrupt a model built for human capacity planning.
 
 Cross-owner feature splits:
 
-- `WP-00` B2/C2; `WP-11` A2/C1.
+- `WP-00` B2/C2; `WP-00a` A2/C2; `WP-11` A2/C1.
 - `WP-14` A2/C1; `WP-15` B2/C1; `WP-18` A1/B1/C1.
 - `WP-19` B2/C1; `WP-20` A2/C1; `WP-21` A2/B2; `WP-22` B2/C1; `WP-23` A1/B1/C1.
 - `WP-25` A3/B1/C2; `WP-26` B2/C2; `WP-27` A1/B2; `WP-28` A1/B1/C2; `WP-29` A1/B1+External.
@@ -552,8 +561,8 @@ Dependency- and owner-constrained schedule:
 
 | Release | Feature schedule | Cross-package quality schedule | Slack |
 |---|---|---|---|
-| R1 | `WP-00` B/C w1–2; `01` C w3; `02` A w4–5; `03` A w6–7; `04` A w8–9; `05` B w4–5; `06` C w4–5 | A w1–3; B w6–8; C w6–8 | B w3,w9; C w9 |
-| R2 | `WP-07` B w10–12; `08` B w13–15; `09` A w10–11; `11` C w10 + A w12–13; `12` C w14–15; `10` C w16–17 | A w14–16; B w16; C w11–12 | A/B w17; C w13 |
+| R1 | `WP-00` B/C w1–2 ✔; `00a` A/C w3–4 ✔; `01` C w5 ✔; `02` A w5–6; `03` A w7; `04` A w8–9; `05` B w4–5; `06` C w6–7 | A w1–2; B w3,w6–9; C w8–9 | none |
+| R2 | `WP-07` B w10–12; `08` B w13–15; `09` A w10; `11` C w10 + A w12–13; `12` C w14–15; `10` C w16–17 | A w14–16; B w16; C w11–12 | A w11,w17; B w17; C w13 |
 | R3 | `WP-13` A w18–20; `16` B w18–20; `14` C w21 + A w21–22; `15` C w23 + B w23–24; `17` C w24–26; `18` A/B/C w27 | A w23–25; B w21–22,w25; C w18–20 | A/B w26; C w22 |
 | R4 | `WP-19` B w28–29 + C w28; `20` A w28–29 + C w29; `21` A/B w30–31; `22` C w30 + B w32–33; `23` C w31 + A w32 + B w34; `24` C w32–34 | A w33–35; B/C w35 | none |
 | R5 | `WP-25` A w36–38 + B w36 + C w36–37; `26` B w37–38 + C w38–39; `27` A w39 + B w39–40; `28` A/B w41 + C w41–42; `29` external w41–43 + A/B w43 | A w40,w42; B w42; C w40,w43 | none |
@@ -561,7 +570,9 @@ Dependency- and owner-constrained schedule:
 
 The four-engineer 39-week and two-engineer 75-week figures are capacity-only bounds, not approved dependency schedules. Either staffing variant requires its own resource-constrained schedule before commitment.
 
-The estimates are hypotheses. `WP-00` produces a bottom-up re-estimate; see the next section for its findings. Rebaseline when committed work exceeds 102 person-weeks, quality allocation falls below 36, an owner exceeds phase capacity, or the third engineer is unavailable by R2.
+The estimates are hypotheses. `WP-00` produces a bottom-up re-estimate; see the next section for its findings. Rebaseline when committed work exceeds 104 person-weeks, quality allocation falls below 36, an owner exceeds phase capacity, or the third engineer is unavailable by R2.
+
+Two of these have already fired once, on `WP-00a`: committed work rose past the original 102 and owner A exceeded R1 capacity. The thresholds above are the post-`WP-00a` baseline, not the original one.
 
 ### `WP-00` re-estimate
 
@@ -577,13 +588,13 @@ Four findings change the estimates.
 
 **The audit-derived P0 list is incomplete.** Surveying the path helpers for `WP-00` surfaced a containment bug that no audit finding named: `isUnderCwd` resolves symlinks only when the leaf is a symlink, so a path through a symlinked parent directory escapes the workspace, and only `write_file` realpaths its parent. The kernel authority closes this; every tier-0 tool still carries it. Expect comparable findings during adoption, and treat the remediation allocation as a floor rather than an estimate.
 
-Recommended adjustments:
+Recommended adjustments, all now applied:
 
-- Add an adoption package between `WP-00` and `WP-03` that moves the production path onto the frozen contracts and consolidates the event writers. Estimate 4 person-weeks, A+C. Nothing downstream that assumes a single canonicalization or policy chokepoint is real until it lands.
-- Re-scope `WP-07` to exclude journal construction, which is done, and to include migrating the existing writers.
-- Add the second SDK wiring path to `WP-03`, `WP-04`, and `WP-09`, or make collapsing the two chokepoints an explicit goal of the adoption package.
+- **Applied.** Add an adoption package between `WP-00` and `WP-03` that moves the production path onto the frozen contracts. Estimate 4 person-weeks, A+C. Delivered as `WP-00a` below. Event-writer consolidation was originally folded in here and has instead moved to `WP-07`, where the snapshot and import work it interacts with already lives.
+- **Applied.** Re-scope `WP-07` to exclude journal construction, which is done, and to include migrating the existing writers.
+- **Applied, differently than proposed.** Rather than adding a second SDK wiring path to `WP-03`, `WP-04`, and `WP-09`, `WP-00a` enforced at `canUseTool`, which every engine already honours. The two chokepoints were never collapsed and no longer need to be.
 
-Net effect on the R1 budget is approximately neutral: `WP-00` and `WP-07` both shrink, and the new adoption package absorbs the difference. The schedule risk is not the totals but the ordering, because the adoption package is on the critical path of every enforcement package that follows it.
+The predicted neutral R1 budget did not hold. `WP-00a` added 4 person-weeks; `WP-07` did not shrink, because the writer migration replaced the journal work rather than being additive to a smaller package; and the offset came instead from `WP-03` and `WP-09`, both of which `WP-00a` partly delivered. Net is +2 committed and −2 contingency. The ordering risk was called correctly: `WP-00a` did sit on the critical path of every enforcement package after it.
 
 ### `WP-00a` Production adoption of the frozen contracts — 4 person-weeks, A+C
 
@@ -629,19 +640,31 @@ Gate:
 
 #### `WP-01` Capability manifest and evidence harness — 1 person-week, C
 
-- Depends on `WP-00`.
-- Own the Compose parity image, deterministic fixtures, artifact schema, and one-suite-at-a-time verbose runner.
-- Encode every `DDP-*` capability, owner, release, supported cells, evidence, and status.
-- Encode exact certified provider/model/API IDs; mark all other models `unverified`.
-- Preregister the mixed corpus, one comparator per workflow, paired seeds, bootstrap analysis, −5-point success margin, 1.25× latency guardrail, and 1.15× cost guardrail.
-- Define local-only telemetry artifacts and explicit redacted opt-in evidence.
-- Add claim-to-capability validation.
-- Add reproducible malicious-repository and fault-injection fixtures.
+Depends on `WP-00`. Delivered. Run `bun scripts/check-parity-manifest.ts`, or the full gate through `./scripts/verify-parity-wp.sh WP-01 linux-x64`.
+
+Delivered earlier, ahead of this package, to gate `WP-00`:
+
+- The Compose parity image, artifact schema, and one-suite-at-a-time verbose runner, as `Dockerfile.parity`, `compose.parity.yml`, and `scripts/verify-parity-wp.sh`.
+
+Delivered by this package, in `src/parity/`:
+
+- Every `DDP-*` capability encoded with its accountable owner, release, supported cells, and evidence, in `capabilities.ts`, alongside the whole work-package schedule in `work-packages.ts`.
+- Status is **not** encoded. It is derived from the parity artifacts on disk by `status.ts`, and an artifact that passed at another commit or from a dirty tree does not count. A hand-editable status field is the marketing surface this package exists to remove.
+- Exact provider/model API identifiers in `certification.ts`, with every entry a **candidate** and `labelFor` returning `unverified` for all of them. Certification means passing the `WP-16` contract suite, which has not run; recording a certification date now would be the first false claim in the ledger.
+- The mixed corpus, one comparator per workflow, five paired seeds, and the margins, in `eval-plan.ts`. The paired bootstrap, the non-inferiority decision, the guardrail ratios, and the power rule are **implemented** in `statistics.ts` rather than merely described, so the procedure is fixed before any result exists. Comparator versions and corpus snapshots are deliberately `null`: naming the repositories is the part that could be cherry-picked, and pinning a competitor's release now would pin a stale one.
+- Claim-to-capability validation in `docs-sync.ts`, which fails when a document cites an ID the manifest does not define, when the manifest and the docs/63 tables disagree on any outcome or evidence statement, and when text inside a `parity:claims` block cites no ID.
+
+Not delivered, and reassigned:
+
+- Deterministic malicious-repository and fault-injection fixtures. `FX-CRASH-001` and `FX-EFFECT-001` exist from `WP-00`; the malicious-clone corpus belongs with `WP-02`, which is the package that has to defeat it, and building it here would have meant building it twice.
+- Local-only telemetry artifacts and redacted opt-in evidence. `DDP-PRIV-01` is gated by `FX-PRIVACY-001` in `WP-32`; this package records the capability and its owner, not the mechanism.
 
 Gate:
 
-- CI fails when a mandatory ID has no evidence owner.
+- CI fails when a mandatory ID has no evidence owner. Enforced more broadly than stated, because evidence that names a work package that does not exist, a cell that package never runs, a fixture it never exercises, or work scheduled after the release being proven is indistinguishable from no evidence at all.
 - Public capability claims without an ID fail documentation validation.
+
+What encoding the contract found: three release exit gates claimed capabilities whose own stated beta evidence arrives later (`DDP-SAFE-03`, `DDP-SWM-04`, `DDP-PRIV-01`), and `WP-17` was three person-weeks of work that no capability required, against a scope promise that had no ID. All four are corrected above and in the capability contract. Four review passes over the prose found none of them.
 
 #### `WP-02` Repository trust and configuration provenance — 2 person-weeks, A
 
@@ -657,13 +680,22 @@ Depends on `WP-01`.
 
 Gate: malicious-clone fixtures cause zero process, network, or secret activity before trust.
 
-#### `WP-03` Canonical path authorization — 2 person-weeks, A
+#### `WP-03` Canonical path authorization — 1 person-week, A
 
-Depends on `WP-01`.
+Depends on `WP-01`. Re-scoped after `WP-00a`, which delivered the design half.
 
-- Central path authorization for every file-bearing tool.
-- Parent-symlink, nearest-existing-ancestor, broken-link, external-path, and race handling.
-- Permission decisions include canonical path arguments.
+Delivered by `WP-00a`:
+
+- Central path authorization for every file-bearing tool, decided in `canUseTool` and re-checked at write time by one shared helper.
+- Parent-symlink, nearest-existing-ancestor, and external-path handling, via `WorkspaceAuthority.canonicalize`.
+- Permission decisions carry canonical path arguments, as `OperationRequest.path`.
+
+Remaining:
+
+- Broken-link handling, which no current test covers.
+- Race handling. Containment is checked twice, at authorization and at write, which narrows the window but has not been shown to close it.
+- The escape corpus. This is now the bulk of the package and is verification rather than design work.
+- Atomic `notebook_edit` writes and a read-before-edit contract. `WP-00a` fixed its containment only; it still rewrites the whole file with a plain `writeFile` and, alone among the write tools, does not require a prior read. Until this lands the risk register's "disable by default" position stands.
 
 Gate: generated and swap-race escape corpus reports zero unauthorized access.
 
@@ -674,6 +706,9 @@ Depends on `WP-02` and `WP-03`.
 - Route Bash, persistent shell, hooks, MCP, and plugins through the broker.
 - Add process-group cancellation, bounded output, and effective-isolation diagnostics.
 - Remove the synchronous `require` fail-open path.
+- Close the unknown-resource gap `WP-00a` left open. A tool that cannot name what it touches — `bash`, `shell_exec`, `shell_write`, and every plugin and MCP tool — is still authorized by tool name alone, because central containment has no opinion on a resource it cannot name. The broker is where those operations acquire nameable resources, so this is where "unknown" stops meaning "unrestricted".
+- For plugin and MCP tools specifically, the nameable resource is the **server or plugin identity**, not the paths the call happens to touch. Such a tool keeps declaring `ToolAccesses.all()` and is authorized as one `network.request` against that identity, so consent is granted once per server rather than once per call. Per-call authorization was considered and rejected: a remote tool cannot predict its own paths, so a per-call prompt asks the user to approve something neither side can describe, and the resulting prompt volume trains people to approve without reading. Making `accesses` mandatory on `ToolImpl`, with the missing-declaration default inverted from `none()` to `all()`, belongs here too — the current optional field means a new tool is parallel-safe and unrestricted by omission.
+- Replace `CodexFrameworkEngine`'s `danger-full-access` and `approvalPolicy: "never"` defaults. `WP-00a` gated OpenSwarm's own tools on that path, but Codex's built-in tooling is unrestricted and OpenSwarm never sees it, so a Codex-backed worker currently has full filesystem access regardless of permission mode.
 
 Gate: no untrusted child can launch outside the broker; unavailable required isolation runs nothing.
 
@@ -711,14 +746,16 @@ Limited developer alpha.
 
 #### `WP-07` Session schema, journal, snapshots, and importer — 3 person-weeks, B
 
-Depends on `WP-00` and `WP-05`.
+Depends on `WP-00` and `WP-05`. Re-scoped per the `WP-00` re-estimate: journal construction moves out, writer migration moves in.
 
-- Versioned journal and checksummed atomic snapshots.
+- ~~Versioned journal~~ — built in `WP-00` as `FileEventStore`, with gap-free sequencing, `fsync` on append, and torn-trailing-line recovery.
+- Migrate the four existing lane-event writers onto it. All four use `createWriteStream` with no flush discipline, and `session-recorder` opens with `flags: "w"`, truncating per session. This was the unlisted prerequisite the re-estimate identified and is the work that replaces journal construction here.
+- Checksummed atomic snapshots.
 - Import legacy Claude IDs, native snapshots, and team checkpoints where possible.
 - Mark imports read-only/lossy when typed tool, reasoning, or attachment history cannot be reconstructed.
 - Backup before migration and archive unsupported state.
 
-Gate: torn-write tests preserve the last committed event.
+Gate: torn-write tests preserve the last committed event, and no writer bypasses the store.
 
 #### `WP-08` Automatic multi-turn and crash resume — 3 person-weeks, B
 
@@ -729,16 +766,22 @@ Depends on `WP-07`.
 
 Gate: ten-turn tests pass without manual resume; restart retains early context.
 
-#### `WP-09` Approval broker and headless default deny — 2 person-weeks, A
+#### `WP-09` Approval broker and headless default deny — 1 person-week, A
 
-Depends on `WP-02` and `WP-04`.
+Depends on `WP-02` and `WP-04`. Re-scoped after `WP-00a`, which delivered the schema and the grant model.
 
-- Shared approval request/decision schema.
-- Default session-scoped exact-resource/operation grants plus explicit one-shot and trust-bound persistent alternatives.
-- Grant expiry, use limits, revocation, trust invalidation, and audit events.
+Delivered by `WP-00a`:
+
+- Shared approval request/decision schema, as `ApprovalRequest` and `ApprovalResponse`.
+- Exact-resource/operation grants with explicit one-shot and session alternatives, backed by the existing TUI, headless, and ACP surfaces. Note the default differs from what this package originally assumed: a plain approval is one-shot and only an explicit "always" creates a session grant, which preserves the established UX rather than widening consent by default.
+
+Remaining:
+
+- Trust-bound persistent grants, which need `WP-02`.
+- Grant expiry, use limits, revocation, trust invalidation, and audit events. None exist; grants currently live until the process does.
 - Authenticated optional headless broker.
 
-Gate: absent, invalid, expired, replayed, disconnected, or late approvals deny.
+Gate: absent, invalid, expired, replayed, disconnected, or late approvals deny. Today only "absent" denies, and only on the Codex path.
 
 #### `WP-10` TUI single-owner input state — 2 person-weeks, C
 
@@ -850,8 +893,10 @@ Gate: the 16-worker quota is never exceeded; 30/60/90-second heartbeat states ho
 
 R3 exit:
 
-- `DDP-SAFE-03`, `DDP-SAFE-04`, `DDP-EXT-01`, initial `DDP-PROV-01`, `DDP-SWM-04`, and initial `DDP-OBS-01` pass.
+- `DDP-SAFE-04`, `DDP-EXT-01`, `DDP-SWM-05`, initial `DDP-PROV-01`, initial `DDP-OBS-01`, initial `DDP-SAFE-03`, and initial `DDP-SWM-04` pass.
 - Existing topologies may enter hardening but none may be added.
+
+`DDP-SAFE-03` and `DDP-SWM-04` are explicitly partial here, corrected after `WP-01` encoded the contract: `DDP-SAFE-03` requires LSP to run through the broker and LSP does not exist until `WP-21` in R4, and `DDP-SWM-04` requires survival of an eight-hour soak that `WP-31` does not run until R6. Both previously read as full passes at R3, which no gate could have delivered.
 
 ### R4 — Recovery and intelligence preview, weeks 28–35
 
@@ -919,7 +964,7 @@ Gate: watch/status/TUI/ACP agree on state and usage after restart and reconnect.
 
 R4 exit:
 
-- `DDP-SES-02`, `DDP-LSP-01`, `DDP-MEDIA-01`, `DDP-SWM-03`, `DDP-UX-02`, `DDP-UX-03`, and durable `DDP-MEM-01` pass.
+- `DDP-SES-02`, `DDP-LSP-01`, `DDP-MEDIA-01`, `DDP-SWM-03`, `DDP-UX-02`, `DDP-UX-03`, `DDP-SAFE-03` in full, and durable `DDP-MEM-01` pass.
 
 ### R5 — Matrix release candidate, weeks 36–43
 
@@ -990,7 +1035,8 @@ Gate: a signed report is delivered and every finding has severity, reproduction,
 
 R5 exit:
 
-- All mandatory capabilities are feature complete.
+- `DDP-CORE-01`, `DDP-HDL-01`, `DDP-ACP-01`, `DDP-PLAT-01`, and `DDP-MEM-01`, `DDP-PROV-01`, and `DDP-OBS-01` in full pass.
+- All mandatory capabilities are feature complete. Three remain unproven rather than incomplete, because the gates that prove them are release-quality runs rather than feature work: `DDP-SWM-04` awaits the `WP-31` soak, and `DDP-PRIV-01` and `DDP-EVAL-01` await the `WP-32` claims and privacy audit. Feature-complete and proven are different states and R5 only claims the first.
 - Feature additions stop; only remediation, migration, performance, documentation, and release work continue.
 
 ### R6 — Parity beta, weeks 44–50
@@ -1040,13 +1086,20 @@ Gate:
 - migration backup and rollback rehearsal;
 - no Sev-1/Sev-2 defects.
 
+R6 exit:
+
+- `DDP-SWM-04`, `DDP-PRIV-01`, and `DDP-EVAL-01` pass in full, closing the last three capabilities.
+- Every capability in `src/parity/capabilities.ts` reports `verified` against the release SHA, with no stale or dirty-tree artifacts counted as evidence.
+
 R6 result: a parity beta, explicitly not compatibility-stable 1.0.
 
 ## Critical paths
 
 Security:
 
-`WP-00 → WP-01 → WP-02/WP-03 → WP-04 → WP-09 → WP-13 → WP-14 → WP-25 → WP-29 → WP-30 → WP-32 → WP-33`
+`WP-00 → WP-00a → WP-01 → WP-02/WP-03 → WP-04 → WP-09 → WP-13 → WP-14 → WP-25 → WP-29 → WP-30 → WP-32 → WP-33`
+
+The first three are delivered. `WP-02` and `WP-03` are now the joint head of this path, and `WP-06` of the swarm-correctness path below; all three depended only on `WP-01`, so R1's remaining five packages are unblocked and can proceed in parallel across their owners.
 
 Sessions:
 
@@ -1071,16 +1124,16 @@ Rules:
 
 ## Capacity
 
-Three engineers over 50 weeks provide 150 gross person-weeks. The loading model allocates 102 to feature packages, 36 to explicit cross-package quality work, and 12 to true contingency.
+Three engineers over 50 weeks provide 150 gross person-weeks. The loading model allocates 104 to feature packages, 36 to explicit cross-package quality work, and 10 to true contingency. It allocated 102/36/12 before `WP-00a`.
 
 Four engineers have enough capacity for the original 39-week target but require a separate dependency schedule. Two engineers require approximately 69 weeks for committed work or 75 weeks with equivalent contingency.
 
 `WP-00` and R1 replace planning estimates with measured loading. Rebaseline beyond 50 weeks when:
 
-- committed package work exceeds 102 core person-weeks;
+- committed package work exceeds 104 core person-weeks;
 - cross-package quality work exceeds 36 person-weeks;
 - any owner exceeds phase capacity;
-- true reserve drops below twelve person-weeks;
+- true reserve drops below ten person-weeks;
 - any required platform runner is unavailable at the start of week 10;
 - the third engineer is unavailable at week ten.
 
@@ -1168,7 +1221,7 @@ The script writes `artifacts/parity/<WP>/<cell>.json`, exits nonzero on a failed
 | `WP-22` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-22 image-matrix` | `FX-IMG-001..012`, `FX-MIG-BLOB-001` | Valid images traverse all surfaces/providers; malformed/oversized/tampered blobs fail |
 | `WP-23` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-23 linux-x64` | `FX-MEM-001..010`, `FX-MIG-MEM-001` | Curated/archive state survives crash and obeys canonical scope |
 | `WP-24` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-24 linux-x64-team` | `FX-TEAM-UX-001..012` | Watch/status/TUI/ACP converge after restart; usage reconciles |
-| `WP-25` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-25 platform-matrix` | `FX-PLAT-001..005`, `FX-WSL-ID-001` | Package/isolation/PTY/cancel/cleanup pass on all five pinned targets |
+| `WP-25` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-25 linux-x64` | `FX-PLAT-001..005`, `FX-WSL-ID-001` | Package/isolation/PTY/cancel/cleanup pass on all five pinned targets; the other four cells are invoked as in the `WP-25` table above |
 | `WP-26` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-26 surface-matrix` | `FX-HDL-001..010`, `FX-ACP-001..010` | Headless and Zed pass the same mandatory journeys as TUI |
 | `WP-27` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-27 crypto-matrix` | `FX-RET-001..010`, `FX-MIG-CRYPTO-001` | Encrypted 90-day default, alternate policies, export/delete, ephemeral no-key fallback, and tamper failures pass |
 | `WP-28` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-28 release-matrix` | `FX-MATRIX-001..045`, `FX-NONINFERIOR-001`, `FX-EFFICIENCY-001` | Deterministic cells pass 100%; −5-point paired confidence, 1.25× latency, and 1.15× cost gates pass |
@@ -1356,7 +1409,7 @@ Each work package updates its subsystem’s design-of-record in the same change.
 | Worker parity | `WP-09`, `WP-14`, `WP-17` |
 | Budgets/errors | `WP-12`, `WP-16`, `WP-18` |
 | Task authorization | `WP-06`, `WP-17` |
-| Notebook safety | `WP-03`, `WP-04`; disable by default pending atomic implementation |
+| Notebook safety | `WP-03`, `WP-04`. Containment fixed in `WP-00a`; still disable by default pending atomic writes and a read-before-edit contract |
 | Worktree mode | `WP-11`, `WP-20` |
 | Documentation drift | `WP-01`, `WP-32` |
 

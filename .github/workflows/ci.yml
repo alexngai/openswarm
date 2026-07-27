@@ -60,6 +60,13 @@ jobs:
         # keeps them importable against the live src/ they depend on.
         run: npx tsc -p experimental/tsconfig.json --noEmit
 
+      - name: Parity manifest gate (WP-01)
+        # docs/63 WP-01: fail when a mandatory capability ID has no resolvable
+        # evidence owner, when the manifest and the roadmap disagree, or when a
+        # public capability claim cites no ID. Cheap and fully offline, so it
+        # runs before the expensive suites.
+        run: bun scripts/check-parity-manifest.ts
+
       - name: Build compiled binary (host platform)
         # Build the host-matching binary before running tests so the PTY e2e
         # suite has a packages/cli-<platform>-<arch>/openswarm to spawn.

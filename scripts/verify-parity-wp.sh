@@ -53,10 +53,11 @@ list_targets() {
   echo "  baseline   existing repository suite (mirrors .github/workflows/ci.yml)"
   echo "  WP-00      effect-transaction walking skeleton"
   echo "  WP-00a     production adoption of the frozen contracts (partial)"
+  echo "  WP-01      capability manifest and evidence harness"
   echo
   echo "Declared but not yet implemented (exit 2):"
   printf '%s\n' "${KNOWN_WPS[@]:1}" \
-    | grep -vx -e 'WP-00' -e 'WP-00a' \
+    | grep -vx -e 'WP-00' -e 'WP-00a' -e 'WP-01' \
     | paste -sd' ' - | fold -sw 76 | sed 's/^/  /'
   echo
   echo "See docs/63-product-parity-roadmap.md for each gate's fixtures and threshold."
@@ -248,6 +249,34 @@ case "$WP" in
         npx vitest run src/permissions/policy-broker.test.ts
       run_check A8 "per-tool containment consolidated onto one helper" \
         npx vitest run src/tools/workspace-path.test.ts
+    fi
+    ;;
+
+  WP-01)
+    # Capability manifest and evidence harness. Threshold (docs/63): every ID has
+    # evidence ownership, and the corpus, comparator, model IDs, statistics, and
+    # guardrails are preregistered. The harness half of this package — this
+    # script, compose.parity.yml, Dockerfile.parity — was built ahead of WP-00;
+    # what these checks cover is the manifest half.
+    FIXTURES="FX-MANIFEST-001,FX-CLAIM-001,FX-EVAL-PLAN-001"
+    if ! ensure_deps; then
+      RESULT="error"
+      FAIL=$((FAIL + 1))
+    else
+      run_check M1 "FX-MANIFEST-001 every capability has resolvable evidence" \
+        npx vitest run src/parity/validate.test.ts
+      run_check M2 "capability status derives from artifacts, not assertion" \
+        npx vitest run src/parity/status.test.ts
+      run_check M3 "FX-CLAIM-001 manifest and docs/63 cannot diverge" \
+        npx vitest run src/parity/docs-sync.test.ts
+      run_check M4 "FX-EVAL-PLAN-001 preregistered corpus, comparators, margins" \
+        npx vitest run src/parity/eval-plan.test.ts
+      run_check M5 "FX-EVAL-PLAN-001 paired bootstrap and power rule" \
+        npx vitest run src/parity/statistics.test.ts
+      # The gate CI runs, over the real documents rather than fixtures. M1-M5
+      # prove the checks work; this proves they currently pass on this tree.
+      run_check M6 "manifest gate passes against the real documents" \
+        bun scripts/check-parity-manifest.ts
     fi
     ;;
 
