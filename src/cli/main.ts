@@ -516,13 +516,24 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     // latter matters even with zero guards, since "N failures recurred and the
     // agent installed nothing" is the control observation for LH1.
     if (guardSummary.guardCount > 0 || recurrenceSummary.repeatedFailures > 0) {
+      const payload = { guards: guardSummary, recurrence: recurrenceSummary };
       sessionRecorder?.record({
         ts: Date.now(),
         agentId: "root" as AgentId,
         type: "harness_guard_summary",
-        payload: { guards: guardSummary, recurrence: recurrenceSummary },
+        payload,
         provenance: "cli/main",
       });
+      // Also surface it on the headless JSONL stream. The session recorder only
+      // writes to a local transcript; in a sandboxed eval (E2B) that transcript
+      // stays inside the sandbox and only stdout is captured, so the LH1 metric
+      // would otherwise be invisible to the harness. Emitting it as a normal
+      // event line keeps the stream well-formed (consumers filter by `type`).
+      if (useHeadless) {
+        process.stdout.write(
+          JSON.stringify({ type: "harness_guard_summary", payload }) + "\n",
+        );
+      }
     }
     await endMemorySession({
       sessionId,
