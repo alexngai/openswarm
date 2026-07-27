@@ -62,17 +62,23 @@ async function runCli(
   return { exitCode, stdout, stderr };
 }
 
-// Both cases spawn a cold CLI subprocess, which takes ~1.3s idle but has been
-// seen to exceed bun's 5s default when the whole suite runs in parallel under
-// emulation. `runCli`'s own 15s budget does not raise the test-level timeout,
-// so state it explicitly rather than leaving 4x headroom to contention.
-const SPAWN_TIMEOUT_MS = 20_000;
+// Both cases spawn a cold CLI subprocess. Idle in a container it takes about
+// 2s; inside the full parity run under x86 emulation it has been measured past
+// 15s, a spread of roughly 7x that comes from contention rather than from
+// anything the CLI does. Budget for the loaded case: these tests spawn and
+// exit, so a genuine hang still fails, just later. A budget tuned to the idle
+// case instead buys a faster failure at the price of a gate that fails for
+// reasons unrelated to the code under test.
+const SPAWN_BUDGET_MS = 60_000;
+// The outer timeout has to exceed the inner one, or bun kills the test before
+// runCli can report which command stalled.
+const SPAWN_TIMEOUT_MS = 75_000;
 
 describe("CLI under Bun runtime", () => {
   test(
     "--help prints usage",
     async () => {
-      const { exitCode, stdout } = await runCli(["--help"], { timeoutMs: 15_000 });
+      const { exitCode, stdout } = await runCli(["--help"], { timeoutMs: SPAWN_BUDGET_MS });
       expect(exitCode).toBe(0);
       expect(stdout).toContain("openswarm");
       expect(stdout).toContain("swarm run flags");
@@ -83,7 +89,7 @@ describe("CLI under Bun runtime", () => {
   test(
     "doctor runs all checks",
     async () => {
-      const { exitCode, stdout } = await runCli(["doctor"], { timeoutMs: 15_000 });
+      const { exitCode, stdout } = await runCli(["doctor"], { timeoutMs: SPAWN_BUDGET_MS });
       // doctor reports a failing check by exiting nonzero, and a credential-free
       // environment (CI, a container) legitimately fails the auth check. Assert
       // that every check ran and reported rather than that this particular
