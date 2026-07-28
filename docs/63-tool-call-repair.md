@@ -226,18 +226,103 @@ vllm serve Qwen/Qwen3-30B-A3B \
 If `tool_call_repaired{stage:"recovered_text"}` events appear in a run, the
 server is mis-configured — fix the flags rather than relying on extraction.
 
-## 9. Known gaps / follow-ups
+## 9. Adjacent gaps — F1–F3 (resolved)
 
-- **F1 — capability probing.** `LiteLLMTransportProvider.defaultCapabilities()`
-  hardcodes a 200k context window and 8k output cap for every self-hosted model.
-  Compaction therefore triggers against a window the server may not have. Repair
-  does not address this; a `/v1/models` probe would.
-- **F2 — `toolChoice` is never set.** The field exists on `ProviderRequest` but
-  no engine writes it, so there is no lever to force a tool call on a model that
-  keeps answering in prose.
-- **F3 — sampling params are unreachable** from `RunConfig` on the LiteLLM path;
-  only `LITELLM_EXTRA_BODY` works. Lower temperature materially improves
-  tool-call well-formedness on small models.
+Three gaps sat next to repair and made the open-weight path worse in ways repair
+could not reach. All three are now closed.
+
+### F1 — capability probing (was: a hardcoded 200k window for every model)
+
+`LiteLLMTransportProvider` serves arbitrary gateway/self-hosted models, so it
+cannot use the static capability catalog. It guessed 200k context / 8k output
+for everything. That number drives compaction: a model actually served at 32k
+never trips the L1 trigger, so instead of compacting, the run walks into a
+provider-side context-overflow error.
+
+`src/providers/capability-probe.ts` discovers the real limits from the two
+places OpenAI-compatible servers advertise them:
+
+| Source | Endpoint | Field |
+|---|---|---|
+| vLLM / SGLang | `GET /v1/models` | `data[].max_model_len` |
+| LiteLLM proxy | `GET /model/info` | `data[].model_info.max_input_tokens` |
+
+Resolution order is **env → `/models` → `/model/info` → baseline**. An operator
+who knows the number should not have to argue with a probe, so
+`OPENSWARM_MAX_CONTEXT_TOKENS` / `OPENSWARM_MAX_OUTPUT_TOKENS` short-circuit the
+network entirely; `OPENSWARM_CAPABILITY_PROBE=0` disables probing.
+
+The probe is best-effort by construction: 2s timeout, never throws, any failure
+or unrecognised shape falls back to the baseline. It runs once in
+`create()`. Two deliberate conservatisms: a multi-model server with no matching
+id yields nothing rather than a guess (a single-model server is accepted as
+unambiguous even when the id was aliased), and `applyProbedCapabilities` clamps
+the output cap to the discovered window so a 4k-window model cannot be asked
+for 8k of output.
+
+### F2 — `toolChoice` (was: the field existed but nothing wrote it)
+
+`ProviderRequest.toolChoice` had been present since M4a, but no engine wrote it
+and only the Codex Responses builder read it — so all seven AI-SDK transports
+silently ran on the SDK default. `src/providers/tool-choice.ts` maps our union
+(`{name}`) to the SDK's (`{type:"tool",toolName}`), and every transport now
+spreads `...toolChoiceOption(req)` into its `streamText` call.
+
+Reachable as `RunConfig.toolChoice`, `--tool-choice`, or
+`OPENSWARM_TOOL_CHOICE`, accepting `auto` | `required` | `none` | a tool name.
+
+Two guards, both in the mapper so no transport can forget them: a choice is
+dropped when the request advertises **no tools** (`required` against an empty
+tool set is a provider-side error), and a named tool is dropped when that tool
+is not advertised.
+
+> **`required` applies to every turn.** A model that must always call a tool can
+> never end the conversation naturally, so it will run to `maxTurns`. It is the
+> right lever for a model answering in prose instead of calling tools; pair it
+> with `--max-turns`.
+
+### F3 — sampling parameters (was: unreachable from `RunConfig`)
+
+Every transport already read `temperature` / `topP` / `topK` off
+`ProviderRequest` — no engine ever wrote them. The only way to tune a
+self-hosted model was `LITELLM_EXTRA_BODY`, which the swarm worker path could
+not set per-role at all. Lower temperature measurably improves tool-call
+well-formedness on small open-weight models, so this was a real lever to be
+missing.
+
+Added to `RunConfig` and threaded through both native engines, with
+`src/engine/sampling.ts` resolving flags over environment:
+
+| Lever | Flag | Env |
+|---|---|---|
+| temperature | `--temperature` | `OPENSWARM_TEMPERATURE` |
+| top-p | `--top-p` | `OPENSWARM_TOP_P` |
+| top-k | `--top-k` | `OPENSWARM_TOP_K` |
+| tool choice | `--tool-choice` | `OPENSWARM_TOOL_CHOICE` |
+
+Environment is the propagation mechanism on purpose: the subprocess spawner
+spreads `process.env`, so a value resolved once on the orchestrator reaches
+every worker without a new IPC field. `exportSamplingEnv` publishes the
+resolved values but never clobbers an already-set variable, so a per-worker
+override stays authoritative.
+
+Unset levers are omitted from `ProviderRequest` entirely rather than sent as
+`undefined`, so provider defaults survive. `temperature: 0` is honoured, not
+treated as falsy.
+
+`topK` has no OpenAI-wire equivalent, so the OpenAI-compatible transports
+(LiteLLM, Azure, DashScope) ignore it — use `LITELLM_EXTRA_BODY` for vLLM's
+`top_k`. Google, xAI and Bedrock accept it natively.
+
+## 10. Remaining follow-ups
+
 - **F4 — no eval cell yet** measuring repair-on vs repair-off resolve rate on an
   open-weight tier. That is the measurement that would tell us how much of
-  docs/62's Phase 0 result was serving-layer loss rather than capability.
+  docs/62's Phase 0 result was serving-layer loss rather than capability. Needs
+  real model access; not addressable in code alone.
+- **F5 — no auto-escalation.** When `diagnoseSilentStop` fires, the model
+  demonstrably wanted to call a tool, and retrying that one turn with
+  `toolChoice: "required"` would likely convert a dead run into a working one.
+  The lever now exists (F2); wiring it to fire automatically is deliberately not
+  done — it needs a loop guard, and forcing tool use on a model that has
+  genuinely finished is its own failure mode.

@@ -413,6 +413,16 @@ export class HardenedNativeEngine implements AgentEngine {
         ...(config.maxOutputTokens !== undefined
           ? { maxOutputTokens: config.maxOutputTokens }
           : {}),
+        // Sampling + tool-choice levers (docs/63 F2/F3). Omitted when unset so
+        // the provider's own defaults still apply.
+        ...(config.temperature !== undefined
+          ? { temperature: config.temperature }
+          : {}),
+        ...(config.topP !== undefined ? { topP: config.topP } : {}),
+        ...(config.topK !== undefined ? { topK: config.topK } : {}),
+        ...(config.toolChoice !== undefined
+          ? { toolChoice: config.toolChoice }
+          : {}),
         ...(this.sessionId !== undefined ? { sessionId: this.sessionId } : {}),
       });
 
