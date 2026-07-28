@@ -369,11 +369,73 @@ completion request and zero tool results — the silent one-turn stop.
 
 ## 11. Remaining follow-ups
 
-- **F4 — no eval cell yet** measuring repair-on vs repair-off resolve rate on an
-  open-weight tier. That is the measurement that would tell us how much of
-  docs/62's Phase 0 result was serving-layer loss rather than capability.
-  Deliberately not built here: it needs a real open-weight tier and GPU/API
-  budget, and eval code that cannot be run bit-rots. The *enabling* piece is
-  already in place — `tool_call_repaired` events land in headless JSONL, so an
-  eval run can attribute repairs today with no new harness code. What is needed
-  is the run, not the plumbing.
+Repair is justified here by **mechanism**, not by measurement: the e2e proves it
+converts a silently-truncated run into a working one, but nothing in this change
+establishes how often that happens on a real tier or what it is worth. F4 is
+that gap, and it is the one that matters.
+
+### F4 — resolve-rate measurement on an open-weight tier (open, runbook written)
+
+**Runbook: [63-live-eval-handoff.md](./63-live-eval-handoff.md).**
+
+Deliberately not run here — it needs a real open-weight tier and GPU/API budget,
+neither of which the dev sandbox has. Deliberately not *scaffolded* here either:
+eval code that cannot be executed bit-rots, and guessing at the harness shape
+would produce something worse than a precise spec.
+
+What the runbook pins down, because these are the parts that are easy to get
+wrong:
+
+- **The server-configuration confound.** A correctly-configured vLLM hides most
+  of the effect — case 3 never fires, both arms score alike, and the naive
+  reading is "repair does nothing." Server config is therefore a first-class
+  axis (`parser-on` / `parser-off`), reported separately. `parser-off` is not a
+  strawman: it is the default state of a fresh server.
+- **A free pre-check before any spend.** Count `tool_call_repaired` events on a
+  handful of `repair-on` runs. Zero across the board ⇒ repair is structurally
+  inert on that tier and the resolve-rate delta is necessarily zero — report
+  that instead of buying a null result at full price. (Same move as docs/62's
+  oracle pre-check.)
+- **Mechanism metrics alongside the headline.** Repair rate by `stage`,
+  silent-stop rate, escalation rate, and tokens — all already in the headless
+  JSONL. A resolve-rate delta with no matching repair-rate movement means
+  something else changed.
+
+Enablement is complete: arms are env overlays the shipped code already reads
+(`OPENSWARM_TOOL_CALL_REPAIR`, `OPENSWARM_TOOL_CHOICE_ESCALATION`), telemetry is
+already emitted, `--temperature 0` is now reachable (F3) so arm variance is the
+treatment rather than the sampler, and the capability probe (F1) means a 32k tier
+is no longer silently mis-compacted mid-study. **What is missing is the run and
+one experiment file, not the plumbing.**
+
+### F6 — probe coverage beyond LiteLLM
+
+`AzureTransportProvider` still hardcodes `maxContextTokens: 200_000` /
+`maxOutputTokens: 8_192` (`src/providers/azure-transport.ts`), so an Azure
+deployment of an open-weight model — e.g. the `gpt-oss-20b` used in docs/55 —
+has exactly the F1 problem F1 fixed for LiteLLM. `probeOpenAICompatCapabilities`
+is transport-agnostic and would drop straight in; it was scoped to LiteLLM
+because that is the self-hosted path. DashScope is fine (it uses a capability
+catalog).
+
+### F7 — the escalation budget is unmeasured
+
+`DEFAULT_ESCALATION_BUDGET = 1` was chosen conservatively, not empirically. The
+F4 run answers it directly by comparing a `repair-only` arm against `repair-on`:
+if escalation adds resolve rate the default is defensible, if it only adds tokens
+it should drop to 0 and become opt-in.
+
+### F8 — `topK` unreachable on OpenAI-wire transports
+
+`topK` has no OpenAI Chat Completions equivalent, so LiteLLM/Azure/DashScope
+ignore it; vLLM *does* accept `top_k`, reachable only via
+`LITELLM_EXTRA_BODY`. A transport-level passthrough would remove that asymmetry,
+at the cost of sending a non-standard field to gateways that may reject it.
+
+### F9 — no aggregated repair telemetry
+
+`tool_call_repaired` is per-event only. `ToolCallRecovery.repairCount` and
+`ToolChoiceEscalation.escalationCount` are tracked but never surfaced — a
+per-session line in `/cost` or the session summary ("3 tool calls repaired, 1
+escalation") would make a mis-configured server obvious to a human without
+grepping JSONL.
