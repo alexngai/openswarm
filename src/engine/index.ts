@@ -168,6 +168,34 @@ export interface RunConfig {
   /** Hard cap on output tokens per turn. */
   readonly maxOutputTokens?: number;
 
+  /**
+   * Sampling parameters, forwarded to the provider (docs/63 F3). Previously
+   * unreachable: the transports read them off `ProviderRequest` but no engine
+   * ever wrote them, so a self-hosted model could only be tuned through
+   * `LITELLM_EXTRA_BODY`. Lowering temperature measurably improves tool-call
+   * well-formedness on small open-weight models.
+   *
+   * Providers that reject a parameter for a given model family drop it — e.g.
+   * OpenAI reasoning models strip temperature/topP/topK via openai-quirks.
+   * `topK` has no OpenAI-wire equivalent, so OpenAI-compatible transports
+   * (LiteLLM, Azure, DashScope) ignore it; use `LITELLM_EXTRA_BODY` there.
+   */
+  readonly temperature?: number;
+  readonly topP?: number;
+  readonly topK?: number;
+
+  /**
+   * Force, suppress, or pin tool use for every turn of this run (docs/63 F2).
+   * Defaults to the provider's own default (`auto`).
+   *
+   * `"required"` is the lever for an open-weight model that keeps answering in
+   * prose instead of emitting a tool call. Note that it applies to EVERY turn:
+   * a model that must always call a tool can never end the conversation
+   * naturally, so pair it with `maxTurns`. Ignored when the run advertises no
+   * tools, and a `{ name }` choice is ignored when that tool is not advertised.
+   */
+  readonly toolChoice?: "auto" | "required" | "none" | { readonly name: string };
+
   /** Opaque resume state from a prior session. */
   readonly resumeFrom?: SessionSnapshot;
 
@@ -256,6 +284,18 @@ export interface RunConfig {
   /** When true, compaction is checked after tool results mid-turn.
    *  Default: false (pre-turn compaction only). */
   readonly midTurnCompaction?: boolean;
+
+  /**
+   * How hard the engine tries to rescue a malformed tool call before dropping
+   * it (docs/63-tool-call-repair.md). Matters almost exclusively for
+   * open-weight models behind an OpenAI-compatible endpoint, where the serving
+   * layer's tool-call parser — not the model — is usually what failed.
+   *
+   * Defaults to `OPENSWARM_TOOL_CALL_REPAIR`, itself defaulting to
+   * `"standard"`. Set `"off"` to restore the prior drop-on-malformed
+   * behaviour, `"aggressive"` to also mine undelimited JSON out of prose.
+   */
+  readonly toolCallRepair?: import("./tool-call-recovery.js").ToolCallRepairLevel;
 }
 
 // ---------------------------------------------------------------------------

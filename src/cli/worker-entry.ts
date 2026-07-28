@@ -56,6 +56,7 @@ import { redactSecrets } from "../tools/tier0/secrets.js";
 import type { ToolExecutionContext, ToolImpl } from "../tools/types.js";
 import { readSessionSidecar, writeSessionSidecar } from "./session-sidecar.js";
 import { buildSystemPrompt } from "../engine/default-system-prompt.js";
+import { resolveSamplingConfig } from "../engine/sampling.js";
 import {
   ensureScratchpadDir,
   formatScratchpadForSystemPrompt,
@@ -431,6 +432,10 @@ async function executeTurn(
       ...(resolvedAllowedTools !== undefined && {
         allowedTools: resolvedAllowedTools,
       }),
+      // Sampling + tool-choice levers (docs/63 F2/F3). Env-only here: the
+      // subprocess spawner spreads process.env, so whatever the orchestrator
+      // resolved reaches every worker without a new IPC field.
+      ...resolveSamplingConfig(),
     };
 
     // Layer 0: record this worker's session transcript (opt-in, best-effort) so

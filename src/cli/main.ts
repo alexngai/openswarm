@@ -76,6 +76,8 @@ import {
   loadProjectInstructions,
   formatInstructionsForSystemPrompt,
 } from "../engine/project-instructions.js";
+import { buildToolUseWarmupPrompt } from "../tools/tool-feedback.js";
+import { resolveSamplingConfig, exportSamplingEnv } from "../engine/sampling.js";
 import {
   enrichTurnInputs,
   observeTurnEvents,
@@ -127,6 +129,14 @@ Budget flags (single-agent; on exceed the run stops cleanly, exit 3):
   --max-cost-usd <n>             Cost budget in USD (known models only)
   --max-turns <n>                Cap on model round-trips (no cap by default)
   --max-wall-clock <dur>         Wall-clock budget, e.g. 90s, 5m, 1h
+
+Sampling flags (forwarded to the provider; also OPENSWARM_TEMPERATURE etc.):
+  --temperature <n>              Sampling temperature
+  --top-p <n>                    Nucleus sampling cutoff
+  --top-k <n>                    Top-k cutoff (ignored by OpenAI-wire providers)
+  --tool-choice <v>              auto | required | none | <tool-name>.
+                                 "required" forces a tool call every turn —
+                                 pair with --max-turns.
 
 swarm run flags:
   --concurrency N                Max parallel workers (default: 3)
@@ -435,6 +445,12 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
               scratchpadDir !== undefined
                 ? formatScratchpadForSystemPrompt(scratchpadDir)
                 : "",
+              // Tool-interface warmup (docs/63). Previously wired only in
+              // worker-entry, so a single-agent run against an open-weight
+              // model never got it even with the flag set.
+              process.env.OPENSWARM_TOOL_USE_WARMUP === "1"
+                ? buildToolUseWarmupPrompt(engineTools.map((t) => t.spec))
+                : "",
             ]
               .filter((s) => s.length > 0)
               .join("\n\n"),
@@ -447,6 +463,14 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
       ? `${baseSystemPrompt}\n\n${appendText}`
       : appendText
     : baseSystemPrompt;
+  const samplingConfig = resolveSamplingConfig(process.env, {
+    ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
+    ...(opts.topP !== undefined ? { topP: opts.topP } : {}),
+    ...(opts.topK !== undefined ? { topK: opts.topK } : {}),
+    ...(opts.toolChoice !== undefined ? { toolChoice: opts.toolChoice } : {}),
+  });
+  exportSamplingEnv(samplingConfig);
+
   const config: RunConfig = {
     systemPrompt,
     prompt: text,
@@ -468,6 +492,9 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     ...(opts.maxWallClockMs !== undefined
       ? { maxWallClockMs: opts.maxWallClockMs }
       : {}),
+    // Sampling + tool-choice levers (docs/63 F2/F3). Flags win over env; the
+    // resolved values are re-exported so spawned workers inherit them.
+    ...samplingConfig,
   };
 
   // 11. Route to UI.

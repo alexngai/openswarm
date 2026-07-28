@@ -26,6 +26,7 @@ import { toolSpecsToVercelTools } from "./tool-translation.js";
 import { mapVercelUsage } from "./vercel-usage.js";
 import { dashscopePreflight } from "./dashscope-preflight.js";
 import { classifyProviderError } from "./error-classifier.js";
+import { toolChoiceOption } from "./tool-choice.js";
 import { getDashScopeModelCapability } from "./capability-catalog.js";
 
 const DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
@@ -162,6 +163,7 @@ export class DashScopeTransportProvider implements TransportProvider {
       messages: providerMessagesToVercel(messages),
       ...(systemPrompt !== undefined ? { system: systemPrompt } : {}),
       tools: toolSpecsToVercelTools(req.tools ?? []),
+      ...toolChoiceOption(req),
       ...(req.abort !== undefined ? { abortSignal: req.abort } : {}),
       ...extraOptions,
     });
