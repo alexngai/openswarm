@@ -47,7 +47,9 @@ import type { RecontextualizeFn } from "./compact-rebuild.js";
 import {
   applyRecovery,
   createToolCallRecovery,
+  resolveEscalationBudget,
   toolCallRepairedEvent,
+  ToolChoiceEscalation,
 } from "./tool-call-recovery.js";
 import type { ToolRequest } from "../tools/dispatcher.js";
 
@@ -216,6 +218,12 @@ export class NativeEngine implements AgentEngine {
       config.tools.map((t) => t.spec.name),
       config.toolCallRepair,
     );
+    // One-shot toolChoice escalation (docs/63 F5). Disabled when the caller
+    // pinned toolChoice — their choice wins over ours.
+    const escalation = new ToolChoiceEscalation(
+      recovery.enabled ? resolveEscalationBudget() : 0,
+      config.toolChoice !== undefined,
+    );
 
     // -----------------------------------------------------------------
     // 3. Turn loop
@@ -292,6 +300,7 @@ export class NativeEngine implements AgentEngine {
       let turnUsage: Usage = { inputTokens: 0, outputTokens: 0 };
       let stopReason: StopReason = "end_turn";
       let streamErrored = false;
+      const forcedToolChoice = escalation.consume();
 
       const request: ProviderRequest = {
         messages,
@@ -309,9 +318,13 @@ export class NativeEngine implements AgentEngine {
           : {}),
         ...(config.topP !== undefined ? { topP: config.topP } : {}),
         ...(config.topK !== undefined ? { topK: config.topK } : {}),
-        ...(config.toolChoice !== undefined
-          ? { toolChoice: config.toolChoice }
-          : {}),
+        // A pending escalation outranks the caller's default for this one turn;
+        // consume() disarms it so the forced turn cannot force itself again.
+        ...(forcedToolChoice !== undefined
+          ? { toolChoice: forcedToolChoice }
+          : config.toolChoice !== undefined
+            ? { toolChoice: config.toolChoice }
+            : {}),
         ...(this.sessionId !== undefined ? { sessionId: this.sessionId } : {}),
       };
 
@@ -421,11 +434,12 @@ export class NativeEngine implements AgentEngine {
       // the model wrote as text because the serving layer has no tool-call
       // parser configured (docs/63). Runs before the assistant message is
       // committed so recovered calls appear as real tool_use blocks on it.
-      yield* applyRecovery({
+      const recoveryOutcome = yield* applyRecovery({
         recovery,
         assistantContent,
         toolUseBuffer,
         turnId: `t${turn}`,
+        escalation,
       });
 
       // 3c. Post-turn bookkeeping. Sum ALL four token categories — dropping the
@@ -445,6 +459,12 @@ export class NativeEngine implements AgentEngine {
           (this.cumulativeUsage.cacheWriteInputTokens ?? 0) +
           (turnUsage.cacheWriteInputTokens ?? 0),
       };
+
+      // 3c-bis. Escalation armed (docs/63 F5): re-run this turn with tool use
+      // forced. The assistant message is deliberately NOT committed — the
+      // model is about to produce a replacement for it. Usage is already
+      // tallied above, so the extra round trip stays visible in the ledger.
+      if (recoveryOutcome.escalated) continue;
 
       // Merge consecutive text blocks for a tidy assistant message.
       const mergedContent: AssistantBlock[] = [];

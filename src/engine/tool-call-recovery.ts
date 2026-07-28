@@ -338,6 +338,86 @@ export function createToolCallRecovery(
 }
 
 // ---------------------------------------------------------------------------
+// Tool-choice escalation (docs/63 F5)
+// ---------------------------------------------------------------------------
+
+/** Set to "0" to disable, or to an integer budget. Default: 1 per run. */
+export const ESCALATION_ENV = "OPENSWARM_TOOL_CHOICE_ESCALATION";
+export const DEFAULT_ESCALATION_BUDGET = 1;
+
+/**
+ * Resolve the per-run escalation budget. `0` disables; a malformed value falls
+ * back to the default rather than silently disabling.
+ */
+export function resolveEscalationBudget(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const raw = env[ESCALATION_ENV]?.trim();
+  if (raw === undefined || raw.length === 0) return DEFAULT_ESCALATION_BUDGET;
+  if (raw === "off" || raw === "false") return 0;
+  const n = Number.parseInt(raw, 10);
+  return Number.isNaN(n) || n < 0 ? DEFAULT_ESCALATION_BUDGET : n;
+}
+
+/**
+ * One-shot `toolChoice: "required"` escalation for a turn that ended with no
+ * tool call while its text plainly contained one.
+ *
+ * That state means the model *wanted* to call a tool and the serving layer did
+ * not turn it into one — so the useful next move is to re-run the same turn
+ * with tool use forced, which routes the call through the provider's own
+ * tool-call path instead of its content stream.
+ *
+ * Three guards keep this from becoming a loop or a nuisance:
+ *   - it never fires when the caller set `toolChoice` explicitly (their choice
+ *     wins);
+ *   - the override is consumed exactly once per arming, so the escalated turn
+ *     cannot re-escalate itself;
+ *   - a per-run budget (default 1) bounds the total, so a model that ignores
+ *     `required` costs one extra round trip, not an unbounded retry storm.
+ */
+export class ToolChoiceEscalation {
+  private armed = false;
+  private used = 0;
+
+  constructor(
+    private readonly budget: number = DEFAULT_ESCALATION_BUDGET,
+    /** True when the caller pinned toolChoice — escalation must not override it. */
+    private readonly callerPinned: boolean = false,
+  ) {}
+
+  get enabled(): boolean {
+    return this.budget > 0 && !this.callerPinned;
+  }
+
+  /** How many escalations this run has spent — surfaced for telemetry. */
+  get escalationCount(): number {
+    return this.used;
+  }
+
+  /**
+   * Arm an escalation for the next request. Returns false when disabled, when
+   * one is already armed, or when the budget is spent.
+   */
+  arm(): boolean {
+    if (!this.enabled || this.armed || this.used >= this.budget) return false;
+    this.armed = true;
+    this.used++;
+    return true;
+  }
+
+  /**
+   * Take the pending override, disarming it. Called once while building a
+   * provider request, so the forced turn cannot force itself again.
+   */
+  consume(): "required" | undefined {
+    if (!this.armed) return undefined;
+    this.armed = false;
+    return "required";
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Engine glue
 // ---------------------------------------------------------------------------
 
@@ -389,6 +469,22 @@ export interface ApplyRecoveryParams {
    * it. Omitted on the batch path, where dispatch happens after this pass.
    */
   readonly onRecovered?: (call: RepairedToolCall) => void;
+  /**
+   * When supplied, a turn that ended with unrecoverable tool-call syntax arms a
+   * one-shot `toolChoice: "required"` retry instead of just diagnosing
+   * (docs/63 F5).
+   */
+  readonly escalation?: ToolChoiceEscalation;
+}
+
+export interface ApplyRecoveryOutcome {
+  /** How many calls were admitted into the turn. */
+  readonly recovered: number;
+  /**
+   * True when the turn should be re-run with tool use forced. The caller must
+   * NOT commit the assistant message or dispatch — it re-requests instead.
+   */
+  readonly escalated: boolean;
 }
 
 /**
@@ -404,9 +500,10 @@ export interface ApplyRecoveryParams {
  */
 export function* applyRecovery(
   params: ApplyRecoveryParams,
-): Generator<NormalizedEvent> {
+): Generator<NormalizedEvent, ApplyRecoveryOutcome> {
   const { recovery, assistantContent, toolUseBuffer, turnId } = params;
-  if (!recovery.enabled) return;
+  if (!recovery.enabled) return { recovered: 0, escalated: false };
+  let recovered = 0;
 
   /**
    * Admit a recovered call into the turn.
@@ -448,9 +545,10 @@ export function* applyRecovery(
   // Case 2 — calls the provider started streaming but never delivered.
   for (const call of recovery.recoverDroppedCalls()) {
     yield* admit(call, false);
+    recovered++;
   }
 
-  if (toolUseBuffer.length > 0) return;
+  if (toolUseBuffer.length > 0) return { recovered, escalated: false };
 
   // Case 3 — calls the model wrote as text. Only when the turn would
   // otherwise be terminal, so a turn that made real calls is never re-read.
@@ -472,19 +570,41 @@ export function* applyRecovery(
     }
     for (const call of calls) {
       yield* admit(call, true);
+      recovered++;
     }
-    return;
+    return { recovered, escalated: false };
   }
 
-  // Nothing recovered, but the text still smells like a tool call — surface it
-  // rather than letting the run end looking like a deliberate final answer.
+  // Nothing recovered, but the text still smells like a tool call. The model
+  // wanted a tool; the serving layer did not produce one.
   const diagnosis = recovery.diagnoseSilentStop(text);
-  if (diagnosis !== undefined) {
+  if (diagnosis === undefined) return { recovered, escalated: false };
+
+  // Prefer re-running the turn with tool use forced (docs/63 F5) — that routes
+  // the call through the provider's own tool-call path instead of its content
+  // stream. Budgeted and one-shot, so a model that ignores `required` costs a
+  // single extra round trip.
+  if (params.escalation?.arm() === true) {
     yield {
       type: "info",
       source: "tool-call-repair",
-      method: "unrecovered_text_tool_call",
-      payload: { message: diagnosis },
+      method: "tool_choice_escalation",
+      payload: {
+        message:
+          "assistant text contained tool-call syntax but no tool call was " +
+          "produced; retrying this turn with toolChoice=required",
+      },
     };
+    return { recovered, escalated: true };
   }
+
+  // Escalation unavailable or spent — surface the diagnosis rather than
+  // letting the run end looking like a deliberate final answer.
+  yield {
+    type: "info",
+    source: "tool-call-repair",
+    method: "unrecovered_text_tool_call",
+    payload: { message: diagnosis },
+  };
+  return { recovered, escalated: false };
 }

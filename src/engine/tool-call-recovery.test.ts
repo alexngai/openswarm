@@ -3,9 +3,11 @@ import type { NormalizedEvent } from "../core/types.js";
 import {
   applyRecovery,
   createToolCallRecovery,
+  resolveEscalationBudget,
   resolveRepairLevel,
   ToolCallRecovery,
   toolCallRepairedEvent,
+  ToolChoiceEscalation,
   type RecoveryAssistantBlock,
   type RecoveryPendingToolUse,
 } from "./tool-call-recovery.js";
@@ -351,6 +353,154 @@ describe("applyRecovery", () => {
       }),
     ];
     expect(seen).toEqual(["t1"]);
+  });
+});
+
+describe("ToolChoiceEscalation", () => {
+  it("arms once, then reports the override exactly once", () => {
+    const e = new ToolChoiceEscalation(1, false);
+    expect(e.arm()).toBe(true);
+    expect(e.consume()).toBe("required");
+    // Consumed — the forced turn must not force itself again.
+    expect(e.consume()).toBeUndefined();
+  });
+
+  it("respects the per-run budget", () => {
+    const e = new ToolChoiceEscalation(1, false);
+    expect(e.arm()).toBe(true);
+    e.consume();
+    expect(e.arm()).toBe(false);
+    expect(e.escalationCount).toBe(1);
+  });
+
+  it("honours a budget above one", () => {
+    const e = new ToolChoiceEscalation(2, false);
+    expect(e.arm()).toBe(true);
+    e.consume();
+    expect(e.arm()).toBe(true);
+    e.consume();
+    expect(e.arm()).toBe(false);
+  });
+
+  it("will not double-arm before the pending override is consumed", () => {
+    const e = new ToolChoiceEscalation(5, false);
+    expect(e.arm()).toBe(true);
+    expect(e.arm()).toBe(false);
+  });
+
+  it("is disabled when the caller pinned toolChoice", () => {
+    const e = new ToolChoiceEscalation(1, true);
+    expect(e.enabled).toBe(false);
+    expect(e.arm()).toBe(false);
+  });
+
+  it("is disabled at budget zero", () => {
+    expect(new ToolChoiceEscalation(0, false).arm()).toBe(false);
+  });
+});
+
+describe("resolveEscalationBudget", () => {
+  it("defaults to one per run", () => {
+    expect(resolveEscalationBudget({})).toBe(1);
+  });
+
+  it("recognises the off spellings", () => {
+    expect(resolveEscalationBudget({ OPENSWARM_TOOL_CHOICE_ESCALATION: "0" })).toBe(0);
+    expect(resolveEscalationBudget({ OPENSWARM_TOOL_CHOICE_ESCALATION: "off" })).toBe(0);
+  });
+
+  it("accepts an explicit budget", () => {
+    expect(resolveEscalationBudget({ OPENSWARM_TOOL_CHOICE_ESCALATION: "3" })).toBe(3);
+  });
+
+  it("degrades a malformed value to the default", () => {
+    expect(resolveEscalationBudget({ OPENSWARM_TOOL_CHOICE_ESCALATION: "lots" })).toBe(1);
+  });
+});
+
+describe("applyRecovery + escalation", () => {
+  const SYNTAX = '<tool_call>{"name":"summon_unicorn","arguments":{}}</tool_call>';
+
+  function runWith(escalation?: ToolChoiceEscalation) {
+    const assistantContent: RecoveryAssistantBlock[] = [
+      { type: "text", text: SYNTAX },
+    ];
+    const toolUseBuffer: RecoveryPendingToolUse[] = [];
+    const events: NormalizedEvent[] = [];
+    const gen = applyRecovery({
+      recovery: recovery(),
+      assistantContent,
+      toolUseBuffer,
+      turnId: "t0",
+      ...(escalation !== undefined ? { escalation } : {}),
+    });
+    let next = gen.next();
+    while (!next.done) {
+      events.push(next.value);
+      next = gen.next();
+    }
+    return { events, outcome: next.value };
+  }
+
+  it("arms an escalation instead of only diagnosing", () => {
+    const { events, outcome } = runWith(new ToolChoiceEscalation(1, false));
+    expect(outcome.escalated).toBe(true);
+    const info = events.find((e) => e.type === "info");
+    expect(info).toMatchObject({ method: "tool_choice_escalation" });
+  });
+
+  it("falls back to the plain diagnosis once the budget is spent", () => {
+    const escalation = new ToolChoiceEscalation(1, false);
+    escalation.arm();
+    escalation.consume();
+    const { events, outcome } = runWith(escalation);
+    expect(outcome.escalated).toBe(false);
+    expect(events.find((e) => e.type === "info")).toMatchObject({
+      method: "unrecovered_text_tool_call",
+    });
+  });
+
+  it("diagnoses without escalating when no escalation is supplied", () => {
+    const { outcome, events } = runWith(undefined);
+    expect(outcome.escalated).toBe(false);
+    expect(events.find((e) => e.type === "info")).toMatchObject({
+      method: "unrecovered_text_tool_call",
+    });
+  });
+
+  it("never escalates a turn whose call was successfully recovered", () => {
+    const assistantContent: RecoveryAssistantBlock[] = [
+      { type: "text", text: '<tool_call>{"name":"bash","arguments":{"command":"ls"}}</tool_call>' },
+    ];
+    const toolUseBuffer: RecoveryPendingToolUse[] = [];
+    const escalation = new ToolChoiceEscalation(1, false);
+    const gen = applyRecovery({
+      recovery: recovery(),
+      assistantContent,
+      toolUseBuffer,
+      turnId: "t0",
+      escalation,
+    });
+    let next = gen.next();
+    while (!next.done) next = gen.next();
+    expect(next.value).toEqual({ recovered: 1, escalated: false });
+    expect(escalation.escalationCount).toBe(0);
+  });
+
+  it("reports the recovered count", () => {
+    const r = recovery();
+    r.noteInputStart("t1", "bash");
+    r.noteInputDelta("t1", '{"command":"ls"');
+    const buffer: RecoveryPendingToolUse[] = [];
+    const gen = applyRecovery({
+      recovery: r,
+      assistantContent: [],
+      toolUseBuffer: buffer,
+      turnId: "t0",
+    });
+    let next = gen.next();
+    while (!next.done) next = gen.next();
+    expect(next.value).toEqual({ recovered: 1, escalated: false });
   });
 });
 

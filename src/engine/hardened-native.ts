@@ -62,7 +62,10 @@ import { type RetryPolicy, DEFAULT_RETRY_POLICY } from "./retry-policy.js";
 import {
   applyRecovery,
   createToolCallRecovery,
+  resolveEscalationBudget,
   toolCallRepairedEvent,
+  ToolChoiceEscalation,
+  type ApplyRecoveryOutcome,
 } from "./tool-call-recovery.js";
 import {
   isRetryableError,
@@ -313,6 +316,12 @@ export class HardenedNativeEngine implements AgentEngine {
       config.tools.map((t) => t.spec.name),
       config.toolCallRepair,
     );
+    // One-shot toolChoice escalation (docs/63 F5). Disabled when the caller
+    // pinned toolChoice — their choice wins over ours.
+    const escalation = new ToolChoiceEscalation(
+      recovery.enabled ? resolveEscalationBudget() : 0,
+      config.toolChoice !== undefined,
+    );
 
     // -----------------------------------------------------------------
     // 3. Turn loop — maps to Codex run_turn (turn.rs:136-422)
@@ -404,6 +413,10 @@ export class HardenedNativeEngine implements AgentEngine {
         ? new ToolScheduler<ToolResult>()
         : undefined;
 
+      // Consumed once per TURN (not per retry attempt) so a transport retry
+      // still carries the forced tool choice.
+      const forcedToolChoice = escalation.consume();
+
       const buildRequest = (): ProviderRequest => ({
         messages,
         tools: config.tools.map((t) => t.spec),
@@ -420,9 +433,12 @@ export class HardenedNativeEngine implements AgentEngine {
           : {}),
         ...(config.topP !== undefined ? { topP: config.topP } : {}),
         ...(config.topK !== undefined ? { topK: config.topK } : {}),
-        ...(config.toolChoice !== undefined
-          ? { toolChoice: config.toolChoice }
-          : {}),
+        // A pending escalation outranks the caller's default for this one turn.
+        ...(forcedToolChoice !== undefined
+          ? { toolChoice: forcedToolChoice }
+          : config.toolChoice !== undefined
+            ? { toolChoice: config.toolChoice }
+            : {}),
         ...(this.sessionId !== undefined ? { sessionId: this.sessionId } : {}),
       });
 
@@ -755,13 +771,15 @@ export class HardenedNativeEngine implements AgentEngine {
       // parser configured (docs/63). Recovered calls join the eager in-flight
       // map via onRecovered so the eager drain — which iterates inFlight —
       // does not skip them.
+      let recoveryOutcome: ApplyRecoveryOutcome = { recovered: 0, escalated: false };
       {
         const recoveredCalls: Array<{ id: string; name: string; input: unknown }> = [];
-        yield* applyRecovery({
+        recoveryOutcome = yield* applyRecovery({
           recovery,
           assistantContent,
           toolUseBuffer,
           turnId: `t${turn}`,
+          escalation,
           ...(eagerDispatch
             ? {
                 onRecovered: (call) =>
@@ -794,6 +812,12 @@ export class HardenedNativeEngine implements AgentEngine {
           (this.cumulativeUsage.cacheWriteInputTokens ?? 0) +
           (turnUsage.cacheWriteInputTokens ?? 0),
       };
+
+      // 3c-bis. Escalation armed (docs/63 F5): re-run this turn with tool use
+      // forced. The assistant message is deliberately NOT committed — the model
+      // is about to produce a replacement for it. Usage is already tallied
+      // above, so the extra round trip stays visible in the ledger.
+      if (recoveryOutcome.escalated) continue;
 
       const mergedContent: AssistantBlock[] = [];
       for (const block of assistantContent) {

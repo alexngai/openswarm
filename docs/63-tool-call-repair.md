@@ -314,15 +314,66 @@ treated as falsy.
 (LiteLLM, Azure, DashScope) ignore it — use `LITELLM_EXTRA_BODY` for vLLM's
 `top_k`. Google, xAI and Bedrock accept it natively.
 
-## 10. Remaining follow-ups
+### F5 — one-shot `toolChoice` escalation
+
+A turn that ends with no tool call while its text plainly contained one means
+the model *wanted* a tool and the serving layer did not produce one. Diagnosing
+that is useful; acting on it is better. `ToolChoiceEscalation` re-runs the same
+turn with `toolChoice: "required"`, routing the call through the provider's own
+tool-call path instead of its content stream.
+
+Three guards keep it from becoming a loop or a nuisance:
+
+- **Never overrides the caller.** If `toolChoice` was set explicitly, escalation
+  is disabled outright.
+- **One-shot per arming.** `consume()` disarms while building the request, so
+  the escalated turn cannot escalate itself.
+- **Per-run budget** (`OPENSWARM_TOOL_CHOICE_ESCALATION`, default 1). A model
+  that ignores `required` costs one extra round trip, not a retry storm.
+
+The escalated turn's assistant message is deliberately **not committed** — the
+model is about to produce a replacement for it, and replaying a dead turn would
+waste context and teach the wrong thing. Usage *is* tallied before the retry, so
+the extra round trip stays visible in the ledger.
+
+False-positive risk is low because arming requires `looksLikeTextToolCall`,
+which only matches delimited syntaxes (`<tool_call>`, `<|python_tag|>`,
+`[TOOL_CALLS]`, `<function=`). A model writing a genuine final answer does not
+emit those.
+
+## 10. Verification
+
+Unit and engine tests use scripted `ProviderEvent`s, which necessarily encode an
+*assumption* about AI SDK behaviour. `test/integration/open-weight-repair.e2e.test.ts`
+is what verifies it: a real OpenAI-compatible HTTP server (SSE chat completions
++ `/v1/models`) driving the **compiled CLI** over the `litellm/` route. Nothing
+is mocked below the CLI boundary — argv → routing → transport → capability probe
+→ `@ai-sdk/openai`'s real streaming parser → engine → recovery → permission gate
+→ dispatcher → the real `glob` tool → headless JSONL. No network, no
+credentials, no user state.
+
+Two things it established that the unit tests could not:
+
+- **A tool call with unparseable arguments is silently dropped by the SDK.**
+  Confirmed on the wire: `tool-input-start` fires, the truncated delta streams,
+  and no `tool-call` ever arrives. Case 2 recovery is therefore load-bearing,
+  not defensive — the observed repair trail is
+  `["rebuilt tool call the provider dropped mid-stream", "closed truncated JSON"]`.
+- **`@ai-sdk/openai` writes `tool_choice: "auto"` itself** whenever tools are
+  present. Our "unset" is absence of *our* lever, not absence of the field —
+  worth knowing before reading a request body and concluding the lever is broken.
+
+The suite also pins the regression this whole change exists to prevent: with
+`OPENSWARM_TOOL_CALL_REPAIR=0`, a text-format tool call produces exactly one
+completion request and zero tool results — the silent one-turn stop.
+
+## 11. Remaining follow-ups
 
 - **F4 — no eval cell yet** measuring repair-on vs repair-off resolve rate on an
   open-weight tier. That is the measurement that would tell us how much of
-  docs/62's Phase 0 result was serving-layer loss rather than capability. Needs
-  real model access; not addressable in code alone.
-- **F5 — no auto-escalation.** When `diagnoseSilentStop` fires, the model
-  demonstrably wanted to call a tool, and retrying that one turn with
-  `toolChoice: "required"` would likely convert a dead run into a working one.
-  The lever now exists (F2); wiring it to fire automatically is deliberately not
-  done — it needs a loop guard, and forcing tool use on a model that has
-  genuinely finished is its own failure mode.
+  docs/62's Phase 0 result was serving-layer loss rather than capability.
+  Deliberately not built here: it needs a real open-weight tier and GPU/API
+  budget, and eval code that cannot be run bit-rots. The *enabling* piece is
+  already in place — `tool_call_repaired` events land in headless JSONL, so an
+  eval run can attribute repairs today with no new harness code. What is needed
+  is the run, not the plumbing.

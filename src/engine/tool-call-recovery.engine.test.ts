@@ -348,21 +348,115 @@ for (const engineName of ["native", "hardened"] as const) {
     });
   });
 
-  describe(`${engineName} engine: diagnostics`, () => {
-    it("surfaces an info event when tool-call syntax cannot be recovered", async () => {
+  /** A turn whose tool-call syntax names a tool that does not exist. */
+  const UNRECOVERABLE_TURN: readonly ProviderEvent[] = [
+    {
+      type: "text-delta",
+      text: '<tool_call>{"name": "summon_unicorn", "arguments": {}}</tool_call>',
+    },
+    { type: "finish", stopReason: "end_turn", usage: USAGE },
+  ];
+
+  describe(`${engineName} engine: toolChoice escalation (F5)`, () => {
+    it("re-runs the turn with tool use forced", async () => {
+      const provider = new ScriptedProvider([UNRECOVERABLE_TURN, FINAL_TURN]);
+      const dispatcher = new RecordingDispatcher();
+      const events = await collect(
+        makeEngine(engineName, provider).run(
+          config({ dispatcher: dispatcher as unknown as RunConfig["dispatcher"] }),
+        ),
+      );
+
+      expect(events.find((e) => e.type === "info")).toMatchObject({
+        source: "tool-call-repair",
+        method: "tool_choice_escalation",
+      });
+      // Second request carries the forced choice…
+      expect(provider.requests.length).toBe(2);
+      expect(provider.requests[0]!.toolChoice).toBeUndefined();
+      expect(provider.requests[1]!.toolChoice).toBe("required");
+      // …and the un-committed assistant turn is not replayed as history.
+      const assistants = provider.requests[1]!.messages.filter(
+        (m) => m.role === "assistant",
+      );
+      expect(assistants).toEqual([]);
+    });
+
+    it("escalates at most once, then falls back to the diagnosis", async () => {
+      // Both turns fail the same way; the budget is 1, so the run must stop.
       const provider = new ScriptedProvider([
-        [
-          {
-            type: "text-delta",
-            text: '<tool_call>{"name": "summon_unicorn", "arguments": {}}</tool_call>',
-          },
-          { type: "finish", stopReason: "end_turn", usage: USAGE },
-        ],
+        UNRECOVERABLE_TURN,
+        UNRECOVERABLE_TURN,
       ]);
       const dispatcher = new RecordingDispatcher();
       const events = await collect(
         makeEngine(engineName, provider).run(
           config({ dispatcher: dispatcher as unknown as RunConfig["dispatcher"] }),
+        ),
+      );
+      expect(provider.requests.length).toBe(2);
+      const methods = events
+        .filter((e) => e.type === "info")
+        .map((e) => (e as { method: string }).method);
+      expect(methods).toEqual(["tool_choice_escalation", "unrecovered_text_tool_call"]);
+      expect(events.some((e) => e.type === "message_stop")).toBe(true);
+      expect(dispatcher.dispatched).toEqual([]);
+    });
+
+    it("recovers on the forced retry when the model then emits a real call", async () => {
+      const provider = new ScriptedProvider([
+        UNRECOVERABLE_TURN,
+        [
+          { type: "tool-input-start", id: "c1", name: "bash" },
+          { type: "tool-call", id: "c1", name: "bash", input: { command: "ls" } },
+          { type: "finish", stopReason: "tool_use", usage: USAGE },
+        ],
+        FINAL_TURN,
+      ]);
+      const dispatcher = new RecordingDispatcher();
+      await collect(
+        makeEngine(engineName, provider).run(
+          config({
+            maxTurns: 5,
+            dispatcher: dispatcher as unknown as RunConfig["dispatcher"],
+          }),
+        ),
+      );
+      expect(dispatcher.dispatched).toEqual([
+        { name: "bash", input: { command: "ls" } },
+      ]);
+    });
+
+    it("never overrides a toolChoice the caller pinned", async () => {
+      const provider = new ScriptedProvider([UNRECOVERABLE_TURN]);
+      const dispatcher = new RecordingDispatcher();
+      const events = await collect(
+        makeEngine(engineName, provider).run(
+          config({
+            toolChoice: "auto",
+            dispatcher: dispatcher as unknown as RunConfig["dispatcher"],
+          }),
+        ),
+      );
+      expect(provider.requests.length).toBe(1);
+      expect(provider.requests[0]!.toolChoice).toBe("auto");
+      expect(events.find((e) => e.type === "info")).toMatchObject({
+        method: "unrecovered_text_tool_call",
+      });
+    });
+  });
+
+  describe(`${engineName} engine: diagnostics`, () => {
+    it("surfaces an info event when escalation is unavailable", async () => {
+      const provider = new ScriptedProvider([UNRECOVERABLE_TURN]);
+      const dispatcher = new RecordingDispatcher();
+      const events = await collect(
+        makeEngine(engineName, provider).run(
+          // Pinning toolChoice disables escalation, isolating the diagnosis.
+          config({
+            toolChoice: "auto",
+            dispatcher: dispatcher as unknown as RunConfig["dispatcher"],
+          }),
         ),
       );
       const info = events.find((e) => e.type === "info");
