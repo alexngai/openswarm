@@ -76,6 +76,7 @@ import {
   loadProjectInstructions,
   formatInstructionsForSystemPrompt,
 } from "../engine/project-instructions.js";
+import { buildToolUseWarmupPrompt } from "../tools/tool-feedback.js";
 import {
   enrichTurnInputs,
   observeTurnEvents,
@@ -434,6 +435,12 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
               ),
               scratchpadDir !== undefined
                 ? formatScratchpadForSystemPrompt(scratchpadDir)
+                : "",
+              // Tool-interface warmup (docs/63). Previously wired only in
+              // worker-entry, so a single-agent run against an open-weight
+              // model never got it even with the flag set.
+              process.env.OPENSWARM_TOOL_USE_WARMUP === "1"
+                ? buildToolUseWarmupPrompt(engineTools.map((t) => t.spec))
                 : "",
             ]
               .filter((s) => s.length > 0)

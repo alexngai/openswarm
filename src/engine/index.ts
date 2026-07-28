@@ -256,6 +256,18 @@ export interface RunConfig {
   /** When true, compaction is checked after tool results mid-turn.
    *  Default: false (pre-turn compaction only). */
   readonly midTurnCompaction?: boolean;
+
+  /**
+   * How hard the engine tries to rescue a malformed tool call before dropping
+   * it (docs/63-tool-call-repair.md). Matters almost exclusively for
+   * open-weight models behind an OpenAI-compatible endpoint, where the serving
+   * layer's tool-call parser — not the model — is usually what failed.
+   *
+   * Defaults to `OPENSWARM_TOOL_CALL_REPAIR`, itself defaulting to
+   * `"standard"`. Set `"off"` to restore the prior drop-on-malformed
+   * behaviour, `"aggressive"` to also mine undelimited JSON out of prose.
+   */
+  readonly toolCallRepair?: import("./tool-call-recovery.js").ToolCallRepairLevel;
 }
 
 // ---------------------------------------------------------------------------

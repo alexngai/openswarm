@@ -60,6 +60,11 @@ import {
 } from "./hardened-native-snapshot.js";
 import { type RetryPolicy, DEFAULT_RETRY_POLICY } from "./retry-policy.js";
 import {
+  applyRecovery,
+  createToolCallRecovery,
+  toolCallRepairedEvent,
+} from "./tool-call-recovery.js";
+import {
   isRetryableError,
   classifyProviderError,
 } from "../providers/error-classifier.js";
@@ -301,6 +306,14 @@ export class HardenedNativeEngine implements AgentEngine {
     // Merge retry policy from RunConfig if provided.
     const retryPolicy = config.retryPolicy ?? this.retryPolicy;
 
+    // Malformed-tool-call recovery (docs/63). Resolves against the tool surface
+    // actually advertised this run, so a repair can only ever land on a
+    // registered tool.
+    const recovery = createToolCallRecovery(
+      config.tools.map((t) => t.spec.name),
+      config.toolCallRepair,
+    );
+
     // -----------------------------------------------------------------
     // 3. Turn loop — maps to Codex run_turn (turn.rs:136-422)
     // -----------------------------------------------------------------
@@ -403,6 +416,63 @@ export class HardenedNativeEngine implements AgentEngine {
         ...(this.sessionId !== undefined ? { sessionId: this.sessionId } : {}),
       });
 
+      /**
+       * Gate one tool call and start it on the eager scheduler. Extracted from
+       * the `tool-call` case so post-stream recovered calls (docs/63) can enter
+       * the same in-flight map — otherwise the eager drain, which iterates
+       * `inFlight`, would silently skip them.
+       * Maps to Codex handle_tool_call_with_source (parallel.rs:81-178).
+       */
+      const startEagerDispatch = async (
+        id: string,
+        name: string,
+        input: unknown,
+      ): Promise<void> => {
+        const decision = await config.canUseTool(name, input);
+        if (!decision.allow) {
+          inFlight.set(
+            id,
+            Promise.resolve({ status: "error" as const, message: decision.reason }),
+          );
+          return;
+        }
+        const dispatchInput =
+          decision.updatedInput !== undefined ? decision.updatedInput : input;
+        const ctx = {
+          cwd: process.cwd(),
+          abort: config.abort,
+          ...(config.host !== undefined ? { host: config.host } : {}),
+        };
+
+        // Compute accesses for ToolScheduler conflict detection.
+        let accesses: ToolAccessesType = ToolAccesses.none();
+        const toolImpl =
+          typeof config.dispatcher!.get === "function"
+            ? config.dispatcher!.get(name)
+            : undefined;
+        if (toolImpl !== undefined) {
+          if (toolImpl.accesses !== undefined) {
+            try {
+              accesses = toolImpl.accesses(dispatchInput, ctx);
+            } catch {
+              accesses = ToolAccesses.all();
+            }
+          } else if (toolImpl.spec.concurrencySafe === false) {
+            accesses = ToolAccesses.all();
+          }
+        }
+
+        inFlight.set(
+          id,
+          eagerScheduler!.add({
+            accesses,
+            start: async () => ({
+              result: config.dispatcher!.dispatch(name, dispatchInput, ctx),
+            }),
+          }),
+        );
+      };
+
       // Retry loop — maps to Codex streamWithRetry
       for (
         let attempt = 0;
@@ -421,6 +491,9 @@ export class HardenedNativeEngine implements AgentEngine {
         if (eagerDispatch) {
           eagerScheduler = new ToolScheduler<ToolResult>();
         }
+        // Drop buffered tool-input fragments from the failed attempt so a
+        // retry cannot "recover" a call the model is about to re-emit.
+        recovery.reset();
 
         try {
           for await (const ev of this.provider.stream(buildRequest())) {
@@ -443,6 +516,7 @@ export class HardenedNativeEngine implements AgentEngine {
 
               case "tool-input-start":
                 yield { type: "tool_use_start", id: ev.id, name: ev.name };
+                recovery.noteInputStart(ev.id, ev.name);
                 break;
 
               case "tool-input-delta":
@@ -451,82 +525,35 @@ export class HardenedNativeEngine implements AgentEngine {
                   id: ev.id,
                   jsonDelta: ev.delta,
                 };
+                recovery.noteInputDelta(ev.id, ev.delta);
                 break;
 
               case "tool-call": {
                 yield { type: "tool_use_end", id: ev.id };
+                recovery.noteDelivered(ev.id);
+                // Aliased name / enveloped or string-encoded arguments are
+                // fixed before gating, so the call reaches the dispatcher
+                // instead of burning a turn on an invalid_tool_name round trip.
+                const repaired = recovery.repairDelivered(ev.id, ev.name, ev.input);
+                if (repaired !== undefined) yield toolCallRepairedEvent(repaired);
+                const toolName = repaired?.name ?? ev.name;
+                const toolInput = repaired !== undefined ? repaired.input : ev.input;
+
                 assistantContent.push({
                   type: "tool_use",
                   id: ev.id,
-                  name: ev.name,
-                  input: ev.input,
+                  name: toolName,
+                  input: toolInput,
                 });
                 toolUseBuffer.push({
                   id: ev.id,
-                  name: ev.name,
-                  input: ev.input,
+                  name: toolName,
+                  input: toolInput,
                 });
 
                 // Eager dispatch — start tool execution during streaming.
-                // Maps to Codex handle_tool_call_with_source (parallel.rs:81-178).
                 if (eagerDispatch) {
-                  const decision = await config.canUseTool(
-                    ev.name,
-                    ev.input,
-                  );
-                  if (decision.allow) {
-                    const dispatchInput =
-                      decision.updatedInput !== undefined
-                        ? decision.updatedInput
-                        : ev.input;
-                    const ctx = {
-                      cwd: process.cwd(),
-                      abort: config.abort,
-                      ...(config.host !== undefined
-                        ? { host: config.host }
-                        : {}),
-                    };
-
-                    // Compute accesses for ToolScheduler conflict detection.
-                    let accesses: ToolAccessesType = ToolAccesses.none();
-                    const toolImpl =
-                      typeof config.dispatcher!.get === "function"
-                        ? config.dispatcher!.get(ev.name)
-                        : undefined;
-                    if (toolImpl !== undefined) {
-                      if (toolImpl.accesses !== undefined) {
-                        try {
-                          accesses = toolImpl.accesses(dispatchInput, ctx);
-                        } catch {
-                          accesses = ToolAccesses.all();
-                        }
-                      } else if (toolImpl.spec.concurrencySafe === false) {
-                        accesses = ToolAccesses.all();
-                      }
-                    }
-
-                    inFlight.set(
-                      ev.id,
-                      eagerScheduler!.add({
-                        accesses,
-                        start: async () => ({
-                          result: config.dispatcher!.dispatch(
-                            ev.name,
-                            dispatchInput,
-                            ctx,
-                          ),
-                        }),
-                      }),
-                    );
-                  } else {
-                    inFlight.set(
-                      ev.id,
-                      Promise.resolve({
-                        status: "error" as const,
-                        message: decision.reason,
-                      }),
-                    );
-                  }
+                  await startEagerDispatch(ev.id, toolName, toolInput);
                 }
                 break;
               }
@@ -712,6 +739,34 @@ export class HardenedNativeEngine implements AgentEngine {
 
       if (fatalError) return;
       if (streamErrored) return;
+
+      // 3b-bis. Recover tool calls the transport dropped mid-stream, or that
+      // the model wrote as text because the serving layer has no tool-call
+      // parser configured (docs/63). Recovered calls join the eager in-flight
+      // map via onRecovered so the eager drain — which iterates inFlight —
+      // does not skip them.
+      {
+        const recoveredCalls: Array<{ id: string; name: string; input: unknown }> = [];
+        yield* applyRecovery({
+          recovery,
+          assistantContent,
+          toolUseBuffer,
+          turnId: `t${turn}`,
+          ...(eagerDispatch
+            ? {
+                onRecovered: (call) =>
+                  recoveredCalls.push({
+                    id: call.id,
+                    name: call.name,
+                    input: call.input,
+                  }),
+              }
+            : {}),
+        });
+        for (const call of recoveredCalls) {
+          await startEagerDispatch(call.id, call.name, call.input);
+        }
+      }
 
       // 3c. Post-turn bookkeeping. Accumulate the cache fields too — dropping them
       // here made the headless `message_stop` usage (the only ledger eval harnesses

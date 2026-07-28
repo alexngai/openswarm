@@ -44,6 +44,11 @@ import {
   extractNativeSnapshot,
 } from "./native-snapshot.js";
 import type { RecontextualizeFn } from "./compact-rebuild.js";
+import {
+  applyRecovery,
+  createToolCallRecovery,
+  toolCallRepairedEvent,
+} from "./tool-call-recovery.js";
 import type { ToolRequest } from "../tools/dispatcher.js";
 
 // ---------------------------------------------------------------------------
@@ -204,6 +209,14 @@ export class NativeEngine implements AgentEngine {
     const startTime = Date.now();
     let terminated = false;
 
+    // Malformed-tool-call recovery (docs/63). Resolves against the tool surface
+    // actually advertised this run, so a repair can only ever land on a
+    // registered tool.
+    const recovery = createToolCallRecovery(
+      config.tools.map((t) => t.spec.name),
+      config.toolCallRepair,
+    );
+
     // -----------------------------------------------------------------
     // 3. Turn loop
     // -----------------------------------------------------------------
@@ -316,6 +329,7 @@ export class NativeEngine implements AgentEngine {
 
             case "tool-input-start":
               yield { type: "tool_use_start", id: ev.id, name: ev.name };
+              recovery.noteInputStart(ev.id, ev.name);
               break;
 
             case "tool-input-delta":
@@ -324,22 +338,28 @@ export class NativeEngine implements AgentEngine {
                 id: ev.id,
                 jsonDelta: ev.delta,
               };
+              recovery.noteInputDelta(ev.id, ev.delta);
               break;
 
-            case "tool-call":
+            case "tool-call": {
               yield { type: "tool_use_end", id: ev.id };
+              recovery.noteDelivered(ev.id);
+              // Aliased name / enveloped or string-encoded arguments are fixed
+              // here so the call reaches the dispatcher instead of burning a
+              // turn on an invalid_tool_name round trip.
+              const repaired = recovery.repairDelivered(ev.id, ev.name, ev.input);
+              if (repaired !== undefined) yield toolCallRepairedEvent(repaired);
+              const name = repaired?.name ?? ev.name;
+              const input = repaired !== undefined ? repaired.input : ev.input;
               assistantContent.push({
                 type: "tool_use",
                 id: ev.id,
-                name: ev.name,
-                input: ev.input,
+                name,
+                input,
               });
-              toolUseBuffer.push({
-                id: ev.id,
-                name: ev.name,
-                input: ev.input,
-              });
+              toolUseBuffer.push({ id: ev.id, name, input });
               break;
+            }
 
             case "finish":
               stopReason = ev.stopReason;
@@ -386,6 +406,17 @@ export class NativeEngine implements AgentEngine {
       }
 
       if (streamErrored) return;
+
+      // 3b-bis. Recover tool calls the transport dropped mid-stream, or that
+      // the model wrote as text because the serving layer has no tool-call
+      // parser configured (docs/63). Runs before the assistant message is
+      // committed so recovered calls appear as real tool_use blocks on it.
+      yield* applyRecovery({
+        recovery,
+        assistantContent,
+        toolUseBuffer,
+        turnId: `t${turn}`,
+      });
 
       // 3c. Post-turn bookkeeping. Sum ALL four token categories — dropping the
       // cache fields here made the final `message_stop` usage (the only ledger

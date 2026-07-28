@@ -40,6 +40,7 @@ For end-user CLI reference (flags, model routing, tools, limitations, architectu
 ## Engines & parity
 
 - [37-hardened-engine-design.md](./37-hardened-engine-design.md) — production-hardened NativeEngine (retry, eager dispatch, mid-turn compaction)
+- [63-tool-call-repair.md](./63-tool-call-repair.md) — engine-level repair and recovery of malformed tool calls from open-weight models behind OpenAI-compatible endpoints: name/argument/envelope repair, rebuilding calls the provider dropped mid-stream, and extracting calls the serving layer emitted as text (Hermes/Llama/Mistral/DeepSeek syntaxes) — fixes the silent one-turn stop when vLLM has no `--tool-call-parser`; default-on, `OPENSWARM_TOOL_CALL_REPAIR` (implemented; F1–F4 open, extends 62)
 - [39-codex-parity-gap-analysis.md](./39-codex-parity-gap-analysis.md) — gap analysis vs OpenAI Codex CLI (all P0/P1/P2 gaps closed)
 - [42-codex-native-provider-plan.md](./42-codex-native-provider-plan.md) — native Codex (ChatGPT-plan) provider (Phase 1 complete)
 - [43-macro-agent-parity.md](./43-macro-agent-parity.md) — gap analysis vs macro-agent; tracked checklist + scope decisions (draft)
