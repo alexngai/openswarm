@@ -58,11 +58,12 @@ list_targets() {
   echo "  WP-03      canonical path authorization"
   echo "  WP-04      process broker and fail-closed shell baseline"
   echo "  WP-05      retry operation ledger and cancellation barrier"
+  echo "  WP-06      atomic task transitions and safe target CAS"
   echo
   echo "Declared but not yet implemented (exit 2):"
   printf '%s\n' "${KNOWN_WPS[@]:1}" \
     | grep -vx -e 'WP-00' -e 'WP-00a' -e 'WP-01' -e 'WP-02' -e 'WP-03' -e 'WP-04' \
-    -e 'WP-05' \
+    -e 'WP-05' -e 'WP-06' \
     | paste -sd' ' - | fold -sw 76 | sed 's/^/  /'
   echo
   echo "See docs/63-product-parity-roadmap.md for each gate's fixtures and threshold."
@@ -396,6 +397,34 @@ case "$WP" in
         npx vitest run src/engine/native.test.ts src/tools/dispatcher.test.ts
       run_check R5 "the kernel's own durability order still holds" \
         npx vitest run src/kernel/effect-runtime.test.ts src/kernel/event-store.test.ts
+    fi
+    ;;
+
+  WP-06)
+    # Atomic task transitions and safe target CAS. Threshold (docs/63):
+    # 10,000 claim attempts produce one owner; a moved target loses no commit.
+    #
+    # C1 and C4 are the load-bearing checks, and they fail differently. C1 is
+    # about authority — who is allowed to say a task changed state — and it
+    # catches a regression that no amount of concurrency testing would, because
+    # a forged transition is perfectly well-ordered. C4 is about a landing that
+    # reports success while dropping commits, which is the one failure here that
+    # destroys work rather than confusing bookkeeping.
+    FIXTURES="FX-CLAIM-002, FX-CAS-001"
+    if ! ensure_deps; then
+      RESULT="error"
+      FAIL=$((FAIL + 1))
+    else
+      run_check C1 "a transition is authorized against the caller the transport saw" \
+        npx vitest run src/swarm/task-transition-authority.test.ts
+      run_check C2 "FX-CLAIM-002 10,000 claim attempts produce one owner" \
+        npx vitest run src/swarm/task-claim-atomicity.test.ts
+      run_check C3 "the registry, the lane events, and results.jsonl agree on an outcome" \
+        npx vitest run src/swarm/task-registry.test.ts src/swarm/task-stop-self.test.ts
+      run_check C4 "FX-CAS-001 a moved target loses no commit" \
+        npx vitest run src/swarm/adapters/git-cascade-target-cas.test.ts
+      run_check C5 "landing, conflict retain, and the task tools are unaffected" \
+        npx vitest run src/swarm/adapters/ src/tools/tier2/
     fi
     ;;
 

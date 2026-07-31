@@ -83,10 +83,22 @@ describe("the shipped manifest", () => {
   });
 
   it("marks exactly the work packages whose gates are built", () => {
+    // Spelled out rather than counted, so flipping `gateImplemented` without a
+    // gate to back it fails here. Extend this list in the same commit that adds
+    // the gate to scripts/verify-parity-wp.sh.
     const built = WORK_PACKAGES.filter((wp) => wp.gateImplemented).map(
       (wp) => wp.id,
     );
-    expect(built).toEqual(["WP-00", "WP-00a", "WP-01", "WP-02", "WP-03"]);
+    expect(built).toEqual([
+      "WP-00",
+      "WP-00a",
+      "WP-01",
+      "WP-02",
+      "WP-03",
+      "WP-04",
+      "WP-05",
+      "WP-06",
+    ]);
   });
 
   it("records the three capabilities whose evidence lands after the release that claimed them", () => {

@@ -792,7 +792,21 @@ Depends on `WP-01`.
 - Parent-side identity and transition authorization.
 - Capture target SHA before landing-worktree creation.
 
-Gate: 10,000 claim attempts produce one owner; a moved target loses no commit.
+Delivered. Gate: `./scripts/verify-parity-wp.sh WP-06 <cell>`, `C1`–`C5` passing, over `FX-CLAIM-002` and `FX-CAS-001`. 10,000 claim attempts produce one owner; a moved target loses no commit.
+
+**Two of the three items were live holes, and the landing one destroyed work.** Landing read the target branch twice: once to decide what to check the merge worktree out at, and once to pick the compare-and-swap expectation. Those are different commits whenever the target advances in between, and the combination is worse than either read being wrong alone — the merge is built on the old tip, the CAS expects the new one, so the CAS *succeeds* and moves the branch to a commit that does not contain what landed in that window. Every commit in the window is dropped, on a merge that reported success, with nothing for the caller to observe. Measured with a real `post-checkout` hook advancing the branch at the exact instant the landing worktree is created, the rival commit was not an ancestor of the branch afterwards. One read, used for both purposes, turns that into the `stale` the drain already knows how to retry.
+
+**Transitions were unauthenticated.** The orchestrator knows which worker a request arrived from — the transport is per-child and the handler is handed that identity — and `task.create` already used it to derive the caller's scope rather than believing a scope in the request. The transition handlers did not, taking the task id, the claiming agent, and the target scope from the request body. So a worker could finish, fail, or reassign any task whose id it could name; claim work in another team's scope; or claim *as another agent*, after which every honest ownership check downstream agreed with the forgery. Ownership now comes from the transport. The relation accepted is the owner or an ancestor of the owner, identical to what `task_stop` already enforced, so the two cannot drift into disagreeing about who is in charge of a task. Reassignment by the worker running a task is refused outright: handing work to another agent is the parent's decision, taken through spawn.
+
+Two findings beyond the listed scope, both in the same place — what "terminal" means.
+
+**A terminal result was not final.** `update` and `stop` rewrote status unconditionally, so a cancellation arriving after a task completed turned a finished task into a cancelled one and discarded its result — which `stop`'s own doc comment said it would refuse to do. The first terminal outcome now wins and a later report is a visible no-op rather than an exception the caller has to expect, because a second report is either a duplicate or a disagreement and overwriting makes the answer depend on arrival order. Trailing output is still accepted after a terminal transition: a late chunk of a stream is ordinary and says nothing about the outcome.
+
+**The registry never learned that tasks finished.** Terminal outcomes reached the lane events and `results.jsonl`, and the registry was left saying `running` — so `task.get` and the task board disagreed about whether a finished task had finished, and a parent deciding whether to retry consulted the stale one. The outcome now lands in the registry through one write that carries the status and its payload together, using the same four-way mapping `results.jsonl` uses so the two cannot describe the same run differently. Status and payload are one write because separately they disagree: a task marked succeeded before its output arrives is briefly a success with nothing to show, indistinguishable from one that produced nothing. A worker that exits silently is resolved from its exit code as a fallback, which is a no-op once a real outcome landed rather than a second opinion overwriting it.
+
+The claim itself was already safe and is now honestly stated. It is a synchronous `Map` mutation with no `await` inside, so nothing can interleave — but "correct as long as nobody adds an await" is a property that stops being true quietly, and the loop read as though it were merely checking fields. The claim is now a compare-and-swap against the record the loop actually saw, so the 10,000-claimant fixture includes the case that separates the two: every claimant reads before any of them writes, which is the shape of every store that is not an in-process map. A read-modify-write loses there; the CAS refuses the stale 9,999.
+
+Persistence remains out of scope here. The registry is still in-memory, so a claim does not survive the orchestrator dying — the durable journal is `WP-07`, and this package is the transition semantics that journal will record.
 
 R1 exit:
 
@@ -1160,7 +1174,7 @@ Security:
 
 `WP-00 → WP-00a → WP-01 → WP-02/WP-03 → WP-04 → WP-09 → WP-13 → WP-14 → WP-25 → WP-29 → WP-30 → WP-32 → WP-33`
 
-The first seven are delivered: `WP-00`, `WP-00a`, `WP-01`, `WP-02`, `WP-03`, `WP-04`, and `WP-05`. The security path has no remaining R1 work — `WP-09` heads it but sits in R2 — and the sessions path's R1 requirement is met, leaving `WP-06` as the only R1 package still open. `bun scripts/parity-ready.ts` derives this from the manifest rather than from this paragraph.
+The first eight are delivered: `WP-00`, `WP-00a`, `WP-01`, `WP-02`, `WP-03`, `WP-04`, `WP-05`, and `WP-06`. Every R1 package is closed, so the remaining R1 exit conditions are review items rather than implementation: the walking skeleton and revised loading model need approving, and the `DDP-*` outcomes need certifying on Linux x64. The ready queue is now entirely R2 — `WP-07` heads the sessions path, `WP-09` heads the security path. `bun scripts/parity-ready.ts` derives this from the manifest rather than from this paragraph.
 
 Sessions:
 
