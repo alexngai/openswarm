@@ -103,6 +103,57 @@ describe("readHeadlessApproval", () => {
     }
   });
 
+  /**
+   * Found live, not here. Every fixture above hands the reader its own fresh
+   * stream and asks once, which is the one shape where borrowing the stream per
+   * question behaves the same as owning it. A real run asks twice.
+   */
+  describe("more than one question on one stdin", () => {
+    it("answers the second question from input that arrived with the first", async () => {
+      // What an orchestrator does: write the whole batch, once. The reader used
+      // to keep the first line and drop the rest, so the second question was
+      // answered by nothing at all.
+      const input = pipedIn("n\ny\n");
+
+      const first = await readHeadlessApproval(PENDING, { out: captureOut().stream, in: input });
+      const second = await readHeadlessApproval(PENDING, { out: captureOut().stream, in: input });
+
+      expect(first.allow).toBe(false);
+      expect(second.allow).toBe(true);
+    });
+
+    it("denies rather than hanging when stdin ended before the question", async () => {
+      // The live failure: a stream that has already ended does not re-emit `end`
+      // to a listener attached afterwards, so this never settled — and with stdin
+      // closed nothing held the event loop, so the process exited 0 with the turn
+      // unfinished and the caller read that as success.
+      const input = pipedIn("y\n");
+      await readHeadlessApproval(PENDING, { out: captureOut().stream, in: input });
+
+      const after = await Promise.race([
+        readHeadlessApproval(PENDING, { out: captureOut().stream, in: input }),
+        new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 1_000)),
+      ]);
+
+      expect(after).not.toBe("hung");
+      expect(typeof after === "object" && after.allow).toBe(false);
+    });
+
+    it("keeps answers in order across three questions", async () => {
+      const input = pipedIn("y\nn\na\n");
+      const out = () => captureOut().stream;
+
+      const a = await readHeadlessApproval(PENDING, { out: out(), in: input });
+      const b = await readHeadlessApproval(PENDING, { out: out(), in: input });
+      const c = await readHeadlessApproval(PENDING, { out: out(), in: input });
+
+      expect(a.allow).toBe(true);
+      expect(b.allow).toBe(false);
+      expect(c.allow).toBe(true);
+      expect(c.allow && c.alwaysAllow).toBe(true);
+    });
+  });
+
   it("omits reason field from payload when pending has no reason", async () => {
     const out = captureOut();
     const { reason: _unused, ...bare } = PENDING;

@@ -37,6 +37,7 @@ import { buildTier2Tools } from "../tools/tier2/index.js";
 import { PermissionEngine } from "../permissions/index.js";
 import { makePathContainment } from "../permissions/path-containment.js";
 import { AnthropicEnvAuth } from "../auth/anthropic-env-auth.js";
+import { createHash } from "node:crypto";
 import {
   BUILTIN_ROLES,
   RoleRegistry,
@@ -678,6 +679,18 @@ export async function runWorkerEntry(): Promise<number> {
     if (role !== undefined) {
       roleSuffix = role.systemPromptSuffix;
       resolvedAllowedTools = role.allowedTools;
+      // Success was silent, which made the roles carrier unmeasurable: an eval could not tell a
+      // role that shaped the prompt from one that was never read. The digest ties the marker to the
+      // suffix ACTUALLY applied, so a stale or different role cannot satisfy a probe looking for a
+      // specific one. Emitted here rather than at load because this is where the suffix binds to
+      // this worker's prompt — loading roles.json proves delivery, not application.
+      process.stderr.write(
+        `[openswarm] worker: role "${roleName}" applied ` +
+          `(suffix ${roleSuffix.length} chars, sha256 ${createHash("sha256")
+            .update(roleSuffix)
+            .digest("hex")
+            .slice(0, 12)})\n`,
+      );
     } else {
       process.stderr.write(
         `[openswarm] worker: unknown role "${roleName}" — proceeding without role overlay\n`,
