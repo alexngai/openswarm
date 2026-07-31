@@ -9,6 +9,7 @@ import {
   TEAM_CHECKPOINT_SCHEMA_VERSION,
 } from "./team-checkpoint.js";
 import type { TeamSpec } from "./team-spec.js";
+import { readSnapshot } from "./atomic-snapshot.js";
 
 function makeSpec(overrides?: Partial<TeamSpec>): TeamSpec {
   return {
@@ -48,6 +49,91 @@ describe("team-checkpoint", () => {
     await store.close();
   });
 
+  /**
+   * The checkpoint is stored inside a checksummed envelope (WP-07), so a test
+   * that wants to see the document itself has to unwrap it. Tests assert on the
+   * document, not the envelope, except for the two below that pin the envelope.
+   */
+  async function onDisk(file: string): Promise<Record<string, any>> {
+    const read = await readSnapshot<Record<string, any>>(file);
+    if (read.kind !== "ok") throw new Error(`not a snapshot: ${read.kind}`);
+    return read.data;
+  }
+
+  it("stores the checkpoint behind a checksum", async () => {
+    const spec = makeSpec();
+    const store = await openTeamCheckpoint({ checkpointPath: cpPath, spec });
+    await store.record({
+      id: "a",
+      status: "succeeded",
+      output: "result-A",
+      agentId: "agent-1",
+      sessionId: "sess-1",
+      completedAt: 123,
+    });
+    await store.close();
+
+    const read = await readSnapshot(cpPath);
+    expect(read.kind).toBe("ok");
+  });
+
+  it("does not resume from a checkpoint whose bytes were altered", async () => {
+    const spec = makeSpec();
+    const store = await openTeamCheckpoint({ checkpointPath: cpPath, spec });
+    await store.record({
+      id: "a",
+      status: "succeeded",
+      output: "result-A",
+      agentId: "agent-1",
+      sessionId: "sess-1",
+      completedAt: 123,
+    });
+    await store.close();
+
+    // Someone edits a completed unit's output. Under a bare document this reads
+    // back as ordinary resume state and the team trusts it.
+    const raw = JSON.parse(await fsp.readFile(cpPath, "utf8"));
+    raw.data.units[0].output = "tampered";
+    await fsp.writeFile(cpPath, JSON.stringify(raw));
+
+    const reopened = await openTeamCheckpoint({ checkpointPath: cpPath, spec });
+    expect(reopened.resumed).toBe(false);
+    expect(reopened.isDone("a")).toBe(false);
+    await reopened.close();
+  });
+
+  it("still resumes from a checkpoint written before it was checksummed", async () => {
+    const spec = makeSpec();
+    // Exactly what the pre-WP-07 writer produced: the bare document.
+    await fsp.writeFile(
+      cpPath,
+      JSON.stringify({
+        schemaVersion: TEAM_CHECKPOINT_SCHEMA_VERSION,
+        teamName: spec.name,
+        topology: spec.topology,
+        specHash: computeSpecHash(spec),
+        units: [
+          {
+            id: "a",
+            status: "succeeded",
+            output: "result-A",
+            agentId: "agent-1",
+            sessionId: "sess-1",
+            completedAt: 123,
+          },
+        ],
+        inFlight: [],
+        updatedAt: Date.now(),
+      }) + "\n",
+    );
+
+    const store = await openTeamCheckpoint({ checkpointPath: cpPath, spec });
+    expect(store.resumed).toBe(true);
+    expect(store.isDone("a")).toBe(true);
+    expect(store.get("a")?.output).toBe("result-A");
+    await store.close();
+  });
+
   it("persists recorded units atomically and reloads them", async () => {
     const spec = makeSpec();
     const store = await openTeamCheckpoint({ checkpointPath: cpPath, spec });
@@ -61,8 +147,7 @@ describe("team-checkpoint", () => {
     });
     await store.close();
 
-    const raw = await fsp.readFile(cpPath, "utf8");
-    const parsed = JSON.parse(raw);
+    const parsed = await onDisk(cpPath);
     expect(parsed.schemaVersion).toBe(TEAM_CHECKPOINT_SCHEMA_VERSION);
     expect(parsed.units).toHaveLength(1);
 
@@ -137,8 +222,7 @@ describe("team-checkpoint", () => {
     );
     await store.close();
 
-    const raw = await fsp.readFile(cpPath, "utf8");
-    const parsed = JSON.parse(raw); // must be valid JSON (no interleaved writes)
+    const parsed = await onDisk(cpPath); // must be valid JSON (no interleaved writes)
     expect(parsed.units).toHaveLength(10);
   });
 
@@ -153,7 +237,7 @@ describe("team-checkpoint", () => {
       });
       await store.close();
 
-      const raw = JSON.parse(await fsp.readFile(cpPath, "utf8"));
+      const raw = await onDisk(cpPath);
       expect(raw.inFlight).toHaveLength(1);
       expect(raw.inFlight[0].id).toBe("a");
 
@@ -175,7 +259,7 @@ describe("team-checkpoint", () => {
       await store.record({ id: "a", status: "succeeded", completedAt: 2 });
       await store.close();
 
-      const raw = JSON.parse(await fsp.readFile(cpPath, "utf8"));
+      const raw = await onDisk(cpPath);
       expect(raw.inFlight).toHaveLength(0);
       expect(raw.units).toHaveLength(1);
 

@@ -30,6 +30,7 @@
 
 import { createHash } from "node:crypto";
 import * as fsp from "node:fs/promises";
+import { readSnapshot, writeSnapshot } from "./atomic-snapshot.js";
 import * as path from "node:path";
 import type { TeamSpec, TopologyKind } from "./team-spec.js";
 
@@ -151,6 +152,39 @@ export function computeSpecHash(spec: TeamSpec): string {
  * malformed, the schema version is unknown, or the spec hash doesn't match —
  * all of which mean "treat as no checkpoint and start fresh".
  */
+/**
+ * Read a checkpoint file, accepting both the checksummed envelope written today
+ * and the bare document written before `WP-07`.
+ *
+ * The legacy fallback is not politeness: a team upgraded mid-run has a checkpoint
+ * on disk in the old shape, and refusing it would silently re-run every unit that
+ * had already succeeded. It is the narrow case of what `WP-07`'s importer has to
+ * do generally — accept what is there, and be explicit about what it could not
+ * verify.
+ *
+ * A checkpoint that fails verification is treated as absent, which for this
+ * artefact is the safe direction: the team redoes work rather than skipping work
+ * it never did.
+ */
+export async function loadCheckpoint(
+  checkpointPath: string,
+  expected: { teamName: string; topology: TopologyKind; specHash: string },
+): Promise<TeamCheckpointData | null> {
+  const read = await readSnapshot<unknown>(checkpointPath);
+  if (read.kind === "ok") {
+    return parseCheckpoint(JSON.stringify(read.data), expected);
+  }
+  if (read.kind === "absent") return null;
+  if (read.reason !== "not a checksummed snapshot") return null;
+
+  // Pre-WP-07 checkpoint: a bare document, unverified by construction.
+  try {
+    return parseCheckpoint(await fsp.readFile(checkpointPath, "utf8"), expected);
+  } catch {
+    return null;
+  }
+}
+
 export function parseCheckpoint(
   raw: string,
   expected: { teamName: string; topology: TopologyKind; specHash: string },
@@ -238,8 +272,7 @@ export async function openTeamCheckpoint(opts: {
 
   let prior: TeamCheckpointData | null = null;
   try {
-    const raw = await fsp.readFile(checkpointPath, "utf8");
-    prior = parseCheckpoint(raw, expected);
+    prior = await loadCheckpoint(checkpointPath, expected);
   } catch {
     prior = null;
   }
@@ -291,10 +324,11 @@ export async function openTeamCheckpoint(opts: {
       inFlight: [...inFlightById.values()],
       updatedAt: Date.now(),
     };
-    await fsp.mkdir(path.dirname(checkpointPath), { recursive: true });
-    const tmp = `${checkpointPath}.tmp-${process.pid}`;
-    await fsp.writeFile(tmp, JSON.stringify(data) + "\n");
-    await fsp.rename(tmp, checkpointPath);
+    // Checksummed, fsync'd, then renamed. The rename alone was atomic against a
+    // reader but said nothing about the bytes reaching disk first, and nothing
+    // about integrity: a checkpoint damaged by anything other than an
+    // interrupted write reads back as plausible resume state (docs/63 WP-07).
+    await writeSnapshot(checkpointPath, data);
   };
 
   const enqueue = (): Promise<void> => {
