@@ -18,6 +18,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { LaneEvent } from "./events.js";
+import { openTranscript } from "./transcript-writer.js";
 import {
   beginCheckpointedSession,
   type CheckpointedSession,
@@ -186,14 +187,13 @@ export async function startSessionRecorder(
     const dir = path.join(resolveSessionsDir(cwd), opts.sessionId);
     fs.mkdirSync(dir, { recursive: true });
     const transcriptPath = path.join(dir, "events.jsonl");
-    const stream = fs.createWriteStream(transcriptPath, { flags: "w" });
+    // Appends, one whole line at a time, flushed to disk in batches. Opening
+    // for write truncated the session on every reopen; see transcript-writer.ts.
+    const transcript = await openTranscript(transcriptPath);
+    if (transcript === null) return null;
 
     const writeLine = (obj: unknown): void => {
-      try {
-        stream.write(JSON.stringify(obj) + "\n");
-      } catch {
-        // transcript write failed — drop silently, never block the worker
-      }
+      transcript.record(obj);
     };
 
     // Record the task prompt as turn_start so the adapter's extractPrompts works.
@@ -233,25 +233,14 @@ export async function startSessionRecorder(
           // tracking is additive — never interfere with recording
         }
       },
-      close(): Promise<void> {
-        return new Promise((resolve) => {
-          // Flush the transcript, then finish the checkpoint (TurnEnd ->
-          // SessionEnd). Best-effort: a failed checkpoint never blocks close.
-          const finalize = (): void => {
-            const skillsUsed = skillUses.used();
-            void Promise.resolve(
-              checkpoint?.finish(skillsUsed.length > 0 ? { skillsUsed } : undefined),
-            ).then(
-              () => resolve(),
-              () => resolve(),
-            );
-          };
-          try {
-            stream.end(finalize);
-          } catch {
-            finalize();
-          }
-        });
+      async close(): Promise<void> {
+        // Get the transcript on disk first, then finish the checkpoint (TurnEnd
+        // -> SessionEnd). Best-effort: a failed checkpoint never blocks close.
+        await transcript.close().catch(() => {});
+        const skillsUsed = skillUses.used();
+        await Promise.resolve(
+          checkpoint?.finish(skillsUsed.length > 0 ? { skillsUsed } : undefined),
+        ).catch(() => {});
       },
     };
   } catch {
