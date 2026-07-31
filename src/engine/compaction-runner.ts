@@ -8,6 +8,7 @@
  * yield the events it produces.
  */
 
+import { appendFileSync } from "node:fs";
 import type { ProviderMessage } from "../providers/index.js";
 import type { NormalizedEvent, Usage } from "../core/types.js";
 import {
@@ -298,6 +299,32 @@ export async function* preTurnCompaction(
       ? "compact"
       : "ok";
     threshold = deps.compactionConfig.maxEstimatedTokens;
+  }
+
+  // Diagnostic (OPENSWARM_COMPACT_DEBUG=1): the L1 decision is otherwise invisible —
+  // compaction events do not reach the session recorder, and micro-compaction makes no
+  // model call, so from outside the process a compaction is indistinguishable from the
+  // agent simply behaving differently. One stderr line per turn makes the trigger,
+  // the occupancy estimate, and which branch produced it directly observable.
+  if (process.env.OPENSWARM_COMPACT_DEBUG === "1") {
+    const line =
+      `[compact-debug] pid=${process.pid} turn=${turn} level=${level} ` +
+      `contextTokens=${contextTokens} threshold=${threshold} window=${contextWindow} ` +
+      `source=${contextTokens > 0 ? "usage" : "estimator"} ` +
+      `msgs=${messages.length} lastUsage=${state.lastContextTokens} ` +
+      `rapidRefill=${state.rapidRefillCount} breaker=${state.breakerTripped}\n`;
+    // Agents run as separate subprocesses whose stderr is not necessarily plumbed to
+    // the caller, so append to a shared file when one is named.
+    const dbgFile = process.env.OPENSWARM_COMPACT_DEBUG_FILE;
+    if (dbgFile !== undefined && dbgFile.length > 0) {
+      try {
+        appendFileSync(dbgFile, line);
+      } catch {
+        process.stderr.write(line);
+      }
+    } else {
+      process.stderr.write(line);
+    }
   }
 
   if (manual === undefined && level === "ok") {
