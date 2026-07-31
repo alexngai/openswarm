@@ -59,7 +59,7 @@ list_targets() {
   echo "  WP-04      process broker and fail-closed shell baseline"
   echo "  WP-05      retry operation ledger and cancellation barrier"
   echo "  WP-06      atomic task transitions and safe target CAS"
-  echo "  WP-07      session journal and snapshot durability (partial)"
+  echo "  WP-07      session schema, journal, snapshots, and importer"
   echo "  WP-09      approval broker and headless default deny"
   echo
   echo "Declared but not yet implemented (exit 2):"
@@ -462,15 +462,11 @@ case "$WP" in
     # event survives the process that recorded it, and a snapshot that reads
     # back is the snapshot that was written.
     #
-    # This gate is PARTIAL. It covers FX-JOURNAL-001..008 — the writers and the
-    # snapshot format. FX-JOURNAL-009..012 and FX-MIG-SESSION-001 (the legacy
-    # importer, and the read-only/lossy marking of what an import cannot
-    # reconstruct) are specified but not built, so WP-07 stays open and its
-    # manifest entry stays gateImplemented: false.
-    #
     # J1 is the load-bearing check: two of its four fixtures were failing when
     # written, and both were silent data loss rather than an error anybody saw.
-    FIXTURES="FX-JOURNAL-001..012 (of FX-JOURNAL-001..012, FX-MIG-SESSION-001)"
+    # J6 is the one to read if the importer is ever changed — it asserts what an
+    # import refuses and what it admits to losing, not what it converts.
+    FIXTURES="FX-JOURNAL-001..012, FX-MIG-SESSION-001"
     if ! ensure_deps; then
       RESULT="error"
       FAIL=$((FAIL + 1))
@@ -491,6 +487,8 @@ case "$WP" in
         npx vitest run src/swarm/durable-append.test.ts
       run_check J5 "the writers' consumers are unaffected by the migration" \
         npx vitest run src/swarm/session-recorder.test.ts src/swarm/team-daemon.test.ts src/cli/swarm.test.ts src/swarm/topologies/ test/integration/retry.test.ts
+      run_check J6 "FX-MIG-SESSION-001 legacy sessions import, and say what they lost" \
+        npx vitest run src/session/import.test.ts
     fi
     ;;
 
