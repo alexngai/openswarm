@@ -470,19 +470,27 @@ case "$WP" in
     #
     # J1 is the load-bearing check: two of its four fixtures were failing when
     # written, and both were silent data loss rather than an error anybody saw.
-    FIXTURES="FX-JOURNAL-001..008 (of FX-JOURNAL-001..012, FX-MIG-SESSION-001)"
+    FIXTURES="FX-JOURNAL-001..012 (of FX-JOURNAL-001..012, FX-MIG-SESSION-001)"
     if ! ensure_deps; then
       RESULT="error"
       FAIL=$((FAIL + 1))
     else
+      # The crash fixtures run the writer in a real process and kill it, so they
+      # need dist. The suite builds it via globalSetup, which the parity
+      # environment disables (OPENSWARM_SKIP_INTEGRATION_BUILD=1), so the gate
+      # owns that precondition rather than leaving a fixture to fail on an import.
+      run_check J0 "compile, so the crash fixtures have a module to run" \
+        npm run build
       run_check J1 "FX-JOURNAL-001..004 a recorded event outlives its recorder" \
         npx vitest run src/swarm/session-transcript-durability.test.ts
       run_check J2 "FX-JOURNAL-005..008 a snapshot that reads back is the one written" \
         npx vitest run src/swarm/atomic-snapshot.test.ts
       run_check J3 "resume state is checksummed, and still reads pre-WP-07 files" \
         npx vitest run src/swarm/team-checkpoint.test.ts
-      run_check J4 "the session recorders and their consumers are unaffected" \
-        npx vitest run src/swarm/session-recorder.test.ts src/swarm/team-daemon.test.ts
+      run_check J4 "FX-JOURNAL-009..012 the append writers commit what they acknowledge" \
+        npx vitest run src/swarm/durable-append.test.ts
+      run_check J5 "the writers' consumers are unaffected by the migration" \
+        npx vitest run src/swarm/session-recorder.test.ts src/swarm/team-daemon.test.ts src/cli/swarm.test.ts src/swarm/topologies/ test/integration/retry.test.ts
     fi
     ;;
 

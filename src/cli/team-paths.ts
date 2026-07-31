@@ -39,6 +39,14 @@ export interface TeamPaths {
   readonly pidPath: string;
   readonly eventsPath: string;
   readonly statePath: string;
+  /**
+   * Task results. Separate from `statePath`, which used to double as the results
+   * sink because the orchestrator needed some `Writable` and the state path was
+   * to hand (docs/63 `WP-07`). One file cannot be both a replaceable snapshot
+   * and an append-only log: making the snapshot durable means replacing the file,
+   * which unlinks the one the results stream still holds open.
+   */
+  readonly resultsPath: string;
   readonly logPath: string;
   readonly specPath: string;
   /** Durable per-team progress checkpoint for crash-recovery (docs/28 T1). */
@@ -71,6 +79,7 @@ export function computeTeamPaths(teamName: string): TeamPaths {
     pidPath: path.join(dir, "daemon.pid"),
     eventsPath: path.join(dir, "events.jsonl"),
     statePath: path.join(dir, "state.json"),
+    resultsPath: path.join(dir, "results.jsonl"),
     logPath: path.join(dir, "daemon.log"),
     specPath: path.join(dir, "spec.json"),
     checkpointPath: path.join(dir, "checkpoint.json"),

@@ -2,11 +2,15 @@
  * Durable kernel journal (docs/63 §A0, WP-00).
  *
  * The existing lane-event writers (session-recorder, team-daemon, ACP spine)
- * are `createWriteStream` appenders with no flush discipline: after `write()`
- * returns, the bytes may still be in a userspace buffer, so a crash can drop
- * records the kernel already acted on. That is survivable for a telemetry
- * stream and not survivable for an attempt journal, where "did this effect
- * already run?" has to be answerable after a hard kill.
+ * are `createWriteStream` appenders with no flush discipline. Measured under
+ * `WP-07`, the gap is narrower than this comment first claimed but real: an
+ * acknowledged write is past the syscall and survives a hard kill, while an
+ * unacknowledged one is still in the stream's queue and is lost with the
+ * process, and neither is on the disk until something syncs. Those writers do
+ * not await, so their unacknowledged tail is unbounded. That is survivable for
+ * a telemetry stream and not for an attempt journal, where "did this effect
+ * already run?" has to be answerable after a hard kill — hence the explicit
+ * commit below, which resolves only once the record is durable.
  *
  * This store therefore commits with an explicit fsync and defines committed
  * narrowly: a record is committed only when its line is complete and durable.
