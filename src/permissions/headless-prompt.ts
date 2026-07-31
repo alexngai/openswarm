@@ -20,6 +20,15 @@ export interface HeadlessPromptOptions {
   readonly out?: NodeJS.WritableStream;
   /** Input stream to read the user's answer. Default: process.stdin. */
   readonly in?: NodeJS.ReadableStream;
+  /**
+   * Stop waiting when this aborts, and deny.
+   *
+   * An orchestrator driving a headless run answers promptly or not at all, so
+   * the case this covers is nobody being there — stdin open, no line coming.
+   * Detaching matters as much as denying: a listener left on stdin would
+   * consume the line meant for the next question (docs/63 WP-09).
+   */
+  readonly signal?: AbortSignal;
 }
 
 /**
@@ -43,7 +52,13 @@ export async function readHeadlessApproval(
   };
   out.write(JSON.stringify(payload) + "\n");
 
-  const line = await readLine(input);
+  const line = await readLine(input, opts.signal);
+  if (line === ABANDONED) {
+    return {
+      allow: false,
+      reason: `denied ${pending.toolName}: no answer arrived before the request expired`,
+    };
+  }
   const normalized = (line ?? "").trim().toLowerCase();
 
   if (normalized === "y" || normalized === "yes") {
@@ -61,23 +76,32 @@ export async function readHeadlessApproval(
   };
 }
 
+/** Distinguishes "we stopped waiting" from EOF and from an empty line. */
+const ABANDONED = Symbol("headless approval abandoned");
+
 /**
  * Read a single line from the stream. Returns the line without the trailing
- * newline, or `null` on EOF.
+ * newline, `null` on EOF, or `ABANDONED` if `signal` fired first.
  */
-function readLine(stream: NodeJS.ReadableStream): Promise<string | null> {
+function readLine(
+  stream: NodeJS.ReadableStream,
+  signal?: AbortSignal,
+): Promise<string | null | typeof ABANDONED> {
   return new Promise((resolve) => {
     let buffer = "";
     let resolved = false;
 
-    const done = (value: string | null): void => {
+    const done = (value: string | null | typeof ABANDONED): void => {
       if (resolved) return;
       resolved = true;
       stream.off("data", onData);
       stream.off("end", onEnd);
       stream.off("error", onError);
+      signal?.removeEventListener("abort", onAbort);
       resolve(value);
     };
+
+    const onAbort = (): void => done(ABANDONED);
 
     const onData = (chunk: unknown): void => {
       // Chunk may be Buffer or string depending on encoding.
@@ -102,6 +126,11 @@ function readLine(stream: NodeJS.ReadableStream): Promise<string | null> {
       done(null);
     };
 
+    if (signal?.aborted === true) {
+      resolve(ABANDONED);
+      return;
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
     stream.on("data", onData);
     stream.on("end", onEnd);
     stream.on("error", onError);

@@ -37,13 +37,19 @@ function execRequest(command: string): OperationRequest {
   };
 }
 
-/** Records what it was asked and answers with a fixed response. */
-function broker(response: ApprovalResponse) {
+/**
+ * Records what it was asked and answers with a fixed response, echoing the id
+ * of the request it is answering — which the engine requires, since an answer
+ * that does not name its question cannot be told from a replay (WP-09). Tests
+ * for what happens when that echo is wrong live in
+ * `src/permissions/approval-denials.test.ts`.
+ */
+function broker(response: Omit<ApprovalResponse, "requestId">) {
   const seen: ApprovalRequest[] = [];
   const impl: ApprovalBroker = {
     request: async (req) => {
       seen.push(req);
-      return response;
+      return { ...response, requestId: req.id };
     },
   };
   return { impl, seen };

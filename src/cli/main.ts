@@ -378,6 +378,9 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     getCurrentMode: () => currentPermissionMode,
     cwd: process.cwd(),
     sessionRules,
+    // Tag grants with the workspace state the operator vouched for, so consent
+    // given about this repository does not silently carry into a different one.
+    trustBinding: () => trust.provenance.digest || undefined,
   });
 
   // 9a. Phase 4.1e — wire the request_permissions escalation seam for the

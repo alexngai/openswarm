@@ -24,6 +24,12 @@ function approvalRequest(): ApprovalRequest {
   return {
     operationClass: "file.write",
     resource: canonical.canonical,
+    // The identity, deadline, and cancellation the engine attaches to every ask
+    // (WP-09). Tests for what happens when a response mishandles them live in
+    // `approval-denials.test.ts`.
+    id: "ask-1",
+    expiresAt: Date.now() + 60_000,
+    signal: new AbortController().signal,
     request: {
       kind: "file.write",
       operationId: "op-1",

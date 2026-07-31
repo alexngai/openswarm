@@ -25,7 +25,7 @@ import type {
   ApprovalRequest,
   ApprovalResponse,
 } from "../kernel/policy-engine.js";
-import type { PermissionBridge } from "./bridge.js";
+import type { BridgeDecision, PermissionBridge } from "./bridge.js";
 import { readHeadlessApproval } from "./headless-prompt.js";
 import type { PermissionMode } from "../core/types.js";
 
@@ -59,17 +59,39 @@ export function makeApprovalBroker(deps: BrokerDeps): ApprovalBroker {
   return {
     async request(req: ApprovalRequest): Promise<ApprovalResponse> {
       const pending = pendingFor(req, deps.getCurrentMode());
-      const decision = deps.useHeadless
-        ? await readHeadlessApproval(pending)
-        : await deps.bridge.request(pending);
-
-      if (!decision.allow) {
-        return { approved: false, reason: decision.reason };
+      // Release the surface if the engine stops waiting. The bridge is strictly
+      // serial, so an abandoned prompt would otherwise hold its slot and refuse
+      // every later ask; the headless reader would otherwise keep a stdin
+      // listener that swallows a line meant for the next question.
+      const onAbort = (): void => deps.bridge.cancel("approval request expired");
+      if (!deps.useHeadless) {
+        req.signal.addEventListener("abort", onAbort, { once: true });
       }
-      return {
-        approved: true,
-        scope: decision.alwaysAllow === true ? "session" : "one-shot",
-      };
+      try {
+        const decision = deps.useHeadless
+          ? await readHeadlessApproval(pending, { signal: req.signal })
+          : await deps.bridge.request(pending);
+        return toResponse(req, decision);
+      } finally {
+        req.signal.removeEventListener("abort", onAbort);
+      }
     },
+  };
+}
+
+function toResponse(req: ApprovalRequest, decision: BridgeDecision): ApprovalResponse {
+
+      // Echo the id so the engine can tell this apart from a stale decision, a
+      // replay, or an answer to a question it never asked. In-process this is
+      // bookkeeping; for the ACP and headless surfaces the response crosses a
+      // boundary the engine does not control, and there it is the only thing
+      // tying an answer to its question (docs/63 WP-09).
+  if (!decision.allow) {
+    return { approved: false, requestId: req.id, reason: decision.reason };
+  }
+  return {
+    approved: true,
+    requestId: req.id,
+    scope: decision.alwaysAllow === true ? "session" : "one-shot",
   };
 }

@@ -68,6 +68,16 @@ export interface CanUseToolDeps {
    * remembered for the session.
    */
   readonly sessionRules?: SessionAllowRules;
+  /**
+   * Identity of the trusted workspace, read fresh whenever a grant is used, so
+   * consent given about one repository state does not carry into another.
+   *
+   * Today the digest is computed once at startup, so tagging is what this
+   * buys: any later re-verification invalidates the grants it should, and the
+   * grant record says what it was given about. The re-verification itself is
+   * not here (docs/63 WP-09).
+   */
+  readonly trustBinding?: () => string | undefined;
 }
 
 export function makeCanUseTool(deps: CanUseToolDeps): PermissionGate {
@@ -77,6 +87,7 @@ export function makeCanUseTool(deps: CanUseToolDeps): PermissionGate {
   const policy = new PolicyEngine(
     () => rulesForMode(getCurrentMode()),
     makeApprovalBroker({ bridge, useHeadless, getCurrentMode }),
+    { ...(deps.trustBinding !== undefined && { trustBinding: deps.trustBinding }) },
   );
 
   return async (toolName, input) => {
