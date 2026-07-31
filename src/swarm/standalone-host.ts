@@ -1077,12 +1077,13 @@ export class StandaloneHost implements SwarmHost {
         taskRecord.id,
         exitCode === 0
           ? { status: "succeeded" }
-          : {
-              status: "failed",
-              error: `worker exited with ${
-                signal !== null ? `signal ${signal}` : `code ${exitCode ?? "unknown"}`
-              }`,
-            },
+          : signal !== null
+            ? // Something ended this worker — a stop, an operator, the OS. It did
+              // not fail; recording it as failed would blame the task for its own
+              // cancellation, which is also the mapping `results.jsonl` uses for
+              // a killed run.
+              { status: "stopped", error: `worker killed by signal ${signal}` }
+            : { status: "failed", error: `worker exited with code ${exitCode ?? "unknown"}` },
       );
       this.emit(
         exitCode === 0
