@@ -880,7 +880,7 @@ One finding beyond the listed scope, and it was worse than the holes it came fro
 
 Grants can now end, four ways: they expire, they run out of uses, they are revoked, or the workspace identity they were given about changes. The last is checked rather than subscribed to, deliberately — a revocation event has to be delivered to be honoured, and the failure mode of a missed event is a grant outliving the trust it rested on, silently and in the direction of permitting more. Re-reading the identity cannot be missed. Expiry is available but not the default: a grant that expires mid-task becomes a prompt the operator did not expect, so bounding consent in time is opt-in while revocation and trust-binding are always on.
 
-**A later live run found a third case, and it is the reason this package now argues for a live cell.** Every fixture here hands the reader a fresh stream and asks once, which is the single shape where borrowing stdin per question behaves like owning it. A real headless run asks twice. Denying the first approval and approving the second emitted both questions and produced one result: the reader kept the first line of the `"n\ny\n"` an orchestrator writes in one go and discarded the rest, so the second question had nothing to answer it, and it then attached to a stdin that had already ended — which does not re-emit `end` to a listener arriving afterwards. The read never settled, and because stdin was closed nothing was left holding the event loop, so the process did not hang; it exited 0 with a tool call still outstanding, which whoever is driving it reads as success. The buffer and the ended flag now live with the stream, and a read after end answers immediately. The three fixtures added for it fail against the previous reader, two by timing out. What this says about the gate is that `FX-APPROVAL-001..012` tested the decision logic thoroughly and the transport not at all, and no amount of the former would have reached this.
+**A later live run found a third case, and it is the reason this package now argues for a live cell.** Every fixture here hands the reader a fresh stream and asks once, which is the single shape where borrowing stdin per question behaves like owning it. A real headless run asks twice. Denying the first approval and approving the second emitted both questions and produced one result: the reader kept the first line of the `"n\ny\n"` an orchestrator writes in one go and discarded the rest, so the second question had nothing to answer it, and it then attached to a stdin that had already ended — which does not re-emit `end` to a listener arriving afterwards. The read never settled, and because stdin was closed nothing was left holding the event loop, so the process did not hang; it exited 0 with a tool call still outstanding, which whoever is driving it reads as success. The buffer and the ended flag now live with the stream, and a read after end answers immediately. The three fixtures added for it fail against the previous reader, two by timing out. What this says about the gate is that `FX-APPROVAL-001..012` tested the decision logic thoroughly and the transport not at all, and no amount of the former would have reached this. The live cell argued for here now exists as the `live` target (§Platform matrix), and `L3` is this case: reverting this fix turns it red against both certified providers while the other four probes stay green.
 
 Decisions that involved an approver are reported to an audit sink, including the refusals the human never saw. Those are the ones that most need a record, because nothing else in the system mentions them. A standing rule emits nothing — it is not a decision anybody made about this operation, and logging it as one would bury the approvals in noise.
 
@@ -1372,11 +1372,31 @@ The script writes `artifacts/parity/<WP>/<cell>.json`, exits nonzero on a failed
 
 Five targets × three providers × three languages = 45 deterministic release smoke cells. These cells use recorded/provider-contract fixtures; they do not imply 45 live API calls.
 
-- Full live-provider suites: Linux x64 and macOS arm64.
+- Full live-provider suites: Linux x64 and macOS arm64. Implemented as the `live` target — see below.
 - Package, TUI, isolation, shell, cancellation, and cleanup: every target.
 - Zed integration: macOS arm64 and Linux x64; ACP golden protocol tests elsewhere.
 - Windows cell: Windows 11 host with the pinned Linux distribution under WSL2/container; native Windows fallback is rejected.
 - The R1 manifest pins exact OS builds, runtimes, LSP servers, provider model IDs, and certification dates.
+
+#### The live cell
+
+```
+OPENSWARM_PARITY_LIVE=1 OPENSWARM_LIVE_MODELS=azureoai/gpt-5.5,awsbedrock/amazon.nova-pro-v1:0 \
+  docker compose -f compose.parity.yml run --rm -T parity \
+  ./scripts/verify-parity-wp.sh live linux-x64
+```
+
+`FX-LIVE-001..005` in `scripts/live-probe.sh`, run once per model named. Not a work-package gate: it certifies no capability. It checks that the seams between the model, the process, and the filesystem still line up, which is the class of defect an in-process fixture cannot reach — a turn completes (`L1`), a tool call reaches a real file through canonicalization (`L2`), every approval question asked gets an answer (`L3`), two live workers land two results and two files (`L4`), and what the writers left behind parses and ends on a line boundary (`L5`). It exists because of the WP-09 finding below, and `L3` is that finding: reverting the fix turns `L3` red and leaves the other four green.
+
+Certified on both cells against `azureoai/gpt-5.5` and `awsbedrock/amazon.nova-pro-v1:0`.
+
+Three things about it are deliberate, and each was learned by getting it wrong first:
+
+**Two independent locks, because a live cell's failure mode is a bill and a leaked credential rather than a red check.** The target has to be named — no matrix over the work packages reaches it, since those are all `WP-*` — *and* `OPENSWARM_PARITY_LIVE=1` has to be set, so a copied command line or a job that enumerates `--list` still spends nothing. Compose defaults both off and passes credentials with bare `- VAR` entries, which forward a variable only when it exists: `VAR: "${VAR:-}"` would define it as empty, and empty is not absent to the code reading it, since the Azure transport resolves `AZURE_API_BASE ?? AZURE_OPENAI_ENDPOINT` and an empty first operand satisfies `??` and suppresses the fallback.
+
+**A missing credential reports `skipped` and exits 4, never `pass`.** A live cell that cannot reach a provider has certified nothing, and a matrix that reads that as green has no live coverage and no way to find out. The probe distinguishes an unconfigured provider from a defect and stops after one request rather than five, so the report says "no credential" once instead of describing a broken build five times.
+
+**The probes assert on transport invariants, not on model output, and every one is bounded.** `L3` first demanded exactly two approval questions and failed against a weak model that looped to fifty-two — a transport failure reported where there was only a model with poor discipline. The invariant is that every question asked gets answered, which is what the bug actually violated (it asked twice and answered once) and which holds whatever the model does. That looping run also spent 1.1M input tokens before anything stopped it, so the probes now pass `--max-turns 12 --max-wall-clock 4m`. `L4` checks the two files separately from the two `succeeded` statuses, because a task reports success when its loop ended, which is not the same as the work having happened.
 
 ### Observability gates
 

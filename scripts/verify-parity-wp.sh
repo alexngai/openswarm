@@ -16,6 +16,8 @@
 # Environment:
 #   VERBOSE=1                 stream check output instead of capturing it
 #   OPENSWARM_PARITY_IMAGE    image digest to record in the artifact
+#   OPENSWARM_PARITY_LIVE=1   permit the `live` target to call a real provider
+#   OPENSWARM_LIVE_MODELS     comma-separated model ids for the `live` target
 #
 # Writes artifacts/parity/<WP>/<cell>.json plus per-check logs under
 # artifacts/parity/<WP>/logs/<cell>/.
@@ -25,6 +27,9 @@
 #   1  at least one check failed
 #   2  the requested work package has no implemented gate yet
 #   3  usage error
+#   4  nothing ran (the live target without OPENSWARM_PARITY_LIVE=1, or with no
+#      usable credential) — never conflated with 0, since a cell that certified
+#      nothing must not be readable as a cell that passed
 #
 # A work package with no gate exits nonzero on purpose: an unimplemented
 # capability must never be able to report green.
@@ -38,14 +43,14 @@ cd "$REPO_ROOT"
 # WP-00 re-estimate recommends inserting before WP-03, which moves the
 # production path onto the frozen contracts. Packages without an implemented
 # gate are still declared so --list stays honest about what remains.
-KNOWN_WPS=(baseline)
+KNOWN_WPS=(baseline live)
 for n in $(seq -w 0 33); do
   KNOWN_WPS+=("WP-$n")
   [[ "$n" == "00" ]] && KNOWN_WPS+=("WP-00a")
 done
 
 usage() {
-  sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 list_targets() {
@@ -62,10 +67,13 @@ list_targets() {
   echo "  WP-07      session schema, journal, snapshots, and importer"
   echo "  WP-09      approval broker and headless default deny"
   echo
+  echo "Opt-in only (spends real tokens, needs OPENSWARM_PARITY_LIVE=1):"
+  echo "  live       probes against a real provider; set OPENSWARM_LIVE_MODELS"
+  echo
   echo "Declared but not yet implemented (exit 2):"
   printf '%s\n' "${KNOWN_WPS[@]:1}" \
-    | grep -vx -e 'WP-00' -e 'WP-00a' -e 'WP-01' -e 'WP-02' -e 'WP-03' -e 'WP-04' \
-    -e 'WP-05' -e 'WP-06' -e 'WP-07' -e 'WP-09' \
+    | grep -vx -e 'live' -e 'WP-00' -e 'WP-00a' -e 'WP-01' -e 'WP-02' -e 'WP-03' \
+    -e 'WP-04' -e 'WP-05' -e 'WP-06' -e 'WP-07' -e 'WP-09' \
     | paste -sd' ' - | fold -sw 76 | sed 's/^/  /'
   echo
   echo "See docs/63-product-parity-roadmap.md for each gate's fixtures and threshold."
@@ -146,6 +154,54 @@ run_check() {
 
   CHECKS_JSON+=("$(printf '{"id":"%s","description":"%s","status":"%s","duration_s":%d,"exit_code":%d,"log":"%s"}' \
     "$id" "$(json_escape "$desc")" "$status" "$dur" "$rc" "${log#"$REPO_ROOT"/}")")
+}
+
+# A check that can legitimately have no result. Only the live target uses it: a
+# probe against a model whose credential is absent (exit 4) has certified
+# nothing, which is neither a pass nor a defect. Counted separately so that a
+# run where every model was unconfigured cannot report pass on an empty set.
+SKIP=0
+run_probe() {
+  local id="$1" desc="$2"; shift 2
+  local log="$LOG_DIR/$id.log" t0 t1 dur rc
+  t0=$(date +%s)
+  printf '  %-4s %-52s ' "$id" "$desc"
+
+  if [[ "${VERBOSE:-0}" == "1" ]]; then
+    echo
+    "$@" 2>&1 | tee "$log"
+    rc=${PIPESTATUS[0]}
+  else
+    "$@" >"$log" 2>&1
+    rc=$?
+  fi
+  t1=$(date +%s); dur=$((t1 - t0))
+
+  if [[ $rc -eq 4 ]]; then
+    SKIP=$((SKIP + 1))
+    printf 'SKIP  %3ds  (no credential)\n' "$dur"
+    CHECKS_JSON+=("$(printf '{"id":"%s","description":"%s","status":"SKIP","duration_s":%d,"exit_code":%d,"log":"%s"}' \
+      "$id" "$(json_escape "$desc")" "$dur" "$rc" "${log#"$REPO_ROOT"/}")")
+    return 0
+  fi
+
+  if [[ $rc -eq 0 ]]; then
+    PASS=$((PASS + 1))
+    printf 'PASS  %3ds\n' "$dur"
+    CHECKS_JSON+=("$(printf '{"id":"%s","description":"%s","status":"PASS","duration_s":%d,"exit_code":%d,"log":"%s"}' \
+      "$id" "$(json_escape "$desc")" "$dur" "$rc" "${log#"$REPO_ROOT"/}")")
+    return 0
+  fi
+
+  FAIL=$((FAIL + 1))
+  printf 'FAIL  %3ds  (rc=%d)\n' "$dur" "$rc"
+  if [[ "${VERBOSE:-0}" != "1" ]]; then
+    echo "    ---- last 40 lines of ${log#"$REPO_ROOT"/} ----"
+    tail -n 40 "$log" | sed 's/^/    /'
+    echo "    ---- end ----"
+  fi
+  CHECKS_JSON+=("$(printf '{"id":"%s","description":"%s","status":"FAIL","duration_s":%d,"exit_code":%d,"log":"%s"}' \
+    "$id" "$(json_escape "$desc")" "$dur" "$rc" "${log#"$REPO_ROOT"/}")")
 }
 
 # Records a fixture that the work package requires but has not implemented yet.
@@ -430,6 +486,72 @@ case "$WP" in
     fi
     ;;
 
+  live)
+    # Probes against a real provider (docs/63 §Platform matrix, live-provider
+    # cells). Not a work-package gate: it does not certify a capability, it
+    # checks that the seams between the model, the process, and the filesystem
+    # still line up on a machine with credentials.
+    #
+    # It exists because WP-09's twelve in-process fixtures all passed while a
+    # real headless run exited 0 with a tool call outstanding. Every fixture
+    # handed the approval reader a fresh stream and asked once; a real run asks
+    # twice, and that difference was the whole bug.
+    #
+    # Two independent locks, because the failure mode of a live cell is a bill
+    # and a leaked credential, not a red check:
+    #
+    #   1. The target has to be named. It is never reached by a matrix over
+    #      KNOWN_WPS, since those are all WP-*.
+    #   2. OPENSWARM_PARITY_LIVE=1 has to be set, so a copied command line or a
+    #      CI job that enumerates --list output still runs nothing.
+    #
+    # A missing credential reports skipped, never passed. A live cell that
+    # cannot reach a provider has certified nothing, and saying otherwise is how
+    # a matrix ends up green with no live coverage at all.
+    FIXTURES="FX-LIVE-001..005"
+    if [[ "${OPENSWARM_PARITY_LIVE:-0}" != "1" ]]; then
+      echo "  live probes spend real tokens against a real provider."
+      echo "  Set OPENSWARM_PARITY_LIVE=1 to run them, and OPENSWARM_LIVE_MODELS"
+      echo "  to a comma-separated list of model ids, e.g.:"
+      echo
+      echo "    OPENSWARM_PARITY_LIVE=1 OPENSWARM_LIVE_MODELS=azureoai/gpt-5.5 \\"
+      echo "      ./scripts/verify-parity-wp.sh live $CELL"
+      RESULT="skipped"
+    elif [[ -z "${OPENSWARM_LIVE_MODELS:-}" ]]; then
+      echo "  error: OPENSWARM_LIVE_MODELS is unset; there is no default model" >&2
+      echo "  on purpose — a live cell records which model it certified." >&2
+      RESULT="skipped"
+    elif ! ensure_deps; then
+      RESULT="error"
+      FAIL=$((FAIL + 1))
+    else
+      # The probes drive the compiled CLI as a subprocess, exactly as a user
+      # does, so dist has to exist and be current. Nothing else in this target
+      # is worth running if it is stale.
+      run_check L0 "compile, so the probes drive the current CLI" \
+        npm run build
+
+      IFS=',' read -ra LIVE_MODELS <<<"$OPENSWARM_LIVE_MODELS"
+      n=0
+      for model in "${LIVE_MODELS[@]}"; do
+        model="$(printf '%s' "$model" | tr -d '[:space:]')"
+        [[ -z "$model" ]] && continue
+        n=$((n + 1))
+        run_probe "L$n" "FX-LIVE-001..005 against $model" \
+          ./scripts/live-probe.sh "$model"
+      done
+      if [[ $n -eq 0 ]]; then
+        echo "  error: OPENSWARM_LIVE_MODELS named no models" >&2
+        RESULT="skipped"
+      elif [[ $FAIL -eq 0 && $SKIP -eq $n ]]; then
+        # Every model named was unconfigured. The build compiled, so PASS is
+        # nonzero and the generic rule below would call this a pass.
+        echo "  every named model lacked a credential; no live coverage" >&2
+        RESULT="skipped"
+      fi
+    fi
+    ;;
+
   WP-09)
     # Approval broker and headless default deny. Threshold (docs/63): absent,
     # invalid, expired, replayed, disconnected, or late approvals deny.
@@ -539,11 +661,16 @@ ARTIFACT="$OUT_DIR/$CELL.json"
 } >"$ARTIFACT"
 
 echo
-echo "  result: $RESULT ($PASS passed, $FAIL failed)"
+if [[ $SKIP -gt 0 ]]; then
+  echo "  result: $RESULT ($PASS passed, $FAIL failed, $SKIP skipped)"
+else
+  echo "  result: $RESULT ($PASS passed, $FAIL failed)"
+fi
 echo "  artifact: ${ARTIFACT#"$REPO_ROOT"/}"
 
 case "$RESULT" in
   pass)            exit 0 ;;
   not-implemented) exit 2 ;;
+  skipped)         exit 4 ;;
   *)               exit 1 ;;
 esac

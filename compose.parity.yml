@@ -28,17 +28,39 @@ services:
       - .:/workspace
       - parity-node-modules:/workspace/node_modules
       - parity-dist:/workspace/dist
+    # List form, not mapping form, and the difference is load-bearing for the
+    # credential entries. `VAR: "${VAR:-}"` defines VAR as the empty string when
+    # the caller has not set it, and an empty string is not the same as absent to
+    # the code that reads it: the Azure transport resolves
+    # `AZURE_API_BASE ?? AZURE_OPENAI_ENDPOINT`, where an empty AZURE_API_BASE
+    # satisfies `??` and suppresses the fallback, and the Bedrock transport
+    # resolves `AWS_REGION ?? "us-east-1"`, where an empty AWS_REGION becomes the
+    # region. A bare `- VAR` passes the variable through only when it exists,
+    # which is what "absent by default" has to mean.
     environment:
-      CI: "1"
+      - CI=1
       # Defaults keep runs hermetic. Live-provider cells override these
       # explicitly; see docs/63 §Platform matrix.
-      OPENSWARM_SKIP_LIVE: "${OPENSWARM_SKIP_LIVE:-1}"
-      OPENSWARM_SKIP_INTEGRATION_BUILD: "${OPENSWARM_SKIP_INTEGRATION_BUILD:-1}"
-      # Absent by default; populated only for certified live-provider runs.
-      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
-      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
-      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
-      CLAUDE_CODE_OAUTH_TOKEN: "${CLAUDE_CODE_OAUTH_TOKEN:-}"
+      - OPENSWARM_SKIP_LIVE=${OPENSWARM_SKIP_LIVE:-1}
+      - OPENSWARM_SKIP_INTEGRATION_BUILD=${OPENSWARM_SKIP_INTEGRATION_BUILD:-1}
+      # The `live` target's two locks. Both default off, so `docker compose run
+      # parity ./scripts/verify-parity-wp.sh live <cell>` reaches a provider only
+      # when the caller passed these in deliberately — forwarding a credential is
+      # not by itself consent to spend it.
+      - OPENSWARM_PARITY_LIVE=${OPENSWARM_PARITY_LIVE:-0}
+      - OPENSWARM_LIVE_MODELS=${OPENSWARM_LIVE_MODELS:-}
+      # Absent unless the caller's environment has them; populated only for
+      # certified live-provider runs.
+      - ANTHROPIC_API_KEY
+      - OPENAI_API_KEY
+      - GEMINI_API_KEY
+      - CLAUDE_CODE_OAUTH_TOKEN
+      - AZURE_API_BASE
+      - AZURE_OPENAI_ENDPOINT
+      - AZURE_OPENAI_API_KEY
+      - AZURE_OPENAI_API_VERSION
+      - AWS_BEARER_TOKEN_BEDROCK
+      - AWS_REGION
     command: ["./scripts/verify-parity-wp.sh", "--list"]
 
 volumes:
