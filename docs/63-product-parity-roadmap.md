@@ -824,13 +824,22 @@ Limited developer alpha.
 Depends on `WP-00` and `WP-05`. Re-scoped per the `WP-00` re-estimate: journal construction moves out, writer migration moves in.
 
 - ~~Versioned journal~~ — built in `WP-00` as `FileEventStore`, with gap-free sequencing, `fsync` on append, and torn-trailing-line recovery.
-- Migrate the four existing lane-event writers onto it. All four use `createWriteStream` with no flush discipline, and `session-recorder` opens with `flags: "w"`, truncating per session. This was the unlisted prerequisite the re-estimate identified and is the work that replaces journal construction here.
-- Checksummed atomic snapshots.
-- Import legacy Claude IDs, native snapshots, and team checkpoints where possible.
-- Mark imports read-only/lossy when typed tool, reasoning, or attachment history cannot be reconstructed.
-- Backup before migration and archive unsupported state.
+- **Delivered.** Durable append for the session transcript. `session-recorder` now writes through a group-committing appender that opens `O_APPEND` and `fsync`s each batch.
+- **Delivered.** Checksummed atomic snapshots, and resume state moved onto them.
+- **Open.** The remaining three lane-event writers, `FX-JOURNAL-009..012`.
+- **Open.** Import legacy Claude IDs, native snapshots, and team checkpoints where possible — `FX-MIG-SESSION-001`.
+- **Open.** Mark imports read-only/lossy when typed tool, reasoning, or attachment history cannot be reconstructed.
+- **Open.** Backup before migration and archive unsupported state.
 
-Gate: torn-write tests preserve the last committed event, and no writer bypasses the store.
+Partially delivered. Gate: `./scripts/verify-parity-wp.sh WP-07 <cell>`, `J1`–`J4` passing, over `FX-JOURNAL-001..008`. The package stays open and its manifest entry stays `gateImplemented: false` until `FX-JOURNAL-009..012` and `FX-MIG-SESSION-001` are built; roughly 1.5 of the 3 person-weeks remain, all of it in the importer.
+
+**The transcript was truncated on purpose, once per session, and nobody noticed because the loss was invisible.** `session-recorder` opened with `flags: "w"`. That is the correct flag for a file whose only reader is a human tailing the current run, and the wrong one for the record `WP-08` will resume from and `WP-12` will audit: the second `startSessionRecorder` call against a session erased the first turn's transcript entirely. Nothing errored, the file existed, and it was plausible — it just described a shorter session than the one that happened. The fixture that catches it records a turn, closes, records a second turn, and asks for the first one back.
+
+**A second recorder on one session lost events wholesale rather than interleaving them.** Two `createWriteStream` handles on a path each keep their own offset, so the second writer's first line lands *on top of* the first writer's output rather than after it. The concurrent-recorder fixture lost roughly half of what it wrote. `O_APPEND` fixes the offset, but not atomicity on its own — a line larger than the pipe-atomic size can still tear — so the appender buffers whole lines and hands the kernel one batch per commit, which also gives it somewhere natural to `fsync`.
+
+**An atomic rename was being read as a durability guarantee it does not provide.** The team checkpoint wrote a temp file and renamed it, which is genuinely atomic against a concurrent reader: nobody sees a half-replaced file. It says nothing about whether the *bytes* reached disk before the rename entry did, and nothing at all about integrity — a checkpoint corrupted by anything other than an interrupted write reads back as ordinary resume state, and a team resumes from a state it was never in. Snapshots now carry a checksum over the canonical document, are `fsync`'d before the rename and again on the directory after it, and a failed check reports `corrupt` rather than `absent`. For a checkpoint specifically, `corrupt` is then treated as absent, which is the safe direction for this artefact: the team redoes work rather than skipping work it never did.
+
+Two notes on what was deliberately left alone. Pre-`WP-07` checkpoints are still accepted, unverified, because refusing them would silently re-run every unit a mid-upgrade team had already finished — it is the narrow case of what the importer has to do generally. And the daemon's `state.json` was left on its plain write: the same path doubles as the results stream by an existing hack, so a rename there would unlink the file the stream still holds open and results would vanish. Untangling that belongs with the writer migration, not here.
 
 #### `WP-08` Automatic multi-turn and crash resume — 3 person-weeks, B
 
@@ -1182,7 +1191,7 @@ Security:
 
 `WP-00 → WP-00a → WP-01 → WP-02/WP-03 → WP-04 → WP-09 → WP-13 → WP-14 → WP-25 → WP-29 → WP-30 → WP-32 → WP-33`
 
-The first eight are delivered: `WP-00`, `WP-00a`, `WP-01`, `WP-02`, `WP-03`, `WP-04`, `WP-05`, and `WP-06`. Every R1 package is closed, so the remaining R1 exit conditions are review items rather than implementation: the walking skeleton and revised loading model need approving, and the `DDP-*` outcomes need certifying on Linux x64. The ready queue is now entirely R2 — `WP-07` heads the sessions path, `WP-09` heads the security path. `bun scripts/parity-ready.ts` derives this from the manifest rather than from this paragraph.
+Nine are delivered: `WP-00`, `WP-00a`, `WP-01`, `WP-02`, `WP-03`, `WP-04`, `WP-05`, `WP-06`, and `WP-09`. Every R1 package is closed, so the remaining R1 exit conditions are review items rather than implementation: the walking skeleton and revised loading model need approving, and the `DDP-*` outcomes need certifying on Linux x64. The ready queue is now entirely R2. `WP-07` heads the sessions path and is part-delivered — its writers and snapshot format are done and gated, its importer is not — so `WP-08` is not yet unblocked. `bun scripts/parity-ready.ts` derives this from the manifest rather than from this paragraph.
 
 Sessions:
 
@@ -1286,7 +1295,7 @@ The script writes `artifacts/parity/<WP>/<cell>.json`, exits nonzero on a failed
 | `WP-04` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-04 linux-x64` | `FX-PROC-001..012` | Zero direct untrusted spawns; all unavailable `require` paths execute nothing |
 | `WP-05` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-05 linux-x64` | `FX-RETRY-001..010` | Zero duplicate mutating dispatches; unresolved attempts remain `outcome_unknown` |
 | `WP-06` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-06 linux-x64` | `FX-CLAIM-002`, `FX-CAS-001` | One owner across 10,000 claims; no moved target commit is lost |
-| `WP-07` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-07 linux-x64` | `FX-JOURNAL-001..012`, `FX-MIG-SESSION-001` | Every torn-write boundary retains the last committed event; N/N−1 rules pass |
+| `WP-07` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-07 linux-x64` | `FX-JOURNAL-001..008` implemented, of `FX-JOURNAL-001..012`, `FX-MIG-SESSION-001` | Every torn-write boundary retains the last committed event; N/N−1 rules pass |
 | `WP-08` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-08 linux-x64` | `FX-CONV-001..004` | Ten-turn and restart continuity pass on all engine adapters |
 | `WP-09` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-09 linux-x64` | `FX-APPROVAL-001..012` | Default grants are session/resource/operation scoped; missing, expired, replayed, disconnected, and late decisions deny 100% |
 | `WP-10` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-10 linux-x64-pty` | `FX-TUI-KEYS-001..014` | Zero dropped input; all key/history/paste/approval cases pass |

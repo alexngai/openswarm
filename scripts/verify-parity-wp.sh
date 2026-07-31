@@ -59,12 +59,13 @@ list_targets() {
   echo "  WP-04      process broker and fail-closed shell baseline"
   echo "  WP-05      retry operation ledger and cancellation barrier"
   echo "  WP-06      atomic task transitions and safe target CAS"
+  echo "  WP-07      session journal and snapshot durability (partial)"
   echo "  WP-09      approval broker and headless default deny"
   echo
   echo "Declared but not yet implemented (exit 2):"
   printf '%s\n' "${KNOWN_WPS[@]:1}" \
     | grep -vx -e 'WP-00' -e 'WP-00a' -e 'WP-01' -e 'WP-02' -e 'WP-03' -e 'WP-04' \
-    -e 'WP-05' -e 'WP-06' -e 'WP-09' \
+    -e 'WP-05' -e 'WP-06' -e 'WP-07' -e 'WP-09' \
     | paste -sd' ' - | fold -sw 76 | sed 's/^/  /'
   echo
   echo "See docs/63-product-parity-roadmap.md for each gate's fixtures and threshold."
@@ -453,6 +454,35 @@ case "$WP" in
         npx vitest run src/permissions/headless-prompt.test.ts src/acp/ src/permissions/gate.test.ts
       run_check A5 "the kernel effect path still authorizes before it acts" \
         npx vitest run src/kernel/
+    fi
+    ;;
+
+  WP-07)
+    # Session journal and snapshot durability. Threshold (docs/63): a recorded
+    # event survives the process that recorded it, and a snapshot that reads
+    # back is the snapshot that was written.
+    #
+    # This gate is PARTIAL. It covers FX-JOURNAL-001..008 — the writers and the
+    # snapshot format. FX-JOURNAL-009..012 and FX-MIG-SESSION-001 (the legacy
+    # importer, and the read-only/lossy marking of what an import cannot
+    # reconstruct) are specified but not built, so WP-07 stays open and its
+    # manifest entry stays gateImplemented: false.
+    #
+    # J1 is the load-bearing check: two of its four fixtures were failing when
+    # written, and both were silent data loss rather than an error anybody saw.
+    FIXTURES="FX-JOURNAL-001..008 (of FX-JOURNAL-001..012, FX-MIG-SESSION-001)"
+    if ! ensure_deps; then
+      RESULT="error"
+      FAIL=$((FAIL + 1))
+    else
+      run_check J1 "FX-JOURNAL-001..004 a recorded event outlives its recorder" \
+        npx vitest run src/swarm/session-transcript-durability.test.ts
+      run_check J2 "FX-JOURNAL-005..008 a snapshot that reads back is the one written" \
+        npx vitest run src/swarm/atomic-snapshot.test.ts
+      run_check J3 "resume state is checksummed, and still reads pre-WP-07 files" \
+        npx vitest run src/swarm/team-checkpoint.test.ts
+      run_check J4 "the session recorders and their consumers are unaffected" \
+        npx vitest run src/swarm/session-recorder.test.ts src/swarm/team-daemon.test.ts
     fi
     ;;
 
