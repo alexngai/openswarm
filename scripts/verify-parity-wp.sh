@@ -59,11 +59,12 @@ list_targets() {
   echo "  WP-04      process broker and fail-closed shell baseline"
   echo "  WP-05      retry operation ledger and cancellation barrier"
   echo "  WP-06      atomic task transitions and safe target CAS"
+  echo "  WP-09      approval broker and headless default deny"
   echo
   echo "Declared but not yet implemented (exit 2):"
   printf '%s\n' "${KNOWN_WPS[@]:1}" \
     | grep -vx -e 'WP-00' -e 'WP-00a' -e 'WP-01' -e 'WP-02' -e 'WP-03' -e 'WP-04' \
-    -e 'WP-05' -e 'WP-06' \
+    -e 'WP-05' -e 'WP-06' -e 'WP-09' \
     | paste -sd' ' - | fold -sw 76 | sed 's/^/  /'
   echo
   echo "See docs/63-product-parity-roadmap.md for each gate's fixtures and threshold."
@@ -425,6 +426,33 @@ case "$WP" in
         npx vitest run src/swarm/adapters/git-cascade-target-cas.test.ts
       run_check C5 "landing, conflict retain, and the task tools are unaffected" \
         npx vitest run src/swarm/adapters/ src/tools/tier2/
+    fi
+    ;;
+
+  WP-09)
+    # Approval broker and headless default deny. Threshold (docs/63): absent,
+    # invalid, expired, replayed, disconnected, or late approvals deny.
+    #
+    # A1 is the load-bearing check. Approval gates are not judged on the path
+    # where somebody says yes; they are judged on what "nobody said yes" does,
+    # and every one of those paths has to end in a refusal that says which one it
+    # was. A3 exists because failing closed forever is its own outage: one
+    # unanswered prompt used to take the rest of the session with it.
+    FIXTURES="FX-APPROVAL-001..012"
+    if ! ensure_deps; then
+      RESULT="error"
+      FAIL=$((FAIL + 1))
+    else
+      run_check A1 "FX-APPROVAL-001..012 every way an approval fails to arrive denies" \
+        npx vitest run src/permissions/approval-denials.test.ts
+      run_check A2 "a grant expires, runs out, is revoked, or loses its workspace" \
+        npx vitest run src/permissions/grant-lifetime.test.ts
+      run_check A3 "the engine, the broker, and the bridge agree on a decision" \
+        npx vitest run src/kernel/policy-engine.test.ts src/permissions/policy-broker.test.ts src/permissions/bridge.test.ts
+      run_check A4 "the three approval surfaces are unaffected" \
+        npx vitest run src/permissions/headless-prompt.test.ts src/acp/ src/permissions/gate.test.ts
+      run_check A5 "the kernel effect path still authorizes before it acts" \
+        npx vitest run src/kernel/
     fi
     ;;
 

@@ -850,13 +850,21 @@ Delivered by `WP-00a`:
 - Shared approval request/decision schema, as `ApprovalRequest` and `ApprovalResponse`.
 - Exact-resource/operation grants with explicit one-shot and session alternatives, backed by the existing TUI, headless, and ACP surfaces. Note the default differs from what this package originally assumed: a plain approval is one-shot and only an explicit "always" creates a session grant, which preserves the established UX rather than widening consent by default.
 
-Remaining:
+Delivered. Gate: `./scripts/verify-parity-wp.sh WP-09 <cell>`, `A1`–`A5` passing, over `FX-APPROVAL-001..012`. Absent, invalid, expired, replayed, disconnected, and late approvals all deny.
 
-- Trust-bound persistent grants, which need `WP-02`.
-- Grant expiry, use limits, revocation, trust invalidation, and audit events. None exist; grants currently live until the process does.
-- Authenticated optional headless broker.
+**An approval gate is judged on its failure modes, and five of the six were fail-open or hang.** "The user said yes" was the only path with a defined outcome. An unanswered prompt waited forever, which is an outage that looks like a hang and leaves the operation pending rather than refused. A response that did not say what it decided, or answered a question that was never asked, or replayed an earlier decision, was indistinguishable from a valid approval — there was no request identity to check it against. And on the ACP surface, anything that was not literally `reject` or `cancelled` fell through to allow, so a client on a newer protocol revision, a typo in an option id, or a hostile response approved the operation silently.
 
-Gate: absent, invalid, expired, replayed, disconnected, or late approvals deny. Today only "absent" denies, and only on the Codex path.
+Every ask now carries an identity and a deadline, and a response has to echo the identity to count. That one mechanism covers invalid, replayed, and expired, because all three are the same question — is this an answer to what we asked, and is it still open? The refusals are kept distinct in the decision source (`approval:invalid`, `approval:replayed`, `approval:expired`, `approval:timeout`, `approval:unavailable`) because they call for different responses: a timeout is operational, a replay is a security event, and reporting both as "denied" means neither gets looked at. Approval on the ACP surface is now named explicitly and everything else is a refusal.
+
+One finding beyond the listed scope, and it was worse than the holes it came from.
+
+**Failing closed forever is its own outage.** The bridge is strictly serial by design, so abandoning an ask left its slot occupied — and every later request was then refused with a reason about the earlier one, no prompt shown, no way back short of a restart. One unanswered prompt took the rest of the session with it. Giving up on an ask now cancels it, which releases the bridge and detaches the headless reader; without the detach, a listener left on stdin would consume the line meant for the next question.
+
+Grants can now end, four ways: they expire, they run out of uses, they are revoked, or the workspace identity they were given about changes. The last is checked rather than subscribed to, deliberately — a revocation event has to be delivered to be honoured, and the failure mode of a missed event is a grant outliving the trust it rested on, silently and in the direction of permitting more. Re-reading the identity cannot be missed. Expiry is available but not the default: a grant that expires mid-task becomes a prompt the operator did not expect, so bounding consent in time is opt-in while revocation and trust-binding are always on.
+
+Decisions that involved an approver are reported to an audit sink, including the refusals the human never saw. Those are the ones that most need a record, because nothing else in the system mentions them. A standing rule emits nothing — it is not a decision anybody made about this operation, and logging it as one would bury the approvals in noise.
+
+Two pieces remain and are not claimed. The trust digest is computed once at startup, so trust-binding tags grants correctly and any later re-verification invalidates them for free, but the re-verification itself does not exist yet. And the authenticated headless broker is still a stdin reader: it fails closed when nobody answers, which is what the threshold requires, but it is not an authenticated endpoint. Consuming the audit stream is `WP-12`.
 
 #### `WP-10` TUI single-owner input state — 2 person-weeks, C
 
