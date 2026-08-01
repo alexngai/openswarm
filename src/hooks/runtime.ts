@@ -364,10 +364,21 @@ function runShellHook(
       stderr += d;
     });
 
+    // This listener is what makes the pipe-closed case survivable, NOT the
+    // try/catch below. EPIPE is emitted asynchronously as an "error" event on
+    // the stream and is never thrown synchronously, so the try/catch caught
+    // nothing and the error escaped as an uncaught exception that killed the
+    // process. `child.once("error")` below does not cover it either — that
+    // fires for spawn failures, not for writes to the child's stdin.
+    child.stdin?.on("error", () => {
+      // The hook command exited without reading stdin. Legitimate: its real
+      // outcome is the exit code, handled on "close".
+    });
     try {
       child.stdin?.end(JSON.stringify(payload) + "\n");
     } catch {
-      // stdin pipe closed — command may have already exited; that's fine.
+      // Synchronous throws only (e.g. write-after-end). The asynchronous case
+      // is the listener above.
     }
 
     child.once("error", (err: Error & { code?: string }) => {
