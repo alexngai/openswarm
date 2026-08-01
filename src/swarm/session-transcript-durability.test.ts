@@ -1,6 +1,6 @@
 /**
  * FX-JOURNAL-001..004 — a session transcript is append-only and survives a crash
- * (docs/63 `WP-07`).
+ * (docs/67 `WP-07`).
  *
  * The transcript is the record of what happened in a session: what the operator
  * asked, what the agent did, which tools ran. Compaction reads it, resume reads

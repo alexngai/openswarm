@@ -656,7 +656,7 @@ Delivered by this package, in `src/parity/`:
 - Status is **not** encoded. It is derived from the parity artifacts on disk by `status.ts`, and an artifact that passed at another commit or from a dirty tree does not count. A hand-editable status field is the marketing surface this package exists to remove.
 - Exact provider/model API identifiers in `certification.ts`, with every entry a **candidate** and `labelFor` returning `unverified` for all of them. Certification means passing the `WP-16` contract suite, which has not run; recording a certification date now would be the first false claim in the ledger.
 - The mixed corpus, one comparator per workflow, five paired seeds, and the margins, in `eval-plan.ts`. The paired bootstrap, the non-inferiority decision, the guardrail ratios, and the power rule are **implemented** in `statistics.ts` rather than merely described, so the procedure is fixed before any result exists. Comparator versions and corpus snapshots are deliberately `null`: naming the repositories is the part that could be cherry-picked, and pinning a competitor's release now would pin a stale one.
-- Claim-to-capability validation in `docs-sync.ts`, which fails when a document cites an ID the manifest does not define, when the manifest and the docs/63 tables disagree on any outcome or evidence statement, and when text inside a `parity:claims` block cites no ID.
+- Claim-to-capability validation in `docs-sync.ts`, which fails when a document cites an ID the manifest does not define, when the manifest and the docs/67 tables disagree on any outcome or evidence statement, and when text inside a `parity:claims` block cites no ID.
 
 Not delivered, and reassigned:
 

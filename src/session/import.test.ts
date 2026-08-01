@@ -1,6 +1,6 @@
 /**
  * FX-MIG-SESSION-001 — legacy sessions import, and say what they lost
- * (docs/63 `WP-07`).
+ * (docs/67 `WP-07`).
  *
  * The assertions are weighted towards refusal and disclosure rather than towards
  * the happy path. An importer that converts everything and reports nothing is easy

@@ -80,7 +80,7 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   // where a concurrent writer's work leaves no trace at all: nothing in the
   // request refers to the old content, so there is nothing to fail to match.
   // Where several agents share a working directory that made a lost update
-  // indistinguishable from a successful write (docs/63 `WP-11`).
+  // indistinguishable from a successful write (docs/67 `WP-11`).
   if (fileExists) {
     const verdict = await checkFileCurrent(resolved);
     if (verdict.kind === "stale") {

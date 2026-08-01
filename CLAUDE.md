@@ -19,7 +19,7 @@ bun scripts/check-parity-manifest.ts               # product-parity capability m
 - **Dual lockfiles are deliberate.** `package-lock.json` is canonical (CI installs with `npm ci`; add dependencies via `npm install <pkg>`). `bun.lock` feeds the compiled-binary build. After any dependency change, resync with `bun install --lockfile-only` and commit both files — CI fails on a stale `bun.lock`.
 - UI component tests under `src/ui/repl-solid/` run with `bun test`, not vitest.
 - `eval/` and `experimental/` are separate TypeScript trees with their own tsconfigs; type-check them explicitly when touching them.
-- The product-parity capability contract in [`docs/63-product-parity-roadmap.md`](docs/63-product-parity-roadmap.md) is encoded as data in `src/parity/`. Editing a `DDP-*` outcome, its evidence, or the roadmap tables in one place without the other fails CI — change both, or run `bun scripts/check-parity-manifest.ts` to see what diverged.
+- The product-parity capability contract in [`docs/67-product-parity-roadmap.md`](docs/67-product-parity-roadmap.md) is encoded as data in `src/parity/`. Editing a `DDP-*` outcome, its evidence, or the roadmap tables in one place without the other fails CI — change both, or run `bun scripts/check-parity-manifest.ts` to see what diverged.
 
 ## Docs
 

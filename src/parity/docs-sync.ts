@@ -1,13 +1,13 @@
 /**
  * docs-sync.ts — `FX-CLAIM-001`: the manifest and the documents cannot drift apart.
  *
- * docs/63 states this gate as "public capability claims without an ID fail documentation
+ * docs/67 states this gate as "public capability claims without an ID fail documentation
  * validation". The literal reading needs a definition of "claim", which is why this module enforces
  * three things instead of one:
  *
  *   1. Every `DDP-*` and `WP-*` identifier cited in any document resolves in the manifest. This is
  *      the check that fires in practice, because renaming or dropping an ID leaves citations behind.
- *   2. The docs/63 capability contract and verification tables agree with the manifest, field for
+ *   2. The docs/67 capability contract and verification tables agree with the manifest, field for
  *      field. Without this the manifest is a second source of truth rather than a checkable one.
  *   3. Text inside a `parity:claims` block must cite an ID. The block is opt-in, and no document
  *      uses one yet — `WP-32`'s claims audit is where public copy gets bound. The mechanism exists
@@ -148,7 +148,7 @@ export function parseClaimBlocks(markdown: string): ClaimLine[] {
 }
 
 export interface DocsInput {
-  /** Contents of docs/63, the document of record for the capability and verification contracts. */
+  /** Contents of docs/67, the document of record for the capability and verification contracts. */
   readonly roadmap: string;
   /** Every other document to scan for citations and claim blocks, keyed by path. */
   readonly others: Readonly<Record<string, string>>;
@@ -167,7 +167,7 @@ export function checkDocsSync(input: DocsInput): DocsSyncResult {
 
   // 1. Citations resolve, in the roadmap and everywhere else.
   const documents: Record<string, string> = {
-    "docs/63-product-parity-roadmap.md": input.roadmap,
+    "docs/67-product-parity-roadmap.md": input.roadmap,
     ...input.others,
   };
   for (const [file, text] of Object.entries(documents)) {
@@ -200,7 +200,7 @@ export function checkDocsSync(input: DocsInput): DocsSyncResult {
       violations.push({
         check: "doc-capability-documented",
         subject: cap.id,
-        message: "capability is in the manifest but not in the docs/63 contract table",
+        message: "capability is in the manifest but not in the docs/67 contract table",
       });
       continue;
     }
@@ -224,7 +224,7 @@ export function checkDocsSync(input: DocsInput): DocsSyncResult {
       violations.push({
         check: "doc-capability-documented",
         subject: id,
-        message: "docs/63 documents a capability the manifest does not define",
+        message: "docs/67 documents a capability the manifest does not define",
       });
     }
   }
@@ -240,7 +240,7 @@ export function checkDocsSync(input: DocsInput): DocsSyncResult {
       violations.push({
         check: "doc-verification-documented",
         subject: wp.id,
-        message: "work package has no row in the docs/63 verification table",
+        message: "work package has no row in the docs/67 verification table",
       });
       continue;
     }
@@ -248,7 +248,7 @@ export function checkDocsSync(input: DocsInput): DocsSyncResult {
       violations.push({
         check: "doc-verification-cell",
         subject: `${wp.id}/${row.cell}`,
-        message: `docs/63 runs ${wp.id} in a cell the manifest does not declare (${wp.cells.join(", ")})`,
+        message: `docs/67 runs ${wp.id} in a cell the manifest does not declare (${wp.cells.join(", ")})`,
       });
     }
     const declared = new Set(expandFixtures(wp.fixtures));
@@ -257,7 +257,7 @@ export function checkDocsSync(input: DocsInput): DocsSyncResult {
         violations.push({
           check: "doc-verification-fixture",
           subject: `${wp.id}/${fixture}`,
-          message: "docs/63 names a fixture the manifest does not declare",
+          message: "docs/67 names a fixture the manifest does not declare",
         });
       }
     }

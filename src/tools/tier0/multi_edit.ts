@@ -118,7 +118,7 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   }
 
   // The agent has to still be looking at this file, not merely to have looked at
-  // it once. See edit_file for why anchor matching is not enough (docs/63
+  // it once. See edit_file for why anchor matching is not enough (docs/67
   // `WP-11`); the same hash serves the TOCTTOU check at the write below.
   const contentHash = crypto.createHash("sha256").update(originalContent).digest("hex");
   const known = recordedHash(resolved);

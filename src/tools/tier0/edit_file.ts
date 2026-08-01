@@ -148,7 +148,7 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   // this one asks whether the content the *agent* read is still there. Matching
   // `old_string` against a freshly-read file makes a stale edit look clean
   // whenever the anchor survived somebody else's rewrite, and the edit then
-  // lands in a file the agent has never seen (docs/63 `WP-11`).
+  // lands in a file the agent has never seen (docs/67 `WP-11`).
   const contentHash = crypto.createHash("sha256").update(content).digest("hex");
   const known = recordedHash(resolved);
   if (known !== null && known !== contentHash) {

@@ -448,7 +448,7 @@ export class HardenedNativeEngine implements AgentEngine {
 
       // Outlives the retry loop below, which is the point: it is what lets a
       // re-announced call be answered from what the failed attempt already did
-      // rather than performed a second time (docs/63 WP-05).
+      // rather than performed a second time (docs/67 WP-05).
       const ledger = new TurnLedger(turn);
 
       /**

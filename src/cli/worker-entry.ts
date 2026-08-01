@@ -388,7 +388,7 @@ async function executeTurn(
         if (!mutates(t, input, withHost)) {
           return t.execute(input, withHost);
         }
-        // Exactly one writer per working directory (docs/63 §A5, `WP-11`).
+        // Exactly one writer per working directory (docs/67 §A5, `WP-11`).
         // Keyed on the worker's own cwd, so a member that was given a worktree
         // gets an uncontended lease of its own and only members that genuinely
         // share a directory serialize against each other.

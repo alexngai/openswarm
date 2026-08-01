@@ -1,5 +1,5 @@
 /**
- * Swap-race containment (docs/63 WP-03).
+ * Swap-race containment (docs/67 WP-03).
  *
  * Containment is decided twice — once in `canUseTool` before the tool runs,
  * once in the tool through `resolveInWorkspace` — and the roadmap recorded

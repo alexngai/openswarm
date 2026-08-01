@@ -64,7 +64,7 @@ export class TaskRegistry {
    * completion — but "correct as long as nobody adds an await" is a property
    * that quietly stops being true, and the loop reads as though it were merely
    * checking fields. Stating the precondition means a future async store
-   * inherits a claim that fails cleanly instead of a lost update (docs/63
+   * inherits a claim that fails cleanly instead of a lost update (docs/67
    * WP-06).
    *
    * Iteration order is insertion order so producers can rely on FIFO

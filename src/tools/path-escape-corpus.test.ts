@@ -1,5 +1,5 @@
 /**
- * Generated path-escape corpus (docs/63 WP-03, FX-PATH-001..020).
+ * Generated path-escape corpus (docs/67 WP-03, FX-PATH-001..020).
  *
  * The hand-written containment tests each encode a gap someone already
  * thought of. This one is built the other way round: generate paths from

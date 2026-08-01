@@ -474,7 +474,7 @@ export class TeamDaemon {
       pid: process.pid,
       startedAt: this.startedAt,
     };
-    // Checksummed and atomically replaced (docs/63 `WP-07`). Possible only now
+    // Checksummed and atomically replaced (docs/67 `WP-07`). Possible only now
     // that results have their own file: replacing this one no longer pulls the
     // results stream's inode out from under it.
     await writeSnapshot(this.opts.paths.statePath, snapshot);

@@ -1,6 +1,6 @@
 /**
  * FX-JOURNAL-009..012 — the append writers commit what they acknowledge
- * (docs/63 `WP-07`).
+ * (docs/67 `WP-07`).
  *
  * These fixtures are written against measurements rather than against the survey.
  * The survey said the old `createWriteStream` writers acknowledged from a

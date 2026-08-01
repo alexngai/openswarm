@@ -1,7 +1,7 @@
 /**
  * statistics.ts — the paired non-inferiority machinery `DDP-EVAL-01` preregisters.
  *
- * docs/63 commits to a specific test: "task success passes only when the paired 95% bootstrap lower
+ * docs/67 commits to a specific test: "task success passes only when the paired 95% bootstrap lower
  * confidence bound for `OpenSwarm − comparator` is above −5 percentage points", with median wall time
  * at most 1.25× and median model cost at most 1.15× the comparator.
  *
@@ -110,7 +110,7 @@ function percentile(sorted: Float64Array, p: number): number {
 }
 
 /**
- * The non-inferiority decision. `inconclusive` is a distinct outcome rather than a failure: docs/63
+ * The non-inferiority decision. `inconclusive` is a distinct outcome rather than a failure: docs/67
  * requires the sample to expand under the power rule until the result resolves, and an inconclusive
  * result explicitly cannot support a parity claim.
  */
@@ -204,7 +204,7 @@ export function normalQuantile(p: number): number {
 
 /**
  * Paired sample size for a given minimum detectable effect. Follows docs/50 §3.1, whose σ_d ≈ 0.3 and
- * MDE of 5 points yield roughly 280 instances — the figure docs/63's corpus sizing assumes.
+ * MDE of 5 points yield roughly 280 instances — the figure docs/67's corpus sizing assumes.
  */
 export function requiredPairs(
   sigmaD: number,

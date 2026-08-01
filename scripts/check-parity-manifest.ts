@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 /**
- * check-parity-manifest.ts — the `WP-01` gate (docs/63).
+ * check-parity-manifest.ts — the `WP-01` gate (docs/67).
  *
- * docs/63 states two conditions: CI fails when a mandatory capability ID has no evidence owner
+ * docs/67 states two conditions: CI fails when a mandatory capability ID has no evidence owner
  * (`FX-MANIFEST-001`), and public capability claims without an ID fail documentation validation
  * (`FX-CLAIM-001`). Both are structural checks over `src/parity/`, which is where the capability
  * contract and the work-package schedule live as data.
@@ -40,7 +40,7 @@ function documents(): Record<string, string> {
   const docsDir = path.join(REPO_ROOT, "docs");
   for (const entry of walk(docsDir)) {
     const rel = path.relative(REPO_ROOT, entry);
-    if (rel === "docs/63-product-parity-roadmap.md") continue; // passed separately as the roadmap
+    if (rel === "docs/67-product-parity-roadmap.md") continue; // passed separately as the roadmap
     out[rel] = fs.readFileSync(entry, "utf8");
   }
   return out;
@@ -110,7 +110,7 @@ function main(): number {
   const roadmapPath = path.join(
     REPO_ROOT,
     "docs",
-    "63-product-parity-roadmap.md",
+    "67-product-parity-roadmap.md",
   );
   const docs = checkDocsSync({
     roadmap: fs.readFileSync(roadmapPath, "utf8"),

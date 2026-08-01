@@ -13,7 +13,7 @@
  * read files as attachments (docs/48-compaction-design.md §L4).
  *
  * It records content identity as well as the path, and that half is what makes
- * the contract mean anything in a shared workspace (docs/63 `WP-11`). A record
+ * the contract mean anything in a shared workspace (docs/67 `WP-11`). A record
  * of paths alone answers "has the agent read this?" and cannot answer "is this
  * still what the agent read?", so `hasFileBeenRead` returned true for a file
  * another agent had since replaced — and `write_file`, which never reads its

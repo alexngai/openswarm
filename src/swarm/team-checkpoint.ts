@@ -327,7 +327,7 @@ export async function openTeamCheckpoint(opts: {
     // Checksummed, fsync'd, then renamed. The rename alone was atomic against a
     // reader but said nothing about the bytes reaching disk first, and nothing
     // about integrity: a checkpoint damaged by anything other than an
-    // interrupted write reads back as plausible resume state (docs/63 WP-07).
+    // interrupted write reads back as plausible resume state (docs/67 WP-07).
     await writeSnapshot(checkpointPath, data);
   };
 

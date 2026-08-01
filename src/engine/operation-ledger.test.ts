@@ -1,5 +1,5 @@
 /**
- * Operation ledger (docs/63 `WP-05`).
+ * Operation ledger (docs/67 `WP-05`).
  *
  * The properties worth pinning here are the ones the engine relies on and
  * cannot easily observe: that a retried attempt computes the same identity for

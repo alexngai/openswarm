@@ -1,5 +1,5 @@
 /**
- * Operation ledger for a single turn (docs/63 `WP-05`).
+ * Operation ledger for a single turn (docs/67 `WP-05`).
  *
  * A turn's provider request can be retried. The retried stream re-announces
  * the tool calls the failed one announced, and without a record of what the

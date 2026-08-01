@@ -1,5 +1,5 @@
 /**
- * FX-RW-009..012 — the single-writer lease under real contention (docs/63 `WP-11`).
+ * FX-RW-009..012 — the single-writer lease under real contention (docs/67 `WP-11`).
  *
  * The in-process fixtures cover the state machine: renewal, bounded holds,
  * cancellation, and release that cannot steal. Mutual exclusion and fairness are

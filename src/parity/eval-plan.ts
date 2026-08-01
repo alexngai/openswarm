@@ -1,7 +1,7 @@
 /**
  * eval-plan.ts — the preregistered evaluation plan for `DDP-EVAL-01` (`FX-EVAL-PLAN-001`).
  *
- * docs/63 asks `WP-01` to preregister the mixed corpus, one comparator per workflow, paired seeds,
+ * docs/67 asks `WP-01` to preregister the mixed corpus, one comparator per workflow, paired seeds,
  * the bootstrap analysis, the −5-point success margin, and the 1.25× latency and 1.15× cost
  * guardrails. Preregistration is the whole value: fixing the corpus, the comparators, and the
  * decision rule before any number exists is what stops the eventual result from being the product of
@@ -21,7 +21,7 @@
 import { requiredPairs } from "./statistics.js";
 import type { CertifiedProvider } from "./certification.js";
 
-/** The decision thresholds, exactly as docs/63 states them. */
+/** The decision thresholds, exactly as docs/67 states them. */
 export interface EvalMargins {
   /** Non-inferiority margin for task success, in percentage points. */
   readonly successMarginPp: number;
@@ -160,7 +160,7 @@ export interface ComparatorSpec {
 /**
  * One comparator per workflow. The team workflow is paired against OpenSwarm's own single agent
  * rather than an external product, because no comparable multi-agent product exists and because
- * docs/63 explicitly defers any claim that swarms outperform a strong single agent — so the honest
+ * docs/67 explicitly defers any claim that swarms outperform a strong single agent — so the honest
  * question for teams is whether they cost more than they return, not whether they beat a rival.
  */
 export const COMPARATORS: readonly ComparatorSpec[] = [

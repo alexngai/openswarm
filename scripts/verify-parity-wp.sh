@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/verify-parity-wp.sh — the single verification entry point for the
-# product-parity program (docs/63 §Per-work-package verification contract).
+# product-parity program (docs/67 §Per-work-package verification contract).
 #
 # Every work package is verified through one command shape so that each run
 # produces one comparable, machine-readable artifact:
@@ -39,7 +39,7 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
-# Work packages defined in docs/63, plus WP-00a — the adoption package the
+# Work packages defined in docs/67, plus WP-00a — the adoption package the
 # WP-00 re-estimate recommends inserting before WP-03, which moves the
 # production path onto the frozen contracts. Packages without an implemented
 # gate are still declared so --list stays honest about what remains.
@@ -77,7 +77,7 @@ list_targets() {
     -e 'WP-04' -e 'WP-05' -e 'WP-06' -e 'WP-07' -e 'WP-08' -e 'WP-09' \
     | paste -sd' ' - | fold -sw 76 | sed 's/^/  /'
   echo
-  echo "See docs/63-product-parity-roadmap.md for each gate's fixtures and threshold."
+  echo "See docs/67-product-parity-roadmap.md for each gate's fixtures and threshold."
 }
 
 case "${1:-}" in
@@ -265,7 +265,7 @@ case "$WP" in
     ;;
 
   WP-00)
-    # Effect-transaction walking skeleton. Threshold (docs/63): the durability
+    # Effect-transaction walking skeleton. Threshold (docs/67): the durability
     # invariant passes, and the encrypted 90-day default plus secure-key-missing
     # ephemeral behaviour are explicit.
     FIXTURES="FX-EFFECT-001,FX-CRASH-001,FX-STORAGE-DEFAULT-001"
@@ -318,7 +318,7 @@ case "$WP" in
     ;;
 
   WP-01)
-    # Capability manifest and evidence harness. Threshold (docs/63): every ID has
+    # Capability manifest and evidence harness. Threshold (docs/67): every ID has
     # evidence ownership, and the corpus, comparator, model IDs, statistics, and
     # guardrails are preregistered. The harness half of this package — this
     # script, compose.parity.yml, Dockerfile.parity — was built ahead of WP-00;
@@ -332,7 +332,7 @@ case "$WP" in
         npx vitest run src/parity/validate.test.ts
       run_check M2 "capability status derives from artifacts, not assertion" \
         npx vitest run src/parity/status.test.ts
-      run_check M3 "FX-CLAIM-001 manifest and docs/63 cannot diverge" \
+      run_check M3 "FX-CLAIM-001 manifest and docs/67 cannot diverge" \
         npx vitest run src/parity/docs-sync.test.ts
       run_check M4 "FX-EVAL-PLAN-001 preregistered corpus, comparators, margins" \
         npx vitest run src/parity/eval-plan.test.ts
@@ -346,7 +346,7 @@ case "$WP" in
     ;;
 
   WP-03)
-    # Canonical path authorization. Threshold (docs/63): the generated and
+    # Canonical path authorization. Threshold (docs/67): the generated and
     # swap-race escape corpus reports zero unauthorized access. WP-00a
     # delivered the design half — one central check, one shared helper — so
     # what remains is the part that can only be established by attacking it.
@@ -373,7 +373,7 @@ case "$WP" in
     ;;
 
   WP-02)
-    # Repository trust and configuration provenance. Threshold (docs/63):
+    # Repository trust and configuration provenance. Threshold (docs/67):
     # malicious-clone fixtures cause zero process, network, or secret activity
     # before trust. T2 is the one that actually establishes that — it runs the
     # built CLI in a hostile repository and looks for evidence, rather than
@@ -400,7 +400,7 @@ case "$WP" in
     ;;
 
   WP-04)
-    # Process broker and fail-closed shell baseline. Threshold (docs/63): zero
+    # Process broker and fail-closed shell baseline. Threshold (docs/67): zero
     # direct untrusted spawns, and an unavailable `require` executes nothing.
     #
     # C1 is the load-bearing check and the only one that can observe the
@@ -433,7 +433,7 @@ case "$WP" in
     ;;
 
   WP-05)
-    # Retry operation ledger and cancellation barrier. Threshold (docs/63):
+    # Retry operation ledger and cancellation barrier. Threshold (docs/67):
     # fault injection around dispatch never duplicates a mutating call.
     #
     # R1 is the load-bearing check. Two independent mechanisms have to hold —
@@ -460,7 +460,7 @@ case "$WP" in
     ;;
 
   WP-06)
-    # Atomic task transitions and safe target CAS. Threshold (docs/63):
+    # Atomic task transitions and safe target CAS. Threshold (docs/67):
     # 10,000 claim attempts produce one owner; a moved target loses no commit.
     #
     # C1 and C4 are the load-bearing checks, and they fail differently. C1 is
@@ -488,7 +488,7 @@ case "$WP" in
     ;;
 
   live)
-    # Probes against a real provider (docs/63 §Platform matrix, live-provider
+    # Probes against a real provider (docs/67 §Platform matrix, live-provider
     # cells). Not a work-package gate: it does not certify a capability, it
     # checks that the seams between the model, the process, and the filesystem
     # still line up on a machine with credentials.
@@ -554,7 +554,7 @@ case "$WP" in
     ;;
 
   WP-09)
-    # Approval broker and headless default deny. Threshold (docs/63): absent,
+    # Approval broker and headless default deny. Threshold (docs/67): absent,
     # invalid, expired, replayed, disconnected, or late approvals deny.
     #
     # A1 is the load-bearing check. Approval gates are not judged on the path
@@ -581,7 +581,7 @@ case "$WP" in
     ;;
 
   WP-08)
-    # Automatic multi-turn and crash resume. Threshold (docs/63): ten-turn tests
+    # Automatic multi-turn and crash resume. Threshold (docs/67): ten-turn tests
     # pass without manual resume; restart retains early context.
     #
     # R2 is the load-bearing check, and it is the gate's own wording made
@@ -609,7 +609,7 @@ case "$WP" in
     ;;
 
   WP-11)
-    # Shared writer lease and generation tracking. Threshold (docs/63): injected
+    # Shared writer lease and generation tracking. Threshold (docs/67): injected
     # races mark stale reads and reject stale writes; after the active writer
     # releases, the next queued writer starts within five seconds under 32
     # continuously active readers.
@@ -650,7 +650,7 @@ case "$WP" in
     ;;
 
   WP-07)
-    # Session journal and snapshot durability. Threshold (docs/63): a recorded
+    # Session journal and snapshot durability. Threshold (docs/67): a recorded
     # event survives the process that recorded it, and a snapshot that reads
     # back is the snapshot that was written.
     #
@@ -686,7 +686,7 @@ case "$WP" in
 
   *)
     echo "  no gate implemented for $WP yet."
-    echo "  Its fixtures and threshold are specified in docs/63-product-parity-roadmap.md;"
+    echo "  Its fixtures and threshold are specified in docs/67-product-parity-roadmap.md;"
     echo "  implement them here before the work package can report a result."
     echo
     RESULT="not-implemented"

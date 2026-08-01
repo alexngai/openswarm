@@ -164,7 +164,7 @@ describe("task.stop self-stop IPC response (v0.4 stage 4I Defect 3)", () => {
     // the task had already finished by the time the stop arrived. It keeps the
     // outcome it reported: a cancellation that lands after completion cancelled
     // nothing, and recording it as stopped would throw away a real result
-    // (docs/63 WP-06). What this test is about is the ordering above — the
+    // (docs/67 WP-06). What this test is about is the ordering above — the
     // response reaching the worker before its transport tears down.
     const updated = await orch.task.get(taskId);
     expect(updated?.status).toBe("succeeded");

@@ -1,7 +1,7 @@
 /**
  * validate.ts — structural checks over the parity manifest (`FX-MANIFEST-001`).
  *
- * docs/63 states the `WP-01` gate as "CI fails when a mandatory ID has no evidence owner". Taken
+ * docs/67 states the `WP-01` gate as "CI fails when a mandatory ID has no evidence owner". Taken
  * literally that is one check; taken usefully it is a family, because every way a capability can
  * *appear* to have evidence while having none is the same failure wearing a disguise: evidence that
  * points at a work package that does not exist, at a cell that package never runs, at a fixture it
@@ -233,7 +233,7 @@ function checkCapabilityIdentity({ capabilities }: ManifestInput): Violation[] {
 }
 
 /**
- * The gate docs/63 names: every mandatory capability must have evidence, and that evidence must
+ * The gate docs/67 names: every mandatory capability must have evidence, and that evidence must
  * resolve to a real work package, real cells of that package, and real fixtures of that package.
  * An evidence pointer that does not resolve is indistinguishable from no evidence at all.
  */
@@ -384,7 +384,7 @@ function checkEveryWorkPackageIsCited({
 }
 
 /**
- * Feature-package loading per release and owner. This is the manifest's half of the docs/63 loading
+ * Feature-package loading per release and owner. This is the manifest's half of the docs/67 loading
  * table; the test asserts the two agree, which is what makes the table's arithmetic checkable rather
  * than merely reviewed. Cross-package quality allocation is not modelled here — it is reassignable
  * between owners, so it is a scheduling decision rather than a property of a package.

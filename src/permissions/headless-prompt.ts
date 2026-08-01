@@ -26,7 +26,7 @@ export interface HeadlessPromptOptions {
    * An orchestrator driving a headless run answers promptly or not at all, so
    * the case this covers is nobody being there — stdin open, no line coming.
    * Detaching matters as much as denying: a listener left on stdin would
-   * consume the line meant for the next question (docs/63 WP-09).
+   * consume the line meant for the next question (docs/67 WP-09).
    */
   readonly signal?: AbortSignal;
 }
@@ -96,7 +96,7 @@ type Line = string | null | typeof ABANDONED;
  * with the turn unfinished, and whoever is driving it reads that as success.
  *
  * So the buffer and the ended flag live with the stream, and a read after end
- * answers immediately (docs/63 `WP-09`).
+ * answers immediately (docs/67 `WP-09`).
  */
 interface LineSource {
   read(signal?: AbortSignal): Promise<Line>;

@@ -16,7 +16,7 @@ export interface DeadLetterLine {
  * instance. Pre-existing file contents are never considered part of the
  * delta, so `--allow-dead-letter` decisions are scoped to the current run.
  *
- * Durable rather than merely appended (docs/63 `WP-07`), because this file is
+ * Durable rather than merely appended (docs/67 `WP-07`), because this file is
  * read as evidence: `--allow-dead-letter` turns on whether a run dropped work, so
  * a line lost with the process turns a lossy run into a clean one, and the caller
  * has no way to tell. `write()` resolves against a committed line.

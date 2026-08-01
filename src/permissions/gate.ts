@@ -75,7 +75,7 @@ export interface CanUseToolDeps {
    * Today the digest is computed once at startup, so tagging is what this
    * buys: any later re-verification invalidates the grants it should, and the
    * grant record says what it was given about. The re-verification itself is
-   * not here (docs/63 WP-09).
+   * not here (docs/67 WP-09).
    */
   readonly trustBinding?: () => string | undefined;
 }

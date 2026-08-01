@@ -1,6 +1,6 @@
 /**
  * FX-CLAIM-002 — a task has one owner, and a terminal result is final
- * (docs/63 `WP-06`).
+ * (docs/67 `WP-06`).
  *
  * Two agents that both believe they own a task will both do the work, both
  * write to the same worktree, and both report an outcome; the second report

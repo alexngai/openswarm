@@ -1,6 +1,6 @@
 /**
  * TranscriptWriter — the durable append path for session transcripts
- * (docs/63 `WP-07`).
+ * (docs/67 `WP-07`).
  *
  * Transcripts were written through `createWriteStream`, which got three things
  * wrong at once.

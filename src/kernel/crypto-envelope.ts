@@ -1,5 +1,5 @@
 /**
- * Sealed storage envelope (docs/63 WP-00, WP-27).
+ * Sealed storage envelope (docs/67 WP-00, WP-27).
  *
  * Session history, attachments, and journal payloads are stored inside this
  * envelope so that "encrypted by default" is a property of the format rather
@@ -12,7 +12,7 @@
  * where its contents would be read under the wrong identity.
  *
  * The version field exists so a future algorithm change can be read by the
- * release that introduces it and the one before (docs/63 §A9).
+ * release that introduces it and the one before (docs/67 §A9).
  */
 
 import * as crypto from "node:crypto";

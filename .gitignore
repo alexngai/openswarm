@@ -15,7 +15,7 @@ dead-letter.jsonl
 eval/.artifacts/
 # npm pack artifacts (anywhere in the tree)
 *.tgz
-# parity harness run output (docs/63); evidence is uploaded, not committed
+# parity harness run output (docs/67); evidence is uploaded, not committed
 artifacts/parity/
 .claude/
 .omx/

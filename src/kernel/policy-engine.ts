@@ -1,5 +1,5 @@
 /**
- * Discriminated operation policy (docs/63 §A2, WP-00).
+ * Discriminated operation policy (docs/67 §A2, WP-00).
  *
  * The existing gate is `(toolName, unknownInput) => decision`, which cannot
  * express a grant narrower than "this tool, any argument": there is no resource
@@ -7,7 +7,7 @@
  * discriminated `OperationRequest`, so a grant names an exact resource and
  * operation class and can be audited and revoked as such.
  *
- * Default grant scope is the session (docs/63 locked decisions). One-shot and
+ * Default grant scope is the session (docs/67 locked decisions). One-shot and
  * persistent grants exist but must be chosen explicitly by the approver; the
  * engine never upgrades a scope on its own.
  */
@@ -89,7 +89,7 @@ export interface ApprovalResponse {
 /**
  * Asks a human (TTY, ACP client, or authenticated headless endpoint). Absent
  * broker means nobody can be asked, which is a denial rather than an allowance
- * — headless runs must fail closed (docs/63 §DDP-SAFE-05).
+ * — headless runs must fail closed (docs/67 §DDP-SAFE-05).
  */
 export interface ApprovalBroker {
   request(req: ApprovalRequest): Promise<ApprovalResponse>;

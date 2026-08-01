@@ -1,5 +1,5 @@
 /**
- * Engine-agnostic resume, backed by the kernel journal (docs/63 `WP-08`).
+ * Engine-agnostic resume, backed by the kernel journal (docs/67 `WP-08`).
  *
  * What this replaces: `--resume` resolved sessions through the Claude Agent
  * SDK's own store and wrapped whatever it found as

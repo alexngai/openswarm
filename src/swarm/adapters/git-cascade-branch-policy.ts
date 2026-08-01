@@ -758,7 +758,7 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
       // the branch to a commit that did not contain the commits pushed in that
       // window. A success that silently rewinds the branch is worse than a
       // refusal, and it is unobservable to the caller. One read, used for both,
-      // turns that into a `stale` the drain retries (docs/63 WP-06, FX-CAS-001).
+      // turns that into a `stale` the drain retries (docs/67 WP-06, FX-CAS-001).
       const targetSha = runGit(["rev-parse", targetBranch], this.repoPath).trim();
       // Detached at the measured commit so we don't collide with an
       // already-checked-out branch (typical: main is checked out in the repo cwd).

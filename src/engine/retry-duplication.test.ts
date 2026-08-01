@@ -1,6 +1,6 @@
 /**
  * FX-RETRY-001..010 — a retried or cancelled turn performs no effect twice and
- * leaves none unaccounted for (docs/63 `WP-05`).
+ * leaves none unaccounted for (docs/67 `WP-05`).
  *
  * Eager dispatch starts a tool the moment the provider announces the call,
  * before the stream that announced it has finished. When that stream then

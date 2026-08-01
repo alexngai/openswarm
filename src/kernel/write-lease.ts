@@ -1,5 +1,5 @@
 /**
- * Single-writer lease for a shared workspace (docs/63 §A5, `WP-11`).
+ * Single-writer lease for a shared workspace (docs/67 §A5, `WP-11`).
  *
  * Shared mode puts several agents in one working directory, each in its own
  * process. Nothing in-process can order them, so this lease lives on the

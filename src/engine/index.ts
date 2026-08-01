@@ -324,7 +324,7 @@ export interface SessionSnapshot {
  * places all along — but they only knew one destination, a per-engine file
  * written when `sessionDir` was set, which no production caller ever set. A sink
  * lets the surface decide where state goes (for the CLI, the kernel journal)
- * without the engine learning about journals (docs/63 `WP-08`).
+ * without the engine learning about journals (docs/67 `WP-08`).
  *
  * Rejecting aborts the turn, matching what the file write already did. A turn
  * whose state could not be recorded is not recoverable, and continuing as though

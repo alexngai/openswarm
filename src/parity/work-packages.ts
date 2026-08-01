@@ -1,15 +1,15 @@
 /**
- * work-packages.ts — the docs/63 work-package schedule as data.
+ * work-packages.ts — the docs/67 work-package schedule as data.
  *
- * This is a transcription, not a second source of truth: docs/63 remains the document of record
+ * This is a transcription, not a second source of truth: docs/67 remains the document of record
  * and `validate.ts` cross-checks this registry against it. The reason to have it as data at all is
  * that prose cannot be checked for the failures that actually happened during roadmap review —
  * a package depending on work scheduled in a later release, a capability citing a cell its gate
  * never runs, an owner loaded past capacity.
  *
- * `ownerSplit` is core capacity only, and its per-release totals are checked against the docs/63
+ * `ownerSplit` is core capacity only, and its per-release totals are checked against the docs/67
  * loading table. `WP-29`, `WP-31`, and `WP-33` also consume bought external calendar time, which
- * stays in docs/63 prose because it is not drawn from the same pool and cannot be traded against
+ * stays in docs/67 prose because it is not drawn from the same pool and cannot be traded against
  * feature work — hence `External: 0` on the packages a vendor participates in.
  */
 import type { WorkPackage } from "./contracts.js";

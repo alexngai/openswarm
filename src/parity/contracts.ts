@@ -1,5 +1,5 @@
 /**
- * contracts.ts — types for the product-parity capability manifest (docs/63 `WP-01`).
+ * contracts.ts — types for the product-parity capability manifest (docs/67 `WP-01`).
  *
  * The manifest exists to stop one specific failure: a capability claim drifting away from the
  * evidence that is supposed to back it. Every mandatory capability carries a stable `DDP-*` ID,
@@ -13,7 +13,7 @@
  */
 
 /**
- * Implementation owners. `A`, `B`, and `C` are the three core engineers in the docs/63 loading
+ * Implementation owners. `A`, `B`, and `C` are the three core engineers in the docs/67 loading
  * model; `External` covers the security review and the UX/QA/soak vendors, whose work is bought
  * rather than scheduled against core capacity.
  */
@@ -67,7 +67,7 @@ export const PLATFORM_CELLS: readonly Cell[] = [
 ];
 
 /**
- * A fixture reference as docs/63 writes it, which includes contiguous ranges such as
+ * A fixture reference as docs/67 writes it, which includes contiguous ranges such as
  * `FX-TRUST-001..006`. Stored in the doc's own notation so the manifest and the roadmap can be
  * compared literally; use `expandFixtures` when concrete IDs are needed.
  */
@@ -80,7 +80,7 @@ export type WorkPackageId = string;
 export type CapabilityId = string;
 
 /**
- * A work package as scheduled in docs/63. `cells` and `fixtures` are the authoritative record of
+ * A work package as scheduled in docs/67. `cells` and `fixtures` are the authoritative record of
  * what this package's gate covers, so a capability cannot claim evidence from a cell the package
  * never runs or a fixture it never exercises.
  */
@@ -89,7 +89,7 @@ export interface WorkPackage {
   readonly title: string;
   readonly release: Release;
   /**
-   * Core person-weeks per owner, as the docs/63 cross-owner split table states them. Stored per
+   * Core person-weeks per owner, as the docs/67 cross-owner split table states them. Stored per
    * owner rather than as a total plus an owner list because the splits are uneven (`WP-11` is A2/C1)
    * and because the per-owner totals are what the release loading table can be checked against.
    *
@@ -119,7 +119,7 @@ export interface EvidenceRef {
   readonly fixtures: readonly FixtureRef[];
 }
 
-/** Thematic grouping, matching the docs/63 capability-contract subsections. */
+/** Thematic grouping, matching the docs/67 capability-contract subsections. */
 export type CapabilityGroup =
   | "Daily-driver core"
   | "Sessions and recovery"
@@ -131,7 +131,7 @@ export type CapabilityGroup =
 export interface Capability {
   readonly id: CapabilityId;
   readonly group: CapabilityGroup;
-  /** The required outcome, as the docs/63 capability contract states it. */
+  /** The required outcome, as the docs/67 capability contract states it. */
   readonly outcome: string;
   /** What the beta must show. Prose, because it is the human-readable acceptance statement. */
   readonly betaEvidence: string;
@@ -144,7 +144,7 @@ export interface Capability {
   /** The release whose exit gate requires this capability to pass in full. */
   readonly release: Release;
   /**
-   * Set when an earlier release requires a partial pass — docs/63 gates "initial `DDP-PROV-01`" at
+   * Set when an earlier release requires a partial pass — docs/67 gates "initial `DDP-PROV-01`" at
    * R3 and the full capability at R5. Recorded so a partial pass can never be read as a full one.
    */
   readonly partialFrom?: Release;
@@ -154,7 +154,7 @@ export interface Capability {
 }
 
 /**
- * Expands docs/63 fixture notation into concrete IDs. `FX-TRUST-001..006` becomes six IDs;
+ * Expands docs/67 fixture notation into concrete IDs. `FX-TRUST-001..006` becomes six IDs;
  * a plain `FX-GATE-001` passes through. Non-numeric suffixes are returned as-is rather than
  * silently dropped, so a malformed reference surfaces in validation instead of vanishing.
  */

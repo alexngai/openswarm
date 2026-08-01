@@ -28,7 +28,7 @@ describe("the preregistered plan", () => {
     expect(validateEvalPlan()).toEqual([]);
   });
 
-  it("pins the docs/63 margins and guardrails", () => {
+  it("pins the docs/67 margins and guardrails", () => {
     expect(EVAL_MARGINS.successMarginPp).toBe(5);
     expect(EVAL_MARGINS.latencyRatioMax).toBe(1.25);
     expect(EVAL_MARGINS.costRatioMax).toBe(1.15);
@@ -50,7 +50,7 @@ describe("the preregistered plan", () => {
   });
 
   it("pairs the team workflow against our own single agent", () => {
-    // docs/63 defers any claim that swarms beat a strong single agent, so an
+    // docs/67 defers any claim that swarms beat a strong single agent, so an
     // external comparator here would be measuring a claim we do not make.
     const team = COMPARATORS.find((c) => c.workflow === "multi-agent-team");
     expect(team?.comparator).toBe("openswarm-single-agent");

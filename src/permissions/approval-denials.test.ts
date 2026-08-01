@@ -1,6 +1,6 @@
 /**
  * FX-APPROVAL-001..012 — every way an approval can fail to arrive is a denial
- * (docs/63 `WP-09`, `DDP-SAFE-05`).
+ * (docs/67 `WP-09`, `DDP-SAFE-05`).
  *
  * An approval gate is only as good as its failure modes. "The user said yes" is
  * the easy path; what decides whether the gate is worth having is what happens

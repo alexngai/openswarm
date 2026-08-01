@@ -1,6 +1,6 @@
 /**
  * FX-JOURNAL-005..012 — a snapshot is either the document that was written or
- * visibly not (docs/63 `WP-07`).
+ * visibly not (docs/67 `WP-07`).
  *
  * The failure mode a snapshot has to defend against is not throwing. It is
  * resuming from a state that never existed: a document truncated at an arbitrary

@@ -1,7 +1,7 @@
 /**
  * certification.ts — pinned identities for `DDP-PROV-01` and `DDP-PLAT-01`.
  *
- * docs/63 asks `WP-01` to "encode exact certified provider/model/API IDs; mark all other models
+ * docs/67 asks `WP-01` to "encode exact certified provider/model/API IDs; mark all other models
  * `unverified`", and `WP-25` to "pin exact OS/distribution builds, Node/Bun versions, LSP server
  * versions, provider model IDs, and certification dates".
  *
@@ -106,7 +106,7 @@ export const PINNED_TOOLCHAIN: PinnedToolchain = {
 /**
  * LSP servers `DDP-LSP-01` certifies. Deliberately unpinned: `WP-21` selects and pins the versions,
  * and inventing version numbers now would put three unverifiable facts into the manifest. The
- * languages are pinned because those are a scope decision docs/63 already made.
+ * languages are pinned because those are a scope decision docs/67 already made.
  */
 export interface LspServerPin {
   readonly language: "typescript" | "python" | "go";

@@ -1,5 +1,5 @@
 /**
- * Canonical path authority (docs/63 §A4, WP-00).
+ * Canonical path authority (docs/67 §A4, WP-00).
  *
  * Today every tier-0 file tool re-derives its own answer to "is this path
  * allowed?": `path.resolve`, then `isUnderCwd`, then a `realpath` only when the

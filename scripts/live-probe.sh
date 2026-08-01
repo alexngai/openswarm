@@ -9,7 +9,7 @@
 # and exited 0 with the turn unfinished — which whoever is driving it reads as
 # success. Every in-process fixture passed throughout, because each handed the
 # reader a fresh stream and asked once, and that is the single shape where
-# borrowing stdin per question behaves like owning it (docs/63 WP-09).
+# borrowing stdin per question behaves like owning it (docs/67 WP-09).
 #
 # So these probes deliberately assert on the seams between the model, the
 # process, and the filesystem rather than on model output. Nothing here checks
@@ -248,7 +248,7 @@ fi
 #
 # The first version of this seam passed its type check and every unit test while
 # nesting the payload one level too deep, which surfaced only here, on a real
-# second turn (docs/63 WP-08).
+# second turn (docs/67 WP-08).
 # ---------------------------------------------------------------------------
 L6A="$WORKDIR/l6a.jsonl"
 L6B="$WORKDIR/l6b.jsonl"

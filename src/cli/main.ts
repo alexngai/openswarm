@@ -332,7 +332,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   // sessions get a fresh UUID.
   // Where this session's history may go. Ephemeral unless explicitly opted in,
   // because a journal is conversation history and the storage decision locked in
-  // WP-00 is encrypted-or-nothing (docs/63 §The live cell's sibling, WP-08).
+  // WP-00 is encrypted-or-nothing (docs/67 §The live cell's sibling, WP-08).
   const persistence = await resolvePersistence({
     workspaceDir: process.cwd(),
     optIn: process.env.OPENSWARM_SESSION_STORE,

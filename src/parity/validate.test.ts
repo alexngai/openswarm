@@ -51,7 +51,7 @@ describe("the shipped manifest", () => {
     ).toEqual([]);
   });
 
-  it("covers every capability group from the docs/63 contract", () => {
+  it("covers every capability group from the docs/67 contract", () => {
     const groups = new Set(CAPABILITIES.map((c) => c.group));
     expect([...groups].sort()).toEqual([
       "Daily-driver core",
@@ -63,17 +63,17 @@ describe("the shipped manifest", () => {
     ]);
   });
 
-  it("commits the 105 core person-weeks docs/63 budgets", () => {
+  it("commits the 105 core person-weeks docs/67 budgets", () => {
     expect(committedPersonWeeks()).toBe(105);
   });
 
-  it("reproduces the docs/63 per-release owner loading table", () => {
+  it("reproduces the docs/67 per-release owner loading table", () => {
     const loading = loadingByRelease();
     const abc = (release: Parameters<typeof loading.get>[0]) => {
       const row = loading.get(release);
       return [row?.A, row?.B, row?.C];
     };
-    // Feature A/B/C columns of the docs/63 release table.
+    // Feature A/B/C columns of the docs/67 release table.
     expect(abc("R1")).toEqual([7, 4, 7]);
     expect(abc("R2")).toEqual([3, 8, 5]);
     expect(abc("R3")).toEqual([6, 6, 6]);

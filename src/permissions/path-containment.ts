@@ -1,5 +1,5 @@
 /**
- * Central path containment for the permission gate (docs/63 §A4, WP-03).
+ * Central path containment for the permission gate (docs/67 §A4, WP-03).
  *
  * Every file-bearing tool has, until now, answered "is this path allowed?" for
  * itself: resolve against cwd, prefix-compare with `isUnderCwd`, then realpath

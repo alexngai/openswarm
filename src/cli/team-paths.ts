@@ -42,7 +42,7 @@ export interface TeamPaths {
   /**
    * Task results. Separate from `statePath`, which used to double as the results
    * sink because the orchestrator needed some `Writable` and the state path was
-   * to hand (docs/63 `WP-07`). One file cannot be both a replaceable snapshot
+   * to hand (docs/67 `WP-07`). One file cannot be both a replaceable snapshot
    * and an append-only log: making the snapshot durable means replacing the file,
    * which unlinks the one the results stream still holds open.
    */

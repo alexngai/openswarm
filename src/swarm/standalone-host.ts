@@ -1003,7 +1003,7 @@ export class StandaloneHost implements SwarmHost {
       // The lane events below announce completion and results.jsonl records it,
       // but the registry was left saying `running` — so `task.get` and the task
       // board disagreed about whether a finished task had finished, and a parent
-      // deciding whether to retry consulted the stale one (docs/63 WP-06).
+      // deciding whether to retry consulted the stale one (docs/67 WP-06).
       this.registry.resolve(taskRecord.id, terminalOutcomeOf(r));
       const resolver = pendingResolve;
       pendingResolve = undefined;
@@ -1666,7 +1666,7 @@ export class StandaloneHost implements SwarmHost {
       // Who asked comes from the transport, never from the body: the task id in
       // a request is a claim about what to change, not about who may change it.
       // Without this a worker could finish, fail, or reassign any task whose id
-      // it could name or guess (docs/63 WP-06).
+      // it could name or guess (docs/67 WP-06).
       const permitted = await this.mayTransition(from, parsed.data.taskId);
       if (!permitted.ok) {
         transport.respondError(frame.id, IPC_ERROR_CODES.INTERNAL_ERROR, permitted.reason);

@@ -1,5 +1,5 @@
 /**
- * Effect transaction runtime (docs/63 §A0, WP-00).
+ * Effect transaction runtime (docs/67 §A0, WP-00).
  *
  * Implements the durability order that the whole parity program depends on:
  *

@@ -65,7 +65,7 @@ All ACP stages are shipped. The living references:
 ## Product audits & roadmap
 
 - [58-coding-agent-product-review.md](./58-coding-agent-product-review.md) — honest coding-agent product review versus Claude Code, Codex, OpenCode, and Reasonix; source-audited launch blockers, empirical claim boundary, positioning decision, and prioritized roadmap
-- [63-product-parity-roadmap.md](./63-product-parity-roadmap.md) — 50-week capability-based product-parity program: resolved storage/trust/certification/privacy defaults, effect-transaction walking skeleton, 34 work packages, mixed-corpus non-inferiority gates, migration, and P0/P1 traceability
+- [67-product-parity-roadmap.md](./67-product-parity-roadmap.md) — 50-week capability-based product-parity program: resolved storage/trust/certification/privacy defaults, effect-transaction walking skeleton, 36 work packages, mixed-corpus non-inferiority gates, migration, and P0/P1 traceability
 
 ## Status
 

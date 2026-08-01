@@ -1,5 +1,5 @@
 /**
- * Checksummed atomic snapshots (docs/63 `WP-07`).
+ * Checksummed atomic snapshots (docs/67 `WP-07`).
  *
  * Snapshots in the tree were written three different ways with three different
  * guarantees. Team checkpoints and engine snapshots wrote to a temp file and

@@ -1,5 +1,5 @@
 /**
- * Session storage policy (docs/63 locked decisions, WP-00).
+ * Session storage policy (docs/67 locked decisions, WP-00).
  *
  * The rule this encodes: storage is configurable, but with no configuration
  * OpenSwarm keeps full encrypted history for 90 days, and if no secure key

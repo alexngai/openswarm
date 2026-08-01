@@ -122,7 +122,7 @@ export async function buildAuthForProvider(modelId: string): Promise<AuthSource>
  * `hooks` is optional so the surfaces that do not persist session state (ACP
  * supplies its own ids and, for now, its own lifecycle) are unaffected. The CLI
  * passes `onSnapshot` when session storage is durable, which is what gives
- * `--resume` something to read (docs/63 `WP-08`).
+ * `--resume` something to read (docs/67 `WP-08`).
  */
 export type MakeEngine = (
   sessionId: string,

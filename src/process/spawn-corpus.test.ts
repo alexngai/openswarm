@@ -1,5 +1,5 @@
 /**
- * Untrusted-child launch corpus (docs/63 WP-04, FX-PROC-001..012).
+ * Untrusted-child launch corpus (docs/67 WP-04, FX-PROC-001..012).
  *
  * The broker is only worth having if nothing goes around it, and "nothing goes
  * around it" is not a property any single unit test observes. Each caller was

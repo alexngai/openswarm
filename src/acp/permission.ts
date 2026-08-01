@@ -58,7 +58,7 @@ export class AcpPermissionBridge extends PermissionBridge {
     // "not a rejection" as consent meant a client on a newer protocol revision,
     // a typo in an option id, or a hostile response approved the operation —
     // and it approved it silently, since an unrecognised outcome looks like a
-    // successful prompt from the outside (docs/63 WP-09, FX-APPROVAL-005).
+    // successful prompt from the outside (docs/67 WP-09, FX-APPROVAL-005).
     switch (outcome.optionId) {
       // "allow_always" additionally records a session-scoped allow rule in the
       // bash gate (Phase 3 B4; banned-broad prefixes are refused there).

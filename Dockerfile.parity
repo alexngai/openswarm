@@ -1,5 +1,5 @@
 # Dockerfile.parity — pinned toolchain for the product-parity verification
-# harness (docs/63 §Verification strategy).
+# harness (docs/67 §Verification strategy).
 #
 # This image deliberately contains no application source. The repository is
 # bind-mounted at run time by compose.parity.yml, so editing code never

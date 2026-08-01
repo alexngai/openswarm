@@ -456,7 +456,7 @@ describe("Scenario 9b: real spawn chain — ancestry-based task_stop end-to-end"
       // Whether the explicit stop or the resulting signal exit is recorded first
       // is a race between a real worker's teardown and this call, so `stoppedBy`
       // may be unset — the first terminal outcome wins and is not overwritten
-      // (docs/63 WP-06). What must never be true is B's name here: it is the
+      // (docs/67 WP-06). What must never be true is B's name here: it is the
       // agent the ancestry check refused, and an attribution to it would mean the
       // refusal did not hold.
       expect(stoppedRecord?.stoppedBy ?? handleA.agentId).toBe(handleA.agentId);

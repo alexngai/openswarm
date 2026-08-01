@@ -309,7 +309,7 @@ The selected parity gate uses a mixed corpus, capability-specific preregistered 
 
 ## Roadmap
 
-The product decision is to pursue full daily-driver parity despite this review’s control-plane-first recommendation. Dependency and capacity review produced a 50-week baseline with three engineers; four provide enough capacity for 39 weeks, but that variant still needs a separate dependency schedule. The detailed capability contract, work packages, gates, and staffing model are in [63-product-parity-roadmap.md](./63-product-parity-roadmap.md).
+The product decision is to pursue full daily-driver parity despite this review’s control-plane-first recommendation. Dependency and capacity review produced a 50-week baseline with three engineers; four provide enough capacity for 39 weeks, but that variant still needs a separate dependency schedule. The detailed capability contract, work packages, gates, and staffing model are in [67-product-parity-roadmap.md](./67-product-parity-roadmap.md).
 
 Resolved product-policy defaults:
 

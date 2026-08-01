@@ -85,7 +85,7 @@ function toResponse(req: ApprovalRequest, decision: BridgeDecision): ApprovalRes
       // replay, or an answer to a question it never asked. In-process this is
       // bookkeeping; for the ACP and headless surfaces the response crosses a
       // boundary the engine does not control, and there it is the only thing
-      // tying an answer to its question (docs/63 WP-09).
+      // tying an answer to its question (docs/67 WP-09).
   if (!decision.allow) {
     return { approved: false, requestId: req.id, reason: decision.reason };
   }

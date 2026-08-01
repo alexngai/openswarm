@@ -1,6 +1,6 @@
 /**
  * FX-RESUME-001..010 — engine-agnostic resume through the kernel journal
- * (docs/63 `WP-08`).
+ * (docs/67 `WP-08`).
  *
  * The fixture that matters most is the one asserting the engine id survives a
  * round trip. Resume did not fail before because the engines refused a

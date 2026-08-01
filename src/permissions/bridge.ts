@@ -102,7 +102,7 @@ export class PermissionBridge {
    * abandoned turn. It is a deny rather than a silent drop because the caller is
    * still holding a promise, and because the bridge is strictly serial: leaving
    * the slot occupied would refuse every later request with a reason about this
-   * one (docs/63 WP-09).
+   * one (docs/67 WP-09).
    */
   cancel(reason: string): void {
     this.respond({ allow: false, reason });

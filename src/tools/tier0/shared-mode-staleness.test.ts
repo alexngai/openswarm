@@ -1,6 +1,6 @@
 /**
  * FX-RW-001..004 — what two agents sharing one working directory do to each
- * other's work (docs/63 `WP-11`).
+ * other's work (docs/67 `WP-11`).
  *
  * Shared mode is `branchPolicy: { kind: "none" }`: several worker processes in
  * one directory with no worktree between them. The read-before-edit contract

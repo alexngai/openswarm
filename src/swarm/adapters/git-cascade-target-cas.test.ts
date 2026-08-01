@@ -1,6 +1,6 @@
 /**
  * FX-CAS-001 — landing a stream onto a target that moved loses no commit
- * (docs/63 `WP-06`).
+ * (docs/67 `WP-06`).
  *
  * Landing read the target branch twice. `git worktree add --detach <tmp>
  * <target>` resolved it once to decide what to merge onto, and `rev-parse

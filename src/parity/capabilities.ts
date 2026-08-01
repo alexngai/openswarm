@@ -1,5 +1,5 @@
 /**
- * capabilities.ts — the `DDP-*` capability contract from docs/63 as data.
+ * capabilities.ts — the `DDP-*` capability contract from docs/67 as data.
  *
  * Each entry answers four questions that prose kept leaving implicit: which release must this pass,
  * who is accountable, which work-package gate proves it, and which fixtures inside that gate do the
@@ -15,7 +15,7 @@
  *     mandatory capability feature complete.
  *
  * All three are recorded here as `release` plus `partialFrom`, so a partial pass can never be read
- * as a full one, and docs/63's exit gates were corrected to match.
+ * as a full one, and docs/67's exit gates were corrected to match.
  *
  * `accountableOwner` is assigned by domain rather than derived, because deriving it from work-package
  * ownership produces nonsense for capabilities whose only gate is a measurement package: `WP-28`
@@ -571,7 +571,7 @@ export const CAPABILITIES: readonly Capability[] = [
     ],
   },
   {
-    // Not in the original docs/63 contract. Encoding the manifest surfaced WP-17 — three
+    // Not in the original docs/67 contract. Encoding the manifest surfaced WP-17 — three
     // person-weeks of R3 work — as evidence no capability had asked for, while the scope boundary
     // separately promised "one authoritative runtime contract across root agents, workers, daemons,
     // TUI, headless, and ACP" with no ID to hold it. This is that ID; the outcome is taken from

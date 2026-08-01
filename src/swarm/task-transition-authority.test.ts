@@ -1,6 +1,6 @@
 /**
  * FX-CLAIM-002 — a task transition is authorized against who asked for it
- * (docs/63 `WP-06`).
+ * (docs/67 `WP-06`).
  *
  * The orchestrator knows which worker a request arrived from: the transport is
  * per-child, and `handleWorkerRequest` is handed that identity. Some handlers

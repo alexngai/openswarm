@@ -1,12 +1,12 @@
 /**
- * Frozen kernel contracts (docs/63 §A0, WP-00).
+ * Frozen kernel contracts (docs/67 §A0, WP-00).
  *
  * These types are the interop boundary for the effect-transaction foundation.
  * Everything in the parity program — durable journal, workspace authority,
  * policy engine, effect runtime, session kernel — is written against the shapes
  * declared here, so they change only through the schema-version rules below.
  *
- * Compatibility rule (docs/63 §A9): a release reads schema N and N−1 and writes
+ * Compatibility rule (docs/67 §A9): a release reads schema N and N−1 and writes
  * only N. Adding an optional field is a compatible change and does not bump the
  * version. Removing a field, renaming one, or narrowing a union does bump it,
  * and needs a reader for the previous shape before it ships.
@@ -81,7 +81,7 @@ export interface DirectoryQueryStamp {
  *
  * `generation` is the workspace generation current at observation time. In a
  * shared workspace a reader's output is provisional until its ReadSet is
- * revalidated against the live generation (docs/63 §A5); that check is what
+ * revalidated against the live generation (docs/67 §A5); that check is what
  * makes stale advice detectable rather than silently wrong.
  */
 export interface ReadSet {
@@ -160,7 +160,7 @@ export type IdempotencyClass =
   /**
    * Replaying may duplicate a side effect. Never retried automatically; an
    * unresolved attempt needs reconciliation or an explicit user decision
-   * (docs/63 §A0).
+   * (docs/67 §A0).
    */
   | "mutating"
   /** Effect is unknown to the kernel; treated as strictly as `mutating`. */
@@ -207,7 +207,7 @@ export interface NetworkRequest extends OperationRequestBase {
 }
 
 /**
- * Discriminated effect request (docs/63 §A2).
+ * Discriminated effect request (docs/67 §A2).
  *
  * Policy is evaluated against this, not against `(toolName, unknownInput)`, so
  * a decision and the approval grant derived from it name an exact resource and
@@ -224,7 +224,7 @@ export type OperationRequest =
 // Policy
 // ---------------------------------------------------------------------------
 
-/** How long an approval applies. Session scope is the default (docs/63). */
+/** How long an approval applies. Session scope is the default (docs/67). */
 export type GrantScope = "one-shot" | "session" | "persistent";
 
 export interface PolicyDecision {
@@ -304,7 +304,7 @@ export function isAutoReplayable(
 
 /**
  * Kernel event types. The journal is the source of truth; UI and lane events
- * are projections of it, never the other way round (docs/63 §A0 gate).
+ * are projections of it, never the other way round (docs/67 §A0 gate).
  */
 export type KernelEventType =
   /** An attempt is authorized and about to execute. Written before the effect. */
@@ -338,7 +338,7 @@ export interface AttemptResolvedPayload {
  * Opaque per-engine resume state. The kernel stores and returns it verbatim.
  *
  * Typing `data` as `unknown` is deliberate: the kernel coordinates sessions
- * without becoming a second authority on provider internals (docs/63 §A1), and
+ * without becoming a second authority on provider internals (docs/67 §A1), and
  * a structurally-typed field here would quietly become one.
  */
 export interface EngineSessionState {

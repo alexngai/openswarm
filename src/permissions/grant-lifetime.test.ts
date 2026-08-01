@@ -1,5 +1,5 @@
 /**
- * Grants end (docs/63 `WP-09`).
+ * Grants end (docs/67 `WP-09`).
  *
  * A grant used to last until the process did. For a short interactive session
  * that is roughly the same as "for now", which is why it went unnoticed; for a

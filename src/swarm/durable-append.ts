@@ -1,5 +1,5 @@
 /**
- * Durable append-only stream (docs/63 `WP-07`).
+ * Durable append-only stream (docs/67 `WP-07`).
  *
  * Every JSONL writer in the repository was a `createWriteStream(p, {flags:"a"})`.
  * Measured rather than assumed, that gets more right than the `WP-07` survey

@@ -1,5 +1,5 @@
 /**
- * Legacy session importer (docs/63 `WP-07`, `FX-MIG-SESSION-001`).
+ * Legacy session importer (docs/67 `WP-07`, `FX-MIG-SESSION-001`).
  *
  * Sessions predating the kernel journal exist in four shapes on disk: a Claude
  * Agent SDK session id, a `NativeEngine` snapshot, a `HardenedNativeEngine`
@@ -16,7 +16,7 @@
  *
  * What the journal can and cannot hold shapes this directly. `KernelEventType`
  * has no member carrying message content — the frozen contract records session
- * identity, turn boundaries, attempts, and opaque engine state (docs/63 §A9). So
+ * identity, turn boundaries, attempts, and opaque engine state (docs/67 §A9). So
  * message history travels as `EngineStateRecorded.data`, verbatim, which the
  * kernel stores without interpreting. That is lossless for resume and it is not a
  * queryable transcript. Where a source's history cannot even survive that trip,

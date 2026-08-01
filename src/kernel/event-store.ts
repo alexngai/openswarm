@@ -1,5 +1,5 @@
 /**
- * Durable kernel journal (docs/63 §A0, WP-00).
+ * Durable kernel journal (docs/67 §A0, WP-00).
  *
  * The existing lane-event writers (session-recorder, team-daemon, ACP spine)
  * are `createWriteStream` appenders with no flush discipline. Measured under
