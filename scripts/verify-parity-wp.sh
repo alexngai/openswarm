@@ -65,6 +65,7 @@ list_targets() {
   echo "  WP-05      retry operation ledger and cancellation barrier"
   echo "  WP-06      atomic task transitions and safe target CAS"
   echo "  WP-07      session schema, journal, snapshots, and importer"
+  echo "  WP-08      automatic multi-turn and crash resume"
   echo "  WP-09      approval broker and headless default deny"
   echo
   echo "Opt-in only (spends real tokens, needs OPENSWARM_PARITY_LIVE=1):"
@@ -73,7 +74,7 @@ list_targets() {
   echo "Declared but not yet implemented (exit 2):"
   printf '%s\n' "${KNOWN_WPS[@]:1}" \
     | grep -vx -e 'live' -e 'WP-00' -e 'WP-00a' -e 'WP-01' -e 'WP-02' -e 'WP-03' \
-    -e 'WP-04' -e 'WP-05' -e 'WP-06' -e 'WP-07' -e 'WP-09' \
+    -e 'WP-04' -e 'WP-05' -e 'WP-06' -e 'WP-07' -e 'WP-08' -e 'WP-09' \
     | paste -sd' ' - | fold -sw 76 | sed 's/^/  /'
   echo
   echo "See docs/63-product-parity-roadmap.md for each gate's fixtures and threshold."
@@ -576,6 +577,34 @@ case "$WP" in
         npx vitest run src/permissions/headless-prompt.test.ts src/acp/ src/permissions/gate.test.ts
       run_check A5 "the kernel effect path still authorizes before it acts" \
         npx vitest run src/kernel/
+    fi
+    ;;
+
+  WP-08)
+    # Automatic multi-turn and crash resume. Threshold (docs/63): ten-turn tests
+    # pass without manual resume; restart retains early context.
+    #
+    # R2 is the load-bearing check, and it is the gate's own wording made
+    # executable: ten turns, each through a new engine and a new store, so the
+    # only thing carrying the conversation is the journal. R1's FX-RESUME-002 is
+    # the one to read if resume ever breaks again — it pins the engine id
+    # surviving a round trip, which is precisely what the previous
+    # implementation destroyed by stamping every session `claude-agent-sdk`.
+    FIXTURES="FX-RESUME-001..011"
+    if ! ensure_deps; then
+      RESULT="error"
+      FAIL=$((FAIL + 1))
+    else
+      run_check R1 "FX-RESUME-001..010 state records, reads back, and refuses honestly" \
+        npx vitest run src/session/resume.test.ts
+      run_check R2 "FX-RESUME-011 ten turns across restarts keep the first one" \
+        npx vitest run src/engine/native.test.ts -t "ten turns across restarts"
+      run_check R3 "the sink hands over a snapshot the engine can resume from" \
+        npx vitest run src/engine/native.test.ts -t "snapshot sink"
+      run_check R4 "both native engines are otherwise unaffected" \
+        npx vitest run src/engine/native.test.ts src/engine/hardened-native.test.ts
+      run_check R5 "the CLI and session consumers are unaffected" \
+        npx vitest run src/cli/ src/session/ src/kernel/
     fi
     ;;
 

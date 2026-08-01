@@ -13,7 +13,9 @@ import * as path from "node:path";
 
 import { NativeEngine } from "./native.js";
 import { makeSnapshot } from "./native-snapshot.js";
-import type { RunConfig, PermissionDecision } from "./index.js";
+import { FileEventStore } from "../kernel/event-store.js";
+import { readResumeState, recordTurnState } from "../session/resume.js";
+import type { RunConfig, PermissionDecision, SessionSnapshot } from "./index.js";
 import type {
   Provider,
   ProviderCapabilities,
@@ -1240,4 +1242,185 @@ describe("NativeEngine: sessionId plumbing", () => {
     await collect(engine.run(baseConfig()));
     expect(captured).toEqual([undefined]);
   });
+});
+
+describe("NativeEngine: snapshot sink", () => {
+  it("hands the sink a snapshot the engine can resume from", async () => {
+    // The round trip, because the two halves being individually correct is what
+    // the first attempt at this looked like. The sink was handed
+    // `{ engineId, data: snap }` where `snap` was already a SessionSnapshot, so
+    // the payload nested one level too deep and resume failed on a missing
+    // message list — past the type checker, and only on a real second turn.
+    const provider1 = new MockProvider({
+      scripts: [
+        [
+          { type: "text-delta", text: "run1" },
+          { type: "finish", stopReason: "end_turn", usage: { inputTokens: 3, outputTokens: 4 } },
+        ],
+      ],
+    });
+    const recorded: SessionSnapshot[] = [];
+    const engine1 = new NativeEngine({
+      provider: provider1,
+      onSnapshot: async (snap) => {
+        recorded.push(snap);
+      },
+    });
+    await collect(engine1.run(baseConfig({ prompt: "first" })));
+
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]!.engineId).toBe("native");
+
+    const provider2 = new MockProvider({
+      scripts: [
+        [
+          { type: "text-delta", text: "run2" },
+          { type: "finish", stopReason: "end_turn", usage: { inputTokens: 2, outputTokens: 3 } },
+        ],
+      ],
+    });
+    const captured: ProviderRequest[] = [];
+    const engine2 = new NativeEngine({ provider: provider2 });
+    (provider2 as unknown as { onRequest: (r: ProviderRequest) => void }).onRequest =
+      (r) => captured.push(r);
+
+    const events = await collect(
+      engine2.run(baseConfig({ prompt: "second", resumeFrom: recorded[0]! })),
+    );
+
+    expect(events.some((e) => e.type === "error")).toBe(false);
+    const priorMessages = (recorded[0]!.data as { messages: unknown[] }).messages;
+    expect(captured[0]!.messages.length).toBe(priorMessages.length + 1);
+  });
+
+  it("records one snapshot per acknowledged turn", async () => {
+    const provider = new MockProvider({
+      scripts: [
+        [
+          {
+            type: "tool-call",
+            id: "t1",
+            name: "echo",
+            input: { value: "x" },
+          },
+          { type: "finish", stopReason: "tool_use", usage: { inputTokens: 1, outputTokens: 1 } },
+        ],
+        [
+          { type: "text-delta", text: "done" },
+          { type: "finish", stopReason: "end_turn", usage: { inputTokens: 1, outputTokens: 1 } },
+        ],
+      ],
+    });
+    const recorded: SessionSnapshot[] = [];
+    const engine = new NativeEngine({
+      provider,
+      onSnapshot: async (snap) => {
+        recorded.push(snap);
+      },
+    });
+    await collect(engine.run(baseConfig({ prompt: "go" })));
+
+    // Two turn boundaries: the tool-calling turn and the terminal one.
+    expect(recorded).toHaveLength(2);
+    expect((recorded[1]!.data as { turnCount: number }).turnCount).toBe(2);
+  });
+
+  it("aborts the turn when the sink cannot record it", async () => {
+    // A turn whose state was not recorded is not recoverable, so it must not be
+    // reported as an ordinary success. This matches what the file write already
+    // did when the disk refused it.
+    const provider = new MockProvider({
+      scripts: [
+        [
+          { type: "text-delta", text: "hi" },
+          { type: "finish", stopReason: "end_turn", usage: { inputTokens: 1, outputTokens: 1 } },
+        ],
+      ],
+    });
+    const engine = new NativeEngine({
+      provider,
+      onSnapshot: async () => {
+        throw new Error("journal is full");
+      },
+    });
+    await expect(collect(engine.run(baseConfig({ prompt: "go" })))).rejects.toThrow(
+      /journal is full/,
+    );
+  });
+});
+
+describe("NativeEngine: ten turns across restarts", () => {
+  it("FX-RESUME-011 retains the first turn's content after ten restarts", async () => {
+    // The WP-08 gate, deterministically: "ten-turn tests pass without manual
+    // resume; restart retains early context". Every iteration builds a new
+    // engine and a new store, so nothing survives in memory between turns —
+    // what carries the conversation is the journal on disk and nothing else.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "native-tenturn-"));
+    const sessionId = "ten-turn-session";
+    try {
+      for (let turn = 1; turn <= 10; turn += 1) {
+        const store = new FileEventStore(dir);
+        try {
+          const prior = await readResumeState(store, sessionId);
+          if (turn === 1) {
+            expect(prior.kind).toBe("refused");
+          } else {
+            expect(prior.kind).toBe("ok");
+          }
+
+          const provider = new MockProvider({
+            scripts: [
+              [
+                { type: "text-delta", text: `reply ${turn}` },
+                {
+                  type: "finish",
+                  stopReason: "end_turn",
+                  usage: { inputTokens: 1, outputTokens: 1 },
+                },
+              ],
+            ],
+          });
+          const engine = new NativeEngine({
+            provider,
+            onSnapshot: (snap) => recordTurnState(store, sessionId, snap),
+          });
+
+          const events = await collect(
+            engine.run(
+              baseConfig({
+                prompt: `turn ${turn}`,
+                ...(prior.kind === "ok" ? { resumeFrom: prior.snapshot } : {}),
+              }),
+            ),
+          );
+          expect(events.some((e) => e.type === "error")).toBe(false);
+        } finally {
+          await store.close();
+        }
+      }
+
+      const store = new FileEventStore(dir);
+      try {
+        const final = await readResumeState(store, sessionId);
+        if (final.kind !== "ok") throw new Error("expected a resumable session");
+
+        const data = final.snapshot.data as {
+          messages: { content?: unknown }[];
+          turnCount: number;
+        };
+        expect(data.turnCount).toBe(10);
+        // Ten user prompts and ten replies, and the earliest of them is still
+        // there. A snapshot that kept only recent turns would pass on turnCount
+        // and lose the conversation.
+        const serialized = JSON.stringify(data.messages);
+        expect(serialized).toContain("turn 1");
+        expect(serialized).toContain("reply 1");
+        expect(serialized).toContain("turn 10");
+      } finally {
+        await store.close();
+      }
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

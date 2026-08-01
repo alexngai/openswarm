@@ -53,7 +53,7 @@ import { loadAliases, resolveAlias } from "../providers/aliases.js";
 import { OpenAIEnvAuth } from "../auth/openai-env.js";
 import { planEngine } from "./select-engine.js";
 import type { CommonOpts } from "./argv.js";
-import type { AgentEngine } from "../engine/index.js";
+import type { AgentEngine, SnapshotSink } from "../engine/index.js";
 import type { AuthSource } from "../auth/index.js";
 import type { ToolImpl } from "../tools/types.js";
 import type { HooksConfigFile } from "../hooks/config.js";
@@ -118,8 +118,15 @@ export async function buildAuthForProvider(modelId: string): Promise<AuthSource>
  * Lazily constructs an engine for a given session id. Returns the engine plus
  * the provider id (native path only — used by `--dump-engine`).
  */
+/**
+ * `hooks` is optional so the surfaces that do not persist session state (ACP
+ * supplies its own ids and, for now, its own lifecycle) are unaffected. The CLI
+ * passes `onSnapshot` when session storage is durable, which is what gives
+ * `--resume` something to read (docs/63 `WP-08`).
+ */
 export type MakeEngine = (
   sessionId: string,
+  hooks?: { readonly onSnapshot?: SnapshotSink },
 ) => Promise<{ engine: AgentEngine; providerId?: string }>;
 
 export interface AgentRuntime {
@@ -447,7 +454,7 @@ export async function buildAgentRuntime(
       const providerModelId = plan.resolved.modelId!;
       const authFactory = plan.resolved.authFactory;
       const useHardened = plan.hardened;
-      makeEngine = async (sessionId: string) => {
+      makeEngine = async (sessionId: string, hooks) => {
         const providerAuth = authFactory
           ? await authFactory()
           : await buildAuthForProvider(providerModelId);
@@ -465,12 +472,18 @@ export async function buildAgentRuntime(
               midTurnCompaction: opts.midTurnCompaction,
               compactionConfig,
               recontextualize,
+              ...(hooks?.onSnapshot !== undefined
+                ? { onSnapshot: hooks.onSnapshot }
+                : {}),
             })
           : new NativeEngine({
               provider,
               sessionId,
               compactionConfig,
               recontextualize,
+              ...(hooks?.onSnapshot !== undefined
+                ? { onSnapshot: hooks.onSnapshot }
+                : {}),
             });
         return { engine, providerId: provider.id };
       };

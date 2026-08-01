@@ -63,7 +63,7 @@ export const CAPABILITIES: readonly Capability[] = [
       {
         workPackage: "WP-08",
         cells: ["linux-x64"],
-        fixtures: ["FX-CONV-001..004"],
+        fixtures: ["FX-RESUME-001..011"],
       },
     ],
   },

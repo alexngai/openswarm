@@ -99,6 +99,7 @@ describe("the shipped manifest", () => {
       "WP-05",
       "WP-06",
       "WP-07",
+      "WP-08",
       "WP-09",
     ]);
   });

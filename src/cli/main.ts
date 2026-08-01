@@ -58,6 +58,16 @@ import { computeTeamPaths } from "./team-paths.js";
 import { combineSwarmSources, type SwarmEventSource } from "../ui/repl-solid/merge-swarm-events.js";
 import type { PendingPermission } from "../ui/repl/state.js";
 import { SessionStore } from "../session/store.js";
+import {
+  DURABLE_OPT_IN,
+  explainRefusal,
+  readResumeState,
+  recordTurnState,
+  resolveLatest,
+  resolvePersistence,
+} from "../session/resume.js";
+import { FileEventStore } from "../kernel/event-store.js";
+import type { SessionSnapshot } from "../engine/index.js";
 import { runHeadless } from "../ui/headless.js";
 import { checkBudget } from "../core/budget.js";
 import { ApiCostModel } from "../core/cost-model.js";
@@ -108,7 +118,7 @@ Usage:
 
 Flags:
   --model <id>                   Model id or alias (e.g. sonnet, claude-sonnet-4-6)
-  --resume <session-id|latest>   Resume a previous session
+  --resume <session-id|latest>   Resume a previous session (see OPENSWARM_SESSION_STORE)
   --permission-mode <mode>       read-only | workspace-write | danger-full-access
                                  (default: workspace-write)
   --plan                         Read-only plan mode: investigate + design, no edits
@@ -141,6 +151,15 @@ swarm run flags:
   --role <name>                  Default role applied to every task without a per-task override
   --dead-letter <path>           Dead-letter JSONL file (default: ./dead-letter.jsonl)
   --allow-dead-letter            Do not exit non-zero when this run appends to dead-letter
+
+Session history:
+  Sessions are ephemeral by default: nothing is written to disk, and --resume
+  works only for Claude SDK sessions, whose transcripts the SDK keeps itself.
+  OPENSWARM_SESSION_STORE=unencrypted-durable journals sessions under
+  .openswarm/sessions/ so --resume works for any engine. The default will become
+  encrypted history once a secure key provider is available; until then the only
+  alternative to keeping nothing is keeping it in the clear, which is why
+  enabling it is spelled out in full.
 
 Examples:
   openswarm "explain this codebase"
@@ -311,20 +330,72 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   // `sessionId` is forwarded to NativeEngine so the OpenAI transport can pass
   // it as `prompt_cache_key`. Resumed sessions inherit the previous id; new
   // sessions get a fresh UUID.
-  let resumeFrom: { engineId: string; data: unknown } | undefined;
+  // Where this session's history may go. Ephemeral unless explicitly opted in,
+  // because a journal is conversation history and the storage decision locked in
+  // WP-00 is encrypted-or-nothing (docs/63 §The live cell's sibling, WP-08).
+  const persistence = await resolvePersistence({
+    workspaceDir: process.cwd(),
+    optIn: process.env.OPENSWARM_SESSION_STORE,
+  });
+  let journal: FileEventStore | undefined;
+  let journalRoot: string | undefined;
+  if (persistence.kind === "durable") {
+    journalRoot = persistence.rootDir;
+    journal = new FileEventStore(journalRoot);
+    process.stderr.write(`warning: ${persistence.warning}\n`);
+  }
+
+  let resumeFrom: SessionSnapshot | undefined;
   let sessionId: string | undefined;
   if (opts.resume !== undefined) {
-    const store = new SessionStore();
-    if (opts.resume === "latest") {
-      sessionId = await store.resolveLatest(process.cwd());
-      if (sessionId === undefined) {
-        process.stderr.write("warning: no previous sessions found; starting fresh\n");
+    // The journal first, because it is the only store that works for every
+    // engine. The SDK store below stays as the fallback so a Claude session
+    // recorded before any of this still resumes; it is also the default path,
+    // since durable journalling is opt-in.
+    if (journal !== undefined && journalRoot !== undefined) {
+      const wanted =
+        opts.resume === "latest" ? await resolveLatest(journalRoot) : opts.resume;
+      if (wanted !== undefined) {
+        const state = await readResumeState(journal, wanted);
+        if (state.kind === "ok") {
+          sessionId = wanted;
+          resumeFrom = state.snapshot;
+        } else if (state.refusal.reason !== "no-such-session") {
+          // A session that exists and cannot be continued is an error worth
+          // stopping for. Starting fresh would silently discard what the user
+          // asked to return to.
+          process.stderr.write(`error: ${explainRefusal(state.refusal, wanted)}\n`);
+          return 1;
+        }
       }
-    } else {
-      sessionId = opts.resume;
     }
-    if (sessionId !== undefined) {
-      resumeFrom = store.buildSnapshot(sessionId);
+
+    if (resumeFrom === undefined) {
+      // The fallback only knows Claude SDK sessions, whose transcripts the SDK
+      // owns. Saying so here matters because the alternative is what used to
+      // happen: the engine refused a snapshot this layer had labelled
+      // `claude-agent-sdk`, and the user read "cannot resume snapshots produced
+      // by another engine" as a bug in resume rather than as history that was
+      // never kept.
+      if (journal === undefined) {
+        process.stderr.write(
+          `warning: session history is ephemeral, so only Claude SDK sessions can be ` +
+            `resumed. Set OPENSWARM_SESSION_STORE=${DURABLE_OPT_IN} to journal ` +
+            `sessions for any engine.\n`,
+        );
+      }
+      const store = new SessionStore();
+      if (opts.resume === "latest") {
+        sessionId = await store.resolveLatest(process.cwd());
+        if (sessionId === undefined) {
+          process.stderr.write("warning: no previous sessions found; starting fresh\n");
+        }
+      } else {
+        sessionId = opts.resume;
+      }
+      if (sessionId !== undefined) {
+        resumeFrom = store.buildSnapshot(sessionId);
+      }
     }
   }
   if (sessionId === undefined) {
@@ -332,7 +403,19 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   }
 
   // 8. Construct the engine for this session.
-  const { engine, providerId } = await rt.makeEngine(sessionId);
+  // The sink records resume state at each turn boundary the engine acknowledges.
+  // Bound to the session id resolved above, so a resumed session keeps appending
+  // to the journal it came from rather than starting a second one.
+  const resumeSessionId = sessionId;
+  const { engine, providerId } = await rt.makeEngine(
+    sessionId,
+    journal !== undefined
+      ? {
+          onSnapshot: (snapshot) =>
+            recordTurnState(journal as FileEventStore, resumeSessionId, snapshot),
+        }
+      : undefined,
+  );
 
   // --dump-engine: print engine info as JSON and exit 0 (smoke tests only).
   if (opts.dumpEngine) {

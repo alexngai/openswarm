@@ -316,3 +316,18 @@ export interface SessionSnapshot {
   readonly engineId: string;
   readonly data: unknown;
 }
+
+/**
+ * Receives the engine's resume state at each acknowledged turn boundary.
+ *
+ * The engines already knew when to persist — the turn boundaries were the right
+ * places all along — but they only knew one destination, a per-engine file
+ * written when `sessionDir` was set, which no production caller ever set. A sink
+ * lets the surface decide where state goes (for the CLI, the kernel journal)
+ * without the engine learning about journals (docs/63 `WP-08`).
+ *
+ * Rejecting aborts the turn, matching what the file write already did. A turn
+ * whose state could not be recorded is not recoverable, and continuing as though
+ * it were is how a resume silently loses the tail of a conversation.
+ */
+export type SnapshotSink = (snapshot: SessionSnapshot) => Promise<void>;

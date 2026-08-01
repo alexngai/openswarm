@@ -113,8 +113,8 @@ export const WORK_PACKAGES: readonly WorkPackage[] = [
     ownerSplit: { B: 3 },
     dependsOn: ["WP-07"],
     cells: ["linux-x64"],
-    fixtures: ["FX-CONV-001..004"],
-    gateImplemented: false,
+    fixtures: ["FX-RESUME-001..011"],
+    gateImplemented: true,
   },
   {
     id: "WP-09",

@@ -238,5 +238,77 @@ else
 fi
 fi
 
+# ---------------------------------------------------------------------------
+# L6 — a session resumes in a second process, and remembers.
+#
+# Two processes, because that is the claim: state written by one run is picked up
+# by the next. An in-process fixture can assert the journal round-trips and still
+# tell us nothing about whether the CLI resolves the session, hands the snapshot
+# to an engine that accepts it, and keeps appending to the same journal.
+#
+# The first version of this seam passed its type check and every unit test while
+# nesting the payload one level too deep, which surfaced only here, on a real
+# second turn (docs/63 WP-08).
+# ---------------------------------------------------------------------------
+L6A="$WORKDIR/l6a.jsonl"
+L6B="$WORKDIR/l6b.jsonl"
+RESUME_DIR="$WORKDIR/resume"
+mkdir -p "$RESUME_DIR"
+( cd "$RESUME_DIR" && git init -q . 2>/dev/null )
+say L6 "a second process resumes the session and recalls it"
+(
+  cd "$RESUME_DIR" &&
+    OPENSWARM_SESSION_STORE=unencrypted-durable node "$CLI" prompt \
+      "My favourite bird is the GANNET. Reply with just: OK" \
+      --headless --model "$MODEL" "${BOUNDS[@]}"
+) >"$L6A" 2>&1
+(
+  cd "$RESUME_DIR" &&
+    OPENSWARM_SESSION_STORE=unencrypted-durable node "$CLI" prompt \
+      "What is my favourite bird? Reply with just the bird name." \
+      --headless --model "$MODEL" --resume latest "${BOUNDS[@]}"
+) >"$L6B" 2>&1
+JOURNAL="$(find "$RESUME_DIR/.openswarm/sessions" -name journal.jsonl 2>/dev/null | head -1)"
+require "the first run recorded no journal" test -n "$JOURNAL"
+require "the resumed run did not complete" \
+  test "$(count '"type":"message_stop"' "$L6B")" = "1"
+
+# What this asserts is that *we* delivered the history, not that the model
+# remembered it. An earlier version failed against a model that was handed the
+# whole first turn and still answered "Condor", which is a fact about the model
+# and not about resume; the same model answered correctly on the next run. The
+# journal accumulating a second turn over a longer message list, and the resumed
+# request costing more input tokens than the fresh one, are the parts this
+# codebase is responsible for and they hold whatever the model says.
+if [[ -n "$JOURNAL" ]]; then
+  require "the journal did not accumulate a second turn over a longer history" \
+    node -e '
+      const fs = require("node:fs");
+      const records = fs.readFileSync(process.argv[1], "utf8").trim().split("\n")
+        .map((l) => JSON.parse(l))
+        .filter((r) => r.type === "EngineStateRecorded");
+      if (records.length < 2) { console.error(`only ${records.length} state records`); process.exit(1); }
+      const first = records[0].payload.data, last = records[records.length - 1].payload.data;
+      if (!(last.turnCount > first.turnCount)) { console.error("turn count did not advance"); process.exit(1); }
+      if (!(last.messages.length > first.messages.length)) { console.error("history did not grow"); process.exit(1); }
+      if (records.some((r) => r.payload.engineId !== records[0].payload.engineId)) {
+        console.error("engine id changed between turns"); process.exit(1);
+      }
+    ' "$JOURNAL"
+fi
+
+tokens_of() { rg -o '"inputTokens":[0-9]+' "$1" | tail -1 | grep -o '[0-9]*'; }
+fresh_tokens="$(tokens_of "$L6A")"
+resumed_tokens="$(tokens_of "$L6B")"
+require "resumed prompt was not larger than the fresh one ($resumed_tokens vs $fresh_tokens input tokens), so no history was sent" \
+  test "${resumed_tokens:-0}" -gt "${fresh_tokens:-0}"
+verdict "$L6B"
+
+# Reported rather than asserted, for the reason above.
+resumed_text="$(rg -o '"text":"[^"]*"' "$L6B" 2>/dev/null | sed 's/"text":"//;s/"$//' | tr -d '\n')"
+if ! grep -qi 'GANNET' <<<"$resumed_text"; then
+  printf '         note: %s did not recall the fact (said: %s)\n' "$MODEL" "${resumed_text:0:60}"
+fi
+
 printf '\n  %s: %d passed, %d failed\n' "$MODEL" "$PASS" "$FAIL"
 [[ $FAIL -eq 0 ]]

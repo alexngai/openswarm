@@ -33,6 +33,7 @@ import type {
   EngineCapabilities,
   RunConfig,
   PermissionDecision,
+  SnapshotSink,
 } from "./index.js";
 import {
   shouldCompact,
@@ -129,7 +130,13 @@ function abortableSleep(
 export interface HardenedNativeEngineOptions {
   readonly provider: Provider;
   readonly compactionConfig?: CompactionConfig;
+  /**
+   * Legacy on-disk resume state, kept because the `WP-07` importer reads it.
+   * New callers should pass `onSnapshot`, which reaches the session journal.
+   */
   readonly sessionDir?: string;
+  /** Same snapshot, same turn boundaries, caller-chosen destination. */
+  readonly onSnapshot?: SnapshotSink;
   readonly sessionId?: string;
   readonly retryPolicy?: RetryPolicy;
   readonly eagerToolDispatch?: boolean;
@@ -159,6 +166,7 @@ export class HardenedNativeEngine implements AgentEngine {
   private readonly provider: Provider;
   private readonly compactionConfig: CompactionConfig;
   private readonly sessionDir?: string;
+  private readonly onSnapshot?: SnapshotSink;
   private readonly sessionId?: string;
   private readonly retryPolicy: RetryPolicy;
   private readonly eagerToolDispatch: boolean;
@@ -198,6 +206,7 @@ export class HardenedNativeEngine implements AgentEngine {
     this.provider = opts.provider;
     this.compactionConfig = opts.compactionConfig ?? DEFAULT_COMPACTION;
     if (opts.sessionDir !== undefined) this.sessionDir = opts.sessionDir;
+    if (opts.onSnapshot !== undefined) this.onSnapshot = opts.onSnapshot;
     if (opts.sessionId !== undefined) this.sessionId = opts.sessionId;
     this.retryPolicy = opts.retryPolicy ?? DEFAULT_RETRY_POLICY;
     this.eagerToolDispatch = opts.eagerToolDispatch ?? false;
@@ -1057,7 +1066,7 @@ export class HardenedNativeEngine implements AgentEngine {
     turnCount: number,
     compactionCount: number,
   ): Promise<void> {
-    if (this.sessionDir === undefined) return;
+    if (this.sessionDir === undefined && this.onSnapshot === undefined) return;
     const snap = makeHardenedSnapshot(
       messages,
       turnCount,
@@ -1066,6 +1075,16 @@ export class HardenedNativeEngine implements AgentEngine {
       this.retryStats,
       persistCompactionState(this.compactionState),
     );
+
+    // `snap` is already a SessionSnapshot carrying this engine's id, so it
+    // travels as-is. Re-wrapping it would nest the payload one level deeper than
+    // the extractor expects, which surfaces on resume as a missing message list
+    // rather than as a type error.
+    if (this.onSnapshot !== undefined) {
+      await this.onSnapshot(snap);
+    }
+
+    if (this.sessionDir === undefined) return;
     const snapPath = path.join(
       this.sessionDir,
       "hardened-native-snapshot.json",
