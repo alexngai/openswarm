@@ -29,7 +29,7 @@ across 4 model configs). Only TE-26 (optional) is deferred.
 `azureoai/gpt-5.5` (best-of-3): **all arms 100% non-security retention; baseline
 already saturates**, so verbatim pinning stays gated off (no code change). Full
 table, decision, and the saturation caveat in [Live result](#live-result-2026-07-22-te-25-constraint-retention).
-Runbook: [`55-live-eval-handoff.md`](./55-live-eval-handoff.md).
+Runbook: [`65-live-eval-handoff.md`](./65-live-eval-handoff.md).
 
 **Efficiency validated live (2026-07-24).** Beyond the retention work (a quality
 guardrail), the two core *token-efficiency* claims are now confirmed on real
@@ -343,7 +343,7 @@ Reuse the swarmkit-eval cost-frontier harness (51), the TE-14 telemetry, and the
 non-security retention, baseline saturates, verbatim stays gated off (no code
 change). See [Live result](#live-result-2026-07-22-te-25-constraint-retention).
 The runbook below is retained for re-running on a different (ideally weaker)
-model. Standalone runbook: [`55-live-eval-handoff.md`](./55-live-eval-handoff.md).
+model. Standalone runbook: [`65-live-eval-handoff.md`](./65-live-eval-handoff.md).
 
 ```bash
 # 1. fresh clone of the branch, then:
