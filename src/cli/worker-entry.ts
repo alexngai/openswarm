@@ -58,6 +58,7 @@ import { ToolInputAccumulator, parseToolInput } from "../core/tool-input.js";
 import { isEditTool } from "../acp/tool-kind.js";
 import { redactSecrets } from "../tools/tier0/secrets.js";
 import type { ToolExecutionContext, ToolImpl } from "../tools/types.js";
+import { bumpGeneration, withWriteLease } from "../kernel/write-lease.js";
 import { readSessionSidecar, writeSessionSidecar } from "./session-sidecar.js";
 import { buildSystemPrompt } from "../engine/default-system-prompt.js";
 import {
@@ -322,6 +323,41 @@ export function buildWorkerCanUseTool(deps: {
  * Reused for the initial run AND each subsequent `run_more` in long-lived
  * mode. Lifecycle transitions are handled by the caller.
  */
+/**
+ * Long enough that an ordinary tool call never has to renew, short enough that a
+ * worker killed mid-write does not park the queue. `withWriteLease` renews for
+ * anything slower.
+ */
+const LEASE_TTL_MS = 15_000;
+
+/**
+ * Whether a call needs the write lease.
+ *
+ * Read-only calls must not take it: the lease is single-writer precisely so that
+ * readers stay concurrent, and putting reads behind it would serialize the
+ * common case for nothing. A tool that cannot describe its accesses is treated
+ * as writing, matching what the access model already does with malformed
+ * accesses — a needless lease costs throughput, a missing one costs the
+ * guarantee.
+ */
+function mutates(
+  tool: ToolImpl,
+  input: unknown,
+  ctx: ToolExecutionContext,
+): boolean {
+  let accesses;
+  try {
+    accesses = tool.accesses(input, ctx);
+  } catch {
+    return true;
+  }
+  return accesses.some(
+    (a) =>
+      a.kind === "all" ||
+      (a.kind === "file" && (a.operation === "write" || a.operation === "readwrite")),
+  );
+}
+
 async function executeTurn(
   ctx: TurnContext,
   task: TaskPacket,
@@ -348,7 +384,29 @@ async function executeTurn(
       ...t,
       execute: async (input: unknown, ec: ToolExecutionContext) => {
         // Inject SwarmHost into the execution context for Tier 2 tools.
-        return t.execute(input, { ...ec, host: ctx.host });
+        const withHost: ToolExecutionContext = { ...ec, host: ctx.host };
+        if (!mutates(t, input, withHost)) {
+          return t.execute(input, withHost);
+        }
+        // Exactly one writer per working directory (docs/63 §A5, `WP-11`).
+        // Keyed on the worker's own cwd, so a member that was given a worktree
+        // gets an uncontended lease of its own and only members that genuinely
+        // share a directory serialize against each other.
+        return withWriteLease(
+          ec.cwd,
+          { agentId, ttlMs: LEASE_TTL_MS, signal: ec.abort },
+          async (lease) => {
+            const result = await t.execute(input, withHost);
+            // The generation advances on a committed mutation, and is what a
+            // reader's `ReadSet` is judged against. Failing to advance it would
+            // make stale work look current, so a bump that throws must not be
+            // swallowed into a successful tool result.
+            if (result.status === "ok") {
+              await bumpGeneration(ec.cwd, lease);
+            }
+            return result;
+          },
+        );
       },
     }));
 

@@ -608,6 +608,47 @@ case "$WP" in
     fi
     ;;
 
+  WP-11)
+    # Shared writer lease and generation tracking. Threshold (docs/63): injected
+    # races mark stale reads and reject stale writes; after the active writer
+    # releases, the next queued writer starts within five seconds under 32
+    # continuously active readers.
+    #
+    # W2 and W5 are the two halves of that threshold, and they fail for different
+    # reasons. W2 is the detection half: before it, `write_file` overwrote another
+    # agent's work and reported success, because read state recorded which paths
+    # had been read and nothing about what was in them. W5 is the throughput half,
+    # and the one to read if the lease is ever changed — it is the fixture that
+    # would catch a reader starting to queue behind writers, which is the failure
+    # a single-writer lease invites.
+    FIXTURES="FX-RW-001..012"
+    if ! ensure_deps; then
+      RESULT="error"
+      FAIL=$((FAIL + 1))
+    else
+      # The exclusion and fairness fixtures run the lease in real processes, for
+      # the reason the lease exists: shared mode is several agents that share a
+      # directory and share no memory. They need dist, which the parity
+      # environment does not build for them (OPENSWARM_SKIP_INTEGRATION_BUILD=1).
+      run_check W0 "compile, so the contention fixtures have a module to run" \
+        npm run build
+      run_check W1 "FX-RW-001..008 a stale read is detected and a stale write refused" \
+        npx vitest run src/tools/tier0/shared-mode-staleness.test.ts
+      run_check W2 "FX-RW-009 sixteen real processes produce one writer at a time" \
+        npx vitest run src/kernel/write-lease.test.ts -t "FX-RW-009"
+      run_check W3 "FX-RW-010 queued writers are served in arrival order" \
+        npx vitest run src/kernel/write-lease.test.ts -t "FX-RW-010"
+      run_check W4 "FX-RW-011 a killed or stalled writer cannot park the queue" \
+        npx vitest run src/kernel/write-lease.test.ts -t "FX-RW-011"
+      run_check W5 "FX-RW-012 the next writer starts within 5s under 32 readers" \
+        npx vitest run src/kernel/write-lease.test.ts -t "FX-RW-012"
+      run_check W6 "the lease state machine: renewal, bounded holds, cancellation" \
+        npx vitest run src/kernel/write-lease.test.ts -t "the state machine"
+      run_check W7 "the read-state consumers and the worker tool path are unaffected" \
+        npx vitest run src/tools/ src/cli/ src/engine/compact-rebuild.test.ts
+    fi
+    ;;
+
   WP-07)
     # Session journal and snapshot durability. Threshold (docs/63): a recorded
     # event survives the process that recorded it, and a snapshot that reads

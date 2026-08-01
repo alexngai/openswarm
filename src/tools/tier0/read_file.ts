@@ -147,7 +147,7 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   // continuation notice below tells the model where to resume.
   const byteCapped = capSliceBytes(slice, MAX_OUTPUT_BYTES);
 
-  recordFileRead(resolved);
+  recordFileRead(resolved, text);
 
   // Empty file / offset past EOF: Claude Code's exact system-reminder warnings.
   if (lines.length === 0) {

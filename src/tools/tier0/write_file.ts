@@ -6,8 +6,13 @@ import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { ToolAccesses, type ToolAccesses as ToolAccessesType } from "../access.js";
 import { aliasParams } from "./internal.js";
 import { resolveInWorkspace, atomicWriteInWorkspace } from "../workspace-path.js";
-import { hasFileBeenRead, recordFileRead, READ_BEFORE_EDIT_ERROR } from "./read-state.js";
-import { FILE_STATE_CURRENT_SUFFIX } from "./edit_file.js";
+import {
+  checkFileCurrent,
+  hasFileBeenRead,
+  recordFileRead,
+  READ_BEFORE_EDIT_ERROR,
+} from "./read-state.js";
+import { FILE_STATE_CURRENT_SUFFIX, STALE_FILE_ERROR } from "./edit_file.js";
 
 const paramsSchema = z.object({
   file_path: z.string(),
@@ -70,6 +75,19 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
     return { status: "error", message: READ_BEFORE_EDIT_ERROR };
   }
 
+  // ...and the file has to still be the one that was read. Unlike edit_file,
+  // this tool never reads its target, so a whole-file overwrite is the one place
+  // where a concurrent writer's work leaves no trace at all: nothing in the
+  // request refers to the old content, so there is nothing to fail to match.
+  // Where several agents share a working directory that made a lost update
+  // indistinguishable from a successful write (docs/63 `WP-11`).
+  if (fileExists) {
+    const verdict = await checkFileCurrent(resolved);
+    if (verdict.kind === "stale") {
+      return { status: "error", message: STALE_FILE_ERROR };
+    }
+  }
+
   // Content size check (UTF-8 byte length).
   const contentBytes = Buffer.byteLength(input.content, "utf8");
   if (contentBytes > MAX_CONTENT_BYTES) {
@@ -97,7 +115,7 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   }
 
   // Post-write content is known to the agent.
-  recordFileRead(resolved);
+  recordFileRead(resolved, input.content);
 
   // Claude Code's exact success sentences (v2.1.198) — both variants carry
   // the "file state is current" suffix that suppresses read-backs.

@@ -19,7 +19,12 @@ import { ToolAccesses, type ToolAccesses as ToolAccessesType } from "../access.j
 import { aliasParams } from "./internal.js";
 import { resolveInWorkspace } from "../workspace-path.js";
 import { atomicWrite, TocttouError, STALE_FILE_ERROR } from "./edit_file.js";
-import { hasFileBeenRead, recordFileRead, READ_BEFORE_EDIT_ERROR } from "./read-state.js";
+import {
+  hasFileBeenRead,
+  recordFileRead,
+  recordedHash,
+  READ_BEFORE_EDIT_ERROR,
+} from "./read-state.js";
 
 const editSchema = z.object({
   old_string: z.string(),
@@ -112,6 +117,15 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
     return { status: "error", message: `failed to read "${input.file_path}": ${msg}` };
   }
 
+  // The agent has to still be looking at this file, not merely to have looked at
+  // it once. See edit_file for why anchor matching is not enough (docs/63
+  // `WP-11`); the same hash serves the TOCTTOU check at the write below.
+  const contentHash = crypto.createHash("sha256").update(originalContent).digest("hex");
+  const known = recordedHash(resolved);
+  if (known !== null && known !== contentHash) {
+    return { status: "error", message: STALE_FILE_ERROR };
+  }
+
   // Phase 1: validate ALL edits before applying any.
   // Simulate applying edits in order to validate each against the evolving content.
   let simulatedContent = originalContent;
@@ -130,9 +144,6 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
 
   // Phase 2: apply all edits in order to produce the final content.
   // simulatedContent already holds the result after all valid edits.
-  // S5: compute hash of original content for TOCTTOU check.
-  const contentHash = crypto.createHash("sha256").update(originalContent).digest("hex");
-
   try {
     await atomicWrite(resolved, simulatedContent, ctx.cwd, contentHash);
   } catch (err) {
@@ -144,7 +155,7 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   }
 
   // Post-edit content is known to the agent.
-  recordFileRead(resolved);
+  recordFileRead(resolved, simulatedContent);
 
   return {
     status: "ok",

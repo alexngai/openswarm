@@ -20,7 +20,12 @@ import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { ToolAccesses, type ToolAccesses as ToolAccessesType } from "../access.js";
 import { aliasParams } from "./internal.js";
 import { resolveInWorkspace, atomicWriteInWorkspace } from "../workspace-path.js";
-import { hasFileBeenRead, recordFileRead, READ_BEFORE_EDIT_ERROR } from "./read-state.js";
+import {
+  hasFileBeenRead,
+  recordFileRead,
+  recordedHash,
+  READ_BEFORE_EDIT_ERROR,
+} from "./read-state.js";
 
 const paramsSchema = z.object({
   file_path: z.string(),
@@ -138,6 +143,18 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
     return { status: "error", message: `failed to read "${input.file_path}": ${msg}` };
   }
 
+  // The hash check below and the one in `atomicWrite` answer different
+  // questions. That one guards this function's own read-modify-write window;
+  // this one asks whether the content the *agent* read is still there. Matching
+  // `old_string` against a freshly-read file makes a stale edit look clean
+  // whenever the anchor survived somebody else's rewrite, and the edit then
+  // lands in a file the agent has never seen (docs/63 `WP-11`).
+  const contentHash = crypto.createHash("sha256").update(content).digest("hex");
+  const known = recordedHash(resolved);
+  if (known !== null && known !== contentHash) {
+    return { status: "error", message: STALE_FILE_ERROR };
+  }
+
   // Uniqueness check.
   const count = countOccurrences(content, input.old_string);
 
@@ -161,9 +178,6 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   // Apply replacement(s).
   const newContent = content.split(input.old_string).join(input.new_string);
 
-  // S5: compute hash of original content for TOCTTOU check.
-  const contentHash = crypto.createHash("sha256").update(content).digest("hex");
-
   try {
     await atomicWrite(resolved, newContent, ctx.cwd, contentHash);
   } catch (err) {
@@ -175,7 +189,7 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   }
 
   // Post-edit content is known to the agent.
-  recordFileRead(resolved);
+  recordFileRead(resolved, newContent);
 
   // Claude Code's exact success sentences (v2.1.198).
   return {
