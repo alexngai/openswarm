@@ -376,7 +376,7 @@ that gap, and it is the one that matters.
 
 ### F4 — resolve-rate measurement on an open-weight tier (open, runbook written)
 
-**Runbook: [63-live-eval-handoff.md](./63-live-eval-handoff.md).**
+**Runbook: [66-live-eval-handoff.md](./66-live-eval-handoff.md).**
 
 Deliberately not run here — it needs a real open-weight tier and GPU/API budget,
 neither of which the dev sandbox has. Deliberately not *scaffolded* here either:

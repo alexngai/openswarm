@@ -293,6 +293,11 @@ export class FanoutTopology implements Topology {
         let result: AgentResult;
         let handle;
         const perAttemptCeiling = task.budget?.maxWallClockMsPerAttempt;
+        // Set when the ceiling timer wins the race below. Authoritative: the
+        // clock-based check further down cannot re-derive this reliably,
+        // because a timer scheduled for N ms can settle at exactly N and the
+        // comparison there is strictly greater-than.
+        let perAttemptCeilingHit = false;
         try {
           // NOTE: we intentionally omit `taskId` — StandaloneHost treats
           // non-undefined taskId as "look up an EXISTING record", which we
@@ -333,6 +338,7 @@ export class FanoutTopology implements Topology {
             );
             const raced = await Promise.race([waitPromise, racePromise]);
             if (raced === timeoutSentinel) {
+              perAttemptCeilingHit = true;
               // Per-attempt ceiling hit — kill the worker, then let wait()
               // resolve (it will return a killed result from the host).
               await handle.kill().catch(() => {
@@ -406,7 +412,7 @@ export class FanoutTopology implements Topology {
         // dead-letter immediately without consulting the retry policy (C2).
         if (
           perAttemptCeiling != null &&
-          attemptDurationMs > perAttemptCeiling
+          (perAttemptCeilingHit || attemptDurationMs > perAttemptCeiling)
         ) {
           await sendToDeadLetter(
             task,

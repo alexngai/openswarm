@@ -86,6 +86,38 @@ describe("LiteLLMTransportProvider.stream()", () => {
     expect(events[1]).toMatchObject({ type: "finish", stopReason: "tool_use" });
   });
 
+  it("forwards req.sessionId as providerOptions.openai.promptCacheKey", async () => {
+    (streamText as ReturnType<typeof vi.fn>).mockReturnValue({
+      fullStream: asyncIterOf([finishPart]),
+    });
+    const p = await LiteLLMTransportProvider.create(authOk, "gpt-4.1");
+    for await (const _ of p.stream(makeReq({ sessionId: "agent-7" }))) {
+      /* consume */
+    }
+    const args = (streamText as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<
+      string,
+      unknown
+    >;
+    // Not gated on capabilities.promptCache (false for the arbitrary gateway model):
+    // the key is what lets a gateway attribute a call to the agent that made it.
+    expect(args.providerOptions).toEqual({ openai: { promptCacheKey: "agent-7" } });
+  });
+
+  it("omits providerOptions entirely when sessionId is not set", async () => {
+    (streamText as ReturnType<typeof vi.fn>).mockReturnValue({
+      fullStream: asyncIterOf([finishPart]),
+    });
+    const p = await LiteLLMTransportProvider.create(authOk, "gpt-4.1");
+    for await (const _ of p.stream(makeReq())) {
+      /* consume */
+    }
+    const args = (streamText as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<
+      string,
+      unknown
+    >;
+    expect(args.providerOptions).toBeUndefined();
+  });
+
   it("forwards maxOutputTokens/temperature/topP to streamText", async () => {
     (streamText as ReturnType<typeof vi.fn>).mockReturnValue({
       fullStream: asyncIterOf([finishPart]),

@@ -81,6 +81,29 @@ export function autoCompactThreshold(contextWindow: number): number {
   );
 }
 
+/**
+ * Compaction config sized to a provider's real context window — the safe default for
+ * any engine.
+ *
+ * `DEFAULT_COMPACTION.maxEstimatedTokens` (10k) is a floor for tiny-context models.
+ * Applying it to a large-window model makes the agent compact from ~10k tokens onward,
+ * re-compact nearly every turn, and trip the rapid-refill breaker ("context refills too
+ * quickly after compaction") — a failure that is invisible at the call site, since
+ * omitting `compactionConfig` looks harmless. Keeps the 10k floor via Math.max so
+ * genuinely small windows are unaffected.
+ */
+export function defaultCompactionForProvider(provider: {
+  readonly capabilities: { readonly maxContextTokens: number };
+}): CompactionConfig {
+  return {
+    preserveRecentMessages: DEFAULT_COMPACTION.preserveRecentMessages,
+    maxEstimatedTokens: Math.max(
+      DEFAULT_COMPACTION.maxEstimatedTokens,
+      autoCompactThreshold(provider.capabilities.maxContextTokens),
+    ),
+  };
+}
+
 export type ContextUsageLevel = "ok" | "warn" | "compact" | "blocked";
 
 export interface ContextUsageStatus {

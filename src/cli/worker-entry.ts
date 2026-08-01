@@ -170,8 +170,19 @@ async function buildNativeWorkerEngine({
   const providerModelId = resolved.modelId!;
   const providerAuth = await buildWorkerProviderAuth(resolved, providerModelId);
   const provider = await resolved.providerFactory!(providerAuth, providerModelId);
+  // Size compaction to the provider's real context window. Omitting this silently falls
+  // back to DEFAULT_COMPACTION's 10k floor (native.ts:
+  // `opts.compactionConfig ?? DEFAULT_COMPACTION`), which exists for tiny-context models.
+  // On a 200k-window model that makes every agent compact from ~10k tokens onward and
+  // re-compact almost every turn, which trips the rapid-refill breaker
+  // ("context refills too quickly after compaction") and kills the run. The
+  // codex-native worker path below already sized this correctly; the native path did not.
+  const compactionConfig = {
+    preserveRecentMessages: DEFAULT_COMPACTION.preserveRecentMessages,
+    maxEstimatedTokens: autoCompactThreshold(provider.capabilities.maxContextTokens),
+  };
   if (!hardened) {
-    return new NativeEngine({ provider, sessionId: agentId });
+    return new NativeEngine({ provider, sessionId: agentId, compactionConfig });
   }
   const retryPolicy: RetryPolicy = {
     maxRetries: parseIntEnv("OPENSWARM_RETRY_MAX_RETRIES", 3),
@@ -181,6 +192,7 @@ async function buildNativeWorkerEngine({
     provider,
     sessionId: agentId,
     retryPolicy,
+    compactionConfig,
     eagerToolDispatch: process.env.OPENSWARM_EAGER_TOOL_DISPATCH === "1",
     midTurnCompaction: process.env.OPENSWARM_MID_TURN_COMPACTION === "1",
   });

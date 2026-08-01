@@ -245,6 +245,49 @@ describe("ClaudeCodeSource", () => {
     }
   });
 
+  // 7a-bis. A plugin that never reads stdin must not crash the host.
+  //
+  // Regression: the stdin write had no "error" listener, so when the child
+  // exited before reading it, EPIPE surfaced as an UNCAUGHT exception instead
+  // of a rejected promise. The plugin's own result was unaffected, which is
+  // what made this easy to miss — vitest reported every test passing and then
+  // failed the run on the stray error. It reproduced on CI and not locally,
+  // because whether the write lands before the child exits is a race.
+  //
+  // The payload is padded past the pipe buffer so the write cannot complete in
+  // a single go, making the broken pipe deterministic rather than timing-
+  // dependent.
+  it("survives a plugin that exits without reading stdin", async () => {
+    await writePluginJson(tmpDir, "ignores-stdin", {
+      id: "ignores-stdin",
+      version: "1.0.0",
+      execMode: "shell",
+      tools: [{ name: "say" }],
+      command: 'echo \'{"status":"ok","output":"done"}\'',
+    });
+
+    const src = new ClaudeCodeSource({ pluginsDir: tmpDir });
+    await src.discover();
+    const plugin = await src.load("ignores-stdin");
+
+    const uncaught: Error[] = [];
+    const onUncaught = (err: Error) => uncaught.push(err);
+    process.on("uncaughtException", onUncaught);
+    try {
+      const result = await plugin.executeTool(
+        "say",
+        { pad: "x".repeat(1_000_000) },
+        { cwd: tmpDir },
+      );
+      expect(result.status).toBe("ok");
+      // Give a stray EPIPE a turn of the loop to surface before asserting.
+      await new Promise((r) => setTimeout(r, 50));
+    } finally {
+      process.off("uncaughtException", onUncaught);
+    }
+    expect(uncaught).toEqual([]);
+  });
+
   // 7b. Shell plugin command resolves relative paths against pluginDir
   //     (regression: earlier revisions spawned in process.cwd(), so
   //     manifests like `command: "./run.sh"` failed with "No such file".)

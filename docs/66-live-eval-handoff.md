@@ -1,4 +1,4 @@
-# 63 — Live-eval handoff: F4 tool-call repair on an open-weight tier
+# 66 — Live-eval handoff: F4 tool-call repair on an open-weight tier
 
 > **Status: NOT RUN.** Everything in
 > [63-tool-call-repair.md](./63-tool-call-repair.md) is landed, unit-tested, and

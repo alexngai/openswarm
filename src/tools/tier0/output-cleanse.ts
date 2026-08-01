@@ -76,6 +76,12 @@ export interface CleanResult {
 
 export interface CleanPlugin {
   readonly name: string;
+  /**
+   * Security plugins are exempt from the never-worse guard. Their job is to
+   * remove something dangerous and they typically *grow* the text doing it, so
+   * a size-based rollback would silently undo them.
+   */
+  readonly security?: boolean;
   apply(text: string, ctx: CleanOptions): string;
 }
 
@@ -135,6 +141,7 @@ export function ansiPlugin(): CleanPlugin {
 export function redactPlugin(): CleanPlugin {
   return {
     name: "redact",
+    security: true,
     apply(text) {
       if (process.env.OPENSWARM_OUTPUT_NO_REDACT === "1") return text;
       return redactSecrets(text).redacted;
@@ -177,6 +184,12 @@ export function defaultPlugins(): CleanPlugin[] {
  * never-worse guard. The guard runs at the tail because individual plugins may
  * temporarily inflate the text (e.g. a short secret expanding to its
  * `[REDACTED:*]` marker); only the chain as a whole must shrink.
+ *
+ * The guard's fallback keeps `security` plugins applied. Falling all the way
+ * back to the raw input would make the byte budget able to un-redact secrets,
+ * which is the same inflation the paragraph above describes — on a short
+ * output there is nothing else to reclaim those bytes, so the guard trips and
+ * the credential would be handed back in the clear.
  */
 export function createPipeline(plugins: CleanPlugin[] = defaultPlugins()): CleanPipeline {
   return {
@@ -189,7 +202,21 @@ export function createPipeline(plugins: CleanPlugin[] = defaultPlugins()): Clean
       const out = plugins.reduce((acc, plugin) => plugin.apply(acc, options), text);
       const bytesOut = Buffer.byteLength(out, "utf8");
       if (bytesOut + tunables().neverWorseMargin >= bytesIn) {
-        return { text, bytesIn, bytesOut: bytesIn, degraded: true };
+        // Never-worse guard: the chain did not pay for itself, so fall back to
+        // the input — but re-apply the security plugins first. Reverting to raw
+        // text would un-redact secrets whenever redaction was the thing that
+        // grew the output, which is exactly the short-output case (a 20-char
+        // key becomes a 25-char [REDACTED:*] marker). Saving bytes is never
+        // worth re-exposing a credential.
+        const safe = plugins
+          .filter((plugin) => plugin.security)
+          .reduce((acc, plugin) => plugin.apply(acc, options), text);
+        return {
+          text: safe,
+          bytesIn,
+          bytesOut: Buffer.byteLength(safe, "utf8"),
+          degraded: true,
+        };
       }
       return { text: out, bytesIn, bytesOut, degraded: false };
     },

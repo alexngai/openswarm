@@ -28,6 +28,7 @@ import type {
 } from "./index.js";
 import {
   DEFAULT_COMPACTION,
+  defaultCompactionForProvider,
   type CompactionConfig,
 } from "./compactor.js";
 import {
@@ -123,7 +124,14 @@ export class NativeEngine implements AgentEngine {
 
   constructor(opts: NativeEngineOptions) {
     this.provider = opts.provider;
-    this.compactionConfig = opts.compactionConfig ?? DEFAULT_COMPACTION;
+    // Default the estimator-fallback threshold to the PROVIDER'S window rather than
+    // DEFAULT_COMPACTION's 10k floor. That floor exists for tiny-context models; applied
+    // to a 200k-window model it makes an agent compact from ~10k tokens onward and
+    // re-compact almost every turn, tripping the rapid-refill breaker. Deriving it here
+    // means a caller that omits `compactionConfig` gets a sane threshold instead of a
+    // silently pathological one — the failure mode was invisible at every call site.
+    this.compactionConfig =
+      opts.compactionConfig ?? defaultCompactionForProvider(opts.provider);
     if (opts.sessionDir !== undefined) this.sessionDir = opts.sessionDir;
     if (opts.sessionId !== undefined) this.sessionId = opts.sessionId;
     if (opts.recontextualize !== undefined)

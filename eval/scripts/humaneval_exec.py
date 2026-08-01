@@ -21,6 +21,8 @@ def main() -> int:
     prompt = open(prompt_f).read()
     completion = open(completion_f).read()
     test = open(test_f).read()
+    # Optional 5th arg: model-authored self-tests (newline-separated asserts) → sig_selftests.
+    selftests = [l for l in open(sys.argv[5]).read().splitlines() if l.strip().startswith("assert")] if len(sys.argv) > 5 else []
 
     # The visible-test signal runs the PROMPT's docstring `>>>` examples against the
     # model's function — the model's completion often drops the docstring, so we take
@@ -43,7 +45,7 @@ def main() -> int:
             err = None
             break
     if entry not in ns or not callable(ns.get(entry)):
-        print(json.dumps({"hidden": False, "dt_attempt": 0, "dt_fail": 0, "err": err or "no-entry"}))
+        print(json.dumps({"hidden": False, "dt_attempt": 0, "dt_fail": 0, "st_attempt": len(selftests), "st_fail": len(selftests), "err": err or "no-entry"}))
         return 0
 
     # Attach the prompt's original docstring (with >>> examples) to the completed function.
@@ -66,6 +68,17 @@ def main() -> int:
     except Exception:  # noqa: BLE001
         pass
 
+    # Self-test signal: run the model's OWN authored asserts against its completion
+    # (oracle-free — never the hidden test). Each is exec'd in a fresh copy of ns.
+    st_attempt = st_fail = 0
+    for a in selftests:
+        st_attempt += 1
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                exec(a, dict(ns))
+        except Exception:  # noqa: BLE001
+            st_fail += 1
+
     # Hidden test: define check(...) and run it against the entry function.
     hidden = True
     try:
@@ -75,7 +88,7 @@ def main() -> int:
     except Exception:  # noqa: BLE001
         hidden = False
 
-    print(json.dumps({"hidden": hidden, "dt_attempt": dt_attempt, "dt_fail": dt_fail}))
+    print(json.dumps({"hidden": hidden, "dt_attempt": dt_attempt, "dt_fail": dt_fail, "st_attempt": st_attempt, "st_fail": st_fail}))
     return 0
 
 

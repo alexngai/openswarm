@@ -73,12 +73,43 @@ fi
 # ---------------------------------------------------------------------------
 # O4: bun build --compile produces a working standalone binary.
 # ---------------------------------------------------------------------------
-BINARY_PATH="$REPO_ROOT/dist/openswarm"
+# Resolved from the build below, not hardcoded. build-binary.ts writes to
+# packages/cli-<platform>-<arch>/ and has since the packages layout landed, but
+# this pointed at the pre-layout dist/openswarm — so the build succeeded, the
+# binary was never found, and O4 reported "compiled binary --help or doctor
+# failed" for a binary that was fine. O5 and L2 gate on `-x "$BINARY_PATH"` and
+# had been silently skipping for the same reason. Parsing the build's own
+# "OK. <path>" line keeps this from drifting again.
+BINARY_PATH=""
 if bun "$REPO_ROOT/scripts/build-binary.ts" >/tmp/smoke-opentui-o4-build.log 2>&1; then
-  if "$BINARY_PATH" --help 2>/tmp/smoke-opentui-o4-help.err | grep -q "openswarm" \
-    && "$BINARY_PATH" doctor 2>/tmp/smoke-opentui-o4-doctor.err | grep -qE "auth|install|workspace"; then
+  BINARY_PATH="$REPO_ROOT/$(sed -n 's/^OK\. //p' /tmp/smoke-opentui-o4-build.log | tail -1)"
+  # Capture first, then grep — same shape as O3 above. Piping the binary
+  # straight into grep fails under `set -o pipefail` whenever the command exits
+  # nonzero, and `doctor` exits 1 when any check fails: on a host with no
+  # Anthropic credential (any CI runner) the auth check fails by design. That
+  # made O4 report "compiled binary --help or doctor failed" for a binary that
+  # built and ran correctly. What this check is for is that the binary WORKS,
+  # not that the host is configured.
+  O4_HELP_OUT=$("$BINARY_PATH" --help 2>/tmp/smoke-opentui-o4-help.err || true)
+  O4_DOCTOR_OUT=$("$BINARY_PATH" doctor 2>/tmp/smoke-opentui-o4-doctor.err || true)
+  if echo "$O4_HELP_OUT" | grep -q "openswarm" \
+    && echo "$O4_DOCTOR_OUT" | grep -qE "auth|install|workspace"; then
     record O4 PASS "compiled binary passes --help and doctor"
   else
+    # Say which half failed and show what came back. The /tmp logs are not
+    # retrievable from a CI runner, so a bare "--help or doctor failed" is
+    # undiagnosable from the outside — print the evidence inline instead.
+    echo "--- O4 diagnostics ---" >&2
+    echo "binary: ${BINARY_PATH:-<unresolved>}" >&2
+    echo "--help matched: $(echo "$O4_HELP_OUT" | grep -qc "openswarm" || true)" >&2
+    echo "--help stdout (first 5):" >&2
+    echo "$O4_HELP_OUT" | head -5 >&2
+    echo "--help stderr (first 5):" >&2
+    head -5 /tmp/smoke-opentui-o4-help.err >&2 || true
+    echo "doctor stdout (first 10):" >&2
+    echo "$O4_DOCTOR_OUT" | head -10 >&2
+    echo "doctor stderr (first 10):" >&2
+    head -10 /tmp/smoke-opentui-o4-doctor.err >&2 || true
     record O4 FAIL "compiled binary --help or doctor failed"
   fi
 else

@@ -190,6 +190,19 @@ export class LiteLLMTransportProvider implements TransportProvider {
     if (req.temperature !== undefined) extraOptions["temperature"] = req.temperature;
     if (req.topP !== undefined) extraOptions["topP"] = req.topP;
 
+    // Per-session stable key, same as openai-transport. LiteLLM speaks the OpenAI
+    // wire format, so the `openai` provider-options namespace serializes to
+    // `prompt_cache_key`. Beyond cache warmth this is the only per-agent marker on
+    // the request, so a gateway fronting a swarm can attribute a call to the agent
+    // that made it — without it every agent's traffic is indistinguishable.
+    //
+    // Deliberately NOT gated on `capabilities.promptCache`: that flag is false here
+    // because the gateway model is arbitrary and we can't promise the *upstream*
+    // caches, which says nothing about whether the key is useful or safe to send.
+    // It is an optional hint field — gateways that don't understand it drop it.
+    const providerOptions =
+      req.sessionId !== undefined ? { openai: { promptCacheKey: req.sessionId } } : undefined;
+
     const result = streamText({
       model: this.model,
       messages: providerMessagesToVercel(req.messages),
@@ -197,6 +210,7 @@ export class LiteLLMTransportProvider implements TransportProvider {
       tools: toolSpecsToVercelTools(req.tools ?? []),
       ...toolChoiceOption(req),
       ...(req.abort !== undefined ? { abortSignal: req.abort } : {}),
+      ...(providerOptions !== undefined ? { providerOptions } : {}),
       ...extraOptions,
     });
 

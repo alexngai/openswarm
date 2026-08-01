@@ -24,6 +24,8 @@ import {
   DEFAULT_COMPACTION,
   type Session,
   type CompactionConfig,
+  defaultCompactionForProvider,
+  autoCompactThreshold,
 } from "./compactor.js";
 import type { ProviderMessage } from "../providers/index.js";
 
@@ -620,5 +622,38 @@ describe("compactSession — carries todo progress across the boundary", () => {
     ).text;
     expect(systemText).toContain("## Todos / Progress");
     expect(systemText).toContain("implement");
+  });
+});
+
+describe("defaultCompactionForProvider (rapid-refill-breaker regression)", () => {
+  // An engine built without an explicit compactionConfig used to inherit
+  // DEFAULT_COMPACTION's 10k maxEstimatedTokens regardless of the model's window. On a
+  // 200k-window model that means compacting from ~10k tokens onward and re-compacting
+  // nearly every turn, which trips the rapid-refill breaker and kills the run. The
+  // failure was invisible at the call site: omitting the option looks harmless.
+  it("sizes the estimator threshold to a large provider window, not the 10k floor", () => {
+    const cfg = defaultCompactionForProvider({
+      capabilities: { maxContextTokens: 200_000 },
+    });
+    expect(cfg.maxEstimatedTokens).toBe(autoCompactThreshold(200_000));
+    expect(cfg.maxEstimatedTokens).toBeGreaterThan(
+      DEFAULT_COMPACTION.maxEstimatedTokens * 10,
+    );
+  });
+
+  it("keeps the 10k floor for genuinely tiny context windows", () => {
+    const cfg = defaultCompactionForProvider({
+      capabilities: { maxContextTokens: 8_000 },
+    });
+    expect(cfg.maxEstimatedTokens).toBe(DEFAULT_COMPACTION.maxEstimatedTokens);
+  });
+
+  it("a 200k-window agent does not compact at a context size the old default would", () => {
+    // 40k tokens: comfortably under the real threshold, far over the 10k floor.
+    const cfg = defaultCompactionForProvider({
+      capabilities: { maxContextTokens: 200_000 },
+    });
+    expect(40_000 >= cfg.maxEstimatedTokens).toBe(false);
+    expect(40_000 >= DEFAULT_COMPACTION.maxEstimatedTokens).toBe(true);
   });
 });

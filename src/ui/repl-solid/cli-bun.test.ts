@@ -72,9 +72,18 @@ describe("CLI under Bun runtime", () => {
 
   test("doctor runs all checks", async () => {
     const { exitCode, stdout } = await runCli(["doctor"], { timeoutMs: 15_000 });
-    expect(exitCode).toBe(0);
-    // Doctor emits ✓ / ⚠ / ✗ markers for each check.
-    expect(stdout).toMatch(/auth|config|install|workspace/);
+    // 0 = every check passed, 1 = at least one check failed. Both mean doctor
+    // ran and reported, which is what this test is about. Asserting 0 asserted
+    // that the HOST is healthy: with no Anthropic credential the auth check
+    // fails by design, so this passed on a developer laptop and failed on CI —
+    // a property of the environment, not of the CLI.
+    expect([0, 1]).toContain(exitCode);
+    // Doctor emits ✓ / ⚠ / ✗ markers for each check. Assert every check is
+    // present rather than any one of them: that is what "runs all checks"
+    // claims, and an alternation regex passes on a single match.
+    for (const check of ["auth", "config", "install", "workspace"]) {
+      expect(stdout).toContain(check);
+    }
   });
 });
 
