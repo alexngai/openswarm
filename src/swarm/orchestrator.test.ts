@@ -758,6 +758,66 @@ describe("Orchestrator — per-attempt wall-clock ceiling (C2 regression)", () =
 
     await nodeFs.rm(tmpDir, { recursive: true, force: true });
   }, 10_000);
+
+  it("attributes the ceiling kill even when the measured duration does not exceed it", async () => {
+    // Regression: the dead-letter reason used to be re-derived from the clock
+    // (`attemptDurationMs > perAttemptCeiling`, strictly greater) rather than
+    // from the fact that the ceiling timer won the race. A timer scheduled for
+    // N ms can settle at exactly N, so the comparison was false and the task
+    // dead-lettered as a generic "timeout" instead. It reproduced on CI
+    // runners and not on this machine, where setTimeout tends to overshoot.
+    //
+    // Freezing the clock pins the failure deterministically: every reading of
+    // Date.now() is identical, so the measured duration is 0 while the timer
+    // still fires. Only the race result can carry the reason.
+    const nodeFs = await import("node:fs/promises");
+    const nodePath = await import("node:path");
+    const os = await import("node:os");
+    const tmpDir = await nodeFs.mkdtemp(nodePath.join(os.tmpdir(), "swarm-c2b-"));
+    const deadLetterPath = nodePath.join(tmpDir, "dl.jsonl");
+
+    const frozen = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(frozen);
+
+    const host = fakeHost(async () => ({
+      agentId: "stuck-agent" as AgentId,
+      sessionId: "stuck-session" as SessionId,
+      wait: () => new Promise<AgentResult>(() => {}), // never resolves
+      kill: vi.fn(() => Promise.resolve()),
+      events: async function* () { return; },
+      runMore: () => Promise.reject(new Error("runMore not supported in test fake")),
+      drain: () => Promise.resolve(),
+    }));
+
+    const resultsOut = new PassThrough();
+    resultsOut.resume();
+
+    const orch = new Orchestrator({
+      concurrency: 1,
+      permissionMode: "workspace-write",
+      resultsOut,
+      host,
+      deadLetterPath,
+    });
+
+    await orch.run([
+      samplePacket("runaway-boundary", {
+        budget: { maxWallClockMsPerAttempt: 50 },
+        escalationPolicy: { kind: "retry", max: 3, backoff: "fixed" },
+      }),
+    ]);
+    resultsOut.end();
+
+    const lines = (await nodeFs.readFile(deadLetterPath, "utf8"))
+      .split("\n")
+      .filter((l) => l.trim().length > 0)
+      .map((l) => JSON.parse(l) as { id: string; lastStatus: string });
+    const ours = lines.find((l) => l.id === "runaway-boundary");
+    expect(ours).toBeDefined();
+    expect(ours!.lastStatus).toBe("per_attempt_budget_exceeded");
+
+    await nodeFs.rm(tmpDir, { recursive: true, force: true });
+  }, 10_000);
 });
 
 describe("Orchestrator — per-attempt timer cleared on race-win (M3b Phase 8.0a)", () => {

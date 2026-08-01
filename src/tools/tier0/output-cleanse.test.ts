@@ -100,12 +100,20 @@ describe("createPipeline / cleanOutput", () => {
     const clean = "already clean short output";
     const result = cleanOutput(clean);
     expect(result.text).toBe(clean);
-    // A short secret expands to its marker (net-longer) → guard reverts.
+  });
+
+  it("never-worse guard does NOT un-redact a secret to save bytes", () => {
+    // A short secret expands to its marker (net-longer), so the guard trips.
+    // It must still fall back to REDACTED text, not the raw input: on a short
+    // output there is nothing else to reclaim the bytes, so a naive revert
+    // hands the credential back in the clear. Regression — this leaked through
+    // the shell tool's STDERR on any host where bash echoes the command back
+    // (CI runners without job control), while stdout looked correctly masked.
     const tiny = "AKIAIOSFODNN7EXAMPLE";
     const r2 = cleanOutput(tiny);
     expect(r2.degraded).toBe(true);
-    expect(r2.text).toBe(tiny);
-    expect(r2.bytesOut).toBe(r2.bytesIn);
+    expect(r2.text).not.toContain(tiny);
+    expect(r2.text).toContain("[REDACTED:");
   });
 
   it("respects the never-worse margin", () => {
