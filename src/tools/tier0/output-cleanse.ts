@@ -9,7 +9,7 @@
  * pass over the text; `createPipeline` chains them and wraps the chain with a
  * "never-worse" guard — if the cleaned output is not strictly shorter than the
  * original, the cosmetic passes are reverted (degraded=true). Passes marked
- * `mandatory` survive that revert: redaction grows the text, so it is often
+ * `security` survive that revert: redaction grows the text, so it is often
  * the reason the chain fails to shrink, and reverting it would put the raw
  * secret back into model-facing output.
  *
@@ -80,11 +80,11 @@ export interface CleanResult {
 export interface CleanPlugin {
   readonly name: string;
   /**
-   * Marks a pass the never-worse guard may not revert. Cosmetic passes exist
-   * to save tokens and are safe to undo; a security pass is not, because
-   * undoing it puts the raw secret back in model-facing output.
+   * Security plugins are exempt from the never-worse guard. Their job is to
+   * remove something dangerous and they typically *grow* the text doing it, so
+   * a size-based rollback would silently undo them.
    */
-  readonly mandatory?: boolean;
+  readonly security?: boolean;
   apply(text: string, ctx: CleanOptions): string;
 }
 
@@ -144,7 +144,7 @@ export function ansiPlugin(): CleanPlugin {
 export function redactPlugin(): CleanPlugin {
   return {
     name: "redact",
-    mandatory: true,
+    security: true,
     apply(text) {
       if (process.env.OPENSWARM_OUTPUT_NO_REDACT === "1") return text;
       return redactSecrets(text).redacted;
@@ -187,6 +187,12 @@ export function defaultPlugins(): CleanPlugin[] {
  * never-worse guard. The guard runs at the tail because individual plugins may
  * temporarily inflate the text (e.g. a short secret expanding to its
  * `[REDACTED:*]` marker); only the chain as a whole must shrink.
+ *
+ * The guard's fallback keeps `security` plugins applied. Falling all the way
+ * back to the raw input would make the byte budget able to un-redact secrets,
+ * which is the same inflation the paragraph above describes — on a short
+ * output there is nothing else to reclaim those bytes, so the guard trips and
+ * the credential would be handed back in the clear.
  */
 export function createPipeline(plugins: CleanPlugin[] = defaultPlugins()): CleanPipeline {
   return {
@@ -199,11 +205,14 @@ export function createPipeline(plugins: CleanPlugin[] = defaultPlugins()): Clean
       const out = plugins.reduce((acc, plugin) => plugin.apply(acc, options), text);
       const bytesOut = Buffer.byteLength(out, "utf8");
       if (bytesOut + tunables().neverWorseMargin >= bytesIn) {
-        // Degrading to the raw text would un-redact any secret the chain
-        // masked, because masking grows the text and can be the very reason
-        // the chain failed to shrink. Fall back to mandatory passes only.
+        // Never-worse guard: the chain did not pay for itself, so fall back to
+        // the input — but re-apply the security plugins first. Reverting to raw
+        // text would un-redact secrets whenever redaction was the thing that
+        // grew the output, which is exactly the short-output case (a 20-char
+        // key becomes a 25-char [REDACTED:*] marker). Saving bytes is never
+        // worth re-exposing a credential.
         const safe = plugins
-          .filter((plugin) => plugin.mandatory)
+          .filter((plugin) => plugin.security)
           .reduce((acc, plugin) => plugin.apply(acc, options), text);
         return {
           text: safe,

@@ -25,6 +25,7 @@ import { providerMessagesToVercel } from "./message-replay.js";
 import { toolSpecsToVercelTools } from "./tool-translation.js";
 import { mapVercelUsage } from "./vercel-usage.js";
 import { classifyProviderError } from "./error-classifier.js";
+import { toolChoiceOption } from "./tool-choice.js";
 import { getBedrockModelCapability } from "./capability-catalog.js";
 
 const DEFAULT_REGION = "us-east-1";
@@ -127,6 +128,7 @@ export class BedrockTransportProvider implements TransportProvider {
       messages: providerMessagesToVercel(req.messages),
       ...(systemPrompt !== undefined ? { system: systemPrompt } : {}),
       tools: toolSpecsToVercelTools(req.tools ?? []),
+      ...toolChoiceOption(req),
       ...(req.abort !== undefined ? { abortSignal: req.abort } : {}),
       ...extraOptions,
     });

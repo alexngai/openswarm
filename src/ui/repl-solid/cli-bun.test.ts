@@ -90,11 +90,15 @@ describe("CLI under Bun runtime", () => {
     "doctor runs all checks",
     async () => {
       const { exitCode, stdout } = await runCli(["doctor"], { timeoutMs: SPAWN_BUDGET_MS });
-      // doctor reports a failing check by exiting nonzero, and a credential-free
-      // environment (CI, a container) legitimately fails the auth check. Assert
-      // that every check ran and reported rather than that this particular
-      // machine is fully configured.
+      // 0 = every check passed, 1 = at least one check failed. Both mean doctor
+      // ran and reported, which is what this test is about. Asserting 0 asserted
+      // that the HOST is healthy: with no Anthropic credential the auth check
+      // fails by design, so this passed on a developer laptop and failed on CI —
+      // a property of the environment, not of the CLI.
       expect([0, 1]).toContain(exitCode);
+      // Assert every check is present rather than any one of them: that is what
+      // "runs all checks" claims, and an alternation regex passes on a single
+      // match.
       for (const check of ["auth:", "config:", "install:", "workspace:"]) {
         expect(stdout).toContain(check);
       }

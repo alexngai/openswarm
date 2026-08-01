@@ -1,6 +1,6 @@
 # 62 — Offline frontier reconstruction + escalation-signal AUC
 
-**Status:** methodology proposal + Phase 0 results (retroactive validation). Extends 50 (the thesis), 54/59/60/61 (the live-experiment line that reached "H2.1 not robustly supported").
+**Status:** methodology + Phase 0/1/1.5/2 results. First positive frontier expansion on a clean known-params pair, replicated across HumanEval + MBPP (§4.2, F5–F11); Phase 2 (§5.2, F12–F16) shows the oracle pre-check **transfers to agentic SWE** (Qwen-Coder 3B/35B, FAIL→PASS vs the dead haiku/Nova pairs) — a robust *structural* positive across hard-18 / easy-16 / combined-34 slices (oracle Pareto-dominates mono-large on FLOPs everywhere; ~1.3× magnitude). The first *deployable*-signal attempt (authored-repro, F16) degenerated (AUC 0.500) — a runnable agentic cascade is not yet demonstrated. Extends 50 (the thesis), 54/59/60/61 (the live-experiment line that reached "H2.1 not robustly supported").
 
 ## 1. Why a new methodology
 
@@ -109,9 +109,85 @@ Structure: both-solve=98, llama-only=1, **gpt-only=61**, neither=4. Oracle-casca
 
 **Caveats (what Phase 1 does *not* yet show):** (a) the FLOPs win uses an *estimated* gpt-5.5 param count (proprietary) — the clean claim needs two **open-weight** models with known params (Phase 1.5: e.g. Qwen-Coder-7B vs 32B, or Llama-8B vs 70B). (b) The signal covers 44% of problems. (c) Single-shot code-gen, not agentic SWE — transfer is Phase 2.
 
+### 4.3 Signal comparison — a 100%-coverage deployable signal (2026-07-25)
+
+Caveat (b) resolved. Comparing oracle-free signals on Llama-8B × 164 HumanEval (`HE_SIGNALS=1`; each signal computed from the model's own output, no oracle):
+
+| signal | AUC | coverage |
+|---|--:|--:|
+| `sig_visible` (docstring `>>>` examples) | 0.896 | 43% |
+| **`sig_selftests`** (model writes asserts for its own function → run them) | **0.841** | **100%** |
+| `sig_judge` (model self-scores P(correct)) | 0.662 | 100% |
+| **combined** (visible where available, else self-tests) | **0.876** | **100%** |
+
+**F15 — self-authored tests are a full-coverage deployable signal.** `sig_selftests` — the single-shot analog of the agentic **authored-repro** gate — discriminates the cheap tier's correct completions from its wrong ones at AUC 0.841 over *every* problem (0.812 even on the 57% with no docstring). The combined signal reaches 0.876 at 100% coverage, ≈ `sig_visible`'s 0.896 but everywhere. `sig_judge` is weak — the model is overconfident about its own code, so self-assessment barely beats chance. This validates the authored-test mechanism for the Phase 2 §5.2 deployable-signal work (open item a): route on the model's own test outcomes, not its self-rated confidence.
+
+### 4.2 Phase 1.5 results — the clean known-params pair
+
+Phase 1's FLOPs win rested on an *estimated* gpt-5.5 param count (§4.1 caveat a). Phase 1.5 removes it: both tiers are open-weight with **known** params — **Llama-3.1-8B** (C, 8B) vs **Llama-3.3-70B** (E, 70B), same `awsbedrock/` transport, all 164 HumanEval, single-shot, 1 seed. Analyzer: `eval/analysis/humaneval-frontier.ts` (durable + unit-tested; the §4.1 numbers had lived only in an ephemeral script).
+
+| | resolve | mean FLOPs/task | mean fresh tok/task |
+|---|--:|--:|--:|
+| mono-C (Llama-8B) | 0.598 | 3.8 TFLOP | 236 |
+| mono-E (Llama-70B) | 0.829 | 40.0 TFLOP | 286 |
+| oracle cascade | 0.848 | 21.3 TFLOP | — |
+
+Structure: both-solve=95, small-only=**3**, large-only=41, neither=25. `sig_visible` AUC = **0.887** (72/164 coverage). (2 cheap-tier cells were test-exec ETIMEDOUTs scored `correct=0` — a conservative bias *against* the cheap tier, so it can't inflate the result.)
+
+**F8 — the oracle pre-check PASSES on a clean known-params pair.** `cost(C) 3.8 < resolve_C(0.598)·cost(E) 40.0 = 23.9 TFLOP`: the always-paid cheap compute is well under the expected large-tier compute it saves. The gate that killed both SWE pairs (F1) clears here with **no estimated param** — the FLOPs ratio is the exact 8/70. The oracle cascade Pareto-dominates mono-large (0.848 ≥ 0.829 at **1.88× fewer FLOPs**).
+
+**F9 — the *deployable* signal cascade also Pareto-dominates mono-large, not just the oracle.** Sweeping τ on `sig_visible` (null signal ⇒ escalate), the real cascade reaches **0.835 quality @ 20.0 TFLOP** (τ≈0.25) — *above* mono-E's 0.829 and at ~half its 40.0 TFLOP. Phase 1 demonstrated only the oracle ceiling; here a signal you can compute at runtime wins outright. Escalation rate is 65%, inflated by the 56% of tasks with no doctest signal (all force-escalated) — so this is a floor, not the best achievable.
+
+**F10 — unique ownership is not the mechanism; a real compute gap on the shared easy slice is.** small-only=3: the cheap tier owns almost nothing uniquely — the same signature as the dead SWE haiku pair (small-only=1, F3). Yet this pair expands the frontier, because Llama-8B is a genuine ~10× FLOPs discount on the **95 both-solve** tasks, whereas haiku's *fresh compute wasn't actually lower* (F2), so routing the shared slice to it saved nothing. The frontier win comes from cheaply clearing the easy slice, not from owning a unique one.
+
+**MBPP replication (427 tasks) — the result holds and strengthens at scale.** Same pair, same harness, on the sanitized MBPP set (`eval/experiments/mbpp-signal.ts` + `mbpp_exec.py`; each problem's `test_list` is split — the first assert is shown to the model and becomes the signal, the rest are held out as the hidden oracle, so signal coverage is ~100% vs HumanEval's 44%).
+
+| Llama-8B (C) / Llama-70B (E) | HumanEval (164) | MBPP (427) |
+|---|--:|--:|
+| resolve C / E | 0.598 / 0.829 | 0.677 / 0.838 |
+| sig_visible AUC (on C) | 0.887 (44% cov) | 0.886 (**100% cov**) |
+| oracle cascade | 0.848 @ 21.3 TFLOP (1.88×) | 0.869 @ 11.2 TFLOP (**2.23×**) |
+| deployable signal cascade | 0.835 @ 20.0 TFLOP | **0.838 @ 9.5 TFLOP (2.63×)** |
+| oracle pre-check | PASS | PASS |
+
+**F11 — the positive replicates on a second benchmark; the *deployable* cascade matches mono-large quality at 2.6× less compute.** The cheap-tier signal AUC is essentially identical across benchmarks (0.886 vs 0.887) — it generalizes. With MBPP's ~100% signal coverage the deployable cascade (escalate iff the completion fails its one shown assert; the binary signal makes every τ∈(0,1] identical) recovers **mono-large's exact quality 0.838 at 9.5 TFLOP — 2.63× fewer FLOPs than the 24.9 TFLOP monolith**, escalating only 27%. Structure both=276, small-only=13, large-only=82, neither=56 — the same shape as HumanEval (cheap tier owns little uniquely, wins by clearing the shared easy slice cheaply, F10). 4/854 cells were exec ETIMEDOUT/SyntaxError, scored `correct=0` (conservative).
+
+**Still open after 1.5:** (a) the large tier in this pair (Llama-70B, 0.83–0.84) is weaker than gpt-5.5 (0.970) — the *structural* claim now holds on clean known-params across two benchmarks, but a strong-large known-params pairing (Qwen-Coder 7B vs 32B) would pin both ends. (b) The 44%-coverage limit is resolved on MBPP (split-assert ⇒ ~100%), but the MBPP signal is *binary* (one shown assert) — a multi-assert or self-test signal would give a finer τ-curve and let more borderline cheap wins stay cheap. (c) Still single-shot, not agentic (Phase 2). (d) 1 seed; ≥3 seeds would harden the per-task labels.
+
 ## 5. Phase 2 — transfer to agentic SWE (only if Phase 1 signal is good)
 
 Reuse the existing SWE harness, but run each model **once** and do the **offline** policy sweep instead of live per-policy runs; log the escalation signal we already build (authored-repro + compile gate). Same cost as one screen (~$40–100), then every τ/router is free — and the live-vs-offline cost gap directly quantifies handoff bloat (§2 decomposition).
+
+### 5.1 Phase 2 pair selection + agentic gate (2026-07-24)
+
+The clean Phase-1.5 Llama-8B/70B pair **cannot** be used agentically: Llama-3.1-8B is streaming-tool-use-blocked on Bedrock in our stack (commit 239cb4e), so the cheap tier can't drive the tool loop; and the only keyless tool-capable pairs already captured (haiku↔gpt-5.5, Nova↔gpt-5.5) are structurally dead (§3). Enumerating the Bedrock catalog surfaced a better option **with no new credential**: **Qwen3-Coder is on Bedrock on-demand** (`awsbedrock/qwen.qwen3-coder-30b-a3b-v1:0`, 3B active — and `…-480b-a35b-v1:0`, 35B active) — same-family agentic coders, a ~12× active-param FLOPs gap.
+
+Gate results (all pass): both models stream via the `awsbedrock/` transport; **both drive tool-use** (`eval/scripts/bedrock-toolcheck.ts` — `tool-input-start → tool-call → finish`, valid parsed args) — the Llama-8B blocker is gone; and single-shot HumanEval confirms a Goldilocks pair — mono-C 0.811, mono-E 0.933, **oracle 0.945 @ 3.46× fewer FLOPs**, oracle pre-check PASS (1.6 < 0.811·19.4 TFLOP). (Small-tier resolve is understated by ~15 fence-extraction SyntaxErrors — a single-shot harness artifact the agentic loop doesn't share.) → cleared for the agentic offline-once run.
+
+### 5.2 Phase 2 results — agentic SWE, the pre-check transfers (2026-07-24)
+
+Ran the Qwen-Coder pair agentically on **18 baked SWE-bench-Verified instances** (self-hosted docker on the EC2 box, `CS_ARM=mono-small,mono-large`, 1 seed, `us-west-2`). Each model once; the offline oracle frontier + FLOPs pre-check via `eval/analysis/swe-cells-to-rows.ts` → `humaneval-frontier.ts` (SWE cell fresh tokens × active params — the honest axis `offline-frontier.ts` lacks).
+
+| Qwen3-Coder 3B-A3B (C) / 480B-A35B (E) | value |
+|---|---|
+| resolve C / E | 0.333 / 0.333 (6/18 each) |
+| mean FLOPs/task C / E | 3.46 / 74.6 TFLOP (**21.5×** — 12× params × ~1.85× agentic tokens) |
+| oracle cascade | 0.389 @ 53.7 TFLOP |
+| structure | both=5, small-only=1, large-only=1, **neither=11** |
+| oracle pre-check (FLOPs) | **PASS** (3.46 < 0.333·74.6 = 24.9) |
+| oracle dominates mono-large | YES (0.389 ≥ 0.333 at **1.4× fewer FLOPs**) |
+
+**F12 — the oracle pre-check transfers to agentic SWE (FAIL→PASS vs the dead pairs).** haiku↔gpt-5.5 and Nova↔gpt-5.5 FAILED the pre-check on SWE (F1, structurally dead); the Qwen-Coder pair **PASSES** on the same agentic surface — a genuinely small tier (3B active) with a real FLOPs gap flips the inequality. First positive transfer of H2.1 beyond single-shot, and the agentic-loop pipeline itself works end-to-end for a small open-weight tool-driver (both tiers real usage, real scores; the Bedrock tool-use gate was the enabler).
+
+**F13 — but the magnitude is modest and the slice is hard.** Only 7/18 instances are solved by anyone (**neither=11** — the baked slice skews hard); the oracle gain is **+1 task** (django-16032, large-only) and the small tier owns just 1 unique task (xarray-2905). The 1.4× FLOPs expansion is far below single-shot's 3.46×, because agentic escalation pays the large tier on 12/18 tasks — 11 of which fail anyway, wasting the compute. And this is the **oracle ceiling**: no deployable escalation signal yet (the SWE repro/compile-gate isn't extracted into the rows; `sig_visible=null` ⇒ the τ-sweep degenerates to the oracle).
+
+**F14 — a less-hard slice firms up the transfer (structure is real, not a 1-task artifact).** The F13 slice was too hard (neither=11/18). Re-running on **16 easy-difficulty instances** (`difficulty="<15 min fix"`) lifts solve rates to mono-C 0.438 / mono-E 0.563 with genuine structure — both=5, **small-only=2**, large-only=4, neither=5 (11/16 solvable). The oracle cascade reaches **0.688 @ 47.8 TFLOP vs mono-E 0.563 @ 62.7 TFLOP — +0.125 quality AND 1.31× fewer FLOPs** (pre-check PASS: 3.67 < 0.438·62.7 = 27.4). Combined 34-instance frontier: mono-C 0.382 / mono-E 0.441 / oracle **0.529 @ 50.9 TFLOP** (1.35× fewer, +3 tasks; structure both=10/small-only=3/large-only=5/neither=16). The cheap tier now owns a real unique slice, and oracle Pareto-dominance holds on **every** slice (hard-18, easy-16, combined-34). The FLOPs magnitude (~1.3×) stays below single-shot's 3.5× — agentic escalation still pays the large tier on the ~55% escalated fraction — but the structural positive is now robust.
+
+*(Infra note: baking SWE instances is disk-bound — the m7i.4xlarge's 194 GB root holds ~16 instances' base+template images; 34 thrashes it into unkillable-I/O and needs an EBS reboot to recover. Run ≤~16 instances per pass, or grow the volume. See [[hard-slice-run-ops]].)*
+
+**F16 — the deployable authored-repro signal degenerates (honest negative).** Instrumented the mono arms to author a repro + log the compile/repro confidence (`CS_SIGNAL=1`, `cascade-adapter.ts` `signalCommands`), re-ran easy-16. Result: `sig_repro` is **constant 0.5 for all 16 small-tier cells** (compile-gate passes, repro-gate fails on *every* cell incl. the 5 correct ones) → **AUC 0.500, zero discrimination**; the τ-sweep degenerates to all-small (τ≤0.5) or all-escalate (τ>0.5) — no runnable cascade. **Diagnosed (signalDetail = {gateExits, reproExists} on a 4-cell probe):** for *every* cell `reproExists=true` and `gateExits=[0,1]` — the 3B coder **does** author `/testbed/repro_test.py` and it **survives** (not git-cleaned), the compile gate passes, but `pytest repro_test.py` **fails on every cell, including the one correct fix**. So the cause is **not** plumbing (authoring/git-clean) and **not** a missing repro — it is **capability**: the capacity-strained 3B coder writes repros that don't track correctness (repro-first prompting also *lowered* its solve rate 0.438→0.313). The repro gate is uniformly red regardless of whether the patch is right, so it carries no signal. Contrast single-shot `sig_selftests` on a lone function (AUC 0.841, F15): authoring a good test for one function is easy; authoring a correct failing repro in a large repo while also fixing the bug is beyond a 3B coder. **The oracle-ceiling result (F12–F14) stands; a *deployable* agentic cascade is NOT demonstrated, and fixing the repro path won't help.** Remaining options: a signal that needs no authoring (self-consistency across k samples), or a stronger — but less cheap — small tier.
+
+**Still open after Phase 2:** (a) a *working* deployable signal — F16 diagnosed the authored-repro gate as capability-limited (the 3B coder's repros fail even on correct fixes, not a plumbing bug), so the remaining paths are self-consistency (no authoring) or a stronger small tier; (b) ≥3 seeds (all slices are 1-seed); (c) the offline cold-E cost excludes live handoff bloat (docs/61 F3), so a live cascade would cost more — bound it; (d) the ~1.3× agentic FLOPs magnitude is modest vs single-shot. The transfer is a robust *structural* positive (oracle ceiling); a deployable policy is not yet shown.
 
 ## 6. Build + cost
 
@@ -122,3 +198,15 @@ Reuse the existing SWE harness, but run each model **once** and do the **offline
 ## 7. The reusable contribution: the oracle pre-check gate
 
 Independent of the frontier study: **before any cascade/routing study on a model pair, run the two monoliths once and check the oracle inequality `cost(C) < p_C · cost(E)` on an honest compute axis.** If it fails, the pair cannot support frontier expansion — stop before spending on signals, τ-sweeps, or seeds. Phase 0 shows this would have diagnosed both haiku↔gpt-5.5 and Nova↔gpt-5.5 immediately.
+
+## 8. Threats to validity & attribution
+
+Two honest questions about what these results *mean*: how much is **membership** (weak/ill-chosen models) vs a real heterogeneity effect, and how much is **setup/bug** vs signal?
+
+**8.1 Membership drove the negatives — and detecting that is the contribution.** docs/54–61's "not robustly supported" was **mis-selected membership**, not a refutation: haiku isn't genuinely cheap (its 3× "cheapness" was 96% cache-reads; no real FLOPs gap → pre-check FAIL), Nova-Pro is too weak (solves ~nothing → owns no tasks). When membership had a genuine compute gap (Llama-8B/70B, Qwen-Coder 3B/480B) the frontier expanded. The oracle pre-check (§7) *is* the "are these proper members?" test.
+
+**8.2 But this is *cost-tiering*, not *diversity*.** Every winning pair was a **same-family scale ladder**, and `small-only` was tiny across *every* pair (1–3 tasks). The wins came from **routing the shared easy slice cheaply**, not from the small tier owning tasks the large couldn't. Mechanically these are routing/cost-tiering wins, **not complementarity wins**. Genuine diversity — models with *different* strengths covering *different* tasks — is **untested here**, and the near-zero `small-only` mildly suggests it's absent for scale ladders. Testing it is the docs/64 program (H3).
+
+**8.3 Setup/bug vs signal.** Several *early* results were bugs, caught and corrected: the advisor-$0 scratch-wipe (39125f7, re-run clean), a **false "Nova-Pro 0/14"** from cache-mixing (model not in the cache key — caught, fresh `CS_CONFIG_VERSION` since), and docs/56's cheap/gap split that **inverted at 5 seeds** (docs/57). The surviving conclusions rest on clean post-fix data (the powered docs/59 run; single-shot reproduced HumanEval+MBPP; easy-16 from a clean run after the disk-thrash recovery, which cost time but contaminated no data). The F16 deployable-signal negative was specifically **diagnosed** as capability, not a bug (`reproExists=true`, repro fails even on the correct fix).
+
+**8.4 Residual, unresolved caveats (real threats to the numbers).** (a) **All agentic slices are 1-seed** — and §8.3's 5-seed inversion is direct evidence 1-seed can flip a conclusion, so the ~1.3× agentic magnitude is under-powered; ≥3 seeds is the first fix. (b) **Offline ≠ live** — the offline frontier excludes handoff bloat (docs/61: escalation can cost ~2× a cold monolith), so a live cascade costs more than these numbers. (c) The single-shot Phase-1 FLOPs used an *estimated* gpt-5.5 param count (superseded by the known-params Llama/Qwen pairs).

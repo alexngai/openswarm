@@ -70,7 +70,14 @@ const TARGETS: Record<string, Target> = {
   "bun-windows-x64":  { bunTarget: "bun-windows-x64",  platform: "win32",  arch: "x64",   libName: null,                exe: "openswarm.exe" },
 };
 
-const targetKey = process.argv[2] ?? "bun-darwin-arm64";
+// Default to the HOST, not a fixed platform. The release scripts always pass an
+// explicit target, so cross-compiles are unaffected; the default only serves
+// callers that mean "build something I can run here". It used to be a hardcoded
+// bun-darwin-arm64, so a no-arg build on a Linux x64 CI runner produced a
+// Mach-O binary and the smoke check then failed with "Exec format error" —
+// reported as though the binary itself were broken.
+const hostKey = `bun-${process.platform === "win32" ? "windows" : process.platform}-${process.arch}`;
+const targetKey = process.argv[2] ?? (hostKey in TARGETS ? hostKey : "bun-darwin-arm64");
 const target = TARGETS[targetKey];
 if (!target) {
   console.error(`Unknown target: ${targetKey}. Valid: ${Object.keys(TARGETS).join(", ")}`);

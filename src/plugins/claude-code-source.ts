@@ -292,6 +292,16 @@ export class ClaudeCodeSource implements PluginSource {
         child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
 
         // Write input JSON to stdin and close.
+        //
+        // A plugin is free to ignore stdin — `echo '{...}'` never reads it. If
+        // it exits first the pipe is already gone and this write raises EPIPE
+        // on the stream. With no "error" listener that becomes an uncaught
+        // exception and takes the host down, even though the plugin ran fine
+        // and its result is captured below. Swallow it: the child's real
+        // outcome arrives on "close", via exit code and stderr.
+        // Optional-chained because a brokered child's streams are nullable —
+        // isolation decides the stdio, so the broker cannot promise a pipe.
+        child.stdin?.on("error", () => {});
         child.stdin?.write(JSON.stringify(input));
         child.stdin?.end();
 

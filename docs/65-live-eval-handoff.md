@@ -1,4 +1,4 @@
-# 55 — Live-eval handoff: TE-25 constraint retention
+# 65 — Live-eval handoff: TE-25 constraint retention
 
 > **✅ RAN 2026-07-22 on `azureoai/gpt-5.5`** (Azure OpenAI direct transport,
 > best-of-3). Result: **baseline / section / verbatim all 100% overall + 100%

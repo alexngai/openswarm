@@ -24,6 +24,7 @@ import { providerMessagesToVercel } from "./message-replay.js";
 import { toolSpecsToVercelTools } from "./tool-translation.js";
 import { mapVercelUsage } from "./vercel-usage.js";
 import { classifyProviderError } from "./error-classifier.js";
+import { toolChoiceOption } from "./tool-choice.js";
 import { getOpenAIModelCapability } from "./capability-catalog.js";
 
 // ---------------------------------------------------------------------------
@@ -128,6 +129,7 @@ export class OpenAITransportProvider implements TransportProvider {
       messages: providerMessagesToVercel(req.messages),
       ...(systemPrompt !== undefined ? { system: systemPrompt } : {}),
       tools: toolSpecsToVercelTools(req.tools ?? []),
+      ...toolChoiceOption(req),
       ...(req.abort !== undefined ? { abortSignal: req.abort } : {}),
       ...(providerOptions !== undefined ? { providerOptions } : {}),
       ...extraOptions,

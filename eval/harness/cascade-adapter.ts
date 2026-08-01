@@ -40,6 +40,10 @@ export interface CascadeAdapterOptions {
   /** Composite gate (docs/50 §10.4 step 3): several visible checks (e.g. [compile-gate,
    *  authored-repro]) combined weakest-link — ALL must clear τ. Supersedes escalationCommand. */
   readonly escalationCommands?: readonly string[];
+  /** Offline deployable-signal gates (docs/62 §5.2): run in the FINAL workspace after the
+   *  run, logged as `metadata.cascade.confidence` (fraction passing). For mono arms that
+   *  never escalate — records what a real cascade would route on, without escalating. */
+  readonly signalCommands?: readonly string[];
   readonly env?: Record<string, string>;
   readonly permissionMode?: string;
   readonly timeoutMs?: number;
@@ -147,6 +151,35 @@ export class CascadeAdapter implements ExecutionAdapter {
     }
     const parsed = openSwarmParse(r.stdout);
 
+    // Offline deployable signal (docs/62 §5.2): run the confidence gates in the final tier
+    // workspace (patch applied + authored repro_test.py present) and record the composite
+    // pass-rate. The mono arm never escalates, so this is a pure measurement — the signal a
+    // real cascade would route on. Oracle-free (repro is the tier's own test, not the SWE
+    // hidden test). Gate errors count as fail.
+    let confidence: number | undefined;
+    let signalDetail: { gateExits: number[]; reproExists: boolean } | undefined;
+    if (this.opts.signalCommands?.length) {
+      let passed = 0;
+      const gateExits: number[] = [];
+      for (const sc of this.opts.signalCommands) {
+        try {
+          const g = await ws.run(sc, { env, timeoutMs: 120_000 });
+          gateExits.push(g.exitCode);
+          if (g.exitCode === 0) passed++;
+        } catch { gateExits.push(-1); /* gate errored → fail */ }
+      }
+      confidence = passed / this.opts.signalCommands.length;
+      // Diagnostic (F16): did the tier actually author a surviving repro? Distinguishes a
+      // git-cleaned/never-authored repro (repro gate fails for a plumbing/capability reason)
+      // from a genuinely-failing one.
+      let reproExists = false;
+      try {
+        const rx = await ws.run("test -f /testbed/repro_test.py && echo YES || echo NO", { env, timeoutMs: 30_000 });
+        reproExists = rx.stdout.includes("YES");
+      } catch { /* ignore */ }
+      signalDetail = { gateExits, reproExists };
+    }
+
     const teamUsage = await readTeamUsage(ws, resultsPath);
     const escalations = await readEscalations(ws, traceOutputPath);
     const usage = teamUsage
@@ -186,6 +219,8 @@ export class CascadeAdapter implements ExecutionAdapter {
           // Team-wide LLM-call count → context-per-call in the frontier (docs/53 TE-14).
           ...(teamUsage?.team.calls !== undefined && { teamCalls: teamUsage.team.calls }),
           exitCode: r.exitCode,
+          ...(confidence !== undefined && { confidence }),
+          ...(signalDetail !== undefined && { signalDetail }),
           ...(r.exitCode !== 0 && { stderrTail: r.stderr.slice(-2000) }),
         },
       },

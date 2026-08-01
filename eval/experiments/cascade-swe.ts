@@ -71,6 +71,25 @@ const REPRO_PREFIX =
  *  confidence 0 (escalate). Cheap syntax guard, composited weakest-link with the repro. */
 const COMPILE_CMD =
   "cd /testbed 2>/dev/null; git diff --name-only -- '*.py' | xargs -r -n1 python3 -m py_compile";
+/** CS_SIGNAL=1 (docs/62 §5.2 deployable signal): the mono arms author a repro + log the
+ *  compile/repro confidence per cell (metadata.cascade.confidence), for the offline
+ *  real-signal frontier. Opt-in — changes mono behaviour (repro-first), so use a fresh
+ *  CS_CONFIG_VERSION vs the plain mono baseline. */
+const SIGNAL = process.env.CS_SIGNAL === "1";
+const MONO_SIGNAL_OPTS = SIGNAL ? { promptPrefix: REPRO_PREFIX, signalCommands: [COMPILE_CMD, REPRO_CMD] } : {};
+
+/** docs/64 H4 — loadout diversity: the SAME model in different prompt loadouts (roles).
+ *  CS_LOADOUTS=direct,repro,explore,plan creates one mono arm per loadout (arm id
+ *  `mono-<name>`, so cache keys don't collide), all on CS_MODEL_SMALL. Tests whether
+ *  loadout diversity (path-dependent) beats any single loadout where model diversity didn't. */
+const EXPLORE_PREFIX =
+  "Before editing any source, FIRST read the affected module(s) and their existing tests " +
+  "to understand the current behaviour and locate the bug. Then make the minimal fix.\n\n--- Issue to resolve ---";
+const PLAN_PREFIX =
+  "FIRST write a brief numbered plan (3–5 steps) for the fix as a comment, then implement it " +
+  "step by step, verifying each step before the next.\n\n--- Issue to resolve ---";
+const LOADOUT_PREFIX: Record<string, string> = { direct: "", repro: REPRO_PREFIX, explore: EXPLORE_PREFIX, plan: PLAN_PREFIX };
+const LOADOUTS = (process.env.CS_LOADOUTS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 
 /** Bedrock (haiku) + Azure (gpt-5.5) creds forwarded to the sandbox for the cross-provider cascade. */
 function providerEnv(): Record<string, string> {
@@ -217,9 +236,18 @@ export async function runCascadeSwe(): Promise<void> {
 
   const arms: Array<{ arm: Arm; adapter: ExecutionAdapter }> = [
     { arm: { id: "mono-small", label: `mono ${SMALL}`, scaffold: {} },
-      adapter: new CascadeAdapter({ tiers: [{ model: SMALL }], tau: 1, env, timeoutMs: AGENT_TIMEOUT_MS, bin: BIN }) },
+      adapter: new CascadeAdapter({ tiers: [{ model: SMALL }], tau: 1, ...MONO_SIGNAL_OPTS, env, timeoutMs: AGENT_TIMEOUT_MS, bin: BIN }) },
     { arm: { id: "mono-large", label: `mono ${LARGE}`, scaffold: {} },
-      adapter: new CascadeAdapter({ tiers: [{ model: LARGE }], tau: 1, env, timeoutMs: AGENT_TIMEOUT_MS, bin: BIN }) },
+      adapter: new CascadeAdapter({ tiers: [{ model: LARGE }], tau: 1, ...MONO_SIGNAL_OPTS, env, timeoutMs: AGENT_TIMEOUT_MS, bin: BIN }) },
+    // docs/64 H4: one mono arm per loadout (same SMALL model, different promptPrefix).
+    ...LOADOUTS.map((name) => ({
+      arm: { id: `mono-${name}`, label: `mono ${SMALL} [${name}]`, scaffold: {} } as Arm,
+      adapter: new CascadeAdapter({
+        tiers: [{ model: SMALL }], tau: 1,
+        ...(LOADOUT_PREFIX[name] ? { promptPrefix: LOADOUT_PREFIX[name] } : {}),
+        env, timeoutMs: AGENT_TIMEOUT_MS, bin: BIN,
+      }),
+    })),
     ...TAUS.map((tau) => ({
       arm: { id: `cascade-tau${tau}`, label: `cascade τ=${tau}`, scaffold: {} } as Arm,
       adapter: new CascadeAdapter({

@@ -77,6 +77,18 @@ export const MODEL_ACTIVE_PARAMS_B: Readonly<Record<string, number>> = {
   // Bedrock inference-profile ids (normalizeModelId strips the awsbedrock/ prefix → the bare id).
   "us.meta.llama3-1-8b-instruct-v1:0": 8, // Llama 3.1 8B (dense) — native-Bedrock small tier
   "meta.llama3-1-8b-instruct-v1:0": 8,
+  "us.meta.llama3-3-70b-instruct-v1:0": 70, // Llama 3.3 70B (dense) — native-Bedrock large tier (docs/62 Phase 1.5, known-params pair)
+  "meta.llama3-3-70b-instruct-v1:0": 70,
+  // Qwen3-Coder on Bedrock (on-demand) — the docs/62 Phase 2 agentic coder pair (MoE active params).
+  "qwen.qwen3-coder-30b-a3b-v1:0": 3, // Qwen3-Coder 30B total, ~3B active/token — small agentic-coder tier
+  "qwen.qwen3-coder-480b-a35b-v1:0": 35, // Qwen3-Coder 480B total, ~35B active/token — large agentic-coder tier
+  // docs/64 H3 diverse-specialist swarm (Bedrock on-demand). MoE models use ACTIVE params.
+  "openai.gpt-oss-20b-1:0": 3.6, // GPT-OSS 20B total, ~3.6B active/token (MoE)
+  "google.gemma-3-12b-it": 12, // Gemma-3 12B (dense)
+  "nvidia.nemotron-nano-9b-v2": 9, // Nemotron-Nano 9B (dense) — reasoning model, verbose (poor single-shot fit)
+  "mistral.ministral-3-8b-instruct": 8, // Ministral-3 8B (dense instruct) — clean-code swarm member
+  "deepseek.v3-v1:0": 37, // DeepSeek-V3 671B total, ~37B active/token (MoE) — big generalist baseline
+  "deepseek.v3.2": 37,
 };
 
 /** Strip a provider/gateway prefix ("litellm/…", "azureoai/…") and lowercase. */

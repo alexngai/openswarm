@@ -36,6 +36,55 @@ describe("parseArgv --max-wall-clock", () => {
   });
 });
 
+describe("parseArgv sampling + tool-choice flags (docs/63 F2/F3)", () => {
+  it("parses --temperature, --top-p and --top-k", () => {
+    const r = parseArgv([
+      "--temperature", "0.2",
+      "--top-p", "0.95",
+      "--top-k", "40",
+      "hi",
+    ]);
+    expect(r).toMatchObject({
+      kind: "prompt",
+      opts: { temperature: 0.2, topP: 0.95, topK: 40 },
+    });
+  });
+
+  it("accepts temperature 0", () => {
+    expect(parseArgv(["--temperature", "0", "hi"])).toMatchObject({
+      kind: "prompt",
+      opts: { temperature: 0 },
+    });
+  });
+
+  it("rejects malformed sampling values", () => {
+    expect(parseArgv(["--temperature", "hot", "hi"])).toMatchObject({ kind: "error" });
+    expect(parseArgv(["--top-k", "0", "hi"])).toMatchObject({ kind: "error" });
+    expect(parseArgv(["--temperature"])).toMatchObject({ kind: "error" });
+  });
+
+  it("parses --tool-choice modes and a pinned tool name", () => {
+    expect(parseArgv(["--tool-choice", "required", "hi"])).toMatchObject({
+      kind: "prompt",
+      opts: { toolChoice: "required" },
+    });
+    expect(parseArgv(["--tool-choice", "bash", "hi"])).toMatchObject({
+      kind: "prompt",
+      opts: { toolChoice: { name: "bash" } },
+    });
+  });
+
+  it("requires a --tool-choice value", () => {
+    expect(parseArgv(["--tool-choice"])).toMatchObject({ kind: "error" });
+  });
+
+  it("omits the levers entirely when no flag is passed", () => {
+    const r = parseArgv(["hi"]) as { opts: Record<string, unknown> };
+    expect(r.opts).not.toHaveProperty("temperature");
+    expect(r.opts).not.toHaveProperty("toolChoice");
+  });
+});
+
 describe("parseArgv --system-prompt / --append-system-prompt", () => {
   it("captures a system-prompt override (text or @file, resolved at runtime)", () => {
     expect(parseArgv(["--system-prompt", "@/tmp/sp.txt", "hi"])).toMatchObject({
