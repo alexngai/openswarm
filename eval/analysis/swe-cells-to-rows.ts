@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { isCorrect, freshTokens, modelOf } from "./offline-frontier.js";
 
 /** `cascade__<instance>__<arm>__cascade__seed<N>@<hash>.json` (instance may contain `__`).
- *  Matches any `mono-<name>` arm, incl. docs/63 H4 loadout arms (mono-direct/repro/…). */
+ *  Matches any `mono-<name>` arm, incl. docs/64 H4 loadout arms (mono-direct/repro/…). */
 const CELL_RE = /^cascade__(.+)__(mono-[a-z0-9-]+)__cascade__seed(\d+)@[0-9a-f]+\.json$/;
 
 function main(argv: string[]): number {
@@ -45,7 +45,7 @@ function main(argv: string[]): number {
       JSON.stringify({
         task_id: inst,
         model,
-        arm, // docs/63 H4: distinguishes loadouts (mono-direct/repro/…) of the same model
+        arm, // docs/64 H4: distinguishes loadouts (mono-direct/repro/…) of the same model
         seed: Number(seed),
         correct: isCorrect(cell) ? 1 : 0,
         sig_visible: typeof conf === "number" ? conf : null,

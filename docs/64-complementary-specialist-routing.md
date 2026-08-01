@@ -1,4 +1,4 @@
-# 63 — Complementary-specialist routing (diversity, not just cost-tiering)
+# 64 — Complementary-specialist routing (diversity, not just cost-tiering)
 
 **Status:** design + results — **diversity not supported (H3 + H4)**. Model diversity: substitutable single-shot (κ=0.058), harness-fit-contaminated agentic (§9). Loadout diversity: κ=0 at 3 seeds — the best loadout (plan-first) dominates; the 1-seed probe's κ=0.67 was noise (§10). Loadout is a *quality* lever (+0.19), not a diversity lever. Extends 50 (thesis), 62 (offline method + honest-compute pre-check + §8 attribution).
 

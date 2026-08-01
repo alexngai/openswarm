@@ -78,7 +78,7 @@ const COMPILE_CMD =
 const SIGNAL = process.env.CS_SIGNAL === "1";
 const MONO_SIGNAL_OPTS = SIGNAL ? { promptPrefix: REPRO_PREFIX, signalCommands: [COMPILE_CMD, REPRO_CMD] } : {};
 
-/** docs/63 H4 — loadout diversity: the SAME model in different prompt loadouts (roles).
+/** docs/64 H4 — loadout diversity: the SAME model in different prompt loadouts (roles).
  *  CS_LOADOUTS=direct,repro,explore,plan creates one mono arm per loadout (arm id
  *  `mono-<name>`, so cache keys don't collide), all on CS_MODEL_SMALL. Tests whether
  *  loadout diversity (path-dependent) beats any single loadout where model diversity didn't. */
@@ -239,7 +239,7 @@ export async function runCascadeSwe(): Promise<void> {
       adapter: new CascadeAdapter({ tiers: [{ model: SMALL }], tau: 1, ...MONO_SIGNAL_OPTS, env, timeoutMs: AGENT_TIMEOUT_MS, bin: BIN }) },
     { arm: { id: "mono-large", label: `mono ${LARGE}`, scaffold: {} },
       adapter: new CascadeAdapter({ tiers: [{ model: LARGE }], tau: 1, ...MONO_SIGNAL_OPTS, env, timeoutMs: AGENT_TIMEOUT_MS, bin: BIN }) },
-    // docs/63 H4: one mono arm per loadout (same SMALL model, different promptPrefix).
+    // docs/64 H4: one mono arm per loadout (same SMALL model, different promptPrefix).
     ...LOADOUTS.map((name) => ({
       arm: { id: `mono-${name}`, label: `mono ${SMALL} [${name}]`, scaffold: {} } as Arm,
       adapter: new CascadeAdapter({

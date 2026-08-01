@@ -1,12 +1,12 @@
 /**
  * router-frontier.ts — N-way complementary-specialist router over the flat Row schema
- * (docs/63 H3). Tests whether a DIVERSE swarm, routed per-task to the best-suited member,
+ * (docs/64 H3). Tests whether a DIVERSE swarm, routed per-task to the best-suited member,
  * beats the best single model on accuracy (union coverage) and/or a big baseline on
  * compute — i.e. whether diversity (not just cost-tiering) helps.
  *
  * Key metric: complementarity index κ = (tasks solved by EXACTLY ONE swarm member) /
  * (tasks solved by ≥1 member). κ≈0 ⇒ members solve the same tasks ⇒ routing can't raise
- * accuracy (docs/63 §2). Compute is the honest FLOPs axis (2·N·tokens), reusing
+ * accuracy (docs/64 §2). Compute is the honest FLOPs axis (2·N·tokens), reusing
  * humaneval-frontier's attemptFlops.
  *
  * Run: tsx eval/analysis/router-frontier.ts rows.jsonl --swarm m1,m2,m3 [--baseline mB]
@@ -15,7 +15,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { attemptFlops, type Row } from "./humaneval-frontier.js";
 
-/** A row may carry an `arm` tag (docs/63 H4 loadouts of one model). */
+/** A row may carry an `arm` tag (docs/64 H4 loadouts of one model). */
 type RouterRow = Row & { arm?: string };
 const mean = (xs: number[]): number => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 
