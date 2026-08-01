@@ -1,13 +1,13 @@
 /**
  * Branch lock — two layers:
  *
- * (A) Pure collision detector (diagnostic) — ported near-verbatim from claw's
- *     `rust/crates/runtime/src/branch_lock.rs::detect_branch_lock_collisions`.
+ * (A) Pure collision detector (diagnostic) — originally derived from a reference collision-detection
+ *     routine and since evolved independently.
  *     Reports `(branch, module, laneIds)` tuples where 2+ intents claim the
  *     same branch AND overlapping modules. Read-only: consumers decide what
  *     to do with collisions.
  *
- * (B) Atomic filesystem lock (enforcement) — NEW design on top, not in claw.
+ * (B) Atomic filesystem lock (enforcement) — NEW design on top, original to OpenSwarm.
  *     Uses `fs.open(path, "wx")` (O_EXCL-equivalent) to acquire a single
  *     writer per branch. Lock file contents are JSON:
  *       { ownerAgentId, acquiredAt, pid, branch }
@@ -27,7 +27,7 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 // ---------------------------------------------------------------------------
-// (A) Collision detector — pure function, mirrors claw's Rust port.
+// (A) Collision detector — pure diagnostic function.
 // ---------------------------------------------------------------------------
 
 export interface BranchLockIntent {

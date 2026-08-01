@@ -1351,7 +1351,7 @@ export class StandaloneHost implements SwarmHost {
     });
 
     // Route to the operator (the ACP client) when a handler is present — the ACP
-    // team path has no TTY but can prompt the editor (docs/archive/33 §9).
+    // team path has no TTY but can prompt the editor.
     if (this.interactionHandler?.askUserQuestion !== undefined) {
       return this.interactionHandler.askUserQuestion(question, options);
     }

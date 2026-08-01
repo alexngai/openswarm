@@ -2,7 +2,7 @@
 
 Living tracker of disparities between `openswarm` (TS) and
 `references/macro-agent/` (TS orchestration system). Companion to
-`15-parity-gaps.md` (claw-code parity) and `39-codex-parity-gap-analysis.md`
+`15-parity-gaps.md` (reference-implementation parity) and `39-codex-parity-gap-analysis.md`
 (Codex parity).
 
 **openswarm is the spiritual successor to macro-agent.** macro-agent is a

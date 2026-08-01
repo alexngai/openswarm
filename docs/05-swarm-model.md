@@ -50,7 +50,7 @@ Parent ↔ worker uses JSONL over stdio by default. Every event carries:
   agentId: string;
   type: string;         // see event catalog below
   payload: unknown;
-  fingerprint?: string; // for dedup (ported from claw's lane_events.rs)
+  fingerprint?: string; // for dedup (ported from the reference implementation)
   provenance?: string;  // which component emitted this
 }
 ```
@@ -59,7 +59,7 @@ Future transports (unix socket, shared message bus, NATS) slot in behind the `Sw
 
 ### Lane event catalog
 
-Ported near-verbatim from claw's `rust/crates/runtime/src/lane_events.rs` (research/05-swarm.md §5). Names and failure taxonomy stay the same; we gain interop with claw-ecosystem observers.
+Ported near-verbatim from the reference implementation. Names and failure taxonomy stay the same; we gain interop with compatible observers.
 
 Event types (non-exhaustive — full list ported to `src/core/events.ts`):
 
@@ -74,7 +74,7 @@ Event types (non-exhaustive — full list ported to `src/core/events.ts`):
 
 ### TaskPacket shape
 
-Structured task format (research/05-swarm.md §2). Claw ships `branch_policy` / `commit_policy` / `escalation_policy` as free-form strings that are just hints to the model. **Ours are discriminated-union records enforced at runtime (M3a Phase 2):**
+Structured task format. The reference implementation ships `branch_policy` / `commit_policy` / `escalation_policy` as free-form strings that are just hints to the model. **Ours are discriminated-union records enforced at runtime (M3a Phase 2):**
 
 ```ts
 type BranchPolicy =
@@ -104,11 +104,11 @@ interface TaskPacket {
 }
 ```
 
-The Zod schemas live in `src/swarm/policies.ts`. Legacy flat strings (`"main"`, `"worktree"`, `"never"`, `"abort-on-error"`, etc.) are rejected at CLI parse time with a migration hint. See `docs/archive/11-m3a-plan.md §Policy migration` for the before/after table.
+The Zod schemas live in `src/swarm/policies.ts`. Legacy flat strings (`"main"`, `"worktree"`, `"never"`, `"abort-on-error"`, etc.) are rejected at CLI parse time with a migration hint.
 
 ### Worker state file
 
-Each worker writes an atomic state file at `.openswarm/workers/<agentId>.json` (pattern borrowed from claw's `.claw/worker-state.json`). Orchestrator reads this for crash recovery — if a worker dies without emitting a final event, the state file is the last known good record.
+Each worker writes an atomic state file at `.openswarm/workers/<agentId>.json` (pattern borrowed from the reference implementation's worker-state file). Orchestrator reads this for crash recovery — if a worker dies without emitting a final event, the state file is the last known good record.
 
 ## Failure model
 
@@ -131,17 +131,17 @@ Every atomic agent has an `agentId` assigned at spawn time. It is:
 
 At M3, orchestrators may assign roles: `architect`, `executor`, `reviewer`, `critic`. A role is a name + system-prompt overlay + tool allowlist. Roles do not change the atomic-agent binary — they are parameters passed at spawn time.
 
-**Why not copy claw's `TeamRegistry`:** it stores only `{name, [task_id]}` with no roles, no allowlists, no system-prompt overlays (research/05-swarm.md §3). We ship teams with real semantics or not at all.
+**Why not copy the reference implementation's `TeamRegistry`:** it stores only `{name, [task_id]}` with no roles, no allowlists, no system-prompt overlays. We ship teams with real semantics or not at all.
 
 ## Git-based coordination (M3)
 
-Multi-agent swarms writing to the same git working tree need coordination to avoid stepping on each other. Claw has three small, pure, well-tested modules (research/05-swarm.md §6) we port near-verbatim:
+Multi-agent swarms writing to the same git working tree need coordination to avoid stepping on each other. The reference implementation has three small, pure, well-tested modules we port near-verbatim:
 
 - **`branch_lock`** — advisory lock on a branch; prevents two workers from concurrently committing to the same branch. Uses a lock file under `.openswarm/locks/<branch>.lock` with atomic-create semantics and stale-lock eviction.
 - **`stale_base`** — detects when a worker's base commit has diverged from the current branch tip. Orchestrator decides: rebase, abort, or escalate.
 - **`stale_branch`** — detects when a workspace test was run against a branch that has since moved. Blocks bash preflight on stale state.
 
-These are the only parts of claw's coordination layer we import directly.
+These are the only parts of the reference implementation's coordination layer we import directly.
 
 ## Branch coordination (M3b)
 
@@ -157,13 +157,13 @@ M3b ships the atomic lock + staleness modules the orchestrator consults before a
 
 ## Anti-patterns we reject
 
-From claw-code research (05-swarm.md §3, §9; see `07-implementation-plan.md` for the full list):
+From studying the reference implementation (see `07-implementation-plan.md` for the full list):
 
-- **Thread-based sub-agents** — claw's `Agent` tool spawns `std::thread`. We use subprocess.
+- **Thread-based sub-agents** — the reference implementation's `Agent` tool spawns `std::thread`. We use subprocess.
 - **Global `OnceLock` registries** — fine for one process, hostile to subprocess workers. Our registries are per-runtime with explicit IPC.
 - **`CronRegistry` with no scheduler** — we don't ship cron until a real scheduler exists.
 - **`TeamRegistry` with no roles** — we don't ship teams without system-prompt overlays and tool allowlists.
-- **`SendUserMessage` that echoes** — no delivery mechanism in claw. We deliver or we skip.
+- **`SendUserMessage` that echoes** — no delivery mechanism in the reference implementation. We deliver or we skip.
 - **`AskUserQuestion` that blocks stdin** — unusable from threads or headless. Ours routes via SwarmHost lane events.
 
 ## Resource accounting

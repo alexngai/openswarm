@@ -1,30 +1,38 @@
 import type { ToolSpec } from "../core/types.js";
-
-const BASH_ALIASES = new Set([
-  "cmd",
-  "command",
-  "exec",
-  "execute",
-  "run",
-  "run_command",
-  "shell",
-  "terminal",
-  "python",
-  "pytest",
-  "npm",
-  "node",
-]);
-
-const EDIT_ALIASES = new Set([
-  "apply_patch",
-  "edit",
-  "patch",
-  "replace",
-  "str_replace",
-]);
+import {
+  boundedEditDistance,
+  TOOL_NAME_ALIASES,
+} from "../providers/tool-call-repair.js";
 
 function sortedToolNames(specs: readonly ToolSpec[]): readonly string[] {
   return specs.map((s) => s.name).sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * Closest registered names to a rejected one, for a "did you mean" hint. The
+ * repair layer (docs/63) resolves unambiguous cases before dispatch, so by the
+ * time this runs the name was either ambiguous or genuinely invented — naming
+ * the near misses is the most useful thing left to tell the model.
+ */
+function nearestToolNames(
+  requested: string,
+  available: readonly string[],
+  limit = 3,
+): readonly string[] {
+  const normalized = requested.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return available
+    .map((name) => ({
+      name,
+      distance: boundedEditDistance(
+        normalized,
+        name.toLowerCase().replace(/[^a-z0-9]/g, ""),
+        4,
+      ),
+    }))
+    .filter((entry) => entry.distance <= 4)
+    .sort((a, b) => a.distance - b.distance || a.name.localeCompare(b.name))
+    .slice(0, limit)
+    .map((entry) => entry.name);
 }
 
 function compactJson(value: unknown): string {
@@ -39,17 +47,22 @@ function correctionForUnknownTool(
   requestedName: string,
   available: ReadonlySet<string>,
 ): string {
-  const lower = requestedName.toLowerCase();
-  if (BASH_ALIASES.has(lower) && available.has("bash")) {
+  // Single source of truth with the repair layer's alias table, so a name that
+  // repair would have resolved is described the same way here.
+  const canonical = TOOL_NAME_ALIASES[requestedName.toLowerCase()];
+  if (canonical === "bash" && available.has("bash")) {
     return 'Use tool `bash` with arguments like {"command":"pwd"}.';
   }
-  if (EDIT_ALIASES.has(lower)) {
+  if (canonical === "edit_file") {
     if (available.has("edit_file")) {
       return "Use tool `edit_file` for exact-string replacements, or `bash` with a concrete shell command when shell editing is required.";
     }
     if (available.has("bash")) {
       return "Use tool `bash` with a concrete shell command, for example {\"command\":\"python - <<'PY'\\nfrom pathlib import Path\\n...\\nPY\"}.";
     }
+  }
+  if (canonical !== undefined && available.has(canonical)) {
+    return `Use tool \`${canonical}\` instead of \`${requestedName}\`.`;
   }
   return "Retry using one of the exact tool names listed above; do not invent aliases or pseudo-tools.";
 }
@@ -60,9 +73,13 @@ export function formatUnknownToolFeedback(
 ): string {
   const names = sortedToolNames(specs);
   const available = new Set(names);
+  const nearest = nearestToolNames(requestedName, names);
   return [
     `invalid_tool_name: \`${requestedName}\` is not an available tool.`,
     `Available tools: ${names.map((n) => `\`${n}\``).join(", ")}.`,
+    ...(nearest.length > 0
+      ? [`Closest matches: ${nearest.map((n) => `\`${n}\``).join(", ")}.`]
+      : []),
     correctionForUnknownTool(requestedName, available),
   ].join("\n");
 }

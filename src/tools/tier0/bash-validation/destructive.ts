@@ -4,7 +4,7 @@
  * Always-applicable (any permission mode). Warns when a command matches known
  * destructive patterns or is inherently destructive.
  *
- * Corresponds to claw's `check_destructive` (bash_validation.rs:237-273).
+ * Detects destructive command patterns.
  */
 
 import type { ValidationResult } from "./types.js";

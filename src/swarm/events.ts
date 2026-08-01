@@ -1,9 +1,9 @@
 /**
  * Lane event schema — the wire format between a worker and its orchestrator.
  *
- * Ported near-verbatim from claw-code's `rust/crates/runtime/src/lane_events.rs`
- * (docs/research/05-swarm.md §5). Keeping names and failure classes aligned
- * preserves interop with claw-ecosystem observers.
+ * Originally derived from a reference lane-event schema and since evolved
+ * independently. Keeping event names and failure classes stable preserves
+ * interop with existing lane-event observers.
  *
  * Transport: JSONL over stdio in the default subprocess topology.
  * One event per line. Events are strictly additive — never remove or rename.
@@ -178,7 +178,7 @@ export type LaneEventPayload = unknown;
  * recorded/live split (commit b71c322) for worker tool boundaries and hid the
  * real type from consumers. Returning the real type lets events.jsonl record
  * the semantic spine (tool_use_start/end, tool_result, message_stop) and lets
- * the ACP layer translate member activity (docs/archive/33 B0.2).
+ * the ACP layer translate member activity.
  *
  * Returns `undefined` for engine events with no lane equivalent
  * (info/hook_event/compaction/cache_*) — those were never usefully consumed and

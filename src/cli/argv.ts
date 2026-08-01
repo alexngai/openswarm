@@ -21,6 +21,7 @@
 
 import type { PermissionMode } from "../core/types.js";
 import type { TopologyKind } from "../swarm/team-spec.js";
+import { parseToolChoice } from "../engine/sampling.js";
 
 /**
  * Parse a duration string to milliseconds. Accepts an optional unit suffix
@@ -87,11 +88,11 @@ export interface CommonOpts {
    */
   plan: boolean;
   /**
-   * acp subcommand: force single-agent mode (Stage A). docs/archive/33.
+   * acp subcommand: force single-agent mode (Stage A).
    */
   readonly single?: boolean;
   /**
-   * acp subcommand: force team mode (coordinator). docs/archive/33.
+   * acp subcommand: force team mode (coordinator).
    */
   readonly team?: boolean;
   /**
@@ -119,6 +120,22 @@ export interface CommonOpts {
    * token count above threshold. Requires --framework hardened-native.
    */
   readonly midTurnCompaction?: boolean;
+  /**
+   * Sampling parameters forwarded to the provider (docs/63 F3). Also settable
+   * via OPENSWARM_TEMPERATURE / OPENSWARM_TOP_P / OPENSWARM_TOP_K, which is how
+   * they reach spawned swarm workers.
+   */
+  readonly temperature?: number;
+  readonly topP?: number;
+  readonly topK?: number;
+  /**
+   * Force or suppress tool use for every turn (docs/63 F2): `auto`, `required`,
+   * `none`, or a tool name to pin. `required` is the lever for an open-weight
+   * model that answers in prose instead of calling tools — pair it with
+   * `--max-turns`, since a model that must always call a tool cannot end the
+   * conversation on its own.
+   */
+  readonly toolChoice?: "auto" | "required" | "none" | { readonly name: string };
   /**
    * Maximum total tokens (input + output + cache) for the entire run.
    * On exceed, the engine is aborted and the process exits with code 3.
@@ -330,7 +347,7 @@ export function parseArgv(args: string[]): ParsedArgs {
   let dumpTools = false;
   let enableWebSearch = false;
   let plan = false;
-  // acp subcommand mode selectors (docs/archive/33). Default resolves in runAcp.
+  // acp subcommand mode selectors. Default resolves in runAcp.
   let acpSingle = false;
   let acpTeam = false;
   let framework: FrameworkChoice = "auto";
@@ -343,6 +360,10 @@ export function parseArgv(args: string[]): ParsedArgs {
   let maxTokens: number | undefined;
   let maxCostUsd: number | undefined;
   let maxTurns: number | undefined;
+  let temperature: number | undefined;
+  let topP: number | undefined;
+  let topK: number | undefined;
+  let toolChoice: CommonOpts["toolChoice"] | undefined;
   let systemPromptOverride: string | undefined;
   let appendSystemPrompt: string | undefined;
   let maxWallClockMs: number | undefined;
@@ -508,7 +529,7 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
-    // acp mode selectors (docs/archive/33): --single forces Stage A single-agent;
+    // acp mode selectors: --single forces Stage A single-agent;
     // --team forces team mode. Default is resolved in runAcp.
     if (tok === "--single") {
       acpSingle = true;
@@ -990,6 +1011,61 @@ export function parseArgv(args: string[]): ParsedArgs {
       continue;
     }
 
+    // Sampling levers (docs/63 F3) — float-valued, so they share a parser.
+    if (tok === "--temperature" || tok === "--top-p" || tok === "--top-k") {
+      const val = expanded[i + 1];
+      if (val === undefined || (val.startsWith("-") && Number.isNaN(Number(val)))) {
+        return { kind: "error", message: `${tok} requires a value`, showHelp: true };
+      }
+      if (tok === "--top-k") {
+        const n = Number.parseInt(val, 10);
+        if (Number.isNaN(n) || n < 1) {
+          return {
+            kind: "error",
+            message: `--top-k must be a positive integer, got "${val}"`,
+            showHelp: true,
+          };
+        }
+        topK = n;
+      } else {
+        const n = Number.parseFloat(val);
+        if (!Number.isFinite(n) || n < 0) {
+          return {
+            kind: "error",
+            message: `${tok} must be a non-negative number, got "${val}"`,
+            showHelp: true,
+          };
+        }
+        if (tok === "--temperature") temperature = n;
+        else topP = n;
+      }
+      i += 2;
+      continue;
+    }
+
+    // Tool-choice lever (docs/63 F2).
+    if (tok === "--tool-choice") {
+      const val = expanded[i + 1];
+      if (val === undefined || val.startsWith("-")) {
+        return {
+          kind: "error",
+          message: "--tool-choice requires a value (auto | required | none | <tool-name>)",
+          showHelp: true,
+        };
+      }
+      const parsed = parseToolChoice(val);
+      if (parsed === undefined) {
+        return {
+          kind: "error",
+          message: `--tool-choice must be auto, required, none, or a tool name, got "${val}"`,
+          showHelp: true,
+        };
+      }
+      toolChoice = parsed;
+      i += 2;
+      continue;
+    }
+
     if (tok === "--max-cost-usd") {
       const val = expanded[i + 1];
       if (val === undefined || val.startsWith("-")) {
@@ -1130,6 +1206,10 @@ export function parseArgv(args: string[]): ParsedArgs {
     ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
     ...(maxTurns !== undefined ? { maxTurns } : {}),
     ...(maxWallClockMs !== undefined ? { maxWallClockMs } : {}),
+    ...(temperature !== undefined ? { temperature } : {}),
+    ...(topP !== undefined ? { topP } : {}),
+    ...(topK !== undefined ? { topK } : {}),
+    ...(toolChoice !== undefined ? { toolChoice } : {}),
   };
 
   switch (subcommand) {

@@ -1,8 +1,7 @@
 /**
  * Bash command validation — command intent classifier.
  *
- * Ports claw's `CommandIntent` enum and `classify_command` function.
- * claw source: rust/crates/runtime/src/bash_validation.rs:28-44, 529-583
+ * Command-intent classification: an 8-variant enum plus a classifier.
  */
 
 import {
@@ -20,8 +19,7 @@ import { extractFirstCommand } from "./utils.js";
 /**
  * Semantic classification of a bash command's intent.
  *
- * 8-variant string union matching claw's `CommandIntent` enum
- * (bash_validation.rs:28-44).
+ * 8-variant string union of command intents.
  */
 export type CommandIntent =
   | "read-only"
@@ -49,7 +47,7 @@ function classifyGit(command: string): CommandIntent {
 /**
  * Classify the semantic intent of a bash command.
  *
- * Corresponds to claw's `classify_command` (bash_validation.rs:529-535).
+ * Classifies a command by its intent.
  */
 export function classifyCommand(command: string): CommandIntent {
   const first = extractFirstCommand(command);

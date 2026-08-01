@@ -1,6 +1,6 @@
 /**
  * branch-lock.test.ts — covers both layers:
- *   (A) Pure `detectCollisions` semantics (ported from claw).
+ *   (A) Pure `detectCollisions` semantics (originally derived from a reference implementation).
  *   (B) Atomic filesystem lock (acquire/release/stale-reclaim/timeout).
  *
  * Uses `os.tmpdir() + mkdtemp` for isolated lock dirs per test.

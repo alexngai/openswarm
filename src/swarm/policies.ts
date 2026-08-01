@@ -4,9 +4,6 @@
  * Replaces the legacy flat-string enums (M1/M2) with runtime-validated
  * discriminated unions. Import TaskPacketSchema in CLI entry points and
  * tools that accept raw user input.
- *
- * See docs/archive/11-m3a-plan.md §Phase 2 and §Policy migration for before/after
- * migration examples.
  */
 
 import { z } from "zod";

@@ -9,7 +9,7 @@
  *
  * Two JSON shapes are accepted:
  *
- * A) Dedicated `hooks.json` (simple, matches docs/archive/10-m2-plan.md §9.5):
+ * A) Dedicated `hooks.json` (simple):
  *    {
  *      "PreToolUse":  [{ "matcher": "bash", "command": "./log.sh" }],
  *      "PostToolUse": [{ "matcher": "*",    "command": "./audit.sh", "timeoutMs": 5000 }]

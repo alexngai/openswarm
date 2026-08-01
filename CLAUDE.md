@@ -21,4 +21,4 @@ npx tsc -p experimental/tsconfig.json --noEmit     # type-check experimental/ tr
 
 ## Docs
 
-Design docs live in `docs/` — see [`docs/README.md`](docs/README.md) for the full index. Research notes are in `docs/research/`.
+Design docs live in `docs/` — see [`docs/README.md`](docs/README.md) for the full index.

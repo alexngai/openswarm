@@ -1,7 +1,7 @@
 /**
  * stale-branch — compare a branch's freshness against a main ref.
  *
- * Ported from claw's `rust/crates/runtime/src/stale_branch.rs`. Claw's
+ * Originally derived from a reference implementation. The reference's
  * `missing_fix_subjects` does NOT filter commits by regex; it returns every
  * non-empty subject line in the `main..branch` range. We mirror that here.
  *
@@ -9,7 +9,7 @@
  * `origin/master` → `master`. Throws if none resolve.
  *
  * `applyPolicy` maps a Freshness + PolicyKind to a PolicyIntent. Intent only —
- * no rebase/merge is actually performed here (same as claw).
+ * no rebase/merge is actually performed here (same as the reference).
  */
 
 import { execFile } from "node:child_process";

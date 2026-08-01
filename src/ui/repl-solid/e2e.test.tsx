@@ -373,7 +373,7 @@ describe("App — end-to-end interactive flow", () => {
   // OpenTUI's `streaming={true}` contract (Markdown.d.ts:62-72) to keep the
   // trailing block unstable mid-stream and finalise on the streaming=false
   // flip after message_stop. If this leaks raw fence markers post-stream,
-  // that's the trigger to port claw's find_stream_safe_boundary.
+  // that's the trigger for stream-safe boundary detection.
   it("multi-chunk streaming with mid-fence pauses settles cleanly after message_stop", async () => {
     const { events, push, close } = makeEventChannel();
 

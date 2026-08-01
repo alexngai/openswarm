@@ -1,8 +1,8 @@
 /**
  * worker-state-file.ts — atomic worker state persistence.
  *
- * Each worker writes a JSON state file to ~/.openswarm/workers/<agentId>.json
- * (pattern borrowed from claw's .claw/worker-state.json). Orchestrator reads
+ * Each worker writes a JSON state file to ~/.openswarm/workers/<agentId>.json.
+ * The orchestrator reads
  * these files for crash recovery — if a worker dies without emitting a final
  * event, the state file is the last known good record.
  *

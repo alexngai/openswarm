@@ -6,7 +6,7 @@
 
 /**
  * Permission modes control what a tool call is allowed to do.
- * Evaluation order (see docs/03-interfaces.md, docs/research/03-runtime.md §4):
+ * Evaluation order (see docs/03-interfaces.md):
  *   deny rules → hook override → ask rule → mode-required → prompt → deny
  */
 export type PermissionMode = "read-only" | "workspace-write" | "danger-full-access";
@@ -130,6 +130,28 @@ export type NormalizedEvent =
       readonly structuredOutput?: unknown;
     }
   | { readonly type: "error"; readonly error: ProviderError }
+  /**
+   * Emitted when a malformed tool call was repaired or recovered rather than
+   * dropped (docs/63-tool-call-repair.md). Purely observational — the repaired
+   * call still goes through `canUseTool` and schema validation — but it is the
+   * only signal that a self-hosted serving layer is mis-emitting tool calls,
+   * so headless/eval consumers record it to attribute open-weight failures.
+   */
+  | {
+      readonly type: "tool_call_repaired";
+      /** Tool-use id the repaired call will be dispatched under. */
+      readonly id: string;
+      /** Where the repair happened — see RepairStage in tool-call-recovery. */
+      readonly stage: "delivered" | "recovered_stream" | "recovered_text";
+      /** Resolved (post-repair) tool name. */
+      readonly toolName: string;
+      /** Ordered audit trail of the transforms applied. */
+      readonly repairs: readonly string[];
+      /** Present when the model's tool name differed from the resolved one. */
+      readonly originalName?: string;
+      /** Native text syntax the call was written in (stage recovered_text). */
+      readonly format?: string;
+    }
   /**
    * Fallback for Codex-specific notifications that don't map to a known event
    * type. The original method name and params are preserved verbatim so callers

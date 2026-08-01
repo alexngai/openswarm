@@ -1,7 +1,7 @@
 # 39 — Codex Parity Gap Analysis
 
 Gap analysis between openswarm and OpenAI Codex CLI (`codex-rs`).
-Companion to `15-parity-gaps.md` (which tracks claw-code parity).
+Companion to `15-parity-gaps.md` (which tracks reference-implementation parity).
 
 Codex is the reference for production-hardened agent behavior: sandboxing,
 safety, and execution policy. openswarm leads on multi-agent orchestration,

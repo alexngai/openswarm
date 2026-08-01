@@ -1,5 +1,5 @@
 /**
- * ACP team orchestration-spine recorder (B1.3, docs/archive/34 §5).
+ * ACP team orchestration-spine recorder (B1.3).
  *
  * B0 streamed lane events to the client but persisted nothing, so an ACP team
  * session had no transcript to replay. This subscribes to the runner's lane bus

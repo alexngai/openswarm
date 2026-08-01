@@ -1,7 +1,7 @@
 /**
  * Single-agent translator: NormalizedEvent stream -> ACP session/update.
  * Thin wrapper over the shared emitter (normalized-translate.ts), which is also
- * used by the team lane translator. See docs/archive/32 §9.
+ * used by the team lane translator.
  */
 
 import type {

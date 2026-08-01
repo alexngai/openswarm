@@ -7,7 +7,7 @@
  *
  * v0.2 Stage 2F (T8): success/failure transition — when `active` transitions
  * to false, the spinner briefly shows ✔ (success) or ✘ (failure) for
- * `transitionMs` milliseconds before disappearing. Matches claw-code's
+ * `transitionMs` milliseconds before disappearing. Matches the reference implementation's
  * terminal spinner polish.
  */
 

@@ -3,7 +3,7 @@
  *
  * The codex access token is a JWT whose claims carry the account id, plan, and
  * expiry we need for request headers and silent refresh (docs/42 §5). Ported
- * from openclaw `extensions/openai/openai-chatgpt-auth-identity.ts`.
+ * from a reference implementation.
  *
  * Pure — no I/O. Never logs token contents.
  */

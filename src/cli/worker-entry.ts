@@ -56,6 +56,7 @@ import { redactSecrets } from "../tools/tier0/secrets.js";
 import type { ToolExecutionContext, ToolImpl } from "../tools/types.js";
 import { readSessionSidecar, writeSessionSidecar } from "./session-sidecar.js";
 import { buildSystemPrompt } from "../engine/default-system-prompt.js";
+import { resolveSamplingConfig } from "../engine/sampling.js";
 import {
   ensureScratchpadDir,
   formatScratchpadForSystemPrompt,
@@ -395,7 +396,7 @@ async function executeTurn(
 
     // Long-lived workers resume the prior turn's session so conversation
     // context carries across run_more (the engine tracks its latest session id).
-    // undefined on the first turn -> a fresh conversation (docs/archive/33 B0.5).
+    // undefined on the first turn -> a fresh conversation.
     // B1.4: on the first turn (no in-memory id) fall back to the session sidecar
     // so a freshly-spawned root resumes the prior conversation across processes
     // (ACP session/load live resume).
@@ -443,6 +444,10 @@ async function executeTurn(
       ...(resolvedAllowedTools !== undefined && {
         allowedTools: resolvedAllowedTools,
       }),
+      // Sampling + tool-choice levers (docs/63 F2/F3). Env-only here: the
+      // subprocess spawner spreads process.env, so whatever the orchestrator
+      // resolved reaches every worker without a new IPC field.
+      ...resolveSamplingConfig(),
     };
 
     // Layer 0: record this worker's session transcript (opt-in, best-effort) so
@@ -514,7 +519,7 @@ async function executeTurn(
       }
       // Forward each engine event as a lane_event, preserving its real type so
       // events.jsonl records the semantic spine and the ACP layer can translate
-      // member activity (docs/archive/33 B0.2). Events with no lane equivalent are
+      // member activity. Events with no lane equivalent are
       // dropped (they were never usefully consumed).
       const laneType = normalizedEventToLaneType(evt.type);
       if (laneType !== undefined) {

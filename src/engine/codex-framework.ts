@@ -3,8 +3,6 @@
  *
  * Wraps a long-lived CodexAppServerProvider (spawned lazily on first run())
  * and a single thread (started lazily on first run(), reused across calls).
- *
- * See docs/archive/24-phase-6-codex-app-server-plan.md §Stage 3C.
  */
 
 import type {

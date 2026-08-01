@@ -1,10 +1,10 @@
 /**
  * headless-prompt.ts — approval handler for `--headless` mode.
  *
- * Phase 2 design lock (doc 17 P2.Q4): same semantics as claw's piped-stdin
- * path (`input.rs:141-197`, `main.rs:7394-7404`).
+ * Phase 2 design lock (doc 17 P2.Q4): same semantics as the reference implementation's piped-stdin
+ * path.
  *   - Emit a `{"type":"permission_required", ...}` JSONL line on stdout so
- *     orchestrators know what to feed. Small deviation from claw (which
+ *     orchestrators know what to feed. Small deviation from the reference implementation (which
  *     prints plain text) — JSONL is our existing headless stream format.
  *   - Block on stdin for one line.
  *   - "y" / "yes" (case-insensitive, trimmed) → approve.

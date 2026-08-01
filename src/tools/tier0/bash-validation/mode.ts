@@ -2,7 +2,7 @@
  * Bash command validation — mode validation submodule.
  *
  * Cross-checks command intent against the current permission mode.
- * Corresponds to claw's `validate_mode` (bash_validation.rs:280-303).
+ * Validates the requested permission mode.
  */
 
 import type { PermissionMode } from "../../../core/types.js";

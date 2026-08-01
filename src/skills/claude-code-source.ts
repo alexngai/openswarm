@@ -8,12 +8,10 @@
  *  3. For each ancestor of cwd (bounded by maxAncestorDepth, default 10):
  *       <dir>/.claude/skills
  *       <dir>/.codex/skills
- *       <dir>/.claw/skills
  *       <dir>/.omc/skills
  *  4. $HOME/.claude/skills
  *  5. $HOME/.codex/skills
- *  6. $HOME/.claw/skills
- *  7. $HOME/.omc/skills
+ *  6. $HOME/.omc/skills
  *
  * Skill layout:
  *   Canonical:  <root>/<skill-id>/SKILL.md
@@ -292,14 +290,12 @@ export class ClaudeCodeSource implements SkillSource {
     for (const dir of ancestors) {
       roots.push(path.join(dir, ".claude", "skills"));
       roots.push(path.join(dir, ".codex", "skills"));
-      roots.push(path.join(dir, ".claw", "skills"));
       roots.push(path.join(dir, ".omc", "skills"));
     }
 
     // 4-7. Home directory roots.
     roots.push(path.join(this.homedir, ".claude", "skills"));
     roots.push(path.join(this.homedir, ".codex", "skills"));
-    roots.push(path.join(this.homedir, ".claw", "skills"));
     roots.push(path.join(this.homedir, ".omc", "skills"));
 
     return roots;

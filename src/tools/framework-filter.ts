@@ -5,7 +5,7 @@
  * History: prior to v0.4 stage 4G this stripped 5 SwarmHost-routed tools
  * (send_message, check_inbox, task_stop, task_output, ask_user_question)
  * in framework modes on the assumption that they couldn't dispatch through
- * the framework's tool surface. Track A (docs/archive/26 §Track A) verified
+ * the framework's tool surface. Track A verified
  * empirically that they work fine under --framework claude-agent-sdk —
  * canUseTool routes the framework's call back to the openswarm
  * implementation. The strip was conservative, not technically required.

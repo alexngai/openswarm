@@ -1,5 +1,5 @@
 /**
- * RichClient (B2.2, docs/archive/35 §3) — the swarm-aware ACP client's core: an ACP
+ * RichClient (B2.2) — the swarm-aware ACP client's core: an ACP
  * `Client` that folds `session/update`s into a RichRenderer and renders
  * per-member lanes. The reference rich client by construction (Q5) — it speaks
  * plain ACP-with-`_meta.swarm`, so the same agent drives stock Zed (collapsed)

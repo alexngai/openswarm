@@ -2,8 +2,6 @@
 
 Concrete path from empty repo to v0 and beyond. Milestones are sized for working software at each checkpoint, not calendar-aligned. Every milestone has an **exit criterion** you can point at.
 
-Claw-code research backing this plan lives in [`research/`](./research/). Each milestone cites the specific research note for deeper detail.
-
 ## Sequencing rationale
 
 We ship **M0 (atomic agent)** before **M1 (swarm orchestrator)** because the orchestrator is a consumer of the atomic unit. If the atomic unit is wobbly, a swarm of wobbles is worse. M2 (UI depth) is after M1 because a shaky swarm with pretty output is not the goal — headless M1 has to work before we invest in ink affordances.
@@ -18,21 +16,21 @@ Runnable single-agent CLI. No swarm yet.
 - `AuthSource` interface + `AnthropicApiKeyAuth` (`ANTHROPIC_API_KEY`) **+ `AnthropicOAuthAuth`** (Claude Max subscription). OAuth is first-class in M0 — not deferred.
 - Tool and permission callbacks bound at the engine boundary: our `PermissionEngine` implements `canUseTool`; our tool dispatcher implements `executeTool`. Tools stay out of the engine's internal surface.
 - Preflight handled by Agent SDK — we don't implement token estimation in M0.
-- `PermissionEngine`: three modes (`read-only`, `workspace-write`, `danger-full-access`); two-layer evaluation (deny → mode-required → allow). Bound to the engine's `canUseTool` callback. Hook layer deferred to M2 (research/03-runtime.md §4).
+- `PermissionEngine`: three modes (`read-only`, `workspace-write`, `danger-full-access`); two-layer evaluation (deny → mode-required → allow). Bound to the engine's `canUseTool` callback. Hook layer deferred to M2.
 - No `ConversationRuntime` / turn loop in M0 — Agent SDK owns it. Our turn loop arrives with `NativeEngine` in M4.
-- `SessionStore`: per-worktree isolation at `.openswarm/sessions/<fnv1a(cwd)>/` — non-negotiable. Append-on-push JSONL with atomic-rename snapshots (research/03-runtime.md §3; research/05-swarm.md §2). Stores the engine's opaque `SessionSnapshot` alongside our JSONL log so `--resume` works against whichever engine produced the session.
+- `SessionStore`: per-worktree isolation at `.openswarm/sessions/<fnv1a(cwd)>/` — non-negotiable. Append-on-push JSONL with atomic-rename snapshots. Stores the engine's opaque `SessionSnapshot` alongside our JSONL log so `--resume` works against whichever engine produced the session.
 - CLI: `openswarm login` + `openswarm logout` commands for OAuth (`AnthropicOAuthAuth.login()` → Max subscription flow). Tokens persist to `~/.openswarm/auth.json`.
 - Tier 0 tools:
-  - `bash` — timeout, 16 KiB stdout/stderr truncation on UTF-8 boundaries, background PID return (research/02-tools.md §2)
+  - `bash` — timeout, 16 KiB stdout/stderr truncation on UTF-8 boundaries, background PID return
   - `read_file` — 10 MiB cap, NUL-in-first-8-KiB binary detection, offset/limit
-  - `write_file` — 10 MiB cap, canonical workspace boundary check (claw has the helpers but leaves them unwired; we wire them)
-  - `edit_file` — **mandatory uniqueness check** (fixes claw's first-match silent bug; research/02-tools.md §2)
+  - `write_file` — 10 MiB cap, canonical workspace boundary check (the reference implementation has the helpers but leaves them unwired; we wire them)
+  - `edit_file` — **mandatory uniqueness check** (fixes the reference implementation's first-match silent bug)
   - `multi_edit` — atomic all-or-nothing batch of edits (per Q9)
   - `glob` — gitignore-respecting
   - `grep` — bundled `@vscode/ripgrep` binary (per Q11)
   - `todo_write` — in-memory + session-persisted
 - CLI: bare-positional → `prompt` shorthand; `--model`, `--resume latest`, `--permission-mode`, `--output-format text|json`, `--headless`
-- `doctor` — four claw-parity checks: auth / config / install / workspace. `sandbox` and `system` checks slip to M5 (research/06-cli.md §5)
+- `doctor` — four parity checks: auth / config / install / workspace. `sandbox` and `system` checks slip to M5
 - `init` — creates `.openswarm/`, `.gitignore` entries, stack-detected `CLAUDE.md` if missing
 - Headless mode: JSONL events on stdout; ink is bypassed when `!process.stdout.isTTY`
 
@@ -54,12 +52,12 @@ The thesis proof. One orchestrator fans out N tasks to N atomic agents, collects
 - `SwarmHost` interface with two implementations:
   - `StandaloneHost` — in-process event bus; task registry scoped to this agent
   - `WorkerHost` — JSONL-over-stdio to parent
-- Subprocess spawn machinery: child inherits `ANTHROPIC_API_KEY`; gets fresh env `OPENSWARM_AGENT_ID`, `OPENSWARM_PARENT_PID`, `OPENSWARM_SESSION_ID` (research/05-swarm.md §4)
-- `TaskRegistry` — worktree-scoped, per claw's `task_registry.rs` lifecycle (states, output stream, dispatch) but ours lives at the orchestrator, not as a global `OnceLock` (research/05-swarm.md §2)
+- Subprocess spawn machinery: child inherits `ANTHROPIC_API_KEY`; gets fresh env `OPENSWARM_AGENT_ID`, `OPENSWARM_PARENT_PID`, `OPENSWARM_SESSION_ID`
+- `TaskRegistry` — worktree-scoped, per the reference implementation's lifecycle (states, output stream, dispatch) but ours lives at the orchestrator, not as a global `OnceLock`
 - Tier 2 subset:
   - `agent` — spawn sub-agent via SwarmHost
   - `task_create` / `task_update` / `task_get` / `task_list`
-- Lane-event port — near-verbatim TS translation of claw's `lane_events.rs` catalog (event names, failure taxonomy, provenance tags, fingerprint dedup) (research/05-swarm.md §5)
+- Lane-event port — near-verbatim TS translation of the reference implementation's catalog (event names, failure taxonomy, provenance tags, fingerprint dedup)
 - Orchestrator CLI: `openswarm swarm run tasks.jsonl --concurrency N`
 - Result aggregation: `results.jsonl` with status, output, usage, wall-clock per task
 
@@ -70,24 +68,24 @@ The thesis proof. One orchestrator fans out N tasks to N atomic agents, collects
 
 ## Milestone M2 — UI depth and productivity tools
 
-The "feels like a real CLI" milestone. Atomic-agent UX catches up to claw's.
+The "feels like a real CLI" milestone. Atomic-agent UX catches up to the reference implementation's.
 
 **Scope:**
 
 - ink TUI:
-  - Streaming markdown renderer — port claw's `MarkdownStreamState.push` logic or wrap `marked-terminal` (unresolved, see open question §10)
+  - Streaming markdown renderer — port the reference implementation's `MarkdownStreamState.push` logic or wrap `marked-terminal` (unresolved, see open question §10)
   - Tab-completion dropdown component (rustyline's native cycling has no ink equivalent — we build it)
   - Emacs keybindings (Ctrl+A/E/K/U/W via manual `useInput` wiring)
   - Spinner coexisting with ink re-renders
-  - Slash completion only when line starts with `/` and cursor is at end (research/06-cli.md §3)
+  - Slash completion only when line starts with `/` and cursor is at end
 - Slash commands: `/help`, `/exit`, `/clear`, `/status`, `/cost`, `/model`, `/permissions`, `/resume`, `/doctor`, `/tasks`, `/approve`, `/deny`, `/stop`
 - Tier 1 tools: `web_fetch`, `web_search`, `structured_output`
-- Compaction (mechanical, not LLM-driven, per claw) with tool-use/tool-result boundary guard + post-compaction `glob` health probe (research/03-runtime.md §7)
-- Hooks: shell-command protocol — JSON on stdin, exit codes 0/2/other, stdout schema with `permissionDecision`, `updatedInput`, `systemMessage` (research/03-runtime.md §5). Claude-code-compatible.
+- Compaction (mechanical, not LLM-driven, per the reference implementation) with tool-use/tool-result boundary guard + post-compaction `glob` health probe
+- Hooks: shell-command protocol — JSON on stdin, exit codes 0/2/other, stdout schema with `permissionDecision`, `updatedInput`, `systemMessage`. Claude-code-compatible.
 - Additional TransportProviders: `@ai-sdk/openai` (M2 surface only — Anthropic remains default), wired behind `AuthSource` variants `OpenAIApiKeyAuth` and `OpenAICompatApiKeyAuth` (the latter for Ollama / LM Studio / OpenRouter via `OPENAI_BASE_URL`)
 - Discovery sources (read-only, no install/enable yet):
   - `PluginSource.claude-code` — JSON manifests at `~/.claude/plugins`
-  - `SkillSource.claude-code` — tiered path walk: `CODEX_HOME` / `CLAUDE_CONFIG_DIR` / `.claude` / `.codex` / `.claw` / `.omc` (research/04-integrations.md §3)
+  - `SkillSource.claude-code` — tiered path walk: `CODEX_HOME` / `CLAUDE_CONFIG_DIR` / `.claude` / `.codex` / `.claw` / `.omc`
 - MCP: stdio client, read-only (list + read resources). **First-class tool registration at startup** (per Q12) — each discovered MCP tool registers into the tool table as `mcp__<server>__<tool>`. Parallel connect with per-server timeout; fail-soft on unreachable servers (emit `degraded_startup` event, skip those tools). Dynamic mid-session registration deferred to M5.
 
 **Out of scope for M2:**
@@ -102,15 +100,15 @@ The swarm becomes a real coordination platform. Subscription auth arrives for An
 **Scope:**
 
 - Tier 2 remainder: `send_message`, `check_inbox`, `task_stop`, `task_output`
-- Git coordination: port `branch_lock.rs`, `stale_base.rs`, `stale_branch.rs` near-verbatim — small, pure, well-tested (research/05-swarm.md §6)
-- `TaskPacket` format: `branch_policy`, `commit_policy`, `escalation_policy` fields. Ours are **enums, not claw's free-form strings** — runtime-enforced, not just model hints (research/05-swarm.md §2)
+- Git coordination: port branch-lock, stale-base, and stale-branch logic near-verbatim — small, pure, well-tested
+- `TaskPacket` format: `branch_policy`, `commit_policy`, `escalation_policy` fields. Ours are **enums, not the reference implementation's free-form strings** — runtime-enforced, not just model hints
 - Orchestrator retry policies: fixed retry count, exponential backoff, dead-letter for permanent failures
 - Team roles: system-prompt overlay + tool allowlist per role. Starter roles: `architect`, `executor`, `reviewer`
-- Prompt caching (Anthropic): cache declaration via `providerOptions.anthropic.cacheControl`, fingerprint, usage-delta analytics (research/01-api.md §7)
+- Prompt caching (Anthropic): cache declaration via `providerOptions.anthropic.cacheControl`, fingerprint, usage-delta analytics
 - Parallel tool execution when `ProviderCapabilities.parallelToolUse === true`
 - `notebook_edit` tool
-- `ask_user_question` routed via SwarmHost (not stdin blocking — research/05-swarm.md §9)
-- Server-side token preflight (`count_tokens` with silent local-estimate fallback; research/01-api.md §8)
+- `ask_user_question` routed via SwarmHost (not stdin blocking)
+- Server-side token preflight (`count_tokens` with silent local-estimate fallback)
 
 ### Claude Max subscription auth (FrameworkProvider)
 
@@ -129,12 +127,12 @@ Flexibility milestone. Additional `TransportProvider`s slot in behind the existi
 
 ### M4a — SHIPPED (commit 0abb6d4)
 
-- **NativeEngine** — full turn loop: streaming, tool fan-out via `dispatchBatch`, compaction with tool-pair boundary guard, post-compaction probe, session snapshots, cross-engine resume rejection. See `docs/archive/13-m4a-plan.md`.
+- **NativeEngine** — full turn loop: streaming, tool fan-out via `dispatchBatch`, compaction with tool-pair boundary guard, post-compaction probe, session snapshots, cross-engine resume rejection.
 - **OpenAI TransportProvider** (`gpt-*`, `o1/o3/o4/*`) via `@ai-sdk/openai`. Reasoning-model quirks (strip temperature/top_p, use `max_completion_tokens`) handled at provider boundary.
 - **Model-prefix routing** (`claude*` / `grok*` / `openai/` / `gpt-` / `qwen*` / `gemini-*`) — `src/providers/routing.ts`.
 - **Model alias table** — built-in aliases + user-defined extension (`~/.openswarm/settings.json aliases`), cycle detection — `src/providers/aliases.ts`.
 - **`--framework native` CLI flag** — routes to NativeEngine; `--model` selects provider via routing table.
-- **Vercel AI SDK spike** — findings captured in `docs/research/vercel-sdk-spike.md`.
+- **Vercel AI SDK spike** — findings captured.
 
 ### M4b — PARTIAL (commits 23e2500, 37be22a + Phase 8)
 
@@ -163,7 +161,7 @@ Flexibility milestone. Additional `TransportProvider`s slot in behind the existi
 ### Explicitly NOT in M4
 
 - **GitHub Copilot subscription** — no supported third-party API; community proxies violate March 2026 Copilot terms. Decision Q18. Any future Copilot support requires an official API from GitHub.
-- **Direct OAuth to Anthropic Messages API** without the Agent SDK — technically works (claw-code does it) but requires impersonating `user-agent: claude-code/…` and conflicts with Anthropic's Feb 2026 OAuth-proxying policy. Rejected per Q16.
+- **Direct OAuth to Anthropic Messages API** without the Agent SDK — technically works (the reference implementation does it) but requires impersonating `user-agent: claude-code/…` and conflicts with Anthropic's Feb 2026 OAuth-proxying policy. Rejected per Q16.
 
 **Exit criterion:** `openswarm --model gpt-4o` with API key, `--model gemini-2.0-flash`, `--model llama3.2` against local Ollama, and `openswarm login --provider codex-chatgpt && openswarm prompt "…"` all work without collapsing under provider-specific limits.
 
@@ -171,30 +169,30 @@ Flexibility milestone. Additional `TransportProvider`s slot in behind the existi
 
 Not sequenced yet. Pulled in based on demand.
 
-- **Tier 3** — real cron scheduler (don't copy claw's storage-only stub); team persistence; remote agent triggers over proper RPC; finalized `ask_user_question`
-- **Tier 4** — LSP full protocol (claw stubs the wire; we implement it); **dynamic mid-session MCP tool registration** (first-class registration at startup already lands in M2 per Q12 — M5 adds hot-add/remove of MCP servers during a running session)
+- **Tier 3** — real cron scheduler (don't copy the reference implementation's storage-only stub); team persistence; remote agent triggers over proper RPC; finalized `ask_user_question`
+- **Tier 4** — LSP full protocol (the reference implementation stubs the wire; we implement it); **dynamic mid-session MCP tool registration** (first-class registration at startup already lands in M2 per Q12 — M5 adds hot-add/remove of MCP servers during a running session)
 - **Tier 5** — `plan_mode`, `sandbox` (Linux `unshare` with macOS/Windows fallback), `pdf_extract`, `repl`, full hooks runtime
 
-## What we explicitly refuse to copy from claw
+## What we explicitly refuse to copy from the reference implementation
 
-These are design anti-patterns we are not replicating. Each has an evidence citation.
+These are design anti-patterns we are not replicating.
 
-1. **Thread-based sub-agents.** Claw's `Agent` tool spawns `std::thread` + `ConversationRuntime`. We use subprocess. (research/05-swarm.md §1)
-2. **Dead bash-validation modules.** All six claw validation submodules exist in `bash_validation.rs` but none are wired into `execute_bash`. If we port them, we wire them. (research/02-tools.md §3)
-3. **Silent first-match `edit_file`.** No uniqueness check. We reject ambiguous edits. (research/02-tools.md §2)
-4. **Fake `grep_search`.** Claw's grep is walkdir+regex with no gitignore. We use real ripgrep. (research/02-tools.md §2)
-5. **Storage-only `CronRegistry`.** No actual scheduler. We don't ship cron until we have one. (research/05-swarm.md §3)
-6. **Roleless `TeamRegistry`.** Just `{name, [task_id]}`. We ship teams with roles and tool allowlists, or not at all. (research/05-swarm.md §3)
-7. **Echoing `SendUserMessage`.** No delivery mechanism. We deliver or we don't expose the tool. (research/05-swarm.md §9)
-8. **Stdin-blocking `AskUserQuestion`.** Unusable from threads or headless. Ours routes via SwarmHost. (research/05-swarm.md §9)
-9. **MCP as a single generic tool.** The model can't plan against individual MCP tools when they're hidden behind a `{server, tool, args}` dispatcher. We register each MCP tool first-class in M5. (research/04-integrations.md §4)
-10. **Global `OnceLock` registries.** Fine for one process, hostile to subprocess workers. Our registries are per-runtime with explicit IPC. (research/05-swarm.md §1)
+1. **Thread-based sub-agents.** The reference implementation's `Agent` tool spawns `std::thread` + `ConversationRuntime`. We use subprocess.
+2. **Dead bash-validation modules.** All six of the reference implementation's validation submodules exist but none are wired into `execute_bash`. If we port them, we wire them.
+3. **Silent first-match `edit_file`.** No uniqueness check. We reject ambiguous edits.
+4. **Fake `grep_search`.** The reference implementation's grep is walkdir+regex with no gitignore. We use real ripgrep.
+5. **Storage-only `CronRegistry`.** No actual scheduler. We don't ship cron until we have one.
+6. **Roleless `TeamRegistry`.** Just `{name, [task_id]}`. We ship teams with roles and tool allowlists, or not at all.
+7. **Echoing `SendUserMessage`.** No delivery mechanism. We deliver or we don't expose the tool.
+8. **Stdin-blocking `AskUserQuestion`.** Unusable from threads or headless. Ours routes via SwarmHost.
+9. **MCP as a single generic tool.** The model can't plan against individual MCP tools when they're hidden behind a `{server, tool, args}` dispatcher. We register each MCP tool first-class in M5.
+10. **Global `OnceLock` registries.** Fine for one process, hostile to subprocess workers. Our registries are per-runtime with explicit IPC.
 
 ## Cross-cutting tracks
 
 These run continuously alongside milestones:
 
-- **Testing** — mock Anthropic service + clean-env parity harness (port claw's pattern; 10 scripted scenarios is a good baseline)
+- **Testing** — mock Anthropic service + clean-env parity harness (port the reference implementation's pattern; 10 scripted scenarios is a good baseline)
 - **Typecheck** — strict TS, no `any` in public interfaces
 - **Lint** — enforce layering rules from `02-architecture.md` via no-circular-imports and per-module import allowlists
 - **Docs** — keep `README.md` index current; resolved open questions migrate to the decision log in `06-open-questions.md`
@@ -207,7 +205,7 @@ To make M0 executable without further planning, here is the dependency order:
 2. `src/engine/index.ts` — `AgentEngine`, `RunConfig`, `PermissionGate`, `ToolExecutor`, `SessionSnapshot` *(drafted)*
 3. `src/auth/index.ts` — `AuthSource` + `InteractiveAuth` *(drafted)*
 4. `src/auth/anthropic-api-key.ts` — `AnthropicApiKeyAuth` reading `ANTHROPIC_API_KEY`
-5. `src/auth/anthropic-oauth.ts` — `AnthropicOAuthAuth` implementing `InteractiveAuth` (delegates to Agent SDK's OAuth flow, or reimplements from claw-code's `oauth.rs` if the SDK's helpers aren't public)
+5. `src/auth/anthropic-oauth.ts` — `AnthropicOAuthAuth` implementing `InteractiveAuth` (delegates to Agent SDK's OAuth flow, or reimplements from the reference implementation's OAuth flow if the SDK's helpers aren't public)
 6. `src/engine/claude-agent-sdk.ts` — `ClaudeAgentSdkEngine` wrapping `@anthropic-ai/claude-agent-sdk`; translates SDK events → `NormalizedEvent`; binds engine's `canUseTool` to our `PermissionEngine`; binds engine's tool execution to our dispatcher
 7. `src/session/store.ts` — per-worktree `SessionStore` with JSONL append + atomic snapshots, persists engine `SessionSnapshot` alongside our log
 8. `src/permissions/index.ts` — `PermissionEngine`: mode evaluator + rule grammar (`tool(subject:*)`)

@@ -13,7 +13,7 @@ describe("resolveAlias", () => {
     expect(resolveAlias("gpt-4o", BUILTIN_ALIASES)).toBe("gpt-4o-2024-11-20");
   });
 
-  it('resolves "grok" → "grok-3" (claw parity)', () => {
+  it('resolves "grok" → "grok-3"', () => {
     expect(resolveAlias("grok", BUILTIN_ALIASES)).toBe("grok-3");
   });
 

@@ -29,6 +29,13 @@ import { providerMessagesToVercel } from "./message-replay.js";
 import { toolSpecsToVercelTools } from "./tool-translation.js";
 import { mapVercelUsage } from "./vercel-usage.js";
 import { classifyProviderError } from "./error-classifier.js";
+import {
+  applyProbedCapabilities,
+  probeOpenAICompatCapabilities,
+  type CapabilitySource,
+  type ProbedCapabilities,
+} from "./capability-probe.js";
+import { toolChoiceOption } from "./tool-choice.js";
 
 /** Generic capabilities — the gateway model is arbitrary, so assume the common SWE-agent baseline. */
 function defaultCapabilities(): ProviderCapabilities {
@@ -120,7 +127,14 @@ export class LiteLLMTransportProvider implements TransportProvider {
   private readonly modelId: string;
   private readonly extraBody: Record<string, unknown> | undefined;
 
-  private constructor(auth: AuthSource, modelId: string) {
+  /** How the context/output limits were determined (docs/63 F1). */
+  readonly capabilitySource: CapabilitySource;
+
+  private constructor(
+    auth: AuthSource,
+    modelId: string,
+    probed: ProbedCapabilities = { source: "none" },
+  ) {
     this.auth = auth;
     this.modelId = modelId;
     this.extraBody = liteLLMExtraBodyFromEnv();
@@ -131,12 +145,20 @@ export class LiteLLMTransportProvider implements TransportProvider {
       fetch: fetchWithExtraBody(this.extraBody),
     });
     this.model = client.chat(this.modelId) as LanguageModel;
-    this.capabilities = defaultCapabilities();
+    // The generic baseline is a guess; a probed window replaces it so
+    // compaction sizes against the model the server is actually serving.
+    this.capabilities = applyProbedCapabilities(defaultCapabilities(), probed);
+    this.capabilitySource = probed.source;
   }
 
-  /** Async factory — verifies LITELLM_BASE_URL + LITELLM_API_KEY are present. */
+  /**
+   * Async factory — verifies LITELLM_BASE_URL + LITELLM_API_KEY are present,
+   * then discovers the model's real context window (docs/63 F1). The probe is
+   * best-effort: on any failure the generic baseline is kept.
+   */
   static async create(auth: AuthSource, modelId: string): Promise<LiteLLMTransportProvider> {
-    if (!process.env["LITELLM_BASE_URL"]) {
+    const baseURL = process.env["LITELLM_BASE_URL"];
+    if (!baseURL) {
       throw new Error(
         "error: LiteLLMTransportProvider requires LITELLM_BASE_URL env var (the gateway /v1 URL). Set it and retry.",
       );
@@ -146,7 +168,14 @@ export class LiteLLMTransportProvider implements TransportProvider {
         "error: LiteLLMTransportProvider requires LITELLM_API_KEY env var. Set it and retry.",
       );
     }
-    return new LiteLLMTransportProvider(auth, modelId);
+    const probed = await probeOpenAICompatCapabilities({
+      baseURL,
+      modelId,
+      ...(process.env["LITELLM_API_KEY"] !== undefined
+        ? { apiKey: process.env["LITELLM_API_KEY"] }
+        : {}),
+    });
+    return new LiteLLMTransportProvider(auth, modelId, probed);
   }
 
   async *stream(req: ProviderRequest): AsyncIterable<ProviderEvent> {
@@ -179,6 +208,7 @@ export class LiteLLMTransportProvider implements TransportProvider {
       messages: providerMessagesToVercel(req.messages),
       ...(systemPrompt !== undefined ? { system: systemPrompt } : {}),
       tools: toolSpecsToVercelTools(req.tools ?? []),
+      ...toolChoiceOption(req),
       ...(req.abort !== undefined ? { abortSignal: req.abort } : {}),
       ...(providerOptions !== undefined ? { providerOptions } : {}),
       ...extraOptions,

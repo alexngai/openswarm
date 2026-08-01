@@ -1,5 +1,5 @@
 /**
- * B1.1 acceptance gate (docs/31 §1/§6, docs/archive/34 §7): the hard invariant —
+ * B1.1 acceptance gate (docs/31 §1/§6): the hard invariant —
  * stripping every `_meta` from a team session's updates must leave a valid,
  * trust-coherent single-agent (baseline) session. Member identity for tool
  * calls lives in the standard `title` field, never in `_meta` alone.

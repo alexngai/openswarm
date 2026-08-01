@@ -5,7 +5,7 @@
  *
  * Because it extends PermissionBridge, `makeCanUseTool` reuses its body
  * unchanged: pass this bridge with `useHeadless: false` and both prompt points
- * route through ACP (docs/archive/32 §8).
+ * route through ACP.
  *
  * Limitation: the engine's PermissionGate fires with (toolName, input) but no
  * tool_use id, so the permission request carries a fresh toolCallId rather than

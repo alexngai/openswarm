@@ -1,5 +1,5 @@
 /**
- * Compactor test suite — parity with claw-code compact_test.rs (L562–L824).
+ * Compactor test suite — originally derived from a reference implementation.
  * At least 15 tests covering all exported functions.
  */
 
