@@ -157,6 +157,21 @@ export const WORK_PACKAGES: readonly WorkPackage[] = [
     gateImplemented: false,
   },
   {
+    // Split forward out of `WP-27`, which owned encryption in R5. `WP-08` found
+    // that an R2 exit criterion depends on it: history cannot be durable by
+    // default until it can be encrypted, and `DDP-CONV-01` is an R2 outcome. The
+    // number records where the scope came from; the release records when it is
+    // needed.
+    id: "WP-27a",
+    title: "Session encryption at rest and key providers",
+    release: "R2",
+    ownerSplit: { B: 2 },
+    dependsOn: ["WP-07"],
+    cells: ["crypto-matrix"],
+    fixtures: ["FX-CRYPT-001..010"],
+    gateImplemented: false,
+  },
+  {
     id: "WP-13",
     title: "Domain and named-secret grants",
     release: "R3",
@@ -302,10 +317,10 @@ export const WORK_PACKAGES: readonly WorkPackage[] = [
   },
   {
     id: "WP-27",
-    title: "Retention, purge, export, and encryption",
+    title: "Retention, purge, and export",
     release: "R5",
-    ownerSplit: { A: 1, B: 2 },
-    dependsOn: ["WP-07", "WP-19", "WP-22", "WP-23"],
+    ownerSplit: { A: 1, B: 1 },
+    dependsOn: ["WP-07", "WP-19", "WP-22", "WP-23", "WP-27a"],
     cells: ["crypto-matrix"],
     fixtures: ["FX-RET-001..010", "FX-MIG-CRYPTO-001"],
     gateImplemented: false,

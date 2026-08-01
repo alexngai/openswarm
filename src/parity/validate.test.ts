@@ -63,8 +63,8 @@ describe("the shipped manifest", () => {
     ]);
   });
 
-  it("commits the 104 core person-weeks docs/63 budgets", () => {
-    expect(committedPersonWeeks()).toBe(104);
+  it("commits the 105 core person-weeks docs/63 budgets", () => {
+    expect(committedPersonWeeks()).toBe(105);
   });
 
   it("reproduces the docs/63 per-release owner loading table", () => {
@@ -75,10 +75,10 @@ describe("the shipped manifest", () => {
     };
     // Feature A/B/C columns of the docs/63 release table.
     expect(abc("R1")).toEqual([7, 4, 7]);
-    expect(abc("R2")).toEqual([3, 6, 5]);
+    expect(abc("R2")).toEqual([3, 8, 5]);
     expect(abc("R3")).toEqual([6, 6, 6]);
     expect(abc("R4")).toEqual([5, 7, 7]);
-    expect(abc("R5")).toEqual([6, 7, 6]);
+    expect(abc("R5")).toEqual([6, 6, 6]);
     expect(abc("R6")).toEqual([5, 6, 5]);
   });
 

@@ -48,7 +48,7 @@ The release target is a **parity beta**, not a compatibility-stable 1.0. Depende
 
 The fixed scope requires:
 
-- 104 core person-weeks of feature/work-package delivery;
+- 105 core person-weeks of feature/work-package delivery;
 - 36 person-weeks explicitly allocated to integration, tests, migration, documentation, remediation, and release quality;
 - 10 person-weeks of true contingency;
 - an external security review;
@@ -536,14 +536,16 @@ Calendar duration and person-week loading are separate. Package gates include pa
 | Release | Weeks | Package estimates (person-weeks) | Feature A/B/C | Quality A/B/C | Total | Capacity | Slack |
 |---|---:|---|---:|---:|---:|---:|---:|
 | R1 | 1–9 | `00` 4 ✔; `00a` 4 ✔; `01` 1 ✔; `02` 2 ✔; `03` 1 ✔; `04` 2; `05` 2; `06` 2 | 7/4/7 | 2/5/2 | 27 | 27 | 0 |
-| R2 | 10–17 | `07` 3; `08` 3; `09` 1; `10` 2; `11` 3; `12` 2 | 3/6/5 | 3/1/2 | 20 | 24 | 4 |
+| R2 | 10–17 | `07` 3; `08` 3; `09` 1; `10` 2; `11` 3; `12` 2; `27a` 2 | 3/8/5 | 3/0/2 | 21 | 24 | 3 |
 | R3 | 18–27 | `13`–`18` 3 each | 6/6/6 | 3/3/3 | 27 | 30 | 3 |
 | R4 | 28–35 | `19` 3; `20` 3; `21` 4; `22` 3; `23` 3; `24` 3 | 5/7/7 | 3/1/1 | 24 | 24 | 0 |
-| R5 | 36–43 | `25` 6; `26` 4; `27` 3; `28` 4; `29` 2 | 6/7/6 | 2/1/2 | 24 | 24 | 0 |
+| R5 | 36–43 | `25` 6; `26` 4; `27` 2; `28` 4; `29` 2 | 6/6/6 | 2/2/2 | 24 | 24 | 0 |
 | R6 | 44–50 | `30` 6; `31` 4; `32` 3; `33` 3 | 5/6/5 | 1/0/1 | 18 | 21 | 3 |
-| **Total** | **50** |  | **32/36/36** | **14/11/11** | **140** | **150** | **10** |
+| **Total** | **50** |  | **32/37/36** | **14/11/11** | **141** | **150** | **9** |
 
 ✔ marks delivered work. Inserting `WP-00a` added 4 person-weeks and the `WP-03`/`WP-09` re-scopes returned 2, so committed work rises from 138 to 140 and true contingency falls from twelve to ten. That crosses the rebaseline trigger below, and it does so on the first inserted package — which is the signal the pre-mortem asked for, not a surprise to absorb quietly.
+
+`WP-27a` lands at w16–17, after `WP-08` at w13–15, which is the order the two packages actually require: `WP-08` builds the resume plumbing against opt-in storage, and the default flips to durable only once encryption exists. Splitting `WP-27a` forward is the second insertion, and it costs one net person-week: two in R2 for encryption and key providers, against one returned by the `WP-27` remainder that keeps retention, purge, and export. Committed work rises from 140 to 141 and contingency from ten to nine. The forward move is not optional — `DDP-CONV-01` is an R2 exit criterion and cannot pass on ephemeral-by-default history — but it does put owner B at eight package weeks in an eight-week release, so B's R2 quality week moves to R5, where the `WP-27` remainder freed the room. Release-wide quality is unchanged at 36. R5 now has zero slack in every owner, and B has none in R2.
 
 `WP-00a` is A+C work, and both owners were already loaded to exactly nine person-weeks across R1's nine weeks, so the insertion put each at ten. R1's total still fits in 27 because owner B had two weeks spare, so R1's cross-package quality allocation is rebalanced from 3/3/3 to 2/5/2 and the release-wide quality split becomes 14/11/11, unchanged at 36 in total. This works only because quality work is reassignable; the package work is not. R1 now has zero slack in every owner, so any further insertion has to move a package out.
 
@@ -554,7 +556,7 @@ Cross-owner feature splits:
 - `WP-00` B2/C2; `WP-00a` A2/C2; `WP-11` A2/C1.
 - `WP-14` A2/C1; `WP-15` B2/C1; `WP-18` A1/B1/C1.
 - `WP-19` B2/C1; `WP-20` A2/C1; `WP-21` A2/B2; `WP-22` B2/C1; `WP-23` A1/B1/C1.
-- `WP-25` A3/B1/C2; `WP-26` B2/C2; `WP-27` A1/B2; `WP-28` A1/B1/C2; `WP-29` A1/B1+External.
+- `WP-25` A3/B1/C2; `WP-26` B2/C2; `WP-27` A1/B1; `WP-28` A1/B1/C2; `WP-29` A1/B1+External.
 - `WP-30` A3/B3; `WP-31` B1/C3; `WP-32` A1/B1/C1; `WP-33` A1/B1/C1.
 
 Dependency- and owner-constrained schedule:
@@ -562,15 +564,15 @@ Dependency- and owner-constrained schedule:
 | Release | Feature schedule | Cross-package quality schedule | Slack |
 |---|---|---|---|
 | R1 | `WP-00` B/C w1–2 ✔; `00a` A/C w3–4 ✔; `01` C w5 ✔; `02` A w5–6 ✔; `03` A w7 ✔; `04` A w8–9; `05` B w4–5; `06` C w6–7 | A w1–2; B w3,w6–9; C w8–9 | none |
-| R2 | `WP-07` B w10–12; `08` B w13–15; `09` A w10; `11` C w10 + A w12–13; `12` C w14–15; `10` C w16–17 | A w14–16; B w16; C w11–12 | A w11,w17; B w17; C w13 |
+| R2 | `WP-07` B w10–12; `08` B w13–15; `09` A w10; `11` C w10 + A w12–13; `12` C w14–15; `10` C w16–17; `27a` B w16–17 | A w14–16; C w11–12 | A w11,w17; C w13 |
 | R3 | `WP-13` A w18–20; `16` B w18–20; `14` C w21 + A w21–22; `15` C w23 + B w23–24; `17` C w24–26; `18` A/B/C w27 | A w23–25; B w21–22,w25; C w18–20 | A/B w26; C w22 |
 | R4 | `WP-19` B w28–29 + C w28; `20` A w28–29 + C w29; `21` A/B w30–31; `22` C w30 + B w32–33; `23` C w31 + A w32 + B w34; `24` C w32–34 | A w33–35; B/C w35 | none |
-| R5 | `WP-25` A w36–38 + B w36 + C w36–37; `26` B w37–38 + C w38–39; `27` A w39 + B w39–40; `28` A/B w41 + C w41–42; `29` external w41–43 + A/B w43 | A w40,w42; B w42; C w40,w43 | none |
+| R5 | `WP-25` A w36–38 + B w36 + C w36–37; `26` B w37–38 + C w38–39; `27` A w39 + B w39; `28` A/B w41 + C w41–42; `29` external w41–43 + A/B w43 | A w40,w42; B w40,w42; C w40,w43 | none |
 | R6 | `WP-30` A/B w44–46; `31` C w44–46 + B w47; `32` A/B/C w48; `33` A/B/C 0.5 pw each in w49 and w50 with the seven-day soak spanning both weeks | A/C w47 | 0.5 A/B/C in w49–50 |
 
 The four-engineer 39-week and two-engineer 75-week figures are capacity-only bounds, not approved dependency schedules. Either staffing variant requires its own resource-constrained schedule before commitment.
 
-The estimates are hypotheses. `WP-00` produces a bottom-up re-estimate; see the next section for its findings. Rebaseline when committed work exceeds 104 person-weeks, quality allocation falls below 36, an owner exceeds phase capacity, or the third engineer is unavailable by R2.
+The estimates are hypotheses. `WP-00` produces a bottom-up re-estimate; see the next section for its findings. Rebaseline when committed work exceeds 105 person-weeks, quality allocation falls below 36, an owner exceeds phase capacity, or the third engineer is unavailable by R2.
 
 Two of these have already fired once, on `WP-00a`: committed work rose past the original 102 and owner A exceeded R1 capacity. The thresholds above are the post-`WP-00a` baseline, not the original one.
 
@@ -617,6 +619,8 @@ What landed, as gated by `A1`–`A8`:
 - The seven per-tool containment checks are consolidated onto one helper (`A8`).
 
 Two limits are deliberate and carry into `WP-03`. A tool that declares `all()` or declares nothing — `bash`, plugin tools, MCP tools — is still judged by tool name alone, because central containment has no opinion on a resource it cannot name; expressing "unknown resource" as something other than silence is the remaining work. And the per-tool checks were consolidated rather than deleted: `canUseTool` decides before execution, and a path can change in between, so a second check at write time closes a race that one up-front check cannot.
+
+**One remainder is not deliberate, and `WP-11` made it worse.** The gate was adopted; the *effect path* was not. `EffectRuntime` — the frozen contract's write transaction, with its compare-and-swap against an expected `FileIdentity`, its durable prepare/resolve records, and its generation bump — still has no production caller. Tools write through `atomicWriteInWorkspace` instead. That was a tolerable gap while nothing else answered the question, and it stopped being one when `WP-11` built a second answer at the tool path: a cross-process lease and a read-state staleness check, with no compare-and-swap, while the kernel path has a compare-and-swap and no lease. Two mechanisms for one invariant is how they drift, and the failure mode is the worse direction — each looks complete in isolation, and the kernel's unused CAS reads as a guarantee the product does not actually provide. Unifying them is scheduled here as this package's remainder rather than left implicit: the tool path should acquire its lease and then commit through the effect transaction, so containment, authorization, exclusion, and compare-and-swap are decided in one place, as the walking skeleton intended.
 
 ## Six staged releases
 
@@ -922,6 +926,8 @@ Partially delivered. Gate: `./scripts/verify-parity-wp.sh WP-11 <cell>`, `W0`–
 
 What is not yet true, and it is the reader-facing half: output is not streamed as provisional, nothing revalidates a dependency automatically, and there are no stale-result events. Read sets are recomputed at write, because that is where the generation advances, but not at task completion, checkpoint, commit, or landing, and the parent still commits terminal task state without waiting for a revalidation that does not exist. So `DDP-SWM-02` cannot certify: its beta evidence reads "overlapping reader output is provisional, generation-stamped, automatically revalidated, and terminal only when verified", and only the stamping is real. What has landed is the half that decides whether a conflict is *detectable at all* — a reader whose output is provisional is only useful if something can tell that its inputs moved.
 
+The remainder is distributed rather than carried here as one lump, because most of it cannot be built where it was written down. Stale-result events move to `WP-12`, where a stale read joins the other committed facts instead of getting a second event path. Revalidation at checkpoint moves to `WP-19` and at commit and landing to `WP-20`, for the plain reason that neither checkpoints nor landing exist until those packages land — recomputing a read set at a checkpoint was never buildable in R2. What stays here is roughly one person-week: streaming reader output as provisional, revalidating affected dependencies automatically, and holding terminal task state until the new read set passes. That plus `WP-12` is what `DDP-SWM-02` now rests on, and both are in R2, so the outcome still certifies in the release that claims it.
+
 **Read-before-edit was enforced against the wrong question.** `read-state` recorded which paths had been read, as a path and a recency counter, with no hash, size, or mtime. That answers "has the agent read this?" and cannot answer "is this still what the agent read?", and the two look like one question until several agents share a directory. So `hasFileBeenRead` returned true for a file another agent had since rewritten, and `write_file` — which never reads its target, and so has nothing in its request referring to the old content — overwrote that work and returned `The file … has been updated successfully.` The lost update left no trace anywhere: not in the result, not in the log, not on disk. `FX-RW-002` is deliberately written as the reader's complaint rather than the lease's, because the damage was never that two writers ran; it was that the loser was never told.
 
 **The parity error for this already existed, with nothing to compare against.** `STALE_FILE_ERROR` — Claude Code's "File has been modified since read, either by the user or by a linter" — was in the tree and wired into `edit_file` and `multi_edit`, which made it look handled. It was guarding those tools' own read-modify-write window: they hash the content *they* just read and refuse if it moves before the rename. That is a genuine TOCTTOU check and it is not this. Anchoring on `old_string` against a freshly-read file made a stale edit look clean whenever the anchor survived somebody else's rewrite, and the edit then landed in a file the agent had never seen — `FX-RW-004`. Both tools now compare against the hash the *agent* saw, so the same recoverable message covers both halves of the rewrite case, and the model already knows what to do with it. Identical bytes under a new mtime are not a conflict (`FX-RW-005`), or every formatter run would refuse the next write.
@@ -941,8 +947,22 @@ Depends on `WP-00`, `WP-05`, `WP-06`, `WP-07`, `WP-09`, and `WP-11`.
 - Project canonical committed facts to `LaneEvent`, TUI, headless, ACP, usage, audit, and sessionlog.
 - Keep token deltas ephemeral and persist semantic boundaries.
 - Persist policy, operation, read-set, result, usage, and redaction records.
+- Project stale-result events, moved here from `WP-11`: a stale read is a committed fact about the workspace, so it belongs with the projections rather than in a second event path of its own.
 
 Gate: every test side effect has correlated pre-decision and terminal facts; every durable semantic projection rebuilds from the journal. Live token/input deltas are tested for ordering and bounded loss behavior, not byte-identical replay.
+
+#### `WP-27a` Session encryption at rest and key providers — 2 person-weeks, B
+
+Depends on `WP-07`. Split forward out of `WP-27`; the number records where the scope came from and the release records when it is needed.
+
+- Authenticated encryption for the session journal and snapshots.
+- OS and headless key-provider abstraction, with provider selection and absence both explicit.
+- Explicit ephemeral-session fallback with a warning when no secure key is available; no plaintext fallback.
+- Retire the `unencrypted-durable` opt-in `WP-08` introduced, and make durable history the default.
+
+Gate: a journal written with a key provider present is unreadable without it; no-config key absence selects the warned ephemeral mode; a configuration that requires durable encryption fails closed on a missing key; the plaintext opt-in no longer exists.
+
+**Why this is in R2 rather than R5.** `WP-08` established that history cannot be durable by default until it can be encrypted, because `WP-00` froze the rule that history is encrypted with 90-day retention, ephemeral with a warning when no key provider exists, and never plaintext — `ResolvedStorage` has no plaintext variant precisely so there is nothing to silently degrade to. `DDP-CONV-01` is an R2 exit criterion whose evidence reads "ten turns retain prior text and tool results without `/resume`", and that cannot be true of sessions the product declines to keep. Leaving encryption in R5 therefore made an R2 exit criterion depend on R5 work, which the manifest's `evidence-reaches-release` check exists to catch and which prose review had missed. The alternative considered was re-scoping `DDP-CONV-01` to in-process continuity, and it was rejected because the mandatory outcome would then no longer describe what a user experiences across invocations.
 
 R2 exit:
 
@@ -1035,6 +1055,7 @@ Depends on `WP-07`, `WP-08`, and `WP-11`.
 
 - Conversation-only and code+conversation checkpoints.
 - Fork preserves parent history and creates independent workspace/session lineage.
+- Recompute affected read sets at checkpoint, moved here from `WP-11` for the obvious reason that there is nothing to revalidate at a checkpoint until checkpoints exist.
 
 Gate: restore matches selected hashes and never mutates the original branch/session.
 
@@ -1047,6 +1068,7 @@ Depends on `WP-06`, `WP-11`, and `WP-12`.
 - Serialize captured-SHA landing for parallel worktree writers.
 - Bind evidence to source SHA, target SHA, merge SHA, and `ReadSet`.
 - Revalidate after rebase/merge and preserve conflicts.
+- Recompute affected read sets at commit and landing, moved here from `WP-11` alongside the rebase/merge revalidation this package already owns.
 
 Gate: non-conflicting changes land serially; conflicts preserve both worktrees and leave target unchanged. Ref-only, clean-owner, dirty-owner, and concurrent-owner fixtures never desynchronize target HEAD/index/worktree.
 
@@ -1131,17 +1153,17 @@ Depends on `WP-08`, `WP-09`, `WP-19`, and `WP-22`.
 
 Gate: headless and Zed pass the same daily-driver journeys as TUI.
 
-#### `WP-27` Retention, purge, export, and encryption — 3 person-weeks, A+B
+#### `WP-27` Retention, purge, and export — 2 person-weeks, A+B
 
-Depends on `WP-07`, `WP-19`, `WP-22`, and `WP-23`.
+Depends on `WP-07`, `WP-19`, `WP-22`, `WP-23`, and `WP-27a`.
+
+Re-scoped: encryption and key providers moved forward to `WP-27a` in R2, because an R2 exit criterion turned out to depend on them. What stays here is everything that operates *on* an encrypted store, which is why it stays in R5 behind checkpoint, attachments, and memory.
 
 - Configurable retention and storage modes.
-- Full encrypted history with automatic 90-day purge as the no-config default.
-- Authenticated encryption and OS/headless key-provider abstraction.
-- Explicit ephemeral-session fallback with a warning when no secure key is available; no plaintext fallback.
+- Automatic 90-day purge as the no-config default.
 - Export, deletion, and cryptographic tamper detection.
 
-Gate: configured policies survive restart; no-config key absence selects the warned ephemeral mode; configurations that require durable encryption fail closed on missing keys; tampering always fails closed.
+Gate: configured policies survive restart; tampering always fails closed.
 
 #### `WP-28` Full matrix and evidence ledger — 4 person-weeks, A+B+C
 
@@ -1230,7 +1252,7 @@ Security:
 
 Ten are delivered: `WP-00`, `WP-00a`, `WP-01`, `WP-02`, `WP-03`, `WP-04`, `WP-05`, `WP-06`, `WP-07`, and `WP-09`. Two more are partially delivered. `WP-08`: resume now works for every engine through the journal, which gives `FileEventStore` its first production caller and makes the importer's verdict actionable, but the ACP and TUI surfaces are still on the old path and durable storage stays opt-in until encryption exists. `WP-11`: a stale read is detected and a stale write refused, and one writer at a time is enforced across processes with a shared generation, but reader output is not yet provisional and nothing revalidates it, so `DDP-SWM-02` cannot certify. Every R1 package is closed, so the remaining R1 exit conditions are review items rather than implementation: the walking skeleton and revised loading model need approving, and the `DDP-*` outcomes need certifying on Linux x64. `bun scripts/parity-ready.ts` derives the queue from the manifest rather than from this paragraph.
 
-**Encryption at rest is now the blocking dependency, and it belongs to no package.** `WP-08` found that the locked storage decision — encrypted history, ephemeral when no key exists, never plaintext — is encoded in `storage-policy.ts` with nothing calling it, and that the follow-up which owns key providers is worded as a prerequisite for exactly this work ("verify the ephemeral fallback before durable rollout"). Until it lands, session history is kept only when a user opts into plaintext, which means crash resume is not on by default and the R2 conversation-durability outcomes cannot certify. It should be scheduled as a package rather than left as a bullet under Follow-ups.
+**Encryption at rest is the blocking dependency, and it was owned all along — three releases too late.** `WP-08` found that the locked storage decision — encrypted history, ephemeral when no key exists, never plaintext — is encoded in `storage-policy.ts` with nothing calling it. This was first written up here as belonging to no package, and that was wrong: `WP-27` scoped "authenticated encryption and OS/headless key-provider abstraction" from the start. The defect was sequencing, not ownership, and it is the more dangerous of the two, because a missing owner is visible while a mis-sequenced one looks handled. `WP-27` sits in R5 behind checkpoint, attachments, and memory, while `DDP-CONV-01` has to pass at R2 exit — so an R2 criterion depended on R5 work. The encryption and key-provider half is now `WP-27a` in R2; until it lands, session history is kept only when a user opts into plaintext, so crash resume is not on by default and the R2 conversation-durability outcomes cannot certify.
 
 Sessions:
 
@@ -1255,13 +1277,13 @@ Rules:
 
 ## Capacity
 
-Three engineers over 50 weeks provide 150 gross person-weeks. The loading model allocates 104 to feature packages, 36 to explicit cross-package quality work, and 10 to true contingency. It allocated 102/36/12 before `WP-00a`.
+Three engineers over 50 weeks provide 150 gross person-weeks. The loading model allocates 105 to feature packages, 36 to explicit cross-package quality work, and 9 to true contingency. It allocated 102/36/12 before `WP-00a` and 104/36/10 before `WP-27a` was split forward.
 
 Four engineers have enough capacity for the original 39-week target but require a separate dependency schedule. Two engineers require approximately 69 weeks for committed work or 75 weeks with equivalent contingency.
 
 `WP-00` and R1 replace planning estimates with measured loading. Rebaseline beyond 50 weeks when:
 
-- committed package work exceeds 104 core person-weeks;
+- committed package work exceeds 105 core person-weeks;
 - cross-package quality work exceeds 36 person-weeks;
 - any owner exceeds phase capacity;
 - true reserve drops below ten person-weeks;
@@ -1340,6 +1362,7 @@ The script writes `artifacts/parity/<WP>/<cell>.json`, exits nonzero on a failed
 | `WP-10` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-10 linux-x64-pty` | `FX-TUI-KEYS-001..014` | Zero dropped input; all key/history/paste/approval cases pass |
 | `WP-11` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-11 linux-x64` | `FX-RW-001..012` | Stale output remains provisional, revalidates automatically, and cannot become terminal; queued writer starts within five seconds |
 | `WP-12` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-12 linux-x64` | `FX-EVENT-001..010` | 100% semantic projections rebuild; no semantic frame is dropped at standard load |
+| `WP-27a` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-27a crypto-matrix` | `FX-CRYPT-001..010` | A journal written with a key provider is unreadable without it; key absence selects the warned ephemeral mode; required-encryption configurations fail closed |
 | `WP-13` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-13 linux-x64` | `FX-NET-001..016`, `FX-SECRET-001..008` | Zero redirect/rebind/private-IP/ambient-secret bypasses |
 | `WP-14` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-14 linux-x64` | `FX-EXT-ABUSE-001..016`, `FX-PLUGIN-HASH-001` | Every malicious extension is denied/contained; changed plugin content invalidates trust |
 | `WP-15` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-15 linux-x64` | `FX-MCP-001..014`, `FX-MCP-OAUTH-001`, `FX-MIG-CONFIG-001` | Layering, stdio/HTTP, OAuth/named-secret auth, resources, timeout, cancellation, and N/N−1 pass 100% |
@@ -1354,7 +1377,7 @@ The script writes `artifacts/parity/<WP>/<cell>.json`, exits nonzero on a failed
 | `WP-24` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-24 linux-x64-team` | `FX-TEAM-UX-001..012` | Watch/status/TUI/ACP converge after restart; usage reconciles |
 | `WP-25` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-25 linux-x64` | `FX-PLAT-001..005`, `FX-WSL-ID-001` | Package/isolation/PTY/cancel/cleanup pass on all five pinned targets; the other four cells are invoked as in the `WP-25` table above |
 | `WP-26` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-26 surface-matrix` | `FX-HDL-001..010`, `FX-ACP-001..010` | Headless and Zed pass the same mandatory journeys as TUI |
-| `WP-27` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-27 crypto-matrix` | `FX-RET-001..010`, `FX-MIG-CRYPTO-001` | Encrypted 90-day default, alternate policies, export/delete, ephemeral no-key fallback, and tamper failures pass |
+| `WP-27` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-27 crypto-matrix` | `FX-RET-001..010`, `FX-MIG-CRYPTO-001` | 90-day purge default, alternate policies, export/delete, and tamper failures pass |
 | `WP-28` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-28 release-matrix` | `FX-MATRIX-001..045`, `FX-NONINFERIOR-001`, `FX-EFFICIENCY-001` | Deterministic cells pass 100%; −5-point paired confidence, 1.25× latency, and 1.15× cost gates pass |
 | `WP-29` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-29 security-review` | `FX-SEC-REPORT-001` | Signed report exists; every finding has severity, reproduction, owner, and disposition |
 | `WP-30` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-30 security-retest` | `FX-SEC-RETEST-001` | Zero open critical/high findings; every remediation has an independent retest |
@@ -1656,7 +1679,7 @@ The walking skeleton tests the minimum canonical contracts against a complete ef
 - Complete and review `WP-00` before expanding the foundation.
 - Freeze exact certified model IDs, the mixed corpus, preregistered comparator mapping, and `DDP-*` manifest in R1.
 - Validate the OpenCode-inspired configuration/MCP UX against OpenSwarm’s trust and secret boundaries.
-- Select and test OS/headless secure-key providers; verify the ephemeral fallback before durable rollout.
+- ~~Select and test OS/headless secure-key providers; verify the ephemeral fallback before durable rollout.~~ Owned by `WP-27a` since the R2 sequencing defect was found; no longer a loose follow-up.
 - Book external security review by week 12.
 - Provision every platform runner during R1.
 - Reassess scope/date at R2 and R4 without weakening mandatory gates.

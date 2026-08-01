@@ -65,6 +65,11 @@ export const CAPABILITIES: readonly Capability[] = [
         cells: ["linux-x64"],
         fixtures: ["FX-RESUME-001..011"],
       },
+      {
+        workPackage: "WP-27a",
+        cells: ["crypto-matrix"],
+        fixtures: ["FX-CRYPT-001..010"],
+      },
     ],
   },
   {
@@ -167,6 +172,11 @@ export const CAPABILITIES: readonly Capability[] = [
         workPackage: "WP-23",
         cells: ["linux-x64"],
         fixtures: ["FX-MEM-001..010", "FX-MIG-MEM-001"],
+      },
+      {
+        workPackage: "WP-27a",
+        cells: ["crypto-matrix"],
+        fixtures: ["FX-CRYPT-001..010"],
       },
       {
         workPackage: "WP-27",
@@ -511,6 +521,11 @@ export const CAPABILITIES: readonly Capability[] = [
         workPackage: "WP-11",
         cells: ["linux-x64"],
         fixtures: ["FX-RW-001..012"],
+      },
+      {
+        workPackage: "WP-12",
+        cells: ["linux-x64"],
+        fixtures: ["FX-EVENT-001..010"],
       },
     ],
   },
