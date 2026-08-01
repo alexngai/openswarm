@@ -303,6 +303,20 @@ export class CodexAppServerProvider extends EventEmitter {
       this.emit("error", err);
     });
 
+    // Writes to the child's stdin fail ASYNCHRONOUSLY, as an "error" event on
+    // the stream. The handler above is on the child process and covers spawn
+    // failures, not pipe writes — so without this listener an EPIPE from
+    // writing a frame to an already-exited codex was an uncaught exception
+    // that killed the host. It also stranded the caller: `send` registers into
+    // `pending` before it writes, so the request being written never settled.
+    // Draining here turns both into a rejected promise.
+    child.stdin?.on("error", (err: Error) => {
+      this.rejectAllPending(err);
+      if (!this.disposing) {
+        this.drainActiveTurnQueuesWithError(`transport write failed: ${err.message}`);
+      }
+    });
+
     // If the child exits unexpectedly (not via dispose()), unblock active turns.
     child.on("close", (_code, _signal) => {
       if (!this.disposing) {
