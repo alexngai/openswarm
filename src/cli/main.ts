@@ -39,6 +39,8 @@ import { makeTrustPrompt, canPrompt } from "./trust-prompt.js";
 import { makeCanUseTool } from "../permissions/gate.js";
 import type { AttemptRecorder } from "../permissions/gate.js";
 import { openAuditJournal } from "../kernel/audit-journal.js";
+import { reconcileAttempts } from "../kernel/attempt-recovery.js";
+import { WorkspaceAuthority } from "../kernel/workspace-authority.js";
 import type { AttemptResolver } from "../engine/operation-ledger.js";
 import { PermissionBridge } from "../permissions/bridge.js";
 import { SessionAllowRules } from "../permissions/session-rules.js";
@@ -444,6 +446,35 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
         })
         .then(() => undefined),
   };
+
+  // Reconcile before the first turn: a prepare with no resolve in this session's
+  // journal means the previous process died between performing an effect and
+  // recording it, and until now nothing read those records back. Scoped to this
+  // session because it is the only one no other process can be running — a sweep
+  // of the workspace would call a concurrent agent's in-flight prepare a crash.
+  //
+  // Reported and never replayed. The runtime cannot tell "never ran" from "ran
+  // but was not recorded", and replaying a write on the second reading is the
+  // reading that does damage.
+  const reconciled = await reconcileAttempts({
+    sessionId: auditSessionId,
+    journal: audit,
+    authority: new WorkspaceAuthority(process.cwd()),
+  });
+  if (reconciled.closed > 0) {
+    const changed = reconciled.unresolved.filter((u) => !u.workspaceUnchanged);
+    process.stderr.write(
+      `openswarm: closed ${reconciled.closed} unresolved operation(s) from a previous run; ` +
+        `${changed.length} left the workspace different from what they expected.\n`,
+    );
+    for (const u of reconciled.unresolved) {
+      // Not every request names a path; a process exec does not have one.
+      const what = "path" in u.request ? u.request.path.relative : u.request.kind;
+      process.stderr.write(
+        `  ${u.request.kind} ${what}${u.workspaceUnchanged ? "" : " [workspace changed]"}\n`,
+      );
+    }
+  }
 
   // 8. Construct the engine for this session.
   // The sink records resume state at each turn boundary the engine acknowledges.

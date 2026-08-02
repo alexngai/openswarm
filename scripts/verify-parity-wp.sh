@@ -337,6 +337,13 @@ case "$WP" in
       # pass while they diverged.
       run_check A12 "FX-AUDIT-012..014 both dispatch paths resolve what the gate prepared" \
         npx vitest run src/engine/attempt-dispatch-paths.test.ts
+      # A13 is what makes the records in A9-A12 load-bearing rather than merely
+      # present: before it, reconciliation had no caller, so a restart found the
+      # dangling attempt and did nothing with it. FX-AUDIT-017 kills a process
+      # mid-attempt for real, because the failure worth guarding against is that
+      # what a crash leaves behind is not the shape recovery looks for.
+      run_check A13 "FX-AUDIT-015..019 a dangling attempt is reconciled on restart" \
+        npx vitest run src/kernel/attempt-recovery.test.ts
     fi
     ;;
 

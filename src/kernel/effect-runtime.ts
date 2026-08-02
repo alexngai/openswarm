@@ -33,7 +33,7 @@ import type {
   FileIdentity,
   OperationRequest,
 } from "./contracts.js";
-import { isAutoReplayable } from "./contracts.js";
+import { reconcileAttempts } from "./attempt-recovery.js";
 import type { EventStore } from "./event-store.js";
 import type { PolicyEngine } from "./policy-engine.js";
 import { PathEscapeError, type WorkspaceAuthority } from "./workspace-authority.js";
@@ -223,56 +223,17 @@ export class EffectRuntime {
   }
 
   /**
-   * Replays the journal and closes out attempts that never reached a terminal
-   * record — the state a crash between steps 4 and 5 leaves behind.
-   *
-   * Each unresolved attempt is recorded as outcome_unknown and reported with
-   * enough context to reconcile: whether the workspace still matches what the
-   * attempt expected, and whether replay would be safe. Mutating attempts are
-   * never replayed here regardless, because the runtime cannot distinguish
-   * "never ran" from "ran but was not recorded".
+   * Closes out attempts that never reached a terminal record — the state a crash
+   * between steps 4 and 5 leaves behind. See `attempt-recovery.ts`, which holds
+   * the logic so the restart path can reconcile the audit journal with the same
+   * implementation rather than a second copy of it.
    */
   async recover(): Promise<RecoveryReport> {
-    const preparedById = new Map<string, EventEnvelope<AttemptPreparedPayload>>();
-    const resolved = new Set<string>();
-
-    for await (const record of this.deps.store.read(this.deps.sessionId)) {
-      if (record.type === "AttemptPrepared") {
-        const envelope = record as EventEnvelope<AttemptPreparedPayload>;
-        preparedById.set(envelope.payload.request.operationId, envelope);
-      } else if (record.type === "AttemptResolved") {
-        const envelope = record as EventEnvelope<AttemptResolvedPayload>;
-        resolved.add(envelope.payload.outcome.operationId);
-      }
-    }
-
-    const unresolved: UnresolvedAttempt[] = [];
-    for (const [operationId, prepared] of preparedById) {
-      if (resolved.has(operationId)) continue;
-
-      const { request } = prepared.payload;
-      const workspaceUnchanged =
-        request.kind === "file.write"
-          ? await this.deps.authority.matches(request.expected)
-          : true;
-
-      const outcome: EffectOutcome = {
-        kind: "outcome_unknown",
-        operationId,
-        reason: "no terminal record found for a prepared attempt",
-      };
-
-      unresolved.push({
-        request,
-        prepared,
-        workspaceUnchanged,
-        autoReplayable: isAutoReplayable(request, outcome),
-      });
-
-      await this.append("AttemptResolved", { outcome }, operationId);
-    }
-
-    return { unresolved, closed: unresolved.length };
+    return reconcileAttempts({
+      sessionId: this.deps.sessionId,
+      journal: this.deps.store,
+      authority: this.deps.authority,
+    });
   }
 
   private async append(
