@@ -33,7 +33,12 @@ export const WORK_PACKAGES: readonly WorkPackage[] = [
     ownerSplit: { A: 2, C: 2 },
     dependsOn: ["WP-00"],
     cells: ["linux-x64"],
-    fixtures: ["FX-ESCAPE-001", "FX-GATE-001"],
+    // `FX-AUDIT-*` came from this package's remainder. The survey found that
+    // containment and authorization were already adopted and the *record* of the
+    // decision was what production lacked, so the attempt journal is evidence
+    // here rather than in `WP-12`, which projects those records but does not
+    // produce them.
+    fixtures: ["FX-ESCAPE-001", "FX-GATE-001", "FX-AUDIT-001..011"],
     gateImplemented: true,
   },
   {
@@ -151,7 +156,10 @@ export const WORK_PACKAGES: readonly WorkPackage[] = [
     title: "Audit and event projections",
     release: "R2",
     ownerSplit: { C: 2 },
-    dependsOn: ["WP-00", "WP-05", "WP-06", "WP-07", "WP-09", "WP-11"],
+    // `WP-00a` was missing and is what produces the facts this package projects;
+    // see docs/67. Without it the estimate covered the second half of a job whose
+    // first half was scheduled elsewhere and unfinished.
+    dependsOn: ["WP-00", "WP-00a", "WP-05", "WP-06", "WP-07", "WP-09", "WP-11"],
     cells: ["linux-x64"],
     fixtures: ["FX-EVENT-001..010"],
     gateImplemented: false,

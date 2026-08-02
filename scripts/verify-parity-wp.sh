@@ -314,6 +314,22 @@ case "$WP" in
         npx vitest run src/permissions/policy-broker.test.ts
       run_check A8 "per-tool containment consolidated onto one helper" \
         npx vitest run src/tools/workspace-path.test.ts
+      # A9-A11 are this package's remainder. The survey behind them found that
+      # containment and authorization were already adopted and that what
+      # production lacked was the *record* of the decision: AttemptPrepared and
+      # AttemptResolved had one writer, EffectRuntime, which nothing constructed.
+      #
+      # A10 is the one to read if these ever change. It asserts the pairing rather
+      # than either half, because a prepare with no resolve is indistinguishable
+      # from a crash, and that is precisely the state recovery has to be able to
+      # find -- so a fixture that checked only "a record was written" would pass
+      # on the failure this exists to detect.
+      run_check A9 "FX-AUDIT-001..005 the audit journal is durable without configuration" \
+        npx vitest run src/kernel/audit-journal.test.ts
+      run_check A10 "FX-AUDIT-006..010 every side effect pairs a pre-decision fact with a terminal one" \
+        npx vitest run src/kernel/attempt-correlation.test.ts
+      run_check A11 "FX-AUDIT-011 the real gate records the attempt it authorized" \
+        npx vitest run src/permissions/gate.test.ts -t "durable attempt records"
     fi
     ;;
 
