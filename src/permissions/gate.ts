@@ -37,12 +37,14 @@ import { makeResourceDeriver } from "./path-containment.js";
 import { makeApprovalBroker } from "./policy-broker.js";
 import { rulesForMode } from "./mode-rules.js";
 import { PolicyEngine } from "../kernel/policy-engine.js";
+import { readGeneration } from "../kernel/write-lease.js";
 import type { PermissionBridge } from "./bridge.js";
 import type { SessionAllowRules } from "./session-rules.js";
 import type { PermissionEngine } from "./index.js";
 import type { ToolDispatcher } from "../tools/dispatcher.js";
 import type { PermissionGate } from "../engine/index.js";
 import type { PermissionMode } from "../core/types.js";
+import type { AttemptPreparedPayload } from "../kernel/contracts.js";
 
 export interface CanUseToolDeps {
   readonly dispatcher: ToolDispatcher;
@@ -78,6 +80,24 @@ export interface CanUseToolDeps {
    * not here (docs/67 WP-09).
    */
   readonly trustBinding?: () => string | undefined;
+  /**
+   * Where authorized attempts are durably recorded before they execute
+   * (docs/67 `WP-00a` remainder). Optional because tests and the tool-name-only
+   * paths have nothing to record; when present, every per-resource
+   * authorization produces an `AttemptPrepared` fact.
+   */
+  readonly attempts?: AttemptRecorder;
+}
+
+/**
+ * Records the pre-decision half of an attempt.
+ *
+ * Narrower than the journal on purpose: the gate should be able to record a
+ * prepared attempt and nothing else, so the audit trail cannot grow a second
+ * writer that resolves attempts from the wrong side of execution.
+ */
+export interface AttemptRecorder {
+  prepare(payload: AttemptPreparedPayload): Promise<void>;
 }
 
 export function makeCanUseTool(deps: CanUseToolDeps): PermissionGate {
@@ -110,6 +130,7 @@ export function makeCanUseTool(deps: CanUseToolDeps): PermissionGate {
     // authoritative for such a call: running the tool-level mode check after
     // it would ask the user a second time about a decision already made.
     if (derived.kind === "requests" && derived.requests.length > 0) {
+      const prepared: string[] = [];
       for (const request of derived.requests) {
         const decision = await policy.authorize(request);
         if (!decision.allowed) {
@@ -118,8 +139,19 @@ export function makeCanUseTool(deps: CanUseToolDeps): PermissionGate {
             reason: decision.reason ?? `denied by policy (${decision.source})`,
           };
         }
+        if (deps.attempts !== undefined) {
+          // The shared generation rather than the in-process one. An expectation
+          // is only comparable across the agents that might invalidate it, and in
+          // shared mode every agent is its own process (docs/67 `WP-11`).
+          await deps.attempts.prepare({
+            request,
+            decision,
+            generation: await readGeneration(cwd),
+          });
+          prepared.push(request.operationId);
+        }
       }
-      return { allow: true };
+      return prepared.length > 0 ? { allow: true, preparedOperationIds: prepared } : { allow: true };
     }
 
     // Bash command validation gate fires first. For non-bash tools the gate

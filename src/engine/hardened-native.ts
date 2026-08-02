@@ -505,6 +505,11 @@ export class HardenedNativeEngine implements AgentEngine {
         const accesses = accessesFor(toolImpl, input, ctx);
         const idempotency = idempotencyOf(accesses);
         const id = ledger.identify(req.name, input);
+        // The gate already recorded these attempts as prepared; the ledger is
+        // what brackets the execution, so it owns the terminal record.
+        if (decision.preparedOperationIds !== undefined) {
+          ledger.attach(id, decision.preparedOperationIds);
+        }
         const replay = decideReplay(ledger.get(id), idempotency);
 
         return replayResult(replay, () =>
@@ -602,6 +607,9 @@ export class HardenedNativeEngine implements AgentEngine {
         // agree independently and weakening one does not disarm the other.
         const idempotency = idempotencyOf(accesses);
         const ledgerId = ledger.identify(name, dispatchInput);
+        if (decision.preparedOperationIds !== undefined) {
+          ledger.attach(ledgerId, decision.preparedOperationIds);
+        }
         const replay = decideReplay(ledger.get(ledgerId), idempotency);
 
         // A retry can re-announce a call the failed attempt is still making.

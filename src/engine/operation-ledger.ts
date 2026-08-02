@@ -22,7 +22,7 @@
 
 import { createHash } from "node:crypto";
 
-import type { IdempotencyClass } from "../kernel/contracts.js";
+import type { EffectOutcome, IdempotencyClass } from "../kernel/contracts.js";
 import type { ToolAccesses } from "../tools/access.js";
 import type { ToolResult } from "../tools/types.js";
 
@@ -137,6 +137,18 @@ export function decideReplay(
 }
 
 /**
+ * Closes out the attempts the gate prepared (docs/67 `WP-00a` remainder).
+ *
+ * Narrow in the mirror image of the gate's `AttemptRecorder`: the gate can only
+ * prepare and this can only resolve, so neither side can write the other's half
+ * and the journal cannot acquire a writer that resolves an attempt before it
+ * executed.
+ */
+export interface AttemptResolver {
+  resolve(outcome: EffectOutcome): Promise<void>;
+}
+
+/**
  * Identity and outcomes for the operations of one turn.
  *
  * Identity has to be computed rather than taken from the provider. A retry is
@@ -148,12 +160,64 @@ export function decideReplay(
  * canonical arguments, and that occurrence count — which also keeps two
  * genuinely distinct calls (`echo a` twice) as two operations rather than
  * collapsing them into one.
+ *
+ * When an `AttemptResolver` is supplied the ledger also writes the terminal half
+ * of the durability order to the audit journal. This is the one place that can:
+ * the gate records the attempt immediately before execution, and the ledger is
+ * what brackets the execution, so it is the only point that knows whether the
+ * tool got to say what happened. The distinction it already draws for retries —
+ * a returned error is a proven outcome, a thrown one is not — is exactly the
+ * distinction the journal needs between `failed` and `outcome_unknown`.
  */
 export class TurnLedger {
   private readonly records = new Map<string, OperationRecord>();
   private occurrences = new Map<string, number>();
+  /** Attempt ids the gate prepared for a ledger operation, awaiting a terminal record. */
+  private readonly prepared = new Map<string, readonly string[]>();
 
-  constructor(private readonly turn: number) {}
+  constructor(
+    private readonly turn: number,
+    private readonly audit?: AttemptResolver,
+  ) {}
+
+  /**
+   * Note the attempts the gate prepared for this operation, so settling it also
+   * settles them. Separate from `start` because a call can be refused between
+   * the gate and the dispatcher, and a prepared attempt still needs closing.
+   */
+  attach(id: string, preparedOperationIds: readonly string[]): void {
+    if (preparedOperationIds.length > 0) this.prepared.set(id, preparedOperationIds);
+  }
+
+  /**
+   * Writes the terminal record for every attempt the gate prepared under `id`.
+   *
+   * A success records only that it completed. The tool's output is deliberately
+   * not quoted: it is the one field that can carry arbitrary file content, and
+   * the audit journal's durability is unconditional precisely because it holds
+   * paths and decisions rather than content. A failure records its message,
+   * bounded, because a refusal nobody can read is not much of an audit trail —
+   * redaction discipline for anything a projection quotes is `WP-12`'s.
+   */
+  private async resolveAttempts(id: string, result: ToolResult | undefined, unknown?: string) {
+    const ids = this.prepared.get(id);
+    if (ids === undefined || this.audit === undefined) return;
+    this.prepared.delete(id);
+
+    for (const operationId of ids) {
+      const outcome: EffectOutcome =
+        unknown !== undefined
+          ? { kind: "outcome_unknown", operationId, reason: unknown }
+          : result?.status === "ok"
+            ? { kind: "completed", operationId }
+            : {
+                kind: "failed",
+                operationId,
+                message: (result?.message ?? "tool reported no message").slice(0, 512),
+              };
+      await this.audit.resolve(outcome);
+    }
+  }
 
   /**
    * Start a new attempt at this turn. Occurrence counts reset so the retried
@@ -193,13 +257,19 @@ export class TurnLedger {
     run: () => Promise<ToolResult>,
   ): Promise<ToolResult> {
     const promise = run().then(
-      (result) => {
+      async (result) => {
         this.records.set(id, { kind: "completed", id, idempotency, result });
+        // Awaited before the result is handed back, so the acknowledgement the
+        // caller receives is never ahead of the durable record of it (step 6
+        // follows step 5). A journal write that failed must not be reported as a
+        // completed effect.
+        await this.resolveAttempts(id, result);
         return result;
       },
-      (err: unknown) => {
+      async (err: unknown) => {
         const reason = err instanceof Error ? err.message : String(err);
         this.records.set(id, { kind: "outcome_unknown", id, idempotency, reason });
+        await this.resolveAttempts(id, undefined, reason);
         throw err;
       },
     );
@@ -210,6 +280,7 @@ export class TurnLedger {
   /** Record a result the ledger did not run itself, such as a gate refusal. */
   settle(id: string, idempotency: IdempotencyClass, result: ToolResult): void {
     this.records.set(id, { kind: "completed", id, idempotency, result });
+    void this.resolveAttempts(id, result);
   }
 
   /**
@@ -219,6 +290,7 @@ export class TurnLedger {
    */
   markUnknown(id: string, idempotency: IdempotencyClass, reason: string): void {
     this.records.set(id, { kind: "outcome_unknown", id, idempotency, reason });
+    void this.resolveAttempts(id, undefined, reason);
   }
 
   /** Operations that never reached a proven outcome. */

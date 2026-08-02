@@ -334,7 +334,25 @@ export type PermissionGate = (
 ) => Promise<PermissionDecision>;
 
 export type PermissionDecision =
-  | { readonly allow: true; readonly updatedInput?: unknown }
+  | {
+      readonly allow: true;
+      readonly updatedInput?: unknown;
+      /**
+       * Attempts the gate durably prepared for this call, in the audit journal,
+       * before returning (docs/67 `WP-00a` remainder).
+       *
+       * The gate is where an attempt becomes real: it canonicalizes the paths,
+       * authorizes each one, and returns immediately before execution — which is
+       * exactly step 3 of the durability order. Recording there and resolving
+       * after execution is what makes a crash distinguishable from a refusal.
+       *
+       * The ids travel back so whoever brackets the execution can close them
+       * out. Absent when the call named no resources the gate could authorize
+       * per-resource, which is the `bash`/MCP/plugin case that still resolves by
+       * tool name alone.
+       */
+      readonly preparedOperationIds?: readonly string[];
+    }
   | { readonly allow: false; readonly reason: string };
 
 // ---------------------------------------------------------------------------
