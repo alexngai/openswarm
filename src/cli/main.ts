@@ -37,6 +37,9 @@ import { buildAgentRuntime } from "./runtime.js";
 import { resolveTrust, explainDenial, propagateTrust } from "../trust/gate.js";
 import { makeTrustPrompt, canPrompt } from "./trust-prompt.js";
 import { makeCanUseTool } from "../permissions/gate.js";
+import type { AttemptRecorder } from "../permissions/gate.js";
+import { openAuditJournal } from "../kernel/audit-journal.js";
+import type { AttemptResolver } from "../engine/operation-ledger.js";
 import { PermissionBridge } from "../permissions/bridge.js";
 import { SessionAllowRules } from "../permissions/session-rules.js";
 import { readHeadlessApproval } from "../permissions/headless-prompt.js";
@@ -412,20 +415,50 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     sessionId = crypto.randomUUID();
   }
 
+  // The attempt journal, which is not the history journal above and is not
+  // conditional on it (docs/67 `WP-00a` remainder). History is ephemeral unless
+  // the user opts in, because it carries message text; an attempt record carries
+  // paths and decisions, and "did this effect already run?" has to be answerable
+  // after a hard kill however history was configured.
+  const audit = openAuditJournal(process.cwd());
+  const auditSessionId = sessionId;
+  const attempts: AttemptRecorder = {
+    prepare: (payload) =>
+      audit
+        .append({
+          sessionId: auditSessionId,
+          type: "AttemptPrepared",
+          payload,
+          causationId: payload.request.operationId,
+        })
+        .then(() => undefined),
+  };
+  const onAttemptResolved: AttemptResolver = {
+    resolve: (outcome) =>
+      audit
+        .append({
+          sessionId: auditSessionId,
+          type: "AttemptResolved",
+          payload: { outcome },
+          causationId: outcome.operationId,
+        })
+        .then(() => undefined),
+  };
+
   // 8. Construct the engine for this session.
   // The sink records resume state at each turn boundary the engine acknowledges.
   // Bound to the session id resolved above, so a resumed session keeps appending
   // to the journal it came from rather than starting a second one.
   const resumeSessionId = sessionId;
-  const { engine, providerId } = await rt.makeEngine(
-    sessionId,
-    journal !== undefined
+  const { engine, providerId } = await rt.makeEngine(sessionId, {
+    ...(journal !== undefined
       ? {
-          onSnapshot: (snapshot) =>
+          onSnapshot: (snapshot: SessionSnapshot) =>
             recordTurnState(journal as FileEventStore, resumeSessionId, snapshot),
         }
-      : undefined,
-  );
+      : {}),
+    onAttemptResolved,
+  });
 
   // --dump-engine: print engine info as JSON and exit 0 (smoke tests only).
   if (opts.dumpEngine) {
@@ -474,6 +507,7 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     // Tag grants with the workspace state the operator vouched for, so consent
     // given about this repository does not silently carry into a different one.
     trustBinding: () => trust.provenance.digest || undefined,
+    attempts,
   });
 
   // 9a. Phase 4.1e — wire the request_permissions escalation seam for the

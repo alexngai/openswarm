@@ -216,3 +216,100 @@ describe("makeCanUseTool — authorizes declared resources per path", () => {
     expect(await h.gate("declared_write", {})).toEqual({ allow: true });
   });
 });
+
+/**
+ * FX-AUDIT-011 — the gate records the pre-decision half through its real deriver
+ * and policy, not a hand-built payload (docs/67 `WP-00a` remainder).
+ *
+ * The correlation fixtures in `src/kernel/attempt-correlation.test.ts` construct
+ * the prepared payload themselves, which proves the pairing but not that the gate
+ * produces one. This closes that: the request, its canonical path, and the policy
+ * decision all come from the code the CLI runs.
+ */
+describe("makeCanUseTool — durable attempt records", () => {
+  let workspace: string;
+
+  beforeEach(() => {
+    workspace = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "gate-audit-")));
+  });
+  afterEach(() => fs.rmSync(workspace, { recursive: true, force: true }));
+
+  function writingTool(): ToolImpl {
+    return {
+      spec: {
+        name: "write_file",
+        description: "writes a file",
+        inputSchema: { type: "object" },
+        requiredPermission: "write",
+        tier: 0,
+      },
+      // Declared honestly, which is what makes the deriver produce a per-resource
+      // request rather than falling back to judging by tool name.
+      accesses: (raw: unknown) =>
+        ToolAccesses.writeFile(path.resolve(workspace, (raw as { file_path: string }).file_path)),
+      execute: async () => ({ status: "ok", output: "" }),
+    } as unknown as ToolImpl;
+  }
+
+  it("FX-AUDIT-011 prepares an attempt before returning, and reports its id", async () => {
+    const tool = writingTool();
+    const prepared: unknown[] = [];
+    const gate = makeCanUseTool({
+      dispatcher: {
+        get: (n: string) => (n === "write_file" ? tool : undefined),
+      } as unknown as ToolDispatcher,
+      permEngine: new PermissionEngine("workspace-write"),
+      bridge: { request: async () => ({ allow: true }) } as unknown as PermissionBridge,
+      useHeadless: false,
+      getCurrentMode: () => "workspace-write",
+      cwd: workspace,
+      attempts: { prepare: async (p) => void prepared.push(p) },
+    });
+
+    const decision = await gate("write_file", { file_path: "note.txt" });
+    expect(decision.allow).toBe(true);
+
+    expect(prepared).toHaveLength(1);
+    const payload = prepared[0] as {
+      request: { toolName: string; idempotency: string; path: { relative: string } };
+      decision: { allowed: boolean };
+      generation: number;
+    };
+    expect(payload.request.path.relative).toBe("note.txt");
+    expect(payload.request.idempotency).toBe("mutating");
+    expect(payload.decision.allowed).toBe(true);
+    // The shared generation, which is 1 in a workspace no writer has touched.
+    expect(payload.generation).toBeGreaterThanOrEqual(1);
+
+    // The ids travel back so whoever brackets execution can close them out;
+    // without this the prepared record could never be resolved.
+    expect(
+      (decision as { preparedOperationIds?: readonly string[] }).preparedOperationIds,
+    ).toHaveLength(1);
+  });
+
+  it("records nothing when the gate refuses, because there is no attempt", async () => {
+    const tool = writingTool();
+    const prepared: unknown[] = [];
+    const gate = makeCanUseTool({
+      dispatcher: {
+        get: (n: string) => (n === "write_file" ? tool : undefined),
+      } as unknown as ToolDispatcher,
+      permEngine: new PermissionEngine("read-only"),
+      bridge: {
+        request: async () => ({ allow: false, reason: "denied by test bridge" }),
+      } as unknown as PermissionBridge,
+      useHeadless: false,
+      getCurrentMode: () => "read-only",
+      cwd: workspace,
+      attempts: { prepare: async (p) => void prepared.push(p) },
+    });
+
+    const decision = await gate("write_file", { file_path: "note.txt" });
+    expect(decision.allow).toBe(false);
+    // A refusal is durable in the journal only once something executes against
+    // it; the gate's own denial has no effect to reconcile, so preparing one
+    // would leave a permanently dangling record that reads as a crash.
+    expect(prepared).toEqual([]);
+  });
+});

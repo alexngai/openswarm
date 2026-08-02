@@ -33,6 +33,7 @@ import {
   type CompactionConfig,
 } from "../engine/compactor.js";
 import type { RemoteCompactionConfig } from "../engine/compact-remote.js";
+import type { AttemptResolver } from "../engine/operation-ledger.js";
 import { makeProjectInstructionsRecontextualizer } from "../engine/compact-rebuild.js";
 import type { Provider } from "../providers/index.js";
 import { PluginRegistry } from "../plugins/registry.js";
@@ -126,7 +127,11 @@ export async function buildAuthForProvider(modelId: string): Promise<AuthSource>
  */
 export type MakeEngine = (
   sessionId: string,
-  hooks?: { readonly onSnapshot?: SnapshotSink },
+  hooks?: {
+    readonly onSnapshot?: SnapshotSink;
+    /** Terminal half of an attempt; see `HardenedNativeEngineOptions.audit`. */
+    readonly onAttemptResolved?: AttemptResolver;
+  },
 ) => Promise<{ engine: AgentEngine; providerId?: string }>;
 
 export interface AgentRuntime {
@@ -474,6 +479,9 @@ export async function buildAgentRuntime(
               recontextualize,
               ...(hooks?.onSnapshot !== undefined
                 ? { onSnapshot: hooks.onSnapshot }
+                : {}),
+              ...(hooks?.onAttemptResolved !== undefined
+                ? { audit: hooks.onAttemptResolved }
                 : {}),
             })
           : new NativeEngine({

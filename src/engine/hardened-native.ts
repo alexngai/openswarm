@@ -79,6 +79,7 @@ import {
 } from "../tools/access.js";
 import type { ToolRequest } from "../tools/dispatcher.js";
 import { accessesFor } from "../tools/dispatcher.js";
+import type { AttemptResolver } from "./operation-ledger.js";
 import {
   TurnLedger,
   decideReplay,
@@ -146,6 +147,13 @@ export interface HardenedNativeEngineOptions {
   /** Same snapshot, same turn boundaries, caller-chosen destination. */
   readonly onSnapshot?: SnapshotSink;
   readonly sessionId?: string;
+  /**
+   * Closes out the attempts the permission gate prepared (docs/67 `WP-00a`
+   * remainder). The engine is where it belongs because `TurnLedger` brackets
+   * the execution, and only the thing that brackets it knows whether the tool
+   * got to say what happened.
+   */
+  readonly audit?: AttemptResolver;
   readonly retryPolicy?: RetryPolicy;
   readonly eagerToolDispatch?: boolean;
   readonly midTurnCompaction?: boolean;
@@ -175,6 +183,7 @@ export class HardenedNativeEngine implements AgentEngine {
   private readonly compactionConfig: CompactionConfig;
   private readonly sessionDir?: string;
   private readonly onSnapshot?: SnapshotSink;
+  private readonly audit?: AttemptResolver;
   private readonly sessionId?: string;
   private readonly retryPolicy: RetryPolicy;
   private readonly eagerToolDispatch: boolean;
@@ -215,6 +224,7 @@ export class HardenedNativeEngine implements AgentEngine {
     this.compactionConfig = opts.compactionConfig ?? DEFAULT_COMPACTION;
     if (opts.sessionDir !== undefined) this.sessionDir = opts.sessionDir;
     if (opts.onSnapshot !== undefined) this.onSnapshot = opts.onSnapshot;
+    if (opts.audit !== undefined) this.audit = opts.audit;
     if (opts.sessionId !== undefined) this.sessionId = opts.sessionId;
     this.retryPolicy = opts.retryPolicy ?? DEFAULT_RETRY_POLICY;
     this.eagerToolDispatch = opts.eagerToolDispatch ?? false;
@@ -471,7 +481,7 @@ export class HardenedNativeEngine implements AgentEngine {
       // Outlives the retry loop below, which is the point: it is what lets a
       // re-announced call be answered from what the failed attempt already did
       // rather than performed a second time (docs/67 WP-05).
-      const ledger = new TurnLedger(turn);
+      const ledger = new TurnLedger(turn, this.audit);
 
       /**
        * Run a call the eager path declined to speculate on.
