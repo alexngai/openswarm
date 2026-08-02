@@ -330,6 +330,13 @@ case "$WP" in
         npx vitest run src/kernel/attempt-correlation.test.ts
       run_check A11 "FX-AUDIT-011 the real gate records the attempt it authorized" \
         npx vitest run src/permissions/gate.test.ts -t "durable attempt records"
+      # A12 exists because A9-A11 all passed while the default dispatch path was
+      # writing a prepare with no resolve for every tool call: they drive the
+      # ledger directly, and that path has no ledger. It asserts the two paths
+      # agree rather than checking either, since a per-path fixture would still
+      # pass while they diverged.
+      run_check A12 "FX-AUDIT-012..014 both dispatch paths resolve what the gate prepared" \
+        npx vitest run src/engine/attempt-dispatch-paths.test.ts
     fi
     ;;
 

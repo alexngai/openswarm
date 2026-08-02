@@ -149,6 +149,37 @@ export interface AttemptResolver {
 }
 
 /**
+ * The terminal record for one attempt, derived from what the tool reported.
+ *
+ * Exported because two dispatch paths need it and must not answer differently:
+ * the ledger brackets the eager path, and the batch path has no ledger and
+ * resolves against its own results. A second copy of this mapping is how one
+ * path starts calling a returned error `outcome_unknown`, which would tell
+ * recovery that an effect it can see the result of might not have happened.
+ *
+ * A success records only that it completed. The tool's output is the one field
+ * that can carry arbitrary file content, and the audit journal is durable
+ * unconditionally because it holds paths and decisions instead. A failure keeps
+ * a bounded message, because a refusal nobody can read is not much of an audit
+ * trail; redaction for anything a projection quotes is `WP-12`'s.
+ */
+export function outcomeFor(
+  operationId: string,
+  result: ToolResult | undefined,
+  unknownReason?: string,
+): EffectOutcome {
+  if (unknownReason !== undefined) {
+    return { kind: "outcome_unknown", operationId, reason: unknownReason };
+  }
+  if (result?.status === "ok") return { kind: "completed", operationId };
+  return {
+    kind: "failed",
+    operationId,
+    message: (result?.message ?? "tool reported no message").slice(0, 512),
+  };
+}
+
+/**
  * Identity and outcomes for the operations of one turn.
  *
  * Identity has to be computed rather than taken from the provider. A retry is
@@ -205,17 +236,7 @@ export class TurnLedger {
     this.prepared.delete(id);
 
     for (const operationId of ids) {
-      const outcome: EffectOutcome =
-        unknown !== undefined
-          ? { kind: "outcome_unknown", operationId, reason: unknown }
-          : result?.status === "ok"
-            ? { kind: "completed", operationId }
-            : {
-                kind: "failed",
-                operationId,
-                message: (result?.message ?? "tool reported no message").slice(0, 512),
-              };
-      await this.audit.resolve(outcome);
+      await this.audit.resolve(outcomeFor(operationId, result, unknown));
     }
   }
 

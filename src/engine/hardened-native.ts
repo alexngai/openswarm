@@ -79,7 +79,7 @@ import {
 } from "../tools/access.js";
 import type { ToolRequest } from "../tools/dispatcher.js";
 import { accessesFor } from "../tools/dispatcher.js";
-import type { AttemptResolver } from "./operation-ledger.js";
+import { outcomeFor, type AttemptResolver } from "./operation-ledger.js";
 import {
   TurnLedger,
   decideReplay,
@@ -1069,6 +1069,31 @@ export class HardenedNativeEngine implements AgentEngine {
             const id = allowedIds[i]!;
             const res = batchResults[i];
             if (res !== undefined) resultById.set(id, res);
+          }
+
+          // This path has no ledger, so it resolves its own attempts. Not
+          // optional: the gate prepares a record before every authorized call
+          // and this is the default dispatch path, so leaving it unresolved
+          // would write a dangling AttemptPrepared for every tool call the
+          // product makes -- and a prepare with no resolve is exactly the
+          // signature recovery treats as a crash. The absent case is reported
+          // as unknown rather than failed because a request that was allowed
+          // and then had no result did not come back to say so.
+          if (this.audit !== undefined) {
+            for (const id of allowedIds) {
+              const decision = decisions.get(id);
+              if (decision === undefined || !decision.allow) continue;
+              const prepared = decision.preparedOperationIds;
+              if (prepared === undefined) continue;
+              const res = resultById.get(id);
+              for (const operationId of prepared) {
+                await this.audit.resolve(
+                  res === undefined
+                    ? outcomeFor(operationId, undefined, "dispatch returned no result")
+                    : outcomeFor(operationId, res),
+                );
+              }
+            }
           }
 
           for (const req of toolUseBuffer) {
