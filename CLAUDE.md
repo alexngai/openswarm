@@ -20,6 +20,7 @@ bun scripts/check-parity-manifest.ts               # product-parity capability m
 - UI component tests under `src/ui/repl-solid/` run with `bun test`, not vitest.
 - `eval/` and `experimental/` are separate TypeScript trees with their own tsconfigs; type-check them explicitly when touching them.
 - The product-parity capability contract in [`docs/67-product-parity-roadmap.md`](docs/67-product-parity-roadmap.md) is encoded as data in `src/parity/`. Editing a `DDP-*` outcome, its evidence, or the roadmap tables in one place without the other fails CI — change both, or run `bun scripts/check-parity-manifest.ts` to see what diverged.
+- Docs are cited by number (`docs/67`), so renaming one breaks every reference to it. Numbers are never reused; `test/docs-numbering.test.ts` fails on a duplicate number or a reference to a doc that does not exist.
 
 ## Docs
 

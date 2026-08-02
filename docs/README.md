@@ -2,7 +2,7 @@
 
 Design capture for openswarm — a TypeScript agent harness where the atomic unit is a single coding agent and the primary product surface is multi-agent swarm orchestration.
 
-Numbering is chronological and stable: numbers are never reused.
+Numbering is chronological and stable: numbers are never reused. The number is also how the rest of the tree cites a document — source comments say `docs/67`, CI says `docs/55` — so renaming one means following its references. `test/docs-numbering.test.ts` enforces both halves: one document per number, and every `docs/NN` reference in the tree resolving to a file that exists.
 
 For end-user CLI reference (flags, model routing, tools, limitations, architecture), see [USAGE.md](./USAGE.md).
 
