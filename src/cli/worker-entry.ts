@@ -35,7 +35,13 @@ import {
 } from "../memory/index.js";
 import { buildTier2Tools } from "../tools/tier2/index.js";
 import { PermissionEngine } from "../permissions/index.js";
-import { makePathContainment } from "../permissions/path-containment.js";
+import { makeCanUseTool, type AttemptRecorder } from "../permissions/gate.js";
+import { openAuditJournal, type AuditJournal } from "../kernel/audit-journal.js";
+import type { AttemptResolver } from "../engine/operation-ledger.js";
+import type { LaneEvent } from "../swarm/events.js";
+import { PermissionBridge } from "../permissions/bridge.js";
+import type { BridgeDecision } from "../permissions/bridge.js";
+import type { PendingPermission } from "../ui/repl/state.js";
 import { AnthropicEnvAuth } from "../auth/anthropic-env-auth.js";
 import { createHash } from "node:crypto";
 import {
@@ -198,6 +204,7 @@ async function buildNativeWorkerEngine({
     sessionId: agentId,
     retryPolicy,
     compactionConfig,
+    audit: workerAttemptResolver(agentId),
     eagerToolDispatch: process.env.OPENSWARM_EAGER_TOOL_DISPATCH === "1",
     midTurnCompaction: process.env.OPENSWARM_MID_TURN_COMPACTION === "1",
   });
@@ -225,6 +232,7 @@ async function buildCodexNativeWorkerEngine({
   return new HardenedNativeEngine({
     provider,
     sessionId: agentId,
+    audit: workerAttemptResolver(agentId),
     eagerToolDispatch: process.env.OPENSWARM_EAGER_TOOL_DISPATCH === "1",
     midTurnCompaction: process.env.OPENSWARM_MID_TURN_COMPACTION === "1",
     compactionConfig: {
@@ -285,16 +293,120 @@ interface TurnContext {
 }
 
 /**
- * Build a worker's `canUseTool` gate. Workspace containment first, then the
- * mode check; when a tool is denied under the current mode AND escalation is
- * enabled (an `escalate` callback is provided — the ACP team path), the denied
- * call is routed to the orchestrator (which forwards it to the ACP client).
- * Without `escalate`, a mode denial is returned directly — identical to the
- * prior behavior. Exported for testing.
+ * The worker's audit journal, opened once per process.
  *
- * Containment is never escalated. An operator approving a path outside the
- * worker's workspace is not a decision the escalation protocol is meant to
- * carry, and a worker asking for one is a bug worth surfacing as a denial.
+ * Workers share the workspace, so they share the journal root and separate by
+ * session id. The agent id is that id, matching what the engines already use as
+ * their session id, and it is what makes reconciliation's single-session scope
+ * correct here: a worker owns its own stream and no other process writes it.
+ */
+let workerJournal: AuditJournal | undefined;
+const journalForWorker = (): AuditJournal =>
+  (workerJournal ??= openAuditJournal(process.cwd()));
+
+/** The gate's half: record the authorized attempt before it runs. */
+function workerAttempts(agentId: string): AttemptRecorder {
+  const journal = journalForWorker();
+  return {
+    prepare: (payload) =>
+      journal
+        .append({
+          sessionId: agentId,
+          type: "AttemptPrepared",
+          payload,
+          causationId: payload.request.operationId,
+        })
+        .then(() => undefined),
+  };
+}
+
+/**
+ * The ledger's half. Wired wherever `workerAttempts` is, and not optionally:
+ * a prepare with no resolve is the signature recovery reads as a crash, so
+ * recording only the first half would have every worker tool call look like a
+ * process that died. That was a live bug on the CLI's default dispatch path
+ * (docs/67 `WP-00a`); this is the same trap one surface over.
+ */
+function workerAttemptResolver(agentId: string): AttemptResolver {
+  const journal = journalForWorker();
+  return {
+    resolve: (outcome) =>
+      journal
+        .append({
+          sessionId: agentId,
+          type: "AttemptResolved",
+          payload: { outcome },
+          causationId: outcome.operationId,
+        })
+        .then(() => undefined),
+  };
+}
+
+/**
+ * Forwards a gate prompt to the orchestrator, or refuses when nobody is there.
+ *
+ * The gate prompts through a `PermissionBridge`, and a worker has no terminal to
+ * prompt at, so this plays the same role for the swarm that `AcpPermissionBridge`
+ * plays for ACP. Without an `escalate` callback there is no one to ask and the
+ * answer is no, which is the behaviour a worker spawned outside the ACP team path
+ * already had.
+ */
+class WorkerEscalationBridge extends PermissionBridge {
+  constructor(
+    private readonly escalate?: (req: PermissionRequest) => Promise<PermissionDecisionResponse>,
+  ) {
+    super();
+  }
+
+  override async request(pending: PendingPermission): Promise<BridgeDecision> {
+    if (this.escalate === undefined) {
+      return { allow: false, reason: pending.reason ?? "denied by permission mode" };
+    }
+    const res = await this.escalate({
+      toolName: pending.toolName,
+      input: pending.input,
+      requiredPermission: pending.requiredPermission,
+      currentMode: pending.currentMode,
+    });
+    // Approval is named; anything else is not one. Same rule as the ACP bridge,
+    // for the same reason: treating an unrecognised outcome as consent approves
+    // silently.
+    return res.outcome === "allow"
+      ? { allow: true }
+      : { allow: false, reason: res.reason ?? "denied by operator" };
+  }
+}
+
+/**
+ * Build a worker's `canUseTool` gate.
+ *
+ * This delegates to `makeCanUseTool` — the same gate the CLI and ACP use —
+ * rather than reimplementing authorization. It used to be its own
+ * implementation: containment, then a check of the *tool's* declared permission,
+ * then escalation. That was weaker than the CLI's in three ways at once, and
+ * `worker-gate-parity.test.ts` records each as a differential fixture.
+ *
+ * It never ran the bash-validation pipeline, so a command the product classifies
+ * as never-allowable was merely graded by mode. With an operator who approves —
+ * or in danger-full-access, where nobody is asked at all — a worker would run
+ * `cat /etc/passwd`, which the CLI refuses in every mode. Swarm orchestration is
+ * this product's primary surface, so that was the real posture and the CLI's was
+ * the one being read.
+ *
+ * It emitted no lane events. `bash_validation_blocked` and
+ * `bash_validation_warned` are `LaneEvent` types that exist so the orchestrator
+ * can see what its workers were stopped from doing, and `bash-gate.ts` is their
+ * only emitter — so the events the swarm schema was extended to carry were never
+ * produced by a swarm.
+ *
+ * And it graded tools rather than resources, which is why nothing here could
+ * record an attempt: `makePathContainment` derives complete `OperationRequest`s
+ * and returns only whether one escaped, so the requests an audit record is built
+ * from were computed and dropped.
+ *
+ * Containment is still never escalated — the shared gate refuses an escaping path
+ * before any prompt, because no mode grants it and asking would offer a choice
+ * that does not exist. Exported for testing.
  */
 export function buildWorkerCanUseTool(deps: {
   dispatcher: ToolDispatcher;
@@ -302,32 +414,37 @@ export function buildWorkerCanUseTool(deps: {
   permissionMode: PermissionMode;
   cwd: string;
   escalate?: (req: PermissionRequest) => Promise<PermissionDecisionResponse>;
+  /** The worker's lane, so the orchestrator sees validation events. */
+  emitLaneEvent?: (event: unknown) => void;
+  /** Where an authorized attempt is recorded before it runs (docs/67 `WP-00a`). */
+  attempts?: AttemptRecorder;
 }): (toolName: string, input: unknown) => Promise<PermissionDecision> {
-  const checkContainment = makePathContainment(deps.cwd);
+  const gate = makeCanUseTool({
+    dispatcher: deps.dispatcher,
+    permEngine: deps.permissionEngine,
+    bridge: new WorkerEscalationBridge(deps.escalate),
+    // A worker's prompts go to the orchestrator, never to stdin: its stdin is
+    // the IPC transport.
+    useHeadless: false,
+    // Fixed for the worker's lifetime: a worker is spawned with its mode and has
+    // no `/permissions` to change it mid-session.
+    getCurrentMode: () => deps.permissionMode,
+    cwd: deps.cwd,
+    ...(deps.emitLaneEvent !== undefined ? { emitLaneEvent: deps.emitLaneEvent } : {}),
+    ...(deps.attempts !== undefined ? { attempts: deps.attempts } : {}),
+  });
+
   return async (toolName, input) => {
-    const tool = deps.dispatcher.get(toolName);
-    if (tool === undefined) {
+    // Kept ahead of the shared gate for its feedback rather than its verdict:
+    // both refuse an unknown tool, but this names the ones that exist, which is
+    // what lets a worker recover instead of retrying the same wrong name.
+    if (deps.dispatcher.get(toolName) === undefined) {
       return {
         allow: false,
         reason: formatUnknownToolFeedback(toolName, deps.dispatcher.list()),
       };
     }
-    const escape = await checkContainment(tool, input);
-    if (escape !== null) return escape;
-
-    const decision = deps.permissionEngine.check(tool.spec);
-    if (decision.allow || deps.escalate === undefined) {
-      return decision;
-    }
-    const res = await deps.escalate({
-      toolName,
-      input,
-      requiredPermission: tool.spec.requiredPermission,
-      currentMode: deps.permissionMode,
-    });
-    return res.outcome === "allow"
-      ? { allow: true }
-      : { allow: false, reason: res.reason ?? "denied by operator" };
+    return gate(toolName, input);
   };
 }
 
@@ -508,6 +625,16 @@ async function executeTurn(
         permissionEngine,
         permissionMode,
         cwd: process.cwd(),
+        // Validation events go to the worker's lane, which is what the
+        // `bash_validation_*` LaneEvent types were added for. The host restamps
+        // agentId, so the orchestrator learns which worker was stopped rather
+        // than that some gate somewhere stopped something.
+        emitLaneEvent: (event: unknown) =>
+          ctx.host.emit(event as Omit<LaneEvent, "ts" | "agentId">),
+        // Keyed by agent id: workers share the workspace, so they share the
+        // journal root and each needs its own stream — which is also what makes
+        // reconciliation's single-session scope correct for a worker.
+        attempts: workerAttempts(agentId),
         // Escalate denied calls to the orchestrator only when the ACP team path
         // enabled it (env flag set on the spawned worker); else deny directly.
         ...(process.env.OPENSWARM_PERMISSION_ESCALATION === "1"

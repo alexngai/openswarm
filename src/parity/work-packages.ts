@@ -38,7 +38,7 @@ export const WORK_PACKAGES: readonly WorkPackage[] = [
     // decision was what production lacked, so the attempt journal is evidence
     // here rather than in `WP-12`, which projects those records but does not
     // produce them.
-    fixtures: ["FX-ESCAPE-001", "FX-GATE-001", "FX-AUDIT-001..019"],
+    fixtures: ["FX-ESCAPE-001", "FX-GATE-001", "FX-AUDIT-001..019", "FX-WORKER-001..006"],
     gateImplemented: true,
   },
   {

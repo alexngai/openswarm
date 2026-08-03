@@ -344,6 +344,13 @@ case "$WP" in
       # what a crash leaves behind is not the shape recovery looks for.
       run_check A13 "FX-AUDIT-015..019 a dangling attempt is reconciled on restart" \
         npx vitest run src/kernel/attempt-recovery.test.ts
+      # A14 is differential. Two gates in one product is the defect; whichever is
+      # weaker is the real posture, and the stronger one is what gets read during
+      # review. FX-WORKER-001/002/004 were red before the worker path adopted the
+      # shared gate: a worker would run `cat /etc/passwd` in every mode, including
+      # danger-full-access where nobody is even asked.
+      run_check A14 "FX-WORKER-001..006 a swarm worker authorizes the way the CLI does" \
+        npx vitest run src/cli/worker-gate-parity.test.ts
     fi
     ;;
 
