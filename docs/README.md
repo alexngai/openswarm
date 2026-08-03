@@ -20,6 +20,7 @@ For end-user CLI reference (flags, model routing, tools, limitations, architectu
 ## Teams & orchestration
 
 - [25-team-orchestration.md](./25-team-orchestration.md) — canonical team design: `TeamSession`, topologies, long-lived workers, openteams loader (shipped v0.4)
+- [67-peer-first-architecture.md](./67-peer-first-architecture.md) — peer-first gap analysis + target design: the five structural gaps (no mid-turn attention, depth-1 relation graph, no conversation semantics, no shared state, rigid topologies), seven pillars (delivery classes + mid-turn injection, communication policy replacing the depth gate, `ask_peer`/threads/receipts, blackboard wired as a `MemoryProvider`, leases/barriers/proposals, topologies-as-composable-policy, peer observability), phased P0–P7, and the coordination-necessary benchmark without which none of it is measurable (proposal; extends 25/52/59/60/61)
 - [28-v0.5-daemon-plan.md](./28-v0.5-daemon-plan.md) — long-lived team daemon design (design lock; daemon shipped through 5E/5F)
 - [29-v0.7-git-cascade-plan.md](./29-v0.7-git-cascade-plan.md) — git-cascade integration design (design lock)
 - [45-adaptive-orchestration-design.md](./45-adaptive-orchestration-design.md) — adaptive orchestration design spike (draft)
