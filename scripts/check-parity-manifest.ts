@@ -7,6 +7,11 @@
  * (`FX-CLAIM-001`). Both are structural checks over `src/parity/`, which is where the capability
  * contract and the work-package schedule live as data.
  *
+ * `FX-MANIFEST-002` is the third, added because the first two can only catch a manifest that
+ * disagrees with itself. A package can name fixtures nobody wrote, or claim a gate the script does
+ * not have, and every structural check passes because each reference is well-formed. That one reads
+ * the tree, so it is the only check here that is not purely structural.
+ *
  * Run:
  *   bun scripts/check-parity-manifest.ts            # both gates
  *   bun scripts/check-parity-manifest.ts --ledger   # derived capability status from artifacts
@@ -22,8 +27,10 @@ import { CAPABILITIES } from "../src/parity/capabilities.js";
 import { WORK_PACKAGES } from "../src/parity/work-packages.js";
 import { checkDocsSync } from "../src/parity/docs-sync.js";
 import { committedPersonWeeks, validateManifest } from "../src/parity/validate.js";
+import { expandFixtures } from "../src/parity/contracts.js";
 import type { Violation } from "../src/parity/validate.js";
 import { readArtifacts, reportAll, summarize } from "../src/parity/status.js";
+import { coverageViolations, scanTree } from "../src/parity/fixture-coverage.js";
 import { MINIMUM_PAIRS, validateEvalPlan } from "../src/parity/eval-plan.js";
 import { evidenceEligibleModels } from "../src/parity/certification.js";
 
@@ -117,8 +124,12 @@ function main(): number {
     others: documents(),
   });
   const planViolations = validateEvalPlan();
+  const coverage = coverageViolations(scanTree(REPO_ROOT));
   const total =
-    manifestViolations.length + docs.violations.length + planViolations.length;
+    manifestViolations.length +
+    docs.violations.length +
+    planViolations.length +
+    coverage.length;
 
   if (args.has("--json")) {
     console.log(
@@ -133,6 +144,7 @@ function main(): number {
           manifest_violations: manifestViolations,
           docs_violations: docs.violations,
           eval_plan_violations: planViolations,
+          coverage_violations: coverage,
         },
         null,
         2,
@@ -154,6 +166,7 @@ function main(): number {
   printViolations("FX-MANIFEST-001 structural", manifestViolations);
   printViolations("FX-CLAIM-001 documentation", docs.violations);
   printViolations("FX-EVAL-PLAN-001 preregistration", planViolations);
+  printViolations("FX-MANIFEST-002 evidence exists", coverage);
   console.log(
     `  claim lines bound to an ID: ${docs.claimBlockCount}` +
       (docs.claimBlockCount === 0
@@ -165,6 +178,16 @@ function main(): number {
       `evidence-eligible models: ${evidenceEligibleModels().length} ` +
       "(none until WP-16 certifies)",
   );
+  const owing = WORK_PACKAGES.filter((wp) => (wp.owes ?? []).length > 0);
+  if (owing.length > 0) {
+    // Printed unconditionally rather than only on failure. Owing is a legal state,
+    // and the reason it is legal is that it is visible.
+    console.log(
+      `  gated but owing evidence: ${owing
+        .map((wp) => `${wp.id} (${expandFixtures(wp.owes ?? []).length})`)
+        .join(", ")}`,
+    );
+  }
 
   return total === 0 ? 0 : 1;
 }

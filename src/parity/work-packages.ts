@@ -39,6 +39,11 @@ export const WORK_PACKAGES: readonly WorkPackage[] = [
     // here rather than in `WP-12`, which projects those records but does not
     // produce them.
     fixtures: ["FX-ESCAPE-001", "FX-GATE-001", "FX-AUDIT-001..019", "FX-WORKER-001..006"],
+    // The CLI and the swarm record attempts; ACP authorizes per resource and records nothing, the
+    // kernel's weaker staging is still present beside the contained write, `write_file` is the one
+    // tool with no rename-time compare-and-swap, and every record so far comes from a gate run
+    // rather than a live one. See docs/67.
+    owes: ["FX-AUDIT-020..022", "FX-WRITE-001"],
     gateImplemented: true,
   },
   {
@@ -119,6 +124,9 @@ export const WORK_PACKAGES: readonly WorkPackage[] = [
     dependsOn: ["WP-07"],
     cells: ["linux-x64"],
     fixtures: ["FX-RESUME-001..011"],
+    // Resume works for every engine through the journal, but only from the CLI: the ACP and TUI
+    // surfaces still take the old path. The durable-by-default switch is `WP-27a`'s, not owed here.
+    owes: ["FX-RESUME-012..013"],
     gateImplemented: true,
   },
   {
@@ -149,6 +157,9 @@ export const WORK_PACKAGES: readonly WorkPackage[] = [
     dependsOn: ["WP-03", "WP-06"],
     cells: ["linux-x64"],
     fixtures: ["FX-RW-001..012"],
+    // A stale read is detected and a stale write refused. The reader half is not built: output is
+    // not provisional and nothing revalidates it, which is why `DDP-SWM-02` cannot certify.
+    owes: ["FX-RW-013..014"],
     gateImplemented: true,
   },
   {
@@ -310,7 +321,14 @@ export const WORK_PACKAGES: readonly WorkPackage[] = [
     ownerSplit: { A: 3, B: 1, C: 2 },
     dependsOn: ["WP-03", "WP-04", "WP-13", "WP-14"],
     cells: PLATFORM_CELLS,
-    fixtures: ["FX-PLAT-001..005", "FX-WSL-ID-001"],
+    // The estimate covers isolation and packaging. It does not cover auditing
+    // platform-dependent path assumptions, which a macOS trust-store defect found
+    // during `WP-00a` showed to be a separate job -- grants keyed by `path.resolve`
+    // are invisible to lookups canonicalized through `realpath` where `/tmp` is a
+    // symlink. Fails closed, so a usability defect rather than a bypass, and in
+    // scope for nothing earlier: every macOS and Windows cell belongs here. Needs a
+    // re-estimate before R5 planning; see docs/67.
+    fixtures: ["FX-PLAT-001..005", "FX-WSL-ID-001", "FX-TRUST-007"],
     gateImplemented: false,
   },
   {

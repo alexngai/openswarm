@@ -82,27 +82,19 @@ describe("the shipped manifest", () => {
     expect(abc("R6")).toEqual([5, 6, 5]);
   });
 
-  it("marks exactly the work packages whose gates are built", () => {
-    // Spelled out rather than counted, so flipping `gateImplemented` without a
-    // gate to back it fails here. Extend this list in the same commit that adds
-    // the gate to scripts/verify-parity-wp.sh.
-    const built = WORK_PACKAGES.filter((wp) => wp.gateImplemented).map(
-      (wp) => wp.id,
-    );
-    expect(built).toEqual([
-      "WP-00",
-      "WP-00a",
-      "WP-01",
-      "WP-02",
-      "WP-03",
-      "WP-04",
-      "WP-05",
-      "WP-06",
-      "WP-07",
-      "WP-08",
-      "WP-09",
-      "WP-11",
-    ]);
+  it("does not claim a gate the manifest cannot back", () => {
+    // The list of built gates used to be spelled out here, on the reasoning that
+    // flipping `gateImplemented` without a gate would fail. It would not: the array
+    // and the flag were both edited by hand, so the check was a claim about a claim
+    // in the file whose job is to stop those. `fixture-coverage.ts` derives the set
+    // from the branches in scripts/verify-parity-wp.sh instead.
+    //
+    // What is worth asserting here, with no filesystem, is the weaker structural
+    // property: a package that claims a gate has to name what the gate proves.
+    const mute = WORK_PACKAGES.filter(
+      (wp) => wp.gateImplemented && wp.fixtures.length === 0,
+    ).map((wp) => wp.id);
+    expect(mute).toEqual([]);
   });
 
   it("records the three capabilities whose evidence lands after the release that claimed them", () => {

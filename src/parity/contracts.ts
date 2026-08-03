@@ -101,9 +101,28 @@ export interface WorkPackage {
   readonly cells: readonly Cell[];
   readonly fixtures: readonly FixtureRef[];
   /**
+   * Fixtures this package's contract includes and that nothing yet proves.
+   *
+   * A passing gate is not a finished package. Three packages reached `gateImplemented` while work
+   * they owned was still outstanding, and because the manifest had nowhere to say so,
+   * `scripts/parity-ready.ts` counted them as done and handed their dependents a green light —
+   * which is how `WP-12` came to be schedulable on facts production did not yet record.
+   *
+   * Stated as fixtures rather than prose because `status.ts` is right that "anything else is a claim
+   * about a claim": a `remainder: "ACP sink pending"` string is an assertion nobody can falsify, and
+   * would rot exactly like the paragraph it replaced. An owed *fixture* is checkable in both
+   * directions — `fixture-coverage.ts` requires that a gated package's declared fixtures all exist
+   * in the tree, and that an owed one does not — so writing the evidence forces the entry to move
+   * here-to-`fixtures` in the same commit, or CI fails.
+   *
+   * `Capability.partialFrom` is the same idea one level up: recorded so a partial pass can never be
+   * read as a full one.
+   */
+  readonly owes?: readonly FixtureRef[];
+  /**
    * Whether `scripts/verify-parity-wp.sh` has a real gate for this package. Declared rather than
    * probed so the manifest can be validated without a shell, and cross-checked against the script
-   * by `validate.ts` so the two cannot drift.
+   * by `fixture-coverage.ts` so the two cannot drift.
    */
   readonly gateImplemented: boolean;
 }

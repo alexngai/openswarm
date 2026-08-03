@@ -18,8 +18,9 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { Capability, Cell, WorkPackageId } from "./contracts.js";
+import type { Capability, Cell, WorkPackage, WorkPackageId } from "./contracts.js";
 import { CAPABILITIES } from "./capabilities.js";
+import { WORK_PACKAGES } from "./work-packages.js";
 
 /** A parity artifact, narrowed to the fields status derivation depends on. */
 export interface ArtifactRecord {
@@ -105,6 +106,15 @@ export type EvidenceState =
   | "not-implemented"
   | "missing"
   | "stale"
+  /**
+   * The gate passed, and the package that owns it has declared fixtures nothing yet proves.
+   *
+   * A passing gate covers the fixtures it runs, not the package's scope, and those stopped being the
+   * same thing once `WorkPackage.owes` existed to record the difference. Without this state a
+   * capability could read `verified` off a package that openly admits it is unfinished — which is how
+   * `DDP-OBS-01` came to rest on attempt records that only one of three surfaces produced.
+   */
+  | "owed"
   | "dirty";
 
 export interface EvidenceStatus {
@@ -116,8 +126,8 @@ export interface EvidenceStatus {
 /**
  * `verified` requires every piece of evidence to pass. `failing` means at least one gate ran and did
  * not pass — a strictly worse signal than never having run, so it wins. `unproven` covers gates that
- * are missing, unimplemented, stale, or dirty: all of them mean the same thing, which is that nobody
- * has shown this works on this code.
+ * are missing, unimplemented, stale, dirty, or owed: all of them mean the same thing, which is that
+ * nobody has shown this works on this code.
  */
 export type CapabilityStatus = "verified" | "failing" | "unproven";
 
@@ -135,6 +145,18 @@ export interface StatusOptions {
   readonly atCommit?: string;
   /** When true, artifacts produced from a modified working tree do not count. Defaults to true. */
   readonly requireCleanTree?: boolean;
+  /**
+   * Packages with declared-but-unproven fixtures. Injected rather than read from the manifest here so
+   * this stays a pure function of its inputs; `owingPackages()` is the default a caller wants.
+   */
+  readonly owing?: ReadonlySet<WorkPackageId>;
+}
+
+/** Gated packages that still owe fixtures, derived from the manifest alone. */
+export function owingPackages(
+  packages: readonly WorkPackage[] = WORK_PACKAGES,
+): ReadonlySet<WorkPackageId> {
+  return new Set(packages.filter((wp) => (wp.owes ?? []).length > 0).map((wp) => wp.id));
 }
 
 export function statusOf(
@@ -145,13 +167,19 @@ export function statusOf(
   const requireCleanTree = options.requireCleanTree ?? true;
   const evidence: EvidenceStatus[] = [];
 
+  const owing = options.owing ?? owingPackages();
+
   for (const ref of cap.evidence) {
     for (const cell of ref.cells) {
       const record = index.get(artifactKey(ref.workPackage, cell));
+      const state = stateOf(record, options.atCommit, requireCleanTree);
       evidence.push({
         workPackage: ref.workPackage,
         cell,
-        state: stateOf(record, options.atCommit, requireCleanTree),
+        // Only a pass is downgraded. Anything else is already a stronger objection,
+        // and reporting `owed` over `fail` would make an unfinished package look
+        // like the milder problem.
+        state: state === "pass" && owing.has(ref.workPackage) ? "owed" : state,
       });
     }
   }

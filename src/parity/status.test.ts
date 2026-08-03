@@ -16,6 +16,7 @@ import {
   readArtifacts,
   reportAll,
   statusOf,
+  owingPackages,
   summarize,
 } from "./status.js";
 import { CAPABILITIES } from "./capabilities.js";
@@ -242,5 +243,40 @@ describe("reading artifacts from disk", () => {
     fs.mkdirSync(path.join(root, "WP-00", "logs"), { recursive: true });
     fs.writeFileSync(path.join(root, "WP-00", "logs", "E1.log"), "output");
     expect(readArtifacts(root).size).toBe(0);
+  });
+});
+
+describe("evidence from a package that owes fixtures", () => {
+  it("is not verified, even though both gates passed", () => {
+    // The state that had no representation before `owes`: the gates ran, they
+    // passed, and the package that owns them says outright that it is unfinished.
+    // Reading that as verified is how a capability comes to rest on a surface that
+    // does not implement it.
+    const report = statusOf(
+      CAP,
+      index({ workPackage: "WP-00" }, { workPackage: "WP-07" }),
+      { owing: new Set(["WP-07"]) },
+    );
+    expect(report.status).toBe("unproven");
+    expect(report.evidence.map((e) => e.state)).toEqual(["pass", "owed"]);
+  });
+
+  it("still reports a failure as a failure", () => {
+    // `owed` must never mask a fail: an unfinished package is the milder problem,
+    // and a gate that ran and failed is the one to act on first.
+    const report = statusOf(
+      CAP,
+      index({ workPackage: "WP-00" }, { workPackage: "WP-07", result: "fail" }),
+      { owing: new Set(["WP-07"]) },
+    );
+    expect(report.status).toBe("failing");
+    expect(report.evidence.map((e) => e.state)).toEqual(["pass", "fail"]);
+  });
+
+  it("defaults to the packages the manifest says are owing", () => {
+    // No injected set, so the default is consulted. Guards the wiring: a default
+    // that silently resolved to empty would make every assertion above vacuous in
+    // production while passing here.
+    expect([...owingPackages()].sort()).toEqual(["WP-00a", "WP-08", "WP-11"]);
   });
 });
