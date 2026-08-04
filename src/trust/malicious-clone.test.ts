@@ -1,5 +1,5 @@
 /**
- * FX-TRUST-001..006 — the malicious-clone corpus.
+ * FX-TRUST-001..007 — the malicious-clone corpus.
  *
  * Each fixture is a repository whose configuration tries to make something
  * happen merely by being opened. The oracle is empirical rather than
@@ -445,6 +445,80 @@ describe("the gate itself", () => {
       allowWorkspaceConfig: false,
     });
     expect(loaded.configs).toEqual([]);
+    expect(spoils()).toEqual([]);
+  });
+});
+
+/**
+ * FX-TRUST-007 — one workspace, one identity.
+ *
+ * `scanProvenance` has always canonicalized its root, on the stated reasoning
+ * that "reaching the same repo through a link should not be a second trust
+ * decision, nor a way to sidestep an existing one". `TrustStore` keyed its
+ * records with a bare `path.resolve`, so it disagreed, and a grant recorded
+ * under one spelling of a directory could not be found under the other.
+ *
+ * It failed closed — the user is re-prompted rather than silently trusted — so
+ * this is a usability defect and not a bypass. It surfaced on macOS, where
+ * `os.tmpdir()` sits under `/var`, a link to `/private/var`, which made a
+ * disagreement that is rare on Linux the default for every fixture here.
+ *
+ * Reached through an explicit alias rather than by relying on that accident, so
+ * these fail on any platform if the two canonicalizations drift apart again.
+ */
+describe("FX-TRUST-007 a workspace reached through a symlink", () => {
+  /** `base/alias` -> `base/repo`: the same directory under a second name. */
+  function alias(): string {
+    const link = path.join(path.dirname(repo), "alias");
+    fs.symlinkSync(repo, link);
+    return link;
+  }
+
+  it("honours a grant recorded under the aliased name", async () => {
+    const s = store();
+    const digest = (await scanProvenance(repo)).digest;
+    await s.grant(alias(), "directory", digest);
+
+    expect((await s.lookup(repo, digest)).state).toBe("trusted");
+  });
+
+  it("honours a grant recorded under the real name", async () => {
+    const s = store();
+    const digest = (await scanProvenance(repo)).digest;
+    await s.grant(repo, "directory", digest);
+
+    expect((await s.lookup(alias(), digest)).state).toBe("trusted");
+  });
+
+  it("stores one record for a workspace, not one per name", async () => {
+    const s = store();
+    const digest = (await scanProvenance(repo)).digest;
+    await s.grant(repo, "directory", digest);
+    await s.grant(alias(), "directory", digest);
+
+    // Two grants for two spellings would also make `trust --list` report a
+    // workspace twice, and leave a revoke of one looking like it did nothing.
+    expect(await s.list()).toHaveLength(1);
+  });
+
+  it("revokes through either name", async () => {
+    const s = store();
+    const digest = (await scanProvenance(repo)).digest;
+    await s.grant(repo, "directory", digest);
+
+    expect(await s.revoke(alias())).toBe(true);
+    expect((await s.lookup(repo, digest)).state).toBe("unknown");
+  });
+
+  it("carries the grant through the startup gate", async () => {
+    // The end-to-end shape of the macOS failure: a directory grant that the
+    // gate could not find, so workspace configuration stayed refused.
+    write(".openswarm/mcp.json", JSON.stringify({ mcpServers: {} }));
+    const s = store();
+    await s.grant(alias(), "directory", (await scanProvenance(repo)).digest);
+
+    const decision = await resolveTrust({ cwd: repo, store: s, envOverrides: noEnv });
+    expect(decision.allowWorkspaceConfig).toBe(true);
     expect(spoils()).toEqual([]);
   });
 });

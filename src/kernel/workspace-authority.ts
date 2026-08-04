@@ -62,6 +62,29 @@ async function readLinkTarget(candidate: string): Promise<string | null> {
   }
 }
 
+/**
+ * The one identity a workspace root has: absolute and symlink-resolved.
+ *
+ * Anything that keys a decision by workspace — a trust grant, a lookup that has
+ * to find it again — must derive the key from here, or the two spellings of one
+ * directory become two workspaces. `path.resolve` alone is not enough: on macOS
+ * a temporary directory is reached through `/var`, which is a link to
+ * `/private/var`, so a grant recorded on the way in is invisible on the way out.
+ * That is the whole of `FX-TRUST-007`.
+ *
+ * Falls back to the resolved path when the root does not exist yet, since a
+ * caller naming a directory that is about to be created should get a usable key
+ * rather than an exception.
+ *
+ * Only for roots. Candidates *beneath* a root are deliberately judged lexically
+ * — see the `@security` note in `../trust/provenance.ts`, where resolving one
+ * through a link is how a repository file comes to look user-owned.
+ */
+export async function canonicalRoot(root: string): Promise<string> {
+  const resolved = path.resolve(root);
+  return await fs.realpath(resolved).catch(() => resolved);
+}
+
 /** True when `candidate` is the root itself or genuinely beneath it. */
 export function isWithin(candidate: string, root: string): boolean {
   if (candidate === root) return true;

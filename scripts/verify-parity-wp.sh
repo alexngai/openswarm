@@ -8,10 +8,22 @@
 #   docker compose -f compose.parity.yml run --rm parity \
 #     ./scripts/verify-parity-wp.sh <WP> <cell>
 #
+# A `macos-*` cell is the exception, and not by preference: Compose has no macOS
+# runtime, so there is no container to put one in. Those cells run this same
+# script directly on the host. The difference is worth stating because macOS is
+# the platform the product ships on, so a program whose evidence base is
+# entirely Linux is a program with no evidence about its users. `ensure_deps`
+# already no-ops when node_modules is populated, so a host run installs nothing.
+#
+# The cell is checked against `uname` before anything runs — see
+# check_cell_platform. Two execution surfaces and one free-form label is
+# otherwise how a container run gets filed as proof about a Mac.
+#
 # Usage:
 #   ./scripts/verify-parity-wp.sh --list                # known targets
 #   ./scripts/verify-parity-wp.sh baseline linux-x64    # existing repo suite
 #   ./scripts/verify-parity-wp.sh WP-00 linux-x64       # a work-package gate
+#   ./scripts/verify-parity-wp.sh WP-02 macos-arm64     # on the host, not compose
 #
 # Environment:
 #   VERBOSE=1                 stream check output instead of capturing it
@@ -50,7 +62,7 @@ for n in $(seq -w 0 33); do
 done
 
 usage() {
-  sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,47p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 list_targets() {
@@ -99,6 +111,62 @@ if ! printf '%s\n' "${KNOWN_WPS[@]}" | grep -qx -- "$WP"; then
   echo "error: unknown work package '$WP' (try --list)" >&2
   exit 3
 fi
+
+# ---------------------------------------------------------------------------
+# The cell must be the truth about where this ran.
+#
+# A cell is the coordinate an artifact is filed under, and status.ts reads
+# `WP-02/macos-arm64.json` as "WP-02 was proven on macOS". Nothing checked that,
+# and the check matters more than it looks: the Linux cells run under Docker and
+# the macOS cells cannot — Compose has no macOS runtime, so a darwin cell runs
+# on the host with the same script. Two execution surfaces and one free-form
+# label is how a container run comes to be filed as evidence for a platform it
+# never touched.
+#
+# Only the OS and architecture a cell actually names are enforced. Matrix and
+# review cells (`crypto-matrix`, `security-review`, `soak-8h`) name a scope
+# rather than a machine and are left alone.
+# ---------------------------------------------------------------------------
+check_cell_platform() {
+  local uname_s uname_m want_os="" want_arch=""
+  uname_s="$(uname -s)"
+  uname_m="$(uname -m)"
+
+  case "$CELL" in
+    linux-*) want_os=Linux ;;
+    macos-*) want_os=Darwin ;;
+    # windows11-wsl2-* is a Linux kernel; asserting the distinction is beyond
+    # what uname can tell us, so only its architecture is checked below.
+  esac
+
+  case "$CELL" in
+    *arm64*) want_arch=arm64 ;;
+    *x64*) want_arch=x64 ;;
+  esac
+
+  if [[ -n "$want_os" && "$uname_s" != "$want_os" ]]; then
+    echo "error: cell '$CELL' claims $want_os but this is $uname_s." >&2
+    [[ "$want_os" == Darwin ]] &&
+      echo "note: macOS cells run on the host, not through compose.parity.yml." >&2
+    [[ "$want_os" == Linux ]] &&
+      echo "note: Linux cells run through 'docker compose -f compose.parity.yml run --rm parity'." >&2
+    exit 3
+  fi
+
+  if [[ -n "$want_arch" ]]; then
+    local actual
+    case "$uname_m" in
+      x86_64 | amd64) actual=x64 ;;
+      arm64 | aarch64) actual=arm64 ;;
+      *) actual="$uname_m" ;;
+    esac
+    if [[ "$actual" != "$want_arch" ]]; then
+      echo "error: cell '$CELL' claims $want_arch but this is $uname_m ($actual)." >&2
+      exit 3
+    fi
+  fi
+}
+check_cell_platform
 
 OUT_DIR="$REPO_ROOT/artifacts/parity/$WP"
 LOG_DIR="$OUT_DIR/logs/$CELL"
@@ -415,12 +483,12 @@ case "$WP" in
     # before trust. T2 is the one that actually establishes that — it runs the
     # built CLI in a hostile repository and looks for evidence, rather than
     # asking each loader whether it behaved.
-    FIXTURES="FX-TRUST-001..006"
+    FIXTURES="FX-TRUST-001..007"
     if ! ensure_deps; then
       RESULT="error"
       FAIL=$((FAIL + 1))
     else
-      run_check T1 "FX-TRUST-001..006 a malicious clone activates nothing" \
+      run_check T1 "FX-TRUST-001..007 a malicious clone activates nothing" \
         npx vitest run src/trust/malicious-clone.test.ts
       # Needs dist/: the probe runs the real entry point, not an import of it.
       run_check T2 "opening a hostile repository leaves no evidence behind" \

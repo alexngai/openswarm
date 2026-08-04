@@ -15,6 +15,7 @@ import {
   parseVerificationTable,
 } from "./docs-sync.js";
 import { capability } from "./capabilities.js";
+import { expandFixtures } from "./contracts.js";
 import { workPackage } from "./work-packages.js";
 
 /** A roadmap fragment that agrees with the manifest for the IDs it mentions. */
@@ -155,7 +156,13 @@ describe("manifest and roadmap agreement", () => {
 
   it("accepts a verification row whose fixture sits inside a declared range", () => {
     const wp = workPackage("WP-02")!;
-    expect(wp.fixtures).toEqual(["FX-TRUST-001..006"]);
+    // The precondition this scenario needs is that WP-02 declares a *range*
+    // covering the single fixture the roadmap row below cites. Spelling the
+    // range out made the range's endpoint part of the contract, so extending
+    // the corpus by one fixture failed a test about range handling.
+    expect(wp.fixtures).toHaveLength(1);
+    expect(wp.fixtures[0]).toMatch(/^FX-TRUST-001\.\.\d+$/);
+    expect(expandFixtures(wp.fixtures)).toContain("FX-TRUST-003");
     const roadmap = [
       agreeingRoadmap([]),
       "| `WP-02` | `./scripts/verify-parity-wp.sh WP-02 linux-x64` | `FX-TRUST-003` | x |",

@@ -7,6 +7,18 @@
  * a package depending on work scheduled in a later release, a capability citing a cell its gate
  * never runs, an owner loaded past capacity.
  *
+ * Six packages carry `macos-arm64` beside `linux-x64`: the kernel and gate (`WP-00`, `WP-00a`),
+ * trust (`WP-02`), path containment (`WP-03`), the process broker (`WP-04`), and approvals
+ * (`WP-09`). macOS is the platform the product ships on, and evidence gathered entirely inside a
+ * Linux container is evidence about a machine no user has. It is not merely a gap in coverage:
+ * the two defects that a second cell immediately surfaced — a trust grant that could not be found
+ * again, and session fixtures that wrote into the developer's own history checkout — were both
+ * invisible to a green Linux gate.
+ *
+ * The rest stay single-cell on purpose. A macOS cell runs on the host rather than in Compose,
+ * which has no macOS runtime, so each one is a second execution surface to keep honest; they are
+ * spent where a platform difference can change a security answer.
+ *
  * `ownerSplit` is core capacity only, and its per-release totals are checked against the docs/67
  * loading table. `WP-29`, `WP-31`, and `WP-33` also consume bought external calendar time, which
  * stays in docs/67 prose because it is not drawn from the same pool and cannot be traded against
@@ -22,7 +34,7 @@ export const WORK_PACKAGES: readonly WorkPackage[] = [
     release: "R1",
     ownerSplit: { B: 2, C: 2 },
     dependsOn: [],
-    cells: ["linux-x64"],
+    cells: ["linux-x64", "macos-arm64"],
     fixtures: ["FX-EFFECT-001", "FX-CRASH-001", "FX-STORAGE-DEFAULT-001"],
     gateImplemented: true,
   },
@@ -32,7 +44,7 @@ export const WORK_PACKAGES: readonly WorkPackage[] = [
     release: "R1",
     ownerSplit: { A: 2, C: 2 },
     dependsOn: ["WP-00"],
-    cells: ["linux-x64"],
+    cells: ["linux-x64", "macos-arm64"],
     // `FX-AUDIT-*` came from this package's remainder. The survey found that
     // containment and authorization were already adopted and the *record* of the
     // decision was what production lacked, so the attempt journal is evidence
@@ -62,8 +74,8 @@ export const WORK_PACKAGES: readonly WorkPackage[] = [
     release: "R1",
     ownerSplit: { A: 2 },
     dependsOn: ["WP-01"],
-    cells: ["linux-x64"],
-    fixtures: ["FX-TRUST-001..006"],
+    cells: ["linux-x64", "macos-arm64"],
+    fixtures: ["FX-TRUST-001..007"],
     gateImplemented: true,
   },
   {
@@ -72,7 +84,7 @@ export const WORK_PACKAGES: readonly WorkPackage[] = [
     release: "R1",
     ownerSplit: { A: 1 },
     dependsOn: ["WP-01"],
-    cells: ["linux-x64"],
+    cells: ["linux-x64", "macos-arm64"],
     fixtures: ["FX-PATH-001..020"],
     gateImplemented: true,
   },
@@ -82,7 +94,7 @@ export const WORK_PACKAGES: readonly WorkPackage[] = [
     release: "R1",
     ownerSplit: { A: 2 },
     dependsOn: ["WP-02", "WP-03"],
-    cells: ["linux-x64"],
+    cells: ["linux-x64", "macos-arm64"],
     fixtures: ["FX-PROC-001..012"],
     gateImplemented: true,
   },
@@ -135,7 +147,7 @@ export const WORK_PACKAGES: readonly WorkPackage[] = [
     release: "R2",
     ownerSplit: { A: 1 },
     dependsOn: ["WP-02", "WP-04"],
-    cells: ["linux-x64"],
+    cells: ["linux-x64", "macos-arm64"],
     fixtures: ["FX-APPROVAL-001..012"],
     gateImplemented: true,
   },
@@ -322,13 +334,21 @@ export const WORK_PACKAGES: readonly WorkPackage[] = [
     dependsOn: ["WP-03", "WP-04", "WP-13", "WP-14"],
     cells: PLATFORM_CELLS,
     // The estimate covers isolation and packaging. It does not cover auditing
-    // platform-dependent path assumptions, which a macOS trust-store defect found
-    // during `WP-00a` showed to be a separate job -- grants keyed by `path.resolve`
-    // are invisible to lookups canonicalized through `realpath` where `/tmp` is a
-    // symlink. Fails closed, so a usability defect rather than a bypass, and in
-    // scope for nothing earlier: every macOS and Windows cell belongs here. Needs a
-    // re-estimate before R5 planning; see docs/67.
-    fixtures: ["FX-PLAT-001..005", "FX-WSL-ID-001", "FX-TRUST-007"],
+    // platform-dependent path assumptions, which the macOS trust-store defect
+    // (`FX-TRUST-007`, now proven in `WP-02`) showed to be a separate job: grants
+    // keyed by `path.resolve` were invisible to lookups canonicalized through
+    // `realpath`, and macOS reaches every temporary directory through a symlink.
+    //
+    // What remains here is the part no amount of path auditing supplies —
+    // isolation. `SandboxMode` is `bwrap | landlock | none`, both real modes
+    // Linux-only, so on the platform the product ships on every shell, hook, MCP
+    // server and plugin runs unconfined. It is reported honestly (`doctor` warns,
+    // `--sandbox require` refuses to start) but it is absent. Seatbelt
+    // (`sandbox-exec`) is present on macOS and denies writes under a profile, so
+    // this is implementation rather than research, and holding it at R5 prices a
+    // shipping platform like a secondary one. Needs a re-estimate and probably a
+    // pull-forward before R5 planning; see docs/67.
+    fixtures: ["FX-PLAT-001..005", "FX-WSL-ID-001"],
     gateImplemented: false,
   },
   {

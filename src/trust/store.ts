@@ -21,6 +21,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 import lockfile from "proper-lockfile";
+import { canonicalRoot } from "../kernel/workspace-authority.js";
 
 export const TRUST_SCHEMA_VERSION = 1;
 
@@ -92,7 +93,7 @@ export class TrustStore {
 
   /** Whether `root` is trusted for a workspace currently hashing to `digest`. */
   async lookup(root: string, digest: string): Promise<TrustLookup> {
-    const resolved = path.resolve(root);
+    const resolved = await canonicalRoot(root);
     const file = await this.read();
     const record = file.workspaces[resolved];
     if (record === undefined) return { state: "unknown" };
@@ -102,7 +103,7 @@ export class TrustStore {
   }
 
   async grant(root: string, scope: TrustScope, digest: string): Promise<TrustRecord> {
-    const resolved = path.resolve(root);
+    const resolved = await canonicalRoot(root);
     const record: TrustRecord = {
       root: resolved,
       scope,
@@ -117,12 +118,19 @@ export class TrustStore {
   }
 
   async revoke(root: string): Promise<boolean> {
-    const resolved = path.resolve(root);
+    // Both spellings, because a store written before grants were canonicalized
+    // still holds keys that `path.resolve` produced. Those are unreachable by
+    // `lookup` — which fails closed and re-prompts — but they are still listed,
+    // and a revoke that reported success while `trust --list` kept showing the
+    // record would be worse than the stale entry.
+    const keys = new Set([await canonicalRoot(root), path.resolve(root)]);
     let existed = false;
     await this.mutate((current) => {
-      existed = current.workspaces[resolved] !== undefined;
       const next = { ...current.workspaces };
-      delete next[resolved];
+      for (const key of keys) {
+        if (next[key] !== undefined) existed = true;
+        delete next[key];
+      }
       return { ...current, workspaces: next };
     });
     return existed;
