@@ -6,12 +6,14 @@
  * `scripts/verify-parity-wp.sh` writes to `artifacts/parity/<WP>/<cell>.json`. Anything else is a
  * claim about a claim.
  *
- * Two qualifiers matter for release evidence and are tracked separately from pass/fail, because both
- * describe artifacts that passed but should not count:
+ * Three qualifiers matter for release evidence and are tracked separately from pass/fail, because all
+ * of them describe artifacts that passed but should not count:
  *
  *   - *stale*: the artifact was produced at a different commit, so it says nothing about the code
  *     being shipped;
- *   - *dirty*: the artifact was produced from a modified working tree, so it is not reproducible.
+ *   - *dirty*: the artifact was produced from a modified working tree, so it is not reproducible;
+ *   - *unbaselined*: the repository suite does not pass on that cell, so a gate reporting green there
+ *     is green over a platform that does not work.
  *
  * Reading the filesystem is confined to `readArtifacts`; everything else is a pure function over the
  * index so status derivation is testable without fixtures on disk.
@@ -19,8 +21,15 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Capability, Cell, WorkPackage, WorkPackageId } from "./contracts.js";
+import { PLATFORM_CELLS } from "./contracts.js";
 import { CAPABILITIES } from "./capabilities.js";
 import { WORK_PACKAGES } from "./work-packages.js";
+
+/**
+ * The target `scripts/verify-parity-wp.sh` writes for the repository suite. Not a work package, but
+ * it is filed in the same artifact tree, so the index holds it under this key.
+ */
+const BASELINE = "baseline" as WorkPackageId;
 
 /** A parity artifact, narrowed to the fields status derivation depends on. */
 export interface ArtifactRecord {
@@ -115,6 +124,19 @@ export type EvidenceState =
    * `DDP-OBS-01` came to rest on attempt records that only one of three surfaces produced.
    */
   | "owed"
+  /**
+   * The gate passed on a platform cell whose repository baseline does not.
+   *
+   * A work-package gate runs its own fixtures and nothing else, so on a cell where the suite as a
+   * whole is broken it can report green over a platform that does not work. That is not theoretical:
+   * `Test (macos-latest)` failed at `npm ci` for a month — `@vscode/ripgrep`'s postinstall hitting an
+   * unauthenticated rate limit — so the macOS job never ran a test, and three real defects
+   * accumulated behind it while the Linux job stayed green.
+   *
+   * Only platform cells are held to this. A scope cell like `crypto-matrix` or `security-review`
+   * names a body of work rather than a machine, and has no baseline to be measured against.
+   */
+  | "unbaselined"
   | "dirty";
 
 export interface EvidenceStatus {
@@ -126,8 +148,8 @@ export interface EvidenceStatus {
 /**
  * `verified` requires every piece of evidence to pass. `failing` means at least one gate ran and did
  * not pass — a strictly worse signal than never having run, so it wins. `unproven` covers gates that
- * are missing, unimplemented, stale, dirty, or owed: all of them mean the same thing, which is that
- * nobody has shown this works on this code.
+ * are missing, unimplemented, stale, dirty, owed, or unbaselined: all of them mean the same thing,
+ * which is that nobody has shown this works on this code.
  */
 export type CapabilityStatus = "verified" | "failing" | "unproven";
 
@@ -179,7 +201,18 @@ export function statusOf(
         // Only a pass is downgraded. Anything else is already a stronger objection,
         // and reporting `owed` over `fail` would make an unfinished package look
         // like the milder problem.
-        state: state === "pass" && owing.has(ref.workPackage) ? "owed" : state,
+        //
+        // `unbaselined` is checked before `owed` because it is the wider fault: an
+        // unfinished package is one package, while a cell whose suite does not pass
+        // invalidates every gate filed against that cell, including this one.
+        state:
+          state !== "pass"
+            ? state
+            : !baselinePasses(index, cell, options.atCommit, requireCleanTree)
+              ? "unbaselined"
+              : owing.has(ref.workPackage)
+                ? "owed"
+                : state,
       });
     }
   }
@@ -192,6 +225,23 @@ export function statusOf(
       : "unproven";
 
   return { id: cap.id, status, evidence };
+}
+
+/**
+ * Whether the repository suite passes on `cell`, held to the same commit and clean-tree rules as the
+ * gate being judged. A non-platform cell has no baseline and is treated as satisfied rather than
+ * failed, since demanding one would make every matrix and review cell permanently unproven.
+ */
+function baselinePasses(
+  index: ArtifactIndex,
+  cell: string,
+  atCommit: string | undefined,
+  requireCleanTree: boolean,
+): boolean {
+  if (!(PLATFORM_CELLS as readonly string[]).includes(cell)) return true;
+  return (
+    stateOf(index.get(artifactKey(BASELINE, cell)), atCommit, requireCleanTree) === "pass"
+  );
 }
 
 function stateOf(

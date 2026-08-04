@@ -2,8 +2,9 @@
  * status.test.ts — capability status is derived, and cannot be talked up.
  *
  * The cases that matter are the ones where an artifact says "pass" but the pass should not count:
- * produced at another commit, or produced from a dirty tree. Those are how an evidence ledger
- * quietly starts lying.
+ * produced at another commit, produced from a dirty tree, owed by a package that admits it is
+ * unfinished, or filed against a cell whose repository suite does not pass. Those are how an evidence
+ * ledger quietly starts lying.
  */
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
@@ -49,6 +50,23 @@ function index(
       ...partial,
     };
     map.set(artifactKey(record.workPackage, record.cell), record);
+  }
+
+  // Every platform cell mentioned gets a passing repository baseline unless the
+  // caller supplied one, because a gate on a cell whose suite is broken no longer
+  // counts and each test below is about something else. Pass an explicit
+  // `workPackage: "baseline"` record to exercise that rule.
+  for (const cell of new Set([...map.values()].map((r) => r.cell))) {
+    const key = artifactKey("baseline" as ArtifactRecord["workPackage"], cell);
+    if (!map.has(key)) {
+      map.set(key, {
+        workPackage: "baseline" as ArtifactRecord["workPackage"],
+        cell,
+        result: "pass",
+        commit: "abc123",
+        workingTreeDirty: false,
+      });
+    }
   }
   return map;
 }
@@ -278,5 +296,83 @@ describe("evidence from a package that owes fixtures", () => {
     // that silently resolved to empty would make every assertion above vacuous in
     // production while passing here.
     expect([...owingPackages()].sort()).toEqual(["WP-00a", "WP-08", "WP-11"]);
+  });
+});
+
+describe("evidence from a cell whose repository baseline does not pass", () => {
+  it("is not verified, even though the gate itself passed", () => {
+    // A work-package gate runs its own fixtures and nothing else, so on a cell
+    // where the suite as a whole is broken it can report green over a platform
+    // that does not work. Test (macos-latest) failed at `npm ci` for a month and
+    // three real defects accumulated behind it while Linux stayed green.
+    const report = statusOf(
+      CAP,
+      index(
+        { workPackage: "WP-00" },
+        { workPackage: "WP-07" },
+        { workPackage: "baseline" as ArtifactRecord["workPackage"], result: "fail" },
+      ),
+    );
+    expect(report.status).toBe("unproven");
+    expect(report.evidence.map((e) => e.state)).toEqual(["unbaselined", "unbaselined"]);
+  });
+
+  it("treats a missing baseline the same as a failing one", () => {
+    // A cell nobody ran and a cell that failed before it tested anything are the
+    // same artifact: an assertion of coverage with no evidence under it.
+    const map = index({ workPackage: "WP-00" }, { workPackage: "WP-07" });
+    map.delete(artifactKey("baseline" as ArtifactRecord["workPackage"], "linux-x64"));
+
+    expect(statusOf(CAP, map).evidence.map((e) => e.state)).toEqual([
+      "unbaselined",
+      "unbaselined",
+    ]);
+  });
+
+  it("holds the baseline to the same commit rule as the gate", () => {
+    // A baseline from another commit says nothing about the code being shipped,
+    // so it cannot be what licenses a gate at this one.
+    const report = statusOf(
+      CAP,
+      index(
+        { workPackage: "WP-00" },
+        { workPackage: "WP-07" },
+        {
+          workPackage: "baseline" as ArtifactRecord["workPackage"],
+          commit: "older99",
+        },
+      ),
+      { atCommit: "abc123" },
+    );
+    expect(report.evidence.map((e) => e.state)).toEqual(["unbaselined", "unbaselined"]);
+  });
+
+  it("reports a failing gate as failing rather than unbaselined", () => {
+    // Precedence: a gate that ran and failed is the thing to act on, and must not
+    // be reported as the milder cell-level objection.
+    const report = statusOf(
+      CAP,
+      index(
+        { workPackage: "WP-00", result: "fail" },
+        { workPackage: "WP-07" },
+        { workPackage: "baseline" as ArtifactRecord["workPackage"], result: "fail" },
+      ),
+    );
+    expect(report.status).toBe("failing");
+    expect(report.evidence.map((e) => e.state)).toEqual(["fail", "unbaselined"]);
+  });
+
+  it("does not demand a baseline from a cell that is not a platform", () => {
+    // `crypto-matrix` and friends name a body of work rather than a machine.
+    // Requiring a baseline there would make every review cell permanently
+    // unproven, which is a false alarm rather than a stricter standard.
+    const scoped: Capability = {
+      ...CAP,
+      evidence: [{ workPackage: "WP-00", cells: ["crypto-matrix"], fixtures: ["FX-A-001"] }],
+    };
+    const map = index({ workPackage: "WP-00", cell: "crypto-matrix" });
+    map.delete(artifactKey("baseline" as ArtifactRecord["workPackage"], "crypto-matrix"));
+
+    expect(statusOf(scoped, map).status).toBe("verified");
   });
 });
