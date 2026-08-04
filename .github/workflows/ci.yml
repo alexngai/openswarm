@@ -37,6 +37,18 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
 
       - name: Install dependencies
+        # GITHUB_TOKEN is for @vscode/ripgrep, whose postinstall downloads a
+        # platform binary from a GitHub release and reads this variable to
+        # authenticate (lib/postinstall.js). Unauthenticated it shares the
+        # runner's anonymous rate limit and answers 403, which failed `npm ci` on
+        # macos-latest for a month -- so the macOS job never reached a single
+        # test, and every macOS defect the parity work later found by hand was
+        # one CI had already been asked to catch and could not.
+        #
+        # Set on both cells rather than only the one that failed: the limit is
+        # shared and anonymous, so which runner trips it first is weather.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm ci
 
       - name: Check bun.lock freshness
@@ -122,6 +134,9 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
 
       - name: Install dependencies
+        # Authenticated for @vscode/ripgrep's release download; see the test job.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm ci
 
       - name: Cache-impact gate

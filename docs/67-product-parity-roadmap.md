@@ -1420,6 +1420,12 @@ A third was the same class again, and is now fixed. The `baseline` cell on `maco
 
 With that, 4788 of 4810 tests pass on macOS and 22 skip. The `macos-arm64` baseline is green.
 
+**And the reason none of the three was caught earlier is worse than a missing cell.** `.github/workflows/ci.yml` already runs the whole suite on `macos-latest` — it always has. That job had been failing at `npm ci` for a month: `@vscode/ripgrep`'s postinstall downloads a platform binary from a GitHub release, shares the runner's anonymous rate limit when no token is present, and answers `403`. So the macOS job never reached a single test, and `main` has been red on it continuously since early July while the Linux job went green beside it.
+
+That reframes this whole section. The gap was not only that the parity matrix declared one cell; it was that the second cell existed, was red for an environmental reason nobody had to look at, and stayed red long enough for three real defects to accumulate behind it. Every one of them was something CI had already been asked to catch and could not. Passing `GITHUB_TOKEN` to the install step is the fix, and it is a one-line change that has been available the entire time.
+
+The lesson for the program is about what a cell is *for*. A declared cell that nobody runs and a declared cell that fails before it tests anything are the same artifact: an assertion of coverage with no evidence under it. `check_cell_platform` stops a cell from lying about *where* it ran; nothing stops one from lying about whether it ran at all, and the parity harness should treat a red baseline on a declared cell as blocking rather than as weather.
+
 | WP | Exact verification command | Primary fixtures | Threshold |
 |---|---|---|---|
 | `WP-00` | `docker compose -f compose.parity.yml run --rm parity ./scripts/verify-parity-wp.sh WP-00 linux-x64`; plus `./scripts/verify-parity-wp.sh WP-00 macos-arm64` on the host | `FX-EFFECT-001`, `FX-CRASH-001`, `FX-STORAGE-DEFAULT-001` | Durability invariant passes; encrypted 90-day default and secure-key-missing ephemeral behavior are explicit |
