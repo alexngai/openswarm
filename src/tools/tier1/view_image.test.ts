@@ -76,4 +76,38 @@ describe("view_image", () => {
     const result = await viewImageTool.execute({}, ctx());
     expect(result.status).toBe("error");
   });
+
+  it("refuses an absolute path outside the workspace", async () => {
+    tmpDir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "viewimg-"));
+    const outside = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "viewimg-out-"));
+    try {
+      const secret = path.join(outside, "secret.png");
+      fs.writeFileSync(secret, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+
+      const result = await viewImageTool.execute({ path: secret }, { cwd: tmpDir });
+      expect(result.status).toBe("error");
+      if (result.status !== "error") return;
+      expect(result.message).toContain("outside the workspace boundary");
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a symlink inside the workspace that points outside it", async () => {
+    tmpDir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "viewimg-"));
+    const outside = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "viewimg-out-"));
+    try {
+      const secret = path.join(outside, "secret.png");
+      fs.writeFileSync(secret, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+      const link = path.join(tmpDir, "innocent.png");
+      fs.symlinkSync(secret, link);
+
+      const result = await viewImageTool.execute({ path: link }, { cwd: tmpDir });
+      expect(result.status).toBe("error");
+      if (result.status !== "error") return;
+      expect(result.message).toContain("symlink pointing outside");
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
 });

@@ -33,6 +33,7 @@ import { SwarmUsageAggregator } from "../swarm/usage-aggregator.js";
 import { defaultCostModel } from "../core/cost-model.js";
 import type { LaneEvent } from "../swarm/events.js";
 import type { EventEmitter } from "node:events";
+import { openDurableAppend } from "../swarm/durable-append.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -227,7 +228,7 @@ export async function runTeamStart(
   }
 
   // 4. Open results stream + orchestrator.
-  const resultsOut = fs.createWriteStream(opts.output, { flags: "a" });
+  const resultsOut = await openDurableAppend(opts.output);
   const orch = new Orchestrator({
     concurrency: opts.concurrency,
     permissionMode: opts.permissionMode,
@@ -577,6 +578,7 @@ async function detachAndForkDaemon(
         OPENSWARM_DAEMON_PID: paths.pidPath,
         OPENSWARM_DAEMON_EVENTS: paths.eventsPath,
         OPENSWARM_DAEMON_STATE: paths.statePath,
+        OPENSWARM_DAEMON_RESULTS: paths.resultsPath,
         OPENSWARM_DAEMON_CHECKPOINT: paths.checkpointPath,
         OPENSWARM_DAEMON_PERMISSION_MODE: config.permissionMode,
         OPENSWARM_DAEMON_CONCURRENCY: String(config.concurrency),

@@ -39,6 +39,38 @@ const ev = (type: string, payload: unknown): LaneEvent =>
   ({ ts: 1, agentId: "a1", type, payload }) as unknown as LaneEvent;
 
 describe("session checkpointer (integration)", () => {
+  it("keeps the fixture's session storage inside the fixture", async () => {
+    if (!sl) return;
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "ckpt-int-"));
+    try {
+      execSync("git init -q -b main", { cwd: repo });
+
+      // The assertion the two tests below were quietly relying on. sessionlog is
+      // configured through ambient SESSIONLOG_* variables, and one of them
+      // (SESSIONLOG_REPO_REMOTE) redirects all session storage into a clone of
+      // that remote under ~/.sessionlog/repos/. On a machine with it exported,
+      // both tests wrote their state into the developer's own history checkout
+      // and then failed looking for it here — which read as a macOS defect,
+      // since the Docker cell forwards no such variable and stayed green.
+      //
+      // test/vitest-setup.ts strips them suite-wide; this fails if that stops
+      // happening, and says why rather than leaving a missing-file assertion.
+      const mod = sl as unknown as {
+        resolveSessionRepoConfig?: (cwd: string) => Promise<{ sessionsDir?: string }>;
+      };
+      const cfg = (await mod.resolveSessionRepoConfig?.(repo)) ?? {};
+      expect(
+        cfg.sessionsDir,
+        `session storage was redirected out of the fixture (${cfg.sessionsDir}); ` +
+          `check for exported SESSIONLOG_* variables`,
+      ).toBeUndefined();
+
+      expect(Object.keys(process.env).filter((k) => k.startsWith("SESSIONLOG_"))).toEqual([]);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   it("creates a sessionlog checkpoint from a recorded session", async () => {
     if (!sl) {
       console.warn("[skip] sessionlog openswarm adapter unavailable — integration skipped");

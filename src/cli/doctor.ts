@@ -23,6 +23,7 @@ import { detectAuth } from "../auth/status.js";
 import { readCodexTokens, type CodexTokens } from "../auth/openai-codex-token-store.js";
 import { runCodexTlsPreflight, formatCodexTlsFix } from "../auth/openai-codex-tls-preflight.js";
 import { fetchCodexUsage, formatCodexUsage } from "../auth/openai-codex-usage.js";
+import { getProcessBroker } from "../process/broker.js";
 
 const execFile = promisify(execFileCb);
 
@@ -346,6 +347,59 @@ async function checkWorkspace(cwd: string): Promise<CheckResult> {
 // Main export
 // ---------------------------------------------------------------------------
 
+/**
+ * Report the isolation untrusted children would actually get.
+ *
+ * This is a `warn`, not a `fail`: running without OS isolation is the normal
+ * and only possible state on macOS and Windows today, so failing would make
+ * `doctor` red for most users on a condition they cannot fix. But it must be
+ * *said*. Isolation was previously silent about being unavailable, which left
+ * "openswarm sandboxes shell commands" true only on some Linux hosts and
+ * indistinguishable, from the outside, from everywhere else.
+ */
+async function checkSandbox(): Promise<CheckResult> {
+  const broker = getProcessBroker();
+  const policy = broker.getPolicy();
+
+  if (policy === "off") {
+    return {
+      name: "sandbox",
+      status: "warn",
+      message: "disabled (--sandbox off) — shell, hooks, MCP and plugins run unconfined",
+    };
+  }
+
+  const { mode, satisfiesPolicy } = await broker.effectiveIsolation();
+
+  if (mode !== "none") {
+    return {
+      name: "sandbox",
+      status: "pass",
+      message: `${mode} (policy: ${policy})`,
+    };
+  }
+
+  if (!satisfiesPolicy) {
+    return {
+      name: "sandbox",
+      status: "fail",
+      message:
+        `policy is "require" but no isolation is available on ${process.platform} — ` +
+        "every shell, hook, MCP server and plugin will refuse to run. " +
+        "Install bubblewrap, or use --sandbox prefer.",
+    };
+  }
+
+  return {
+    name: "sandbox",
+    status: "warn",
+    message:
+      `unavailable on ${process.platform} — shell, hooks, MCP and plugins run ` +
+      "unconfined. bubblewrap or Landlock (Linux) would confine them; " +
+      "--sandbox require refuses to run without one.",
+  };
+}
+
 export async function runDoctor(
   outputFormat: "text" | "json",
   cwd: string = process.cwd(),
@@ -355,6 +409,7 @@ export async function runDoctor(
     checkConfig(cwd),
     checkInstall(),
     checkWorkspace(cwd),
+    checkSandbox(),
     checkCodexCli(),
     checkCodexAuth(),
     checkCodexTls(),

@@ -1,0 +1,68 @@
+# compose.parity.yml — the single execution surface for repository
+# verification (docs/67 §Per-work-package verification contract).
+#
+# Every work-package gate runs through one command shape:
+#
+#   docker compose -f compose.parity.yml run --rm parity \
+#     ./scripts/verify-parity-wp.sh <WP> <cell>
+#
+# The repository is bind-mounted rather than copied, so runs always verify the
+# working tree. node_modules and dist are masked by named volumes: the host
+# tree carries darwin-arm64 native addons (node-pty, @vscode/ripgrep,
+# libopentui) that would segfault under linux/amd64, so the container installs
+# and keeps its own.
+
+services:
+  parity:
+    build:
+      context: .
+      dockerfile: Dockerfile.parity
+    # Pinned so the linux-x64 cell means linux-x64 even on an arm64 host.
+    # Expect emulation overhead on Apple silicon.
+    platform: linux/amd64
+    working_dir: /workspace
+    # Reap the child processes the shell/broker fixtures spawn, so orphan
+    # assertions measure the code under test and not PID 1 semantics.
+    init: true
+    volumes:
+      - .:/workspace
+      - parity-node-modules:/workspace/node_modules
+      - parity-dist:/workspace/dist
+    # List form, not mapping form, and the difference is load-bearing for the
+    # credential entries. `VAR: "${VAR:-}"` defines VAR as the empty string when
+    # the caller has not set it, and an empty string is not the same as absent to
+    # the code that reads it: the Azure transport resolves
+    # `AZURE_API_BASE ?? AZURE_OPENAI_ENDPOINT`, where an empty AZURE_API_BASE
+    # satisfies `??` and suppresses the fallback, and the Bedrock transport
+    # resolves `AWS_REGION ?? "us-east-1"`, where an empty AWS_REGION becomes the
+    # region. A bare `- VAR` passes the variable through only when it exists,
+    # which is what "absent by default" has to mean.
+    environment:
+      - CI=1
+      # Defaults keep runs hermetic. Live-provider cells override these
+      # explicitly; see docs/67 §Platform matrix.
+      - OPENSWARM_SKIP_LIVE=${OPENSWARM_SKIP_LIVE:-1}
+      - OPENSWARM_SKIP_INTEGRATION_BUILD=${OPENSWARM_SKIP_INTEGRATION_BUILD:-1}
+      # The `live` target's two locks. Both default off, so `docker compose run
+      # parity ./scripts/verify-parity-wp.sh live <cell>` reaches a provider only
+      # when the caller passed these in deliberately — forwarding a credential is
+      # not by itself consent to spend it.
+      - OPENSWARM_PARITY_LIVE=${OPENSWARM_PARITY_LIVE:-0}
+      - OPENSWARM_LIVE_MODELS=${OPENSWARM_LIVE_MODELS:-}
+      # Absent unless the caller's environment has them; populated only for
+      # certified live-provider runs.
+      - ANTHROPIC_API_KEY
+      - OPENAI_API_KEY
+      - GEMINI_API_KEY
+      - CLAUDE_CODE_OAUTH_TOKEN
+      - AZURE_API_BASE
+      - AZURE_OPENAI_ENDPOINT
+      - AZURE_OPENAI_API_KEY
+      - AZURE_OPENAI_API_VERSION
+      - AWS_BEARER_TOKEN_BEDROCK
+      - AWS_REGION
+    command: ["./scripts/verify-parity-wp.sh", "--list"]
+
+volumes:
+  parity-node-modules:
+  parity-dist:

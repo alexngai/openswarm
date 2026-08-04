@@ -1,13 +1,18 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import * as crypto from "node:crypto";
 import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { ToolAccesses, type ToolAccesses as ToolAccessesType } from "../access.js";
-import { isUnderCwd, aliasParams } from "./internal.js";
-import { hasFileBeenRead, recordFileRead, READ_BEFORE_EDIT_ERROR } from "./read-state.js";
-import { FILE_STATE_CURRENT_SUFFIX } from "./edit_file.js";
+import { aliasParams } from "./internal.js";
+import { resolveInWorkspace, atomicWriteInWorkspace } from "../workspace-path.js";
+import {
+  checkFileCurrent,
+  hasFileBeenRead,
+  recordFileRead,
+  READ_BEFORE_EDIT_ERROR,
+} from "./read-state.js";
+import { FILE_STATE_CURRENT_SUFFIX, STALE_FILE_ERROR } from "./edit_file.js";
 
 const paramsSchema = z.object({
   file_path: z.string(),
@@ -42,28 +47,26 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   }
   const input: Input = parsed.data;
 
-  const resolved = path.resolve(ctx.cwd, input.file_path);
-
-  // Workspace boundary check.
-  if (!isUnderCwd(resolved, ctx.cwd)) {
-    return { status: "error", message: `path escapes workspace: ${resolved}` };
+  // Workspace boundary check, including any symlink along the way.
+  const contained = await resolveInWorkspace(input.file_path, ctx.cwd);
+  if (!contained.ok) {
+    return { status: "error", message: contained.message };
   }
+  const resolved = contained.path;
 
-  // Symlink-escape guard: if the path already exists as a symlink,
-  // follow it to its real target and re-check. Also detect existence for
-  // the read-before-overwrite contract below.
+  // Existence drives the read-before-overwrite contract below, so the question
+  // is whether content would be lost, not whether a directory entry is there.
+  // Those differ for a link with nothing at the far end: lstat sees the link
+  // and demands a prior read, but read_file follows the link and finds
+  // nothing, so the demand can never be met. stat asks the question the
+  // contract actually cares about. Containment already followed the link and
+  // judged its target, so following it again here cannot widen reach.
   let fileExists = false;
   try {
-    const lstat = await fs.lstat(resolved);
+    await fs.stat(resolved);
     fileExists = true;
-    if (lstat.isSymbolicLink()) {
-      const real = await fs.realpath(resolved);
-      if (!isUnderCwd(real, ctx.cwd)) {
-        return { status: "error", message: `path escapes workspace: ${resolved}` };
-      }
-    }
   } catch {
-    // File doesn't exist yet — that's fine, we'll create it.
+    // Nothing to overwrite — either the name is free or the link dangles.
   }
 
   // Read-before-overwrite contract (Claude Code alignment): overwriting an
@@ -72,51 +75,47 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
     return { status: "error", message: READ_BEFORE_EDIT_ERROR };
   }
 
+  // ...and the file has to still be the one that was read. Unlike edit_file,
+  // this tool never reads its target, so a whole-file overwrite is the one place
+  // where a concurrent writer's work leaves no trace at all: nothing in the
+  // request refers to the old content, so there is nothing to fail to match.
+  // Where several agents share a working directory that made a lost update
+  // indistinguishable from a successful write (docs/67 `WP-11`).
+  if (fileExists) {
+    const verdict = await checkFileCurrent(resolved);
+    if (verdict.kind === "stale") {
+      return { status: "error", message: STALE_FILE_ERROR };
+    }
+  }
+
   // Content size check (UTF-8 byte length).
   const contentBytes = Buffer.byteLength(input.content, "utf8");
   if (contentBytes > MAX_CONTENT_BYTES) {
     return { status: "error", message: "content exceeds 10 MiB write cap" };
   }
 
-  // Create parent directories if missing.
+  // Create parent directories if missing. Recursive mkdir stats after an
+  // EEXIST to confirm the entry is a directory, so an ancestor that is being
+  // swapped concurrently makes it throw rather than return — and a tool that
+  // throws leaves its caller with an exception where a refusal belongs.
   const dir = path.dirname(resolved);
-  await fs.mkdir(dir, { recursive: true });
-
-  // S5: Re-validate parent directory after mkdir to prevent TOCTTOU
-  // (directory could be replaced with a symlink between mkdir and write).
-  // Canonicalize both paths via realpath so that symlink-prefixed OS temp
-  // directories (e.g. /var/folders → /private/var/folders on macOS) compare
-  // correctly against each other.
   try {
-    const parentReal = await fs.realpath(dir);
-    const cwdReal = await fs.realpath(ctx.cwd);
-    if (!isUnderCwd(parentReal, cwdReal)) {
-      return {
-        status: "error",
-        message: `parent directory was replaced outside workspace after mkdir`,
-      };
-    }
-  } catch {
-    // realpath failed — directory doesn't exist anymore, write below will fail naturally
+    await fs.mkdir(dir, { recursive: true });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { status: "error", message: `could not create parent directory: ${msg}` };
   }
 
-  // Atomic write: write to a temp file then rename.
-  const rand = crypto.randomBytes(6).toString("hex");
-  const basename = path.basename(resolved);
-  const tmpPath = path.join(dir, `.${basename}.tmp-${rand}`);
-
-  try {
-    await fs.writeFile(tmpPath, input.content, "utf8");
-    await fs.rename(tmpPath, resolved);
-  } catch (err: unknown) {
-    // Attempt cleanup of temp file; ignore secondary errors.
-    await fs.unlink(tmpPath).catch(() => undefined);
-    const msg = err instanceof Error ? err.message : String(err);
-    return { status: "error", message: `write failed: ${msg}` };
+  // Atomic write, with the swap race handled by the shared helper: the
+  // directory can be replaced between the check above and the rename below,
+  // and only verifying where the bytes landed catches that.
+  const written = await atomicWriteInWorkspace(resolved, input.content, ctx.cwd);
+  if (!written.ok) {
+    return { status: "error", message: written.message };
   }
 
   // Post-write content is known to the agent.
-  recordFileRead(resolved);
+  recordFileRead(resolved, input.content);
 
   // Claude Code's exact success sentences (v2.1.198) — both variants carry
   // the "file state is current" suffix that suppresses read-backs.

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { ToolDispatcher } from "./dispatcher.js";
 import { HookRuntime } from "../hooks/runtime.js";
 import type { ToolImpl, ToolExecutionContext } from "./types.js";
+import { ToolAccesses } from "./access.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,6 +32,7 @@ function makeTool(
     },
     zodSchema: inputSchema,
     execute,
+    accesses: () => ToolAccesses.none(),
   };
 }
 
@@ -138,6 +140,7 @@ describe("ToolDispatcher", () => {
       },
       execute: async () => ({ status: "ok", output: "ran" }),
       // no zodSchema
+      accesses: () => ToolAccesses.none(),
     };
     dispatcher.register(tool);
     const result = await dispatcher.dispatch("no-schema-tool", { anything: true }, ctx);
@@ -167,6 +170,7 @@ describe("ToolDispatcher — hook integration (Tier 2 coverage)", () => {
       },
       zodSchema: permissiveSchema,
       execute,
+      accesses: () => ToolAccesses.none(),
     };
   }
 
@@ -289,6 +293,7 @@ describe("ToolDispatcher — dispatchBatch parallel dispatch (M3b Phase 4)", () 
         await new Promise<void>((res) => setTimeout(res, delayMs));
         return { status: "ok", output: name };
       },
+      accesses: () => ToolAccesses.none(),
     };
   }
 
@@ -309,6 +314,7 @@ describe("ToolDispatcher — dispatchBatch parallel dispatch (M3b Phase 4)", () 
         concurrencySafe: false,
       },
       execute,
+      accesses: () => ToolAccesses.all(),
     };
   }
 
@@ -402,6 +408,7 @@ describe("ToolDispatcher — dispatchBatch parallel dispatch (M3b Phase 4)", () 
           intervals.push({ name, start, end });
           return { status: "ok", output: name };
         },
+        accesses: () => ToolAccesses.all(),
       };
     }
 
@@ -496,6 +503,7 @@ describe("ToolDispatcher — dispatchBatch parallel dispatch (M3b Phase 4)", () 
           await new Promise<void>((res) => setTimeout(res, 10));
           return { status: "ok", output: name };
         },
+        accesses: () => ToolAccesses.none(),
       });
     }
 

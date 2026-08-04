@@ -14,6 +14,8 @@ import { EventEmitter } from "node:events";
 import { Writable } from "node:stream";
 import { Orchestrator } from "../swarm/orchestrator.js";
 import { StandaloneHost } from "../swarm/standalone-host.js";
+import { RoleRegistry, BUILTIN_ROLES, loadCustomRoles } from "../swarm/roles.js";
+import path from "node:path";
 import type { TeamSpec } from "../swarm/team-spec.js";
 import type { TeamResult } from "../swarm/topologies-types.js";
 import type { LaneEvent } from "../swarm/events.js";
@@ -102,16 +104,40 @@ export function createOrchestratorRunner(
       interactionHandler: opts.interactionHandler,
     }),
   });
+  // Resolve member roles the same way team-daemon.ts:217 and the foreground `swarm` path do.
+  // Without a registry the orchestrator resolves nothing and every role-bearing member fails with
+  // "unknown role", so `.openswarm/roles.json` was written, hashed, and then read by nobody.
+  //
+  // The registry is handed over now but filled in two stages, because this factory is called
+  // synchronously from inside the AgentSideConnection factory and `loadCustomRoles` is async.
+  // That is safe: RoleRegistry is a mutable map and the orchestrator resolves names AT DISPATCH,
+  // so customs registered before the first runTeam are visible to it.
+  const roles = new RoleRegistry();
+  for (const r of BUILTIN_ROLES) roles.register(r);
+  let customRoles: Promise<void> | undefined;
+  const ensureCustomRoles = (): Promise<void> => {
+    customRoles ??= loadCustomRoles(
+      path.join(process.cwd(), ".openswarm", "roles.json"),
+    ).then((custom) => {
+      for (const r of custom) roles.register(r);
+    });
+    return customRoles;
+  };
+
   const orch = new Orchestrator({
     concurrency: opts.concurrency ?? 4,
     permissionMode: opts.permissionMode,
     resultsOut: new NullWritable(),
     host,
     persistent: true,
+    roles,
   });
   const bus = (host as unknown as { readonly events: EventEmitter }).events;
   return {
-    runTeam: (spec, opts) => orch.runTeam(spec, opts),
+    runTeam: async (spec, opts) => {
+      await ensureCustomRoles();
+      return orch.runTeam(spec, opts);
+    },
     subscribeEvents: (handler) => {
       bus.on("lane_event", handler);
       return () => {

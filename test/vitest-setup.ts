@@ -21,3 +21,23 @@ process.env["OPENSWARM_HISTORY_PATH"] = path.join(tmpDir, "history");
 // Prevent vitest tests from writing to the user's real ~/.openswarm/workers/.
 // Mirror the OPENSWARM_HISTORY_PATH pattern used above.
 process.env["OPENSWARM_WORKERS_DIR"] = path.join(tmpDir, "workers");
+
+// The same hazard, one dependency over. `sessionlog` is configured entirely
+// through ambient SESSIONLOG_* variables: SESSIONLOG_REPO_REMOTE redirects
+// session storage into a clone of that remote under ~/.sessionlog/repos/<hash>,
+// SESSIONLOG_PROJECT_DIR moves where settings are read from, and the rest move
+// individual paths. A developer with any of them exported gets tests that write
+// fixture state into their own session-history checkout — and the remote path
+// clones over the network on first use, inside a suite that is supposed to be
+// hermetic.
+//
+// Deleted rather than blanked: sessionlog tests these for truthiness in some
+// places and existence in others, so an empty string is not reliably "unset".
+//
+// This is also why the swarm checkpointer fixtures looked like a macOS defect.
+// They passed in the Docker cell, which forwards no SESSIONLOG_* variables, and
+// failed on the host, which had one exported — a platform difference in
+// appearance only. The Linux-only gate matrix is what let the two be confused.
+for (const key of Object.keys(process.env)) {
+  if (key.startsWith("SESSIONLOG_")) delete process.env[key];
+}

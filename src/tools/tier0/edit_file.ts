@@ -18,8 +18,14 @@ import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { ToolAccesses, type ToolAccesses as ToolAccessesType } from "../access.js";
-import { isUnderCwd, aliasParams } from "./internal.js";
-import { hasFileBeenRead, recordFileRead, READ_BEFORE_EDIT_ERROR } from "./read-state.js";
+import { aliasParams } from "./internal.js";
+import { resolveInWorkspace, atomicWriteInWorkspace } from "../workspace-path.js";
+import {
+  hasFileBeenRead,
+  recordFileRead,
+  recordedHash,
+  READ_BEFORE_EDIT_ERROR,
+} from "./read-state.js";
 
 const paramsSchema = z.object({
   file_path: z.string(),
@@ -58,55 +64,24 @@ function countOccurrences(haystack: string, needle: string): number {
 }
 
 /**
- * Atomic write: write to a temp file in the same directory, then rename.
- * Ensures the target is never left in a partial state.
+ * Atomic write with a stale-content guard, throwing where the shared helper
+ * returns. Three tools reach this through `multi_edit` and `apply_patch` and
+ * all three distinguish a lost race from a hard failure by catching
+ * `TocttouError`, so the exception is the contract rather than an accident.
  *
- * When `expectedHash` is provided (S5 TOCTTOU protection), re-reads the
- * target file just before rename and verifies the content hash matches
- * what was read earlier. If the file changed between the initial read
- * and the write, the operation is aborted with an error.
+ * The containment and swap-race handling live in `atomicWriteInWorkspace`;
+ * this only adapts the result shape.
  */
 async function atomicWrite(
   targetPath: string,
   content: string,
+  cwd: string,
   expectedHash?: string,
 ): Promise<void> {
-  const dir = path.dirname(targetPath);
-  // Random suffix (not pid+ms) so concurrent batch writes can't collide on
-  // the temp name and lose to `fs.rename` after the writer has been
-  // unlinked by a sibling.
-  const rand = crypto.randomBytes(6).toString("hex");
-  const tmp = path.join(dir, `.openswarm-tmp-${process.pid}-${rand}`);
-  try {
-    await fs.writeFile(tmp, content, "utf8");
-
-    // S5: TOCTTOU guard — if we know the expected content hash, verify
-    // the target hasn't been modified since we read it.
-    if (expectedHash !== undefined) {
-      try {
-        const currentContent = await fs.readFile(targetPath, "utf8");
-        const currentHash = crypto
-          .createHash("sha256")
-          .update(currentContent)
-          .digest("hex");
-        if (currentHash !== expectedHash) {
-          throw new TocttouError(
-            `file "${targetPath}" was modified between read and write ` +
-              `(expected hash ${expectedHash.slice(0, 12)}…, got ${currentHash.slice(0, 12)}…)`,
-          );
-        }
-      } catch (err) {
-        if (err instanceof TocttouError) throw err;
-        // File was deleted between our read and write — unusual but not TOCTTOU
-      }
-    }
-
-    await fs.rename(tmp, targetPath);
-  } catch (err) {
-    // Best-effort cleanup of temp file on failure.
-    await fs.unlink(tmp).catch(() => undefined);
-    throw err;
-  }
+  const written = await atomicWriteInWorkspace(targetPath, content, cwd, expectedHash);
+  if (written.ok) return;
+  if (written.reason === "stale") throw new TocttouError(written.message);
+  throw new Error(written.message);
 }
 
 /** Sentinel error for TOCTTOU detection (S5). */
@@ -147,29 +122,11 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   }
 
   // Resolve and enforce workspace boundary.
-  const resolved = path.resolve(ctx.cwd, input.file_path);
-
-  // Also check that the resolved path is not a symlink escaping the workspace.
-  if (!isUnderCwd(resolved, ctx.cwd)) {
-    return {
-      status: "error",
-      message: `path "${input.file_path}" resolves outside the workspace boundary`,
-    };
+  const contained = await resolveInWorkspace(input.file_path, ctx.cwd);
+  if (!contained.ok) {
+    return { status: "error", message: contained.message };
   }
-  try {
-    const lstat = await fs.lstat(resolved);
-    if (lstat.isSymbolicLink()) {
-      const real = await fs.realpath(resolved);
-      if (!isUnderCwd(real, ctx.cwd)) {
-        return {
-          status: "error",
-          message: `path "${input.file_path}" is a symlink pointing outside the workspace boundary`,
-        };
-      }
-    }
-  } catch {
-    // File doesn't exist; fall through — read below will error naturally.
-  }
+  const resolved = contained.path;
 
   // Read-before-edit contract (Claude Code alignment): the model must have
   // read the file this session so the edit operates on known content.
@@ -184,6 +141,18 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return { status: "error", message: `failed to read "${input.file_path}": ${msg}` };
+  }
+
+  // The hash check below and the one in `atomicWrite` answer different
+  // questions. That one guards this function's own read-modify-write window;
+  // this one asks whether the content the *agent* read is still there. Matching
+  // `old_string` against a freshly-read file makes a stale edit look clean
+  // whenever the anchor survived somebody else's rewrite, and the edit then
+  // lands in a file the agent has never seen (docs/67 `WP-11`).
+  const contentHash = crypto.createHash("sha256").update(content).digest("hex");
+  const known = recordedHash(resolved);
+  if (known !== null && known !== contentHash) {
+    return { status: "error", message: STALE_FILE_ERROR };
   }
 
   // Uniqueness check.
@@ -209,11 +178,8 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   // Apply replacement(s).
   const newContent = content.split(input.old_string).join(input.new_string);
 
-  // S5: compute hash of original content for TOCTTOU check.
-  const contentHash = crypto.createHash("sha256").update(content).digest("hex");
-
   try {
-    await atomicWrite(resolved, newContent, contentHash);
+    await atomicWrite(resolved, newContent, ctx.cwd, contentHash);
   } catch (err) {
     if (err instanceof TocttouError) {
       return { status: "error", message: STALE_FILE_ERROR };
@@ -223,7 +189,7 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   }
 
   // Post-edit content is known to the agent.
-  recordFileRead(resolved);
+  recordFileRead(resolved, newContent);
 
   // Claude Code's exact success sentences (v2.1.198).
   return {

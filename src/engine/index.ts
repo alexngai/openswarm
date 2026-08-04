@@ -334,7 +334,25 @@ export type PermissionGate = (
 ) => Promise<PermissionDecision>;
 
 export type PermissionDecision =
-  | { readonly allow: true; readonly updatedInput?: unknown }
+  | {
+      readonly allow: true;
+      readonly updatedInput?: unknown;
+      /**
+       * Attempts the gate durably prepared for this call, in the audit journal,
+       * before returning (docs/67 `WP-00a` remainder).
+       *
+       * The gate is where an attempt becomes real: it canonicalizes the paths,
+       * authorizes each one, and returns immediately before execution — which is
+       * exactly step 3 of the durability order. Recording there and resolving
+       * after execution is what makes a crash distinguishable from a refusal.
+       *
+       * The ids travel back so whoever brackets the execution can close them
+       * out. Absent when the call named no resources the gate could authorize
+       * per-resource, which is the `bash`/MCP/plugin case that still resolves by
+       * tool name alone.
+       */
+      readonly preparedOperationIds?: readonly string[];
+    }
   | { readonly allow: false; readonly reason: string };
 
 // ---------------------------------------------------------------------------
@@ -356,3 +374,18 @@ export interface SessionSnapshot {
   readonly engineId: string;
   readonly data: unknown;
 }
+
+/**
+ * Receives the engine's resume state at each acknowledged turn boundary.
+ *
+ * The engines already knew when to persist — the turn boundaries were the right
+ * places all along — but they only knew one destination, a per-engine file
+ * written when `sessionDir` was set, which no production caller ever set. A sink
+ * lets the surface decide where state goes (for the CLI, the kernel journal)
+ * without the engine learning about journals (docs/67 `WP-08`).
+ *
+ * Rejecting aborts the turn, matching what the file write already did. A turn
+ * whose state could not be recorded is not recoverable, and continuing as though
+ * it were is how a resume silently loses the tail of a conversation.
+ */
+export type SnapshotSink = (snapshot: SessionSnapshot) => Promise<void>;

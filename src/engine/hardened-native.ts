@@ -33,6 +33,7 @@ import type {
   EngineCapabilities,
   RunConfig,
   PermissionDecision,
+  SnapshotSink,
 } from "./index.js";
 import {
   shouldCompact,
@@ -77,6 +78,16 @@ import {
   type ToolAccesses as ToolAccessesType,
 } from "../tools/access.js";
 import type { ToolRequest } from "../tools/dispatcher.js";
+import { accessesFor } from "../tools/dispatcher.js";
+import { outcomeFor, type AttemptResolver } from "./operation-ledger.js";
+import {
+  TurnLedger,
+  decideReplay,
+  idempotencyOf,
+  replayResult,
+  settleOutstanding,
+  type OperationRecord,
+} from "./operation-ledger.js";
 import type { ToolResult } from "../tools/types.js";
 
 // ---------------------------------------------------------------------------
@@ -128,8 +139,21 @@ function abortableSleep(
 export interface HardenedNativeEngineOptions {
   readonly provider: Provider;
   readonly compactionConfig?: CompactionConfig;
+  /**
+   * Legacy on-disk resume state, kept because the `WP-07` importer reads it.
+   * New callers should pass `onSnapshot`, which reaches the session journal.
+   */
   readonly sessionDir?: string;
+  /** Same snapshot, same turn boundaries, caller-chosen destination. */
+  readonly onSnapshot?: SnapshotSink;
   readonly sessionId?: string;
+  /**
+   * Closes out the attempts the permission gate prepared (docs/67 `WP-00a`
+   * remainder). The engine is where it belongs because `TurnLedger` brackets
+   * the execution, and only the thing that brackets it knows whether the tool
+   * got to say what happened.
+   */
+  readonly audit?: AttemptResolver;
   readonly retryPolicy?: RetryPolicy;
   readonly eagerToolDispatch?: boolean;
   readonly midTurnCompaction?: boolean;
@@ -139,6 +163,16 @@ export interface HardenedNativeEngineOptions {
    * reactive overflow paths).
    */
   readonly recontextualize?: RecontextualizeFn;
+  /**
+   * How long a cancelled turn waits for operations already under way to report
+   * what they did, before recording them as unknown and returning.
+   *
+   * The trade-off is which lie to avoid. Waiting forever lets a tool that
+   * ignores its abort signal hold the cancellation open; not waiting at all
+   * reports a turn as stopped while its writes are still landing. Defaults to
+   * five seconds, which is long enough for a killed subprocess to be reaped.
+   */
+  readonly cancellationGraceMs?: number;
 }
 
 export class HardenedNativeEngine implements AgentEngine {
@@ -148,23 +182,54 @@ export class HardenedNativeEngine implements AgentEngine {
   private readonly provider: Provider;
   private readonly compactionConfig: CompactionConfig;
   private readonly sessionDir?: string;
+  private readonly onSnapshot?: SnapshotSink;
+  private readonly audit?: AttemptResolver;
   private readonly sessionId?: string;
   private readonly retryPolicy: RetryPolicy;
   private readonly eagerToolDispatch: boolean;
   private readonly midTurnCompaction: boolean;
   private readonly recontextualize?: RecontextualizeFn;
+  private readonly cancellationGraceMs: number;
   private cumulativeUsage: Usage = { inputTokens: 0, outputTokens: 0 };
   private retryStats = { totalRetries: 0, retriesThisTurn: 0 };
   private compactionState: CompactionState = initialCompactionState();
+
+  /**
+   * Operations from abandoned turns whose outcome was never proven.
+   *
+   * Kept because "we do not know whether this happened" is a fact about the
+   * workspace that outlives the turn that produced it, and discarding it is how
+   * a half-applied change becomes indistinguishable from one that never
+   * started. Nothing consumes this yet — surfacing and reconciling it is
+   * `WP-12` — but it is recorded rather than lost in the meantime.
+   */
+  private readonly unresolved: OperationRecord[] = [];
+
+  /** Operations this engine could not account for, oldest first. */
+  unresolvedOperations(): readonly OperationRecord[] {
+    return [...this.unresolved];
+  }
+
+  /**
+   * Stop a turn without pretending its work stopped with it: wait for what is
+   * running to say what it did, then keep whatever could not be accounted for.
+   */
+  private async abandonTurn(ledger: TurnLedger, reason: string): Promise<void> {
+    await settleOutstanding(ledger, reason, this.cancellationGraceMs);
+    this.unresolved.push(...ledger.unresolved());
+  }
 
   constructor(opts: HardenedNativeEngineOptions) {
     this.provider = opts.provider;
     this.compactionConfig = opts.compactionConfig ?? DEFAULT_COMPACTION;
     if (opts.sessionDir !== undefined) this.sessionDir = opts.sessionDir;
+    if (opts.onSnapshot !== undefined) this.onSnapshot = opts.onSnapshot;
+    if (opts.audit !== undefined) this.audit = opts.audit;
     if (opts.sessionId !== undefined) this.sessionId = opts.sessionId;
     this.retryPolicy = opts.retryPolicy ?? DEFAULT_RETRY_POLICY;
     this.eagerToolDispatch = opts.eagerToolDispatch ?? false;
     this.midTurnCompaction = opts.midTurnCompaction ?? false;
+    this.cancellationGraceMs = opts.cancellationGraceMs ?? 5_000;
     if (opts.recontextualize !== undefined)
       this.recontextualize = opts.recontextualize;
 
@@ -413,6 +478,62 @@ export class HardenedNativeEngine implements AgentEngine {
         ? new ToolScheduler<ToolResult>()
         : undefined;
 
+      // Outlives the retry loop below, which is the point: it is what lets a
+      // re-announced call be answered from what the failed attempt already did
+      // rather than performed a second time (docs/67 WP-05).
+      const ledger = new TurnLedger(turn, this.audit);
+
+      /**
+       * Run a call the eager path declined to speculate on.
+       *
+       * This is where everything that can leave a trace runs: after the stream
+       * that asked for it has finished, so the turn is known to exist, and past
+       * the ledger, so an earlier attempt's work is reused or reported rather
+       * than repeated. It shares the attempt's scheduler, because two mutations
+       * of the same file still have to be ordered.
+       */
+      const runDeferred = async (req: {
+        readonly id: string;
+        readonly name: string;
+        readonly input: unknown;
+      }): Promise<ToolResult> => {
+        const decision = await config.canUseTool(req.name, req.input);
+        if (!decision.allow) {
+          return { status: "error", message: decision.reason };
+        }
+        const input =
+          decision.updatedInput !== undefined ? decision.updatedInput : req.input;
+        const ctx = {
+          cwd: process.cwd(),
+          abort: config.abort,
+          ...(config.host !== undefined ? { host: config.host } : {}),
+        };
+        const toolImpl =
+          typeof config.dispatcher!.get === "function"
+            ? config.dispatcher!.get(req.name)
+            : undefined;
+        const accesses = accessesFor(toolImpl, input, ctx);
+        const idempotency = idempotencyOf(accesses);
+        const id = ledger.identify(req.name, input);
+        // The gate already recorded these attempts as prepared; the ledger is
+        // what brackets the execution, so it owns the terminal record.
+        if (decision.preparedOperationIds !== undefined) {
+          ledger.attach(id, decision.preparedOperationIds);
+        }
+        const replay = decideReplay(ledger.get(id), idempotency);
+
+        return replayResult(replay, () =>
+          eagerScheduler!.add({
+            accesses,
+            start: async () => ({
+              result: ledger.start(id, idempotency, () =>
+                config.dispatcher!.dispatch(req.name, input, ctx),
+              ),
+            }),
+          }),
+        );
+      };
+
       // Consumed once per TURN (not per retry attempt) so a transport retry
       // still carries the forced tool choice.
       const forcedToolChoice = escalation.consume();
@@ -454,6 +575,29 @@ export class HardenedNativeEngine implements AgentEngine {
         name: string,
         input: unknown,
       ): Promise<void> => {
+        const ctx = {
+          cwd: process.cwd(),
+          abort: config.abort,
+          ...(config.host !== undefined ? { host: config.host } : {}),
+        };
+        // Same resolution the batch dispatcher uses, so a tool cannot serialize
+        // there and fan out here.
+        const toolImpl =
+          typeof config.dispatcher!.get === "function"
+            ? config.dispatcher!.get(name)
+            : undefined;
+
+        // Only calls that are free to repeat start here. Eager dispatch is
+        // speculation on a stream that has not finished and may yet fail, and a
+        // mutation performed on a failed attempt cannot be taken back — so
+        // anything that is not idempotent returns without claiming an in-flight
+        // slot and runs on the deferred path once the stream succeeds. The gate
+        // is deliberately not consulted for those: it must run exactly once per
+        // call, and that will be where they run.
+        if (idempotencyOf(accessesFor(toolImpl, input, ctx)) !== "idempotent") {
+          return;
+        }
+
         const decision = await config.canUseTool(name, input);
         if (!decision.allow) {
           inFlight.set(
@@ -464,38 +608,35 @@ export class HardenedNativeEngine implements AgentEngine {
         }
         const dispatchInput =
           decision.updatedInput !== undefined ? decision.updatedInput : input;
-        const ctx = {
-          cwd: process.cwd(),
-          abort: config.abort,
-          ...(config.host !== undefined ? { host: config.host } : {}),
-        };
 
-        // Compute accesses for ToolScheduler conflict detection.
-        let accesses: ToolAccessesType = ToolAccesses.none();
-        const toolImpl =
-          typeof config.dispatcher!.get === "function"
-            ? config.dispatcher!.get(name)
-            : undefined;
-        if (toolImpl !== undefined) {
-          if (toolImpl.accesses !== undefined) {
-            try {
-              accesses = toolImpl.accesses(dispatchInput, ctx);
-            } catch {
-              accesses = ToolAccesses.all();
-            }
-          } else if (toolImpl.spec.concurrencySafe === false) {
-            accesses = ToolAccesses.all();
-          }
+        // Re-derived: the gate may have rewritten the input, and the accesses of
+        // the call that actually runs are the ones the scheduler has to order.
+        const accesses = accessesFor(toolImpl, dispatchInput, ctx);
+        // Re-classified from those accesses rather than assumed idempotent
+        // because the check above let it through, so the check and the ledger
+        // agree independently and weakening one does not disarm the other.
+        const idempotency = idempotencyOf(accesses);
+        const ledgerId = ledger.identify(name, dispatchInput);
+        if (decision.preparedOperationIds !== undefined) {
+          ledger.attach(ledgerId, decision.preparedOperationIds);
         }
+        const replay = decideReplay(ledger.get(ledgerId), idempotency);
 
+        // A retry can re-announce a call the failed attempt is still making.
+        // Joining it is both cheaper and more consistent than racing a second
+        // copy of it.
         inFlight.set(
           id,
-          eagerScheduler!.add({
-            accesses,
-            start: async () => ({
-              result: config.dispatcher!.dispatch(name, dispatchInput, ctx),
+          replayResult(replay, () =>
+            eagerScheduler!.add({
+              accesses,
+              start: async () => ({
+                result: ledger.start(ledgerId, idempotency, () =>
+                  config.dispatcher!.dispatch(name, dispatchInput, ctx),
+                ),
+              }),
             }),
-          }),
+          ),
         );
       };
 
@@ -512,8 +653,11 @@ export class HardenedNativeEngine implements AgentEngine {
         turnUsage = { inputTokens: 0, outputTokens: 0 };
         stopReason = "end_turn";
         // Reset eager dispatch state so stale promises from a failed
-        // attempt are not drained after a successful retry.
+        // attempt are not drained after a successful retry. Forgetting the
+        // promises is not the same as undoing what they did, which is what the
+        // ledger is for; it keeps its records and only restarts its counting.
         inFlight = new Map<string, Promise<ToolResult>>();
+        ledger.beginAttempt();
         if (eagerDispatch) {
           eagerScheduler = new ToolScheduler<ToolResult>();
         }
@@ -523,7 +667,10 @@ export class HardenedNativeEngine implements AgentEngine {
 
         try {
           for await (const ev of this.provider.stream(buildRequest())) {
-            if (config.abort !== undefined && config.abort.aborted) return;
+            if (config.abort !== undefined && config.abort.aborted) {
+              await this.abandonTurn(ledger, "the turn was cancelled mid-stream");
+              return;
+            }
 
             switch (ev.type) {
               case "text-delta":
@@ -759,7 +906,13 @@ export class HardenedNativeEngine implements AgentEngine {
           };
 
           const sleptFull = await abortableSleep(delayMs, config.abort);
-          if (!sleptFull) return;
+          if (!sleptFull) {
+            // Cancelled while waiting to retry. The failed attempt's calls may
+            // still be running, and the whole reason we are here is that the
+            // stream broke before it could say what they did.
+            await this.abandonTurn(ledger, "the turn was cancelled before its retry");
+            return;
+          }
         }
       }
 
@@ -848,33 +1001,41 @@ export class HardenedNativeEngine implements AgentEngine {
           isError: boolean;
         }> = [];
 
-        if (
-          eagerDispatch &&
-          config.dispatcher !== undefined &&
-          inFlight.size > 0
-        ) {
-          // ── Eager path: drain in-flight promises ──
+        if (eagerDispatch && config.dispatcher !== undefined) {
+          // ── Eager path: drain what was speculated, run what was not ──
           // Maps to Codex drain_in_flight (turn.rs:1739-1763).
-          // inFlight is insertion-ordered (ES2015 Map guarantee) so results
-          // are emitted in the order the model produced tool_use blocks,
-          // regardless of completion order.
-          for (const [id, promise] of inFlight) {
+          //
+          // Driven by the announced calls rather than by the in-flight map,
+          // because the two are no longer the same set: anything that could
+          // leave a trace was deliberately not started during streaming, so it
+          // has no promise here and iterating the map would drop it from the
+          // turn without a result. Buffer order is the order the model produced
+          // the tool_use blocks, which is the order results must come back in.
+          for (const req of toolUseBuffer) {
+            const started = inFlight.get(req.id);
             let r: ToolResult;
-            try {
-              r = await promise;
-            } catch {
-              r = { status: "error", message: "tool execution aborted" };
+            if (started !== undefined) {
+              try {
+                r = await started;
+              } catch {
+                r = { status: "error", message: "tool execution aborted" };
+              }
+            } else {
+              r = await runDeferred(req);
             }
-            const content =
-              r.status === "ok" ? r.output : r.message;
+            const content = r.status === "ok" ? r.output : r.message;
             resolvedResults.push({
-              id,
+              id: req.id,
               content,
               isError: r.status !== "ok",
             });
           }
         } else {
           // ── Batch path: gate + dispatch after stream ──
+          // No ledger here, and none needed: this path runs only once the
+          // stream has succeeded, so a retry can never have executed any of it.
+          // Eager dispatch is what makes replay possible, and that is where the
+          // ledger sits.
           const allowedRequests: ToolRequest[] = [];
           const allowedIds: string[] = [];
           const decisions = new Map<string, PermissionDecision>();
@@ -908,6 +1069,31 @@ export class HardenedNativeEngine implements AgentEngine {
             const id = allowedIds[i]!;
             const res = batchResults[i];
             if (res !== undefined) resultById.set(id, res);
+          }
+
+          // This path has no ledger, so it resolves its own attempts. Not
+          // optional: the gate prepares a record before every authorized call
+          // and this is the default dispatch path, so leaving it unresolved
+          // would write a dangling AttemptPrepared for every tool call the
+          // product makes -- and a prepare with no resolve is exactly the
+          // signature recovery treats as a crash. The absent case is reported
+          // as unknown rather than failed because a request that was allowed
+          // and then had no result did not come back to say so.
+          if (this.audit !== undefined) {
+            for (const id of allowedIds) {
+              const decision = decisions.get(id);
+              if (decision === undefined || !decision.allow) continue;
+              const prepared = decision.preparedOperationIds;
+              if (prepared === undefined) continue;
+              const res = resultById.get(id);
+              for (const operationId of prepared) {
+                await this.audit.resolve(
+                  res === undefined
+                    ? outcomeFor(operationId, undefined, "dispatch returned no result")
+                    : outcomeFor(operationId, res),
+                );
+              }
+            }
           }
 
           for (const req of toolUseBuffer) {
@@ -1015,7 +1201,7 @@ export class HardenedNativeEngine implements AgentEngine {
     turnCount: number,
     compactionCount: number,
   ): Promise<void> {
-    if (this.sessionDir === undefined) return;
+    if (this.sessionDir === undefined && this.onSnapshot === undefined) return;
     const snap = makeHardenedSnapshot(
       messages,
       turnCount,
@@ -1024,6 +1210,16 @@ export class HardenedNativeEngine implements AgentEngine {
       this.retryStats,
       persistCompactionState(this.compactionState),
     );
+
+    // `snap` is already a SessionSnapshot carrying this engine's id, so it
+    // travels as-is. Re-wrapping it would nest the payload one level deeper than
+    // the extractor expects, which surfaces on resume as a missing message list
+    // rather than as a type error.
+    if (this.onSnapshot !== undefined) {
+      await this.onSnapshot(snap);
+    }
+
+    if (this.sessionDir === undefined) return;
     const snapPath = path.join(
       this.sessionDir,
       "hardened-native-snapshot.json",

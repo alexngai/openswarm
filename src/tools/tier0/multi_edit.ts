@@ -16,9 +16,15 @@ import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { ToolAccesses, type ToolAccesses as ToolAccessesType } from "../access.js";
-import { isUnderCwd, aliasParams } from "./internal.js";
+import { aliasParams } from "./internal.js";
+import { resolveInWorkspace } from "../workspace-path.js";
 import { atomicWrite, TocttouError, STALE_FILE_ERROR } from "./edit_file.js";
-import { hasFileBeenRead, recordFileRead, READ_BEFORE_EDIT_ERROR } from "./read-state.js";
+import {
+  hasFileBeenRead,
+  recordFileRead,
+  recordedHash,
+  READ_BEFORE_EDIT_ERROR,
+} from "./read-state.js";
 
 const editSchema = z.object({
   old_string: z.string(),
@@ -91,28 +97,11 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   const input: Input = parsed.data;
 
   // Resolve and enforce workspace boundary.
-  const resolved = path.resolve(ctx.cwd, input.file_path);
-
-  if (!isUnderCwd(resolved, ctx.cwd)) {
-    return {
-      status: "error",
-      message: `path "${input.file_path}" resolves outside the workspace boundary`,
-    };
+  const contained = await resolveInWorkspace(input.file_path, ctx.cwd);
+  if (!contained.ok) {
+    return { status: "error", message: contained.message };
   }
-  try {
-    const lstat = await fs.lstat(resolved);
-    if (lstat.isSymbolicLink()) {
-      const real = await fs.realpath(resolved);
-      if (!isUnderCwd(real, ctx.cwd)) {
-        return {
-          status: "error",
-          message: `path "${input.file_path}" is a symlink pointing outside the workspace boundary`,
-        };
-      }
-    }
-  } catch {
-    // File doesn't exist yet; fall through — subsequent read will error.
-  }
+  const resolved = contained.path;
 
   // Read-before-edit contract (Claude Code alignment).
   if (!hasFileBeenRead(resolved)) {
@@ -126,6 +115,15 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return { status: "error", message: `failed to read "${input.file_path}": ${msg}` };
+  }
+
+  // The agent has to still be looking at this file, not merely to have looked at
+  // it once. See edit_file for why anchor matching is not enough (docs/67
+  // `WP-11`); the same hash serves the TOCTTOU check at the write below.
+  const contentHash = crypto.createHash("sha256").update(originalContent).digest("hex");
+  const known = recordedHash(resolved);
+  if (known !== null && known !== contentHash) {
+    return { status: "error", message: STALE_FILE_ERROR };
   }
 
   // Phase 1: validate ALL edits before applying any.
@@ -146,11 +144,8 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
 
   // Phase 2: apply all edits in order to produce the final content.
   // simulatedContent already holds the result after all valid edits.
-  // S5: compute hash of original content for TOCTTOU check.
-  const contentHash = crypto.createHash("sha256").update(originalContent).digest("hex");
-
   try {
-    await atomicWrite(resolved, simulatedContent, contentHash);
+    await atomicWrite(resolved, simulatedContent, ctx.cwd, contentHash);
   } catch (err) {
     if (err instanceof TocttouError) {
       return { status: "error", message: STALE_FILE_ERROR };
@@ -160,7 +155,7 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   }
 
   // Post-edit content is known to the agent.
-  recordFileRead(resolved);
+  recordFileRead(resolved, simulatedContent);
 
   return {
     status: "ok",

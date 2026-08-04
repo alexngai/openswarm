@@ -95,6 +95,19 @@ export class PermissionBridge {
    *
    * No-op if nothing is pending.
    */
+  /**
+   * Withdraw the pending question, denying it.
+   *
+   * Called when the asker has stopped waiting — an expired approval, an
+   * abandoned turn. It is a deny rather than a silent drop because the caller is
+   * still holding a promise, and because the bridge is strictly serial: leaving
+   * the slot occupied would refuse every later request with a reason about this
+   * one (docs/67 WP-09).
+   */
+  cancel(reason: string): void {
+    this.respond({ allow: false, reason });
+  }
+
   respond(decision: BridgeDecision): void {
     if (this.resolver === null) return;
     const resolve = this.resolver;

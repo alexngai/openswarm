@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
+import { ToolAccesses } from "../access.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import type { SkillRegistry } from "../../skills/index.js";
 
@@ -57,5 +58,11 @@ export function buildSkillTool(registry: SkillRegistry | undefined): ToolImpl {
 
       return { status: "ok", output: loaded.body };
     },
+    // Reads a skill file from the registry's roots, which are user- and
+    // system-level directories rather than the workspace. Declaring that read
+    // as a file access would put it through workspace containment and deny
+    // every skill, so this names nothing: the call mutates no workspace state
+    // and races nothing in a batch.
+    accesses: () => ToolAccesses.none(),
   };
 }

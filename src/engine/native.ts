@@ -25,6 +25,7 @@ import type {
   EngineCapabilities,
   RunConfig,
   PermissionDecision,
+  SnapshotSink,
 } from "./index.js";
 import {
   DEFAULT_COMPACTION,
@@ -93,8 +94,17 @@ export interface NativeEngineOptions {
    * When set, the engine writes `<sessionDir>/native-snapshot.json`
    * atomically after each turn boundary. The directory is created
    * on demand.
+   *
+   * Retained as the legacy on-disk shape the `WP-07` importer reads. New callers
+   * that want resume state should pass `onSnapshot` instead, which reaches the
+   * session journal.
    */
   readonly sessionDir?: string;
+  /**
+   * Receives the same snapshot at the same turn boundaries, for callers that
+   * store resume state somewhere other than a file next to the session.
+   */
+  readonly onSnapshot?: SnapshotSink;
   /**
    * Stable per-session identifier. Forwarded to the provider via
    * `ProviderRequest.sessionId`; OpenAI uses it as a prompt-cache
@@ -117,6 +127,7 @@ export class NativeEngine implements AgentEngine {
   private readonly provider: Provider;
   private readonly compactionConfig: CompactionConfig;
   private readonly sessionDir?: string;
+  private readonly onSnapshot?: SnapshotSink;
   private readonly sessionId?: string;
   private readonly recontextualize?: RecontextualizeFn;
   private cumulativeUsage: Usage = { inputTokens: 0, outputTokens: 0 };
@@ -133,6 +144,7 @@ export class NativeEngine implements AgentEngine {
     this.compactionConfig =
       opts.compactionConfig ?? defaultCompactionForProvider(opts.provider);
     if (opts.sessionDir !== undefined) this.sessionDir = opts.sessionDir;
+    if (opts.onSnapshot !== undefined) this.onSnapshot = opts.onSnapshot;
     if (opts.sessionId !== undefined) this.sessionId = opts.sessionId;
     if (opts.recontextualize !== undefined)
       this.recontextualize = opts.recontextualize;
@@ -625,7 +637,7 @@ export class NativeEngine implements AgentEngine {
     turnCount: number,
     compactionCount: number,
   ): Promise<void> {
-    if (this.sessionDir === undefined) return;
+    if (this.sessionDir === undefined && this.onSnapshot === undefined) return;
     const snap = makeSnapshot(
       messages,
       turnCount,
@@ -633,6 +645,16 @@ export class NativeEngine implements AgentEngine {
       this.cumulativeUsage,
       persistCompactionState(this.compactionState),
     );
+
+    // `snap` is already a SessionSnapshot carrying this engine's id, so it
+    // travels as-is. Re-wrapping it would nest the payload one level deeper than
+    // the extractor expects, which surfaces on resume as a missing message list
+    // rather than as a type error.
+    if (this.onSnapshot !== undefined) {
+      await this.onSnapshot(snap);
+    }
+
+    if (this.sessionDir === undefined) return;
     const snapPath = path.join(this.sessionDir, "native-snapshot.json");
     const tmp = snapPath + ".tmp";
     try {

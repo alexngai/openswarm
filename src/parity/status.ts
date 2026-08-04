@@ -1,0 +1,281 @@
+/**
+ * status.ts — capability status derived from parity artifacts.
+ *
+ * The manifest deliberately has no status field. A capability is verified when the gates that prove
+ * it have actually run and passed, and the only honest source for that is the artifacts
+ * `scripts/verify-parity-wp.sh` writes to `artifacts/parity/<WP>/<cell>.json`. Anything else is a
+ * claim about a claim.
+ *
+ * Three qualifiers matter for release evidence and are tracked separately from pass/fail, because all
+ * of them describe artifacts that passed but should not count:
+ *
+ *   - *stale*: the artifact was produced at a different commit, so it says nothing about the code
+ *     being shipped;
+ *   - *dirty*: the artifact was produced from a modified working tree, so it is not reproducible;
+ *   - *unbaselined*: the repository suite does not pass on that cell, so a gate reporting green there
+ *     is green over a platform that does not work.
+ *
+ * Reading the filesystem is confined to `readArtifacts`; everything else is a pure function over the
+ * index so status derivation is testable without fixtures on disk.
+ */
+import * as fs from "node:fs";
+import * as path from "node:path";
+import type { Capability, Cell, WorkPackage, WorkPackageId } from "./contracts.js";
+import { PLATFORM_CELLS } from "./contracts.js";
+import { CAPABILITIES } from "./capabilities.js";
+import { WORK_PACKAGES } from "./work-packages.js";
+
+/**
+ * The target `scripts/verify-parity-wp.sh` writes for the repository suite. Not a work package, but
+ * it is filed in the same artifact tree, so the index holds it under this key.
+ */
+const BASELINE = "baseline" as WorkPackageId;
+
+/** A parity artifact, narrowed to the fields status derivation depends on. */
+export interface ArtifactRecord {
+  readonly workPackage: WorkPackageId;
+  readonly cell: string;
+  readonly result: "pass" | "fail" | "error" | "not-implemented" | string;
+  readonly commit: string;
+  readonly workingTreeDirty: boolean;
+}
+
+/** Artifacts keyed by `<WP>/<cell>`. */
+export type ArtifactIndex = ReadonlyMap<string, ArtifactRecord>;
+
+export function artifactKey(wp: WorkPackageId, cell: string): string {
+  return `${wp}/${cell}`;
+}
+
+/**
+ * Loads every artifact under `root`. Unreadable or malformed files are skipped rather than thrown on:
+ * a corrupt artifact is absent evidence, which the caller already handles, and failing the whole
+ * report because one file is truncated would hide the other capabilities' real state.
+ */
+export function readArtifacts(root: string): ArtifactIndex {
+  const index = new Map<string, ArtifactRecord>();
+  let packages: fs.Dirent[];
+  try {
+    packages = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return index;
+  }
+
+  for (const entry of packages) {
+    if (!entry.isDirectory()) continue;
+    const dir = path.join(root, entry.name);
+    let files: string[];
+    try {
+      files = fs.readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const file of files) {
+      if (!file.endsWith(".json")) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(fs.readFileSync(path.join(dir, file), "utf8"));
+      } catch {
+        continue;
+      }
+      const record = toRecord(parsed);
+      if (record !== undefined) {
+        index.set(artifactKey(record.workPackage, record.cell), record);
+      }
+    }
+  }
+  return index;
+}
+
+function toRecord(value: unknown): ArtifactRecord | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const raw = value as Record<string, unknown>;
+  const workPackage = raw["work_package"];
+  const cell = raw["cell"];
+  const result = raw["result"];
+  if (
+    typeof workPackage !== "string" ||
+    typeof cell !== "string" ||
+    typeof result !== "string"
+  ) {
+    return undefined;
+  }
+  return {
+    workPackage,
+    cell,
+    result,
+    commit: typeof raw["commit"] === "string" ? raw["commit"] : "unknown",
+    workingTreeDirty: raw["working_tree_dirty"] === true,
+  };
+}
+
+export type EvidenceState =
+  | "pass"
+  | "fail"
+  | "not-implemented"
+  | "missing"
+  | "stale"
+  /**
+   * The gate passed, and the package that owns it has declared fixtures nothing yet proves.
+   *
+   * A passing gate covers the fixtures it runs, not the package's scope, and those stopped being the
+   * same thing once `WorkPackage.owes` existed to record the difference. Without this state a
+   * capability could read `verified` off a package that openly admits it is unfinished — which is how
+   * `DDP-OBS-01` came to rest on attempt records that only one of three surfaces produced.
+   */
+  | "owed"
+  /**
+   * The gate passed on a platform cell whose repository baseline does not.
+   *
+   * A work-package gate runs its own fixtures and nothing else, so on a cell where the suite as a
+   * whole is broken it can report green over a platform that does not work. That is not theoretical:
+   * `Test (macos-latest)` failed at `npm ci` for a month — `@vscode/ripgrep`'s postinstall hitting an
+   * unauthenticated rate limit — so the macOS job never ran a test, and three real defects
+   * accumulated behind it while the Linux job stayed green.
+   *
+   * Only platform cells are held to this. A scope cell like `crypto-matrix` or `security-review`
+   * names a body of work rather than a machine, and has no baseline to be measured against.
+   */
+  | "unbaselined"
+  | "dirty";
+
+export interface EvidenceStatus {
+  readonly workPackage: WorkPackageId;
+  readonly cell: Cell;
+  readonly state: EvidenceState;
+}
+
+/**
+ * `verified` requires every piece of evidence to pass. `failing` means at least one gate ran and did
+ * not pass — a strictly worse signal than never having run, so it wins. `unproven` covers gates that
+ * are missing, unimplemented, stale, dirty, owed, or unbaselined: all of them mean the same thing,
+ * which is that nobody has shown this works on this code.
+ */
+export type CapabilityStatus = "verified" | "failing" | "unproven";
+
+export interface CapabilityReport {
+  readonly id: string;
+  readonly status: CapabilityStatus;
+  readonly evidence: readonly EvidenceStatus[];
+}
+
+export interface StatusOptions {
+  /**
+   * When set, an artifact from any other commit counts as stale. Release gates must set this;
+   * local runs generally should not, or every uncommitted edit invalidates the whole ledger.
+   */
+  readonly atCommit?: string;
+  /** When true, artifacts produced from a modified working tree do not count. Defaults to true. */
+  readonly requireCleanTree?: boolean;
+  /**
+   * Packages with declared-but-unproven fixtures. Injected rather than read from the manifest here so
+   * this stays a pure function of its inputs; `owingPackages()` is the default a caller wants.
+   */
+  readonly owing?: ReadonlySet<WorkPackageId>;
+}
+
+/** Gated packages that still owe fixtures, derived from the manifest alone. */
+export function owingPackages(
+  packages: readonly WorkPackage[] = WORK_PACKAGES,
+): ReadonlySet<WorkPackageId> {
+  return new Set(packages.filter((wp) => (wp.owes ?? []).length > 0).map((wp) => wp.id));
+}
+
+export function statusOf(
+  cap: Capability,
+  index: ArtifactIndex,
+  options: StatusOptions = {},
+): CapabilityReport {
+  const requireCleanTree = options.requireCleanTree ?? true;
+  const evidence: EvidenceStatus[] = [];
+
+  const owing = options.owing ?? owingPackages();
+
+  for (const ref of cap.evidence) {
+    for (const cell of ref.cells) {
+      const record = index.get(artifactKey(ref.workPackage, cell));
+      const state = stateOf(record, options.atCommit, requireCleanTree);
+      evidence.push({
+        workPackage: ref.workPackage,
+        cell,
+        // Only a pass is downgraded. Anything else is already a stronger objection,
+        // and reporting `owed` over `fail` would make an unfinished package look
+        // like the milder problem.
+        //
+        // `unbaselined` is checked before `owed` because it is the wider fault: an
+        // unfinished package is one package, while a cell whose suite does not pass
+        // invalidates every gate filed against that cell, including this one.
+        state:
+          state !== "pass"
+            ? state
+            : !baselinePasses(index, cell, options.atCommit, requireCleanTree)
+              ? "unbaselined"
+              : owing.has(ref.workPackage)
+                ? "owed"
+                : state,
+      });
+    }
+  }
+
+  const states = new Set(evidence.map((e) => e.state));
+  const status: CapabilityStatus = states.has("fail")
+    ? "failing"
+    : evidence.length > 0 && states.size === 1 && states.has("pass")
+      ? "verified"
+      : "unproven";
+
+  return { id: cap.id, status, evidence };
+}
+
+/**
+ * Whether the repository suite passes on `cell`, held to the same commit and clean-tree rules as the
+ * gate being judged. A non-platform cell has no baseline and is treated as satisfied rather than
+ * failed, since demanding one would make every matrix and review cell permanently unproven.
+ */
+function baselinePasses(
+  index: ArtifactIndex,
+  cell: string,
+  atCommit: string | undefined,
+  requireCleanTree: boolean,
+): boolean {
+  if (!(PLATFORM_CELLS as readonly string[]).includes(cell)) return true;
+  return (
+    stateOf(index.get(artifactKey(BASELINE, cell)), atCommit, requireCleanTree) === "pass"
+  );
+}
+
+function stateOf(
+  record: ArtifactRecord | undefined,
+  atCommit: string | undefined,
+  requireCleanTree: boolean,
+): EvidenceState {
+  if (record === undefined) return "missing";
+  if (record.result === "not-implemented") return "not-implemented";
+  if (record.result !== "pass") return "fail";
+  // Order matters below: a dirty tree is the stronger objection, since a stale
+  // artifact at least describes some identifiable commit.
+  if (requireCleanTree && record.workingTreeDirty) return "dirty";
+  if (atCommit !== undefined && record.commit !== atCommit) return "stale";
+  return "pass";
+}
+
+export function reportAll(
+  index: ArtifactIndex,
+  options: StatusOptions = {},
+  capabilities: readonly Capability[] = CAPABILITIES,
+): CapabilityReport[] {
+  return capabilities.map((cap) => statusOf(cap, index, options));
+}
+
+/** Counts by status, for a one-line summary. */
+export function summarize(
+  reports: readonly CapabilityReport[],
+): Record<CapabilityStatus, number> {
+  const out: Record<CapabilityStatus, number> = {
+    verified: 0,
+    failing: 0,
+    unproven: 0,
+  };
+  for (const report of reports) out[report.status] += 1;
+  return out;
+}

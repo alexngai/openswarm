@@ -8,9 +8,10 @@
 import type {
   AgentEngine,
   EngineCapabilities,
+  PermissionGate,
   RunConfig,
 } from "./index.js";
-import type { NormalizedEvent, Usage } from "../core/types.js";
+import type { NormalizedEvent, PermissionMode, Usage } from "../core/types.js";
 import type {
   SandboxMode,
   AskForApproval,
@@ -34,9 +35,23 @@ export interface CodexFrameworkEngineOptions {
   readonly codexBinary?: string;
   /** Working directory forwarded to the App Server subprocess. */
   readonly cwd?: string;
-  /** Sandbox policy. Defaults to "danger-full-access". */
-  readonly sandbox?: SandboxMode;
-  /** Approval policy. Defaults to "never". */
+  /**
+   * openswarm permission mode governing Codex's own built-in tooling.
+   *
+   * Codex runs its file and shell tools inside its own process, so they never
+   * reach `canUseTool` and none of openswarm's containment applies to them.
+   * Forwarding the session's permission mode as Codex's sandbox mode is the
+   * only way a Codex-backed run honours the mode the user selected. The two
+   * vocabularies are identical by construction; see `codexSandboxFor`.
+   *
+   * Defaults to `"read-only"` when omitted, so a caller that forgets to pass
+   * one gets the restrictive end rather than the permissive one.
+   */
+  readonly permissionMode?: PermissionMode;
+  /**
+   * Approval policy. Defaults to `"never"`, meaning "enforce the sandbox
+   * without escalation" — no approval channel exists to escalate to.
+   */
   readonly approvalPolicy?: AskForApproval;
   /**
    * Tier 2 tool implementations to register with the codex agent as host
@@ -56,17 +71,39 @@ export interface CodexFrameworkEngineOptions {
    * CodexAppServerProvider is constructed from the other options.
    *
    * Receives the resolved `dynamicTools` + `onDynamicToolCall` so factories
-   * can wire the same dynamic-tools pipeline as the production path.
+   * can wire the same dynamic-tools pipeline as the production path, and the
+   * resolved `sandbox` so tests can assert the mode a real provider would be
+   * built with without spawning codex.
    */
   readonly providerFactory?: (args: {
     dynamicTools: readonly Tool[];
     onDynamicToolCall: DynamicToolCallHandler | undefined;
+    sandbox: SandboxMode;
   }) => CodexAppServerProvider;
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Map an openswarm permission mode onto Codex's sandbox mode.
+ *
+ * The two enumerations happen to share all three names, but they are separate
+ * types owned by separate projects, so this stays an explicit total mapping
+ * rather than a cast: if either side adds a variant, the compiler reports it
+ * here instead of silently widening what Codex is allowed to do.
+ */
+export function codexSandboxFor(mode: PermissionMode): SandboxMode {
+  switch (mode) {
+    case "read-only":
+      return "read-only";
+    case "workspace-write":
+      return "workspace-write";
+    case "danger-full-access":
+      return "danger-full-access";
+  }
+}
 
 /**
  * Default model used when --framework codex-chatgpt is selected without a
@@ -115,16 +152,27 @@ function toolImplToCodexTool(impl: ToolImpl): Tool {
  * Build the onDynamicToolCall handler that routes codex agent tool calls
  * back to the openswarm tool implementations.
  *
- * Unknown-tool requests, validation errors, and execution exceptions are
- * all wrapped into a `{success: false}` response — the handler never throws.
+ * Unknown-tool requests, denials, validation errors, and execution exceptions
+ * are all wrapped into a `{success: false}` response — the handler never throws.
  * The returned tool's text output is sent verbatim as `inputText` content.
+ *
+ * `getGate` reads the gate from the run in progress rather than closing over
+ * one, because the handler is built at construction and `canUseTool` arrives
+ * per-run. A call that arrives with no run in flight is denied: the AgentEngine
+ * contract is that a tool executes only after the gate passes, so an absent
+ * gate is an unanswerable request, not an unrestricted one.
  */
 function buildDynamicToolCallHandler(
   tools: readonly ToolImpl[],
   cwd: string,
   host: SwarmHost | undefined,
+  getGate: () => PermissionGate | undefined,
 ): DynamicToolCallHandler {
   const byName = new Map<string, ToolImpl>(tools.map((t) => [t.spec.name, t]));
+  const refuse = (text: string): DynamicToolCallResponse => ({
+    contentItems: [{ type: "inputText", text }],
+    success: false,
+  });
   return async (
     toolName: string,
     args: unknown,
@@ -132,19 +180,33 @@ function buildDynamicToolCallHandler(
   ): Promise<DynamicToolCallResponse> => {
     const impl = byName.get(toolName);
     if (impl === undefined) {
-      return {
-        contentItems: [
-          { type: "inputText", text: `unknown tool: ${toolName}` },
-        ],
-        success: false,
-      };
+      return refuse(`unknown tool: ${toolName}`);
     }
+
+    const gate = getGate();
+    if (gate === undefined) {
+      return refuse(`permission denied: ${toolName} was called outside a run`);
+    }
+    let effectiveArgs = args;
+    try {
+      const decision = await gate(toolName, args);
+      if (!decision.allow) {
+        return refuse(`permission denied: ${decision.reason}`);
+      }
+      if (decision.updatedInput !== undefined) {
+        effectiveArgs = decision.updatedInput;
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return refuse(`permission check failed: ${msg}`);
+    }
+
     const ctx: ToolExecutionContext = {
       cwd,
       ...(host !== undefined && { host }),
     };
     try {
-      const result = await impl.execute(args, ctx);
+      const result = await impl.execute(effectiveArgs, ctx);
       if (result.status === "ok") {
         return {
           contentItems: [{ type: "inputText", text: result.output }],
@@ -193,22 +255,31 @@ export class CodexFrameworkEngine implements AgentEngine {
   private cumulativeUsage: Usage = { inputTokens: 0, outputTokens: 0 };
   /** Set to true when any error event is yielded. Subsequent run() calls fail fast (Defect 4). */
   private dead = false;
+  /** Gate belonging to the run in flight; read by the dynamic-tool handler. */
+  private currentGate: PermissionGate | undefined;
 
   constructor(opts: CodexFrameworkEngineOptions = {}) {
     const tools = opts.tools ?? [];
     const dynamicTools = tools.map(toolImplToCodexTool);
     const onDynamicToolCall =
       tools.length > 0
-        ? buildDynamicToolCallHandler(tools, opts.cwd ?? process.cwd(), opts.host)
+        ? buildDynamicToolCallHandler(
+            tools,
+            opts.cwd ?? process.cwd(),
+            opts.host,
+            () => this.currentGate,
+          )
         : undefined;
 
+    const sandbox = codexSandboxFor(opts.permissionMode ?? "read-only");
+
     if (opts.providerFactory !== undefined) {
-      this.provider = opts.providerFactory({ dynamicTools, onDynamicToolCall });
+      this.provider = opts.providerFactory({ dynamicTools, onDynamicToolCall, sandbox });
     } else {
       this.provider = new CodexAppServerProvider({
         codexBinary: opts.codexBinary,
         cwd: opts.cwd,
-        sandbox: opts.sandbox,
+        sandbox,
         approvalPolicy: opts.approvalPolicy,
         ...(dynamicTools.length > 0 && { dynamicTools }),
         ...(onDynamicToolCall !== undefined && { onDynamicToolCall }),
@@ -221,6 +292,9 @@ export class CodexFrameworkEngine implements AgentEngine {
   }
 
   async *run(config: RunConfig): AsyncIterable<NormalizedEvent> {
+    // Publish this run's gate before anything can call a dynamic tool.
+    this.currentGate = config.canUseTool;
+
     // Fail fast if a previous turn errored — the engine is in a failed state
     // and the Codex thread may be unusable (Defect 4).
     if (this.dead) {
@@ -297,6 +371,9 @@ export class CodexFrameworkEngine implements AgentEngine {
         },
       };
       return;
+    } finally {
+      // Retire the gate with the turn so a late call cannot reuse it.
+      this.currentGate = undefined;
     }
 
     // Sync cumulative usage from provider after each turn.

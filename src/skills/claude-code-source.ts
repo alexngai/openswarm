@@ -43,6 +43,14 @@ export interface ClaudeCodeSkillSourceOptions {
   readonly envOverrides?: NodeJS.ProcessEnv;
   /** Max ancestor directories to walk (default 10) */
   readonly maxAncestorDepth?: number;
+  /**
+   * Whether skills found by walking up from `cwd` may be used. Defaults to
+   * true. The trust gate passes false for an untrusted workspace, leaving only
+   * the user's own skill directories. A `SKILL.md` is prompt injection rather
+   * than execution, but it is repository-authored text that steers an agent
+   * holding real tools, so an untrusted repository does not get to supply it.
+   */
+  readonly allowWorkspaceConfig?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -224,12 +232,14 @@ export class ClaudeCodeSource implements SkillSource {
   private readonly homedir: string;
   private readonly env: NodeJS.ProcessEnv;
   private readonly maxAncestorDepth: number;
+  private readonly allowWorkspaceConfig: boolean;
 
   constructor(opts?: ClaudeCodeSkillSourceOptions) {
     this.cwd = opts?.cwd ?? process.cwd();
     this.homedir = opts?.homedir ?? os.homedir();
     this.env = opts?.envOverrides ?? process.env;
     this.maxAncestorDepth = opts?.maxAncestorDepth ?? 10;
+    this.allowWorkspaceConfig = opts?.allowWorkspaceConfig ?? true;
   }
 
   // -------------------------------------------------------------------------
@@ -285,12 +295,16 @@ export class ClaudeCodeSource implements SkillSource {
       roots.push(path.join(claudeConfigDir, "skills"));
     }
 
-    // 3. Ancestor walk from cwd.
-    const ancestors = this._ancestors();
-    for (const dir of ancestors) {
-      roots.push(path.join(dir, ".claude", "skills"));
-      roots.push(path.join(dir, ".codex", "skills"));
-      roots.push(path.join(dir, ".omc", "skills"));
+    // 3. Ancestor walk from cwd. Skipped wholesale for an untrusted workspace:
+    // the walk reaches above cwd, and a repository cloned into a subdirectory
+    // controls those levels too.
+    if (this.allowWorkspaceConfig) {
+      const ancestors = this._ancestors();
+      for (const dir of ancestors) {
+        roots.push(path.join(dir, ".claude", "skills"));
+        roots.push(path.join(dir, ".codex", "skills"));
+        roots.push(path.join(dir, ".omc", "skills"));
+      }
     }
 
     // 4-7. Home directory roots.

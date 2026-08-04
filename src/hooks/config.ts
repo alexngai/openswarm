@@ -28,6 +28,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
 import { z } from "zod";
+import { isWithin } from "../kernel/workspace-authority.js";
 import type { HookConfig } from "./index.js";
 
 // ---------------------------------------------------------------------------
@@ -84,6 +85,12 @@ export interface LoadHooksConfigOptions {
   readonly cwd?: string;
   readonly homedir?: string;
   readonly envOverrides?: NodeJS.ProcessEnv;
+  /**
+   * Whether configuration inside the workspace may be read. Defaults to true.
+   * The trust gate passes false for an untrusted workspace, whose hooks would
+   * otherwise run `bash -c` on the first tool call.
+   */
+  readonly allowWorkspaceConfig?: boolean;
 }
 
 export interface LoadedHooksConfig {
@@ -122,10 +129,20 @@ export function formatHooksConfigError(
 // Resolver
 // ---------------------------------------------------------------------------
 
-interface Candidate {
+export interface Candidate {
   readonly path: string;
   /** true when the file is a Claude Code settings.json (extract `.hooks`). */
   readonly isSettingsJson: boolean;
+}
+
+/**
+ * The paths this loader would consult, highest precedence first.
+ *
+ * Exported so the trust scanner reports on exactly the files the loader would
+ * read, rather than keeping a second copy of the hierarchy that can drift.
+ */
+export function hookConfigCandidates(opts: LoadHooksConfigOptions = {}): Candidate[] {
+  return resolveCandidates(opts);
 }
 
 function resolveCandidates(opts: LoadHooksConfigOptions): Candidate[] {
@@ -174,7 +191,13 @@ function firstExisting(candidates: readonly Candidate[]): Candidate | undefined 
 export async function loadHooksConfig(
   opts: LoadHooksConfigOptions = {},
 ): Promise<LoadedHooksConfig> {
-  const candidate = firstExisting(resolveCandidates(opts));
+  const cwd = opts.cwd ?? process.cwd();
+  const all = resolveCandidates(opts);
+  // An untrusted workspace loses its own hooks but keeps the user's, so the
+  // degraded session still behaves like the user configured it.
+  const candidate = firstExisting(
+    opts.allowWorkspaceConfig === false ? all.filter((c) => !isWithin(c.path, cwd)) : all,
+  );
   if (candidate === undefined) {
     return { config: {} };
   }

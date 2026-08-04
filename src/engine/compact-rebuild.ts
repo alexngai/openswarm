@@ -137,7 +137,7 @@ export function buildPostCompactAttachments(
         `The following file was read before the conversation was summarized and is re-attached for continuity:\n<file path="${filePath}">\n${numberLines(content)}\n</file>`,
       ),
     );
-    recordFileRead(filePath);
+    recordFileRead(filePath, content);
   }
 
   // --- Todo re-injection ---------------------------------------------------

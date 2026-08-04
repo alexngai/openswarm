@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { z } from "zod";
 import type { NormalizedEvent } from "../core/types.js";
+import { ToolAccesses } from "../tools/access.js";
 
 // ---------------------------------------------------------------------------
 // Mock SDK — must be declared before any import that uses it.
@@ -1202,6 +1203,7 @@ describe("Scenario 10: non-ZodObject schema acceptance", () => {
         status: "ok" as const,
         output: JSON.stringify(args),
       }),
+      accesses: () => ToolAccesses.plugin("p"),
     };
 
     await collectEvents(makeConfig({ tools: [pluginTool] }));
@@ -1228,6 +1230,7 @@ describe("Scenario 10: non-ZodObject schema acceptance", () => {
       },
       zodSchema: z.unknown(),
       execute: async () => ({ status: "ok" as const, output: "2026-01-01T00:00:00Z" }),
+      accesses: () => ToolAccesses.mcpServer("srv"),
     };
 
     await expect(collectEvents(makeConfig({ tools: [mcpTool] }))).resolves.toBeDefined();
@@ -1250,6 +1253,7 @@ describe("Scenario 10: non-ZodObject schema acceptance", () => {
       },
       zodSchema: z.unknown(),
       execute: async () => ({ status: "ok" as const, output: "" }),
+      accesses: () => ToolAccesses.mcpServer("srv"),
     };
 
     await collectEvents(makeConfig({ tools: [mcpTool] }));

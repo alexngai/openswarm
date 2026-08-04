@@ -1,0 +1,468 @@
+/**
+ * work-packages.ts — the docs/67 work-package schedule as data.
+ *
+ * This is a transcription, not a second source of truth: docs/67 remains the document of record
+ * and `validate.ts` cross-checks this registry against it. The reason to have it as data at all is
+ * that prose cannot be checked for the failures that actually happened during roadmap review —
+ * a package depending on work scheduled in a later release, a capability citing a cell its gate
+ * never runs, an owner loaded past capacity.
+ *
+ * Six packages carry `macos-arm64` beside `linux-x64`: the kernel and gate (`WP-00`, `WP-00a`),
+ * trust (`WP-02`), path containment (`WP-03`), the process broker (`WP-04`), and approvals
+ * (`WP-09`). macOS is the platform the product ships on, and evidence gathered entirely inside a
+ * Linux container is evidence about a machine no user has. It is not merely a gap in coverage:
+ * the two defects that a second cell immediately surfaced — a trust grant that could not be found
+ * again, and session fixtures that wrote into the developer's own history checkout — were both
+ * invisible to a green Linux gate.
+ *
+ * The rest stay single-cell on purpose. A macOS cell runs on the host rather than in Compose,
+ * which has no macOS runtime, so each one is a second execution surface to keep honest; they are
+ * spent where a platform difference can change a security answer.
+ *
+ * `ownerSplit` is core capacity only, and its per-release totals are checked against the docs/67
+ * loading table. `WP-29`, `WP-31`, and `WP-33` also consume bought external calendar time, which
+ * stays in docs/67 prose because it is not drawn from the same pool and cannot be traded against
+ * feature work — hence `External: 0` on the packages a vendor participates in.
+ */
+import type { WorkPackage } from "./contracts.js";
+import { PLATFORM_CELLS } from "./contracts.js";
+
+export const WORK_PACKAGES: readonly WorkPackage[] = [
+  {
+    id: "WP-00",
+    title: "Effect-transaction walking skeleton",
+    release: "R1",
+    ownerSplit: { B: 2, C: 2 },
+    dependsOn: [],
+    cells: ["linux-x64", "macos-arm64"],
+    fixtures: ["FX-EFFECT-001", "FX-CRASH-001", "FX-STORAGE-DEFAULT-001"],
+    gateImplemented: true,
+  },
+  {
+    id: "WP-00a",
+    title: "Production adoption of the frozen contracts",
+    release: "R1",
+    ownerSplit: { A: 2, C: 2 },
+    dependsOn: ["WP-00"],
+    cells: ["linux-x64", "macos-arm64"],
+    // `FX-AUDIT-*` came from this package's remainder. The survey found that
+    // containment and authorization were already adopted and the *record* of the
+    // decision was what production lacked, so the attempt journal is evidence
+    // here rather than in `WP-12`, which projects those records but does not
+    // produce them.
+    fixtures: ["FX-ESCAPE-001", "FX-GATE-001", "FX-AUDIT-001..019", "FX-WORKER-001..006"],
+    // The CLI and the swarm record attempts; ACP authorizes per resource and records nothing, the
+    // kernel's weaker staging is still present beside the contained write, `write_file` is the one
+    // tool with no rename-time compare-and-swap, and every record so far comes from a gate run
+    // rather than a live one. See docs/67.
+    owes: ["FX-AUDIT-020..022", "FX-WRITE-001"],
+    gateImplemented: true,
+  },
+  {
+    id: "WP-01",
+    title: "Capability manifest and evidence harness",
+    release: "R1",
+    ownerSplit: { C: 1 },
+    dependsOn: ["WP-00"],
+    cells: ["linux-x64"],
+    fixtures: ["FX-MANIFEST-001", "FX-CLAIM-001", "FX-EVAL-PLAN-001"],
+    gateImplemented: true,
+  },
+  {
+    id: "WP-02",
+    title: "Repository trust and configuration provenance",
+    release: "R1",
+    ownerSplit: { A: 2 },
+    dependsOn: ["WP-01"],
+    cells: ["linux-x64", "macos-arm64"],
+    fixtures: ["FX-TRUST-001..007"],
+    gateImplemented: true,
+  },
+  {
+    id: "WP-03",
+    title: "Canonical path authorization",
+    release: "R1",
+    ownerSplit: { A: 1 },
+    dependsOn: ["WP-01"],
+    cells: ["linux-x64", "macos-arm64"],
+    fixtures: ["FX-PATH-001..020"],
+    gateImplemented: true,
+  },
+  {
+    id: "WP-04",
+    title: "Process broker and fail-closed shell baseline",
+    release: "R1",
+    ownerSplit: { A: 2 },
+    dependsOn: ["WP-02", "WP-03"],
+    cells: ["linux-x64", "macos-arm64"],
+    fixtures: ["FX-PROC-001..012"],
+    gateImplemented: true,
+  },
+  {
+    id: "WP-05",
+    title: "Retry operation ledger and cancellation barrier",
+    release: "R1",
+    ownerSplit: { B: 2 },
+    dependsOn: ["WP-01"],
+    cells: ["linux-x64"],
+    fixtures: ["FX-RETRY-001..010"],
+    gateImplemented: true,
+  },
+  {
+    id: "WP-06",
+    title: "Atomic task transitions and safe target CAS",
+    release: "R1",
+    ownerSplit: { C: 2 },
+    dependsOn: ["WP-01"],
+    cells: ["linux-x64"],
+    fixtures: ["FX-CLAIM-002", "FX-CAS-001"],
+    gateImplemented: true,
+  },
+  {
+    id: "WP-07",
+    title: "Session schema, journal, snapshots, and importer",
+    release: "R2",
+    ownerSplit: { B: 3 },
+    dependsOn: ["WP-00", "WP-05"],
+    cells: ["linux-x64"],
+    fixtures: ["FX-JOURNAL-001..012", "FX-MIG-SESSION-001"],
+    gateImplemented: true,
+  },
+  {
+    id: "WP-08",
+    title: "Automatic multi-turn and crash resume",
+    release: "R2",
+    ownerSplit: { B: 3 },
+    dependsOn: ["WP-07"],
+    cells: ["linux-x64"],
+    fixtures: ["FX-RESUME-001..011"],
+    // Resume works for every engine through the journal, but only from the CLI: the ACP and TUI
+    // surfaces still take the old path. The durable-by-default switch is `WP-27a`'s, not owed here.
+    owes: ["FX-RESUME-012..013"],
+    gateImplemented: true,
+  },
+  {
+    id: "WP-09",
+    title: "Approval broker and headless default deny",
+    release: "R2",
+    ownerSplit: { A: 1 },
+    dependsOn: ["WP-02", "WP-04"],
+    cells: ["linux-x64", "macos-arm64"],
+    fixtures: ["FX-APPROVAL-001..012"],
+    gateImplemented: true,
+  },
+  {
+    id: "WP-10",
+    title: "TUI single-owner input state",
+    release: "R2",
+    ownerSplit: { C: 2 },
+    dependsOn: ["WP-08", "WP-09"],
+    cells: ["linux-x64-pty"],
+    fixtures: ["FX-TUI-KEYS-001..014"],
+    gateImplemented: false,
+  },
+  {
+    id: "WP-11",
+    title: "Shared writer lease and generation tracking",
+    release: "R2",
+    ownerSplit: { A: 2, C: 1 },
+    dependsOn: ["WP-03", "WP-06"],
+    cells: ["linux-x64"],
+    fixtures: ["FX-RW-001..012"],
+    // A stale read is detected and a stale write refused. The reader half is not built: output is
+    // not provisional and nothing revalidates it, which is why `DDP-SWM-02` cannot certify.
+    owes: ["FX-RW-013..014"],
+    gateImplemented: true,
+  },
+  {
+    id: "WP-12",
+    title: "Audit and event projections",
+    release: "R2",
+    ownerSplit: { C: 2 },
+    // `WP-00a` was missing and is what produces the facts this package projects;
+    // see docs/67. Without it the estimate covered the second half of a job whose
+    // first half was scheduled elsewhere and unfinished.
+    dependsOn: ["WP-00", "WP-00a", "WP-05", "WP-06", "WP-07", "WP-09", "WP-11"],
+    cells: ["linux-x64"],
+    fixtures: ["FX-EVENT-001..010"],
+    gateImplemented: false,
+  },
+  {
+    // Split forward out of `WP-27`, which owned encryption in R5. `WP-08` found
+    // that an R2 exit criterion depends on it: history cannot be durable by
+    // default until it can be encrypted, and `DDP-CONV-01` is an R2 outcome. The
+    // number records where the scope came from; the release records when it is
+    // needed.
+    id: "WP-27a",
+    title: "Session encryption at rest and key providers",
+    release: "R2",
+    ownerSplit: { B: 2 },
+    dependsOn: ["WP-07"],
+    cells: ["crypto-matrix"],
+    fixtures: ["FX-CRYPT-001..010"],
+    gateImplemented: false,
+  },
+  {
+    id: "WP-13",
+    title: "Domain and named-secret grants",
+    release: "R3",
+    ownerSplit: { A: 3 },
+    dependsOn: ["WP-04", "WP-09", "WP-12"],
+    cells: ["linux-x64"],
+    fixtures: ["FX-NET-001..016", "FX-SECRET-001..008"],
+    gateImplemented: false,
+  },
+  {
+    id: "WP-14",
+    title: "Supervised extension execution",
+    release: "R3",
+    ownerSplit: { A: 2, C: 1 },
+    dependsOn: ["WP-02", "WP-04", "WP-09", "WP-13"],
+    cells: ["linux-x64"],
+    fixtures: ["FX-EXT-ABUSE-001..016", "FX-PLUGIN-HASH-001"],
+    gateImplemented: false,
+  },
+  {
+    id: "WP-15",
+    title: "Layered extension configuration and MCP core",
+    release: "R3",
+    ownerSplit: { B: 2, C: 1 },
+    dependsOn: ["WP-14"],
+    cells: ["linux-x64"],
+    fixtures: ["FX-MCP-001..014", "FX-MCP-OAUTH-001", "FX-MIG-CONFIG-001"],
+    gateImplemented: false,
+  },
+  {
+    id: "WP-16",
+    title: "Typed provider contract and certification manifest",
+    release: "R3",
+    ownerSplit: { B: 3 },
+    dependsOn: ["WP-07", "WP-08", "WP-12"],
+    cells: ["provider-contract"],
+    fixtures: ["FX-PROVIDER-001..018", "FX-MODEL-LABEL-001"],
+    gateImplemented: false,
+  },
+  {
+    id: "WP-17",
+    title: "Worker composition parity and transport identity",
+    release: "R3",
+    ownerSplit: { C: 3 },
+    dependsOn: ["WP-06", "WP-09", "WP-11", "WP-12", "WP-14"],
+    cells: ["linux-x64"],
+    fixtures: ["FX-WORKER-001..012", "FX-MIG-DAEMON-001"],
+    gateImplemented: false,
+  },
+  {
+    id: "WP-18",
+    title: "Supervision, backpressure, and aggregate budgets",
+    release: "R3",
+    ownerSplit: { A: 1, B: 1, C: 1 },
+    dependsOn: ["WP-12", "WP-17"],
+    cells: ["linux-x64-load"],
+    fixtures: ["FX-SUP-001..014", "FX-BUDGET-001..006"],
+    gateImplemented: false,
+  },
+  {
+    id: "WP-19",
+    title: "Checkpoint, rewind, and fork",
+    release: "R4",
+    ownerSplit: { B: 2, C: 1 },
+    dependsOn: ["WP-07", "WP-08", "WP-11"],
+    cells: ["linux-x64"],
+    fixtures: ["FX-REWIND-001..010"],
+    gateImplemented: false,
+  },
+  {
+    id: "WP-20",
+    title: "Harden isolated writer landing",
+    release: "R4",
+    ownerSplit: { A: 2, C: 1 },
+    dependsOn: ["WP-06", "WP-11", "WP-12"],
+    cells: ["linux-x64-git"],
+    fixtures: ["FX-LAND-001..016"],
+    gateImplemented: false,
+  },
+  {
+    id: "WP-21",
+    title: "Core LSP manager and tools",
+    release: "R4",
+    ownerSplit: { A: 2, B: 2 },
+    dependsOn: ["WP-03", "WP-04", "WP-14", "WP-16"],
+    cells: ["lsp-matrix"],
+    fixtures: [
+      "FX-LSP-TS-001..004",
+      "FX-LSP-PY-001..004",
+      "FX-LSP-GO-001..004",
+    ],
+    gateImplemented: false,
+  },
+  {
+    id: "WP-22",
+    title: "Attachment store and image paths",
+    release: "R4",
+    ownerSplit: { B: 2, C: 1 },
+    dependsOn: ["WP-07", "WP-14", "WP-16"],
+    cells: ["image-matrix"],
+    fixtures: ["FX-IMG-001..012", "FX-MIG-BLOB-001"],
+    gateImplemented: false,
+  },
+  {
+    id: "WP-23",
+    title: "Durable memory and archive",
+    release: "R4",
+    ownerSplit: { A: 1, B: 1, C: 1 },
+    dependsOn: ["WP-07"],
+    cells: ["linux-x64"],
+    fixtures: ["FX-MEM-001..010", "FX-MIG-MEM-001"],
+    gateImplemented: false,
+  },
+  {
+    id: "WP-24",
+    title: "Team patch, conflict, usage, and steering UX",
+    release: "R4",
+    ownerSplit: { C: 3 },
+    dependsOn: ["WP-12", "WP-17", "WP-18", "WP-20"],
+    cells: ["linux-x64-team"],
+    fixtures: ["FX-TEAM-UX-001..012"],
+    gateImplemented: false,
+  },
+  {
+    id: "WP-25",
+    title: "Platform containment, packaging, and CI",
+    release: "R5",
+    ownerSplit: { A: 3, B: 1, C: 2 },
+    dependsOn: ["WP-03", "WP-04", "WP-13", "WP-14"],
+    cells: PLATFORM_CELLS,
+    // The estimate covers isolation and packaging. It does not cover auditing
+    // platform-dependent path assumptions, which the macOS trust-store defect
+    // (`FX-TRUST-007`, now proven in `WP-02`) showed to be a separate job: grants
+    // keyed by `path.resolve` were invisible to lookups canonicalized through
+    // `realpath`, and macOS reaches every temporary directory through a symlink.
+    //
+    // What remains here is the part no amount of path auditing supplies —
+    // isolation. `SandboxMode` is `bwrap | landlock | none`, both real modes
+    // Linux-only, so on the platform the product ships on every shell, hook, MCP
+    // server and plugin runs unconfined. It is reported honestly (`doctor` warns,
+    // `--sandbox require` refuses to start) but it is absent. Seatbelt
+    // (`sandbox-exec`) is present on macOS and denies writes under a profile, so
+    // this is implementation rather than research, and holding it at R5 prices a
+    // shipping platform like a secondary one. Needs a re-estimate and probably a
+    // pull-forward before R5 planning; see docs/67.
+    fixtures: ["FX-PLAT-001..005", "FX-WSL-ID-001"],
+    gateImplemented: false,
+  },
+  {
+    id: "WP-26",
+    title: "Headless and Zed ACP completion",
+    release: "R5",
+    ownerSplit: { B: 2, C: 2 },
+    dependsOn: ["WP-08", "WP-09", "WP-19", "WP-22"],
+    cells: ["surface-matrix"],
+    fixtures: ["FX-HDL-001..010", "FX-ACP-001..010"],
+    gateImplemented: false,
+  },
+  {
+    id: "WP-27",
+    title: "Retention, purge, and export",
+    release: "R5",
+    ownerSplit: { A: 1, B: 1 },
+    dependsOn: ["WP-07", "WP-19", "WP-22", "WP-23", "WP-27a"],
+    cells: ["crypto-matrix"],
+    fixtures: ["FX-RET-001..010", "FX-MIG-CRYPTO-001"],
+    gateImplemented: false,
+  },
+  {
+    id: "WP-28",
+    title: "Full matrix and evidence ledger",
+    release: "R5",
+    ownerSplit: { A: 1, B: 1, C: 2 },
+    dependsOn: [
+      "WP-10",
+      "WP-15",
+      "WP-16",
+      "WP-18",
+      "WP-19",
+      "WP-20",
+      "WP-21",
+      "WP-22",
+      "WP-23",
+      "WP-24",
+      "WP-25",
+      "WP-26",
+      "WP-27",
+    ],
+    cells: ["release-matrix"],
+    fixtures: ["FX-MATRIX-001..045", "FX-NONINFERIOR-001", "FX-EFFICIENCY-001"],
+    gateImplemented: false,
+  },
+  {
+    id: "WP-29",
+    title: "External security review",
+    release: "R5",
+    ownerSplit: { A: 1, B: 1, External: 0 },
+    // The signed final report additionally depends on WP-28; review start needs only these four.
+    dependsOn: ["WP-14", "WP-20", "WP-25", "WP-27", "WP-28"],
+    cells: ["security-review"],
+    fixtures: ["FX-SEC-REPORT-001"],
+    gateImplemented: false,
+  },
+  {
+    id: "WP-30",
+    title: "Security remediation and adversarial rerun",
+    release: "R6",
+    ownerSplit: { A: 3, B: 3 },
+    dependsOn: ["WP-29"],
+    cells: ["security-retest"],
+    fixtures: ["FX-SEC-RETEST-001"],
+    gateImplemented: false,
+  },
+  {
+    id: "WP-31",
+    title: "UX/QA, performance, and soak",
+    release: "R6",
+    ownerSplit: { B: 1, C: 3, External: 0 },
+    // Preparation needs WP-28 and WP-29; the signed artifact must run against the post-WP-30 SHA.
+    dependsOn: ["WP-28", "WP-29", "WP-30"],
+    cells: ["soak-8h"],
+    fixtures: ["FX-SOAK-001", "FX-UX-001..008"],
+    gateImplemented: false,
+  },
+  {
+    id: "WP-32",
+    title: "Migration, documentation, and claims audit",
+    release: "R6",
+    ownerSplit: { A: 1, B: 1, C: 1 },
+    dependsOn: [
+      "WP-15",
+      "WP-18",
+      "WP-20",
+      "WP-23",
+      "WP-24",
+      "WP-25",
+      "WP-26",
+      "WP-27",
+      "WP-28",
+      "WP-30",
+      "WP-31",
+    ],
+    cells: ["migration-claims"],
+    fixtures: ["FX-MIG-ALL-001..010", "FX-CLAIMS-001", "FX-PRIVACY-001"],
+    gateImplemented: false,
+  },
+  {
+    id: "WP-33",
+    title: "Release-candidate matrix and beta publication",
+    release: "R6",
+    ownerSplit: { A: 1, B: 1, C: 1 },
+    dependsOn: ["WP-30", "WP-31", "WP-32"],
+    cells: ["release"],
+    fixtures: ["FX-RC-001", "FX-ROLLBACK-001"],
+    gateImplemented: false,
+  },
+];
+
+const BY_ID = new Map(WORK_PACKAGES.map((wp) => [wp.id, wp]));
+
+export function workPackage(id: string): WorkPackage | undefined {
+  return BY_ID.get(id);
+}

@@ -1,4 +1,4 @@
-import { createWriteStream, type WriteStream } from "node:fs";
+import { openDurableAppend, type DurableAppendStream } from "./durable-append.js";
 
 export interface DeadLetterLine {
   readonly id: string;
@@ -15,50 +15,57 @@ export interface DeadLetterLine {
  * per-orchestrator-instance: `hasDelta()` tracks bytes written by THIS
  * instance. Pre-existing file contents are never considered part of the
  * delta, so `--allow-dead-letter` decisions are scoped to the current run.
+ *
+ * Durable rather than merely appended (docs/67 `WP-07`), because this file is
+ * read as evidence: `--allow-dead-letter` turns on whether a run dropped work, so
+ * a line lost with the process turns a lossy run into a clean one, and the caller
+ * has no way to tell. `write()` resolves against a committed line.
+ *
+ * The open is started in the constructor and awaited on first use. `Orchestrator`
+ * builds this synchronously alongside everything else it owns, and the file is
+ * created at construction as it always was.
  */
 export class DeadLetterWriter {
-  private stream: WriteStream;
-  private bytesWritten = 0;
+  private readonly opening: Promise<DurableAppendStream | null>;
+  private stream: DurableAppendStream | null = null;
   private failures = 0;
 
   constructor(readonly path: string) {
-    this.stream = createWriteStream(path, { flags: "a" });
-    this.stream.on("error", () => {
+    this.opening = openDurableAppend(path).catch(() => {
       this.failures += 1;
+      return null;
+    });
+    void this.opening.then((s) => {
+      this.stream = s;
     });
   }
 
   async write(line: DeadLetterLine): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const payload = JSON.stringify(line) + "\n";
-      this.stream.write(payload, (err) => {
-        if (err) {
-          this.failures += 1;
-          reject(err);
-          return;
-        }
-        this.bytesWritten += Buffer.byteLength(payload);
-        resolve();
-      });
+    const stream = await this.opening;
+    if (stream === null) return;
+    await new Promise<void>((resolve) => {
+      stream.write(`${JSON.stringify(line)}\n`, () => resolve());
     });
   }
 
   /** True when this run added any bytes to the dead-letter file. */
   hasDelta(): boolean {
-    return this.bytesWritten > 0;
+    return (this.stream?.bytesWritten() ?? 0) > 0;
   }
 
   /** True when this run encountered any write failures. */
   hadWriteFailures(): boolean {
-    return this.failures > 0;
+    return this.writeFailures() > 0;
   }
 
   /** Number of write failures encountered. */
   writeFailures(): number {
-    return this.failures;
+    return this.failures + (this.stream?.writeFailures() ?? 0);
   }
 
-  close(): Promise<void> {
-    return new Promise((resolve) => this.stream.end(resolve));
+  async close(): Promise<void> {
+    const stream = await this.opening;
+    if (stream === null) return;
+    await new Promise<void>((resolve) => stream.end(() => resolve()));
   }
 }

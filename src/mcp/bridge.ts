@@ -15,6 +15,7 @@
 
 import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../tools/types.js";
+import { ToolAccesses } from "../tools/access.js";
 import type { ToolSpec, JsonSchema } from "../core/types.js";
 import type { McpStdioClient, McpToolDescriptor } from "./client.js";
 
@@ -102,6 +103,12 @@ export function buildMcpToolImpl(
         };
       }
     },
+    // An MCP tool's real side effects happen inside the server, so no path
+    // here would be true. What can be named is which server is being handed
+    // the call, and that is the useful thing to bind an approval to: one
+    // decision per server for the session, rather than one per tool name or
+    // one per call.
+    accesses: () => ToolAccesses.mcpServer(client.serverName),
   };
 }
 

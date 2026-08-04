@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { filterToolsForFramework } from "./framework-filter.js";
 import type { ToolImpl } from "./types.js";
+import { ToolAccesses } from "./access.js";
 
 // ---------------------------------------------------------------------------
 // Stub helpers
@@ -16,6 +17,7 @@ function stubTool(name: string): ToolImpl {
       tier: 0,
     },
     execute: async () => ({ status: "ok", output: "" }),
+    accesses: () => ToolAccesses.none(),
   };
 }
 

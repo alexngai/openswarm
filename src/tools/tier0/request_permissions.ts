@@ -12,6 +12,7 @@
 
 import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
+import { ToolAccesses } from "../access.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import type { PermissionMode } from "../../core/types.js";
 
@@ -138,4 +139,5 @@ export const requestPermissionsTool: ToolImpl = {
   spec,
   execute,
   zodSchema: inputSchema,
+  accesses: () => ToolAccesses.all(),
 };

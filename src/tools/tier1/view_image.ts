@@ -11,6 +11,9 @@ import * as path from "node:path";
 import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
+import type { ToolAccesses as ToolAccessesType } from "../access.js";
+import { ToolAccesses } from "../access.js";
+import { resolveInWorkspace } from "../workspace-path.js";
 
 const inputSchema = z.object({
   path: z.string().describe("Absolute or relative path to the image file"),
@@ -49,9 +52,13 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   }
   const input: Input = parsed.data;
 
-  const resolved = path.isAbsolute(input.path)
-    ? input.path
-    : path.resolve(ctx.cwd, input.path);
+  // Workspace boundary — read_file enforces the same one so that read-only mode
+  // is genuinely confined to the workspace; an image is no less exfiltrable.
+  const contained = await resolveInWorkspace(input.path, ctx.cwd);
+  if (!contained.ok) {
+    return { status: "error", message: contained.message };
+  }
+  const resolved = contained.path;
 
   const ext = path.extname(resolved).toLowerCase();
   const mime = SUPPORTED_EXTENSIONS.get(ext);
@@ -84,8 +91,15 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   }
 }
 
+function accesses(raw: unknown, ctx: ToolExecutionContext): ToolAccessesType {
+  const parsed = inputSchema.safeParse(raw);
+  if (!parsed.success) return ToolAccesses.all();
+  return ToolAccesses.readFile(path.resolve(ctx.cwd, parsed.data.path));
+}
+
 export const viewImageTool: ToolImpl = {
   spec,
   execute,
   zodSchema: inputSchema,
+  accesses,
 };

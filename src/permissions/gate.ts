@@ -13,21 +13,38 @@
  *
  * Ordering (doc 17 "Phase 2 — design lock" + Phase 5 stage A bash gate):
  *   1. Unknown tool → hard deny.
- *   2. Bash-validation gate fires first. Block → deny. Warn → prompt;
+ *   2. Declared paths that escape the workspace → hard deny, before any prompt.
+ *      An out-of-workspace path is not something to ask about.
+ *   3. A call that named its resources is authorized per resource and returns.
+ *   4. Otherwise the bash-validation gate fires. Block → deny. Warn → prompt;
  *      approve falls through (or, when validationApproved, fast-allows to avoid
  *      a second prompt for the same call). Non-bash tools return null → fall through.
- *   3. Mode allows → fast-path allow.
- *   4. Mode denies → dispatch a prompt (headless stdin or bridge).
+ *   5. Mode allows → fast-path allow.
+ *   6. Mode denies → dispatch a prompt (headless stdin or bridge).
+ *
+ * Steps 3 and 5/6 are alternatives, not a sequence. Per-resource authorization
+ * is exact for a call whose paths are known, and re-running the tool-level mode
+ * check afterwards would prompt twice for one decision. The mode path remains
+ * for everything that cannot name what it touches: bash, plugin tools, MCP
+ * tools, and anything declaring `all()`. `rulesForMode` keeps the two in
+ * agreement, so which path a call takes changes when it is remembered, not
+ * whether it is allowed.
  */
 
 import { bashValidationGate } from "./bash-gate.js";
 import { readHeadlessApproval } from "./headless-prompt.js";
+import { makeResourceDeriver } from "./path-containment.js";
+import { makeApprovalBroker } from "./policy-broker.js";
+import { rulesForMode } from "./mode-rules.js";
+import { PolicyEngine } from "../kernel/policy-engine.js";
+import { readGeneration } from "../kernel/write-lease.js";
 import type { PermissionBridge } from "./bridge.js";
 import type { SessionAllowRules } from "./session-rules.js";
 import type { PermissionEngine } from "./index.js";
 import type { ToolDispatcher } from "../tools/dispatcher.js";
 import type { PermissionGate } from "../engine/index.js";
 import type { PermissionMode } from "../core/types.js";
+import type { AttemptPreparedPayload } from "../kernel/contracts.js";
 
 export interface CanUseToolDeps {
   readonly dispatcher: ToolDispatcher;
@@ -53,11 +70,45 @@ export interface CanUseToolDeps {
    * remembered for the session.
    */
   readonly sessionRules?: SessionAllowRules;
+  /**
+   * Identity of the trusted workspace, read fresh whenever a grant is used, so
+   * consent given about one repository state does not carry into another.
+   *
+   * Today the digest is computed once at startup, so tagging is what this
+   * buys: any later re-verification invalidates the grants it should, and the
+   * grant record says what it was given about. The re-verification itself is
+   * not here (docs/67 WP-09).
+   */
+  readonly trustBinding?: () => string | undefined;
+  /**
+   * Where authorized attempts are durably recorded before they execute
+   * (docs/67 `WP-00a` remainder). Optional because tests and the tool-name-only
+   * paths have nothing to record; when present, every per-resource
+   * authorization produces an `AttemptPrepared` fact.
+   */
+  readonly attempts?: AttemptRecorder;
+}
+
+/**
+ * Records the pre-decision half of an attempt.
+ *
+ * Narrower than the journal on purpose: the gate should be able to record a
+ * prepared attempt and nothing else, so the audit trail cannot grow a second
+ * writer that resolves attempts from the wrong side of execution.
+ */
+export interface AttemptRecorder {
+  prepare(payload: AttemptPreparedPayload): Promise<void>;
 }
 
 export function makeCanUseTool(deps: CanUseToolDeps): PermissionGate {
   const { dispatcher, permEngine, bridge, useHeadless, getCurrentMode, cwd } = deps;
   const emitLaneEvent = deps.emitLaneEvent ?? (() => {});
+  const derive = makeResourceDeriver(cwd);
+  const policy = new PolicyEngine(
+    () => rulesForMode(getCurrentMode()),
+    makeApprovalBroker({ bridge, useHeadless, getCurrentMode }),
+    { ...(deps.trustBinding !== undefined && { trustBinding: deps.trustBinding }) },
+  );
 
   return async (toolName, input) => {
     const toolImpl = dispatcher.get(toolName);
@@ -65,7 +116,43 @@ export function makeCanUseTool(deps: CanUseToolDeps): PermissionGate {
       return { allow: false, reason: `unknown tool: ${toolName}` };
     }
 
+    const derived = await derive(toolImpl, input);
+
+    // Containment precedes every prompt. A path outside the workspace is
+    // refused rather than escalated: no permission mode grants it, so asking
+    // would only offer the user a choice they do not have.
+    if (derived.kind === "denied") return derived.decision;
+
     const currentMode = getCurrentMode();
+
+    // Resources this call named are authorized per resource, which is what
+    // lets an approval bind to one path instead of to a tool name. This is
+    // authoritative for such a call: running the tool-level mode check after
+    // it would ask the user a second time about a decision already made.
+    if (derived.kind === "requests" && derived.requests.length > 0) {
+      const prepared: string[] = [];
+      for (const request of derived.requests) {
+        const decision = await policy.authorize(request);
+        if (!decision.allowed) {
+          return {
+            allow: false,
+            reason: decision.reason ?? `denied by policy (${decision.source})`,
+          };
+        }
+        if (deps.attempts !== undefined) {
+          // The shared generation rather than the in-process one. An expectation
+          // is only comparable across the agents that might invalidate it, and in
+          // shared mode every agent is its own process (docs/67 `WP-11`).
+          await deps.attempts.prepare({
+            request,
+            decision,
+            generation: await readGeneration(cwd),
+          });
+          prepared.push(request.operationId);
+        }
+      }
+      return prepared.length > 0 ? { allow: true, preparedOperationIds: prepared } : { allow: true };
+    }
 
     // Bash command validation gate fires first. For non-bash tools the gate
     // returns null and we fall through to the mode check.

@@ -1,13 +1,22 @@
 /**
- * Resource access declarations used by the tool scheduler to decide which
- * concurrent tool calls may overlap and which must serialize.
+ * Resource access declarations. These have two consumers.
  *
+ * The scheduler reads them to decide which concurrent tool calls may overlap.
  * Two accesses conflict when at least one of them writes and their paths
  * overlap. Reads (including `search`) on overlapping paths do not conflict.
  * The `all` kind is a global barrier: it conflicts with every other access,
- * including other `all`s. Tools that cannot describe their side effects in
- * terms of files (network, env mutation, shared in-process state, shell
- * commands) should declare `ToolAccesses.all()`.
+ * including other `all`s.
+ *
+ * The permission gate reads them to learn which resources a call will touch,
+ * so a grant can bind to one path or one host rather than to a tool name.
+ *
+ * Every tool must declare something — `ToolImpl.accesses` is required — because
+ * the two consumers have opposite failure modes and silence reads as
+ * "conflicts with nothing" to one and "nothing to authorize" to the other. A
+ * tool whose side effects cannot be named (shell commands, env mutation,
+ * shared in-process state) declares `all()`, which is honest in both
+ * directions: a global barrier to the scheduler and an unknown resource to the
+ * gate.
  *
  * Ported, with light adaptation, from kimi-code's tool-access module.
  */
@@ -21,11 +30,27 @@ export interface ToolFileAccess {
   readonly recursive?: boolean;
 }
 
+/**
+ * A call to something outside this machine's filesystem. `url` carries the
+ * grant identity: the policy engine binds an approval to its host, so
+ * `https://api.example.com/a` and `.../b` are one decision.
+ *
+ * The scheme need not be http. A stdio MCP server has no host of its own, so
+ * it is named `mcp://<server>`; a plugin is `plugin://<plugin>`. That keeps
+ * "approve this server once" on the same machinery as "approve this domain
+ * once" instead of inventing a second grant vocabulary for local servers.
+ */
+export interface ToolNetworkAccess {
+  readonly kind: "network";
+  readonly method: string;
+  readonly url: string;
+}
+
 export interface ToolResourceAccessAll {
   readonly kind: "all";
 }
 
-export type ToolResourceAccess = ToolFileAccess | ToolResourceAccessAll;
+export type ToolResourceAccess = ToolFileAccess | ToolNetworkAccess | ToolResourceAccessAll;
 export type ToolAccesses = readonly ToolResourceAccess[];
 
 export const ToolAccesses = {
@@ -35,6 +60,21 @@ export const ToolAccesses = {
 
   all(): ToolAccesses {
     return [{ kind: "all" }];
+  },
+
+  /** A request to a remote resource, identified for grants by its host. */
+  network(url: string, method = "GET"): ToolAccesses {
+    return [{ kind: "network", method, url }];
+  },
+
+  /** A call into an MCP server, identified by the server's configured name. */
+  mcpServer(serverName: string): ToolAccesses {
+    return ToolAccesses.network(`mcp://${encodeURIComponent(serverName)}`, "CALL");
+  },
+
+  /** A call into a plugin-provided tool, identified by the plugin's name. */
+  plugin(pluginName: string): ToolAccesses {
+    return ToolAccesses.network(`plugin://${encodeURIComponent(pluginName)}`, "CALL");
   },
 
   file(
@@ -83,6 +123,14 @@ function resourceAccessesConflict(
   right: ToolResourceAccess,
 ): boolean {
   if (left.kind === "all" || right.kind === "all") return true;
+
+  // Network accesses never conflict. The scheduler exists to protect this
+  // machine's state from concurrent tool calls, and a request to a remote host
+  // does not touch it. Ordering of remote effects is the caller's problem —
+  // two writes to the same API would race whether or not we serialized them,
+  // since nothing here can see that remote state.
+  if (left.kind === "network" || right.kind === "network") return false;
+
   if (!fileOperationsConflict(left.operation, right.operation)) return false;
   return fileAccessesOverlap(left, right);
 }

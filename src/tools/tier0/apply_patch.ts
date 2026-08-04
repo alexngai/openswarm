@@ -33,7 +33,8 @@ import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { ToolAccesses, type ToolAccesses as ToolAccessesType } from "../access.js";
-import { isUnderCwd, aliasParams } from "./internal.js";
+import { aliasParams } from "./internal.js";
+import { resolveInWorkspace } from "../workspace-path.js";
 import { atomicWrite, TocttouError } from "./edit_file.js";
 
 const paramsSchema = z.object({
@@ -231,22 +232,8 @@ async function checkBoundary(
   filePath: string,
   cwd: string,
 ): Promise<{ resolved: string } | { error: string }> {
-  const resolved = path.resolve(cwd, filePath);
-  if (!isUnderCwd(resolved, cwd)) {
-    return { error: `path "${filePath}" resolves outside the workspace boundary` };
-  }
-  try {
-    const lstat = await fs.lstat(resolved);
-    if (lstat.isSymbolicLink()) {
-      const real = await fs.realpath(resolved);
-      if (!isUnderCwd(real, cwd)) {
-        return { error: `path "${filePath}" is a symlink pointing outside the workspace boundary` };
-      }
-    }
-  } catch {
-    // Does not exist yet — fine for Add / Move target.
-  }
-  return { resolved };
+  const contained = await resolveInWorkspace(filePath, cwd);
+  return contained.ok ? { resolved: contained.path } : { error: contained.message };
 }
 
 /** Apply update chunks in order to `content`; returns new content or an error. */
@@ -360,7 +347,7 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   try {
     for (const w of writes) {
       await fs.mkdir(path.dirname(w.resolved), { recursive: true });
-      await atomicWrite(w.resolved, w.content, w.expectedHash);
+      await atomicWrite(w.resolved, w.content, ctx.cwd, w.expectedHash);
     }
     for (const d of deletes) {
       await fs.unlink(d.resolved);

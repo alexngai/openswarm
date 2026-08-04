@@ -27,17 +27,24 @@ export interface ToolImpl {
    */
   readonly zodSchema?: ZodTypeAny;
   /**
-   * Declare the resources this call will touch so the dispatcher can schedule
-   * non-conflicting calls concurrently. Should be a pure, side-effect-free
-   * description derived from `input` (path resolution against `ctx.cwd` is
-   * fine). Throwing or returning malformed accesses is treated as
-   * `ToolAccesses.all()` (pessimistic — serializes against everything).
+   * Declare the resources this call will touch. Should be a pure,
+   * side-effect-free description derived from `input` (path resolution against
+   * `ctx.cwd` is fine). Throwing or returning malformed accesses is treated as
+   * `ToolAccesses.all()` (pessimistic — serializes against everything, and
+   * authorizes as an unknown resource).
    *
-   * When omitted, the dispatcher falls back to `spec.concurrencySafe`:
-   *   - `false` → `ToolAccesses.all()` (legacy serial-after-safe behavior)
-   *   - `true` or `undefined` → `ToolAccesses.none()` (parallel)
+   * Required, deliberately. Two subsystems read this and they fail in opposite
+   * directions: the scheduler would read an absent declaration as "conflicts
+   * with nothing" and run the call beside a write to the same file, while the
+   * permission gate would read it as "no resource to bind a grant to". Neither
+   * failure is visible in the tool's own code, and neither surfaces until a
+   * race or an over-broad approval. Making the field required turns that into
+   * a compile error at the one moment someone is in a position to answer it.
+   *
+   * The honest answer for a tool with unnameable side effects is
+   * `ToolAccesses.all()`, not `none()`.
    */
-  readonly accesses?: (input: unknown, ctx: ToolExecutionContext) => ToolAccesses;
+  readonly accesses: (input: unknown, ctx: ToolExecutionContext) => ToolAccesses;
 }
 
 /**

@@ -28,7 +28,7 @@ import {
   type WorkerStateFile,
 } from "./worker-state-file.js";
 import { isAncestorOf as ancestorCheck } from "./ancestry.js";
-import { TaskRegistry } from "./task-registry.js";
+import { TaskRegistry, type TerminalTaskStatus } from "./task-registry.js";
 import { WorkerTransport } from "./ipc/worker-transport.js";
 import { spawnWorker } from "./subprocess-spawner.js";
 import { resolveMaxDepth } from "./depth-limit.js";
@@ -109,6 +109,34 @@ export interface StandaloneHostOptions {
    * worktree-per-member pass a `GitCascadeBranchPolicyAdapter`.
    */
   readonly branchPolicyAdapter?: BranchPolicyAdapter;
+}
+
+/**
+ * Translate what a worker reported into the task's terminal status and payload.
+ *
+ * The same four-way mapping `results.jsonl` uses, so the registry and the
+ * results file cannot describe the same run differently. A killed worker is
+ * `stopped` rather than `failed` because it did not fail — something ended it.
+ */
+function terminalOutcomeOf(
+  r: AgentResult,
+): { status: TerminalTaskStatus; output?: string; error?: string } {
+  switch (r.status) {
+    case "success":
+      return { status: "succeeded", ...(r.output !== undefined && { output: r.output }) };
+    case "failure":
+      return { status: "failed", ...(r.error !== undefined && { error: r.error }) };
+    case "timeout":
+      return {
+        status: "timeout",
+        error: "task exceeded wall-clock budget",
+        // Whatever it managed to produce is still the most useful thing to show
+        // for a task that ran out of time.
+        ...(r.partialOutput !== undefined && { output: r.partialOutput }),
+      };
+    case "killed":
+      return { status: "stopped" };
+  }
 }
 
 export class StandaloneHost implements SwarmHost {
@@ -971,6 +999,12 @@ export class StandaloneHost implements SwarmHost {
 
     transport.on("task_result", (params: unknown) => {
       const r = params as AgentResult;
+      // Record the outcome where readers look it up, not only on the event bus.
+      // The lane events below announce completion and results.jsonl records it,
+      // but the registry was left saying `running` — so `task.get` and the task
+      // board disagreed about whether a finished task had finished, and a parent
+      // deciding whether to retry consulted the stale one (docs/67 WP-06).
+      this.registry.resolve(taskRecord.id, terminalOutcomeOf(r));
       const resolver = pendingResolve;
       pendingResolve = undefined;
       if (resolver !== undefined) resolver(r);
@@ -1034,6 +1068,23 @@ export class StandaloneHost implements SwarmHost {
       // GitHub #23: finalize the task with a real terminal lane event so the
       // swarm view's task board (incl. the detached-daemon attach path) reflects
       // completion from a real event rather than only worker-lifecycle synthesis.
+      //
+      // A worker that exits without reporting leaves a task that would otherwise
+      // stay `running` forever. `resolve` is a no-op once an outcome landed, so
+      // this is the fallback for a silent exit rather than a second opinion
+      // overwriting the result the worker actually sent.
+      this.registry.resolve(
+        taskRecord.id,
+        exitCode === 0
+          ? { status: "succeeded" }
+          : signal !== null
+            ? // Something ended this worker — a stop, an operator, the OS. It did
+              // not fail; recording it as failed would blame the task for its own
+              // cancellation, which is also the mapping `results.jsonl` uses for
+              // a killed run.
+              { status: "stopped", error: `worker killed by signal ${signal}` }
+            : { status: "failed", error: `worker exited with code ${exitCode ?? "unknown"}` },
+      );
       this.emit(
         exitCode === 0
           ? { type: "task_completed", payload: { taskId: taskRecord.id } }
@@ -1163,6 +1214,42 @@ export class StandaloneHost implements SwarmHost {
 
   async isAncestorOf(ancestor: AgentId, descendant: AgentId): Promise<boolean> {
     return ancestorCheck(ancestor, descendant, this.spawnParents);
+  }
+
+  /**
+   * Whether `caller` may report a transition on `taskId`.
+   *
+   * The owner may, because it is the one doing the work. An ancestor of the
+   * owner may, because a parent finalizing a child's task is how supervision
+   * works and how a stuck child gets resolved — the same relation `task_stop`
+   * already accepts, kept identical so the two cannot drift into disagreeing
+   * about who is in charge of a task.
+   *
+   * An unowned task is refused rather than allowed. It is either not claimed
+   * yet, in which case there is nothing to report, or its owner was lost, in
+   * which case recovery belongs to the parent that spawned it and not to
+   * whichever worker asked first.
+   */
+  private async mayTransition(
+    caller: AgentId,
+    taskId: string,
+  ): Promise<{ ok: true } | { ok: false; reason: string }> {
+    const record = this.registry.get(taskId);
+    if (record === undefined) {
+      return { ok: false, reason: `unknown taskId: ${taskId}` };
+    }
+    if (record.owner === undefined) {
+      return {
+        ok: false,
+        reason: `permission denied: task ${taskId} has no owner to report for`,
+      };
+    }
+    if (record.owner === caller) return { ok: true };
+    if (await this.isAncestorOf(caller, record.owner)) return { ok: true };
+    return {
+      ok: false,
+      reason: `permission denied: caller does not own task ${taskId} and is not an ancestor of its owner`,
+    };
   }
 
   /**
@@ -1576,6 +1663,26 @@ export class StandaloneHost implements SwarmHost {
         transport.respondError(frame.id, IPC_ERROR_CODES.INVALID_PARAMS, parsed.error.message);
         return;
       }
+      // Who asked comes from the transport, never from the body: the task id in
+      // a request is a claim about what to change, not about who may change it.
+      // Without this a worker could finish, fail, or reassign any task whose id
+      // it could name or guess (docs/67 WP-06).
+      const permitted = await this.mayTransition(from, parsed.data.taskId);
+      if (!permitted.ok) {
+        transport.respondError(frame.id, IPC_ERROR_CODES.INTERNAL_ERROR, permitted.reason);
+        return;
+      }
+      if ("owner" in parsed.data.patch && parsed.data.patch.owner !== undefined) {
+        // Reassignment is the same forgery in a different shape — it makes the
+        // next honest ownership check agree with the attacker. Handing work to
+        // another agent is the parent's decision, taken through spawn.
+        transport.respondError(
+          frame.id,
+          IPC_ERROR_CODES.INTERNAL_ERROR,
+          "permission denied: a task's owner cannot be reassigned by the worker running it",
+        );
+        return;
+      }
       try {
         this.registry.update(
           parsed.data.taskId,
@@ -1704,10 +1811,12 @@ export class StandaloneHost implements SwarmHost {
         return;
       }
       try {
-        const claimed = await this.task.pullNext(
-          parsed.data.scope,
-          parsed.data.claimerId as AgentId,
-        );
+        // Both arguments come from the transport rather than the request. A
+        // worker naming another agent as the claimer would attribute work to an
+        // agent that never asked for it, and every later ownership check would
+        // believe that; a worker naming another team's scope would take work it
+        // was never given. `task.create` above already derives scope this way.
+        const claimed = await this.task.pullNext(this.scopeOf(from), from);
         transport.respond(frame.id, claimed);
       } catch (err) {
         transport.respondError(

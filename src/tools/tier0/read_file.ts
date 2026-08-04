@@ -21,7 +21,8 @@ import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 import { ToolAccesses, type ToolAccesses as ToolAccessesType } from "../access.js";
-import { isUnderCwd, aliasParams } from "./internal.js";
+import { aliasParams } from "./internal.js";
+import { resolveInWorkspace } from "../workspace-path.js";
 import { recordFileRead } from "./read-state.js";
 
 const paramsSchema = z.object({
@@ -89,31 +90,13 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   }
   const input: Input = parsed.data;
 
-  const resolved = path.resolve(ctx.cwd, input.file_path);
-
   // Workspace boundary — read_file honors the same boundary as write-side tools
   // so read-only permission mode is actually confined to the agent's workspace.
-  if (!isUnderCwd(resolved, ctx.cwd)) {
-    return {
-      status: "error",
-      message: `path "${input.file_path}" resolves outside the workspace boundary`,
-    };
+  const contained = await resolveInWorkspace(input.file_path, ctx.cwd);
+  if (!contained.ok) {
+    return { status: "error", message: contained.message };
   }
-  // Symlink-escape guard (only when file exists and is a symlink).
-  try {
-    const lstat = await fs.lstat(resolved);
-    if (lstat.isSymbolicLink()) {
-      const real = await fs.realpath(resolved);
-      if (!isUnderCwd(real, ctx.cwd)) {
-        return {
-          status: "error",
-          message: `path "${input.file_path}" is a symlink pointing outside the workspace boundary`,
-        };
-      }
-    }
-  } catch {
-    // File doesn't exist — stat/read below will produce the appropriate error.
-  }
+  const resolved = contained.path;
 
   // Stat first for size check.
   let stat: Awaited<ReturnType<typeof fs.stat>>;
@@ -164,7 +147,7 @@ async function execute(raw: unknown, ctx: ToolExecutionContext): Promise<ToolRes
   // continuation notice below tells the model where to resume.
   const byteCapped = capSliceBytes(slice, MAX_OUTPUT_BYTES);
 
-  recordFileRead(resolved);
+  recordFileRead(resolved, text);
 
   // Empty file / offset past EOF: Claude Code's exact system-reminder warnings.
   if (lines.length === 0) {

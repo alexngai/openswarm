@@ -8,7 +8,10 @@
  * A Pipeline is composed from CleanPlugin instances. Each plugin is a single
  * pass over the text; `createPipeline` chains them and wraps the chain with a
  * "never-worse" guard — if the cleaned output is not strictly shorter than the
- * original, the original is returned unchanged (degraded=true).
+ * original, the cosmetic passes are reverted (degraded=true). Passes marked
+ * `security` survive that revert: redaction grows the text, so it is often
+ * the reason the chain fails to shrink, and reverting it would put the raw
+ * secret back into model-facing output.
  *
  * Default plugin chain — order matters:
  *   progress  fold \r-redrawn lines, keep only the last rendered frame

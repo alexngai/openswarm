@@ -27,6 +27,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { z } from "zod";
+import { isWithin } from "../kernel/workspace-authority.js";
 import type { McpServerConfig } from "./client.js";
 
 // ---------------------------------------------------------------------------
@@ -52,6 +53,12 @@ export interface LoadMcpConfigOptions {
   readonly cwd?: string;
   readonly homedir?: string;
   readonly envOverrides?: NodeJS.ProcessEnv;
+  /**
+   * Whether configuration inside the workspace may be read. Defaults to true.
+   * The trust gate passes false for a workspace the user has not trusted; an
+   * MCP entry there would otherwise spawn its subprocess at startup.
+   */
+  readonly allowWorkspaceConfig?: boolean;
 }
 
 export interface LoadedMcpConfig {
@@ -64,12 +71,13 @@ export interface LoadedMcpConfig {
 // ---------------------------------------------------------------------------
 
 /**
- * Resolve the first matching config path from the hierarchy. Absent files are
- * silently skipped; the first one that exists wins.
+ * The paths this loader would consult, highest precedence first.
  *
- * Returns undefined when none of the paths exist.
+ * Exported so the trust scanner reports on exactly the files the loader would
+ * read. A scanner with its own copy of this list is a scanner that eventually
+ * describes one file while the loader loads another.
  */
-function resolveConfigPath(opts: LoadMcpConfigOptions): string | undefined {
+export function mcpConfigCandidates(opts: LoadMcpConfigOptions = {}): string[] {
   const cwd = opts.cwd ?? process.cwd();
   const home = opts.homedir ?? os.homedir();
   const env = opts.envOverrides ?? process.env;
@@ -83,6 +91,24 @@ function resolveConfigPath(opts: LoadMcpConfigOptions): string | undefined {
   candidates.push(path.join(cwd, ".openswarm", "mcp.json"));
   candidates.push(path.join(cwd, ".claude", "mcp_servers.json"));
   candidates.push(path.join(home, ".claude", "mcp_servers.json"));
+  return candidates;
+}
+
+/**
+ * Resolve the first matching config path from the hierarchy. Absent files are
+ * silently skipped; the first one that exists wins.
+ *
+ * When `allowWorkspaceConfig` is false, candidates inside the workspace are
+ * dropped before the search, so an untrusted repository falls through to the
+ * user's own configuration rather than losing it.
+ *
+ * Returns undefined when none of the paths exist.
+ */
+function resolveConfigPath(opts: LoadMcpConfigOptions): string | undefined {
+  const cwd = opts.cwd ?? process.cwd();
+  const all = mcpConfigCandidates(opts);
+  const candidates =
+    opts.allowWorkspaceConfig === false ? all.filter((p) => !isWithin(p, cwd)) : all;
 
   for (const p of candidates) {
     try {

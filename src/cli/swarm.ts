@@ -26,6 +26,7 @@ import { attachLaneTrace } from "./trace-output.js";
 
 // Extend TaskPacketSchema to allow an optional id (CLI generates one if absent).
 import { z } from "zod";
+import { openDurableAppend } from "../swarm/durable-append.js";
 const taskPacketSchema = TaskPacketSchema.extend({ id: z.string().optional() });
 
 // ---------------------------------------------------------------------------
@@ -181,7 +182,7 @@ export async function runSwarm(opts: SwarmRunOptions): Promise<number> {
   }
 
   // Open results stream.
-  const resultsOut = fs.createWriteStream(opts.output, { flags: "a" });
+  const resultsOut = await openDurableAppend(opts.output);
 
   // Ecosystem adapters (--opentasks / --agent-inbox / --git-cascade) share
   // one assembly path with `topology` and `team start` — see adapter-host.ts.

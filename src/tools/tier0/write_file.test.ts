@@ -79,7 +79,7 @@ describe("writeFileTool", () => {
     );
     expect(result.status).toBe("error");
     if (result.status === "error") {
-      expect(result.message).toContain("path escapes workspace");
+      expect(result.message).toContain("outside the workspace boundary");
     }
   });
 
@@ -107,7 +107,7 @@ describe("writeFileTool", () => {
     );
     expect(result.status).toBe("error");
     if (result.status === "error") {
-      expect(result.message).toContain("path escapes workspace");
+      expect(result.message).toContain("outside the workspace boundary");
     }
   });
 

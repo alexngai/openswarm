@@ -8,6 +8,7 @@
 
 import { z } from "zod";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../types.js";
+import { ToolAccesses } from "../access.js";
 import type { ToolSpec, JsonSchema } from "../../core/types.js";
 
 const inputSchema = z.object({
@@ -95,4 +96,7 @@ export const toolSearchTool: ToolImpl = {
   spec,
   execute,
   zodSchema: inputSchema,
+  // Searches the in-process tool registry. It reads no file and mutates
+  // nothing, so it is safe beside any other call.
+  accesses: () => ToolAccesses.none(),
 };
