@@ -184,7 +184,13 @@ describe("the audit/history partition", () => {
         }),
       );
 
-      const run = spawnSync("npx", ["tsc", "-p", "tsconfig.json"], {
+      // By absolute path, not `npx tsc`: the probe lives outside the repo, so npx
+      // finds no local typescript and instead fetches the unrelated `tsc` package
+      // from npm, which exits non-zero with advice rather than a type error.
+      const tsc = path.resolve("node_modules/typescript/bin/tsc");
+      expect(fs.existsSync(tsc), `no compiler at ${tsc}`).toBe(true);
+
+      const run = spawnSync(process.execPath, [tsc, "-p", "tsconfig.json"], {
         cwd: probe,
         encoding: "utf8",
       });
