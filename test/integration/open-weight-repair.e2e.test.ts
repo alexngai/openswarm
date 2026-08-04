@@ -108,13 +108,28 @@ class FakeServer {
           ...(body !== undefined ? { body } : {}),
         });
 
-        // Capability probe (docs/63 F1) — advertise a real 32k window.
+        // Capability probe (docs/63 F1) — advertise a real window, large enough
+        // that nothing below accidentally measures compaction.
+        //
+        // It used to advertise 32k, and `glob` for `*.json` against this repo
+        // returns its 1000-line cap, so the fixture's *size in bytes* was the
+        // length of the absolute path to the checkout times a thousand. At
+        // `/workspace` that fits; at `/Users/<someone>/GitHub/openswarm` it does
+        // not, and the run spent two extra round trips compacting — so
+        // "dispatches the call and continues the run" failed on a round-trip
+        // count while the repair path it exists to test worked perfectly.
+        //
+        // That reads as a macOS defect and is nothing of the kind: a Linux
+        // developer with a deep checkout fails it too. No test here asserts
+        // anything about compaction, so the window is the right thing to move;
+        // narrowing the pattern would trade a dependency on path length for one
+        // on how many files the developer's tree happens to contain.
         if (req.method === "GET" && url.includes("/models")) {
           res.writeHead(200, { "content-type": "application/json" });
           res.end(
             JSON.stringify({
               object: "list",
-              data: [{ id: MODEL, object: "model", max_model_len: 32_768 }],
+              data: [{ id: MODEL, object: "model", max_model_len: 200_000 }],
             }),
           );
           return;
