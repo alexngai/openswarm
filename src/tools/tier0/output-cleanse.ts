@@ -24,7 +24,9 @@
  * mid-pattern.
  *
  * Opt-out: `# nofilter` / `# raw` in the command, or env OPENSWARM_BASH_RAW=1.
- * Disable only redaction: env OPENSWARM_OUTPUT_NO_REDACT=1.
+ * This opts out of the token-efficiency folds ONLY — redaction still runs.
+ * Disable redaction: env OPENSWARM_OUTPUT_NO_REDACT=1, the single explicit
+ * control for it, so turning masking off is always a deliberate, greppable act.
  *
  * Tunables (positive ints via env; defaults shown):
  *   OPENSWARM_OUTPUT_MAX_LINE_CHARS=500
@@ -188,19 +190,41 @@ export function defaultPlugins(): CleanPlugin[] {
  * temporarily inflate the text (e.g. a short secret expanding to its
  * `[REDACTED:*]` marker); only the chain as a whole must shrink.
  *
- * The guard's fallback keeps `security` plugins applied. Falling all the way
- * back to the raw input would make the byte budget able to un-redact secrets,
- * which is the same inflation the paragraph above describes — on a short
- * output there is nothing else to reclaim those bytes, so the guard trips and
- * the credential would be handed back in the clear.
+ * `security` plugins are applied on EVERY path out of this function — the
+ * never-worse fallback and the raw/nofilter opt-out included. Both of those are
+ * about token cost, and neither is a request to be handed a credential. The
+ * guard case is the same inflation described above: on a short output there is
+ * nothing to reclaim the bytes a `[REDACTED:*]` marker costs, so the guard
+ * trips and a naive revert hands the secret back in the clear.
+ *
+ * `OPENSWARM_OUTPUT_NO_REDACT=1` remains the one explicit way to turn redaction
+ * off, which is the property that makes it auditable.
  */
 export function createPipeline(plugins: CleanPlugin[] = defaultPlugins()): CleanPipeline {
+  const applySecurity = (text: string, options: CleanOptions): string =>
+    plugins
+      .filter((plugin) => plugin.security)
+      .reduce((acc, plugin) => plugin.apply(acc, options), text);
+
   return {
     plugins,
     run(text, options = {}) {
       const bytesIn = Buffer.byteLength(text, "utf8");
-      if (!text || shouldSkip(options.command)) {
+      if (!text) {
         return { text, bytesIn, bytesOut: bytesIn, degraded: false };
+      }
+      if (shouldSkip(options.command)) {
+        // `# raw` / `# nofilter` / OPENSWARM_BASH_RAW=1 opt out of the
+        // token-efficiency folds — progress collapsing, ANSI stripping, long-
+        // line eliding. They are not a security decision, so redaction still
+        // runs: "show me the unfiltered output" is not "show me the key".
+        const safe = applySecurity(text, options);
+        return {
+          text: safe,
+          bytesIn,
+          bytesOut: Buffer.byteLength(safe, "utf8"),
+          degraded: false,
+        };
       }
       const out = plugins.reduce((acc, plugin) => plugin.apply(acc, options), text);
       const bytesOut = Buffer.byteLength(out, "utf8");
@@ -211,9 +235,7 @@ export function createPipeline(plugins: CleanPlugin[] = defaultPlugins()): Clean
         // grew the output, which is exactly the short-output case (a 20-char
         // key becomes a 25-char [REDACTED:*] marker). Saving bytes is never
         // worth re-exposing a credential.
-        const safe = plugins
-          .filter((plugin) => plugin.security)
-          .reduce((acc, plugin) => plugin.apply(acc, options), text);
+        const safe = applySecurity(text, options);
         return {
           text: safe,
           bytesIn,

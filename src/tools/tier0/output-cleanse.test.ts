@@ -155,6 +155,37 @@ describe("createPipeline / cleanOutput", () => {
     expect(result.degraded).toBe(false);
   });
 
+  // The raw/nofilter opt-out is about token cost. It used to return before any
+  // plugin ran, so it silently disabled redaction too — a user asking for
+  // unfiltered output got handed credentials in the clear.
+  const SECRET = "AKIAIOSFODNN7EXAMPLE";
+  const ANSI_SECRET = `\x1b[31mred\x1b[0m key=${SECRET}`;
+
+  it("# nofilter / # raw opt out of the folds but NOT of redaction", () => {
+    for (const command of ["ls # nofilter", "ls # raw"]) {
+      const result = cleanOutput(ANSI_SECRET, { command });
+      expect(result.text).not.toContain(SECRET);
+      expect(result.text).toContain("[REDACTED:");
+      // ...while the folds really are still opted out: ANSI survives.
+      expect(result.text).toContain("\x1b[31m");
+    }
+  });
+
+  it("OPENSWARM_BASH_RAW=1 opts out of the folds but NOT of redaction", () => {
+    process.env.OPENSWARM_BASH_RAW = "1";
+    const result = cleanOutput(ANSI_SECRET);
+    expect(result.text).not.toContain(SECRET);
+    expect(result.text).toContain("\x1b[31m");
+  });
+
+  it("OPENSWARM_OUTPUT_NO_REDACT=1 stays the single explicit way to disable redaction", () => {
+    // Deliberate opt-out, and the only one — that is what makes turning
+    // masking off auditable rather than a side effect of a formatting flag.
+    process.env.OPENSWARM_OUTPUT_NO_REDACT = "1";
+    process.env.OPENSWARM_BASH_RAW = "1";
+    expect(cleanOutput(ANSI_SECRET).text).toContain(SECRET);
+  });
+
   it("empty input is returned unchanged", () => {
     const result = cleanOutput("");
     expect(result.text).toBe("");

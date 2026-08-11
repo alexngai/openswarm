@@ -14,6 +14,7 @@ const mutateHook = path.join(FIXTURES, "mutate-hook.sh");
 const timeoutHook = path.join(FIXTURES, "timeout-hook.sh");
 const contextHook = path.join(FIXTURES, "context-hook.sh");
 const stopDenyHook = path.join(FIXTURES, "stop-deny-hook.sh");
+const ignoresStdinHook = path.join(FIXTURES, "ignores-stdin-hook.sh");
 
 describe("HookRuntime.invoke — PreToolUse shell hooks", () => {
   it("allow-hook returns decision: allow", async () => {
@@ -26,6 +27,40 @@ describe("HookRuntime.invoke — PreToolUse shell hooks", () => {
       toolInput: { command: "ls" },
     });
     expect(result.decision).toBe("allow");
+  });
+
+  it("survives a hook that exits without reading stdin", async () => {
+    // Regression: the payload write was wrapped in try/catch with a comment
+    // saying a closed pipe was fine. It was not — EPIPE is emitted
+    // ASYNCHRONOUSLY as an "error" event on the stream and is never thrown, so
+    // the catch never ran and the error escaped as an uncaught exception that
+    // killed the process. `child.once("error")` did not cover it either: that
+    // fires for spawn failures, not for writes to the child's stdin.
+    //
+    // Every other fixture drains stdin, so nothing here ever broke the pipe.
+    // The oversized toolInput pushes the write past the pipe buffer, making the
+    // break deterministic instead of a race the CI runner loses and a laptop
+    // wins.
+    const rt = new HookRuntime({
+      PreToolUse: [{ matcher: "*", command: ignoresStdinHook }],
+    });
+
+    const uncaught: Error[] = [];
+    const onUncaught = (err: Error) => uncaught.push(err);
+    process.on("uncaughtException", onUncaught);
+    try {
+      const result = await rt.invoke("PreToolUse", {
+        event: "PreToolUse",
+        toolName: "bash",
+        toolInput: { command: "ls", pad: "x".repeat(1_000_000) },
+      });
+      expect(result.decision).toBe("allow");
+      // Let a stray EPIPE reach the loop before asserting it did not happen.
+      await new Promise((r) => setTimeout(r, 50));
+    } finally {
+      process.off("uncaughtException", onUncaught);
+    }
+    expect(uncaught).toEqual([]);
   });
 
   it("deny-hook returns decision: deny with systemMessage", async () => {

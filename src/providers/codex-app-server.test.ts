@@ -144,6 +144,49 @@ describe("CodexAppServerProvider", () => {
   });
 
   // -------------------------------------------------------------------------
+  // Test 3b: a stdin write failure rejects the in-flight request
+  // -------------------------------------------------------------------------
+
+  it("a stdin write failure rejects pending requests instead of stranding them", async () => {
+    // Regression: writes to the child's stdin fail ASYNCHRONOUSLY, as an
+    // "error" event on the stream. The only listener was on the child PROCESS,
+    // which covers spawn failures and not pipe writes — so an EPIPE from
+    // writing to an exited codex was an uncaught exception that killed the
+    // host. It also stranded the caller: `send` registers into `pending`
+    // BEFORE it writes, so the request being written never settled.
+    const provider = new CodexAppServerProvider({ spawn: spawnMock as never });
+
+    const startPromise = provider.start();
+    await new Promise<void>((r) => setImmediate(r));
+    pair.emitLine({ id: 1, result: { userAgent: "ua" } });
+    await startPromise;
+
+    const uncaught: Error[] = [];
+    const onUncaught = (err: Error) => uncaught.push(err);
+    process.on("uncaughtException", onUncaught);
+    try {
+      // In flight, registered in `pending`, with no reply coming.
+      const inflight = provider.getAuthStatus();
+      await new Promise<void>((r) => setImmediate(r));
+
+      // The pipe breaks under the write.
+      pair.child.stdin!.emit(
+        "error",
+        Object.assign(new Error("write EPIPE"), { code: "EPIPE" }),
+      );
+
+      // It must settle as a rejection rather than hang forever.
+      await expect(inflight).rejects.toThrow(/EPIPE/);
+      await new Promise((r) => setTimeout(r, 20));
+    } finally {
+      process.off("uncaughtException", onUncaught);
+    }
+    expect(uncaught).toEqual([]);
+
+    await provider.dispose();
+  });
+
+  // -------------------------------------------------------------------------
   // Test 4: Notifications fire on the notification event
   // -------------------------------------------------------------------------
 
