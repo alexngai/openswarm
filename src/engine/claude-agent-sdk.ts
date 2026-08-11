@@ -170,8 +170,29 @@ function mapPermissionMode(_mode: PermissionMode): SDKPermissionMode {
 // Engine
 // ---------------------------------------------------------------------------
 
+export interface ClaudeAgentSdkEngineOptions {
+  /**
+   * Whether the SDK may read the workspace's own `.claude/` settings.
+   *
+   * @security Defaults to false. `settingSources: ["project"]` hands the SDK a
+   * repository's `.claude/settings.json`, from which it runs its own hooks and
+   * spawns its own MCP servers — a path OpenSwarm cannot inspect or filter,
+   * only decline. Since the only lever is whether to pass it at all, the
+   * default is not to; a caller that has actually resolved trust says so
+   * explicitly. Omission therefore costs project settings rather than costing
+   * containment.
+   */
+  readonly allowWorkspaceConfig?: boolean;
+}
+
 export class ClaudeAgentSdkEngine implements AgentEngine {
   readonly id = "claude-agent-sdk";
+
+  private readonly allowWorkspaceConfig: boolean;
+
+  constructor(opts: ClaudeAgentSdkEngineOptions = {}) {
+    this.allowWorkspaceConfig = opts.allowWorkspaceConfig ?? false;
+  }
 
   readonly capabilities: EngineCapabilities = {
     streaming: true,
@@ -390,7 +411,7 @@ export class ClaudeAgentSdkEngine implements AgentEngine {
       options: {
         systemPrompt,
         model: config.model,
-        settingSources: ["project"],
+        settingSources: this.allowWorkspaceConfig ? ["project"] : [],
         // Built-in SDK tools allowlisted via RunConfig.enabledBuiltinTools.
         // Our custom tools are MCP-registered via mcpServers below.
         // Built-in tools are permission-gated at engine-config time (not via

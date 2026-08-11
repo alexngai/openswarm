@@ -15,6 +15,8 @@ import { createServer, type Server, type Socket } from "node:net";
 import { EventEmitter } from "node:events";
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
+import { openDurableAppend, type DurableAppendStream } from "./durable-append.js";
+import { writeSnapshot } from "./atomic-snapshot.js";
 import * as path from "node:path";
 import { Writable } from "node:stream";
 import type { PermissionMode } from "../core/types.js";
@@ -60,6 +62,7 @@ export interface TeamDaemonPaths {
   readonly pidPath: string;
   readonly eventsPath: string;
   readonly statePath: string;
+  readonly resultsPath: string;
   /** Durable per-team progress checkpoint for crash-recovery (docs/28 T1). */
   readonly checkpointPath: string;
 }
@@ -136,7 +139,7 @@ export class TeamDaemon {
   private signalCleanup: (() => void) | undefined;
   private runTeamPromise: Promise<TeamResult> | undefined;
   private stopped = false;
-  private eventsStream: fs.WriteStream | undefined;
+  private eventsStream: DurableAppendStream | undefined;
   private eventsUnsubscribe: (() => void) | undefined;
   private checkpointStore: TeamCheckpointStore | undefined;
   /**
@@ -221,32 +224,21 @@ export class TeamDaemon {
         path.join(process.cwd(), ".openswarm", "roles.json"),
       );
       for (const r of custom) roles.register(r);
-      this.orchestrator = this.buildOrchestrator(this.checkpointStore, roles);
+      this.orchestrator = await this.buildOrchestrator(this.checkpointStore, roles);
     }
 
     // 8. v0.5 stage 5E.5 — open events.jsonl writer + subscribe lane events.
     if (this.orchestrator.subscribeEvents !== undefined) {
-      // Detect first-open so we can stamp a wire-protocol metadata header
-      // exactly once. On restart we append to the existing file and skip
-      // the header so readers see one metadata line per wire.
-      let needsHeader = false;
-      try {
-        const st = await fsp.stat(this.opts.paths.eventsPath);
-        needsHeader = st.size === 0;
-      } catch {
-        needsHeader = true;
-      }
-      this.eventsStream = fs.createWriteStream(this.opts.paths.eventsPath, {
-        flags: "a",
+      // The wire-protocol metadata header is stamped exactly once, by whichever
+      // writer creates the file. That used to be decided by stat-ing for size 0
+      // and then appending, which two daemons starting together both pass — so
+      // both wrote a header. Creation is the only exclusive fact available, so
+      // the header is tied to it (see openDurableAppend). On restart the file
+      // exists, no header is written, and readers still see one per wire.
+      this.eventsStream = await openDurableAppend(this.opts.paths.eventsPath, {
+        header: buildMetadataEvent("team-daemon"),
       });
       const stream = this.eventsStream;
-      if (needsHeader) {
-        try {
-          stream.write(JSON.stringify(buildMetadataEvent("team-daemon")) + "\n");
-        } catch {
-          /* writer broken — drop the header silently */
-        }
-      }
       this.eventsUnsubscribe = this.orchestrator.subscribeEvents((event) => {
         // GitHub #17: accrue usage from EVERY event (before the recorded
         // filter below) so `message_stop` samples and `worker_spawned` spawn
@@ -432,15 +424,16 @@ export class TeamDaemon {
     }
   }
 
-  private buildOrchestrator(
+  private async buildOrchestrator(
     checkpoint?: TeamCheckpointStore,
     roles?: RoleRegistry,
-  ): TeamDaemonOrchestrator {
-    // Default production orchestrator. Writes results to a stream sink at
-    // statePath (5E.5 will refine this — for now we just need a Writable).
-    const resultsOut = fs.createWriteStream(this.opts.paths.statePath, {
-      flags: "a",
-    });
+  ): Promise<TeamDaemonOrchestrator> {
+    // Results go to their own file. They used to be appended to statePath
+    // because the orchestrator needed a Writable and that path was to hand, which
+    // left state.json holding a snapshot on its first line and results after it —
+    // and made the snapshot unreplaceable, since a rename would unlink the file
+    // this stream has open.
+    const resultsOut = await openDurableAppend(this.opts.paths.resultsPath);
     // v0.5 stage 5E.5 — construct the host explicitly so the daemon can
     // subscribe to its lane-event bus. Orchestrator.opts.host accepts a
     // pre-built host; without it Orchestrator would build a private one we
@@ -481,10 +474,10 @@ export class TeamDaemon {
       pid: process.pid,
       startedAt: this.startedAt,
     };
-    await fsp.writeFile(
-      this.opts.paths.statePath,
-      JSON.stringify(snapshot) + "\n",
-    );
+    // Checksummed and atomically replaced (docs/67 `WP-07`). Possible only now
+    // that results have their own file: replacing this one no longer pulls the
+    // results stream's inode out from under it.
+    await writeSnapshot(this.opts.paths.statePath, snapshot);
   }
 
   private async removeStaleSocketOrThrow(): Promise<void> {

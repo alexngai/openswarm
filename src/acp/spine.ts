@@ -17,6 +17,10 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import {
+  openDurableAppend,
+  type DurableAppendStream,
+} from "../swarm/durable-append.js";
 import { buildMetadataEvent, isRecordedLaneEvent } from "../swarm/wire-protocol.js";
 import type { LaneEvent } from "../swarm/events.js";
 import type { TeamRunner } from "./team-runner.js";
@@ -115,51 +119,50 @@ export interface SpineRecorder {
 export function startSpineRecorder(
   runner: Pick<TeamRunner, "subscribeEvents">,
 ): SpineRecorder {
-  let stream: fs.WriteStream | undefined;
+  // `start` is synchronous and opening durably is not, so the stream is held as
+  // the pending open. Writes chain onto it, which keeps them in emission order:
+  // callbacks registered on one promise run in registration order.
+  let opening: Promise<DurableAppendStream> | undefined;
   let unsubscribe: (() => void) | undefined;
 
   return {
     start(sessionId: string): void {
-      if (stream !== undefined) return;
+      if (opening !== undefined) return;
       const dir = acpSessionDir(sessionId);
-      fs.mkdirSync(dir, { recursive: true });
       const eventsPath = path.join(dir, "events.jsonl");
-      // Stamp the wire metadata header exactly once per file.
-      let needsHeader = true;
-      try {
-        needsHeader = fs.statSync(eventsPath).size === 0;
-      } catch {
-        needsHeader = true;
-      }
-      const s = fs.createWriteStream(eventsPath, { flags: "a" });
-      stream = s;
-      if (needsHeader) {
-        try {
-          s.write(JSON.stringify(buildMetadataEvent("acp-team")) + "\n");
-        } catch {
-          /* writer broken — drop the header silently */
-        }
-      }
+      // The metadata header is written by whichever writer creates the file,
+      // rather than by anyone who observes it empty — see openDurableAppend.
+      const pending = openDurableAppend(eventsPath, {
+        header: buildMetadataEvent("acp-team"),
+      });
+      opening = pending;
+
+      const write = (obj: unknown): void => {
+        void pending
+          .then((s) => {
+            s.write(`${JSON.stringify(obj)}\n`);
+          })
+          .catch(() => {
+            /* writer broken — drop the event silently */
+          });
+      };
+
       unsubscribe = runner.subscribeEvents((event: LaneEvent) => {
         // Keep the recorded, attributed spine; drop live-only deltas. LaneEvent
         // already carries its own ts + agentId — preserve them.
         if (!isAcpSpineEvent(event)) return;
-        try {
-          s.write(JSON.stringify(event) + "\n");
-        } catch {
-          /* writer broken — drop the event silently */
-        }
+        write(event);
       });
     },
 
     async stop(): Promise<void> {
       unsubscribe?.();
       unsubscribe = undefined;
-      const s = stream;
-      stream = undefined;
-      if (s !== undefined) {
-        await new Promise<void>((resolve) => s.end(resolve));
-      }
+      const pending = opening;
+      opening = undefined;
+      if (pending === undefined) return;
+      const s = await pending.catch(() => null);
+      if (s !== null) await new Promise<void>((resolve) => s.end(() => resolve()));
     },
   };
 }

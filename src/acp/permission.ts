@@ -54,14 +54,25 @@ export class AcpPermissionBridge extends PermissionBridge {
     if (outcome.outcome === "cancelled") {
       return { allow: false, reason: "cancelled" };
     }
-    if (outcome.optionId === "reject") {
-      return { allow: false, reason: "denied by user" };
+    // Approval is named, and everything else is not an approval. Treating
+    // "not a rejection" as consent meant a client on a newer protocol revision,
+    // a typo in an option id, or a hostile response approved the operation —
+    // and it approved it silently, since an unrecognised outcome looks like a
+    // successful prompt from the outside (docs/67 WP-09, FX-APPROVAL-005).
+    switch (outcome.optionId) {
+      // "allow_always" additionally records a session-scoped allow rule in the
+      // bash gate (Phase 3 B4; banned-broad prefixes are refused there).
+      case "allow_always":
+        return { allow: true, alwaysAllow: true };
+      case "allow":
+        return { allow: true };
+      case "reject":
+        return { allow: false, reason: "denied by user" };
+      default:
+        return {
+          allow: false,
+          reason: `permission response was not one of the offered options (got "${outcome.optionId}")`,
+        };
     }
-    // "allow_always" additionally records a session-scoped allow rule in the
-    // bash gate (Phase 3 B4; banned-broad prefixes are refused there).
-    if (outcome.optionId === "allow_always") {
-      return { allow: true, alwaysAllow: true };
-    }
-    return { allow: true };
   }
 }

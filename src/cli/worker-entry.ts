@@ -3,6 +3,8 @@ import type { AgentId } from "../core/types.js";
 import { ParentTransport } from "../swarm/ipc/parent-transport.js";
 import { WorkerHost } from "../swarm/worker-host.js";
 import { ClaudeAgentSdkEngine } from "../engine/claude-agent-sdk.js";
+import { resolveTrust } from "../trust/gate.js";
+import { getProcessBroker } from "../process/broker.js";
 import { CodexFrameworkEngine } from "../engine/codex-framework.js";
 import { NativeEngine } from "../engine/native.js";
 import { HardenedNativeEngine } from "../engine/hardened-native.js";
@@ -33,7 +35,15 @@ import {
 } from "../memory/index.js";
 import { buildTier2Tools } from "../tools/tier2/index.js";
 import { PermissionEngine } from "../permissions/index.js";
+import { makeCanUseTool, type AttemptRecorder } from "../permissions/gate.js";
+import { openAuditJournal, type AuditJournal } from "../kernel/audit-journal.js";
+import type { AttemptResolver } from "../engine/operation-ledger.js";
+import type { LaneEvent } from "../swarm/events.js";
+import { PermissionBridge } from "../permissions/bridge.js";
+import type { BridgeDecision } from "../permissions/bridge.js";
+import type { PendingPermission } from "../ui/repl/state.js";
 import { AnthropicEnvAuth } from "../auth/anthropic-env-auth.js";
+import { createHash } from "node:crypto";
 import {
   BUILTIN_ROLES,
   RoleRegistry,
@@ -54,6 +64,7 @@ import { ToolInputAccumulator, parseToolInput } from "../core/tool-input.js";
 import { isEditTool } from "../acp/tool-kind.js";
 import { redactSecrets } from "../tools/tier0/secrets.js";
 import type { ToolExecutionContext, ToolImpl } from "../tools/types.js";
+import { bumpGeneration, withWriteLease } from "../kernel/write-lease.js";
 import { readSessionSidecar, writeSessionSidecar } from "./session-sidecar.js";
 import { buildSystemPrompt } from "../engine/default-system-prompt.js";
 import { resolveSamplingConfig } from "../engine/sampling.js";
@@ -193,6 +204,7 @@ async function buildNativeWorkerEngine({
     sessionId: agentId,
     retryPolicy,
     compactionConfig,
+    audit: workerAttemptResolver(agentId),
     eagerToolDispatch: process.env.OPENSWARM_EAGER_TOOL_DISPATCH === "1",
     midTurnCompaction: process.env.OPENSWARM_MID_TURN_COMPACTION === "1",
   });
@@ -220,6 +232,7 @@ async function buildCodexNativeWorkerEngine({
   return new HardenedNativeEngine({
     provider,
     sessionId: agentId,
+    audit: workerAttemptResolver(agentId),
     eagerToolDispatch: process.env.OPENSWARM_EAGER_TOOL_DISPATCH === "1",
     midTurnCompaction: process.env.OPENSWARM_MID_TURN_COMPACTION === "1",
     compactionConfig: {
@@ -280,39 +293,158 @@ interface TurnContext {
 }
 
 /**
- * Build a worker's `canUseTool` gate. Mode-based first; when a tool is denied
- * under the current mode AND escalation is enabled (an `escalate` callback is
- * provided — the ACP team path), the denied call is routed to the orchestrator
- * (which forwards it to the ACP client). Without `escalate`, a mode denial is
- * returned directly — identical to the prior behavior. Exported for testing.
+ * The worker's audit journal, opened once per process.
+ *
+ * Workers share the workspace, so they share the journal root and separate by
+ * session id. The agent id is that id, matching what the engines already use as
+ * their session id, and it is what makes reconciliation's single-session scope
+ * correct here: a worker owns its own stream and no other process writes it.
+ */
+let workerJournal: AuditJournal | undefined;
+const journalForWorker = (): AuditJournal =>
+  (workerJournal ??= openAuditJournal(process.cwd()));
+
+/** The gate's half: record the authorized attempt before it runs. */
+function workerAttempts(agentId: string): AttemptRecorder {
+  const journal = journalForWorker();
+  return {
+    prepare: (payload) =>
+      journal
+        .append({
+          sessionId: agentId,
+          type: "AttemptPrepared",
+          payload,
+          causationId: payload.request.operationId,
+        })
+        .then(() => undefined),
+  };
+}
+
+/**
+ * The ledger's half. Wired wherever `workerAttempts` is, and not optionally:
+ * a prepare with no resolve is the signature recovery reads as a crash, so
+ * recording only the first half would have every worker tool call look like a
+ * process that died. That was a live bug on the CLI's default dispatch path
+ * (docs/67 `WP-00a`); this is the same trap one surface over.
+ */
+function workerAttemptResolver(agentId: string): AttemptResolver {
+  const journal = journalForWorker();
+  return {
+    resolve: (outcome) =>
+      journal
+        .append({
+          sessionId: agentId,
+          type: "AttemptResolved",
+          payload: { outcome },
+          causationId: outcome.operationId,
+        })
+        .then(() => undefined),
+  };
+}
+
+/**
+ * Forwards a gate prompt to the orchestrator, or refuses when nobody is there.
+ *
+ * The gate prompts through a `PermissionBridge`, and a worker has no terminal to
+ * prompt at, so this plays the same role for the swarm that `AcpPermissionBridge`
+ * plays for ACP. Without an `escalate` callback there is no one to ask and the
+ * answer is no, which is the behaviour a worker spawned outside the ACP team path
+ * already had.
+ */
+class WorkerEscalationBridge extends PermissionBridge {
+  constructor(
+    private readonly escalate?: (req: PermissionRequest) => Promise<PermissionDecisionResponse>,
+  ) {
+    super();
+  }
+
+  override async request(pending: PendingPermission): Promise<BridgeDecision> {
+    if (this.escalate === undefined) {
+      return { allow: false, reason: pending.reason ?? "denied by permission mode" };
+    }
+    const res = await this.escalate({
+      toolName: pending.toolName,
+      input: pending.input,
+      requiredPermission: pending.requiredPermission,
+      currentMode: pending.currentMode,
+    });
+    // Approval is named; anything else is not one. Same rule as the ACP bridge,
+    // for the same reason: treating an unrecognised outcome as consent approves
+    // silently.
+    return res.outcome === "allow"
+      ? { allow: true }
+      : { allow: false, reason: res.reason ?? "denied by operator" };
+  }
+}
+
+/**
+ * Build a worker's `canUseTool` gate.
+ *
+ * This delegates to `makeCanUseTool` — the same gate the CLI and ACP use —
+ * rather than reimplementing authorization. It used to be its own
+ * implementation: containment, then a check of the *tool's* declared permission,
+ * then escalation. That was weaker than the CLI's in three ways at once, and
+ * `worker-gate-parity.test.ts` records each as a differential fixture.
+ *
+ * It never ran the bash-validation pipeline, so a command the product classifies
+ * as never-allowable was merely graded by mode. With an operator who approves —
+ * or in danger-full-access, where nobody is asked at all — a worker would run
+ * `cat /etc/passwd`, which the CLI refuses in every mode. Swarm orchestration is
+ * this product's primary surface, so that was the real posture and the CLI's was
+ * the one being read.
+ *
+ * It emitted no lane events. `bash_validation_blocked` and
+ * `bash_validation_warned` are `LaneEvent` types that exist so the orchestrator
+ * can see what its workers were stopped from doing, and `bash-gate.ts` is their
+ * only emitter — so the events the swarm schema was extended to carry were never
+ * produced by a swarm.
+ *
+ * And it graded tools rather than resources, which is why nothing here could
+ * record an attempt: `makePathContainment` derives complete `OperationRequest`s
+ * and returns only whether one escaped, so the requests an audit record is built
+ * from were computed and dropped.
+ *
+ * Containment is still never escalated — the shared gate refuses an escaping path
+ * before any prompt, because no mode grants it and asking would offer a choice
+ * that does not exist. Exported for testing.
  */
 export function buildWorkerCanUseTool(deps: {
   dispatcher: ToolDispatcher;
   permissionEngine: PermissionEngine;
   permissionMode: PermissionMode;
+  cwd: string;
   escalate?: (req: PermissionRequest) => Promise<PermissionDecisionResponse>;
+  /** The worker's lane, so the orchestrator sees validation events. */
+  emitLaneEvent?: (event: unknown) => void;
+  /** Where an authorized attempt is recorded before it runs (docs/67 `WP-00a`). */
+  attempts?: AttemptRecorder;
 }): (toolName: string, input: unknown) => Promise<PermissionDecision> {
+  const gate = makeCanUseTool({
+    dispatcher: deps.dispatcher,
+    permEngine: deps.permissionEngine,
+    bridge: new WorkerEscalationBridge(deps.escalate),
+    // A worker's prompts go to the orchestrator, never to stdin: its stdin is
+    // the IPC transport.
+    useHeadless: false,
+    // Fixed for the worker's lifetime: a worker is spawned with its mode and has
+    // no `/permissions` to change it mid-session.
+    getCurrentMode: () => deps.permissionMode,
+    cwd: deps.cwd,
+    ...(deps.emitLaneEvent !== undefined ? { emitLaneEvent: deps.emitLaneEvent } : {}),
+    ...(deps.attempts !== undefined ? { attempts: deps.attempts } : {}),
+  });
+
   return async (toolName, input) => {
-    const tool = deps.dispatcher.get(toolName);
-    if (tool === undefined) {
+    // Kept ahead of the shared gate for its feedback rather than its verdict:
+    // both refuse an unknown tool, but this names the ones that exist, which is
+    // what lets a worker recover instead of retrying the same wrong name.
+    if (deps.dispatcher.get(toolName) === undefined) {
       return {
         allow: false,
         reason: formatUnknownToolFeedback(toolName, deps.dispatcher.list()),
       };
     }
-    const decision = deps.permissionEngine.check(tool.spec);
-    if (decision.allow || deps.escalate === undefined) {
-      return decision;
-    }
-    const res = await deps.escalate({
-      toolName,
-      input,
-      requiredPermission: tool.spec.requiredPermission,
-      currentMode: deps.permissionMode,
-    });
-    return res.outcome === "allow"
-      ? { allow: true }
-      : { allow: false, reason: res.reason ?? "denied by operator" };
+    return gate(toolName, input);
   };
 }
 
@@ -321,6 +453,41 @@ export function buildWorkerCanUseTool(deps: {
  * Reused for the initial run AND each subsequent `run_more` in long-lived
  * mode. Lifecycle transitions are handled by the caller.
  */
+/**
+ * Long enough that an ordinary tool call never has to renew, short enough that a
+ * worker killed mid-write does not park the queue. `withWriteLease` renews for
+ * anything slower.
+ */
+const LEASE_TTL_MS = 15_000;
+
+/**
+ * Whether a call needs the write lease.
+ *
+ * Read-only calls must not take it: the lease is single-writer precisely so that
+ * readers stay concurrent, and putting reads behind it would serialize the
+ * common case for nothing. A tool that cannot describe its accesses is treated
+ * as writing, matching what the access model already does with malformed
+ * accesses — a needless lease costs throughput, a missing one costs the
+ * guarantee.
+ */
+function mutates(
+  tool: ToolImpl,
+  input: unknown,
+  ctx: ToolExecutionContext,
+): boolean {
+  let accesses;
+  try {
+    accesses = tool.accesses(input, ctx);
+  } catch {
+    return true;
+  }
+  return accesses.some(
+    (a) =>
+      a.kind === "all" ||
+      (a.kind === "file" && (a.operation === "write" || a.operation === "readwrite")),
+  );
+}
+
 async function executeTurn(
   ctx: TurnContext,
   task: TaskPacket,
@@ -347,7 +514,29 @@ async function executeTurn(
       ...t,
       execute: async (input: unknown, ec: ToolExecutionContext) => {
         // Inject SwarmHost into the execution context for Tier 2 tools.
-        return t.execute(input, { ...ec, host: ctx.host });
+        const withHost: ToolExecutionContext = { ...ec, host: ctx.host };
+        if (!mutates(t, input, withHost)) {
+          return t.execute(input, withHost);
+        }
+        // Exactly one writer per working directory (docs/67 §A5, `WP-11`).
+        // Keyed on the worker's own cwd, so a member that was given a worktree
+        // gets an uncontended lease of its own and only members that genuinely
+        // share a directory serialize against each other.
+        return withWriteLease(
+          ec.cwd,
+          { agentId, ttlMs: LEASE_TTL_MS, signal: ec.abort },
+          async (lease) => {
+            const result = await t.execute(input, withHost);
+            // The generation advances on a committed mutation, and is what a
+            // reader's `ReadSet` is judged against. Failing to advance it would
+            // make stale work look current, so a bump that throws must not be
+            // swallowed into a successful tool result.
+            if (result.status === "ok") {
+              await bumpGeneration(ec.cwd, lease);
+            }
+            return result;
+          },
+        );
       },
     }));
 
@@ -435,6 +624,17 @@ async function executeTurn(
         dispatcher,
         permissionEngine,
         permissionMode,
+        cwd: process.cwd(),
+        // Validation events go to the worker's lane, which is what the
+        // `bash_validation_*` LaneEvent types were added for. The host restamps
+        // agentId, so the orchestrator learns which worker was stopped rather
+        // than that some gate somewhere stopped something.
+        emitLaneEvent: (event: unknown) =>
+          ctx.host.emit(event as Omit<LaneEvent, "ts" | "agentId">),
+        // Keyed by agent id: workers share the workspace, so they share the
+        // journal root and each needs its own stream — which is also what makes
+        // reconciliation's single-session scope correct for a worker.
+        attempts: workerAttempts(agentId),
         // Escalate denied calls to the orchestrator only when the ACP team path
         // enabled it (env flag set on the spawned worker); else deny directly.
         ...(process.env.OPENSWARM_PERMISSION_ESCALATION === "1"
@@ -607,6 +807,13 @@ export async function runWorkerEntry(): Promise<number> {
   const transport = new ParentTransport({ agentId, heartbeatIntervalMs });
   const permissionMode = (process.env.OPENSWARM_PERMISSION_MODE ??
     "workspace-write") as PermissionMode;
+  // Inherited from the root, which resolved it from --sandbox or the
+  // environment. A worker confines its children the same way the root does,
+  // or the policy only holds for whichever agent the user happened to type at.
+  const sandbox = process.env.OPENSWARM_SANDBOX;
+  if (sandbox === "require" || sandbox === "prefer" || sandbox === "off") {
+    getProcessBroker().setPolicy(sandbox);
+  }
   // v0.4 stage 4M.7: WorkerHost reads team scope from env so its scopeOf()
   // can resolve the worker's own scope when the agent tool spawns a peer
   // via team: "self". Falls back to "swarm:default" when unset.
@@ -674,6 +881,18 @@ export async function runWorkerEntry(): Promise<number> {
     if (role !== undefined) {
       roleSuffix = role.systemPromptSuffix;
       resolvedAllowedTools = role.allowedTools;
+      // Success was silent, which made the roles carrier unmeasurable: an eval could not tell a
+      // role that shaped the prompt from one that was never read. The digest ties the marker to the
+      // suffix ACTUALLY applied, so a stale or different role cannot satisfy a probe looking for a
+      // specific one. Emitted here rather than at load because this is where the suffix binds to
+      // this worker's prompt — loading roles.json proves delivery, not application.
+      process.stderr.write(
+        `[openswarm] worker: role "${roleName}" applied ` +
+          `(suffix ${roleSuffix.length} chars, sha256 ${createHash("sha256")
+            .update(roleSuffix)
+            .digest("hex")
+            .slice(0, 12)})\n`,
+      );
     } else {
       process.stderr.write(
         `[openswarm] worker: unknown role "${roleName}" — proceeding without role overlay\n`,
@@ -742,7 +961,13 @@ export async function runWorkerEntry(): Promise<number> {
       engine = new ScriptedTestEngine();
       break;
     case "claude-sdk":
-      engine = new ClaudeAgentSdkEngine();
+      // Inherited from the parent, which resolved trust for this workspace
+      // before spawning us. Absent that inheritance this is false, so a worker
+      // reached by some other route does not read project settings.
+      engine = new ClaudeAgentSdkEngine({
+        allowWorkspaceConfig: (await resolveTrust({ cwd: process.cwd() }))
+          .allowWorkspaceConfig,
+      });
       break;
     case "codex-chatgpt": {
       // V0.4.Q11: register the 8-tool peer subset with the codex agent as
@@ -751,7 +976,11 @@ export async function runWorkerEntry(): Promise<number> {
       // team scope as a claude-agent-sdk worker would.
       const tier2 = buildTier2Tools();
       const codexPeerTools = filterCodexPeerTools(tier2);
-      engine = new CodexFrameworkEngine({ tools: codexPeerTools, host });
+      engine = new CodexFrameworkEngine({
+        tools: codexPeerTools,
+        host,
+        permissionMode,
+      });
       break;
     }
     case "codex-native":

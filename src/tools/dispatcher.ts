@@ -211,13 +211,6 @@ export class ToolDispatcher {
    * concurrently and serializes the rest in input order. Result emission is
    * always in input (provider) order regardless of completion order.
    *
-   * Tools without an `accesses` callback fall back to `spec.concurrencySafe`:
-   *   - `false` → `ToolAccesses.all()` (global barrier, serializes in
-   *     input order against every other task — matches the legacy
-   *     "unsafe goes serial" guarantee for e.g. todo_write).
-   *   - `true` / `undefined` → `ToolAccesses.none()` (parallel — matches the
-   *     legacy "safe fans out" path).
-   *
    * Note: parallel_tool_batch lane events are emitted by upstream callers
    * rather than here, to avoid emitter-plumbing complexity in the dispatcher.
    */
@@ -245,26 +238,39 @@ export class ToolDispatcher {
     return results;
   }
 
-  /**
-   * Resolve the access set for one request. Prefers the tool's declared
-   * `accesses(input, ctx)` when present; otherwise falls back to the legacy
-   * `concurrencySafe` flag. Unregistered tools are treated as conflict-free
-   * — `dispatch()` will return a structured `unknown tool` error in parallel.
-   */
   private computeAccesses(req: ToolRequest): ToolAccessesType {
-    const tool = this.registry.get(req.name);
-    if (tool === undefined) return ToolAccesses.none();
-    if (tool.accesses !== undefined) {
-      try {
-        return tool.accesses(req.input, req.ctx);
-      } catch {
-        // A buggy access declaration must not stall the batch — fall back to
-        // the most pessimistic option so we never run conflicting work.
-        return ToolAccesses.all();
-      }
-    }
-    return tool.spec.concurrencySafe === false
-      ? ToolAccesses.all()
-      : ToolAccesses.none();
+    return accessesFor(this.registry.get(req.name), req.input, req.ctx);
+  }
+}
+
+/**
+ * Resolve the access set for one call from the tool's declaration.
+ *
+ * Two schedulers need this answer — `dispatchBatch` here and the hardened
+ * engine's eager-dispatch path — and they must not be able to give different
+ * ones for the same call. A tool that serializes in one and fans out in the
+ * other is a race that only appears under the engine nobody was testing.
+ *
+ * An unregistered tool is conflict-free: dispatch will return a structured
+ * `unknown tool` error, and a call that runs nothing races nothing.
+ *
+ * `accesses` is required by `ToolImpl`, so the missing-declaration branch is
+ * reachable only from a tool built outside the type system (plain JS, a
+ * dynamic registration). It yields `all()` rather than `none()` so such a tool
+ * serializes instead of being silently declared safe.
+ */
+export function accessesFor(
+  tool: ToolImpl | undefined,
+  input: unknown,
+  ctx: ToolExecutionContext,
+): ToolAccessesType {
+  if (tool === undefined) return ToolAccesses.none();
+  if (tool.accesses === undefined) return ToolAccesses.all();
+  try {
+    return tool.accesses(input, ctx);
+  } catch {
+    // A buggy access declaration must not stall the batch — fall back to the
+    // most pessimistic option so we never run conflicting work.
+    return ToolAccesses.all();
   }
 }

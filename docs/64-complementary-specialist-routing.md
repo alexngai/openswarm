@@ -90,7 +90,7 @@ Since model diversity failed, test **configuration diversity**: one working mode
 | explore-first | 0.500 | 0 |
 | **plan-first** | **0.625** | 0 |
 
-**κ = 0.000, Δacc = 0.000.** The best loadout (plan-first) solves a **strict superset** — all 10 tasks any loadout solves (union=plan=10, non-plan-solves-plan-misses=0). No loadout complements it. **The 1-seed probe's κ=0.67 was seed noise:** apparent "unique solves" were single-seed flukes that wash out over 3 seeds — exactly the 1-seed hazard of docs/57 (5-seed inversion) and §8.4. A clean vindication of the ≥3-seed discipline.
+**κ = 0.000, Δacc = 0.000.** The best loadout (plan-first) solves a **strict superset** — all 10 tasks any loadout solves (union=plan=10, non-plan-solves-plan-misses=0). No loadout complements it. **The 1-seed probe's κ=0.67 was seed noise:** apparent "unique solves" were single-seed flukes that wash out over 3 seeds — exactly the 1-seed hazard of docs/61 (5-seed inversion) and §8.4. A clean vindication of the ≥3-seed discipline.
 
 **But loadout is a real *quality* lever, not a diversity lever:** plan-first (0.625) > explore (0.500) > direct = repro (0.438) — **+0.19 resolve from prompt strategy alone**. So loadout/prompt engineering meaningfully improves the *single* agent; the win is "find and use the best loadout," not "run a swarm of diverse loadouts."
 

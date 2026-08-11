@@ -12,9 +12,9 @@ describe("ShellSessionManager", () => {
     mgr?.closeAll();
   });
 
-  it("creates a session and returns metadata", () => {
+  it("creates a session and returns metadata", async () => {
     mgr = new ShellSessionManager();
-    const session = mgr.create("/tmp");
+    const session = await mgr.create("/tmp");
     expect(session.id).toMatch(/^sh_\d+$/);
     expect(session.pid).toBeGreaterThan(0);
     expect(session.cwd).toBe("/tmp");
@@ -25,15 +25,15 @@ describe("ShellSessionManager", () => {
     expect(session.state).toBeNull();
   });
 
-  it("tracks initial command in lastCommand", () => {
+  it("tracks initial command in lastCommand", async () => {
     mgr = new ShellSessionManager();
-    const session = mgr.create("/tmp", "echo hello");
+    const session = await mgr.create("/tmp", "echo hello");
     expect(session.lastCommand).toBe("echo hello");
   });
 
   it("runs an initial command and captures output", async () => {
     mgr = new ShellSessionManager();
-    const session = mgr.create("/tmp", "echo hello-session");
+    const session = await mgr.create("/tmp", "echo hello-session");
     await sleep(500);
 
     const output = mgr.readOutput(session.id);
@@ -43,7 +43,7 @@ describe("ShellSessionManager", () => {
 
   it("writeStdin sends input and produces output", async () => {
     mgr = new ShellSessionManager();
-    const session = mgr.create("/tmp");
+    const session = await mgr.create("/tmp");
     await sleep(300);
     mgr.readOutput(session.id); // drain startup noise
 
@@ -57,7 +57,7 @@ describe("ShellSessionManager", () => {
 
   it("readOutput returns only new data (cursor tracking)", async () => {
     mgr = new ShellSessionManager();
-    const session = mgr.create("/tmp", "echo first");
+    const session = await mgr.create("/tmp", "echo first");
     await sleep(500);
 
     const out1 = mgr.readOutput(session.id);
@@ -71,16 +71,16 @@ describe("ShellSessionManager", () => {
     expect(out2!.stdout).not.toContain("first");
   });
 
-  it("list returns all sessions", () => {
+  it("list returns all sessions", async () => {
     mgr = new ShellSessionManager();
-    mgr.create("/tmp");
-    mgr.create("/tmp");
+    await mgr.create("/tmp");
+    await mgr.create("/tmp");
     expect(mgr.list()).toHaveLength(2);
   });
 
-  it("close removes a session", () => {
+  it("close removes a session", async () => {
     mgr = new ShellSessionManager();
-    const s = mgr.create("/tmp");
+    const s = await mgr.create("/tmp");
     expect(mgr.close(s.id)).toBe(true);
     expect(mgr.get(s.id)).toBeNull();
     expect(mgr.size).toBe(0);
@@ -93,7 +93,7 @@ describe("ShellSessionManager", () => {
 
   it("signal sends SIGKILL to session and kills it", async () => {
     mgr = new ShellSessionManager();
-    const s = mgr.create("/tmp");
+    const s = await mgr.create("/tmp");
     await sleep(300);
 
     expect(mgr.signal(s.id, "SIGKILL")).toBe(true);
@@ -110,12 +110,12 @@ describe("ShellSessionManager", () => {
 
   it("evicts LRU session when max reached", async () => {
     mgr = new ShellSessionManager({ maxSessions: 2 });
-    const s1 = mgr.create("/tmp");
+    const s1 = await mgr.create("/tmp");
     await sleep(50);
-    const s2 = mgr.create("/tmp");
+    const s2 = await mgr.create("/tmp");
     await sleep(50);
 
-    const s3 = mgr.create("/tmp");
+    const s3 = await mgr.create("/tmp");
     expect(mgr.size).toBe(2);
     expect(mgr.get(s1.id)).toBeNull();
     expect(mgr.get(s2.id)).not.toBeNull();
@@ -124,7 +124,7 @@ describe("ShellSessionManager", () => {
 
   it("writeStdin returns false for exited session", async () => {
     mgr = new ShellSessionManager();
-    const s = mgr.create("/tmp", "exit 0");
+    const s = await mgr.create("/tmp", "exit 0");
     await sleep(500);
 
     expect(mgr.writeStdin(s.id, "test\n")).toBe(false);
@@ -137,7 +137,7 @@ describe("ShellSessionManager", () => {
 
   it("tracks exit code", async () => {
     mgr = new ShellSessionManager();
-    const s = mgr.create("/tmp", "exit 42");
+    const s = await mgr.create("/tmp", "exit 42");
     await sleep(500);
 
     const session = mgr.get(s.id);
@@ -145,11 +145,11 @@ describe("ShellSessionManager", () => {
     expect(session!.exitCode).toBe(42);
   });
 
-  it("closeAll removes everything", () => {
+  it("closeAll removes everything", async () => {
     mgr = new ShellSessionManager();
-    mgr.create("/tmp");
-    mgr.create("/tmp");
-    mgr.create("/tmp");
+    await mgr.create("/tmp");
+    await mgr.create("/tmp");
+    await mgr.create("/tmp");
     mgr.closeAll();
     expect(mgr.size).toBe(0);
   });
@@ -198,9 +198,9 @@ describe("ShellSessionManager", () => {
       expect(state).toBeNull();
     });
 
-    it("updateState updates session cwd and state", () => {
+    it("updateState updates session cwd and state", async () => {
       mgr = new ShellSessionManager();
-      const s = mgr.create("/tmp");
+      const s = await mgr.create("/tmp");
       expect(s.cwd).toBe("/tmp");
 
       mgr.updateState(s.id, { cwd: "/home", env: {}, shellOpts: "" });
@@ -209,16 +209,16 @@ describe("ShellSessionManager", () => {
       expect(updated!.state!.cwd).toBe("/home");
     });
 
-    it("setLastCommand updates lastCommand", () => {
+    it("setLastCommand updates lastCommand", async () => {
       mgr = new ShellSessionManager();
-      const s = mgr.create("/tmp");
+      const s = await mgr.create("/tmp");
       mgr.setLastCommand(s.id, "npm test");
       expect(mgr.get(s.id)!.lastCommand).toBe("npm test");
     });
 
-    it("injectStateProbe returns false when captureState disabled", () => {
+    it("injectStateProbe returns false when captureState disabled", async () => {
       mgr = new ShellSessionManager({ captureState: false });
-      const s = mgr.create("/tmp");
+      const s = await mgr.create("/tmp");
       expect(mgr.injectStateProbe(s.id)).toBe(false);
     });
   });
@@ -227,7 +227,7 @@ describe("ShellSessionManager", () => {
   describe("lifecycle management (F15)", () => {
     it("tracks totalStdoutBytes", async () => {
       mgr = new ShellSessionManager();
-      const s = mgr.create("/tmp", "echo hello");
+      const s = await mgr.create("/tmp", "echo hello");
       await sleep(500);
       const session = mgr.get(s.id);
       expect(session!.totalStdoutBytes).toBeGreaterThan(0);
@@ -235,7 +235,7 @@ describe("ShellSessionManager", () => {
 
     it("tracks lastAccessedAt", async () => {
       mgr = new ShellSessionManager();
-      const s = mgr.create("/tmp");
+      const s = await mgr.create("/tmp");
       const t1 = mgr.get(s.id)!.lastAccessedAt;
       await sleep(50);
       mgr.get(s.id); // access again
@@ -245,7 +245,7 @@ describe("ShellSessionManager", () => {
 
     it("readAllOutput returns everything from the beginning", async () => {
       mgr = new ShellSessionManager();
-      const s = mgr.create("/tmp", "echo first");
+      const s = await mgr.create("/tmp", "echo first");
       await sleep(500);
 
       // Consume first output.
@@ -266,9 +266,9 @@ describe("ShellSessionManager", () => {
       expect(mgr.readAllOutput("nonexistent")).toBeNull();
     });
 
-    it("snapshot includes all metadata fields", () => {
+    it("snapshot includes all metadata fields", async () => {
       mgr = new ShellSessionManager();
-      const s = mgr.create("/tmp", "echo test");
+      const s = await mgr.create("/tmp", "echo test");
       expect(s).toHaveProperty("id");
       expect(s).toHaveProperty("pid");
       expect(s).toHaveProperty("cwd");
@@ -280,6 +280,50 @@ describe("ShellSessionManager", () => {
       expect(s).toHaveProperty("state");
       expect(s).toHaveProperty("exitCode");
       expect(s).toHaveProperty("exited");
+    });
+  });
+
+  describe("output retention is bounded (WP-04)", () => {
+    // A session outlives its commands, so anything it holds it holds for a
+    // long time. These are about the buffer, not the reported text: the read
+    // path already truncated what callers see, while the buffer behind it grew
+    // without limit.
+
+    it("keeps reporting total bytes produced after discarding the middle", async () => {
+      mgr = new ShellSessionManager();
+      // ~2 MiB, well past the retention window at each end.
+      const s = await mgr.create("/tmp", "for i in $(seq 1 20000); do echo 0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789; done");
+      await sleep(2000);
+
+      const listed = mgr.list().find((x) => x.id === s.id)!;
+      expect(listed.totalStdoutBytes).toBeGreaterThan(1_000_000);
+    }, 20_000);
+
+    it("returns head and tail of a session that outran the window", async () => {
+      mgr = new ShellSessionManager();
+      const s = await mgr.create("/tmp", "echo FIRSTLINE; for i in $(seq 1 20000); do echo 01234567890123456789012345678901234567890123456789012345678901234567890123456789; done; echo LASTLINE");
+      await sleep(2000);
+
+      const all = mgr.readAllOutput(s.id)!;
+      // Both ends survive even though the middle is long gone, which is the
+      // same shape the read path produced before — now decided while reading.
+      expect(all.stdout).toContain("FIRSTLINE");
+      expect(all.stdout).toContain("LASTLINE");
+    }, 20_000);
+
+    it("stops holding output a reader has already drained", async () => {
+      mgr = new ShellSessionManager();
+      const s = await mgr.create("/tmp", "echo one");
+      await sleep(500);
+
+      const first = mgr.readOutput(s.id)!;
+      expect(first.stdout).toContain("one");
+
+      // The previous implementation advanced a cursor and left the bytes in
+      // place, so a drained session never shrank. A second read must now see
+      // nothing rather than the same bytes again.
+      const second = mgr.readOutput(s.id)!;
+      expect(second.stdout).toBe("");
     });
   });
 });

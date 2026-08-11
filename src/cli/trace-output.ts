@@ -1,5 +1,4 @@
-import { dirname } from "node:path";
-import * as fs from "node:fs";
+import { openDurableAppend } from "../swarm/durable-append.js";
 import type { EventEmitter } from "node:events";
 import type { LaneEvent } from "../swarm/events.js";
 import type { StandaloneHost } from "../swarm/standalone-host.js";
@@ -14,11 +13,18 @@ export function attachLaneTrace(
 ): LaneTraceRecorder | undefined {
   if (traceOutput === undefined) return undefined;
 
-  fs.mkdirSync(dirname(traceOutput), { recursive: true });
-  const stream = fs.createWriteStream(traceOutput, { flags: "a" });
+  // Held as the pending open because `attachLaneTrace` is synchronous. Writes
+  // chain onto it, which preserves emission order.
+  const opening = openDurableAppend(traceOutput);
   const bus = (host as unknown as { readonly events: EventEmitter }).events;
   const handler = (event: LaneEvent): void => {
-    stream.write(JSON.stringify(event) + "\n");
+    void opening
+      .then((stream) => {
+        stream.write(`${JSON.stringify(event)}\n`);
+      })
+      .catch(() => {
+        /* trace is diagnostic — never take the run down with it */
+      });
   };
 
   bus.on("lane_event", handler);
@@ -26,7 +32,8 @@ export function attachLaneTrace(
   return {
     close: async () => {
       bus.off("lane_event", handler);
-      await new Promise<void>((resolve) => stream.end(resolve));
+      const stream = await opening.catch(() => null);
+      if (stream !== null) await new Promise<void>((resolve) => stream.end(() => resolve()));
     },
   };
 }

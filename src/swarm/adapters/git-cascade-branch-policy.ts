@@ -747,15 +747,26 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
     // finalizeConflictResolution, which removes it).
     let retainWorktree = false;
     try {
-      // worktree add --detach <tmp> <targetBranch>: detached at the target's
-      // HEAD so we can merge without colliding with an already-checked-out
-      // branch (typical: main is checked out in the repo cwd).
-      runGit(
-        ["worktree", "add", "--detach", tmpRoot, targetBranch],
-        this.repoPath,
-      );
+      // Measure the target BEFORE the worktree exists, and then build the
+      // worktree at that exact commit rather than at whatever the branch names
+      // by the time git gets to it.
+      //
+      // Reading the branch twice — once to check out, once for the CAS — is
+      // what made a moving target dangerous rather than merely inconvenient. If
+      // the target advanced in between, the merge was built on the old tip
+      // while the CAS expected the new one, so the CAS *succeeded* and moved
+      // the branch to a commit that did not contain the commits pushed in that
+      // window. A success that silently rewinds the branch is worse than a
+      // refusal, and it is unobservable to the caller. One read, used for both,
+      // turns that into a `stale` the drain retries (docs/67 WP-06, FX-CAS-001).
+      const targetSha = runGit(["rev-parse", targetBranch], this.repoPath).trim();
+      // Detached at the measured commit so we don't collide with an
+      // already-checked-out branch (typical: main is checked out in the repo cwd).
+      runGit(["worktree", "add", "--detach", tmpRoot, targetSha], this.repoPath);
       try {
-        let oldSha = "";
+        // The commit the landing worktree is actually sitting on, which is what
+        // the CAS has to expect for the merge to mean anything.
+        const oldSha = targetSha;
         let newHead = "";
         try {
           const sourceBranch = `stream/${streamId}`;
@@ -767,9 +778,6 @@ export class GitCascadeBranchPolicyAdapter implements BranchPolicyAdapter {
           // "fast-forward".
           const flag =
             opts.strategy === "fast-forward" ? "--ff-only" : "--no-ff";
-          // Capture old branch sha for the update-ref CAS so we don't clobber
-          // concurrent updates.
-          oldSha = runGit(["rev-parse", targetBranch], this.repoPath).trim();
           runGit(
             [
               "merge",

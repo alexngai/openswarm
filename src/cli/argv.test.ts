@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { parseArgv, parseDurationToMs } from "./argv.js";
 
 describe("parseDurationToMs", () => {
@@ -211,6 +211,64 @@ describe("parseArgv", () => {
     const result = parseArgv(["--permission-mode", "danger-full-access", "go"]);
     if (result.kind !== "prompt") throw new Error("expected prompt");
     expect(result.opts.permissionMode).toBe("danger-full-access");
+  });
+
+  // WP-04: before this flag existed the sandbox policy had no caller at all —
+  // the setter was defined and never invoked, so "require" was unreachable and
+  // isolation was permanently best-effort.
+  describe("--sandbox", () => {
+    const saved = process.env.OPENSWARM_SANDBOX;
+    afterEach(() => {
+      if (saved === undefined) delete process.env.OPENSWARM_SANDBOX;
+      else process.env.OPENSWARM_SANDBOX = saved;
+    });
+
+    it.each(["require", "prefer", "off"] as const)("parses --sandbox %s", (policy) => {
+      const result = parseArgv(["--sandbox", policy, "hello"]);
+      if (result.kind !== "prompt") throw new Error("expected prompt");
+      expect(result.opts.sandbox).toBe(policy);
+    });
+
+    it("defaults to prefer", () => {
+      delete process.env.OPENSWARM_SANDBOX;
+      const result = parseArgv(["hello"]);
+      if (result.kind !== "prompt") throw new Error("expected prompt");
+      expect(result.opts.sandbox).toBe("prefer");
+    });
+
+    it("reads OPENSWARM_SANDBOX when no flag is given", () => {
+      process.env.OPENSWARM_SANDBOX = "require";
+      const result = parseArgv(["hello"]);
+      if (result.kind !== "prompt") throw new Error("expected prompt");
+      expect(result.opts.sandbox).toBe("require");
+    });
+
+    it("lets the flag win over the environment", () => {
+      process.env.OPENSWARM_SANDBOX = "off";
+      const result = parseArgv(["--sandbox", "require", "hello"]);
+      if (result.kind !== "prompt") throw new Error("expected prompt");
+      expect(result.opts.sandbox).toBe("require");
+    });
+
+    it("ignores an unrecognised environment value rather than failing", () => {
+      // A typo in a shell profile should not make the CLI unusable.
+      process.env.OPENSWARM_SANDBOX = "yes-please";
+      const result = parseArgv(["hello"]);
+      if (result.kind !== "prompt") throw new Error("expected prompt");
+      expect(result.opts.sandbox).toBe("prefer");
+    });
+
+    it("rejects an unrecognised flag value, where the user is being explicit", () => {
+      const result = parseArgv(["--sandbox", "yes-please", "hello"]);
+      expect(result.kind).toBe("error");
+      if (result.kind !== "error") throw new Error("expected error");
+      expect(result.message).toContain("require, prefer, off");
+    });
+
+    it("rejects a missing value", () => {
+      const result = parseArgv(["--sandbox"]);
+      expect(result.kind).toBe("error");
+    });
   });
 
   it("--plan sets plan mode and defaults are otherwise unchanged", () => {

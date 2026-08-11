@@ -19,6 +19,7 @@ import { AnthropicEnvAuth } from "../auth/anthropic-env-auth.js";
 import { ToolDispatcher } from "../tools/dispatcher.js";
 import { buildTier0Tools } from "../tools/tier0/index.js";
 import { PermissionEngine } from "../permissions/index.js";
+import { getProcessBroker } from "../process/broker.js";
 import { NativeEngine } from "../engine/native.js";
 import { HardenedNativeEngine } from "../engine/hardened-native.js";
 import { ScriptedTestEngine } from "../engine/test-engine.js";
@@ -32,6 +33,7 @@ import {
   type CompactionConfig,
 } from "../engine/compactor.js";
 import type { RemoteCompactionConfig } from "../engine/compact-remote.js";
+import type { AttemptResolver } from "../engine/operation-ledger.js";
 import { makeProjectInstructionsRecontextualizer } from "../engine/compact-rebuild.js";
 import type { Provider } from "../providers/index.js";
 import { PluginRegistry } from "../plugins/registry.js";
@@ -42,6 +44,8 @@ import { ClaudeCodeSource as ClaudeCodeSkillSource } from "../skills/claude-code
 import { buildTier1Tools } from "../tools/tier1/index.js";
 import { setToolRegistry } from "../tools/tier1/tool_search.js";
 import { loadMcpConfig } from "../mcp/config.js";
+import { isWithin } from "../kernel/workspace-authority.js";
+import type { TrustDecision } from "../trust/gate.js";
 import { McpStdioClient } from "../mcp/client.js";
 import { buildMcpToolImpl } from "../mcp/bridge.js";
 import { loadHooksConfig, countEvents, countMatchers } from "../hooks/config.js";
@@ -50,7 +54,7 @@ import { loadAliases, resolveAlias } from "../providers/aliases.js";
 import { OpenAIEnvAuth } from "../auth/openai-env.js";
 import { planEngine } from "./select-engine.js";
 import type { CommonOpts } from "./argv.js";
-import type { AgentEngine } from "../engine/index.js";
+import type { AgentEngine, SnapshotSink } from "../engine/index.js";
 import type { AuthSource } from "../auth/index.js";
 import type { ToolImpl } from "../tools/types.js";
 import type { HooksConfigFile } from "../hooks/config.js";
@@ -115,8 +119,19 @@ export async function buildAuthForProvider(modelId: string): Promise<AuthSource>
  * Lazily constructs an engine for a given session id. Returns the engine plus
  * the provider id (native path only — used by `--dump-engine`).
  */
+/**
+ * `hooks` is optional so the surfaces that do not persist session state (ACP
+ * supplies its own ids and, for now, its own lifecycle) are unaffected. The CLI
+ * passes `onSnapshot` when session storage is durable, which is what gives
+ * `--resume` something to read (docs/67 `WP-08`).
+ */
 export type MakeEngine = (
   sessionId: string,
+  hooks?: {
+    readonly onSnapshot?: SnapshotSink;
+    /** Terminal half of an attempt; see `HardenedNativeEngineOptions.audit`. */
+    readonly onAttemptResolved?: AttemptResolver;
+  },
 ) => Promise<{ engine: AgentEngine; providerId?: string }>;
 
 export interface AgentRuntime {
@@ -143,10 +158,25 @@ export type BuildRuntimeResult =
  * Assemble the shared agent runtime. Returns `{ kind: "exit", code }` for the
  * paths that previously short-circuited runPrompt with a process exit code
  * (auth failure → 1, `--dump-tools` → 0, engine/framework mismatch → 2).
+ *
+ * @security `trust` is required rather than defaulted because this function
+ * spawns MCP subprocesses and imports plugin modules. A default would mean a
+ * caller that forgets the gate silently gets the permissive answer, which is
+ * the shape of CVE-2025-59536. Callers with no workspace to vet — workers,
+ * tests — pass `inheritedTrust(cwd)` and say so.
  */
 export async function buildAgentRuntime(
   opts: CommonOpts,
+  trust: TrustDecision,
 ): Promise<BuildRuntimeResult> {
+  const allowWorkspaceConfig = trust.allowWorkspaceConfig;
+  // Set before anything can spawn: the broker applies this to every untrusted
+  // child, and a child launched before the policy lands would get the default.
+  getProcessBroker().setPolicy(opts.sandbox);
+  // Exported so workers inherit it. A worker runs the same tools against the
+  // same workspace, so it has to confine them the same way; without this a
+  // --sandbox chosen on the command line would stop at the root process.
+  process.env.OPENSWARM_SANDBOX = opts.sandbox;
   // 1. Validate auth. Scripted-test mode skips the check (the scripted engine
   // never calls the API).
   const scriptedMode = !!process.env.OPENSWARM_TEST_SCRIPT;
@@ -177,7 +207,7 @@ export async function buildAgentRuntime(
   let hooksConfig: Awaited<ReturnType<typeof loadHooksConfig>> = { config: {} };
   if (opts.hooks) {
     try {
-      hooksConfig = await loadHooksConfig({ cwd: process.cwd() });
+      hooksConfig = await loadHooksConfig({ cwd: process.cwd(), allowWorkspaceConfig });
     } catch (err) {
       // Hooks are optional — degrade gracefully: warn to stderr, skip the bad
       // config, and continue with an empty hooks map (hooksConfig stays {}).
@@ -209,7 +239,16 @@ export async function buildAgentRuntime(
       : path.join(os.homedir(), ".openswarm", "plugins");
   // One shared store across plugin discovery and the `/plugin` slash command.
   const pluginStateStore = new PluginStateStore(swarmPluginsDir);
-  if (opts.plugins) {
+  // Plugins normally live under the user's home and are not the repository's
+  // to supply, but OPENSWARM_PLUGINS_DIR can point anywhere — including into
+  // the workspace, where loading one means `import()`ing repository code.
+  const pluginsFromWorkspace = isWithin(path.resolve(swarmPluginsDir), process.cwd());
+  if (pluginsFromWorkspace && !allowWorkspaceConfig) {
+    process.stderr.write(
+      "[openswarm] untrusted workspace: skipping plugins under OPENSWARM_PLUGINS_DIR\n",
+    );
+  }
+  if (opts.plugins && !(pluginsFromWorkspace && !allowWorkspaceConfig)) {
     const pluginRegistry = new PluginRegistry(pluginStateStore);
     pluginRegistry.registerSource(
       new ClaudeCodeSource({ id: "openswarm", pluginsDir: swarmPluginsDir }),
@@ -238,7 +277,7 @@ export async function buildAgentRuntime(
   const tier1Tools: ToolImpl[] = [];
   if (opts.skills) {
     skillRegistry = new SkillRegistry();
-    skillRegistry.registerSource(new ClaudeCodeSkillSource());
+    skillRegistry.registerSource(new ClaudeCodeSkillSource({ allowWorkspaceConfig }));
   }
   for (const tool of buildTier1Tools({ skillRegistry })) {
     try {
@@ -257,7 +296,7 @@ export async function buildAgentRuntime(
   if (opts.mcp) {
     let loaded: Awaited<ReturnType<typeof loadMcpConfig>>;
     try {
-      loaded = await loadMcpConfig();
+      loaded = await loadMcpConfig({ cwd: process.cwd(), allowWorkspaceConfig });
     } catch (err) {
       process.stderr.write(
         `[openswarm] mcp config load error: ${err instanceof Error ? err.message : String(err)}\n`,
@@ -375,7 +414,10 @@ export async function buildAgentRuntime(
       break;
     case "codex-chatgpt":
       makeEngine = async () => ({
-        engine: new CodexFrameworkEngine({ cwd: process.cwd() }),
+        engine: new CodexFrameworkEngine({
+          cwd: process.cwd(),
+          permissionMode: effectivePermissionMode,
+        }),
       });
       break;
     case "codex-native": {
@@ -409,7 +451,7 @@ export async function buildAgentRuntime(
     }
     case "claude-sdk": {
       const factory = plan.resolved.engineFactory!;
-      makeEngine = async () => ({ engine: factory() });
+      makeEngine = async () => ({ engine: factory({ allowWorkspaceConfig }) });
       break;
     }
     case "native": {
@@ -417,7 +459,7 @@ export async function buildAgentRuntime(
       const providerModelId = plan.resolved.modelId!;
       const authFactory = plan.resolved.authFactory;
       const useHardened = plan.hardened;
-      makeEngine = async (sessionId: string) => {
+      makeEngine = async (sessionId: string, hooks) => {
         const providerAuth = authFactory
           ? await authFactory()
           : await buildAuthForProvider(providerModelId);
@@ -435,12 +477,21 @@ export async function buildAgentRuntime(
               midTurnCompaction: opts.midTurnCompaction,
               compactionConfig,
               recontextualize,
+              ...(hooks?.onSnapshot !== undefined
+                ? { onSnapshot: hooks.onSnapshot }
+                : {}),
+              ...(hooks?.onAttemptResolved !== undefined
+                ? { audit: hooks.onAttemptResolved }
+                : {}),
             })
           : new NativeEngine({
               provider,
               sessionId,
               compactionConfig,
               recontextualize,
+              ...(hooks?.onSnapshot !== undefined
+                ? { onSnapshot: hooks.onSnapshot }
+                : {}),
             });
         return { engine, providerId: provider.id };
       };

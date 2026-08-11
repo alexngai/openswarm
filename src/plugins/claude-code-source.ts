@@ -19,8 +19,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import * as cp from "node:child_process";
 import { z } from "zod";
+import { getProcessBroker, type BrokeredProcess } from "../process/broker.js";
 import type {
   PluginSource,
   PluginManifest,
@@ -247,29 +247,49 @@ export class ClaudeCodeSource implements PluginSource {
         ),
       );
 
+      const TIMEOUT_MS = 30_000;
+      const ac = new AbortController();
+
+      // Brokered: a plugin tool is third-party code the repository asked for,
+      // so it runs under the same isolation and cancellation as any other
+      // untrusted child. Awaited outside the executor because resolving
+      // isolation is async — a plugin that cannot be isolated under a
+      // "require" policy fails rather than running unconfined.
+      //
+      // cwd: pluginDir so the manifest's `command` can use paths relative to
+      // its own directory (e.g., "./run.sh").
+      let proc: BrokeredProcess;
+      try {
+        proc = await getProcessBroker().spawn({
+          kind: "plugin",
+          command: "bash",
+          args: ["-c", shellCommand],
+          cwd: pluginDir,
+          env,
+          stdio: ["pipe", "pipe", "pipe"],
+          label: `plugin tool '${toolName}'`,
+        });
+      } catch (err) {
+        return {
+          status: "error",
+          message: err instanceof Error ? err.message : String(err),
+        };
+      }
+
       return new Promise<PluginToolResult>((resolve) => {
-        const TIMEOUT_MS = 30_000;
-        const ac = new AbortController();
         const timer = setTimeout(() => {
           ac.abort();
+          proc.kill();
           resolve({ status: "error", message: "plugin timed out after 30s" });
         }, TIMEOUT_MS);
 
-        // Use `bash -c` for shell compatibility.
-        // cwd: pluginDir so the manifest's `command` can use paths relative
-        // to its own directory (e.g., "./run.sh").
-        const child = cp.spawn("bash", ["-c", shellCommand], {
-          env,
-          stdio: ["pipe", "pipe", "pipe"],
-          signal: ac.signal,
-          cwd: pluginDir,
-        });
+        const child = proc.child;
 
         const stdoutChunks: Buffer[] = [];
         const stderrChunks: Buffer[] = [];
 
-        child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
-        child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+        child.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+        child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
 
         // Write input JSON to stdin and close.
         //
@@ -279,9 +299,11 @@ export class ClaudeCodeSource implements PluginSource {
         // exception and takes the host down, even though the plugin ran fine
         // and its result is captured below. Swallow it: the child's real
         // outcome arrives on "close", via exit code and stderr.
-        child.stdin.on("error", () => {});
-        child.stdin.write(JSON.stringify(input));
-        child.stdin.end();
+        // Optional-chained because a brokered child's streams are nullable —
+        // isolation decides the stdio, so the broker cannot promise a pipe.
+        child.stdin?.on("error", () => {});
+        child.stdin?.write(JSON.stringify(input));
+        child.stdin?.end();
 
         child.on("close", (code) => {
           clearTimeout(timer);

@@ -14,7 +14,7 @@
  *      rev-2 Major M6.
  */
 
-import { spawn } from "node:child_process";
+import { getProcessBroker, type BrokeredProcess } from "../process/broker.js";
 import { getHardenedEnv } from "../tools/tier0/process-hardening.js";
 import type {
   HookCallback,
@@ -322,7 +322,7 @@ const HOOK_EVENTS: readonly HookEvent[] = [
  * and translate exit codes (0 → allow, 2 → deny, other → fail). Timeouts
  * surface as `{ decision: "fail", error: "hook timed out after <ms>ms" }`.
  */
-function runShellHook(
+async function runShellHook(
   cfg: HookConfig,
   payload: unknown,
 ): Promise<HookResult> {
@@ -333,6 +333,33 @@ function runShellHook(
   let stdout = "";
   let stderr = "";
 
+  // Spawning is awaited outside the executor because resolving isolation is
+  // async, and a hook that cannot be isolated under a "require" policy must
+  // fail the hook rather than run unconfined.
+  let proc: BrokeredProcess;
+  try {
+    proc = await getProcessBroker().spawn({
+      kind: "hook",
+      command: "bash",
+      args: ["-c", cfg.command],
+      cwd: process.cwd(),
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...getHardenedEnv() },
+      label: `hook: ${cfg.command}`,
+    });
+  } catch (err) {
+    clearTimeout(timer);
+    return {
+      decision: "fail",
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+
+  const child = proc.child;
+  // The broker owns cancellation so the whole tree dies, not just bash — a
+  // hook that backgrounds work would otherwise leave it running past timeout.
+  ac.signal.addEventListener("abort", () => proc.kill(), { once: true });
+
   return new Promise<HookResult>((resolve) => {
     let settled = false;
     const settle = (r: HookResult): void => {
@@ -341,21 +368,6 @@ function runShellHook(
       clearTimeout(timer);
       resolve(r);
     };
-
-    let child: ReturnType<typeof spawn>;
-    try {
-      child = spawn("bash", ["-c", cfg.command], {
-        signal: ac.signal,
-        stdio: ["pipe", "pipe", "pipe"],
-        env: { ...getHardenedEnv() },
-      });
-    } catch (err) {
-      settle({
-        decision: "fail",
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return;
-    }
 
     child.stdout?.setEncoding("utf8").on("data", (d: string) => {
       stdout += d;

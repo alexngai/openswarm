@@ -12,12 +12,14 @@ import { readBootstrapConfig, type BootstrapConfig } from "../host/bootstrap.js"
 import { createTeamConnection } from "../acp/team-connection.js";
 import type { CommonOpts } from "./argv.js";
 import type { PermissionMode } from "../core/types.js";
+import type { SandboxPolicy } from "../tools/tier0/sandbox.js";
 
 export interface RunHostOptions {
   readonly port: number;
   readonly host?: string;
   readonly cwd?: string;
   readonly permissionMode?: PermissionMode;
+  readonly sandbox?: SandboxPolicy;
   /** OpenHive `--adapter` value (accepted for compatibility; informational). */
   readonly adapter?: string;
   /** docs/44 Case 2 — outbound MAP: dial this hub instead of waiting to be dialed. */
@@ -105,9 +107,14 @@ function redactToken(url: string): string {
 }
 
 /** Default CommonOpts for the hosted ACP coordinator team (headless, no TTY). */
-function hostedAcpOpts(permissionMode: PermissionMode, model?: string): CommonOpts {
+function hostedAcpOpts(
+  permissionMode: PermissionMode,
+  sandbox: SandboxPolicy,
+  model?: string,
+): CommonOpts {
   return {
     permissionMode,
+    sandbox,
     ...(model !== undefined && { model }),
     outputFormat: "json",
     headless: true,
@@ -128,7 +135,7 @@ export async function runHost(opts: RunHostOptions): Promise<number> {
   // so spawned agents operate in the hosted workspace.
   const cwd = opts.cwd ?? bootstrap.dataDir ?? process.cwd();
   const permissionMode = opts.permissionMode ?? "workspace-write";
-  const acpOpts = hostedAcpOpts(permissionMode, opts.model);
+  const acpOpts = hostedAcpOpts(permissionMode, opts.sandbox ?? "prefer", opts.model);
 
   // Where to dial for the outbound MAP sidecar: an explicit --map-server, else
   // the hub coordinates carried in the OpenHive bootstrap token.

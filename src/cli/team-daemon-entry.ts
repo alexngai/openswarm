@@ -15,6 +15,7 @@
  */
 
 import * as fsp from "node:fs/promises";
+import * as path from "node:path";
 import type { PermissionMode } from "../core/types.js";
 import { TeamSpecSchema, type TeamSpec } from "../swarm/team-spec.js";
 import { TeamDaemon } from "../swarm/team-daemon.js";
@@ -49,6 +50,11 @@ export async function runTeamDaemonEntry(): Promise<number> {
   const pidPath = process.env.OPENSWARM_DAEMON_PID!;
   const eventsPath = process.env.OPENSWARM_DAEMON_EVENTS!;
   const statePath = process.env.OPENSWARM_DAEMON_STATE!;
+  // Derived when absent so a spawner from before results moved out of state.json
+  // still starts, rather than writing results into the snapshot again.
+  const resultsPath =
+    process.env.OPENSWARM_DAEMON_RESULTS ??
+    path.join(path.dirname(statePath), "results.jsonl");
   const checkpointPath = process.env.OPENSWARM_DAEMON_CHECKPOINT!;
 
   let spec: TeamSpec;
@@ -83,7 +89,7 @@ export async function runTeamDaemonEntry(): Promise<number> {
 
   const daemon = new TeamDaemon({
     spec,
-    paths: { sockPath, pidPath, eventsPath, statePath, checkpointPath },
+    paths: { sockPath, pidPath, eventsPath, statePath, resultsPath, checkpointPath },
     ...(permissionMode !== undefined && { permissionMode }),
     ...(concurrency !== undefined && { concurrency }),
   });

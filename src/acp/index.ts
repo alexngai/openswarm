@@ -10,6 +10,7 @@
 import { Readable, Writable } from "node:stream";
 import { AgentSideConnection, ndJsonStream } from "@agentclientprotocol/sdk";
 import { buildAgentRuntime } from "../cli/runtime.js";
+import { resolveTrust, explainDenial } from "../trust/gate.js";
 import { AcpAgent } from "./agent.js";
 import {
   createTeamConnection,
@@ -62,7 +63,16 @@ export async function runAcp(opts: CommonOpts): Promise<number> {
 async function runAcpSingle(opts: CommonOpts): Promise<number> {
   // ACP is a non-TTY JSONL-style surface: force headless so the runtime never
   // mounts the REPL or writes UI chrome to stdout.
-  const built = await buildAgentRuntime({ ...opts, headless: true });
+  //
+  // No prompt is passed: there is no operator on this transport, so an
+  // untrusted workspace runs without its own configuration rather than
+  // guessing at consent. ACP clients that have vetted the workspace set
+  // OPENSWARM_TRUST_WORKSPACE.
+  const trust = await resolveTrust({ cwd: process.cwd() });
+  if (!trust.allowWorkspaceConfig && !trust.provenance.inert) {
+    process.stderr.write(explainDenial(trust));
+  }
+  const built = await buildAgentRuntime({ ...opts, headless: true }, trust);
   if (built.kind === "exit") return built.code;
   const rt = built.runtime;
 

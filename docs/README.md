@@ -2,7 +2,7 @@
 
 Design capture for openswarm — a TypeScript agent harness where the atomic unit is a single coding agent and the primary product surface is multi-agent swarm orchestration.
 
-Numbering is chronological and stable: numbers are never reused.
+Numbering is chronological and stable: numbers are never reused. The number is also how the rest of the tree cites a document — source comments say `docs/67`, CI says `docs/55` — so renaming one means following its references. `test/docs-numbering.test.ts` enforces both halves: one document per number, and every `docs/NN` reference in the tree resolving to a file that exists.
 
 For end-user CLI reference (flags, model routing, tools, limitations, architecture), see [USAGE.md](./USAGE.md).
 
@@ -64,6 +64,11 @@ All ACP stages are shipped. The living references:
 
 - [41-tui-redesign.md](./41-tui-redesign.md) — OpenTUI/Solid REPL redesign (active)
 - [49-tui-parity-plan.md](./49-tui-parity-plan.md) — parity plan vs Claude Code/Codex/opencode: syntax highlighting, `<diff>`/`<code>` adoption, transcript ergonomics, half-wired feature fixes (plan)
+
+## Product audits & roadmap
+
+- [58-coding-agent-product-review.md](./58-coding-agent-product-review.md) — honest coding-agent product review versus Claude Code, Codex, OpenCode, and Reasonix; source-audited launch blockers, empirical claim boundary, positioning decision, and prioritized roadmap
+- [67-product-parity-roadmap.md](./67-product-parity-roadmap.md) — 50-week capability-based product-parity program: resolved storage/trust/certification/privacy defaults, effect-transaction walking skeleton, 36 work packages, mixed-corpus non-inferiority gates, migration, and P0/P1 traceability
 
 ## Status
 

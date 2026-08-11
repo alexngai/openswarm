@@ -77,9 +77,21 @@ export interface CodexAppServerOptions {
   readonly cwd?: string;
   /** Model override passed to thread/start. */
   readonly model?: string;
-  /** Sandbox policy. Defaults to `"danger-full-access"`. */
+  /**
+   * Sandbox policy. Defaults to `"read-only"`.
+   *
+   * Codex enforces this over its own built-in tooling, which openswarm never
+   * observes and therefore cannot gate at `canUseTool`. This is the only lever
+   * on that tooling, so an omitted value must be the restrictive one.
+   */
   readonly sandbox?: SandboxMode;
-  /** Approval policy. Defaults to `"never"`. */
+  /**
+   * Approval policy. Defaults to `"never"`.
+   *
+   * No approval channel is wired between Codex and openswarm's broker, so
+   * `"on-failure"` and `"always"` would address a request to nobody. `"never"`
+   * here means "enforce `sandbox` without escalation", not "permit anything".
+   */
   readonly approvalPolicy?: AskForApproval;
   /**
    * Tools to register at thread/start (sent as `dynamicTools`). Each entry
@@ -239,7 +251,7 @@ export class CodexAppServerProvider extends EventEmitter {
       codexBinary: options.codexBinary ?? "codex",
       cwd: options.cwd ?? process.cwd(),
       model: options.model,
-      sandbox: options.sandbox ?? "danger-full-access",
+      sandbox: options.sandbox ?? "read-only",
       approvalPolicy: options.approvalPolicy ?? "never",
       dynamicTools: options.dynamicTools ?? [],
       onDynamicToolCall: options.onDynamicToolCall,
@@ -357,12 +369,18 @@ export class CodexAppServerProvider extends EventEmitter {
     sandbox?: SandboxMode;
     approvalPolicy?: AskForApproval;
   } = {}): Promise<{ threadId: string; model: string }> {
+    // Fall back to the constructed policy rather than omitting the field: an
+    // absent `sandbox` lets the server pick, and its pick is permissive. The
+    // constructor always resolves both, so these are always on the wire.
+    const sandbox = opts.sandbox ?? this.options.sandbox;
+    const approvalPolicy = opts.approvalPolicy ?? this.options.approvalPolicy;
+
     const params: ThreadStartParams = {
       experimentalRawEvents: false,
       ...(opts.model !== undefined && { model: opts.model }),
       ...(opts.cwd !== undefined && { cwd: opts.cwd }),
-      ...(opts.sandbox !== undefined && { sandbox: opts.sandbox }),
-      ...(opts.approvalPolicy !== undefined && { approvalPolicy: opts.approvalPolicy }),
+      sandbox,
+      approvalPolicy,
       ...(this.options.dynamicTools.length > 0 && {
         dynamicTools: this.options.dynamicTools,
       }),

@@ -25,6 +25,7 @@ import type { BashGateDeps, BashGateInput } from "./bash-gate.js";
 import type { ToolImpl } from "../tools/types.js";
 import type { PermissionDecision } from "../engine/index.js";
 import type { LaneEvent, BashValidationBlockedPayload, BashValidationWarnedPayload } from "../swarm/events.js";
+import { ToolAccesses } from "../tools/access.js";
 
 // ---------------------------------------------------------------------------
 // Helpers — minimal ToolImpl fixtures
@@ -40,6 +41,7 @@ function makeTool(name: string, requiredPermission: "exec" | "read" | "write" | 
       tier: 0,
     },
     execute: vi.fn(),
+    accesses: () => ToolAccesses.none(),
   };
 }
 

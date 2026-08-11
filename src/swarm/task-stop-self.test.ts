@@ -160,9 +160,14 @@ describe("task.stop self-stop IPC response (v0.4 stage 4I Defect 3)", () => {
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
 
-    // Registry should reflect the stop.
+    // This fixture reports a successful `task_result` before it stops itself, so
+    // the task had already finished by the time the stop arrived. It keeps the
+    // outcome it reported: a cancellation that lands after completion cancelled
+    // nothing, and recording it as stopped would throw away a real result
+    // (docs/67 WP-06). What this test is about is the ordering above — the
+    // response reaching the worker before its transport tears down.
     const updated = await orch.task.get(taskId);
-    expect(updated?.status).toBe("stopped");
+    expect(updated?.status).toBe("succeeded");
   });
 
   it("self-stop response is delivered even though kill() closes the transport", async () => {

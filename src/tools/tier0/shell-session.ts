@@ -9,8 +9,11 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { headTailTruncate, type HeadTailOptions } from "./internal.js";
+import { BoundedOutput } from "./bounded-output.js";
 import { getHardenedEnv } from "./process-hardening.js";
-import { spawnSandboxedSync, type SandboxPolicy } from "./sandbox.js";
+import type { SandboxPolicy } from "./sandbox.js";
+import { killProcessTree } from "../../process/tree.js";
+import { getProcessBroker, type ProcessBroker } from "../../process/broker.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -47,12 +50,45 @@ export interface ShellSessionManagerOptions {
   readonly maxSessions?: number;
   readonly headTail?: HeadTailOptions;
   readonly captureState?: boolean;
+  /**
+   * @deprecated Isolation policy belongs to the broker. Setting it here now
+   * sets it for every untrusted child, not just this manager's sessions.
+   */
   readonly sandboxPolicy?: SandboxPolicy;
+  /** Broker to launch sessions through. Defaults to the process-wide one. */
+  readonly broker?: ProcessBroker;
 }
 
 // ---------------------------------------------------------------------------
 // Internal session state (not exported — callers use ShellSession snapshots)
 // ---------------------------------------------------------------------------
+
+/**
+ * Bytes retained per end, per stream, per session. Reads truncate to 20 KiB at
+ * each end, so this keeps several times more than any caller can observe: the
+ * bound is reached only by output that was already going to be elided.
+ */
+const SESSION_RETAIN_BYTES = 64 * 1024;
+
+/**
+ * One stream of a session, held in bounded memory.
+ *
+ * A session outlives the command that filled it, so this is where unbounded
+ * retention hurts most: the previous chunk array was never freed, and grew for
+ * the life of the session even under ordinary use, because draining only
+ * advanced a cursor past chunks it left in place. Two windows replace it —
+ * `history` for a reattach that wants the whole session, `pending` for the
+ * incremental read — and each discards its own middle as it fills.
+ */
+interface SessionStream {
+  readonly history: BoundedOutput;
+  readonly pending: BoundedOutput;
+}
+
+function newStream(): SessionStream {
+  const window = { headBytes: SESSION_RETAIN_BYTES, tailBytes: SESSION_RETAIN_BYTES };
+  return { history: new BoundedOutput(window), pending: new BoundedOutput(window) };
+}
 
 interface LiveSession {
   id: string;
@@ -60,12 +96,8 @@ interface LiveSession {
   cwd: string;
   startedAt: number;
   lastAccessedAt: number;
-  stdoutChunks: Buffer[];
-  stderrChunks: Buffer[];
-  stdoutCursor: number;
-  stderrCursor: number;
-  totalStdoutBytes: number;
-  totalStderrBytes: number;
+  stdout: SessionStream;
+  stderr: SessionStream;
   lastCommand: string | null;
   state: ShellState | null;
   exitCode: number | null;
@@ -95,31 +127,35 @@ export class ShellSessionManager {
   private readonly maxSessions: number;
   private readonly headTailOpts: HeadTailOptions;
   private readonly captureState: boolean;
-  private readonly sandboxPolicy: SandboxPolicy;
+  private readonly broker: ProcessBroker;
   private nextId = 1;
 
   constructor(opts: ShellSessionManagerOptions = {}) {
     this.maxSessions = opts.maxSessions ?? DEFAULT_MAX_SESSIONS;
     this.headTailOpts = opts.headTail ?? {};
     this.captureState = opts.captureState ?? true;
-    this.sandboxPolicy = opts.sandboxPolicy ?? "prefer";
+    this.broker = opts.broker ?? getProcessBroker();
+    if (opts.sandboxPolicy !== undefined) this.broker.setPolicy(opts.sandboxPolicy);
   }
 
   /**
    * Create a new persistent shell session. Optionally run an initial command.
    * Returns the session ID and PID.
    */
-  create(cwd: string, initialCommand?: string): ShellSession {
+  async create(cwd: string, initialCommand?: string): Promise<ShellSession> {
     this.evictIfNeeded();
 
     const id = `sh_${this.nextId++}`;
     const env = { ...getHardenedEnv(), TERM: "dumb", PS1: "" };
-    const child = spawnSandboxedSync(
-      "/bin/bash",
-      ["--norc", "--noprofile", "-i"],
-      { cwd, stdio: ["pipe", "pipe", "pipe"] },
-      { writableRoots: [], cwd, env, policy: this.sandboxPolicy },
-    );
+    const { child } = await this.broker.spawn({
+      kind: "shell-session",
+      command: "/bin/bash",
+      args: ["--norc", "--noprofile", "-i"],
+      cwd,
+      env,
+      stdio: ["pipe", "pipe", "pipe"],
+      label: `persistent shell ${id}`,
+    });
 
     const session: LiveSession = {
       id,
@@ -127,12 +163,8 @@ export class ShellSessionManager {
       cwd,
       startedAt: Date.now(),
       lastAccessedAt: Date.now(),
-      stdoutChunks: [],
-      stderrChunks: [],
-      stdoutCursor: 0,
-      stderrCursor: 0,
-      totalStdoutBytes: 0,
-      totalStderrBytes: 0,
+      stdout: newStream(),
+      stderr: newStream(),
       lastCommand: initialCommand ?? null,
       state: null,
       exitCode: null,
@@ -140,13 +172,13 @@ export class ShellSessionManager {
     };
 
     child.stdout!.on("data", (chunk: Buffer) => {
-      session.stdoutChunks.push(chunk);
-      session.totalStdoutBytes += chunk.length;
+      session.stdout.history.push(chunk);
+      session.stdout.pending.push(chunk);
     });
 
     child.stderr!.on("data", (chunk: Buffer) => {
-      session.stderrChunks.push(chunk);
-      session.totalStderrBytes += chunk.length;
+      session.stderr.history.push(chunk);
+      session.stderr.pending.push(chunk);
     });
 
     child.on("close", (code) => {
@@ -194,7 +226,7 @@ export class ShellSessionManager {
 
     session.lastAccessedAt = Date.now();
     try {
-      session.process.kill(sig);
+      killProcessTree(session.process, sig);
       return true;
     } catch {
       return false;
@@ -202,9 +234,9 @@ export class ShellSessionManager {
   }
 
   /**
-   * Read new output since the last read. Uses cursor tracking so each read
-   * returns only new data. Output is HeadTail-truncated per the configured
-   * limits.
+   * Read new output since the last read. Draining clears the pending window,
+   * so what a reader has already seen stops being held. Output is
+   * HeadTail-truncated per the configured limits.
    */
   readOutput(sessionId: string): SessionOutput | null {
     const session = this.sessions.get(sessionId);
@@ -212,11 +244,11 @@ export class ShellSessionManager {
 
     session.lastAccessedAt = Date.now();
 
-    const newStdout = this.drainSince(session.stdoutChunks, session.stdoutCursor);
-    session.stdoutCursor = session.stdoutChunks.length;
+    const newStdout = session.stdout.pending.bytes();
+    session.stdout.pending.reset();
 
-    const newStderr = this.drainSince(session.stderrChunks, session.stderrCursor);
-    session.stderrCursor = session.stderrChunks.length;
+    const newStderr = session.stderr.pending.bytes();
+    session.stderr.pending.reset();
 
     const stdout = headTailTruncate(newStdout, this.headTailOpts);
     const stderr = headTailTruncate(newStderr, this.headTailOpts);
@@ -316,12 +348,12 @@ export class ShellSessionManager {
 
     session.lastAccessedAt = Date.now();
 
-    const allStdout = Buffer.concat(session.stdoutChunks);
-    const allStderr = Buffer.concat(session.stderrChunks);
+    const allStdout = session.stdout.history.bytes();
+    const allStderr = session.stderr.history.bytes();
 
-    // Advance cursor past everything.
-    session.stdoutCursor = session.stdoutChunks.length;
-    session.stderrCursor = session.stderrChunks.length;
+    // Everything has now been seen, so nothing is pending.
+    session.stdout.pending.reset();
+    session.stderr.pending.reset();
 
     const stdout = headTailTruncate(allStdout, this.headTailOpts);
     const stderr = headTailTruncate(allStderr, this.headTailOpts);
@@ -359,11 +391,7 @@ export class ShellSessionManager {
     if (!session) return false;
 
     if (!session.exited) {
-      try {
-        session.process.kill("SIGKILL");
-      } catch {
-        // already dead
-      }
+      killProcessTree(session.process);
     }
     this.sessions.delete(sessionId);
     return true;
@@ -402,11 +430,6 @@ export class ShellSessionManager {
     }
   }
 
-  private drainSince(chunks: Buffer[], cursor: number): Buffer {
-    if (cursor >= chunks.length) return Buffer.alloc(0);
-    return Buffer.concat(chunks.slice(cursor));
-  }
-
   private snapshot(s: LiveSession): ShellSession {
     return {
       id: s.id,
@@ -414,8 +437,11 @@ export class ShellSessionManager {
       cwd: s.cwd,
       startedAt: s.startedAt,
       lastAccessedAt: s.lastAccessedAt,
-      totalStdoutBytes: s.totalStdoutBytes,
-      totalStderrBytes: s.totalStderrBytes,
+      // Bytes the process produced, not bytes still held. A caller asking how
+      // much a session has emitted wants the former, and it stays accurate
+      // after the middle has been discarded.
+      totalStdoutBytes: s.stdout.history.totalBytes,
+      totalStderrBytes: s.stderr.history.totalBytes,
       lastCommand: s.lastCommand,
       state: s.state,
       exitCode: s.exitCode,

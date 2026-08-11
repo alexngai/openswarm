@@ -15,6 +15,7 @@
 import { z } from "zod";
 import type { PluginSource, PluginManifest, LoadedPlugin, PluginExecutionContext } from "./index.js";
 import type { ToolImpl, ToolExecutionContext, ToolResult } from "../tools/types.js";
+import { ToolAccesses } from "../tools/access.js";
 import { PluginStateStore, defaultStore } from "./state.js";
 
 // ---------------------------------------------------------------------------
@@ -230,6 +231,11 @@ export class PluginRegistry {
               message: pluginResult.message,
             };
           },
+          // A plugin tool runs code we did not write, usually as a shell
+          // command, so no path or host describes it. The plugin itself is the
+          // one thing that can be named, and it is the right unit of trust:
+          // approving a plugin once covers its tools for the session.
+          accesses: () => ToolAccesses.plugin(capturedManifestId),
         };
 
         result.push(toolImpl);

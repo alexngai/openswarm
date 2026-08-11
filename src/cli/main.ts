@@ -34,7 +34,14 @@ import { logoutMain } from "./logout.js";
 import { loginMain } from "./login.js";
 import { runAcp } from "./acp.js";
 import { buildAgentRuntime } from "./runtime.js";
+import { resolveTrust, explainDenial, propagateTrust } from "../trust/gate.js";
+import { makeTrustPrompt, canPrompt } from "./trust-prompt.js";
 import { makeCanUseTool } from "../permissions/gate.js";
+import type { AttemptRecorder } from "../permissions/gate.js";
+import { openAuditJournal } from "../kernel/audit-journal.js";
+import { reconcileAttempts } from "../kernel/attempt-recovery.js";
+import { WorkspaceAuthority } from "../kernel/workspace-authority.js";
+import type { AttemptResolver } from "../engine/operation-ledger.js";
 import { PermissionBridge } from "../permissions/bridge.js";
 import { SessionAllowRules } from "../permissions/session-rules.js";
 import { readHeadlessApproval } from "../permissions/headless-prompt.js";
@@ -56,6 +63,16 @@ import { computeTeamPaths } from "./team-paths.js";
 import { combineSwarmSources, type SwarmEventSource } from "../ui/repl-solid/merge-swarm-events.js";
 import type { PendingPermission } from "../ui/repl/state.js";
 import { SessionStore } from "../session/store.js";
+import {
+  DURABLE_OPT_IN,
+  explainRefusal,
+  readResumeState,
+  recordTurnState,
+  resolveLatest,
+  resolvePersistence,
+} from "../session/resume.js";
+import { FileEventStore } from "../kernel/event-store.js";
+import type { SessionSnapshot } from "../engine/index.js";
 import { runHeadless } from "../ui/headless.js";
 import { checkBudget } from "../core/budget.js";
 import { ApiCostModel } from "../core/cost-model.js";
@@ -108,11 +125,16 @@ Usage:
 
 Flags:
   --model <id>                   Model id or alias (e.g. sonnet, claude-sonnet-4-6)
-  --resume <session-id|latest>   Resume a previous session
+  --resume <session-id|latest>   Resume a previous session (see OPENSWARM_SESSION_STORE)
   --permission-mode <mode>       read-only | workspace-write | danger-full-access
                                  (default: workspace-write)
   --plan                         Read-only plan mode: investigate + design, no edits
                                  (forces read-only; toggle live with /plan)
+  --sandbox <policy>             OS isolation for shell, hooks, MCP and plugins:
+                                 require | prefer | off (default: prefer;
+                                 env: OPENSWARM_SANDBOX). "require" refuses to
+                                 run anything this host cannot confine — see
+                                 "openswarm doctor" for what it can.
   --output-format <fmt>          text | json (default: text)
   --system-prompt <text|@file>   Replace the single-agent base system prompt (@file reads a file)
   --append-system-prompt <t|@f>  Append guidance to the system prompt (@file reads a file)
@@ -144,6 +166,15 @@ swarm run flags:
   --role <name>                  Default role applied to every task without a per-task override
   --dead-letter <path>           Dead-letter JSONL file (default: ./dead-letter.jsonl)
   --allow-dead-letter            Do not exit non-zero when this run appends to dead-letter
+
+Session history:
+  Sessions are ephemeral by default: nothing is written to disk, and --resume
+  works only for Claude SDK sessions, whose transcripts the SDK keeps itself.
+  OPENSWARM_SESSION_STORE=unencrypted-durable journals sessions under
+  .openswarm/sessions/ so --resume works for any engine. The default will become
+  encrypted history once a secure key provider is available; until then the only
+  alternative to keeping nothing is keeping it in the clear, which is why
+  enabling it is spelled out in full.
 
 Examples:
   openswarm "explain this codebase"
@@ -286,10 +317,26 @@ function buildSubagentSummarizer(
 // ---------------------------------------------------------------------------
 
 async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
+  // 0. Resolve workspace trust. This must precede runtime assembly, which
+  // spawns MCP subprocesses and imports plugin modules — see the ordering
+  // CVEs cited in src/trust/gate.ts.
+  const trust = await resolveTrust({
+    cwd: process.cwd(),
+    ...(canPrompt() && { prompt: makeTrustPrompt() }),
+  });
+  if (trust.reason === "declined") {
+    process.stderr.write("[openswarm] workspace not trusted; exiting.\n");
+    return 1;
+  }
+  if (!trust.allowWorkspaceConfig && !trust.provenance.inert) {
+    process.stderr.write(explainDenial(trust));
+  }
+  propagateTrust(trust);
+
   // 1–6. Shared runtime assembly (auth, hooks, tools, permission engine,
   // engine plan). Short-circuits for auth failure (1), --dump-tools (0), and
   // engine/framework mismatch (2).
-  const built = await buildAgentRuntime(opts);
+  const built = await buildAgentRuntime(opts, trust);
   if (built.kind === "exit") return built.code;
   const rt = built.runtime;
 
@@ -298,28 +345,151 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
   // `sessionId` is forwarded to NativeEngine so the OpenAI transport can pass
   // it as `prompt_cache_key`. Resumed sessions inherit the previous id; new
   // sessions get a fresh UUID.
-  let resumeFrom: { engineId: string; data: unknown } | undefined;
+  // Where this session's history may go. Ephemeral unless explicitly opted in,
+  // because a journal is conversation history and the storage decision locked in
+  // WP-00 is encrypted-or-nothing (docs/67 §The live cell's sibling, WP-08).
+  const persistence = await resolvePersistence({
+    workspaceDir: process.cwd(),
+    optIn: process.env.OPENSWARM_SESSION_STORE,
+  });
+  let journal: FileEventStore | undefined;
+  let journalRoot: string | undefined;
+  if (persistence.kind === "durable") {
+    journalRoot = persistence.rootDir;
+    journal = new FileEventStore(journalRoot);
+    process.stderr.write(`warning: ${persistence.warning}\n`);
+  }
+
+  let resumeFrom: SessionSnapshot | undefined;
   let sessionId: string | undefined;
   if (opts.resume !== undefined) {
-    const store = new SessionStore();
-    if (opts.resume === "latest") {
-      sessionId = await store.resolveLatest(process.cwd());
-      if (sessionId === undefined) {
-        process.stderr.write("warning: no previous sessions found; starting fresh\n");
+    // The journal first, because it is the only store that works for every
+    // engine. The SDK store below stays as the fallback so a Claude session
+    // recorded before any of this still resumes; it is also the default path,
+    // since durable journalling is opt-in.
+    if (journal !== undefined && journalRoot !== undefined) {
+      const wanted =
+        opts.resume === "latest" ? await resolveLatest(journalRoot) : opts.resume;
+      if (wanted !== undefined) {
+        const state = await readResumeState(journal, wanted);
+        if (state.kind === "ok") {
+          sessionId = wanted;
+          resumeFrom = state.snapshot;
+        } else if (state.refusal.reason !== "no-such-session") {
+          // A session that exists and cannot be continued is an error worth
+          // stopping for. Starting fresh would silently discard what the user
+          // asked to return to.
+          process.stderr.write(`error: ${explainRefusal(state.refusal, wanted)}\n`);
+          return 1;
+        }
       }
-    } else {
-      sessionId = opts.resume;
     }
-    if (sessionId !== undefined) {
-      resumeFrom = store.buildSnapshot(sessionId);
+
+    if (resumeFrom === undefined) {
+      // The fallback only knows Claude SDK sessions, whose transcripts the SDK
+      // owns. Saying so here matters because the alternative is what used to
+      // happen: the engine refused a snapshot this layer had labelled
+      // `claude-agent-sdk`, and the user read "cannot resume snapshots produced
+      // by another engine" as a bug in resume rather than as history that was
+      // never kept.
+      if (journal === undefined) {
+        process.stderr.write(
+          `warning: session history is ephemeral, so only Claude SDK sessions can be ` +
+            `resumed. Set OPENSWARM_SESSION_STORE=${DURABLE_OPT_IN} to journal ` +
+            `sessions for any engine.\n`,
+        );
+      }
+      const store = new SessionStore();
+      if (opts.resume === "latest") {
+        sessionId = await store.resolveLatest(process.cwd());
+        if (sessionId === undefined) {
+          process.stderr.write("warning: no previous sessions found; starting fresh\n");
+        }
+      } else {
+        sessionId = opts.resume;
+      }
+      if (sessionId !== undefined) {
+        resumeFrom = store.buildSnapshot(sessionId);
+      }
     }
   }
   if (sessionId === undefined) {
     sessionId = crypto.randomUUID();
   }
 
+  // The attempt journal, which is not the history journal above and is not
+  // conditional on it (docs/67 `WP-00a` remainder). History is ephemeral unless
+  // the user opts in, because it carries message text; an attempt record carries
+  // paths and decisions, and "did this effect already run?" has to be answerable
+  // after a hard kill however history was configured.
+  const audit = openAuditJournal(process.cwd());
+  const auditSessionId = sessionId;
+  const attempts: AttemptRecorder = {
+    prepare: (payload) =>
+      audit
+        .append({
+          sessionId: auditSessionId,
+          type: "AttemptPrepared",
+          payload,
+          causationId: payload.request.operationId,
+        })
+        .then(() => undefined),
+  };
+  const onAttemptResolved: AttemptResolver = {
+    resolve: (outcome) =>
+      audit
+        .append({
+          sessionId: auditSessionId,
+          type: "AttemptResolved",
+          payload: { outcome },
+          causationId: outcome.operationId,
+        })
+        .then(() => undefined),
+  };
+
+  // Reconcile before the first turn: a prepare with no resolve in this session's
+  // journal means the previous process died between performing an effect and
+  // recording it, and until now nothing read those records back. Scoped to this
+  // session because it is the only one no other process can be running — a sweep
+  // of the workspace would call a concurrent agent's in-flight prepare a crash.
+  //
+  // Reported and never replayed. The runtime cannot tell "never ran" from "ran
+  // but was not recorded", and replaying a write on the second reading is the
+  // reading that does damage.
+  const reconciled = await reconcileAttempts({
+    sessionId: auditSessionId,
+    journal: audit,
+    authority: new WorkspaceAuthority(process.cwd()),
+  });
+  if (reconciled.closed > 0) {
+    const changed = reconciled.unresolved.filter((u) => !u.workspaceUnchanged);
+    process.stderr.write(
+      `openswarm: closed ${reconciled.closed} unresolved operation(s) from a previous run; ` +
+        `${changed.length} left the workspace different from what they expected.\n`,
+    );
+    for (const u of reconciled.unresolved) {
+      // Not every request names a path; a process exec does not have one.
+      const what = "path" in u.request ? u.request.path.relative : u.request.kind;
+      process.stderr.write(
+        `  ${u.request.kind} ${what}${u.workspaceUnchanged ? "" : " [workspace changed]"}\n`,
+      );
+    }
+  }
+
   // 8. Construct the engine for this session.
-  const { engine, providerId } = await rt.makeEngine(sessionId);
+  // The sink records resume state at each turn boundary the engine acknowledges.
+  // Bound to the session id resolved above, so a resumed session keeps appending
+  // to the journal it came from rather than starting a second one.
+  const resumeSessionId = sessionId;
+  const { engine, providerId } = await rt.makeEngine(sessionId, {
+    ...(journal !== undefined
+      ? {
+          onSnapshot: (snapshot: SessionSnapshot) =>
+            recordTurnState(journal as FileEventStore, resumeSessionId, snapshot),
+        }
+      : {}),
+    onAttemptResolved,
+  });
 
   // --dump-engine: print engine info as JSON and exit 0 (smoke tests only).
   if (opts.dumpEngine) {
@@ -365,6 +535,10 @@ async function runPrompt(text: string, opts: CommonOpts): Promise<number> {
     getCurrentMode: () => currentPermissionMode,
     cwd: process.cwd(),
     sessionRules,
+    // Tag grants with the workspace state the operator vouched for, so consent
+    // given about this repository does not silently carry into a different one.
+    trustBinding: () => trust.provenance.digest || undefined,
+    attempts,
   });
 
   // 9a. Phase 4.1e — wire the request_permissions escalation seam for the

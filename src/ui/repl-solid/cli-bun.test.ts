@@ -62,29 +62,49 @@ async function runCli(
   return { exitCode, stdout, stderr };
 }
 
-describe("CLI under Bun runtime", () => {
-  test("--help prints usage", async () => {
-    const { exitCode, stdout } = await runCli(["--help"], { timeoutMs: 15_000 });
-    expect(exitCode).toBe(0);
-    expect(stdout).toContain("openswarm");
-    expect(stdout).toContain("swarm run flags");
-  });
+// Both cases spawn a cold CLI subprocess. Idle in a container it takes about
+// 2s; inside the full parity run under x86 emulation it has been measured past
+// 15s, a spread of roughly 7x that comes from contention rather than from
+// anything the CLI does. Budget for the loaded case: these tests spawn and
+// exit, so a genuine hang still fails, just later. A budget tuned to the idle
+// case instead buys a faster failure at the price of a gate that fails for
+// reasons unrelated to the code under test.
+const SPAWN_BUDGET_MS = 60_000;
+// The outer timeout has to exceed the inner one, or bun kills the test before
+// runCli can report which command stalled.
+const SPAWN_TIMEOUT_MS = 75_000;
 
-  test("doctor runs all checks", async () => {
-    const { exitCode, stdout } = await runCli(["doctor"], { timeoutMs: 15_000 });
-    // 0 = every check passed, 1 = at least one check failed. Both mean doctor
-    // ran and reported, which is what this test is about. Asserting 0 asserted
-    // that the HOST is healthy: with no Anthropic credential the auth check
-    // fails by design, so this passed on a developer laptop and failed on CI —
-    // a property of the environment, not of the CLI.
-    expect([0, 1]).toContain(exitCode);
-    // Doctor emits ✓ / ⚠ / ✗ markers for each check. Assert every check is
-    // present rather than any one of them: that is what "runs all checks"
-    // claims, and an alternation regex passes on a single match.
-    for (const check of ["auth", "config", "install", "workspace"]) {
-      expect(stdout).toContain(check);
-    }
-  });
+describe("CLI under Bun runtime", () => {
+  test(
+    "--help prints usage",
+    async () => {
+      const { exitCode, stdout } = await runCli(["--help"], { timeoutMs: SPAWN_BUDGET_MS });
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain("openswarm");
+      expect(stdout).toContain("swarm run flags");
+    },
+    SPAWN_TIMEOUT_MS,
+  );
+
+  test(
+    "doctor runs all checks",
+    async () => {
+      const { exitCode, stdout } = await runCli(["doctor"], { timeoutMs: SPAWN_BUDGET_MS });
+      // 0 = every check passed, 1 = at least one check failed. Both mean doctor
+      // ran and reported, which is what this test is about. Asserting 0 asserted
+      // that the HOST is healthy: with no Anthropic credential the auth check
+      // fails by design, so this passed on a developer laptop and failed on CI —
+      // a property of the environment, not of the CLI.
+      expect([0, 1]).toContain(exitCode);
+      // Assert every check is present rather than any one of them: that is what
+      // "runs all checks" claims, and an alternation regex passes on a single
+      // match.
+      for (const check of ["auth:", "config:", "install:", "workspace:"]) {
+        expect(stdout).toContain(check);
+      }
+    },
+    SPAWN_TIMEOUT_MS,
+  );
 });
 
 describe.skipIf(!runLive)("CLI live agent under Bun", () => {

@@ -184,7 +184,9 @@ export type ProviderMessage =
 export interface ResolvedProvider {
   readonly kind: "native" | "sdk" | "error";
   readonly providerFactory?: (auth: AuthSource, modelId: string) => Provider | Promise<Provider>;
-  readonly engineFactory?: () => import("../engine/index.js").AgentEngine;
+  readonly engineFactory?: (
+    opts?: import("../engine/claude-agent-sdk.js").ClaudeAgentSdkEngineOptions,
+  ) => import("../engine/index.js").AgentEngine;
   readonly modelId?: string;
   /**
    * Optional self-described auth. When present the caller uses it instead of the id-prefix lookup in
