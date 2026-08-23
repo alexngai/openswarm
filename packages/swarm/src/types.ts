@@ -1,6 +1,16 @@
 import type { AgentOptions } from '@deepseek-ai/dsh-agent'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { SubagentStopReason } from '@deepseek-ai/dsh-subagent'
+
+/**
+ * One addressable team peer. Continuable activations are transient, so the
+ * durable child session id is the identity — never a captured Agent.
+ */
+export interface PeerHandle {
+  readonly name: string
+  readonly childId: SessionId
+}
 
 /** One swarm member: a named role over a subagent provider. */
 export interface MemberSpec {
@@ -101,6 +111,12 @@ export interface PeerTeamSpec {
   topology: 'peer-team'
   members: MemberSpec[]
   tasks: PeerTask[]
+  /**
+   * Run members as continuable peers with the durable mailbox and the
+   * `swarm_send_message` tool (in-process providers only in this phase).
+   * Default false: one-shot members, no messaging.
+   */
+  messaging?: boolean
 }
 
 export type TeamSpec =

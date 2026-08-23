@@ -122,15 +122,10 @@ export async function runCoordinator(spec: CoordinatorSpec, run: RunMember): Pro
   return { topology: 'coordinator', plan, subtasks, synthesis }
 }
 
-export async function runPeerTeam(
-  spec: PeerTeamSpec,
-  run: RunMember,
-  board: SwarmBoard,
-): Promise<PeerTeamResult> {
-  if (spec.members.length === 0) throw new Error('peer-team needs at least one member')
-  // Seed the board; blockedBy indices resolve against creation order.
+/** Seed the board from spec tasks; `blockedBy` indices resolve to created ids. */
+export async function seedBoard(board: SwarmBoard, tasks: PeerTeamSpec['tasks']): Promise<string[]> {
   const created: string[] = []
-  for (const task of spec.tasks) {
+  for (const task of tasks) {
     const blockedBy = (task.blockedBy ?? []).map((i) => {
       const id = created[i]
       if (id === undefined) throw new Error(`peer task blockedBy index ${i} does not precede it`)
@@ -138,6 +133,16 @@ export async function runPeerTeam(
     })
     created.push((await board.create({ subject: task.subject, prompt: task.prompt, blockedBy })).id)
   }
+  return created
+}
+
+export async function runPeerTeam(
+  spec: PeerTeamSpec,
+  run: RunMember,
+  board: SwarmBoard,
+): Promise<PeerTeamResult> {
+  if (spec.members.length === 0) throw new Error('peer-team needs at least one member')
+  const created = await seedBoard(board, spec.tasks)
 
   const runs: Record<string, MemberRunResult> = {}
   const seeded = new Set(created)

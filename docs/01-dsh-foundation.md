@@ -152,9 +152,30 @@ Out-of-tree npm packages in this repo, consumed by a dsh profile:
   and peer-team (work-stealing loops over the board; claim order provably
   respects `blockedBy` in the durable log). 21 tests: pure topology units
   over a scripted runner plus board and end-to-end runs through the real
-  spine. Deferred within Phase 1: peer messaging between live members (needs
-  continuable children — arrives with the mailbox), `waitForChange` on the
-  board (peers poll at 10ms in-process), and the `ctx.commands` entry point.
+  spine.
+
+  **Third cut: durable mailbox + peer messaging (in-process).** Two more
+  lead-log events (`swarm/message/queued` / `swarm/message/delivered`,
+  queued-minus-delivered is the recovery mailbox); `wakeup` delivery rides
+  `ctx.subagents.followup` as the target's next FIFO turn, `quiet` mail stays
+  durably queued and rides in front of the next waking delivery. Members in
+  `peer-team { messaging: true }` are continuable children; the
+  `swarm_send_message` tool installs through the activation setup registry
+  (`registerContinuableSetup`) with sender identity resolved from the
+  executing agent against the roster. Three residency lessons learned the
+  hard way, now encoded: continuable activations are TRANSIENT (the manager
+  disposes them after each settled turn and cold-resumes on the next waking
+  delivery), so peers are addressed by durable child id, never a captured
+  Agent; child-scoped tools must install per-activation, not per-spawn; and
+  immediate `inject` into a resident activation is an acked-but-lost delivery
+  when the activation is disposed — quiet mail therefore never injects. Also:
+  `suppressSettlementTurns` rejects the lead's reactive model turns for
+  child-settlement notices via `agent/pre-step` (a service-driven lead never
+  pays a model call per child turn). 25 tests total, incl. a model-driven
+  send through the real tool pipeline. Deferred: cross-process delivery
+  (rides the F2 app-server wire; `subagent-dsh-sdk` has no continuable
+  capability — upstream issue candidate), request/reply correlation, board
+  `waitForChange`, and the `ctx.commands` entry point.
 - **Phase 2 — git layer.** Worktree lifecycle + cascade + merge queue; member
   spawn → worktree create → merge on complete.
 - **Phase 3 — LLM adapters.** Azure → LiteLLM shape → Anthropic/Bedrock.

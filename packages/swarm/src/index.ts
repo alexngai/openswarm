@@ -9,6 +9,9 @@ import { Service, type Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { SwarmBoard } from './board'
+import { SwarmMailbox } from './mailbox'
+import { askPeer, registerSwarmMessaging, spawnPeer, suppressSettlementTurns } from './peers'
+import type { PeerHandle } from './types'
 import {
   isApproved,
   runCascade,
@@ -16,6 +19,7 @@ import {
   runCoordinator,
   runPeerTeam,
   runPipeline,
+  seedBoard,
   type RunMember,
 } from './topologies'
 import type {
@@ -31,6 +35,14 @@ import type {
 
 export * from './types'
 export * from './board'
+export * from './mailbox'
+export {
+  askPeer,
+  nextTurnEnd,
+  registerSwarmMessaging,
+  spawnPeer,
+  suppressSettlementTurns,
+} from './peers'
 export { parseNumberedPlan } from './topologies'
 
 export interface SwarmConfig {
@@ -92,8 +104,75 @@ export default class SwarmService extends Service {
       case 'coordinator':
         return runCoordinator(spec, run)
       case 'peer-team':
-        return runPeerTeam(spec, run, this.board(options.parent))
+        return spec.messaging === true
+          ? this.runPeerTeamMessaging(spec, options)
+          : runPeerTeam(spec, run, this.board(options.parent))
     }
+  }
+
+  /**
+   * Messaging peer-team: continuable peers with the durable mailbox and the
+   * `swarm_send_message` tool; board tasks are delivered as addressed turns.
+   */
+  private async runPeerTeamMessaging(
+    spec: import('./types').PeerTeamSpec,
+    options: RunTeamOptions,
+  ): Promise<import('./types').PeerTeamResult> {
+    if (spec.members.length === 0) throw new Error('peer-team needs at least one member')
+    const lead = options.parent
+    const board = this.board(lead)
+    const created = await seedBoard(board, spec.tasks)
+    const seeded = new Set(created)
+
+    const roster = new Map<string, PeerHandle>()
+    const mailbox = this.mailbox(lead, roster)
+    const provider = this.swarmConfig.defaultSubagentProvider ?? 'spawn'
+    const disposers: (() => void)[] = [
+      suppressSettlementTurns(lead),
+      registerSwarmMessaging(this.ctx, roster, mailbox),
+    ]
+    for (const member of spec.members) {
+      const names = spec.members.filter((m) => m.name !== member.name).map((m) => m.name)
+      const handle = await spawnPeer(this.ctx, member, {
+        parent: lead,
+        provider: member.subagentProvider ?? provider,
+        briefing: `You are ${member.name}, a member of a swarm team. Your teammates: ${names.join(', ') || '(none)'}. Coordinate with them via the swarm_send_message tool. Acknowledge this briefing and wait for tasks.`,
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      })
+      roster.set(member.name, handle)
+    }
+
+    const runs: Record<string, MemberRunResult> = {}
+    const boardDone = () => board.list().every((t) => !seeded.has(t.id) || t.status === 'completed')
+    try {
+      await Promise.all(
+        spec.members.map(async (member) => {
+          const handle = roster.get(member.name)!
+          while (!boardDone()) {
+            const claimed = await board.claimNextReady(member.name)
+            if (claimed === undefined) {
+              await new Promise((r) => setTimeout(r, 10))
+              continue
+            }
+            const result = await askPeer(this.ctx, lead, handle, claimed.prompt, {
+              mailbox,
+              ...(options.signal === undefined ? {} : { signal: options.signal }),
+            })
+            runs[claimed.id] = result
+            await board.complete(claimed.id, member.name, claimed.revision, result.text)
+          }
+        }),
+      )
+    } finally {
+      for (const dispose of disposers) dispose()
+    }
+    const tasks = board.list().filter((t) => seeded.has(t.id))
+    return { topology: 'peer-team', tasks, runs }
+  }
+
+  /** A durable mailbox over one lead's session log and a live roster. */
+  mailbox(lead: Agent, roster: Map<string, PeerHandle>): SwarmMailbox {
+    return new SwarmMailbox(this.ctx, lead, roster)
   }
 
   /** One member, one prompt, one settled subagent run. */
