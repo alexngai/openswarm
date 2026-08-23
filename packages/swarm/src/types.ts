@@ -4,12 +4,14 @@ import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { SubagentStopReason } from '@deepseek-ai/dsh-subagent'
 
 /**
- * One addressable team peer. Continuable activations are transient, so the
- * durable child session id is the identity — never a captured Agent.
+ * One addressable team peer. In-process peers carry the durable continuable
+ * child id (activations are transient — never a captured Agent); remote
+ * peers carry the live subprocess port.
  */
 export interface PeerHandle {
   readonly name: string
-  readonly childId: SessionId
+  readonly childId?: SessionId
+  readonly remote?: import('./remote-peer').RemotePeer
 }
 
 /** One swarm member: a named role over a subagent provider. */

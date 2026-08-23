@@ -155,12 +155,18 @@ export class SwarmMailbox {
     if (message.delivery === 'wakeup') {
       // Pending quiet mail for the same target rides in front of the wakeup.
       const prelude = this.framePendingQuiet(message.to)
-      await this.ctx.subagents.followup(
-        this.lead,
-        target.childId,
-        [...prelude.blocks, ...frameMessage(message)],
-        { source, signal: new AbortController().signal },
-      )
+      const blocks = [...prelude.blocks, ...frameMessage(message)]
+      if (target.remote !== undefined) {
+        // Remote member: acceptance of the prompt is the delivery boundary.
+        await target.remote.deliver(blocks)
+      } else if (target.childId !== undefined) {
+        await this.ctx.subagents.followup(this.lead, target.childId, blocks, {
+          source,
+          signal: new AbortController().signal,
+        })
+      } else {
+        return // unreachable roster shape; stays queued
+      }
       await prelude.ack()
       await this.append('swarm/message/delivered', { version: 1, messageId: message.id })
     }

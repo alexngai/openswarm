@@ -226,8 +226,30 @@ Out-of-tree npm packages in this repo, consumed by a dsh profile:
   skipped unless a feature gap forces it. LiteLLM: expected to work on the
   same routes (plain chat-completions Bearer); unverified until an endpoint
   is at hand.
-- **Phase 4 — eval repoint + discrimination-set rerun.**
-- **Phase 5 — deletion.** Remove `legacy/` once nothing references it.
+- **Phase 4 — cross-process, multi-turn peer messaging. DONE (first cut,
+  2026-08-23).** Prioritized ahead of the eval repoint. `RemotePeer` owns a
+  long-lived `dsh-jsonrpc-agent` subprocess through the published SDK client:
+  briefing, every task, and every waking peer message land on ONE session,
+  so members keep true multi-turn memory across the process boundary (turn
+  serialization via a promise chain; the durable turn reason folds into
+  `stopReason`, so an errored member turn is never reported as success —
+  learned from a silent-failure debug). `SwarmServer` is the F2 seed: the
+  lead's loopback TCP endpoint framed by the published `JsonRpcLineTransport`
+  with one method, `swarm/send`, feeding the durable mailbox; sender identity
+  comes from per-member spawn tokens, never caller fields.
+  `openswarm-swarm-member` mounts `swarm_send_message` inside the member
+  composition (silent no-op without `OPENSWARM_SWARM_URL`/`_TOKEN`, so one
+  yml serves all modes). `peer-team { messaging: true } + worktrees` now runs
+  members in per-MEMBER worktrees (member-lived branch, merged on finish) —
+  the previously ledgered combination. Member session logs write outside the
+  worktree (`DSH_SESSION_ROOT`), or auto-commit sweeps them into the branch —
+  found and fixed for one-shot worktree runs too. 3 keyless E2E tests:
+  multi-turn memory proven from captured request history; a scripted
+  `swarm_send_message` tool call crossing member→socket→mailbox→target
+  wakeup; and the full topology with member-keyed merge. Delivery contract
+  for remote wakeups: durable prompt acceptance is the ack boundary.
+- **Phase 5 — eval repoint + discrimination-set rerun.**
+- **Phase 6 — deletion.** Remove `legacy/` once nothing references it.
 
 ## Deferred work ledger
 
@@ -246,7 +268,9 @@ later phase gets a row here, so nothing is dropped silently.
 | **Upstream issue: continuable capability for `subagent-dsh-sdk`** | wire already supports it (`session/prompt` on an existing session); provider lacks `prepareContinuable` | file when we open upstream dialogue |
 | **Upstream issue: method-registry seam on the SDK server** | method table is a closed switch; we wrap the exported class meanwhile (spike probe 3) | file when we open upstream dialogue |
 | **Upstream gap: wire approval flows** — server→client requests are dead capability on both wire ends | headless-with-policy works; a prompting client needs it | before any interactive UI |
-| **Worktrees × messaging peer-teams** — `runTeam` rejects the combination loud | in-process continuable peers share the lead's execution world; converges when messaging goes cross-process | with cross-process delivery |
+| ~~Worktrees × messaging peer-teams~~ **resolved in Phase 4** — remote members run in per-member worktrees | — | done |
+| **Swarm socket hardening** — loopback + per-member UUID tokens only; no TLS, no member→lead methods beyond `swarm/send` (board ops, task claiming from inside the member are natural next methods) | minimal F2 seed first; grows with the app-server | app-server phase |
+| **Remote peer lifecycle** — no idle timeout, no crash-restart of a member subprocess mid-team, `deliver` ack is prompt acceptance (not turn completion) | happy path first | Phase 4 follow-up |
 | **Crash/abort hygiene for worktree runs** — an aborted or crashed team leaves task worktrees, provider mounts, and the target worktree behind; no orphan sweep on startup | happy path first; `git worktree prune` + team-dir sweep + signal-path finalize are mechanical | Phase 2 follow-up |
 | **Sibling visibility** — task worktrees are cut from `baseRef`, so a task never sees another task's merged work; sequential topologies that want it must share a `taskKey` | independent-cut is the safe default; a cut-from-integration / re-base option changes merge semantics and deserves its own design | Phase 2 follow-up |
 | **Agent-driven conflict resolution** — a retained conflict branch could feed a critic-loop/cascade run that resolves it | it is a topology pattern over existing pieces, not merge-queue machinery | Phase 3+ |

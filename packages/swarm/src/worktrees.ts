@@ -12,6 +12,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
@@ -63,6 +64,17 @@ function defaultMemberConfig(): string {
 
 const plug = (m: unknown): any => (m as any).default ?? m
 
+/** Resolve the child runtime launch spec for one member config. */
+export function resolveMemberLaunch(cfg: WorktreeMemberConfig = {}): {
+  command: string
+  args: string[]
+} {
+  return {
+    command: cfg.command ?? process.execPath,
+    args: cfg.args ?? [defaultRuntimeBin(), cfg.configPath ?? defaultMemberConfig()],
+  }
+}
+
 export class WorktreeRun {
   readonly teamId = randomUUID().slice(0, 8)
   private readonly git: SwarmGit
@@ -88,16 +100,22 @@ export class WorktreeRun {
     taskKey: string | undefined,
     run: RunTeamOptions,
   ): Promise<MemberRunResult> {
-    const cwd = taskKey === undefined ? this.options.repoRoot : (await this.git.worktree(taskKey)).path
+    const cwd = taskKey === undefined ? this.options.repoRoot : (await this.worktree(taskKey)).path
     const cfg = this.options.member ?? {}
     const text = member.persona === undefined ? prompt : `${member.persona}\n\n${prompt}`
     const providerName = `swarm-sdk-${this.teamId}-${this.seq++}`
+    const launch = resolveMemberLaunch(cfg)
     const fiber = this.ctx.plugin(plug(SdkProvider), {
       providerName,
-      command: cfg.command ?? process.execPath,
-      args: cfg.args ?? [defaultRuntimeBin(), cfg.configPath ?? defaultMemberConfig()],
+      command: launch.command,
+      args: launch.args,
       cwd,
-      env: cfg.env ?? {},
+      // Session logs must not land inside the worktree, or auto-commit
+      // sweeps them into the task branch.
+      env: {
+        DSH_SESSION_ROOT: join(tmpdir(), 'openswarm-sessions', this.teamId),
+        ...cfg.env,
+      },
       provider: member.agentOptions?.provider ?? cfg.provider ?? 'openai',
       ...((member.agentOptions?.model ?? cfg.model) === undefined
         ? {}
@@ -128,6 +146,11 @@ export class WorktreeRun {
     } finally {
       await fiber.dispose()
     }
+  }
+
+  /** Create (or return) the worktree for one task or member key. */
+  worktree(key: string) {
+    return this.git.worktree(key)
   }
 
   /** Auto-commit dirty task worktrees, run the merge queue, release the target. */

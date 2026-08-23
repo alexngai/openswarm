@@ -25,7 +25,10 @@ import {
   seedBoard,
   type RunMember,
 } from './topologies'
-import { WorktreeRun, type WorktreeTeamOptions } from './worktrees'
+import { tmpdir } from 'node:os'
+import { RemotePeer } from './remote-peer'
+import { SwarmServer } from './server'
+import { WorktreeRun, resolveMemberLaunch, type WorktreeTeamOptions } from './worktrees'
 import type { MergeOutcome } from 'openswarm-git'
 import type {
   MemberRunResult,
@@ -45,6 +48,8 @@ export {
   suppressSettlementTurns,
 } from './peers'
 export { parseNumberedPlan } from './topologies'
+export { RemotePeer } from './remote-peer'
+export { SwarmServer } from './server'
 export { WorktreeRun } from './worktrees'
 export type { WorktreeTeamOptions, WorktreeMemberConfig } from './worktrees'
 
@@ -58,12 +63,26 @@ export interface RunTeamOptions {
   parent: Agent
   signal?: AbortSignal
   /**
-   * Execute member runs as subprocess harnesses in per-task git worktrees,
-   * merging completed task branches on finish (docs/01 Phase 2). Not
-   * compatible with `peer-team { messaging: true }` — in-process continuable
-   * peers share the lead's execution world.
+   * Execute member runs as subprocess harnesses in git worktrees, merging
+   * completed branches on finish (docs/01 Phase 2). One-shot topologies use
+   * per-task worktrees; `peer-team { messaging: true }` runs long-lived
+   * multi-turn remote members in per-MEMBER worktrees (docs/01 Phase 4).
    */
   worktrees?: WorktreeTeamOptions
+}
+
+/** The wire requires an explicit model for remote members; resolve or fail loud. */
+function resolveMemberModel(
+  member: MemberSpec,
+  cfg: import('./worktrees').WorktreeMemberConfig,
+): string {
+  const model = member.agentOptions?.model ?? cfg.model ?? cfg.env?.['DSH_MODEL']
+  if (model === undefined) {
+    throw new Error(
+      `remote member "${member.name}" has no model: set member.agentOptions.model, worktrees.member.model, or DSH_MODEL in worktrees.member.env`,
+    )
+  }
+  return model
 }
 
 /** Concatenated text content of an assistant output. */
@@ -102,19 +121,21 @@ export default class SwarmService extends Service {
   ): Promise<TeamResult & { git?: MergeOutcome }> {
     const worktrees =
       options.worktrees === undefined ? undefined : new WorktreeRun(this.ctx, options.worktrees)
-    if (worktrees !== undefined && spec.topology === 'peer-team' && spec.messaging === true) {
-      throw new Error('worktree execution is not supported for messaging peer-teams yet')
-    }
     const run: RunMember = (member, prompt, taskKey) =>
       worktrees === undefined
         ? this.runMember(member, prompt, options)
         : worktrees.runMember(member, prompt, taskKey, options)
-    const result = await this.dispatch(spec, run, options)
+    const result = await this.dispatch(spec, run, options, worktrees)
     if (worktrees === undefined) return result
     return { ...result, git: await worktrees.finalize() }
   }
 
-  private dispatch(spec: TeamSpec, run: RunMember, options: RunTeamOptions): Promise<TeamResult> {
+  private dispatch(
+    spec: TeamSpec,
+    run: RunMember,
+    options: RunTeamOptions,
+    worktrees?: WorktreeRun,
+  ): Promise<TeamResult> {
     switch (spec.topology) {
       case 'fanout':
         return runFanout(spec, run)
@@ -130,8 +151,89 @@ export default class SwarmService extends Service {
         return runCoordinator(spec, run)
       case 'peer-team':
         return spec.messaging === true
-          ? this.runPeerTeamMessaging(spec, options)
+          ? worktrees === undefined
+            ? this.runPeerTeamMessaging(spec, options)
+            : this.runRemotePeerTeam(spec, options, worktrees)
           : runPeerTeam(spec, run, this.board(options.parent))
+    }
+  }
+
+  /**
+   * Remote messaging peer-team (docs/01 Phase 4): each member is a
+   * long-lived subprocess harness in its OWN member-keyed worktree, keeping
+   * one session across briefing, tasks, and peer messages. The lead exposes
+   * the swarm socket; members' `swarm_send_message` reaches the durable
+   * mailbox through it, authenticated by per-member spawn tokens.
+   */
+  private async runRemotePeerTeam(
+    spec: import('./types').PeerTeamSpec,
+    options: RunTeamOptions,
+    worktrees: WorktreeRun,
+  ): Promise<import('./types').PeerTeamResult> {
+    if (spec.members.length === 0) throw new Error('peer-team needs at least one member')
+    const lead = options.parent
+    const board = this.board(lead)
+    const created = await seedBoard(board, spec.tasks)
+    const seeded = new Set(created)
+
+    const roster = new Map<string, PeerHandle>()
+    const mailbox = this.mailbox(lead, roster)
+    const server = new SwarmServer(mailbox)
+    await server.listen()
+    const cfg = options.worktrees?.member ?? {}
+    const launch = resolveMemberLaunch(cfg)
+    const peers: RemotePeer[] = []
+    try {
+      for (const member of spec.members) {
+        const names = spec.members.filter((m) => m.name !== member.name).map((m) => m.name)
+        const worktree = await worktrees.worktree(member.name)
+        const peer = await RemotePeer.spawn({
+          name: member.name,
+          command: launch.command,
+          args: launch.args,
+          cwd: worktree.path,
+          env: {
+            DSH_SESSION_ROOT: `${tmpdir()}/openswarm-sessions/${worktrees.teamId}`,
+            ...cfg.env,
+            OPENSWARM_SWARM_URL: server.url,
+            OPENSWARM_SWARM_TOKEN: server.addMember(member.name),
+          },
+          provider: member.agentOptions?.provider ?? cfg.provider ?? 'openai',
+          model: resolveMemberModel(member, cfg),
+          briefing: `${member.persona === undefined ? '' : `${member.persona}\n\n`}You are ${member.name}, a member of a swarm team working in your own git worktree. Your teammates: ${names.join(', ') || '(none)'}. Coordinate with them via the swarm_send_message tool. Acknowledge this briefing and wait for tasks.`,
+        })
+        peers.push(peer)
+        roster.set(member.name, { name: member.name, remote: peer })
+      }
+
+      const runs: Record<string, MemberRunResult> = {}
+      const boardDone = () =>
+        board.list().every((t) => !seeded.has(t.id) || t.status === 'completed')
+      await Promise.all(
+        spec.members.map(async (member) => {
+          const handle = roster.get(member.name)!
+          while (!boardDone()) {
+            const claimed = await board.claimNextReady(member.name)
+            if (claimed === undefined) {
+              await new Promise((r) => setTimeout(r, 10))
+              continue
+            }
+            const prelude = mailbox.framePendingQuiet(member.name)
+            const result = await handle.remote!.ask([
+              ...prelude.blocks,
+              { type: 'text', text: claimed.prompt },
+            ])
+            await prelude.ack()
+            runs[claimed.id] = result
+            await board.complete(claimed.id, member.name, claimed.revision, result.text)
+          }
+        }),
+      )
+      const tasks = board.list().filter((t) => seeded.has(t.id))
+      return { topology: 'peer-team', tasks, runs }
+    } finally {
+      for (const peer of peers) await peer.close().catch(() => undefined)
+      await server.close()
     }
   }
 

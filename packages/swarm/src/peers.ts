@@ -105,11 +105,13 @@ export async function askPeer(
   prompt: string,
   options?: { signal?: AbortSignal; mailbox?: SwarmMailbox },
 ): Promise<MemberRunResult> {
+  const childId = peer.childId
+  if (childId === undefined) throw new Error(`peer "${peer.name}" is not an in-process peer`)
   const prelude = options?.mailbox?.framePendingQuiet(peer.name)
-  const turnDone = nextTurnEnd(ctx, () => peer.childId)
+  const turnDone = nextTurnEnd(ctx, () => childId)
   await ctx.subagents.followup(
     lead,
-    peer.childId,
+    childId,
     [...(prelude?.blocks ?? []), { type: 'text', text: prompt }],
     {
       source: { kind: 'plugin', plugin: 'openswarm-swarm' } as never,
@@ -121,7 +123,7 @@ export async function askPeer(
   const output = finalAssistantOutput(session.events as never) ?? []
   return {
     member: peer.name,
-    runId: peer.childId,
+    runId: childId,
     output,
     text: textOf(output),
     stopReason: 'completed',

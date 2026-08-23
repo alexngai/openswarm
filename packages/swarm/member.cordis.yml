@@ -68,5 +68,10 @@
 - id: sessions
   name: '@deepseek-ai/dsh-session-persistence-jsonl'
   config:
-    root: './.sessions'
+    root: !!js process.env.DSH_SESSION_ROOT ?? './.sessions'
     compression: none
+
+# Member-side swarm capabilities: swarm_send_message over the lead's socket.
+# Silent no-op unless OPENSWARM_SWARM_URL / OPENSWARM_SWARM_TOKEN are set.
+- id: swarm-member
+  name: 'openswarm-swarm-member'
