@@ -223,6 +223,12 @@ later phase gets a row here, so nothing is dropped silently.
 | **Upstream issue: continuable capability for `subagent-dsh-sdk`** | wire already supports it (`session/prompt` on an existing session); provider lacks `prepareContinuable` | file when we open upstream dialogue |
 | **Upstream issue: method-registry seam on the SDK server** | method table is a closed switch; we wrap the exported class meanwhile (spike probe 3) | file when we open upstream dialogue |
 | **Upstream gap: wire approval flows** — server→client requests are dead capability on both wire ends | headless-with-policy works; a prompting client needs it | before any interactive UI |
+| **Worktrees × messaging peer-teams** — `runTeam` rejects the combination loud | in-process continuable peers share the lead's execution world; converges when messaging goes cross-process | with cross-process delivery |
+| **Crash/abort hygiene for worktree runs** — an aborted or crashed team leaves task worktrees, provider mounts, and the target worktree behind; no orphan sweep on startup | happy path first; `git worktree prune` + team-dir sweep + signal-path finalize are mechanical | Phase 2 follow-up |
+| **Sibling visibility** — task worktrees are cut from `baseRef`, so a task never sees another task's merged work; sequential topologies that want it must share a `taskKey` | independent-cut is the safe default; a cut-from-integration / re-base option changes merge semantics and deserves its own design | Phase 2 follow-up |
+| **Agent-driven conflict resolution** — a retained conflict branch could feed a critic-loop/cascade run that resolves it | it is a topology pattern over existing pieces, not merge-queue machinery | Phase 3+ |
+| **Subprocess concurrency cap** — a 50-task fanout spawns 50 member harnesses | worker-pool cap is a small scheduler in front of `runMember` | Phase 2 follow-up |
+| **`.swarm/` ignore guidance** — default worktree dir sits inside the user's repo and shows as untracked | document + optional auto-append to `.git/info/exclude` | Phase 2 follow-up |
 | LLM adapters (Azure → LiteLLM shape → Anthropic/Bedrock) | roadmap order per §Phases | Phase 3 |
 | Eval harness repoint + discrimination-set rerun | needs subprocess members first | Phase 4 |
 | `legacy/` deletion | kept for porting reference | Phase 5 |
