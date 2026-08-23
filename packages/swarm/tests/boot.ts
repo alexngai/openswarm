@@ -35,17 +35,44 @@ export interface TestHarness {
 
 let leadCounter = 0
 
-export async function bootHarness(mockOptions: MockLlmServerOptions): Promise<TestHarness> {
+/** Boot against a live OpenAI-compatible endpoint instead of the mock. */
+export interface LiveLlmTarget {
+  baseURL: string
+  apiKeyEnv: string
+  model: string
+}
+
+/** Replace the default llm-deepseek adapter with another adapter plugin. */
+export interface LlmPluginOverride {
+  module: unknown
+  config: Record<string, unknown>
+  /** Provider route the lead agent uses (must be served by the plugin). */
+  provider: string
+  model: string
+}
+
+export async function bootHarness(
+  mockOptions: MockLlmServerOptions,
+  live?: LiveLlmTarget,
+  llmPlugin?: LlmPluginOverride,
+): Promise<TestHarness> {
   const mock = await startMockLlmServer({ apiKey: 'mock-key', ...mockOptions })
-  const base = mock.baseURL.endsWith('/v1') ? mock.baseURL : `${mock.baseURL}/v1`
-  process.env['DEEPSEEK_BASE_URL'] = base
-  process.env['DEEPSEEK_API_KEY'] = 'mock-key'
+  if (live === undefined) {
+    const base = mock.baseURL.endsWith('/v1') ? mock.baseURL : `${mock.baseURL}/v1`
+    process.env['DEEPSEEK_BASE_URL'] = base
+    process.env['DEEPSEEK_API_KEY'] = 'mock-key'
+  }
 
   const workDir = mkdtempSync(join(tmpdir(), 'openswarm-swarm-test-'))
   const ctx = new Context()
-  ctx.plugin(plug(LlmDeepseek), {
-    models: [{ id: 'mock-model', contextWindow: 128_000 }],
-  })
+  if (llmPlugin !== undefined) {
+    ctx.plugin(plug(llmPlugin.module), llmPlugin.config)
+  } else {
+    ctx.plugin(plug(LlmDeepseek), {
+      ...(live === undefined ? {} : { baseURL: live.baseURL, apiKeyEnv: live.apiKeyEnv }),
+      models: [{ id: live?.model ?? 'mock-model', contextWindow: 128_000 }],
+    })
+  }
   ctx.plugin(plug(Spine), {
     includeHarnessIdentity: false,
     includeRuntimeContext: false,
@@ -71,7 +98,10 @@ export async function bootHarness(mockOptions: MockLlmServerOptions): Promise<Te
   const lead = await ctx.agents.create({
     sessionId: SessionId(`swarm-test-lead-${process.pid}-${leadCounter++}`),
     meta: { cwd: workDir },
-    agentOptions: { provider: 'deepseek-official', model: 'mock-model' },
+    agentOptions: {
+      provider: llmPlugin?.provider ?? 'deepseek-official',
+      model: llmPlugin?.model ?? live?.model ?? 'mock-model',
+    },
   })
 
   return {

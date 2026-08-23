@@ -8,10 +8,12 @@
   config:
     maxTokensAsSuccess: false
 
-- id: llm-deepseek
-  name: '@deepseek-ai/dsh-llm-deepseek'
+- id: llm-openai
+  name: 'openswarm-llm-openai'
   config:
-    apiKeyEnv: DEEPSEEK_API_KEY
+    routes:
+      - openai
+    apiKeyEnv: OPENSWARM_LLM_API_KEY
     models:
       - id: !!js process.env.DSH_MODEL ?? 'mock-model'
         contextWindow: 128000

@@ -98,7 +98,7 @@ export class WorktreeRun {
       args: cfg.args ?? [defaultRuntimeBin(), cfg.configPath ?? defaultMemberConfig()],
       cwd,
       env: cfg.env ?? {},
-      provider: member.agentOptions?.provider ?? cfg.provider ?? 'deepseek-official',
+      provider: member.agentOptions?.provider ?? cfg.provider ?? 'openai',
       ...((member.agentOptions?.model ?? cfg.model) === undefined
         ? {}
         : { model: member.agentOptions?.model ?? cfg.model }),

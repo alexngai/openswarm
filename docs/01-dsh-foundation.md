@@ -202,7 +202,30 @@ Out-of-tree npm packages in this repo, consumed by a dsh profile:
   supported yet: worktrees × messaging peer-teams (in-process peers share
   the lead's execution world; converges with cross-process delivery per the
   ledger).
-- **Phase 3 — LLM adapters.** Azure → LiteLLM shape → Anthropic/Bedrock.
+- **Phase 3 — LLM adapters. Azure DONE (first cut, 2026-08-23);
+  Anthropic/Bedrock remain.** The rung-0 probe settled the design: Azure's
+  `/openai/v1` surface accepts plain Bearer chat-completions (200 on first
+  try), but the stock `llm-deepseek` adapter cannot serve it — its
+  `resolveModel` intrinsically advertises a default reasoning effort, so
+  every request carries a `thinking` field gpt-5.5 rejects
+  (`Unknown parameter`), and caps serialize as the rejected `max_tokens`.
+  [`packages/llm-openai`](../packages/llm-openai/) is therefore a rung-5
+  subclass, not a rewrite: `OpenAiChatAdapter extends DeepSeekAdapter`
+  drops the reasoning advertisement and strips effort/cap at the
+  prepared-call boundary (the agent loop streams through
+  `prepareCall().stream`, not `adapter.stream()` — learned the hard way),
+  keeping the published SSE/StreamChunk machinery. Routes, models, and
+  env-driven base URL/credentials are config; the worktree
+  `member.cordis.yml` now mounts it (`OPENSWARM_LLM_BASE_URL` /
+  `OPENSWARM_LLM_API_KEY` / `DSH_MODEL`). Validated keyless against the
+  upstream mock with wire assertions (no `thinking` / `reasoning_effort` /
+  `max_tokens` on any request; tool-call round trip) and **live against
+  Azure gpt-5.5**: an in-process member turn and the full worktree E2E —
+  subprocess member, real bash, auto-commit, merge — both green
+  (`OPENSWARM_LIVE=1`, local-only). `openai-responses` is deliberately
+  skipped unless a feature gap forces it. LiteLLM: expected to work on the
+  same routes (plain chat-completions Bearer); unverified until an endpoint
+  is at hand.
 - **Phase 4 — eval repoint + discrimination-set rerun.**
 - **Phase 5 — deletion.** Remove `legacy/` once nothing references it.
 
@@ -229,7 +252,9 @@ later phase gets a row here, so nothing is dropped silently.
 | **Agent-driven conflict resolution** — a retained conflict branch could feed a critic-loop/cascade run that resolves it | it is a topology pattern over existing pieces, not merge-queue machinery | Phase 3+ |
 | **Subprocess concurrency cap** — a 50-task fanout spawns 50 member harnesses | worker-pool cap is a small scheduler in front of `runMember` | Phase 2 follow-up |
 | **`.swarm/` ignore guidance** — default worktree dir sits inside the user's repo and shows as untracked | document + optional auto-append to `.git/info/exclude` | Phase 2 follow-up |
-| LLM adapters (Azure → LiteLLM shape → Anthropic/Bedrock) | roadmap order per §Phases | Phase 3 |
+| **No output cap or reasoning-effort control on openai routes** — `openswarm-llm-openai` strips both rather than translating (`max_completion_tokens`, bare `reasoning_effort`) | requires our own request serializer or an upstream PR making thinking-field emission provider-configurable; upstream issue candidate | when caps/effort matter (effort sweeps are research-relevant) |
+| **LiteLLM route unverified** — same wire dialect, expected to work on `openswarm-llm-openai` | no live LiteLLM endpoint at hand during Phase 3 | first LiteLLM deployment |
+| Anthropic/Bedrock adapters (`openswarm-llm-anthropic`) | Azure unblocked the research arm first; Bedrock daily quota makes it a poor smoke target | Phase 3b |
 | Eval harness repoint + discrimination-set rerun | needs subprocess members first | Phase 4 |
 | `legacy/` deletion | kept for porting reference | Phase 5 |
 

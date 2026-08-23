@@ -35,8 +35,8 @@ const show = (root: string, ref: string, file: string) =>
 function memberEnv(h: TestHarness): Record<string, string> {
   const base = h.mock.baseURL.endsWith('/v1') ? h.mock.baseURL : `${h.mock.baseURL}/v1`
   return {
-    DEEPSEEK_BASE_URL: base,
-    DEEPSEEK_API_KEY: 'mock-key',
+    OPENSWARM_LLM_BASE_URL: base,
+    OPENSWARM_LLM_API_KEY: 'mock-key',
     DSH_MODEL: 'mock-model',
   }
 }

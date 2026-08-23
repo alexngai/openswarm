@@ -11,7 +11,7 @@
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc -p packages/swarm --noEmit && tsc -p packages/git --noEmit"
+    "typecheck": "tsc -p packages/swarm --noEmit && tsc -p packages/git --noEmit && tsc -p packages/llm-openai --noEmit"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
