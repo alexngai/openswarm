@@ -137,9 +137,24 @@ Out-of-tree npm packages in this repo, consumed by a dsh profile:
   Validated in-process by vitest over the real spine + agent loop + stock
   adapter + scripted mock LLM (5 tests: fanout collection/personas,
   unknown-member rejection, per-member model override, critic approve-round-1,
-  feedback threading to maxRounds). Deferred within Phase 1: the coordination
-  board seam, remaining topologies (cascade, committee, pipeline, peer-team,
-  coordinator), and the `ctx.commands` entry point.
+  feedback threading to maxRounds).
+
+  **Second cut (same day): SwarmBoard + all seven topologies.** The board is
+  log-backed as designed: every mutation appends a whole-snapshot
+  `swarm/task` event (`SessionEventMap` extension) to the lead session and
+  flushes; reads fold the log; mutations serialize through a per-board
+  transaction tail with compare-and-set revisions (`SWARM_TASK_STALE_REVISION`
+  et al.); a fresh board over the same session replays to identical state and
+  continues the id sequence. Topologies added: committee (parallel answers +
+  optional judge synthesis), pipeline (stage-output threading), cascade
+  (tiered escalation with optional gate, feedback threads upward),
+  coordinator (numbered-plan decomposition, round-robin workers, synthesis),
+  and peer-team (work-stealing loops over the board; claim order provably
+  respects `blockedBy` in the durable log). 21 tests: pure topology units
+  over a scripted runner plus board and end-to-end runs through the real
+  spine. Deferred within Phase 1: peer messaging between live members (needs
+  continuable children — arrives with the mailbox), `waitForChange` on the
+  board (peers poll at 10ms in-process), and the `ctx.commands` entry point.
 - **Phase 2 — git layer.** Worktree lifecycle + cascade + merge queue; member
   spawn → worktree create → merge on complete.
 - **Phase 3 — LLM adapters.** Azure → LiteLLM shape → Anthropic/Bedrock.

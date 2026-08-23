@@ -45,7 +45,72 @@ export interface CriticLoopSpec {
   maxRounds?: number
 }
 
-export type TeamSpec = FanoutSpec | CriticLoopSpec
+/** N members answer the same task in parallel; an optional judge synthesizes. */
+export interface CommitteeSpec {
+  topology: 'committee'
+  members: MemberSpec[]
+  task: string
+  /** Reviews every answer and produces the synthesis. */
+  judge?: MemberSpec
+}
+
+/** Sequential stages; each stage's prompt receives the previous stage's output. */
+export interface PipelineSpec {
+  topology: 'pipeline'
+  stages: { member: MemberSpec; prompt: string }[]
+}
+
+/**
+ * Escalation chain: tiers attempt the task in order (cheap first). A tier's
+ * result is accepted unless its run failed or the optional gate rejects it
+ * (same APPROVED / REVISE protocol as the critic); rejection feedback threads
+ * into the next tier's prompt.
+ */
+export interface CascadeSpec {
+  topology: 'cascade'
+  tiers: MemberSpec[]
+  task: string
+  gate?: MemberSpec
+}
+
+/**
+ * A coordinator decomposes the task into a numbered subtask list, workers run
+ * the subtasks concurrently (round-robin), and the coordinator synthesizes.
+ */
+export interface CoordinatorSpec {
+  topology: 'coordinator'
+  coordinator: MemberSpec
+  workers: MemberSpec[]
+  task: string
+}
+
+/** One board task seeded by a peer-team run; `blockedBy` are task indices. */
+export interface PeerTask {
+  subject: string
+  prompt: string
+  blockedBy?: number[]
+}
+
+/**
+ * Work-stealing peers over the shared SwarmBoard: every member loops
+ * claim-next-ready → run → complete until the whole board is done. Peer
+ * messaging between live members needs continuable children and arrives with
+ * the mailbox in a later phase.
+ */
+export interface PeerTeamSpec {
+  topology: 'peer-team'
+  members: MemberSpec[]
+  tasks: PeerTask[]
+}
+
+export type TeamSpec =
+  | FanoutSpec
+  | CriticLoopSpec
+  | CommitteeSpec
+  | PipelineSpec
+  | CascadeSpec
+  | CoordinatorSpec
+  | PeerTeamSpec
 
 /** Outcome of one member run. */
 export interface MemberRunResult {
@@ -72,4 +137,55 @@ export interface CriticLoopResult {
   history: { draft: MemberRunResult; verdict: MemberRunResult }[]
 }
 
-export type TeamResult = FanoutResult | CriticLoopResult
+export interface CommitteeResult {
+  topology: 'committee'
+  answers: MemberRunResult[]
+  synthesis?: MemberRunResult
+}
+
+export interface PipelineResult {
+  topology: 'pipeline'
+  stages: MemberRunResult[]
+  /** The last stage's result. */
+  final: MemberRunResult
+}
+
+export interface CascadeAttempt {
+  tier: number
+  result: MemberRunResult
+  verdict?: MemberRunResult
+}
+
+export interface CascadeResult {
+  topology: 'cascade'
+  /** Whether any tier's result was accepted before the chain was exhausted. */
+  accepted: boolean
+  /** Index into `tiers` of the accepted (or final attempted) tier. */
+  tier: number
+  final: MemberRunResult
+  attempts: CascadeAttempt[]
+}
+
+export interface CoordinatorResult {
+  topology: 'coordinator'
+  plan: MemberRunResult
+  subtasks: { prompt: string; worker: string; result: MemberRunResult }[]
+  synthesis: MemberRunResult
+}
+
+export interface PeerTeamResult {
+  topology: 'peer-team'
+  /** Completed board tasks in board order, results recorded on each. */
+  tasks: import('./board').SwarmTaskSnapshot[]
+  /** Member run results keyed by board task id. */
+  runs: Record<string, MemberRunResult>
+}
+
+export type TeamResult =
+  | FanoutResult
+  | CriticLoopResult
+  | CommitteeResult
+  | PipelineResult
+  | CascadeResult
+  | CoordinatorResult
+  | PeerTeamResult

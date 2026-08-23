@@ -8,6 +8,16 @@
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+import { SwarmBoard } from './board'
+import {
+  isApproved,
+  runCascade,
+  runCommittee,
+  runCoordinator,
+  runPeerTeam,
+  runPipeline,
+  type RunMember,
+} from './topologies'
 import type {
   CriticLoopResult,
   CriticLoopSpec,
@@ -20,6 +30,8 @@ import type {
 } from './types'
 
 export * from './types'
+export * from './board'
+export { parseNumberedPlan } from './topologies'
 
 export interface SwarmConfig {
   /** Subagent provider used when a member does not name one (default 'spawn'). */
@@ -42,11 +54,6 @@ function textOf(output: ContentBlock[]): string {
     .join('')
 }
 
-/** Critic verdict protocol: `APPROVED` approves; anything else is feedback. */
-function isApproved(verdict: string): boolean {
-  return /^\s*APPROVED\b/i.test(verdict)
-}
-
 export default class SwarmService extends Service {
   static inject = ['subagents']
 
@@ -57,12 +64,35 @@ export default class SwarmService extends Service {
     this.swarmConfig = config
   }
 
+  private boards = new WeakMap<Agent, SwarmBoard>()
+
+  /** The shared task board bound to one lead agent's session log. */
+  board(lead: Agent): SwarmBoard {
+    let board = this.boards.get(lead)
+    if (board === undefined) {
+      board = new SwarmBoard(this.ctx, lead)
+      this.boards.set(lead, board)
+    }
+    return board
+  }
+
   async runTeam(spec: TeamSpec, options: RunTeamOptions): Promise<TeamResult> {
+    const run: RunMember = (member, prompt) => this.runMember(member, prompt, options)
     switch (spec.topology) {
       case 'fanout':
         return this.runFanout(spec, options)
       case 'critic-loop':
         return this.runCriticLoop(spec, options)
+      case 'committee':
+        return runCommittee(spec, run)
+      case 'pipeline':
+        return runPipeline(spec, run)
+      case 'cascade':
+        return runCascade(spec, run)
+      case 'coordinator':
+        return runCoordinator(spec, run)
+      case 'peer-team':
+        return runPeerTeam(spec, run, this.board(options.parent))
     }
   }
 
