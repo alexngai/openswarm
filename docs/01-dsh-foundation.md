@@ -129,9 +129,17 @@ Out-of-tree npm packages in this repo, consumed by a dsh profile:
 ## Phases
 
 - **Phase 0 — spike (kill criteria below).**
-- **Phase 1 — swarm kernel.** TeamSpec/roles/board/topologies over
-  `ctx.subagents`; fanout + critic-loop first; driven by a `ctx.commands`
-  command, headless.
+- **Phase 1 — swarm kernel. DONE (first cut, 2026-08-23).**
+  [`packages/swarm`](../packages/swarm/) provides `ctx.swarm` with fanout and
+  critic-loop over `ctx.subagents`; per-member `agentOptions` give
+  heterogeneous model routing; member personas embed in the prompt text (the
+  seam's `persona` capability is not portable to the dsh-sdk provider).
+  Validated in-process by vitest over the real spine + agent loop + stock
+  adapter + scripted mock LLM (5 tests: fanout collection/personas,
+  unknown-member rejection, per-member model override, critic approve-round-1,
+  feedback threading to maxRounds). Deferred within Phase 1: the coordination
+  board seam, remaining topologies (cascade, committee, pipeline, peer-team,
+  coordinator), and the `ctx.commands` entry point.
 - **Phase 2 — git layer.** Worktree lifecycle + cascade + merge queue; member
   spawn → worktree create → merge on complete.
 - **Phase 3 — LLM adapters.** Azure → LiteLLM shape → Anthropic/Bedrock.

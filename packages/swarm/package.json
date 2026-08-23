@@ -1,0 +1,14 @@
+{
+  "name": "openswarm-swarm",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "OpenSwarm swarm kernel: ctx.swarm topologies over the dsh subagent seam (docs/01 F1)",
+  "main": "src/index.ts",
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-agent": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-llm": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-subagent": "^0.1.1-rc.2"
+  }
+}
