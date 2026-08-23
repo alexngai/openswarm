@@ -1,0 +1,9 @@
+{
+  "name": "openswarm-spike-bundle",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": { ".": "./lib/index.js" },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
+  "peerDependencies": { "@deepseek-ai/cordis": "*" }
+}

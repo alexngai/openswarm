@@ -138,20 +138,26 @@ Out-of-tree npm packages in this repo, consumed by a dsh profile:
 - **Phase 4 — eval repoint + discrimination-set rerun.**
 - **Phase 5 — deletion.** Remove `legacy/` once nothing references it.
 
-## Phase-0 spike
+## Phase-0 spike — RESULTS (2026-08-23)
 
-Proves one probe per feature, each with a fork-pressure reading — if a probe
-requires patching dsh itself, that seam gets a red flag before we commit.
+**All four probes passed against the published npm distribution
+(`0.1.1-rc.2` era); no dsh patches were needed.** Details and re-run
+instructions: [`spike/README.md`](../spike/README.md).
 
-1. **Bundle mechanics** — out-of-tree package with `dsh.bundle`, mounted via
-   profile; `--dump-config` shows our rows.
-2. **Worktree isolation (F1, kill criterion)** — two `subagent-dsh-sdk`
-   members with `cwd` set to two git worktrees; each child's Bash/fs must be
-   rooted in its own worktree. If per-member isolation fails without forking,
-   option B dies and we fall back to porting ideas into the legacy runtime.
-3. **SDK drive (F2)** — drive the harness from a script via `dsh-sdk-client`;
-   add one custom method via declaration merging; confirm the transport
-   accepts non-stdio streams.
-4. **Hot-load (F3)** — while running, write a trivial plugin + patch row;
-   confirm HMR mounts it without restart, and a deliberately broken plugin
-   leaves the last-good tree running.
+1. **Bundle mechanics — PASS.** `dsh plugin add file:…` joins the layer
+   stack; `--dump-config` shows our rows with provenance headers.
+2. **Worktree isolation (F1, kill criterion) — PASS.** Two SDK-driven child
+   harnesses with `cwd` = two git worktrees; each child's real
+   persistent-bash execution was rooted in its own worktree.
+3. **SDK drive (F2) — PASS, one red flag.** Handshake and typed
+   unknown-method rejection work. The server's method table is a closed
+   switch (no registration seam) — but `HarnessSdkJsonRpcServer` is exported
+   and transports are caller-owned streams, so our app-server wraps it:
+   `swarm/*` handled locally, the rest delegated. Upstream issue candidate:
+   a method-registry seam.
+4. **Hot-load (F3) — PASS.** Live patch edit replugged our plugin without a
+   restart; a broken patch left the last-good tree running.
+
+Spike-confirmed policy: **pin exact aligned versions** — the npm dist-tags
+are stale and resolve pre-rename `0.0.1-rc.1` builds with unpublished
+imports; at aligned versions plain npm resolves cleanly.

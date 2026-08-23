@@ -1,0 +1,6 @@
+- insert:
+    - id: spike-marker
+      name: 'openswarm-spike-bundle'
+      config:
+        file: spike-marker.txt
+        text: spike-v1
