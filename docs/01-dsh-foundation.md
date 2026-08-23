@@ -182,6 +182,27 @@ Out-of-tree npm packages in this repo, consumed by a dsh profile:
 - **Phase 4 — eval repoint + discrimination-set rerun.**
 - **Phase 5 — deletion.** Remove `legacy/` once nothing references it.
 
+## Deferred work ledger
+
+Deliberate deferrals, each with the phase that picks it up. Anything cut in a
+later phase gets a row here, so nothing is dropped silently.
+
+| Deferred item | Why deferred | Lands in |
+|---|---|---|
+| **Cross-process message delivery** — mailbox delivery to subprocess/remote members | `subagent-dsh-sdk` has no continuable capability, so the seam cannot follow up a subprocess child; delivery rides our app-server wire instead (a `swarm/deliver` method on the extended protocol — the F2 remote-member convergence) | Phase 2/3 (app-server) |
+| **Full-duplex request/reply** — correlated ask-and-wait between peers | One-way messages + the board cover current coordination patterns; blocking replies add deadlock/timeout surface with no consumer yet. Message ids already give correlation | later, on demand |
+| **Self-directed messaging peers + `report` completion** — members that loop on the board themselves | v1 is lead-driven (`askPeer` per claimed task, awaited turn ends); self-directed members need the child-scoped `report` tool and roster-drain semantics | with full-duplex |
+| **Board/mailbox `waitForChange`** — peers poll the board at 10ms in-process (`ponytail:` marker in topologies.ts) | fine in-process; needed when the board is read across processes | Phase 2/3 |
+| **Structured critic/gate verdicts via `outputSchema`** — verdicts are the plain-text `APPROVED`/`REVISE:` protocol | text protocol is provider-portable and mock-scriptable today | Phase 3+ |
+| **`ctx.commands` entry point** — no human command drives `runTeam` yet | tests drive the service directly; the real entry is the app-server | Phase 2/3 |
+| **Explicit peer drain/disposal** — messaging peers are cleaned up by lead disposal, not drained explicitly | acceptable while teams die with the lead; long-lived leads need drain | Phase 2 |
+| **Upstream issue: continuable capability for `subagent-dsh-sdk`** | wire already supports it (`session/prompt` on an existing session); provider lacks `prepareContinuable` | file when we open upstream dialogue |
+| **Upstream issue: method-registry seam on the SDK server** | method table is a closed switch; we wrap the exported class meanwhile (spike probe 3) | file when we open upstream dialogue |
+| **Upstream gap: wire approval flows** — server→client requests are dead capability on both wire ends | headless-with-policy works; a prompting client needs it | before any interactive UI |
+| LLM adapters (Azure → LiteLLM shape → Anthropic/Bedrock) | roadmap order per §Phases | Phase 3 |
+| Eval harness repoint + discrimination-set rerun | needs subprocess members first | Phase 4 |
+| `legacy/` deletion | kept for porting reference | Phase 5 |
+
 ## Phase-0 spike — RESULTS (2026-08-23)
 
 **All four probes passed against the published npm distribution
