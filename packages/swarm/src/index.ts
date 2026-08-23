@@ -1,9 +1,11 @@
 /**
  * `ctx.swarm` — the OpenSwarm swarm kernel over the dsh subagent seam.
  *
- * Phase-1 scope (docs/01): fanout and critic-loop topologies, members as
- * one-shot subagent runs. Members share the parent's cwd (worktrees are
- * Phase 2) and inherit its model route unless `agentOptions` overrides.
+ * Topologies run members as one-shot subagent runs (plus continuable peers
+ * in messaging peer-teams). By default members share the parent's cwd and
+ * inherit its model route unless `agentOptions` overrides; with
+ * `RunTeamOptions.worktrees` they run as subprocess harnesses in per-task
+ * git worktrees whose branches merge on finish (docs/01 Phase 2).
  */
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -13,20 +15,19 @@ import { SwarmMailbox } from './mailbox'
 import { askPeer, registerSwarmMessaging, spawnPeer, suppressSettlementTurns } from './peers'
 import type { PeerHandle } from './types'
 import {
-  isApproved,
   runCascade,
   runCommittee,
   runCoordinator,
+  runCriticLoop,
+  runFanout,
   runPeerTeam,
   runPipeline,
   seedBoard,
   type RunMember,
 } from './topologies'
+import { WorktreeRun, type WorktreeTeamOptions } from './worktrees'
+import type { MergeOutcome } from 'openswarm-git'
 import type {
-  CriticLoopResult,
-  CriticLoopSpec,
-  FanoutResult,
-  FanoutSpec,
   MemberRunResult,
   MemberSpec,
   TeamResult,
@@ -44,6 +45,8 @@ export {
   suppressSettlementTurns,
 } from './peers'
 export { parseNumberedPlan } from './topologies'
+export { WorktreeRun } from './worktrees'
+export type { WorktreeTeamOptions, WorktreeMemberConfig } from './worktrees'
 
 export interface SwarmConfig {
   /** Subagent provider used when a member does not name one (default 'spawn'). */
@@ -54,9 +57,14 @@ export interface RunTeamOptions {
   /** The delegating agent; members spawn as its subagent children. */
   parent: Agent
   signal?: AbortSignal
+  /**
+   * Execute member runs as subprocess harnesses in per-task git worktrees,
+   * merging completed task branches on finish (docs/01 Phase 2). Not
+   * compatible with `peer-team { messaging: true }` — in-process continuable
+   * peers share the lead's execution world.
+   */
+  worktrees?: WorktreeTeamOptions
 }
-
-const DEFAULT_MAX_ROUNDS = 3
 
 /** Concatenated text content of an assistant output. */
 function textOf(output: ContentBlock[]): string {
@@ -88,13 +96,30 @@ export default class SwarmService extends Service {
     return board
   }
 
-  async runTeam(spec: TeamSpec, options: RunTeamOptions): Promise<TeamResult> {
-    const run: RunMember = (member, prompt) => this.runMember(member, prompt, options)
+  async runTeam(
+    spec: TeamSpec,
+    options: RunTeamOptions,
+  ): Promise<TeamResult & { git?: MergeOutcome }> {
+    const worktrees =
+      options.worktrees === undefined ? undefined : new WorktreeRun(this.ctx, options.worktrees)
+    if (worktrees !== undefined && spec.topology === 'peer-team' && spec.messaging === true) {
+      throw new Error('worktree execution is not supported for messaging peer-teams yet')
+    }
+    const run: RunMember = (member, prompt, taskKey) =>
+      worktrees === undefined
+        ? this.runMember(member, prompt, options)
+        : worktrees.runMember(member, prompt, taskKey, options)
+    const result = await this.dispatch(spec, run, options)
+    if (worktrees === undefined) return result
+    return { ...result, git: await worktrees.finalize() }
+  }
+
+  private dispatch(spec: TeamSpec, run: RunMember, options: RunTeamOptions): Promise<TeamResult> {
     switch (spec.topology) {
       case 'fanout':
-        return this.runFanout(spec, options)
+        return runFanout(spec, run)
       case 'critic-loop':
-        return this.runCriticLoop(spec, options)
+        return runCriticLoop(spec, run)
       case 'committee':
         return runCommittee(spec, run)
       case 'pipeline':
@@ -201,50 +226,6 @@ export default class SwarmService extends Service {
     }
   }
 
-  private async runFanout(spec: FanoutSpec, options: RunTeamOptions): Promise<FanoutResult> {
-    const byName = new Map(spec.members.map((m) => [m.name, m]))
-    if (byName.size !== spec.members.length) throw new Error('duplicate member name in team spec')
-    const results = await Promise.all(
-      spec.tasks.map((task) => {
-        const member = byName.get(task.member)
-        if (member === undefined) throw new Error(`fanout task names unknown member "${task.member}"`)
-        return this.runMember(member, task.prompt, options)
-      }),
-    )
-    return { topology: 'fanout', results }
-  }
-
-  private async runCriticLoop(
-    spec: CriticLoopSpec,
-    options: RunTeamOptions,
-  ): Promise<CriticLoopResult> {
-    const maxRounds = spec.maxRounds ?? DEFAULT_MAX_ROUNDS
-    if (!Number.isInteger(maxRounds) || maxRounds < 1) throw new Error('maxRounds must be a positive integer')
-    const history: CriticLoopResult['history'] = []
-    let feedback: string | undefined
-    let previous: MemberRunResult | undefined
-    for (let round = 1; round <= maxRounds; round++) {
-      const workerPrompt =
-        previous === undefined || feedback === undefined
-          ? spec.task
-          : `${spec.task}\n\nYour previous draft:\n${previous.text}\n\nReviewer feedback:\n${feedback}\n\nRevise the draft to address the feedback.`
-      const draft = await this.runMember(spec.worker, workerPrompt, options)
-      const verdict = await this.runMember(
-        spec.critic,
-        `Task:\n${spec.task}\n\nDraft under review:\n${draft.text}\n\nReply with exactly APPROVED if the draft fully satisfies the task; otherwise reply REVISE: <specific feedback>.`,
-        options,
-      )
-      history.push({ draft, verdict })
-      if (isApproved(verdict.text)) {
-        return { topology: 'critic-loop', approved: true, rounds: round, final: draft, history }
-      }
-      previous = draft
-      feedback = verdict.text
-    }
-    const last = history[history.length - 1]
-    if (last === undefined) throw new Error('unreachable: critic loop ran zero rounds')
-    return { topology: 'critic-loop', approved: false, rounds: maxRounds, final: last.draft, history }
-  }
 }
 
 declare module '@deepseek-ai/cordis' {

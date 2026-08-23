@@ -176,8 +176,32 @@ Out-of-tree npm packages in this repo, consumed by a dsh profile:
   (rides the F2 app-server wire; `subagent-dsh-sdk` has no continuable
   capability — upstream issue candidate), request/reply correlation, board
   `waitForChange`, and the `ctx.commands` entry point.
-- **Phase 2 — git layer.** Worktree lifecycle + cascade + merge queue; member
-  spawn → worktree create → merge on complete.
+- **Phase 2 — git layer + subprocess members. DONE (first cut, 2026-08-23).**
+  [`packages/git`](../packages/git/): per-task worktrees on
+  `swarm/<teamId>/<taskKey>` branches, auto-commit of dirty trees
+  (configurable off for agent-decided commits), and a sequential merge queue
+  operating in a dedicated target worktree — default target is a fresh
+  `swarm/<teamId>/integration` branch (task branches occupy the ref
+  directory, so the integration ref lives beside them), configurable to any
+  branch, and a target checked out elsewhere fails loud with git's own
+  error. Conflicted merges are aborted and the branch + worktree retained,
+  never auto-resolved. In `packages/swarm`, `RunTeamOptions.worktrees` makes
+  member runs execute as full peer harnesses in subprocesses: one
+  dynamically mounted `subagent-dsh-sdk` provider instance per run
+  (`cwd` = the task worktree, disposed after — Cordis reversible mounting,
+  quietly the first real F3 exercise). Topology runs thread a `taskKey`:
+  same key shares a worktree (cascade tiers continue each other's work, a
+  critic reads the worker's tree, pipeline stages chain), no key runs at the
+  repo root (judge/plan/synthesis). Member composition defaults to the
+  shipped `member.cordis.yml` and is overridable per team
+  (`worktrees.member.configPath`/`env`/model route) for richer members.
+  Validated by 5 git-layer unit tests on scratch repos plus 2 keyless E2E
+  tests driving real subprocess harnesses whose scripted bash edits land in
+  the right branches — merged content verified in the integration branch,
+  conflict retention verified, and the user's checkout untouched. Not
+  supported yet: worktrees × messaging peer-teams (in-process peers share
+  the lead's execution world; converges with cross-process delivery per the
+  ledger).
 - **Phase 3 — LLM adapters.** Azure → LiteLLM shape → Anthropic/Bedrock.
 - **Phase 4 — eval repoint + discrimination-set rerun.**
 - **Phase 5 — deletion.** Remove `legacy/` once nothing references it.

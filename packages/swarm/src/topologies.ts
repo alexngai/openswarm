@@ -4,6 +4,10 @@
  */
 import type { SwarmBoard } from './board'
 import type {
+  CriticLoopResult,
+  CriticLoopSpec,
+  FanoutResult,
+  FanoutSpec,
   CascadeResult,
   CascadeSpec,
   CommitteeResult,
@@ -18,7 +22,74 @@ import type {
   PipelineSpec,
 } from './types'
 
-export type RunMember = (member: MemberSpec, prompt: string) => Promise<MemberRunResult>
+/**
+ * Run one member with one prompt. `taskKey` scopes the run to a shared unit
+ * of work: under worktree execution, runs with the same key share a worktree
+ * and runs without a key execute at the repo root.
+ */
+export type RunMember = (
+  member: MemberSpec,
+  prompt: string,
+  taskKey?: string,
+) => Promise<MemberRunResult>
+
+export async function runFanout(spec: FanoutSpec, run: RunMember): Promise<FanoutResult> {
+  const byName = new Map(spec.members.map((m) => [m.name, m]))
+  if (byName.size !== spec.members.length) throw new Error('duplicate member name in team spec')
+  const results = await Promise.all(
+    spec.tasks.map((task, i) => {
+      const member = byName.get(task.member)
+      if (member === undefined) throw new Error(`fanout task names unknown member "${task.member}"`)
+      return run(member, task.prompt, `task-${i}`)
+    }),
+  )
+  return { topology: 'fanout', results }
+}
+
+const DEFAULT_MAX_ROUNDS = 3
+
+export async function runCriticLoop(spec: CriticLoopSpec, run: RunMember): Promise<CriticLoopResult> {
+  const maxRounds = spec.maxRounds ?? DEFAULT_MAX_ROUNDS
+  if (!Number.isInteger(maxRounds) || maxRounds < 1) throw new Error('maxRounds must be a positive integer')
+  const history: CriticLoopResult['history'] = []
+  let feedback: string | undefined
+  let previous: MemberRunResult | undefined
+  for (let round = 1; round <= maxRounds; round++) {
+    const workerPrompt =
+      previous === undefined || feedback === undefined
+        ? spec.task
+        : `${spec.task}
+
+Your previous draft:
+${previous.text}
+
+Reviewer feedback:
+${feedback}
+
+Revise the draft to address the feedback.`
+    const draft = await run(spec.worker, workerPrompt, 'task')
+    const verdict = await run(
+      spec.critic,
+      `Task:
+${spec.task}
+
+Draft under review:
+${draft.text}
+
+Reply with exactly APPROVED if the draft fully satisfies the task; otherwise reply REVISE: <specific feedback>.`,
+      'task',
+    )
+    history.push({ draft, verdict })
+    if (isApproved(verdict.text)) {
+      return { topology: 'critic-loop', approved: true, rounds: round, final: draft, history }
+    }
+    previous = draft
+    feedback = verdict.text
+  }
+  const last = history[history.length - 1]
+  if (last === undefined) throw new Error('unreachable: critic loop ran zero rounds')
+  return { topology: 'critic-loop', approved: false, rounds: maxRounds, final: last.draft, history }
+}
 
 /** Critic/gate verdict protocol: `APPROVED` approves; anything else is feedback. */
 export function isApproved(verdict: string): boolean {
@@ -26,7 +97,7 @@ export function isApproved(verdict: string): boolean {
 }
 
 export async function runCommittee(spec: CommitteeSpec, run: RunMember): Promise<CommitteeResult> {
-  const answers = await Promise.all(spec.members.map((m) => run(m, spec.task)))
+  const answers = await Promise.all(spec.members.map((m) => run(m, spec.task, `answer-${m.name}`)))
   if (spec.judge === undefined) return { topology: 'committee', answers }
   const dossier = answers
     .map((a) => `--- Answer from ${a.member} ---\n${a.text}`)
@@ -45,7 +116,7 @@ export async function runPipeline(spec: PipelineSpec, run: RunMember): Promise<P
   for (const stage of spec.stages) {
     const prompt =
       carry === undefined ? stage.prompt : `${stage.prompt}\n\nInput from the previous stage:\n${carry}`
-    const result = await run(stage.member, prompt)
+    const result = await run(stage.member, prompt, 'pipeline')
     stages.push(result)
     carry = result.text
   }
@@ -64,7 +135,7 @@ export async function runCascade(spec: CascadeSpec, run: RunMember): Promise<Cas
       feedback === undefined
         ? spec.task
         : `${spec.task}\n\nA previous attempt was rejected with this feedback:\n${feedback}`
-    const result = await run(member, prompt)
+    const result = await run(member, prompt, 'task')
     if (result.stopReason !== 'completed') {
       attempts.push({ tier, result })
       continue
@@ -76,6 +147,7 @@ export async function runCascade(spec: CascadeSpec, run: RunMember): Promise<Cas
     const verdict = await run(
       spec.gate,
       `Task:\n${spec.task}\n\nCandidate result:\n${result.text}\n\nReply with exactly APPROVED if the result fully satisfies the task; otherwise reply REVISE: <specific feedback>.`,
+      'task',
     )
     attempts.push({ tier, result, verdict })
     if (isApproved(verdict.text)) {
@@ -109,7 +181,7 @@ export async function runCoordinator(spec: CoordinatorSpec, run: RunMember): Pro
   const subtasks = await Promise.all(
     prompts.map(async (prompt, i) => {
       const worker = spec.workers[i % spec.workers.length]!
-      return { prompt, worker: worker.name, result: await run(worker, prompt) }
+      return { prompt, worker: worker.name, result: await run(worker, prompt, `subtask-${i}`) }
     }),
   )
   const dossier = subtasks
@@ -160,7 +232,7 @@ export async function runPeerTeam(
           await new Promise((r) => setTimeout(r, 10))
           continue
         }
-        const result = await run(member, claimed.prompt)
+        const result = await run(member, claimed.prompt, claimed.id)
         runs[claimed.id] = result
         await board.complete(claimed.id, member.name, claimed.revision, result.text)
       }
