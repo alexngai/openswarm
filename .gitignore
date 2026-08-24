@@ -39,3 +39,5 @@ packages/*/claude.exe
 
 # Downloaded Tree-sitter grammar assets (doc 49, run 'npm run grammars:update')
 assets/grammars/
+packages/cli/dist/
+legacy/.eval-runs/

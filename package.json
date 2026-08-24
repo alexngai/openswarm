@@ -11,7 +11,8 @@
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc -p packages/swarm --noEmit && tsc -p packages/git --noEmit && tsc -p packages/llm-openai --noEmit && tsc -p packages/swarm-member --noEmit && tsc -p packages/cli --noEmit"
+    "typecheck": "tsc -p packages/swarm --noEmit && tsc -p packages/git --noEmit && tsc -p packages/llm-openai --noEmit && tsc -p packages/swarm-member --noEmit && tsc -p packages/cli --noEmit",
+    "bundle:cli": "esbuild packages/cli/src/main.ts --bundle --platform=node --format=esm --target=node20 --external:node-pty --outfile=packages/cli/dist/openswarm.mjs --banner:js=\"import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);\" --log-level=warning"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
@@ -36,6 +37,7 @@
     "@deepseek-ai/dsh-terminal-bash": "^0.1.1-rc.2",
     "@deepseek-ai/dsh-tool-bash-persistent": "^0.1.1-rc.2",
     "@deepseek-ai/dsh-tool-str-replace-editor": "^0.1.1-rc.2",
+    "esbuild": "^0.25.0",
     "typescript": "^5.8.0",
     "vitest": "^3.2.0"
   }
