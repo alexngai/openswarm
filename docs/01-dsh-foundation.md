@@ -268,10 +268,20 @@ Out-of-tree npm packages in this repo, consumed by a dsh profile:
   per member session. Validated: 3 keyless contract tests (including a real
   gate-failure escalation where tier-1's bash creates the marker tier-0
   lacked) and a live Azure gpt-5.5 cascade with a real command gate.
-  Remaining for the rerun: sandbox deployment of the CLI (bundled
-  single-file or packed tarball into the E2B/docker image), an
-  eval-side smoke on one SWE instance, then the discrimination-set sweep
-  (budget + E2B/Azure creds).
+  **E2B smoke: PASSED (2026-08-23)** — django__django-11179, mono
+  `azureoai/gpt-5.5` through the UNCHANGED legacy CascadeAdapter, graded by
+  the held-out swebench tests: **Success 1.00**, 65.7s agent latency, 20 LLM
+  calls, 137k tokens (115k cache-read — prompt caching live), per-model
+  usage attributed, 0% env errors. Deployment recipe
+  (`scripts/bundle-cli.mjs` + `legacy/eval/experiments/dsh-smoke.ts`):
+  esbuild single-file ESM bundle with node-pty AND koffi external
+  (installed beside the bundle — ESM import resolution ignores NODE_PATH),
+  sandbox node ≥ 22.15 (node:zlib zstd APIs), and dsh-llm's runtime
+  version-require inlined at build time. Four import-time failures found
+  and fixed by cheap zero-token smoke iterations. Remaining: the
+  discrimination-set sweep itself (multi-instance, multi-arm; needs the
+  Bedrock small tier from Phase 3b for the heterogeneous arms — the
+  azure-only arms can run now).
 - **Phase 6 — deletion.** Remove `legacy/` once nothing references it.
 
 ## Deferred work ledger

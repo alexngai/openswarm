@@ -50,9 +50,9 @@ const INSTALL: string[] = [
   `curl -fsSL ${NODE_TARBALL} -o /tmp/node.tgz || wget -qO /tmp/node.tgz ${NODE_TARBALL}`,
   "mkdir -p /opt/node && tar -xzf /tmp/node.tgz -C /opt/node --strip-components=1",
   "for b in node npm npx; do ln -sf /opt/node/bin/$b /usr/local/bin/$b; done",
-  "cd /opt/oscli && /opt/node/bin/npm install --no-audit --no-fund node-pty@1.2.0-beta.15",
+  "cd /opt/oscli && /opt/node/bin/npm install --no-audit --no-fund node-pty@1.2.0-beta.15 koffi@3.1.6",
   `test -f ${SANDBOX_BUNDLE}`,
-  `cd /opt/oscli && /opt/node/bin/node -e "require('node-pty'); console.log('pty ok')"`,
+  `cd /opt/oscli && /opt/node/bin/node -e "require('node-pty'); require('koffi'); console.log('pty ok')"`,
 ];
 
 const templateName = (i: SweInstance): string => e2bSafeName(`dsh-${i.instanceId}`);

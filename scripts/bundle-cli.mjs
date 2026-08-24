@@ -16,7 +16,7 @@ await build({
   platform: 'node',
   format: 'esm',
   target: 'node20',
-  external: ['node-pty'],
+  external: ['node-pty', 'koffi'],
   outfile: OUT,
   banner: {
     js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);",
