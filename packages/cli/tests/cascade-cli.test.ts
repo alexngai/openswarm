@@ -136,21 +136,3 @@ it('mono tier with no gate accepts immediately, zero escalations', async () => {
   expect(readFileSync(join(scratch, 'trace.jsonl'), 'utf8')).toMatch(/after 0 escalation/)
   expect(lines.some((l) => l.includes('mono answer'))).toBe(true)
 })
-
-it('bedrock/anthropic models fail loud until Phase 3b', async () => {
-  const scratch = mkdtempSync(join(tmpdir(), 'openswarm-cli-bedrock-'))
-  writeFileSync(
-    join(scratch, 'team.json'),
-    JSON.stringify({
-      topology: 'cascade',
-      members: [{ id: 'tier-0', prompt: 'x', model: 'us.anthropic.claude-haiku-4-5-20251001-v1:0' }],
-    }),
-  )
-  const lines: string[] = []
-  const code = await runCli(
-    ['topology', 'cascade', '--spec', join(scratch, 'team.json')],
-    { out: (l) => lines.push(l), err: () => {} },
-  )
-  expect(code).toBe(1)
-  expect(lines.join('\n')).toContain('Phase 3b')
-})

@@ -28,6 +28,7 @@ import { dirname, join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import * as LlmOpenAi from 'openswarm-llm-openai'
+import * as LlmAnthropic from 'openswarm-llm-anthropic'
 import SwarmService, { type CascadeResult, type MemberSpec } from 'openswarm-swarm'
 import * as Spine from '@deepseek-ai/dsh-agent-spine-demo'
 import * as SessionPersistenceJsonl from '@deepseek-ai/dsh-session-persistence-jsonl'
@@ -79,12 +80,20 @@ const emptyUsage = (): UsageTotals => ({
 /**
  * Map an eval model string to an adapter route + wire model.
  * - `azureoai/<m>` → Azure's OpenAI-compatible surface (AZURE_API_BASE/KEY).
+ * - Bedrock/Anthropic ids (`us.anthropic.…`, `anthropic.…`, `claude-…`) →
+ *   the Anthropic Messages adapter (bedrock backend, bearer token).
  * - anything else → the generic OpenAI-compatible route
  *   (OPENSWARM_LLM_BASE_URL/KEY — LiteLLM, mock, any Bearer endpoint).
- * Bedrock/Anthropic model ids fail loud until openswarm-llm-anthropic
- * (docs/01 Phase 3b).
  */
-function routeOf(model: string): { route: string; model: string; baseURL?: string; apiKeyEnv: string } {
+interface Route {
+  route: string
+  model: string
+  adapter: 'openai' | 'anthropic'
+  baseURL?: string
+  apiKeyEnv?: string
+}
+
+function routeOf(model: string): Route {
   if (model.startsWith('azureoai/')) {
     const base = process.env['AZURE_API_BASE']
     if (base === undefined || base.length === 0) {
@@ -93,16 +102,15 @@ function routeOf(model: string): { route: string; model: string; baseURL?: strin
     return {
       route: 'azure',
       model: model.slice('azureoai/'.length),
+      adapter: 'openai',
       baseURL: `${base.replace(/\/+$/, '')}/openai/v1`,
       apiKeyEnv: 'AZURE_API_KEY',
     }
   }
-  if (/anthropic|bedrock/i.test(model)) {
-    throw new Error(
-      `model "${model}" requires the Anthropic/Bedrock adapter (docs/01 Phase 3b) — not yet available on the dsh stack`,
-    )
+  if (/(^|\.)anthropic\.|^claude-/i.test(model)) {
+    return { route: 'bedrock', model, adapter: 'anthropic' }
   }
-  return { route: 'openai', model, apiKeyEnv: 'OPENSWARM_LLM_API_KEY' }
+  return { route: 'openai', model, adapter: 'openai', apiKeyEnv: 'OPENSWARM_LLM_API_KEY' }
 }
 
 function parseArgs(argv: string[]): Map<string, string> {
@@ -161,12 +169,19 @@ async function runTopologyCascade(args: Map<string, string>, io: CliIo): Promise
   for (const r of routes) {
     if (mounted.has(r.route)) continue
     mounted.add(r.route)
-    ctx.plugin(plug(LlmOpenAi), {
-      routes: [r.route],
-      ...(r.baseURL === undefined ? {} : { baseURL: r.baseURL }),
-      apiKeyEnv: r.apiKeyEnv,
-      models: routes.filter((x) => x.route === r.route).map((x) => ({ id: x.model, contextWindow: 200_000 })),
-    })
+    const models = routes
+      .filter((x) => x.route === r.route)
+      .map((x) => ({ id: x.model, contextWindow: 200_000 }))
+    if (r.adapter === 'anthropic') {
+      ctx.plugin(plug(LlmAnthropic), { routes: [r.route], backend: 'bedrock', models })
+    } else {
+      ctx.plugin(plug(LlmOpenAi), {
+        routes: [r.route],
+        ...(r.baseURL === undefined ? {} : { baseURL: r.baseURL }),
+        apiKeyEnv: r.apiKeyEnv,
+        models,
+      })
+    }
   }
   ctx.plugin(plug(Spine), {
     includeHarnessIdentity: false,

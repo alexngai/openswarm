@@ -311,7 +311,8 @@ later phase gets a row here, so nothing is dropped silently.
 | **`.swarm/` ignore guidance** — default worktree dir sits inside the user's repo and shows as untracked | document + optional auto-append to `.git/info/exclude` | Phase 2 follow-up |
 | **No output cap or reasoning-effort control on openai routes** — `openswarm-llm-openai` strips both rather than translating (`max_completion_tokens`, bare `reasoning_effort`) | requires our own request serializer or an upstream PR making thinking-field emission provider-configurable; upstream issue candidate | when caps/effort matter (effort sweeps are research-relevant) |
 | **LiteLLM route unverified** — same wire dialect, expected to work on `openswarm-llm-openai` | no live LiteLLM endpoint at hand during Phase 3 | first LiteLLM deployment |
-| Anthropic/Bedrock adapters (`openswarm-llm-anthropic`) | Azure unblocked the research arm first; Bedrock daily quota makes it a poor smoke target | Phase 3b |
+| ~~Anthropic/Bedrock adapters~~ **done (Phase 3b, 2026-08-24)** — `openswarm-llm-anthropic` wraps the official SDK (`@anthropic-ai/bedrock-sdk` bearer-token backend + direct-API backend); translation to StreamChunk is pure/unit-tested; live: haiku tool-work tier AND a heterogeneous haiku→gpt-5.5 cascade with cross-provider per-model usage. v1 ceilings: no extended thinking, no image input (ledgered) | — | done |
+| **Anthropic adapter v1 ceilings** — extended thinking unsupported (reasoning ad absent, historical reasoning blocks dropped), image input rejected | eval arms need neither; thinking support interacts with tool-use signature rules and deserves its own pass | when research wants thinking sweeps |
 | Eval harness repoint + discrimination-set rerun | needs subprocess members first | Phase 4 |
 | `legacy/` deletion | kept for porting reference | Phase 5 |
 

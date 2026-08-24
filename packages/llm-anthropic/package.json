@@ -1,0 +1,14 @@
+{
+  "name": "openswarm-llm-anthropic",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Anthropic Messages adapter for dsh (docs/01 Phase 3b): Bedrock (bearer-token) and direct API backends via the official SDK",
+  "main": "src/index.ts",
+  "peerDependencies": {
+    "@anthropic-ai/bedrock-sdk": "*",
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-llm": "^0.1.1-rc.2",
+    "@deepseek-ai/schemastery": "*"
+  }
+}
