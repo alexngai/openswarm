@@ -12,7 +12,7 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc -p packages/swarm --noEmit && tsc -p packages/git --noEmit && tsc -p packages/llm-openai --noEmit && tsc -p packages/swarm-member --noEmit && tsc -p packages/cli --noEmit",
-    "bundle:cli": "esbuild packages/cli/src/main.ts --bundle --platform=node --format=esm --target=node20 --external:node-pty --outfile=packages/cli/dist/openswarm.mjs --banner:js=\"import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);\" --log-level=warning"
+    "bundle:cli": "node scripts/bundle-cli.mjs"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.1",

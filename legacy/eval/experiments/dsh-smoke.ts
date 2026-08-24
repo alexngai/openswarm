@@ -39,23 +39,26 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "
 /** The Phase-5 single-file bundle (esbuild; node-pty external). */
 const BUNDLE = resolve(REPO_ROOT, "packages", "cli", "dist", "openswarm.mjs");
 
-const NODE_TARBALL = "https://nodejs.org/dist/v22.12.0/node-v22.12.0-linux-x64.tar.gz";
+// v22.15+ required: dsh session persistence imports node:zlib zstd APIs.
+const NODE_TARBALL = "https://nodejs.org/dist/v22.21.1/node-v22.21.1-linux-x64.tar.gz";
 const SANDBOX_BUNDLE = "/opt/oscli/openswarm.mjs";
-/** node + node-pty (global, resolved via NODE_PATH) + the copied bundle. */
+/** node + the copied bundle + node-pty BESIDE the bundle: the bundle is ESM,
+ *  and ESM import resolution walks node_modules from the importing file —
+ *  NODE_PATH is a CJS-only mechanism and is ignored. */
 const INSTALL: string[] = [
   "command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1 || (apt-get update && apt-get install -y curl) || true",
   `curl -fsSL ${NODE_TARBALL} -o /tmp/node.tgz || wget -qO /tmp/node.tgz ${NODE_TARBALL}`,
   "mkdir -p /opt/node && tar -xzf /tmp/node.tgz -C /opt/node --strip-components=1",
   "for b in node npm npx; do ln -sf /opt/node/bin/$b /usr/local/bin/$b; done",
-  "/opt/node/bin/npm install -g --no-audit --no-fund --prefix /opt/node node-pty@1.2.0-beta.15",
+  "cd /opt/oscli && /opt/node/bin/npm install --no-audit --no-fund node-pty@1.2.0-beta.15",
   `test -f ${SANDBOX_BUNDLE}`,
-  `NODE_PATH=/opt/node/lib/node_modules /opt/node/bin/node -e "require('node-pty'); console.log('pty ok')"`,
+  `cd /opt/oscli && /opt/node/bin/node -e "require('node-pty'); console.log('pty ok')"`,
 ];
 
 const templateName = (i: SweInstance): string => e2bSafeName(`dsh-${i.instanceId}`);
 
 function providerEnv(): Record<string, string> {
-  const env: Record<string, string> = { NODE_PATH: "/opt/node/lib/node_modules" };
+  const env: Record<string, string> = {};
   for (const k of ["AZURE_API_BASE", "AZURE_API_KEY"]) {
     const v = process.env[k];
     if (v) env[k] = v;
@@ -97,7 +100,7 @@ export async function runDshSmoke(): Promise<void> {
     tau: 1,
     env,
     timeoutMs: 1_800_000,
-    bin: `NODE_PATH=/opt/node/lib/node_modules /opt/node/bin/node ${SANDBOX_BUNDLE}`,
+    bin: `/opt/node/bin/node ${SANDBOX_BUNDLE}`,
   });
 
   const config: EvalConfig = {
