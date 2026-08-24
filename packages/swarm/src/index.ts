@@ -7,6 +7,8 @@
  * `RunTeamOptions.worktrees` they run as subprocess harnesses in per-task
  * git worktrees whose branches merge on finish (docs/01 Phase 2).
  */
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
@@ -63,12 +65,35 @@ export interface RunTeamOptions {
   parent: Agent
   signal?: AbortSignal
   /**
+   * Runs cascade command-confidence gates (weakest link over exit codes).
+   * Default: bash in `confidenceCwd` (or the process cwd).
+   */
+  confidenceRunner?: (commands: string[]) => Promise<number>
+  /** Working directory for the default confidence runner. */
+  confidenceCwd?: string
+  /**
    * Execute member runs as subprocess harnesses in git worktrees, merging
    * completed branches on finish (docs/01 Phase 2). One-shot topologies use
    * per-task worktrees; `peer-team { messaging: true }` runs long-lived
    * multi-turn remote members in per-MEMBER worktrees (docs/01 Phase 4).
    */
   worktrees?: WorktreeTeamOptions
+}
+
+const execFileAsync = promisify(execFile)
+
+/** Weakest-link default: every command must exit 0 in `cwd` for confidence 1. */
+function defaultConfidenceRunner(cwd: string): (commands: string[]) => Promise<number> {
+  return async (commands) => {
+    for (const command of commands) {
+      try {
+        await execFileAsync('bash', ['-c', command], { cwd, maxBuffer: 16 * 1024 * 1024 })
+      } catch {
+        return 0
+      }
+    }
+    return 1
+  }
 }
 
 /** The wire requires an explicit model for remote members; resolve or fail loud. */
@@ -146,7 +171,11 @@ export default class SwarmService extends Service {
       case 'pipeline':
         return runPipeline(spec, run)
       case 'cascade':
-        return runCascade(spec, run)
+        return runCascade(
+          spec,
+          run,
+          options.confidenceRunner ?? defaultConfidenceRunner(options.confidenceCwd ?? process.cwd()),
+        )
       case 'coordinator':
         return runCoordinator(spec, run)
       case 'peer-team':

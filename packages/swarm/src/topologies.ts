@@ -33,6 +33,9 @@ export type RunMember = (
   taskKey?: string,
 ) => Promise<MemberRunResult>
 
+/** Weakest-link command confidence: 1 when every command exits 0, else 0. */
+export type RunConfidence = (commands: string[]) => Promise<number>
+
 export async function runFanout(spec: FanoutSpec, run: RunMember): Promise<FanoutResult> {
   const byName = new Map(spec.members.map((m) => [m.name, m]))
   if (byName.size !== spec.members.length) throw new Error('duplicate member name in team spec')
@@ -125,8 +128,15 @@ export async function runPipeline(spec: PipelineSpec, run: RunMember): Promise<P
   return { topology: 'pipeline', stages, final }
 }
 
-export async function runCascade(spec: CascadeSpec, run: RunMember): Promise<CascadeResult> {
+export async function runCascade(
+  spec: CascadeSpec,
+  run: RunMember,
+  runConfidence?: RunConfidence,
+): Promise<CascadeResult> {
   if (spec.tiers.length === 0) throw new Error('cascade needs at least one tier')
+  if (spec.confidence !== undefined && runConfidence === undefined) {
+    throw new Error('cascade confidence gate requires a confidence runner')
+  }
   const attempts: CascadeResult['attempts'] = []
   let feedback: string | undefined
   for (let tier = 0; tier < spec.tiers.length; tier++) {
@@ -138,6 +148,15 @@ export async function runCascade(spec: CascadeSpec, run: RunMember): Promise<Cas
     const result = await run(member, prompt, 'task')
     if (result.stopReason !== 'completed') {
       attempts.push({ tier, result })
+      continue
+    }
+    if (spec.confidence !== undefined) {
+      const confidence = await runConfidence!(spec.confidence.commands)
+      attempts.push({ tier, result, confidence })
+      if (confidence >= spec.confidence.tau) {
+        return { topology: 'cascade', accepted: true, tier, final: result, attempts }
+      }
+      feedback = `automated confidence ${confidence} was below the required threshold ${spec.confidence.tau}; the verification commands did not pass`
       continue
     }
     if (spec.gate === undefined) {

@@ -82,7 +82,15 @@ export interface CascadeSpec {
   topology: 'cascade'
   tiers: MemberSpec[]
   task: string
+  /** LLM gate member (APPROVED / REVISE protocol). */
   gate?: MemberSpec
+  /**
+   * Command-confidence gate (the eval-harness escalation evaluator): after a
+   * tier completes, every command runs in the workspace; confidence is the
+   * weakest link (all must exit 0 for 1.0). Escalate when confidence < tau.
+   * Takes precedence over the LLM `gate` when both are set.
+   */
+  confidence?: { commands: string[]; tau: number }
 }
 
 /**
@@ -172,6 +180,8 @@ export interface CascadeAttempt {
   tier: number
   result: MemberRunResult
   verdict?: MemberRunResult
+  /** Command-gate confidence measured for this tier, when configured. */
+  confidence?: number
 }
 
 export interface CascadeResult {

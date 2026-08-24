@@ -248,7 +248,30 @@ Out-of-tree npm packages in this repo, consumed by a dsh profile:
   `swarm_send_message` tool call crossing member→socket→mailbox→target
   wakeup; and the full topology with member-keyed merge. Delivery contract
   for remote wakeups: durable prompt acceptance is the ack boundary.
-- **Phase 5 — eval repoint + discrimination-set rerun.**
+- **Phase 5 — eval repoint + discrimination-set rerun. IN PROGRESS
+  (2026-08-23): CLI contract done, E2B rerun pending.** The eval seam turned
+  out to be a CLI contract, not adapter surgery: the legacy CascadeAdapter's
+  `bin` is `CS_BIN`-overridable, so [`packages/cli`](../packages/cli/)
+  implements the exact legacy `openswarm topology cascade` invocation — the
+  legacy team.json spec shape (members-as-tiers + coordination escalation
+  fields), the `openSwarmParse` stdout JSONL (`text_delta` /
+  `tool_use_start` / `message_stop{usage}` / `error`), the
+  `{type:'team_usage', byModel, team}` results line (legacy UsageTotals
+  field names, per-model `calls`), and the `after N escalation(s)` trace
+  line. Members run in-process over the real spine with persistent bash +
+  editor in the sandbox cwd; `azureoai/<m>` maps to the Azure route, bare
+  models to the generic OPENSWARM_LLM_* route (LiteLLM/mock), and
+  Bedrock/Anthropic ids fail loud until Phase 3b. The cascade topology
+  gained the eval's command-confidence gate (`confidence: {commands, tau}`,
+  weakest-link over exit codes, feedback threads upward — takes precedence
+  over the LLM gate); usage folds from `assistant/message` session events
+  per member session. Validated: 3 keyless contract tests (including a real
+  gate-failure escalation where tier-1's bash creates the marker tier-0
+  lacked) and a live Azure gpt-5.5 cascade with a real command gate.
+  Remaining for the rerun: sandbox deployment of the CLI (bundled
+  single-file or packed tarball into the E2B/docker image), an
+  eval-side smoke on one SWE instance, then the discrimination-set sweep
+  (budget + E2B/Azure creds).
 - **Phase 6 — deletion.** Remove `legacy/` once nothing references it.
 
 ## Deferred work ledger
