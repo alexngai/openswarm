@@ -119,7 +119,11 @@ function textOf(output: ContentBlock[]): string {
 }
 
 export default class SwarmService extends Service {
-  static inject = ['subagents']
+  // 'sessions' is a real dependency: the board and mailbox flush durable
+  // events through ctx.sessions. Undeclared it resolves only when accessed
+  // from an unrestricted root context — service-to-service callers hit
+  // cordis's inject guard.
+  static inject = ['subagents', 'sessions']
 
   private swarmConfig: SwarmConfig
 
