@@ -1,10 +1,9 @@
 {
   "name": "openswarm-cli",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "description": "openswarm CLI for the dsh-based stack: eval-facing `topology cascade` matching the legacy contract (docs/01 Phase 5)",
-  "main": "src/index.ts",
+  "main": "dist/index.js",
   "bin": {
     "openswarm": "bin/openswarm.mjs"
   },
@@ -12,5 +11,11 @@
     "openswarm-swarm": "*",
     "openswarm-llm-openai": "*",
     "openswarm-llm-anthropic": "*"
-  }
+  },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ]
 }

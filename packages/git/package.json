@@ -1,8 +1,13 @@
 {
   "name": "openswarm-git",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "description": "OpenSwarm git layer: per-task worktrees, auto-commit, merge queue (docs/01 Phase 2)",
-  "main": "src/index.ts"
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ]
 }

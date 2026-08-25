@@ -1,0 +1,57 @@
+# openswarm-bundle — the OpenSwarm layer over dsh-base (docs/01).
+#
+# dsh-base already mounts llm/session/agent/agent-loop/tools/system-prompt/
+# subagent(+spawn,fork)/sandbox/fs/bash/persistence. This layer swaps the
+# model adapter for the OpenSwarm adapters and inserts the swarm services.
+# HMR stays cold here (the `openswarm` profile is the headless/eval default);
+# `cordis.dev.patch.yml` (openswarm-dev profile) turns it hot and serves the
+# app-server.
+
+# Retire the shipped DeepSeek adapter; the OpenSwarm adapters own the routes.
+- id: llm-deepseek
+  disabled: true
+
+# Point the default agent route at an OpenSwarm adapter (env-overridable).
+- id: agent-default-model
+  config:
+    provider: !!js process.env.OPENSWARM_DEFAULT_PROVIDER ?? 'openai'
+    model: !!js process.env.OPENSWARM_DEFAULT_MODEL ?? 'mock-model'
+
+- id: system-prompt
+  config:
+    persona: >-
+      You are a coding agent powered by the {{model}} model. Your working
+      directory is {{cwd}}. Use your tools to complete the task and verify
+      your work by running commands.
+
+- insert:
+    # Model adapters — routes are config, creds are env-driven.
+    - id: openswarm-llm-openai
+      name: 'openswarm-llm-openai'
+      config:
+        routes: [openai, azure]
+        baseURLEnv: OPENSWARM_LLM_BASE_URL
+        apiKeyEnv: OPENSWARM_LLM_API_KEY
+        models: !!js JSON.parse(process.env.OPENSWARM_OPENAI_MODELS ?? '[]')
+
+    - id: openswarm-llm-anthropic
+      name: 'openswarm-llm-anthropic'
+      config:
+        routes: [bedrock]
+        backend: bedrock
+        models: !!js JSON.parse(process.env.OPENSWARM_ANTHROPIC_MODELS ?? '[]')
+
+    # ctx.swarm — the topology kernel over the subagent seam.
+    - id: openswarm-swarm
+      name: 'openswarm-swarm'
+
+    # ctx.swarmAppServer — off by default (port 0 binds only when the dev
+    # profile or a --patch enables a real port and the runner keeps the
+    # process alive).
+    - id: openswarm-app-server
+      name: 'openswarm-app-server'
+      disabled: true
+
+    # F3 — agent-authored plugins; lead-scope mounts denied until a gate is wired.
+    - id: openswarm-plugin-authoring
+      name: 'openswarm-plugin-authoring'

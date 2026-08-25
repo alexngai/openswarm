@@ -304,7 +304,28 @@ Out-of-tree npm packages in this repo, consumed by a dsh profile:
   discrimination-set sweep itself (multi-instance, multi-arm; needs the
   Bedrock small tier from Phase 3b for the heterogeneous arms — the
   azure-only arms can run now).
-- **Phase 6 — deletion.** Remove `legacy/` once nothing references it.
+- **Phase 6 — profile/bundle packaging. DONE (first cut, 2026-08-24).**
+  [`packages/bundle`](../packages/bundle/) is `openswarm-bundle`: a dsh bundle
+  (`"dsh": { "bundle": { "patch": "./cordis.patch.yml" } }`) that layers over
+  `dsh-base` — disables `llm-deepseek`, inserts the OpenAI/Anthropic adapters +
+  `ctx.swarm` + `ctx.swarmAppServer` (off by default) + the F3
+  plugin-authoring tool, and repoints `agent-default-model` to our route.
+  Two profiles (`scripts/init-profile.mjs`): `openswarm` (HMR cold — headless/
+  eval default, includes `dsh-headless` for the one-shot runner) and
+  `openswarm-dev` (HMR hot + app-server bound, via `cordis.dev.patch.yml`).
+  Packages build to `dist/` (`npm run build`, esbuild, bare imports external —
+  publishable shape, `main`→dist); a vitest alias resolves siblings to `src`
+  so the test loop needs no build. Validated by a real dsh app-boot E2E:
+  `dsh --profile openswarm --dump-config` shows our rows composed over base
+  with provenance headers, and `dsh --profile openswarm "<task>"` boots the
+  composed tree (no hand-built context), resolves our adapter, runs a model
+  turn, and exits 0. Decisions (per the packaging discussion): eval keeps the
+  esbuild single-file bundle (profile is the interactive/product path);
+  bundle is publishable-shaped now; default profile ships HMR cold. Remaining:
+  publish to npm, the F3 patch-file/HMR path test on `openswarm-dev`, and
+  wiring `topology cascade` onto `ctx.commands`.
+
+- **Phase 7 — deletion.** Remove `legacy/` once nothing references it.
 
 ## Deferred work ledger
 

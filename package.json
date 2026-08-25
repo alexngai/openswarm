@@ -11,12 +11,14 @@
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc -p packages/swarm --noEmit && tsc -p packages/git --noEmit && tsc -p packages/llm-openai --noEmit && tsc -p packages/swarm-member --noEmit && tsc -p packages/cli --noEmit && tsc -p packages/llm-anthropic --noEmit && tsc -p packages/app-server --noEmit && tsc -p packages/plugin-authoring --noEmit",
-    "bundle:cli": "node scripts/bundle-cli.mjs"
+    "typecheck": "tsc -p packages/swarm --noEmit && tsc -p packages/git --noEmit && tsc -p packages/llm-openai --noEmit && tsc -p packages/swarm-member --noEmit && tsc -p packages/cli --noEmit && tsc -p packages/llm-anthropic --noEmit && tsc -p packages/app-server --noEmit && tsc -p packages/plugin-authoring --noEmit && tsc -p packages/bundle --noEmit",
+    "bundle:cli": "node scripts/bundle-cli.mjs",
+    "build": "node scripts/build-packages.mjs"
   },
   "devDependencies": {
     "@anthropic-ai/bedrock-sdk": "^0.33.1",
     "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh": "^0.1.1-rc.2",
     "@deepseek-ai/dsh-agent": "0.1.1-rc.2",
     "@deepseek-ai/dsh-agent-loop": "0.1.1-rc.2",
     "@deepseek-ai/dsh-agent-spine-demo": "0.1.1-rc.2",

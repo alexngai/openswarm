@@ -1,15 +1,22 @@
 {
   "name": "openswarm-app-server",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
-  "description": "OpenSwarm app-server (docs/01 F2): one JSON-RPC endpoint for UIs/TUIs — dsh's SDK session protocol wrapped with swarm methods, over TCP",
-  "main": "src/index.ts",
-  "dependencies": { "openswarm-swarm": "*" },
+  "description": "OpenSwarm app-server (docs/01 F2): one JSON-RPC endpoint for UIs/TUIs \u2014 dsh's SDK session protocol wrapped with swarm methods, over TCP",
+  "main": "dist/index.js",
+  "dependencies": {
+    "openswarm-swarm": "*"
+  },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-sdk-jsonrpc-server": "^0.1.1-rc.2",
     "@deepseek-ai/dsh-sdk-protocol": "^0.1.1-rc.2",
     "@deepseek-ai/schemastery": "*"
-  }
+  },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ]
 }

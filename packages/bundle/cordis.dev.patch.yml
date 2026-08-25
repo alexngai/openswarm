@@ -1,0 +1,13 @@
+# openswarm-dev overlay: hot HMR + the app-server bound to a real port.
+# Layered ABOVE openswarm-bundle in the openswarm-dev profile.
+
+- id: hmr
+  disabled: false
+  config:
+    root: ['.']
+
+- id: openswarm-app-server
+  disabled: false
+  config:
+    host: !!js process.env.OPENSWARM_APP_HOST ?? '127.0.0.1'
+    port: !!js Number(process.env.OPENSWARM_APP_PORT ?? 4620)

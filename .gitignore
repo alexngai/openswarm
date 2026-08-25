@@ -41,3 +41,5 @@ packages/*/claude.exe
 assets/grammars/
 packages/cli/dist/
 legacy/.eval-runs/
+packages/*/dist/
+.dsh-home/

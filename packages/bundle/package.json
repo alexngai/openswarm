@@ -1,0 +1,20 @@
+{
+  "name": "openswarm-bundle",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "OpenSwarm dsh bundle (docs/01): swarm + app-server + plugin-authoring + OpenAI/Anthropic adapters over dsh-base",
+  "main": "src/index.js",
+  "exports": { ".": "./src/index.js" },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
+  "files": ["src", "cordis.patch.yml", "cordis.dev.patch.yml"],
+  "dependencies": {
+    "openswarm-swarm": "0.1.0",
+    "openswarm-app-server": "0.1.0",
+    "openswarm-plugin-authoring": "0.1.0",
+    "openswarm-llm-openai": "0.1.0",
+    "openswarm-llm-anthropic": "0.1.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-base": "^0.1.1-rc.2"
+  }
+}
