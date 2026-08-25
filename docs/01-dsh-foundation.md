@@ -248,8 +248,9 @@ Out-of-tree npm packages in this repo, consumed by a dsh profile:
   `swarm_send_message` tool call crossing member→socket→mailbox→target
   wakeup; and the full topology with member-keyed merge. Delivery contract
   for remote wakeups: durable prompt acceptance is the ack boundary.
-- **Phase 5 — eval repoint + discrimination-set rerun. IN PROGRESS
-  (2026-08-23): CLI contract done, E2B rerun pending.** The eval seam turned
+- **Phase 5 — eval repoint + discrimination-set rerun. DONE (2026-08-24;
+  results in [docs/02](02-discrimination-rerun.md) — the rewrite replicates
+  legacy run-2's solve sets AND failure signatures exactly).** The eval seam turned
   out to be a CLI contract, not adapter surgery: the legacy CascadeAdapter's
   `bin` is `CS_BIN`-overridable, so [`packages/cli`](../packages/cli/)
   implements the exact legacy `openswarm topology cascade` invocation — the
