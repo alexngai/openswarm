@@ -66,7 +66,16 @@ children). We add the peer layer as our own `ctx.swarm` service:
 
 Multi-process from day one via `subagent-dsh-sdk`; networking arrives via F2.
 
-### F2 — App-server interface (codex app-server shaped)
+### F2 — App-server interface (codex app-server shaped) — FIRST CUT DONE (2026-08-24)
+
+[`packages/app-server`](../packages/app-server/) wraps dsh's exported
+`HarnessSdkJsonRpcServer` per TCP connection: `initialize`/`session/prompt`/
+streamed `session.event` delegate verbatim, `swarm/runTeam` (async → a
+`swarm.runFinished` notification), `swarm/runs`, and `swarm/board` are ours.
+The Phase-4 `SwarmServer` (member socket) and this (frontend socket) are the
+two roles of the same protocol. Remaining: server→client requests for
+interactive approval (still a dead capability upstream), a WS transport, and
+richer methods (steering, cancel, per-run event scoping).
 
 No UI of our own. One JSON-RPC interface that any UI/TUI connects to later:
 
@@ -85,7 +94,19 @@ unimplemented on both ends, so interactive approval flows over the wire don't
 exist yet. Headless-with-policy works today; a prompting TUI needs us to
 implement that (additive, reserved in the protocol).
 
-### F3 — Dynamic extensibility: agents authoring plugins
+### F3 — Dynamic extensibility: agents authoring plugins — FIRST CUT DONE (2026-08-24)
+
+[`packages/plugin-authoring`](../packages/plugin-authoring/) ships
+`swarm_author_plugin`: an agent writes a Cordis plugin module (evaluated as a
+data: URL with a `defineTool` capability injected, nothing else) and mounts
+it live via `ctx.plugin()` — reversible by construction, the registrations
+unwind on dispose. The blast-radius policy is realized: `self` scope mounts
+into the agent's own `agent.ctx` (freely allowed — worst case a broken
+child), `lead` scope mounts into the shared root and requires an approval
+gate (default deny). Validated: an authored tool is callable in the same
+run, a throwing plugin is refused without crashing the harness, lead-scope
+denied-then-approved. Uses `ctx.plugin()` reversibility rather than the HMR
+patch-file path (that lands with the profile/bundle packaging).
 
 Cordis makes hot-loading safe-by-construction (reversible effects,
 transactional recomposition, last-good-tree rollback). We add:

@@ -11,7 +11,7 @@
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc -p packages/swarm --noEmit && tsc -p packages/git --noEmit && tsc -p packages/llm-openai --noEmit && tsc -p packages/swarm-member --noEmit && tsc -p packages/cli --noEmit && tsc -p packages/llm-anthropic --noEmit && tsc -p packages/app-server --noEmit",
+    "typecheck": "tsc -p packages/swarm --noEmit && tsc -p packages/git --noEmit && tsc -p packages/llm-openai --noEmit && tsc -p packages/swarm-member --noEmit && tsc -p packages/cli --noEmit && tsc -p packages/llm-anthropic --noEmit && tsc -p packages/app-server --noEmit && tsc -p packages/plugin-authoring --noEmit",
     "bundle:cli": "node scripts/bundle-cli.mjs"
   },
   "devDependencies": {
