@@ -12,6 +12,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { SessionEventMap } from '@deepseek-ai/dsh-session'
+import { Serializer } from './serialize'
 
 /** `pending` is unstarted or released; `in_progress` carries an owner. */
 export type SwarmTaskStatus = 'pending' | 'in_progress' | 'completed'
@@ -69,7 +70,7 @@ export function foldBoard(events: ReadonlyArray<{ type: string; data?: unknown }
 }
 
 export class SwarmBoard {
-  private tail: Promise<unknown> = Promise.resolve()
+  private readonly serial = new Serializer()
   private nextTaskNumber = 0
 
   constructor(
@@ -95,12 +96,7 @@ export class SwarmBoard {
 
   /** Serialize one read-check-append mutation against every other mutation. */
   private transact<T>(operation: () => Promise<T>): Promise<T> {
-    const run = this.tail.then(operation, operation)
-    this.tail = run.then(
-      () => undefined,
-      () => undefined,
-    )
-    return run
+    return this.serial.run(operation)
   }
 
   private async commit(task: SwarmTaskSnapshot): Promise<SwarmTaskSnapshot> {

@@ -42,15 +42,22 @@ function resolveDsh() {
 }
 const dshScript = resolveDsh()
 
+const VALUE_FLAGS = new Set(['--model', '--provider', '--home', '--port'])
+
 function parse(argv) {
   const opts = {}
   const rest = []
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
-    if (a === '--model' || a === '--provider' || a === '--home' || a === '--port') {
-      opts[a.slice(2)] = argv[++i]
+    if (VALUE_FLAGS.has(a)) {
+      const value = argv[i + 1]
+      if (value === undefined || value.startsWith('--')) die(`${a} requires a value`)
+      opts[a.slice(2)] = value
+      i++
     } else if (a === '--help' || a === '-h') {
       opts.help = true
+    } else if (a.startsWith('--')) {
+      die(`unknown option "${a}"`)
     } else {
       rest.push(a)
     }

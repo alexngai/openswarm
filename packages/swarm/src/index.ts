@@ -243,7 +243,13 @@ export default class SwarmService extends Service {
       const runs = await runBoardWorkers(spec.members, board, seeded, async (member, claimed) => {
         const handle = roster.get(member.name)!
         const prelude = mailbox.framePendingQuiet(member.name)
-        const result = await handle.remote!.ask([...prelude.blocks, { type: 'text', text: claimed.prompt }])
+        let result
+        try {
+          result = await handle.remote!.ask([...prelude.blocks, { type: 'text', text: claimed.prompt }])
+        } catch (error) {
+          prelude.release()
+          throw error
+        }
         await prelude.ack()
         return result
       })

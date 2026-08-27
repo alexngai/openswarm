@@ -14,6 +14,7 @@
  * branch retained for inspection — never auto-resolved.
  */
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -49,6 +50,10 @@ export interface MergeOutcome {
 
 export class SwarmGit {
   private readonly worktrees = new Map<string, WorktreeInfo>()
+  /** One in-flight creation promise per task key — the concurrency memo. */
+  private readonly worktreePromises = new Map<string, Promise<WorktreeInfo>>()
+  /** Safe branch names already assigned, to disambiguate lossy collisions. */
+  private readonly usedNames = new Set<string>()
   private base: string | undefined
   private targetPath: string | undefined
   private scratchPromise: Promise<string> | undefined
@@ -83,11 +88,30 @@ export class SwarmGit {
     return this.base
   }
 
-  /** Create (or return the existing) worktree for one task. */
-  async worktree(taskKey: string): Promise<WorktreeInfo> {
-    const existing = this.worktrees.get(taskKey)
-    if (existing !== undefined) return existing
-    const safe = taskKey.replace(/[^A-Za-z0-9._-]/g, '-')
+  /**
+   * Create (or return the existing) worktree for one task. Promise-memoized
+   * per key, so concurrent calls for the same key share one creation instead
+   * of both running `git worktree add`.
+   */
+  worktree(taskKey: string): Promise<WorktreeInfo> {
+    let promise = this.worktreePromises.get(taskKey)
+    if (promise === undefined) {
+      promise = this.createWorktree(taskKey)
+      this.worktreePromises.set(taskKey, promise)
+    }
+    return promise
+  }
+
+  private async createWorktree(taskKey: string): Promise<WorktreeInfo> {
+    const sanitized = taskKey.replace(/[^A-Za-z0-9._-]/g, '-')
+    // Distinct keys that sanitize to the same name (or a name already taken)
+    // would otherwise collide on one branch; a short deterministic hash keeps
+    // each key's branch unique while staying readable.
+    const safe =
+      sanitized === taskKey && !this.usedNames.has(sanitized)
+        ? sanitized
+        : `${sanitized}-${createHash('sha1').update(taskKey).digest('hex').slice(0, 8)}`
+    this.usedNames.add(safe)
     const branch = `swarm/${this.options.teamId}/${safe}`
     const path = join(this.dir, safe)
     mkdirSync(this.dir, { recursive: true })
@@ -200,6 +224,7 @@ export class SwarmGit {
       rmSync(info.path, { recursive: true, force: true })
     })
     this.worktrees.delete(info.taskKey)
+    this.worktreePromises.delete(info.taskKey)
   }
 
   /** Remove the target and scratch worktrees (branches survive). */

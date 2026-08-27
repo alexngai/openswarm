@@ -126,3 +126,26 @@ it('messaging peer-team completes the board with continuable peers', async () =>
   // Two briefing turns + two task turns.
   expect(h.mock.requests.length).toBe(4)
 })
+
+it('framePendingQuiet reserves in-flight mail so concurrent drains do not double-deliver', async () => {
+  h = await bootHarness({ sequence: ['success'], repeatLast: true, successText: 'x' })
+  const { b, mailbox } = await spawnPair(h)
+  await mailbox.send({ from: 'peer-a', to: 'peer-b', text: 'quiet-note', delivery: 'quiet' })
+
+  // Two concurrent drains for peer-b: the first reserves the message, the
+  // second sees it in-flight and gets nothing.
+  const first = mailbox.framePendingQuiet('peer-b')
+  const second = mailbox.framePendingQuiet('peer-b')
+  expect(first.blocks.length).toBeGreaterThan(0)
+  expect(second.blocks).toHaveLength(0)
+
+  // Releasing the first returns the message to a later drain.
+  first.release()
+  const third = mailbox.framePendingQuiet('peer-b')
+  expect(third.blocks.length).toBeGreaterThan(0)
+  // Acking marks it delivered; nothing pending, no further drain yields it.
+  await third.ack()
+  expect(mailbox.pending()).toHaveLength(0)
+  expect(mailbox.framePendingQuiet('peer-b').blocks).toHaveLength(0)
+  void b
+})

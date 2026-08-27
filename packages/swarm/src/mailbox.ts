@@ -20,6 +20,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { SessionEventMap } from '@deepseek-ai/dsh-session'
+import { Serializer } from './serialize'
 import type { PeerHandle } from './types'
 
 export type SwarmMessageDelivery = 'quiet' | 'wakeup'
@@ -77,7 +78,9 @@ export function foldPendingMessages(
 }
 
 export class SwarmMailbox {
-  private tail: Promise<unknown> = Promise.resolve()
+  private readonly serial = new Serializer()
+  /** Quiet-message ids currently being carried by an in-flight delivery. */
+  private readonly delivering = new Set<string>()
 
   constructor(
     private readonly ctx: Context,
@@ -90,12 +93,7 @@ export class SwarmMailbox {
   }
 
   private transact<T>(operation: () => Promise<T>): Promise<T> {
-    const run = this.tail.then(operation, operation)
-    this.tail = run.then(
-      () => undefined,
-      () => undefined,
-    )
-    return run
+    return this.serial.run(operation)
   }
 
   private async append(
@@ -135,16 +133,31 @@ export class SwarmMailbox {
 
   /**
    * Frame the pending quiet mail for one peer so a waking delivery can carry
-   * it. The caller prepends `blocks` to the waking content and calls `ack()`
-   * once that delivery was accepted.
+   * it. The selected messages are reserved as in-flight so a concurrent
+   * delivery to the same peer does not carry them a second time. The caller
+   * MUST settle the reservation exactly once: `ack()` on accepted delivery
+   * (marks them delivered), or `release()` on failure (returns them to
+   * pending for a later delivery).
    */
-  framePendingQuiet(to: string): { blocks: ContentBlock[]; ack: () => Promise<void> } {
-    const messages = this.pending().filter((m) => m.to === to && m.delivery === 'quiet')
+  framePendingQuiet(to: string): {
+    blocks: ContentBlock[]
+    ack: () => Promise<void>
+    release: () => void
+  } {
+    const messages = this.pending().filter(
+      (m) => m.to === to && m.delivery === 'quiet' && !this.delivering.has(m.id),
+    )
+    for (const m of messages) this.delivering.add(m.id)
+    const clear = () => {
+      for (const m of messages) this.delivering.delete(m.id)
+    }
     return {
       blocks: messages.flatMap((m) => frameMessage(m)),
       ack: async () => {
         for (const m of messages) await this.append('swarm/message/delivered', { version: 1, messageId: m.id })
+        clear()
       },
+      release: clear,
     }
   }
 
@@ -155,17 +168,24 @@ export class SwarmMailbox {
     if (message.delivery === 'wakeup') {
       // Pending quiet mail for the same target rides in front of the wakeup.
       const prelude = this.framePendingQuiet(message.to)
-      const blocks = [...prelude.blocks, ...frameMessage(message)]
-      if (target.remote !== undefined) {
-        // Remote member: acceptance of the prompt is the delivery boundary.
-        await target.remote.deliver(blocks)
-      } else if (target.childId !== undefined) {
-        await this.ctx.subagents.followup(this.lead, target.childId, blocks, {
-          source,
-          signal: new AbortController().signal,
-        })
-      } else {
+      if (target.remote === undefined && target.childId === undefined) {
+        prelude.release()
         return // unreachable roster shape; stays queued
+      }
+      const blocks = [...prelude.blocks, ...frameMessage(message)]
+      try {
+        if (target.remote !== undefined) {
+          // Remote member: acceptance of the prompt is the delivery boundary.
+          await target.remote.deliver(blocks)
+        } else {
+          await this.ctx.subagents.followup(this.lead, target.childId!, blocks, {
+            source,
+            signal: new AbortController().signal,
+          })
+        }
+      } catch (error) {
+        prelude.release()
+        throw error
       }
       await prelude.ack()
       await this.append('swarm/message/delivered', { version: 1, messageId: message.id })

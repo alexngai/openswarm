@@ -125,3 +125,17 @@ it('scratch worktree is detached, excluded from merge, and removed on dispose', 
   await git.dispose()
   expect(existsSync(scratch)).toBe(false)
 })
+
+it('worktree() memoizes per key and disambiguates colliding sanitized names', async () => {
+  const root = scratchRepo()
+  const git = new SwarmGit({ repoRoot: root, teamId: 'wt1' })
+  // Concurrent same-key calls share one creation (no double `git worktree add`).
+  const [a1, a2] = await Promise.all([git.worktree('task-a'), git.worktree('task-a')])
+  expect(a1).toBe(a2)
+
+  // Two distinct keys that sanitize to the same name get distinct branches.
+  const x = await git.worktree('feat/x')
+  const y = await git.worktree('feat-x')
+  expect(x.branch).not.toBe(y.branch)
+  await git.dispose()
+})

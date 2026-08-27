@@ -109,15 +109,20 @@ export async function askPeer(
   if (childId === undefined) throw new Error(`peer "${peer.name}" is not an in-process peer`)
   const prelude = options?.mailbox?.framePendingQuiet(peer.name)
   const turnDone = nextTurnEnd(ctx, () => childId)
-  await ctx.subagents.followup(
-    lead,
-    childId,
-    [...(prelude?.blocks ?? []), { type: 'text', text: prompt }],
-    {
-      source: { kind: 'plugin', plugin: 'openswarm-swarm' } as never,
-      signal: options?.signal ?? new AbortController().signal,
-    },
-  )
+  try {
+    await ctx.subagents.followup(
+      lead,
+      childId,
+      [...(prelude?.blocks ?? []), { type: 'text', text: prompt }],
+      {
+        source: { kind: 'plugin', plugin: 'openswarm-swarm' } as never,
+        signal: options?.signal ?? new AbortController().signal,
+      },
+    )
+  } catch (error) {
+    prelude?.release()
+    throw error
+  }
   await prelude?.ack()
   const session = await turnDone
   const output = finalAssistantOutput(session.events as never) ?? []
