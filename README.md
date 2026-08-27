@@ -1,99 +1,95 @@
 <h1 align="center">OpenSwarm</h1>
 
-<p align="center">See and steer a swarm of coding agents.</p>
+<p align="center">Run a swarm of coding agents — peer teams, worktree isolation, heterogeneous models — on <a href="https://github.com/deepseek-ai/deepseek-harness">DeepSeek Harness</a>.</p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/openswarm"><img alt="npm" src="https://img.shields.io/npm/v/openswarm?style=flat-square" /></a>
-  <a href="#license"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" /></a>
+  <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" />
   <img alt="Node >= 22" src="https://img.shields.io/badge/node-%3E%3D22-brightgreen?style=flat-square" />
-</p>
-
-<p align="center">
-  <img src="demo/see-and-steer.gif" alt="openswarm team watch — see and steer your swarm" width="820" />
+  <img alt="status: developer preview" src="https://img.shields.io/badge/status-developer%20preview-orange?style=flat-square" />
 </p>
 
 ---
 
-OpenSwarm is a multi-agent-**first** coding CLI: launch a team of agents on one task, watch every member work in a live board, and steer them mid-run — all from your terminal. One agent is a tool; **N coordinated agents is the product.**
+OpenSwarm is a multi-agent coding system: launch a **team** of agents on one task, run each member in its own isolated git worktree, mix cheap and frontier models in one roster, and let peers message each other mid-run. One agent is a tool; **N coordinated agents is the product.**
 
-### Installation
+It is built as a set of **out-of-tree plugins on [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)** (`dsh`, Cordis-based) — the harness supplies the agent loop, tools, sessions, and sandbox; OpenSwarm adds the swarm layer (`ctx.swarm`), the git worktree/merge layer, model adapters, a JSON-RPC app-server, and agent-authored plugins. The design rationale lives in [`docs/01-dsh-foundation.md`](docs/01-dsh-foundation.md).
 
-```bash
-npm install -g openswarm      # global `openswarm` command
-npx openswarm "explain this codebase"   # or run on demand
-```
+> **Developer preview.** OpenSwarm runs on a pinned pre-release of `dsh`; expect breaking changes. Run from a clone for now (npm publish is pending).
 
-Requires **Node.js >= 22**. Installing pulls a self-contained, prebuilt binary for your platform (macOS arm64/x64, Linux x64) that bundles the interactive TUI — no Bun install needed. Other platforms still run every headless, swarm, ACP, and API path. Prefer a single file? Grab a standalone binary from [GitHub Releases](https://github.com/alexngai/openswarm/releases). Build from source with [Bun](https://bun.sh) `>= 1.3.8`: `bun install && bun run build`.
+## What it does
 
-### Authentication
+- **Peer + hierarchical teams** — seven topologies (fanout, critic-loop, cascade, committee, pipeline, peer-team, coordinator) over a durable, log-backed task board and mailbox. Peers send each other messages that wake a teammate's turn.
+- **Worktree isolation** — each member runs as a full subprocess harness in its own git worktree; a sequential merge queue folds completed branches, conflicts are retained for inspection, and your checkout is never touched.
+- **Heterogeneous, cross-provider rosters** — route cheap tiers to Bedrock haiku and hard work to Azure gpt-5.5 in one cascade, with per-model usage accounting.
+- **App-server** — a JSON-RPC interface (`swarm/runTeam`, `swarm/runs`, `swarm/board`, streamed events) any UI/TUI can drive over a socket.
+- **Agent-authored plugins** — an agent can write and hot-load a Cordis plugin into its own harness (freely) or the shared one (with approval).
 
-OpenSwarm stores **zero credentials** — it reads what's already in your environment or keychain.
-
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...   # API billing
-claude auth login                     # Claude Max subscription (via Anthropic's own CLI)
-claude setup-token                    # CI / headless → CLAUDE_CODE_OAUTH_TOKEN
-```
-
-Other providers use plain API-key env vars — OpenAI, xAI, Google, DashScope. ChatGPT Plus/Pro works via `--framework codex-native`. Team members can mix providers, so peers on Claude Max, ChatGPT Plus, and direct API keys collaborate in one team.
-
-### Quickstart
+## Install
 
 ```bash
-# Single agent, interactive
-openswarm "explain this codebase"
-
-# A team of agents — no YAML, built-in presets (review | fix | refactor)
-openswarm team start review --detach
-
-# Watch the swarm live, then steer it mid-run (from another shell)
-openswarm team watch review
-openswarm team send review "also check error handling"
-openswarm team stop review            # graceful drain when done
+git clone https://github.com/alexngai/openswarm
+cd openswarm
+npm install
+npm run build        # builds the plugin packages to dist/
 ```
 
-`team watch` renders a live multi-pane board: every member gets a `[role]` lane with inline edit diffs, per-member `tok · $`, and a running `Σ team` cost ledger, while a shared task board flips ◐→● as work lands.
+Requires **Node.js ≥ 22**.
 
-### Multi-agent teams
+## Configure a model provider
 
-Beyond the built-in presets, teams are defined as [OpenTeams](docs/25-team-orchestration.md#54-openteams-yaml-compatibility) YAML templates or inline `TeamSpec` files, across six topologies:
-
-`fanout` · `pipeline` · `peer-team` · `coordinator` · `committee` · `critic-loop`
+OpenSwarm stores **zero credentials** — it reads your environment. Set one of:
 
 ```bash
-openswarm topology peer-team --spec ./team.yaml --git-cascade
+# Azure OpenAI
+export AZURE_API_BASE=https://<resource>.openai.azure.com
+export AZURE_API_KEY=...
+# OpenAI
+export OPENAI_API_KEY=sk-...
+# Bedrock (Anthropic)
+export AWS_BEARER_TOKEN_BEDROCK=...   # + AWS_REGION
 ```
 
-`--git-cascade` gives each member its own git worktree so parallel agents edit files without stomping each other, then auto-merges to a target branch. Full topology catalog, TeamSpec schema, and daemon commands (`team list`/`logs`/`status`/`stop`) are in [docs/25-team-orchestration.md](docs/25-team-orchestration.md).
+The launcher auto-detects the provider (Azure → OpenAI → Bedrock). Override with `--provider` / `--model`.
 
-### Editor integration (ACP)
-
-OpenSwarm speaks the [Agent Client Protocol](https://agentclientprotocol.com), so it runs as an agent inside editors like [Zed](https://zed.dev). Add to Zed's `settings.json`:
-
-```json
-{ "agent_servers": { "openswarm": { "command": "openswarm", "args": ["acp"] } } }
-```
-
-Each ACP session is a coordinator team: you converse with a long-lived lead that spawns peers, and every member's tool calls surface `[role]`-attributed with inline diffs. Details in [docs/36-meta-swarm-convention.md](docs/36-meta-swarm-convention.md).
-
-### Tools & extensibility
-
-Fourteen built-in Tier-0 tools (`bash`, `read_file`, `edit_file`, `multi_edit`, `apply_patch`, `glob`, `grep`, shell sessions, memory, and more), plus swarm tools for team members (`agent`, `send_message`, task graph, `commit_changes`). Extend via **plugins**, **MCP servers**, **skills**, and **hooks**. Run `openswarm --help` for all flags, or `openswarm doctor` for a health check. Full flag, model-routing, tool, and provider reference is in [docs/USAGE.md](docs/USAGE.md).
-
-### Documentation
-
-Full CLI reference (flags, models, tools, limitations, architecture) is in [docs/USAGE.md](docs/USAGE.md). Design docs live in [`docs/`](docs/README.md) — start with the [vision](docs/00-vision.md), [architecture](docs/02-architecture.md), [team orchestration](docs/25-team-orchestration.md), and [tool tiers](docs/04-tool-tiers.md).
-
-### Contributing
+## Quickstart
 
 ```bash
-bun install          # install dependencies
-bun run build        # type-check + bundle
-npm test             # vitest suite (3,500+ tests)
+./bin/openswarm "explain what this repository does"      # one-shot task
+./bin/openswarm --model gpt-5.5 "fix the failing test"
+./bin/openswarm config                                   # show resolved provider/model/home
+./bin/openswarm serve --port 4620                        # start the JSON-RPC app-server
 ```
 
-Both lockfiles are tracked deliberately: `package-lock.json` is canonical (CI uses `npm ci`); `bun.lock` feeds the compiled-binary build — resync with `bun install --lockfile-only` after any dependency change. See [CONTRIBUTING.md](CONTRIBUTING.md) and [CLAUDE.md](CLAUDE.md). File issues at [github.com/alexngai/openswarm/issues](https://github.com/alexngai/openswarm/issues).
+The launcher initializes its profiles on first use (into `~/.openswarm`, override with `--home` / `$OPENSWARM_HOME`), auto-detects your provider, and boots the composed `dsh` harness. See [`docs/03-usage.md`](docs/03-usage.md) for the full runbook — profiles, the app-server wire protocol, driving a team programmatically, and the eval harness.
 
-### License
+## How it's structured
 
-MIT © [Alex Ngai](mailto:alexander.s.ngai@gmail.com)
+| Package | Role |
+|---|---|
+| `openswarm-swarm` | `ctx.swarm`: topologies, log-backed board, peer mailbox |
+| `openswarm-git` | per-task worktrees, auto-commit, merge queue |
+| `openswarm-llm-openai` | OpenAI-compatible adapter (Azure, LiteLLM, any Bearer endpoint) |
+| `openswarm-llm-anthropic` | Anthropic Messages adapter (Bedrock + direct API) |
+| `openswarm-app-server` | JSON-RPC interface for UIs/TUIs |
+| `openswarm-plugin-authoring` | agent-authored, hot-loaded plugins |
+| `openswarm-bundle` | the dsh bundle stacking all of the above over `dsh-base` |
+
+Two profiles: **`openswarm`** (headless one-shot, HMR cold — the default) and **`openswarm-dev`** (app-server + hot HMR).
+
+## Develop
+
+```bash
+npm test                              # full suite (keyless, uses a scripted mock LLM)
+npm run typecheck                     # tsc across every package
+OPENSWARM_LIVE=1 npm test             # also run the env-gated live tests (needs creds)
+```
+
+The reusable live/integration harness for peer messaging lives in [`packages/swarm/tests/support/board-harness.ts`](packages/swarm/tests/support/board-harness.ts); the same scenarios run mock (CI) and live (real model).
+
+## Legacy
+
+The pre-rewrite v0.x implementation (TUI, single-binary CLI) is frozen under [`legacy/`](legacy/) for reference. It is not maintained; new work is the dsh-based stack above.
+
+## License
+
+MIT.
