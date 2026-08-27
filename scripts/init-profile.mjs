@@ -46,6 +46,13 @@ function link(linkPath, target) {
 function initProfile(name, extraBundles = []) {
   const dir = join(dshHome, 'profiles', name)
   mkdirSync(dir, { recursive: true })
+  // The headless one-shot runner drives a task then exits — right for the
+  // cold `openswarm` profile (headless/eval). The `-dev` server profile omits
+  // it: the app-server's bound socket keeps the process alive to serve.
+  const isServer = name.endsWith('-dev')
+  const bundles = isServer
+    ? ['@deepseek-ai/dsh-base', 'openswarm-bundle', ...extraBundles]
+    : ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-headless', 'openswarm-bundle', ...extraBundles]
   writeFileSync(
     join(dir, 'package.json'),
     JSON.stringify(
@@ -53,7 +60,7 @@ function initProfile(name, extraBundles = []) {
         name: `dsh-profile-${name}`,
         private: true,
         dependencies: {},
-        dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-headless', 'openswarm-bundle', ...extraBundles] } },
+        dsh: { profile: { bundles } },
       },
       null,
       2,

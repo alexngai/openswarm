@@ -72,6 +72,16 @@ it.skipIf(!ready)('composes the openswarm bundle over dsh-base', async () => {
   expect(stdout).toContain('@deepseek-ai/dsh-base')
 })
 
+it.skipIf(!ready)('the dev server profile enables the app-server and omits the one-shot runner', async () => {
+  const { stdout } = await dsh(['--profile', 'openswarm-dev', '--dump-config'])
+  // App-server enabled by the dev overlay...
+  expect(stdout).toMatch(/id: openswarm-app-server[\s\S]*?disabled: false/)
+  // ...HMR turned hot...
+  expect(stdout).toMatch(/id: hmr[\s\S]*?disabled: false/)
+  // ...and NO headless one-shot runner (it would exit the server process).
+  expect(stdout).not.toContain('headless-runner')
+})
+
 it.skipIf(!ready)('boots the composed profile and runs a fanout team', async () => {
   mock = await startMockLlmServer({ apiKey: 'mock-key', sequence: ['success'], repeatLast: true, successText: 'profile-answer' })
   const base = mock.baseURL.endsWith('/v1') ? mock.baseURL : `${mock.baseURL}/v1`
