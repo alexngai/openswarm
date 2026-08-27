@@ -5,9 +5,14 @@
   "description": "OpenSwarm git layer: per-task worktrees, auto-commit, merge queue (docs/01 Phase 2)",
   "main": "dist/index.js",
   "exports": {
-    ".": "./dist/index.js"
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
   },
   "files": [
-    "dist"
-  ]
+    "dist",
+    "src"
+  ],
+  "types": "src/index.ts"
 }

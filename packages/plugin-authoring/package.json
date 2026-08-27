@@ -9,9 +9,14 @@
     "@deepseek-ai/dsh-tools": "^0.1.1-rc.2"
   },
   "exports": {
-    ".": "./dist/index.js"
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
   },
   "files": [
-    "dist"
-  ]
+    "dist",
+    "src"
+  ],
+  "types": "src/index.ts"
 }

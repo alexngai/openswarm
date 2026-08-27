@@ -11,9 +11,14 @@
     "@deepseek-ai/schemastery": "*"
   },
   "exports": {
-    ".": "./dist/index.js"
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
   },
   "files": [
-    "dist"
-  ]
+    "dist",
+    "src"
+  ],
+  "types": "src/index.ts"
 }
