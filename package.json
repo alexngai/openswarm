@@ -49,9 +49,36 @@
   "description": "Run a swarm of coding agents on DeepSeek Harness \u2014 peer teams, worktree isolation, heterogeneous models.",
   "license": "MIT",
   "files": [
-    "bin",
-    "scripts",
-    "packages"
+    "bin/openswarm.mjs",
+    "scripts/init-profile.mjs",
+    "LICENSE",
+    "README.md",
+    "packages/git/dist",
+    "packages/git/src",
+    "packages/git/package.json",
+    "packages/swarm/dist",
+    "packages/swarm/src",
+    "packages/swarm/package.json",
+    "packages/llm-openai/dist",
+    "packages/llm-openai/src",
+    "packages/llm-openai/package.json",
+    "packages/llm-anthropic/dist",
+    "packages/llm-anthropic/src",
+    "packages/llm-anthropic/package.json",
+    "packages/app-server/dist",
+    "packages/app-server/src",
+    "packages/app-server/package.json",
+    "packages/plugin-authoring/dist",
+    "packages/plugin-authoring/src",
+    "packages/plugin-authoring/package.json",
+    "packages/swarm-member/dist",
+    "packages/swarm-member/src",
+    "packages/swarm-member/package.json",
+    "packages/bundle/src",
+    "packages/bundle/package.json",
+    "packages/bundle/cordis.patch.yml",
+    "packages/bundle/cordis.dev.patch.yml",
+    "packages/swarm/member.cordis.yml"
   ],
   "dependencies": {
     "@anthropic-ai/bedrock-sdk": "0.33.1",
@@ -81,5 +108,21 @@
     "@deepseek-ai/dsh-tool-bash-persistent": "0.1.1-rc.2",
     "@deepseek-ai/dsh-tool-str-replace-editor": "0.1.1-rc.2",
     "@deepseek-ai/dsh-tools": "0.1.1-rc.2"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alexngai/openswarm.git"
+  },
+  "homepage": "https://github.com/alexngai/openswarm#readme",
+  "bugs": {
+    "url": "https://github.com/alexngai/openswarm/issues"
+  },
+  "keywords": [
+    "agents",
+    "multi-agent",
+    "coding-agent",
+    "swarm",
+    "deepseek-harness",
+    "llm"
+  ]
 }

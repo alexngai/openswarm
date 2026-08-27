@@ -14,6 +14,7 @@ const PACKAGES = [
   'llm-anthropic',
   'app-server',
   'plugin-authoring',
+  'swarm-member',
   'cli',
 ]
 
