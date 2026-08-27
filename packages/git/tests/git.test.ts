@@ -99,3 +99,29 @@ it('a target branch checked out in the main tree fails loud', async () => {
   await git.autoCommit(a, 'x')
   await expect(git.mergeAll()).rejects.toThrow(/already used by worktree|already checked out/)
 })
+
+it('scratch worktree is detached, excluded from merge, and removed on dispose', async () => {
+  const root = scratchRepo()
+  const git = new SwarmGit({ repoRoot: root, teamId: 'scratch1' })
+  const scratch = await git.scratch()
+  expect(await git.scratch()).toBe(scratch) // memoized
+
+  // It's a real git worktree (tools work) but detached — no branch.
+  writeFileSync(join(scratch, 'junk.txt'), 'ephemeral\n')
+  const head = execFileSync('git', ['-C', scratch, 'rev-parse', '--abbrev-ref', 'HEAD']).toString().trim()
+  expect(head).toBe('HEAD') // detached
+
+  // A task worktree alongside it still merges; scratch contributes nothing.
+  const a = await git.worktree('t')
+  writeFileSync(join(a.path, 'a.txt'), 'x\n')
+  await git.autoCommit(a, 'x')
+  const outcome = await git.mergeAll()
+  expect(outcome.merged).toHaveLength(1)
+  expect(outcome.merged[0]!.taskKey).toBe('t')
+  // Nothing scratch-related in any merge bucket.
+  const all = [...outcome.merged, ...outcome.conflicts, ...outcome.empty]
+  expect(all.some((x) => x.taskKey === '.scratch' || x.branch.includes('.scratch'))).toBe(false)
+
+  await git.dispose()
+  expect(existsSync(scratch)).toBe(false)
+})

@@ -128,6 +128,14 @@ it('board state is queryable per run', async () => {
   })
   const done = notifications.find((n) => n.method === 'swarm.runFinished')!
   expect(done.params.error, JSON.stringify(done.params)).toBeUndefined()
+
+  // The per-run lead is disposed once the run settles (no unbounded lead
+  // accumulation on a long-lived server)...
+  const runs = (await client.request('swarm/runs', {})) as any
+  const leadId = runs.runs.find((r: any) => r.runId === runId)!.leadSessionId
+  expect(ctx.agents.get(leadId)).toBeUndefined()
+
+  // ...yet swarm/board still answers from the snapshot captured at finish.
   const board = (await client.request('swarm/board', { runId })) as any
   expect(board.tasks).toHaveLength(1)
   expect(board.tasks[0]).toMatchObject({ subject: 'one', status: 'completed', owner: 'solo' })

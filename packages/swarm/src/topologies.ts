@@ -227,37 +227,67 @@ export async function seedBoard(board: SwarmBoard, tasks: PeerTeamSpec['tasks'])
   return created
 }
 
+/** Run one claimed board task for a member. */
+export type RunClaim = (
+  member: MemberSpec,
+  claimed: import('./board').SwarmTaskSnapshot,
+) => Promise<MemberRunResult>
+
+/**
+ * Work-stealing fan-out over a seeded board: every member loops
+ * claim-next-ready → run → complete until all seeded tasks are done. Shared by
+ * the three peer-team execution modes. On any member's failure, the claim is
+ * released (so the board is never left with a stuck in_progress task) and every
+ * member's loop is signalled to stop before the error is rethrown — without
+ * this, a single failure leaves sibling loops busy-polling forever.
+ */
+export async function runBoardWorkers(
+  members: MemberSpec[],
+  board: SwarmBoard,
+  seeded: Set<string>,
+  runClaim: RunClaim,
+): Promise<Record<string, MemberRunResult>> {
+  const runs: Record<string, MemberRunResult> = {}
+  let aborted: unknown
+  const boardDone = () => board.list().every((t) => !seeded.has(t.id) || t.status === 'completed')
+  await Promise.all(
+    members.map(async (member) => {
+      while (aborted === undefined && !boardDone()) {
+        const claimed = await board.claimNextReady(member.name)
+        if (claimed === undefined) {
+          // Nothing ready: blockers are still in flight with other members.
+          // ponytail: 10ms poll; the board grows waitForChange out of process.
+          await new Promise((r) => setTimeout(r, 10))
+          continue
+        }
+        try {
+          const result = await runClaim(member, claimed)
+          runs[claimed.id] = result
+          await board.complete(claimed.id, member.name, claimed.revision, result.text)
+        } catch (error) {
+          aborted ??= error
+          // Release the claim so the board isn't stuck in_progress; siblings see
+          // `aborted` and exit their loops.
+          await board.release(claimed.id, member.name, claimed.revision).catch(() => undefined)
+          return
+        }
+      }
+    }),
+  )
+  if (aborted !== undefined) throw aborted
+  return runs
+}
+
 export async function runPeerTeam(
   spec: PeerTeamSpec,
   run: RunMember,
   board: SwarmBoard,
 ): Promise<PeerTeamResult> {
   if (spec.members.length === 0) throw new Error('peer-team needs at least one member')
-  const created = await seedBoard(board, spec.tasks)
-
-  const runs: Record<string, MemberRunResult> = {}
-  const seeded = new Set(created)
-  const boardDone = () =>
-    board.list().every((t) => !seeded.has(t.id) || t.status === 'completed')
-
-  await Promise.all(
-    spec.members.map(async (member) => {
-      while (!boardDone()) {
-        const claimed = await board.claimNextReady(member.name)
-        if (claimed === undefined) {
-          // Nothing ready: blockers are still in flight with other members.
-          // ponytail: 10ms poll; the board grows waitForChange when it moves
-          // out of process.
-          await new Promise((r) => setTimeout(r, 10))
-          continue
-        }
-        const result = await run(member, claimed.prompt, claimed.id)
-        runs[claimed.id] = result
-        await board.complete(claimed.id, member.name, claimed.revision, result.text)
-      }
-    }),
+  const seeded = new Set(await seedBoard(board, spec.tasks))
+  const runs = await runBoardWorkers(spec.members, board, seeded, (member, claimed) =>
+    run(member, claimed.prompt, claimed.id),
   )
-
   const tasks = board.list().filter((t) => seeded.has(t.id))
   return { topology: 'peer-team', tasks, runs }
 }

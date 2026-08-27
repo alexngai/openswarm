@@ -26,7 +26,7 @@ import z from '@deepseek-ai/schemastery'
 import { JsonRpcLineTransport } from '@deepseek-ai/dsh-sdk-protocol'
 import { HarnessSdkJsonRpcServer } from '@deepseek-ai/dsh-sdk-jsonrpc-server'
 import { SessionId } from '@deepseek-ai/dsh-session'
-import type { TeamSpec } from 'openswarm-swarm'
+import type { SwarmTaskSnapshot, TeamSpec } from 'openswarm-swarm'
 
 export const Config = z.object({
   host: z.string().default('127.0.0.1'),
@@ -42,6 +42,9 @@ interface RunRecord {
   runId: string
   status: 'running' | 'finished' | 'failed'
   leadSessionId: string
+  /** Board snapshot captured at finish, so swarm/board survives lead disposal. */
+  tasks: SwarmTaskSnapshot[]
+  /** Idempotent lead teardown. */
   dispose: () => Promise<void>
 }
 
@@ -123,27 +126,36 @@ export default class SwarmAppServer extends Service {
           meta: { cwd: process.cwd() },
           agentOptions: { provider, ...(model === undefined ? {} : { model }) },
         } as never)
+        let disposed = false
         const record: RunRecord = {
           runId,
           status: 'running',
           leadSessionId: String(lead.agent.id),
-          dispose: () => lead.dispose(),
+          tasks: [],
+          dispose: async () => {
+            if (disposed) return
+            disposed = true
+            await lead.dispose()
+          },
         }
         this.runs.set(runId, record)
+        // Capture the final board and dispose the lead once the run settles, so
+        // leads don't accumulate for the server's lifetime; swarm/board then
+        // reads the snapshot.
+        const settle = (status: 'finished' | 'failed', payload: Record<string, unknown>) => {
+          record.status = status
+          record.tasks = this.ctx.swarm.board(lead.agent).list()
+          transport.notify('swarm.runFinished', { runId, ...payload })
+          void record.dispose().catch(() => undefined)
+        }
         void this.ctx.swarm
           .runTeam(spec, {
             parent: lead.agent,
             ...(params['worktrees'] === undefined ? {} : { worktrees: params['worktrees'] as never }),
           })
           .then(
-            (result) => {
-              record.status = 'finished'
-              transport.notify('swarm.runFinished', { runId, result })
-            },
-            (error) => {
-              record.status = 'failed'
-              transport.notify('swarm.runFinished', { runId, error: String(error?.message ?? error) })
-            },
+            (result) => settle('finished', { result }),
+            (error) => settle('failed', { error: String(error?.message ?? error) }),
           )
         return { runId }
       }
@@ -159,9 +171,10 @@ export default class SwarmAppServer extends Service {
         const runId = String(params['runId'] ?? '')
         const record = this.runs.get(runId)
         if (record === undefined) throw new Error(`unknown run "${runId}"`)
+        // Live board while the run is in flight; the captured snapshot after the
+        // lead has been disposed.
         const lead = this.ctx.agents.get(record.leadSessionId as never)
-        if (lead === undefined) throw new Error(`run "${runId}" lead is not resident`)
-        return { tasks: this.ctx.swarm.board(lead).list() }
+        return { tasks: lead !== undefined ? this.ctx.swarm.board(lead).list() : record.tasks }
       }
       default:
         throw new Error(`unknown swarm method: ${method}`)

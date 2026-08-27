@@ -100,7 +100,10 @@ export class WorktreeRun {
     taskKey: string | undefined,
     run: RunTeamOptions,
   ): Promise<MemberRunResult> {
-    const cwd = taskKey === undefined ? this.options.repoRoot : (await this.worktree(taskKey)).path
+    // Keyless runs (judge/synthesis) get a throwaway detached worktree, never
+    // the user's checkout — the member harness carries write tools, so running
+    // in repoRoot would let a model mutate the working tree.
+    const cwd = taskKey === undefined ? await this.git.scratch() : (await this.worktree(taskKey)).path
     const cfg = this.options.member ?? {}
     const text = member.persona === undefined ? prompt : `${member.persona}\n\n${prompt}`
     const providerName = `swarm-sdk-${this.teamId}-${this.seq++}`

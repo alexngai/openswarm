@@ -80,3 +80,32 @@ it('board state is a pure fold of the lead session log', async () => {
   const next = await rebuilt.create({ subject: 'c', prompt: 'p' })
   expect(next.id).toBe('task-2')
 })
+
+it('runBoardWorkers releases the claim and propagates the error on member failure', async () => {
+  const { runBoardWorkers } = await import('../src/topologies')
+  const { board } = await bootBoard()
+  const a = await board.create({ subject: 'a', prompt: 'pa' })
+  const b = await board.create({ subject: 'b', prompt: 'pb' })
+  const seeded = new Set([a.id, b.id])
+
+  const boom = new Error('member exploded')
+  // Two members; one runClaim throws on its first task. Without the fix this
+  // would spin forever (the claimed task stuck in_progress); the test
+  // completing at all proves termination.
+  await expect(
+    runBoardWorkers(
+      [{ name: 'm1' }, { name: 'm2' }],
+      board,
+      seeded,
+      async (_member, claimed) => {
+        if (claimed.subject === 'a') throw boom
+        return { member: _member.name, runId: 'r', output: [], text: 'ok', stopReason: 'completed' as const }
+      },
+    ),
+  ).rejects.toBe(boom)
+
+  // The failed task was released (pending), not left stuck in_progress.
+  const failed = board.list().find((t) => t.subject === 'a')!
+  expect(failed.status).toBe('pending')
+  expect(failed.owner).toBeUndefined()
+}, 15_000)

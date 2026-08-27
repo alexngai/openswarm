@@ -51,6 +51,7 @@ export class SwarmGit {
   private readonly worktrees = new Map<string, WorktreeInfo>()
   private base: string | undefined
   private targetPath: string | undefined
+  private scratchPromise: Promise<string> | undefined
 
   constructor(private readonly options: SwarmGitOptions) {}
 
@@ -175,6 +176,25 @@ export class SwarmGit {
     return outcome
   }
 
+  /**
+   * A throwaway, detached worktree for member runs that have no task branch
+   * (committee judge, coordinator synthesis, …). Detached at the base commit,
+   * so it carries no branch and never enters the merge set; it isolates those
+   * runs from the user's checkout and is removed on dispose. Promise-memoized
+   * so concurrent callers share one worktree instead of racing its creation.
+   */
+  scratch(): Promise<string> {
+    if (this.scratchPromise === undefined) {
+      this.scratchPromise = (async () => {
+        const path = join(this.dir, '.scratch')
+        mkdirSync(this.dir, { recursive: true })
+        await this.git(this.options.repoRoot, 'worktree', 'add', '--detach', path, await this.baseCommit())
+        return path
+      })()
+    }
+    return this.scratchPromise
+  }
+
   private async removeWorktree(info: WorktreeInfo): Promise<void> {
     await this.git(this.options.repoRoot, 'worktree', 'remove', '--force', info.path).catch(() => {
       rmSync(info.path, { recursive: true, force: true })
@@ -182,13 +202,20 @@ export class SwarmGit {
     this.worktrees.delete(info.taskKey)
   }
 
-  /** Remove the target worktree (the branch survives). */
+  /** Remove the target and scratch worktrees (branches survive). */
   async dispose(): Promise<void> {
     if (this.targetPath !== undefined) {
       await this.git(this.options.repoRoot, 'worktree', 'remove', '--force', this.targetPath).catch(
         () => {},
       )
       this.targetPath = undefined
+    }
+    if (this.scratchPromise !== undefined) {
+      const scratch = await this.scratchPromise.catch(() => undefined)
+      this.scratchPromise = undefined
+      if (scratch !== undefined) {
+        await this.git(this.options.repoRoot, 'worktree', 'remove', '--force', scratch).catch(() => {})
+      }
     }
   }
 }

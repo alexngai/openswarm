@@ -17,6 +17,7 @@ import { SwarmMailbox } from './mailbox'
 import { askPeer, registerSwarmMessaging, spawnPeer, suppressSettlementTurns } from './peers'
 import type { PeerHandle } from './types'
 import {
+  runBoardWorkers,
   runCascade,
   runCommittee,
   runCoordinator,
@@ -239,29 +240,13 @@ export default class SwarmService extends Service {
         roster.set(member.name, { name: member.name, remote: peer })
       }
 
-      const runs: Record<string, MemberRunResult> = {}
-      const boardDone = () =>
-        board.list().every((t) => !seeded.has(t.id) || t.status === 'completed')
-      await Promise.all(
-        spec.members.map(async (member) => {
-          const handle = roster.get(member.name)!
-          while (!boardDone()) {
-            const claimed = await board.claimNextReady(member.name)
-            if (claimed === undefined) {
-              await new Promise((r) => setTimeout(r, 10))
-              continue
-            }
-            const prelude = mailbox.framePendingQuiet(member.name)
-            const result = await handle.remote!.ask([
-              ...prelude.blocks,
-              { type: 'text', text: claimed.prompt },
-            ])
-            await prelude.ack()
-            runs[claimed.id] = result
-            await board.complete(claimed.id, member.name, claimed.revision, result.text)
-          }
-        }),
-      )
+      const runs = await runBoardWorkers(spec.members, board, seeded, async (member, claimed) => {
+        const handle = roster.get(member.name)!
+        const prelude = mailbox.framePendingQuiet(member.name)
+        const result = await handle.remote!.ask([...prelude.blocks, { type: 'text', text: claimed.prompt }])
+        await prelude.ack()
+        return result
+      })
       const tasks = board.list().filter((t) => seeded.has(t.id))
       return { topology: 'peer-team', tasks, runs }
     } finally {
@@ -302,25 +287,12 @@ export default class SwarmService extends Service {
       roster.set(member.name, handle)
     }
 
-    const runs: Record<string, MemberRunResult> = {}
-    const boardDone = () => board.list().every((t) => !seeded.has(t.id) || t.status === 'completed')
+    let runs: Record<string, MemberRunResult>
     try {
-      await Promise.all(
-        spec.members.map(async (member) => {
-          const handle = roster.get(member.name)!
-          while (!boardDone()) {
-            const claimed = await board.claimNextReady(member.name)
-            if (claimed === undefined) {
-              await new Promise((r) => setTimeout(r, 10))
-              continue
-            }
-            const result = await askPeer(this.ctx, lead, handle, claimed.prompt, {
-              mailbox,
-              ...(options.signal === undefined ? {} : { signal: options.signal }),
-            })
-            runs[claimed.id] = result
-            await board.complete(claimed.id, member.name, claimed.revision, result.text)
-          }
+      runs = await runBoardWorkers(spec.members, board, seeded, (member, claimed) =>
+        askPeer(this.ctx, lead, roster.get(member.name)!, claimed.prompt, {
+          mailbox,
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
         }),
       )
     } finally {
