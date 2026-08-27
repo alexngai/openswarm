@@ -13,6 +13,7 @@ dead-letter.jsonl
 .runs/
 # packed local-harness tarballs for sandbox evals
 eval/.artifacts/
+legacy/eval/.artifacts/
 # npm pack artifacts (anywhere in the tree)
 *.tgz
 # parity harness run output (docs/67); evidence is uploaded, not committed
@@ -30,9 +31,15 @@ packages/*/openswarm
 packages/*/openswarm.exe
 packages/*/libopentui.dylib
 packages/*/libopentui.so
+legacy/packages/cli-*/libopentui.*
+legacy/packages/cli-*/openswarm
 # claude-agent-sdk native helper, co-located by build-binary.ts (~205MB)
 packages/*/claude
 packages/*/claude.exe
 
 # Downloaded Tree-sitter grammar assets (doc 49, run 'npm run grammars:update')
 assets/grammars/
+packages/cli/dist/
+legacy/.eval-runs/
+packages/*/dist/
+.dsh-home/

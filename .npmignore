@@ -1,0 +1,18 @@
+# What NOT to ship in the published openswarm package (overrides .gitignore so
+# built dist/ ships). The `files` allowlist in package.json is the primary
+# selector; these drop dev/test/eval content from within the allowed dirs.
+legacy
+spike
+docs
+demo
+node_modules
+.dsh-home
+.eval-runs
+*.tgz
+# eval-only cascade CLI — not part of the runtime bundle
+packages/cli
+# tests, dev config, build/eval scripts
+**/tests
+**/tsconfig.json
+scripts/build-packages.mjs
+scripts/bundle-cli.mjs
