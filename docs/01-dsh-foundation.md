@@ -103,10 +103,30 @@ it live via `ctx.plugin()` — reversible by construction, the registrations
 unwind on dispose. The blast-radius policy is realized: `self` scope mounts
 into the agent's own `agent.ctx` (freely allowed — worst case a broken
 child), `lead` scope mounts into the shared root and requires an approval
-gate (default deny). Validated: an authored tool is callable in the same
+gate. Validated: an authored tool is callable in the same
 run, a throwing plugin is refused without crashing the harness, lead-scope
 denied-then-approved. Uses `ctx.plugin()` reversibility rather than the HMR
 patch-file path (that lands with the profile/bundle packaging).
+
+**Gate wired to the human (2026-08-27).** The default is no longer a blanket
+deny: it puts one question to dsh's own approval seam, `ctx.approval` (a
+`dsh-base` row, so present in every profile we ship), which `dsh-host-apiproxy`
+— mounted in the web surface — forwards to the connected browser as a
+permission prompt. `allowed-once` is the seam's only grant; a missing answerer,
+a session on the `never` policy, an ask outside an open turn, and a withdrawn
+question all deny, so a headless run still never grants shared scope silently.
+An explicit `approveLeadMount` in the row's config replaces the default.
+
+**Verified end to end (2026-08-27).** Unit tests cover outcome mapping and both
+fail-closed paths; `web-api.e2e.test.ts` drives a scripted lead-scope mount
+through the REAL `ApprovalService` in the REAL web composition under session
+policy `never` and asserts the `approval/asked`→`approval/decided` audit pair
+settles `rejected` with the tool told "not approved". The GRANTED path was
+driven by hand in a browser against the stock composition: the prompt renders
+in dsh's permission UI carrying our reason string, clicking **Allow once**
+logs `outcome: allowed-once`, and the tool result is `mounted "lead"` — an
+agent-authored plugin hot-mounted into the shared harness with a human in the
+loop.
 
 Cordis makes hot-loading safe-by-construction (reversible effects,
 transactional recomposition, last-good-tree rollback). We add:
@@ -334,16 +354,18 @@ later phase gets a row here, so nothing is dropped silently.
 
 | Deferred item | Why deferred | Lands in |
 |---|---|---|
-| **Cross-process message delivery** — mailbox delivery to subprocess/remote members | `subagent-dsh-sdk` has no continuable capability, so the seam cannot follow up a subprocess child; delivery rides our app-server wire instead (a `swarm/deliver` method on the extended protocol — the F2 remote-member convergence) | Phase 2/3 (app-server) |
+| ~~Cross-process message delivery~~ **done (Phase 4)** — `SwarmServer` + `swarm/send` + `RemotePeer` deliver into the durable mailbox, so subprocess members message across processes today | — | done |
 | **Full-duplex request/reply** — correlated ask-and-wait between peers | One-way messages + the board cover current coordination patterns; blocking replies add deadlock/timeout surface with no consumer yet. Message ids already give correlation | later, on demand |
 | **Self-directed messaging peers + `report` completion** — members that loop on the board themselves | v1 is lead-driven (`askPeer` per claimed task, awaited turn ends); self-directed members need the child-scoped `report` tool and roster-drain semantics | with full-duplex |
 | **Board/mailbox `waitForChange`** — peers poll the board at 10ms in-process (`ponytail:` marker in topologies.ts) | fine in-process; needed when the board is read across processes | Phase 2/3 |
 | **Structured critic/gate verdicts via `outputSchema`** — verdicts are the plain-text `APPROVED`/`REVISE:` protocol | text protocol is provider-portable and mock-scriptable today | Phase 3+ |
-| **`ctx.commands` entry point** — no human command drives `runTeam` yet | tests drive the service directly; the real entry is the app-server | Phase 2/3 |
+| ~~`ctx.commands` entry point~~ **done (2026-08-27)** — `openswarm-swarm/command` registers `/swarm [--workers <n>] <task>` (coordinator topology) on every dsh UI surface, and the `openswarm-web` profile puts dsh's browser UI over the OpenSwarm context. Verified over the real api-gateway (`web-api.e2e.test.ts`: session on the `standard` preset → `commands/list` carries `swarm` → `commands/execute` runs a 4-turn coordinator team) and by hand in a browser (palette renders it; the typed line logs `command/run`/`command/done` with the rendered result). Also validated LIVE (2026-08-27, Azure gpt-5.5, `openswarm web`): a browser-typed `/swarm --workers 2 audit …` decomposed into 4 real subtasks across 2 workers, ran real tool-using agents, and wrote the deliverable to the workspace — 30k uncached input / 4.1k output / 167k cache-read tokens. v1 ceiling: the handler awaits the whole run, so there is no streaming progress — a team would have to write into the session log for that | — | done |
 | **Explicit peer drain/disposal** — messaging peers are cleaned up by lead disposal, not drained explicitly | acceptable while teams die with the lead; long-lived leads need drain | Phase 2 |
 | **Upstream issue: continuable capability for `subagent-dsh-sdk`** | wire already supports it (`session/prompt` on an existing session); provider lacks `prepareContinuable` | file when we open upstream dialogue |
 | **Upstream issue: method-registry seam on the SDK server** | method table is a closed switch; we wrap the exported class meanwhile (spike probe 3) | file when we open upstream dialogue |
-| **Upstream gap: wire approval flows** — server→client requests are dead capability on both wire ends | headless-with-policy works; a prompting client needs it | before any interactive UI |
+| **Upstream gap: wire approval flows on OUR app-server** — server→client requests are dead capability on both ends of the `swarm/*` wire | headless-with-policy works; a client prompting over *our* socket needs it. Note this is now only a limitation of the app-server surface: the `openswarm-web` profile gets prompting for free from dsh's own api-gateway (`ctx.approval` → browser), which is what the F3 lead-scope gate rides | when a client drives teams over the app-server rather than the web UI |
+| **`/swarm` as the FIRST action in a blank session renders nothing** — the command runs and its `command/run`/`command/done` pair lands in the session log, but the UI stays on the landing screen and never shows the result. Send any chat message first and the result renders inline in the conversation as expected. Reproduced on both mock and live runs | the command surface is right; this is the composer's blank-session navigation, and the fix likely belongs with streaming progress rather than as a separate patch | with streaming progress |
+| **Web surface cannot hot-reload our plugin dist** — `dsh-web-app` disables the `hmr` row upstream ("TODO: Re-enable shared HMR for Web after its reload lifecycle is tested"), so an agent that edits `packages/*/src` and rebuilds does not see its own change take effect in the running browser session | overriding an upstream row whose reload lifecycle its owners call untested is not a lazy default; `swarm_author_plugin` already covers live extension, and `openswarm-dev` is HMR-hot for the patch-file path | when the HMR-reload self-modification loop is the goal, or when upstream re-enables it |
 | ~~Worktrees × messaging peer-teams~~ **resolved in Phase 4** — remote members run in per-member worktrees | — | done |
 | **Swarm socket hardening** — loopback + per-member UUID tokens only; no TLS, no member→lead methods beyond `swarm/send` (board ops, task claiming from inside the member are natural next methods) | minimal F2 seed first; grows with the app-server | app-server phase |
 | **Remote peer lifecycle** — no idle timeout, no crash-restart of a member subprocess mid-team, `deliver` ack is prompt acceptance (not turn completion) | happy path first | Phase 4 follow-up |

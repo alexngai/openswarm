@@ -17,12 +17,15 @@ npm install && npm run build
 ```
 openswarm "<task>"          run one task headless
 openswarm run "<task>"      same
+openswarm web [flags]       open DeepSeek's browser UI on a swarm context
 openswarm serve [--port N]  start the app-server (default :4620)
 openswarm setup             (re)initialize profiles
 openswarm config            print resolved provider / model / home
 ```
 
 Options: `--model <id>`, `--provider <azure|openai|bedrock>`, `--home <dir>`, `--port <n>`.
+`web` forwards its remaining flags verbatim to the dsh web app (`--host`,
+`--no-open`, `--trusted-host`, …).
 
 Profile home defaults to `$OPENSWARM_HOME` or `~/.openswarm`. Profiles are re-initialized by `setup` (or delete the home and re-run).
 
@@ -40,10 +43,13 @@ Force a choice with `--provider` / `--model` or `OPENSWARM_PROVIDER` / `OPENSWAR
 
 ## Profiles
 
-The launcher's `init-profile.mjs` writes two profiles into the home and heals a `node_modules` so the bundle's plugins resolve by bare name:
+The launcher's `init-profile.mjs` writes three profiles into the home and heals a `node_modules` so the bundle's plugins resolve by bare name:
 
 - **`openswarm`** — HMR cold, includes `dsh-headless` (one-shot task runner → drives a task, then exits). The default for `openswarm run` and for eval.
 - **`openswarm-dev`** — HMR hot, app-server bound, and **no** headless runner (the app-server's socket keeps the process alive to serve). Used by `openswarm serve`.
+- **`openswarm-web`** — dsh's own browser surface (`@deepseek-ai/dsh-web-app`) with the OpenSwarm layer over it; the bound webserver keeps it alive. Used by `openswarm web`.
+
+Each stack ends with `openswarm-bundle`, so the OpenSwarm rows override whatever surface sits beneath them.
 
 Inspect the composed tree at any time:
 
@@ -52,6 +58,60 @@ DSH_HOME=~/.openswarm dsh --profile openswarm --dump-config      # or openswarm-
 ```
 
 You'll see `llm-deepseek` disabled, the OpenSwarm rows inserted under a `# == openswarm-bundle` provenance header, all over `@deepseek-ai/dsh-base`.
+
+## The web UI
+
+```bash
+openswarm web                     # → http://127.0.0.1:3080, opens your browser
+openswarm web --port 0 --no-open  # OS-assigned port, print the URL only
+```
+
+This is DeepSeek Harness's own browser UI composed over the OpenSwarm context —
+sessions, the tool/trajectory views, settings and the command palette come from
+dsh; the model adapters, `ctx.swarm`, and the `/swarm` command come from ours.
+Pick a workspace in the composer, then chat as usual.
+
+To run a team, type **`/swarm [--workers <n>] <task>`** in the composer. A
+coordinator decomposes the task into numbered subtasks, `n` workers (default 3)
+run them concurrently, and the coordinator synthesizes; the command returns the
+plan and the synthesis. Members inherit the session's model route, so nothing
+extra is configured.
+
+The command is registered by the `openswarm-swarm/command` bundle row, so it
+appears on any dsh surface that renders the command registry — the browser UI
+today, a TUI profile when one ships. It awaits the whole run before returning
+(a `CommandResult` is the only channel the registry offers); long teams block
+the command for their duration. A live Azure run held the request open for 72s
+without trouble, so the ceiling is streaming progress, not the transport.
+
+**Send a chat message before your first `/swarm`.** Run as the very first
+action in a brand-new session, the command executes and lands in the session
+log but the UI stays on the landing screen and never renders the result. Once
+the conversation has any message, results render inline.
+
+## Live self-modification
+
+`swarm_author_plugin` (F3) lets an agent write a Cordis plugin and hot-mount it
+into a *running* harness. Cordis makes this reversible by construction: every
+registration the plugin makes unwinds on dispose.
+
+Two blast radii:
+
+- **`self`** — mounts into the authoring agent's own scoped context. Always
+  allowed; the worst case is a broken child, and disposing the agent unwinds it.
+- **`lead`** — mounts into the shared root context, changing tools for the whole
+  team. Gated. The default gate asks the human over dsh's approval seam
+  (`ctx.approval`), which the api-gateway forwards to the connected UI as a
+  permission prompt. The seam is fail-closed: no answerer composed, a session on
+  the `never` approval policy, an ask outside an open turn, or a withdrawn
+  question all deny. A headless run therefore never silently grants shared scope.
+
+Pass `approveLeadMount` in the row's config to substitute your own policy.
+
+Related, from dsh itself: the shipped **`cordis` agent preset** ("创造模式") mounts
+`tool-cordis`, which inspects and edits the live composition, plus skills for
+authoring Cordis plugins and presets. Pick it from the agent-preset selector in
+the web UI when you want the agent to reason about the running tree.
 
 ## The app-server (for UIs/TUIs)
 

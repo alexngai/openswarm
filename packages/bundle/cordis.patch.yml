@@ -45,6 +45,11 @@
     - id: openswarm-swarm
       name: 'openswarm-swarm'
 
+    # `/swarm` — the human command entry to ctx.swarm, for every dsh UI
+    # surface that renders the command registry (the browser UI, a TUI).
+    - id: openswarm-swarm-command
+      name: 'openswarm-swarm/command'
+
     # ctx.swarmAppServer — off by default (port 0 binds only when the dev
     # profile or a --patch enables a real port and the runner keeps the
     # process alive).
