@@ -1,0 +1,13 @@
+# Publishable openswarm package (docs/03). Overrides .gitignore for `npm pack`
+# so built dist/ ships. The `files` allowlist in package.json is the primary
+# selector; this just prevents .gitignore from excluding dist.
+legacy/
+spike/
+.dsh-home/
+.eval-runs/
+node_modules/
+packages/*/tests/
+docs/
+demo/
+*.tgz
+/tmp/

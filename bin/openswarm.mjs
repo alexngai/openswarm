@@ -19,12 +19,28 @@
  */
 import { spawn, execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const dshBin = join(repo, 'node_modules', '.bin', 'dsh')
+// The OpenSwarm package root — the repo from a clone, node_modules/openswarm
+// when installed. dsh and the init script resolve through Node from here, so
+// the launcher works either way (deps may be hoisted above an install).
+const pkgRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const require = createRequire(join(pkgRoot, 'package.json'))
+
+/** Resolve the dsh runtime bin through Node (hoist-agnostic). */
+function resolveDsh() {
+  try {
+    const pkgPath = require.resolve('@deepseek-ai/dsh/package.json')
+    const pkg = require('@deepseek-ai/dsh/package.json')
+    const bin = typeof pkg.bin === 'string' ? pkg.bin : pkg.bin?.dsh
+    if (bin) return join(dirname(pkgPath), bin)
+  } catch {}
+  return undefined
+}
+const dshScript = resolveDsh()
 
 function parse(argv) {
   const opts = {}
@@ -97,20 +113,20 @@ function defaultModel(provider) {
 }
 
 function ensureBuilt() {
-  if (!existsSync(join(repo, 'packages', 'swarm', 'dist', 'index.js'))) {
+  if (!existsSync(join(pkgRoot, 'packages', 'swarm', 'dist', 'index.js'))) {
     die('packages are not built. Run:  npm install && npm run build')
   }
-  if (!existsSync(dshBin)) die('dsh is not installed. Run:  npm install')
+  if (dshScript === undefined || !existsSync(dshScript)) die('dsh is not installed. Run:  npm install')
 }
 
 function ensureProfiles(home) {
   if (existsSync(join(home, 'profiles', 'openswarm'))) return
   process.stderr.write('openswarm: initializing profiles…\n')
-  execFileSync('node', [join(repo, 'scripts', 'init-profile.mjs'), home], { cwd: repo, stdio: 'inherit' })
+  execFileSync('node', [join(pkgRoot, 'scripts', 'init-profile.mjs'), home], { cwd: pkgRoot, stdio: 'inherit' })
 }
 
 function bootDsh(profile, positional, extraEnv, home) {
-  const child = spawn(dshBin, ['--profile', profile, ...positional], {
+  const child = spawn('node', [dshScript, '--profile', profile, ...positional], {
     cwd: process.cwd(),
     stdio: 'inherit',
     env: { ...process.env, DSH_HOME: home, ...extraEnv },
@@ -152,7 +168,7 @@ function main() {
   ensureBuilt()
 
   if (cmd === 'setup') {
-    execFileSync('node', [join(repo, 'scripts', 'init-profile.mjs'), home], { cwd: repo, stdio: 'inherit' })
+    execFileSync('node', [join(pkgRoot, 'scripts', 'init-profile.mjs'), home], { cwd: pkgRoot, stdio: 'inherit' })
     process.stdout.write(`profiles ready in ${home}\n`)
     return
   }

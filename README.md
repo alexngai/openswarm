@@ -14,7 +14,7 @@ OpenSwarm is a multi-agent coding system: launch a **team** of agents on one tas
 
 It is built as a set of **out-of-tree plugins on [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)** (`dsh`, Cordis-based) — the harness supplies the agent loop, tools, sessions, and sandbox; OpenSwarm adds the swarm layer (`ctx.swarm`), the git worktree/merge layer, model adapters, a JSON-RPC app-server, and agent-authored plugins. The design rationale lives in [`docs/01-dsh-foundation.md`](docs/01-dsh-foundation.md).
 
-> **Developer preview.** OpenSwarm runs on a pinned pre-release of `dsh`; expect breaking changes. Run from a clone for now (npm publish is pending).
+> **Developer preview.** OpenSwarm runs on a pinned pre-release of `dsh`; expect breaking changes.
 
 ## What it does
 
@@ -26,14 +26,21 @@ It is built as a set of **out-of-tree plugins on [DeepSeek Harness](https://gith
 
 ## Install
 
+As a package (once published):
+
 ```bash
-git clone https://github.com/alexngai/openswarm
-cd openswarm
-npm install
-npm run build        # builds the plugin packages to dist/
+npm install -g openswarm      # global `openswarm` command
+# or: npx openswarm "explain this codebase"
 ```
 
-Requires **Node.js ≥ 22**.
+From a clone (development):
+
+```bash
+git clone https://github.com/alexngai/openswarm
+cd openswarm && npm install && npm run build   # ./bin/openswarm ...
+```
+
+Requires **Node.js ≥ 22**. The launcher works identically whether installed or run from a clone — it resolves the harness and its own plugin packages through Node and initializes its profiles on first use.
 
 ## Configure a model provider
 

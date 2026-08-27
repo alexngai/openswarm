@@ -83,6 +83,27 @@ Live tests skip themselves without `OPENSWARM_LIVE=1` and the relevant creds. Th
 
 The discrimination-set rerun and SWE-bench harness live under `legacy/eval/` and drive the sandbox-deployable CLI bundle (`npm run bundle:cli` → `packages/cli/dist/openswarm.mjs`). Results and mechanics: [docs/02](02-discrimination-rerun.md).
 
+## Publishing / installed use
+
+`openswarm` publishes as one package that bundles the built plugin packages
+(`packages/*/dist`) and depends on the dsh harness + framework. `npm pack`
+(or `npm publish`) ships `bin/`, `scripts/`, and `packages/*` (dist + src +
+patch YAMLs); `.npmignore` keeps `legacy/`, tests, and dist out of git but in
+the tarball. Prep and verify a tarball locally:
+
+```bash
+npm run build
+npm pack                                   # → openswarm-<ver>.tgz
+mkdir /tmp/try && cd /tmp/try && npm init -y
+npm install /path/to/openswarm-<ver>.tgz   # pulls the dsh tree from the registry
+node_modules/.bin/openswarm config         # then a real run
+```
+
+The launcher and profile-init resolve everything through Node's module
+resolution, so an installed package works from any cwd; inter-package imports
+(e.g. `openswarm-swarm` → `openswarm-git`) resolve via sibling links the init
+step creates under the package's own `node_modules`.
+
 ## Troubleshooting
 
 - **"packages are not built"** → `npm run build`.

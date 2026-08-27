@@ -7,31 +7,41 @@
 //
 // Usage: node scripts/init-profile.mjs [dshHome]   (default .dsh-home)
 import { mkdirSync, writeFileSync, symlinkSync, existsSync, rmSync, readdirSync, readFileSync } from 'node:fs'
-import { resolve, join } from 'node:path'
+import { createRequire } from 'node:module'
+import { resolve, join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const dshHome = resolve(process.argv[2] ?? '.dsh-home')
-const repo = resolve('.')
 
-/** Every workspace package a profile must resolve by bare name. */
-const WORKSPACE = readdirSync(join(repo, 'packages'))
-  .map((d) => join(repo, 'packages', d))
+// The OpenSwarm package root (parent of scripts/) — the repo when run from a
+// clone, or node_modules/openswarm when installed. Both ship packages/*.
+const pkgRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const require = createRequire(join(pkgRoot, 'package.json'))
+
+/** Every OpenSwarm plugin package a profile must resolve by bare name. */
+const WORKSPACE = readdirSync(join(pkgRoot, 'packages'))
+  .map((d) => join(pkgRoot, 'packages', d))
   .filter((p) => existsSync(join(p, 'package.json')))
   .map((p) => ({ dir: p, name: JSON.parse(readFileSync(join(p, 'package.json'), 'utf8')).name }))
+
+// The node_modules dir that actually holds the dsh app + framework — resolved
+// through Node, so it works whether deps sit in the repo's node_modules or are
+// hoisted above an installed package.
+const depsRoot = dirname(dirname(dirname(require.resolve('@deepseek-ai/dsh/package.json'))))
 
 function healModules(dir) {
   const modules = join(dir, 'node_modules')
   mkdirSync(modules, { recursive: true })
-  // Workspace packages → their source dirs.
+  // OpenSwarm plugin packages → their dirs (source in the repo, dist when installed).
   for (const { dir: pkgDir, name } of WORKSPACE) link(join(modules, name), pkgDir)
-  // dsh + framework deps → the repo's installed copies (scoped names need the dir).
-  const repoModules = join(repo, 'node_modules')
-  for (const name of readdirSync(repoModules)) {
+  // dsh + framework deps → wherever Node resolved them (scoped names need the dir).
+  for (const name of readdirSync(depsRoot)) {
     if (name.startsWith('@')) {
       const scopeDir = join(modules, name)
       mkdirSync(scopeDir, { recursive: true })
-      for (const sub of readdirSync(join(repoModules, name))) link(join(scopeDir, sub), join(repoModules, name, sub))
+      for (const sub of readdirSync(join(depsRoot, name))) link(join(scopeDir, sub), join(depsRoot, name, sub))
     } else if (!name.startsWith('.') && !WORKSPACE.some((w) => w.name === name)) {
-      link(join(modules, name), join(repoModules, name))
+      link(join(modules, name), join(depsRoot, name))
     }
   }
 }
@@ -41,6 +51,23 @@ function link(linkPath, target) {
     rmSync(linkPath, { recursive: true, force: true })
   } catch {}
   symlinkSync(target, linkPath, 'dir')
+}
+
+/**
+ * Inter-package imports (e.g. openswarm-swarm → openswarm-git) resolve from a
+ * package's own on-disk location, walking up to the nearest node_modules. In a
+ * clone, npm workspaces already placed those sibling links; in an installed
+ * package there are none, so create them under the package root's node_modules
+ * so every openswarm-* package can find its siblings. Idempotent.
+ */
+function linkSiblings() {
+  const modules = join(pkgRoot, 'node_modules')
+  mkdirSync(modules, { recursive: true })
+  for (const { dir: pkgDir, name } of WORKSPACE) {
+    const target = join(modules, name)
+    if (existsSync(target)) continue // workspace clone already linked it
+    symlinkSync(pkgDir, target, 'dir')
+  }
 }
 
 function initProfile(name, extraBundles = []) {
@@ -67,7 +94,7 @@ function initProfile(name, extraBundles = []) {
     ) + '\n',
   )
   // A cold profile carries no user patch; the dev profile overlays the dev patch.
-  const devPatch = join(repo, 'packages', 'bundle', 'cordis.dev.patch.yml')
+  const devPatch = join(pkgRoot, 'packages', 'bundle', 'cordis.dev.patch.yml')
   writeFileSync(
     join(dir, 'cordis.patch.yml'),
     name.endsWith('-dev') ? readFileSync(devPatch, 'utf8') : '[]\n',
@@ -76,6 +103,7 @@ function initProfile(name, extraBundles = []) {
   console.log(`profile ${name} → ${dir}`)
 }
 
+linkSiblings()
 mkdirSync(dshHome, { recursive: true })
 initProfile('openswarm')
 initProfile('openswarm-dev')

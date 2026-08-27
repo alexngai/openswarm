@@ -1,7 +1,6 @@
 {
-  "name": "openswarm-root",
-  "private": true,
-  "version": "0.0.0",
+  "name": "openswarm",
+  "version": "0.4.0",
   "type": "module",
   "workspaces": [
     "packages/*"
@@ -46,5 +45,41 @@
   },
   "bin": {
     "openswarm": "bin/openswarm.mjs"
+  },
+  "description": "Run a swarm of coding agents on DeepSeek Harness \u2014 peer teams, worktree isolation, heterogeneous models.",
+  "license": "MIT",
+  "files": [
+    "bin",
+    "scripts",
+    "packages"
+  ],
+  "dependencies": {
+    "@anthropic-ai/bedrock-sdk": "0.33.1",
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/schemastery": "3.18.1",
+    "koffi": "3.1.6",
+    "node-pty": "1.2.0-beta.15",
+    "@deepseek-ai/dsh": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-base": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-headless": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-agent": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-agent-spine-demo": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-fs-local": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-llm": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-llm-deepseek": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-sandbox-local": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-sandbox-policy": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-sdk-jsonrpc-server": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-sdk-protocol": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-session-persistence-jsonl": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-subagent": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-subagent-dsh-sdk": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-subagent-spawn-in-process": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-subprocess-local": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-terminal": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-terminal-bash": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-tool-bash-persistent": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-tool-str-replace-editor": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-tools": "0.1.1-rc.2"
   }
 }
