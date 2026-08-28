@@ -28,8 +28,10 @@
  * is skipped and the run proceeds untracked.
  */
 import type { Context } from '@deepseek-ai/cordis'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { CommandInvocation, CommandResult } from '@deepseek-ai/dsh-commands'
 import type { JobOutcome } from '@deepseek-ai/dsh-jobs'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { CoordinatorResult, CoordinatorSpec, MemberSpec } from './types'
 
 export const name = 'openswarm-swarm-command'
@@ -154,6 +156,38 @@ function track(
   return { report: (line) => pending.push(line), finish: settle, signal: abort.signal }
 }
 
+/**
+ * A session is "blank" until something opens a turn, and command lifecycle
+ * records deliberately never do — upstream's own fold says so: "Standalone
+ * plugin events … never open a turn, so running `/plan` or `/goal` on a fresh
+ * session keeps it blank (list-hidden, reusable)."
+ *
+ * That is fine for commands whose effect you read somewhere else (a goal bar,
+ * a mode switch), but for `/swarm` the returned text IS the deliverable, and a
+ * blank session leaves the composer on its landing screen so nothing renders.
+ */
+function isBlank(agent: Agent): boolean {
+  return !agent.session.events.some((event) => event.type === 'turn/start')
+}
+
+/**
+ * Put the run's outcome into the conversation when the session would otherwise
+ * stay blank. `followup` queues it as its own turn and wakes the driver, which
+ * both makes the session non-blank — so the surface navigates in and the
+ * already-logged `command/done` finally renders — and leaves the lead holding
+ * the synthesis, which is what a follow-up instruction needs.
+ *
+ * Only on a blank session: an established conversation already renders the
+ * command result inline, and doing this there would spend a lead model round
+ * to display something the user can already see.
+ */
+export function surfaceOnBlankSession(agent: Agent, text: string): void {
+  if (!isBlank(agent)) return
+  agent.followup(
+    createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }),
+  )
+}
+
 async function execute(
   ctx: Context,
   invocation: CommandInvocation,
@@ -178,13 +212,18 @@ async function execute(
       status: 'completed',
       detail: `${result.subtasks.length} subtask(s) across ${parsed.workers} worker(s)`,
     })
-    return { kind: 'success', text: renderCoordinatorResult(result) }
+    const text = renderCoordinatorResult(result)
+    surfaceOnBlankSession(invocation.agent, text)
+    return { kind: 'success', text }
   } catch (error) {
     tracker?.finish({
       status: tracker.signal.aborted ? 'killed' : 'failed',
       detail: errText(error),
     })
-    return { kind: 'error', text: `swarm run failed: ${errText(error)}` }
+    const text = `swarm run failed: ${errText(error)}`
+    // A failure on a blank session is just as invisible as a success.
+    surfaceOnBlankSession(invocation.agent, text)
+    return { kind: 'error', text }
   }
 }
 

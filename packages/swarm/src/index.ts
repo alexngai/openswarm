@@ -81,11 +81,7 @@ export interface RunTeamOptions {
    * multi-turn remote members in per-MEMBER worktrees (docs/01 Phase 4).
    */
   worktrees?: WorktreeTeamOptions
-  /**
-   * Receives human-readable progress lines as the team advances. Only the
-   * `coordinator` topology emits today (it is what `/swarm` drives); the
-   * others run silently and return their result as before.
-   */
+  /** Receives human-readable progress lines as the team advances. */
   onProgress?: ReportProgress
 }
 
@@ -186,29 +182,31 @@ export default class SwarmService extends Service {
     options: RunTeamOptions,
     worktrees?: WorktreeRun,
   ): Promise<TeamResult> {
+    const report = options.onProgress
     switch (spec.topology) {
       case 'fanout':
-        return runFanout(spec, run)
+        return runFanout(spec, run, report)
       case 'critic-loop':
-        return runCriticLoop(spec, run)
+        return runCriticLoop(spec, run, report)
       case 'committee':
-        return runCommittee(spec, run)
+        return runCommittee(spec, run, report)
       case 'pipeline':
-        return runPipeline(spec, run)
+        return runPipeline(spec, run, report)
       case 'cascade':
         return runCascade(
           spec,
           run,
           options.confidenceRunner ?? defaultConfidenceRunner(options.confidenceCwd ?? process.cwd()),
+          report,
         )
       case 'coordinator':
-        return runCoordinator(spec, run, options.onProgress)
+        return runCoordinator(spec, run, report)
       case 'peer-team':
         return spec.messaging === true
           ? worktrees === undefined
             ? this.runPeerTeamMessaging(spec, options)
             : this.runRemotePeerTeam(spec, options, worktrees)
-          : runPeerTeam(spec, run, this.board(options.parent))
+          : runPeerTeam(spec, run, this.board(options.parent), report)
     }
   }
 
@@ -272,7 +270,7 @@ export default class SwarmService extends Service {
         }
         await prelude.ack()
         return result
-      })
+      }, options.onProgress)
       const tasks = board.list().filter((t) => seeded.has(t.id))
       return { topology: 'peer-team', tasks, runs }
     } finally {
@@ -315,11 +313,16 @@ export default class SwarmService extends Service {
 
     let runs: Record<string, MemberRunResult>
     try {
-      runs = await runBoardWorkers(spec.members, board, seeded, (member, claimed) =>
-        askPeer(this.ctx, lead, roster.get(member.name)!, claimed.prompt, {
-          mailbox,
-          ...(options.signal === undefined ? {} : { signal: options.signal }),
-        }),
+      runs = await runBoardWorkers(
+        spec.members,
+        board,
+        seeded,
+        (member, claimed) =>
+          askPeer(this.ctx, lead, roster.get(member.name)!, claimed.prompt, {
+            mailbox,
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
+          }),
+        options.onProgress,
       )
     } finally {
       for (const dispose of disposers) dispose()

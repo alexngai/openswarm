@@ -37,20 +37,28 @@ export type RunMember = (
 export type RunConfidence = (commands: string[]) => Promise<number>
 
 /**
- * One human-readable progress line from a running team. Only `coordinator`
- * emits today — it is what `/swarm` drives; other topologies report nothing
- * and their consumers see the final result as before.
+ * One human-readable progress line from a running team. Every topology emits;
+ * the default is a no-op, so a consumer that does not pass one sees exactly
+ * the previous behavior.
  */
 export type ReportProgress = (line: string) => void
 
-export async function runFanout(spec: FanoutSpec, run: RunMember): Promise<FanoutResult> {
+export async function runFanout(
+  spec: FanoutSpec,
+  run: RunMember,
+  report: ReportProgress = () => {},
+): Promise<FanoutResult> {
   const byName = new Map(spec.members.map((m) => [m.name, m]))
   if (byName.size !== spec.members.length) throw new Error('duplicate member name in team spec')
+  report(`fanout: ${spec.tasks.length} task(s) across ${spec.members.length} member(s)`)
+  let settled = 0
   const results = await Promise.all(
-    spec.tasks.map((task, i) => {
+    spec.tasks.map(async (task, i) => {
       const member = byName.get(task.member)
       if (member === undefined) throw new Error(`fanout task names unknown member "${task.member}"`)
-      return run(member, task.prompt, `task-${i}`)
+      const result = await run(member, task.prompt, `task-${i}`)
+      report(`[${++settled}/${spec.tasks.length}] ${member.name}: ${task.prompt}`)
+      return result
     }),
   )
   return { topology: 'fanout', results }
@@ -58,7 +66,11 @@ export async function runFanout(spec: FanoutSpec, run: RunMember): Promise<Fanou
 
 const DEFAULT_MAX_ROUNDS = 3
 
-export async function runCriticLoop(spec: CriticLoopSpec, run: RunMember): Promise<CriticLoopResult> {
+export async function runCriticLoop(
+  spec: CriticLoopSpec,
+  run: RunMember,
+  report: ReportProgress = () => {},
+): Promise<CriticLoopResult> {
   const maxRounds = spec.maxRounds ?? DEFAULT_MAX_ROUNDS
   if (!Number.isInteger(maxRounds) || maxRounds < 1) throw new Error('maxRounds must be a positive integer')
   const history: CriticLoopResult['history'] = []
@@ -77,7 +89,9 @@ Reviewer feedback:
 ${feedback}
 
 Revise the draft to address the feedback.`
+    report(`round ${round}/${maxRounds}: ${spec.worker.name} drafting…`)
     const draft = await run(spec.worker, workerPrompt, 'task')
+    report(`round ${round}/${maxRounds}: ${spec.critic.name} reviewing…`)
     const verdict = await run(
       spec.critic,
       `Task:
@@ -90,6 +104,7 @@ Reply with exactly APPROVED if the draft fully satisfies the task; otherwise rep
       'task',
     )
     history.push({ draft, verdict })
+    report(`round ${round}: ${isApproved(verdict.text) ? 'approved' : 'revise'}`)
     if (isApproved(verdict.text)) {
       return { topology: 'critic-loop', approved: true, rounds: round, final: draft, history }
     }
@@ -106,9 +121,22 @@ export function isApproved(verdict: string): boolean {
   return /^\s*APPROVED\b/i.test(verdict)
 }
 
-export async function runCommittee(spec: CommitteeSpec, run: RunMember): Promise<CommitteeResult> {
-  const answers = await Promise.all(spec.members.map((m) => run(m, spec.task, `answer-${m.name}`)))
+export async function runCommittee(
+  spec: CommitteeSpec,
+  run: RunMember,
+  report: ReportProgress = () => {},
+): Promise<CommitteeResult> {
+  report(`committee: ${spec.members.length} member(s) answering…`)
+  let settled = 0
+  const answers = await Promise.all(
+    spec.members.map(async (m) => {
+      const answer = await run(m, spec.task, `answer-${m.name}`)
+      report(`[${++settled}/${spec.members.length}] ${m.name} answered`)
+      return answer
+    }),
+  )
   if (spec.judge === undefined) return { topology: 'committee', answers }
+  report(`${spec.judge.name} synthesizing…`)
   const dossier = answers
     .map((a) => `--- Answer from ${a.member} ---\n${a.text}`)
     .join('\n\n')
@@ -119,11 +147,17 @@ export async function runCommittee(spec: CommitteeSpec, run: RunMember): Promise
   return { topology: 'committee', answers, synthesis }
 }
 
-export async function runPipeline(spec: PipelineSpec, run: RunMember): Promise<PipelineResult> {
+export async function runPipeline(
+  spec: PipelineSpec,
+  run: RunMember,
+  report: ReportProgress = () => {},
+): Promise<PipelineResult> {
   if (spec.stages.length === 0) throw new Error('pipeline needs at least one stage')
   const stages: MemberRunResult[] = []
   let carry: string | undefined
+  let index = 0
   for (const stage of spec.stages) {
+    report(`stage ${++index}/${spec.stages.length}: ${stage.member.name}…`)
     const prompt =
       carry === undefined ? stage.prompt : `${stage.prompt}\n\nInput from the previous stage:\n${carry}`
     const result = await run(stage.member, prompt, 'pipeline')
@@ -139,6 +173,7 @@ export async function runCascade(
   spec: CascadeSpec,
   run: RunMember,
   runConfidence?: RunConfidence,
+  report: ReportProgress = () => {},
 ): Promise<CascadeResult> {
   if (spec.tiers.length === 0) throw new Error('cascade needs at least one tier')
   if (spec.confidence !== undefined && runConfidence === undefined) {
@@ -152,14 +187,17 @@ export async function runCascade(
       feedback === undefined
         ? spec.task
         : `${spec.task}\n\nA previous attempt was rejected with this feedback:\n${feedback}`
+    report(`tier ${tier + 1}/${spec.tiers.length}: ${member.name}…`)
     const result = await run(member, prompt, 'task')
     if (result.stopReason !== 'completed') {
+      report(`tier ${tier + 1}: ${result.stopReason} — escalating`)
       attempts.push({ tier, result })
       continue
     }
     if (spec.confidence !== undefined) {
       const confidence = await runConfidence!(spec.confidence.commands)
       attempts.push({ tier, result, confidence })
+      report(`tier ${tier + 1}: confidence ${confidence} vs tau ${spec.confidence.tau}`)
       if (confidence >= spec.confidence.tau) {
         return { topology: 'cascade', accepted: true, tier, final: result, attempts }
       }
@@ -176,6 +214,7 @@ export async function runCascade(
       'task',
     )
     attempts.push({ tier, result, verdict })
+    report(`tier ${tier + 1}: gate ${isApproved(verdict.text) ? 'approved' : 'rejected'}`)
     if (isApproved(verdict.text)) {
       return { topology: 'cascade', accepted: true, tier, final: result, attempts }
     }
@@ -264,8 +303,10 @@ export async function runBoardWorkers(
   board: SwarmBoard,
   seeded: Set<string>,
   runClaim: RunClaim,
+  report: ReportProgress = () => {},
 ): Promise<Record<string, MemberRunResult>> {
   const runs: Record<string, MemberRunResult> = {}
+  let settled = 0
   let aborted: unknown
   const boardDone = () => board.list().every((t) => !seeded.has(t.id) || t.status === 'completed')
   await Promise.all(
@@ -279,8 +320,10 @@ export async function runBoardWorkers(
           continue
         }
         try {
+          report(`${member.name} claimed: ${claimed.subject}`)
           const result = await runClaim(member, claimed)
           runs[claimed.id] = result
+          report(`[${++settled}/${seeded.size}] ${member.name}: ${claimed.subject}`)
           await board.complete(claimed.id, member.name, claimed.revision, result.text)
         } catch (error) {
           aborted ??= error
@@ -300,11 +343,17 @@ export async function runPeerTeam(
   spec: PeerTeamSpec,
   run: RunMember,
   board: SwarmBoard,
+  report: ReportProgress = () => {},
 ): Promise<PeerTeamResult> {
   if (spec.members.length === 0) throw new Error('peer-team needs at least one member')
   const seeded = new Set(await seedBoard(board, spec.tasks))
-  const runs = await runBoardWorkers(spec.members, board, seeded, (member, claimed) =>
-    run(member, claimed.prompt, claimed.id),
+  report(`peer-team: ${seeded.size} task(s) across ${spec.members.length} member(s)`)
+  const runs = await runBoardWorkers(
+    spec.members,
+    board,
+    seeded,
+    (member, claimed) => run(member, claimed.prompt, claimed.id),
+    report,
   )
   const tasks = board.list().filter((t) => seeded.has(t.id))
   return { topology: 'peer-team', tasks, runs }

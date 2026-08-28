@@ -7,7 +7,7 @@
 import { afterEach, expect, it } from 'vitest'
 import * as Commands from '@deepseek-ai/dsh-commands'
 import * as SwarmCommand from '../src/command'
-import { parseSwarmLine } from '../src/command'
+import { parseSwarmLine, surfaceOnBlankSession } from '../src/command'
 import { bootHarness, type TestHarness } from './boot'
 
 const plug = (m: unknown): any => (m as any).default ?? m
@@ -84,4 +84,32 @@ it('reports a bad line as a command error without running a team', async () => {
   )
   expect(execution?.result.kind).toBe('error')
   expect(h.mock.requests.length).toBe(0)
+})
+
+/** A stand-in agent exposing only what the blank-session check reads. */
+function fakeAgent(events: { type: string }[]) {
+  const followups: string[] = []
+  const agent = {
+    session: { events },
+    followup: (m: any) => followups.push(m.content?.[0]?.text ?? ''),
+  }
+  return { agent: agent as never, followups }
+}
+
+it('a blank session gets the result as a follow-up turn, so it is rendered at all', () => {
+  // No turn/start: upstream's own blankness fold, which command lifecycle
+  // records deliberately never satisfy.
+  const { agent, followups } = fakeAgent([{ type: 'command/run' }, { type: 'command/done' }])
+  surfaceOnBlankSession(agent, 'Swarm finished: 2 subtask(s)')
+  expect(followups).toEqual(['Swarm finished: 2 subtask(s)'])
+})
+
+it('an established session gets no follow-up — the command result already renders inline', () => {
+  const { agent, followups } = fakeAgent([
+    { type: 'user/message' },
+    { type: 'turn/start' },
+    { type: 'turn/end' },
+  ])
+  surfaceOnBlankSession(agent, 'Swarm finished: 2 subtask(s)')
+  expect(followups).toEqual([])
 })

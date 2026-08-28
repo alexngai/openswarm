@@ -89,10 +89,12 @@ read-only and carry no output, so returning early would put the result where no
 human surface can read it. A live Azure run held its request open 72s without
 trouble.
 
-**Send a chat message before your first `/swarm`.** Run as the very first
-action in a brand-new session, the command executes and lands in the session
-log but the UI stays on the landing screen and never renders the result. Once
-the conversation has any message, results render inline.
+Run as the very first action in a brand-new session, the result is also posted
+into the conversation as a follow-up turn. A session stays "blank" until
+something opens a turn, and command records deliberately never do (the same
+reason `/plan` and `/goal` leave a fresh session untouched) — so without that
+the surface would keep showing its landing screen and the result would never
+render. It costs one lead model round, and only happens on a blank session.
 
 ## Live self-modification
 
@@ -132,7 +134,7 @@ A `spec` is a `TeamSpec` — e.g. `{ topology: 'fanout', members: [{name}], task
 
 ## Driving a team in-process
 
-`ctx.swarm.runTeam(spec, { parent, worktrees? })` is the programmatic entry point. `RunTeamOptions.worktrees` turns member runs into subprocess harnesses in per-task git worktrees and returns a merge outcome. At most `worktrees.maxConcurrent` (default 8) harnesses run at once; the rest queue, so a large fanout does not spawn one subprocess per task up front. `onProgress` receives progress lines (coordinator topology only today).
+`ctx.swarm.runTeam(spec, { parent, worktrees? })` is the programmatic entry point. `RunTeamOptions.worktrees` turns member runs into subprocess harnesses in per-task git worktrees and returns a merge outcome. At most `worktrees.maxConcurrent` (default 8) harnesses run at once; the rest queue, so a large fanout does not spawn one subprocess per task up front. `onProgress` receives human-readable progress lines; every topology emits.
 
 Worktree runs clean up after themselves in two ways: an abort or throw drops this run's checkouts without merging (branches survive, so committed work stays reachable), and each run first sweeps `.swarm/worktrees/` for teams that died before finalizing — the SIGKILL case try/finally cannot cover. Live teams are never touched, so concurrent runs are safe. Members set `agentOptions: { provider, model }` for heterogeneous rosters. See [`packages/swarm/tests/boot.ts`](../packages/swarm/tests/boot.ts) for a minimal composition.
 
