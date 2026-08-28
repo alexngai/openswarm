@@ -32,6 +32,7 @@ import {
 import { tmpdir } from 'node:os'
 import { RemotePeer } from './remote-peer'
 import { SwarmServer } from './server'
+import { digestSessionLog, findSessionLog, renderRecoveryBriefing } from './recover'
 import { WorktreeRun, resolveMemberLaunch, type WorktreeTeamOptions } from './worktrees'
 import type { MergeOutcome } from 'openswarm-git'
 import type {
@@ -52,6 +53,8 @@ export {
   suppressSettlementTurns,
 } from './peers'
 export { parseNumberedPlan } from './topologies'
+export { digestSessionLog, findSessionLog, renderRecoveryBriefing } from './recover'
+export type { SessionDigest } from './recover'
 export type { ReportProgress } from './topologies'
 export { RemotePeer } from './remote-peer'
 export { SwarmServer } from './server'
@@ -234,43 +237,103 @@ export default class SwarmService extends Service {
     await server.listen()
     const cfg = options.worktrees?.member ?? {}
     const launch = resolveMemberLaunch(cfg)
+    const sessionRoot = `${tmpdir()}/openswarm-sessions/${worktrees.teamId}`
     const peers: RemotePeer[] = []
-    try {
-      for (const member of spec.members) {
-        const names = spec.members.filter((m) => m.name !== member.name).map((m) => m.name)
-        const worktree = await worktrees.worktree(member.name)
-        const peer = await RemotePeer.spawn({
-          name: member.name,
-          command: launch.command,
-          args: launch.args,
-          cwd: worktree.path,
-          env: {
-            DSH_SESSION_ROOT: `${tmpdir()}/openswarm-sessions/${worktrees.teamId}`,
-            ...cfg.env,
-            OPENSWARM_SWARM_URL: server.url,
-            OPENSWARM_SWARM_TOKEN: server.addMember(member.name),
-          },
-          provider: member.agentOptions?.provider ?? cfg.provider ?? 'openai',
-          model: resolveMemberModel(member, cfg),
-          briefing: `${member.persona === undefined ? '' : `${member.persona}\n\n`}You are ${member.name}, a member of a swarm team working in your own git worktree. Your teammates: ${names.join(', ') || '(none)'}. Coordinate with them via the swarm_send_message tool. Acknowledge this briefing and wait for tasks.`,
-        })
-        peers.push(peer)
-        roster.set(member.name, { name: member.name, remote: peer })
-      }
+    const report = options.onProgress ?? (() => {})
+    const restarts = new Map<string, number>()
+    const maxRestarts = spec.maxMemberRestarts ?? 1
 
-      const runs = await runBoardWorkers(spec.members, board, seeded, async (member, claimed) => {
-        const handle = roster.get(member.name)!
-        const prelude = mailbox.framePendingQuiet(member.name)
-        let result
-        try {
-          result = await handle.remote!.ask([...prelude.blocks, { type: 'text', text: claimed.prompt }])
-        } catch (error) {
-          prelude.release()
-          throw error
-        }
-        await prelude.ack()
-        return result
-      }, options.onProgress)
+    /** Spawn one member; `recovery` is prepended for a warm restart. */
+    const spawnMember = async (
+      member: MemberSpec,
+      recovery?: string,
+    ): Promise<RemotePeer> => {
+      const names = spec.members.filter((m) => m.name !== member.name).map((m) => m.name)
+      const worktree = await worktrees.worktree(member.name)
+      const peer = await RemotePeer.spawn({
+        name: member.name,
+        command: launch.command,
+        args: launch.args,
+        cwd: worktree.path,
+        env: {
+          DSH_SESSION_ROOT: sessionRoot,
+          ...cfg.env,
+          OPENSWARM_SWARM_URL: server.url,
+          // A restart is a new identity on the wire; the dead token stays dead.
+          OPENSWARM_SWARM_TOKEN: server.addMember(member.name),
+        },
+        provider: member.agentOptions?.provider ?? cfg.provider ?? 'openai',
+        model: resolveMemberModel(member, cfg),
+        ...(spec.memberIdleTimeoutMs === undefined
+          ? {}
+          : { idleTimeoutMs: spec.memberIdleTimeoutMs }),
+        briefing: `${member.persona === undefined ? '' : `${member.persona}\n\n`}You are ${member.name}, a member of a swarm team working in your own git worktree. Your teammates: ${names.join(', ') || '(none)'}. Coordinate with them via the swarm_send_message tool.${recovery === undefined ? ' Acknowledge this briefing and wait for tasks.' : `\n\n${recovery}`}`,
+      })
+      peers.push(peer)
+      roster.set(member.name, { name: member.name, remote: peer })
+      return peer
+    }
+
+    /**
+     * Bring a dead member back with what it knew. Its session log is on disk
+     * (persisted, never auto-resumed), and its worktree still holds its file
+     * changes, so the replacement is briefed with a digest of both rather than
+     * starting blank. Returns false once the restart budget is spent, which
+     * hands the task to `runBoardWorkers` to retry on a sibling.
+     */
+    const restart = async (member: MemberSpec): Promise<boolean> => {
+      const used = restarts.get(member.name) ?? 0
+      if (used >= maxRestarts) {
+        report(`${member.name} exhausted its restart budget (${maxRestarts})`)
+        return false
+      }
+      restarts.set(member.name, used + 1)
+      const dead = roster.get(member.name)?.remote
+      await dead?.close().catch(() => undefined)
+      let recovery: string | undefined
+      if (dead !== undefined) {
+        const log = findSessionLog(sessionRoot, dead.sessionId)
+        if (log !== undefined) recovery = renderRecoveryBriefing(digestSessionLog(log))
+      }
+      report(
+        `restarting ${member.name} (${used + 1}/${maxRestarts})${recovery === undefined ? '' : ' with recovered context'}`,
+      )
+      try {
+        await spawnMember(member, recovery)
+        return true
+      } catch (error) {
+        report(`${member.name} failed to restart: ${error instanceof Error ? error.message : String(error)}`)
+        return false
+      }
+    }
+
+    try {
+      for (const member of spec.members) await spawnMember(member)
+
+      const runs = await runBoardWorkers(
+        spec.members,
+        board,
+        seeded,
+        async (member, claimed) => {
+          const blocks: ContentBlock[] = [{ type: 'text', text: claimed.prompt }]
+          for (let attempt = 0; ; attempt++) {
+            const handle = roster.get(member.name)!
+            const prelude = mailbox.framePendingQuiet(member.name)
+            try {
+              const result = await handle.remote!.ask([...prelude.blocks, ...blocks])
+              await prelude.ack()
+              return result
+            } catch (error) {
+              // Mail stays pending for the replacement rather than being
+              // consumed by a turn that never happened.
+              prelude.release()
+              if (attempt > 0 || !(await restart(member))) throw error
+            }
+          }
+        },
+        options.onProgress,
+        spec.maxTaskAttempts,
+      )
       const tasks = board.list().filter((t) => seeded.has(t.id))
       return { topology: 'peer-team', tasks, runs }
     } finally {
@@ -278,6 +341,7 @@ export default class SwarmService extends Service {
       await server.close()
     }
   }
+
 
   /**
    * Messaging peer-team: continuable peers with the durable mailbox and the
@@ -323,6 +387,7 @@ export default class SwarmService extends Service {
             ...(options.signal === undefined ? {} : { signal: options.signal }),
           }),
         options.onProgress,
+        spec.maxTaskAttempts,
       )
     } finally {
       for (const dispose of disposers) dispose()

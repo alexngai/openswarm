@@ -304,19 +304,42 @@ export async function runBoardWorkers(
   seeded: Set<string>,
   runClaim: RunClaim,
   report: ReportProgress = () => {},
+  maxTaskAttempts = 2,
 ): Promise<Record<string, MemberRunResult>> {
   const runs: Record<string, MemberRunResult> = {}
+  const attempts = new Map<string, number>()
+  /** Tasks no member will finish, with the failure that condemned them. */
+  const abandoned = new Map<string, string>()
   let settled = 0
-  let aborted: unknown
-  const boardDone = () => board.list().every((t) => !seeded.has(t.id) || t.status === 'completed')
+
+  /**
+   * Abandon a task and everything transitively waiting on it — a dependent of
+   * a task that will never complete can never become ready, and leaving it
+   * pending would park the remaining members forever.
+   */
+  const abandon = (id: string, reason: string): void => {
+    if (abandoned.has(id)) return
+    abandoned.set(id, reason)
+    for (const task of board.list()) {
+      if (seeded.has(task.id) && task.blockedBy.includes(id)) {
+        abandon(task.id, `blocked by abandoned task ${id}`)
+      }
+    }
+  }
+
+  const done = () =>
+    board
+      .list()
+      .every((t) => !seeded.has(t.id) || t.status === 'completed' || abandoned.has(t.id))
+
   await Promise.all(
     members.map(async (member) => {
-      while (aborted === undefined && !boardDone()) {
+      while (!done()) {
         const claimed = await board.claimNextReady(member.name)
         if (claimed === undefined) {
           // Nothing ready: blockers are still in flight with other members.
           // Park until a sibling commits (or a short backstop elapses) rather
-          // than spinning; the backstop also re-checks `aborted`.
+          // than spinning; the backstop also re-checks the exit conditions.
           await board.waitForChange()
           continue
         }
@@ -327,16 +350,40 @@ export async function runBoardWorkers(
           report(`[${++settled}/${seeded.size}] ${member.name}: ${claimed.subject}`)
           await board.complete(claimed.id, member.name, claimed.revision, result.text)
         } catch (error) {
-          aborted ??= error
-          // Release the claim so the board isn't stuck in_progress; siblings see
-          // `aborted` and exit their loops.
+          const reason = error instanceof Error ? error.message : String(error)
+          const attempt = (attempts.get(claimed.id) ?? 0) + 1
+          attempts.set(claimed.id, attempt)
+          // Release first: a claim left in_progress is unreclaimable, and a
+          // sibling retrying this task is the whole point.
           await board.release(claimed.id, member.name, claimed.revision).catch(() => undefined)
+          if (attempt >= maxTaskAttempts) {
+            // Retried enough. Condemning it stops a poison task from taking
+            // the roster down one member at a time.
+            abandon(claimed.id, reason)
+            report(`task "${claimed.subject}" abandoned after ${attempt} attempt(s): ${reason}`)
+          } else {
+            report(`${member.name} failed "${claimed.subject}" (attempt ${attempt}): ${reason}`)
+          }
+          // Presume THIS member is the casualty and leave the pool; a healthy
+          // sibling picks the task up. A member that was merely unlucky is
+          // recovered by the caller's own respawn, not here.
           return
         }
       }
     }),
   )
-  if (aborted !== undefined) throw aborted
+
+  // Members exhausted with work outstanding: nothing will run it now.
+  for (const task of board.list()) {
+    if (seeded.has(task.id) && task.status !== 'completed') {
+      abandon(task.id, 'no members left to run it')
+    }
+  }
+
+  if (abandoned.size > 0) {
+    const detail = [...abandoned.entries()].map(([id, why]) => `${id}: ${why}`).join('; ')
+    throw new Error(`swarm board abandoned ${abandoned.size} task(s) — ${detail}`)
+  }
   return runs
 }
 
@@ -355,6 +402,7 @@ export async function runPeerTeam(
     seeded,
     (member, claimed) => run(member, claimed.prompt, claimed.id),
     report,
+    spec.maxTaskAttempts,
   )
   const tasks = board.list().filter((t) => seeded.has(t.id))
   return { topology: 'peer-team', tasks, runs }
