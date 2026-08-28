@@ -19,11 +19,22 @@
  *    all deny. Without that service composed the mount is refused outright,
  *    so a headless run never silently grants shared scope.
  *
- * The module source is evaluated as an ES module data: URL, exposing exactly
- * one capability to the plugin — `defineTool` — so an authored plugin's
- * natural move is to register a new model-facing tool. No filesystem, no
- * network, no process access is handed in (the sandbox/permission layer still
- * governs anything the plugin reaches for on its own).
+ * The module source is evaluated as an ES module data: URL, and exactly one
+ * capability is HANDED IN — `defineTool` — so an authored plugin's natural
+ * move is to register a new model-facing tool.
+ *
+ * Handed in is not the same as available, and the difference matters. A data:
+ * URL module cannot resolve bare specifiers (hence the globalThis handoff
+ * below), but it CAN import `node:` builtins: `node:fs` and
+ * `node:child_process` are both reachable from authored source today, verified
+ * by direct test. So this seam is a CAPABILITY-PASSING convention, not a
+ * sandbox, and it confines nothing on its own. What actually contains an
+ * authored plugin is (a) the approval gate below, for who may reach shared
+ * scope, and (b) whatever sandbox/permission layer the surrounding profile
+ * composes — which a bare hand-built context does not have.
+ *
+ * Read the scope policy below as blast radius for MOUNTING, not as a limit on
+ * what mounted code can do.
  */
 import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
