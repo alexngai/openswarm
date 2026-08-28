@@ -170,13 +170,30 @@ work) and **the gate runs in that worktree** — not the repo root — so it gra
 the tier's actual edits. A rejected tier's feedback threads into the next one.
 Accepted work merges to the integration branch; your checkout is never touched.
 
-One environment trap, specific to gating on a repo's own build: a git worktree
-is gitignore-clean, so it has **no `node_modules`** and `npm run presubmit`
-alone dies with `ERR_MODULE_NOT_FOUND` — scoring 0 for every tier no matter how
-good the work was. Symlinking the root `node_modules` in does not fix it
-either: workspace self-links resolve back to the original checkout and `tsc`
-then sees two identities of the same package. Bootstrap the worktree
-hermetically instead, which is why `npm ci` leads the command list above.
+Two environment traps, both specific to gating on a repo's own build, and both
+of which score a *correct* edit as 0:
+
+1. **A worktree is gitignore-clean**, so it has no `node_modules` and
+   `npm run presubmit` alone dies with `ERR_MODULE_NOT_FOUND`. Symlinking the
+   root `node_modules` in does not fix it either — workspace self-links resolve
+   back to the original checkout and `tsc` then sees two identities of the same
+   package. Bootstrap hermetically instead; that is why `npm ci` leads the list.
+2. **The gate inherits your environment.** The runner shells out with a `cwd`
+   but no `env`, so any flag that changes what your test suite does is still
+   set. Gating this repo from a live run with `OPENSWARM_LIVE=1` made the gate's
+   `npm test` re-run the live suite inside the worktree — including the
+   self-modification test driving the run, which failed its own clean-checkout
+   guard because the worktree is legitimately dirty. Scrub such flags in the
+   command itself (`OPENSWARM_LIVE=0 npm run presubmit`).
+
+When a gate does reject, note that you get a bare `confidence 0`: the runner
+discards command output, and the next tier is told only that "the verification
+commands did not pass". Reproduce the commands by hand in the task worktree to
+find out why.
+
+This is the path rung 5 runs on — a live cascade using exactly the config above
+edited this repository's own source, passed this repository's own presubmit
+inside the worktree, and merged. See `packages/swarm/tests/self-modify-live.test.ts`.
 
 ## The app-server (for UIs/TUIs)
 
