@@ -17,6 +17,7 @@ import { SwarmMailbox } from './mailbox'
 import { askPeer, registerSwarmMessaging, spawnPeer, suppressSettlementTurns } from './peers'
 import type { PeerHandle } from './types'
 import {
+  CASCADE_TASK_KEY,
   runBoardWorkers,
   runCascade,
   runCommittee,
@@ -27,6 +28,7 @@ import {
   runPipeline,
   seedBoard,
   type ReportProgress,
+  type RunConfidence,
   type RunMember,
 } from './topologies'
 import { tmpdir } from 'node:os'
@@ -179,6 +181,31 @@ export default class SwarmService extends Service {
     return { ...result, git: await worktrees.finalize() }
   }
 
+  /**
+   * Resolve the cascade's command-confidence gate.
+   *
+   * Under worktree execution the tiers edit a worktree, NOT the repo root, so
+   * a runner bound to `process.cwd()` would grade a tree the member never
+   * touched — and since that tree is the user's own (usually green) checkout,
+   * the gate would pass no matter what the tier did. The worktree is therefore
+   * resolved lazily, per invocation: it does not exist when `dispatch` runs,
+   * and `SwarmGit` memoizes it, so this returns the same tree the tiers share.
+   * An explicit `confidenceRunner` still wins — the caller knows best.
+   */
+  private confidenceRunner(
+    options: RunTeamOptions,
+    worktrees?: WorktreeRun,
+  ): RunConfidence {
+    if (options.confidenceRunner !== undefined) return options.confidenceRunner
+    if (worktrees === undefined) {
+      return defaultConfidenceRunner(options.confidenceCwd ?? process.cwd())
+    }
+    return async (commands) => {
+      const cwd = (await worktrees.worktree(CASCADE_TASK_KEY)).path
+      return defaultConfidenceRunner(cwd)(commands)
+    }
+  }
+
   private dispatch(
     spec: TeamSpec,
     run: RunMember,
@@ -196,12 +223,7 @@ export default class SwarmService extends Service {
       case 'pipeline':
         return runPipeline(spec, run, report)
       case 'cascade':
-        return runCascade(
-          spec,
-          run,
-          options.confidenceRunner ?? defaultConfidenceRunner(options.confidenceCwd ?? process.cwd()),
-          report,
-        )
+        return runCascade(spec, run, this.confidenceRunner(options, worktrees), report)
       case 'coordinator':
         return runCoordinator(spec, run, report)
       case 'peer-team':

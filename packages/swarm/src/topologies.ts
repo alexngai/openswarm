@@ -37,6 +37,14 @@ export type RunMember = (
 export type RunConfidence = (commands: string[]) => Promise<number>
 
 /**
+ * Every cascade tier (and its gate) shares this task key, so under worktree
+ * execution the whole chain continues in ONE worktree. Exported because the
+ * confidence gate must run its commands in that same tree — see the runner
+ * built in `dispatch`.
+ */
+export const CASCADE_TASK_KEY = 'task'
+
+/**
  * One human-readable progress line from a running team. Every topology emits;
  * the default is a no-op, so a consumer that does not pass one sees exactly
  * the previous behavior.
@@ -188,7 +196,7 @@ export async function runCascade(
         ? spec.task
         : `${spec.task}\n\nA previous attempt was rejected with this feedback:\n${feedback}`
     report(`tier ${tier + 1}/${spec.tiers.length}: ${member.name}…`)
-    const result = await run(member, prompt, 'task')
+    const result = await run(member, prompt, CASCADE_TASK_KEY)
     if (result.stopReason !== 'completed') {
       report(`tier ${tier + 1}: ${result.stopReason} — escalating`)
       attempts.push({ tier, result })
@@ -211,7 +219,7 @@ export async function runCascade(
     const verdict = await run(
       spec.gate,
       `Task:\n${spec.task}\n\nCandidate result:\n${result.text}\n\nReply with exactly APPROVED if the result fully satisfies the task; otherwise reply REVISE: <specific feedback>.`,
-      'task',
+      CASCADE_TASK_KEY,
     )
     attempts.push({ tier, result, verdict })
     report(`tier ${tier + 1}: gate ${isApproved(verdict.text) ? 'approved' : 'rejected'}`)
