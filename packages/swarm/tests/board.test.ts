@@ -109,3 +109,26 @@ it('runBoardWorkers releases the claim and propagates the error on member failur
   expect(failed.status).toBe('pending')
   expect(failed.owner).toBeUndefined()
 }, 15_000)
+
+it('waitForChange wakes on the next commit rather than on its backstop', async () => {
+  const { board } = await bootBoard()
+  const task = await board.create({ subject: 's', prompt: 'p' })
+
+  const started = Date.now()
+  const woke = board.waitForChange(5_000)
+  // A sibling's commit is the event board workers are actually waiting for.
+  await board.claim(task.id, 'worker-1', task.revision)
+  await woke
+
+  // Nowhere near the 5s backstop: this resolved on the commit itself.
+  expect(Date.now() - started).toBeLessThan(1_000)
+})
+
+it('waitForChange still returns on its backstop when nothing commits', async () => {
+  const { board } = await bootBoard()
+  const started = Date.now()
+  // The backstop exists so a worker re-checks conditions no commit announces
+  // (an aborted sibling), instead of parking forever.
+  await board.waitForChange(80)
+  expect(Date.now() - started).toBeGreaterThanOrEqual(70)
+})

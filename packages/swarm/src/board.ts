@@ -71,6 +71,7 @@ export function foldBoard(events: ReadonlyArray<{ type: string; data?: unknown }
 
 export class SwarmBoard {
   private readonly serial = new Serializer()
+  private readonly waiters = new Set<() => void>()
   private nextTaskNumber = 0
 
   constructor(
@@ -105,7 +106,33 @@ export class SwarmBoard {
     const append = this.lead.session.append.bind(this.lead.session) as unknown as AppendSwarmEvent
     append('swarm/task', { version: 1, task })
     await this.ctx.sessions.flush(this.lead.session)
+    // Wake anyone parked in waitForChange: this commit may have unblocked a
+    // dependent task or freed a claim.
+    for (const wake of [...this.waiters]) wake()
     return task
+  }
+
+  /**
+   * Resolve on the next committed mutation, or after `timeoutMs`.
+   *
+   * Replaces a 10ms spin in the board-worker loop: workers with nothing ready
+   * are waiting on a sibling's commit, which is an event we already have. The
+   * timeout is a backstop, not the mechanism — a worker must also re-check
+   * conditions that no commit announces (an aborted sibling, a disposed run),
+   * so parking forever on the event alone could hang the loop.
+   */
+  waitForChange(timeoutMs = 250): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const wake = () => {
+        clearTimeout(timer)
+        this.waiters.delete(wake)
+        resolve()
+      }
+      const timer = setTimeout(wake, timeoutMs)
+      // Never hold the process open for a backstop poll.
+      if (typeof timer === 'object' && 'unref' in timer) timer.unref()
+      this.waiters.add(wake)
+    })
   }
 
   private expect(

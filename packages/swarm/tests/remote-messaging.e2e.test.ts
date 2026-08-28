@@ -175,3 +175,22 @@ it('remote messaging peer-team: member-keyed worktrees, multi-turn tasks, merged
   expect(lastBody).toContain('do task one')
   expect(lastBody).toContain('do task two')
 }, 120_000)
+
+it('a member whose runtime dies mid-turn fails loud instead of hanging the team', async () => {
+  // 'success' answers the briefing; 'stall' leaves the next turn open forever,
+  // which is the window a crashing child would die in.
+  h = await bootHarness({ sequence: ['success', 'stall'], repeatLast: true, successText: 'ok' })
+  const cwd = mkdtempSync(join(tmpdir(), 'openswarm-remote-dead-'))
+  const peer = await spawnRemote(h, 'doomed', cwd)
+
+  const pending = peer.ask([{ type: 'text', text: 'this turn never completes' }])
+  // Let the prompt reach the stalled endpoint so the turn is genuinely open.
+  await new Promise((r) => setTimeout(r, 500))
+
+  // The runtime goes away without us asking it to — a crash, not a teardown.
+  await (peer as unknown as { client: { close(): Promise<void> } }).client.close()
+
+  // Before the fix this awaited `turn/end` forever, and the team's own
+  // teardown (which would have released it) sat behind this same await.
+  await expect(pending).rejects.toThrow(/exited before its turn completed/)
+}, 30_000)

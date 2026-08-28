@@ -40,6 +40,9 @@ export class RemotePeer {
   private lastTurnReason: string | undefined
   private turnWaiter: (() => void) | undefined
   private pump: Promise<void> | undefined
+  /** Set when the child's stream ends before we asked it to; turns fail with it. */
+  private died: Error | undefined
+  private closing = false
 
   private constructor(name: string, client: HarnessClient) {
     this.name = name
@@ -85,8 +88,19 @@ export class RemotePeer {
           }
         }
       } catch {
-        // Runtime closed; pending waiters are released by close().
+        // Fall through: the stream ending IS the signal, error or not.
       }
+      // The subscription only ends when the child runtime is gone. If we did
+      // not ask for that, every turn waiting on `turn/end` would otherwise
+      // wait forever — and the team's own teardown, which would have released
+      // them, sits behind that same await. Fail loud instead of deadlocking.
+      if (!this.closing) {
+        this.died ??= new Error(
+          `swarm member "${this.name}" exited before its turn completed`,
+        )
+      }
+      this.turnWaiter?.()
+      this.turnWaiter = undefined
     })()
   }
 
@@ -102,6 +116,10 @@ export class RemotePeer {
       rejectAccepted = reject
     })
     const done = this.turnTail.then(async () => {
+      if (this.died !== undefined) {
+        rejectAccepted(this.died)
+        throw this.died
+      }
       const turnEnded = new Promise<void>((resolve) => {
         this.turnWaiter = resolve
       })
@@ -112,6 +130,8 @@ export class RemotePeer {
         throw error
       }
       await turnEnded
+      // Released by the pump rather than by a real `turn/end`.
+      if (this.died !== undefined) throw this.died
       const output = this.lastAssistant ?? []
       const reason = this.lastTurnReason
       return {
@@ -150,6 +170,7 @@ export class RemotePeer {
   }
 
   async close(): Promise<void> {
+    this.closing = true
     this.turnWaiter?.()
     this.turnWaiter = undefined
     await this.client.close()

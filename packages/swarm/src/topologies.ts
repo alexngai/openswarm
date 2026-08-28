@@ -315,8 +315,9 @@ export async function runBoardWorkers(
         const claimed = await board.claimNextReady(member.name)
         if (claimed === undefined) {
           // Nothing ready: blockers are still in flight with other members.
-          // ponytail: 10ms poll; the board grows waitForChange out of process.
-          await new Promise((r) => setTimeout(r, 10))
+          // Park until a sibling commits (or a short backstop elapses) rather
+          // than spinning; the backstop also re-checks `aborted`.
+          await board.waitForChange()
           continue
         }
         try {

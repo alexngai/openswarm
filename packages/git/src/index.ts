@@ -15,7 +15,7 @@
  */
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdirSync, readdirSync, rmSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 
@@ -48,12 +48,16 @@ export interface MergeOutcome {
   empty: { taskKey: string; branch: string }[]
 }
 
+/** A team directory younger than this is treated as starting, not abandoned. */
+const RECENT_MS = 60_000
+
 export class SwarmGit {
   private readonly worktrees = new Map<string, WorktreeInfo>()
   /** One in-flight creation promise per task key — the concurrency memo. */
   private readonly worktreePromises = new Map<string, Promise<WorktreeInfo>>()
   /** Safe branch names already assigned, to disambiguate lossy collisions. */
   private readonly usedNames = new Set<string>()
+  private ignoreChecked = false
   private base: string | undefined
   private targetPath: string | undefined
   private scratchPromise: Promise<string> | undefined
@@ -69,6 +73,34 @@ export class SwarmGit {
       this.options.worktreeDir ??
       join(this.options.repoRoot, '.swarm', 'worktrees', this.options.teamId)
     )
+  }
+
+  /**
+   * Create this team's worktree root, and the first time we do it, teach the
+   * repo to ignore `.swarm/` — the default root lives INSIDE the user's
+   * checkout, so without this every run leaves them staring at untracked
+   * directories they did not create.
+   *
+   * `.git/info/exclude` rather than `.gitignore`: it is the per-clone,
+   * untracked ignore file, so we never write to a file the user commits.
+   * Skipped entirely for a custom `worktreeDir` outside the repo (not ours to
+   * ignore) and for a `.git` that is not a real directory (a checkout that is
+   * itself a worktree or submodule), where the path simply does not exist.
+   */
+  private ensureDir(): void {
+    mkdirSync(this.dir, { recursive: true })
+    if (this.ignoreChecked) return
+    this.ignoreChecked = true
+    const swarmRoot = join(this.options.repoRoot, '.swarm')
+    if (!this.dir.startsWith(swarmRoot)) return
+    try {
+      const exclude = join(this.options.repoRoot, '.git', 'info', 'exclude')
+      const current = readFileSync(exclude, 'utf8')
+      if (/^\s*\.swarm\/?\s*$/m.test(current)) return
+      appendFileSync(exclude, `${current.endsWith('\n') || current === '' ? '' : '\n'}.swarm/\n`)
+    } catch {
+      // No standard .git/info/exclude here; nothing to teach.
+    }
   }
 
   get targetBranch(): string {
@@ -114,7 +146,7 @@ export class SwarmGit {
     this.usedNames.add(safe)
     const branch = `swarm/${this.options.teamId}/${safe}`
     const path = join(this.dir, safe)
-    mkdirSync(this.dir, { recursive: true })
+    this.ensureDir()
     await this.git(this.options.repoRoot, 'worktree', 'add', '-b', branch, path, await this.baseCommit())
     const info: WorktreeInfo = { taskKey, path, branch }
     this.worktrees.set(taskKey, info)
@@ -150,7 +182,7 @@ export class SwarmGit {
   private async targetWorktree(): Promise<string> {
     if (this.targetPath !== undefined) return this.targetPath
     const path = join(this.dir, '.target')
-    mkdirSync(this.dir, { recursive: true })
+    this.ensureDir()
     const { stdout } = await this.git(this.options.repoRoot, 'branch', '--list', this.targetBranch)
     if (stdout.trim() === '') {
       await this.git(this.options.repoRoot, 'worktree', 'add', '-b', this.targetBranch, path, await this.baseCommit())
@@ -211,7 +243,7 @@ export class SwarmGit {
     if (this.scratchPromise === undefined) {
       this.scratchPromise = (async () => {
         const path = join(this.dir, '.scratch')
-        mkdirSync(this.dir, { recursive: true })
+        this.ensureDir()
         await this.git(this.options.repoRoot, 'worktree', 'add', '--detach', path, await this.baseCommit())
         return path
       })()
@@ -267,6 +299,15 @@ export class SwarmGit {
     for (const team of teams) {
       const path = join(dir, team)
       if (listed.includes(path)) continue // a live team owns it
+      // A team that has created its directory but not yet finished
+      // `git worktree add` is not listed either, so age is what separates
+      // "starting" from "abandoned". Anything touched in the last minute is
+      // left for the next sweep rather than pulled out from under a peer.
+      try {
+        if (Date.now() - statSync(path).mtimeMs < RECENT_MS) continue
+      } catch {
+        continue // vanished under us; nothing to remove
+      }
       rmSync(path, { recursive: true, force: true })
       removed.push(path)
     }
