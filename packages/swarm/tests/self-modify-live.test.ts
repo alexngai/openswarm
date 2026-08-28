@@ -18,6 +18,14 @@
  * so without it every tier scores 0 on ERR_MODULE_NOT_FOUND no matter how good
  * the work was (docs/01, docs/03).
  *
+ * It also scrubs OPENSWARM_LIVE, which is NOT cosmetic. The confidence runner
+ * shells out without an `env`, so the gate inherits this process's environment
+ * — including the very flag that enables live tests. The gate's `npm test`
+ * would therefore re-run the live suite inside the worktree, THIS test
+ * included, where it fails its own clean-checkout guard because the worktree is
+ * legitimately dirty. That scored a correct tier-1 edit as 0 on the first
+ * attempt: a false negative caused entirely by the harness observing itself.
+ *
  *   source ~/.zshrc && OPENSWARM_LIVE=1 npx vitest run \
  *     packages/swarm/tests/self-modify-live.test.ts
  */
@@ -74,8 +82,10 @@ string so it states explicitly that:
 Change only that description string. Do not change any behaviour, and do not
 touch any other file.
 
-Before you finish, run \`npm ci\` and then \`npm run presubmit\` and make sure
-it passes.`
+Before you finish, run \`npm ci\` and then \`OPENSWARM_LIVE=0 npm run presubmit\`
+and make sure it passes. Use OPENSWARM_LIVE=0 exactly as written — without it
+the suite also runs env-gated live tests that need credentials and a clean
+checkout, which will fail here for reasons unrelated to your change.`
 
 it.skipIf(!live)(
   'live: OpenSwarm edits its own source, passes its own presubmit, and merges',
@@ -94,7 +104,10 @@ it.skipIf(!live)(
         topology: 'cascade',
         tiers: [{ name: 'tier-1' }, { name: 'tier-2' }],
         task: TASK,
-        confidence: { commands: ['npm ci', 'npm run presubmit'], tau: 1 },
+        confidence: {
+          commands: ['npm ci', 'OPENSWARM_LIVE=0 npm run presubmit'],
+          tau: 1,
+        },
       },
       {
         parent: h.lead.agent,
