@@ -80,6 +80,21 @@ export interface RunTeamOptions {
   /** Working directory for the default confidence runner. */
   confidenceCwd?: string
   /**
+   * Pathspecs restored from the base commit before EVERY gate run, under
+   * worktree execution.
+   *
+   * Without this the gate is not independent of what it grades: it runs the
+   * repo's own tests out of the member's worktree, so passing by deleting a
+   * test is as effective as passing by fixing the code. Pin the verification
+   * assets (`['packages/*[/]tests']` here) and the gate stops being something
+   * the graded party can edit.
+   *
+   * Edits to these paths are DISCARDED, not merged — pinning says tests are
+   * not this run's to change. A run that is supposed to add tests must leave
+   * them unpinned and accept the weaker guarantee.
+   */
+  confidencePinPaths?: string[]
+  /**
    * Execute member runs as subprocess harnesses in git worktrees, merging
    * completed branches on finish (docs/01 Phase 2). One-shot topologies use
    * per-task worktrees; `peer-team { messaging: true }` runs long-lived
@@ -200,8 +215,18 @@ export default class SwarmService extends Service {
     if (worktrees === undefined) {
       return defaultConfidenceRunner(options.confidenceCwd ?? process.cwd())
     }
+    const pinPaths = options.confidencePinPaths ?? []
+    const report = options.onProgress ?? (() => {})
     return async (commands) => {
       const cwd = (await worktrees.worktree(CASCADE_TASK_KEY)).path
+      if (pinPaths.length > 0) {
+        const discarded = await worktrees.pinForGate(CASCADE_TASK_KEY, pinPaths)
+        // Reverting a member's work silently would be its own trap, and a tier
+        // that spent its turn editing tests should show up in the record.
+        if (discarded.length > 0) {
+          report(`gate: discarded member edits to ${discarded.length} pinned path(s): ${discarded.slice(0, 5).join(', ')}`)
+        }
+      }
       return defaultConfidenceRunner(cwd)(commands)
     }
   }

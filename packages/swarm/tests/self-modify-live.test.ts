@@ -115,6 +115,10 @@ it.skipIf(!live)(
           progress.push(line)
           console.log(`[swarm] ${line}`)
         },
+        // The gate runs this repo's own suite out of the member's worktree, so
+        // without pinning "make presubmit pass" is satisfiable by editing the
+        // tests. Graded against the suite as committed, not as edited.
+        confidencePinPaths: ['packages/*/tests'],
         worktrees: {
           repoRoot: REPO,
           member: {

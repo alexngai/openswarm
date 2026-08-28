@@ -153,6 +153,47 @@ export class SwarmGit {
     return info
   }
 
+  /**
+   * Force pathspecs in a worktree back to their base-commit state, discarding
+   * any member edits AND any files the member added under them.
+   *
+   * This exists because a command gate that runs the repo's own tests reads
+   * those tests FROM the worktree it is grading — so a member can pass the
+   * gate by weakening the tests rather than by fixing the code. Restoring the
+   * verification assets before each gate run takes them out of the graded
+   * party's control.
+   *
+   * `checkout` alone would only restore tracked files, leaving an added file
+   * (a fixture that neuters collection, say) in place, so the clean pass is
+   * part of the guarantee rather than tidiness.
+   *
+   * Returns the paths that had in fact been modified, so a caller can say so
+   * out loud — silently reverting a member's work would be its own trap.
+   */
+  async restoreFromBase(worktree: WorktreeInfo, pathspecs: string[]): Promise<string[]> {
+    if (pathspecs.length === 0) return []
+    const { stdout } = await this.git(worktree.path, 'status', '--porcelain', '--', ...pathspecs)
+    const touched = stdout
+      .split('\n')
+      .map((line) => line.slice(3).trim())
+      .filter((line) => line !== '')
+    const base = await this.baseCommit()
+    // `checkout` errors on a pathspec absent from the base tree, but pinning a
+    // path that does not exist at base is a legitimate instruction — "nothing
+    // may appear here" — which `clean` alone satisfies. So restore only the
+    // pathspecs base actually knows, and let clean handle the rest.
+    const known: string[] = []
+    for (const spec of pathspecs) {
+      const { stdout: listed } = await this.git(worktree.path, 'ls-tree', '-r', '--name-only', base, '--', spec)
+      if (listed.trim() !== '') known.push(spec)
+    }
+    if (known.length > 0) {
+      await this.git(worktree.path, 'checkout', base, '--', ...known)
+    }
+    await this.git(worktree.path, 'clean', '-fdq', '--', ...pathspecs)
+    return touched
+  }
+
   /** Commit everything dirty in one worktree; false when it was clean. */
   async autoCommit(worktree: WorktreeInfo, message: string): Promise<boolean> {
     await this.git(worktree.path, 'add', '-A')

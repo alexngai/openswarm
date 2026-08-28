@@ -218,7 +218,28 @@ await ctx.swarm.runTeam(
 
 Under `worktrees`, every tier shares one worktree (they continue each other's
 work) and **the gate runs in that worktree** — not the repo root — so it grades
-the tier's actual edits. A rejected tier's feedback threads into the next one.
+the tier's actual edits.
+
+### Pin what the gate grades with
+
+That worktree is a full checkout, tests included, so `npm run presubmit` reads
+the suite **from the tree it is grading**. "Make the gate pass" then has two
+solutions — fix the code, or weaken the test — and the second is cheaper. Pass
+`confidencePinPaths` to take the verification assets out of the graded party's
+hands:
+
+```ts
+{ confidencePinPaths: ['packages/*/tests'], worktrees: { repoRoot: '…' } }
+```
+
+Those pathspecs are restored from the base commit before **every** gate run, and
+files the member added under them are removed, so the pinned paths are exactly
+their base state. A tier that spent its turn editing tests gets a
+`gate: discarded member edits…` progress line rather than a silent revert.
+
+Edits to pinned paths are **discarded and never merged** — pinning declares that
+tests are not this run's to change. A task that is *supposed* to add tests must
+leave them unpinned and accept that the gate is then partly self-authored. A rejected tier's feedback threads into the next one.
 Accepted work merges to the integration branch; your checkout is never touched.
 
 Two environment traps, both specific to gating on a repo's own build, and both

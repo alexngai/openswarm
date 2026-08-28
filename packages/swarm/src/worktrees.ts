@@ -208,6 +208,15 @@ export class WorktreeRun {
   }
 
   /**
+   * Restore a task worktree's pinned pathspecs from the base commit, so a gate
+   * grading that worktree does not read verification assets the member could
+   * have edited. Returns the paths that had been modified.
+   */
+  async pinForGate(key: string, pathspecs: string[]): Promise<string[]> {
+    return this.git.restoreFromBase(await this.git.worktree(key), pathspecs)
+  }
+
+  /**
    * Clear worktrees left by teams that died before finalizing. Called once per
    * run before any member starts, so a crashed predecessor does not accumulate
    * checkouts in the user's repo.
