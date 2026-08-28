@@ -1,0 +1,41 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same branch/PR makes the older run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  presubmit:
+    strategy:
+      fail-fast: false
+      matrix:
+        # This suite has only ever run on macOS. Linux is where the eval
+        # sandboxes run, so both matter and neither is the "other" platform.
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22 # package.json engines: >=22
+          cache: npm
+
+      # `npm ci` needs the lockfile to match package.json exactly, which is
+      # also a check worth having: a drifted lockfile fails here rather than
+      # at publish time.
+      - run: npm ci
+
+      # build → typecheck → test. Build first is load-bearing: the bundle and
+      # web-api E2E suites read packages/*/dist and skip themselves when it is
+      # absent, so testing first would pass while covering less.
+      - run: npm run presubmit
+
+      # The live suites (Azure/Bedrock) are env-gated and skip without creds;
+      # nothing here needs a secret.
