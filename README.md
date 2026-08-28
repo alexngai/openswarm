@@ -37,7 +37,7 @@ From a clone (development):
 
 ```bash
 git clone https://github.com/alexngai/openswarm
-cd openswarm && npm install && npm run build   # ./bin/openswarm ...
+cd openswarm && npm install && npm run build   # ./bin/openswarm.mjs ...
 ```
 
 Requires **Node.js ≥ 22**. The launcher works identically whether installed or run from a clone — it resolves the harness and its own plugin packages through Node and initializes its profiles on first use.
@@ -61,10 +61,10 @@ The launcher auto-detects the provider (Azure → OpenAI → Bedrock). Override 
 ## Quickstart
 
 ```bash
-./bin/openswarm "explain what this repository does"      # one-shot task
-./bin/openswarm --model gpt-5.5 "fix the failing test"
-./bin/openswarm config                                   # show resolved provider/model/home
-./bin/openswarm serve --port 4620                        # start the JSON-RPC app-server
+./bin/openswarm.mjs "explain what this repository does"  # one-shot task
+./bin/openswarm.mjs --model gpt-5.5 "fix the failing test"
+./bin/openswarm.mjs config                               # show resolved provider/model/home
+./bin/openswarm.mjs serve --port 4620                    # start the JSON-RPC app-server
 ```
 
 The launcher initializes its profiles on first use (into `~/.openswarm`, override with `--home` / `$OPENSWARM_HOME`), auto-detects your provider, and boots the composed `dsh` harness. See [`docs/03-usage.md`](docs/03-usage.md) for the full runbook — profiles, the app-server wire protocol, driving a team programmatically, and the eval harness.

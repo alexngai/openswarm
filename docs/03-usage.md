@@ -12,7 +12,7 @@ npm install && npm run build
 
 ## The launcher
 
-`bin/openswarm` wraps `dsh --profile openswarm[-dev]`: it initializes profiles on first use, auto-detects the provider, and maps flags to the `OPENSWARM_*` env the bundle reads.
+`bin/openswarm.mjs` (installed as the `openswarm` bin) wraps `dsh --profile openswarm[-dev]`: it initializes profiles on first use, auto-detects the provider, and maps flags to the `OPENSWARM_*` env the bundle reads.
 
 ```
 openswarm "<task>"          run one task headless
@@ -115,10 +115,68 @@ Two blast radii:
 
 Pass `approveLeadMount` in the row's config to substitute your own policy.
 
+### Surviving a restart
+
+By default nothing outlives its process: Cordis unwinds every mount on dispose,
+which is what makes live mounting safe. Set `persistDir` on the row to keep
+**approved `lead`-scope** plugins across restarts:
+
+```yaml
+- id: openswarm-plugin-authoring
+  name: 'openswarm-plugin-authoring'
+  config:
+    persistDir: ~/.openswarm/plugins
+```
+
+Each approved mount writes `<name>.mjs` plus an `approved.json` manifest holding
+the SHA-256 of exactly what the human approved. On boot, a plugin is restored
+only when its bytes still match that record; anything edited since approval, or
+dropped into the directory without ever passing the gate, is skipped.
+
+That check is a security boundary, not bookkeeping — member harnesses carry
+ordinary file-write tools, so without it a model could write a `.mjs` into the
+directory and reach shared scope on the next boot having never faced the gate.
+
+`self` scope is never persisted: it belongs to an agent that will not exist
+after a restart. To revoke a persisted plugin, delete its file (or its manifest
+entry). Off by default deliberately — persistence turns a one-time grant into a
+standing one, which is the operator's call, not ours.
+
 Related, from dsh itself: the shipped **`cordis` agent preset** ("创造模式") mounts
 `tool-cordis`, which inspects and edits the live composition, plus skills for
 authoring Cordis plugins and presets. Pick it from the agent-preset selector in
 the web UI when you want the agent to reason about the running tree.
+
+## Gating a run on build + test (self-modification)
+
+A `cascade` with a `confidence` gate is the shape for letting a team edit real
+source: tiers attempt the task cheapest-first, and a tier is accepted only when
+every verification command exits 0.
+
+```ts
+await ctx.swarm.runTeam(
+  {
+    topology: 'cascade',
+    tiers: [{ name: 'cheap' }, { name: 'strong' }],
+    task: 'fix the failing test in packages/swarm',
+    confidence: { commands: ['npm ci', 'npm run presubmit'], tau: 1 },
+  },
+  { parent: lead.agent, worktrees: { repoRoot: '/path/to/repo' } },
+)
+```
+
+Under `worktrees`, every tier shares one worktree (they continue each other's
+work) and **the gate runs in that worktree** — not the repo root — so it grades
+the tier's actual edits. A rejected tier's feedback threads into the next one.
+Accepted work merges to the integration branch; your checkout is never touched.
+
+One environment trap, specific to gating on a repo's own build: a git worktree
+is gitignore-clean, so it has **no `node_modules`** and `npm run presubmit`
+alone dies with `ERR_MODULE_NOT_FOUND` — scoring 0 for every tier no matter how
+good the work was. Symlinking the root `node_modules` in does not fix it
+either: workspace self-links resolve back to the original checkout and `tsc`
+then sees two identities of the same package. Bootstrap the worktree
+hermetically instead, which is why `npm ci` leads the command list above.
 
 ## The app-server (for UIs/TUIs)
 

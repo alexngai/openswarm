@@ -9,7 +9,7 @@ governing design doc (decision, seams, focus features, phases);
 
 ```bash
 npm install && npm run build          # build plugin packages to dist/
-./bin/openswarm "explain this repo"   # run a task (auto-detects provider from env)
+./bin/openswarm.mjs "explain this repo"  # run a task (auto-detects provider from env)
 npm test                              # keyless suite (scripted mock LLM)
 npm run typecheck                     # tsc across every package
 OPENSWARM_LIVE=1 npm test             # + env-gated live tests (needs creds)
