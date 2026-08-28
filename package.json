@@ -1,6 +1,6 @@
 {
   "name": "openswarm",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "workspaces": [
     "packages/*"
@@ -12,7 +12,13 @@
     "test": "vitest run",
     "typecheck": "tsc -p packages/swarm --noEmit && tsc -p packages/git --noEmit && tsc -p packages/llm-openai --noEmit && tsc -p packages/swarm-member --noEmit && tsc -p packages/cli --noEmit && tsc -p packages/llm-anthropic --noEmit && tsc -p packages/app-server --noEmit && tsc -p packages/plugin-authoring --noEmit && tsc -p packages/bundle --noEmit",
     "bundle:cli": "node scripts/bundle-cli.mjs",
-    "build": "node scripts/build-packages.mjs"
+    "build": "node scripts/build-packages.mjs",
+    "presubmit": "npm run build && npm run typecheck && npm test",
+    "prepack": "npm run build",
+    "publish:npm": "npm run presubmit && npm publish",
+    "version:patch": "npm version patch",
+    "version:minor": "npm version minor",
+    "version:major": "npm version major"
   },
   "devDependencies": {
     "@anthropic-ai/bedrock-sdk": "^0.33.1",
