@@ -9,6 +9,7 @@
  *
  *   openswarm "<task>"            run one task headless
  *   openswarm run "<task>"        same
+ *   openswarm web [flags]         open the DeepSeek browser UI on a swarm context
  *   openswarm serve [--port N]    start the app-server (JSON-RPC, for UIs/TUIs)
  *   openswarm setup               (re)initialize the profiles
  *   openswarm config              print the resolved provider/model/home
@@ -44,7 +45,12 @@ const dshScript = resolveDsh()
 
 const VALUE_FLAGS = new Set(['--model', '--provider', '--home', '--port'])
 
-function parse(argv) {
+/**
+ * `lenient` forwards flags this launcher does not own instead of rejecting
+ * them — `openswarm web` passes the dsh web app's own flags (--host,
+ * --no-open, --trusted-host, …) straight through.
+ */
+function parse(argv, lenient = false) {
   const opts = {}
   const rest = []
   for (let i = 0; i < argv.length; i++) {
@@ -57,7 +63,8 @@ function parse(argv) {
     } else if (a === '--help' || a === '-h') {
       opts.help = true
     } else if (a.startsWith('--')) {
-      die(`unknown option "${a}"`)
+      if (!lenient) die(`unknown option "${a}"`)
+      rest.push(a)
     } else {
       rest.push(a)
     }
@@ -126,8 +133,12 @@ function ensureBuilt() {
   if (dshScript === undefined || !existsSync(dshScript)) die('dsh is not installed. Run:  npm install')
 }
 
+const PROFILES = ['openswarm', 'openswarm-dev', 'openswarm-web']
+
 function ensureProfiles(home) {
-  if (existsSync(join(home, 'profiles', 'openswarm'))) return
+  // Re-init when ANY profile is missing, so a home from an older version
+  // gains the profiles a newer one added.
+  if (PROFILES.every((p) => existsSync(join(home, 'profiles', p)))) return
   process.stderr.write('openswarm: initializing profiles…\n')
   execFileSync('node', [join(pkgRoot, 'scripts', 'init-profile.mjs'), home], { cwd: pkgRoot, stdio: 'inherit' })
 }
@@ -146,6 +157,7 @@ const HELP = `openswarm — run a swarm of coding agents on the dsh stack
 Usage:
   openswarm "<task>"            run one task headless
   openswarm run "<task>"        same
+  openswarm web [flags]         open the DeepSeek browser UI on a swarm context
   openswarm serve [--port N]    start the app-server (JSON-RPC for UIs/TUIs)
   openswarm setup               (re)initialize the profiles
   openswarm config              print the resolved provider/model/home
@@ -154,7 +166,10 @@ Options:
   --model <id>        model id (default: gpt-5.5, or haiku for bedrock)
   --provider <name>   azure | openai | bedrock (default: auto-detect)
   --home <dir>        profile home (default: $OPENSWARM_HOME or ~/.openswarm)
-  --port <n>          serve port (default: 4620)
+  --port <n>          web / serve port (web default: 3080, serve: 4620)
+
+The web command forwards its remaining flags to the dsh web app (--host,
+--no-open, --trusted-host …); type /swarm in the UI to run a team.
 
 Providers are auto-detected from the environment:
   AZURE_API_KEY + AZURE_API_BASE   → azure
@@ -163,7 +178,8 @@ Providers are auto-detected from the environment:
 `
 
 function main() {
-  const { opts, rest } = parse(process.argv.slice(2))
+  const argv = process.argv.slice(2)
+  const { opts, rest } = parse(argv, argv[0] === 'web')
   const home = opts.home ?? process.env.OPENSWARM_HOME ?? join(homedir(), '.openswarm')
   const cmd = rest[0]
 
@@ -186,6 +202,16 @@ function main() {
   }
 
   ensureProfiles(home)
+
+  if (cmd === 'web') {
+    // dsh's own browser UI, composed over the OpenSwarm context: the swarm
+    // service, the OpenSwarm model adapters, and the `/swarm` command.
+    const { env } = resolveModel(opts)
+    const args = rest.slice(1)
+    if (opts.port) args.push('--port', String(opts.port))
+    bootDsh('openswarm-web', args, env, home)
+    return
+  }
 
   if (cmd === 'serve') {
     const { env } = resolveModel(opts)

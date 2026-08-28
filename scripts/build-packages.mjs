@@ -18,19 +18,23 @@ const PACKAGES = [
   'cli',
 ]
 
+// Subpath exports that are their own plugin rows (`openswarm-swarm/command`).
+const SUBPATHS = { swarm: ['command'] }
+
 for (const pkg of PACKAGES) {
   const dir = `packages/${pkg}`
-  const entry = `${dir}/src/index.ts`
-  await build({
-    entryPoints: [entry],
-    bundle: true,
-    platform: 'node',
-    format: 'esm',
-    target: 'node20',
-    packages: 'external', // every bare import stays external
-    outfile: `${dir}/dist/index.js`,
-    logLevel: 'warning',
-  })
   const name = JSON.parse(readFileSync(`${dir}/package.json`, 'utf8')).name
-  console.log(`built ${name} → ${dir}/dist/index.js`)
+  for (const mod of ['index', ...(SUBPATHS[pkg] ?? [])]) {
+    await build({
+      entryPoints: [`${dir}/src/${mod}.ts`],
+      bundle: true,
+      platform: 'node',
+      format: 'esm',
+      target: 'node20',
+      packages: 'external', // every bare import stays external
+      outfile: `${dir}/dist/${mod}.js`,
+      logLevel: 'warning',
+    })
+    console.log(`built ${name} → ${dir}/dist/${mod}.js`)
+  }
 }

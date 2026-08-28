@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync, existsSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync, existsSync, readFileSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
@@ -138,4 +138,99 @@ it('worktree() memoizes per key and disambiguates colliding sanitized names', as
   const y = await git.worktree('feat-x')
   expect(x.branch).not.toBe(y.branch)
   await git.dispose()
+})
+
+it('sweepOrphans clears worktrees a crashed team left behind, and spares live ones', async () => {
+  const root = scratchRepo()
+  const live = new SwarmGit({ repoRoot: root, teamId: 'live' })
+  const liveTree = await live.worktree('task-a')
+
+  // A team that died before finalizing: its worktree exists on disk and in
+  // git's records, exactly as a SIGKILLed run would leave it.
+  const dead = new SwarmGit({ repoRoot: root, teamId: 'dead' })
+  const deadTree = await dead.worktree('task-b')
+  expect(existsSync(deadTree.path)).toBe(true)
+
+  // Also the reverse leak: a directory git no longer lists at all.
+  const strayTeam = join(root, '.swarm', 'worktrees', 'stray')
+  mkdirSync(strayTeam, { recursive: true })
+  writeFileSync(join(strayTeam, 'leftover.txt'), 'x\n')
+
+  // Simulate the crash: git's record for the dead team is gone, the dir is not.
+  execFileSync('git', ['worktree', 'remove', '--force', deadTree.path], { cwd: root })
+  mkdirSync(deadTree.path, { recursive: true })
+  writeFileSync(join(deadTree.path, 'leftover.txt'), 'x\n')
+
+  // Age both orphans past the sweep's "still starting" grace window, which
+  // exists so a peer mid-`worktree add` is never pulled out from under.
+  // The sweep ages TEAM directories, so backdate those, not the worktrees
+  // nested inside them.
+  const old = new Date(Date.now() - 10 * 60_000)
+  utimesSync(join(root, '.swarm', 'worktrees', 'dead'), old, old)
+  utimesSync(strayTeam, old, old)
+
+  const removed = await SwarmGit.sweepOrphans(root)
+
+  expect(existsSync(deadTree.path)).toBe(false)
+  expect(existsSync(strayTeam)).toBe(false)
+  expect(removed.some((p) => p.endsWith('dead'))).toBe(true)
+  // The live team is untouched: git still lists it, so the sweep skips it.
+  expect(existsSync(liveTree.path)).toBe(true)
+  // ...and it still works afterwards.
+  writeFileSync(join(liveTree.path, 'a.txt'), 'from-a\n')
+  expect(await live.autoCommit(liveTree, 'swarm: task-a')).toBe(true)
+})
+
+it('sweepOrphans is a no-op in a repo that has never run a swarm', async () => {
+  expect(await SwarmGit.sweepOrphans(scratchRepo())).toEqual([])
+})
+
+it('removeAll drops every worktree without merging, and keeps the branches', async () => {
+  const root = scratchRepo()
+  const git = new SwarmGit({ repoRoot: root, teamId: 'aborted' })
+  const a = await git.worktree('task-a')
+  const b = await git.worktree('task-b')
+  writeFileSync(join(a.path, 'a.txt'), 'from-a\n')
+  await git.autoCommit(a, 'swarm: task-a')
+  await git.scratch()
+
+  await git.removeAll()
+
+  // Checkouts gone...
+  expect(existsSync(a.path)).toBe(false)
+  expect(existsSync(b.path)).toBe(false)
+  // ...but committed member work is still reachable by branch, which is what
+  // makes dropping a crashed run's worktrees safe.
+  expect(show(root, a.branch, 'a.txt')).toBe('from-a\n')
+  const branches = execFileSync('git', ['branch', '--list', 'swarm/aborted/*'], { cwd: root }).toString()
+  expect(branches).toContain('swarm/aborted/task-a')
+})
+
+it('sweepOrphans leaves a just-created team dir alone (a peer may be mid-creation)', async () => {
+  const root = scratchRepo()
+  const starting = join(root, '.swarm', 'worktrees', 'starting-now')
+  mkdirSync(starting, { recursive: true })
+
+  expect(await SwarmGit.sweepOrphans(root)).toEqual([])
+  expect(existsSync(starting)).toBe(true)
+})
+
+it('the first worktree teaches the repo to ignore .swarm/', async () => {
+  const root = scratchRepo()
+  const git = new SwarmGit({ repoRoot: root, teamId: 'ignore-me' })
+  const exclude = join(root, '.git', 'info', 'exclude')
+  expect(readFileSync(exclude, 'utf8')).not.toContain('.swarm')
+
+  await git.worktree('task-a')
+
+  expect(readFileSync(exclude, 'utf8')).toContain('.swarm/')
+  // The worktree dir is genuinely ignored now, not merely mentioned.
+  const status = execFileSync('git', ['status', '--porcelain'], { cwd: root }).toString()
+  expect(status).not.toContain('.swarm')
+
+  // Idempotent: a second team does not append a duplicate line.
+  const second = new SwarmGit({ repoRoot: root, teamId: 'ignore-me-too' })
+  await second.worktree('task-b')
+  const lines = readFileSync(exclude, 'utf8').split('\n').filter((l) => l.trim() === '.swarm/')
+  expect(lines).toHaveLength(1)
 })

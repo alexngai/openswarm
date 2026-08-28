@@ -1,0 +1,49 @@
+name: release
+
+# Tag-driven. The intended flow produces the tag from the version itself:
+#   npm run version:minor     # bumps package.json + lockfile, commits, tags
+#   git push --follow-tags    # this workflow fires on the tag
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write # OIDC → npm trusted publishing + provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      # Trusted publishing needs npm >= 11.5.1, which is newer than the npm
+      # bundled with the Node the runner installs.
+      - run: npm install -g npm@latest
+
+      - run: npm ci
+
+      # `npm version` keeps the tag and package.json aligned, but a hand-made
+      # tag does not. Without this the job would happily publish whatever
+      # package.json says while the tag claims something else — and an npm
+      # version, once taken, is permanent.
+      - name: tag must match package.json
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          echo "tag=$TAG package.json=$PKG"
+          [ "$TAG" = "$PKG" ] || { echo "::error::tag $TAG does not match package.json $PKG"; exit 1; }
+
+      # Never publish something that has not built, typechecked, and passed.
+      - run: npm run presubmit
+
+      # `prepack` rebuilds as part of packing, so the tarball can never carry
+      # stale dist. Provenance is attached automatically under OIDC; no
+      # NPM_TOKEN exists to leak.
+      - run: npm publish

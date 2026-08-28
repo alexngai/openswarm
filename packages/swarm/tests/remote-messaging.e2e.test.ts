@@ -175,3 +175,141 @@ it('remote messaging peer-team: member-keyed worktrees, multi-turn tasks, merged
   expect(lastBody).toContain('do task one')
   expect(lastBody).toContain('do task two')
 }, 120_000)
+
+it('a member whose runtime dies mid-turn fails loud instead of hanging the team', async () => {
+  // 'success' answers the briefing; 'stall' leaves the next turn open forever,
+  // which is the window a crashing child would die in.
+  h = await bootHarness({ sequence: ['success', 'stall'], repeatLast: true, successText: 'ok' })
+  const cwd = mkdtempSync(join(tmpdir(), 'openswarm-remote-dead-'))
+  const peer = await spawnRemote(h, 'doomed', cwd)
+
+  const pending = peer.ask([{ type: 'text', text: 'this turn never completes' }])
+  // Let the prompt reach the stalled endpoint so the turn is genuinely open.
+  await new Promise((r) => setTimeout(r, 500))
+
+  // The runtime goes away without us asking it to — a crash, not a teardown.
+  await (peer as unknown as { client: { close(): Promise<void> } }).client.close()
+
+  // Before the fix this awaited `turn/end` forever, and the team's own
+  // teardown (which would have released it) sat behind this same await.
+  await expect(pending).rejects.toThrow(/exited before its turn completed/)
+}, 30_000)
+
+it('a member that goes silent mid-turn fails on the idle clock', async () => {
+  // 'stall' holds the request open producing NO events — the wedged-child case
+  // the stream-ended check cannot see, because the stream stays open.
+  h = await bootHarness({ sequence: ['success', 'stall'], repeatLast: true, successText: 'ok' })
+  const cwd = mkdtempSync(join(tmpdir(), 'openswarm-remote-idle-'))
+  const launch = resolveMemberLaunch()
+  const peer = await RemotePeer.spawn({
+    name: 'silent',
+    command: launch.command,
+    args: launch.args,
+    cwd,
+    env: memberEnv(h),
+    provider: 'openai',
+    model: 'mock-model',
+    briefing: 'You are silent. Acknowledge.',
+    idleTimeoutMs: 1_500,
+  })
+  peers.push(peer)
+
+  await expect(peer.ask([{ type: 'text', text: 'go quiet' }])).rejects.toThrow(/no output for 1500ms/)
+}, 30_000)
+
+it('a member that dies mid-task is restarted with recovered context and finishes', async () => {
+  const repo = scratchRepo()
+  h = await bootHarness({
+    // brief → task stalls (member wedges, idle clock fires) → re-brief the
+    // replacement → the retried task succeeds.
+    sequence: ['success', 'stall', 'success', 'success'],
+    repeatLast: true,
+    successText: 'task done',
+  })
+  const progress: string[] = []
+
+  const result = await h.swarm.runTeam(
+    {
+      topology: 'peer-team',
+      messaging: true,
+      members: [{ name: 'solo' }],
+      tasks: [{ subject: 'one', prompt: 'do task one' }],
+      memberIdleTimeoutMs: 2_000,
+    },
+    {
+      parent: h.lead.agent,
+      worktrees: { repoRoot: repo, member: { env: memberEnv(h) } },
+      onProgress: (line) => progress.push(line),
+    },
+  )
+
+  if (result.topology !== 'peer-team') throw new Error('wrong topology')
+  // The team survived a death that previously would have failed the run.
+  for (const task of result.tasks) expect(task.status).toBe('completed')
+  expect(progress.some((l) => /restarting solo \(1\/1\)/.test(l))).toBe(true)
+
+  // The replacement was briefed from the dead member's persisted log — the
+  // only place its history survives, since the runtime never resumes one.
+  const briefings = h.mock.requests.filter((r) =>
+    JSON.stringify(r.body).includes('previous process ended'),
+  )
+  expect(briefings.length).toBeGreaterThan(0)
+  expect(JSON.stringify(briefings.at(-1)!.body)).toContain('do task one')
+}, 120_000)
+
+it('full chain: member does work, wedges, restarts with context, and its PRE-CRASH work merges', async () => {
+  const repo = scratchRepo()
+  // One member keeps the shared mock's FIFO deterministic. The run:
+  //   1 brief → 2 task: bash (write #1) → 3 WEDGE (idle clock fires)
+  //   4 re-brief → 5 retried task: bash (write #2) → 6 done
+  h = await bootHarness({
+    sequence: ['success', 'tool_call_success', 'stall', 'success', 'tool_call_success', 'success'],
+    repeatLast: true,
+    successText: 'task done',
+    toolName: 'bash',
+    toolArguments: JSON.stringify({ command: 'echo tick >> out-log.txt' }),
+  })
+  const progress: string[] = []
+
+  const result = await h.swarm.runTeam(
+    {
+      topology: 'peer-team',
+      messaging: true,
+      members: [{ name: 'solo' }],
+      tasks: [{ subject: 'one', prompt: 'append a tick' }],
+      memberIdleTimeoutMs: 2_000,
+      maxMemberRestarts: 1,
+    },
+    {
+      parent: h.lead.agent,
+      worktrees: { repoRoot: repo, member: { env: memberEnv(h) } },
+      onProgress: (line) => progress.push(line),
+    },
+  )
+
+  if (result.topology !== 'peer-team') throw new Error('wrong topology')
+
+  // 1. Detection fired and the restart happened.
+  expect(progress.some((l) => /restarting solo \(1\/1\)/.test(l))).toBe(true)
+
+  // 2. The replacement was briefed from the dead member's persisted log.
+  const recovered = h.mock.requests.filter((r) =>
+    JSON.stringify(r.body).includes('previous process ended'),
+  )
+  expect(recovered.length).toBeGreaterThan(0)
+  expect(JSON.stringify(recovered.at(-1)!.body)).toContain('append a tick')
+
+  // 3. The task finished despite the death.
+  for (const task of result.tasks) expect(task.status).toBe('completed')
+
+  // 4. THE POINT: work done BEFORE the crash is in the merged branch beside
+  //    work done after. The worktree is what actually survives a restart, so
+  //    both bash invocations must be present — one tick from each life.
+  const git = result.git!
+  expect(git.conflicts).toEqual([])
+  expect(git.merged.map((m) => m.taskKey)).toContain('solo')
+  const log = execFileSync('git', ['show', `${git.targetBranch}:out-log.txt`], {
+    cwd: repo,
+  }).toString()
+  expect(log.trim().split('\n')).toEqual(['tick', 'tick'])
+}, 120_000)

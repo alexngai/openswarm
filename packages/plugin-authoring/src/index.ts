@@ -12,7 +12,12 @@
  *    freely allowed. Worst case is a broken child; disposing the agent
  *    unwinds it.
  *  - `lead` scope mounts into the shared root context, changing the harness
- *    for everyone — allowed only when an approval gate authorizes it.
+ *    for everyone — allowed only when an approval gate authorizes it. The
+ *    default gate puts the question to the human through dsh's own approval
+ *    seam (`ctx.approval`), which every UI surface renders and which fails
+ *    closed: no answerer, a `never` session policy, or a withdrawn question
+ *    all deny. Without that service composed the mount is refused outright,
+ *    so a headless run never silently grants shared scope.
  *
  * The module source is evaluated as an ES module data: URL, exposing exactly
  * one capability to the plugin — `defineTool` — so an authored plugin's
@@ -21,24 +26,63 @@
  * governs anything the plugin reaches for on its own).
  */
 import type { Context } from '@deepseek-ai/cordis'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+// Type-only, for the `ctx.approval` Context augmentation. The service itself
+// is a dsh-base row, so it is present in every profile we ship.
+import type {} from '@deepseek-ai/dsh-user-approval'
 
 export type PluginScope = 'self' | 'lead'
 
-/** Decides whether a `lead`-scope mount is allowed. `self` is always allowed. */
-export type ApprovalGate = (request: {
+/** One pending `lead`-scope mount put to a gate. */
+export interface LeadMountRequest {
+  /** The authoring agent, for routing the question to the surface that owns it. */
+  agent: Agent | undefined
   agentId: string
   name: string
   source: string
-}) => boolean | Promise<boolean>
+  /** The tool call being decided, so a UI can attach the prompt to it. */
+  callId?: string
+  /** Withdraws the question when the tool call is aborted. */
+  signal?: AbortSignal
+}
+
+/** Decides whether a `lead`-scope mount is allowed. `self` is always allowed. */
+export type ApprovalGate = (request: LeadMountRequest) => boolean | Promise<boolean>
 
 export interface PluginAuthoringConfig {
   /** Root context that `lead`-scope plugins mount into (defaults to the mount ctx). */
   leadContext?: Context
-  /** Gate for `lead`-scope mounts. Default: deny (self-scope only until wired). */
+  /** Gate for `lead`-scope mounts. Default: ask the human via `ctx.approval`. */
   approveLeadMount?: ApprovalGate
   /** Cap on live agent-authored plugins per scope owner. Default 16. */
   maxPlugins?: number
+}
+
+/**
+ * The default gate: one fail-closed question on dsh's approval seam. Absent
+ * the service (a bare hand-built context) there is nobody to ask, so the
+ * mount is denied — `allowed-once` is the seam's only grant.
+ */
+export function userApprovalGate(ctx: Context): ApprovalGate {
+  return async (request) => {
+    const approval = ctx.get('approval')
+    if (approval === undefined || request.agent === undefined) return false
+    try {
+      const outcome = await approval.request({
+        agent: request.agent,
+        toolName: 'swarm_author_plugin',
+        ...(request.callId === undefined ? {} : { callId: request.callId as never }),
+        ...(request.signal === undefined ? {} : { signal: request.signal }),
+        reason: `mount the agent-authored plugin "${request.name}" into the SHARED harness, changing tools for the whole team until it is disposed`,
+      })
+      return outcome === 'allowed-once'
+    } catch {
+      // The seam rejects an ask with no open turn, and an audit append can
+      // fail. Either way nobody granted anything: deny.
+      return false
+    }
+  }
 }
 
 export const name = 'openswarm-plugin-authoring'
@@ -74,7 +118,7 @@ interface MountedPlugin {
 export function apply(ctx: Context, config: PluginAuthoringConfig = {}): void {
   const mounted: MountedPlugin[] = []
   const maxPlugins = config.maxPlugins ?? 16
-  const approve = config.approveLeadMount ?? (() => false)
+  const approve = config.approveLeadMount ?? userApprovalGate(ctx)
 
   const disposeAll = () => {
     for (const p of mounted.splice(0)) p.dispose()
@@ -123,7 +167,14 @@ export function apply(ctx: Context, config: PluginAuthoringConfig = {}): void {
         }
 
         if (scope === 'lead') {
-          const ok = await approve({ agentId, name: String(args.name), source: String(args.source) })
+          const ok = await approve({
+            agent: exec.agent,
+            agentId,
+            name: String(args.name),
+            source: String(args.source),
+            ...(exec.callId === undefined ? {} : { callId: String(exec.callId) }),
+            ...(exec.signal === undefined ? {} : { signal: exec.signal as AbortSignal }),
+          })
           if (!ok) return { mounted: false, scope, reason: 'lead-scope mount not approved' }
         }
 

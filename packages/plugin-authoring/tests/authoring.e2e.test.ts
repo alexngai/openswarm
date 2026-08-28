@@ -7,6 +7,7 @@
  */
 import { afterEach, expect, it } from 'vitest'
 import * as PluginAuthoring from '../src/index'
+import { userApprovalGate } from '../src/index'
 import { bootHarness, type TestHarness } from '../../swarm/tests/boot'
 
 let h: TestHarness | undefined
@@ -98,3 +99,49 @@ it('lead-scope is refused without approval and admitted with it', async () => {
 function result(r: any): any {
   return r.value ?? r
 }
+
+/** A ctx exposing only what the default gate reaches for: `ctx.get('approval')`. */
+function ctxWithApproval(approval: unknown): any {
+  return { get: (name: string) => (name === 'approval' ? approval : undefined) }
+}
+
+const leadRequest = {
+  agent: { id: 'a1' } as never,
+  agentId: 'a1',
+  name: 'shouter',
+  source: SHOUT_PLUGIN,
+  callId: 'call-1',
+}
+
+it('the default gate asks ctx.approval and grants only on allowed-once', async () => {
+  const asked: any[] = []
+  const gate = (outcome: string) =>
+    userApprovalGate(
+      ctxWithApproval({
+        request: (req: unknown) => {
+          asked.push(req)
+          return Promise.resolve(outcome)
+        },
+      }),
+    )
+
+  expect(await gate('allowed-once')(leadRequest)).toBe(true)
+  // The question reached the seam naming the tool and why it is asking.
+  expect(asked[0]).toMatchObject({ toolName: 'swarm_author_plugin', callId: 'call-1' })
+  expect(asked[0].reason).toContain('SHARED harness')
+
+  // Every other outcome in the seam's vocabulary denies.
+  for (const outcome of ['rejected', 'cancelled', 'unavailable']) {
+    expect(await gate(outcome)(leadRequest), outcome).toBe(false)
+  }
+})
+
+it('the default gate fails closed with no approval service and on a throwing one', async () => {
+  // No service composed (a bare headless context): nobody to ask.
+  expect(await userApprovalGate(ctxWithApproval(undefined))(leadRequest)).toBe(false)
+  // The seam rejects an ask outside an open turn — still nobody granted it.
+  const throwing = ctxWithApproval({
+    request: () => Promise.reject(new Error('no turn is open')),
+  })
+  expect(await userApprovalGate(throwing)(leadRequest)).toBe(false)
+})

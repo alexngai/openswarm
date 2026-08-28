@@ -82,6 +82,20 @@ it.skipIf(!ready)('the dev server profile enables the app-server and omits the o
   expect(stdout).not.toContain('headless-runner')
 })
 
+it.skipIf(!ready)('the web profile layers dsh browser UI under the openswarm rows', async () => {
+  const { stdout } = await dsh(['--profile', 'openswarm-web', '--dump-config'])
+  // dsh's browser surface...
+  expect(stdout).toContain('@deepseek-ai/dsh-host-webserver')
+  expect(stdout).toContain('@deepseek-ai/dsh-client-ui-commands')
+  // ...with the openswarm rows composed over it, including the `/swarm` entry.
+  expect(stdout).toContain('openswarm-swarm/command')
+  expect(stdout).toMatch(/id: llm-deepseek[\s\S]*?disabled: true/)
+  // No one-shot runner: the bound webserver keeps this surface alive.
+  expect(stdout).not.toContain('headless-runner')
+})
+
+// Booting the web surface and driving it lives in web-api.e2e.test.ts.
+
 it.skipIf(!ready)('boots the composed profile and runs a fanout team', async () => {
   mock = await startMockLlmServer({ apiKey: 'mock-key', sequence: ['success'], repeatLast: true, successText: 'profile-answer' })
   const base = mock.baseURL.endsWith('/v1') ? mock.baseURL : `${mock.baseURL}/v1`

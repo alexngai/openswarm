@@ -127,6 +127,16 @@ export interface PeerTeamSpec {
    * Default false: one-shot members, no messaging.
    */
   messaging?: boolean
+  /** Times one task may be retried on a sibling before it is abandoned (default 2). */
+  maxTaskAttempts?: number
+  /**
+   * Warm restarts allowed per member before its task falls to a sibling
+   * (default 1). Remote messaging teams only — the replacement is briefed from
+   * the dead member's persisted log plus its surviving worktree.
+   */
+  maxMemberRestarts?: number
+  /** Fail a member turn producing no event for this long (default 5min). */
+  memberIdleTimeoutMs?: number
 }
 
 export type TeamSpec =

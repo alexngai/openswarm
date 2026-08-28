@@ -1,9 +1,10 @@
 // Initialize an OpenSwarm dsh profile home for local boot (docs/01
 // packaging). Creates $DSH_HOME/profiles/<name>/ listing dsh-base +
 // openswarm-bundle, and heals a flat node_modules so bare plugin names in
-// the patch resolve to the workspace packages. Two profiles:
-//   openswarm      — HMR cold (headless/eval default)
+// the patch resolve to the workspace packages. Three profiles:
+//   openswarm      — HMR cold, one-shot headless runner (headless/eval default)
 //   openswarm-dev  — HMR hot + app-server bound (cordis.dev.patch.yml)
+//   openswarm-web  — dsh's browser UI over the OpenSwarm context
 //
 // Usage: node scripts/init-profile.mjs [dshHome]   (default .dsh-home)
 import { mkdirSync, writeFileSync, symlinkSync, existsSync, rmSync, readdirSync, readFileSync } from 'node:fs'
@@ -70,16 +71,23 @@ function linkSiblings() {
   }
 }
 
-function initProfile(name, extraBundles = []) {
+// Profile → its bundle layer stack, in application order. `openswarm-bundle`
+// is always last so its rows win over whatever surface sits beneath it.
+//
+// Only `openswarm` carries the headless one-shot runner (drive a task, exit).
+// The other two are long-lived surfaces kept alive by their own bound socket:
+// the app-server for `-dev`, dsh's own webserver for `-web`.
+const BASE = '@deepseek-ai/dsh-base'
+const PROFILES = {
+  openswarm: [BASE, '@deepseek-ai/dsh-headless', 'openswarm-bundle'],
+  'openswarm-dev': [BASE, 'openswarm-bundle'],
+  'openswarm-web': [BASE, '@deepseek-ai/dsh-web-app', 'openswarm-bundle'],
+}
+
+function initProfile(name) {
   const dir = join(dshHome, 'profiles', name)
   mkdirSync(dir, { recursive: true })
-  // The headless one-shot runner drives a task then exits — right for the
-  // cold `openswarm` profile (headless/eval). The `-dev` server profile omits
-  // it: the app-server's bound socket keeps the process alive to serve.
-  const isServer = name.endsWith('-dev')
-  const bundles = isServer
-    ? ['@deepseek-ai/dsh-base', 'openswarm-bundle', ...extraBundles]
-    : ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-headless', 'openswarm-bundle', ...extraBundles]
+  const bundles = PROFILES[name]
   writeFileSync(
     join(dir, 'package.json'),
     JSON.stringify(
@@ -105,6 +113,5 @@ function initProfile(name, extraBundles = []) {
 
 linkSiblings()
 mkdirSync(dshHome, { recursive: true })
-initProfile('openswarm')
-initProfile('openswarm-dev')
+for (const name of Object.keys(PROFILES)) initProfile(name)
 console.log(`DSH_HOME=${dshHome}`)

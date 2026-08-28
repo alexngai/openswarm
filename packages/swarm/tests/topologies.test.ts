@@ -140,6 +140,37 @@ it('coordinator decomposes, round-robins workers, and synthesizes', async () => 
   expect(synthPrompt).toContain('r-third')
 })
 
+it('coordinator reports progress as the plan, each subtask, and the synthesis land', async () => {
+  const { run } = fakeRun({
+    boss: ['1. first part\n2. second part\n3. third part', 'the synthesis'],
+    w1: ['r-first', 'r-third'],
+    w2: ['r-second'],
+  })
+  const lines: string[] = []
+  await runCoordinator(
+    { topology: 'coordinator', coordinator: m('boss'), workers: [m('w1'), m('w2')], task: 'big job' },
+    run,
+    (line) => lines.push(line),
+  )
+
+  expect(lines[0]).toContain('planning with boss')
+  expect(lines[1]).toBe('plan: 3 subtask(s) across 2 worker(s)')
+  // One line per settled subtask, counted by completion order so the running
+  // tally is monotonic even though subtasks settle out of order.
+  expect(lines.slice(2, 5).map((l) => l.slice(0, 5))).toEqual(['[1/3]', '[2/3]', '[3/3]'])
+  expect(lines.slice(2, 5).join('\n')).toContain('first part')
+  expect(lines.at(-1)).toContain('synthesizing with boss')
+})
+
+it('coordinator without a progress callback still runs (the default is a no-op)', async () => {
+  const { run } = fakeRun({ boss: ['1. only part', 'done'], w: ['r'] })
+  const result = await runCoordinator(
+    { topology: 'coordinator', coordinator: m('boss'), workers: [m('w')], task: 't' },
+    run,
+  )
+  expect(result.synthesis.text).toBe('done')
+})
+
 it('coordinator fails loud on an unparseable plan', async () => {
   const { run } = fakeRun({ boss: ['no list here'], w: [] })
   await expect(

@@ -3,7 +3,7 @@
   "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "openswarm",
+      "name": "openswarm-legacy",
       "dependencies": {
         "@agentclientprotocol/sdk": "^0.24.0",
         "@ai-sdk/amazon-bedrock": "^4.0.134",
