@@ -1,5 +1,5 @@
 {
-  "name": "openswarm",
+  "name": "openswarm-legacy",
   "version": "0.4.0",
   "private": true,
   "description": "OpenSwarm multi-agent coding CLI: one agent is a tool, N coordinated agents are the product. Built on Anthropic's Claude Agent SDK with swarm/team orchestration, multi-provider support, and a Bun-native interactive TUI.",
