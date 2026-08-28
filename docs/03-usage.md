@@ -46,7 +46,7 @@ Force a choice with `--provider` / `--model` or `OPENSWARM_PROVIDER` / `OPENSWAR
 The launcher's `init-profile.mjs` writes three profiles into the home and heals a `node_modules` so the bundle's plugins resolve by bare name:
 
 - **`openswarm`** — HMR cold, includes `dsh-headless` (one-shot task runner → drives a task, then exits). The default for `openswarm run` and for eval.
-- **`openswarm-dev`** — HMR hot, app-server bound, and **no** headless runner (the app-server's socket keeps the process alive to serve). Used by `openswarm serve`.
+- **`openswarm-dev`** — HMR hot, app-server bound, and **no** headless runner (the app-server's socket keeps the process alive to serve). Used by `openswarm serve`. Edit a package's source, run `npm run build`, and the *running* server picks up the new `dist` without restarting — see [Hot reload](#hot-reload-editing-a-running-harness).
 - **`openswarm-web`** — dsh's own browser surface (`@deepseek-ai/dsh-web-app`) with the OpenSwarm layer over it; the bound webserver keeps it alive. Used by `openswarm web`.
 
 Each stack ends with `openswarm-bundle`, so the OpenSwarm rows override whatever surface sits beneath them.
@@ -115,6 +115,18 @@ Two blast radii:
 
 Pass `approveLeadMount` in the row's config to substitute your own policy.
 
+### What an authored plugin can reach
+
+`swarm_author_plugin` hands the module exactly one capability — `defineTool`.
+That is a capability-passing convention, **not a sandbox**. A `data:` URL module
+cannot resolve bare specifiers, but it *can* import `node:` builtins, and both
+`node:fs` and `node:child_process` are reachable from authored source today.
+
+So read the two scopes below as blast radius for **mounting** — who can change
+the shared harness — not as a limit on what mounted code may do. Actual
+confinement comes from the approval gate plus whatever sandbox/permission layer
+your profile composes; a bare hand-built context composes none.
+
 ### Surviving a restart
 
 By default nothing outlives its process: Cordis unwinds every mount on dispose,
@@ -146,6 +158,45 @@ Related, from dsh itself: the shipped **`cordis` agent preset** ("创造模式")
 `tool-cordis`, which inspects and edits the live composition, plus skills for
 authoring Cordis plugins and presets. Pick it from the agent-preset selector in
 the web UI when you want the agent to reason about the running tree.
+
+## Hot reload: editing a running harness
+
+On `openswarm-dev`, a rebuilt `dist` replaces live code in the running process —
+no restart:
+
+```bash
+openswarm serve --port 4620      # leave it running
+# …edit packages/app-server/src/index.ts…
+npm run build                    # the running server picks it up
+```
+
+The one thing that makes this work is `base` in the dev overlay:
+
+```yaml
+- id: hmr
+  disabled: false
+  config:
+    base: !!js process.env.OPENSWARM_HMR_BASE ?? process.cwd()
+    root: ['packages']
+```
+
+`root` resolves against `base`, and **`base` defaults to the profile directory,
+not your working directory** — so the intuitive `root: ['.']` watches
+`~/.openswarm/profiles/openswarm-dev/`, whose contents are config files and a
+`node_modules` of symlinks that the default `ignored` excludes. The watcher then
+never sees your repo, and the failure is *silent*: no reload, no restart, no
+error, with the row still reporting `disabled: false`. If hot reload seems dead,
+check `base` before anything else. Override it with `OPENSWARM_HMR_BASE` when
+running from outside the repo.
+
+This needs no Node flags. `cordis-plugin-hmr` wants Node's internal module
+loader, and while `--expose-internals` is one way to expose it,
+`cordis-plugin-loader` falls back to `node-addon-require-builtin` — so the
+launcher passes no flag, and the unstable-`internal/*` surface stays closed.
+
+Not available on the **web** profile: `dsh-web-app` disables the `hmr` row
+upstream, noting its reload lifecycle is untested. Hot reload is an app-server
+capability today.
 
 ## Gating a run on build + test (self-modification)
 
@@ -219,7 +270,14 @@ Worktree runs clean up after themselves in two ways: an abort or throw drops thi
 npm test                          # full keyless suite (scripted mock LLM)
 npm run typecheck                 # tsc across all packages
 OPENSWARM_LIVE=1 npm test         # + env-gated live tests (needs AZURE_/AWS creds)
+OPENSWARM_HMR_E2E=1 npx vitest run packages/bundle/tests/hmr-reload.e2e.test.ts
 ```
+
+The HMR e2e is gated separately because it is invasive rather than merely
+keyless-or-not: it edits a package's source in your working tree and runs
+`npm run build` twice. It refuses to start on a dirty checkout and restores in a
+`finally`; if a hard kill interrupts it, `git checkout packages/` clears the
+marker.
 
 Live tests skip themselves without `OPENSWARM_LIVE=1` and the relevant creds. The reusable message-boarding harness ([`board-harness.ts`](../packages/swarm/tests/support/board-harness.ts)) runs the same durable-mailbox scenarios in mock and live mode from one place.
 
