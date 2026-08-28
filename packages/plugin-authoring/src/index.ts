@@ -25,6 +25,9 @@
  * network, no process access is handed in (the sandbox/permission layer still
  * governs anything the plugin reaches for on its own).
  */
+import { createHash } from 'node:crypto'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -57,6 +60,13 @@ export interface PluginAuthoringConfig {
   approveLeadMount?: ApprovalGate
   /** Cap on live agent-authored plugins per scope owner. Default 16. */
   maxPlugins?: number
+  /**
+   * Directory persisting APPROVED `lead`-scope plugins so they survive a
+   * restart. Omitted (the default) means no plugin outlives its process.
+   * `self` scope is never persisted: it belongs to an agent that will not
+   * exist after a restart, so there is nothing to mount it into.
+   */
+  persistDir?: string
 }
 
 /**
@@ -115,7 +125,116 @@ interface MountedPlugin {
   dispose: () => void
 }
 
-export function apply(ctx: Context, config: PluginAuthoringConfig = {}): void {
+/**
+ * What the human actually approved, keyed by plugin name: the exact bytes.
+ *
+ * The digest is the whole point. A member harness carries ordinary file-write
+ * tools, so without it a model could drop a `.mjs` straight into `persistDir`
+ * and have it mounted at LEAD scope on the next boot — reaching shared scope
+ * while never once passing the approval gate. Restoring only files whose hash
+ * still matches a recorded approval closes that path: the gate remains the
+ * only way in, and an edit after the fact invalidates the grant.
+ */
+interface ApprovalRecord {
+  sha256: string
+  approvedAt: string
+}
+
+type ApprovalManifest = Record<string, ApprovalRecord>
+
+const MANIFEST = 'approved.json'
+
+const sha256 = (s: string): string => createHash('sha256').update(s, 'utf8').digest('hex')
+
+const pluginFile = (dir: string, name: string): string => join(dir, `${encodeURIComponent(name)}.mjs`)
+
+function readManifest(dir: string): ApprovalManifest {
+  try {
+    const parsed = JSON.parse(readFileSync(join(dir, MANIFEST), 'utf8'))
+    return parsed !== null && typeof parsed === 'object' ? (parsed as ApprovalManifest) : {}
+  } catch {
+    return {} // absent or corrupt: nothing is approved, so nothing restores
+  }
+}
+
+/** Record an approved lead mount so a later boot can restore exactly it. */
+function persistApproved(dir: string, name: string, source: string): void {
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(pluginFile(dir, name), source, 'utf8')
+  const manifest = readManifest(dir)
+  manifest[name] = { sha256: sha256(source), approvedAt: new Date().toISOString() }
+  writeFileSync(join(dir, MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+}
+
+/** One restored plugin, or why it was skipped. */
+export interface RestoreOutcome {
+  name: string
+  mounted: boolean
+  reason?: string
+}
+
+/** Compile one module and mount it, or explain why it did not mount. */
+async function mountModule(
+  target: Context,
+  name: string,
+  source: string,
+): Promise<{ dispose: () => void } | { error: string }> {
+  let plugin: any
+  try {
+    plugin = await loadPluginModule(source)
+  } catch (error) {
+    return { error: `module failed to load: ${errText(error)}` }
+  }
+  const applyFn = plugin.apply ?? plugin.default
+  if (typeof applyFn !== 'function') return { error: 'module exports no apply(ctx) function' }
+  let fiber: any
+  try {
+    fiber = target.plugin({ name, apply: applyFn })
+    await fiber.await?.()
+  } catch (error) {
+    await fiber?.dispose?.().catch(() => undefined)
+    return { error: `plugin apply failed: ${errText(error)}` }
+  }
+  return { dispose: () => void fiber.dispose?.() }
+}
+
+/**
+ * Re-mount every previously approved lead-scope plugin whose bytes still match
+ * their approval. This is what makes an agent's modification outlive the
+ * process that authored it. A file with no manifest entry, or one whose
+ * contents changed since approval, is skipped — it carries no human grant.
+ */
+export async function restoreApprovedPlugins(
+  target: Context,
+  dir: string,
+  onMount?: (entry: { name: string; dispose: () => void }) => void,
+): Promise<RestoreOutcome[]> {
+  const manifest = readManifest(dir)
+  const outcomes: RestoreOutcome[] = []
+  for (const [name, record] of Object.entries(manifest)) {
+    let source: string
+    try {
+      source = readFileSync(pluginFile(dir, name), 'utf8')
+    } catch {
+      outcomes.push({ name, mounted: false, reason: 'approved plugin file is missing' })
+      continue
+    }
+    if (sha256(source) !== record?.sha256) {
+      outcomes.push({ name, mounted: false, reason: 'source changed since it was approved' })
+      continue
+    }
+    const result = await mountModule(target, name, source)
+    if ('error' in result) {
+      outcomes.push({ name, mounted: false, reason: result.error })
+      continue
+    }
+    onMount?.({ name, dispose: result.dispose })
+    outcomes.push({ name, mounted: true })
+  }
+  return outcomes
+}
+
+export async function apply(ctx: Context, config: PluginAuthoringConfig = {}): Promise<void> {
   const mounted: MountedPlugin[] = []
   const maxPlugins = config.maxPlugins ?? 16
   const approve = config.approveLeadMount ?? userApprovalGate(ctx)
@@ -124,6 +243,7 @@ export function apply(ctx: Context, config: PluginAuthoringConfig = {}): void {
     for (const p of mounted.splice(0)) p.dispose()
   }
   ctx.effect(() => disposeAll)
+
 
   ctx.tools.register(
     defineTool({
@@ -178,33 +298,41 @@ export function apply(ctx: Context, config: PluginAuthoringConfig = {}): void {
           if (!ok) return { mounted: false, scope, reason: 'lead-scope mount not approved' }
         }
 
-        let plugin: any
-        try {
-          plugin = await loadPluginModule(String(args.source))
-        } catch (error) {
-          return { mounted: false, scope, reason: `module failed to load: ${errText(error)}` }
-        }
-        const applyFn = plugin.apply ?? plugin.default
-        if (typeof applyFn !== 'function') {
-          return { mounted: false, scope, reason: 'module exports no apply(ctx) function' }
-        }
-
         // self → the authoring agent's own scoped context; lead → the shared root.
         const target: Context =
           scope === 'lead' ? (config.leadContext ?? ctx) : (exec.agent?.ctx ?? ctx)
-        let fiber: any
-        try {
-          fiber = target.plugin({ name: String(args.name), apply: applyFn })
-          await fiber.await?.()
-        } catch (error) {
-          await fiber?.dispose?.().catch(() => undefined)
-          return { mounted: false, scope, reason: `plugin apply failed: ${errText(error)}` }
+        const name = String(args.name)
+        const source = String(args.source)
+        const result = await mountModule(target, name, source)
+        if ('error' in result) return { mounted: false, scope, reason: result.error }
+
+        mounted.push({ name, scope, dispose: result.dispose })
+        // Persist only an approved lead mount, and only once it actually
+        // mounted — a module that throws on apply is not worth restoring.
+        if (scope === 'lead' && config.persistDir !== undefined) {
+          try {
+            persistApproved(config.persistDir, name, source)
+          } catch (error) {
+            return { mounted: true, scope, reason: `mounted but not persisted: ${errText(error)}` }
+          }
         }
-        mounted.push({ name: String(args.name), scope, dispose: () => void fiber.dispose?.() })
         return { mounted: true, scope }
       },
     } as never),
   )
+
+  // Bring back what a previous process was granted. This runs AFTER the
+  // register above — an async function body is synchronous up to its first
+  // await — so `swarm_author_plugin` is live either way, and awaiting here
+  // means the fiber is not ready until restored tools are too. A failed
+  // restore must not take the harness down: a missing tool is recoverable,
+  // a dead context is not.
+  if (config.persistDir !== undefined) {
+    const target = config.leadContext ?? ctx
+    await restoreApprovedPlugins(target, config.persistDir, (entry) =>
+      mounted.push({ name: entry.name, scope: 'lead', dispose: entry.dispose }),
+    ).catch(() => [])
+  }
 }
 
 function errText(error: unknown): string {
