@@ -15,7 +15,7 @@
  */
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, readdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 
@@ -225,6 +225,52 @@ export class SwarmGit {
     })
     this.worktrees.delete(info.taskKey)
     this.worktreePromises.delete(info.taskKey)
+  }
+
+  /**
+   * Tear down every worktree this run created — task, target, and scratch —
+   * without merging. The abort path: branches always survive, so nothing a
+   * member committed is lost, but the checkouts stop littering the repo.
+   */
+  async removeAll(): Promise<void> {
+    for (const info of [...this.worktrees.values()]) await this.removeWorktree(info)
+    await this.dispose()
+  }
+
+  /**
+   * Remove worktrees left behind by teams that died before finalizing (SIGKILL,
+   * a crashed host, a killed terminal) — the case try/finally cannot cover.
+   *
+   * `git worktree prune` clears git's administrative records for directories
+   * that no longer exist; the directory pass then removes team dirs git no
+   * longer lists, which is the reverse leak (dir on disk, record pruned).
+   * Only ever touches `<repoRoot>/.swarm/worktrees/`, never a user path, and
+   * never a directory git still lists as a live worktree.
+   *
+   * ponytail: a live team's dirs ARE git-listed, so a concurrent run is safe
+   * without locking. Two swarms starting in the same millisecond could still
+   * race the prune; per-repo locking if that ever bites.
+   */
+  static async sweepOrphans(repoRoot: string, root?: string): Promise<string[]> {
+    await run('git', ['worktree', 'prune'], { cwd: repoRoot }).catch(() => undefined)
+    const dir = root ?? join(repoRoot, '.swarm', 'worktrees')
+    let teams: string[]
+    try {
+      teams = readdirSync(dir)
+    } catch {
+      return [] // nothing has ever run here
+    }
+    const listed = await run('git', ['worktree', 'list', '--porcelain'], { cwd: repoRoot })
+      .then(({ stdout }) => stdout)
+      .catch(() => '')
+    const removed: string[] = []
+    for (const team of teams) {
+      const path = join(dir, team)
+      if (listed.includes(path)) continue // a live team owns it
+      rmSync(path, { recursive: true, force: true })
+      removed.push(path)
+    }
+    return removed
   }
 
   /** Remove the target and scratch worktrees (branches survive). */

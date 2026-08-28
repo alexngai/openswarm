@@ -36,6 +36,13 @@ export type RunMember = (
 /** Weakest-link command confidence: 1 when every command exits 0, else 0. */
 export type RunConfidence = (commands: string[]) => Promise<number>
 
+/**
+ * One human-readable progress line from a running team. Only `coordinator`
+ * emits today — it is what `/swarm` drives; other topologies report nothing
+ * and their consumers see the final result as before.
+ */
+export type ReportProgress = (line: string) => void
+
 export async function runFanout(spec: FanoutSpec, run: RunMember): Promise<FanoutResult> {
   const byName = new Map(spec.members.map((m) => [m.name, m]))
   if (byName.size !== spec.members.length) throw new Error('duplicate member name in team spec')
@@ -189,23 +196,34 @@ export function parseNumberedPlan(text: string): string[] {
   return subtasks
 }
 
-export async function runCoordinator(spec: CoordinatorSpec, run: RunMember): Promise<CoordinatorResult> {
+export async function runCoordinator(
+  spec: CoordinatorSpec,
+  run: RunMember,
+  report: ReportProgress = () => {},
+): Promise<CoordinatorResult> {
   if (spec.workers.length === 0) throw new Error('coordinator needs at least one worker')
+  report(`planning with ${spec.coordinator.name}…`)
   const plan = await run(
     spec.coordinator,
     `Task:\n${spec.task}\n\nDecompose this task into independent subtasks, one per line, as a numbered list (1. …). Reply with only the list.`,
   )
   const prompts = parseNumberedPlan(plan.text)
   if (prompts.length === 0) throw new Error('coordinator produced no parseable numbered subtasks')
+  report(`plan: ${prompts.length} subtask(s) across ${spec.workers.length} worker(s)`)
+  let settled = 0
   const subtasks = await Promise.all(
     prompts.map(async (prompt, i) => {
       const worker = spec.workers[i % spec.workers.length]!
-      return { prompt, worker: worker.name, result: await run(worker, prompt, `subtask-${i}`) }
+      const result = await run(worker, prompt, `subtask-${i}`)
+      // Subtasks settle out of order; count completions rather than index.
+      report(`[${++settled}/${prompts.length}] ${worker.name}: ${prompt}`)
+      return { prompt, worker: worker.name, result }
     }),
   )
   const dossier = subtasks
     .map((s) => `--- Subtask: ${s.prompt} (by ${s.worker}) ---\n${s.result.text}`)
     .join('\n\n')
+  report(`synthesizing with ${spec.coordinator.name}…`)
   const synthesis = await run(
     spec.coordinator,
     `Task:\n${spec.task}\n\nSubtask results:\n\n${dossier}\n\nSynthesize the final deliverable for the task.`,

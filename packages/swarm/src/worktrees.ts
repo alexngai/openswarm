@@ -47,7 +47,39 @@ export interface WorktreeTeamOptions {
   worktreeDir?: string
   /** Commit dirty task worktrees before merging (default true). */
   autoCommit?: boolean
+  /**
+   * Most member harnesses running at once (default 8). Each is a full
+   * subprocess with its own model session, so an uncapped 50-task fanout
+   * would spawn 50 of them; excess runs queue for a slot.
+   */
+  maxConcurrent?: number
   member?: WorktreeMemberConfig
+}
+
+/**
+ * Minimal FIFO slot semaphore. `release` hands its slot straight to the next
+ * waiter rather than decrementing, so the active count never dips below the
+ * cap while work is queued.
+ */
+export class Slots {
+  private active = 0
+  private readonly waiting: (() => void)[] = []
+
+  constructor(private readonly limit: number) {}
+
+  acquire(): Promise<void> {
+    if (this.active < this.limit) {
+      this.active++
+      return Promise.resolve()
+    }
+    return new Promise<void>((resolve) => this.waiting.push(resolve))
+  }
+
+  release(): void {
+    const next = this.waiting.shift()
+    if (next === undefined) this.active--
+    else next()
+  }
 }
 
 /** Resolve the default child runtime bin (`dsh-jsonrpc-agent`). */
@@ -78,12 +110,14 @@ export function resolveMemberLaunch(cfg: WorktreeMemberConfig = {}): {
 export class WorktreeRun {
   readonly teamId = randomUUID().slice(0, 8)
   private readonly git: SwarmGit
+  private readonly slots: Slots
   private seq = 0
 
   constructor(
     private readonly ctx: Context,
     private readonly options: WorktreeTeamOptions,
   ) {
+    this.slots = new Slots(options.maxConcurrent ?? 8)
     this.git = new SwarmGit({
       repoRoot: options.repoRoot,
       teamId: this.teamId,
@@ -95,6 +129,23 @@ export class WorktreeRun {
 
   /** Run one member in the task's worktree (or the repo root without a key). */
   async runMember(
+    member: MemberSpec,
+    prompt: string,
+    taskKey: string | undefined,
+    run: RunTeamOptions,
+  ): Promise<MemberRunResult> {
+    // Wait for a harness slot before touching git or spawning anything, so a
+    // large fanout queues instead of creating N worktrees and N subprocesses
+    // up front.
+    await this.slots.acquire()
+    try {
+      return await this.runMemberInSlot(member, prompt, taskKey, run)
+    } finally {
+      this.slots.release()
+    }
+  }
+
+  private async runMemberInSlot(
     member: MemberSpec,
     prompt: string,
     taskKey: string | undefined,
@@ -154,6 +205,23 @@ export class WorktreeRun {
   /** Create (or return) the worktree for one task or member key. */
   worktree(key: string) {
     return this.git.worktree(key)
+  }
+
+  /**
+   * Clear worktrees left by teams that died before finalizing. Called once per
+   * run before any member starts, so a crashed predecessor does not accumulate
+   * checkouts in the user's repo.
+   */
+  sweepOrphans(): Promise<string[]> {
+    return SwarmGit.sweepOrphans(this.options.repoRoot, this.options.worktreeDir)
+  }
+
+  /**
+   * Abort path: drop every worktree without merging. Task branches survive, so
+   * committed member work is still recoverable by branch name.
+   */
+  abort(): Promise<void> {
+    return this.git.removeAll()
   }
 
   /** Auto-commit dirty task worktrees, run the merge queue, release the target. */

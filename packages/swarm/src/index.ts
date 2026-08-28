@@ -26,6 +26,7 @@ import {
   runPeerTeam,
   runPipeline,
   seedBoard,
+  type ReportProgress,
   type RunMember,
 } from './topologies'
 import { tmpdir } from 'node:os'
@@ -51,6 +52,7 @@ export {
   suppressSettlementTurns,
 } from './peers'
 export { parseNumberedPlan } from './topologies'
+export type { ReportProgress } from './topologies'
 export { RemotePeer } from './remote-peer'
 export { SwarmServer } from './server'
 export { WorktreeRun } from './worktrees'
@@ -79,6 +81,12 @@ export interface RunTeamOptions {
    * multi-turn remote members in per-MEMBER worktrees (docs/01 Phase 4).
    */
   worktrees?: WorktreeTeamOptions
+  /**
+   * Receives human-readable progress lines as the team advances. Only the
+   * `coordinator` topology emits today (it is what `/swarm` drives); the
+   * others run silently and return their result as before.
+   */
+  onProgress?: ReportProgress
 }
 
 const execFileAsync = promisify(execFile)
@@ -155,8 +163,20 @@ export default class SwarmService extends Service {
       worktrees === undefined
         ? this.runMember(member, prompt, options)
         : worktrees.runMember(member, prompt, taskKey, options)
-    const result = await this.dispatch(spec, run, options, worktrees)
-    if (worktrees === undefined) return result
+    if (worktrees === undefined) return this.dispatch(spec, run, options, worktrees)
+
+    // Clear anything a previously crashed team left in this repo before adding
+    // our own checkouts.
+    await worktrees.sweepOrphans()
+    let result: TeamResult
+    try {
+      result = await this.dispatch(spec, run, options, worktrees)
+    } catch (error) {
+      // Abort (signal or throw): drop our worktrees rather than leaving them
+      // for the next sweep. Branches survive, so committed work is recoverable.
+      await worktrees.abort().catch(() => undefined)
+      throw error
+    }
     return { ...result, git: await worktrees.finalize() }
   }
 
@@ -182,7 +202,7 @@ export default class SwarmService extends Service {
           options.confidenceRunner ?? defaultConfidenceRunner(options.confidenceCwd ?? process.cwd()),
         )
       case 'coordinator':
-        return runCoordinator(spec, run)
+        return runCoordinator(spec, run, options.onProgress)
       case 'peer-team':
         return spec.messaging === true
           ? worktrees === undefined

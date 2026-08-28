@@ -79,10 +79,15 @@ extra is configured.
 
 The command is registered by the `openswarm-swarm/command` bundle row, so it
 appears on any dsh surface that renders the command registry — the browser UI
-today, a TUI profile when one ships. It awaits the whole run before returning
-(a `CommandResult` is the only channel the registry offers); long teams block
-the command for their duration. A live Azure run held the request open for 72s
-without trouble, so the ceiling is streaming progress, not the transport.
+today, a TUI profile when one ships.
+
+While the team runs, it holds a row in the surface's **background-jobs list**
+(the session-header control): label, status, and a ticking elapsed clock, with
+a shape summary once it settles. Killing that row cancels the team. The command
+itself awaits the run and returns the synthesis inline — dsh's job rows are
+read-only and carry no output, so returning early would put the result where no
+human surface can read it. A live Azure run held its request open 72s without
+trouble.
 
 **Send a chat message before your first `/swarm`.** Run as the very first
 action in a brand-new session, the command executes and lands in the session
@@ -127,7 +132,9 @@ A `spec` is a `TeamSpec` — e.g. `{ topology: 'fanout', members: [{name}], task
 
 ## Driving a team in-process
 
-`ctx.swarm.runTeam(spec, { parent, worktrees? })` is the programmatic entry point. `RunTeamOptions.worktrees` turns member runs into subprocess harnesses in per-task git worktrees and returns a merge outcome. Members set `agentOptions: { provider, model }` for heterogeneous rosters. See [`packages/swarm/tests/boot.ts`](../packages/swarm/tests/boot.ts) for a minimal composition.
+`ctx.swarm.runTeam(spec, { parent, worktrees? })` is the programmatic entry point. `RunTeamOptions.worktrees` turns member runs into subprocess harnesses in per-task git worktrees and returns a merge outcome. At most `worktrees.maxConcurrent` (default 8) harnesses run at once; the rest queue, so a large fanout does not spawn one subprocess per task up front. `onProgress` receives progress lines (coordinator topology only today).
+
+Worktree runs clean up after themselves in two ways: an abort or throw drops this run's checkouts without merging (branches survive, so committed work stays reachable), and each run first sweeps `.swarm/worktrees/` for teams that died before finalizing — the SIGKILL case try/finally cannot cover. Live teams are never touched, so concurrent runs are safe. Members set `agentOptions: { provider, model }` for heterogeneous rosters. See [`packages/swarm/tests/boot.ts`](../packages/swarm/tests/boot.ts) for a minimal composition.
 
 ## Testing
 
