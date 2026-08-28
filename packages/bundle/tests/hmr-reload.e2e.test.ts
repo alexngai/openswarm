@@ -39,7 +39,16 @@ let child: ChildProcess | undefined
 let original: string | undefined
 
 afterEach(async () => {
-  child?.kill('SIGTERM')
+  // The launcher execs dsh as its OWN child, so signalling the launcher alone
+  // leaves the harness holding the port. Spawned detached, so the negated pid
+  // signals the whole process group.
+  if (child?.pid !== undefined) {
+    try {
+      process.kill(-child.pid, 'SIGTERM')
+    } catch {
+      child.kill('SIGTERM')
+    }
+  }
   child = undefined
   if (original !== undefined) {
     writeFileSync(target, original, 'utf8')
@@ -108,12 +117,21 @@ it.skipIf(!enabled)(
       cwd: repo,
       env: { ...process.env, NO_COLOR: '1' },
       stdio: 'ignore',
+      detached: true,
     })
     await waitForPort(port)
 
-    // The flag must not be in play, or this proves the wrong thing.
-    const cmdline = await execFileAsync('ps', ['-o', 'command=', '-p', String(child.pid)])
-    expect(cmdline.stdout).not.toContain('expose-internals')
+    // The flag must not be in play, or this proves the wrong thing. Inspect the
+    // process actually BOUND to the port — the dsh harness the launcher
+    // spawned — not the launcher, which is not the one running HMR.
+    const { stdout: harnessPid } = await execFileAsync('lsof', [
+      '-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t',
+    ])
+    const pid = harnessPid.trim().split('\n')[0]!
+    const { stdout: cmdline } = await execFileAsync('ps', ['-o', 'command=', '-p', pid])
+    expect(cmdline, 'harness must run flag-free for this to prove anything').not.toContain(
+      'expose-internals',
+    )
     expect(process.env['NODE_OPTIONS'] ?? '').not.toContain('expose-internals')
 
     expect((await probe(port)).hmrProbe).toBeUndefined()
