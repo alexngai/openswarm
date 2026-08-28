@@ -256,7 +256,7 @@ export async function apply(ctx: Context, config: PluginAuthoringConfig = {}): P
           type: 'string',
           required: true,
           description:
-            'ES module source. It receives `defineTool` in scope and exports `apply(ctx)`; call ctx.tools.register(defineTool({...})) to add a tool.',
+            'ES module source. It receives `defineTool` in scope and exports `apply(ctx)`; call ctx.tools.register(defineTool({...})) to add a tool. In each defineTool call, `output` is REQUIRED and must contain both `schema` and `render`. `parameters` must be a flat record mapping each parameter name to its spec, e.g. { text: { type: \'string\', required: true, description: \'...\' } }; it is NOT a JSON-Schema object with type/properties.',
         },
         scope: {
           type: 'string',
