@@ -286,9 +286,15 @@ export function makeSelfModAdapter({ repoRoot, boot, gate }) {
             confidences: (result.attempts ?? []).map((a) => a.confidence),
             // Present only when a command gate rejected a tier — this is what
             // makes a rejection attributable rather than a bare 0.
+            // Command AND output. Storing only the command made a systematic
+            // gate rejection undiagnosable after the fact — the same bare-verdict
+            // mistake the cascade gate itself used to make.
             failures: (result.attempts ?? [])
-              .map((a) => a.failure?.command)
-              .filter((c) => c !== undefined),
+              .filter((a) => a.failure !== undefined)
+              .map((a) => ({
+                command: a.failure.command,
+                output: (a.failure.output ?? '').slice(-1200),
+              })),
             merged: result.git?.merged?.length ?? 0,
             withheld: result.git?.withheld?.length ?? 0,
             gradedBranch: branch,

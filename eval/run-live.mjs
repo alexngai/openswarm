@@ -100,7 +100,7 @@ for (const cell of results) {
     status: cell.status,
     tokens: cell.usage?.totalTokens ?? 0,
     seconds: Math.round((cell.durationMs ?? 0) / 1000),
-    failedGateCommand: (m.failures ?? [])[0],
+    failedGateCommand: (m.failures ?? [])[0]?.command,
   })
 }
 const count = (a, c) => cells.filter((x) => x.accepted === a && x.correct === c).length
