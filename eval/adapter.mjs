@@ -45,6 +45,27 @@ function provision(repoRoot, ref, label) {
   return dir
 }
 
+/**
+ * Make `dest` a USABLE checkout of `ref`, not just its source.
+ *
+ * `git archive` exports tracked files only, so a bare export has no
+ * `node_modules` and no `packages/*[/]dist` (both gitignored) — every check that
+ * imports our built code would fail for want of a build rather than for want of
+ * a correct change. Sealed checks are therefore given the same thing a developer
+ * would have: source, dependencies, and a fresh build.
+ *
+ * Exported here rather than inlined because the discrimination guard has to
+ * materialize the BASE commit exactly the same way; a check proven against a
+ * differently-built tree proves nothing about the graded one.
+ */
+export function materialize(repoRoot, ref, dest) {
+  execFileSync('bash', ['-c', `git archive ${ref} | tar -x -C ${JSON.stringify(dest)}`], {
+    cwd: repoRoot,
+  })
+  execFileSync('cp', ['-al', join(repoRoot, 'node_modules'), join(dest, 'node_modules')])
+  execFileSync('npm', ['run', 'build'], { cwd: dest, stdio: 'ignore' })
+}
+
 function release(repoRoot, dir) {
   try {
     git(repoRoot, 'worktree', 'remove', '--force', dir)
@@ -142,11 +163,7 @@ export function makeSelfModAdapter({ repoRoot, boot, gate }) {
           // Export the branch's tree into the workspace the grader will read.
           // `git archive` rather than a checkout: it writes files without
           // touching an index or needing the workspace to be a git dir at all.
-          execFileSync(
-            'bash',
-            ['-c', `git archive ${branch} | tar -x -C ${JSON.stringify(ctx.workspace.root)}`],
-            { cwd: repoRoot },
-          )
+          materialize(repoRoot, branch, ctx.workspace.root)
           grading = ctx.workspace.root
         }
 
