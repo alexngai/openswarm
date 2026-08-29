@@ -1,6 +1,7 @@
 # 04 — Does the self-modification gate discriminate?
 
-**Status: design, not yet run.** An experiment design for measuring whether
+**Status: first run complete (2026-08-28). Results below.** An experiment for
+measuring whether
 `npm run presubmit` — the admission test the whole rung-5 self-modification
 loop rests on — actually separates good changes from bad ones.
 
@@ -77,8 +78,18 @@ In [`plugin-authoring/src/index.ts`](../packages/plugin-authoring/src/index.ts):
 
 In [`git/src/index.ts`](../packages/git/src/index.ts):
 
-- report a conflicted merge as merged
-- `removeAll()` skips a worktree, leaving a live checkout behind
+- a conflicted merge silently dropped instead of reported
+- gate pinning stops restoring tracked files (`known.push` disabled)
+- gate pinning stops removing member-added files (the `clean` pass)
+
+The last two are **attacks on the gate itself**, and they are in this class
+because of how they were found. Designing this experiment surfaced that the
+gate ran the repo's tests out of the member's own worktree — so a member could
+pass by deleting a test rather than fixing the code. That was a live
+vulnerability, fixed in `0d37382` by `confidencePinPaths`, and it existed
+because "a member won't attack the gate" was an unexamined assumption. Killing
+unexamined assumptions is what this class is for, so the pinning mechanism now
+has mutants of its own.
 
 These map onto real escalation and data-loss paths. `persistence.e2e.test.ts`
 and `authoring.e2e.test.ts` were written to defend exactly these; this class
@@ -122,6 +133,19 @@ assertion, and is a finding in its own right:
 - reorder two provably independent statements
 - add or reflow comments
 - `const x = a; return x` → `return a`
+
+## Running it
+
+```bash
+node scripts/mutation-gate.mjs                    # all classes
+node scripts/mutation-gate.mjs --only A,B         # containment + cascade logic
+node scripts/mutation-gate.mjs --limit 3          # smoke test
+```
+
+The mutant table lives in the script. Each entry's `find` string must occur
+**exactly once** in its file or the mutant is reported `broken` and excluded
+from scoring — a mutation that silently fails to apply would otherwise look
+like a survivor and deflate the score in the flattering direction.
 
 ## Procedure
 
@@ -173,6 +197,60 @@ Stated before the run, so the result cannot be rationalised afterwards.
 The Class A threshold is deliberately absolute. Those mutants correspond to
 bypassing a human approval or silently losing committed work; a gate that admits
 any of them is not a containment boundary regardless of its aggregate score.
+
+## Results — run 1, 2026-08-28
+
+22 mutants, baseline 3/3 clean, no flakes, no broken mutants.
+
+| Class | Result | Threshold | |
+|---|---|---|---|
+| A — containment | 6/7 killed (86%) | 100% | **FAILED** |
+| B — cascade logic | 6/6 killed (100%) | ≥90% | passed |
+| C — generic | 4/5 killed (80%) | ≥70% | passed |
+| D — control | 0/4 wrongly rejected | 0% | passed |
+
+Class D coming back clean is worth noting: no over-tight assertion rejected a
+semantics-preserving edit, so the false-rejection cost we paid during the live
+rung-5 run was environmental, not a property of the suite.
+
+### A7 survived, and the reason is the point of the exercise
+
+**A7** — gate pinning stops removing member-added files — survived, against a
+test written specifically to cover it hours earlier.
+
+That test had the member add `suite/extra.sh` *and* sabotage `value.txt`, then
+asserted `confidence === 0`. Confidence is 0 either way: with the clean pass
+working the restored `check.sh` fails on the sabotaged value; with it disabled
+the leftover file fails a different command. **The assertion could not
+distinguish the mechanism it named**, so it passed with that mechanism deleted.
+
+A tautological test is worse than no test, because it is counted as coverage. It
+had been giving false confidence about a security control since the hour it was
+written, and nothing short of this experiment would have said so.
+
+Fixed by removing the sabotage so the leftover file is the only thing that can
+fail the gate, asserting the PASSING direction (`confidence === 1`), and adding
+an unpinned control arm so the result is attributable to the clean pass rather
+than to anything else.
+
+### C4 — accepted survivor
+
+`restoreFromBase`'s empty-pathspec guard (`if (pathspecs.length === 0) return []`)
+is untested: with it disabled, an empty list reaches `git clean -fdq --`, which
+would clean the whole worktree. Latent rather than live — the sole caller only
+invokes it under `pinPaths.length > 0` — so it is recorded rather than fixed,
+but the guard is load-bearing and should not be removed on the grounds that
+nothing covers it.
+
+### Verdict
+
+Class B at 100% is the reassuring number: the cascade's own decision logic is
+well covered, including a mutant that reintroduces the `process.cwd()` gate bug
+fixed in `816bcb3`, which the suite now catches.
+
+But the pre-registered rule for Class A is absolute, and 86% is not 100%. Per
+that rule, **the undefended property gets a test before anything else**, which
+is what happened; rung 5 does not run unattended on the strength of run 1.
 
 ## What this does not measure
 

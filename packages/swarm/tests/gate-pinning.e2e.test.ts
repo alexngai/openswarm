@@ -109,32 +109,54 @@ it('PINNED: the same sabotage is caught, because the check is restored first', a
   expect(progress.some((l) => l.includes('discarded member edits'))).toBe(true)
 }, 120_000)
 
+/**
+ * `suite/` does not exist at base, so `checkout` cannot restore it — only the
+ * clean pass removes it. That makes this the test that isolates clean.
+ *
+ * It must assert the PASSING direction. An earlier version had the member also
+ * sabotage value.txt and asserted `confidence === 0`, which is true whether or
+ * not clean runs (leftover file fails one command; sabotaged value fails the
+ * other). It therefore passed with the clean pass deleted — mutation A7 in
+ * docs/04 survived against it. Asserting 1 makes the leftover file the only
+ * thing that can fail the gate.
+ */
 it('pinning also removes files the member ADDED under a pinned path', async () => {
   const repo = scratchRepo()
-  h = await bootHarness({
-    sequence: ['tool_call_success', 'success'],
-    repeatLast: true,
-    successText: 'done',
-    toolName: 'bash',
-    // `checkout` alone would restore check.sh but leave this behind, so the
-    // clean pass is what makes the pinned tree actually equal to base.
-    toolArguments: JSON.stringify({
-      command: 'mkdir -p suite && echo "exit 0" > suite/extra.sh && echo bad > value.txt',
-    }),
+  const bootAdder = () =>
+    bootHarness({
+      sequence: ['tool_call_success', 'success'],
+      repeatLast: true,
+      successText: 'done',
+      toolName: 'bash',
+      // Note: value.txt is left ALONE, so `sh check.sh` passes on its own and
+      // the only way the gate can fail is a surviving suite/extra.sh.
+      toolArguments: JSON.stringify({
+        command: 'mkdir -p suite && echo "exit 0" > suite/extra.sh',
+      }),
+    })
+  const gate = {
+    ...spec,
+    confidence: { commands: ['test ! -e suite/extra.sh', 'sh check.sh'], tau: 1 },
+  }
+
+  h = await bootAdder()
+  const pinned = await h.swarm.runTeam(gate, {
+    parent: h.lead.agent,
+    confidencePinPaths: ['check.sh', 'suite'],
+    worktrees: { repoRoot: repo, member: { env: memberEnv(h) } },
   })
+  if (pinned.topology !== 'cascade') throw new Error('wrong topology')
+  // The added file is gone, so the gate passes.
+  expect(pinned.attempts[0]!.confidence).toBe(1)
 
-  const result = await h.swarm.runTeam(
-    {
-      ...spec,
-      confidence: { commands: ['test ! -e suite/extra.sh', 'sh check.sh'], tau: 1 },
-    },
-    {
-      parent: h.lead.agent,
-      confidencePinPaths: ['check.sh', 'suite'],
-      worktrees: { repoRoot: repo, member: { env: memberEnv(h) } },
-    },
-  )
-
-  if (result.topology !== 'cascade') throw new Error('wrong topology')
-  expect(result.attempts[0]!.confidence).toBe(0)
-}, 120_000)
+  // Control: without pinning the same file survives and the gate fails, so the
+  // assertion above is attributable to clean rather than to anything else.
+  await h.close()
+  h = await bootAdder()
+  const unpinned = await h.swarm.runTeam(gate, {
+    parent: h.lead.agent,
+    worktrees: { repoRoot: scratchRepo(), member: { env: memberEnv(h) } },
+  })
+  if (unpinned.topology !== 'cascade') throw new Error('wrong topology')
+  expect(unpinned.attempts[0]!.confidence).toBe(0)
+}, 180_000)
