@@ -21,7 +21,7 @@
  * the sealed checkpoints run against it.
  */
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync, readdirSync, statSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -139,6 +139,40 @@ function foldMemberUsage(sessionRoot) {
   return totals
 }
 
+/** Copy member session JSONL out of a per-cell root before it is discarded. */
+function copySessionLogs(sessionRoot, dest) {
+  const stack = [sessionRoot]
+  let n = 0
+  while (stack.length > 0) {
+    const dir = stack.pop()
+    let entries
+    try {
+      entries = readdirSync(dir)
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      const path = join(dir, entry)
+      let isDir
+      try {
+        isDir = statSync(path).isDirectory()
+      } catch {
+        continue
+      }
+      if (isDir) {
+        stack.push(path)
+      } else if (entry.endsWith('.jsonl')) {
+        mkdirSync(dest, { recursive: true })
+        try {
+          writeFileSync(join(dest, `member-${n++}.jsonl`), readFileSync(path))
+        } catch {
+          // Best effort: a torn log is still worth what was flushed.
+        }
+      }
+    }
+  }
+}
+
 function release(repoRoot, dir) {
   try {
     git(repoRoot, 'worktree', 'remove', '--force', dir)
@@ -157,7 +191,7 @@ function release(repoRoot, dir) {
  * @param opts.boot      () => harness (mock for validation, live for real runs)
  * @param opts.gate      commands the gated arm runs, and the paths it pins
  */
-export function makeSelfModAdapter({ repoRoot, boot, gate }) {
+export function makeSelfModAdapter({ repoRoot, boot, gate, artifactsDir }) {
   /**
    * Swarm branches created across the matrix, reclaimed by `cleanup()`. They
    * must outlive `run()`: the tree is exported from the branch into the
@@ -274,6 +308,35 @@ export function makeSelfModAdapter({ repoRoot, boot, gate }) {
           // outputs reported SUCCESS on exactly this path.
           materialize(repoRoot, branch ?? base, ctx.workspace.root)
           grading = ctx.workspace.root
+        }
+
+        // Preserve what the run actually DID, before teardown removes it. The
+        // diff and the member's tool-call log are the only direct evidence of
+        // how the harness modified itself; usage and a pass/fail cannot show
+        // whether a change was the intended one or an accident that satisfied
+        // the check. Both were being deleted — the branch by cleanup(), the
+        // session log right after usage was folded out of it.
+        if (artifactsDir !== undefined) {
+          const slug = `${cell.task.id}__${cell.arm.id}__seed${cell.seed ?? 0}`.replace(/[^A-Za-z0-9_.-]/g, '-')
+          const dest = join(artifactsDir, slug)
+          mkdirSync(dest, { recursive: true })
+          if (branch !== undefined) {
+            try {
+              writeFileSync(
+                join(dest, 'change.patch'),
+                execFileSync('git', ['diff', `${base}..${branch}`], { cwd: repoRoot, maxBuffer: 64 * 1024 * 1024 }),
+              )
+            } catch {
+              // A branch with no diff is a real outcome, not an error.
+            }
+          }
+          copySessionLogs(sessionRoot, join(dest, 'sessions'))
+          writeFileSync(
+            join(dest, 'outcome.json'),
+            `${JSON.stringify({ accepted: result.accepted === true, tier: result.tier, branch,
+              confidences: (result.attempts ?? []).map((a) => a.confidence),
+              failures: (result.attempts ?? []).filter((a) => a.failure).map((a) => a.failure) }, null, 2)}\n`,
+          )
         }
 
         return {

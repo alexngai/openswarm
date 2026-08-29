@@ -46,6 +46,10 @@ verifyDiscrimination(tasks, REPO, { onProgress: (l) => console.log(l) })
 const adapter = makeSelfModAdapter({
   repoRoot: REPO,
   boot: () => bootAzure(),
+  // Keep the diff and the member's tool-call log per cell. Numbers say whether
+  // a change passed; only these say what it WAS, and whether it was the change
+  // we asked for or an accident that happened to satisfy the check.
+  artifactsDir: resolve(import.meta.dirname, '.eval-runs/artifacts'),
   gate: {
     // The real gate, provisioning itself: the inner task worktree is
     // gitignore-clean, so without the hardlink `npm run presubmit` dies on
