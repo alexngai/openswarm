@@ -85,11 +85,20 @@ const sealedCheck = (id, source) => ({
 /**
  * "Nothing broke" — the PASS_TO_PASS half of ground truth.
  *
- * Retried once on failure, deliberately. This suite has timing-sensitive e2e
- * tests and has produced two non-reproducing failures in a day. A genuine
- * regression fails both attempts; a flake does not. Without the retry a flaky
- * run scores a CORRECT change as incorrect, biasing the 2×2 toward making the
- * gate look better than it is — the direction we would least question.
+ * NOT retried, deliberately — and it used to be.
+ *
+ * The retry was added to absorb a flaky suite, but the GATE does not retry, so
+ * ground truth held a capability the system under test lacked. A flake then
+ * failed the gate and passed ground truth, manufacturing a phantom
+ * "rejected & correct" cell — which is exactly what happened to slots-resize,
+ * where an unrelated messaging test failed the gate while the change itself was
+ * fine. Measuring the gate against a more forgiving oracle measures the gap
+ * between them, not the gate.
+ *
+ * Symmetric instead, with the underlying flake fixed at its source
+ * (board-harness `assertRecipientSaw` now polls rather than racing delivery).
+ * Residual flakiness will still surface as rejected & correct, which has to be
+ * checked case by case rather than papered over.
  */
 const GUARD = {
   id: 'suite-still-passes',
@@ -101,7 +110,7 @@ const GUARD = {
     // that does not compile — vitest transpiles without typechecking, so a
     // change breaking types scored as done. Only the suite is retried; tsc is
     // deterministic and a retry would just hide a real failure.
-    cmd: 'OPENSWARM_LIVE=0 npm run typecheck && (OPENSWARM_LIVE=0 npm test || OPENSWARM_LIVE=0 npm test)',
+    cmd: 'OPENSWARM_LIVE=0 npm run typecheck && OPENSWARM_LIVE=0 npm test',
   },
 }
 
@@ -327,6 +336,97 @@ it('shrinking does not evict current holders', async () => {
 `,
     ),
   ),
+  task(
+    'slots-cancellable-acquire',
+    'hard',
+    'The Slots semaphore in packages/swarm/src/worktrees.ts queues callers that arrive at the cap, and a queued caller can never give up. Add an OPTIONAL AbortSignal parameter to acquire(signal?): aborting must reject that waiter AND remove it from the queue, so a later release() hands the slot to the next REAL waiter. Do not edit any file under packages/*[/]tests.',
+    sealedCheck(
+      'slots-cancellable-acquire',
+      `import { expect, it } from 'vitest'
+import { Slots } from '../packages/swarm/src/worktrees'
+
+it('an aborted waiter does not swallow a later release', async () => {
+  const slots = new Slots(1)
+  await slots.acquire()
+
+  const ac = new AbortController()
+  const cancelled = slots.acquire(ac.signal).then(() => 'acquired', () => 'cancelled')
+  let bAcquired = false
+  const b = slots.acquire().then(() => { bAcquired = true })
+
+  ac.abort()
+  expect(await cancelled).toBe('cancelled')
+
+  // The slot must reach B. A waiter that is rejected but left in the queue
+  // consumes this release and starves everyone behind it.
+  slots.release()
+  await b
+  expect(bAcquired).toBe(true)
+})
+`,
+    ),
+  ),
+
+  task(
+    'cascade-stall-detection',
+    'hard',
+    'runCascade in packages/swarm/src/topologies.ts escalates through every tier even when a tier returns exactly what the previous tier already returned, burning budget on a chain that is making no progress. When a tier\'s final text is identical to the previous tier\'s, stop escalating and set an OPTIONAL `stalled?: boolean` on CascadeResult. Do not edit any file under packages/*[/]tests.',
+    sealedCheck(
+      'cascade-stall-detection',
+      `import { expect, it } from 'vitest'
+import { runCascade } from '../packages/swarm/src/topologies'
+import type { MemberRunResult, MemberSpec } from '../packages/swarm/src/types'
+
+it('stops escalating when a tier repeats the previous tier', async () => {
+  let calls = 0
+  const run = async (member: MemberSpec): Promise<MemberRunResult> => {
+    calls++
+    return { member: member.name, runId: 'r', text: 'identical',
+      output: [{ type: 'text', text: 'identical' }], stopReason: 'completed' }
+  }
+  const result = await runCascade(
+    { topology: 'cascade', tiers: [{ name: 'a' }, { name: 'b' }, { name: 'c' }], task: 't',
+      confidence: { commands: ['false'], tau: 1 } },
+    run,
+    async () => 0,
+  )
+  expect(result.stalled).toBe(true)
+  // Detected at the repeat, not after exhausting the chain.
+  expect(calls).toBe(2)
+})
+`,
+    ),
+  ),
+
+  task(
+    'pipeline-stage-retries',
+    'hard',
+    'A pipeline stage in packages/swarm/src/topologies.ts gets exactly one attempt, so one transient member failure loses the whole run. Add an OPTIONAL `retries?: number` to a pipeline stage: a stage whose stopReason is not "completed" is retried up to that many additional times before the pipeline gives up. Default stays 0, so existing behaviour is unchanged. Do not edit any file under packages/*[/]tests.',
+    sealedCheck(
+      'pipeline-stage-retries',
+      `import { expect, it } from 'vitest'
+import { runPipeline } from '../packages/swarm/src/topologies'
+import type { MemberRunResult, MemberSpec } from '../packages/swarm/src/types'
+
+it('retries a failing stage up to its budget, then succeeds', async () => {
+  let attempts = 0
+  const run = async (member: MemberSpec): Promise<MemberRunResult> => {
+    attempts++
+    const ok = attempts >= 3
+    return { member: member.name, runId: 'r', text: 'x',
+      output: [{ type: 'text', text: 'x' }],
+      stopReason: (ok ? 'completed' : 'error') as never }
+  }
+  const result = await runPipeline(
+    { topology: 'pipeline', stages: [{ member: { name: 'a' }, prompt: 'p', retries: 2 }] } as never,
+    run,
+  )
+  expect(attempts).toBe(3)
+  expect(result.final.stopReason).toBe('completed')
+})
+`,
+    ),
+  ),
 ]
 
 export function selfModBenchmark(tasks = TASKS) {
@@ -347,5 +447,5 @@ export function selfModBenchmark(tasks = TASKS) {
  */
 export const ARMS = [
   { id: 'gated', label: 'gate on', scaffold: {} },
-  { id: 'ungated', label: 'gate off', scaffold: {} },
+  { id: 'ungated', label: 'gate off', scaffold: {} }
 ]

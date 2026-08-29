@@ -158,12 +158,40 @@ export function assertDeliveredOnce(h: BoardHarness, from: string, to: string): 
   return message
 }
 
-/** The framed message text is present in the recipient peer's transcript. */
-export function assertRecipientSaw(h: BoardHarness, to: string, message: SwarmMessageSnapshot): void {
+/**
+ * The framed message text is present in the recipient peer's transcript.
+ *
+ * POLLS rather than asserting once. `swarm/message/delivered` says the mailbox
+ * handed the message over; the recipient's session recording the framed text is
+ * a separate, later write, so a single immediate read races it. That race was a
+ * real flake — it failed a live gate run and scored a correct change as
+ * rejected, and three unexplained non-reproducing suite failures in one day are
+ * consistent with it.
+ *
+ * A missing agent is also reported as itself. The previous `?? []` turned "the
+ * child is not resident" into "the transcript is empty", so a vanished agent
+ * surfaced as a confusing `expected false to be true` about message content.
+ */
+export async function assertRecipientSaw(
+  h: BoardHarness,
+  to: string,
+  message: SwarmMessageSnapshot,
+  timeoutMs = 5_000,
+): Promise<void> {
   const peer = h.roster.get(to)
   expect(peer, `no peer "${to}"`).toBeDefined()
+  expect(peer!.childId, `peer "${to}" has no child session to inspect`).toBeDefined()
   const framed = (frameMessage(message)[0] as { type: 'text'; text: string }).text
-  const transcript = JSON.stringify(peer!.childId ? h.ctx.agents.get(peer!.childId)?.session.events ?? [] : [])
-  // The framed message (id + sender + text) reached the recipient's context.
-  expect(transcript.includes(message.text) || transcript.includes(framed.slice(0, 40))).toBe(true)
+
+  const deadline = Date.now() + timeoutMs
+  let transcript = ''
+  for (;;) {
+    const agent = h.ctx.agents.get(peer!.childId!)
+    expect(agent, `peer "${to}" child session is no longer resident`).toBeDefined()
+    transcript = JSON.stringify(agent!.session.events)
+    if (transcript.includes(message.text) || transcript.includes(framed.slice(0, 40))) return
+    if (Date.now() > deadline) break
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  expect.fail(`framed message never reached "${to}" transcript within ${timeoutMs}ms`)
 }
