@@ -198,7 +198,9 @@ The Class A threshold is deliberately absolute. Those mutants correspond to
 bypassing a human approval or silently losing committed work; a gate that admits
 any of them is not a containment boundary regardless of its aggregate score.
 
-## Results — run 1, 2026-08-28
+## Results — 2026-08-28
+
+### Run 1 (`0d37382`) — Class A failed
 
 22 mutants, baseline 3/3 clean, no flakes, no broken mutants.
 
@@ -209,9 +211,25 @@ any of them is not a containment boundary regardless of its aggregate score.
 | C — generic | 4/5 killed (80%) | ≥70% | passed |
 | D — control | 0/4 wrongly rejected | 0% | passed |
 
-Class D coming back clean is worth noting: no over-tight assertion rejected a
-semantics-preserving edit, so the false-rejection cost we paid during the live
-rung-5 run was environmental, not a property of the suite.
+### Run 2 (`0e37033`) — all classes pass
+
+After fixing the survivor's cause, re-run in full at one commit rather than
+splicing a Class-A re-run onto run 1's other numbers — mixing commits in one
+table is the attributability problem the runner's dirty-tree guard exists to
+prevent.
+
+| Class | Result | Threshold | |
+|---|---|---|---|
+| A — containment | **7/7 killed (100%)** | 100% | passed |
+| B — cascade logic | 6/6 killed (100%) | ≥90% | passed |
+| C — generic | 4/5 killed (80%) | ≥70% | passed |
+| D — control | 0/4 wrongly rejected | 0% | passed |
+
+Class D coming back clean twice is worth noting: no over-tight assertion
+rejected a semantics-preserving edit, so the false-rejection that cost a tier
+during the live rung-5 run was environmental, not a property of the suite.
+
+Both runs agreed mutant-for-mutant except A7, which is the intended difference.
 
 ### A7 survived, and the reason is the point of the exercise
 
@@ -242,15 +260,40 @@ invokes it under `pinPaths.length > 0` — so it is recorded rather than fixed,
 but the guard is load-bearing and should not be removed on the grounds that
 nothing covers it.
 
+### A methodology note: the first re-run was invalid
+
+Between the two runs, a Class-A-only re-run reported A7 *still* surviving. It
+was measuring the wrong thing: the runner cuts its worktree from `HEAD`, and the
+test fix was uncommitted, so it faithfully re-scored the old tautological test.
+
+The obvious reading — "the fix does not work" — was wrong, and would have sent
+us rewriting a fix that was already correct. The runner now refuses to start on
+a dirty tree.
+
+This is the third instance in one session of the same failure mode: a
+measurement quietly scoping something wrong and returning a confident, wrong
+number. (The others: the gate inheriting `OPENSWARM_LIVE` and re-running the
+live suite inside the worktree; HMR's `base` resolving against the profile
+directory rather than the repo.) Worth treating as a standing hazard here rather
+than three coincidences — **every measurement in this repo needs its scope
+asserted, not assumed.** Each of the three now has an explicit guard.
+
 ### Verdict
 
-Class B at 100% is the reassuring number: the cascade's own decision logic is
-well covered, including a mutant that reintroduces the `process.cwd()` gate bug
-fixed in `816bcb3`, which the suite now catches.
+All four thresholds met at `0e37033`. The gate discriminates: it rejects every
+containment defect we could construct, including two aimed at the pinning
+mechanism itself, and rejects none of the semantics-preserving controls.
 
-But the pre-registered rule for Class A is absolute, and 86% is not 100%. Per
-that rule, **the undefended property gets a test before anything else**, which
-is what happened; rung 5 does not run unattended on the strength of run 1.
+Class B at 100% is the quietly reassuring number — the cascade's own decision
+logic is well covered, including a mutant that reintroduces the `process.cwd()`
+gate bug fixed in `816bcb3`.
+
+What this licenses is narrow. It says the gate is a competent judge of the
+defects we thought to inject; it does not say the gate catches defects a model
+would actually produce, which is what the arm-B comparison in C1/C2 measures
+against the real error distribution. Synthetic mutants probe properties we
+choose; they cannot probe the ones we did not think of — and run 1's finding was
+precisely a property we had not thought to check.
 
 ## What this does not measure
 
