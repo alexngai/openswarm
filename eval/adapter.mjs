@@ -189,6 +189,12 @@ export function makeSelfModAdapter({ repoRoot, boot, gate }) {
       const work = provision(repoRoot, base, cell.task.id.replace(/[^A-Za-z0-9]/g, '-'))
       // Ours to choose, so the member's usage can be read back after the run.
       const sessionRoot = mkdtempSync(join(tmpdir(), 'openswarm-cell-sessions-'))
+      // The swarm's task worktree must NOT live inside `work`. Nested, the outer
+      // `work/node_modules` is an ancestor of the task tree, so TypeScript can
+      // resolve openswarm-* through BOTH trees and fails with TS2717/TS2322 —
+      // two identities of one package. That made the gate reject correct work
+      // for a reason the harness created, in the whole first matrix.
+      const worktreeDir = mkdtempSync(join(tmpdir(), 'openswarm-cell-wt-'))
       let grading
       let harness
 
@@ -223,6 +229,7 @@ export function makeSelfModAdapter({ repoRoot, boot, gate }) {
             ...(gated && gate.pinPaths ? { confidencePinPaths: gate.pinPaths } : {}),
             worktrees: {
               repoRoot: work,
+              worktreeDir,
               // Explicit model: a worktree member is a separate harness and does
               // not inherit the lead's route.
               member: {
@@ -313,6 +320,7 @@ export function makeSelfModAdapter({ repoRoot, boot, gate }) {
       } finally {
         await harness?.close?.().catch?.(() => undefined)
         rmSync(sessionRoot, { recursive: true, force: true })
+        rmSync(worktreeDir, { recursive: true, force: true })
         // The workspace belongs to the backend; the core tears it down after grading.
         release(repoRoot, work)
       }

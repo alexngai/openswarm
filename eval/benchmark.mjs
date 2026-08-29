@@ -79,7 +79,14 @@ const GUARD = {
   id: 'suite-still-passes',
   weight: 1,
   role: 'guard',
-  check: { type: 'cmd', cmd: 'OPENSWARM_LIVE=0 npm test || OPENSWARM_LIVE=0 npm test' },
+  check: {
+    type: 'cmd',
+    // Typecheck AND tests. Ground truth that omits tsc calls code "correct"
+    // that does not compile — vitest transpiles without typechecking, so a
+    // change breaking types scored as done. Only the suite is retried; tsc is
+    // deterministic and a retry would just hide a real failure.
+    cmd: 'OPENSWARM_LIVE=0 npm run typecheck && (OPENSWARM_LIVE=0 npm test || OPENSWARM_LIVE=0 npm test)',
+  },
 }
 
 const task = (id, difficulty, prompt, check) => ({
