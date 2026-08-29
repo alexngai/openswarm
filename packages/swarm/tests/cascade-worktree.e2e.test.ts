@@ -48,6 +48,76 @@ function memberEnv(h: TestHarness): Record<string, string> {
   }
 }
 
+it('an unaccepted cascade withholds the merge but keeps the work on its branch', async () => {
+  const repo = scratchRepo()
+  h = await bootHarness({
+    sequence: ['tool_call_success', 'success'],
+    repeatLast: true,
+    successText: 'tier done',
+    toolName: 'bash',
+    toolArguments: JSON.stringify({ command: 'echo attempted > work.txt' }),
+  })
+
+  const result = await h.swarm.runTeam(
+    {
+      topology: 'cascade',
+      tiers: [{ name: 'only' }],
+      task: 'do the thing',
+      // Never satisfiable, so the run ends unaccepted.
+      confidence: { commands: ['test -f never-exists'], tau: 1 },
+    },
+    { parent: h.lead.agent, worktrees: { repoRoot: repo, member: { env: memberEnv(h) } } },
+  )
+
+  if (result.topology !== 'cascade') throw new Error('wrong topology')
+  expect(result.accepted).toBe(false)
+
+  // Nothing reached the integration branch: previously `finalize` ran
+  // unconditionally and merged regardless of the verdict, which made the gate
+  // decide nothing about what landed.
+  const git = result.git!
+  expect(git.merged).toEqual([])
+  expect(git.withheld).toHaveLength(1)
+
+  // The work is not lost — it is reachable by branch name.
+  const kept = execFileSync('git', ['show', `${git.withheld[0]!.branch}:work.txt`], {
+    cwd: repo,
+  }).toString()
+  expect(kept.trim()).toBe('attempted')
+}, 120_000)
+
+it('a rejected tier records which command failed, and tells the next tier', async () => {
+  const repo = scratchRepo()
+  h = await bootHarness({
+    sequence: ['tool_call_success', 'success'],
+    repeatLast: true,
+    successText: 'tier done',
+    toolName: 'bash',
+    toolArguments: JSON.stringify({ command: 'echo hi > out.txt' }),
+  })
+
+  const result = await h.swarm.runTeam(
+    {
+      topology: 'cascade',
+      tiers: [{ name: 'cheap' }, { name: 'strong' }],
+      task: 'do the thing',
+      confidence: { commands: ['echo DIAGNOSTIC_MARKER >&2; exit 3'], tau: 1 },
+    },
+    { parent: h.lead.agent, worktrees: { repoRoot: repo, member: { env: memberEnv(h) } } },
+  )
+
+  if (result.topology !== 'cascade') throw new Error('wrong topology')
+  // The attempt is attributable: which command, and what it printed. Without
+  // this a rejection cannot be told apart from an environment problem.
+  expect(result.attempts[0]!.failure?.command).toContain('DIAGNOSTIC_MARKER')
+  expect(result.attempts[0]!.failure?.output).toContain('DIAGNOSTIC_MARKER')
+
+  // And it actually reached the model: the second tier's prompt carries the
+  // failure, which is the whole point of escalation feedback.
+  const sent = JSON.stringify(h.mock.requests)
+  expect(sent).toContain('DIAGNOSTIC_MARKER')
+}, 120_000)
+
 it('cascade: the command gate grades the tier worktree, and the passing tier merges', async () => {
   const repo = scratchRepo()
   h = await bootHarness({

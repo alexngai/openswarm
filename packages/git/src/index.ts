@@ -46,6 +46,13 @@ export interface MergeOutcome {
   conflicts: { taskKey: string; branch: string }[]
   /** Task branches with no commits — nothing to merge. */
   empty: { taskKey: string; branch: string }[]
+  /**
+   * Task branches deliberately NOT merged because the run was not accepted.
+   * The commits survive under these branch names, so withheld work is
+   * recoverable; it just does not reach the integration branch on a verdict
+   * that said the work was not good enough.
+   */
+  withheld: { taskKey: string; branch: string }[]
 }
 
 /** A team directory younger than this is treated as starting, not abandoned. */
@@ -246,6 +253,7 @@ export class SwarmGit {
       merged: [],
       conflicts: [],
       empty: [],
+      withheld: [],
     }
     if (this.worktrees.size === 0) return outcome
     const target = await this.targetWorktree()

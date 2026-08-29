@@ -108,16 +108,24 @@ export interface RunTeamOptions {
 const execFileAsync = promisify(execFile)
 
 /** Weakest-link default: every command must exit 0 in `cwd` for confidence 1. */
-function defaultConfidenceRunner(cwd: string): (commands: string[]) => Promise<number> {
+/** Keep the tail: a failing build's useful part is at the end, not the top. */
+const OUTPUT_TAIL = 4_000
+
+function defaultConfidenceRunner(cwd: string): RunConfidence {
   return async (commands) => {
     for (const command of commands) {
       try {
         await execFileAsync('bash', ['-c', command], { cwd, maxBuffer: 16 * 1024 * 1024 })
-      } catch {
-        return 0
+      } catch (error) {
+        const combined = `${(error as any)?.stdout ?? ''}${(error as any)?.stderr ?? ''}`
+        return {
+          score: 0,
+          failedCommand: command,
+          output: combined.length > OUTPUT_TAIL ? combined.slice(-OUTPUT_TAIL) : combined,
+        }
       }
     }
-    return 1
+    return { score: 1 }
   }
 }
 
@@ -193,7 +201,11 @@ export default class SwarmService extends Service {
       await worktrees.abort().catch(() => undefined)
       throw error
     }
-    return { ...result, git: await worktrees.finalize() }
+    // A verdict that does not decide anything is not a gate. Only the cascade
+    // has a whole-run notion of acceptance; every other topology's tasks stand
+    // or fall individually, so they merge as before.
+    const merge = result.topology !== 'cascade' || result.accepted
+    return { ...result, git: await worktrees.finalize({ merge }) }
   }
 
   /**

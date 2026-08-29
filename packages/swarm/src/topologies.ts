@@ -33,8 +33,23 @@ export type RunMember = (
   taskKey?: string,
 ) => Promise<MemberRunResult>
 
-/** Weakest-link command confidence: 1 when every command exits 0, else 0. */
-export type RunConfidence = (commands: string[]) => Promise<number>
+/**
+ * What a command gate observed. The score is the weakest link — 1 when every
+ * command exits 0, else 0 — but a bare score is useless as feedback: the tier
+ * that failed is told only that it failed, so the next tier is guessing. The
+ * failing command and its output are what make the escalation loop informative
+ * rather than ceremonial.
+ */
+export interface ConfidenceOutcome {
+  score: number
+  /** The first command that failed, when one did. */
+  failedCommand?: string
+  /** Tail of that command's combined output. */
+  output?: string
+}
+
+/** A plain number is still accepted, and read as a bare score. */
+export type RunConfidence = (commands: string[]) => Promise<number | ConfidenceOutcome>
 
 /**
  * Every cascade tier (and its gate) shares this task key, so under worktree
@@ -203,13 +218,31 @@ export async function runCascade(
       continue
     }
     if (spec.confidence !== undefined) {
-      const confidence = await runConfidence!(spec.confidence.commands)
-      attempts.push({ tier, result, confidence })
-      report(`tier ${tier + 1}: confidence ${confidence} vs tau ${spec.confidence.tau}`)
+      const raw = await runConfidence!(spec.confidence.commands)
+      const outcome: ConfidenceOutcome = typeof raw === 'number' ? { score: raw } : raw
+      const confidence = outcome.score
+      attempts.push({
+        tier,
+        result,
+        confidence,
+        ...(outcome.failedCommand === undefined
+          ? {}
+          : { failure: { command: outcome.failedCommand, output: outcome.output ?? '' } }),
+      })
+      report(
+        outcome.failedCommand === undefined
+          ? `tier ${tier + 1}: confidence ${confidence} vs tau ${spec.confidence.tau}`
+          : `tier ${tier + 1}: confidence ${confidence} vs tau ${spec.confidence.tau} — failed: ${outcome.failedCommand}`,
+      )
       if (confidence >= spec.confidence.tau) {
         return { topology: 'cascade', accepted: true, tier, final: result, attempts }
       }
-      feedback = `automated confidence ${confidence} was below the required threshold ${spec.confidence.tau}; the verification commands did not pass`
+      // Hand the next tier the actual failure. "The commands did not pass" tells
+      // it nothing it can act on; the command and its output tell it what broke.
+      feedback =
+        outcome.failedCommand === undefined
+          ? `automated confidence ${confidence} was below the required threshold ${spec.confidence.tau}; the verification commands did not pass`
+          : `Verification failed. This command exited non-zero:\n\n  ${outcome.failedCommand}\n\nIts output ended with:\n\n${outcome.output ?? '(no output captured)'}`
       continue
     }
     if (spec.gate === undefined) {

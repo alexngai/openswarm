@@ -233,12 +233,39 @@ export class WorktreeRun {
     return this.git.removeAll()
   }
 
-  /** Auto-commit dirty task worktrees, run the merge queue, release the target. */
-  async finalize(): Promise<MergeOutcome> {
+  /**
+   * Auto-commit dirty task worktrees, then either run the merge queue or
+   * withhold the work.
+   *
+   * `merge: false` commits as usual — so nothing is lost and every branch stays
+   * reachable by name — but does not fold anything into the integration branch.
+   * That is what makes a gate verdict mean something: a cascade that never
+   * satisfied its gate previously merged anyway, since finalize ran
+   * unconditionally after dispatch and never consulted `accepted`.
+   */
+  async finalize(options: { merge?: boolean } = {}): Promise<MergeOutcome> {
     if (this.options.autoCommit !== false) {
       for (const taskKey of this.taskKeys()) {
         const wt = await this.git.worktree(taskKey)
         await this.git.autoCommit(wt, `swarm: ${taskKey} (team ${this.teamId})`)
+      }
+    }
+    if (options.merge === false) {
+      const withheld: MergeOutcome['withheld'] = []
+      for (const taskKey of this.taskKeys()) {
+        const wt = await this.git.worktree(taskKey)
+        if ((await this.git.commitCount(wt.branch)) > 0) {
+          withheld.push({ taskKey, branch: wt.branch })
+        }
+      }
+      await this.git.removeAll()
+      await this.git.dispose()
+      return {
+        targetBranch: this.git.targetBranch,
+        merged: [],
+        conflicts: [],
+        empty: [],
+        withheld,
       }
     }
     const outcome = await this.git.mergeAll()
