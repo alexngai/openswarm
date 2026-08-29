@@ -97,7 +97,7 @@ export function makeSelfModAdapter({ repoRoot, boot, gate }) {
     cleanup() {
       for (const branch of branches.splice(0)) {
         try {
-          git(repoRoot, 'branch', '-D', branch)
+          execFileSync('git', ['branch', '-D', branch], { cwd: repoRoot, stdio: 'ignore' })
         } catch {
           // Already gone, or never created — nothing to reclaim.
         }
@@ -146,7 +146,12 @@ export function makeSelfModAdapter({ repoRoot, boot, gate }) {
             parent: harness.lead.agent,
             signal: ctx.signal,
             ...(gated && gate.pinPaths ? { confidencePinPaths: gate.pinPaths } : {}),
-            worktrees: { repoRoot: work, member: { env: harness.memberEnv } },
+            worktrees: {
+              repoRoot: work,
+              // Explicit model: a worktree member is a separate harness and does
+              // not inherit the lead's route.
+              member: { ...(harness.model ? { model: harness.model } : {}), env: harness.memberEnv },
+            },
             onProgress: (line) => ctx.trace?.emit?.({ type: 'progress', line }),
           },
         )
@@ -171,11 +176,18 @@ export function makeSelfModAdapter({ repoRoot, boot, gate }) {
           if (b !== undefined && !branches.includes(b)) branches.push(b)
         }
 
-        if (branch !== undefined && ctx.workspace !== undefined) {
-          // Export the branch's tree into the workspace the grader will read.
-          // `git archive` rather than a checkout: it writes files without
-          // touching an index or needing the workspace to be a git dir at all.
-          materialize(repoRoot, branch, ctx.workspace.root)
+        if (ctx.workspace !== undefined) {
+          // Export into the workspace the grader will read. `git archive`
+          // rather than a checkout: it writes files without touching an index.
+          //
+          // No branch means the run committed nothing — the member failed, or
+          // did nothing. Grade the BASE tree then, never an empty directory:
+          // "the repo, unchanged" is the honest ground truth for a run that
+          // produced no work, and it scores progress-fails / guard-passes. An
+          // empty workspace instead makes checks pass or fail for reasons
+          // unrelated to the task — a version check comparing two empty command
+          // outputs reported SUCCESS on exactly this path.
+          materialize(repoRoot, branch ?? base, ctx.workspace.root)
           grading = ctx.workspace.root
         }
 
@@ -188,6 +200,11 @@ export function makeSelfModAdapter({ repoRoot, boot, gate }) {
           metadata: {
             accepted: result.accepted === true,
             tier: result.tier,
+            // Why a tier produced nothing is otherwise unrecoverable from the
+            // record: a member that never completed and one that completed
+            // badly look identical downstream.
+            stopReasons: (result.attempts ?? []).map((a) => a.result?.stopReason),
+            finalText: (result.final?.text ?? '').slice(0, 400),
             confidences: (result.attempts ?? []).map((a) => a.confidence),
             // Present only when a command gate rejected a tier — this is what
             // makes a rejection attributable rather than a bare 0.

@@ -98,6 +98,7 @@ export async function bootAzure({ model = process.env['OPENSWARM_LIVE_MODEL'] ??
     ctx,
     swarm: ctx.swarm,
     lead,
+    model,
     memberEnv: {
       OPENSWARM_LLM_BASE_URL: azureBase(),
       OPENSWARM_LLM_API_KEY: key,

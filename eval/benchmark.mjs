@@ -100,8 +100,12 @@ export const TASKS = [
       weight: 1,
       role: 'progress',
       check: {
+        // Fail-closed. `test "$(a)" = "$(b)"` passes when BOTH sides are empty,
+        // so in an empty or broken workspace this check reported success while
+        // nothing had been built at all — it must require the command to exit 0
+        // and produce a non-empty version before comparing.
         type: 'cmd',
-        cmd: 'test "$(node bin/openswarm.mjs --version)" = "$(node -p \'require("./package.json").version\')"',
+        cmd: 'v=$(node bin/openswarm.mjs --version) && [ -n "$v" ] && [ "$v" = "$(node -p \'require("./package.json").version\')" ]',
       },
     },
   ),
