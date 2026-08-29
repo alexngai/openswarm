@@ -21,11 +21,21 @@
  * the sealed checkpoints run against it.
  */
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' })
+
+/** Lead-side and member-side token totals are disjoint; report their sum. */
+const sumUsage = (a, b) => ({
+  inputTokens: (a?.inputTokens ?? 0) + b.inputTokens,
+  outputTokens: (a?.outputTokens ?? 0) + b.outputTokens,
+  cacheReadInputTokens: (a?.cacheReadInputTokens ?? 0) + b.cacheReadInputTokens,
+  cacheWriteInputTokens: (a?.cacheWriteInputTokens ?? 0) + b.cacheWriteInputTokens,
+  totalTokens: (a?.totalTokens ?? 0) + b.totalTokens,
+  calls: (a?.calls ?? 0) + b.calls,
+})
 
 /**
  * A worktree at `ref` with `node_modules` hardlinked in.
@@ -64,6 +74,69 @@ export function materialize(repoRoot, ref, dest) {
   })
   execFileSync('cp', ['-al', join(repoRoot, 'node_modules'), join(dest, 'node_modules')])
   execFileSync('npm', ['run', 'build'], { cwd: dest, stdio: 'ignore' })
+}
+
+/**
+ * Fold token usage out of member session logs.
+ *
+ * A worktree member is a SUBPROCESS, so its `assistant/message` events are
+ * written to the child's own session — the parent context never sees them, and
+ * parent-side folding reports zero for a run that plainly called the model. The
+ * member's session root is ours to choose, so read it back here. Without this
+ * the cost axis is missing for exactly the execution mode the experiment uses.
+ */
+function foldMemberUsage(sessionRoot) {
+  const totals = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0, totalTokens: 0, calls: 0 }
+  const stack = [sessionRoot]
+  while (stack.length > 0) {
+    const dir = stack.pop()
+    let entries
+    try {
+      entries = readdirSync(dir)
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      const path = join(dir, entry)
+      let isDir
+      try {
+        isDir = statSync(path).isDirectory()
+      } catch {
+        continue
+      }
+      if (isDir) {
+        stack.push(path)
+        continue
+      }
+      if (!entry.endsWith('.jsonl')) continue
+      let raw
+      try {
+        raw = readFileSync(path, 'utf8')
+      } catch {
+        continue
+      }
+      for (const line of raw.split('\n')) {
+        if (line.trim() === '') continue
+        let event
+        try {
+          event = JSON.parse(line)
+        } catch {
+          continue // a torn final frame is expected if a member was killed
+        }
+        if (event?.type !== 'assistant/message') continue
+        const usage = event.data?.usage
+        if (usage === undefined) continue
+        totals.inputTokens += usage.inputTokens ?? 0
+        totals.outputTokens += usage.outputTokens ?? 0
+        totals.cacheReadInputTokens += usage.cacheReadTokens ?? 0
+        totals.cacheWriteInputTokens += usage.cacheWriteTokens ?? 0
+        totals.calls += 1
+      }
+    }
+  }
+  totals.totalTokens =
+    totals.inputTokens + totals.outputTokens + totals.cacheReadInputTokens + totals.cacheWriteInputTokens
+  return totals
 }
 
 function release(repoRoot, dir) {
@@ -114,6 +187,8 @@ export function makeSelfModAdapter({ repoRoot, boot, gate }) {
       const gated = cell.arm.id !== 'ungated'
       const base = git(repoRoot, 'rev-parse', 'HEAD').trim()
       const work = provision(repoRoot, base, cell.task.id.replace(/[^A-Za-z0-9]/g, '-'))
+      // Ours to choose, so the member's usage can be read back after the run.
+      const sessionRoot = mkdtempSync(join(tmpdir(), 'openswarm-cell-sessions-'))
       let grading
       let harness
 
@@ -150,7 +225,10 @@ export function makeSelfModAdapter({ repoRoot, boot, gate }) {
               repoRoot: work,
               // Explicit model: a worktree member is a separate harness and does
               // not inherit the lead's route.
-              member: { ...(harness.model ? { model: harness.model } : {}), env: harness.memberEnv },
+              member: {
+                ...(harness.model ? { model: harness.model } : {}),
+                env: { ...harness.memberEnv, DSH_SESSION_ROOT: sessionRoot },
+              },
             },
             onProgress: (line) => ctx.trace?.emit?.({ type: 'progress', line }),
           },
@@ -194,7 +272,7 @@ export function makeSelfModAdapter({ repoRoot, boot, gate }) {
         return {
           output: result.final?.text ?? '',
           workdir: grading,
-          usage: harness.usage(),
+          usage: sumUsage(harness.usage(), foldMemberUsage(sessionRoot)),
           trajectory: [],
           durationMs: Date.now() - started,
           metadata: {
@@ -228,6 +306,7 @@ export function makeSelfModAdapter({ repoRoot, boot, gate }) {
         }
       } finally {
         await harness?.close?.().catch?.(() => undefined)
+        rmSync(sessionRoot, { recursive: true, force: true })
         // The workspace belongs to the backend; the core tears it down after grading.
         release(repoRoot, work)
       }
