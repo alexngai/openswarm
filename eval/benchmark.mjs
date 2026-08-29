@@ -30,6 +30,22 @@
  * `SEALED_CONFIG` alongside it and runs under `--config`, which also keeps it
  * out of `npm test` so the guard and progress checks stay independent.
  *
+ * ## Tasks must be winnable UNDER the pin
+ *
+ * The gate pins `packages/*[/]tests`, so a task that cannot be completed without
+ * editing an existing test is unwinnable by construction, and its cells measure
+ * the pin rather than the gate. Adding a REQUIRED field to a public type does
+ * exactly that: every existing literal stops compiling, so the repo's own tests
+ * must change. That produced a run where the model's work was correct, the
+ * sealed check passed, and ground truth still said "incorrect" because the pin
+ * had reverted the test update the change required — reported as a false accept
+ * until the checkpoint detail was read.
+ *
+ * So: additive-OPTIONAL fields, new functions, or behaviour covered solely by
+ * sealed checks. This is a winnability precondition alongside discrimination,
+ * and unlike discrimination there is no cheap automatic proof — verifying it
+ * needs a reference solution.
+ *
  * ## What this set cannot see
  *
  * Verifiable feedback selects for verifiable work. The one real
@@ -143,7 +159,7 @@ it('reports held and waiting counts', async () => {
   task(
     'digest-tool-calls',
     'medium',
-    "digestSessionLog in packages/swarm/src/recover.ts folds a dead member's session log into what it was asked and what it reported, but drops tool calls, so a restarted member is told the narrative and not the actions. Add a `tools: string[]` field to SessionDigest holding each `tool/call` event's name in order (the name is at `event.data.name`), and include them in renderRecoveryBriefing's output.",
+    "digestSessionLog in packages/swarm/src/recover.ts folds a dead member's session log into what it was asked and what it reported, but drops tool calls, so a restarted member is told the narrative and not the actions. Add an OPTIONAL `tools?: string[]` field to SessionDigest holding each `tool/call` event's name in order (the name is at `event.data.name`), and include them in renderRecoveryBriefing's output. It must be optional so existing SessionDigest literals still compile — do not edit any file under packages/*/tests.",
     sealedCheck(
       'digest-tool-calls',
       `import { mkdtempSync, writeFileSync } from 'node:fs'
@@ -205,7 +221,7 @@ it('records how long each tier took', async () => {
     return { member: member.name, runId: 'r', text: 'ok', output: [{ type: 'text', text: 'ok' }], stopReason: 'completed' }
   }
   const result = await runCascade({ topology: 'cascade', tiers: [{ name: 'only' }], task: 't' }, run)
-  expect(result.attempts[0]!.durationMs).toBeGreaterThanOrEqual(30)
+  expect(result.attempts[0]!.durationMs ?? 0).toBeGreaterThanOrEqual(30)
 })
 `,
     ),
@@ -214,7 +230,7 @@ it('records how long each tier took', async () => {
   task(
     'merge-reports-base',
     'medium',
-    'MergeOutcome.merged entries in packages/git/src/index.ts report taskKey, branch and commits, but not what they were merged from, so a merge cannot be reproduced from the record. Add `baseCommit: string` to each merged entry, set to the resolved base commit the worktrees were cut from.',
+    'MergeOutcome.merged entries in packages/git/src/index.ts report taskKey, branch and commits, but not what they were merged from, so a merge cannot be reproduced from the record. Add an OPTIONAL `baseCommit?: string` to each merged entry, set to the resolved base commit the worktrees were cut from. Keep it optional so existing literals still compile, and do not edit any file under packages/*/tests.',
     sealedCheck(
       'merge-reports-base',
       `import { execFileSync } from 'node:child_process'
