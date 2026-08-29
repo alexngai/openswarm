@@ -33,6 +33,84 @@ async function swarmService() {
 
 let leadCounter = 0
 
+/** Azure's OpenAI-compatible surface, as `azure-live.test.ts` addresses it. */
+const azureBase = () => `${(process.env['AZURE_API_BASE'] ?? '').replace(/\/+$/, '')}/openai/v1`
+
+/**
+ * Compose a harness whose turns go to a real model. Same tree as `bootMock`,
+ * only the adapter row differs — so a live cell and a mock cell exercise the
+ * identical cascade, worktree and merge machinery.
+ */
+export async function bootAzure({ model = process.env['OPENSWARM_LIVE_MODEL'] ?? 'gpt-5.5' } = {}) {
+  const key = process.env['AZURE_API_KEY']
+  if (key === undefined || process.env['AZURE_API_BASE'] === undefined) {
+    throw new Error('bootAzure needs AZURE_API_BASE and AZURE_API_KEY')
+  }
+  const OpenAiChat = await import('../packages/llm-openai/dist/index.js')
+
+  const workDir = mkdtempSync(join(tmpdir(), 'openswarm-eval-live-'))
+  const ctx = new Context()
+  ctx.plugin(plug(OpenAiChat), {
+    routes: ['openai'],
+    baseURL: azureBase(),
+    apiKeyEnv: 'AZURE_API_KEY',
+    models: [{ id: model, contextWindow: 200_000 }],
+  })
+  ctx.plugin(plug(Spine), {
+    includeHarnessIdentity: false,
+    includeRuntimeContext: false,
+    persona: 'You are a careful software engineer.',
+    workspaceContext: false,
+    skills: { enabled: false },
+    toolBash: false,
+    toolJobs: false,
+  })
+  ctx.plugin(plug(SessionPersistenceJsonl), { root: join(workDir, '.sessions'), compression: 'none' })
+  ctx.plugin(plug(Subagent))
+  ctx.plugin(plug(SpawnInProcess), { providerName: 'spawn' })
+  ctx.plugin(await swarmService(), {})
+
+  await new Promise((resolve) =>
+    ctx.inject(['agents', 'subagents', 'swarm', 'sessionPersistence'], () => resolve()),
+  )
+
+  const totals = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0, totalTokens: 0, calls: 0 }
+  ctx.on('session/event', (_session, event) => {
+    if (event?.type !== 'assistant/message') return
+    const usage = event.data?.usage
+    if (usage === undefined) return
+    totals.inputTokens += usage.inputTokens ?? 0
+    totals.outputTokens += usage.outputTokens ?? 0
+    totals.cacheReadInputTokens += usage.cacheReadTokens ?? 0
+    totals.cacheWriteInputTokens += usage.cacheWriteTokens ?? 0
+    totals.calls += 1
+    totals.totalTokens =
+      totals.inputTokens + totals.outputTokens + totals.cacheReadInputTokens + totals.cacheWriteInputTokens
+  })
+
+  const lead = await ctx.agents.create({
+    sessionId: SessionId(`openswarm-eval-live-${process.pid}-${leadCounter++}`),
+    meta: { cwd: workDir },
+    agentOptions: { provider: 'openai', model },
+  })
+
+  return {
+    ctx,
+    swarm: ctx.swarm,
+    lead,
+    memberEnv: {
+      OPENSWARM_LLM_BASE_URL: azureBase(),
+      OPENSWARM_LLM_API_KEY: key,
+      DSH_MODEL: model,
+    },
+    usage: () => ({ ...totals }),
+    async close() {
+      await lead.dispose()
+      await ctx.fiber?.dispose?.()
+    },
+  }
+}
+
 /**
  * Compose a harness whose model turns are served by a scripted mock — zero
  * tokens, no credentials. `mockOptions` is the same shape the test harness uses.

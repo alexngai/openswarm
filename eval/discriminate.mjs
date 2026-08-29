@@ -67,6 +67,19 @@ export function verifyDiscrimination(tasks, repoRoot, { onProgress = () => {} } 
         if (!seen.has(key)) seen.set(key, runCheck(base, cp.check))
         const outcome = seen.get(key)
         const role = cp.role ?? 'progress'
+        // "Fails at base" is necessary but NOT sufficient: a check that fails
+        // because vitest collected no files, or a module is missing, also fails
+        // at base — and keeps failing after a perfectly correct change, making
+        // the task unwinnable while looking well-behaved. (This exact case cost
+        // three tasks: sealed tests sat outside the root config's `include`.)
+        // So a progress failure must not look infrastructural.
+        const infra = /No test files found|Cannot find module|command not found|ERR_MODULE_NOT_FOUND|is not recognized/i
+        if (role === 'progress' && !outcome.passed && infra.test(outcome.detail ?? '')) {
+          throw new Error(
+            `${task.id}/${cp.id} fails at base for an INFRASTRUCTURAL reason, not a missing feature — ` +
+              `it would keep failing after a correct change.\n  command: ${cp.check.cmd}\n${outcome.detail ?? ''}`,
+          )
+        }
         const ok = role === 'progress' ? !outcome.passed : outcome.passed
         findings.push({ task: task.id, check: cp.id, role, passedAtBase: outcome.passed, ok })
         onProgress(

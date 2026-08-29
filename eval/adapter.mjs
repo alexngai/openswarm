@@ -128,7 +128,19 @@ export function makeSelfModAdapter({ repoRoot, boot, gate }) {
             // The ungated arm carries no confidence gate at all, so the cascade
             // accepts its first completed tier — "what would have merged with
             // nobody checking".
-            ...(gated ? { confidence: { commands: gate.commands, tau: 1 } } : {}),
+            // `commands` may be a function of the run's paths: the gate executes
+            // in the cascade's INNER task worktree, which is a fresh checkout
+            // with no node_modules of its own, so a real gate has to provision
+            // itself and needs to know where to hardlink from.
+            ...(gated
+              ? {
+                  confidence: {
+                    commands:
+                      typeof gate.commands === 'function' ? gate.commands({ work }) : gate.commands,
+                    tau: 1,
+                  },
+                }
+              : {}),
           },
           {
             parent: harness.lead.agent,
