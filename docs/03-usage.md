@@ -229,8 +229,14 @@ solutions — fix the code, or weaken the test — and the second is cheaper. Pa
 hands:
 
 ```ts
-{ confidencePinPaths: ['packages/*/tests'], worktrees: { repoRoot: '…' } }
+{ confidencePinPaths: ['packages/swarm/tests', 'packages/git/tests'], worktrees: { repoRoot: '…' } }
 ```
+
+**Use literal directories, not globs.** Git matches pathspec wildcards against
+WHOLE paths, so `packages/*/tests` matches *nothing* — it does not match
+`packages/swarm/tests/foo.test.ts`. A glob like that pins nothing while looking
+configured; `restoreFromBase` now throws on a pathspec that matches neither the
+base commit nor the worktree, rather than treating it as a no-op.
 
 Those pathspecs are restored from the base commit before **every** gate run, and
 files the member added under them are removed, so the pinned paths are exactly

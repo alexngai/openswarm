@@ -30,8 +30,9 @@
  *     packages/swarm/tests/self-modify-live.test.ts
  */
 import { execFileSync } from 'node:child_process'
+import { readdirSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { dirname, resolve } from 'node:path'
+import { dirname, resolve, join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import * as OpenAiChat from '../../llm-openai/src/index'
 import { bootHarness, type TestHarness } from './boot'
@@ -118,7 +119,11 @@ it.skipIf(!live)(
         // The gate runs this repo's own suite out of the member's worktree, so
         // without pinning "make presubmit pass" is satisfiable by editing the
         // tests. Graded against the suite as committed, not as edited.
-        confidencePinPaths: ['packages/*/tests'],
+        // Literal directories: git matches pathspec wildcards against WHOLE
+        // paths, so 'packages/*/tests' matches nothing and pins nothing.
+        confidencePinPaths: readdirSync(join(REPO, 'packages'))
+          .map((pkg) => join('packages', pkg, 'tests'))
+          .filter((rel) => existsSync(join(REPO, rel))),
         worktrees: {
           repoRoot: REPO,
           member: {

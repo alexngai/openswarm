@@ -192,7 +192,24 @@ export class SwarmGit {
     const known: string[] = []
     for (const spec of pathspecs) {
       const { stdout: listed } = await this.git(worktree.path, 'ls-tree', '-r', '--name-only', base, '--', spec)
-      if (listed.trim() !== '') known.push(spec)
+      if (listed.trim() !== '') {
+        known.push(spec)
+        continue
+      }
+      // Absent from base is legitimate ONLY if the member put something there
+      // ("nothing may appear here", which clean alone satisfies). Absent from
+      // both means the pathspec matches nothing at all — a typo, or a glob git
+      // does not expand the way the caller assumed. Treating that as a no-op
+      // makes a gate that pins NOTHING look identical to one that works, which
+      // is how `packages/*/tests` sat inert through a whole live matrix.
+      const { stdout: present } = await this.git(worktree.path, 'status', '--porcelain', '--', spec)
+      if (present.trim() === '') {
+        throw new Error(
+          `restoreFromBase: pathspec "${spec}" matches nothing at base and nothing in the worktree — ` +
+            'it pins nothing. Note git matches wildcards against WHOLE paths, so "a/*/b" does not ' +
+            'match "a/x/b/c.ts"; pass the directory itself.',
+        )
+      }
     }
     if (known.length > 0) {
       await this.git(worktree.path, 'checkout', base, '--', ...known)

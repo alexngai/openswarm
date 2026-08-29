@@ -120,6 +120,29 @@ it('PINNED: the same sabotage is caught, because the check is restored first', a
  * docs/04 survived against it. Asserting 1 makes the leftover file the only
  * thing that can fail the gate.
  */
+/**
+ * Every earlier test here used LITERAL paths, so none of them could catch the
+ * defect that mattered: `packages/*[/]tests` matches nothing, because git
+ * matches wildcards against WHOLE paths — "a/*[/]b" does not match
+ * "a/x/b/c.ts". The pin was therefore inert through a whole live matrix while
+ * looking configured, since a pathspec absent from base was treated as the
+ * legitimate "nothing may appear here" case.
+ */
+it('a pathspec that pins NOTHING fails loud instead of silently protecting nothing', async () => {
+  const repo = scratchRepo()
+  const { SwarmGit } = await import('openswarm-git')
+  const swarm = new SwarmGit({ repoRoot: repo, teamId: 'inert' })
+  const wt = await swarm.worktree('task')
+
+  await expect(swarm.restoreFromBase(wt, ['nope/*/missing'])).rejects.toThrow(/pins nothing/)
+
+  // A literal directory that DOES exist still works.
+  writeFileSync(join(wt.path, 'check.sh'), 'exit 0\n')
+  expect(await swarm.restoreFromBase(wt, ['check.sh'])).toContain('check.sh')
+  await swarm.removeAll()
+  await swarm.dispose()
+}, 60_000)
+
 it('pinning also removes files the member ADDED under a pinned path', async () => {
   const repo = scratchRepo()
   const bootAdder = () =>

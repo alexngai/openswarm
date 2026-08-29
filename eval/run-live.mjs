@@ -8,8 +8,8 @@
  * expensive no-op, and that is cheaper to catch here than in the report.
  */
 import { execFileSync } from 'node:child_process'
-import { writeFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { writeFileSync, readdirSync, existsSync } from 'node:fs'
+import { resolve, join } from 'node:path'
 import {
   runEval,
   buildReport,
@@ -59,8 +59,12 @@ const adapter = makeSelfModAdapter({
       'OPENSWARM_LIVE=0 npm run presubmit',
     ],
     // Tests are not this run's to change: the gate must not grade assets the
-    // graded party can edit.
-    pinPaths: ['packages/*/tests'],
+    // graded party can edit. LITERAL directories, computed here — git matches
+    // pathspec wildcards against whole paths, so 'packages/*/tests' matches
+    // nothing and pinned nothing at all through an entire live matrix.
+    pinPaths: readdirSync(join(REPO, 'packages'))
+      .map((pkg) => join('packages', pkg, 'tests'))
+      .filter((rel) => existsSync(join(REPO, rel))),
     tiers: 1,
   },
 })
