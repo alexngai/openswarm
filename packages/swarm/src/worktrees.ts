@@ -17,6 +17,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import * as SdkProvider from '@deepseek-ai/dsh-subagent-dsh-sdk'
+import type { SubagentRun } from '@deepseek-ai/dsh-subagent'
 import { SwarmGit, type MergeOutcome } from 'openswarm-git'
 import type { MemberRunResult, MemberSpec } from './types'
 import type { RunTeamOptions } from './index'
@@ -178,9 +179,10 @@ export class WorktreeRun {
         ? {}
         : { maxTokens: member.agentOptions?.maxTokens ?? cfg.maxTokens }),
     })
+    let started: SubagentRun | undefined
     try {
       await fiber.await()
-      const started = await this.ctx.subagents.start(providerName, {
+      started = await this.ctx.subagents.start(providerName, {
         label: member.name,
         prompt: [{ type: 'text', text }],
         parent: run.parent,
@@ -198,6 +200,13 @@ export class WorktreeRun {
         stopReason: result.stopReason,
       }
     } finally {
+      // Disposing the PROVIDER does not reap the run: `SubagentRun.dispose()` is
+      // what cancels remaining work, reaches child quiescence, and releases
+      // resources. Awaiting `result` and skipping it leaked the member's harness
+      // subprocess on every worktree run — one orphaned node process per member,
+      // surviving well past the provider's SIGTERM/SIGKILL grace. The suite never
+      // caught it because vitest force-exits its workers.
+      await started?.dispose().catch(() => undefined)
       await fiber.dispose()
     }
   }
