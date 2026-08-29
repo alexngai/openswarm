@@ -64,6 +64,24 @@ export async function bootMock(mockOptions) {
     ctx.inject(['agents', 'subagents', 'swarm', 'sessionPersistence'], () => resolve()),
   )
 
+  // `runTeam` returns no usage, so fold it off the session-event stream the way
+  // packages/cli does — same source, same field names. Without this the eval
+  // loses its cost axis, which is the outcome with the most statistical power
+  // we have (continuous, versus a noisy binary pass/fail).
+  const totals = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0, totalTokens: 0, calls: 0 }
+  ctx.on('session/event', (_session, event) => {
+    if (event?.type !== 'assistant/message') return
+    const usage = event.data?.usage
+    if (usage === undefined) return
+    totals.inputTokens += usage.inputTokens ?? 0
+    totals.outputTokens += usage.outputTokens ?? 0
+    totals.cacheReadInputTokens += usage.cacheReadTokens ?? 0
+    totals.cacheWriteInputTokens += usage.cacheWriteTokens ?? 0
+    totals.calls += 1
+    totals.totalTokens =
+      totals.inputTokens + totals.outputTokens + totals.cacheReadInputTokens + totals.cacheWriteInputTokens
+  })
+
   const lead = await ctx.agents.create({
     sessionId: SessionId(`openswarm-eval-lead-${process.pid}-${leadCounter++}`),
     meta: { cwd: workDir },
@@ -83,6 +101,8 @@ export async function bootMock(mockOptions) {
     lead,
     mock,
     memberEnv,
+    /** Token totals folded across every session this harness drove. */
+    usage: () => ({ ...totals }),
     async close() {
       await lead.dispose()
       await ctx.fiber?.dispose?.()
