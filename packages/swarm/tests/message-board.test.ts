@@ -36,7 +36,7 @@ describe.each(MODES)('message boarding [%s]', (mode) => {
     const message = assertDeliveredOnce(h, 'alice', 'bob')
     expect(message.id).toBe(sent.id)
     // The wakeup carried the message into bob's live context.
-    await assertRecipientSaw(h, 'bob', message)
+    assertRecipientSaw(h, 'bob', message)
   })
 
   it('quiet boarding: stays queued until the next addressed turn carries it', async () => {

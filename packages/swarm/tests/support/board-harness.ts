@@ -67,6 +67,17 @@ export interface BoardHarness {
   ask(peer: string, prompt: string): Promise<string>
   /** All durable mailbox events of one type on the lead log. */
   events(type: 'swarm/message/queued' | 'swarm/message/delivered'): any[]
+  /**
+   * Everything recorded on one session as it happened.
+   *
+   * A continuable peer's ACTIVATION is transient by design — types.ts says so
+   * outright ("activations are transient — never a captured Agent") — so
+   * `ctx.agents.get(childId)` is undefined whenever the child's turn has
+   * settled. Reading a child's transcript through it therefore races the
+   * activation's disposal. The stream is recorded here instead, at the moment
+   * each event is emitted, so the evidence outlives the handle.
+   */
+  transcriptOf(sessionId: string): any[]
   close(): Promise<void>
 }
 
@@ -80,6 +91,15 @@ export async function boardHarness(mode: LlmMode): Promise<BoardHarness> {
   const ctx = (h as any).ctx
   const lead = h.lead.agent
   suppressSettlementTurns(lead)
+  // Record every session's events as they are emitted. See `transcriptOf`.
+  const transcripts = new Map<string, any[]>()
+  ctx.on('session/event', (session: any, event: any) => {
+    const id = String(session?.id ?? '')
+    if (id === '') return
+    const log = transcripts.get(id)
+    if (log === undefined) transcripts.set(id, [event])
+    else log.push(event)
+  })
   const roster = new Map<string, PeerHandle>()
   const mailbox = h.swarm.mailbox(lead, roster)
   registerSwarmMessaging(ctx, roster, mailbox)
@@ -115,6 +135,9 @@ export async function boardHarness(mode: LlmMode): Promise<BoardHarness> {
     },
     events(type) {
       return lead.session.events.filter((e: any) => e.type === type)
+    },
+    transcriptOf(sessionId) {
+      return transcripts.get(sessionId) ?? []
     },
     async close() {
       await h.close()
@@ -159,39 +182,29 @@ export function assertDeliveredOnce(h: BoardHarness, from: string, to: string): 
 }
 
 /**
- * The framed message text is present in the recipient peer's transcript.
+ * The framed message text reached the recipient's context.
  *
- * POLLS rather than asserting once. `swarm/message/delivered` says the mailbox
- * handed the message over; the recipient's session recording the framed text is
- * a separate, later write, so a single immediate read races it. That race was a
- * real flake — it failed a live gate run and scored a correct change as
- * rejected, and three unexplained non-reproducing suite failures in one day are
- * consistent with it.
+ * Reads the RECORDED stream, not `ctx.agents.get(childId)`. A continuable
+ * peer's activation is transient by design, so the live handle is gone once the
+ * child's turn settles — and reading through it was a genuine flake: it failed
+ * intermittently with "child session is no longer resident", corrupted four of
+ * sixty-six cells in a live matrix, and did so in BOTH directions (failing the
+ * gate in two cells, ground truth in two others).
  *
- * A missing agent is also reported as itself. The previous `?? []` turned "the
- * child is not resident" into "the transcript is empty", so a vanished agent
- * surfaced as a confusing `expected false to be true` about message content.
+ * Two earlier attempts treated the symptom. `?? []` turned a missing activation
+ * into an empty transcript, so the failure read as "message not delivered".
+ * Polling then made it wait for a handle that was never coming back. Recording
+ * the stream removes the race instead of timing it.
  */
-export async function assertRecipientSaw(
-  h: BoardHarness,
-  to: string,
-  message: SwarmMessageSnapshot,
-  timeoutMs = 5_000,
-): Promise<void> {
+export function assertRecipientSaw(h: BoardHarness, to: string, message: SwarmMessageSnapshot): void {
   const peer = h.roster.get(to)
   expect(peer, `no peer "${to}"`).toBeDefined()
   expect(peer!.childId, `peer "${to}" has no child session to inspect`).toBeDefined()
   const framed = (frameMessage(message)[0] as { type: 'text'; text: string }).text
-
-  const deadline = Date.now() + timeoutMs
-  let transcript = ''
-  for (;;) {
-    const agent = h.ctx.agents.get(peer!.childId!)
-    expect(agent, `peer "${to}" child session is no longer resident`).toBeDefined()
-    transcript = JSON.stringify(agent!.session.events)
-    if (transcript.includes(message.text) || transcript.includes(framed.slice(0, 40))) return
-    if (Date.now() > deadline) break
-    await new Promise((resolve) => setTimeout(resolve, 50))
-  }
-  expect.fail(`framed message never reached "${to}" transcript within ${timeoutMs}ms`)
+  const transcript = JSON.stringify(h.transcriptOf(String(peer!.childId)))
+  expect(
+    transcript.includes(message.text) || transcript.includes(framed.slice(0, 40)),
+    `framed message never reached "${to}" transcript`,
+  ).toBe(true)
 }
+
