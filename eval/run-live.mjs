@@ -97,7 +97,16 @@ adapter.cleanup()
 // The 2×2 this whole exercise exists to fill: how often does a gate that only
 // checks repo health accept work that did not do the job.
 let cells = []
+let errored = 0
 for (const cell of results) {
+  // An errored cell has no verdict. Counting it renders as "rejected &
+  // incorrect" — indistinguishable from the gate correctly catching bad work —
+  // so an infrastructure failure would masquerade as a finding.
+  if (cell.status === 'env_error') {
+    errored++
+    console.log(`   ! ${cell.taskId} [${cell.armId}] env_error: ${cell.envError?.message ?? '?'}`)
+    continue
+  }
   const m = cell.metadata ?? {}
   cells.push({
     task: cell.taskId,
@@ -113,6 +122,7 @@ for (const cell of results) {
 }
 const count = (a, c) => cells.filter((x) => x.accepted === a && x.correct === c).length
 console.log('\n=== gate verdict × ground truth ===')
+if (errored > 0) console.log(`  (${errored} cell(s) excluded as env_error — no verdict to score)`)
 console.log(`  accepted & correct   : ${count(true, true)}`)
 console.log(`  accepted & INCORRECT : ${count(true, false)}   <- false accepts`)
 console.log(`  rejected & correct   : ${count(false, true)}`)

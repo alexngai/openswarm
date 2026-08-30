@@ -73,7 +73,15 @@ export function materialize(repoRoot, ref, dest) {
     cwd: repoRoot,
   })
   execFileSync('cp', ['-al', join(repoRoot, 'node_modules'), join(dest, 'node_modules')])
-  execFileSync('npm', ['run', 'build'], { cwd: dest, stdio: 'ignore' })
+  try {
+    execFileSync('npm', ['run', 'build'], { cwd: dest, stdio: 'ignore' })
+  } catch {
+    // A change that does not BUILD is incorrect, not un-gradeable. Throwing here
+    // turned every such cell into an env_error, which the core excludes and
+    // retries — so the harness systematically discarded exactly the case the
+    // experiment exists to find: broken work merged with no gate. Checks that
+    // need `dist` will now fail on their own, which is the right verdict.
+  }
 }
 
 /**
