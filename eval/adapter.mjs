@@ -198,8 +198,9 @@ function release(repoRoot, dir) {
  * @param opts.repoRoot  repo the cascade edits (this one)
  * @param opts.boot      () => harness (mock for validation, live for real runs)
  * @param opts.gate      commands the gated arm runs, and the paths it pins
+ * @param opts.revision  commit under test — REQUIRED for resume to be correct
  */
-export function makeSelfModAdapter({ repoRoot, boot, gate, artifactsDir }) {
+export function makeSelfModAdapter({ repoRoot, boot, gate, artifactsDir, revision }) {
   /**
    * Swarm branches created across the matrix, reclaimed by `cleanup()`. They
    * must outlive `run()`: the tree is exported from the branch into the
@@ -220,9 +221,26 @@ export function makeSelfModAdapter({ repoRoot, boot, gate, artifactsDir }) {
     },
     id: 'openswarm-selfmod',
     placement: 'backend',
-    // Result-affecting knobs that live outside EvalConfig, so a changed gate
-    // re-keys exactly its dependent cells instead of silently reusing them.
-    contentHash: { commands: gate.commands, pinPaths: gate.pinPaths, tiers: gate.tiers ?? 1 },
+    // Result-affecting inputs that live outside EvalConfig, so a change re-keys
+    // exactly its dependent cells instead of silently reusing them.
+    //
+    // `revision` is the one that matters and the one that was missing. For an
+    // ordinary benchmark the model is the system under test and the repo is
+    // fixed scaffolding, so the core hashes prompt/arm/model/seed and rightly
+    // ignores the checkout. Here the REPO is the system under test — and
+    // without it, a re-run after a source change resumed all 66 cells from
+    // cache, made zero API calls, and reprinted the previous run's numbers as
+    // if they were fresh. It reported `elapsed 0m`; nothing else gave it away.
+    //
+    // `commands` is stringified because `canonical` is JSON.stringify, which
+    // drops function values silently. Passing the function itself hashed to
+    // nothing, so editing the gate did not re-key a thing.
+    contentHash: {
+      revision: revision ?? 'unpinned',
+      commands: String(gate.commands),
+      pinPaths: gate.pinPaths,
+      tiers: gate.tiers ?? 1,
+    },
 
     async run(cell, ctx) {
       const started = Date.now()

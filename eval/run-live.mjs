@@ -46,6 +46,10 @@ verifyDiscrimination(tasks, REPO, { onProgress: (l) => console.log(l) })
 const adapter = makeSelfModAdapter({
   repoRoot: REPO,
   boot: () => bootAzure(),
+  // The commit under test. Cells are cut from HEAD, so this is the input the
+  // whole benchmark varies — without it in the cell hash, resume replays a
+  // previous commit's results against a repo that has since changed.
+  revision: head,
   // Keep the diff and the member's tool-call log per cell. Numbers say whether
   // a change passed; only these say what it WAS, and whether it was the change
   // we asked for or an accident that happened to satisfy the check.
