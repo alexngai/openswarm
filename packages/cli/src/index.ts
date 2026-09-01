@@ -487,6 +487,21 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
       completed = result.stopReason === 'completed'
     }
     if (exceeded !== undefined) return stopForBudget()
+    // Zero usage means no model call was ever billed — auth or routing failed,
+    // not "the agent tried and produced nothing". Without an `error` line this
+    // reads to the harness as a legitimate empty answer and grades as a real
+    // zero, so the run is scored instead of being flagged as broken.
+    const spent = foldTeam(usageBySession)
+    if (spent.totalTokens === 0) {
+      io.out(
+        JSON.stringify({
+          type: 'error',
+          message: `no model call was made for "${model}" — check the provider route and credentials`,
+        }),
+      )
+      emitStop()
+      return 1
+    }
     io.out(JSON.stringify({ type: 'text_delta', text }))
     emitStop()
     return completed ? 0 : 1

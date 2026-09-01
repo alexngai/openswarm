@@ -252,3 +252,22 @@ it('still rejects a mode with no faithful headless equivalent', async () => {
   expect(code).toBe(1)
   expect(lines.join('\n')).toMatch(/unknown --permission-mode/)
 }, 60_000)
+
+it('flags a run that never reached a model instead of reporting an empty answer', async () => {
+  // No mock server: the route resolves but nothing answers, so no usage is
+  // billed. Previously this exited 1 with an empty text_delta, which parses as
+  // isError=false with a real result — a broken run scored as a legitimate zero.
+  process.env['OPENSWARM_LLM_BASE_URL'] = 'http://127.0.0.1:1/v1'
+  process.env['OPENSWARM_LLM_API_KEY'] = 'unused'
+  process.chdir(mkdtempSync(join(tmpdir(), 'openswarm-run-ws-')))
+
+  const lines: string[] = []
+  const code = await runCli(
+    ['run', '--output-format', 'json', '--model', 'mock-small', '--max-turns', '2', 'go'],
+    { out: (l) => lines.push(l), err: () => {} },
+  )
+  expect(code).not.toBe(0)
+  const parsed = openSwarmParse(lines.join('\n'))
+  expect(parsed.isError).toBe(true)
+  expect(parsed.usage.totalTokens).toBe(0)
+}, 60_000)
