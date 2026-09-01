@@ -271,3 +271,21 @@ it('flags a run that never reached a model instead of reporting an empty answer'
   expect(parsed.isError).toBe(true)
   expect(parsed.usage.totalTokens).toBe(0)
 }, 60_000)
+
+it('accepts the verbless form the harness spec actually emits', async () => {
+  // openSwarmSpec.flags() emits no `run` verb — the prompt is positional after
+  // the flags. Requiring the verb made every cell exit 2 with zero usage.
+  await startMock({ apiKey: 'mock-key', sequence: ['success'], repeatLast: true, successText: 'verbless ok' })
+  process.chdir(mkdtempSync(join(tmpdir(), 'openswarm-run-ws-')))
+
+  const lines: string[] = []
+  const code = await runCli(
+    ['--single', '--headless', '--output-format', 'json', '--model', 'mock-small', '--permission-mode',
+     'danger-full-access', 'solve the thing'],
+    { out: (l) => lines.push(l), err: () => {} },
+  )
+  expect(code).toBe(0)
+  const parsed = openSwarmParse(lines.join('\n'))
+  expect(parsed.sawResult).toBe(true)
+  expect(parsed.output).toContain('verbless ok')
+}, 60_000)

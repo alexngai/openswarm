@@ -170,7 +170,12 @@ const processIo: CliIo = {
 export async function runCli(argv: string[], io: CliIo = processIo): Promise<number> {
   const [command, sub] = argv
   const isCascade = command === 'topology' && sub === 'cascade'
-  const isRun = command === 'run'
+  // `run` is OPTIONAL, matching bin/openswarm.mjs and the v0.x contract the eval
+  // harness was written against: `openswarm <flags> "<task>"` with the prompt
+  // positional. openSwarmSpec.flags() emits no verb, so requiring one made every
+  // harness cell exit 2 on the usage message — a well-formed run, zero tokens.
+  const rest = command === 'run' ? argv.slice(1) : argv
+  const isRun = command === 'run' || (!isCascade && command !== 'topology' && rest.some((a) => !a.startsWith('--')))
   if (!isCascade && !isRun) {
     io.err(
       `usage: openswarm topology cascade --spec <file> [--output <file>] [--trace-output <file>]\n` +
@@ -179,7 +184,7 @@ export async function runCli(argv: string[], io: CliIo = processIo): Promise<num
     return 2
   }
   try {
-    if (isRun) return await runHeadless(argv.slice(1), io)
+    if (isRun) return await runHeadless(rest, io)
     return await runTopologyCascade(parseArgs(argv.slice(2)), io)
   } catch (error) {
     io.out(JSON.stringify({ type: 'error', message: String(error instanceof Error ? error.message : error) }))
