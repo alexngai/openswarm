@@ -192,6 +192,24 @@ export async function runCli(argv: string[], io: CliIo = processIo): Promise<num
 const SANDBOX_MODES = ['read-only', 'workspace-write', 'danger-full-access'] as const
 
 /**
+ * Claude-Code permission vocabulary → dsh sandbox modes.
+ *
+ * The eval harnesses speak Claude Code's names — `CliHarnessAdapter` even falls
+ * back to `bypassPermissions` when no mode is configured — so refusing them
+ * would break every caller that sets `permissionMode`. These three have exact
+ * counterparts, so translating is not a downgrade.
+ *
+ * `default` is deliberately absent: it means "ask a human per action", and
+ * headless there is nobody to ask. Any mode we picked for it would silently
+ * change what the agent is allowed to do, so it is rejected instead.
+ */
+const MODE_ALIASES: Record<string, string> = {
+  bypassPermissions: 'danger-full-access',
+  acceptEdits: 'workspace-write',
+  plan: 'read-only',
+}
+
+/**
  * Validate `--permission-mode`, defaulting to full access.
  *
  * Rejects an unknown mode instead of falling back. A silent downgrade would
@@ -200,10 +218,14 @@ const SANDBOX_MODES = ['read-only', 'workspace-write', 'danger-full-access'] as 
  */
 function sandboxModeOf(mode: string | undefined): string {
   if (mode === undefined) return 'danger-full-access'
-  if (!(SANDBOX_MODES as readonly string[]).includes(mode)) {
-    throw new Error(`unknown --permission-mode "${mode}" (expected ${SANDBOX_MODES.join(' | ')})`)
+  const resolved = MODE_ALIASES[mode] ?? mode
+  if (!(SANDBOX_MODES as readonly string[]).includes(resolved)) {
+    throw new Error(
+      `unknown --permission-mode "${mode}" (expected ${SANDBOX_MODES.join(' | ')}` +
+        `, or one of ${Object.keys(MODE_ALIASES).join(' | ')})`,
+    )
   }
-  return mode
+  return resolved
 }
 
 /** Everything a headless run needs, booted once. */
@@ -394,6 +416,11 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
   const route = routeOf(model)
   const workspace = process.cwd()
   const controller = new AbortController()
+  if (args.has('max-cost-usd')) {
+    // Silently ignoring a spend cap is the one failure mode worse than refusing
+    // the run: the caller believes spending is bounded when it is not.
+    throw new Error('--max-cost-usd is not supported yet; cap with --max-tokens instead')
+  }
   const maxTokens = numericArg(args, 'max-tokens')
   const maxTurns = numericArg(args, 'max-turns')
 

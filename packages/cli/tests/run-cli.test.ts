@@ -13,7 +13,7 @@
  * like a crash — same usage (zero), same missing result. Asserting `sawResult`
  * only on the happy path would be a guard that cannot fail where it matters.
  */
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
@@ -141,13 +141,13 @@ it('--max-turns stops the run AND still reports a result the harness can read', 
   expect(parsed.usage.totalTokens).toBeGreaterThan(0)
 }, 60_000)
 
-it('rejects an unknown --permission-mode instead of quietly downgrading', async () => {
+it('rejects an unrecognized --permission-mode instead of quietly downgrading', async () => {
   await startMock({ apiKey: 'mock-key', sequence: ['success'], repeatLast: true, successText: 'ok' })
   process.chdir(mkdtempSync(join(tmpdir(), 'openswarm-run-ws-')))
 
   const lines: string[] = []
   const code = await runCli(
-    ['run', '--output-format', 'json', '--model', 'mock-small', '--permission-mode', 'bypassPermissions', 'go'],
+    ['run', '--output-format', 'json', '--model', 'mock-small', '--permission-mode', 'yolo', 'go'],
     { out: (l) => lines.push(l), err: () => {} },
   )
   expect(code).toBe(1)
@@ -200,3 +200,55 @@ it('--team runs the coordinator topology and still honors the output contract', 
   expect(parsed.sawResult).toBe(true)
   expect(parsed.usage.totalTokens).toBeGreaterThan(0)
 }, 120_000)
+
+it('accepts the Claude-Code permission vocabulary the harness adapter defaults to', async () => {
+  // CliHarnessAdapter falls back to "bypassPermissions" when no mode is set, so
+  // rejecting it would break every cell that does not override the default.
+  await startMock({
+    apiKey: 'mock-key',
+    sequence: ['tool_call_success', 'success'],
+    repeatLast: true,
+    successText: 'done',
+    toolName: 'bash',
+    toolArguments: JSON.stringify({ command: 'echo hi > alias-proof.txt' }),
+  })
+  const ws = mkdtempSync(join(tmpdir(), 'openswarm-run-ws-'))
+  process.chdir(ws)
+
+  const lines: string[] = []
+  const code = await runCli(
+    ['run', '--output-format', 'json', '--model', 'mock-small', '--permission-mode', 'bypassPermissions', 'go'],
+    { out: (l) => lines.push(l), err: () => {} },
+  )
+  expect(code).toBe(0)
+  expect(openSwarmParse(lines.join('\n')).sawResult).toBe(true)
+  // Mapped to danger-full-access, not merely accepted: the write went through.
+  expect(existsSync(join(ws, 'alias-proof.txt'))).toBe(true)
+}, 60_000)
+
+it('refuses --max-cost-usd rather than letting an uncapped run look capped', async () => {
+  await startMock({ apiKey: 'mock-key', sequence: ['success'], repeatLast: true, successText: 'ok' })
+  process.chdir(mkdtempSync(join(tmpdir(), 'openswarm-run-ws-')))
+
+  const lines: string[] = []
+  const code = await runCli(
+    ['run', '--output-format', 'json', '--model', 'mock-small', '--max-cost-usd', '5', 'go'],
+    { out: (l) => lines.push(l), err: () => {} },
+  )
+  expect(code).toBe(1)
+  expect(lines.join('\n')).toMatch(/--max-cost-usd is not supported/)
+}, 60_000)
+
+it('still rejects a mode with no faithful headless equivalent', async () => {
+  await startMock({ apiKey: 'mock-key', sequence: ['success'], repeatLast: true, successText: 'ok' })
+  process.chdir(mkdtempSync(join(tmpdir(), 'openswarm-run-ws-')))
+
+  const lines: string[] = []
+  // "default" means ask a human per action; headless there is nobody to ask.
+  const code = await runCli(
+    ['run', '--output-format', 'json', '--model', 'mock-small', '--permission-mode', 'default', 'go'],
+    { out: (l) => lines.push(l), err: () => {} },
+  )
+  expect(code).toBe(1)
+  expect(lines.join('\n')).toMatch(/unknown --permission-mode/)
+}, 60_000)
