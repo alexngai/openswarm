@@ -44,6 +44,24 @@ function resolveDsh() {
 const dshScript = resolveDsh()
 
 const VALUE_FLAGS = new Set(['--model', '--provider', '--home', '--port'])
+/**
+ * Flags the headless eval surface understands. They are parsed but NOT acted on
+ * here — `runCli` in packages/cli owns them. Listing them keeps the interactive
+ * parser from rejecting an eval invocation with `unknown option`, which is how
+ * every harness cell used to die on its very first argument.
+ */
+const HEADLESS_VALUE_FLAGS = new Set([
+  '--output-format',
+  '--permission-mode',
+  '--max-tokens',
+  '--max-turns',
+  '--max-cost-usd',
+  '--workers',
+  '--spec',
+  '--output',
+  '--trace-output',
+])
+const HEADLESS_BOOL_FLAGS = new Set(['--headless', '--single', '--team'])
 
 /**
  * `lenient` forwards flags this launcher does not own instead of rejecting
@@ -53,9 +71,17 @@ const VALUE_FLAGS = new Set(['--model', '--provider', '--home', '--port'])
 function parse(argv, lenient = false) {
   const opts = {}
   const rest = []
+  const headless = []
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
-    if (VALUE_FLAGS.has(a)) {
+    if (HEADLESS_VALUE_FLAGS.has(a)) {
+      const value = argv[i + 1]
+      if (value === undefined || value.startsWith('--')) die(`${a} requires a value`)
+      headless.push(a, value)
+      i++
+    } else if (HEADLESS_BOOL_FLAGS.has(a)) {
+      headless.push(a)
+    } else if (VALUE_FLAGS.has(a)) {
       const value = argv[i + 1]
       if (value === undefined || value.startsWith('--')) die(`${a} requires a value`)
       opts[a.slice(2)] = value
@@ -69,7 +95,7 @@ function parse(argv, lenient = false) {
       rest.push(a)
     }
   }
-  return { opts, rest }
+  return { opts, rest, headless }
 }
 
 function die(msg) {
@@ -177,9 +203,15 @@ Providers are auto-detected from the environment:
   AWS_BEARER_TOKEN_BEDROCK         → bedrock
 `
 
+/** Value of `flag` in a flat [flag, value, …] list, or undefined. */
+function valueOf(flat, flag) {
+  const i = flat.indexOf(flag)
+  return i === -1 ? undefined : flat[i + 1]
+}
+
 function main() {
   const argv = process.argv.slice(2)
-  const { opts, rest } = parse(argv, argv[0] === 'web')
+  const { opts, rest, headless } = parse(argv, argv[0] === 'web')
   const home = opts.home ?? process.env.OPENSWARM_HOME ?? join(homedir(), '.openswarm')
   const cmd = rest[0]
 
@@ -223,6 +255,22 @@ function main() {
 
   // run (explicit or implicit): the task is everything after an optional `run`.
   const task = cmd === 'run' ? rest.slice(1) : rest
+  const outputFormat = valueOf(headless, '--output-format')
+
+  // The headless eval path: in-process, JSONL on stdout. It deliberately does
+  // NOT boot dsh — see `bootHarness` in packages/cli for the drift caveat.
+  if (cmd === 'topology' || outputFormat === 'json') {
+    const { env } = resolveModel(opts)
+    Object.assign(process.env, env)
+    const argvForCli =
+      cmd === 'topology'
+        ? ['topology', ...rest.slice(1), ...headless]
+        : ['run', ...headless, '--model', resolveModel(opts).model, ...task]
+    return import(join(pkgRoot, 'packages', 'cli', 'dist', 'index.js'))
+      .then(({ runCli }) => runCli(argvForCli))
+      .then((code) => process.exit(code))
+  }
+
   if (task.length === 0) die('no task given. Try:  openswarm "explain this repo"')
   const { env } = resolveModel(opts)
   bootDsh('openswarm', [task.join(' ')], env, home)
