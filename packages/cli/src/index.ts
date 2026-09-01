@@ -30,6 +30,7 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import * as LlmOpenAi from 'openswarm-llm-openai'
 import * as LlmAnthropic from 'openswarm-llm-anthropic'
 import SwarmService, { type CascadeResult, type CoordinatorResult, type MemberSpec } from 'openswarm-swarm'
+import * as PluginAuthoring from 'openswarm-plugin-authoring'
 import * as Spine from '@deepseek-ai/dsh-agent-spine-demo'
 import * as SessionPersistenceJsonl from '@deepseek-ai/dsh-session-persistence-jsonl'
 import * as Subagent from '@deepseek-ai/dsh-subagent'
@@ -119,7 +120,7 @@ function routeOf(model: string): Route {
  * `--single "do the thing"` swallow the prompt, which fails as a missing task
  * rather than as a parse error.
  */
-const BOOL_FLAGS = new Set(['headless', 'single', 'team'])
+const BOOL_FLAGS = new Set(['headless', 'single', 'team', 'self-modify'])
 
 function parseArgs(argv: string[]): Map<string, string> {
   return splitArgv(argv).args
@@ -255,6 +256,16 @@ export interface BootOptions {
    * request a stop — the caller decides what that means (see `--max-tokens`).
    */
   onUsage?: (team: UsageTotals, turns: number) => void
+  /**
+   * Mount F3 plugin authoring, giving the agent `swarm_author_plugin` — the
+   * self-modification arm of the experiment.
+   *
+   * Only `self` scope is reachable here. `lead` scope needs an approval gate
+   * (`ctx.approval`), which this context does not compose, so it is refused
+   * rather than silently granted: a headless run cannot change the harness for
+   * anyone but itself.
+   */
+  selfModify?: boolean
 }
 
 /**
@@ -321,6 +332,7 @@ export async function bootHarness(opts: BootOptions): Promise<HarnessBoot> {
   ctx.plugin(plug(Subagent))
   ctx.plugin(plug(SpawnInProcess), { providerName: 'spawn' })
   ctx.plugin(SwarmService, {})
+  if (opts.selfModify === true) ctx.plugin(plug(PluginAuthoring), {})
 
   await new Promise<void>((resolve) =>
     ctx.inject(['agents', 'subagents', 'swarm', 'sessionPersistence'], () => resolve()),
@@ -421,6 +433,10 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
   const route = routeOf(model)
   const workspace = process.cwd()
   const controller = new AbortController()
+  // Arms select this via the flag or the env var. The env path exists because an
+  // eval Arm carries `scaffold.env` but cannot add a CLI flag — the harness
+  // spec's `flags()` is fixed across arms.
+  const selfModify = args.has('self-modify') || process.env['OPENSWARM_SELF_MODIFY'] === '1'
   if (args.has('max-cost-usd')) {
     // Silently ignoring a spend cap is the one failure mode worse than refusing
     // the run: the caller believes spending is bounded when it is not.
@@ -436,6 +452,7 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
     workspace,
     io,
     ...(args.get('permission-mode') === undefined ? {} : { permissionMode: args.get('permission-mode')! }),
+    selfModify,
     onUsage: (team, turns) => {
       if (exceeded !== undefined) return
       if (maxTokens !== undefined && team.totalTokens > maxTokens) {

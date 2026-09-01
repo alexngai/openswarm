@@ -289,3 +289,55 @@ it('accepts the verbless form the harness spec actually emits', async () => {
   expect(parsed.sawResult).toBe(true)
   expect(parsed.output).toContain('verbless ok')
 }, 60_000)
+
+/**
+ * The self-modification arm must CHANGE THE AGENT, not just accept a flag.
+ * These two cases are the arm's discrimination proof: the same invocation with
+ * and without `--self-modify` differs in whether `swarm_author_plugin` is
+ * offered to the model. Asserting only that the flag parses would pass just as
+ * happily with the plugin never mounted — an experiment arm that is a no-op.
+ */
+const toolNamesOf = (mock: MockLlmServer): string[] =>
+  JSON.stringify(mock.requests[0] ?? {}).match(/"name":"[a-z_]+"/g)?.map((m) => m.slice(8, -1)) ?? []
+
+it('--self-modify offers swarm_author_plugin to the model', async () => {
+  await startMock({ apiKey: 'mock-key', sequence: ['success'], repeatLast: true, successText: 'ok' })
+  process.chdir(mkdtempSync(join(tmpdir(), 'openswarm-run-ws-')))
+  const code = await runCli(
+    ['run', '--output-format', 'json', '--model', 'mock-small', '--self-modify', 'improve yourself'],
+    { out: () => {}, err: () => {} },
+  )
+  expect(code).toBe(0)
+  expect(toolNamesOf(mock!)).toContain('swarm_author_plugin')
+}, 60_000)
+
+it('without --self-modify the authoring tool is absent', async () => {
+  await startMock({ apiKey: 'mock-key', sequence: ['success'], repeatLast: true, successText: 'ok' })
+  process.chdir(mkdtempSync(join(tmpdir(), 'openswarm-run-ws-')))
+  const code = await runCli(
+    ['run', '--output-format', 'json', '--model', 'mock-small', 'improve yourself'],
+    { out: () => {}, err: () => {} },
+  )
+  expect(code).toBe(0)
+  const names = toolNamesOf(mock!)
+  expect(names).not.toContain('swarm_author_plugin')
+  // Sanity: the tool list was actually read, so "absent" means absent rather
+  // than "the regex found nothing at all".
+  expect(names.length).toBeGreaterThan(0)
+}, 60_000)
+
+it('OPENSWARM_SELF_MODIFY=1 selects the arm, since an eval Arm carries env not flags', async () => {
+  await startMock({ apiKey: 'mock-key', sequence: ['success'], repeatLast: true, successText: 'ok' })
+  process.chdir(mkdtempSync(join(tmpdir(), 'openswarm-run-ws-')))
+  process.env['OPENSWARM_SELF_MODIFY'] = '1'
+  try {
+    const code = await runCli(
+      ['run', '--output-format', 'json', '--model', 'mock-small', 'improve yourself'],
+      { out: () => {}, err: () => {} },
+    )
+    expect(code).toBe(0)
+    expect(toolNamesOf(mock!)).toContain('swarm_author_plugin')
+  } finally {
+    delete process.env['OPENSWARM_SELF_MODIFY']
+  }
+}, 60_000)

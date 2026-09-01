@@ -61,7 +61,7 @@ const HEADLESS_VALUE_FLAGS = new Set([
   '--output',
   '--trace-output',
 ])
-const HEADLESS_BOOL_FLAGS = new Set(['--headless', '--single', '--team'])
+const HEADLESS_BOOL_FLAGS = new Set(['--headless', '--single', '--team', '--self-modify'])
 
 /**
  * `lenient` forwards flags this launcher does not own instead of rejecting
