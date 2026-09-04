@@ -170,7 +170,11 @@ function ensureProfiles(home) {
 }
 
 function bootDsh(profile, positional, extraEnv, home) {
-  const child = spawn('node', [dshScript, '--profile', profile, ...positional], {
+  // `--patch` is a LAUNCHER flag, so it has to precede the profile app's own
+  // arguments; passing it after the task text makes dsh treat it as prompt words.
+  const patchAt = positional.indexOf('--patch')
+  const launcher = patchAt === -1 ? [] : positional.splice(patchAt, 2)
+  const child = spawn('node', [dshScript, '--profile', profile, ...launcher, ...positional], {
     cwd: process.cwd(),
     stdio: 'inherit',
     env: { ...process.env, DSH_HOME: home, ...extraEnv },
@@ -257,18 +261,43 @@ function main() {
   const task = cmd === 'run' ? rest.slice(1) : rest
   const outputFormat = valueOf(headless, '--output-format')
 
-  // The headless eval path: in-process, JSONL on stdout. It deliberately does
-  // NOT boot dsh — see `bootHarness` in packages/cli for the drift caveat.
-  if (cmd === 'topology' || outputFormat === 'json') {
+  // `topology cascade` keeps the legacy in-process contract the eval harness's
+  // CascadeAdapter drives.
+  if (cmd === 'topology') {
     const { env } = resolveModel(opts)
     Object.assign(process.env, env)
-    const argvForCli =
-      cmd === 'topology'
-        ? ['topology', ...rest.slice(1), ...headless]
-        : ['run', ...headless, '--model', resolveModel(opts).model, ...task]
     return import(join(pkgRoot, 'packages', 'cli', 'dist', 'index.js'))
-      .then(({ runCli }) => runCli(argvForCli))
+      .then(({ runCli }) => runCli(['topology', ...rest.slice(1), ...headless]))
       .then((code) => process.exit(code))
+  }
+
+  // Headless JSON runs boot the SAME profile an interactive run does, with the
+  // eval overlay adding a JSONL reporter.
+  //
+  // This used to hand-mount a ~14-plugin context in packages/cli, so anything
+  // measured through it described that stack rather than openswarm: the profile
+  // composes 83 plugins, including agent-instructions, plan-mode,
+  // compaction-basic, tool-result-pruner, tool-fs-search, the skill system and
+  // the subagent tools. Two paths meant the evaluated harness and the shipped
+  // one could drift silently, and they had.
+  if (outputFormat === 'json') {
+    if (task.length === 0) die('no task given')
+    const { env } = resolveModel(opts)
+    env.OPENSWARM_JSONL = '1'
+    // Caps are honoured by the reporter plugin (it folds the usage they measure).
+    const caps = { '--max-tokens': 'OPENSWARM_MAX_TOKENS', '--max-turns': 'OPENSWARM_MAX_TURNS' }
+    for (const [flag, key] of Object.entries(caps)) {
+      const v = valueOf(headless, flag)
+      if (v !== undefined) env[key] = v
+    }
+    if (valueOf(headless, '--max-cost-usd') !== undefined) {
+      // Silently ignoring a spend cap is worse than refusing: the caller
+      // believes spending is bounded when it is not.
+      die('--max-cost-usd is not supported; cap with --max-tokens')
+    }
+    const evalPatch = join(pkgRoot, 'packages', 'bundle', 'cordis.eval.patch.yml')
+    bootDsh('openswarm', ['--patch', evalPatch, task.join(' ')], env, home)
+    return
   }
 
   if (task.length === 0) die('no task given. Try:  openswarm "explain this repo"')

@@ -88,6 +88,7 @@
     "packages/bundle/package.json",
     "packages/bundle/cordis.patch.yml",
     "packages/bundle/cordis.dev.patch.yml",
+    "packages/bundle/cordis.eval.patch.yml",
     "packages/swarm/member.cordis.yml"
   ],
   "dependencies": {

@@ -29,6 +29,16 @@
  * Non-JSON lines are ignored by the parser, so the headless runner's own
  * plain-text final message passes through harmlessly.
  *
+ * ## Budget caps
+ *
+ * `OPENSWARM_MAX_TOKENS` / `OPENSWARM_MAX_TURNS` stop the run and exit 3. These
+ * live here rather than in a bespoke CLI because this plugin already folds the
+ * usage the cap is measured against — and because the alternative was keeping a
+ * second, smaller harness alive purely to own two flags.
+ *
+ * On exceed we emit `budget_exceeded` AND the normal terminator, so a capped run
+ * still reports the usage it spent instead of looking like a crash.
+ *
  * ## Off unless asked
  *
  * Gated on `OPENSWARM_JSONL=1`. The profile is shared with interactive use, and
@@ -48,8 +58,11 @@ export function apply(ctx: Context): void {
   if (process.env['OPENSWARM_JSONL'] !== '1') return
 
   const usage: Usage = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0 }
+  const maxTokens = numericEnv('OPENSWARM_MAX_TOKENS')
+  const maxTurns = numericEnv('OPENSWARM_MAX_TURNS')
   let finalText = ''
   let stopped = false
+  let turns = 0
 
   const emit = (o: unknown): void => {
     process.stdout.write(`${JSON.stringify(o)}\n`)
@@ -81,10 +94,37 @@ export function apply(ctx: Context): void {
     usage.inputTokens += u.inputTokens ?? 0
     usage.outputTokens += u.outputTokens ?? 0
     usage.cacheReadInputTokens += u.cacheReadTokens ?? 0
+    turns += 1
+
+    const total = usage.inputTokens + usage.outputTokens + usage.cacheReadInputTokens
+    const hit =
+      maxTokens !== undefined && total > maxTokens ? `max-tokens (${total} > ${maxTokens})`
+      : maxTurns !== undefined && turns > maxTurns ? `max-turns (${turns} > ${maxTurns})`
+      : undefined
+    if (hit !== undefined) {
+      emit({ type: 'budget_exceeded', limit: hit })
+      stop()
+      process.exit(3)
+    }
   }) as never)
 
   process.on('beforeExit', stop)
   process.on('exit', stop)
+  // Unregister on unmount. Without this every mount leaks two process
+  // listeners, and a later run can be terminated by an earlier reporter's
+  // `stop` — which emits a second `message_stop` and corrupts the transcript.
+  ctx.on('dispose' as never, (() => {
+    process.off('beforeExit', stop)
+    process.off('exit', stop)
+  }) as never)
+}
+
+/** A positive numeric env var, or undefined. Junk is ignored rather than treated as 0 — a cap of 0 would stop every run instantly. */
+function numericEnv(name: string): number | undefined {
+  const raw = process.env[name]
+  if (raw === undefined || raw === '') return undefined
+  const n = Number(raw)
+  return Number.isFinite(n) && n > 0 ? n : undefined
 }
 
 /** Final text from a message's content blocks, tolerating either shape. */
