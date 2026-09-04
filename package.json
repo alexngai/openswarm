@@ -18,7 +18,8 @@
     "publish:npm": "npm run presubmit && npm publish",
     "version:patch": "npm version patch",
     "version:minor": "npm version minor",
-    "version:major": "npm version major"
+    "version:major": "npm version major",
+    "smoke:headless": "node scripts/smoke-headless.mjs"
   },
   "devDependencies": {
     "@anthropic-ai/bedrock-sdk": "^0.33.1",
