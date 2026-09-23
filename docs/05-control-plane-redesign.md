@@ -1,6 +1,6 @@
 # 05 — Control-plane redesign: steerable, nestable, meshable swarms
 
-Status: **draft for discussion** · 2026-09-21 · extends [docs/04](04-mesh-positioning.md)
+Status: **draft — open questions resolved (§8), for review** · 2026-09-22 · extends [docs/04](04-mesh-positioning.md)
 
 A redesign of OpenSwarm's construction and interface so that a person, a
 program, or another swarm can **address, direct, observe, and join** a swarm
@@ -79,6 +79,17 @@ both survive as projections with their current APIs. Events are typed
 mutation is compare-and-set on the entity revision, and `waitForChange`
 generalizes to a filtered subscription.
 
+**One journal per run, linked by parent id** (§8 D1). A program and each
+of its threads keep separate journals; the program board and recap fold
+the parent plus its children. Each run's projections register with dsh's
+`ctx.sessionProjections`, which drives the folds, caches them, and pushes
+changed views to the browser surface, so we stop maintaining our own
+fold-on-read path. Work crosses a journal boundary only by a **handoff**:
+the parent appends `offered {offerId, task}`, the child appends
+`accepted {offerId}`, a restarted parent re-offers anything unaccepted,
+and a child treats a repeated `offerId` as a no-op. Foreign swarms join
+through the same handoff, so it is built once.
+
 Backends, selected per run:
 
 | Backend | Use | Cross-process | Cross-host |
@@ -120,8 +131,9 @@ survives restarts and `attach` works from a new process.
 Two member compositions ship: **`leaf`** (today's `member.cordis.yml`) and
 **`lead`** (adds `openswarm-swarm`, a subagent provider, and the journal
 client). A `lead` member runs a thread inside a program: its worktrees cut
-from its own task branch, its sub-board lives in its own journal segment,
-and its landing target is the parent's branch. Nesting is therefore a
+from its own task branch, its sub-board lives in its own journal (linked
+to the program's by parent id), and its landing target is the parent's
+branch. Nesting is therefore a
 composition choice plus a merge-target rule, which is why it is Phase 2
 and not a rewrite.
 
@@ -153,6 +165,11 @@ policy says, and the same token scheme gates it.
 
 `packages/git`'s sequential `mergeAll` becomes a `MergeTrain`:
 
+- the train is its own class with its own journal (batches, verifier
+  results, outcomes) and touches the program only through the wire, so
+  its host can change without a redesign (§8 D3): hosted in the program
+  lead through Phase C, promoted to a standalone service per target branch
+  in Phase D, when two swarms need to share it;
 - entries carry `blockedBy`, priority, and the required verifier level;
 - batches are merged speculatively and tested once; a failure bisects to
   the culprit entry (Bors, SubmitQueue, Zuul lineage);
@@ -160,7 +177,11 @@ policy says, and the same token scheme gates it.
   conflict, the ledgered "agent-driven conflict resolution") before it is
   retained;
 - several threads and several programs may share one train and one target,
-  which is the concrete form of "merging two swarms".
+  which is the concrete form of "merging two swarms";
+- a **forge adapter** (later) feeds landed batches into GitHub or GitLab's
+  merge queue instead of pushing, for organizations that already gate
+  there; our train then does the agent-specific work (scopes, hidden
+  tests, bisect) and the forge keeps the final say.
 
 ### 3.6 Verifier hierarchy and the landing gate
 
@@ -172,26 +193,42 @@ to land; results record the level actually reached.
 | L0 | member self-report | the default |
 | L1 | LLM judge (`APPROVED`/`REVISE:`) | critic-loop, cascade gate |
 | L2 | declared commands, weakest link over exit codes | cascade `confidence` only |
-| L3 | **hidden tests** — a partition excluded from member worktrees, run at landing | new |
+| L3 | **hidden tests** — kept **outside the repository**, unreachable from the member sandbox, run by the train at landing | new |
 | L4 | external CI on the train | new |
 
 L3 exists because every self-improvement and long-horizon result in the
 record shows evaluator gaming scaling with capability; a verifier the
-member cannot see is the cheapest defence. A hacker-fixer loop over the
-verifier is an optional topology, not core.
+member cannot see is the cheapest defence. "Cannot see" needs two things
+(§8 D4). The tests must not live in the repository: worktrees share one
+object store, so any ref, any excluded path, and any history is readable
+by a member with git. And the member sandbox must not reach them, which
+today it can (§3.8). A read attempt on the verifier location is logged as
+a tamper incident. A hacker-fixer loop over the verifier is an optional
+topology, not core.
 
 ### 3.7 Watchdog and maintenance
 
 - **Stall**: the idle clock (exists) plus a nudge before a restart.
 - **Same-target**: two claims or declared scopes converging on one file or
   one failing test raise a Question to the coordinator; the fix is a
-  re-partition, not a lock.
+  re-partition, not a lock. Scope kinds (§8 D2): `file` and `test` are
+  enforced (detection, leases, landing check); any other `kind`
+  (`api`, `schema`, `config`, …) is recorded and displayed but not
+  enforced, and the UI marks it so. Writes outside a declared scope are
+  caught at landing.
 - **Budget**: exhaustion pauses the target and opens a Question.
 - **Drift**: a scheduled maintenance program (small single-purpose PRs
   against declared principles) is a first-class program kind.
 
 ### 3.8 Policy and approvals
 
+- **Members are sandboxed to their worktree.** Today `member.cordis.yml`
+  runs members with sandbox mode `danger-full-access`, so a member can
+  read or write anything on the host. The default becomes
+  `workspace-write` rooted at the worktree, network denied unless the run
+  policy allows it, with declared read-only paths for toolchains and
+  package caches. This is a Phase A prerequisite: hidden tests, scope
+  enforcement, and blast-radius claims all depend on it.
 - Trust mode set at spawn through dsh's sandbox policy; no per-edit prompts.
 - One approval queue: every Question routes through `ctx.approval` (as F3
   does today), tagged with a risk tier; the queue enforces an escalation
@@ -270,7 +307,8 @@ webhooks start programs the same way a person does.
 | Dimension | Today (`main` @ `9148996`) | Redesign |
 |---|---|---|
 | Unit of execution | `runTeam(spec) → Promise` | durable `SwarmRun` with a stable id; `runTeam` = `start().result` |
-| State | board + mailbox over one lead's session log | one journal, three backends, five projections |
+| State | board + mailbox over one lead's session log | per-run journals linked by parent id, three backends, projections registered with `ctx.sessionProjections` |
+| Member sandbox | `danger-full-access` (whole host) | `workspace-write` at the worktree, network off by default |
 | Survives restart | no (run table in memory, lead disposed) | yes (journal-backed; `attach`) |
 | Human entry | `/swarm` line, blocking, returns synthesis | board-first UI + CLI + wire; `/swarm` stays as the one-shot |
 | Address a member | impossible (mailbox is member↔member) | `steer {target}`: lead, member, role, thread, `*` |
@@ -309,10 +347,10 @@ Each phase names the docs/04 §3.1 metric it moves, so it is checkable.
 
 | Phase | Delivers | Metric |
 |---|---|---|
-| **A — Steerable** | `SwarmRun`, journal over session-log, `steer`/`ask`/`answer`/`cancel`, Question queue through `ctx.approval`, intent header, board view in the web surface, CLI verbs | interventions and questions become measurable; time-to-answer |
-| **B — Verified landing** | verifier levels L2–L3, landing gate, train with bisect and deps, resolver thread, `RunMetrics` | landing rate and latency, coordination overhead ratio |
+| **A — Steerable** | member sandbox to `workspace-write`; resume-capable member runtime; `SwarmRun`, per-run journal over session-log registered with `ctx.sessionProjections`, handoff protocol; `steer`/`ask`/`answer`/`cancel`, Question queue through `ctx.approval`, intent header, `file`/`test` scopes, board view in the web surface, CLI verbs | interventions and questions become measurable; time-to-answer |
+| **B — Verified landing** | verifier levels L2–L3 (out-of-repo hidden tests), landing gate, train with bisect and deps hosted in the lead, resolver thread, `RunMetrics` | landing rate and latency, coordination overhead ratio |
 | **C — Nestable** | `lead` member composition, program spec, partition from the dependency graph, contracts step, budgets | scaling efficiency at 4–8 threads × 3–5 members |
-| **D — Meshable** | sqlite and git-journal backends, `attach` runtime, `join`/`offer`, Agent Card, join policy | time-to-join, task-loss under host loss, replay fidelity |
+| **D — Meshable** | sqlite and git-journal backends, train promoted to a standalone service, `attach` runtime, `join`/`offer` over the handoff protocol, Agent Card, join policy, forge adapter | time-to-join, task-loss under host loss, replay fidelity |
 | **E — Runtime-neutral** | claude-code, codex, a2a members in one roster | runtime coverage |
 
 A is the smallest phase and moves the human surface from below the
@@ -320,18 +358,75 @@ lead-only baseline to above it; it is also the phase every later one
 needs, because nesting and meshing without steering only make the
 unaddressable swarm bigger.
 
-## 8. Open questions
+## 8. Resolved decisions (2026-09-22)
 
-- **Journal segmenting for nested runs**: one journal per program with
-  thread segments, or one per run linked by parent id? The first gives one
-  recap; the second gives independent replication.
-- **Scope kinds**: start with `file` and `symbol` only, or carry the full
-  semantic set from day one? Evidence for semantic scopes in production is
-  unproven; file scopes are enough for same-target detection.
-- **Where the train runs**: in the program lead, or as its own long-lived
-  service that programs enqueue into? The latter is what "merging two
-  swarms" needs; the former is simpler for Phase B.
-- **Hidden-test partition mechanics**: sparse checkout, a separate ref, or
-  an exclude list applied at worktree creation?
-- **Upstream**: continuable `subagent-dsh-sdk`, resume-on-miss, and a
-  method-registry seam on the SDK server all get cheaper if filed now.
+Each decision lists the options weighed, why this one, and what would
+reverse it.
+
+**D1 — One journal per run, linked by parent id.** Weighed against one
+journal per program with thread segments, and a hybrid with a thin program
+index. A single journal gives one compare-and-set domain and a one-fold
+recap, but dsh has no notion of segments, every reader pays for every
+thread's traffic, and a thread cannot be replicated or handed to another
+host alone. Per-run journals match dsh's own model (each registers with
+`ctx.sessionProjections` for caching and push) and make a thread the unit
+the mesh moves. The cost is that nothing is atomic across journals; the
+offer/accept handoff in §3.1 covers it, and it is the same protocol
+foreign swarms need. *Reverse if* programs turn out to need tight,
+frequent cross-thread coordination rather than occasional handoffs.
+
+**D2 — Enforce `file` and `test` scopes; record the rest.** Weighed
+against file only, and the full semantic set enforced. File ownership is
+the only kind with production evidence; a failing-test name catches the
+many-agents-on-one-bug pile-up that file scopes miss. Semantic scopes have
+a published protocol and no published outcome, and enforcing them needs
+per-language symbol resolution and lease tuning that would stall threads
+on false positives. Recording them lets planners express intent now and
+gives us the data to decide. *Reverse if* a program produces a collision
+the file and test scopes missed and a semantic scope would have caught.
+
+**D3 — The train is a service-shaped class: lead-hosted first, promoted
+later.** Weighed against lead-only, standalone from day one, and
+delegating to the forge's queue. Lead-only makes merging two swarms
+impossible; standalone from day one pays for a lifecycle, auth, and a
+deployment question before anything needs it; the forge queue needs a
+remote and hosted CI, is FIFO without dependencies, and cannot run our
+hidden-test gate. The journal makes promotion a change of host. The forge
+queue returns as a downstream adapter, not a replacement. *Guard:* the
+train may not reach into the lead's memory, only the wire and its
+journal; review enforces it until promotion.
+
+**D4 — Hidden tests live outside the repository, and members are
+sandboxed.** Weighed against sparse checkout, a separate ref, and an
+exclude list at worktree creation. All three are obscurity: worktrees
+share one object store, so a member with git can read another ref, an
+excluded path, or history. The agent-gaming record includes models
+extracting hidden tests deliberately, so obscurity fails against exactly
+the agents the gate exists for. A boundary needs both an out-of-repo
+location and a sandbox that cannot reach it, which forces the member
+sandbox change in §3.8. *Cost:* sandboxing may break members that
+currently reach outside the worktree for toolchains or caches; the
+declared read-only paths address that, and the change ships behind a flag
+until the keyless and live suites pass under it.
+
+**D5 — Fix locally where we already wrap; file upstream; delete wrappers
+when upstream lands.** Weighed against filing and waiting, local wrappers
+only, and forking. Resume-on-miss is small locally: the agent registry
+already has a resume call over persisted sessions and the stock SDK server
+simply never calls it, and we already wrap that server. It ships with the
+Phase A member runtime, and `member-resume.test.ts` flips when it does.
+The method-registry seam gets the same treatment. Continuable
+`subagent-dsh-sdk` is filed upstream only, because `RemotePeer` already
+works and the upstream version is cleanup, not a blocker. Forking stays
+governed by docs/01's trigger, which has not fired.
+
+### Still open
+
+- **Handoff timeouts**: how long an unaccepted offer waits before the
+  parent reclaims it, and whether that is per program or per thread.
+- **Sandbox read-only paths**: the default list per ecosystem (Node,
+  Python, Rust), and whether it is declared in the member composition or
+  the run policy.
+- **Verifier location**: a sibling directory the operator manages, or a
+  separate repository the train clones; the second supports the promoted
+  train on another host.
