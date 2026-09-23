@@ -37,7 +37,7 @@ accepts direction**, at every level from member to mesh.
 |---|---|---|
 | P1 | **Fan-out = neglect time ÷ interaction time.** How many agents one person directs is set by how long an agent works correctly unattended and how much each interaction costs. | Every feature is judged by which term it moves. Watchdogs, verifiers, and merge gates raise neglect time; boards, recaps, and one approval queue cut interaction time. |
 | P2 | **Artifacts carry intent; chat carries correction.** | Tasks carry a commander's-intent header. Dispatch is by spec, issue, or board; chat is for exceptions and steering. |
-| P3 | **State is a fold over a journal.** (kept from docs/01) | One journal with pluggable backends; every projection (board, mailbox, roster, questions, budgets, landings) folds from it; replication is a backend, not a feature. |
+| P3 | **State is a fold over a journal.** (kept from docs/01) | A journal per run with pluggable backends; every projection (board, mailbox, roster, questions, budgets, landings) folds from it; replication is a backend, not a feature. |
 | P4 | **One writer per scope; land only through a train; verify before landing.** | Scopes are declared before writes, landing is a speculative bisecting train with a verifier gate, conflicts are routed rather than dropped. |
 | P5 | **Consent at plan time, exception at run time.** | A plan gate before fan-out; run-time prompts only for escalations, fanned into one risk-tiered queue with a rate cap. |
 | P6 | **Same primitives at every level.** | Member, thread, program, and mesh are addressed, steered, observed, and budgeted with the same verbs and the same wire. |
@@ -60,7 +60,7 @@ Entities the journal records, each with a stable id and a revision:
 |---|---|---|
 | **Run** | kind (`program`\|`thread`), spec, parent run, status, principal, budget | today: in-memory `RunRecord`, lost on restart |
 | **Task** | subject, prompt, **intent** {purpose, endState, constraints, preferences}, **scope** (declared write set), blockedBy, priority, owner, attempts, result, **verifiedLevel** | today: subject/prompt/blockedBy/owner/result |
-| **Scope** | task, kind (`file`\|`symbol`\|`api`\|`schema`\|`config`), pattern, lease | new |
+| **Scope** | task, kind (`file`\|`test` enforced; any other string recorded only), pattern, lease | new |
 | **Member** | name, runtime, thread, state (`provisioning`\|`active`\|`idle`\|`blocked`\|`dead`), session ref, budget used | today: roster in memory |
 | **Message** | from principal, to (member\|role\|`*`\|`lead`), delivery (`immediate`\|`enqueue`\|`quiet`), text | today: from/to member names, `wakeup`/`quiet` |
 | **Question** | asker, kind (`consent`\|`approval`\|`input`\|`escalation`), risk tier, prompt, answer, answered by | new; the needs-input queue |
@@ -70,7 +70,7 @@ Entities the journal records, each with a stable id and a revision:
 
 ## 3. Construction
 
-### 3.1 `SwarmJournal` — one log, many projections
+### 3.1 `SwarmJournal` — a log per run, many projections
 
 Replaces the pair `SwarmBoard` + `SwarmMailbox` as the *storage* layer;
 both survive as projections with their current APIs. Events are typed
@@ -134,7 +134,7 @@ client). A `lead` member runs a thread inside a program: its worktrees cut
 from its own task branch, its sub-board lives in its own journal (linked
 to the program's by parent id), and its landing target is the parent's
 branch. Nesting is therefore a
-composition choice plus a merge-target rule, which is why it is Phase 2
+composition choice plus a merge-target rule, which is why it is Phase C
 and not a rewrite.
 
 ### 3.4 One wire, three roles
