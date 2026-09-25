@@ -5,8 +5,9 @@ Status: **draft for review** · 2026-09-25 · extends [docs/04](04-mesh-position
 A redesign of OpenSwarm's construction and interface, organized by the goals
 it serves. §1 states the diagnosis, §2 the outcome and goals, §3–§4 the
 principles and model, §5 the foundation every goal builds on, §6 how the
-design reaches each goal, §7 the phased plan and its exit criteria, and §8–§10
-the comparison with today, the recorded decisions, and what is still open.
+design reaches each goal, §7 the phased plan and its exit criteria, §8–§10
+the comparison with today, the recorded decisions, and what is still open,
+and §11 the dsh seams checked against the installed packages.
 The evidence is the docs/04 discussion record (lab demonstrations,
 program-scale coordination lineage, human-swarm interaction research, and the
 project's own evals); this doc cites it by principle rather than repeating it.
@@ -74,7 +75,7 @@ Further topology mechanism (docs/02's conclusion stands).
 | P3 | **State is a fold over a journal.** A journal per run with pluggable backends; every view is a projection; replication is a backend. | G6, G3 |
 | P4 | **One writer per scope; land only through a train; verify before landing.** | G2, G4 |
 | P5 | **Consent at plan time, exception at run time.** | G1, G7 |
-| P6 | **Same primitives at every level.** Member, thread, program, and mesh share verbs and the wire. | G1, G3 |
+| P6 | **Same primitives at every level.** Member, thread, program, and mesh share verbs and the protocol. | G1, G3 |
 | P7 | **Runtime-neutral members behind a small contract.** | G5 |
 | P8 | **A foreign message is never consent.** Provenance on every message; only a human principal answers a question or approves a mount. | G7 |
 | P9 | **Structural, not voluntary, coordination.** The harness declares, derives, and raises; members may participate. | G1, G2, G4 |
@@ -94,7 +95,7 @@ Entities recorded in the journal, each with a stable id and a revision:
 | Entity | Fields (beyond id/revision) | Today |
 |---|---|---|
 | **Run** | kind (`program`\|`thread`), spec, parent run, status, principal, budget | in-memory `RunRecord`, lost on restart |
-| **Task** | subject, prompt, **intent** {purpose, endState, constraints, preferences}, **scope**, blockedBy, priority, owner, attempts, result, **verifiedLevel** | subject, prompt, blockedBy, owner, result |
+| **Task** | subject, prompt, **intent** {purpose, endState, constraints, preferences}, **scope**, blockedBy, priority, owner, **lease**, attempts, result, **verifiedLevel** | subject, prompt, blockedBy, owner, result |
 | **Scope** | task or thread, kind (`file`\|`test` enforced; any other string recorded only), pattern, lease | none |
 | **Member** | name, runtime, conformance level, thread, state (`provisioning`\|`active`\|`idle`\|`blocked`\|`dead`), session ref, budget used | roster in memory |
 | **Message** | from principal, to (member\|role\|thread\|`lead`\|`*`), delivery (`immediate`\|`enqueue`\|`quiet`), outcome | from/to member names, `wakeup`/`quiet` |
@@ -132,26 +133,44 @@ typed journal (`swarm/task`, `swarm/scope`, `swarm/message/*`,
 `swarm/member`, `swarm/steer`). Every mutation is compare-and-set on the
 entity revision; `waitForChange` generalizes to a filtered subscription.
 
-- **One journal per run, linked by parent id** (D1). Each run's projections
-  register with dsh's `ctx.sessionProjections`, which drives the folds,
-  caches them, and pushes changed views to the web surface as
-  `session/projection` frames. We stop maintaining our own fold-on-read path.
+- **One journal per run, linked by parent id** (D1). The journal is **our
+  own append-only JSONL file**, not a dsh session log: dsh refuses to reload
+  a session containing event types outside its built-in list, and offers no
+  compare-and-set (§11). The run's lead is the journal's only writer; every
+  other principal writes through the protocol (§5.3), so compare-and-set
+  stays the in-process transaction tail `board.ts` already has. Projections
+  are our own folds, pushed to views over the protocol's event
+  subscription. When dsh accepts plugin event types, a session-log backend
+  can replace the file.
+- **Claims carry a lease** tied to the owner's liveness. `attach` releases
+  claims whose owner is gone; today a lead crash leaves claimed tasks
+  `in_progress` forever.
 - **Handoff** is the only way work crosses a journal boundary: the parent
   appends `offered {offerId, task}`, the child appends `accepted {offerId}`,
   a restarted parent re-offers anything unaccepted after a timeout, and a
   child treats a repeated `offerId` as a no-op. Nested threads and foreign
   swarms use the same protocol.
-- **Backends** (D8): `session-log` (today, all single-host work) and
-  `git-journal` (mesh: JSONL under `refs/swarm/<runId>`, claims by push
-  compare-and-set). A `sqlite` backend is added only if a single-host
-  multi-lead case demands it.
+- **Backends** (D8): one JSONL format in two places. A local file per run
+  serves all single-host work; the same JSONL under `refs/swarm/<runId>`
+  serves the mesh, with claims by push compare-and-set. A `sqlite` backend
+  is added only if a single-host multi-lead case demands it.
 
-### 5.3 One wire, principals, and policy
+### 5.3 One protocol, carriers, principals, and policy
 
 Members, humans and UIs, drivers, and foreign swarms speak one `swarm/*`
-JSON-RPC surface. Identity comes from the credential, never from a field.
-Because every principal sees the same method table, **policy is the
-security boundary**, and it is default-deny:
+method table. The table and its policy check are one transport-free module;
+a **carrier** binds it to a transport and establishes the caller's
+principal (D11):
+
+| Carrier | Transport | Principal | Serves |
+|---|---|---|---|
+| **web** | dsh's web gateway, reached by the client plugin (§6.1) | always owner; dsh's web server authenticates nothing, so this carrier is loopback-only | the board in the browser |
+| **socket** | the app-server's JSON-RPC socket | from the token: owner (a local token file, for the CLI), viewer, driver, member, foreign swarm | CLI, programs, members, the mesh |
+
+A new interface (a TUI, an IDE, A2A) is a new carrier, not a new protocol.
+Identity comes from the carrier's credential, never from a field. Because
+every principal sees the same method table, **policy is the security
+boundary**, and it is default-deny:
 
 | Method group | Owner (human) | Viewer (human) | Driver (program) | Lead member | Member | Foreign swarm |
 |---|:-:|:-:|:-:|:-:|:-:|:-:|
@@ -162,8 +181,11 @@ security boundary**, and it is default-deny:
 | Mesh: `join`, `leave`, `offer`, `card` | ✓ | — | — | — | — | ✓ after join policy |
 
 A driver may answer only questions whose risk tier its policy allows; a
-consent or approval question always needs a human (P8). The member socket
-binds wherever the run's policy says; loopback stops being a hard-coded rule.
+consent or approval question always needs a human (P8). The socket binds
+wherever the run's policy says; loopback stops being a hard-coded rule. The
+web carrier stays on loopback until dsh's web surface authenticates
+requests. Today the app-server forwards every non-`swarm/` method to dsh's
+SDK server; under the policy table that pass-through is owner-only.
 
 ### 5.4 Member contract
 
@@ -178,7 +200,10 @@ stay structural. Three conformance levels:
 
 Everything in §6 works at **basic**; steerable adds live direction;
 participating is a bonus (P9). Runtimes today: in-process `spawn`
-(steerable), dsh subprocess (steerable via `RemotePeer`). Planned: a
+(steerable), dsh subprocess (steerable via `RemotePeer`). dsh's SDK server
+only queues a turn, so `immediate` delivery reaches a subprocess member
+through `openswarm-swarm-member`, which calls `agent.steer` inside the
+member (§11). Planned: a
 resume-capable dsh runtime (D5), `claude-code` and `codex` (basic, then
 steerable), `attach` to an existing endpoint, and `a2a`.
 
@@ -186,10 +211,15 @@ steerable), `attach` to an existing endpoint, and `a2a`.
 
 Today `member.cordis.yml` runs members with sandbox mode
 `danger-full-access`: a member can read or write anything on the host. The
-default becomes `workspace-write` rooted at the worktree, network denied
-unless the run policy allows it, with declared read-only paths for
-toolchains and package caches. Hidden tests (G4), scope enforcement (G2),
-and every blast-radius claim (G7) depend on it. It ships behind a flag
+default becomes dsh's `workspace-write`, rooted at the worktree. dsh's
+sandbox confines **writes** to the session cwd and temp directories for the
+whole process tree, git and npm included; it does not restrict reads or
+network, and takes no extra paths (§11). So the sandbox is **write
+containment**: a member cannot damage the host or another member's
+worktree, and package caches are redirected into temp by environment
+(`npm_config_cache`, `PIP_CACHE_DIR`, `CARGO_HOME`) in the member
+composition. It is not a confidentiality boundary; hidden tests are
+protected by where the verifier runs (§6.4, D4). It ships behind a flag
 until the keyless and live suites pass under it.
 
 ## 6. How the design reaches each goal
@@ -232,8 +262,12 @@ conversational target; every other unit is one step away.
 | conflict the resolver could not fix | "landing L conflicts with M; resolver gave up" |
 
 Members at *participating* level may also `ask`. All questions go to one
-queue through dsh's `ctx.approval`, tagged with a risk tier, with a rate cap
-so the queue cannot escalate faster than a person can think.
+queue in the journal, tagged with a risk tier, with a rate cap so the queue
+cannot escalate faster than a person can think, and are answered over any
+carrier. The web carrier also surfaces them through dsh's
+`ctx.userQuestions`, which works outside an agent turn. `ctx.approval` does
+not (it throws unless a turn is open, §11), so it stays what it is today:
+the gate on member tool calls and F3 mounts.
 
 **Observing.**
 
@@ -247,10 +281,11 @@ so the queue cannot escalate faster than a person can think.
 | **Recap on attach** | a change log folded from the journal since the viewer last looked | — |
 
 These render inside dsh's web surface as a client plugin (D7): a package
-declaring `dsh.client`, contributing to `conversation.view`,
-`conversation.session.header.actions`, and `session.hierarchy`, fed by our
-projections through `session/projection` frames. The same data is on the
-wire for any other client, and a CLI covers the headless case:
+declaring `dsh.client` that contributes a view tab to `conversation.view`
+and actions to `conversation.session.header.actions`, fed through the web
+carrier. dsh has no full-page or route slot, so each view must fit a tab
+(§11). The same data is on the socket carrier for any other client, and a
+CLI covers the headless case:
 
 ```
 openswarm start  <swarm.yml | "task"> [--program] [--consent plan] [--budget …]
@@ -321,8 +356,9 @@ enterprise path.
 
 **Risks.** The survey step is per-language; start with TypeScript and
 Python and fall back to co-change. The whole goal is conditional on the
-Phase C experiment (§7): if a program of threads does not beat one team of
-the same total size, G2 and G3 are re-scoped to sharded throughput.
+pilot and the Phase C experiment (§7.5): if a program of threads does not
+beat sharded teams of the same total size, G2 and G3 are re-scoped to
+sharded throughput.
 
 ### 6.3 G3 — Meshable
 
@@ -331,7 +367,7 @@ share coordination state and a train, hand tasks to each other, and merge
 their work, without either restarting.
 
 **Design.**
-- **Transport**: the `git-journal` backend; every swarm already has the
+- **Transport**: the journal under `refs/swarm/<runId>` (D8); every swarm already has the
   repository, so joining needs no broker.
 - **Join**: `swarm/join {card, token}` against a swarm's published Agent
   Card; the join policy (§6.7) decides the principal it becomes.
@@ -363,13 +399,16 @@ level it must reach to land; results record the level reached.
 | L0 | member self-report | the default |
 | L1 | LLM judge (`APPROVED`/`REVISE:`) | critic-loop, cascade gate |
 | L2 | declared commands, weakest link over exit codes | cascade `confidence` only |
-| L3 | **hidden tests**, stored outside the repository, unreachable from the member sandbox, run by the train | new |
+| L3 | **hidden tests**, held where the verifier runs and never on a filesystem a member can read, run by the train | new |
 | L4 | external CI on the train's batch | new |
 
-Hidden tests need both an out-of-repo location and the §5.5 sandbox:
-worktrees share one object store, so anything in the repository is readable
-by a member with git (D4). A read attempt on the verifier location is a
-tamper incident.
+dsh's sandbox does not restrict reads (§5.5), and worktrees share one object
+store, so no location on a member's host is hidden from it. Hidden tests
+therefore live where the verifier runs: a container, another host, or an OS
+user the members cannot read as (D4). Benchmark runs hold this by
+construction, since the grader applies held-out tests after the member has
+finished. Where the verifier's isolation reports a denied access by a
+member, that is a tamper incident.
 
 **The train.** A service-shaped class with its own journal, lead-hosted
 through Phase C and promoted in Phase D (D3):
@@ -416,8 +455,9 @@ mandatory rather than best-effort.
 
 - Runs, questions, offers, and landings are journal records (§5.1–§5.2);
   `attach` rebuilds any view from them.
-- A lead's death loses nothing: a new process attaches, re-offers
-  unaccepted handoffs, and resumes the train from its journal.
+- A lead's death loses nothing: a new process attaches, releases claims
+  whose owner is gone (§5.2), re-offers unaccepted handoffs, and resumes the
+  train from its journal.
 - Member death keeps today's detection, task re-claim, and warm restart, and
   adds true resume: the dsh member runtime resumes its persisted session on
   a miss instead of briefing an amnesiac from a digest (D5).
@@ -425,10 +465,11 @@ mandatory rather than best-effort.
 
 ### 6.7 G7 — Governed
 
-- **Member sandbox** (§5.5): workspace-write at the worktree, network off.
-- **Wire policy** (§5.3): default-deny by principal and method group,
-  enforced from Phase A, when the wire first opens to humans, not deferred
-  to the mesh.
+- **Member sandbox** (§5.5): write containment at the worktree. Network
+  stays open; dsh's sandbox has no network control.
+- **Protocol policy** (§5.3): default-deny by principal and method group,
+  enforced from Phase A, when the protocol first opens to humans, not
+  deferred to the mesh.
 - **Approvals**: one risk-tiered queue with a rate cap; plan consent before
   fan-out; drivers may answer only tiers their policy allows.
 - **Provenance** (P8): every message carries its principal; only a human
@@ -464,11 +505,13 @@ results.
 ### 7.1 Shape
 
 One **spine** of four phases, each with a goal and an exit criterion, plus
-a **runtime track** that runs alongside from Phase B. Phase C ends with the
-go/no-go experiment for the rest.
+a **runtime track** that runs alongside from Phase B. A hand-planned
+**pilot** runs alongside Phase A and puts the program-scale question to an
+early test (D10); Phase C ends with the go/no-go experiment for the rest.
 
 | | A — Steerable foundation | B — Verified landing | C — Program-scale | D — Mesh |
 |---|---|---|---|---|
+| **Pilot** | hand-planned program vs sharded vs single (§7.5) | — | — | — |
 | **Runtime track** | — | R1: `claude-code` basic | R2: `codex` basic; both steerable | R3: `attach`, `a2a` |
 
 ### 7.2 Goals by phase
@@ -483,37 +526,39 @@ go/no-go experiment for the rest.
 | G4 Verified landing | ◐ sandbox | ● | | ◐ forge adapter | |
 | G5 Runtime-neutral | ◐ contract, resume | | | ◐ attach | ● |
 | G6 Durable | ● | ◐ train journal | ◐ handoff | ● cross-host | |
-| G7 Governed | ● sandbox, wire policy, queue | | ◐ budgets | ◐ join policy | |
+| G7 Governed | ● sandbox, protocol policy, queue | | ◐ budgets | ◐ join policy | |
 | G8 Measurable | ◐ interventions | ● RunMetrics | ● effectiveness experiment | ◐ mesh metrics | |
 
 ### 7.3 Phase A — Steerable foundation
 
 **Goal.** G1, G6, and G7's foundation: a durable run a person can address,
-direct, and observe, on a wire that is governed from its first day.
+direct, and observe, on a protocol that is governed from its first day.
 
 | # | Work item | Where |
 |---|---|---|
-| A1 | Member sandbox to `workspace-write` behind a flag; read-only toolchain paths | `packages/swarm/member.cordis.yml`, bundle |
-| A2 | Resume-capable dsh member runtime (wraps the SDK server; resume on miss); `member-resume.test.ts` flips | `packages/swarm` |
-| A3 | Per-run journal over session-log; board and mailbox as projections registered with `ctx.sessionProjections` | `packages/swarm` |
+| A1 | Member sandbox to `workspace-write` behind a flag; package caches redirected into temp | `packages/swarm/member.cordis.yml`, bundle |
+| A2 | Resume-capable dsh member runtime (wraps the SDK server; `ctx.agents.resume` on miss); `member-resume.test.ts` flips; `immediate` steering through `openswarm-swarm-member` | `packages/swarm`, `packages/swarm-member` |
+| A3 | Per-run JSONL journal; board and mailbox as projections over it; claims with leases | `packages/swarm` |
 | A4 | `SwarmRun`: `start`, `attach`, `result`; leads kept; run table as a projection | `packages/swarm`, `packages/app-server` |
-| A5 | Wire: state and direction groups, per-run event subscription, principal policy table enforced | `packages/app-server`, `packages/swarm` |
-| A6 | Harness-raised questions (stall, budget, verifier failure, restart budget) and one queue through `ctx.approval` with a rate cap | `packages/swarm` |
+| A5 | Protocol module: state and direction groups, per-run event subscription, principal policy table; socket carrier (tokens, CLI owner token) and web carrier (owner, loopback) | `packages/app-server`, `packages/swarm` |
+| A6 | Harness-raised questions (stall, budget, verifier failure, restart budget) in one tiered, rate-capped queue; surfaced on the web carrier through `ctx.userQuestions` | `packages/swarm` |
 | A7 | Intent header on tasks; `/swarm` renders the board instead of blocking | `packages/swarm` |
 | A8 | CLI verbs | `bin/openswarm` |
 | A9 | Board client plugin: thread board, member peek, question queue, recap | new `packages/swarm-client` |
-| A10 | File the upstream issues: continuable `subagent-dsh-sdk`, SDK method registry | upstream |
+| A10 | File the upstream issues: continuable `subagent-dsh-sdk`, SDK method registry, plugin event-type registration for session logs | upstream |
 
 **Exit criteria.**
 1. From the web surface and from the CLI, a person redirects a running
    member with `immediate` delivery and answers a harness-raised question;
    the run continues without a restart.
 2. Killing the process hosting a lead, then `openswarm attach` from a new
-   process, shows the same board and a recap; zero tasks lost or duplicated.
-3. A member in the sandbox cannot read a path outside its worktree and the
-   declared read-only list; the keyless and live suites pass with the flag on.
-4. A viewer principal is refused every direction method; a member principal
-   is refused `answer`.
+   process, shows the same board and a recap; the dead lead's claims are
+   released; zero tasks lost or duplicated.
+3. A member in the sandbox cannot write outside its worktree and temp; the
+   keyless and live suites pass with the flag on, including a member that
+   installs packages.
+4. On the socket carrier, a viewer principal is refused every direction
+   method and a member principal is refused `answer`.
 
 **Deliberately not in A.** Scopes, the train, nesting, new runtimes.
 
@@ -524,7 +569,7 @@ computable.
 
 | # | Work item |
 |---|---|
-| B1 | Verifier levels L2 and L3; out-of-repo verifier location; tamper logging |
+| B1 | Verifier levels L2 and L3; verifier environment members cannot read (D4); tamper logging |
 | B2 | Train class with its own journal: speculative batches, bisect, dependencies, priority; lead-hosted |
 | B3 | Resolver thread for conflicts; scope-violation and conflict questions |
 | B4 | Landing evidence bundle; landing queue view |
@@ -545,6 +590,30 @@ computable.
 **Goal.** G2, and the effectiveness answer that decides whether D is worth
 building as designed.
 
+**Pilot, run alongside Phase A (D10).** The same question, asked at
+planning's upper bound on today's primitives, before C is built. A person
+writes each plan: the partition, thread 0's contracts, and the landing
+order. Threads run as today's `runTeam` with worktrees; the cross-team
+steps (cutting from the integration branch, merging across teams) are done
+by hand with git. The benchmark's held-out tests grade landing, and cost
+comes from the eval harness, since the kernel records no usage yet. Arms:
+
+- **single**: one agent, the whole change.
+- **sharded**: the same partition, each thread cut from base, all merged at
+  the end.
+- **program**: the same partition, plus thread 0's contracts landed first,
+  worktrees cut from the integration branch, and threads landed in
+  dependency order.
+
+Program and sharded run at equal total agent count and differ in exactly
+those three things, so the comparison measures coordination rather than
+partition quality. A hand plan is the best planning C can produce, run on
+the weakest runtime (no train, no steering). So a negative result is
+strong: if the hand-planned program does not beat sharding, C and D are
+re-scoped before they are built. A positive result only licenses building
+C; the exit experiment below still decides D. The pilot also fixes the task
+set (§10).
+
 | # | Work item |
 |---|---|
 | C1 | `lead` member composition; thread-in-program nesting; handoff protocol |
@@ -556,14 +625,14 @@ building as designed.
 | C7 | Maintenance program kind |
 | R2 | `codex` member at basic; `claude-code` and `codex` at steerable |
 
-**Exit experiment (go/no-go).** On a set of multi-module changes (a
-RoadmapBench or SWE-EVO subset plus internal migrations), three arms at
-equal total agent count: one agent, one team, one program (for example
-4 threads × 3 members). Measure landed work per dollar-hour at L3, landing
-rate, coordination ratio, and interventions per landed task.
+**Exit experiment (go/no-go).** On the task set the pilot fixed, the
+pilot's three arms with the automated planner and the real train: single,
+sharded (for example 4 teams × 3 members), and program (4 threads × 3
+members). Measure landed work per dollar-hour at L3, landing rate,
+coordination ratio, and interventions per landed task.
 
-- **Go** to D as designed if the program arm beats the team arm on landed
-  work per dollar-hour without a worse landing rate.
+- **Go** to D as designed if the program arm beats the sharded arm on
+  landed work per dollar-hour without a worse landing rate.
 - **Re-scope** if it does not: D keeps durability, the shared train, and
   cross-host sharding for throughput, and drops cross-swarm task handoff
   until a later experiment says otherwise.
@@ -574,7 +643,7 @@ rate, coordination ratio, and interventions per landed task.
 
 | # | Work item |
 |---|---|
-| D1 | `git-journal` backend; contention test |
+| D1 | Journal under `refs/swarm/<runId>` (git backend); contention test |
 | D2 | Train promoted to a standalone service bound to a target branch |
 | D3 | `join`, `leave`, `offer`, `card`; foreign-swarm principal; join policy |
 | D4 | Forge adapter for GitHub and GitLab merge queues |
@@ -600,9 +669,9 @@ in §9 or §10 that would bring it back.
 | Dimension | Today (`main` @ `9148996`) | Redesign | Goal |
 |---|---|---|---|
 | Unit of execution | `runTeam(spec) → Promise` | durable `SwarmRun`; `runTeam` = `start().result` | G1, G6 |
-| State | board + mailbox over one lead's session log | journal per run, linked; projections via `ctx.sessionProjections` | G6, G3 |
+| State | board + mailbox over one lead's session log | our JSONL journal per run, linked; leased claims; projections pushed over the protocol | G6, G3 |
 | Survives restart | no | yes; `attach` | G6 |
-| Human entry | blocking `/swarm` line | board in dsh's web surface, CLI, wire | G1 |
+| Human entry | blocking `/swarm` line | board in dsh's web surface, CLI, protocol carriers | G1 |
 | Address a member | impossible | `steer` to member, role, thread, lead, `*` | G1 |
 | Steering semantics | none | `immediate` / `enqueue` / `quiet`, journaled | G1 |
 | Questions | none | harness-raised plus member `ask`; one tiered queue | G1, G7 |
@@ -611,10 +680,10 @@ in §9 or §10 that would bring it back.
 | Scopes | none | planner-declared `file`/`test`, enforced at landing | G2, G4 |
 | Nesting | none | `lead` member composition | G2 |
 | Landing | sequential merge, conflicts retained | speculative bisecting train, resolver, evidence bundle | G4 |
-| Verification | cascade command gate | L0–L4, hidden tests out of repo | G4 |
+| Verification | cascade command gate | L0–L4, hidden tests where the verifier runs | G4 |
 | Member runtimes | in-process, dsh subprocess | contract with three levels; + claude-code, codex, attach, a2a | G5 |
-| Member sandbox | `danger-full-access` | `workspace-write` at the worktree | G7 |
-| Wire | 3 UI methods + 1 member method, loopback | one surface, principal policy table | G1, G7 |
+| Member sandbox | `danger-full-access` | write containment at the worktree (`workspace-write`) | G7 |
+| Wire | 3 UI methods (+ SDK pass-through) + 1 member method, loopback | one protocol on two carriers (web, socket), principal policy table | G1, G7 |
 | Mesh | none | git journal, join/offer, shared train | G3 |
 | Budgets | concurrency and attempt caps | per run, thread, member | G2, G7 |
 | Telemetry | usage per model, progress lines | `RunMetrics` with the north-star terms | G8 |
@@ -630,15 +699,25 @@ default.
 
 Each records the options weighed, why this one, and what would reverse it.
 
-**D1 — One journal per run, linked by parent id.** Weighed against one
-journal per program with thread segments, and a hybrid with a thin program
-index. One journal gives one compare-and-set domain and a one-fold recap,
-but dsh has no notion of segments, every reader pays for every thread's
-traffic, and a thread cannot be replicated or handed to another host alone.
-Per-run journals match dsh's model and make a thread the unit the mesh
-moves. Nothing is atomic across journals; the handoff protocol covers it and
-is reused by the mesh. *Reverse if* programs need tight, frequent
-cross-thread coordination rather than occasional handoffs.
+**D1 — One journal per run, linked by parent id; our own JSONL until dsh
+accepts plugin events.** *Granularity* was weighed against one journal per
+program with thread segments, and a hybrid with a thin program index. One
+journal gives one compare-and-set domain and a one-fold recap, but every
+reader pays for every thread's traffic, and a thread cannot be replicated
+or handed to another host alone. Per-run journals make a thread the unit
+the mesh moves. Nothing is atomic across journals; the handoff protocol
+covers it and is reused by the mesh. *Storage* was weighed across dsh's
+session log (the first draft's choice), waiting for upstream support,
+mirroring a JSONL into a dsh session, and reusing dsh's own `team/*` event
+types. dsh's persistence refuses to reload a session containing plugin
+event types and offers no compare-and-set (§11), so a session-log journal
+cannot survive the restart G6 requires. A mirror keeps two copies for the
+sake of a view feed, and `team/*` events are folded by dsh's agent teams.
+We own the file, the fold, and compare-and-set (already in `board.ts`), and
+give up dsh's projection cache and push. *Reverse if* programs need tight,
+frequent cross-thread coordination rather than occasional handoffs
+(granularity), or dsh ships plugin event-type registration with a
+conditional append (storage: a session-log backend replaces the file).
 
 **D2 — Enforce `file` and `test` scopes; record the rest.** Weighed against
 file only, and a full semantic set enforced. File ownership is the only kind
@@ -653,15 +732,23 @@ Weighed against lead-only, standalone from day one, and delegating to the
 forge. Lead-only makes merging two swarms impossible; standalone from day one
 pays for a lifecycle and a deployment question early; the forge queue needs a
 remote and hosted CI, is FIFO without dependencies, and cannot run hidden
-tests. *Guard:* the train touches the program only through the wire and its
+tests. *Guard:* the train touches the program only through the protocol and its
 journal until promotion.
 
-**D4 — Hidden tests outside the repository, and a member sandbox.** Weighed
-against sparse checkout, a separate ref, and an exclude list. All three are
-obscurity because worktrees share one object store, and the gaming record
-includes deliberate extraction of hidden tests. *Cost:* the sandbox may
-break members that reach outside the worktree; declared read-only paths and
-a flag cover the transition.
+**D4 — Hidden tests live where the verifier runs; the member sandbox is
+write containment.** Weighed against sparse checkout, a separate ref, an
+exclude list, and an out-of-repo directory behind the member sandbox. The
+first three are obscurity because worktrees share one object store. The
+fourth was the first draft's choice, but dsh's sandbox confines writes
+only (§11), so any path on a member's host is readable, and the gaming
+record includes deliberate extraction of hidden tests. The verifier
+therefore runs in a container, on another host, or as an OS user the
+members cannot read as; benchmark graders already work this way. The
+sandbox still earns its place by containing writes. *Cost:* the verifier
+needs its own execution environment from Phase B, and the sandbox may break
+members that write outside the worktree (caches redirected into temp and a
+flag cover the transition). *Reverse if* dsh's sandbox gains read
+confinement, which would allow a same-host verifier directory.
 
 **D5 — Fix locally where we already wrap; file upstream; delete wrappers
 when upstream lands.** Resume-on-miss and the method registry are local
@@ -679,31 +766,91 @@ harness-raised ones on real runs.
 
 **D7 — The human surface is a dsh client plugin.** Weighed against our own
 UI and a wire-only design. dsh's web client loads out-of-tree `dsh.client`
-packages into named slots and delivers our projections as `session/projection`
-frames, which is exactly the data path D1 adopts. We get sessions, approvals,
-and the member peek (a member is a dsh session) for free. *Risk:* coupling to
-a release-candidate client API; the compatibility suite checks the plugin
-loads. *Reverse if* a full-page board cannot be expressed in the available
-slots.
+packages into named slots; the board is a `conversation.view` tab with
+actions in the session header, fed through the web carrier (D11). We get
+sessions, approvals, and the member peek (a member is a dsh session) for
+free. *Risk:* coupling to a release-candidate client API, and dsh has no
+full-page slot, so the program board must fit a view tab (§11); the
+compatibility suite checks the plugin loads. *Reverse if* the program board
+cannot work inside a view tab.
 
-**D8 — Two journal backends, not three.** `session-log` for single-host
-work and `git-journal` for the mesh. `sqlite` is added only if a single-host
-multi-lead case demands it.
+**D8 — One journal format, two locations.** A JSONL file per run on local
+disk for single-host work, and the same JSONL under `refs/swarm/<runId>`
+for the mesh, so the git backend is mostly a transport. `sqlite` is added
+only if a single-host multi-lead case demands it.
 
 **D9 — Runtime neutrality is a parallel track, not the last phase.** It
 needs the member contract and a worktree, both available by Phase B, not the
 mesh. Shipping it last would delay the one claim nobody else can make.
 
+**D10 — A hand-planned pilot before Phase C is built.** Weighed against
+running the go/no-go only at the end of C, and piloting after Phase B with
+the real train. Ending C with the experiment means building A through C
+before any evidence on G2, and the record leans negative (docs/47 parity;
+an ensemble beat a coordinated team at equal compute; docs/63 closed
+diversity). The pilot is docs/62's oracle pre-check applied to planning: if
+the best available plan does not beat sharding on today's runtime, an
+automated planner will not. Piloting after B buys a real train, but L3
+comes from the benchmark grader either way. *Cost:* manual git steps, cost
+taken from the eval harness, and a positive result is weak evidence (best
+planning, weakest runtime). *Reverse if* the pilot is positive by a wide
+margin, in which case the Phase C experiment confirms rather than gates.
+
+**D11 — One protocol, many carriers.** Weighed against dsh's web gateway
+for humans with our socket for programs (two protocols, and the web gateway
+knows one principal), and our socket for everyone (rebuilding question
+push, steering, and a WebSocket that dsh's web surface already has). The
+`swarm/*` method table and its policy check are one transport-free module;
+each carrier binds a transport and establishes the principal, so a new
+interface is a new carrier. The web carrier is owner-only on loopback
+because dsh's web server authenticates nothing; the socket carries every
+principal from tokens. *Cost:* two carriers to test, and remote viewers
+reach a run only through the socket. *Reverse if* dsh's web surface gains
+authenticated principals (one carrier suffices), or out-of-tree plugins
+cannot register gateway methods (the web carrier becomes a WebSocket onto
+the socket).
+
 ## 10. Still open
 
 - **Handoff timeout**: how long an unaccepted offer waits before reclaim,
   and whether it is set per program or per thread.
-- **Sandbox read-only paths**: default list per ecosystem (Node, Python,
-  Rust), declared in the member composition or the run policy.
-- **Verifier location**: an operator-managed sibling directory, or a separate
-  repository the train clones; the second supports a promoted train on
-  another host.
+- **Package caches under the sandbox**: the per-ecosystem environment that
+  redirects caches into temp (Node, Python, Rust), declared in the member
+  composition; the A1 prototype confirms toolchains survive it.
+- **Verifier environment**: a container, another host, or another OS user
+  (D4), and how hidden tests reach it; a separate repository the train
+  clones also supports a promoted train on another host.
 - **Question rate cap**: a starting default and how it adapts to measured
   answer latency.
-- **Phase C task set**: which public subset and which internal migrations,
-  fixed before C starts so the experiment cannot be tuned after the fact.
+- **Task set**: fixed during the pilot, before C starts, so the experiment
+  cannot be tuned after the fact. Candidates: a TypeScript and Python
+  subset of RoadmapBench (115 version-upgrade tasks, 17 repositories, 5
+  languages, median 51 files changed), with SWE-EVO (48 Python tasks,
+  about 21 files each) as a second set. Screen single-agent over at least
+  three seeds to drop floor and ceiling tasks. Internal migrations are the
+  easiest to tune after the fact and join only if frozen with the rest.
+- **Dollar-hour**: whether the north-star denominator is dollars × wall-clock
+  hours or two separate ratios; fixed with the task set.
+- **Web carrier registration**: whether an out-of-tree plugin can register a
+  method on dsh's web gateway (`ctx.typertRegistry` expects generated
+  definitions or source markers). A spike before A5 settles D11's shape.
+- **Session reload on `main`**: a peer-team run appends `swarm/*` events to
+  its parent agent's session (`packages/swarm/src/index.ts`), which dsh may
+  then refuse to reopen. Reproduce; A3's journal fixes it if so.
+
+## 11. dsh seams, checked against the installed packages
+
+Checked 2026-09-25 against `node_modules/@deepseek-ai/*` at 0.1.1-rc.2 (no
+dsh source checkout). The first draft assumed several of these; the
+decisions above cite this table.
+
+| Seam | What the installed packages do | Used in |
+|---|---|---|
+| Session log with plugin events | `session.append` never marks an event `ignorable`, and persistence refuses to load any log containing a type outside `KNOWN_SESSION_EVENT_TYPES` (`dsh-session-persistence`, `assertEventsSupported`). Registration for plugin types is "deferred until such a consumer exists". No conditional append. | D1, D8 |
+| `ctx.sessionProjections` | Real: folds custom event types, runs over any session in `ctx.sessions`, caches to disk, pushes `session/projection` frames to web clients only. Usable only for sessions dsh can load. | D1 |
+| Sandbox | Modes `read-only`, `workspace-write`, `danger-full-access`. `workspace-write` confines writes to cwd and temp for the whole process tree (Seatbelt on macOS; bwrap or Landlock on Linux); reads and network are unrestricted; no extra-path settings. `dsh-subprocess-local` and MCP clients bypass it. | §5.5, D4 |
+| Approvals and questions | `ctx.approval.request` throws unless an agent turn is open; no tiers. `ctx.userQuestions.ask` works without an agent, one provider, no tiers; answered only from the web surface. | §6.1 |
+| Client slots | `conversation.view` and `conversation.session.header.actions` exist. `session.hierarchy` is an aria-label, not a slot. No full-page or route slot. | D7 |
+| Resume | `ctx.agents.resume({resumeSessionId})` exists; the SDK server's `getOrCreateSession` always calls `agents.create`. | A2, D5 |
+| Steering | `agent.steer` delivers at the next step boundary; the web `session.prompt` accepts `mode: 'steer'`; the SDK JSON-RPC server only calls `followup`. | §5.4, A2 |
+| Protocol extension | The SDK server's dispatch is a closed switch of three methods. The web gateway dispatches registered Typert methods. The web server authenticates nothing and binds `127.0.0.1` or `0.0.0.0`. | §5.3, D11 |
