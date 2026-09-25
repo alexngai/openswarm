@@ -10,4 +10,4 @@ numbering.
 | [02](02-discrimination-rerun.md) | Discrimination-set rerun on the dsh stack — the Phase-5 acceptance result |
 | [03](03-usage.md) | Usage & runbook — the launcher, providers, profiles, app-server, testing |
 | [04](04-mesh-positioning.md) | Positioning as a meshable cluster harness — scorecard, metrics, industry diffusion, next phases |
-| [05](05-control-plane-redesign.md) | Control-plane redesign — durable runs, one wire, steering, verifier gate, merge train, nesting, mesh; comparison with today |
+| [05](05-control-plane-redesign.md) | Control-plane redesign — goals, foundation, per-goal design, phased plan with exit criteria, decisions |
