@@ -139,9 +139,9 @@ entity revision; `waitForChange` generalizes to a filtered subscription.
   compare-and-set (§11). The run's lead is the journal's only writer; every
   other principal writes through the protocol (§5.3), so compare-and-set
   stays the in-process transaction tail `board.ts` already has. Projections
-  are our own folds, pushed to views over the protocol's event
-  subscription. When dsh accepts plugin event types, a session-log backend
-  can replace the file.
+  are our own folds, delivered to views through the protocol's event
+  subscription (§5.3). When dsh accepts plugin event types, a session-log
+  backend can replace the file.
 - **Claims carry a lease** tied to the owner's liveness. `attach` releases
   claims whose owner is gone; today a lead crash leaves claimed tasks
   `in_progress` forever.
@@ -164,8 +164,14 @@ principal (D11):
 
 | Carrier | Transport | Principal | Serves |
 |---|---|---|---|
-| **web** | dsh's web gateway, reached by the client plugin (§6.1) | always owner; dsh's web server authenticates nothing, so this carrier is loopback-only | the board in the browser |
+| **web** | `@Remote` methods on dsh's `/api` gateway, called by the client plugin (§6.1); no dsh codegen needed (§11) | always owner; dsh's web server authenticates nothing, so this carrier is loopback-only | the board in the browser |
 | **socket** | the app-server's JSON-RPC socket | from the token: owner (a local token file, for the CLI), viewer, driver, member, foreign swarm | CLI, programs, members, the mesh |
+
+The web gateway is request/response only: its host-event push is a fixed
+allowlist a plugin cannot extend. So the event subscription is one
+long-poll method, `swarm/events {run, afterSeq, waitMs}`, which returns
+journal entries after `afterSeq` as soon as any exist (today's
+`waitForChange`, over the protocol). Both carriers use it unchanged.
 
 A new interface (a TUI, an IDE, A2A) is a new carrier, not a new protocol.
 Identity comes from the carrier's credential, never from a field. Because
@@ -544,7 +550,7 @@ direct, and observe, on a protocol that is governed from its first day.
 | A6 | Harness-raised questions (stall, budget, verifier failure, restart budget) in one tiered, rate-capped queue; surfaced on the web carrier through `ctx.userQuestions` | `packages/swarm` |
 | A7 | Intent header on tasks; `/swarm` renders the board instead of blocking | `packages/swarm` |
 | A8 | CLI verbs | `bin/openswarm` |
-| A9 | Board client plugin: thread board, member peek, question queue, recap | new `packages/swarm-client` |
+| A9 | Board client plugin: thread board, member peek, question queue, recap; long-polls `swarm/events`; build step for the `dsh.client` bundle format | new `packages/swarm-client` |
 | A10 | File the upstream issues: continuable `subagent-dsh-sdk`, SDK method registry, plugin event-type registration for session logs | upstream |
 
 **Exit criteria.**
@@ -804,11 +810,12 @@ push, steering, and a WebSocket that dsh's web surface already has). The
 each carrier binds a transport and establishes the principal, so a new
 interface is a new carrier. The web carrier is owner-only on loopback
 because dsh's web server authenticates nothing; the socket carries every
-principal from tokens. *Cost:* two carriers to test, and remote viewers
+principal from tokens. A spike (2026-09-25) registered an out-of-tree
+`@Remote` method and called it through a real `openswarm-web` boot, so the
+web carrier needs no transport of ours; the gateway has no push, so views
+long-poll `swarm/events`. *Cost:* two carriers to test, and remote viewers
 reach a run only through the socket. *Reverse if* dsh's web surface gains
-authenticated principals (one carrier suffices), or out-of-tree plugins
-cannot register gateway methods (the web carrier becomes a WebSocket onto
-the socket).
+authenticated principals (one carrier suffices).
 
 ## 10. Still open
 
@@ -823,20 +830,41 @@ the socket).
 - **Question rate cap**: a starting default and how it adapts to measured
   answer latency.
 - **Task set**: fixed during the pilot, before C starts, so the experiment
-  cannot be tuned after the fact. Candidates: a TypeScript and Python
-  subset of RoadmapBench (115 version-upgrade tasks, 17 repositories, 5
-  languages, median 51 files changed), with SWE-EVO (48 Python tasks,
-  about 21 files each) as a second set. Screen single-agent over at least
-  three seeds to drop floor and ceiling tasks. Internal migrations are the
-  easiest to tune after the fact and join only if frozen with the rest.
+  cannot be tuned after the fact. Researched 2026-09-25; recommendation:
+  **RoadmapBench, Python and TypeScript only** (41 and 22 of its 115 tasks;
+  held-out per-target tests with partial credit; one prebuilt image per
+  task; MIT). Screen about 20 mid-size tasks single-agent × 3 seeds and
+  freeze the 8–12 whose completion score lands between 0.2 and 0.8,
+  together with each task's hand-written partition. SWE-EVO is a weak fit
+  (Python only, about 8–10 of 48 tasks span several modules, release notes
+  are mostly independent fixes) and serves at most as a 3–4 task
+  cross-check. Internal migrations join only if frozen with the rest.
+  - *Harness:* a native RoadmapBench adapter of about 100 lines in
+    swarmkit-eval 0.2.0 (which already carries both benchmarks; `legacy/eval`
+    pins 0.0.11). Tasks allow 2h, over E2B's 1h cap, so runs use Docker on
+    the EC2 box (about 16 images at a time).
+  - *Cost (inferred):* $10–30 per single-agent run, so 60 screening runs
+    cost about $600–1,800, after 2–3 calibration runs.
+  - *Checks before freezing, no model tokens:* whether the task images
+    carry `.git` (the worktree arms need it; fall back to `git init`), and
+    reference-solution stability over 2–3 runs per task.
+  - *Validity risk:* RoadmapBench instructions already give target API
+    signatures, so every arm starts with part of what thread 0's contracts
+    would pin, which may shrink the program arm's advantage.
 - **Dollar-hour**: whether the north-star denominator is dollars × wall-clock
   hours or two separate ratios; fixed with the task set.
-- **Web carrier registration**: whether an out-of-tree plugin can register a
-  method on dsh's web gateway (`ctx.typertRegistry` expects generated
-  definitions or source markers). A spike before A5 settles D11's shape.
-- **Session reload on `main`**: a peer-team run appends `swarm/*` events to
-  its parent agent's session (`packages/swarm/src/index.ts`), which dsh may
-  then refuse to reopen. Reproduce; A3's journal fixes it if so.
+- ~~**Web carrier registration**~~ **settled 2026-09-25** (D11, §11): an
+  out-of-tree plugin registers `@Remote` methods on the `/api` gateway
+  without dsh codegen. Still unbuilt: the browser half, a `dsh.client`
+  bundle in the `window.__ModuleLoader__` format, which our esbuild script
+  does not emit yet.
+- ~~**Session reload on `main`**~~ **confirmed 2026-09-25**: a peer-team
+  run appends `swarm/*` events to its lead's session (the app-server's
+  per-run lead, or the caller's agent), and dsh then refuses to resume it.
+  `session-reload.test.ts` pins it: a plain session reopens, the same
+  session after one board write does not. `/swarm` (coordinator) never
+  touches the board and is unaffected. A3's journal fixes it; the test
+  flips if dsh accepts plugin event types first.
 
 ## 11. dsh seams, checked against the installed packages
 
@@ -853,4 +881,4 @@ decisions above cite this table.
 | Client slots | `conversation.view` and `conversation.session.header.actions` exist. `session.hierarchy` is an aria-label, not a slot. No full-page or route slot. | D7 |
 | Resume | `ctx.agents.resume({resumeSessionId})` exists; the SDK server's `getOrCreateSession` always calls `agents.create`. | A2, D5 |
 | Steering | `agent.steer` delivers at the next step boundary; the web `session.prompt` accepts `mode: 'steer'`; the SDK JSON-RPC server only calls `followup`. | §5.4, A2 |
-| Protocol extension | The SDK server's dispatch is a closed switch of three methods. The web gateway dispatches registered Typert methods. The web server authenticates nothing and binds `127.0.0.1` or `0.0.0.0`. | §5.3, D11 |
+| Protocol extension | The SDK server's dispatch is a closed switch of three methods. The web gateway's `/api` falls back to scanning live services for `@Remote` markers (`TypertRemoteService`), and the loader registers a package's `./typert` export for strict schemas; a spike ran both through a real boot. Request/response only: forwarded host events are a fixed allowlist (`API_REMOTE_FORWARDED_EVENTS`). The web server authenticates nothing and binds `127.0.0.1` or `0.0.0.0`. | §5.3, D11 |
