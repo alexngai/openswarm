@@ -843,8 +843,14 @@ authenticated principals (one carrier suffices).
     swarmkit-eval 0.2.0 (which already carries both benchmarks; `legacy/eval`
     pins 0.0.11). Tasks allow 2h, over E2B's 1h cap, so runs use Docker on
     the EC2 box (about 16 images at a time).
-  - *Cost (inferred):* $10–30 per single-agent run, so 60 screening runs
-    cost about $600–1,800, after 2–3 calibration runs.
+  - *Cost, measured 2026-09-25* (openswarm headless `--single`, gpt-5.5,
+    one seed; dollars at $5 / $0.50 / $30 per M fresh input / cached input /
+    output): opt-4.4.0 reward 0.667, $4.23, 6 min; fal-4.1.0 0.750, $3.07,
+    5 min; vbt-1.3.0 0.700, $2.93, 8 min. About $3.40 a run, so a 60-run
+    screen is about $200, against the $600–1,800 first inferred. The agent
+    stops on its own after about 60 tool calls, far inside the 2h budget
+    (published agents take 110–171 turns), so the arms' effort differences
+    belong in the dollar-hour denominator, not in a fixed budget.
   - *Checks before freezing, no model tokens:* whether the task images
     carry `.git` (the worktree arms need it; fall back to `git init`), and
     reference-solution stability over 2–3 runs per task.
