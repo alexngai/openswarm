@@ -10,7 +10,8 @@
   "dependencies": {
     "openswarm-swarm": "*",
     "openswarm-llm-openai": "*",
-    "openswarm-llm-anthropic": "*"
+    "openswarm-llm-anthropic": "*",
+    "openswarm-plugin-authoring": "*"
   },
   "exports": {
     ".": {

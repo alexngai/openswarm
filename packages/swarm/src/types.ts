@@ -192,6 +192,13 @@ export interface CascadeAttempt {
   verdict?: MemberRunResult
   /** Command-gate confidence measured for this tier, when configured. */
   confidence?: number
+  /**
+   * Which command rejected this tier, and what it printed. Present only when a
+   * command gate failed. Without this a rejected tier is unattributable — an
+   * environment problem and a genuine defect look identical, which is how a
+   * correct edit once scored 0 (docs/01).
+   */
+  failure?: { command: string; output: string }
 }
 
 export interface CascadeResult {

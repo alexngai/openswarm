@@ -41,6 +41,61 @@ function memberEnv(h: TestHarness): Record<string, string> {
   }
 }
 
+/** Member harness subprocesses still parented to this test worker. */
+function harnessChildren(): string[] {
+  let pids: string[]
+  try {
+    pids = execFileSync('bash', ['-c', `pgrep -P ${process.pid} 2>/dev/null || true`])
+      .toString()
+      .trim()
+      .split('\n')
+      .filter((p) => p !== '')
+  } catch {
+    return []
+  }
+  return pids.filter((pid) => {
+    try {
+      return execFileSync('ps', ['-o', 'command=', '-p', pid]).toString().includes('dsh-sdk-jsonrpc')
+    } catch {
+      return false
+    }
+  })
+}
+
+/**
+ * Disposing the provider plugin does NOT reap the run — `SubagentRun.dispose()`
+ * does. Awaiting `result` without it orphaned one harness subprocess per member,
+ * surviving past the provider's SIGTERM/SIGKILL grace, so a long-lived server or
+ * a multi-cell eval accumulated them until the host ran out.
+ *
+ * The suite could not have caught this before: vitest force-exits its workers, so
+ * the orphans died with the runner and the leak was invisible. This asserts on
+ * the process table directly for that reason.
+ */
+it('a worktree member run leaves no orphaned harness process', async () => {
+  const repo = scratchRepo()
+  const before = harnessChildren().length
+  h = await bootHarness({
+    sequence: ['tool_call_success', 'success'],
+    repeatLast: true,
+    successText: 'done',
+    toolName: 'bash',
+    toolArguments: JSON.stringify({ command: 'echo done > out.txt' }),
+  })
+
+  await h.swarm.runTeam(
+    {
+      topology: 'fanout',
+      members: [{ name: 'solo' }],
+      tasks: [{ member: 'solo', prompt: 'do it' }],
+    },
+    { parent: h.lead.agent, worktrees: { repoRoot: repo, member: { env: memberEnv(h) } } },
+  )
+
+  await new Promise((resolve) => setTimeout(resolve, 1_000))
+  expect(harnessChildren().length, 'member harness subprocess was not reaped').toBe(before)
+}, 120_000)
+
 it('worktree members edit isolated checkouts and merge into the integration branch', async () => {
   const repo = scratchRepo()
   h = await bootHarness({

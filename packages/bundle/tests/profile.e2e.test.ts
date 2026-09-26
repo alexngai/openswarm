@@ -76,8 +76,21 @@ it.skipIf(!ready)('the dev server profile enables the app-server and omits the o
   const { stdout } = await dsh(['--profile', 'openswarm-dev', '--dump-config'])
   // App-server enabled by the dev overlay...
   expect(stdout).toMatch(/id: openswarm-app-server[\s\S]*?disabled: false/)
-  // ...HMR turned hot...
+  // ...HMR turned hot. `disabled: false` ALONE is not enough, and asserting
+  // only that is what let a dead watcher pass for "HMR hot" (docs/01): `root`
+  // resolves against `base`, which defaults to the PROFILE directory, so
+  // without an explicit base the watcher sits on a tree of config files and
+  // symlinks and never sees this repo. Pin the base too.
   expect(stdout).toMatch(/id: hmr[\s\S]*?disabled: false/)
+  const rest = stdout.slice(stdout.indexOf('- id: hmr'))
+  const hmrRow = rest.slice(0, rest.indexOf('- id: llm'))
+  // --dump-config prints `!!js` expressions unevaluated, so this pins that a
+  // cwd-derived base is CONFIGURED, not what it resolves to. The resolved
+  // behaviour — a rebuilt dist actually replacing live code — is proven by
+  // hmr-reload.e2e.test.ts, which needs a running harness to observe.
+  expect(hmrRow, 'hmr must set a base or it watches the profile dir, not the repo').toMatch(
+    /base:.*process\.cwd\(\)/,
+  )
   // ...and NO headless one-shot runner (it would exit the server process).
   expect(stdout).not.toContain('headless-runner')
 })

@@ -1,10 +1,18 @@
 # openswarm-dev overlay: hot HMR + the app-server bound to a real port.
 # Layered ABOVE openswarm-bundle in the openswarm-dev profile.
 
+# `root` is resolved against `base`, and `base` defaults to the PROFILE
+# directory (`ctx.baseUrl`) — NOT the working directory. Left at the default,
+# `root: ['.']` watches `~/.openswarm/profiles/openswarm-dev/`, whose only
+# contents are config files and a node_modules of symlinks that the default
+# `ignored: ['**/node_modules']` excludes. The result is a watcher that never
+# sees this repo at all: an edit produces no change event, no reload, and no
+# error — HMR looks enabled and does nothing.
 - id: hmr
   disabled: false
   config:
-    root: ['.']
+    base: !!js process.env.OPENSWARM_HMR_BASE ?? process.cwd()
+    root: ['packages']
 
 - id: openswarm-app-server
   disabled: false

@@ -1,0 +1,15 @@
+# Eval overlay: make the REAL `openswarm` profile observable.
+#
+#   dsh --profile openswarm --patch packages/bundle/cordis.eval.patch.yml "<task>"
+#
+# The alternative was to keep hand-mounting a small context in packages/cli and
+# call that "openswarm". That stack had 14 plugins; this profile has 83, and the
+# difference includes agent-instructions, plan-mode, compaction, result pruning,
+# fs-search, skills and the subagent tools. Measuring the small one told us
+# about packages/cli, not about the product.
+#
+# The reporter is inert unless OPENSWARM_JSONL=1, so this overlay is safe to
+# leave applied.
+- insert:
+    - id: openswarm-eval-reporter
+      name: 'openswarm-swarm/eval-reporter'

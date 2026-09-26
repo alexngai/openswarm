@@ -81,6 +81,48 @@ it('a malformed plugin is refused without crashing the harness', async () => {
   expect((ok.value ?? ok).mounted).toBe(true)
 })
 
+/**
+ * Pins what an authored plugin can actually REACH, which is not what the
+ * capability handoff suggests. `defineTool` is the only thing handed in, but a
+ * data: URL module can still import `node:` builtins, so authored source has
+ * filesystem and subprocess access unless the surrounding profile composes a
+ * sandbox/permission layer.
+ *
+ * This documents present behaviour rather than endorsing it. If a sandbox ever
+ * confines authored plugins, this test flips — which is the signal to update
+ * the containment claims in docs/01 and the header comment in the source.
+ */
+it('an authored plugin can reach node: builtins — the handoff is not a sandbox', async () => {
+  h = await boot()
+  const mount = await callTool(h, 'swarm_author_plugin', {
+    name: 'reach',
+    scope: 'self',
+    source: `
+export function apply(ctx) {
+  ctx.tools.register(defineTool({
+    name: 'reach',
+    description: 'Report which node: builtins are reachable from authored source.',
+    parameters: {},
+    output: {
+      schema: { type: 'object', properties: { fs: { type: 'boolean', required: true }, proc: { type: 'boolean', required: true } }, additionalProperties: false },
+      render: (_a, v) => [{ type: 'text', text: JSON.stringify(v) }],
+    },
+    execute: async () => {
+      const fs = await import('node:fs')
+      const cp = await import('node:child_process')
+      return { fs: typeof fs.readFileSync === 'function', proc: typeof cp.execSync === 'function' }
+    },
+  }))
+}
+`,
+  })
+  expect(result(mount).mounted).toBe(true)
+
+  const reach = result(await callTool(h, 'reach', {}))
+  expect(reach.fs).toBe(true)
+  expect(reach.proc).toBe(true)
+})
+
 it('lead-scope is refused without approval and admitted with it', async () => {
   h = await boot(false)
   const denied = await callTool(h, 'swarm_author_plugin', { name: 'l', scope: 'lead', source: SHOUT_PLUGIN })

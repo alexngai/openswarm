@@ -17,6 +17,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import * as SdkProvider from '@deepseek-ai/dsh-subagent-dsh-sdk'
+import type { SubagentRun } from '@deepseek-ai/dsh-subagent'
 import { SwarmGit, type MergeOutcome } from 'openswarm-git'
 import type { MemberRunResult, MemberSpec } from './types'
 import type { RunTeamOptions } from './index'
@@ -178,9 +179,10 @@ export class WorktreeRun {
         ? {}
         : { maxTokens: member.agentOptions?.maxTokens ?? cfg.maxTokens }),
     })
+    let started: SubagentRun | undefined
     try {
       await fiber.await()
-      const started = await this.ctx.subagents.start(providerName, {
+      started = await this.ctx.subagents.start(providerName, {
         label: member.name,
         prompt: [{ type: 'text', text }],
         parent: run.parent,
@@ -198,6 +200,13 @@ export class WorktreeRun {
         stopReason: result.stopReason,
       }
     } finally {
+      // Disposing the PROVIDER does not reap the run: `SubagentRun.dispose()` is
+      // what cancels remaining work, reaches child quiescence, and releases
+      // resources. Awaiting `result` and skipping it leaked the member's harness
+      // subprocess on every worktree run — one orphaned node process per member,
+      // surviving well past the provider's SIGTERM/SIGKILL grace. The suite never
+      // caught it because vitest force-exits its workers.
+      await started?.dispose().catch(() => undefined)
       await fiber.dispose()
     }
   }
@@ -205,6 +214,15 @@ export class WorktreeRun {
   /** Create (or return) the worktree for one task or member key. */
   worktree(key: string) {
     return this.git.worktree(key)
+  }
+
+  /**
+   * Restore a task worktree's pinned pathspecs from the base commit, so a gate
+   * grading that worktree does not read verification assets the member could
+   * have edited. Returns the paths that had been modified.
+   */
+  async pinForGate(key: string, pathspecs: string[]): Promise<string[]> {
+    return this.git.restoreFromBase(await this.git.worktree(key), pathspecs)
   }
 
   /**
@@ -224,12 +242,39 @@ export class WorktreeRun {
     return this.git.removeAll()
   }
 
-  /** Auto-commit dirty task worktrees, run the merge queue, release the target. */
-  async finalize(): Promise<MergeOutcome> {
+  /**
+   * Auto-commit dirty task worktrees, then either run the merge queue or
+   * withhold the work.
+   *
+   * `merge: false` commits as usual — so nothing is lost and every branch stays
+   * reachable by name — but does not fold anything into the integration branch.
+   * That is what makes a gate verdict mean something: a cascade that never
+   * satisfied its gate previously merged anyway, since finalize ran
+   * unconditionally after dispatch and never consulted `accepted`.
+   */
+  async finalize(options: { merge?: boolean } = {}): Promise<MergeOutcome> {
     if (this.options.autoCommit !== false) {
       for (const taskKey of this.taskKeys()) {
         const wt = await this.git.worktree(taskKey)
         await this.git.autoCommit(wt, `swarm: ${taskKey} (team ${this.teamId})`)
+      }
+    }
+    if (options.merge === false) {
+      const withheld: MergeOutcome['withheld'] = []
+      for (const taskKey of this.taskKeys()) {
+        const wt = await this.git.worktree(taskKey)
+        if ((await this.git.commitCount(wt.branch)) > 0) {
+          withheld.push({ taskKey, branch: wt.branch })
+        }
+      }
+      await this.git.removeAll()
+      await this.git.dispose()
+      return {
+        targetBranch: this.git.targetBranch,
+        merged: [],
+        conflicts: [],
+        empty: [],
+        withheld,
       }
     }
     const outcome = await this.git.mergeAll()
