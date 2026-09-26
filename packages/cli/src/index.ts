@@ -22,7 +22,7 @@
  * real spine; usage folds from `assistant/message` session events per member
  * session, attributed to models via the tier list.
  */
-import { mkdtempSync, writeFileSync, readFileSync, mkdirSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync, readdirSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -35,6 +35,7 @@ import * as Spine from '@deepseek-ai/dsh-agent-spine-demo'
 import * as SessionPersistenceJsonl from '@deepseek-ai/dsh-session-persistence-jsonl'
 import * as Subagent from '@deepseek-ai/dsh-subagent'
 import * as SpawnInProcess from '@deepseek-ai/dsh-subagent-spawn-in-process'
+import { ARMS, loadPlan, runPilot, type Arm, type Plan } from './pilot'
 
 export { runControl } from './control'
 
@@ -358,14 +359,8 @@ export async function bootHarness(opts: BootOptions): Promise<HarnessBoot> {
       totals = emptyUsage()
       usageBySession.set(session.id, totals)
     }
-    totals.inputTokens += usage.inputTokens ?? 0
-    totals.outputTokens += usage.outputTokens ?? 0
-    totals.cacheReadInputTokens += usage.cacheReadTokens ?? 0
-    totals.cacheWriteInputTokens += usage.cacheWriteTokens ?? 0
-    totals.calls += 1
-    totals.totalTokens =
-      totals.inputTokens + totals.outputTokens + totals.cacheReadInputTokens + totals.cacheWriteInputTokens
-    opts.onUsage?.(foldTeam(usageBySession), turnCount)
+    addUsage(totals, usage)
+    opts.onUsage?.(foldTeam(usageBySession.values()), turnCount)
   })
 
   const first = routes[0]!
@@ -396,10 +391,60 @@ function textBlocksOf(output: readonly any[]): string {
     .join('')
 }
 
-/** Fold every session's usage into one team total. */
-function foldTeam(usageBySession: Map<string, UsageTotals>): UsageTotals {
+/** Add one `assistant/message` usage record (dsh field names) to a running total. */
+function addUsage(totals: UsageTotals, usage: any): void {
+  totals.inputTokens += usage.inputTokens ?? 0
+  totals.outputTokens += usage.outputTokens ?? 0
+  totals.cacheReadInputTokens += usage.cacheReadTokens ?? 0
+  totals.cacheWriteInputTokens += usage.cacheWriteTokens ?? 0
+  totals.calls += 1
+  totals.totalTokens =
+    totals.inputTokens + totals.outputTokens + totals.cacheReadInputTokens + totals.cacheWriteInputTokens
+}
+
+/**
+ * Fold token usage out of worktree members' session logs (ported from
+ * eval/adapter.mjs, c1299b2).
+ *
+ * A worktree member is a SUBPROCESS: its `assistant/message` events go to the
+ * child's own session, so `session/event` in this context never sees them and
+ * the live fold reports zero for a run that plainly called the model. We choose
+ * the members' session root, so read it back. It is disjoint from the lead's
+ * in-process root, so the two sums never double count.
+ */
+function foldSessionLogs(root: string): UsageTotals {
+  const totals = emptyUsage()
+  let files: string[]
+  try {
+    files = readdirSync(root, { recursive: true, encoding: 'utf8' })
+  } catch {
+    return totals
+  }
+  for (const file of files) {
+    if (!file.endsWith('.jsonl')) continue
+    let raw: string
+    try {
+      raw = readFileSync(join(root, file), 'utf8')
+    } catch {
+      continue
+    }
+    for (const line of raw.split('\n')) {
+      let event: any
+      try {
+        event = JSON.parse(line)
+      } catch {
+        continue // blank, or a torn final frame from a killed member
+      }
+      if (event?.type === 'assistant/message' && event.data?.usage !== undefined) addUsage(totals, event.data.usage)
+    }
+  }
+  return totals
+}
+
+/** Fold per-session usage into one team total. */
+function foldTeam(sessions: Iterable<UsageTotals>): UsageTotals {
   const team = emptyUsage()
-  for (const totals of usageBySession.values()) {
+  for (const totals of sessions) {
     for (const key of [
       'inputTokens',
       'outputTokens',
@@ -414,12 +459,71 @@ function foldTeam(usageBySession: Map<string, UsageTotals>): UsageTotals {
   return team
 }
 
+/** The coordinator team `--team` runs; plan mode runs one per thread. */
+function coordinatorSpec(task: string, agentOptions: { provider: string; model: string }, workers: number) {
+  return {
+    topology: 'coordinator' as const,
+    coordinator: { name: 'coordinator', agentOptions },
+    workers: Array.from({ length: workers }, (_, i) => ({ name: `worker-${i}`, agentOptions })),
+    task,
+  }
+}
+
+/**
+ * Plan mode (docs/05 pilot): `--plan <file> --arm <name>`, or the env pair for
+ * the reason OPENSWARM_SELF_MODIFY exists. swarmkit's `openSwarmSpec.flags()`
+ * always emits `--single` or `--team`, so an env-selected plan supersedes them;
+ * only the explicit flags conflict.
+ */
+function pilotOf(args: Map<string, string>, selfModify: boolean): { plan: Plan; arm: Arm } | undefined {
+  const planPath = args.get('plan') ?? (process.env['OPENSWARM_PILOT_PLAN'] || undefined)
+  const arm = args.get('arm') ?? (process.env['OPENSWARM_PILOT_ARM'] || undefined)
+  if (planPath === undefined && arm === undefined) return undefined
+  if ((args.has('plan') || args.has('arm')) && (args.has('team') || args.has('single'))) {
+    throw new Error('--plan/--arm cannot be combined with --team or --single')
+  }
+  if (planPath === undefined || arm === undefined) {
+    throw new Error('plan mode needs both a plan (--plan or OPENSWARM_PILOT_PLAN) and an arm (--arm or OPENSWARM_PILOT_ARM)')
+  }
+  if (!(ARMS as readonly string[]).includes(arm)) throw new Error(`unknown arm "${arm}" (expected ${ARMS.join(' | ')})`)
+  // The authoring plugin mounts in THIS process; plan-mode members are subprocesses it never reaches.
+  if (selfModify) throw new Error('--self-modify has no effect on plan-mode members; refusing a no-op arm')
+  return { plan: loadPlan(planPath), arm: arm as Arm }
+}
+
+/**
+ * How plan-mode members reach the model. They are worktree subprocesses booted
+ * from member.cordis.yml, not this stack: one OpenAI-compatible route named
+ * `openai` (hence that provider name even for Azure), configured by env. The
+ * SDK spawner scrubs KEY/TOKEN/DSH_* names from the inherited env, so the key
+ * and model travel explicitly.
+ */
+function memberRouteOf(route: Route): { agentOptions: { provider: string; model: string }; env: Record<string, string> } {
+  if (route.adapter !== 'openai') {
+    throw new Error(`plan mode cannot run "${route.model}": worktree members only speak the OpenAI-compatible route`)
+  }
+  const baseURL = route.baseURL ?? process.env['OPENSWARM_LLM_BASE_URL']
+  const key = route.apiKeyEnv === undefined ? undefined : process.env[route.apiKeyEnv]
+  return {
+    agentOptions: { provider: 'openai', model: route.model },
+    env: {
+      ...(baseURL === undefined ? {} : { OPENSWARM_LLM_BASE_URL: baseURL }),
+      ...(key === undefined ? {} : { OPENSWARM_LLM_API_KEY: key }),
+      DSH_MODEL: route.model,
+    },
+  }
+}
+
+/** How often plan mode re-reads member logs to enforce `--max-tokens`/`--max-turns`. */
+const CAP_POLL_MS = 5_000
+
 /**
  * `openswarm run --output-format json --model <m> [--single|--team] "<prompt>"`
  *
  * The eval entry point: one task, headless, JSONL on stdout for the harness
  * adapter's `openSwarmParse`. `--single` (the default) runs one agent over the
- * tool stack; `--team` runs the coordinator topology.
+ * tool stack; `--team` runs the coordinator topology; plan mode (`pilotOf`)
+ * runs a plan's threads as coordinator teams in worktrees (./pilot.ts).
  *
  * Every terminating path emits `message_stop` — the parser sets its `sawResult`
  * flag ONLY from that line, so a run that exits without one is indistinguishable
@@ -446,29 +550,46 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
   }
   const maxTokens = numericArg(args, 'max-tokens')
   const maxTurns = numericArg(args, 'max-turns')
+  const pilot = pilotOf(args, selfModify)
+  const member = pilot === undefined ? undefined : memberRouteOf(route)
 
   /** Set once a cap trips; also the flag that turns the exit into a 3. */
   let exceeded: string | undefined
+  const checkCaps = (team: UsageTotals, turns: number): void => {
+    if (exceeded !== undefined) return
+    if (maxTokens !== undefined && team.totalTokens > maxTokens) {
+      exceeded = `max-tokens (${team.totalTokens} > ${maxTokens})`
+    } else if (maxTurns !== undefined && turns > maxTurns) {
+      exceeded = `max-turns (${turns} > ${maxTurns})`
+    }
+    if (exceeded !== undefined) controller.abort()
+  }
   const harness = await bootHarness({
     routes: [route],
     workspace,
     io,
     ...(args.get('permission-mode') === undefined ? {} : { permissionMode: args.get('permission-mode')! }),
     selfModify,
-    onUsage: (team, turns) => {
-      if (exceeded !== undefined) return
-      if (maxTokens !== undefined && team.totalTokens > maxTokens) {
-        exceeded = `max-tokens (${team.totalTokens} > ${maxTokens})`
-      } else if (maxTurns !== undefined && turns > maxTurns) {
-        exceeded = `max-turns (${turns} > ${maxTurns})`
-      }
-      if (exceeded !== undefined) controller.abort()
-    },
+    onUsage: checkCaps,
   })
   const { ctx, lead, usageBySession } = harness
+  // Ours to choose, so plan-mode member usage can be read back (foldSessionLogs).
+  const memberRoot = pilot === undefined ? undefined : mkdtempSync(join(tmpdir(), 'openswarm-member-sessions-'))
+  const memberUsage = (): UsageTotals => (memberRoot === undefined ? emptyUsage() : foldSessionLogs(memberRoot))
+  const spentNow = (): UsageTotals => foldTeam([...usageBySession.values(), memberUsage()])
+  // Member usage never reaches `onUsage`, so caps over plan-mode members poll
+  // their logs. ponytail: rereads every log per tick and trips up to one tick
+  // late; tail by byte offset if logs ever get large enough to matter.
+  const capPoll =
+    memberRoot !== undefined && (maxTokens !== undefined || maxTurns !== undefined)
+      ? setInterval(() => {
+          const members = memberUsage()
+          checkCaps(foldTeam([...usageBySession.values(), members]), harness.turns() + members.calls)
+        }, CAP_POLL_MS)
+      : undefined
 
   const emitStop = (): void => {
-    const team = foldTeam(usageBySession)
+    const team = spentNow()
     io.out(
       JSON.stringify({
         type: 'message_stop',
@@ -485,15 +606,53 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
     const agentOptions = { provider: route.route, model: route.model }
     let text: string
     let completed: boolean
-    if (args.has('team')) {
-      const workers = Number(args.get('workers') ?? '2')
-      const result = (await (ctx as any).swarm.runTeam(
-        {
-          topology: 'coordinator',
-          coordinator: { name: 'coordinator', agentOptions },
-          workers: Array.from({ length: workers }, (_, i) => ({ name: `worker-${i}`, agentOptions })),
-          task: prompt,
+    if (pilot !== undefined && member !== undefined && memberRoot !== undefined) {
+      const threads = await runPilot({
+        ...pilot,
+        workspace,
+        signal: controller.signal,
+        runThread: async (thread, baseSha) => {
+          try {
+            const result = (await (ctx as any).swarm.runTeam(
+              coordinatorSpec(
+                `${prompt}\n\n## Your thread: ${thread.id}\n${thread.assignment}\nOther threads own the rest of the roadmap; stay within your assignment.`,
+                member.agentOptions,
+                pilot.plan.workers,
+              ),
+              {
+                parent: lead.agent,
+                signal: controller.signal,
+                worktrees: {
+                  repoRoot: workspace,
+                  baseRef: baseSha,
+                  targetBranch: `pilot/${thread.id}`,
+                  member: { env: { ...member.env, DSH_SESSION_ROOT: memberRoot } },
+                },
+              },
+            )) as CoordinatorResult & { git?: { merged: unknown[]; conflicts: unknown[] } }
+            io.out(
+              JSON.stringify({
+                type: 'team_note',
+                thread: thread.id,
+                stopReason: result.synthesis.stopReason,
+                merged: result.git?.merged.length ?? 0,
+                conflicts: result.git?.conflicts.length ?? 0,
+                text: result.synthesis.text,
+              }),
+            )
+          } catch (error) {
+            io.out(JSON.stringify({ type: 'team_note', thread: thread.id, error: String(error instanceof Error ? error.message : error) }))
+            throw error
+          }
         },
+      })
+      io.out(JSON.stringify({ type: 'pilot', arm: pilot.arm, threads }))
+      text = `pilot ${pilot.arm}: ${threads.map((t) => `${t.id} ${t.landed}${t.error === undefined ? '' : ` (${t.error})`}`).join('; ')}`
+      // Conflicts are data about the arm; only a thread that did not run fails the run.
+      completed = threads.every((t) => t.landed !== 'failed')
+    } else if (args.has('team')) {
+      const result = (await (ctx as any).swarm.runTeam(
+        coordinatorSpec(prompt, agentOptions, Number(args.get('workers') ?? '2')),
         { parent: lead.agent, signal: controller.signal },
       )) as CoordinatorResult
       text = result.synthesis.text
@@ -515,7 +674,7 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
     // not "the agent tried and produced nothing". Without an `error` line this
     // reads to the harness as a legitimate empty answer and grades as a real
     // zero, so the run is scored instead of being flagged as broken.
-    const spent = foldTeam(usageBySession)
+    const spent = spentNow()
     if (spent.totalTokens === 0) {
       io.out(
         JSON.stringify({
@@ -532,8 +691,15 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
   } catch (error) {
     // An aborted run rejects; that is a budget stop, not a failure.
     if (exceeded !== undefined) return stopForBudget()
-    throw error
+    if (pilot === undefined) throw error
+    // Plan mode has spent real member tokens by now (a failed landing, a stale
+    // branch); report them rather than exiting like a crash.
+    io.out(JSON.stringify({ type: 'error', message: String(error instanceof Error ? error.message : error) }))
+    io.err(String(error instanceof Error ? (error.stack ?? error.message) : error))
+    emitStop()
+    return 1
   } finally {
+    if (capPoll !== undefined) clearInterval(capPoll)
     await harness.dispose()
   }
 
