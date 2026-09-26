@@ -85,7 +85,7 @@ it.skipIf(!live)(
     expect(aliceResult.stopReason).toBe('completed')
 
     // The mailbox recorded a real delivery from alice → bob.
-    const queued = h.lead.agent.session.events.filter((e: any) => e.type === 'swarm/message/queued')
+    const queued = h.swarm.journal(h.lead.agent).events.filter((e) => e.type === 'swarm/message/queued')
     expect(queued.length, 'alice never sent a message').toBeGreaterThanOrEqual(1)
     const msg = (queued.at(-1) as any).data.message
     expect(msg.from).toBe('alice')

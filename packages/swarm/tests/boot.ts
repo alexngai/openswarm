@@ -88,7 +88,8 @@ export async function bootHarness(
   })
   ctx.plugin(plug(Subagent))
   ctx.plugin(plug(SpawnInProcess), { providerName: 'spawn' })
-  ctx.plugin(SwarmService, {})
+  // Run journals go under the temp workDir, never the home directory.
+  ctx.plugin(SwarmService, { runsDir: join(workDir, 'runs') })
 
   // Wait until every service the tests touch is registered and active.
   await new Promise<void>((resolve) =>

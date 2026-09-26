@@ -1,17 +1,17 @@
 /**
  * SwarmBoard — the durable shared task board (docs/01 F1).
  *
- * Every mutation appends a whole-snapshot `swarm/task` event to the lead
- * agent's session log and flushes before returning; reads fold the log.
- * Recovery is therefore replay: any process holding the lead session sees the
- * same board. Mutations are serialized per board through a promise-chain
- * tail (the agent-team journal pattern), and every mutation carries an
- * `expectedRevision` compare-and-set so stale writers fail loud instead of
- * overwriting newer state.
+ * Every mutation appends a whole-snapshot `swarm/task` event to the run's
+ * journal (docs/05 A3) and resolves once it is written; reads fold the
+ * journal. Recovery is therefore replay: any process that opens the journal
+ * sees the same board. Mutations are serialized per board through a
+ * promise-chain tail (the agent-team journal pattern), and every mutation
+ * carries an `expectedRevision` compare-and-set so stale writers fail loud
+ * instead of overwriting newer state. A claim carries a lease — the journal
+ * incarnation that granted it — so a later opener can release a dead lead's
+ * claims ({@link SwarmBoard.releaseOrphans}).
  */
-import type { Context } from '@deepseek-ai/cordis'
-import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { SessionEventMap } from '@deepseek-ai/dsh-session'
+import type { SwarmJournal } from './journal'
 import { Serializer } from './serialize'
 
 /** `pending` is unstarted or released; `in_progress` carries an owner. */
@@ -29,14 +29,12 @@ export interface SwarmTaskSnapshot {
   readonly blockedBy: readonly string[]
   /** Completion note recorded by the finishing owner. */
   readonly result?: string
+  /** Journal incarnation that granted the current claim; set while `in_progress`. */
+  readonly lease?: string
 }
 
-declare module '@deepseek-ai/dsh-session/types' {
-  interface SessionEventMap {
-    /** Whole swarm-task value, stored in the lead session's log. */
-    'swarm/task': { version: 1; task: SwarmTaskSnapshot }
-  }
-}
+/** Payload of a `swarm/task` journal event. */
+type SwarmTaskEvent = { version: 1; task: SwarmTaskSnapshot }
 
 export type SwarmBoardErrorCode =
   | 'SWARM_TASK_NOT_FOUND'
@@ -55,14 +53,12 @@ export class SwarmBoardError extends Error {
   }
 }
 
-type AppendSwarmEvent = (type: 'swarm/task', data: SessionEventMap['swarm/task']) => void
-
-/** Replay the lead session log into current task state, insertion-ordered. */
+/** Replay the journal into current task state, insertion-ordered. */
 export function foldBoard(events: ReadonlyArray<{ type: string; data?: unknown }>): Map<string, SwarmTaskSnapshot> {
   const tasks = new Map<string, SwarmTaskSnapshot>()
   for (const event of events) {
     if (event.type !== 'swarm/task') continue
-    const { task } = event.data as SessionEventMap['swarm/task']
+    const { task } = event.data as SwarmTaskEvent
     tasks.delete(task.id)
     tasks.set(task.id, task)
   }
@@ -74,10 +70,7 @@ export class SwarmBoard {
   private readonly waiters = new Set<() => void>()
   private nextTaskNumber = 0
 
-  constructor(
-    private readonly ctx: Context,
-    private readonly lead: Agent,
-  ) {}
+  constructor(private readonly journal: SwarmJournal) {}
 
   /** Current folded state (read-only; not serialized against mutations). */
   list(): SwarmTaskSnapshot[] {
@@ -85,7 +78,7 @@ export class SwarmBoard {
   }
 
   private fold(): Map<string, SwarmTaskSnapshot> {
-    return foldBoard(this.lead.session.events)
+    return foldBoard(this.journal.events)
   }
 
   private ready(task: SwarmTaskSnapshot, state: Map<string, SwarmTaskSnapshot>): boolean {
@@ -101,11 +94,7 @@ export class SwarmBoard {
   }
 
   private async commit(task: SwarmTaskSnapshot): Promise<SwarmTaskSnapshot> {
-    // Board events never enter the conversation surface; the narrowed local
-    // capability removes append's conditional surface argument (journal pattern).
-    const append = this.lead.session.append.bind(this.lead.session) as unknown as AppendSwarmEvent
-    append('swarm/task', { version: 1, task })
-    await this.ctx.sessions.flush(this.lead.session)
+    await this.journal.append('swarm/task', { version: 1, task } satisfies SwarmTaskEvent)
     // Wake anyone parked in waitForChange: this commit may have unblocked a
     // dependent task or freed a claim.
     for (const wake of [...this.waiters]) wake()
@@ -184,7 +173,13 @@ export class SwarmBoard {
       if (!this.ready(task, state)) {
         throw new SwarmBoardError(`task "${id}" is not ready to claim`, 'SWARM_TASK_NOT_READY')
       }
-      return this.commit({ ...task, revision: task.revision + 1, status: 'in_progress', owner })
+      return this.commit({
+        ...task,
+        revision: task.revision + 1,
+        status: 'in_progress',
+        owner,
+        lease: this.journal.incarnation,
+      })
     })
   }
 
@@ -194,8 +189,9 @@ export class SwarmBoard {
       if (task.owner !== owner) {
         throw new SwarmBoardError(`task "${id}" is owned by "${task.owner}"`, 'SWARM_TASK_WRONG_OWNER')
       }
+      const { lease: _lease, ...rest } = task
       return this.commit({
-        ...task,
+        ...rest,
         revision: task.revision + 1,
         status: 'completed',
         ...(result === undefined ? {} : { result }),
@@ -209,8 +205,27 @@ export class SwarmBoard {
       if (task.owner !== owner) {
         throw new SwarmBoardError(`task "${id}" is owned by "${task.owner}"`, 'SWARM_TASK_WRONG_OWNER')
       }
-      const { owner: _dropped, ...rest } = task
+      const { owner: _owner, lease: _lease, ...rest } = task
       return this.commit({ ...rest, revision: task.revision + 1, status: 'pending' })
+    })
+  }
+
+  /**
+   * Release every `in_progress` claim whose lease is not this journal
+   * incarnation — claims granted by a lead process that has since died — back
+   * to pending, one appended snapshot each so the release is auditable.
+   * Not called automatically: A4's `attach` calls it when a new process takes
+   * over a run's journal.
+   */
+  releaseOrphans(): Promise<SwarmTaskSnapshot[]> {
+    return this.transact(async () => {
+      const released: SwarmTaskSnapshot[] = []
+      for (const task of this.fold().values()) {
+        if (task.status !== 'in_progress' || task.lease === this.journal.incarnation) continue
+        const { owner: _owner, lease: _lease, ...rest } = task
+        released.push(await this.commit({ ...rest, revision: task.revision + 1, status: 'pending' }))
+      }
+      return released
     })
   }
 
@@ -220,7 +235,13 @@ export class SwarmBoard {
       const state = this.fold()
       for (const task of state.values()) {
         if (this.ready(task, state)) {
-          return this.commit({ ...task, revision: task.revision + 1, status: 'in_progress', owner })
+          return this.commit({
+            ...task,
+            revision: task.revision + 1,
+            status: 'in_progress',
+            owner,
+            lease: this.journal.incarnation,
+          })
         }
       }
       return undefined

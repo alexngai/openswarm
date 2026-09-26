@@ -1,14 +1,13 @@
 /**
- * PROBE: can dsh reopen a session that hosted a swarm board?
+ * Can dsh reopen a session that hosted a swarm board?
  *
- * The board and mailbox append `swarm/*` events to the lead's session log,
- * which for a peer-team run is the caller's own agent. dsh persistence
- * refuses to load a log holding an event type outside its built-in list
- * unless the event is marked `ignorable`, and `session.append` never marks
- * one (docs/05 §11). This pins the consequence: a plain session reopens, and
- * the same session after one board write does not. It flips the day dsh
- * accepts plugin event types; until then the run journal lives in its own
- * file (docs/05 D1).
+ * dsh persistence refuses to load a log holding an event type outside its
+ * built-in list unless the event is marked `ignorable`, and `session.append`
+ * never marks one (docs/05 §11). The board and mailbox used to append
+ * `swarm/*` events to the lead's session log — for a peer-team run, the
+ * caller's own agent — so a session that hosted a board could never resume.
+ * They now write the run's own journal (docs/05 D1, A3); this pins the fix:
+ * a session reopens with or without a board write.
  */
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { afterEach, expect, it } from 'vitest'
@@ -52,9 +51,9 @@ it('a session holding only dsh events reopens', async () => {
   await expect(reopen(h)).resolves.toBeUndefined()
 })
 
-it('the same session after one board write does NOT reopen', async () => {
+it('the same session after one board write still reopens', async () => {
   h = await bootHarness({ sequence: ['success'], successText: 'ok' })
   await oneTurn(h)
   await h.swarm.board(h.lead.agent).create({ subject: 's', prompt: 'p' })
-  await expect(reopen(h)).rejects.toThrow(/swarm\/task.*not marked ignorable/)
+  await expect(reopen(h)).resolves.toBeUndefined()
 })

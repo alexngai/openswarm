@@ -114,9 +114,9 @@ it('a member sends cross-process through the swarm socket; the target wakes', as
   const result = await a.ask([{ type: 'text', text: 'notify your teammate' }])
   expect(result.stopReason).toBe('completed')
 
-  // Durable mailbox pair in the lead log; nothing pending.
+  // Durable mailbox pair in the run journal; nothing pending.
   const leadEvents = (type: string) =>
-    h!.lead.agent.session.events.filter((e: any) => e.type === type)
+    h!.swarm.journal(h!.lead.agent).events.filter((e) => e.type === type)
   expect(leadEvents('swarm/message/queued')).toHaveLength(1)
   expect(leadEvents('swarm/message/delivered')).toHaveLength(1)
   expect(mailbox.pending()).toHaveLength(0)

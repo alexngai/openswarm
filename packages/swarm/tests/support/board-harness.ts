@@ -9,7 +9,7 @@
  *   - `boardHarness(mode)` — mock (CI-safe) or live (real model) LLM.
  *   - `send(from, to, text, delivery)` — drives one boarding, deterministically
  *     via `mailbox.send()` (the boarding machinery is model-independent).
- *   - Reusable invariant assertions over the durable lead log.
+ *   - Reusable invariant assertions over the durable run journal.
  *
  * The same scenarios and assertions run in both modes, so mock is the fast
  * regression gate and live proves delivery reaches a real model's context.
@@ -65,7 +65,7 @@ export interface BoardHarness {
   send(from: string, to: string, text: string, delivery?: SwarmMessageDelivery): Promise<SwarmMessageSnapshot>
   /** Deliver one addressed turn to a peer (carries any pending quiet mail). */
   ask(peer: string, prompt: string): Promise<string>
-  /** All durable mailbox events of one type on the lead log. */
+  /** All durable mailbox events of one type in the run journal. */
   events(type: 'swarm/message/queued' | 'swarm/message/delivered'): any[]
   /**
    * Everything recorded on one session as it happened.
@@ -134,7 +134,7 @@ export async function boardHarness(mode: LlmMode): Promise<BoardHarness> {
       return result.text
     },
     events(type) {
-      return lead.session.events.filter((e: any) => e.type === type)
+      return h.swarm.journal(lead).events.filter((e) => e.type === type)
     },
     transcriptOf(sessionId) {
       return transcripts.get(sessionId) ?? []

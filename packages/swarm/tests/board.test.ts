@@ -1,5 +1,6 @@
 import { afterEach, expect, it } from 'vitest'
 import { SwarmBoard, SwarmBoardError, foldBoard } from '../src/board'
+import { SwarmJournal } from '../src/journal'
 import { bootHarness, type TestHarness } from './boot'
 
 let h: TestHarness | undefined
@@ -60,25 +61,69 @@ it('release returns a task to pending without its owner', async () => {
   const released = await board.release(t.id, 'alice', claimed.revision)
   expect(released.status).toBe('pending')
   expect(released.owner).toBeUndefined()
+  expect(released.lease).toBeUndefined()
   expect(await board.claimNextReady('bob')).toMatchObject({ id: t.id, owner: 'bob' })
 })
 
-it('board state is a pure fold of the lead session log', async () => {
+it('board state is a pure fold of the run journal', async () => {
   const { board, lead } = await bootBoard()
   const a = await board.create({ subject: 'a', prompt: 'p' })
   await board.claim(a.id, 'alice', 0)
   await board.complete(a.id, 'alice', 1, 'r')
   await board.create({ subject: 'b', prompt: 'p' })
 
-  // Replaying the raw log reproduces the board...
-  const folded = foldBoard(lead.session.events)
+  // Replaying the raw journal reproduces the board...
+  const journal = h!.swarm.journal(lead)
+  const folded = foldBoard(journal.events)
   expect([...folded.values()]).toEqual(board.list())
-  // ...and a fresh board over the same session sees identical state and
+  // ...and a fresh board over the same journal sees identical state and
   // continues the id sequence instead of reusing task ids.
-  const rebuilt = new SwarmBoard((h as any).ctx, lead)
+  const rebuilt = new SwarmBoard(journal)
   expect(rebuilt.list()).toEqual(board.list())
   const next = await rebuilt.create({ subject: 'c', prompt: 'p' })
   expect(next.id).toBe('task-2')
+})
+
+it('a board over the journal reopened from its file replays to identical state', async () => {
+  const { board, lead } = await bootBoard()
+  const a = await board.create({ subject: 'a', prompt: 'p' })
+  await board.claim(a.id, 'alice', 0)
+  await board.create({ subject: 'b', prompt: 'p', blockedBy: [a.id] })
+
+  // What a new process sees: only the file, not this process's memory.
+  const reopened = new SwarmBoard(SwarmJournal.open(h!.swarm.journal(lead).path))
+  expect(reopened.list()).toEqual(board.list())
+  expect((await reopened.create({ subject: 'c', prompt: 'p' })).id).toBe('task-2')
+})
+
+it('releaseOrphans frees a dead incarnation\'s claims and keeps the live ones', async () => {
+  const { board, lead } = await bootBoard()
+  const a = await board.create({ subject: 'a', prompt: 'p' })
+  const b = await board.create({ subject: 'b', prompt: 'p' })
+  const orphaned = await board.claim(a.id, 'alice', a.revision)
+  expect(orphaned.lease).toBe(h!.swarm.journal(lead).incarnation)
+
+  // The lead dies; a new process opens the journal as incarnation B.
+  const journal = SwarmJournal.open(h!.swarm.journal(lead).path)
+  const successor = new SwarmBoard(journal)
+  const live = await successor.claim(b.id, 'carol', b.revision)
+  expect(live.lease).toBe(journal.incarnation)
+
+  const released = await successor.releaseOrphans()
+  expect(released).toHaveLength(1)
+  expect(released[0]).toMatchObject({ id: a.id, status: 'pending', revision: orphaned.revision + 1 })
+  expect(released[0]!.owner).toBeUndefined()
+  expect(released[0]!.lease).toBeUndefined()
+  // The release is an appended snapshot, so it survives another reopen.
+  expect(foldBoard(SwarmJournal.open(journal.path).events).get(a.id)).toEqual(released[0])
+  // The current incarnation's claim is untouched...
+  expect(successor.list().find((t) => t.id === b.id)).toEqual(live)
+  // ...and a sibling can now claim the freed task; completing clears its lease.
+  const reclaimed = await successor.claimNextReady('bob')
+  expect(reclaimed).toMatchObject({ id: a.id, owner: 'bob', lease: journal.incarnation })
+  const done = await successor.complete(a.id, 'bob', reclaimed!.revision)
+  expect(done.lease).toBeUndefined()
+  expect(await successor.releaseOrphans()).toEqual([])
 })
 
 it('runBoardWorkers releases the claim and propagates the error on member failure', async () => {

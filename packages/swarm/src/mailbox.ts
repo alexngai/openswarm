@@ -1,8 +1,8 @@
 /**
- * SwarmMailbox — durable peer messaging over the lead session log.
+ * SwarmMailbox — durable peer messaging over the run's journal (docs/05 A3).
  *
  * Same journal pattern as the board: `swarm/message/queued` is appended and
- * flushed BEFORE delivery is attempted; `swarm/message/delivered` is appended
+ * written BEFORE delivery is attempted; `swarm/message/delivered` is appended
  * only after the target durably accepted the message. Queued-minus-delivered
  * is the recovery mailbox. The guarantee is process-local retry plus stable
  * message identity in the delivered framing — not cross-process exactly-once
@@ -19,7 +19,7 @@ import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import type { SessionEventMap } from '@deepseek-ai/dsh-session'
+import type { SwarmJournal } from './journal'
 import { Serializer } from './serialize'
 import type { PeerHandle } from './types'
 
@@ -34,13 +34,10 @@ export interface SwarmMessageSnapshot {
   readonly text: string
 }
 
-declare module '@deepseek-ai/dsh-session/types' {
-  interface SessionEventMap {
-    /** Durable mailbox enqueue, stored in the lead session before delivery. */
-    'swarm/message/queued': { version: 1; message: SwarmMessageSnapshot }
-    /** Durable acknowledgement that the target accepted the message. */
-    'swarm/message/delivered': { version: 1; messageId: string }
-  }
+/** Journal payloads: enqueue (written before delivery) and acknowledgement. */
+interface SwarmMessageEvents {
+  'swarm/message/queued': { version: 1; message: SwarmMessageSnapshot }
+  'swarm/message/delivered': { version: 1; messageId: string }
 }
 
 declare module '@deepseek-ai/dsh-llm' {
@@ -49,11 +46,6 @@ declare module '@deepseek-ai/dsh-llm' {
   }
 }
 
-type AppendMailboxEvent = <T extends 'swarm/message/queued' | 'swarm/message/delivered'>(
-  type: T,
-  data: SessionEventMap[T],
-) => void
-
 /** Model-facing framing; repeats the durable identity for target-side dedup. */
 export function frameMessage(message: SwarmMessageSnapshot): ContentBlock[] {
   return [
@@ -61,17 +53,17 @@ export function frameMessage(message: SwarmMessageSnapshot): ContentBlock[] {
   ]
 }
 
-/** Replay the lead log into the undelivered (queued-minus-delivered) mailbox. */
+/** Replay the journal into the undelivered (queued-minus-delivered) mailbox. */
 export function foldPendingMessages(
   events: ReadonlyArray<{ type: string; data?: unknown }>,
 ): SwarmMessageSnapshot[] {
   const queued = new Map<string, SwarmMessageSnapshot>()
   for (const event of events) {
     if (event.type === 'swarm/message/queued') {
-      const { message } = event.data as SessionEventMap['swarm/message/queued']
+      const { message } = event.data as SwarmMessageEvents['swarm/message/queued']
       queued.set(message.id, message)
     } else if (event.type === 'swarm/message/delivered') {
-      queued.delete((event.data as SessionEventMap['swarm/message/delivered']).messageId)
+      queued.delete((event.data as SwarmMessageEvents['swarm/message/delivered']).messageId)
     }
   }
   return [...queued.values()]
@@ -86,23 +78,19 @@ export class SwarmMailbox {
     private readonly ctx: Context,
     private readonly lead: Agent,
     private readonly roster: Map<string, PeerHandle>,
+    private readonly journal: SwarmJournal,
   ) {}
 
   pending(): SwarmMessageSnapshot[] {
-    return foldPendingMessages(this.lead.session.events)
+    return foldPendingMessages(this.journal.events)
   }
 
   private transact<T>(operation: () => Promise<T>): Promise<T> {
     return this.serial.run(operation)
   }
 
-  private async append(
-    type: 'swarm/message/queued' | 'swarm/message/delivered',
-    data: SessionEventMap['swarm/message/queued'] | SessionEventMap['swarm/message/delivered'],
-  ): Promise<void> {
-    const append = this.lead.session.append.bind(this.lead.session) as unknown as AppendMailboxEvent
-    append(type as never, data as never)
-    await this.ctx.sessions.flush(this.lead.session)
+  private async append<T extends keyof SwarmMessageEvents>(type: T, data: SwarmMessageEvents[T]): Promise<void> {
+    await this.journal.append(type, data)
   }
 
   /**

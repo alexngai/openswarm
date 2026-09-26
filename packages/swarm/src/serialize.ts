@@ -1,7 +1,7 @@
 /**
  * Serializer — runs async operations one at a time in submission order.
  *
- * The board and the mailbox both mutate the durable session log through a
+ * The board and the mailbox both mutate the durable run journal through a
  * read-check-append sequence that must not interleave; each owns a Serializer
  * and routes its mutations through `run()`. Errors are isolated: a rejecting
  * operation rejects only its own caller's promise, and the next queued

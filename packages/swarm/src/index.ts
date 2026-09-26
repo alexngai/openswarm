@@ -13,6 +13,7 @@ import { Service, type Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { SwarmBoard } from './board'
+import { SwarmJournal } from './journal'
 import { SwarmMailbox } from './mailbox'
 import { askPeer, registerSwarmMessaging, spawnPeer, suppressSettlementTurns } from './peers'
 import type { PeerHandle } from './types'
@@ -31,7 +32,8 @@ import {
   type RunConfidence,
   type RunMember,
 } from './topologies'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { RemotePeer } from './remote-peer'
 import { SwarmServer } from './server'
 import { digestSessionLog, findSessionLog, renderRecoveryBriefing } from './recover'
@@ -46,6 +48,7 @@ import type {
 
 export * from './types'
 export * from './board'
+export * from './journal'
 export * from './mailbox'
 export {
   askPeer,
@@ -66,6 +69,11 @@ export type { WorktreeTeamOptions, WorktreeMemberConfig } from './worktrees'
 export interface SwarmConfig {
   /** Subagent provider used when a member does not name one (default 'spawn'). */
   defaultSubagentProvider?: string
+  /**
+   * Where run journals live, one `<lead session id>/journal.jsonl` each
+   * (default `$OPENSWARM_HOME/runs`, else `~/.openswarm/runs`).
+   */
+  runsDir?: string
 }
 
 export interface RunTeamOptions {
@@ -152,11 +160,7 @@ function textOf(output: ContentBlock[]): string {
 }
 
 export default class SwarmService extends Service {
-  // 'sessions' is a real dependency: the board and mailbox flush durable
-  // events through ctx.sessions. Undeclared it resolves only when accessed
-  // from an unrestricted root context — service-to-service callers hit
-  // cordis's inject guard.
-  static inject = ['subagents', 'sessions']
+  static inject = ['subagents']
 
   private swarmConfig: SwarmConfig
 
@@ -165,13 +169,26 @@ export default class SwarmService extends Service {
     this.swarmConfig = config
   }
 
+  private journals = new WeakMap<Agent, SwarmJournal>()
   private boards = new WeakMap<Agent, SwarmBoard>()
 
-  /** The shared task board bound to one lead agent's session log. */
+  /** The run journal for one lead, shared by its board and mailbox. */
+  journal(lead: Agent): SwarmJournal {
+    let journal = this.journals.get(lead)
+    if (journal === undefined) {
+      const home = process.env['OPENSWARM_HOME'] ?? join(homedir(), '.openswarm')
+      const runsDir = this.swarmConfig.runsDir ?? join(home, 'runs')
+      journal = SwarmJournal.open(join(runsDir, lead.session.id, 'journal.jsonl'))
+      this.journals.set(lead, journal)
+    }
+    return journal
+  }
+
+  /** The shared task board bound to one lead agent's run journal. */
   board(lead: Agent): SwarmBoard {
     let board = this.boards.get(lead)
     if (board === undefined) {
-      board = new SwarmBoard(this.ctx, lead)
+      board = new SwarmBoard(this.journal(lead))
       this.boards.set(lead, board)
     }
     return board
@@ -455,9 +472,9 @@ export default class SwarmService extends Service {
     return { topology: 'peer-team', tasks, runs }
   }
 
-  /** A durable mailbox over one lead's session log and a live roster. */
+  /** A durable mailbox over one lead's run journal and a live roster. */
   mailbox(lead: Agent, roster: Map<string, PeerHandle>): SwarmMailbox {
-    return new SwarmMailbox(this.ctx, lead, roster)
+    return new SwarmMailbox(this.ctx, lead, roster, this.journal(lead))
   }
 
   /** One member, one prompt, one settled subagent run. */
