@@ -21,8 +21,8 @@ import {
   registerSwarmMessaging,
   spawnPeer,
   suppressSettlementTurns,
+  SwarmMailbox,
   type PeerHandle,
-  type SwarmMailbox,
   type SwarmMessageDelivery,
   type SwarmMessageSnapshot,
 } from '../../src/index'
@@ -101,7 +101,7 @@ export async function boardHarness(mode: LlmMode): Promise<BoardHarness> {
     else log.push(event)
   })
   const roster = new Map<string, PeerHandle>()
-  const mailbox = h.swarm.mailbox(lead, roster)
+  const mailbox = new SwarmMailbox(ctx, lead, roster, h.journal)
   registerSwarmMessaging(ctx, roster, mailbox)
 
   return {
@@ -134,7 +134,7 @@ export async function boardHarness(mode: LlmMode): Promise<BoardHarness> {
       return result.text
     },
     events(type) {
-      return h.swarm.journal(lead).events.filter((e) => e.type === type)
+      return h.journal.events.filter((e) => e.type === type)
     },
     transcriptOf(sessionId) {
       return transcripts.get(sessionId) ?? []

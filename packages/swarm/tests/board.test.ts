@@ -1,19 +1,13 @@
-import { afterEach, expect, it } from 'vitest'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { expect, it } from 'vitest'
 import { SwarmBoard, SwarmBoardError, foldBoard } from '../src/board'
 import { SwarmJournal } from '../src/journal'
-import { bootHarness, type TestHarness } from './boot'
-
-let h: TestHarness | undefined
-afterEach(async () => {
-  await h?.close()
-  h = undefined
-})
 
 async function bootBoard() {
-  // The mock LLM is unused by board tests; the harness supplies the real
-  // session store, persistence, and a live lead agent to own the log.
-  h = await bootHarness({ sequence: ['success'], successText: 'unused' })
-  return { board: h.swarm.board(h.lead.agent), lead: h.lead.agent }
+  const journal = SwarmJournal.open(join(mkdtempSync(join(tmpdir(), 'openswarm-board-test-')), 'journal.jsonl'))
+  return { board: new SwarmBoard(journal), journal }
 }
 
 it('create → claim → complete round-trips with revisions and results', async () => {
@@ -66,14 +60,13 @@ it('release returns a task to pending without its owner', async () => {
 })
 
 it('board state is a pure fold of the run journal', async () => {
-  const { board, lead } = await bootBoard()
+  const { board, journal } = await bootBoard()
   const a = await board.create({ subject: 'a', prompt: 'p' })
   await board.claim(a.id, 'alice', 0)
   await board.complete(a.id, 'alice', 1, 'r')
   await board.create({ subject: 'b', prompt: 'p' })
 
   // Replaying the raw journal reproduces the board...
-  const journal = h!.swarm.journal(lead)
   const folded = foldBoard(journal.events)
   expect([...folded.values()]).toEqual(board.list())
   // ...and a fresh board over the same journal sees identical state and
@@ -85,26 +78,26 @@ it('board state is a pure fold of the run journal', async () => {
 })
 
 it('a board over the journal reopened from its file replays to identical state', async () => {
-  const { board, lead } = await bootBoard()
+  const { board, journal } = await bootBoard()
   const a = await board.create({ subject: 'a', prompt: 'p' })
   await board.claim(a.id, 'alice', 0)
   await board.create({ subject: 'b', prompt: 'p', blockedBy: [a.id] })
 
   // What a new process sees: only the file, not this process's memory.
-  const reopened = new SwarmBoard(SwarmJournal.open(h!.swarm.journal(lead).path))
+  const reopened = new SwarmBoard(SwarmJournal.open(journal.path))
   expect(reopened.list()).toEqual(board.list())
   expect((await reopened.create({ subject: 'c', prompt: 'p' })).id).toBe('task-2')
 })
 
 it('releaseOrphans frees a dead incarnation\'s claims and keeps the live ones', async () => {
-  const { board, lead } = await bootBoard()
+  const { board, journal: first } = await bootBoard()
   const a = await board.create({ subject: 'a', prompt: 'p' })
   const b = await board.create({ subject: 'b', prompt: 'p' })
   const orphaned = await board.claim(a.id, 'alice', a.revision)
-  expect(orphaned.lease).toBe(h!.swarm.journal(lead).incarnation)
+  expect(orphaned.lease).toBe(first.incarnation)
 
   // The lead dies; a new process opens the journal as incarnation B.
-  const journal = SwarmJournal.open(h!.swarm.journal(lead).path)
+  const journal = SwarmJournal.open(first.path)
   const successor = new SwarmBoard(journal)
   const live = await successor.claim(b.id, 'carol', b.revision)
   expect(live.lease).toBe(journal.incarnation)

@@ -12,8 +12,10 @@
  *   swarm/runTeam  {spec, provider, model, worktrees?} → {runId}; completion
  *                  arrives as a `swarm.runFinished` notification carrying the
  *                  TeamResult (+ merge outcome under worktrees).
- *   swarm/runs     {} → run list with status.
- *   swarm/board    {runId} → the run's lead-session task board.
+ *   swarm/runs     {} → {runs}: every run record in the runs directory, so the
+ *                  list survives a restart.
+ *   swarm/board    {runId} → {tasks}: the live board of a run this process
+ *                  owns, else the board read from the run's journal.
  *
  * Loopback by default. UI-grade trust: clients on this socket are the
  * user's own frontends (member harnesses use the separate token-guarded
@@ -26,7 +28,7 @@ import z from '@deepseek-ai/schemastery'
 import { JsonRpcLineTransport } from '@deepseek-ai/dsh-sdk-protocol'
 import { HarnessSdkJsonRpcServer } from '@deepseek-ai/dsh-sdk-jsonrpc-server'
 import { SessionId } from '@deepseek-ai/dsh-session'
-import type { SwarmTaskSnapshot, TeamSpec } from 'openswarm-swarm'
+import type { RunHandle, TeamSpec } from 'openswarm-swarm'
 
 export const Config = z.object({
   host: z.string().default('127.0.0.1'),
@@ -38,12 +40,9 @@ export interface AppServerConfig {
   port?: number
 }
 
-interface RunRecord {
-  runId: string
-  status: 'running' | 'finished' | 'failed'
-  leadSessionId: string
-  /** Board snapshot captured at finish, so swarm/board survives lead disposal. */
-  tasks: SwarmTaskSnapshot[]
+/** A run this process started and has not yet settled. */
+interface LiveRun {
+  handle: RunHandle
   /** Idempotent lead teardown. */
   dispose: () => Promise<void>
 }
@@ -54,7 +53,7 @@ export default class SwarmAppServer extends Service {
   private server: Server | undefined
   private boundPort = 0
   private readonly sockets = new Set<Socket>()
-  private readonly runs = new Map<string, RunRecord>()
+  private readonly live = new Map<string, LiveRun>()
 
   constructor(
     ctx: Context,
@@ -120,61 +119,46 @@ export default class SwarmAppServer extends Service {
         if (spec === undefined || typeof spec !== 'object') throw new Error('swarm/runTeam: spec is required')
         const provider = String(params['provider'] ?? 'deepseek-official')
         const model = params['model'] === undefined ? undefined : String(params['model'])
-        const runId = `run-${randomUUID().slice(0, 8)}`
         const lead = await this.ctx.agents.create({
-          sessionId: SessionId(`swarm-app-${runId}`),
+          sessionId: SessionId(`swarm-app-${randomUUID()}`),
           meta: { cwd: process.cwd() },
           agentOptions: { provider, ...(model === undefined ? {} : { model }) },
         } as never)
         let disposed = false
-        const record: RunRecord = {
-          runId,
-          status: 'running',
-          leadSessionId: String(lead.agent.id),
-          tasks: [],
-          dispose: async () => {
-            if (disposed) return
-            disposed = true
-            await lead.dispose()
-          },
+        const dispose = async () => {
+          if (disposed) return
+          disposed = true
+          await lead.dispose()
         }
-        this.runs.set(runId, record)
-        // Capture the final board and dispose the lead once the run settles, so
-        // leads don't accumulate for the server's lifetime; swarm/board then
-        // reads the snapshot.
-        const settle = (status: 'finished' | 'failed', payload: Record<string, unknown>) => {
-          record.status = status
-          record.tasks = this.ctx.swarm.board(lead.agent).list()
-          transport.notify('swarm.runFinished', { runId, ...payload })
-          void record.dispose().catch(() => undefined)
-        }
-        void this.ctx.swarm
-          .runTeam(spec, {
+        const handle = await this.ctx.swarm
+          .start(spec, {
             parent: lead.agent,
             ...(params['worktrees'] === undefined ? {} : { worktrees: params['worktrees'] as never }),
           })
-          .then(
-            (result) => settle('finished', { result }),
-            (error) => settle('failed', { error: String(error?.message ?? error) }),
-          )
-        return { runId }
+          .catch(async (error: unknown) => {
+            await dispose()
+            throw error
+          })
+        this.live.set(handle.id, { handle, dispose })
+        // The run's journal is its record, so the lead is disposed once the run
+        // settles rather than accumulating for the server's lifetime.
+        const settle = (payload: Record<string, unknown>) => {
+          this.live.delete(handle.id)
+          transport.notify('swarm.runFinished', { runId: handle.id, ...payload })
+          void dispose().catch(() => undefined)
+        }
+        void handle.result.then(
+          (result) => settle({ result }),
+          (error) => settle({ error: String(error?.message ?? error) }),
+        )
+        return { runId: handle.id }
       }
       case 'swarm/runs':
-        return {
-          runs: [...this.runs.values()].map((r) => ({
-            runId: r.runId,
-            status: r.status,
-            leadSessionId: r.leadSessionId,
-          })),
-        }
+        return { runs: this.ctx.swarm.runs() }
       case 'swarm/board': {
         const runId = String(params['runId'] ?? '')
-        const record = this.runs.get(runId)
-        if (record === undefined) throw new Error(`unknown run "${runId}"`)
-        // Live board while the run is in flight; the captured snapshot after the
-        // lead has been disposed.
-        const lead = this.ctx.agents.get(record.leadSessionId as never)
-        return { tasks: lead !== undefined ? this.ctx.swarm.board(lead).list() : record.tasks }
+        const live = this.live.get(runId)
+        return { tasks: live !== undefined ? live.handle.board().list() : this.ctx.swarm.view(runId).tasks }
       }
       default:
         throw new Error(`unknown swarm method: ${method}`)
@@ -182,8 +166,8 @@ export default class SwarmAppServer extends Service {
   }
 
   async close(): Promise<void> {
-    for (const record of this.runs.values()) await record.dispose().catch(() => undefined)
-    this.runs.clear()
+    for (const run of this.live.values()) await run.dispose().catch(() => undefined)
+    this.live.clear()
     for (const socket of this.sockets) socket.destroy()
     if (this.server !== undefined) {
       await new Promise<void>((resolve) => this.server!.close(() => resolve()))

@@ -9,7 +9,7 @@ afterEach(async () => {
 
 it('peer-team works the board to completion, respecting dependencies (end-to-end)', async () => {
   h = await bootHarness({ sequence: ['success'], repeatLast: true, successText: 'done' })
-  const result = await h.swarm.runTeam(
+  const run = await h.swarm.start(
     {
       topology: 'peer-team',
       members: [
@@ -24,6 +24,7 @@ it('peer-team works the board to completion, respecting dependencies (end-to-end
     },
     { parent: h.lead.agent },
   )
+  const result = await run.result
 
   if (result.topology !== 'peer-team') throw new Error('wrong topology')
   expect(result.tasks).toHaveLength(3)
@@ -37,9 +38,8 @@ it('peer-team works the board to completion, respecting dependencies (end-to-end
 
   // The run journal proves ordering: 'walls' was claimed only after
   // 'foundation' completed.
-  const boardEvents = h.swarm
-    .journal(h.lead.agent)
-    .events.filter((e) => e.type === 'swarm/task')
+  const boardEvents = run.journal.events
+    .filter((e) => e.type === 'swarm/task')
     .map((e: any) => e.data.task)
   const foundationDone = boardEvents.findIndex(
     (t: any) => t.subject === 'foundation' && t.status === 'completed',

@@ -15,6 +15,7 @@ import {
   registerSwarmMessaging,
   spawnPeer,
   suppressSettlementTurns,
+  SwarmMailbox,
   type PeerHandle,
 } from '../src/index'
 import * as OpenAiChat from '../../llm-openai/src/index'
@@ -54,7 +55,7 @@ it.skipIf(!live)(
     const ctx = (h as any).ctx
     suppressSettlementTurns(h.lead.agent)
     const roster = new Map<string, PeerHandle>()
-    const mailbox = h.swarm.mailbox(h.lead.agent, roster)
+    const mailbox = new SwarmMailbox(ctx, h.lead.agent, roster, h.journal)
     registerSwarmMessaging(ctx, roster, mailbox)
 
     const alice = await spawnPeer(ctx, { name: 'alice' }, {
@@ -85,7 +86,7 @@ it.skipIf(!live)(
     expect(aliceResult.stopReason).toBe('completed')
 
     // The mailbox recorded a real delivery from alice → bob.
-    const queued = h.swarm.journal(h.lead.agent).events.filter((e) => e.type === 'swarm/message/queued')
+    const queued = h.journal.events.filter((e) => e.type === 'swarm/message/queued')
     expect(queued.length, 'alice never sent a message').toBeGreaterThanOrEqual(1)
     const msg = (queued.at(-1) as any).data.message
     expect(msg.from).toBe('alice')

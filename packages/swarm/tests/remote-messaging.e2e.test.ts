@@ -9,7 +9,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
-import { RemotePeer, SwarmServer, type PeerHandle } from '../src/index'
+import { RemotePeer, SwarmMailbox, SwarmServer, type PeerHandle } from '../src/index'
 import { resolveMemberLaunch } from '../src/worktrees'
 import { bootHarness, type TestHarness } from './boot'
 
@@ -94,7 +94,7 @@ it('a member sends cross-process through the swarm socket; the target wakes', as
     toolArguments: JSON.stringify({ to: 'peer-b', message: 'walls are ready' }),
   })
   const roster = new Map<string, PeerHandle>()
-  const mailbox = h.swarm.mailbox(h.lead.agent, roster)
+  const mailbox = new SwarmMailbox(h.ctx, h.lead.agent, roster, h.journal)
   server = new SwarmServer(mailbox)
   await server.listen()
 
@@ -115,8 +115,7 @@ it('a member sends cross-process through the swarm socket; the target wakes', as
   expect(result.stopReason).toBe('completed')
 
   // Durable mailbox pair in the run journal; nothing pending.
-  const leadEvents = (type: string) =>
-    h!.swarm.journal(h!.lead.agent).events.filter((e) => e.type === type)
+  const leadEvents = (type: string) => h!.journal.events.filter((e) => e.type === type)
   expect(leadEvents('swarm/message/queued')).toHaveLength(1)
   expect(leadEvents('swarm/message/delivered')).toHaveLength(1)
   expect(mailbox.pending()).toHaveLength(0)

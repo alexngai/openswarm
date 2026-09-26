@@ -20,7 +20,7 @@ import * as Spine from '@deepseek-ai/dsh-agent-spine-demo'
 import * as SessionPersistenceJsonl from '@deepseek-ai/dsh-session-persistence-jsonl'
 import * as Subagent from '@deepseek-ai/dsh-subagent'
 import * as SpawnInProcess from '@deepseek-ai/dsh-subagent-spawn-in-process'
-import SwarmService from '../src/index'
+import SwarmService, { SwarmJournal } from '../src/index'
 
 /** Loader-style default unwrap for hand-mounted plugin modules. */
 const plug = (m: unknown): any => (m as any).default ?? m
@@ -29,6 +29,10 @@ export interface TestHarness {
   ctx: Context
   swarm: SwarmService
   lead: AgentHandle
+  /** Where ctx.swarm keeps run journals (under the temp workDir). */
+  runsDir: string
+  /** A scratch journal for driving a board or mailbox outside any run. */
+  journal: SwarmJournal
   mock: MockLlmServer
   close(): Promise<void>
 }
@@ -89,7 +93,8 @@ export async function bootHarness(
   ctx.plugin(plug(Subagent))
   ctx.plugin(plug(SpawnInProcess), { providerName: 'spawn' })
   // Run journals go under the temp workDir, never the home directory.
-  ctx.plugin(SwarmService, { runsDir: join(workDir, 'runs') })
+  const runsDir = join(workDir, 'runs')
+  ctx.plugin(SwarmService, { runsDir })
 
   // Wait until every service the tests touch is registered and active.
   await new Promise<void>((resolve) =>
@@ -109,6 +114,8 @@ export async function bootHarness(
     ctx,
     swarm: ctx.swarm,
     lead,
+    runsDir,
+    journal: SwarmJournal.open(join(workDir, 'journal.jsonl')),
     mock,
     async close() {
       await lead.dispose()

@@ -280,14 +280,14 @@ inside the worktree, and merged. See `packages/swarm/tests/self-modify-live.test
 - Delegated (dsh): `initialize`, `session/prompt`, streamed `session.event` / `session.status`.
 - Swarm extension:
   - `swarm/runTeam { spec, provider, model, worktrees? } → { runId }`; completion arrives as a `swarm.runFinished` notification carrying the `TeamResult`.
-  - `swarm/runs {} → { runs: [{ runId, status, leadSessionId }] }`.
+  - `swarm/runs {} → { runs: [{ id, status, topology, parentSessionId, writer, startedAt, endedAt?, error?, result?, spec? }] }`, read from the run journals, so it survives a server restart.
   - `swarm/board { runId } → { tasks }`.
 
 A `spec` is a `TeamSpec` — e.g. `{ topology: 'fanout', members: [{name}], tasks: [{member, prompt}] }`. See the topology types in [`packages/swarm/src/types.ts`](../packages/swarm/src/types.ts). A worked client is [`packages/app-server/tests/app-server.e2e.test.ts`](../packages/app-server/tests/app-server.e2e.test.ts).
 
 ## Driving a team in-process
 
-`ctx.swarm.runTeam(spec, { parent, worktrees? })` is the programmatic entry point. `RunTeamOptions.worktrees` turns member runs into subprocess harnesses in per-task git worktrees and returns a merge outcome. At most `worktrees.maxConcurrent` (default 8) harnesses run at once; the rest queue, so a large fanout does not spawn one subprocess per task up front. `onProgress` receives human-readable progress lines; every topology emits.
+`ctx.swarm.runTeam(spec, { parent, worktrees? })` is the programmatic entry point; it is `ctx.swarm.start(spec, options)` (a handle with the run `id`, its `board()`, and the `result` promise) plus waiting for the result. Each run journals to `$OPENSWARM_HOME/runs/<run id>/journal.jsonl` (default `~/.openswarm/runs`), which `ctx.swarm.runs()`, `view(runId)` and `attach(runId)` read from any process; `attach` takes over a run whose process died, releasing its claims and marking it `interrupted`. `RunTeamOptions.worktrees` turns member runs into subprocess harnesses in per-task git worktrees and returns a merge outcome. At most `worktrees.maxConcurrent` (default 8) harnesses run at once; the rest queue, so a large fanout does not spawn one subprocess per task up front. `onProgress` receives human-readable progress lines; every topology emits.
 
 Worktree runs clean up after themselves in two ways: an abort or throw drops this run's checkouts without merging (branches survive, so committed work stays reachable), and each run first sweeps `.swarm/worktrees/` for teams that died before finalizing — the SIGKILL case try/finally cannot cover. Live teams are never touched, so concurrent runs are safe. Members set `agentOptions: { provider, model }` for heterogeneous rosters. See [`packages/swarm/tests/boot.ts`](../packages/swarm/tests/boot.ts) for a minimal composition.
 

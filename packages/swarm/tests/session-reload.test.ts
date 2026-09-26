@@ -6,8 +6,8 @@
  * never marks one (docs/05 §11). The board and mailbox used to append
  * `swarm/*` events to the lead's session log — for a peer-team run, the
  * caller's own agent — so a session that hosted a board could never resume.
- * They now write the run's own journal (docs/05 D1, A3); this pins the fix:
- * a session reopens with or without a board write.
+ * They now write the run's own journal (docs/05 D1, A3, A4); this pins the
+ * fix: a session reopens after parenting a run that wrote a board.
  */
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { afterEach, expect, it } from 'vitest'
@@ -51,9 +51,12 @@ it('a session holding only dsh events reopens', async () => {
   await expect(reopen(h)).resolves.toBeUndefined()
 })
 
-it('the same session after one board write still reopens', async () => {
-  h = await bootHarness({ sequence: ['success'], successText: 'ok' })
+it('the same session after parenting a peer-team run still reopens', async () => {
+  h = await bootHarness({ sequence: ['success'], repeatLast: true, successText: 'ok' })
   await oneTurn(h)
-  await h.swarm.board(h.lead.agent).create({ subject: 's', prompt: 'p' })
+  await h.swarm.runTeam(
+    { topology: 'peer-team', members: [{ name: 'm' }], tasks: [{ subject: 's', prompt: 'p' }] },
+    { parent: h.lead.agent },
+  )
   await expect(reopen(h)).resolves.toBeUndefined()
 })

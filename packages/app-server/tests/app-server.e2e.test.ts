@@ -86,7 +86,12 @@ it('serves the delegated SDK protocol and the swarm extension over one socket', 
   // Run registry reflects completion.
   const runs = (await client.request('swarm/runs', {})) as any
   expect(runs.runs).toEqual([
-    { runId, status: 'finished', leadSessionId: expect.stringContaining('swarm-app-') },
+    expect.objectContaining({
+      id: runId,
+      status: 'finished',
+      topology: 'fanout',
+      parentSessionId: expect.stringContaining('swarm-app-'),
+    }),
   ])
 
   // Unknown swarm methods reject cleanly.
@@ -95,10 +100,8 @@ it('serves the delegated SDK protocol and the swarm extension over one socket', 
   })
 }, 30_000)
 
-it('board state is queryable per run', async () => {
-  h = await bootHarness({ sequence: ['success'], repeatLast: true, successText: 'done' })
-  const ctx = (h as any).ctx
-  ctx.plugin(AppServer, {})
+/** Connect a raw client to the mounted app-server; returns its notification log. */
+async function connectClient(ctx: any): Promise<{ method: string; params: any }[]> {
   await new Promise<void>((resolve) => ctx.inject(['swarmAppServer'], () => resolve()))
   await ctx.swarmAppServer.ready
   const [host, port] = ctx.swarmAppServer.url.split(':')
@@ -108,8 +111,16 @@ it('board state is queryable per run', async () => {
   const notifications: { method: string; params: any }[] = []
   client.onNotification((method, params) => notifications.push({ method, params }))
   client.start()
+  return notifications
+}
 
-  const { runId } = (await client.request('swarm/runTeam', {
+it('board state is queryable per run, across an app-server restart', async () => {
+  h = await bootHarness({ sequence: ['success'], repeatLast: true, successText: 'done' })
+  const ctx = (h as any).ctx
+  const server = ctx.plugin(AppServer, {})
+  const notifications = await connectClient(ctx)
+
+  const { runId } = (await client!.request('swarm/runTeam', {
     provider: 'deepseek-official',
     model: 'mock-model',
     spec: {
@@ -131,12 +142,23 @@ it('board state is queryable per run', async () => {
 
   // The per-run lead is disposed once the run settles (no unbounded lead
   // accumulation on a long-lived server)...
-  const runs = (await client.request('swarm/runs', {})) as any
-  const leadId = runs.runs.find((r: any) => r.runId === runId)!.leadSessionId
+  const runs = (await client!.request('swarm/runs', {})) as any
+  const leadId = runs.runs.find((r: any) => r.id === runId)!.parentSessionId
   expect(ctx.agents.get(leadId)).toBeUndefined()
 
-  // ...yet swarm/board still answers from the snapshot captured at finish.
-  const board = (await client.request('swarm/board', { runId })) as any
+  // ...yet swarm/board still answers, from the run's journal.
+  const board = (await client!.request('swarm/board', { runId })) as any
   expect(board.tasks).toHaveLength(1)
   expect(board.tasks[0]).toMatchObject({ subject: 'one', status: 'completed', owner: 'solo' })
+
+  // A fresh app-server over the same runs directory still lists the run and
+  // serves its board: the run table is the journals, not server memory.
+  client!.close()
+  socket!.destroy()
+  await server.dispose()
+  ctx.plugin(AppServer, {})
+  await connectClient(ctx)
+  const after = (await client!.request('swarm/runs', {})) as any
+  expect(after.runs.map((r: any) => [r.id, r.status])).toEqual([[runId, 'finished']])
+  expect(await client!.request('swarm/board', { runId })).toEqual(board)
 }, 30_000)

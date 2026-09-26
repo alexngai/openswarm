@@ -5,6 +5,7 @@ import {
   registerSwarmMessaging,
   spawnPeer,
   suppressSettlementTurns,
+  SwarmMailbox,
   type PeerHandle,
 } from '../src/index'
 import { bootHarness, type TestHarness } from './boot'
@@ -19,7 +20,7 @@ async function spawnPair(h: TestHarness) {
   const ctx = (h as any).ctx
   suppressSettlementTurns(h.lead.agent)
   const roster = new Map<string, PeerHandle>()
-  const mailbox = h.swarm.mailbox(h.lead.agent, roster)
+  const mailbox = new SwarmMailbox(ctx, h.lead.agent, roster, h.journal)
   registerSwarmMessaging(ctx, roster, mailbox)
   const a = await spawnPeer(ctx, { name: 'peer-a' }, {
     parent: h.lead.agent,
@@ -37,7 +38,7 @@ async function spawnPair(h: TestHarness) {
 }
 
 function leadEvents(h: TestHarness, type: string): any[] {
-  return h.swarm.journal(h.lead.agent).events.filter((e) => e.type === type)
+  return h.journal.events.filter((e) => e.type === type)
 }
 
 it('wakeup send queues durably, wakes the target, and acks delivery', async () => {
