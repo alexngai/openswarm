@@ -864,6 +864,17 @@ authenticated principals (one carrier suffices).
     stops on its own after about 60 tool calls, far inside the 2h budget
     (published agents take 110–171 turns), so the arms' effort differences
     belong in the dollar-hour denominator, not in a fixed budget.
+  - *Screen, run 2026-09-25* (20 tasks × 3 seeds, single agent, gpt-5.5,
+    SUT `1e4bda0`, 8 CPU / 16 GB): 60 cells, $305 (about $5.10 a run;
+    Polars and MikroORM tasks cost $8–11), every cell's parsed reward
+    equal to `test.sh`'s own. Mean reward in [0.2, 0.8] for 13: fal-1.3.0
+    0.41, fal-4.1.0 0.75, mko-5.8.0 0.52, mko-6.4.0 0.73, mko-6.5.0 0.40,
+    opt-4.4.0 0.74, plr-1.30.0 0.37 (seeds 0.00–0.56), plr-1.31.0 0.33,
+    prm-6.7.0 0.59, pyg-2.2.0 0.67, pyg-2.5.0 0.67, spc-3.2.0 0.50,
+    vbt-1.3.0 0.63. Out of window: spc-3.4.0 and vbt-1.1.0 at 1.00,
+    opt-4.6.0 and prm-7.0.0 at 0.92, pyg-2.1.0 0.83, mko-6.6.0 0.15,
+    plr-1.18.0 0.06. The reference solution scored 1.0 in 3 of 3 reps on all
+    20.
   - *Checks before freezing, no model tokens:* whether the task images
     carry `.git` (the worktree arms need it; fall back to `git init`), and
     reference-solution stability over 2–3 runs per task.
