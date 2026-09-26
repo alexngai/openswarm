@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
-import { digestSessionLog, findSessionLog, renderRecoveryBriefing } from '../src/recover'
+import { digestSessionLog, renderRecoveryBriefing } from '../src/recover'
 
 /** Write a log where the persistence plugin puts one: <root>/<slug>/<id>/. */
 function storeWithLog(sessionId: string, lines: unknown[]): { root: string; log: string } {
@@ -25,12 +25,6 @@ const said = (text: string) => ({
   data: { message: { content: [{ type: 'text', text }] } },
 })
 
-it('finds a session log nested under the persistence root', () => {
-  const { root, log } = storeWithLog('swarm-member-alice', [asked('do the thing')])
-  expect(findSessionLog(root, 'swarm-member-alice')).toBe(log)
-  expect(findSessionLog(root, 'swarm-member-nobody')).toBeUndefined()
-})
-
 it('folds a log into what the member was asked and what it reported', () => {
   const { log } = storeWithLog('swarm-member-bob', [
     asked('You are bob. Acknowledge.'),
@@ -45,8 +39,7 @@ it('folds a log into what the member was asked and what it reported', () => {
 })
 
 it('survives the torn final line a crash leaves behind', () => {
-  const { root } = storeWithLog('swarm-member-torn', [asked('a'), said('b')])
-  const log = findSessionLog(root, 'swarm-member-torn')!
+  const { log } = storeWithLog('swarm-member-torn', [asked('a'), said('b')])
   writeFileSync(log, `${JSON.stringify(asked('a'))}\n${JSON.stringify(said('b'))}\n{"type":"assis`)
   const digest = digestSessionLog(log)
   expect(digest.asked).toEqual(['a'])

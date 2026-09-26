@@ -3,8 +3,9 @@
 # subagent-dsh-sdk with cwd = the task worktree; bash/fs root at process.cwd().
 # Override per team via worktrees.member.configPath to grow richer members.
 
+# dsh's SDK server plus resume-on-miss and `swarm/steer` (docs/05 A2).
 - id: sdk-jsonrpc-server
-  name: '@deepseek-ai/dsh-sdk-jsonrpc-server'
+  name: 'openswarm-swarm-member/server'
   config:
     maxTokensAsSuccess: false
 

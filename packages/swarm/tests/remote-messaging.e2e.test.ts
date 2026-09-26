@@ -176,6 +176,40 @@ it('remote messaging peer-team: member-keyed worktrees, multi-turn tasks, merged
   expect(lastBody).toContain('do task two')
 }, 120_000)
 
+it('steering lands inside the running turn, at the next step boundary', async () => {
+  h = await bootHarness({
+    // brief, task step 1 (a bash call that sleeps), task step 2 (final answer).
+    sequence: ['success', 'tool_call_success', 'success'],
+    repeatLast: true,
+    successText: 'done',
+    toolName: 'bash',
+    toolArguments: JSON.stringify({ command: 'sleep 2' }),
+  })
+  const peer = await spawnRemote(h, 'steered', mkdtempSync(join(tmpdir(), 'openswarm-steer-')))
+
+  const turn = peer.ask([{ type: 'text', text: 'run the slow command' }])
+  // The task's first request is in, so the bash call is sleeping: mid-turn.
+  while (h.mock.requests.length < 2) await new Promise((r) => setTimeout(r, 20))
+  await peer.steer('STEER: switch to the fast path')
+  const result = await turn
+
+  expect(result.stopReason).toBe('completed')
+  // No extra turn: the step after the tool call is the turn's last request,
+  // and it is the first to carry the steer.
+  expect(h.mock.requests).toHaveLength(3)
+  expect(JSON.stringify(h.mock.requests[1]!.body)).not.toContain('STEER')
+  expect(JSON.stringify(h.mock.requests[2]!.body)).toContain('STEER: switch to the fast path')
+}, 60_000)
+
+it('steering an unknown session rejects', async () => {
+  h = await bootHarness({ sequence: ['success'], repeatLast: true, successText: 'ok' })
+  const peer = await spawnRemote(h, 'lonely', mkdtempSync(join(tmpdir(), 'openswarm-steer-')))
+  const { client } = peer as unknown as { client: { request(m: string, p: object): Promise<unknown> } }
+  await expect(
+    client.request('swarm/steer', { sessionId: 'swarm-member-nobody', text: 'hi' }),
+  ).rejects.toThrow(/no live session/)
+}, 30_000)
+
 it('a member whose runtime dies mid-turn fails loud instead of hanging the team', async () => {
   // 'success' answers the briefing; 'stall' leaves the next turn open forever,
   // which is the window a crashing child would die in.
@@ -220,8 +254,8 @@ it('a member that goes silent mid-turn fails on the idle clock', async () => {
 it('a member that dies mid-task is restarted with recovered context and finishes', async () => {
   const repo = scratchRepo()
   h = await bootHarness({
-    // brief → task stalls (member wedges, idle clock fires) → re-brief the
-    // replacement → the retried task succeeds.
+    // brief → task stalls (member wedges, idle clock fires) → restart prompt
+    // to the resumed replacement → the retried task succeeds.
     sequence: ['success', 'stall', 'success', 'success'],
     repeatLast: true,
     successText: 'task done',
@@ -248,20 +282,21 @@ it('a member that dies mid-task is restarted with recovered context and finishes
   for (const task of result.tasks) expect(task.status).toBe('completed')
   expect(progress.some((l) => /restarting solo \(1\/1\)/.test(l))).toBe(true)
 
-  // The replacement was briefed from the dead member's persisted log — the
-  // only place its history survives, since the runtime never resumes one.
-  const briefings = h.mock.requests.filter((r) =>
-    JSON.stringify(r.body).includes('previous process ended'),
+  // The replacement resumed the dead member's session: the restart prompt's
+  // request already carries the pre-crash briefing and task.
+  const resumed = h.mock.requests.find((r) =>
+    JSON.stringify(r.body).includes('Your process was restarted'),
   )
-  expect(briefings.length).toBeGreaterThan(0)
-  expect(JSON.stringify(briefings.at(-1)!.body)).toContain('do task one')
+  expect(resumed).toBeDefined()
+  expect(JSON.stringify(resumed!.body)).toContain('Acknowledge this briefing')
+  expect(JSON.stringify(resumed!.body)).toContain('do task one')
 }, 120_000)
 
 it('full chain: member does work, wedges, restarts with context, and its PRE-CRASH work merges', async () => {
   const repo = scratchRepo()
   // One member keeps the shared mock's FIFO deterministic. The run:
   //   1 brief → 2 task: bash (write #1) → 3 WEDGE (idle clock fires)
-  //   4 re-brief → 5 retried task: bash (write #2) → 6 done
+  //   4 restart prompt → 5 retried task: bash (write #2) → 6 done
   h = await bootHarness({
     sequence: ['success', 'tool_call_success', 'stall', 'success', 'tool_call_success', 'success'],
     repeatLast: true,
@@ -292,12 +327,14 @@ it('full chain: member does work, wedges, restarts with context, and its PRE-CRA
   // 1. Detection fired and the restart happened.
   expect(progress.some((l) => /restarting solo \(1\/1\)/.test(l))).toBe(true)
 
-  // 2. The replacement was briefed from the dead member's persisted log.
-  const recovered = h.mock.requests.filter((r) =>
-    JSON.stringify(r.body).includes('previous process ended'),
+  // 2. The replacement resumed the dead member's session, tool calls
+  //    included: the restart prompt's request carries the pre-crash turn.
+  const resumed = h.mock.requests.find((r) =>
+    JSON.stringify(r.body).includes('Your process was restarted'),
   )
-  expect(recovered.length).toBeGreaterThan(0)
-  expect(JSON.stringify(recovered.at(-1)!.body)).toContain('append a tick')
+  expect(resumed).toBeDefined()
+  expect(JSON.stringify(resumed!.body)).toContain('append a tick')
+  expect(JSON.stringify(resumed!.body)).toContain('echo tick')
 
   // 3. The task finished despite the death.
   for (const task of result.tasks) expect(task.status).toBe('completed')

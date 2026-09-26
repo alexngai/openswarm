@@ -19,7 +19,7 @@ const PACKAGES = [
 ]
 
 // Subpath exports that are their own plugin rows (`openswarm-swarm/command`).
-const SUBPATHS = { swarm: ['command', 'eval-reporter'] }
+const SUBPATHS = { swarm: ['command', 'eval-reporter'], 'swarm-member': ['server'] }
 
 for (const pkg of PACKAGES) {
   const dir = `packages/${pkg}`

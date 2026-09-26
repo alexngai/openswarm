@@ -211,6 +211,14 @@ export class RemotePeer {
     return this.enqueueTurn(blocks).done
   }
 
+  /**
+   * `immediate` steering: lands at the member's next step boundary, inside
+   * the running turn (member server's `swarm/steer`, docs/05 A2).
+   */
+  async steer(text: string): Promise<void> {
+    await this.client.request('swarm/steer', { sessionId: this.sessionId, text })
+  }
+
   async close(): Promise<void> {
     this.closing = true
     this.clearIdle()

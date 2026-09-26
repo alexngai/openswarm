@@ -131,8 +131,8 @@ export interface PeerTeamSpec {
   maxTaskAttempts?: number
   /**
    * Warm restarts allowed per member before its task falls to a sibling
-   * (default 1). Remote messaging teams only — the replacement is briefed from
-   * the dead member's persisted log plus its surviving worktree.
+   * (default 1). Remote messaging teams only — the replacement resumes the
+   * dead member's persisted session in its surviving worktree.
    */
   maxMemberRestarts?: number
   /** Fail a member turn producing no event for this long (default 5min). */

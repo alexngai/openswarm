@@ -36,7 +36,6 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RemotePeer } from './remote-peer'
 import { SwarmServer } from './server'
-import { digestSessionLog, findSessionLog, renderRecoveryBriefing } from './recover'
 import { WorktreeRun, resolveMemberLaunch, type WorktreeTeamOptions } from './worktrees'
 import type { MergeOutcome } from 'openswarm-git'
 import type {
@@ -58,8 +57,6 @@ export {
   suppressSettlementTurns,
 } from './peers'
 export { parseNumberedPlan } from './topologies'
-export { digestSessionLog, findSessionLog, renderRecoveryBriefing } from './recover'
-export type { SessionDigest } from './recover'
 export type { ReportProgress } from './topologies'
 export { RemotePeer } from './remote-peer'
 export { SwarmServer } from './server'
@@ -319,11 +316,8 @@ export default class SwarmService extends Service {
     const restarts = new Map<string, number>()
     const maxRestarts = spec.maxMemberRestarts ?? 1
 
-    /** Spawn one member; `recovery` is prepended for a warm restart. */
-    const spawnMember = async (
-      member: MemberSpec,
-      recovery?: string,
-    ): Promise<RemotePeer> => {
+    /** Spawn one member; a restarted one resumes its session, so it is not re-briefed. */
+    const spawnMember = async (member: MemberSpec, restarted = false): Promise<RemotePeer> => {
       const names = spec.members.filter((m) => m.name !== member.name).map((m) => m.name)
       const worktree = await worktrees.worktree(member.name)
       const peer = await RemotePeer.spawn({
@@ -343,7 +337,9 @@ export default class SwarmService extends Service {
         ...(spec.memberIdleTimeoutMs === undefined
           ? {}
           : { idleTimeoutMs: spec.memberIdleTimeoutMs }),
-        briefing: `${member.persona === undefined ? '' : `${member.persona}\n\n`}You are ${member.name}, a member of a swarm team working in your own git worktree. Your teammates: ${names.join(', ') || '(none)'}. Coordinate with them via the swarm_send_message tool.${recovery === undefined ? ' Acknowledge this briefing and wait for tasks.' : `\n\n${recovery}`}`,
+        briefing: restarted
+          ? 'Your process was restarted. Your conversation and worktree are intact; continue your task.'
+          : `${member.persona === undefined ? '' : `${member.persona}\n\n`}You are ${member.name}, a member of a swarm team working in your own git worktree. Your teammates: ${names.join(', ') || '(none)'}. Coordinate with them via the swarm_send_message tool. Acknowledge this briefing and wait for tasks.`,
       })
       peers.push(peer)
       roster.set(member.name, { name: member.name, remote: peer })
@@ -351,11 +347,11 @@ export default class SwarmService extends Service {
     }
 
     /**
-     * Bring a dead member back with what it knew. Its session log is on disk
-     * (persisted, never auto-resumed), and its worktree still holds its file
-     * changes, so the replacement is briefed with a digest of both rather than
-     * starting blank. Returns false once the restart budget is spent, which
-     * hands the task to `runBoardWorkers` to retry on a sibling.
+     * Bring a dead member back with what it knew: the replacement reuses the
+     * session id and root, so the member server resumes its persisted session,
+     * and its worktree still holds its file changes. Returns false once the
+     * restart budget is spent, which hands the task to `runBoardWorkers` to
+     * retry on a sibling.
      */
     const restart = async (member: MemberSpec): Promise<boolean> => {
       const used = restarts.get(member.name) ?? 0
@@ -364,18 +360,10 @@ export default class SwarmService extends Service {
         return false
       }
       restarts.set(member.name, used + 1)
-      const dead = roster.get(member.name)?.remote
-      await dead?.close().catch(() => undefined)
-      let recovery: string | undefined
-      if (dead !== undefined) {
-        const log = findSessionLog(sessionRoot, dead.sessionId)
-        if (log !== undefined) recovery = renderRecoveryBriefing(digestSessionLog(log))
-      }
-      report(
-        `restarting ${member.name} (${used + 1}/${maxRestarts})${recovery === undefined ? '' : ' with recovered context'}`,
-      )
+      await roster.get(member.name)?.remote?.close().catch(() => undefined)
+      report(`restarting ${member.name} (${used + 1}/${maxRestarts})`)
       try {
-        await spawnMember(member, recovery)
+        await spawnMember(member, true)
         return true
       } catch (error) {
         report(`${member.name} failed to restart: ${error instanceof Error ? error.message : String(error)}`)

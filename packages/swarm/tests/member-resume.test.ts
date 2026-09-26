@@ -1,11 +1,11 @@
 /**
- * PROBE: does a respawned member recover its session memory?
+ * A respawned member resumes its own session (docs/05 A2).
  *
  * `RemotePeer` uses a stable session id (`swarm-member-<name>`) and the member
- * composition persists to `DSH_SESSION_ROOT` (defaulting to `./.sessions` in
- * the member's cwd), so both halves of a resume are on disk after a child
- * exits. What is unverified is the wiring: whether a FRESH child prompted with
- * a known id resumes that log or mints a new session.
+ * composition persists to `DSH_SESSION_ROOT`, so both halves of a resume are
+ * on disk after a child exits. This pinned the gap while dsh's SDK server
+ * always minted a new session; it now pins the fix: the member server
+ * (`openswarm-swarm-member/server`) resumes a persisted session on a miss.
  *
  * Decided from the captured request history rather than the model's answer —
  * the mock returns canned text, so the only real evidence is whether the
@@ -54,7 +54,7 @@ async function spawnAt(harness: TestHarness, name: string, cwd: string): Promise
   return peer
 }
 
-it('a respawned member persists its session but does NOT resume it', async () => {
+it('a respawned member resumes its persisted session', async () => {
   h = await bootHarness({ sequence: ['success'], repeatLast: true, successText: 'ok' })
   const cwd = mkdtempSync(join(tmpdir(), 'openswarm-resume-probe-'))
 
@@ -69,24 +69,16 @@ it('a respawned member persists its session but does NOT resume it', async () =>
   const after = h.mock.requests.slice(before)
   const sawPriorTurn = after.some((r) => JSON.stringify(r.body).includes('AZIMUTH'))
 
-  // Distinguish "never persisted" from "persisted but not loaded".
+  // Still one log, keyed by the stable session id: resume minted no new one.
   const root = join(cwd, '.sessions')
   const files = existsSync(root) ? readdirSync(root, { recursive: true } as never) as string[] : []
   const onDisk = files
     .map((f) => join(root, String(f)))
     .filter((f) => { try { return statSync(f).isFile() } catch { return false } })
-  const persisted = onDisk.filter((f) => readFileSync(f, 'utf8').includes('AZIMUTH'))
-
-  // The member composition really does persist, keyed by the stable session id.
-  expect(persisted.length).toBe(1)
+  expect(onDisk).toHaveLength(1)
   expect(onDisk[0]).toContain('swarm-member-rememberer')
+  expect(readFileSync(onDisk[0]!, 'utf8')).toContain('AZIMUTH')
 
-  // ...and the fresh child does not read it. `HarnessSdkJsonRpcServer`'s
-  // `getOrCreateSession` consults an in-memory map for THAT process and falls
-  // through to `agents.create`, never to persistence — so a respawn starts
-  // amnesiac even though its whole log is on disk beside it.
-  //
-  // Characterization, not approval: if this ever flips to true, upstream
-  // gained resume-on-miss and any replay shim we build can be deleted.
-  expect(sawPriorTurn).toBe(false)
+  // ...and the fresh child sent the first child's turn back to the provider.
+  expect(sawPriorTurn).toBe(true)
 }, 60_000)
