@@ -613,7 +613,20 @@ comes from the eval harness, since the kernel records no usage yet. Arms:
 
 Program and sharded run at equal total agent count and differ in exactly
 those three things, so the comparison measures coordination rather than
-partition quality. A hand plan is the best planning C can produce, run on
+partition quality. The system under test is pinned to
+`origin/self-modification` @ `7b79b3d`, the only line with the headless
+`run` mode the eval harness drives, plus member-side usage folding and the
+worktree fixes the team arms need, with the arms driver on top
+(`pilot/roadmap-arms` @ `1e4bda0`: `OPENSWARM_PILOT_PLAN` /
+`OPENSWARM_PILOT_ARM`). Every arm, single included, gets the same 8 CPU /
+16 GB container, so contention among a program's agents is not a
+confound; compute cost is negligible next to tokens. Caveat: the single
+arm is the CLI's in-process agent while team members boot
+`member.cordis.yml`, so single vs team also differs in member composition;
+sharded vs program, the comparison that decides, does not. Validated at
+zero tokens (2026-09-25) on vbt-1.3.0 with a scripted model applying the
+reference solution split into four threads: both arms scored 1.0, program
+cut t1–t3 after t0 landed, sharded cut all four from base. A hand plan is the best planning C can produce, run on
 the weakest runtime (no train, no steering). So a negative result is
 strong: if the hand-planned program does not beat sharding, C and D are
 re-scoped before they are built. A positive result only licenses building
