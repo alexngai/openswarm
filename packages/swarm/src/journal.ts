@@ -43,6 +43,7 @@ export class SwarmJournal {
   /** Identifies this open; a claim whose lease differs was granted by another. */
   readonly incarnation = randomUUID()
   private readonly writes = new Serializer()
+  private readonly waiters = new Set<() => void>()
   private nextSeq: number
 
   private constructor(
@@ -80,7 +81,27 @@ export class SwarmJournal {
       // ponytail: appendFile survives a process crash, not power loss; fsync per append if hosts can lose power mid-run.
       await appendFile(this.path, `${JSON.stringify(event)}\n`)
       this.events.push(event)
+      for (const wake of [...this.waiters]) wake()
       return event
+    })
+  }
+
+  /**
+   * Resolve once an event past `afterSeq` exists: at once if one already
+   * does, else on the next append or after `timeoutMs`, whichever is first.
+   */
+  waitForAppend(afterSeq: number, timeoutMs: number): Promise<void> {
+    if ((this.events.at(-1)?.seq ?? -1) > afterSeq) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      const wake = () => {
+        clearTimeout(timer)
+        this.waiters.delete(wake)
+        resolve()
+      }
+      const timer = setTimeout(wake, timeoutMs)
+      // A long-poll must never hold the process open.
+      if (typeof timer === 'object' && 'unref' in timer) timer.unref()
+      this.waiters.add(wake)
     })
   }
 }

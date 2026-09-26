@@ -21,7 +21,7 @@ It is built as a set of **out-of-tree plugins on [DeepSeek Harness](https://gith
 - **Peer + hierarchical teams** — seven topologies (fanout, critic-loop, cascade, committee, pipeline, peer-team, coordinator) over a durable, log-backed task board and mailbox. Peers send each other messages that wake a teammate's turn.
 - **Worktree isolation** — each member runs as a full subprocess harness in its own git worktree; a sequential merge queue folds completed branches, conflicts are retained for inspection, and your checkout is never touched.
 - **Heterogeneous, cross-provider rosters** — route cheap tiers to Bedrock haiku and hard work to Azure gpt-5.5 in one cascade, with per-model usage accounting.
-- **App-server** — a JSON-RPC interface (`swarm/runTeam`, `swarm/runs`, `swarm/board`, streamed events) any UI/TUI can drive over a socket.
+- **App-server** — a token-authenticated JSON-RPC interface (`swarm/start`, `swarm/runs`, `swarm/view`, `swarm/events`, `swarm/steer`, `swarm/cancel`, streamed events) any UI, CLI or program can drive over a socket.
 - **Agent-authored plugins** — an agent can write and hot-load a Cordis plugin into its own harness (freely) or the shared one (with approval).
 
 ## Install

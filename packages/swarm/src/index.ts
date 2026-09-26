@@ -10,7 +10,8 @@
  * A team run is durable (docs/05 A4): `start` mints a run id whose journal,
  * `<runsDir>/<run id>/journal.jsonl`, holds the run record, board and
  * mailbox, so `view`, `attach` and `runs` work from any process that can read
- * it. `runTeam` is `start` plus waiting for the result.
+ * it. `runTeam` is `start` plus waiting for the result. Its handle takes
+ * direction (`steer`, `cancel`) while the run is live (docs/05 A5).
  */
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
@@ -22,8 +23,16 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { SwarmBoard, foldBoard, type SwarmTaskSnapshot } from './board'
 import { SwarmJournal } from './journal'
 import { SwarmMailbox } from './mailbox'
-import { foldRun, recapJournal, type SwarmRunEvent, type SwarmRunRecord, type SwarmRunView } from './run'
+import {
+  foldRun,
+  recapJournal,
+  type SwarmRunEvent,
+  type SwarmRunRecord,
+  type SwarmRunView,
+  type SwarmSteerEvent,
+} from './run'
 import { askPeer, registerSwarmMessaging, spawnPeer, suppressSettlementTurns } from './peers'
+import type { Principal } from './protocol'
 import type { PeerHandle } from './types'
 import {
   CASCADE_TASK_KEY,
@@ -58,6 +67,7 @@ export * from './board'
 export * from './journal'
 export * from './mailbox'
 export * from './run'
+export * from './protocol'
 export {
   askPeer,
   nextTurnEnd,
@@ -82,12 +92,27 @@ export interface SwarmConfig {
   runsDir?: string
 }
 
+/** `$OPENSWARM_HOME`, else `~/.openswarm`. */
+export function openswarmHome(): string {
+  return process.env['OPENSWARM_HOME'] ?? join(homedir(), '.openswarm')
+}
+
 /** A started team run (docs/05 §5.1). */
 export interface RunHandle {
   /** `run-<8 hex>`; names the run's journal directory. */
   readonly id: string
   readonly journal: SwarmJournal
   board(): SwarmBoard
+  /**
+   * Direct one member of a messaging peer-team (docs/05 §6.1): a worktree
+   * (subprocess) member is steered `immediate`, at its next step boundary; an
+   * in-process one gets a waking mailbox message, its next turn (`enqueue`).
+   * Journaled as `swarm/steer` once delivered. Throws for an unknown member or
+   * a run with no addressable members.
+   */
+  steer(to: string, text: string, by?: string): Promise<SwarmSteerEvent['delivery']>
+  /** Abort the run; it records `failed` with the abort error. */
+  cancel(): void
   /** Settles after the run's `finished` or `failed` record is written. */
   readonly result: Promise<TeamResult & { git?: MergeOutcome }>
 }
@@ -193,7 +218,14 @@ function alive(pid: number): boolean {
 export default class SwarmService extends Service {
   static inject = ['subagents']
 
+  /**
+   * Protocol credentials, token → principal (docs/05 §5.3), which the socket
+   * carrier resolves. ponytail: in memory, so minted tokens do not survive a
+   * restart; persist them once a principal must outlive the process.
+   */
+  readonly tokens = new Map<string, Principal>()
   private swarmConfig: SwarmConfig
+  private readonly liveRuns = new Map<string, RunHandle>()
 
   constructor(ctx: Context, config: SwarmConfig = {}) {
     super(ctx, 'swarm')
@@ -201,12 +233,11 @@ export default class SwarmService extends Service {
   }
 
   private runsDir(): string {
-    const home = process.env['OPENSWARM_HOME'] ?? join(homedir(), '.openswarm')
-    return this.swarmConfig.runsDir ?? join(home, 'runs')
+    return this.swarmConfig.runsDir ?? join(openswarmHome(), 'runs')
   }
 
   /** A run's journal file. The id names a directory, so it may not be a path. */
-  private journalPath(runId: string): string {
+  journalPath(runId: string): string {
     if (!/^[\w-]+$/.test(runId)) throw new Error(`invalid run id "${runId}"`)
     return join(this.runsDir(), runId, 'journal.jsonl')
   }
@@ -222,6 +253,12 @@ export default class SwarmService extends Service {
     while (existsSync(join(this.runsDir(), id)))
     const journal = SwarmJournal.open(this.journalPath(id))
     const board = new SwarmBoard(journal)
+    // The members steering reaches; the messaging peer-team runners fill it.
+    const roster = new Map<string, PeerHandle>()
+    const mailbox = new SwarmMailbox(this.ctx, options.parent, roster, journal)
+    const controller = new AbortController()
+    const signal =
+      options.signal === undefined ? controller.signal : AbortSignal.any([options.signal, controller.signal])
     const record = (run: SwarmRunRecord) =>
       journal.append('swarm/run', { version: 1, run } satisfies SwarmRunEvent)
     const running: SwarmRunRecord = {
@@ -234,18 +271,54 @@ export default class SwarmService extends Service {
       spec,
     }
     await record(running)
-    const result = this.execute(spec, options, journal, board).then(
-      async (result) => {
-        await record({ ...running, status: 'finished', endedAt: Date.now(), result })
+    const result = this.execute(spec, { ...options, signal }, board, roster, mailbox)
+      .then((result) => {
+        // Aborted members settle as results, not rejections, so a cancelled
+        // run can come back whole; it still failed.
+        signal.throwIfAborted()
         return result
+      })
+      .then(
+        async (result) => {
+          await record({ ...running, status: 'finished', endedAt: Date.now(), result })
+          return result
+        },
+        async (error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error)
+          await record({ ...running, status: 'failed', endedAt: Date.now(), error: message })
+          throw error
+        },
+      )
+      .finally(() => this.liveRuns.delete(id))
+    const handle: RunHandle = {
+      id,
+      journal,
+      board: () => board,
+      result,
+      cancel: () => controller.abort(new Error(`run ${id} cancelled`)),
+      steer: async (to, text, by = 'owner') => {
+        const peer = roster.get(to)
+        if (peer === undefined) {
+          throw new Error(
+            roster.size === 0
+              ? `run ${id} (${spec.topology}) has no addressable members`
+              : `run ${id} has no member "${to}"`,
+          )
+        }
+        const delivery = peer.remote === undefined ? 'enqueue' : 'immediate'
+        if (peer.remote === undefined) await mailbox.send({ from: by, to, text })
+        else await peer.remote.steer(text)
+        await journal.append('swarm/steer', { version: 1, to, text, delivery, by } satisfies SwarmSteerEvent)
+        return delivery
       },
-      async (error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error)
-        await record({ ...running, status: 'failed', endedAt: Date.now(), error: message })
-        throw error
-      },
-    )
-    return { id, journal, board: () => board, result }
+    }
+    this.liveRuns.set(id, handle)
+    return handle
+  }
+
+  /** A run this process started that has not settled yet. */
+  live(runId: string): RunHandle | undefined {
+    return this.liveRuns.get(runId)
   }
 
   async runTeam(
@@ -300,8 +373,9 @@ export default class SwarmService extends Service {
   private async execute(
     spec: TeamSpec,
     options: RunTeamOptions,
-    journal: SwarmJournal,
     board: SwarmBoard,
+    roster: Map<string, PeerHandle>,
+    mailbox: SwarmMailbox,
   ): Promise<TeamResult & { git?: MergeOutcome }> {
     const worktrees =
       options.worktrees === undefined ? undefined : new WorktreeRun(this.ctx, options.worktrees)
@@ -309,14 +383,14 @@ export default class SwarmService extends Service {
       worktrees === undefined
         ? this.runMember(member, prompt, options)
         : worktrees.runMember(member, prompt, taskKey, options)
-    if (worktrees === undefined) return this.dispatch(spec, run, options, journal, board)
+    if (worktrees === undefined) return this.dispatch(spec, run, options, board, roster, mailbox)
 
     // Clear anything a previously crashed team left in this repo before adding
     // our own checkouts.
     await worktrees.sweepOrphans()
     let result: TeamResult
     try {
-      result = await this.dispatch(spec, run, options, journal, board, worktrees)
+      result = await this.dispatch(spec, run, options, board, roster, mailbox, worktrees)
     } catch (error) {
       // Abort (signal or throw): drop our worktrees rather than leaving them
       // for the next sweep. Branches survive, so committed work is recoverable.
@@ -369,8 +443,9 @@ export default class SwarmService extends Service {
     spec: TeamSpec,
     run: RunMember,
     options: RunTeamOptions,
-    journal: SwarmJournal,
     board: SwarmBoard,
+    roster: Map<string, PeerHandle>,
+    mailbox: SwarmMailbox,
     worktrees?: WorktreeRun,
   ): Promise<TeamResult> {
     const report = options.onProgress
@@ -390,8 +465,8 @@ export default class SwarmService extends Service {
       case 'peer-team':
         return spec.messaging === true
           ? worktrees === undefined
-            ? this.runPeerTeamMessaging(spec, options, journal, board)
-            : this.runRemotePeerTeam(spec, options, journal, board, worktrees)
+            ? this.runPeerTeamMessaging(spec, options, board, roster, mailbox)
+            : this.runRemotePeerTeam(spec, options, board, roster, mailbox, worktrees)
           : runPeerTeam(spec, run, board, report)
     }
   }
@@ -406,17 +481,15 @@ export default class SwarmService extends Service {
   private async runRemotePeerTeam(
     spec: import('./types').PeerTeamSpec,
     options: RunTeamOptions,
-    journal: SwarmJournal,
     board: SwarmBoard,
+    roster: Map<string, PeerHandle>,
+    mailbox: SwarmMailbox,
     worktrees: WorktreeRun,
   ): Promise<import('./types').PeerTeamResult> {
     if (spec.members.length === 0) throw new Error('peer-team needs at least one member')
-    const lead = options.parent
     const created = await seedBoard(board, spec.tasks)
     const seeded = new Set(created)
 
-    const roster = new Map<string, PeerHandle>()
-    const mailbox = new SwarmMailbox(this.ctx, lead, roster, journal)
     const server = new SwarmServer(mailbox)
     await server.listen()
     const cfg = options.worktrees?.member ?? {}
@@ -490,6 +563,8 @@ export default class SwarmService extends Service {
         board,
         seeded,
         async (member, claimed) => {
+          // A cancelled run takes no new turns; a running turn finishes first.
+          options.signal?.throwIfAborted()
           const blocks: ContentBlock[] = [{ type: 'text', text: claimed.prompt }]
           for (let attempt = 0; ; attempt++) {
             const handle = roster.get(member.name)!
@@ -525,16 +600,15 @@ export default class SwarmService extends Service {
   private async runPeerTeamMessaging(
     spec: import('./types').PeerTeamSpec,
     options: RunTeamOptions,
-    journal: SwarmJournal,
     board: SwarmBoard,
+    roster: Map<string, PeerHandle>,
+    mailbox: SwarmMailbox,
   ): Promise<import('./types').PeerTeamResult> {
     if (spec.members.length === 0) throw new Error('peer-team needs at least one member')
     const lead = options.parent
     const created = await seedBoard(board, spec.tasks)
     const seeded = new Set(created)
 
-    const roster = new Map<string, PeerHandle>()
-    const mailbox = new SwarmMailbox(this.ctx, lead, roster, journal)
     const provider = this.swarmConfig.defaultSubagentProvider ?? 'spawn'
     const disposers: (() => void)[] = [
       suppressSettlementTurns(lead),

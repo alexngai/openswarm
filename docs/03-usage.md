@@ -273,15 +273,23 @@ This is the path rung 5 runs on — a live cascade using exactly the config abov
 edited this repository's own source, passed this repository's own presubmit
 inside the worktree, and merged. See `packages/swarm/tests/self-modify-live.test.ts`.
 
-## The app-server (for UIs/TUIs)
+## The app-server (for UIs, CLIs, programs)
 
-`openswarm serve` binds a newline-delimited JSON-RPC 2.0 endpoint (dsh's SDK session protocol + swarm methods). Connect with `@deepseek-ai/dsh-sdk-protocol`'s `JsonRpcLineTransport`:
+`openswarm serve` binds a newline-delimited JSON-RPC 2.0 endpoint: the socket carrier of the swarm protocol ([docs/05](05-control-plane-redesign.md) §5.3), in front of dsh's SDK session protocol. Connect with `@deepseek-ai/dsh-sdk-protocol`'s `JsonRpcLineTransport`.
 
-- Delegated (dsh): `initialize`, `session/prompt`, streamed `session.event` / `session.status`.
-- Swarm extension:
-  - `swarm/runTeam { spec, provider, model, worktrees? } → { runId }`; completion arrives as a `swarm.runFinished` notification carrying the `TeamResult`.
+- **Auth.** A connection starts unauthenticated, and every method but `swarm/auth { token } → { principal }` is refused until it binds one. At listen the server writes `$OPENSWARM_HOME/app-server.json` (default `~/.openswarm`): `{ url, token, pid }` with an owner token, mode 0600, removed on close. The owner mints more tokens with `swarm/token`; they are held in memory and die with the process.
+- **Policy**, default-deny: owner, everything; viewer, state; driver, state and direction; member (bound to one run and member name), its own run's state. A viewer or driver token minted with a `runId` is held to that run too. A refusal is a JSON-RPC error whose message starts with `FORBIDDEN`, `UNKNOWN_METHOD`, `INVALID_PARAMS` or `NOT_FOUND`.
+- State:
   - `swarm/runs {} → { runs: [{ id, status, topology, parentSessionId, writer, startedAt, endedAt?, error?, result?, spec? }] }`, read from the run journals, so it survives a server restart.
-  - `swarm/board { runId } → { tasks }`.
+  - `swarm/view { runId, since? } → { run, tasks, recap }`.
+  - `swarm/events { runId, afterSeq?, waitMs? } → { events }`: the run's journal events after `afterSeq` (default -1). For a run live in this server, a poll with nothing new waits up to `waitMs` (default 0, at most 30000) for the next event, so polling with the last `seq` follows a run.
+- Direction:
+  - `swarm/start { spec, provider?, model?, worktrees? } → { runId }`; the connection that starts the run gets a `swarm.runFinished` notification carrying the `TeamResult` (or `error`).
+  - `swarm/steer { runId, to, text } → { delivery }`: a member of a messaging peer-team; `immediate` (next step boundary) under `worktrees`, else `enqueue` (its next turn). Other topologies have no addressable members.
+  - `swarm/cancel { runId } → { cancelled: true }`: aborts the run (a messaging peer-team's members finish their current turn), which records `failed`.
+  - `swarm/attach { runId }`: take over a run whose process died (see below).
+- Admin: `swarm/token { role, runId?, member? } → { token }`.
+- Delegated to dsh, owner only: `initialize`, `session/prompt`, streamed `session.event` / `session.status`.
 
 A `spec` is a `TeamSpec` — e.g. `{ topology: 'fanout', members: [{name}], tasks: [{member, prompt}] }`. See the topology types in [`packages/swarm/src/types.ts`](../packages/swarm/src/types.ts). A worked client is [`packages/app-server/tests/app-server.e2e.test.ts`](../packages/app-server/tests/app-server.e2e.test.ts).
 

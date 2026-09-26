@@ -31,6 +31,16 @@ export interface SwarmRunRecord {
 /** Payload of a `swarm/run` journal event. */
 export type SwarmRunEvent = { version: 1; run: SwarmRunRecord }
 
+/** Payload of a `swarm/steer` journal event: a steer as it was delivered (docs/05 §6.1). */
+export type SwarmSteerEvent = {
+  version: 1
+  to: string
+  text: string
+  /** `immediate` at the member's next step boundary, `enqueue` as its next turn. */
+  delivery: 'immediate' | 'enqueue'
+  by: string
+}
+
 /** A run as its journal records it. */
 export interface SwarmRunView {
   run: SwarmRunRecord
@@ -74,6 +84,9 @@ export function recapJournal(events: readonly SwarmJournalEvent[], since = -1): 
       const { messageId } = data as { messageId: string }
       const message = messages.get(messageId)
       line = `message ${message === undefined ? messageId : `${message.from}→${message.to}`} delivered`
+    } else if (type === 'swarm/steer') {
+      const { by, to, delivery, text } = data as SwarmSteerEvent
+      line = `steer ${by}→${to} (${delivery}): ${text.split('\n')[0]!.slice(0, 80)}`
     } else if (type === 'swarm/run') {
       const { run } = data as SwarmRunEvent
       const where = `pid ${run.writer.pid} on ${run.writer.host}`

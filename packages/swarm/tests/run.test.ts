@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process'
 import { appendFileSync, readFileSync } from 'node:fs'
 import { hostname } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { SwarmBoard, SwarmJournal, type FanoutResult, type SwarmRunEvent, type TeamSpec } from '../src/index'
 import { bootHarness, type TestHarness } from './boot'
 
@@ -176,4 +176,54 @@ it('recap narrates the journal, and since skips what a reader has already seen',
     '#5 message alice→bob delivered',
   ])
   expect(h.swarm.view('run-0000beef', { since: 3 }).recap).toEqual(all.slice(4))
+})
+
+it('steer reaches an in-process messaging peer as its next turn, journaled', async () => {
+  // Briefing, then a task turn slow enough to steer during, then the steer's turn.
+  h = await bootHarness({
+    sequence: ['success', 'slow_success', 'success'],
+    repeatLast: true,
+    successText: 'done',
+    chunkSize: 1,
+    chunkDelayMs: 150,
+  })
+  const run = await h.swarm.start(
+    { topology: 'peer-team', messaging: true, members: [{ name: 'peer-a' }], tasks: [{ subject: 'one', prompt: 'do one' }] },
+    { parent: h.lead.agent },
+  )
+  expect(h.swarm.live(run.id)).toBe(run)
+  // Members are all spawned before the first claim, so a claim means peer-a is addressable.
+  while (!run.board().list().some((t) => t.status === 'in_progress')) {
+    await run.journal.waitForAppend(run.journal.events.length - 1, 1_000)
+  }
+  await expect(run.steer('nobody', 'hi')).rejects.toThrow(`run ${run.id} has no member "nobody"`)
+  expect(await run.steer('peer-a', 'check the tests first')).toBe('enqueue')
+  await run.result
+  expect(h.swarm.live(run.id)).toBeUndefined()
+
+  // The mailbox carried it as a waking message from the steerer, and the steer is on record.
+  const data = (type: string) => run.journal.events.filter((e) => e.type === type).map((e) => e.data as any)
+  expect(data('swarm/message/queued').map((d) => d.message)).toEqual([
+    expect.objectContaining({ from: 'owner', to: 'peer-a', delivery: 'wakeup', text: 'check the tests first' }),
+  ])
+  expect(data('swarm/message/delivered')).toHaveLength(1)
+  expect(data('swarm/steer')).toEqual([
+    { version: 1, to: 'peer-a', text: 'check the tests first', delivery: 'enqueue', by: 'owner' },
+  ])
+  expect(h.swarm.view(run.id).recap).toContainEqual(expect.stringMatching(/^#\d+ steer owner→peer-a \(enqueue\): check the tests first$/))
+  // peer-a's next turn opens on it.
+  await vi.waitFor(() =>
+    expect(h!.mock.requests.some((r) => JSON.stringify(r.body).includes('check the tests first'))).toBe(true),
+  )
+})
+
+it('steer refuses a run with no addressable members', async () => {
+  h = await bootHarness({ sequence: ['success'], repeatLast: true, successText: 'done' })
+  const run = await h.swarm.start(
+    { topology: 'fanout', members: [{ name: 'a' }], tasks: [{ member: 'a', prompt: 'go' }] },
+    { parent: h.lead.agent },
+  )
+  await expect(run.steer('a', 'hi')).rejects.toThrow(`run ${run.id} (fanout) has no addressable members`)
+  await run.result
+  expect(run.journal.events.some((e) => e.type === 'swarm/steer')).toBe(false)
 })
