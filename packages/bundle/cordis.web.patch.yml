@@ -1,0 +1,8 @@
+# openswarm-web overlay: the web carrier of the swarm protocol (docs/05 §5.3),
+# `swarm/*` as `@Remote` methods on dsh's /api gateway. Layered ABOVE
+# openswarm-bundle in the openswarm-web profile only. It treats every caller as
+# the owner, so it refuses to load, failing the boot, unless dsh's web server
+# binds 127.0.0.1.
+- insert:
+    - id: openswarm-app-server-web
+      name: 'openswarm-app-server/web'

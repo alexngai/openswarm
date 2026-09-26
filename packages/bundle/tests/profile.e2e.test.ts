@@ -70,6 +70,8 @@ it.skipIf(!ready)('composes the openswarm bundle over dsh-base', async () => {
   expect(stdout).toMatch(/id: llm-deepseek[\s\S]*?disabled: true/)
   // ...with base still underneath (provenance header from probe-1).
   expect(stdout).toContain('@deepseek-ai/dsh-base')
+  // The owner-only web carrier belongs to the web profile alone.
+  expect(stdout).not.toContain('openswarm-app-server/web')
 })
 
 it.skipIf(!ready)('the dev server profile enables the app-server and omits the one-shot runner', async () => {
@@ -100,8 +102,10 @@ it.skipIf(!ready)('the web profile layers dsh browser UI under the openswarm row
   // dsh's browser surface...
   expect(stdout).toContain('@deepseek-ai/dsh-host-webserver')
   expect(stdout).toContain('@deepseek-ai/dsh-client-ui-commands')
-  // ...with the openswarm rows composed over it, including the `/swarm` entry.
+  // ...with the openswarm rows composed over it, including the `/swarm` entry
+  // and the web carrier of the swarm protocol.
   expect(stdout).toContain('openswarm-swarm/command')
+  expect(stdout).toContain('openswarm-app-server/web')
   expect(stdout).toMatch(/id: llm-deepseek[\s\S]*?disabled: true/)
   // No one-shot runner: the bound webserver keeps this surface alive.
   expect(stdout).not.toContain('headless-runner')

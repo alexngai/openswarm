@@ -124,6 +124,8 @@ it.skipIf(!ready)('serves the built UI', async () => {
   const response = await fetch(web.url)
   expect(response.status).toBe(200)
   expect(await response.text()).toContain('<!doctype html>')
+  // The web carrier's `@Remote` methods answer on the same gateway, owner-only, no token.
+  expect(await web.rpc('swarm/runs', { args: {} })).toEqual({ runs: expect.any(Array) })
 }, 90_000)
 
 it.skipIf(!ready)('lists and executes /swarm over the api-gateway', async () => {

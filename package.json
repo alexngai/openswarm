@@ -90,6 +90,7 @@
     "packages/bundle/cordis.patch.yml",
     "packages/bundle/cordis.dev.patch.yml",
     "packages/bundle/cordis.eval.patch.yml",
+    "packages/bundle/cordis.web.patch.yml",
     "packages/swarm/member.cordis.yml"
   ],
   "dependencies": {
@@ -119,7 +120,8 @@
     "@deepseek-ai/dsh-terminal-bash": "0.1.1-rc.2",
     "@deepseek-ai/dsh-tool-bash-persistent": "0.1.1-rc.2",
     "@deepseek-ai/dsh-tool-str-replace-editor": "0.1.1-rc.2",
-    "@deepseek-ai/dsh-tools": "0.1.1-rc.2"
+    "@deepseek-ai/dsh-tools": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-typert-protocol": "0.1.1-rc.2"
   },
   "repository": {
     "type": "git",
