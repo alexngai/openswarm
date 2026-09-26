@@ -121,9 +121,13 @@ run.result        // Promise<TeamResult>  ← today's runTeam, kept for compatib
 await ctx.swarm.attach(runId)   // from any process that can read the journal
 ```
 
-Leads are no longer disposed on settle; a finished run is a readable record.
-The app-server's run table becomes a projection, so `swarm/runs` survives a
-restart and `attach` works from a new process.
+A finished run is a readable record: the run's journal, not its lead, holds
+it, so disposing the lead on settle loses nothing. The app-server's run
+table becomes a projection, so `swarm/runs` survives a restart and `attach`
+works from a new process. `view(runId)` reads a run without writing;
+`attach(runId)` takes over only from a dead writer (same-host pid check
+until the git journal brings a real lease), releases its claims, and marks
+the run `interrupted`; resuming execution is a later direction method.
 
 ### 5.2 Journal per run, projections, handoff
 
@@ -567,6 +571,12 @@ direct, and observe, on a protocol that is governed from its first day.
    method and a member principal is refused `answer`.
 
 **Deliberately not in A.** Scopes, the train, nesting, new runtimes.
+
+**Progress** (branch `claude/phase-a`): A3 `38eafab` (run journal, claim
+leases; peer-team sessions reopen again), A2 `926bf3a` (member server:
+resume on miss, `swarm/steer`), A4 `e34b350` (`start`, `view`, `attach`,
+`runs`; run ids; the app-server's run table from journals). Built in the
+order A3, A2, A4, since direction methods (A5) address runs.
 
 ### 7.4 Phase B — Verified landing
 
