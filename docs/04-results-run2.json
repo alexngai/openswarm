@@ -1,0 +1,217 @@
+[
+  {
+    "id": "A1",
+    "cls": "A",
+    "note": "approval grant widened beyond allowed-once",
+    "file": "packages/plugin-authoring/src/index.ts",
+    "find": "return outcome === 'allowed-once'",
+    "replace": "return outcome !== 'rejected'",
+    "verdict": "killed",
+    "caughtBy": "   × the default gate asks ctx.approval and grants only on allowed-once 3ms\n FAIL  packages/plugin-authoring/tests/authoring.e2e.test.ts > the default gate asks ctx.approval and grants only on allowed-once"
+  },
+  {
+    "id": "A2",
+    "cls": "A",
+    "note": "approval result ignored, mount proceeds",
+    "file": "packages/plugin-authoring/src/index.ts",
+    "find": "if (!ok) return { mounted: false, scope, reason: 'lead-scope mount not approved' }",
+    "replace": "if (false) return { mounted: false, scope, reason: 'lead-scope mount not approved' }",
+    "verdict": "killed",
+    "caughtBy": "   × lead-scope is refused without approval and admitted with it 13ms\n   × a lead-scope plugin mount goes through the real approval seam and is refused fail-closed 1026ms\n FAIL  packages/bundle/tests/web-api.e2e.test.ts > a lead-scope plugin mount goes through the real approval seam and is refused fail-closed"
+  },
+  {
+    "id": "A3",
+    "cls": "A",
+    "note": "lead scope skips the approval gate entirely",
+    "file": "packages/plugin-authoring/src/index.ts",
+    "find": "if (scope === 'lead') {",
+    "replace": "if (false) {",
+    "verdict": "killed",
+    "caughtBy": "   × lead-scope is refused without approval and admitted with it 19ms\n   × a lead-scope plugin mount goes through the real approval seam and is refused fail-closed 60978ms\n FAIL  packages/bundle/tests/web-api.e2e.test.ts > a lead-scope plugin mount goes through the real approval seam and is refused fail-closed"
+  },
+  {
+    "id": "A4",
+    "cls": "A",
+    "note": "persisted-plugin SHA check defeated",
+    "file": "packages/plugin-authoring/src/index.ts",
+    "find": "if (sha256(source) !== record?.sha256) {",
+    "replace": "if (false) {",
+    "verdict": "killed",
+    "caughtBy": "   × a plugin edited after approval is not restored 29ms\n FAIL  packages/plugin-authoring/tests/persistence.e2e.test.ts > a plugin edited after approval is not restored"
+  },
+  {
+    "id": "A5",
+    "cls": "A",
+    "note": "conflicted merge silently dropped",
+    "file": "packages/git/src/index.ts",
+    "find": "outcome.conflicts.push({ taskKey: info.taskKey, branch: info.branch })",
+    "replace": "void { taskKey: info.taskKey, branch: info.branch }",
+    "verdict": "killed",
+    "caughtBy": "   × overlapping edits: one branch merges, the other is retained as a conflict 1718ms\n   × a conflicted merge is aborted and the task branch retained 706ms\n FAIL  packages/swarm/tests/worktrees.e2e.test.ts > overlapping edits: one branch merges, the other is retained as a conflict"
+  },
+  {
+    "id": "A6",
+    "cls": "A",
+    "note": "gate pinning no longer restores tracked files",
+    "file": "packages/git/src/index.ts",
+    "find": "if (listed.trim() !== '') known.push(spec)",
+    "replace": "if (false) known.push(spec)",
+    "verdict": "killed",
+    "caughtBy": "   × PINNED: the same sabotage is caught, because the check is restored first 1032ms\n FAIL  packages/swarm/tests/gate-pinning.e2e.test.ts > PINNED: the same sabotage is caught, because the check is restored first"
+  },
+  {
+    "id": "A7",
+    "cls": "A",
+    "note": "gate pinning no longer removes member-added files",
+    "file": "packages/git/src/index.ts",
+    "find": "await this.git(worktree.path, 'clean', '-fdq', '--', ...pathspecs)",
+    "replace": "void pathspecs",
+    "verdict": "killed",
+    "caughtBy": "   × pinning also removes files the member ADDED under a pinned path 1122ms\n FAIL  packages/swarm/tests/gate-pinning.e2e.test.ts > pinning also removes files the member ADDED under a pinned path"
+  },
+  {
+    "id": "B1",
+    "cls": "B",
+    "note": "tau boundary: >= becomes >, nothing ever accepted",
+    "file": "packages/swarm/src/topologies.ts",
+    "find": "if (confidence >= spec.confidence.tau) {",
+    "replace": "if (confidence > spec.confidence.tau) {",
+    "verdict": "killed",
+    "caughtBy": "   × cascade: the command gate grades the tier worktree, and the passing tier merges 1652ms\n   × UNPINNED: a member passes the gate by neutering the test it is graded by 1055ms\n FAIL  packages/swarm/tests/cascade-worktree.e2e.test.ts > cascade: the command gate grades the tier worktree, and the passing tier merges"
+  },
+  {
+    "id": "B2",
+    "cls": "B",
+    "note": "gate verdict ignored, every tier accepted",
+    "file": "packages/swarm/src/topologies.ts",
+    "find": "if (confidence >= spec.confidence.tau) {",
+    "replace": "if (true) {",
+    "verdict": "killed",
+    "caughtBy": "packages/swarm/src/topologies.ts(212,89): error TS18048: 'spec.confidence' is possibly 'undefined'."
+  },
+  {
+    "id": "B3",
+    "cls": "B",
+    "note": "task abandonment off by one",
+    "file": "packages/swarm/src/topologies.ts",
+    "find": "if (attempt >= maxTaskAttempts) {",
+    "replace": "if (attempt > maxTaskAttempts) {",
+    "verdict": "killed",
+    "caughtBy": "   × runBoardWorkers releases the claim and propagates the error on member failure 70ms\n   × a task blocked by an abandoned one is abandoned too, rather than parking the team 84ms\n FAIL  packages/swarm/tests/board.test.ts > runBoardWorkers releases the claim and propagates the error on member failure"
+  },
+  {
+    "id": "B4",
+    "cls": "B",
+    "note": "retries disabled by default",
+    "file": "packages/swarm/src/topologies.ts",
+    "find": "  maxTaskAttempts = 2,",
+    "replace": "  maxTaskAttempts = 0,",
+    "verdict": "killed",
+    "caughtBy": "   × a member dying on a task does not kill the team — a sibling finishes it 62ms\n FAIL  packages/swarm/tests/board.test.ts > a member dying on a task does not kill the team — a sibling finishes it"
+  },
+  {
+    "id": "B5",
+    "cls": "B",
+    "note": "gate graded at process.cwd() again, not the worktree",
+    "file": "packages/swarm/src/index.ts",
+    "find": "    if (worktrees === undefined) {",
+    "replace": "    if (true as boolean) {",
+    "verdict": "killed",
+    "caughtBy": "packages/swarm/src/index.ts(221,26): error TS18048: 'worktrees' is possibly 'undefined'.\npackages/swarm/src/index.ts(223,33): error TS18048: 'worktrees' is possibly 'undefined'."
+  },
+  {
+    "id": "B6",
+    "cls": "B",
+    "note": "concurrency slot off by one",
+    "file": "packages/swarm/src/worktrees.ts",
+    "find": "if (this.active < this.limit) {",
+    "replace": "if (this.active <= this.limit) {",
+    "verdict": "killed",
+    "caughtBy": "   × caps concurrent runs and still completes every one 13ms\n   × a limit of 1 serializes 4ms\n   × release hands its slot to the next waiter rather than dropping it 7ms"
+  },
+  {
+    "id": "C1",
+    "cls": "C",
+    "note": "recovery digest mislabels prompts as replies",
+    "file": "packages/swarm/src/recover.ts",
+    "find": "if (event.type === 'user/message') digest.asked.push(text)",
+    "replace": "if (event.type === 'assistant/message') digest.asked.push(text)",
+    "verdict": "killed",
+    "caughtBy": "   × folds a log into what the member was asked and what it reported 6ms\n   × survives the torn final line a crash leaves behind 1ms\n FAIL  packages/swarm/tests/recover.test.ts > folds a log into what the member was asked and what it reported"
+  },
+  {
+    "id": "C2",
+    "cls": "C",
+    "note": "blocked task becomes ready before its deps finish",
+    "file": "packages/swarm/src/board.ts",
+    "find": "task.blockedBy.every((id) => state.get(id)?.status === 'completed')",
+    "replace": "task.blockedBy.some((id) => state.get(id)?.status === 'completed')",
+    "verdict": "killed",
+    "caughtBy": "   × messaging peer-team completes the board with continuable peers 30015ms\n   × peer-team works the board to completion, respecting dependencies (end-to-end) 30016ms\n   × board state is queryable per run 30010ms"
+  },
+  {
+    "id": "C3",
+    "cls": "C",
+    "note": "duplicate member names no longer rejected",
+    "file": "packages/swarm/src/topologies.ts",
+    "find": "if (byName.size !== spec.members.length)",
+    "replace": "if (byName.size === spec.members.length)",
+    "verdict": "killed",
+    "caughtBy": "   × serves the delegated SDK protocol and the swarm extension over one socket 61ms\n   × serves a clean chat-completions wire: no thinking, effort, or max_tokens 28ms\n   × streams scripted tool calls through the clean wire 14ms"
+  },
+  {
+    "id": "C4",
+    "cls": "C",
+    "note": "empty pathspec list no longer short-circuits",
+    "file": "packages/git/src/index.ts",
+    "find": "if (pathspecs.length === 0) return []",
+    "replace": "if (pathspecs.length === -1) return []",
+    "verdict": "survived"
+  },
+  {
+    "id": "C5",
+    "cls": "C",
+    "note": "recovery briefing keeps oldest instead of newest",
+    "file": "packages/swarm/src/recover.ts",
+    "find": "entries.slice(-3)",
+    "replace": "entries.slice(0, 3)",
+    "verdict": "killed",
+    "caughtBy": "   × bounds the briefing so a long history cannot crowd out the task 4ms\n FAIL  packages/swarm/tests/recover.test.ts > bounds the briefing so a long history cannot crowd out the task"
+  },
+  {
+    "id": "D1",
+    "cls": "D",
+    "note": "equivalent length comparison",
+    "file": "packages/git/src/index.ts",
+    "find": "if (pathspecs.length === 0) return []",
+    "replace": "if (pathspecs.length < 1) return []",
+    "verdict": "survived"
+  },
+  {
+    "id": "D2",
+    "cls": "D",
+    "note": "equivalent emptiness predicate",
+    "file": "packages/git/src/index.ts",
+    "find": ".filter((line) => line !== '')",
+    "replace": ".filter((line) => line.length !== 0)",
+    "verdict": "survived"
+  },
+  {
+    "id": "D3",
+    "cls": "D",
+    "note": "added comment only",
+    "file": "packages/swarm/src/recover.ts",
+    "find": "export interface SessionDigest {",
+    "replace": "/* mutation control */\nexport interface SessionDigest {",
+    "verdict": "survived"
+  },
+  {
+    "id": "D4",
+    "cls": "D",
+    "note": "equivalent boolean spelling",
+    "file": "packages/swarm/src/topologies.ts",
+    "find": "if (spec.tiers.length === 0)",
+    "replace": "if (!(spec.tiers.length > 0))",
+    "verdict": "survived"
+  }
+]

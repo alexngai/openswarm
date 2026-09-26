@@ -29,7 +29,8 @@ import { Context } from '@deepseek-ai/cordis'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import * as LlmOpenAi from 'openswarm-llm-openai'
 import * as LlmAnthropic from 'openswarm-llm-anthropic'
-import SwarmService, { type CascadeResult, type MemberSpec } from 'openswarm-swarm'
+import SwarmService, { type CascadeResult, type CoordinatorResult, type MemberSpec } from 'openswarm-swarm'
+import * as PluginAuthoring from 'openswarm-plugin-authoring'
 import * as Spine from '@deepseek-ai/dsh-agent-spine-demo'
 import * as SessionPersistenceJsonl from '@deepseek-ai/dsh-session-persistence-jsonl'
 import * as Subagent from '@deepseek-ai/dsh-subagent'
@@ -113,20 +114,48 @@ function routeOf(model: string): Route {
   return { route: 'openai', model, adapter: 'openai', apiKeyEnv: 'OPENSWARM_LLM_API_KEY' }
 }
 
+/**
+ * Flags that never take a value. Declared rather than inferred: the
+ * "next token isn't a flag, so it must be my value" heuristic makes
+ * `--single "do the thing"` swallow the prompt, which fails as a missing task
+ * rather than as a parse error.
+ */
+const BOOL_FLAGS = new Set(['headless', 'single', 'team', 'self-modify'])
+
 function parseArgs(argv: string[]): Map<string, string> {
+  return splitArgv(argv).args
+}
+
+/**
+ * Flags and positionals from ONE scan.
+ *
+ * Deriving positionals separately (e.g. "not a flag, and not preceded by one"
+ * via indexOf) silently drops a prompt word that happens to repeat an earlier
+ * token — the prompt is the task, so that corrupts the run rather than failing it.
+ */
+function splitArgv(argv: string[]): { args: Map<string, string>; positional: string[] } {
   const args = new Map<string, string>()
+  const positional: string[] = []
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!
-    if (!a.startsWith('--')) continue
+    if (!a.startsWith('--')) {
+      positional.push(a)
+      continue
+    }
+    const name = a.slice(2)
+    if (BOOL_FLAGS.has(name)) {
+      args.set(name, '1')
+      continue
+    }
     const next = argv[i + 1]
     if (next !== undefined && !next.startsWith('--')) {
-      args.set(a.slice(2), next)
+      args.set(name, next)
       i++
     } else {
-      args.set(a.slice(2), '1')
+      args.set(name, '1')
     }
   }
-  return args
+  return { args, positional }
 }
 
 export interface CliIo {
@@ -141,11 +170,22 @@ const processIo: CliIo = {
 
 export async function runCli(argv: string[], io: CliIo = processIo): Promise<number> {
   const [command, sub] = argv
-  if (command !== 'topology' || sub !== 'cascade') {
-    io.err(`usage: openswarm topology cascade --spec <file> [--output <file>] [--trace-output <file>]`)
+  const isCascade = command === 'topology' && sub === 'cascade'
+  // `run` is OPTIONAL, matching bin/openswarm.mjs and the v0.x contract the eval
+  // harness was written against: `openswarm <flags> "<task>"` with the prompt
+  // positional. openSwarmSpec.flags() emits no verb, so requiring one made every
+  // harness cell exit 2 on the usage message — a well-formed run, zero tokens.
+  const rest = command === 'run' ? argv.slice(1) : argv
+  const isRun = command === 'run' || (!isCascade && command !== 'topology' && rest.some((a) => !a.startsWith('--')))
+  if (!isCascade && !isRun) {
+    io.err(
+      `usage: openswarm topology cascade --spec <file> [--output <file>] [--trace-output <file>]\n` +
+        `       openswarm run --output-format json --model <m> [--single|--team] "<prompt>"`,
+    )
     return 2
   }
   try {
+    if (isRun) return await runHeadless(rest, io)
     return await runTopologyCascade(parseArgs(argv.slice(2)), io)
   } catch (error) {
     io.out(JSON.stringify({ type: 'error', message: String(error instanceof Error ? error.message : error) }))
@@ -154,16 +194,93 @@ export async function runCli(argv: string[], io: CliIo = processIo): Promise<num
   }
 }
 
-async function runTopologyCascade(args: Map<string, string>, io: CliIo): Promise<number> {
-  const specPath = args.get('spec')
-  if (specPath === undefined) throw new Error('--spec is required')
-  const spec = JSON.parse(readFileSync(specPath, 'utf8')) as LegacySpec
-  if (spec.members.length === 0) throw new Error('spec has no members')
+/** dsh's sandbox policy modes — the vocabulary `--permission-mode` speaks. */
+const SANDBOX_MODES = ['read-only', 'workspace-write', 'danger-full-access'] as const
 
-  // Resolve adapter routes; mount one adapter config per distinct base.
-  const routes = spec.members.map((m) => routeOf(m.model))
-  const workspace = process.cwd()
+/**
+ * Claude-Code permission vocabulary → dsh sandbox modes.
+ *
+ * The eval harnesses speak Claude Code's names — `CliHarnessAdapter` even falls
+ * back to `bypassPermissions` when no mode is configured — so refusing them
+ * would break every caller that sets `permissionMode`. These three have exact
+ * counterparts, so translating is not a downgrade.
+ *
+ * `default` is deliberately absent: it means "ask a human per action", and
+ * headless there is nobody to ask. Any mode we picked for it would silently
+ * change what the agent is allowed to do, so it is rejected instead.
+ */
+const MODE_ALIASES: Record<string, string> = {
+  bypassPermissions: 'danger-full-access',
+  acceptEdits: 'workspace-write',
+  plan: 'read-only',
+}
 
+/**
+ * Validate `--permission-mode`, defaulting to full access.
+ *
+ * Rejects an unknown mode instead of falling back. A silent downgrade would
+ * leave the agent unable to edit, which surfaces as the agent failing the task
+ * rather than as a misconfigured run — a wrong number, not an error.
+ */
+function sandboxModeOf(mode: string | undefined): string {
+  if (mode === undefined) return 'danger-full-access'
+  const resolved = MODE_ALIASES[mode] ?? mode
+  if (!(SANDBOX_MODES as readonly string[]).includes(resolved)) {
+    throw new Error(
+      `unknown --permission-mode "${mode}" (expected ${SANDBOX_MODES.join(' | ')}` +
+        `, or one of ${Object.keys(MODE_ALIASES).join(' | ')})`,
+    )
+  }
+  return resolved
+}
+
+/** Everything a headless run needs, booted once. */
+export interface HarnessBoot {
+  ctx: any
+  lead: any
+  /** Per-session usage, folded live off `session/event`. */
+  usageBySession: Map<string, UsageTotals>
+  /** Assistant turns seen so far, across every session. */
+  turns: () => number
+  dispose: () => Promise<void>
+}
+
+export interface BootOptions {
+  routes: Route[]
+  workspace: string
+  io: CliIo
+  /** Sandbox policy mode (see `--permission-mode`). */
+  permissionMode?: string
+  /**
+   * Called after each usage fold with the running team total. Return `true` to
+   * request a stop — the caller decides what that means (see `--max-tokens`).
+   */
+  onUsage?: (team: UsageTotals, turns: number) => void
+  /**
+   * Mount F3 plugin authoring, giving the agent `swarm_author_plugin` — the
+   * self-modification arm of the experiment.
+   *
+   * Only `self` scope is reachable here. `lead` scope needs an approval gate
+   * (`ctx.approval`), which this context does not compose, so it is refused
+   * rather than silently granted: a headless run cannot change the harness for
+   * anyone but itself.
+   */
+  selfModify?: boolean
+}
+
+/**
+ * Mount the harness stack and open a lead agent.
+ *
+ * This is the ONLY place the plugin list lives. Both entry points — `topology
+ * cascade` and the headless `run` — boot through here, so a cell can never be
+ * evaluated against a different stack than the one the sibling command uses.
+ *
+ * NOTE: this path does NOT go through `dsh --profile openswarm`; it mounts
+ * in-process. The interactive binary spawns dsh instead, so the two can drift.
+ * Unifying them on the profile is deferred (see the scoping discussion).
+ */
+export async function bootHarness(opts: BootOptions): Promise<HarnessBoot> {
+  const { routes, workspace, io } = opts
   const ctx = new Context()
   const mounted = new Set<string>()
   for (const r of routes) {
@@ -203,7 +320,7 @@ async function runTopologyCascade(args: Map<string, string>, io: CliIo): Promise
   const ToolBashPersistent = await import('@deepseek-ai/dsh-tool-bash-persistent')
   const ToolStrReplace = await import('@deepseek-ai/dsh-tool-str-replace-editor')
   ctx.plugin(plug(SandboxLocal))
-  ctx.plugin(plug(SandboxPolicy), { mode: 'danger-full-access', workspaceRoot: workspace })
+  ctx.plugin(plug(SandboxPolicy), { mode: sandboxModeOf(opts.permissionMode), workspaceRoot: workspace })
   ctx.plugin(plug(SubprocessLocal))
   ctx.plugin(plug(Terminal))
   ctx.plugin(plug(TerminalBash), { timeoutMs: 300_000 })
@@ -215,6 +332,7 @@ async function runTopologyCascade(args: Map<string, string>, io: CliIo): Promise
   ctx.plugin(plug(Subagent))
   ctx.plugin(plug(SpawnInProcess), { providerName: 'spawn' })
   ctx.plugin(SwarmService, {})
+  if (opts.selfModify === true) ctx.plugin(plug(PluginAuthoring), {})
 
   await new Promise<void>((resolve) =>
     ctx.inject(['agents', 'subagents', 'swarm', 'sessionPersistence'], () => resolve()),
@@ -222,6 +340,7 @@ async function runTopologyCascade(args: Map<string, string>, io: CliIo): Promise
 
   // Usage + trajectory: fold assistant/message usage per session, attribute
   // sessions to models after the run; stream tool_use_start live.
+  let turnCount = 0
   const usageBySession = new Map<string, UsageTotals>()
   ctx.on('session/event', (session: any, event: any) => {
     if (event.type === 'tool/call') {
@@ -229,6 +348,7 @@ async function runTopologyCascade(args: Map<string, string>, io: CliIo): Promise
       return
     }
     if (event.type !== 'assistant/message') return
+    turnCount += 1
     const usage = event.data?.usage
     if (usage === undefined) return
     let totals = usageBySession.get(session.id)
@@ -243,6 +363,7 @@ async function runTopologyCascade(args: Map<string, string>, io: CliIo): Promise
     totals.calls += 1
     totals.totalTokens =
       totals.inputTokens + totals.outputTokens + totals.cacheReadInputTokens + totals.cacheWriteInputTokens
+    opts.onUsage?.(foldTeam(usageBySession), turnCount)
   })
 
   const first = routes[0]!
@@ -251,6 +372,203 @@ async function runTopologyCascade(args: Map<string, string>, io: CliIo): Promise
     meta: { cwd: workspace },
     agentOptions: { provider: first.route, model: first.model },
   })
+
+  return {
+    ctx,
+    lead,
+    usageBySession,
+    turns: () => turnCount,
+    async dispose() {
+      await lead.dispose().catch(() => undefined)
+      await (ctx as any).fiber?.dispose?.().catch(() => undefined)
+    },
+  }
+}
+
+
+/** Text of a member's content blocks — mirrors SwarmService's private `textOf`. */
+function textBlocksOf(output: readonly any[]): string {
+  return output
+    .filter((b) => b?.type === 'text' && typeof b.text === 'string')
+    .map((b) => b.text as string)
+    .join('')
+}
+
+/** Fold every session's usage into one team total. */
+function foldTeam(usageBySession: Map<string, UsageTotals>): UsageTotals {
+  const team = emptyUsage()
+  for (const totals of usageBySession.values()) {
+    for (const key of [
+      'inputTokens',
+      'outputTokens',
+      'cacheReadInputTokens',
+      'cacheWriteInputTokens',
+      'totalTokens',
+      'calls',
+    ] as const) {
+      team[key] += totals[key]
+    }
+  }
+  return team
+}
+
+/**
+ * `openswarm run --output-format json --model <m> [--single|--team] "<prompt>"`
+ *
+ * The eval entry point: one task, headless, JSONL on stdout for the harness
+ * adapter's `openSwarmParse`. `--single` (the default) runs one agent over the
+ * tool stack; `--team` runs the coordinator topology.
+ *
+ * Every terminating path emits `message_stop` — the parser sets its `sawResult`
+ * flag ONLY from that line, so a run that exits without one is indistinguishable
+ * from a crash no matter what else it printed.
+ */
+export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
+  const { args, positional } = splitArgv(argv)
+  const prompt = positional.join(' ').trim()
+  if (prompt.length === 0) throw new Error('a task prompt is required')
+  const model = args.get('model')
+  if (model === undefined) throw new Error('--model is required')
+
+  const route = routeOf(model)
+  const workspace = process.cwd()
+  const controller = new AbortController()
+  // Arms select this via the flag or the env var. The env path exists because an
+  // eval Arm carries `scaffold.env` but cannot add a CLI flag — the harness
+  // spec's `flags()` is fixed across arms.
+  const selfModify = args.has('self-modify') || process.env['OPENSWARM_SELF_MODIFY'] === '1'
+  if (args.has('max-cost-usd')) {
+    // Silently ignoring a spend cap is the one failure mode worse than refusing
+    // the run: the caller believes spending is bounded when it is not.
+    throw new Error('--max-cost-usd is not supported yet; cap with --max-tokens instead')
+  }
+  const maxTokens = numericArg(args, 'max-tokens')
+  const maxTurns = numericArg(args, 'max-turns')
+
+  /** Set once a cap trips; also the flag that turns the exit into a 3. */
+  let exceeded: string | undefined
+  const harness = await bootHarness({
+    routes: [route],
+    workspace,
+    io,
+    ...(args.get('permission-mode') === undefined ? {} : { permissionMode: args.get('permission-mode')! }),
+    selfModify,
+    onUsage: (team, turns) => {
+      if (exceeded !== undefined) return
+      if (maxTokens !== undefined && team.totalTokens > maxTokens) {
+        exceeded = `max-tokens (${team.totalTokens} > ${maxTokens})`
+      } else if (maxTurns !== undefined && turns > maxTurns) {
+        exceeded = `max-turns (${turns} > ${maxTurns})`
+      }
+      if (exceeded !== undefined) controller.abort()
+    },
+  })
+  const { ctx, lead, usageBySession } = harness
+
+  const emitStop = (): void => {
+    const team = foldTeam(usageBySession)
+    io.out(
+      JSON.stringify({
+        type: 'message_stop',
+        usage: {
+          inputTokens: team.inputTokens,
+          outputTokens: team.outputTokens,
+          cacheReadInputTokens: team.cacheReadInputTokens,
+        },
+      }),
+    )
+  }
+
+  try {
+    const agentOptions = { provider: route.route, model: route.model }
+    let text: string
+    let completed: boolean
+    if (args.has('team')) {
+      const workers = Number(args.get('workers') ?? '2')
+      const result = (await (ctx as any).swarm.runTeam(
+        {
+          topology: 'coordinator',
+          coordinator: { name: 'coordinator', agentOptions },
+          workers: Array.from({ length: workers }, (_, i) => ({ name: `worker-${i}`, agentOptions })),
+          task: prompt,
+        },
+        { parent: lead.agent, signal: controller.signal },
+      )) as CoordinatorResult
+      text = result.synthesis.text
+      completed = result.synthesis.stopReason === 'completed'
+    } else {
+      const run = await (ctx as any).subagents.start('spawn', {
+        label: 'agent',
+        prompt: [{ type: 'text', text: prompt }],
+        parent: lead.agent,
+        signal: controller.signal,
+        agentOptions,
+      })
+      const result = await run.result
+      text = textBlocksOf(result.output)
+      completed = result.stopReason === 'completed'
+    }
+    if (exceeded !== undefined) return stopForBudget()
+    // Zero usage means no model call was ever billed — auth or routing failed,
+    // not "the agent tried and produced nothing". Without an `error` line this
+    // reads to the harness as a legitimate empty answer and grades as a real
+    // zero, so the run is scored instead of being flagged as broken.
+    const spent = foldTeam(usageBySession)
+    if (spent.totalTokens === 0) {
+      io.out(
+        JSON.stringify({
+          type: 'error',
+          message: `no model call was made for "${model}" — check the provider route and credentials`,
+        }),
+      )
+      emitStop()
+      return 1
+    }
+    io.out(JSON.stringify({ type: 'text_delta', text }))
+    emitStop()
+    return completed ? 0 : 1
+  } catch (error) {
+    // An aborted run rejects; that is a budget stop, not a failure.
+    if (exceeded !== undefined) return stopForBudget()
+    throw error
+  } finally {
+    await harness.dispose()
+  }
+
+  /**
+   * Terminate on a tripped cap: `budget_exceeded` for the operator, then
+   * `message_stop` so the harness still sees a result with the usage actually
+   * spent. Skipping the stop line would make this indistinguishable from a
+   * crash — `openSwarmParse` sets `sawResult` from `message_stop` alone.
+   */
+  function stopForBudget(): number {
+    io.out(JSON.stringify({ type: 'budget_exceeded', limit: exceeded }))
+    emitStop()
+    return 3
+  }
+}
+
+/** Parse a numeric flag, rejecting junk rather than silently ignoring the cap. */
+function numericArg(args: Map<string, string>, name: string): number | undefined {
+  const raw = args.get(name)
+  if (raw === undefined) return undefined
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n <= 0) throw new Error(`--${name} must be a positive number (got "${raw}")`)
+  return n
+}
+
+async function runTopologyCascade(args: Map<string, string>, io: CliIo): Promise<number> {
+  const specPath = args.get('spec')
+  if (specPath === undefined) throw new Error('--spec is required')
+  const spec = JSON.parse(readFileSync(specPath, 'utf8')) as LegacySpec
+  if (spec.members.length === 0) throw new Error('spec has no members')
+
+  // Resolve adapter routes; mount one adapter config per distinct base.
+  const routes = spec.members.map((m) => routeOf(m.model))
+  const workspace = process.cwd()
+
+  const harness = await bootHarness({ routes, workspace, io })
+  const { ctx, lead, usageBySession } = harness
 
   try {
     const coordination = spec.coordination ?? {}
@@ -329,7 +647,6 @@ async function runTopologyCascade(args: Map<string, string>, io: CliIo): Promise
     )
     return result.final.stopReason === 'completed' ? 0 : 1
   } finally {
-    await lead.dispose().catch(() => undefined)
-    await (ctx as any).fiber?.dispose?.().catch(() => undefined)
+    await harness.dispose()
   }
 }

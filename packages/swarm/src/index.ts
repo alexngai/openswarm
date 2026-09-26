@@ -17,6 +17,7 @@ import { SwarmMailbox } from './mailbox'
 import { askPeer, registerSwarmMessaging, spawnPeer, suppressSettlementTurns } from './peers'
 import type { PeerHandle } from './types'
 import {
+  CASCADE_TASK_KEY,
   runBoardWorkers,
   runCascade,
   runCommittee,
@@ -27,6 +28,7 @@ import {
   runPipeline,
   seedBoard,
   type ReportProgress,
+  type RunConfidence,
   type RunMember,
 } from './topologies'
 import { tmpdir } from 'node:os'
@@ -78,6 +80,21 @@ export interface RunTeamOptions {
   /** Working directory for the default confidence runner. */
   confidenceCwd?: string
   /**
+   * Pathspecs restored from the base commit before EVERY gate run, under
+   * worktree execution.
+   *
+   * Without this the gate is not independent of what it grades: it runs the
+   * repo's own tests out of the member's worktree, so passing by deleting a
+   * test is as effective as passing by fixing the code. Pin the verification
+   * assets (`['packages/*[/]tests']` here) and the gate stops being something
+   * the graded party can edit.
+   *
+   * Edits to these paths are DISCARDED, not merged — pinning says tests are
+   * not this run's to change. A run that is supposed to add tests must leave
+   * them unpinned and accept the weaker guarantee.
+   */
+  confidencePinPaths?: string[]
+  /**
    * Execute member runs as subprocess harnesses in git worktrees, merging
    * completed branches on finish (docs/01 Phase 2). One-shot topologies use
    * per-task worktrees; `peer-team { messaging: true }` runs long-lived
@@ -91,16 +108,24 @@ export interface RunTeamOptions {
 const execFileAsync = promisify(execFile)
 
 /** Weakest-link default: every command must exit 0 in `cwd` for confidence 1. */
-function defaultConfidenceRunner(cwd: string): (commands: string[]) => Promise<number> {
+/** Keep the tail: a failing build's useful part is at the end, not the top. */
+const OUTPUT_TAIL = 4_000
+
+function defaultConfidenceRunner(cwd: string): RunConfidence {
   return async (commands) => {
     for (const command of commands) {
       try {
         await execFileAsync('bash', ['-c', command], { cwd, maxBuffer: 16 * 1024 * 1024 })
-      } catch {
-        return 0
+      } catch (error) {
+        const combined = `${(error as any)?.stdout ?? ''}${(error as any)?.stderr ?? ''}`
+        return {
+          score: 0,
+          failedCommand: command,
+          output: combined.length > OUTPUT_TAIL ? combined.slice(-OUTPUT_TAIL) : combined,
+        }
       }
     }
-    return 1
+    return { score: 1 }
   }
 }
 
@@ -176,7 +201,46 @@ export default class SwarmService extends Service {
       await worktrees.abort().catch(() => undefined)
       throw error
     }
-    return { ...result, git: await worktrees.finalize() }
+    // A verdict that does not decide anything is not a gate. Only the cascade
+    // has a whole-run notion of acceptance; every other topology's tasks stand
+    // or fall individually, so they merge as before.
+    const merge = result.topology !== 'cascade' || result.accepted
+    return { ...result, git: await worktrees.finalize({ merge }) }
+  }
+
+  /**
+   * Resolve the cascade's command-confidence gate.
+   *
+   * Under worktree execution the tiers edit a worktree, NOT the repo root, so
+   * a runner bound to `process.cwd()` would grade a tree the member never
+   * touched — and since that tree is the user's own (usually green) checkout,
+   * the gate would pass no matter what the tier did. The worktree is therefore
+   * resolved lazily, per invocation: it does not exist when `dispatch` runs,
+   * and `SwarmGit` memoizes it, so this returns the same tree the tiers share.
+   * An explicit `confidenceRunner` still wins — the caller knows best.
+   */
+  private confidenceRunner(
+    options: RunTeamOptions,
+    worktrees?: WorktreeRun,
+  ): RunConfidence {
+    if (options.confidenceRunner !== undefined) return options.confidenceRunner
+    if (worktrees === undefined) {
+      return defaultConfidenceRunner(options.confidenceCwd ?? process.cwd())
+    }
+    const pinPaths = options.confidencePinPaths ?? []
+    const report = options.onProgress ?? (() => {})
+    return async (commands) => {
+      const cwd = (await worktrees.worktree(CASCADE_TASK_KEY)).path
+      if (pinPaths.length > 0) {
+        const discarded = await worktrees.pinForGate(CASCADE_TASK_KEY, pinPaths)
+        // Reverting a member's work silently would be its own trap, and a tier
+        // that spent its turn editing tests should show up in the record.
+        if (discarded.length > 0) {
+          report(`gate: discarded member edits to ${discarded.length} pinned path(s): ${discarded.slice(0, 5).join(', ')}`)
+        }
+      }
+      return defaultConfidenceRunner(cwd)(commands)
+    }
   }
 
   private dispatch(
@@ -196,12 +260,7 @@ export default class SwarmService extends Service {
       case 'pipeline':
         return runPipeline(spec, run, report)
       case 'cascade':
-        return runCascade(
-          spec,
-          run,
-          options.confidenceRunner ?? defaultConfidenceRunner(options.confidenceCwd ?? process.cwd()),
-          report,
-        )
+        return runCascade(spec, run, this.confidenceRunner(options, worktrees), report)
       case 'coordinator':
         return runCoordinator(spec, run, report)
       case 'peer-team':

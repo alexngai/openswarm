@@ -44,6 +44,24 @@ function resolveDsh() {
 const dshScript = resolveDsh()
 
 const VALUE_FLAGS = new Set(['--model', '--provider', '--home', '--port'])
+/**
+ * Flags the headless eval surface understands. They are parsed but NOT acted on
+ * here — `runCli` in packages/cli owns them. Listing them keeps the interactive
+ * parser from rejecting an eval invocation with `unknown option`, which is how
+ * every harness cell used to die on its very first argument.
+ */
+const HEADLESS_VALUE_FLAGS = new Set([
+  '--output-format',
+  '--permission-mode',
+  '--max-tokens',
+  '--max-turns',
+  '--max-cost-usd',
+  '--workers',
+  '--spec',
+  '--output',
+  '--trace-output',
+])
+const HEADLESS_BOOL_FLAGS = new Set(['--headless', '--single', '--team', '--self-modify'])
 
 /**
  * `lenient` forwards flags this launcher does not own instead of rejecting
@@ -53,9 +71,17 @@ const VALUE_FLAGS = new Set(['--model', '--provider', '--home', '--port'])
 function parse(argv, lenient = false) {
   const opts = {}
   const rest = []
+  const headless = []
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
-    if (VALUE_FLAGS.has(a)) {
+    if (HEADLESS_VALUE_FLAGS.has(a)) {
+      const value = argv[i + 1]
+      if (value === undefined || value.startsWith('--')) die(`${a} requires a value`)
+      headless.push(a, value)
+      i++
+    } else if (HEADLESS_BOOL_FLAGS.has(a)) {
+      headless.push(a)
+    } else if (VALUE_FLAGS.has(a)) {
       const value = argv[i + 1]
       if (value === undefined || value.startsWith('--')) die(`${a} requires a value`)
       opts[a.slice(2)] = value
@@ -69,7 +95,7 @@ function parse(argv, lenient = false) {
       rest.push(a)
     }
   }
-  return { opts, rest }
+  return { opts, rest, headless }
 }
 
 function die(msg) {
@@ -144,7 +170,11 @@ function ensureProfiles(home) {
 }
 
 function bootDsh(profile, positional, extraEnv, home) {
-  const child = spawn('node', [dshScript, '--profile', profile, ...positional], {
+  // `--patch` is a LAUNCHER flag, so it has to precede the profile app's own
+  // arguments; passing it after the task text makes dsh treat it as prompt words.
+  const patchAt = positional.indexOf('--patch')
+  const launcher = patchAt === -1 ? [] : positional.splice(patchAt, 2)
+  const child = spawn('node', [dshScript, '--profile', profile, ...launcher, ...positional], {
     cwd: process.cwd(),
     stdio: 'inherit',
     env: { ...process.env, DSH_HOME: home, ...extraEnv },
@@ -177,9 +207,15 @@ Providers are auto-detected from the environment:
   AWS_BEARER_TOKEN_BEDROCK         → bedrock
 `
 
+/** Value of `flag` in a flat [flag, value, …] list, or undefined. */
+function valueOf(flat, flag) {
+  const i = flat.indexOf(flag)
+  return i === -1 ? undefined : flat[i + 1]
+}
+
 function main() {
   const argv = process.argv.slice(2)
-  const { opts, rest } = parse(argv, argv[0] === 'web')
+  const { opts, rest, headless } = parse(argv, argv[0] === 'web')
   const home = opts.home ?? process.env.OPENSWARM_HOME ?? join(homedir(), '.openswarm')
   const cmd = rest[0]
 
@@ -223,6 +259,47 @@ function main() {
 
   // run (explicit or implicit): the task is everything after an optional `run`.
   const task = cmd === 'run' ? rest.slice(1) : rest
+  const outputFormat = valueOf(headless, '--output-format')
+
+  // `topology cascade` keeps the legacy in-process contract the eval harness's
+  // CascadeAdapter drives.
+  if (cmd === 'topology') {
+    const { env } = resolveModel(opts)
+    Object.assign(process.env, env)
+    return import(join(pkgRoot, 'packages', 'cli', 'dist', 'index.js'))
+      .then(({ runCli }) => runCli(['topology', ...rest.slice(1), ...headless]))
+      .then((code) => process.exit(code))
+  }
+
+  // Headless JSON runs boot the SAME profile an interactive run does, with the
+  // eval overlay adding a JSONL reporter.
+  //
+  // This used to hand-mount a ~14-plugin context in packages/cli, so anything
+  // measured through it described that stack rather than openswarm: the profile
+  // composes 83 plugins, including agent-instructions, plan-mode,
+  // compaction-basic, tool-result-pruner, tool-fs-search, the skill system and
+  // the subagent tools. Two paths meant the evaluated harness and the shipped
+  // one could drift silently, and they had.
+  if (outputFormat === 'json') {
+    if (task.length === 0) die('no task given')
+    const { env } = resolveModel(opts)
+    env.OPENSWARM_JSONL = '1'
+    // Caps are honoured by the reporter plugin (it folds the usage they measure).
+    const caps = { '--max-tokens': 'OPENSWARM_MAX_TOKENS', '--max-turns': 'OPENSWARM_MAX_TURNS' }
+    for (const [flag, key] of Object.entries(caps)) {
+      const v = valueOf(headless, flag)
+      if (v !== undefined) env[key] = v
+    }
+    if (valueOf(headless, '--max-cost-usd') !== undefined) {
+      // Silently ignoring a spend cap is worse than refusing: the caller
+      // believes spending is bounded when it is not.
+      die('--max-cost-usd is not supported; cap with --max-tokens')
+    }
+    const evalPatch = join(pkgRoot, 'packages', 'bundle', 'cordis.eval.patch.yml')
+    bootDsh('openswarm', ['--patch', evalPatch, task.join(' ')], env, home)
+    return
+  }
+
   if (task.length === 0) die('no task given. Try:  openswarm "explain this repo"')
   const { env } = resolveModel(opts)
   bootDsh('openswarm', [task.join(' ')], env, home)

@@ -46,6 +46,13 @@ export interface MergeOutcome {
   conflicts: { taskKey: string; branch: string }[]
   /** Task branches with no commits — nothing to merge. */
   empty: { taskKey: string; branch: string }[]
+  /**
+   * Task branches deliberately NOT merged because the run was not accepted.
+   * The commits survive under these branch names, so withheld work is
+   * recoverable; it just does not reach the integration branch on a verdict
+   * that said the work was not good enough.
+   */
+  withheld: { taskKey: string; branch: string }[]
 }
 
 /** A team directory younger than this is treated as starting, not abandoned. */
@@ -153,6 +160,64 @@ export class SwarmGit {
     return info
   }
 
+  /**
+   * Force pathspecs in a worktree back to their base-commit state, discarding
+   * any member edits AND any files the member added under them.
+   *
+   * This exists because a command gate that runs the repo's own tests reads
+   * those tests FROM the worktree it is grading — so a member can pass the
+   * gate by weakening the tests rather than by fixing the code. Restoring the
+   * verification assets before each gate run takes them out of the graded
+   * party's control.
+   *
+   * `checkout` alone would only restore tracked files, leaving an added file
+   * (a fixture that neuters collection, say) in place, so the clean pass is
+   * part of the guarantee rather than tidiness.
+   *
+   * Returns the paths that had in fact been modified, so a caller can say so
+   * out loud — silently reverting a member's work would be its own trap.
+   */
+  async restoreFromBase(worktree: WorktreeInfo, pathspecs: string[]): Promise<string[]> {
+    if (pathspecs.length === 0) return []
+    const { stdout } = await this.git(worktree.path, 'status', '--porcelain', '--', ...pathspecs)
+    const touched = stdout
+      .split('\n')
+      .map((line) => line.slice(3).trim())
+      .filter((line) => line !== '')
+    const base = await this.baseCommit()
+    // `checkout` errors on a pathspec absent from the base tree, but pinning a
+    // path that does not exist at base is a legitimate instruction — "nothing
+    // may appear here" — which `clean` alone satisfies. So restore only the
+    // pathspecs base actually knows, and let clean handle the rest.
+    const known: string[] = []
+    for (const spec of pathspecs) {
+      const { stdout: listed } = await this.git(worktree.path, 'ls-tree', '-r', '--name-only', base, '--', spec)
+      if (listed.trim() !== '') {
+        known.push(spec)
+        continue
+      }
+      // Absent from base is legitimate ONLY if the member put something there
+      // ("nothing may appear here", which clean alone satisfies). Absent from
+      // both means the pathspec matches nothing at all — a typo, or a glob git
+      // does not expand the way the caller assumed. Treating that as a no-op
+      // makes a gate that pins NOTHING look identical to one that works, which
+      // is how `packages/*/tests` sat inert through a whole live matrix.
+      const { stdout: present } = await this.git(worktree.path, 'status', '--porcelain', '--', spec)
+      if (present.trim() === '') {
+        throw new Error(
+          `restoreFromBase: pathspec "${spec}" matches nothing at base and nothing in the worktree — ` +
+            'it pins nothing. Note git matches wildcards against WHOLE paths, so "a/*/b" does not ' +
+            'match "a/x/b/c.ts"; pass the directory itself.',
+        )
+      }
+    }
+    if (known.length > 0) {
+      await this.git(worktree.path, 'checkout', base, '--', ...known)
+    }
+    await this.git(worktree.path, 'clean', '-fdq', '--', ...pathspecs)
+    return touched
+  }
+
   /** Commit everything dirty in one worktree; false when it was clean. */
   async autoCommit(worktree: WorktreeInfo, message: string): Promise<boolean> {
     await this.git(worktree.path, 'add', '-A')
@@ -205,6 +270,7 @@ export class SwarmGit {
       merged: [],
       conflicts: [],
       empty: [],
+      withheld: [],
     }
     if (this.worktrees.size === 0) return outcome
     const target = await this.targetWorktree()

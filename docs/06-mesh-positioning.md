@@ -1,4 +1,4 @@
-# 04 — Positioning: a meshable multi-agent cluster harness
+# 06 — Positioning: a meshable multi-agent cluster harness
 
 Status: **draft for discussion** · 2026-09-19 · branch `claude/openswarm-positioning-metrics-z9cm4m`
 

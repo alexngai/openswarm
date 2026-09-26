@@ -23,6 +23,10 @@
     "./command": {
       "types": "./src/command.ts",
       "default": "./dist/command.js"
+    },
+    "./eval-reporter": {
+      "types": "./src/eval-reporter.ts",
+      "default": "./dist/eval-reporter.js"
     }
   },
   "files": [

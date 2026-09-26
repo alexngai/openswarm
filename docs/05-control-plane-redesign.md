@@ -1,6 +1,6 @@
 # 05 — Control-plane redesign: steerable, program-scale, meshable swarms
 
-Status: **draft for review** · 2026-09-25 · extends [docs/04](04-mesh-positioning.md)
+Status: **draft for review** · 2026-09-25 · extends [docs/06](06-mesh-positioning.md)
 
 A redesign of OpenSwarm's construction and interface, organized by the goals
 it serves. §1 states the diagnosis, §2 the outcome and goals, §3–§4 the
@@ -8,7 +8,7 @@ principles and model, §5 the foundation every goal builds on, §6 how the
 design reaches each goal, §7 the phased plan and its exit criteria, §8–§10
 the comparison with today, the recorded decisions, and what is still open,
 and §11 the dsh seams checked against the installed packages.
-The evidence is the docs/04 discussion record (lab demonstrations,
+The evidence is the docs/06 discussion record (lab demonstrations,
 program-scale coordination lineage, human-swarm interaction research, and the
 project's own evals); this doc cites it by principle rather than repeating it.
 
@@ -26,7 +26,7 @@ ctx.swarm.runTeam(spec, { parent }) : Promise<TeamResult>
 
 A team is a **function call**. You cannot steer a promise, join one, observe
 one except through progress lines, or nest one without blocking the parent's
-turn. Every gap docs/04 scored follows from it: the run table dies with the
+turn. Every gap docs/06 scored follows from it: the run table dies with the
 app-server process, the lead is disposed on settle, `/swarm` blocks and
 returns a synthesis, the only human control is "kill the jobs row", and a
 member cannot lead. The redesign changes the unit from *a call that returns
@@ -43,7 +43,7 @@ voluntarily are a bonus, never a dependency (D6).
 
 ## 2. Outcome and goals
 
-**North star** (docs/04 §3.3): *landed work per dollar-hour, at zero task
+**North star** (docs/06 §3.3): *landed work per dollar-hour, at zero task
 loss, across a heterogeneous mesh.* "Landed" means merged into the target and
 verifier-passing, not "member reported done".
 
@@ -62,7 +62,7 @@ G1–G5 are capabilities. G6–G8 are qualities that every capability must hold.
 
 **Non-goals.** Beating a single agent on resolve rate for hard single tasks
 (docs/47 and the field say parity; we do not design against it). Cross-org
-federation (innovators stage, docs/04 §4.5; the trust model in G7 keeps the
+federation (innovators stage, docs/06 §4.5; the trust model in G7 keeps the
 door open). Our own UI shell (dsh's web surface hosts our views, D7).
 Further topology mechanism (docs/02's conclusion stands).
 
@@ -357,7 +357,7 @@ unenforced. Members never have to declare anything (P9).
 
 **Drift.** A scheduled **maintenance program** is a first-class program
 kind: small single-purpose PRs against declared repository principles, the
-only self-improvement loop in the docs/04 record with a plausible
+only self-improvement loop in the docs/06 record with a plausible
 enterprise path.
 
 **Risks.** The survey step is per-language; start with TypeScript and
@@ -384,7 +384,7 @@ their work, without either restarting.
   standalone service bound to the target branch (D3). That shared train is
   the concrete meaning of "merging two swarms".
 - **Discovery**: an A2A Agent Card per swarm; no AGNTCY, NANDA, or ANP
-  (docs/04 §4.1).
+  (docs/06 §4.1).
 
 **Risks.** Push compare-and-set contention on the git journal at mesh scale
 is unmeasured; the Phase D exit test includes contention. Trust is the
@@ -437,7 +437,7 @@ resource and this is where the design spends on it.
 
 **What it means.** A dsh worker, a Claude Code reviewer, and a Codex tester
 on one task graph and one train. No shipped product does this; it is the
-claim in docs/04 §5 that only a runtime-neutral layer can make.
+claim in docs/06 §5 that only a runtime-neutral layer can make.
 
 **Design.** The member contract (§5.4) is the whole mechanism. Because
 coordination is structural, a *basic* member (prompt in, result out,
