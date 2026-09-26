@@ -575,8 +575,13 @@ direct, and observe, on a protocol that is governed from its first day.
 **Progress** (branch `claude/phase-a`): A3 `38eafab` (run journal, claim
 leases; peer-team sessions reopen again), A2 `926bf3a` (member server:
 resume on miss, `swarm/steer`), A4 `e34b350` (`start`, `view`, `attach`,
-`runs`; run ids; the app-server's run table from journals). Built in the
-order A3, A2, A4, since direction methods (A5) address runs.
+`runs`; run ids; the app-server's run table from journals), A5a `d440294`
+(protocol module with the default-deny policy; token-authenticated socket
+carrier, owner token in `$OPENSWARM_HOME/app-server.json`; `start`,
+`steer`, `cancel`, `attach`, `events` long-poll), A5b `9a671a1` (web
+carrier: `@Remote` methods on dsh's `/api` gateway, owner-only, refuses to
+load unless dsh's web server binds 127.0.0.1). Built in the order A3, A2,
+A4, A5, since direction methods address runs.
 
 ### 7.4 Phase B — Verified landing
 
