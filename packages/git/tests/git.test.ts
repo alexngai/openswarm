@@ -45,6 +45,28 @@ it('per-task worktrees: create, auto-commit, clean merges into the integration b
   await git.dispose()
 })
 
+it('auto-commit and the merge queue never run repository hooks', async () => {
+  const root = scratchRepo()
+  // Fails everything, as a husky hook does when its git-ignored
+  // `.husky/_/husky.sh` is absent from a worktree.
+  for (const hook of ['pre-commit', 'pre-merge-commit', 'commit-msg']) {
+    writeFileSync(join(root, '.git', 'hooks', hook), '#!/bin/sh\nexit 1\n', { mode: 0o755 })
+  }
+  const git = new SwarmGit({ repoRoot: root, teamId: 'hooked' })
+  const a = await git.worktree('task-a')
+  writeFileSync(join(a.path, 'a.txt'), 'from-a\n')
+  // The hooks are live: a member's own commit in the worktree is refused.
+  execFileSync('git', ['add', '-A'], { cwd: a.path })
+  const memberCommit = ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'member']
+  expect(() => execFileSync('git', memberCommit, { cwd: a.path, stdio: 'pipe' })).toThrow()
+
+  expect(await git.autoCommit(a, 'swarm: task-a')).toBe(true)
+  const outcome = await git.mergeAll()
+  expect(outcome.merged.map((m) => m.taskKey)).toEqual(['task-a'])
+  expect(show(root, 'swarm/hooked/integration', 'a.txt')).toBe('from-a\n')
+  await git.dispose()
+})
+
 it('a conflicted merge is aborted and the task branch retained', async () => {
   const root = scratchRepo()
   const git = new SwarmGit({ repoRoot: root, teamId: 'team2' })

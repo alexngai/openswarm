@@ -76,6 +76,11 @@ function scratchRepo(): string {
   writeFileSync(join(root, 'README.md'), 'base\n')
   git(root, 'add', '.')
   git(root, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init')
+  // Hooks that fail everything: auto-commit, the merge queue, and `land` are
+  // harness bookkeeping and must never run them.
+  for (const hook of ['pre-commit', 'pre-merge-commit', 'commit-msg']) {
+    writeFileSync(join(root, '.git', 'hooks', hook), '#!/bin/sh\nexit 1\n', { mode: 0o755 })
+  }
   return root
 }
 

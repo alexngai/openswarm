@@ -218,7 +218,14 @@ export class SwarmGit {
     return touched
   }
 
-  /** Commit everything dirty in one worktree; false when it was clean. */
+  /**
+   * Commit everything dirty in one worktree; false when it was clean.
+   *
+   * `--no-verify` here and on every merge the harness makes: these commits are
+   * bookkeeping, not authorship, and a repo's hooks often depend on git-ignored
+   * setup a worktree lacks (husky's `.husky/_/husky.sh`), so one failing hook
+   * failed every thread of a task. Members' own git commands still run hooks.
+   */
   async autoCommit(worktree: WorktreeInfo, message: string): Promise<boolean> {
     await this.git(worktree.path, 'add', '-A')
     try {
@@ -228,7 +235,7 @@ export class SwarmGit {
       await this.git(
         worktree.path,
         '-c', 'user.email=swarm@openswarm', '-c', 'user.name=openswarm',
-        'commit', '-q', '-m', message,
+        'commit', '-q', '--no-verify', '-m', message,
       )
       return true
     }
@@ -285,7 +292,7 @@ export class SwarmGit {
         await this.git(
           target,
           '-c', 'user.email=swarm@openswarm', '-c', 'user.name=openswarm',
-          'merge', '--no-ff', '-q', '-m', `swarm: merge ${info.branch}`, info.branch,
+          'merge', '--no-ff', '--no-verify', '-q', '-m', `swarm: merge ${info.branch}`, info.branch,
         )
         outcome.merged.push({ taskKey: info.taskKey, branch: info.branch, commits })
         await this.removeWorktree(info)

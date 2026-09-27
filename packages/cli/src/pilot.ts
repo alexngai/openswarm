@@ -112,7 +112,8 @@ async function land(workspace: string, id: string, baseSha: string): Promise<Pic
     await git(
       workspace,
       '-c', 'user.email=swarm@openswarm', '-c', 'user.name=openswarm',
-      'merge', '--no-ff', '-m', `pilot: land ${id}`, branch,
+      // Bookkeeping, not authorship: the repo's hooks are not ours to run (see SwarmGit.autoCommit).
+      'merge', '--no-ff', '--no-verify', '-m', `pilot: land ${id}`, branch,
     )
     return { landed: 'merged', commits }
   } catch {
