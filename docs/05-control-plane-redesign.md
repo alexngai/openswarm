@@ -584,8 +584,14 @@ load unless dsh's web server binds 127.0.0.1), A6 `bb5258e` (journaled
 questions at four triggers — stall after one nudge, restart budget, task
 attempts, cascade exhaustion — each defaulting to the old behavior;
 `swarm/questions`, `swarm/answer` with the tier rule; also raised through
-`ctx.userQuestions` in the web profile). Built in the order A3, A2, A4,
-A5, A6, since direction methods address runs.
+`ctx.userQuestions` in the web profile), A8 `294e69c` (CLI: `ps`, `board`,
+`questions`, `attach` read journals with no server; `start`, `steer`,
+`answer`, `kill` go through `openswarm serve`'s socket; `swarm/start`
+now uses the profile's default model). Exit criterion 2 is met by a test
+that SIGKILLs a lead mid-task and attaches from the test process: same
+board, recap, claims released, run `interrupted`, task set unchanged.
+Built in the order A3, A2, A4, A5, A6, A8, since direction methods
+address runs. Remaining: A1, A7, A9.
 
 ### 7.4 Phase B — Verified landing
 
