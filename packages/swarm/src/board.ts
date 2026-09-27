@@ -12,6 +12,7 @@
  * claims ({@link SwarmBoard.releaseOrphans}).
  */
 import type { SwarmJournal } from './journal'
+import type { Intent } from './types'
 import { Serializer } from './serialize'
 
 /** `pending` is unstarted or released; `in_progress` carries an owner. */
@@ -31,6 +32,8 @@ export interface SwarmTaskSnapshot {
   readonly result?: string
   /** Journal incarnation that granted the current claim; set while `in_progress`. */
   readonly lease?: string
+  /** The task's own intent; it replaces the run's for this task (docs/05 §6.1). */
+  readonly intent?: Intent
 }
 
 /** Payload of a `swarm/task` journal event. */
@@ -140,7 +143,7 @@ export class SwarmBoard {
     return task
   }
 
-  create(input: { subject: string; prompt: string; blockedBy?: readonly string[] }): Promise<SwarmTaskSnapshot> {
+  create(input: { subject: string; prompt: string; blockedBy?: readonly string[]; intent?: Intent }): Promise<SwarmTaskSnapshot> {
     return this.transact(async () => {
       const state = this.fold()
       const blockedBy = input.blockedBy ?? []
@@ -161,6 +164,7 @@ export class SwarmBoard {
         prompt: input.prompt,
         status: 'pending',
         blockedBy: [...blockedBy],
+        ...(input.intent === undefined ? {} : { intent: input.intent }),
       }
       return this.commit(task)
     })

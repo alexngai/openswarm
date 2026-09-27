@@ -15,6 +15,7 @@ import type {
   CommitteeSpec,
   CoordinatorResult,
   CoordinatorSpec,
+  Intent,
   MemberRunResult,
   MemberSpec,
   PeerTeamResult,
@@ -295,6 +296,24 @@ export async function runCascade(
   return { topology: 'cascade', accepted: false, tier: last.tier, final: last.result, attempts }
 }
 
+/** An intent as the markdown header on member prompts (docs/05 §6.1); empty lists are left out. */
+export function renderIntent(intent: Intent): string {
+  const list = (title: string, items: string[] = []) =>
+    items.length === 0 ? [] : [`${title}:`, ...items.map((item) => `- ${item}`)]
+  return [
+    '## Intent',
+    `Purpose: ${intent.purpose}`,
+    `End state (checkable): ${intent.endState}`,
+    ...list('Constraints', intent.constraints),
+    ...list('Preferences', intent.preferences),
+  ].join('\n')
+}
+
+/** `prompt` under the intent header, or unchanged when there is no intent. */
+export function withIntent(prompt: string, intent: Intent | undefined): string {
+  return intent === undefined ? prompt : `${renderIntent(intent)}\n\n${prompt}`
+}
+
 /** Parse a numbered plan (`1. …` / `2) …`) into one prompt per subtask. */
 export function parseNumberedPlan(text: string): string[] {
   const subtasks: string[] = []
@@ -359,7 +378,7 @@ export async function seedBoard(board: SwarmBoard, tasks: PeerTeamSpec['tasks'])
       if (id === undefined) throw new Error(`peer task blockedBy index ${i} does not precede it`)
       return id
     })
-    created.push((await board.create({ subject: task.subject, prompt: task.prompt, blockedBy })).id)
+    created.push((await board.create({ subject: task.subject, prompt: task.prompt, blockedBy, intent: task.intent })).id)
   }
   return created
 }

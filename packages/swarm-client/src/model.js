@@ -42,6 +42,20 @@ export function openQuestions(view) {
   return view.questions.filter((question) => question.status === 'open')
 }
 
+/**
+ * A finished run's deliverable as text (the protocol's `TeamResult`): the
+ * synthesis or final output where the topology has one, else each member's
+ * output under its label. Undefined until the run has finished.
+ */
+export function resultText(run) {
+  const result = run.status === 'finished' ? run.result : undefined
+  if (result === undefined) return undefined
+  const one = result.synthesis ?? result.final
+  if (one !== undefined) return one.text
+  const parts = result.tasks?.map((t) => [`${t.id} ${t.subject}`, t.result ?? '']) ?? (result.results ?? result.answers ?? []).map((r) => [r.member, r.text])
+  return parts.map(([label, text]) => `--- ${label} ---\n${text}`).join('\n\n')
+}
+
 /** Time since `time`, coarsely: `42s`, `5m`, `3h`, `2d`. */
 export function age(time, now = Date.now()) {
   const s = Math.max(0, Math.round((now - time) / 1000))

@@ -13,16 +13,18 @@
  *
  * Progress is reported by registering the run with `ctx.jobs`, so dsh's jobs
  * popover carries a live row (label, status, ticking elapsed clock) for the
- * whole run and a `detail` summary once it settles — the feedback a blocking
- * command otherwise denies. Killing that row cancels the team.
+ * whole run and a `detail` summary once it settles. Killing that row cancels
+ * the run.
  *
- * The command still AWAITS the team and returns the rendered synthesis
- * inline. That is deliberate: `JobView` carries no output, and
- * `dsh-client-ui-jobs` documents its rows as read-only ("a job's streamed
- * output and a human-initiated cancellation are separate phases"), so
- * returning early would leave the result somewhere no human surface can read.
- * Progress lines still feed `readOutput()`, whose consumer is the
- * model-facing `job_read` tool.
+ * By default the command does not block (docs/05 A7): it starts the run and
+ * returns its id at once. It used to await the team, because `JobView`
+ * carries no output and a result returned early had nowhere a person could
+ * read it. It has now: the run's journal, the Swarm tab (which shows a
+ * finished run's result) and `openswarm attach`. When the run settles its
+ * outcome is also injected into the invoking session as context for the next
+ * turn; `inject` never wakes the driver, so that costs no lead model call.
+ * `--wait` keeps the blocking form, returning the synthesis inline, for
+ * surfaces that show only the command's own text.
  *
  * Where no registry is present, or no controller serves the agent, tracking
  * is skipped and the run proceeds untracked.
@@ -30,7 +32,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { CommandInvocation, CommandResult } from '@deepseek-ai/dsh-commands'
-import type { JobOutcome } from '@deepseek-ai/dsh-jobs'
+import type { JobId, JobOutcome } from '@deepseek-ai/dsh-jobs'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { coordinatorSpec } from './topologies'
 import type { CoordinatorResult, MemberSpec } from './types'
@@ -45,31 +47,38 @@ export interface SwarmCommandConfig {
   maxWorkers?: number
 }
 
-const USAGE = 'Usage: /swarm [--workers <n>] <task>'
+const USAGE = 'Usage: /swarm [--wait] [--workers <n>] <task>'
 
 interface SwarmLine {
   workers: number
   task: string
+  /** Block until the run settles and return its synthesis inline. */
+  wait?: true
 }
 
-/** Split an optional leading `--workers N` off the line; the rest is the task. */
+/** Split optional leading `--workers N` and `--wait` flags off the line; the rest is the task. */
 export function parseSwarmLine(
   rawInput: string,
   defaults: { workers: number; maxWorkers: number },
 ): SwarmLine | { error: string } {
   let workers = defaults.workers
+  let wait = false
   let rest = rawInput.trim()
-  const flag = /^--workers(?:=|\s+)(\S+)\s*/u.exec(rest)
-  if (flag !== null) {
-    const n = Number(flag[1])
+  let flag: RegExpExecArray | null
+  while ((flag = /^--(?:(wait)|workers(?:=|\s+)(\S+))(?:\s+|$)/u.exec(rest)) !== null) {
+    rest = rest.slice(flag[0].length)
+    if (flag[1] !== undefined) {
+      wait = true
+      continue
+    }
+    const n = Number(flag[2])
     if (!Number.isInteger(n) || n < 1 || n > defaults.maxWorkers) {
       return { error: `--workers takes an integer 1-${defaults.maxWorkers}. ${USAGE}` }
     }
     workers = n
-    rest = rest.slice(flag[0].length).trim()
   }
   if (rest.length === 0) return { error: `No task given. ${USAGE}` }
-  return { workers, task: rest }
+  return { workers, task: rest, ...(wait ? { wait: true } : {}) }
 }
 
 /** One settled coordinator run as the text a UI renders under the command. */
@@ -113,22 +122,23 @@ function track(
   ctx: Context,
   invocation: CommandInvocation,
   label: string,
+  follow: AbortSignal | undefined,
 ): Tracker | undefined {
   const jobs = ctx.get('jobs')
   if (jobs === undefined) return undefined
 
   const pending: string[] = []
-  // Killing the job must cancel the team, so the run rides this controller
-  // rather than the invocation signal directly; the surface's own abort is
-  // chained into it.
+  // Killing the job must cancel the team, so the run rides this controller;
+  // `follow`, the surface's own abort under `--wait`, is chained into it.
   const abort = new AbortController()
-  if (invocation.signal.aborted) abort.abort()
-  else invocation.signal.addEventListener('abort', () => abort.abort(), { once: true })
+  if (follow?.aborted) abort.abort()
+  else follow?.addEventListener('abort', () => abort.abort(), { once: true })
 
   let settle!: (outcome: JobOutcome) => void
   const done = new Promise<JobOutcome>((resolve) => (settle = resolve))
+  let id: JobId
   try {
-    jobs.start({
+    id = jobs.start({
       // `subagent`, not a bespoke kind: JobKindMap is re-exported rather than
       // declared by the entry module, so it cannot be merged from here — and a
       // swarm IS subagent work. The label carries the real identity.
@@ -144,6 +154,10 @@ function track(
   } catch {
     return undefined
   }
+  // This command delivers the outcome itself, so it waits on its own job; a
+  // pending wait marks the job reported at settlement, which keeps tool-jobs'
+  // completion notice from opening a lead model turn just to say it finished.
+  jobs.wait(id, 2 ** 31 - 1, invocation.agent).catch(() => undefined)
   return { report: (line) => pending.push(line), finish: settle, signal: abort.signal }
 }
 
@@ -162,11 +176,12 @@ function isBlank(agent: Agent): boolean {
 }
 
 /**
- * Put the run's outcome into the conversation when the session would otherwise
- * stay blank. `followup` queues it as its own turn and wakes the driver, which
- * both makes the session non-blank — so the surface navigates in and the
- * already-logged `command/done` finally renders — and leaves the lead holding
- * the synthesis, which is what a follow-up instruction needs.
+ * Put the command's reply (the started run, or under `--wait` its outcome)
+ * into the conversation when the session would otherwise stay blank.
+ * `followup` queues it as its own turn and wakes the driver, which both makes
+ * the session non-blank — so the surface navigates in, the already-logged
+ * `command/done` finally renders, and the Swarm tab appears — and leaves the
+ * lead holding the reply, which is what a follow-up instruction needs.
  *
  * Only on a blank session: an established conversation already renders the
  * command result inline, and doing this there would spend a lead model round
@@ -179,6 +194,21 @@ export function surfaceOnBlankSession(agent: Agent, text: string): void {
   )
 }
 
+/**
+ * Hand a detached run's outcome to the session that started it, as context
+ * for its next turn: `inject` queues it for the next step without waking the
+ * driver. The live agent is looked up, as the invoking one may have been
+ * replaced since; with none live, the journal still holds the result.
+ */
+function injectOutcome(ctx: Context, invoker: Agent, runId: string, text: string): void {
+  ctx.get('agents')?.get(invoker.id)?.inject(
+    createUserMessage({
+      content: [{ type: 'text', text: `/swarm run ${runId} settled.\n\n${text}` }],
+      source: { kind: 'plugin', plugin: 'openswarm-swarm', form: 'notice', summary: `/swarm ${runId} settled` },
+    }),
+  )
+}
+
 async function execute(
   ctx: Context,
   invocation: CommandInvocation,
@@ -187,43 +217,61 @@ async function execute(
   const parsed = parseSwarmLine(invocation.rawInput, defaults)
   if ('error' in parsed) return { kind: 'error', text: parsed.error }
   const spec = coordinatorSpec(parsed.task, parsed.workers)
-  const tracker = track(ctx, invocation, `/swarm ${invocation.rawInput.trim()}`)
-
-  try {
-    const result = asCoordinator(
-      await ctx.swarm.runTeam(spec, {
-        parent: invocation.agent,
-        signal: tracker?.signal ?? invocation.signal,
-        ...(tracker === undefined ? {} : { onProgress: tracker.report }),
-      }),
+  // A detached run outlives the invocation, whose signal belongs to the UI
+  // request, so only `--wait` rides it.
+  const follow = parsed.wait ? invocation.signal : undefined
+  const tracker = track(ctx, invocation, `/swarm ${invocation.rawInput.trim()}`, follow)
+  const signal = tracker?.signal ?? follow
+  const started = ctx.swarm.start(spec, {
+    parent: invocation.agent,
+    ...(signal === undefined ? {} : { signal }),
+    ...(tracker === undefined ? {} : { onProgress: tracker.report }),
+  })
+  // The row settles, and the outcome renders, when the run does.
+  const settled = started
+    .then((run) => run.result)
+    .then(asCoordinator)
+    .then(
+      (result) => {
+        // `detail` replaces the generic status word on the settled row, so it
+        // is the one place a shape summary is legible after the fact.
+        tracker?.finish({
+          status: 'completed',
+          detail: `${result.subtasks.length} subtask(s) across ${parsed.workers} worker(s)`,
+        })
+        return { kind: 'success', text: renderCoordinatorResult(result) } as const
+      },
+      (error: unknown) => {
+        tracker?.finish({
+          status: tracker.signal.aborted ? 'killed' : 'failed',
+          detail: errText(error),
+        })
+        return { kind: 'error', text: `swarm run failed: ${errText(error)}` } as const
+      },
     )
-    // `detail` replaces the generic status word on the settled row, so it is
-    // the one place a shape summary is legible after the fact.
-    tracker?.finish({
-      status: 'completed',
-      detail: `${result.subtasks.length} subtask(s) across ${parsed.workers} worker(s)`,
-    })
-    const text = renderCoordinatorResult(result)
-    surfaceOnBlankSession(invocation.agent, text)
-    return { kind: 'success', text }
-  } catch (error) {
-    tracker?.finish({
-      status: tracker.signal.aborted ? 'killed' : 'failed',
-      detail: errText(error),
-    })
-    const text = `swarm run failed: ${errText(error)}`
-    // A failure on a blank session is just as invisible as a success.
-    surfaceOnBlankSession(invocation.agent, text)
-    return { kind: 'error', text }
+
+  const run = parsed.wait ? undefined : await started.catch(() => undefined)
+  if (run === undefined) {
+    // `--wait`, or a run that never started: the outcome is the reply. A
+    // blank session shows it only as a turn, failure or success alike.
+    const outcome = await settled
+    surfaceOnBlankSession(invocation.agent, outcome.text)
+    return outcome
   }
+  // ponytail: a failed inject only loses the notice; the journal, the Swarm
+  // tab and `openswarm attach` still carry the result.
+  void settled.then((outcome) => injectOutcome(ctx, invocation.agent, run.id, outcome.text)).catch(() => undefined)
+  const text = `Started ${run.id}: coordinator with ${parsed.workers} worker(s). Follow it in the Swarm tab, or \`openswarm attach ${run.id}\`.`
+  surfaceOnBlankSession(invocation.agent, text)
+  return { kind: 'success', text }
 }
 
 export function apply(ctx: Context, config: SwarmCommandConfig = {}): void {
   const defaults = { workers: config.workers ?? 3, maxWorkers: config.maxWorkers ?? 8 }
   ctx.commands.register({
     name: 'swarm',
-    description: 'run a coordinator-led team of agents on one task',
-    input: { hint: '[--workers <n>] <task>' },
+    description: 'start a coordinator-led team of agents on one task',
+    input: { hint: '[--wait] [--workers <n>] <task>' },
     handler: (invocation) => execute(ctx, invocation, defaults),
   })
 }

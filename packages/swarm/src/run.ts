@@ -84,6 +84,20 @@ export interface SwarmRunView {
   recap: string[]
 }
 
+/**
+ * A settled run's deliverable as text: the synthesis or final output where
+ * the topology has one, else each member's output under its label.
+ */
+export function resultText(result: TeamResult): string {
+  const one = 'synthesis' in result ? result.synthesis : 'final' in result ? result.final : undefined
+  if (one !== undefined) return one.text
+  const parts: [string, string][] =
+    result.topology === 'peer-team'
+      ? result.tasks.map((t) => [`${t.id} ${t.subject}`, t.result ?? ''])
+      : (result.topology === 'fanout' ? result.results : 'answers' in result ? result.answers : []).map((r) => [r.member, r.text])
+  return parts.map(([label, text]) => `--- ${label} ---\n${text}`).join('\n\n')
+}
+
 /** The run's current record, or undefined when the journal holds none. */
 export function foldRun(events: ReadonlyArray<{ type: string; data?: unknown }>): SwarmRunRecord | undefined {
   let run: SwarmRunRecord | undefined
@@ -142,7 +156,8 @@ export function recapJournal(events: readonly SwarmJournalEvent[], since = -1): 
     } else if (type === 'swarm/run') {
       const { run } = data as SwarmRunEvent
       const where = `pid ${run.writer.pid} on ${run.writer.host}`
-      if (run.status === 'running') line = `run started: ${run.topology} (${where})`
+      const purpose = run.spec?.intent === undefined ? '' : `: ${run.spec.intent.purpose.split('\n')[0]!.slice(0, 80)}`
+      if (run.status === 'running') line = `run started: ${run.topology} (${where})${purpose}`
       else if (run.status === 'failed') line = `run failed: ${run.error}`
       else if (run.status === 'interrupted') line = `run interrupted; taken over by ${where}`
       else line = 'run finished'

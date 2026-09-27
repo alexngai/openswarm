@@ -54,6 +54,7 @@ import {
   runPeerTeam,
   runPipeline,
   seedBoard,
+  withIntent,
   type ReportProgress,
   type RunConfidence,
   type RunMember,
@@ -84,7 +85,7 @@ export {
   spawnPeer,
   suppressSettlementTurns,
 } from './peers'
-export { coordinatorSpec, parseNumberedPlan } from './topologies'
+export { coordinatorSpec, parseNumberedPlan, renderIntent } from './topologies'
 export type { ReportProgress } from './topologies'
 export { RemotePeer } from './remote-peer'
 export { SwarmServer } from './server'
@@ -546,10 +547,15 @@ export default class SwarmService extends Service {
   ): Promise<TeamResult & { git?: MergeOutcome }> {
     const worktrees =
       options.worktrees === undefined ? undefined : new WorktreeRun(this.ctx, options.worktrees)
-    const run: RunMember = (member, prompt, taskKey) =>
-      worktrees === undefined
-        ? this.runMember(member, prompt, options)
-        : worktrees.runMember(member, prompt, taskKey, options)
+    // Every member prompt through here carries the intent header (docs/05
+    // §6.1). A peer-team keys each member run by its board task, whose own
+    // intent replaces the run's; no other topology seeds the board.
+    const run: RunMember = (member, prompt, taskKey) => {
+      const framed = withIntent(prompt, board.list().find((t) => t.id === taskKey)?.intent ?? spec.intent)
+      return worktrees === undefined
+        ? this.runMember(member, framed, options)
+        : worktrees.runMember(member, framed, taskKey, options)
+    }
     if (worktrees === undefined) return this.dispatch(spec, run, options, board, roster, mailbox, ask)
 
     // Clear anything a previously crashed team left in this repo before adding
@@ -753,7 +759,7 @@ export default class SwarmService extends Service {
         async (member, claimed) => {
           // A cancelled run takes no new turns; a running turn finishes first.
           options.signal?.throwIfAborted()
-          const blocks: ContentBlock[] = [{ type: 'text', text: claimed.prompt }]
+          const blocks: ContentBlock[] = [{ type: 'text', text: withIntent(claimed.prompt, claimed.intent ?? spec.intent) }]
           for (let attempt = 0; ; attempt++) {
             const handle = roster.get(member.name)!
             const prelude = mailbox.framePendingQuiet(member.name)
@@ -828,7 +834,7 @@ export default class SwarmService extends Service {
         board,
         seeded,
         (member, claimed) =>
-          askPeer(this.ctx, lead, roster.get(member.name)!, claimed.prompt, {
+          askPeer(this.ctx, lead, roster.get(member.name)!, withIntent(claimed.prompt, claimed.intent ?? spec.intent), {
             mailbox,
             ...(options.signal === undefined ? {} : { signal: options.signal }),
           }),

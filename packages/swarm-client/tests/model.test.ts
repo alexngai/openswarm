@@ -1,6 +1,6 @@
 /** The Swarm tab's pure view-model helpers (docs/05 A9). */
 import { expect, it } from 'vitest'
-import { age, memberNames, newestFirst, openQuestions, pickRun, runLabel, sortTasks, startArgs } from '../src/model.js'
+import { age, memberNames, newestFirst, openQuestions, pickRun, resultText, runLabel, sortTasks, startArgs } from '../src/model.js'
 
 const run = (id: string, parentSessionId: string, startedAt: number) => ({ id, parentSessionId, startedAt, status: 'running', topology: 'peer-team' })
 
@@ -46,4 +46,19 @@ it('builds start args from the form, omitting blank worktrees', () => {
   expect(() => startArgs('{nope', '')).toThrow(/^spec: /)
   expect(() => startArgs('[]', '')).toThrow('spec: must be a JSON object')
   expect(() => startArgs('{}', 'null')).toThrow('worktrees: must be a JSON object')
+})
+
+it("shows a finished run's result: the synthesis or final text, else each output under its label", () => {
+  const finished = (result?: object) => ({ status: 'finished', result })
+  expect(resultText(finished({ topology: 'coordinator', synthesis: { member: 'c', text: 'synth' } }))).toBe('synth')
+  expect(resultText(finished({ topology: 'cascade', final: { member: 't', text: 'last' } }))).toBe('last')
+  const fanout = { topology: 'fanout', results: [{ member: 'a', text: 'x' }, { member: 'b', text: 'y' }] }
+  expect(resultText(finished(fanout))).toBe('--- a ---\nx\n\n--- b ---\ny')
+  expect(resultText(finished({ topology: 'committee', answers: [{ member: 'a', text: 'x' }] }))).toBe('--- a ---\nx')
+  const peers = { topology: 'peer-team', tasks: [{ id: 'task-0', subject: 'walls', result: 'up' }, { id: 'task-1', subject: 'roof' }], runs: {} }
+  expect(resultText(finished(peers))).toBe('--- task-0 walls ---\nup\n\n--- task-1 roof ---\n')
+  // Nothing until it has finished, and nothing for a record that kept no result.
+  expect(resultText({ status: 'running' })).toBeUndefined()
+  expect(resultText({ status: 'failed', error: 'boom' })).toBeUndefined()
+  expect(resultText(finished())).toBeUndefined()
 })

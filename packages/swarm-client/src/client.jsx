@@ -12,7 +12,7 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import css from './client.css'
-import { memberNames, newestFirst, openQuestions, pickRun, runLabel, sortTasks, startArgs } from './model.js'
+import { memberNames, newestFirst, openQuestions, pickRun, resultText, runLabel, sortTasks, startArgs } from './model.js'
 
 if (typeof document !== 'undefined' && document.querySelector('style[data-plugin-css="openswarm-swarm-client"]') === null) {
   const tag = document.createElement('style')
@@ -104,6 +104,7 @@ function SwarmView({ sessionId, call }) {
 
   const act = (method, args) => call(method, { runId, ...args }).catch((e) => setError(message(e)))
   const running = view?.run.status === 'running'
+  const result = view === undefined ? undefined : resultText(view.run)
 
   return (
     <div className="osw-root" data-conversation-composer-overlay="">
@@ -135,7 +136,18 @@ function SwarmView({ sessionId, call }) {
                   </button>
                 )}
               </div>
+              {view.run.spec?.intent !== undefined && (
+                <p className="osw-muted">
+                  {view.run.spec.intent.purpose} — end state: {view.run.spec.intent.endState}
+                </p>
+              )}
               {view.run.error !== undefined && <p className="osw-error">{view.run.error}</p>}
+              {result !== undefined && (
+                <details className="osw-section">
+                  <summary>Result</summary>
+                  <pre className="osw-result">{result}</pre>
+                </details>
+              )}
               <Board tasks={view.tasks} />
               <Questions questions={openQuestions(view)} answer={(questionId, answer) => act('answer', { questionId, answer })} />
               {running && <Steer key={view.run.id} members={memberNames(view)} steer={(to, text) => call('steer', { runId, to, text })} />}
@@ -177,7 +189,7 @@ function Board({ tasks }) {
                 <td className="osw-mono">{task.id}</td>
                 <td>{task.status}</td>
                 <td>{task.owner ?? '-'}</td>
-                <td>{task.subject}</td>
+                <td title={task.intent === undefined ? undefined : `End state: ${task.intent.endState}`}>{task.subject}</td>
               </tr>
             ))}
           </tbody>

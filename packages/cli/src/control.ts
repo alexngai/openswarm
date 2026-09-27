@@ -22,6 +22,7 @@ import {
   openswarmHome,
   pidAlive,
   recapJournal,
+  resultText,
   runJournalPath,
   viewRun,
   writerLive,
@@ -209,13 +210,22 @@ async function call(method: string, params: object): Promise<any> {
 
 const openCount = (view: SwarmRunView) => view.questions.filter((q) => q.status === 'open').length
 
-/** The run's line, its tasks in id order, and how many questions are open. */
+/**
+ * The run's line and intent, its tasks in id order (with any end state of
+ * their own), how many questions are open, and a finished run's result.
+ */
 function board(io: CliIo, view: SwarmRunView): void {
   io.out(`${view.run.id}  ${view.run.status}  ${view.run.topology}`)
+  const intent = view.run.spec?.intent
+  if (intent !== undefined) io.out(`purpose: ${intent.purpose}\nend state: ${intent.endState}`)
   const tasks = [...view.tasks].sort((a, b) => a.id.localeCompare(b.id, 'en', { numeric: true }))
   if (tasks.length === 0) io.out('no board tasks')
   else table(io, [['TASK', 'STATUS', 'OWNER', 'SUBJECT'], ...tasks.map((t) => [t.id, t.status, t.owner ?? '-', t.subject])])
+  for (const t of tasks) {
+    if (t.intent !== undefined && t.intent.endState !== intent?.endState) io.out(`${t.id} end state: ${t.intent.endState}`)
+  }
   io.out(`${openCount(view)} open question(s)`)
+  if (view.run.status === 'finished' && view.run.result !== undefined) io.out(`result:\n${resultText(view.run.result)}`)
 }
 
 /** Rows as left-aligned columns. */

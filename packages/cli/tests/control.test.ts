@@ -188,6 +188,36 @@ it('attach on a settled run prints its board and recap, and writes nothing', asy
   expect(readFileSync(journal.path).equals(bytes)).toBe(true)
 })
 
+it("board prints the run's intent, a task's own end state, and a finished run's result", async () => {
+  freshHome()
+  const { journal, board, run } = await journalRun('run-000001e7', deadPid(), Date.now())
+  const walls = await board.create({ subject: 'walls', prompt: 'p', intent: { purpose: 'shelter', endState: 'walls stand' } })
+  const roof = await board.create({ subject: 'roof', prompt: 'p', intent: { purpose: 'shelter', endState: 'the house is dry' } })
+  await board.complete(walls.id, 'alice', (await board.claim(walls.id, 'alice', walls.revision)).revision, 'up')
+  await board.complete(roof.id, 'alice', (await board.claim(roof.id, 'alice', roof.revision)).revision, 'on')
+  const spec: TeamSpec = { topology: 'peer-team', members: [{ name: 'alice' }], tasks: [], intent: { purpose: 'build a house', endState: 'the house is dry' } }
+  const result = { topology: 'peer-team' as const, tasks: board.list(), runs: {} }
+  await journal.append('swarm/run', { version: 1, run: { ...run, status: 'finished', endedAt: Date.now(), spec, result } } satisfies SwarmRunEvent)
+
+  // roof's end state is the run's, so only walls' is printed.
+  expect((await ctl('board', 'run-000001e7')).out.split('\n')).toEqual([
+    'run-000001e7  finished  peer-team',
+    'purpose: build a house',
+    'end state: the house is dry',
+    'TASK    STATUS     OWNER  SUBJECT',
+    'task-0  completed  alice  walls',
+    'task-1  completed  alice  roof',
+    'task-0 end state: walls stand',
+    '0 open question(s)',
+    'result:',
+    '--- task-0 walls ---',
+    'up',
+    '',
+    '--- task-1 roof ---',
+    'on',
+  ])
+})
+
 /** The mock's model on the test boot's DeepSeek route. */
 const route = ['--provider', 'deepseek-official', '--model', 'mock-model']
 

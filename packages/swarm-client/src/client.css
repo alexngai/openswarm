@@ -45,6 +45,11 @@
   color: var(--dsw-alias-state-error-primary);
   white-space: pre-wrap;
 }
+.osw-result {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  font: inherit;
+}
 .osw-badge {
   padding: 0 6px;
   border-radius: 5px;

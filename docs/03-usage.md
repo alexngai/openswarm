@@ -97,11 +97,16 @@ sessions, the tool/trajectory views, settings and the command palette come from
 dsh; the model adapters, `ctx.swarm`, and the `/swarm` command come from ours.
 Pick a workspace in the composer, then chat as usual.
 
-To run a team, type **`/swarm [--workers <n>] <task>`** in the composer. A
+To run a team, type **`/swarm [--wait] [--workers <n>] <task>`** in the composer. A
 coordinator decomposes the task into numbered subtasks, `n` workers (default 3)
-run them concurrently, and the coordinator synthesizes; the command returns the
-plan and the synthesis. Members inherit the session's model route, so nothing
-extra is configured.
+run them concurrently, and the coordinator synthesizes. By default the command
+returns at once with the run id (`Started run-…`); follow the run in the Swarm
+tab or with `openswarm attach <run>`, both of which show the synthesis once it
+finishes. When it settles, the outcome is also handed to the session as context
+for its next turn, without waking the lead. `--wait` blocks instead and returns
+the plan and the synthesis inline, for surfaces that show only the command's
+text. Members inherit the session's model route, so nothing extra is
+configured.
 
 The command is registered by the `openswarm-swarm/command` bundle row, so it
 appears on any dsh surface that renders the command registry — the browser UI
@@ -109,20 +114,19 @@ today, a TUI profile when one ships.
 
 While the team runs, it holds a row in the surface's **background-jobs list**
 (the session-header control): label, status, and a ticking elapsed clock, with
-a shape summary once it settles. Killing that row cancels the team. The command
-itself awaits the run and returns the synthesis inline — dsh's job rows are
-read-only and carry no output, so returning early would put the result where no
-human surface can read it. A live Azure run held its request open 72s without
-trouble.
+a shape summary once it settles. Killing that row cancels the team. (A live
+Azure run under the old always-blocking form held its request open 72s without
+trouble.)
 
-Run as the very first action in a brand-new session, the result is also posted
-into the conversation as a follow-up turn. A session stays "blank" until
-something opens a turn, and command records deliberately never do (the same
+Run as the very first action in a brand-new session, the command's reply (the
+started run, or under `--wait` the result) is also posted into the
+conversation as a follow-up turn, which makes the Swarm tab appear. A session
+stays "blank" until something opens a turn, and command records deliberately never do (the same
 reason `/plan` and `/goal` leave a fresh session untouched) — so without that
 the surface would keep showing its landing screen and the result would never
 render. It costs one lead model round, and only happens on a blank session.
 
-**The Swarm tab** (the `openswarm-swarm-client` row, a dsh client plugin; `openswarm setup` adds it to an older home) sits beside Chat and Trajectory in a session's view tabs; dsh shows the tab bar only once a session has started. It follows one run, picked from a list of every run in `<home>/runs` (default: the newest started from this session, else the newest): status and topology with a Cancel button while it runs, the task board (id, status, owner, subject), open questions with a button per option, the recap newest first, and a steer box (member and text → `immediate` or `enqueue`, or the refusal). **Start run** takes a `TeamSpec` as JSON and optional `worktrees` JSON (`{ "repoRoot": … }`, which makes steers land `immediate`); steering needs a messaging peer-team. It talks to the web carrier and updates by long-polling `swarm/events`, so direction (cancel, steer, answer) works only on runs this web process hosts: those started from the tab, by `/swarm`, or by the CLI below. `openswarm web` also serves the socket carrier on an ephemeral loopback port and writes `<home>/app-server.json`, so `openswarm start|steer|answer|kill` direct the same runs the tab shows. Run one of `openswarm web` and `openswarm serve` per home: both write that file, the last to start wins, and either one stopping removes it.
+**The Swarm tab** (the `openswarm-swarm-client` row, a dsh client plugin; `openswarm setup` adds it to an older home) sits beside Chat and Trajectory in a session's view tabs; dsh shows the tab bar only once a session has started. It follows one run, picked from a list of every run in `<home>/runs` (default: the newest started from this session, else the newest): status and topology with a Cancel button while it runs, the run's intent, a finished run's **Result** (the synthesis or final output), the task board (id, status, owner, subject; a task's own end state on hover), open questions with a button per option, the recap newest first, and a steer box (member and text → `immediate` or `enqueue`, or the refusal). **Start run** takes a `TeamSpec` as JSON and optional `worktrees` JSON (`{ "repoRoot": … }`, which makes steers land `immediate`); steering needs a messaging peer-team. It talks to the web carrier and updates by long-polling `swarm/events`, so direction (cancel, steer, answer) works only on runs this web process hosts: those started from the tab, by `/swarm`, or by the CLI below. `openswarm web` also serves the socket carrier on an ephemeral loopback port and writes `<home>/app-server.json`, so `openswarm start|steer|answer|kill` direct the same runs the tab shows. Run one of `openswarm web` and `openswarm serve` per home: both write that file, the last to start wins, and either one stopping removes it.
 
 ## Live self-modification
 
@@ -323,7 +327,7 @@ inside the worktree, and merged. See `packages/swarm/tests/self-modify-live.test
 
 **Questions** ([docs/05](05-control-plane-redesign.md) §6.1). The harness asks when a messaging member under `worktrees` stays silent through a nudge (`stall`: restart it, or wait another `memberIdleTimeoutMs`), a member dies with its restart budget spent (`restart-budget`: drop it, or restart once more), a board task runs out of attempts with a sibling left to retry it (`task-attempts`: abandon it, or retry once more), or every cascade tier fails (`verifier-failure`: stop, or retry the top tier once). Each question is a low-tier escalation in the run's journal (`swarm/question`, with recap lines) and takes the first answer, else its default once the timeout passes; while 3 are open, the next is `capped` at its default at once, and a run that ends defaults the rest.
 
-A `spec` is a `TeamSpec` — e.g. `{ topology: 'fanout', members: [{name}], tasks: [{member, prompt}] }`. See the topology types in [`packages/swarm/src/types.ts`](../packages/swarm/src/types.ts). A worked client is [`packages/app-server/tests/app-server.e2e.test.ts`](../packages/app-server/tests/app-server.e2e.test.ts).
+A `spec` is a `TeamSpec` — e.g. `{ topology: 'fanout', members: [{name}], tasks: [{member, prompt}] }`. Any spec may carry an `intent` — `{ purpose, endState, constraints?, preferences? }`, the end state checkable — which is prepended as an `## Intent` header to every member prompt of the run; a peer-team task's own `intent` replaces it for that task. `openswarm board` and the Swarm tab show it. See the topology types in [`packages/swarm/src/types.ts`](../packages/swarm/src/types.ts). A worked client is [`packages/app-server/tests/app-server.e2e.test.ts`](../packages/app-server/tests/app-server.e2e.test.ts).
 
 **The web carrier.** The `openswarm-web` profile also serves these `swarm/*` methods, minus `swarm/token`, on dsh's `/api` gateway (the `openswarm-app-server-web` row; `openswarm setup` adds it to an older home): `POST /api/swarm/<method>` with `{ type: 'client-request', rpcId, method: 'swarm/<method>', payload: { args: { …params } } }` answers `{ result: { ok: true, value } }`, or `ok: false` with an `error.message` led by the same code. Every caller is the owner, because dsh's web server authenticates nothing, so the carrier refuses to load unless that server binds 127.0.0.1, and the refusal fails the boot: `openswarm web --host 0.0.0.0` starts only with the row disabled. The gateway has no push, so there is no `swarm.runFinished`; follow a run by long-polling `swarm/events` with the last `seq`. An open question is also put to dsh's own question prompt (`ctx.userQuestions`), in the run's lead session; an answer there is recorded `by: 'userQuestions'`, and a reply naming none of the options is ignored.
 

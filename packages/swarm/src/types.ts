@@ -30,6 +30,24 @@ export interface MemberSpec {
   subagentProvider?: string
 }
 
+/**
+ * Commander's intent (docs/05 §6.1): why the work exists and how to tell it
+ * is done. Rendered as a header on every member prompt it applies to.
+ */
+export interface Intent {
+  purpose: string
+  /** Checkable: a member can tell whether it holds. */
+  endState: string
+  constraints?: string[]
+  preferences?: string[]
+}
+
+/** What every topology's spec may carry. */
+export interface TeamSpecBase {
+  /** The run's intent; a peer-team task's own intent replaces it for that task. */
+  intent?: Intent
+}
+
 /** One fanout assignment: a member name plus its prompt. */
 export interface FanoutTask {
   member: string
@@ -37,7 +55,7 @@ export interface FanoutTask {
 }
 
 /** Run every task concurrently, one subagent run per task. */
-export interface FanoutSpec {
+export interface FanoutSpec extends TeamSpecBase {
   topology: 'fanout'
   members: MemberSpec[]
   tasks: FanoutTask[]
@@ -48,7 +66,7 @@ export interface FanoutSpec {
  * The critic replies `APPROVED` or `REVISE: <feedback>` (plain-text protocol;
  * a structured `outputSchema` verdict is a later refinement).
  */
-export interface CriticLoopSpec {
+export interface CriticLoopSpec extends TeamSpecBase {
   topology: 'critic-loop'
   worker: MemberSpec
   critic: MemberSpec
@@ -58,7 +76,7 @@ export interface CriticLoopSpec {
 }
 
 /** N members answer the same task in parallel; an optional judge synthesizes. */
-export interface CommitteeSpec {
+export interface CommitteeSpec extends TeamSpecBase {
   topology: 'committee'
   members: MemberSpec[]
   task: string
@@ -67,7 +85,7 @@ export interface CommitteeSpec {
 }
 
 /** Sequential stages; each stage's prompt receives the previous stage's output. */
-export interface PipelineSpec {
+export interface PipelineSpec extends TeamSpecBase {
   topology: 'pipeline'
   stages: { member: MemberSpec; prompt: string }[]
 }
@@ -78,7 +96,7 @@ export interface PipelineSpec {
  * (same APPROVED / REVISE protocol as the critic); rejection feedback threads
  * into the next tier's prompt.
  */
-export interface CascadeSpec {
+export interface CascadeSpec extends TeamSpecBase {
   topology: 'cascade'
   tiers: MemberSpec[]
   task: string
@@ -97,7 +115,7 @@ export interface CascadeSpec {
  * A coordinator decomposes the task into a numbered subtask list, workers run
  * the subtasks concurrently (round-robin), and the coordinator synthesizes.
  */
-export interface CoordinatorSpec {
+export interface CoordinatorSpec extends TeamSpecBase {
   topology: 'coordinator'
   coordinator: MemberSpec
   workers: MemberSpec[]
@@ -109,6 +127,8 @@ export interface PeerTask {
   subject: string
   prompt: string
   blockedBy?: number[]
+  /** Replaces the run's intent for this task. */
+  intent?: Intent
 }
 
 /**
@@ -117,7 +137,7 @@ export interface PeerTask {
  * messaging between live members needs continuable children and arrives with
  * the mailbox in a later phase.
  */
-export interface PeerTeamSpec {
+export interface PeerTeamSpec extends TeamSpecBase {
   topology: 'peer-team'
   members: MemberSpec[]
   tasks: PeerTask[]
