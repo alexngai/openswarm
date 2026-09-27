@@ -936,6 +936,18 @@ authenticated principals (one carrier suffices).
     and on the decomposable subset, tasks where t0 owns under half the
     plan-assigned source lines (`t0-share.py`): 11 of 12; mko-5.8.0 (0.61)
     is hub-bound, its roadmap targets meeting in three hub files.
+  - *Zero-token check, 2026-09-27* (SUT `5cfab25`; scripted members apply
+    each thread's slice of the reference solution): 22 of 24 cells score
+    1.0; pyg-2.5.0 scores 0.667 in both arms, which is its gold patch's own
+    ceiling (its `solve.sh` also edits `utils/sort.py`, which agents can
+    do; the patch alone cannot). Getting there found four defects, all
+    fixed: the published swarmkit-eval dropped per-run env (`5d84e31`);
+    harness commits ran repository hooks (`7a75cc4`, husky); worktrees
+    lacked the checkout's ignored environment, so on 6 of 12 tasks team
+    members could neither build nor test there while the single agent
+    could (`5cfab25`, hard-linked `node_modules` and native extensions);
+    and in Docker the first such link pays an overlayfs copy-up of up to
+    3.5 min, which the runner now pays in setup for every arm.
   - *Checks before freezing, no model tokens:* whether the task images
     carry `.git` (the worktree arms need it; fall back to `git init`), and
     reference-solution stability over 2–3 runs per task.

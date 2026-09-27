@@ -61,6 +61,11 @@ for (const arm of ARMS) if (!["single", "sharded", "program"].includes(arm)) { c
 
 const INIT = [
   "cd /app && (git rev-parse --is-inside-work-tree >/dev/null 2>&1 || (git init -q && git add -A && git -c user.email=eval@local -c user.name=eval commit -qm base))",
+  // Team members' worktrees hard-link the checkout's ignored node_modules. In a
+  // Docker image the first link of each file forces an overlayfs copy-up (about
+  // 3 min for 35k files); later links take a second. Pay it here, in EVERY arm,
+  // so it is never inside a team arm's timed run.
+  "cd /app && git config --global --add safe.directory '*' && git ls-files -z --others --ignored --exclude-standard --directory | tr '\\0' '\\n' | grep -E '(^|/)node_modules/$' | while IFS= read -r d; do cp -al \"$d\" /tmp/.osw-warm && rm -rf /tmp/.osw-warm; done; true",
 ];
 
 /** The built CLI exports runCli without running it; this is the process entry. */
