@@ -58,7 +58,7 @@ import {
   type RunConfidence,
   type RunMember,
 } from './topologies'
-import { homedir, hostname, tmpdir } from 'node:os'
+import { homedir, hostname } from 'node:os'
 import { join } from 'node:path'
 import { RemotePeer } from './remote-peer'
 import { SwarmServer } from './server'
@@ -652,7 +652,6 @@ export default class SwarmService extends Service {
     await server.listen()
     const cfg = options.worktrees?.member ?? {}
     const launch = resolveMemberLaunch(cfg)
-    const sessionRoot = `${tmpdir()}/openswarm-sessions/${worktrees.teamId}`
     const peers: RemotePeer[] = []
     const report = options.onProgress ?? (() => {})
     const idleTimeoutMs = spec.memberIdleTimeoutMs ?? 300_000
@@ -671,8 +670,8 @@ export default class SwarmService extends Service {
         args: launch.args,
         cwd: worktree.path,
         env: {
-          DSH_SESSION_ROOT: sessionRoot,
-          ...cfg.env,
+          // Same session root on restart, so the member server resumes.
+          ...worktrees.memberEnv(),
           OPENSWARM_SWARM_URL: server.url,
           // A restart is a new identity on the wire; the dead token stays dead.
           OPENSWARM_SWARM_TOKEN: server.addMember(member.name),

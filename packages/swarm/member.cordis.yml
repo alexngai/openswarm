@@ -22,10 +22,13 @@
 - id: sandbox
   name: '@deepseek-ai/dsh-sandbox-local'
 
+# Member sandbox (docs/05 §5.5): OPENSWARM_MEMBER_SANDBOX=workspace-write
+# confines bash and editor writes to the worktree (the session cwd) and temp;
+# reads and network stay open. Unset means danger-full-access.
 - id: sandbox-policy
   name: '@deepseek-ai/dsh-sandbox-policy'
   config:
-    mode: danger-full-access
+    mode: !!js "{ const mode = process.env.OPENSWARM_MEMBER_SANDBOX ?? 'danger-full-access'; if (mode !== 'workspace-write' && mode !== 'danger-full-access') throw new Error(`OPENSWARM_MEMBER_SANDBOX must be workspace-write or danger-full-access, not ${mode}`); mode }"
     workspaceRoot: !!js process.cwd()
 
 - id: subprocess
@@ -39,8 +42,10 @@
   config:
     timeoutMs: 60000
 
-- id: fs-local
-  name: '@deepseek-ai/dsh-fs-local'
+# dsh-fs-local plus the sandbox's write fence: without it the editor writes
+# anywhere under workspace-write. Unfenced under danger-full-access.
+- id: fs
+  name: '@deepseek-ai/dsh-fs-sandbox'
   config:
     cwd: !!js process.cwd()
 

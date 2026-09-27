@@ -33,6 +33,12 @@ export interface WorktreeMemberConfig {
   configPath?: string
   /** Extra child environment (model endpoint, credentials, DSH_MODEL, …). */
   env?: Record<string, string>
+  /**
+   * Member sandbox for this run (docs/05 §5.5); `OPENSWARM_MEMBER_SANDBOX` is
+   * the default, and unset means `danger-full-access`. A custom `configPath`
+   * composition must read `OPENSWARM_MEMBER_SANDBOX` itself.
+   */
+  sandbox?: 'workspace-write'
   /** Default provider route for members without agentOptions. */
   provider?: string
   model?: string
@@ -165,12 +171,7 @@ export class WorktreeRun {
       command: launch.command,
       args: launch.args,
       cwd,
-      // Session logs must not land inside the worktree, or auto-commit
-      // sweeps them into the task branch.
-      env: {
-        DSH_SESSION_ROOT: join(tmpdir(), 'openswarm-sessions', this.teamId),
-        ...cfg.env,
-      },
+      env: this.memberEnv(),
       provider: member.agentOptions?.provider ?? cfg.provider ?? 'openai',
       ...((member.agentOptions?.model ?? cfg.model) === undefined
         ? {}
@@ -208,6 +209,39 @@ export class WorktreeRun {
       // caught it because vitest force-exits its workers.
       await started?.dispose().catch(() => undefined)
       await fiber.dispose()
+    }
+  }
+
+  /**
+   * The environment every member of this run starts with, passed explicitly
+   * because the one-shot spawner scrubs the inherited one. `member.env` wins.
+   */
+  memberEnv(): Record<string, string> {
+    const cfg = this.options.member ?? {}
+    const sandbox =
+      cfg.sandbox ?? cfg.env?.['OPENSWARM_MEMBER_SANDBOX'] ?? process.env['OPENSWARM_MEMBER_SANDBOX']
+    // Under workspace-write a member writes only its worktree and temp, so
+    // package caches move out of the home directory into a per-run temp dir.
+    // By design, global installs (`pip install` into site-packages) and git
+    // writes (the object store and `.git/worktrees/<name>` live outside the
+    // worktree) still fail; the lead auto-commits.
+    // ponytail: per run, so each run re-downloads and the OS reaps temp; share
+    // one across runs if downloads cost.
+    const caches = join(tmpdir(), 'openswarm-cache', this.teamId)
+    return {
+      // Session logs must not land inside the worktree, or auto-commit
+      // sweeps them into the task branch.
+      DSH_SESSION_ROOT: join(tmpdir(), 'openswarm-sessions', this.teamId),
+      ...(sandbox === undefined ? {} : { OPENSWARM_MEMBER_SANDBOX: sandbox }),
+      ...(sandbox === 'workspace-write'
+        ? {
+            npm_config_cache: join(caches, 'npm'),
+            PIP_CACHE_DIR: join(caches, 'pip'),
+            CARGO_HOME: join(caches, 'cargo'),
+            XDG_CACHE_HOME: join(caches, 'xdg'),
+          }
+        : {}),
+      ...cfg.env,
     }
   }
 

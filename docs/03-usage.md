@@ -331,12 +331,15 @@ A `spec` is a `TeamSpec` — e.g. `{ topology: 'fanout', members: [{name}], task
 
 Worktree runs clean up after themselves in two ways: an abort or throw drops this run's checkouts without merging (branches survive, so committed work stays reachable), and each run first sweeps `.swarm/worktrees/` for teams that died before finalizing — the SIGKILL case try/finally cannot cover. Live teams are never touched, so concurrent runs are safe. Members set `agentOptions: { provider, model }` for heterogeneous rosters. See [`packages/swarm/tests/boot.ts`](../packages/swarm/tests/boot.ts) for a minimal composition.
 
+**Member sandbox** ([docs/05](05-control-plane-redesign.md) §5.5, behind a flag). `OPENSWARM_MEMBER_SANDBOX=workspace-write`, or `worktrees.member.sandbox: 'workspace-write'` for one run, confines a worktree member's writes, from bash (and everything it spawns) and from the editor, to its worktree and temp (`/tmp`, `$TMPDIR`); unset, members run `danger-full-access`. Reads and network stay open, so it contains damage but hides nothing. The npm, pip and cargo caches (and `XDG_CACHE_HOME`) move to `$TMPDIR/openswarm-cache/<team>`. Failing by design: git writes in the worktree (`add`, `commit`, `checkout -b`; the object store and `.git/worktrees/<name>` are outside it, and the lead auto-commits), global installs (`pip install` outside a venv, `npm -g`), and anything else that writes the home directory. Where dsh has no backend (Seatbelt on macOS, bwrap or Landlock on Linux), a member's bash fails rather than running unconfined. A custom `member.configPath` composition must read the variable itself.
+
 ## Testing
 
 ```bash
 npm test                          # full keyless suite (scripted mock LLM)
 npm run typecheck                 # tsc across all packages
 OPENSWARM_LIVE=1 npm test         # + env-gated live tests (needs AZURE_/AWS creds)
+OPENSWARM_MEMBER_SANDBOX=workspace-write npm test   # members sandboxed
 OPENSWARM_HMR_E2E=1 npx vitest run packages/bundle/tests/hmr-reload.e2e.test.ts
 ```
 
