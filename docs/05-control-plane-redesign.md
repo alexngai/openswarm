@@ -598,7 +598,17 @@ to temp; git writes and PTYs are denied inside a member by design). Exit
 criterion 3 is met: the keyless suite passes with and without the flag,
 and all seven live tests pass with it (the rung-5 self-edit needed
 `27c83b0`, which stops the command gate inheriting the driver's `npm_*`).
-Remaining: A9, then A7.
+A9 `fc0428d` (the Swarm tab: a `conversation.view` client plugin over
+the web carrier; board, questions, recap, steer, cancel, start form; the
+web profile also serves the socket carrier so the CLI directs the same
+runs). Exit criterion 1 was verified 2026-09-27 in a real browser and the
+CLI against one `openswarm web`: a run started from the tab was steered
+`immediate` from the tab and another from the CLI, each member changing
+course mid-turn, and a harness-raised question was answered from each
+surface, with no restart. That exercise found two defects, fixed:
+`ecf77cb` (a messaging team's late settlement notices woke the lead for a
+model turn) and `2f28e99` (worktree members need the launcher's model
+route, not a key sent by the caller). Remaining: A7.
 
 ### 7.4 Phase B — Verified landing
 
