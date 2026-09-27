@@ -127,10 +127,12 @@ it('a member sends cross-process through the swarm socket; the target wakes', as
   expect(leadEvents('swarm/message/delivered')).toHaveLength(1)
   expect(mailbox.pending()).toHaveLength(0)
 
-  // Peer-b's wakeup turn saw the framed message from peer-a.
+  // Peer-b's wakeup turn saw the framed message from peer-a. Peer-a's
+  // post-tool request also carries the text (in its tool call) and races
+  // peer-b's wakeup to the mock, so pick peer-b's first request carrying it.
   await b.ask([{ type: 'text', text: 'status?' }]) // serialize behind the wakeup turn
   const bodies = h.mock.requests.map((r) => JSON.stringify(r.body))
-  const wake = bodies.find((body) => body.includes('walls are ready'))
+  const wake = bodies.find((body) => body.includes('You are peer-b.') && body.includes('walls are ready'))
   expect(wake).toBeDefined()
   expect(wake).toContain('Swarm message msg-')
   expect(wake).toContain('from peer-a')
