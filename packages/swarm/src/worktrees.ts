@@ -55,6 +55,12 @@ export interface WorktreeTeamOptions {
   /** Commit dirty task worktrees before merging (default true). */
   autoCommit?: boolean
   /**
+   * Hard-link the main checkout's git-ignored environment (`node_modules`,
+   * native extensions) into each new worktree so members can build and test
+   * there (default true).
+   */
+  linkIgnored?: boolean
+  /**
    * Most member harnesses running at once (default 8). Each is a full
    * subprocess with its own model session, so an uncapped 50-task fanout
    * would spawn 50 of them; excess runs queue for a slot.
@@ -141,6 +147,7 @@ export class WorktreeRun {
   constructor(
     private readonly ctx: Context,
     private readonly options: WorktreeTeamOptions,
+    onProgress?: (line: string) => void,
   ) {
     this.slots = new Slots(options.maxConcurrent ?? 8)
     this.git = new SwarmGit({
@@ -149,6 +156,8 @@ export class WorktreeRun {
       ...(options.baseRef === undefined ? {} : { baseRef: options.baseRef }),
       ...(options.targetBranch === undefined ? {} : { targetBranch: options.targetBranch }),
       ...(options.worktreeDir === undefined ? {} : { worktreeDir: options.worktreeDir }),
+      ...(options.linkIgnored === undefined ? {} : { linkIgnored: options.linkIgnored }),
+      ...(onProgress === undefined ? {} : { onProgress }),
     })
   }
 

@@ -546,7 +546,7 @@ export default class SwarmService extends Service {
     ask: AskQuestion,
   ): Promise<TeamResult & { git?: MergeOutcome }> {
     const worktrees =
-      options.worktrees === undefined ? undefined : new WorktreeRun(this.ctx, options.worktrees)
+      options.worktrees === undefined ? undefined : new WorktreeRun(this.ctx, options.worktrees, options.onProgress)
     // Every member prompt through here carries the intent header (docs/05
     // §6.1). A peer-team keys each member run by its board task, whose own
     // intent replaces the run's; no other topology seeds the board.

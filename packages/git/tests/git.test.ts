@@ -1,5 +1,17 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, writeFileSync, existsSync, readFileSync, utimesSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  writeFileSync,
+  existsSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+  lstatSync,
+  statSync,
+  symlinkSync,
+  utimesSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
@@ -255,4 +267,64 @@ it('the first worktree teaches the repo to ignore .swarm/', async () => {
   await second.worktree('task-b')
   const lines = readFileSync(exclude, 'utf8').split('\n').filter((l) => l.trim() === '.swarm/')
   expect(lines).toHaveLength(1)
+})
+
+/**
+ * A checkout with an installed environment, all git-ignored: a dependency
+ * tree (with a relative workspace-style symlink), a compiled extension, a
+ * generated Python module, and build output.
+ */
+function installedRepo(): string {
+  const root = scratchRepo()
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: root })
+  writeFileSync(join(root, '.gitignore'), 'node_modules/\n*.so\ngit_info.py\ndist/\n')
+  mkdirSync(join(root, 'pkg'))
+  writeFileSync(join(root, 'pkg', '__init__.py'), '')
+  git('add', '.')
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'layout')
+  mkdirSync(join(root, 'node_modules', 'dep'), { recursive: true })
+  writeFileSync(join(root, 'node_modules', 'dep', 'index.js'), 'module.exports = 1\n')
+  symlinkSync('../pkg', join(root, 'node_modules', 'pkg-link'))
+  writeFileSync(join(root, 'pkg', 'ext.so'), 'ELF\n')
+  writeFileSync(join(root, 'pkg', 'git_info.py'), 'GIT_VERSION = "x"\n')
+  mkdirSync(join(root, 'dist'))
+  writeFileSync(join(root, 'dist', 'out.js'), 'built\n')
+  return root
+}
+
+it('a new worktree gets the ignored environment by hard link, never build output', async () => {
+  const root = installedRepo()
+  const progress: string[] = []
+  const git = new SwarmGit({ repoRoot: root, teamId: 'env', onProgress: (line) => progress.push(line) })
+  const wt = await git.worktree('task-a')
+
+  // Same inode: linked, not copied.
+  const dep = join('node_modules', 'dep', 'index.js')
+  expect(statSync(join(wt.path, dep)).ino).toBe(statSync(join(root, dep)).ino)
+  expect(statSync(join(wt.path, 'pkg', 'ext.so')).ino).toBe(statSync(join(root, 'pkg', 'ext.so')).ino)
+  expect(existsSync(join(wt.path, 'pkg', 'git_info.py'))).toBe(true)
+  // The workspace link stays a relative symlink, so it resolves inside the worktree.
+  const link = join(wt.path, 'node_modules', 'pkg-link')
+  expect(lstatSync(link).isSymbolicLink()).toBe(true)
+  expect(readlinkSync(link)).toBe('../pkg')
+  expect(realpathSync(link)).toBe(realpathSync(join(wt.path, 'pkg')))
+  // Build output is the member's to regenerate.
+  expect(existsSync(join(wt.path, 'dist'))).toBe(false)
+  expect(progress.some((l) => /linked 3 ignored path\(s\)/.test(l))).toBe(true)
+
+  // Still ignored in the worktree: auto-commit sweeps none of it in.
+  expect(await git.autoCommit(wt, 'noop')).toBe(false)
+  // The scratch worktree gets it too.
+  expect(existsSync(join(await git.scratch(), dep))).toBe(true)
+  await git.dispose()
+})
+
+it('linkIgnored: false leaves the worktree as git made it', async () => {
+  const root = installedRepo()
+  const git = new SwarmGit({ repoRoot: root, teamId: 'bare', linkIgnored: false })
+  const wt = await git.worktree('task-a')
+  expect(existsSync(join(wt.path, 'node_modules'))).toBe(false)
+  expect(existsSync(join(wt.path, 'pkg', 'ext.so'))).toBe(false)
+  expect(existsSync(join(wt.path, 'pkg', '__init__.py'))).toBe(true)
+  await git.dispose()
 })

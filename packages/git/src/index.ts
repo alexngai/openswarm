@@ -15,8 +15,18 @@
  */
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { appendFileSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import {
+  appendFileSync,
+  copyFileSync,
+  existsSync,
+  linkSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from 'node:fs'
+import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 
 const run = promisify(execFile)
@@ -30,7 +40,16 @@ export interface SwarmGitOptions {
   targetBranch?: string
   /** Directory holding this team's worktrees (default `<repoRoot>/.swarm/worktrees/<teamId>`). */
   worktreeDir?: string
+  /** Hard-link the main checkout's ignored environment into each new member worktree (default true). */
+  linkIgnored?: boolean
+  /** One human-readable progress line (what was linked, and how long it took). */
+  onProgress?: (line: string) => void
 }
+
+/** Ignored files an import needs: native extensions and generated Python source (spaCy's `git_info.py`). */
+const ENVIRONMENT_FILE = /\.(so|pyd|dylib|node|py)$/
+/** Never replicated: build output a member's build regenerates, and the swarm's own scratch. */
+const NOT_ENVIRONMENT = /(^|\/)(dist|build|out|coverage|\.cache|__pycache__|[^/]*\.egg-info|\.turbo|\.next|\.swarm)\//
 
 export interface WorktreeInfo {
   taskKey: string
@@ -155,9 +174,59 @@ export class SwarmGit {
     const path = join(this.dir, safe)
     this.ensureDir()
     await this.git(this.options.repoRoot, 'worktree', 'add', '-b', branch, path, await this.baseCommit())
+    await this.linkIgnored(path)
     const info: WorktreeInfo = { taskKey, path, branch }
     this.worktrees.set(taskKey, info)
     return info
+  }
+
+  /**
+   * Replicate the main checkout's git-ignored ENVIRONMENT into a fresh
+   * worktree. A worktree is gitignore-clean, so without this a TypeScript repo
+   * has no `node_modules` (a member can neither build nor test there) and a
+   * Python package with compiled extensions cannot even import.
+   *
+   * Replicated: every ignored `node_modules/` (nested ones too), ignored native
+   * extensions, and ignored `*.py` — never build output or `.swarm/`, and
+   * nothing the worktree already has. By hard link (`cp -al` keeps symlinks as
+   * symlinks, so relative workspace links resolve INSIDE the worktree), with a
+   * plain copy only where linking fails (across filesystems). Best-effort: a
+   * failure leaves the worktree as git made it, and says so.
+   */
+  private async linkIgnored(path: string): Promise<void> {
+    if (this.options.linkIgnored === false) return
+    const started = Date.now()
+    let linked = 0
+    try {
+      const { stdout } = await this.git(
+        this.options.repoRoot,
+        'ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--directory',
+      )
+      for (const entry of stdout.split('\0')) {
+        const isDir = entry.endsWith('/') // git marks directories with a trailing slash
+        const rel = isDir ? entry.slice(0, -1) : entry
+        const wanted = isDir ? /(^|\/)node_modules$/.test(rel) : ENVIRONMENT_FILE.test(rel)
+        if (!wanted || NOT_ENVIRONMENT.test(entry)) continue
+        const from = join(this.options.repoRoot, rel)
+        const to = join(path, rel)
+        if (existsSync(to)) continue
+        mkdirSync(dirname(to), { recursive: true })
+        // ponytail: a tool rewriting a linked file in place (in node_modules, a rebuilt .so) edits the main checkout's copy too; fine for dependency trees.
+        try {
+          if (isDir) await run('cp', ['-al', from, to])
+          else linkSync(from, to)
+        } catch {
+          rmSync(to, { recursive: true, force: true })
+          if (isDir) await run('cp', ['-a', from, to])
+          else copyFileSync(from, to)
+        }
+        linked++
+      }
+      this.options.onProgress?.(`worktree: linked ${linked} ignored path(s) in ${Date.now() - started}ms`)
+    } catch (error) {
+      const why = error instanceof Error ? error.message : String(error)
+      this.options.onProgress?.(`worktree: ignored environment only partly replicated (${linked} path(s)): ${why}`)
+    }
   }
 
   /**
@@ -318,6 +387,7 @@ export class SwarmGit {
         const path = join(this.dir, '.scratch')
         this.ensureDir()
         await this.git(this.options.repoRoot, 'worktree', 'add', '--detach', path, await this.baseCommit())
+        await this.linkIgnored(path)
         return path
       })()
     }
