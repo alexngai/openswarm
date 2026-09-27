@@ -948,6 +948,21 @@ authenticated principals (one carrier suffices).
     could (`5cfab25`, hard-linked `node_modules` and native extensions);
     and in Docker the first such link pays an overlayfs copy-up of up to
     3.5 min, which the runner now pays in setup for every arm.
+  - *Team-arm calibration, 2026-09-27* (live gpt-5.5, one seed, threads
+    run as `--team`'s coordinator team, 40M-token backstop), $285.79 total:
+    pyg-2.2.0 sharded 0.50 / program 0.20, vbt-1.3.0 sharded 0.00 /
+    program 0.00, about $70 a cell against about $2 for the single agent
+    (0.67 and 0.63 in the screen). Two causes, both in the pilot's
+    configuration rather than its question: (1) each thread's coordinator
+    fans out 7–13 subtasks from one base in separate worktrees, and
+    30–60 % of their branches conflict and are retained unmerged (e.g. a
+    thread merging 1 and retaining 8) — exactly the one-writer-per-scope
+    failure P4 exists for, with no scopes or resolver yet; (2) the backstop
+    binds (vbt program's t0 alone spent 40M tokens) and a stop favours
+    program, which lands as it goes, over sharded, which lands at the end.
+    Proposed before any pilot cell counts: one writer per thread (each
+    thread a single agent), and a budget stop that lands finished threads
+    in both arms.
   - *Checks before freezing, no model tokens:* whether the task images
     carry `.git` (the worktree arms need it; fall back to `git init`), and
     reference-solution stability over 2–3 runs per task.
