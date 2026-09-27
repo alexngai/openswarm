@@ -580,8 +580,12 @@ resume on miss, `swarm/steer`), A4 `e34b350` (`start`, `view`, `attach`,
 carrier, owner token in `$OPENSWARM_HOME/app-server.json`; `start`,
 `steer`, `cancel`, `attach`, `events` long-poll), A5b `9a671a1` (web
 carrier: `@Remote` methods on dsh's `/api` gateway, owner-only, refuses to
-load unless dsh's web server binds 127.0.0.1). Built in the order A3, A2,
-A4, A5, since direction methods address runs.
+load unless dsh's web server binds 127.0.0.1), A6 `bb5258e` (journaled
+questions at four triggers — stall after one nudge, restart budget, task
+attempts, cascade exhaustion — each defaulting to the old behavior;
+`swarm/questions`, `swarm/answer` with the tier rule; also raised through
+`ctx.userQuestions` in the web profile). Built in the order A3, A2, A4,
+A5, A6, since direction methods address runs.
 
 ### 7.4 Phase B — Verified landing
 
@@ -855,8 +859,10 @@ authenticated principals (one carrier suffices).
 - **Verifier environment**: a container, another host, or another OS user
   (D4), and how hidden tests reach it; a separate repository the train
   clones also supports a promoted train on another host.
-- **Question rate cap**: a starting default and how it adapts to measured
-  answer latency.
+- **Question rate cap**: started at 3 open questions per run, beyond which a
+  question is recorded `capped` and takes its default; protocol-started runs
+  wait 5 minutes for an answer, unattended runs none (A6). Still open: how
+  both adapt to measured answer latency.
 - **Task set**: fixed during the pilot, before C starts, so the experiment
   cannot be tuned after the fact. Researched 2026-09-25; recommendation:
   **RoadmapBench, Python and TypeScript only** (41 and 22 of its 115 tasks;
