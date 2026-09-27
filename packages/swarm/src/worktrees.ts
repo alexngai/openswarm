@@ -114,6 +114,24 @@ export function resolveMemberLaunch(cfg: WorktreeMemberConfig = {}): {
   }
 }
 
+/**
+ * The launcher's own OpenAI-compatible route (Azure or OpenAI), as member env,
+ * so a member reaches the model the way this process does unless its config
+ * says otherwise. The SDK spawner scrubs `*_KEY` names from the inherited env,
+ * so they travel explicitly; without this, starting a worktree run from the
+ * web or the CLI would need the caller to send an API key. Members speak only
+ * that route, so nothing is inherited for any other provider.
+ */
+export function inheritedRoute(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  if (env['OPENSWARM_DEFAULT_PROVIDER'] !== 'openai') return {}
+  const route: Record<string, string | undefined> = {
+    OPENSWARM_LLM_BASE_URL: env['OPENSWARM_LLM_BASE_URL'],
+    OPENSWARM_LLM_API_KEY: env['OPENSWARM_LLM_API_KEY'],
+    DSH_MODEL: env['OPENSWARM_DEFAULT_MODEL'],
+  }
+  return Object.fromEntries(Object.entries(route).filter((entry): entry is [string, string] => entry[1] !== undefined))
+}
+
 export class WorktreeRun {
   readonly teamId = randomUUID().slice(0, 8)
   private readonly git: SwarmGit
@@ -229,6 +247,7 @@ export class WorktreeRun {
     // one across runs if downloads cost.
     const caches = join(tmpdir(), 'openswarm-cache', this.teamId)
     return {
+      ...inheritedRoute(),
       // Session logs must not land inside the worktree, or auto-commit
       // sweeps them into the task branch.
       DSH_SESSION_ROOT: join(tmpdir(), 'openswarm-sessions', this.teamId),

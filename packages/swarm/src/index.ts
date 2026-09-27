@@ -62,7 +62,7 @@ import { homedir, hostname } from 'node:os'
 import { join } from 'node:path'
 import { RemotePeer } from './remote-peer'
 import { SwarmServer } from './server'
-import { WorktreeRun, resolveMemberLaunch, type WorktreeTeamOptions } from './worktrees'
+import { inheritedRoute, WorktreeRun, resolveMemberLaunch, type WorktreeTeamOptions } from './worktrees'
 import type { MergeOutcome } from 'openswarm-git'
 import type {
   MemberRunResult,
@@ -286,7 +286,7 @@ function resolveMemberModel(
   member: MemberSpec,
   cfg: import('./worktrees').WorktreeMemberConfig,
 ): string {
-  const model = member.agentOptions?.model ?? cfg.model ?? cfg.env?.['DSH_MODEL']
+  const model = member.agentOptions?.model ?? cfg.model ?? cfg.env?.['DSH_MODEL'] ?? inheritedRoute()['DSH_MODEL']
   if (model === undefined) {
     throw new Error(
       `remote member "${member.name}" has no model: set member.agentOptions.model, worktrees.member.model, or DSH_MODEL in worktrees.member.env`,
