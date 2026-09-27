@@ -134,6 +134,26 @@ const armOf = (id) => ({
   scaffold: id === "single" ? {} : { env: { OPENSWARM_PILOT_ARM: id, OPENSWARM_PILOT_PLAN: "/opt/pilot/plan.json" } },
 });
 
+/**
+ * swarmkit-eval 0.2.0's DockerWorkspace.run drops `opts.env` (fixed in its
+ * source, not yet published), so the harness's route and each arm's
+ * OPENSWARM_PILOT_* never reached the CLI and every cell ran as a bare single
+ * agent with no model route. Re-add the env as exports ahead of the command.
+ * Delete once a published swarmkit-eval passes it.
+ */
+class EnvDockerBackend extends DockerBackend {
+  async acquire(cell) {
+    const ws = await super.acquire(cell);
+    const run = ws.run.bind(ws);
+    const quote = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`;
+    ws.run = (cmd, opts = {}) => {
+      const env = Object.entries(opts.env ?? {}).map(([k, v]) => `export ${k}=${quote(v)};`).join(" ");
+      return run(env === "" ? cmd : `${env} ${cmd}`, opts);
+    };
+    return ws;
+  }
+}
+
 const dir = `.eval-runs/${RUN_ID}`;
 const results = await runEval(
   {
@@ -150,7 +170,7 @@ const results = await runEval(
   {
     benchmark,
     adapter: harness.adapter,
-    backend: new DockerBackend({
+    backend: new EnvDockerBackend({
       root: "/app",
       runArgs: [
         "--cpus", process.env.ROADMAP_CPUS ?? "8", "--memory", process.env.ROADMAP_MEM ?? "16g",
