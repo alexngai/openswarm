@@ -4,7 +4,7 @@
  * exactly as `POST /api/swarm/<method>` does (web-api.e2e.test.ts makes that
  * HTTP call against a real `openswarm-web` boot).
  */
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
 import TypertGatewayService from '@deepseek-ai/dsh-api-gateway'
 import SwarmWebCarrier from '../src/web'
@@ -56,6 +56,32 @@ it("serves the swarm protocol as the owner through dsh's gateway", async () => {
   })
   await expect(call('runs', { bogus: 1 })).rejects.toMatchObject({ code: 'arguments-invalid' })
   await expect(call('token', { role: 'owner' })).rejects.toMatchObject({ code: 'invocation-unavailable' })
+}, 30_000)
+
+it('lists and answers questions as the owner through the gateway', async () => {
+  const ctx = await boot('127.0.0.1')
+  ctx.plugin(SwarmWebCarrier)
+  await new Promise<void>((resolve) => ctx.inject(['typertGateway', 'swarmWeb'], () => resolve()))
+  const call = (method: string, args: object): Promise<any> =>
+    ctx.typertGateway.invoke({ namespace: 'swarm', method, args })
+
+  // A run held live by a command gate that waits, raising one question.
+  let pass!: (score: number) => void
+  const gate = new Promise<number>((resolve) => (pass = resolve))
+  const run = await h!.swarm.start(
+    { topology: 'cascade', tiers: [{ name: 't' }], task: 'hold', confidence: { commands: ['true'], tau: 1 } },
+    { parent: h!.lead.agent, confidenceRunner: () => gate, questions: { timeoutMs: 60_000 } },
+  )
+  const asked = run.ask({ trigger: 'stall', prompt: 'restart or wait?', options: ['restart', 'wait'], default: 'restart' })
+  await vi.waitFor(async () => expect((await call('questions', {})).questions).toHaveLength(1))
+  expect((await call('questions', { runId: run.id })).questions).toEqual([
+    expect.objectContaining({ runId: run.id, id: 'q-0', prompt: 'restart or wait?', status: 'open' }),
+  ])
+  expect(await call('answer', { runId: run.id, questionId: 'q-0', answer: 'wait' })).toEqual({ answered: true })
+  expect(await asked).toBe('wait')
+  expect(h!.swarm.view(run.id).questions[0]).toMatchObject({ status: 'answered', answer: 'wait', by: 'owner' })
+  pass(1)
+  await run.result
 }, 30_000)
 
 it('refuses to load unless the web server binds loopback', async () => {

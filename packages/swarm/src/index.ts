@@ -11,7 +11,8 @@
  * `<runsDir>/<run id>/journal.jsonl`, holds the run record, board and
  * mailbox, so `view`, `attach` and `runs` work from any process that can read
  * it. `runTeam` is `start` plus waiting for the result. Its handle takes
- * direction (`steer`, `cancel`) while the run is live (docs/05 A5).
+ * direction (`steer`, `cancel`) while the run is live (docs/05 A5), and
+ * answers to the questions the harness raises (A6).
  */
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
@@ -20,12 +21,19 @@ import { promisify } from 'node:util'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+// Type-only, for the `ctx.userQuestions` Context augmentation.
+import type {} from '@deepseek-ai/dsh-user-questions'
 import { SwarmBoard, foldBoard, type SwarmTaskSnapshot } from './board'
 import { SwarmJournal } from './journal'
 import { SwarmMailbox } from './mailbox'
 import {
+  foldQuestions,
   foldRun,
   recapJournal,
+  type AskQuestion,
+  type SwarmQuestion,
+  type SwarmQuestionEvent,
+  type SwarmQuestionRequest,
   type SwarmRunEvent,
   type SwarmRunRecord,
   type SwarmRunView,
@@ -36,6 +44,7 @@ import type { Principal } from './protocol'
 import type { PeerHandle } from './types'
 import {
   CASCADE_TASK_KEY,
+  head,
   runBoardWorkers,
   runCascade,
   runCommittee,
@@ -113,6 +122,17 @@ export interface RunHandle {
   steer(to: string, text: string, by?: string): Promise<SwarmSteerEvent['delivery']>
   /** Abort the run; it records `failed` with the abort error. */
   cancel(): void
+  /**
+   * Raise a question (docs/05 §6.1), journaled as `swarm/question`, and
+   * resolve the first of: an `answer`, an answer from dsh's
+   * `ctx.userQuestions` when one is mounted, or its default once
+   * `RunTeamOptions.questions.timeoutMs` passes. Past `maxOpen` open questions
+   * it is recorded `capped` and takes its default at once; a run that ends
+   * closes its open questions with their defaults. The triggers call this.
+   */
+  ask(question: SwarmQuestionRequest): Promise<string>
+  /** Answer an open question with one of its options; throws for anything else. */
+  answer(questionId: string, answer: string, by: string): void
   /** Settles after the run's `finished` or `failed` record is written. */
   readonly result: Promise<TeamResult & { git?: MergeOutcome }>
 }
@@ -152,6 +172,12 @@ export interface RunTeamOptions {
   worktrees?: WorktreeTeamOptions
   /** Receives human-readable progress lines as the team advances. */
   onProgress?: ReportProgress
+  /**
+   * Harness-raised questions (docs/05 §6.1): how long one waits for an answer
+   * before taking its default (default 0: at once, as an unattended run
+   * needs), and how many may be open before the next is capped (default 3).
+   */
+  questions?: { timeoutMs?: number; maxOpen?: number }
 }
 
 const execFileAsync = promisify(execFile)
@@ -261,6 +287,84 @@ export default class SwarmService extends Service {
       options.signal === undefined ? controller.signal : AbortSignal.any([options.signal, controller.signal])
     const record = (run: SwarmRunRecord) =>
       journal.append('swarm/run', { version: 1, run } satisfies SwarmRunEvent)
+
+    // The run's question queue (docs/05 §6.1). An open question's `close` is
+    // called by the first of an answer, userQuestions, the timeout or the run's
+    // end; the rest find it gone.
+    const { timeoutMs = 0, maxOpen = 3 } = options.questions ?? {}
+    const open = new Map<string, { question: SwarmQuestion; close: (answer: string, by?: string) => void }>()
+    let asked = 0
+    let ended = false
+    const recordQuestion = (question: SwarmQuestion) =>
+      journal.append('swarm/question', { version: 1, question } satisfies SwarmQuestionEvent)
+    const ask: AskQuestion = (request) => {
+      const question: SwarmQuestion = {
+        id: `q-${asked++}`,
+        kind: 'escalation',
+        tier: 'low',
+        ...request,
+        status: 'open',
+        raisedAt: Date.now(),
+      }
+      // The rate cap: the queue may not outrun the person answering it.
+      if (open.size >= maxOpen) {
+        const capped = { ...question, status: 'capped', answer: question.default, closedAt: Date.now() } as const
+        return recordQuestion(capped).then(() => question.default)
+      }
+      return new Promise<string>((resolve, reject) => {
+        let timer: ReturnType<typeof setTimeout> | undefined
+        const withdraw = new AbortController()
+        // Without `by` nobody answered, and the default was taken.
+        const close = (answer: string, by?: string) => {
+          if (!open.delete(question.id)) return
+          clearTimeout(timer)
+          withdraw.abort()
+          recordQuestion({
+            ...question,
+            status: by === undefined ? 'defaulted' : 'answered',
+            answer,
+            ...(by === undefined ? {} : { by }),
+            closedAt: Date.now(),
+          }).then(() => resolve(answer), reject)
+        }
+        open.set(question.id, { question, close })
+        recordQuestion(question).catch(reject)
+        if (ended || signal.aborted || timeoutMs <= 0) return close(question.default)
+        // Clamped: past 2^31-1 ms (about 24.8 days) setTimeout fires at once.
+        timer = setTimeout(() => close(question.default), Math.min(timeoutMs, 2 ** 31 - 1))
+        // A person at dsh's web surface may answer first. Its provider shows a
+        // question in the asking agent's session, so it refuses one without.
+        this.ctx
+          .get('userQuestions')
+          ?.ask({
+            agent: options.parent,
+            questions: [
+              {
+                id: question.id,
+                header: `swarm ${id}`,
+                question: question.prompt,
+                detail: `Defaults to ${question.default} in ${Math.round(timeoutMs / 1000)}s.`,
+                options: question.options.map((label) => ({ label })),
+              },
+            ],
+            signal: withdraw.signal,
+          })
+          .then(({ answers }) => {
+            const reply = answers.find((a) => a.id === question.id)
+            const text = (reply?.custom ?? reply?.selected[0])?.trim().toLowerCase()
+            // Anything but one of the options is no answer; the question stays open.
+            const choice = question.options.find((option) => option.toLowerCase() === text)
+            if (choice !== undefined) close(choice, 'userQuestions')
+          }, () => undefined)
+      })
+    }
+    /** A run that ends, settled or cancelled, takes every open question's default. */
+    const endQuestions = () => {
+      ended = true
+      for (const { question, close } of [...open.values()]) close(question.default)
+    }
+    signal.addEventListener('abort', endQuestions, { once: true })
+
     const running: SwarmRunRecord = {
       id,
       status: 'running',
@@ -271,13 +375,15 @@ export default class SwarmService extends Service {
       spec,
     }
     await record(running)
-    const result = this.execute(spec, { ...options, signal }, board, roster, mailbox)
+    const result = this.execute(spec, { ...options, signal }, board, roster, mailbox, ask)
       .then((result) => {
         // Aborted members settle as results, not rejections, so a cancelled
         // run can come back whole; it still failed.
         signal.throwIfAborted()
         return result
       })
+      // Journaled ahead of the run's own record.
+      .finally(endQuestions)
       .then(
         async (result) => {
           await record({ ...running, status: 'finished', endedAt: Date.now(), result })
@@ -311,14 +417,25 @@ export default class SwarmService extends Service {
         await journal.append('swarm/steer', { version: 1, to, text, delivery, by } satisfies SwarmSteerEvent)
         return delivery
       },
+      ask,
+      answer: (questionId, answer, by) => {
+        const entry = open.get(questionId)
+        if (entry === undefined) throw new Error(`run ${id} has no open question "${questionId}"`)
+        if (!entry.question.options.includes(answer)) {
+          throw new Error(`question ${questionId} takes ${entry.question.options.join(' or ')}, not "${answer}"`)
+        }
+        entry.close(answer, by)
+      },
     }
     this.liveRuns.set(id, handle)
     return handle
   }
 
-  /** A run this process started that has not settled yet. */
-  live(runId: string): RunHandle | undefined {
-    return this.liveRuns.get(runId)
+  /** A run this process started that has not settled yet; with no id, every such run. */
+  live(): RunHandle[]
+  live(runId: string): RunHandle | undefined
+  live(runId?: string): RunHandle[] | RunHandle | undefined {
+    return runId === undefined ? [...this.liveRuns.values()] : this.liveRuns.get(runId)
   }
 
   async runTeam(
@@ -333,7 +450,12 @@ export default class SwarmService extends Service {
     const events = SwarmJournal.read(this.journalPath(runId))
     const run = foldRun(events)
     if (run === undefined) throw new Error(`unknown run "${runId}"`)
-    return { run, tasks: [...foldBoard(events).values()], recap: recapJournal(events, since) }
+    return {
+      run,
+      tasks: [...foldBoard(events).values()],
+      questions: [...foldQuestions(events).values()],
+      recap: recapJournal(events, since),
+    }
   }
 
   /**
@@ -376,6 +498,7 @@ export default class SwarmService extends Service {
     board: SwarmBoard,
     roster: Map<string, PeerHandle>,
     mailbox: SwarmMailbox,
+    ask: AskQuestion,
   ): Promise<TeamResult & { git?: MergeOutcome }> {
     const worktrees =
       options.worktrees === undefined ? undefined : new WorktreeRun(this.ctx, options.worktrees)
@@ -383,14 +506,14 @@ export default class SwarmService extends Service {
       worktrees === undefined
         ? this.runMember(member, prompt, options)
         : worktrees.runMember(member, prompt, taskKey, options)
-    if (worktrees === undefined) return this.dispatch(spec, run, options, board, roster, mailbox)
+    if (worktrees === undefined) return this.dispatch(spec, run, options, board, roster, mailbox, ask)
 
     // Clear anything a previously crashed team left in this repo before adding
     // our own checkouts.
     await worktrees.sweepOrphans()
     let result: TeamResult
     try {
-      result = await this.dispatch(spec, run, options, board, roster, mailbox, worktrees)
+      result = await this.dispatch(spec, run, options, board, roster, mailbox, ask, worktrees)
     } catch (error) {
       // Abort (signal or throw): drop our worktrees rather than leaving them
       // for the next sweep. Branches survive, so committed work is recoverable.
@@ -446,6 +569,7 @@ export default class SwarmService extends Service {
     board: SwarmBoard,
     roster: Map<string, PeerHandle>,
     mailbox: SwarmMailbox,
+    ask: AskQuestion,
     worktrees?: WorktreeRun,
   ): Promise<TeamResult> {
     const report = options.onProgress
@@ -459,15 +583,15 @@ export default class SwarmService extends Service {
       case 'pipeline':
         return runPipeline(spec, run, report)
       case 'cascade':
-        return runCascade(spec, run, this.confidenceRunner(options, worktrees), report)
+        return runCascade(spec, run, this.confidenceRunner(options, worktrees), report, ask)
       case 'coordinator':
         return runCoordinator(spec, run, report)
       case 'peer-team':
         return spec.messaging === true
           ? worktrees === undefined
-            ? this.runPeerTeamMessaging(spec, options, board, roster, mailbox)
-            : this.runRemotePeerTeam(spec, options, board, roster, mailbox, worktrees)
-          : runPeerTeam(spec, run, board, report)
+            ? this.runPeerTeamMessaging(spec, options, board, roster, mailbox, ask)
+            : this.runRemotePeerTeam(spec, options, board, roster, mailbox, ask, worktrees)
+          : runPeerTeam(spec, run, board, report, ask)
     }
   }
 
@@ -484,6 +608,7 @@ export default class SwarmService extends Service {
     board: SwarmBoard,
     roster: Map<string, PeerHandle>,
     mailbox: SwarmMailbox,
+    ask: AskQuestion,
     worktrees: WorktreeRun,
   ): Promise<import('./types').PeerTeamResult> {
     if (spec.members.length === 0) throw new Error('peer-team needs at least one member')
@@ -497,8 +622,11 @@ export default class SwarmService extends Service {
     const sessionRoot = `${tmpdir()}/openswarm-sessions/${worktrees.teamId}`
     const peers: RemotePeer[] = []
     const report = options.onProgress ?? (() => {})
+    const idleTimeoutMs = spec.memberIdleTimeoutMs ?? 300_000
     const restarts = new Map<string, number>()
     const maxRestarts = spec.maxMemberRestarts ?? 1
+    /** Per member, `maxRestarts` plus one for each 'restart' answer once it was spent. */
+    const budgets = new Map<string, number>()
 
     /** Spawn one member; a restarted one resumes its session, so it is not re-briefed. */
     const spawnMember = async (member: MemberSpec, restarted = false): Promise<RemotePeer> => {
@@ -518,9 +646,17 @@ export default class SwarmService extends Service {
         },
         provider: member.agentOptions?.provider ?? cfg.provider ?? 'openai',
         model: resolveMemberModel(member, cfg),
-        ...(spec.memberIdleTimeoutMs === undefined
-          ? {}
-          : { idleTimeoutMs: spec.memberIdleTimeoutMs }),
+        idleTimeoutMs,
+        onStall: async () => {
+          const task = board.list().find((t) => t.status === 'in_progress' && t.owner === member.name)
+          const answer = await ask({
+            trigger: 'stall',
+            prompt: `${member.name} has produced no output for over ${Math.round((2 * idleTimeoutMs) / 1000)}s${task === undefined ? '' : ` on "${task.subject}"`} and did not respond to a nudge. Restart it (its session resumes), or wait another ${Math.round(idleTimeoutMs / 1000)}s?`,
+            options: ['restart', 'wait'],
+            default: 'restart',
+          })
+          return answer === 'wait' ? 'wait' : 'restart'
+        },
         briefing: restarted
           ? 'Your process was restarted. Your conversation and worktree are intact; continue your task.'
           : `${member.persona === undefined ? '' : `${member.persona}\n\n`}You are ${member.name}, a member of a swarm team working in your own git worktree. Your teammates: ${names.join(', ') || '(none)'}. Coordinate with them via the swarm_send_message tool. Acknowledge this briefing and wait for tasks.`,
@@ -533,19 +669,28 @@ export default class SwarmService extends Service {
     /**
      * Bring a dead member back with what it knew: the replacement reuses the
      * session id and root, so the member server resumes its persisted session,
-     * and its worktree still holds its file changes. Returns false once the
-     * restart budget is spent, which hands the task to `runBoardWorkers` to
+     * and its worktree still holds its file changes. Once the restart budget
+     * is spent it asks: 'restart' allows exactly one more, 'drop' (the
+     * default) returns false, which hands the task to `runBoardWorkers` to
      * retry on a sibling.
      */
-    const restart = async (member: MemberSpec): Promise<boolean> => {
+    const restart = async (member: MemberSpec, task: SwarmTaskSnapshot, error: unknown): Promise<boolean> => {
       const used = restarts.get(member.name) ?? 0
-      if (used >= maxRestarts) {
-        report(`${member.name} exhausted its restart budget (${maxRestarts})`)
-        return false
+      let budget = budgets.get(member.name) ?? maxRestarts
+      if (used >= budget) {
+        report(`${member.name} exhausted its restart budget (${budget})`)
+        const answer = await ask({
+          trigger: 'restart-budget',
+          prompt: `${member.name} died on "${task.subject}" with its restart budget spent (${used}/${budget}); last error: ${head(error instanceof Error ? error.message : String(error))}. Restart it once more, or drop it and leave the task to a sibling?`,
+          options: ['drop', 'restart'],
+          default: 'drop',
+        })
+        if (answer !== 'restart') return false
+        budgets.set(member.name, ++budget)
       }
       restarts.set(member.name, used + 1)
       await roster.get(member.name)?.remote?.close().catch(() => undefined)
-      report(`restarting ${member.name} (${used + 1}/${maxRestarts})`)
+      report(`restarting ${member.name} (${used + 1}/${budget})`)
       try {
         await spawnMember(member, true)
         return true
@@ -577,12 +722,13 @@ export default class SwarmService extends Service {
               // Mail stays pending for the replacement rather than being
               // consumed by a turn that never happened.
               prelude.release()
-              if (attempt > 0 || !(await restart(member))) throw error
+              if (attempt > 0 || !(await restart(member, claimed, error))) throw error
             }
           }
         },
         options.onProgress,
         spec.maxTaskAttempts,
+        ask,
       )
       const tasks = board.list().filter((t) => seeded.has(t.id))
       return { topology: 'peer-team', tasks, runs }
@@ -603,6 +749,7 @@ export default class SwarmService extends Service {
     board: SwarmBoard,
     roster: Map<string, PeerHandle>,
     mailbox: SwarmMailbox,
+    ask: AskQuestion,
   ): Promise<import('./types').PeerTeamResult> {
     if (spec.members.length === 0) throw new Error('peer-team needs at least one member')
     const lead = options.parent
@@ -638,6 +785,7 @@ export default class SwarmService extends Service {
           }),
         options.onProgress,
         spec.maxTaskAttempts,
+        ask,
       )
     } finally {
       for (const dispose of disposers) dispose()

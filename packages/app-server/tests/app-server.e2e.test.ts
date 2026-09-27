@@ -200,12 +200,16 @@ it('refuses everything before auth, and each principal beyond its policy', async
   for (const [method, params] of direction) {
     await expect(viewer.request(method, params)).rejects.toThrow(`FORBIDDEN: viewer may not call ${method}`)
   }
+  // Nor answers a question, which neither a viewer nor a member may (docs/05 §7.3 exit criterion 4).
+  const answer = { runId, questionId: 'q-0', answer: 'drop' }
+  await expect(viewer.request('swarm/answer', answer)).rejects.toThrow('FORBIDDEN: viewer may not call swarm/answer')
   await expect(viewer.request('initialize', handshake)).rejects.toThrow('FORBIDDEN: viewer may not call initialize')
 
   const member = await connectClient(ctx, await mint({ role: 'member', runId, member: 'a' }))
   await expect(member.request('swarm/steer', { runId, to: 'b', text: 'hi' })).rejects.toThrow(
     'FORBIDDEN: member may not call swarm/steer',
   )
+  await expect(member.request('swarm/answer', answer)).rejects.toThrow('FORBIDDEN: member may not call swarm/answer')
 
   const driver = await connectClient(ctx, await mint({ role: 'driver' }))
   await expect(driver.request('swarm/token', { role: 'owner' })).rejects.toThrow(

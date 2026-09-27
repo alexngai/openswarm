@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import { expect, it } from 'vitest'
 import { SwarmBoard, SwarmBoardError, foldBoard } from '../src/board'
 import { SwarmJournal } from '../src/journal'
+import type { SwarmQuestionRequest } from '../src/run'
+import type { MemberSpec } from '../src/types'
 
 async function bootBoard() {
   const journal = SwarmJournal.open(join(mkdtempSync(join(tmpdir(), 'openswarm-board-test-')), 'journal.jsonl'))
@@ -206,6 +208,89 @@ it('a member dying on a task does not kill the team — a sibling finishes it', 
   expect(board.list().filter((t) => t.status === 'completed')).toHaveLength(2)
   expect(Object.values(runs).every((r) => r.member === 'm2')).toBe(true)
   expect(m1Failed).toBe(true)
+}, 15_000)
+
+it("a task out of attempts is asked about first; 'retry' leaves it to a sibling for one more", async () => {
+  const { board } = await bootBoard()
+  const task = await board.create({ subject: 'flaky', prompt: 'p' })
+  const { runBoardWorkers } = await import('../src/topologies')
+  const asked: { prompt: string; claimed: string | undefined }[] = []
+  let failed: string | undefined
+  const runs = await runBoardWorkers(
+    [{ name: 'm1' }, { name: 'm2' }],
+    board,
+    new Set([task.id]),
+    async (member, claimed) => {
+      if (failed === undefined) {
+        failed = member.name
+        throw new Error(`${member.name} broke\nwith a trace`)
+      }
+      return { member: member.name, runId: 'r', output: [], text: `did ${claimed.subject}`, stopReason: 'completed' as const }
+    },
+    undefined,
+    1,
+    async (question) => {
+      // Asked while the claim still holds: no sibling can start it meanwhile.
+      asked.push({ prompt: question.prompt, claimed: board.list()[0]!.owner })
+      expect(question).toMatchObject({ trigger: 'task-attempts', options: ['abandon', 'retry'], default: 'abandon' })
+      return 'retry'
+    },
+  )
+  expect(asked).toEqual([
+    {
+      prompt: `task "flaky" failed 1 of 1 allowed attempt(s), last on ${failed}: ${failed} broke with a trace. Retry it once more on a sibling, or abandon it and its dependents?`,
+      claimed: failed,
+    },
+  ])
+  expect(runs[task.id]!.member).not.toBe(failed)
+  expect(board.list()[0]!.status).toBe('completed')
+}, 15_000)
+
+it('nobody is asked about a task no sibling is left to retry, and an abandoned task is never run again', async () => {
+  const { runBoardWorkers } = await import('../src/topologies')
+  const asked: string[] = []
+  const ask = async (question: SwarmQuestionRequest) => (asked.push(question.prompt), 'abandon')
+  const done = (member: MemberSpec) => ({ member: member.name, runId: 'r', output: [], text: 'ok', stopReason: 'completed' as const })
+
+  // Two members, two attempts: the second failure is the last member's.
+  const lone = await bootBoard()
+  const flaky = await lone.board.create({ subject: 'flaky', prompt: 'p' })
+  await expect(
+    runBoardWorkers([{ name: 'm1' }, { name: 'm2' }], lone.board, new Set([flaky.id]), async (member) => {
+      throw new Error(`${member.name} broke`)
+    }, undefined, undefined, ask),
+  ).rejects.toThrow(/abandoned 1 task/)
+  expect(asked).toEqual([])
+
+  // A member parked behind a slow task does not pick the abandoned poison back up.
+  const { board } = await bootBoard()
+  const poison = await board.create({ subject: 'poison', prompt: 'p' })
+  const slow = await board.create({ subject: 'slow', prompt: 'p' })
+  const after = await board.create({ subject: 'after', prompt: 'p', blockedBy: [slow.id] })
+  const ran: string[] = []
+  await expect(
+    runBoardWorkers(
+      [{ name: 'm1' }, { name: 'm2' }, { name: 'm3' }, { name: 'm4' }],
+      board,
+      new Set([poison.id, slow.id, after.id]),
+      async (member, claimed) => {
+        ran.push(claimed.subject)
+        if (claimed.subject === 'poison') throw new Error('poison')
+        if (claimed.subject === 'slow') await new Promise((resolve) => setTimeout(resolve, 300))
+        return done(member)
+      },
+      undefined,
+      undefined,
+      ask,
+    ),
+  ).rejects.toThrow(/abandoned 1 task\(s\) — task-0: poison/)
+  expect(ran.filter((subject) => subject === 'poison')).toHaveLength(2)
+  expect(asked).toHaveLength(1)
+  expect(board.list().map((t) => [t.subject, t.status])).toEqual([
+    ['poison', 'pending'],
+    ['slow', 'completed'],
+    ['after', 'completed'],
+  ])
 }, 15_000)
 
 it('a task blocked by an abandoned one is abandoned too, rather than parking the team', async () => {

@@ -8,8 +8,15 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, expect, it } from 'vitest'
-import { RemotePeer, SwarmMailbox, SwarmServer, type PeerHandle } from '../src/index'
+import { afterEach, expect, it, vi } from 'vitest'
+import {
+  RemotePeer,
+  SwarmMailbox,
+  SwarmServer,
+  foldQuestions,
+  type PeerHandle,
+  type SwarmQuestion,
+} from '../src/index'
 import { resolveMemberLaunch } from '../src/worktrees'
 import { bootHarness, type TestHarness } from './boot'
 
@@ -228,12 +235,13 @@ it('a member whose runtime dies mid-turn fails loud instead of hanging the team'
   await expect(pending).rejects.toThrow(/exited before its turn completed/)
 }, 30_000)
 
-it('a member that goes silent mid-turn fails on the idle clock', async () => {
+it('a member that goes silent mid-turn is nudged, then fails on the idle clock', async () => {
   // 'stall' holds the request open producing NO events — the wedged-child case
   // the stream-ended check cannot see, because the stream stays open.
   h = await bootHarness({ sequence: ['success', 'stall'], repeatLast: true, successText: 'ok' })
   const cwd = mkdtempSync(join(tmpdir(), 'openswarm-remote-idle-'))
   const launch = resolveMemberLaunch()
+  const steer = vi.spyOn(RemotePeer.prototype, 'steer')
   const peer = await RemotePeer.spawn({
     name: 'silent',
     command: launch.command,
@@ -247,8 +255,97 @@ it('a member that goes silent mid-turn fails on the idle clock', async () => {
   })
   peers.push(peer)
 
-  await expect(peer.ask([{ type: 'text', text: 'go quiet' }])).rejects.toThrow(/no output for 1500ms/)
+  const started = Date.now()
+  await expect(peer.ask([{ type: 'text', text: 'go quiet' }])).rejects.toThrow(/no output for 1500ms after a nudge/)
+  // The first window's expiry nudged it; the second, still silent, failed the turn.
+  expect(steer).toHaveBeenCalledOnce()
+  expect(Date.now() - started).toBeGreaterThanOrEqual(3_000)
+  steer.mockRestore()
 }, 30_000)
+
+it("a stalled member's onStall 'wait' buys one more idle window, then it is asked again", async () => {
+  h = await bootHarness({ sequence: ['success', 'stall'], repeatLast: true, successText: 'ok' })
+  const launch = resolveMemberLaunch()
+  const answers = ['wait', 'restart'] as const
+  let asked = 0
+  const peer = await RemotePeer.spawn({
+    name: 'patient',
+    command: launch.command,
+    args: launch.args,
+    cwd: mkdtempSync(join(tmpdir(), 'openswarm-remote-wait-')),
+    env: memberEnv(h),
+    provider: 'openai',
+    model: 'mock-model',
+    briefing: 'You are patient. Acknowledge.',
+    idleTimeoutMs: 1_000,
+    onStall: async () => answers[asked++]!,
+  })
+  peers.push(peer)
+
+  const started = Date.now()
+  await expect(peer.ask([{ type: 'text', text: 'go quiet' }])).rejects.toThrow(/no output for 1000ms after a nudge/)
+  // The nudge's window, the window 'wait' bought, then 'restart' on the second ask.
+  expect(asked).toBe(2)
+  expect(Date.now() - started).toBeGreaterThanOrEqual(3_000)
+}, 30_000)
+
+it('a stall and a spent restart budget are questions to the run; answered restart, the member finishes', async () => {
+  const repo = scratchRepo()
+  h = await bootHarness({
+    // brief → task stalls (nudged, then the stall question) → restart prompt
+    // to the resumed replacement → the retried task succeeds.
+    sequence: ['success', 'stall', 'success', 'success'],
+    repeatLast: true,
+    successText: 'task done',
+  })
+  const progress: string[] = []
+  const run = await h.swarm.start(
+    {
+      topology: 'peer-team',
+      messaging: true,
+      members: [{ name: 'solo' }],
+      tasks: [{ subject: 'one', prompt: 'do task one' }],
+      memberIdleTimeoutMs: 1_000,
+      maxMemberRestarts: 0,
+    },
+    {
+      parent: h.lead.agent,
+      worktrees: { repoRoot: repo, member: { env: memberEnv(h) } },
+      questions: { timeoutMs: 60_000 },
+      onProgress: (line) => progress.push(line),
+    },
+  )
+  /** The run's open question from `trigger`, once raised. */
+  const raised = (trigger: SwarmQuestion['trigger']) =>
+    vi.waitFor(
+      () => {
+        const open = [...foldQuestions(run.journal.events).values()].find((q) => q.trigger === trigger && q.status === 'open')
+        if (open === undefined) throw new Error(`no open ${trigger} question`)
+        return open
+      },
+      { timeout: 30_000, interval: 50 },
+    )
+
+  const stall = await raised('stall')
+  expect(stall.prompt).toBe(
+    'solo has produced no output for over 2s on "one" and did not respond to a nudge. Restart it (its session resumes), or wait another 1s?',
+  )
+  run.answer(stall.id, 'restart', 'owner')
+  const budget = await raised('restart-budget')
+  expect(budget.prompt).toBe(
+    'solo died on "one" with its restart budget spent (0/0); last error: swarm member "solo" produced no output for 1000ms after a nudge. Restart it once more, or drop it and leave the task to a sibling?',
+  )
+  run.answer(budget.id, 'restart', 'owner')
+
+  const result = await run.result
+  if (result.topology !== 'peer-team') throw new Error('wrong topology')
+  for (const task of result.tasks) expect(task.status).toBe('completed')
+  expect(progress).toContain('restarting solo (1/1)')
+  expect(h.swarm.view(run.id).questions.map((q) => [q.trigger, q.status, q.answer, q.by])).toEqual([
+    ['stall', 'answered', 'restart', 'owner'],
+    ['restart-budget', 'answered', 'restart', 'owner'],
+  ])
+}, 120_000)
 
 it('a member that dies mid-task is restarted with recovered context and finishes', async () => {
   const repo = scratchRepo()

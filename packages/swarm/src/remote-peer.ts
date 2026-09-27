@@ -23,7 +23,8 @@ export interface RemotePeerOptions {
   model: string
   briefing: string
   /**
-   * Fail a turn that produces NO session event for this long (default 5min).
+   * Nudge a turn that produces NO session event for this long (default 5min),
+   * and fail it after as long again unless `onStall` says wait.
    *
    * Idle is measured on the event stream, not on turn completion, so a member
    * legitimately grinding through tool calls keeps resetting it — a bash tool
@@ -31,6 +32,12 @@ export interface RemotePeerOptions {
    * alive but wedged, which the stream-ended check cannot see.
    */
   idleTimeoutMs?: number
+  /**
+   * Asked when the idle clock expires again after a nudge (docs/05 §6.1):
+   * 'restart' fails the turn as a death (the default); 'wait' grants one more
+   * idle window, after which it is asked again.
+   */
+  onStall?: () => Promise<'restart' | 'wait'>
 }
 
 function textOf(blocks: ContentBlock[] | undefined): string {
@@ -55,7 +62,12 @@ export class RemotePeer {
   private readonly idleTimeoutMs: number
   private idleTimer: ReturnType<typeof setTimeout> | undefined
 
-  private constructor(name: string, client: HarnessClient, idleTimeoutMs: number) {
+  private constructor(
+    name: string,
+    client: HarnessClient,
+    idleTimeoutMs: number,
+    private readonly onStall: () => Promise<'restart' | 'wait'>,
+  ) {
     this.name = name
     this.sessionId = `swarm-member-${name}`
     this.client = client
@@ -69,7 +81,12 @@ export class RemotePeer {
       cwd: options.cwd,
       env: { ...process.env, ...options.env } as never,
     })
-    const peer = new RemotePeer(options.name, client, options.idleTimeoutMs ?? 300_000)
+    const peer = new RemotePeer(
+      options.name,
+      client,
+      options.idleTimeoutMs ?? 300_000,
+      options.onStall ?? (async () => 'restart'),
+    )
     client.start()
     await client.initialize({
       cwd: options.cwd,
@@ -89,9 +106,10 @@ export class RemotePeer {
     this.pump = (async () => {
       try {
         for await (const notification of subscription as any) {
-          // Any event is progress, not just turn/end.
-          if (this.idleTimer !== undefined) this.armIdle()
           const event = notification.params?.event
+          // Any event is progress, not just turn/end, except our own input
+          // (a prompt or a nudge) echoed back as it lands in the inbox.
+          if (this.idleTimer !== undefined && event?.type !== 'agent/inbox/spliced') this.armIdle()
           if (event?.type === 'assistant/message') {
             const content = event.data?.message?.content ?? event.data?.content
             if (Array.isArray(content) && content.length > 0) this.lastAssistant = content
@@ -119,24 +137,40 @@ export class RemotePeer {
   }
 
   /**
-   * (Re)start the idle clock. Expiry is treated exactly like a death: the
-   * pending turn fails loud and the runtime is torn down, because a wedged
-   * child holds a worktree and a model session open indefinitely.
+   * (Re)start the idle clock. The first expiry nudges the member through
+   * `steer` and re-arms; the next asks `onStall`. 'restart' is treated exactly
+   * like a death: the pending turn fails loud and the runtime is torn down,
+   * because a wedged child holds a worktree and a model session open
+   * indefinitely. 'wait' re-arms once more.
    */
-  private armIdle(): void {
+  private armIdle(nudged = false): void {
     this.clearIdle()
-    this.idleTimer = setTimeout(() => {
-      this.idleTimer = undefined
+    const timer = setTimeout(async () => {
       if (this.closing) return
+      if (!nudged) {
+        // Fire and forget: a wedged child may never answer the request.
+        this.steer(
+          `You have produced no output for ${Math.round(this.idleTimeoutMs / 1000)}s. If you are stuck, try another approach.`,
+        ).catch(() => undefined)
+        return this.armIdle(true)
+      }
+      const choice = await this.onStall().catch(() => 'restart' as const)
+      // Progress, the turn's end or close while that was pending moved the clock on.
+      // ponytail: the question behind a moot answer stays open until answered or
+      // timed out; pass onStall a signal to withdraw it if moot ones crowd the cap.
+      if (this.idleTimer !== timer || this.closing) return
+      if (choice === 'wait') return this.armIdle(true)
+      this.idleTimer = undefined
       this.died ??= new Error(
-        `swarm member "${this.name}" produced no output for ${this.idleTimeoutMs}ms`,
+        `swarm member "${this.name}" produced no output for ${this.idleTimeoutMs}ms after a nudge`,
       )
       this.turnWaiter?.()
       this.turnWaiter = undefined
       // Reap it; nothing is coming, and the process would otherwise linger.
       void this.client.close().catch(() => undefined)
     }, this.idleTimeoutMs)
-    if (typeof this.idleTimer === 'object' && 'unref' in this.idleTimer) this.idleTimer.unref()
+    this.idleTimer = timer
+    if (typeof timer === 'object' && 'unref' in timer) timer.unref()
   }
 
   private clearIdle(): void {

@@ -4,6 +4,7 @@
  * A run's lifecycle is a whole-snapshot `swarm/run` event, folded like board
  * tasks (last wins): `running` at start, then `finished` or `failed` when its
  * result settles, or `interrupted` when `attach` takes over from a dead writer.
+ * Questions the harness raises (A6) are folded the same way, per question id.
  */
 import type { MergeOutcome } from 'openswarm-git'
 import type { SwarmTaskSnapshot } from './board'
@@ -41,10 +42,44 @@ export type SwarmSteerEvent = {
   by: string
 }
 
+/**
+ * A harness-raised question (docs/05 §6.1), whole snapshot: the latest
+ * `swarm/question` event per id wins.
+ */
+export interface SwarmQuestion {
+  /** `q-<n>`, unique within its run. */
+  readonly id: string
+  readonly trigger: 'stall' | 'restart-budget' | 'task-attempts' | 'verifier-failure'
+  readonly kind: 'escalation' | 'consent' | 'approval'
+  /** An owner answers any tier; a driver only `low`, and never a consent or approval (§5.3). */
+  readonly tier: 'low' | 'high'
+  readonly prompt: string
+  readonly options: readonly string[]
+  /** Taken on timeout, past the open-question cap, or when the run ends. */
+  readonly default: string
+  readonly status: 'open' | 'answered' | 'defaulted' | 'capped'
+  readonly answer?: string
+  /** The answering principal's role, or `userQuestions` for dsh's web prompt. */
+  readonly by?: string
+  readonly raisedAt: number
+  readonly closedAt?: number
+}
+
+/** Payload of a `swarm/question` journal event. */
+export type SwarmQuestionEvent = { version: 1; question: SwarmQuestion }
+
+/** What a trigger asks; unless it says otherwise, a low-tier escalation. */
+export type SwarmQuestionRequest = Pick<SwarmQuestion, 'trigger' | 'prompt' | 'options' | 'default'> &
+  Partial<Pick<SwarmQuestion, 'kind' | 'tier'>>
+
+/** Raise a question and resolve its answer, one of its options. */
+export type AskQuestion = (question: SwarmQuestionRequest) => Promise<string>
+
 /** A run as its journal records it. */
 export interface SwarmRunView {
   run: SwarmRunRecord
   tasks: SwarmTaskSnapshot[]
+  questions: SwarmQuestion[]
   /** {@link recapJournal} lines. */
   recap: string[]
 }
@@ -54,6 +89,17 @@ export function foldRun(events: ReadonlyArray<{ type: string; data?: unknown }>)
   let run: SwarmRunRecord | undefined
   for (const event of events) if (event.type === 'swarm/run') run = (event.data as SwarmRunEvent).run
   return run
+}
+
+/** Every question the journal records, oldest first, each as its latest snapshot. */
+export function foldQuestions(events: ReadonlyArray<{ type: string; data?: unknown }>): Map<string, SwarmQuestion> {
+  const questions = new Map<string, SwarmQuestion>()
+  for (const event of events) {
+    if (event.type !== 'swarm/question') continue
+    const { question } = event.data as SwarmQuestionEvent
+    questions.set(question.id, question)
+  }
+  return questions
 }
 
 /**
@@ -87,6 +133,12 @@ export function recapJournal(events: readonly SwarmJournalEvent[], since = -1): 
     } else if (type === 'swarm/steer') {
       const { by, to, delivery, text } = data as SwarmSteerEvent
       line = `steer ${by}→${to} (${delivery}): ${text.split('\n')[0]!.slice(0, 80)}`
+    } else if (type === 'swarm/question') {
+      const { question: q } = data as SwarmQuestionEvent
+      if (q.status === 'open') line = `${q.id} raised (${q.trigger}): ${q.prompt.split('\n')[0]!.slice(0, 80)}`
+      else if (q.status === 'answered') line = `${q.id} answered by ${q.by}: ${q.answer}`
+      else if (q.status === 'defaulted') line = `${q.id} defaulted to ${q.answer}`
+      else line = `${q.id} capped (${q.trigger}): defaulted to ${q.answer}`
     } else if (type === 'swarm/run') {
       const { run } = data as SwarmRunEvent
       const where = `pid ${run.writer.pid} on ${run.writer.host}`

@@ -229,12 +229,12 @@ export class SwarmBoard {
     })
   }
 
-  /** Atomically claim the first ready task, or undefined when none is ready. */
-  claimNextReady(owner: string): Promise<SwarmTaskSnapshot | undefined> {
+  /** Atomically claim the first ready task not skipped, or undefined when none is ready. */
+  claimNextReady(owner: string, skip: (task: SwarmTaskSnapshot) => boolean = () => false): Promise<SwarmTaskSnapshot | undefined> {
     return this.transact(async () => {
       const state = this.fold()
       for (const task of state.values()) {
-        if (this.ready(task, state)) {
+        if (this.ready(task, state) && !skip(task)) {
           return this.commit({
             ...task,
             revision: task.revision + 1,

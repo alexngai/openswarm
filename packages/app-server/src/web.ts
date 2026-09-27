@@ -44,8 +44,16 @@ export default class SwarmWebCarrier extends TypertRemoteService {
     return this.call('events', { runId, afterSeq, waitMs })
   }
 
-  @Remote start(spec: object, provider?: string, model?: string, worktrees?: object) {
-    return this.call('start', { spec, provider, model, worktrees })
+  @Remote start(spec: object, provider?: string, model?: string, worktrees?: object, questionTimeoutMs?: number) {
+    return this.call('start', { spec, provider, model, worktrees, questionTimeoutMs })
+  }
+
+  @Remote questions(runId?: string) {
+    return this.call('questions', { runId })
+  }
+
+  @Remote answer(runId: string, questionId: string, answer: string) {
+    return this.call('answer', { runId, questionId, answer })
   }
 
   @Remote steer(runId: string, to: string, text: string) {

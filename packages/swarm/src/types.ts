@@ -135,7 +135,10 @@ export interface PeerTeamSpec {
    * dead member's persisted session in its surviving worktree.
    */
   maxMemberRestarts?: number
-  /** Fail a member turn producing no event for this long (default 5min). */
+  /**
+   * Nudge a member turn producing no event for this long, then raise a stall
+   * question after as long again (default 5min).
+   */
   memberIdleTimeoutMs?: number
 }
 

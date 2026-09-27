@@ -8,7 +8,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import type { RunHandle } from './index'
 import { SwarmJournal, type SwarmJournalEvent } from './journal'
-import { foldRun } from './run'
+import { foldQuestions, foldRun } from './run'
 
 export type Role = 'owner' | 'viewer' | 'driver' | 'member'
 
@@ -26,15 +26,15 @@ export interface Principal {
 export type MethodGroup = 'state' | 'direction' | 'answer' | 'member' | 'admin'
 
 /**
- * The groups each role may call; anything else is refused. `answer` gets its
- * method with A6's questions, and `member` takes member-side methods as they
- * move onto the protocol. The socket carrier adds dsh's SDK pass-through,
- * for owners only.
+ * The groups each role may call; anything else is refused. A driver's
+ * `answer` is tiered further by `swarm/answer` itself, and `member` takes
+ * member-side methods as they move onto the protocol. The socket carrier adds
+ * dsh's SDK pass-through, for owners only.
  */
 export const POLICY: Readonly<Record<Role, readonly MethodGroup[]>> = {
   owner: ['state', 'direction', 'answer', 'admin'],
   viewer: ['state'],
-  driver: ['state', 'direction'],
+  driver: ['state', 'direction', 'answer'],
   member: ['member', 'state'],
 }
 
@@ -118,17 +118,69 @@ const METHODS: Record<string, Method> = {
       return { events: eventsOf(ctx, runId).filter((event) => event.seq > afterSeq) }
     },
   },
+  'swarm/questions': {
+    group: 'state',
+    params: { 'runId?': 'string' },
+    handle: (ctx, { runId }, principal) => {
+      // Every live run's, or one run's, folded from its file if not live here.
+      const only = runId ?? boundRun(principal)
+      const runIds = only === undefined ? ctx.swarm.live().map((run) => run.id) : [only]
+      return {
+        questions: runIds.flatMap((id) =>
+          [...foldQuestions(eventsOf(ctx, id)).values()]
+            .filter((question) => question.status === 'open')
+            .map((question) => ({ runId: id, ...question })),
+        ),
+      }
+    },
+  },
+  'swarm/answer': {
+    group: 'answer',
+    params: { runId: 'string', questionId: 'string', answer: 'string' },
+    handle: (ctx, { runId, questionId, answer }, principal) => {
+      const run = liveRun(ctx, runId)
+      const question = foldQuestions(run.journal.events).get(questionId)
+      const missing = () => new SwarmProtocolError('NOT_FOUND', `run ${runId} has no open question "${questionId}"`)
+      if (question?.status !== 'open') throw missing()
+      // A driver answers only low tiers; a consent or approval needs a human (P8).
+      const human = question.kind === 'consent' || question.kind === 'approval'
+      if (principal.role !== 'owner' && (question.tier !== 'low' || human)) {
+        throw new SwarmProtocolError('FORBIDDEN', `${principal.role} may not answer ${question.tier}-tier ${question.kind} ${questionId}`)
+      }
+      if (!question.options.includes(answer)) {
+        throw invalid('swarm/answer', `answer must be one of ${question.options.join(', ')}`)
+      }
+      try {
+        run.answer(questionId, answer, principal.role)
+      } catch {
+        // Closed a moment ago, its record still being written.
+        throw missing()
+      }
+      return { answered: true }
+    },
+  },
   'swarm/start': {
     group: 'direction',
-    params: { spec: 'object', 'provider?': 'string', 'model?': 'string', 'worktrees?': 'object' },
-    handle: async (ctx, { spec, provider = 'deepseek-official', model, worktrees }) => {
+    params: {
+      spec: 'object',
+      'provider?': 'string',
+      'model?': 'string',
+      'worktrees?': 'object',
+      'questionTimeoutMs?': 'number',
+    },
+    // A person is attached to a run started here, so its questions wait for one (5 min by default).
+    handle: async (ctx, { spec, provider = 'deepseek-official', model, worktrees, questionTimeoutMs = 300_000 }) => {
       const lead = await ctx.agents.create({
         sessionId: `swarm-app-${randomUUID()}`,
         meta: { cwd: process.cwd() },
         agentOptions: { provider, ...(model === undefined ? {} : { model }) },
       } as never)
       const run = await ctx.swarm
-        .start(spec, { parent: lead.agent, ...(worktrees === undefined ? {} : { worktrees }) })
+        .start(spec, {
+          parent: lead.agent,
+          questions: { timeoutMs: questionTimeoutMs },
+          ...(worktrees === undefined ? {} : { worktrees }),
+        })
         .catch(async (error: unknown) => {
           await lead.dispose()
           throw error
@@ -207,8 +259,9 @@ export async function dispatch(
   if (p['runId'] !== undefined && !/^[\w-]+$/.test(p['runId'])) throw invalid(method, `invalid run id "${p['runId']}"`)
   // A bound principal lists only its run and addresses no other; starting one is another.
   const bound = boundRun(principal)
-  const addressesBound = entry.params['runId'] !== undefined && p['runId'] === bound
-  if (bound !== undefined && method !== 'swarm/runs' && !addressesBound) {
+  const addressesBound = ('runId' in entry.params || 'runId?' in entry.params) && p['runId'] === bound
+  const lists = method === 'swarm/runs' || (method === 'swarm/questions' && p['runId'] === undefined)
+  if (bound !== undefined && !lists && !addressesBound) {
     throw new SwarmProtocolError('FORBIDDEN', `${method}: this principal is bound to run ${bound}`)
   }
   return entry.handle(ctx, p, principal)

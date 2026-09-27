@@ -31,15 +31,16 @@ it('the policy matrix: each role reaches exactly its groups', async () => {
   const expected: Record<Role, MethodGroup[]> = {
     owner: ['state', 'direction', 'answer', 'admin'],
     viewer: ['state'],
-    driver: ['state', 'direction'],
+    driver: ['state', 'direction', 'answer'],
     member: ['member', 'state'],
   }
-  // Every group, including the two with no Phase A method yet.
+  // Every group, including `member`, which has no Phase A method yet.
   expect(POLICY).toEqual(expected)
   // One call per group that has methods; a permitted call fails, if at all, for another reason.
   const probes: [MethodGroup, string, object][] = [
     ['state', 'swarm/runs', {}],
     ['direction', 'swarm/cancel', { runId: 'run-00000000' }],
+    ['answer', 'swarm/answer', { runId: 'run-00000000', questionId: 'q-0', answer: 'drop' }],
     ['admin', 'swarm/token', { role: 'viewer' }],
   ]
   for (const role of Object.keys(principals) as Role[]) {

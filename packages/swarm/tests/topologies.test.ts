@@ -7,7 +7,8 @@ import {
   runPipeline,
   type RunMember,
 } from '../src/topologies'
-import type { MemberRunResult, MemberSpec } from '../src/types'
+import type { SwarmQuestionRequest } from '../src/run'
+import type { CascadeSpec, MemberRunResult, MemberSpec } from '../src/types'
 
 /** Scripted member runner: replies per member name (FIFO), records prompts. */
 function fakeRun(script: Record<string, string[]>) {
@@ -119,6 +120,33 @@ it('cascade exhausting every tier returns unaccepted with the last attempt', asy
   expect(result.accepted).toBe(false)
   expect(result.tier).toBe(1)
   expect(result.final.text).toBe('a2')
+})
+
+it("cascade asks before giving up; 'retry' runs the top tier once more with the last feedback", async () => {
+  const spec: CascadeSpec = { topology: 'cascade', tiers: [m('cheap'), m('strong')], task: 'solve it', gate: m('gate') }
+  const asked: SwarmQuestionRequest[] = []
+  const retry = async (question: SwarmQuestionRequest) => (asked.push(question), 'retry')
+
+  const passes = fakeRun({ cheap: ['a1'], strong: ['a2', 'a3'], gate: ['REVISE: no', 'REVISE: still no', 'APPROVED'] })
+  const accepted = await runCascade(spec, passes.run, undefined, undefined, retry)
+  expect(accepted).toMatchObject({ accepted: true, tier: 1, final: { text: 'a3' } })
+  expect(accepted.attempts).toHaveLength(3)
+  expect(passes.prompts.filter((p) => p.member === 'strong').at(-1)!.prompt).toContain('REVISE: still no')
+  expect(asked).toEqual([
+    {
+      trigger: 'verifier-failure',
+      prompt:
+        'cascade task "solve it" failed on all 2 tier(s) (2 attempt(s)); last feedback: REVISE: still no. Retry strong once more with that feedback, or stop?',
+      options: ['stop', 'retry'],
+      default: 'stop',
+    },
+  ])
+
+  // A retry that fails too is the result, and nobody is asked twice.
+  const fails = fakeRun({ cheap: ['a1'], strong: ['a2', 'a3'], gate: ['REVISE: no', 'REVISE: still no', 'REVISE: never'] })
+  const rejected = await runCascade(spec, fails.run, undefined, undefined, retry)
+  expect(rejected).toMatchObject({ accepted: false, tier: 1, final: { text: 'a3' } })
+  expect(asked).toHaveLength(2)
 })
 
 it('coordinator decomposes, round-robins workers, and synthesizes', async () => {

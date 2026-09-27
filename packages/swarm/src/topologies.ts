@@ -3,6 +3,7 @@
  * stay pure coordination logic over whatever runtime the service wires in.
  */
 import type { SwarmBoard } from './board'
+import type { AskQuestion } from './run'
 import type {
   CriticLoopResult,
   CriticLoopSpec,
@@ -65,6 +66,12 @@ export const CASCADE_TASK_KEY = 'task'
  * the previous behavior.
  */
 export type ReportProgress = (line: string) => void
+
+/** The default for a question nobody is there to answer: its own default, at once. */
+const unattended: AskQuestion = async (question) => question.default
+
+/** A text's whitespace-collapsed head, for question prompts. */
+export const head = (text: string, max = 160): string => text.replace(/\s+/g, ' ').trim().slice(0, max)
 
 export async function runFanout(
   spec: FanoutSpec,
@@ -197,6 +204,7 @@ export async function runCascade(
   run: RunMember,
   runConfidence?: RunConfidence,
   report: ReportProgress = () => {},
+  ask: AskQuestion = unattended,
 ): Promise<CascadeResult> {
   if (spec.tiers.length === 0) throw new Error('cascade needs at least one tier')
   if (spec.confidence !== undefined && runConfidence === undefined) {
@@ -204,7 +212,28 @@ export async function runCascade(
   }
   const attempts: CascadeResult['attempts'] = []
   let feedback: string | undefined
-  for (let tier = 0; tier < spec.tiers.length; tier++) {
+  const top = spec.tiers.length - 1
+  /**
+   * The tiers in order. The loop returns on an accepted tier, so resuming past
+   * the last one means every tier failed: ask, and on 'retry' run the top tier
+   * once more with the last feedback, returning whatever that attempt yields.
+   */
+  async function* tiers(): AsyncGenerator<number> {
+    for (let tier = 0; tier <= top; tier++) yield tier
+    const last = attempts.at(-1)!
+    const why =
+      last.result.stopReason === 'completed'
+        ? `last feedback: ${head(feedback ?? '')}`
+        : `${last.result.member} stopped (${last.result.stopReason})`
+    const answer = await ask({
+      trigger: 'verifier-failure',
+      prompt: `cascade task "${head(spec.task, 80)}" failed on all ${spec.tiers.length} tier(s) (${attempts.length} attempt(s)); ${why}. Retry ${spec.tiers[top]!.name} once more with that feedback, or stop?`,
+      options: ['stop', 'retry'],
+      default: 'stop',
+    })
+    if (answer === 'retry') yield top
+  }
+  for await (const tier of tiers()) {
     const member = spec.tiers[tier]!
     const prompt =
       feedback === undefined
@@ -346,11 +375,16 @@ export async function runBoardWorkers(
   runClaim: RunClaim,
   report: ReportProgress = () => {},
   maxTaskAttempts = 2,
+  ask: AskQuestion = unattended,
 ): Promise<Record<string, MemberRunResult>> {
   const runs: Record<string, MemberRunResult> = {}
   const attempts = new Map<string, number>()
+  /** Attempts granted past `maxTaskAttempts` by a 'retry' answer. */
+  const extra = new Map<string, number>()
   /** Tasks no member will finish, with the failure that condemned them. */
   const abandoned = new Map<string, string>()
+  /** Members still in the pool; one that fails leaves it. */
+  let active = members.length
   let settled = 0
 
   /**
@@ -376,7 +410,8 @@ export async function runBoardWorkers(
   await Promise.all(
     members.map(async (member) => {
       while (!done()) {
-        const claimed = await board.claimNextReady(member.name)
+        // An abandoned task is released to pending, but never run again.
+        const claimed = await board.claimNextReady(member.name, (task) => abandoned.has(task.id))
         if (claimed === undefined) {
           // Nothing ready: blockers are still in flight with other members.
           // Park until a sibling commits (or a short backstop elapses) rather
@@ -391,20 +426,37 @@ export async function runBoardWorkers(
           report(`[${++settled}/${seeded.size}] ${member.name}: ${claimed.subject}`)
           await board.complete(claimed.id, member.name, claimed.revision, result.text)
         } catch (error) {
+          // This member leaves the pool below, whatever else happens.
+          active--
           const reason = error instanceof Error ? error.message : String(error)
           const attempt = (attempts.get(claimed.id) ?? 0) + 1
           attempts.set(claimed.id, attempt)
-          // Release first: a claim left in_progress is unreclaimable, and a
-          // sibling retrying this task is the whole point.
-          await board.release(claimed.id, member.name, claimed.revision).catch(() => undefined)
-          if (attempt >= maxTaskAttempts) {
+          const allowed = maxTaskAttempts + (extra.get(claimed.id) ?? 0)
+          // Out of attempts: ask, if a sibling remains to take a retry, while
+          // the claim still holds, so none starts a task that may be abandoned.
+          // An ask that fails is no answer.
+          const retry =
+            attempt >= allowed &&
+            active > 0 &&
+            (await ask({
+              trigger: 'task-attempts',
+              prompt: `task "${claimed.subject}" failed ${attempt} of ${allowed} allowed attempt(s), last on ${member.name}: ${head(reason)}. Retry it once more on a sibling, or abandon it and its dependents?`,
+              options: ['abandon', 'retry'],
+              default: 'abandon',
+            }).catch(() => 'abandon')) === 'retry'
+          if (retry) extra.set(claimed.id, (extra.get(claimed.id) ?? 0) + 1)
+          if (attempt >= allowed && !retry) {
             // Retried enough. Condemning it stops a poison task from taking
-            // the roster down one member at a time.
+            // the roster down one member at a time; condemned before the
+            // release, so no sibling that wakes on it claims it again.
             abandon(claimed.id, reason)
             report(`task "${claimed.subject}" abandoned after ${attempt} attempt(s): ${reason}`)
           } else {
             report(`${member.name} failed "${claimed.subject}" (attempt ${attempt}): ${reason}`)
           }
+          // Then release: a claim left in_progress is unreclaimable, and a
+          // sibling retrying this task is the whole point.
+          await board.release(claimed.id, member.name, claimed.revision).catch(() => undefined)
           // Presume THIS member is the casualty and leave the pool; a healthy
           // sibling picks the task up. A member that was merely unlucky is
           // recovered by the caller's own respawn, not here.
@@ -433,6 +485,7 @@ export async function runPeerTeam(
   run: RunMember,
   board: SwarmBoard,
   report: ReportProgress = () => {},
+  ask: AskQuestion = unattended,
 ): Promise<PeerTeamResult> {
   if (spec.members.length === 0) throw new Error('peer-team needs at least one member')
   const seeded = new Set(await seedBoard(board, spec.tasks))
@@ -444,6 +497,7 @@ export async function runPeerTeam(
     (member, claimed) => run(member, claimed.prompt, claimed.id),
     report,
     spec.maxTaskAttempts,
+    ask,
   )
   const tasks = board.list().filter((t) => seeded.has(t.id))
   return { topology: 'peer-team', tasks, runs }
