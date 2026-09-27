@@ -252,11 +252,22 @@ const execFileAsync = promisify(execFile)
 /** Keep the tail: a failing build's useful part is at the end, not the top. */
 const OUTPUT_TAIL = 4_000
 
+/**
+ * The environment the gate's commands run in: the driver's, minus the npm
+ * invocation that launched the driver. `npx`/`npm run` export `npm_*` and
+ * `INIT_CWD` describing THAT invocation, and the graded repo's own npm then
+ * reads them as its config — an inherited `npm_config_allow_scripts` makes
+ * `npm ci` fail with EALLOWSCRIPTS, scoring a correct change 0.
+ */
+export function gateEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(env).filter(([key]) => !/^npm_/i.test(key) && key !== 'INIT_CWD'))
+}
+
 function defaultConfidenceRunner(cwd: string): RunConfidence {
   return async (commands) => {
     for (const command of commands) {
       try {
-        await execFileAsync('bash', ['-c', command], { cwd, maxBuffer: 16 * 1024 * 1024 })
+        await execFileAsync('bash', ['-c', command], { cwd, env: gateEnv(), maxBuffer: 16 * 1024 * 1024 })
       } catch (error) {
         const combined = `${(error as any)?.stdout ?? ''}${(error as any)?.stderr ?? ''}`
         return {
