@@ -32,7 +32,8 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { CommandInvocation, CommandResult } from '@deepseek-ai/dsh-commands'
 import type { JobOutcome } from '@deepseek-ai/dsh-jobs'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { CoordinatorResult, CoordinatorSpec, MemberSpec } from './types'
+import { coordinatorSpec } from './topologies'
+import type { CoordinatorResult, MemberSpec } from './types'
 
 export const name = 'openswarm-swarm-command'
 export const inject = ['commands', 'swarm']
@@ -84,16 +85,6 @@ export function renderCoordinatorResult(result: CoordinatorResult): string {
 
 function errText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
-}
-
-/** The team as a coordinator spec over N anonymous workers. */
-function specFor(task: string, workerCount: number): CoordinatorSpec {
-  return {
-    topology: 'coordinator',
-    coordinator: { name: 'coordinator' },
-    workers: Array.from({ length: workerCount }, (_, i) => ({ name: `worker-${i + 1}` })),
-    task,
-  }
 }
 
 function asCoordinator(result: { topology: string }): CoordinatorResult {
@@ -195,7 +186,7 @@ async function execute(
 ): Promise<CommandResult> {
   const parsed = parseSwarmLine(invocation.rawInput, defaults)
   if ('error' in parsed) return { kind: 'error', text: parsed.error }
-  const spec = specFor(parsed.task, parsed.workers)
+  const spec = coordinatorSpec(parsed.task, parsed.workers)
   const tracker = track(ctx, invocation, `/swarm ${invocation.rawInput.trim()}`)
 
   try {

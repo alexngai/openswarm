@@ -3,7 +3,9 @@
  * through `dispatch` with a principal as a carrier would bind it.
  */
 import { afterEach, expect, it } from 'vitest'
-import { POLICY, dispatch, type MethodGroup, type Principal, type Role, type TeamSpec } from '../src/index'
+import AgentDefaultModel from '@deepseek-ai/dsh-agent-default-model'
+import * as OpenAiChat from '../../llm-openai/src/index'
+import { POLICY, dispatch, type FanoutResult, type MethodGroup, type Principal, type Role, type TeamSpec } from '../src/index'
 import { bootHarness, type TestHarness } from './boot'
 
 let h: TestHarness | undefined
@@ -102,4 +104,21 @@ it('refuses unknown methods and malformed params, and reports unknown runs', asy
   for (const method of ['swarm/view', 'swarm/events', 'swarm/steer', 'swarm/cancel', 'swarm/attach']) {
     expect(await outcome(owner, method, { runId: 'run-00000000', to: 'a', text: 'hi' })).toMatch(/^NOT_FOUND: /)
   }
+})
+
+it('swarm/start without a provider or model leads with the harness default model', async () => {
+  // As in the openswarm profiles: no deepseek-official route, and the default model on another.
+  h = await bootHarness({ sequence: ['success'], repeatLast: true, successText: 'on the default route' }, undefined, {
+    module: OpenAiChat,
+    config: { routes: ['openai'], baseURLEnv: 'DEEPSEEK_BASE_URL', apiKeyEnv: 'DEEPSEEK_API_KEY', models: [{ id: 'mock-model' }] },
+    provider: 'openai',
+    model: 'mock-model',
+  })
+  h.ctx.plugin(AgentDefaultModel, { provider: 'openai', model: 'mock-model' })
+  await new Promise<void>((resolve) => h!.ctx.inject(['agentDefaultModel'], () => resolve()))
+  const spec: TeamSpec = { topology: 'fanout', members: [{ name: 'a' }], tasks: [{ member: 'a', prompt: 'go' }] }
+  const { runId } = (await dispatch(h.ctx, principals.owner, 'swarm/start', { spec })) as { runId: string }
+  // The member inherits the lead's route, so it answers only if the lead has one.
+  const { results } = (await h.swarm.live(runId)!.result) as FanoutResult
+  expect(results).toEqual([expect.objectContaining({ stopReason: 'completed', text: 'on the default route' })])
 })

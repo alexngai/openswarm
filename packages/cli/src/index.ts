@@ -36,6 +36,8 @@ import * as SessionPersistenceJsonl from '@deepseek-ai/dsh-session-persistence-j
 import * as Subagent from '@deepseek-ai/dsh-subagent'
 import * as SpawnInProcess from '@deepseek-ai/dsh-subagent-spawn-in-process'
 
+export { runControl } from './control'
+
 const plug = (m: unknown): any => (m as any).default ?? m
 
 interface LegacyMember {

@@ -6,6 +6,8 @@
  */
 import { randomBytes, randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
+// Type-only, for the `ctx.agentDefaultModel` Context augmentation.
+import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type { RunHandle } from './index'
 import { SwarmJournal, type SwarmJournalEvent } from './journal'
 import { foldQuestions, foldRun } from './run'
@@ -169,11 +171,17 @@ const METHODS: Record<string, Method> = {
       'questionTimeoutMs?': 'number',
     },
     // A person is attached to a run started here, so its questions wait for one (5 min by default).
-    handle: async (ctx, { spec, provider = 'deepseek-official', model, worktrees, questionTimeoutMs = 300_000 }) => {
+    handle: async (ctx, { spec, provider, model, worktrees, questionTimeoutMs = 300_000 }) => {
+      // Unnamed, the route is the harness's default model (the profile's
+      // agent-default-model row), as dsh's headless runner resolves it. An agent
+      // created without one has none: dsh does not fall back on its own.
+      const fallback = ctx.get('agentDefaultModel')?.currentSelection()
+      provider ??= fallback?.provider
+      model ??= fallback?.model
       const lead = await ctx.agents.create({
         sessionId: `swarm-app-${randomUUID()}`,
         meta: { cwd: process.cwd() },
-        agentOptions: { provider, ...(model === undefined ? {} : { model }) },
+        agentOptions: { ...(provider === undefined ? {} : { provider }), ...(model === undefined ? {} : { model }) },
       } as never)
       const run = await ctx.swarm
         .start(spec, {

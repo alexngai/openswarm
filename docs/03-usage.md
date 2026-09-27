@@ -21,13 +21,39 @@ openswarm web [flags]       open DeepSeek's browser UI on a swarm context
 openswarm serve [--port N]  start the app-server (default :4620)
 openswarm setup             (re)initialize profiles
 openswarm config            print resolved provider / model / home
+openswarm ps | board | questions | attach | start | steer | answer | kill
+                            control verbs (see below)
 ```
 
 Options: `--model <id>`, `--provider <azure|openai|bedrock>`, `--home <dir>`, `--port <n>`.
 `web` forwards its remaining flags verbatim to the dsh web app (`--host`,
 `--no-open`, `--trusted-host`, …).
 
-Profile home defaults to `$OPENSWARM_HOME` or `~/.openswarm`. Profiles are re-initialized by `setup` (or delete the home and re-run).
+Profile home defaults to `$OPENSWARM_HOME` or `~/.openswarm`; the launcher passes it to dsh as both `DSH_HOME` and `OPENSWARM_HOME`, so run journals (`<home>/runs`) and the app-server's credential file (`<home>/app-server.json`) land where the control verbs read them. Profiles are re-initialized by `setup` (or delete the home and re-run).
+
+## Control verbs
+
+The CLI side of steering ([docs/05](05-control-plane-redesign.md) §6.1), in `packages/cli` (`runControl`). The state verbs read run journals under `<home>/runs` directly, so they need no server and see a run whose process died:
+
+```
+openswarm ps [--json]                      runs: id, status, topology, age, writer pid
+openswarm board <run> [--json]             tasks (id, status, owner, subject), open question count
+openswarm questions [--run <id>] [--json]  open questions of running runs (or of one run)
+openswarm attach <run> [--no-follow]       board and recap; see below
+```
+
+`attach` on a settled run prints its board and recap and exits. On a running one whose writer (same host) is dead, it takes the run over — releases the dead writer's claims and records the run `interrupted` — and prints the board, the released claims and the recap. On one whose writer is alive, it prints the recap and then follows it, polling the journal each second, until the run settles (or Ctrl-C; `--no-follow` stops after the recap). A `ps` row whose writer died reads `pid N (dead)`.
+
+The direction verbs call a running `openswarm serve` over its socket as the owner, with the token it wrote to `<home>/app-server.json`; without a live server they exit 1 with `no app-server running`:
+
+```
+openswarm start <"task" | spec.json> [--workers N] [--provider P] [--model M] [--question-timeout MS]
+openswarm steer <run> --to <member> "text"   → immediate | enqueue
+openswarm answer <run> <question> <choice>
+openswarm kill <run>
+```
+
+`start` prints the run id. A task becomes the coordinator team `/swarm` builds (default 3 workers); a single word (no spaces) ending in `.json` is read as a `TeamSpec` file. `--provider`/`--model` name the lead's route (a route of the serving profile, e.g. `openai`, `azure`, `bedrock`); omitted, the lead takes the server's default model — the one `openswarm serve` was launched with. The run's questions wait `--question-timeout` ms (default 300000) for `answer`. A refusal from the server is printed as it arrives, led by its code (`NOT_FOUND: …`), with exit 1; usage errors exit 2. `pause`, `resume` and `join` are not implemented yet.
 
 ## Providers
 
@@ -285,7 +311,7 @@ inside the worktree, and merged. See `packages/swarm/tests/self-modify-live.test
   - `swarm/events { runId, afterSeq?, waitMs? } → { events }`: the run's journal events after `afterSeq` (default -1). For a run live in this server, a poll with nothing new waits up to `waitMs` (default 0, at most 30000) for the next event, so polling with the last `seq` follows a run.
   - `swarm/questions { runId? } → { questions: [{ runId, id, trigger, kind, tier, prompt, options, default, status, raisedAt }] }`: the open questions of every run live in this server, or of one run (a bound principal's own).
 - Direction:
-  - `swarm/start { spec, provider?, model?, worktrees?, questionTimeoutMs? } → { runId }`; the connection that starts the run gets a `swarm.runFinished` notification carrying the `TeamResult` (or `error`). The run's questions wait `questionTimeoutMs` (default 300000) for an answer.
+  - `swarm/start { spec, provider?, model?, worktrees?, questionTimeoutMs? } → { runId }`; the connection that starts the run gets a `swarm.runFinished` notification carrying the `TeamResult` (or `error`). The lead's route fills a missing `provider` or `model` from the harness's default model (`ctx.agentDefaultModel`, the profile's `agent-default-model` row), which members inherit. The run's questions wait `questionTimeoutMs` (default 300000) for an answer.
   - `swarm/steer { runId, to, text } → { delivery }`: a member of a messaging peer-team; `immediate` (next step boundary) under `worktrees`, else `enqueue` (its next turn). Other topologies have no addressable members.
   - `swarm/cancel { runId } → { cancelled: true }`: aborts the run (a messaging peer-team's members finish their current turn), which records `failed`.
   - `swarm/attach { runId }`: take over a run whose process died (see below).
@@ -301,7 +327,7 @@ A `spec` is a `TeamSpec` — e.g. `{ topology: 'fanout', members: [{name}], task
 
 ## Driving a team in-process
 
-`ctx.swarm.runTeam(spec, { parent, worktrees? })` is the programmatic entry point; it is `ctx.swarm.start(spec, options)` (a handle with the run `id`, its `board()`, and the `result` promise) plus waiting for the result. Each run journals to `$OPENSWARM_HOME/runs/<run id>/journal.jsonl` (default `~/.openswarm/runs`), which `ctx.swarm.runs()`, `view(runId)` and `attach(runId)` read from any process; `attach` takes over a run whose process died, releasing its claims and marking it `interrupted`. `RunTeamOptions.worktrees` turns member runs into subprocess harnesses in per-task git worktrees and returns a merge outcome. At most `worktrees.maxConcurrent` (default 8) harnesses run at once; the rest queue, so a large fanout does not spawn one subprocess per task up front. `onProgress` receives human-readable progress lines; every topology emits. `questions: { timeoutMs?, maxOpen? }` (default 0 and 3) sets how long a question waits: at 0 every question takes its default at once, as an unattended run needs; the handle's `answer(questionId, answer, by)` answers one.
+`ctx.swarm.runTeam(spec, { parent, worktrees? })` is the programmatic entry point; it is `ctx.swarm.start(spec, options)` (a handle with the run `id`, its `board()`, and the `result` promise) plus waiting for the result. Each run journals to `$OPENSWARM_HOME/runs/<run id>/journal.jsonl` (default `~/.openswarm/runs`), which `ctx.swarm.runs()`, `view(runId)` and `attach(runId)` read from any process (outside a harness, `listRuns(runsDir)`, `viewRun(runsDir, runId)` and `attachRun(runsDir, runId)` do the same, with `defaultRunsDir()`); `attach` takes over a run whose process died, releasing its claims and marking it `interrupted`. `RunTeamOptions.worktrees` turns member runs into subprocess harnesses in per-task git worktrees and returns a merge outcome. At most `worktrees.maxConcurrent` (default 8) harnesses run at once; the rest queue, so a large fanout does not spawn one subprocess per task up front. `onProgress` receives human-readable progress lines; every topology emits. `questions: { timeoutMs?, maxOpen? }` (default 0 and 3) sets how long a question waits: at 0 every question takes its default at once, as an unattended run needs; the handle's `answer(questionId, answer, by)` answers one.
 
 Worktree runs clean up after themselves in two ways: an abort or throw drops this run's checkouts without merging (branches survive, so committed work stays reachable), and each run first sweeps `.swarm/worktrees/` for teams that died before finalizing — the SIGKILL case try/finally cannot cover. Live teams are never touched, so concurrent runs are safe. Members set `agentOptions: { provider, model }` for heterogeneous rosters. See [`packages/swarm/tests/boot.ts`](../packages/swarm/tests/boot.ts) for a minimal composition.
 

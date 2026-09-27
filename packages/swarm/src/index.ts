@@ -84,7 +84,7 @@ export {
   spawnPeer,
   suppressSettlementTurns,
 } from './peers'
-export { parseNumberedPlan } from './topologies'
+export { coordinatorSpec, parseNumberedPlan } from './topologies'
 export type { ReportProgress } from './topologies'
 export { RemotePeer } from './remote-peer'
 export { SwarmServer } from './server'
@@ -104,6 +104,72 @@ export interface SwarmConfig {
 /** `$OPENSWARM_HOME`, else `~/.openswarm`. */
 export function openswarmHome(): string {
   return process.env['OPENSWARM_HOME'] ?? join(homedir(), '.openswarm')
+}
+
+/** Where run journals live unless `SwarmConfig.runsDir` says otherwise. */
+export function defaultRunsDir(): string {
+  return join(openswarmHome(), 'runs')
+}
+
+/** A run's journal file under `runsDir`. The id names a directory, so it may not be a path. */
+export function runJournalPath(runsDir: string, runId: string): string {
+  if (!/^[\w-]+$/.test(runId)) throw new Error(`invalid run id "${runId}"`)
+  return join(runsDir, runId, 'journal.jsonl')
+}
+
+/** Every run record under `runsDir`, oldest first. */
+export function listRuns(runsDir: string): SwarmRunRecord[] {
+  if (!existsSync(runsDir)) return []
+  // ponytail: reads whole journals; add an index if listing gets slow.
+  return readdirSync(runsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .flatMap((entry) => foldRun(SwarmJournal.read(join(runsDir, entry.name, 'journal.jsonl'))) ?? [])
+    .sort((a, b) => a.startedAt - b.startedAt)
+}
+
+/** A run read from its journal file. Read-only: it never appends or truncates. */
+export function viewRun(runsDir: string, runId: string, { since }: { since?: number } = {}): SwarmRunView {
+  const events = SwarmJournal.read(runJournalPath(runsDir, runId))
+  const run = foldRun(events)
+  if (run === undefined) throw new Error(`unknown run "${runId}"`)
+  return {
+    run,
+    tasks: [...foldBoard(events).values()],
+    questions: [...foldQuestions(events).values()],
+    recap: recapJournal(events, since),
+  }
+}
+
+/**
+ * Whether a run's writer may still be appending. A writer on another host is
+ * never judged dead from here.
+ */
+export function writerLive(run: SwarmRunRecord): boolean {
+  // ponytail: same-host pid liveness; the git journal / mesh needs a real lease.
+  return run.writer.host !== hostname() || pidAlive(run.writer.pid)
+}
+
+/**
+ * Take over a run whose writer is dead: become the journal's writer,
+ * release the dead writer's claims, and record the run `interrupted` under
+ * this process. A run already settled is returned as viewed, untouched.
+ * Resuming execution is out of scope; a later direction method does that.
+ */
+export async function attachRun(
+  runsDir: string,
+  runId: string,
+): Promise<SwarmRunView & { released: SwarmTaskSnapshot[] }> {
+  const view = viewRun(runsDir, runId)
+  const { run } = view
+  if (run.status !== 'running') return { ...view, released: [] }
+  if (writerLive(run)) throw new Error(`run ${runId} is live in pid ${run.writer.pid} on ${run.writer.host}; use view`)
+  const journal = SwarmJournal.open(runJournalPath(runsDir, runId))
+  const released = await new SwarmBoard(journal).releaseOrphans()
+  await journal.append('swarm/run', {
+    version: 1,
+    run: { ...run, status: 'interrupted', writer: writerOf(journal) },
+  } satisfies SwarmRunEvent)
+  return { ...viewRun(runsDir, runId), released }
 }
 
 /** A started team run (docs/05 §5.1). */
@@ -232,7 +298,7 @@ function writerOf(journal: SwarmJournal): SwarmRunRecord['writer'] {
 }
 
 /** Whether a pid on this host exists; EPERM means it does, under another user. */
-function alive(pid: number): boolean {
+export function pidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0)
     return true
@@ -259,13 +325,12 @@ export default class SwarmService extends Service {
   }
 
   private runsDir(): string {
-    return this.swarmConfig.runsDir ?? join(openswarmHome(), 'runs')
+    return this.swarmConfig.runsDir ?? defaultRunsDir()
   }
 
   /** A run's journal file. The id names a directory, so it may not be a path. */
   journalPath(runId: string): string {
-    if (!/^[\w-]+$/.test(runId)) throw new Error(`invalid run id "${runId}"`)
-    return join(this.runsDir(), runId, 'journal.jsonl')
+    return runJournalPath(this.runsDir(), runId)
   }
 
   /**
@@ -445,51 +510,19 @@ export default class SwarmService extends Service {
     return (await this.start(spec, options)).result
   }
 
-  /** A run read from its journal file. Read-only: it never appends or truncates. */
-  view(runId: string, { since }: { since?: number } = {}): SwarmRunView {
-    const events = SwarmJournal.read(this.journalPath(runId))
-    const run = foldRun(events)
-    if (run === undefined) throw new Error(`unknown run "${runId}"`)
-    return {
-      run,
-      tasks: [...foldBoard(events).values()],
-      questions: [...foldQuestions(events).values()],
-      recap: recapJournal(events, since),
-    }
+  /** {@link viewRun} under this service's runs directory. */
+  view(runId: string, options: { since?: number } = {}): SwarmRunView {
+    return viewRun(this.runsDir(), runId, options)
   }
 
-  /**
-   * Take over a run whose writer is dead: become the journal's writer,
-   * release the dead writer's claims, and record the run `interrupted` under
-   * this process. A run already settled is returned as viewed, untouched.
-   * Resuming execution is out of scope; a later direction method does that.
-   */
-  async attach(runId: string): Promise<SwarmRunView & { released: SwarmTaskSnapshot[] }> {
-    const view = this.view(runId)
-    const { run } = view
-    if (run.status !== 'running') return { ...view, released: [] }
-    // ponytail: same-host pid liveness; the git journal / mesh needs a real lease.
-    if (run.writer.host !== hostname() || alive(run.writer.pid)) {
-      throw new Error(`run ${runId} is live in pid ${run.writer.pid} on ${run.writer.host}; use view`)
-    }
-    const journal = SwarmJournal.open(this.journalPath(runId))
-    const released = await new SwarmBoard(journal).releaseOrphans()
-    await journal.append('swarm/run', {
-      version: 1,
-      run: { ...run, status: 'interrupted', writer: writerOf(journal) },
-    } satisfies SwarmRunEvent)
-    return { ...this.view(runId), released }
+  /** {@link attachRun} under this service's runs directory. */
+  attach(runId: string): Promise<SwarmRunView & { released: SwarmTaskSnapshot[] }> {
+    return attachRun(this.runsDir(), runId)
   }
 
-  /** Every run record under the runs directory, oldest first. */
+  /** {@link listRuns} under this service's runs directory. */
   runs(): SwarmRunRecord[] {
-    const dir = this.runsDir()
-    if (!existsSync(dir)) return []
-    // ponytail: reads whole journals; add an index if listing gets slow.
-    return readdirSync(dir, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .flatMap((entry) => foldRun(SwarmJournal.read(join(dir, entry.name, 'journal.jsonl'))) ?? [])
-      .sort((a, b) => a.startedAt - b.startedAt)
+    return listRuns(this.runsDir())
   }
 
   private async execute(

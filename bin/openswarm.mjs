@@ -13,6 +13,8 @@
  *   openswarm serve [--port N]    start the app-server (JSON-RPC, for UIs/TUIs)
  *   openswarm setup               (re)initialize the profiles
  *   openswarm config              print the resolved provider/model/home
+ *   openswarm ps|board|questions|attach|start|steer|answer|kill
+ *                                 control verbs (docs/05 §6.1), in packages/cli
  *
  * Options: --model <id>, --provider <azure|openai|bedrock>, --home <dir>.
  * Provider auto-detect (when --provider is unset): Azure (AZURE_API_KEY +
@@ -177,7 +179,8 @@ function bootDsh(profile, positional, extraEnv, home) {
   const child = spawn('node', [dshScript, '--profile', profile, ...launcher, ...positional], {
     cwd: process.cwd(),
     stdio: 'inherit',
-    env: { ...process.env, DSH_HOME: home, ...extraEnv },
+    // OPENSWARM_HOME too, so run journals and app-server.json land where the control verbs read them.
+    env: { ...process.env, DSH_HOME: home, OPENSWARM_HOME: home, ...extraEnv },
   })
   child.on('exit', (code) => process.exit(code ?? 0))
 }
@@ -191,6 +194,18 @@ Usage:
   openswarm serve [--port N]    start the app-server (JSON-RPC for UIs/TUIs)
   openswarm setup               (re)initialize the profiles
   openswarm config              print the resolved provider/model/home
+
+Control (runs under <home>/runs; start/steer/answer/kill need \`openswarm serve\`):
+  openswarm ps [--json]                       runs: status, topology, age, writer
+  openswarm board <run> [--json]              a run's tasks and open question count
+  openswarm questions [--run <id>] [--json]   open questions
+  openswarm attach <run> [--no-follow]        board and recap, then follow a live run;
+                                              takes over a run whose process died
+  openswarm start <"task" | spec.json> [--workers N] [--provider P] [--model M]
+                  [--question-timeout MS]     start a run (a task gets /swarm's team)
+  openswarm steer <run> --to <member> "text"  message a messaging peer-team member
+  openswarm answer <run> <question> <choice>  answer an open question
+  openswarm kill <run>                        cancel a run
 
 Options:
   --model <id>        model id (default: gpt-5.5, or haiku for bedrock)
@@ -213,8 +228,29 @@ function valueOf(flat, flag) {
   return i === -1 ? undefined : flat[i + 1]
 }
 
+/** Handled by packages/cli's runControl, which parses its own flags (docs/05 §6.1). */
+const CONTROL_VERBS = new Set(['ps', 'board', 'questions', 'attach', 'start', 'steer', 'answer', 'kill'])
+
+/** A control verb, in-process; only --home and --help are the launcher's. */
+function control(argv) {
+  if (argv.includes('--help') || argv.includes('-h')) {
+    process.stdout.write(HELP)
+    process.exit(0)
+  }
+  const at = argv.indexOf('--home')
+  if (at !== -1) {
+    if (argv[at + 1] === undefined) die('--home requires a value')
+    process.env.OPENSWARM_HOME = argv.splice(at, 2)[1]
+  }
+  ensureBuilt()
+  return import(join(pkgRoot, 'packages', 'cli', 'dist', 'index.js'))
+    .then(({ runControl }) => runControl(argv))
+    .then((code) => process.exit(code))
+}
+
 function main() {
   const argv = process.argv.slice(2)
+  if (CONTROL_VERBS.has(argv[0])) return control(argv)
   const { opts, rest, headless } = parse(argv, argv[0] === 'web')
   const home = opts.home ?? process.env.OPENSWARM_HOME ?? join(homedir(), '.openswarm')
   const cmd = rest[0]

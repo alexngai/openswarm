@@ -305,6 +305,16 @@ export function parseNumberedPlan(text: string): string[] {
   return subtasks
 }
 
+/** The team as a coordinator spec over N anonymous workers: what `/swarm` and `openswarm start "task"` run. */
+export function coordinatorSpec(task: string, workerCount: number): CoordinatorSpec {
+  return {
+    topology: 'coordinator',
+    coordinator: { name: 'coordinator' },
+    workers: Array.from({ length: workerCount }, (_, i) => ({ name: `worker-${i + 1}` })),
+    task,
+  }
+}
+
 export async function runCoordinator(
   spec: CoordinatorSpec,
   run: RunMember,
