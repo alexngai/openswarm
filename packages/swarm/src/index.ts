@@ -800,10 +800,15 @@ export default class SwarmService extends Service {
     const seeded = new Set(created)
 
     const provider = this.swarmConfig.defaultSubagentProvider ?? 'spawn'
-    const disposers: (() => void)[] = [
-      suppressSettlementTurns(lead),
-      registerSwarmMessaging(this.ctx, roster, mailbox),
-    ]
+    // A child's last settlement notice can reach the lead after this runner
+    // returns, so the suppression outlives the run: every notice while it
+    // runs, then only this run's children's, for the lead's lifetime.
+    // ponytail: one filter per run on a long-lived parent; drop it once each
+    // child's final notice is swallowed if parents ever host many runs.
+    const children = new Set<string>()
+    let running = true
+    suppressSettlementTurns(lead, (childId) => running || children.has(childId))
+    const disposers: (() => void)[] = [registerSwarmMessaging(this.ctx, roster, mailbox)]
     for (const member of spec.members) {
       const names = spec.members.filter((m) => m.name !== member.name).map((m) => m.name)
       const handle = await spawnPeer(this.ctx, member, {
@@ -813,6 +818,7 @@ export default class SwarmService extends Service {
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       })
       roster.set(member.name, handle)
+      if (handle.childId !== undefined) children.add(String(handle.childId))
     }
 
     let runs: Record<string, MemberRunResult>
@@ -831,6 +837,7 @@ export default class SwarmService extends Service {
         ask,
       )
     } finally {
+      running = false
       for (const dispose of disposers) dispose()
     }
     const tasks = board.list().filter((t) => seeded.has(t.id))
