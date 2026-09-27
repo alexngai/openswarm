@@ -38,3 +38,36 @@ for (const pkg of PACKAGES) {
     console.log(`built ${name} → ${dir}/dist/${mod}.js`)
   }
 }
+
+// The Swarm tab's browser half (docs/05 A9), in dsh's `dsh.client` bundle
+// format: one classic script whose only effect is registering a CJS factory
+// with the page's module loader. The host's `require` serves just these shared
+// modules (React is the host's), so everything else is bundled in.
+const SHARED = [
+  'react',
+  'react/jsx-runtime',
+  'react-dom',
+  'react-dom/client',
+  '@deepseek-ai/cordis',
+  '@deepseek-ai/dsh-client-ui-slots',
+  '@deepseek-ai/dsh-client-ui-primitives',
+]
+const client = 'packages/swarm-client'
+const clientId = JSON.parse(readFileSync(`${client}/package.json`, 'utf8')).name
+await build({
+  entryPoints: [`${client}/src/client.jsx`],
+  bundle: true,
+  platform: 'browser',
+  format: 'cjs',
+  target: 'es2022',
+  jsx: 'automatic',
+  loader: { '.css': 'text' },
+  external: SHARED,
+  banner: {
+    js: `window.__ModuleLoader__.load({ id: ${JSON.stringify(clientId)}, factory: (require) => { var module = { exports: {} }; var exports = module.exports;`,
+  },
+  footer: { js: 'return module.exports; } });' },
+  outfile: `${client}/dist/client.js`,
+  logLevel: 'warning',
+})
+console.log(`built ${clientId} → ${client}/dist/client.js`)

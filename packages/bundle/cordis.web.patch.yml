@@ -6,3 +6,16 @@
 - insert:
     - id: openswarm-app-server-web
       name: 'openswarm-app-server/web'
+
+    # The Swarm tab (docs/05 A9): a `dsh.client` package whose browser half
+    # dsh's client-modules serves at /plugins/openswarm-swarm-client/client.js.
+    - id: openswarm-swarm-client
+      name: 'openswarm-swarm-client'
+
+# The socket carrier too, so runs this web process hosts can be directed from
+# the CLI (`openswarm start|steer|answer|kill` read `$OPENSWARM_HOME/app-server.json`).
+# Port 0: an ephemeral port, never colliding with `openswarm serve`'s 4620.
+- id: openswarm-app-server
+  disabled: false
+  config:
+    port: 0

@@ -106,6 +106,10 @@ it.skipIf(!ready)('the web profile layers dsh browser UI under the openswarm row
   // and the web carrier of the swarm protocol.
   expect(stdout).toContain('openswarm-swarm/command')
   expect(stdout).toContain('openswarm-app-server/web')
+  // The Swarm tab's client plugin, and the socket carrier on an ephemeral port
+  // so the CLI can direct this process's runs.
+  expect(stdout).toContain('name: openswarm-swarm-client')
+  expect(stdout).toMatch(/id: openswarm-app-server\n\s+name: openswarm-app-server\n\s+disabled: false\n\s+config:\n\s+port: 0/)
   expect(stdout).toMatch(/id: llm-deepseek[\s\S]*?disabled: true/)
   // No one-shot runner: the bound webserver keeps this surface alive.
   expect(stdout).not.toContain('headless-runner')

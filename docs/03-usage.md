@@ -122,6 +122,8 @@ reason `/plan` and `/goal` leave a fresh session untouched) — so without that
 the surface would keep showing its landing screen and the result would never
 render. It costs one lead model round, and only happens on a blank session.
 
+**The Swarm tab** (the `openswarm-swarm-client` row, a dsh client plugin; `openswarm setup` adds it to an older home) sits beside Chat and Trajectory in a session's view tabs; dsh shows the tab bar only once a session has started. It follows one run, picked from a list of every run in `<home>/runs` (default: the newest started from this session, else the newest): status and topology with a Cancel button while it runs, the task board (id, status, owner, subject), open questions with a button per option, the recap newest first, and a steer box (member and text → `immediate` or `enqueue`, or the refusal). **Start run** takes a `TeamSpec` as JSON and optional `worktrees` JSON (`{ "repoRoot": … }`, which makes steers land `immediate`); steering needs a messaging peer-team. It talks to the web carrier and updates by long-polling `swarm/events`, so direction (cancel, steer, answer) works only on runs this web process hosts: those started from the tab, by `/swarm`, or by the CLI below. `openswarm web` also serves the socket carrier on an ephemeral loopback port and writes `<home>/app-server.json`, so `openswarm start|steer|answer|kill` direct the same runs the tab shows. Run one of `openswarm web` and `openswarm serve` per home: both write that file, the last to start wins, and either one stopping removes it.
+
 ## Live self-modification
 
 `swarm_author_plugin` (F3) lets an agent write a Cordis plugin and hot-mount it

@@ -1,0 +1,21 @@
+{
+  "name": "openswarm-swarm-client",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "The Swarm tab (docs/05 A9): a dsh web client plugin showing a run's board, questions and recap over the web carrier, with steer, answer, cancel and start",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./dist/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ]
+}

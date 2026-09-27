@@ -19,7 +19,7 @@
  */
 import { spawn, execFile, type ChildProcess } from 'node:child_process'
 import { promisify } from 'node:util'
-import { existsSync, mkdtempSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
@@ -29,7 +29,10 @@ import { startMockLlmServer, type MockLlmServer, type MockLlmServerOptions } fro
 const execFileAsync = promisify(execFile)
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 const dshBin = resolve(repo, 'node_modules', '.bin', 'dsh')
-const ready = existsSync(dshBin) && existsSync(resolve(repo, 'packages', 'swarm', 'dist', 'command.js'))
+const ready =
+  existsSync(dshBin) &&
+  existsSync(resolve(repo, 'packages', 'swarm', 'dist', 'command.js')) &&
+  existsSync(resolve(repo, 'packages', 'swarm-client', 'dist', 'client.js'))
 
 let dshHome: string
 const running: { child: ChildProcess; mock: MockLlmServer }[] = []
@@ -48,6 +51,7 @@ afterAll(async () => {
 
 interface WebSurface {
   url: string
+  pid: number
   mock: MockLlmServer
   /** One gateway call; returns the decoded `result` envelope. */
   rpc(method: string, payload: unknown): Promise<any>
@@ -102,6 +106,7 @@ async function bootWeb(
   let seq = 0
   return {
     url,
+    pid: child.pid!,
     mock,
     async rpc(method, payload) {
       const response = await fetch(`${url}/api/${method}`, {
@@ -119,13 +124,29 @@ async function bootWeb(
   }
 }
 
-it.skipIf(!ready)('serves the built UI', async () => {
-  const web = await bootWeb({ sequence: ['success'], repeatLast: true, successText: 'x' })
+it.skipIf(!ready)('serves the built UI, the Swarm tab, and both carriers', async () => {
+  const home = mkdtempSync(resolve(tmpdir(), 'openswarm-web-home-'))
+  const web = await bootWeb({ sequence: ['success'], repeatLast: true, successText: 'x' }, { OPENSWARM_HOME: home })
   const response = await fetch(web.url)
   expect(response.status).toBe(200)
   expect(await response.text()).toContain('<!doctype html>')
   // The web carrier's `@Remote` methods answer on the same gateway, owner-only, no token.
   expect(await web.rpc('swarm/runs', { args: {} })).toEqual({ runs: expect.any(Array) })
+
+  // dsh's client-modules found the `dsh.client` package and serves its bundle.
+  const bundle = await fetch(`${web.url}/plugins/openswarm-swarm-client/client.js`)
+  expect(bundle.status).toBe(200)
+  expect(await bundle.text()).toMatch(/^window\.__ModuleLoader__\.load\(\{ id: "openswarm-swarm-client", factory: /)
+
+  // The socket carrier is up in the same process, for the CLI's direction verbs.
+  const file = resolve(home, 'app-server.json')
+  const deadline = Date.now() + 10_000
+  while (!existsSync(file) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100))
+  expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({
+    url: expect.stringMatching(/^127\.0\.0\.1:\d+$/),
+    token: expect.any(String),
+    pid: web.pid,
+  })
 }, 90_000)
 
 it.skipIf(!ready)('lists and executes /swarm over the api-gateway', async () => {
