@@ -662,12 +662,11 @@ comes from the eval harness, since the kernel records no usage yet. Arms:
 
 Program and sharded run at equal total agent count and differ in exactly
 those three things, so the comparison measures coordination rather than
-partition quality. The system under test is pinned to
-`origin/self-modification` @ `7b79b3d`, the only line with the headless
-`run` mode the eval harness drives, plus member-side usage folding and the
-worktree fixes the team arms need, with the arms driver on top
-(`pilot/roadmap-arms` @ `1e4bda0`: `OPENSWARM_PILOT_PLAN` /
-`OPENSWARM_PILOT_ARM`). Every arm, single included, gets the same 8 CPU /
+partition quality. The system under test is this branch with Phase A and
+the arms driver (`e2e4187`: `OPENSWARM_PILOT_PLAN` / `OPENSWARM_PILOT_ARM`),
+pinned by commit when the pilot runs; every arm runs that one commit. (The
+task screen ran on an earlier pin, `1e4bda0`, the self-modification line
+plus the driver; its numbers serve only to select tasks.) Every arm, single included, gets the same 8 CPU /
 16 GB container, so contention among a program's agents is not a
 confound; compute cost is negligible next to tokens. Caveat: the single
 arm is the CLI's in-process agent while team members boot
