@@ -608,7 +608,14 @@ course mid-turn, and a harness-raised question was answered from each
 surface, with no restart. That exercise found two defects, fixed:
 `ecf77cb` (a messaging team's late settlement notices woke the lead for a
 model turn) and `2f28e99` (worktree members need the launcher's model
-route, not a key sent by the caller). Remaining: A7.
+route, not a key sent by the caller). A7 `7cefb19` (intent header on runs
+and peer-team tasks, rendered into member prompts and shown on the board,
+the tab and the recap; `/swarm` starts the run and returns its id, the
+outcome reaching the tab, `openswarm attach` and the invoking session as
+injected context; `/swarm --wait` keeps the blocking form).
+
+**Phase A is complete** (2026-09-27): all ten items built, all four exit
+criteria met.
 
 ### 7.4 Phase B — Verified landing
 
