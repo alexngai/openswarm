@@ -1,0 +1,29 @@
+{
+  "workers": 2,
+  "threads": [
+    {
+      "id": "t0",
+      "default": true,
+      "paths": ["torch_geometric/__init__.py", "torch_geometric/metrics/__init__.py", "torch_geometric/datasets/graph_generator/__init__.py", "torch_geometric/datasets/motif_generator/__init__.py"],
+      "assignment": "Shared contracts only. Export EdgeIndex from torch_geometric/__init__.py, LinkPredPrecision, LinkPredRecall, LinkPredF1, LinkPredMAP and LinkPredNDCG from the new torch_geometric/metrics/__init__.py, TreeGraph from torch_geometric/datasets/graph_generator/__init__.py and GridMotif from torch_geometric/datasets/motif_generator/__init__.py. Back each with a stub module at the roadmap's path (torch_geometric/edge_index.py, torch_geometric/metrics/link_pred.py, torch_geometric/datasets/graph_generator/tree_graph.py, torch_geometric/datasets/motif_generator/grid.py) with the roadmap's names and signatures; other threads implement them. Nothing else."
+    },
+    {
+      "id": "t1",
+      "blockedBy": ["t0"],
+      "paths": ["torch_geometric/edge_index.py"],
+      "assignment": "Target 1 (EdgeIndex): implement SortOrder, set_tuple_item and EdgeIndex in torch_geometric/edge_index.py, with tests under test/. The torch_geometric/__init__.py export belongs to t0."
+    },
+    {
+      "id": "t2",
+      "blockedBy": ["t0"],
+      "paths": ["torch_geometric/metrics/", "torch_geometric/utils/noise_scheduler.py", "torch_geometric/utils/cross_entropy.py"],
+      "assignment": "Target 2 (Link-Prediction Retrieval Metrics), Target 3 (Noise Scheduler Utilities for Diffusion Models) and Target 6 (Weighted Sparse Cross-Entropy): implement LinkPredMetric and its five subclasses in torch_geometric/metrics/link_pred.py, get_smld_sigma_schedule and get_diffusion_beta_schedule in torch_geometric/utils/noise_scheduler.py, and edge_label_weight in torch_geometric/utils/cross_entropy.py, with tests under test/metrics and test/utils. torch_geometric/metrics/__init__.py belongs to t0."
+    },
+    {
+      "id": "t3",
+      "blockedBy": ["t0"],
+      "paths": ["torch_geometric/datasets/graph_generator/tree_graph.py", "torch_geometric/datasets/motif_generator/grid.py", "torch_geometric/data/"],
+      "assignment": "Target 4 (TreeGraph and GridMotif Generators) and Target 5 (Temporal Convenience Methods on Data): implement tree and TreeGraph in torch_geometric/datasets/graph_generator/tree_graph.py and GridMotif in torch_geometric/datasets/motif_generator/grid.py, and is_sorted_by_time, sort_by_time, snapshot and up_to on BaseData and its stores under torch_geometric/data, with tests under test/datasets and test/data. The generator package exports belong to t0."
+    }
+  ]
+}

@@ -43,3 +43,5 @@ packages/cli/dist/
 legacy/.eval-runs/
 packages/*/dist/
 .dsh-home/
+# RoadmapBench task data and reference slices: benchmark gold, never committed
+eval/pilot/.roadmap/

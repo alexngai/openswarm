@@ -1,0 +1,51 @@
+{
+  "workers": 2,
+  "threads": [
+    {
+      "id": "t0",
+      "default": true,
+      "paths": [
+        "falcon/__init__.py",
+        "falcon/constants.py",
+        "falcon/status_codes.py",
+        "falcon/api.py",
+        "falcon/request.py",
+        "falcon/response.py",
+        "falcon/media/__init__.py",
+        "falcon/routing/__init__.py"
+      ],
+      "assignment": "Shared contracts and hub files only. Create falcon/constants.py with the media type constants and HTTP_METHODS and make them, Forwarded and the three new error classes importable from falcon/__init__.py; export the media handler classes from falcon/media/__init__.py and the converter classes and router options from falcon/routing/__init__.py (a stub module per class with the exact signature from the roadmap is enough; other threads implement them); add HTTP_501, HTTP_504 and HTTP_505 to falcon/status_codes.py. falcon/request.py, falcon/response.py and falcon/api.py are shared by several targets, so this thread makes every roadmap change to them and no other thread edits them: the Request/Response media properties and the media options (Target 1), the API router_options attribute (Target 2), the Forwarded class and the forwarded/prefix properties (Target 3), get_param_as_datetime and referer (Target 4), and the Request/Response __repr__ (Target 5). Nothing else."
+    },
+    {
+      "id": "t1",
+      "blockedBy": [
+        "t0"
+      ],
+      "paths": [
+        "falcon/media/"
+      ],
+      "assignment": "Target 1 (Media Framework): implement BaseHandler, Handlers, JSONHandler, MessagePackHandler and the jsonschema validate decorator under falcon/media (including falcon/media/validators). falcon/media/__init__.py, the constants and the Request/Response media properties belong to t0."
+    },
+    {
+      "id": "t2",
+      "blockedBy": [
+        "t0"
+      ],
+      "paths": [
+        "falcon/routing/"
+      ],
+      "assignment": "Target 2 (URI Template Field Converters): implement BaseConverter, IntConverter, DateTimeConverter, UUIDConverter and BUILTIN in falcon/routing/converters.py, and the converter-aware template parsing and matching plus the RouterOptions class in falcon/routing/compiled.py. Work under falcon/routing; falcon/routing/__init__.py and the API class's router configuration belong to t0."
+    },
+    {
+      "id": "t3",
+      "blockedBy": [
+        "t0"
+      ],
+      "paths": [
+        "falcon/errors.py",
+        "falcon/http_error.py"
+      ],
+      "assignment": "Target 5 (Error Classes and Object Representations): add HTTPNotImplemented, HTTPGatewayTimeout and HTTPVersionNotSupported to falcon/errors.py and HTTPError.__repr__ to falcon/http_error.py. The exports, status strings and the Request/Response __repr__ belong to t0."
+    }
+  ]
+}

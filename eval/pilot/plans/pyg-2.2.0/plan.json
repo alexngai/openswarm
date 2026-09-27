@@ -1,0 +1,29 @@
+{
+  "workers": 2,
+  "threads": [
+    {
+      "id": "t0",
+      "default": true,
+      "paths": ["torch_geometric/nn/__init__.py", "torch_geometric/nn/conv/__init__.py", "torch_geometric/utils/__init__.py", "torch_geometric/transforms/__init__.py", "torch_geometric/explain/__init__.py", "torch_geometric/explain/algorithm/__init__.py"],
+      "assignment": "Shared contracts only. Export every new public API named in the roadmap from the package indexes: PositionalEncoding from torch_geometric/nn/__init__.py; SSGConv and WLConvContinuous from torch_geometric/nn/conv/__init__.py; dropout_node, dropout_edge, shuffle_node, mask_feature, add_random_edge and assortativity from torch_geometric/utils/__init__.py; IndexToMask, MaskToIndex, FeaturePropagation and AddRandomMetaPaths from torch_geometric/transforms/__init__.py; and ExplainerConfig, ModelConfig, ThresholdConfig, Explanation, Explainer, the ExplainerAlgorithm base and DummyExplainer from the new torch_geometric/explain/__init__.py and torch_geometric/explain/algorithm/__init__.py. A stub module per API with the roadmap's exact signature is enough where the module does not exist yet; other threads implement them. Nothing else."
+    },
+    {
+      "id": "t1",
+      "blockedBy": ["t0"],
+      "paths": ["torch_geometric/nn/conv/ssg_conv.py", "torch_geometric/nn/conv/wl_conv_continuous.py", "torch_geometric/nn/encoding.py", "torch_geometric/nn/aggr/"],
+      "assignment": "Target 1 (New Neural Network Modules) and Target 4 (Fused Aggregation): implement SSGConv and WLConvContinuous under torch_geometric/nn/conv, PositionalEncoding under torch_geometric/nn, and FusedAggregation in torch_geometric/nn/aggr/fused.py (with any changes it needs elsewhere in torch_geometric/nn/aggr), with tests under test/nn. The package exports belong to t0."
+    },
+    {
+      "id": "t2",
+      "blockedBy": ["t0"],
+      "paths": ["torch_geometric/utils/augmentation.py", "torch_geometric/utils/dropout.py", "torch_geometric/utils/assortativity.py", "torch_geometric/transforms/mask.py", "torch_geometric/transforms/feature_propagation.py", "torch_geometric/transforms/add_metapaths.py"],
+      "assignment": "Target 2 (Graph Augmentation Utilities), Target 3 (New Data Transforms) and Target 6 (Graph Metrics and Meta-path Utilities): implement dropout_node, dropout_edge, shuffle_node, mask_feature, add_random_edge and assortativity under torch_geometric/utils, and IndexToMask, MaskToIndex, FeaturePropagation and AddRandomMetaPaths under torch_geometric/transforms, with tests under test/utils and test/transforms. The package exports belong to t0."
+    },
+    {
+      "id": "t3",
+      "blockedBy": ["t0"],
+      "paths": ["torch_geometric/explain/"],
+      "assignment": "Target 5 (Explainability Framework): implement ExplainerConfig, ModelConfig, ThresholdConfig, Explanation, Explainer, the ExplainerAlgorithm base and DummyExplainer under torch_geometric/explain, with tests under test/explain. The two package __init__ files belong to t0."
+    }
+  ]
+}

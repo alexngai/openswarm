@@ -1,0 +1,58 @@
+{
+  "workers": 2,
+  "threads": [
+    {
+      "id": "t0",
+      "default": true,
+      "paths": [
+        "py-polars/polars/__init__.py",
+        "py-polars/polars/_reexport.py",
+        "py-polars/polars/datatypes/__init__.py",
+        "py-polars/polars/datatypes/_parse.py",
+        "py-polars/polars/functions/__init__.py",
+        "py-polars/polars/io/__init__.py",
+        "py-polars/polars/io/scan_options/__init__.py",
+        "py-polars/polars/expr/expr.py",
+        "py-polars/polars/series/series.py"
+      ],
+      "assignment": "Shared contracts and hub files only. Export DataTypeExpr and dtype_of from py-polars/polars/__init__.py (import and __all__) and py-polars/polars/_reexport.py, and dtype_of from py-polars/polars/functions/__init__.py; add parse_into_datatype_expr(input: Any) -> DataTypeExpr to py-polars/polars/datatypes/_parse.py and export it from py-polars/polars/datatypes/__init__.py. Back the new names with a stub DataTypeExpr class in a new module under py-polars/polars and a stub dtype_of(col_or_expr: str | Expr) -> DataTypeExpr in py-polars/polars/functions/datatype.py, with the roadmap's signatures (another thread implements them). py-polars/polars/expr/expr.py and py-polars/polars/series/series.py are shared by several targets, so this thread makes every roadmap change to them and no other thread edits them: DataTypeExpr acceptance in Expr.map_batches, Expr.replace_strict and Expr.cast (Target 1, requirement 5), the descending keyword on Expr.search_sorted and Series.search_sorted (Target 3), and Series.top_k_by and Series.bottom_k_by (Target 4). Nothing else."
+    },
+    {
+      "id": "t1",
+      "blockedBy": [
+        "t0"
+      ],
+      "paths": [
+        "py-polars/polars/datatype_expr.py",
+        "py-polars/polars/functions/datatype.py",
+        "py-polars/polars/datatypes/classes.py",
+        "py-polars/polars/functions/range/"
+      ],
+      "assignment": "Target 1 (Lazy DataType Expressions), apart from the exports, parse_into_datatype_expr and the Expr methods, which belong to t0: implement DataTypeExpr (including collect_dtype) in the new module t0 creates for it, dtype_of in py-polars/polars/functions/datatype.py, DataType.to_dtype_expr() (also reachable through the DataTypeClass metaclass) in py-polars/polars/datatypes/classes.py, and DataTypeExpr support in int_range, int_ranges and arange under py-polars/polars/functions/range, with tests under py-polars/tests/unit."
+    },
+    {
+      "id": "t2",
+      "blockedBy": [
+        "t0"
+      ],
+      "paths": [
+        "py-polars/polars/io/parquet/functions.py",
+        "py-polars/polars/io/scan_options/",
+        "py-polars/polars/io/cast_options.py",
+        "py-polars/polars/io/delta.py",
+        "py-polars/polars/io/iceberg/"
+      ],
+      "assignment": "Target 2 (Parquet Scan Parameter Enhancements): add missing_columns and extra_columns to scan_parquet and read_parquet and deprecate allow_missing_columns, in py-polars/polars/io/parquet/functions.py and the scan plumbing under py-polars/polars/io that passes these options on (including the other readers that still pass the deprecated flag), with tests under py-polars/tests/unit/io."
+    },
+    {
+      "id": "t3",
+      "blockedBy": [
+        "t0"
+      ],
+      "paths": [
+        "py-polars/polars/io/parquet/field_overwrites.py"
+      ],
+      "assignment": "Target 5 (Parquet Field Nullability Control): add the keyword-only required parameter to ParquetFieldOverwrites in py-polars/polars/io/parquet/field_overwrites.py, serialized with the other field overwrites, with tests under py-polars/tests/unit/io."
+    }
+  ]
+}

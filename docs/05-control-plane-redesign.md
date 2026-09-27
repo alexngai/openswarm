@@ -925,6 +925,17 @@ authenticated principals (one carrier suffices).
     opt-4.6.0 and prm-7.0.0 at 0.92, pyg-2.1.0 0.83, mko-6.6.0 0.15,
     plr-1.18.0 0.06. The reference solution scored 1.0 in 3 of 3 reps on all
     20.
+  - *Frozen 2026-09-27* (`eval/pilot/tasks.txt`): the 13 in-window tasks
+    minus plr-1.30.0 (seeds 0.00–0.56, the noisiest, and among the
+    costliest), with one hand-written partition each (`eval/pilot/plans/`):
+    t0 owns shared contracts and every file two targets touch; 2–3 target
+    threads own file-disjoint areas. Plans name targets, directories and
+    existing files, never what only the reference solution contains
+    (`leak-check.py`), so team arms get ownership, not hints.
+  - *Pre-registered analysis:* program vs sharded is reported on all 12
+    and on the decomposable subset, tasks where t0 owns under half the
+    plan-assigned source lines (`t0-share.py`): 11 of 12; mko-5.8.0 (0.61)
+    is hub-bound, its roadmap targets meeting in three hub files.
   - *Checks before freezing, no model tokens:* whether the task images
     carry `.git` (the worktree arms need it; fall back to `git init`), and
     reference-solution stability over 2–3 runs per task.

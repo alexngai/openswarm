@@ -1,0 +1,29 @@
+{
+  "workers": 2,
+  "threads": [
+    {
+      "id": "t0",
+      "default": true,
+      "paths": ["library/src/actions/index.ts", "library/src/methods/index.ts", "library/src/regex.ts", "library/src/types/", "library/src/utils/", "library/src/schemas/", "library/src/methods/fallback/", "library/src/methods/getFallback/"],
+      "assignment": "Shared contracts only. Export every new public API named in the roadmap from library/src/actions/index.ts and library/src/methods/index.ts (a stub module per API with the exact signature is enough; other threads implement them), add the regular expressions the new validators need to library/src/regex.ts, and make the shared type and utility changes in library/src/types and library/src/utils that the other targets depend on."
+    },
+    {
+      "id": "t1",
+      "blockedBy": ["t0"],
+      "paths": ["library/src/actions/guard/", "library/src/actions/parseBoolean/"],
+      "assignment": "Target 1 (guard) and Target 2 (parseBoolean): implement both transformation actions and their tests under library/src/actions/guard and library/src/actions/parseBoolean."
+    },
+    {
+      "id": "t2",
+      "blockedBy": ["t0"],
+      "paths": ["library/src/methods/cache/"],
+      "assignment": "Target 3: implement cache and cacheAsync (with their LRU cache and types) and their tests under library/src/methods/cache."
+    },
+    {
+      "id": "t3",
+      "blockedBy": ["t0"],
+      "paths": ["library/src/actions/"],
+      "assignment": "Target 4 (domain, jwsCompact, isrc validators) and Target 5 (creditCard and isoTimestamp compatibility fixes): implement them and their tests under library/src/actions."
+    }
+  ]
+}

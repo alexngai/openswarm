@@ -1,0 +1,29 @@
+{
+  "workers": 2,
+  "threads": [
+    {
+      "id": "t0",
+      "default": true,
+      "paths": ["packages/core/src/index.ts", "packages/core/src/entity/index.ts", "packages/core/src/utils/index.ts", "packages/core/src/typings.ts", "packages/core/src/enums.ts", "packages/core/src/drivers/IDatabaseDriver.ts", "packages/knex/src/typings.ts", "packages/core/src/utils/Configuration.ts", "packages/core/src/entity/utils.ts", "packages/core/src/EntityManager.ts", "packages/knex/src/AbstractSqlDriver.ts"],
+      "assignment": "Shared contracts and hub files only. Add TransactionPropagation, the propagation field on TransactionOptions and LoadStrategy.BALANCED to packages/core/src/enums.ts; add processOnCreateHooksEarly (default false) and accept 'balanced' for loadStrategy in packages/core/src/utils/Configuration.ts; make the shared type changes in packages/core/src/typings.ts, packages/core/src/drivers/IDatabaseDriver.ts and packages/knex/src/typings.ts; export defineEntity and TransactionManager through the package index files (a stub module per API with the exact signature from the roadmap is enough; other threads implement them). packages/core/src/EntityManager.ts, packages/knex/src/AbstractSqlDriver.ts and the loading-strategy helpers in packages/core/src/entity/utils.ts are shared by several targets, so this thread makes every roadmap change to them: em.transactional() delegating to TransactionManager (Target 2), the balanced loading strategy (Target 3), the relation-filter handling in those files (Target 4), and the processOnCreateHooksEarly option on em.create() (Target 5). Nothing else."
+    },
+    {
+      "id": "t1",
+      "blockedBy": ["t0"],
+      "paths": ["packages/core/src/entity/defineEntity.ts"],
+      "assignment": "Target 1 (Declarative Entity Definition): implement defineEntity, defineEntity.properties, the scalar, relation, embedded and enum builders and InferEntity in packages/core/src/entity/defineEntity.ts."
+    },
+    {
+      "id": "t2",
+      "blockedBy": ["t0"],
+      "paths": ["packages/core/src/utils/TransactionManager.ts", "packages/core/src/errors.ts", "packages/core/src/decorators/Transactional.ts", "packages/core/src/connections/Connection.ts", "packages/knex/src/AbstractSqlConnection.ts"],
+      "assignment": "Target 2 (Transaction Propagation): implement TransactionManager and its seven propagation modes in packages/core/src/utils/TransactionManager.ts, TransactionStateError in packages/core/src/errors.ts, the contextName option in packages/core/src/decorators/Transactional.ts, and any connection-level transaction changes in packages/core/src/connections/Connection.ts and packages/knex/src/AbstractSqlConnection.ts. em.transactional() and the enum belong to t0."
+    },
+    {
+      "id": "t3",
+      "blockedBy": ["t0"],
+      "paths": ["packages/knex/src/query/", "packages/core/src/entity/EntityLoader.ts", "packages/core/src/entity/ArrayCollection.ts", "packages/core/src/entity/EntityFactory.ts"],
+      "assignment": "Target 4 (Relation Filter Improvements) and Target 5 (Early onCreate Hook Processing): apply filters and populateWhere as join conditions on to-one relations in the query builder and criteria nodes (packages/knex/src/query) and in relation loading (packages/core/src/entity/EntityLoader.ts, ArrayCollection.ts), and run onCreate hooks inside em.create() when processOnCreateHooksEarly is enabled in packages/core/src/entity/EntityFactory.ts. The EntityManager and SQL driver sides belong to t0."
+    }
+  ]
+}
