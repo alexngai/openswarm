@@ -591,7 +591,14 @@ now uses the profile's default model). Exit criterion 2 is met by a test
 that SIGKILLs a lead mid-task and attaches from the test process: same
 board, recap, claims released, run `interrupted`, task set unchanged.
 Built in the order A3, A2, A4, A5, A6, A8, since direction methods
-address runs. Remaining: A1, A7, A9.
+address runs. A1 `32376a9` (member sandbox behind
+`OPENSWARM_MEMBER_SANDBOX=workspace-write`: bash and, via `dsh-fs-sandbox`,
+the editor are write-confined to the worktree and temp; caches redirected
+to temp; git writes and PTYs are denied inside a member by design). Exit
+criterion 3 is met: the keyless suite passes with and without the flag,
+and all seven live tests pass with it (the rung-5 self-edit needed
+`27c83b0`, which stops the command gate inheriting the driver's `npm_*`).
+Remaining: A9, then A7.
 
 ### 7.4 Phase B — Verified landing
 
