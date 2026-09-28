@@ -1,7 +1,10 @@
 /**
  * openswarm on RoadmapBench, Docker on a native x86 Linux host: the openswarm docs/05
  * pilot (D10). Arms: `single` (one agent), `sharded` and `program` (hand-planned
- * threads; see openswarm docs/05 §7.5).
+ * threads; see openswarm docs/05 §7.5), and docs/07 §7.1's search arms: `attempt` (one
+ * agent then a reviewer; seeds 1..N are the attempts arms a and c are built from) and
+ * `rounds` (up to ROADMAP_ROUNDS agent rounds fed by the same reviewer: arm b). The
+ * search arms run through search.mjs, so they cannot share a run with the others.
  *
  * The system under test is a BUILT openswarm checkout on the host (the pilot pins the
  * self-modification line), mounted read-only at /opt/openswarm, with the host's Node at
@@ -57,7 +60,10 @@ if (!MOCK) for (const key of ["AZURE_API_BASE", "AZURE_API_KEY"]) {
 if (!existsSync(join(OPENSWARM_ROOT, "packages/cli/dist/index.js"))) { console.error(`no built openswarm at ${OPENSWARM_ROOT}`); process.exit(2); }
 if (!existsSync("/opt/node/bin/node")) { console.error("no Node at /opt/node on the host"); process.exit(2); }
 if (TASKS.length === 0) { console.error("set ROADMAP_TASKS=<task>[,<task>…] (e.g. opt-4.4.0)"); process.exit(2); }
-for (const arm of ARMS) if (!["single", "sharded", "program"].includes(arm)) { console.error(`unknown arm ${arm}`); process.exit(2); }
+for (const arm of ARMS) if (!["single", "sharded", "program", "attempt", "rounds"].includes(arm)) { console.error(`unknown arm ${arm}`); process.exit(2); }
+const SEARCH_ARMS = ["attempt", "rounds"];
+const SEARCH = ARMS.some((a) => SEARCH_ARMS.includes(a));
+if (SEARCH && !ARMS.every((a) => SEARCH_ARMS.includes(a))) { console.error("attempt/rounds run through search.mjs; run them apart from the other arms"); process.exit(2); }
 
 const INIT = [
   "cd /app && (git rev-parse --is-inside-work-tree >/dev/null 2>&1 || (git init -q && git add -A && git -c user.email=eval@local -c user.name=eval commit -qm base))",
@@ -86,8 +92,9 @@ function loadTask(name) {
   if (!image || !weights?.length || weights.some(Number.isNaN)) throw new Error(`${name}: cannot read image or weights`);
 
   const files = [{ path: "/opt/pilot/openswarm.mjs", content: ENTRY }];
+  if (SEARCH) files.push({ path: "/opt/pilot/search.mjs", content: readFileSync(join(HERE, "search.mjs"), "utf8") });
   const plan = join(PLANS, name, "plan.json");
-  if (ARMS.some((a) => a !== "single")) {
+  if (ARMS.some((a) => a === "sharded" || a === "program")) {
     if (!existsSync(plan)) throw new Error(`${name}: team arms need ${plan}`);
     files.push({ path: "/opt/pilot/plan.json", content: readFileSync(plan, "utf8") });
   }
@@ -115,12 +122,13 @@ const passEnv = (keys) => Object.fromEntries(keys.filter((k) => process.env[k]).
 const harness = harnessOf(
   { ...openSwarmSpec, install: [], readyCmd: undefined },
   {
-    bin: "/opt/node/bin/node /opt/pilot/openswarm.mjs",
+    bin: `/opt/node/bin/node /opt/pilot/${SEARCH ? "search" : "openswarm"}.mjs`,
     // Otherwise a model name the adapter reads as a placeholder (e.g. "mock-model") is
     // silently replaced by the spec default, which has no route here.
     defaultModel: MODEL,
     captureSubmissionDiff: true,
-    timeoutMs: 2 * 60 * 60 * 1000,
+    // `rounds` is N agents in a row, so it gets N× the task's 2h.
+    timeoutMs: (ARMS.includes("rounds") ? Number(process.env.ROADMAP_ROUNDS ?? 4) : 1) * 2 * 60 * 60 * 1000,
     // A backstop, not the budget: cache reads count toward it, and the 2h clock is the real cap.
     maxTokens: Number(process.env.ROADMAP_MAX_TOKENS ?? 40_000_000),
     env: {
@@ -133,10 +141,15 @@ const harness = harnessOf(
   },
 );
 
+const SCAFFOLD = {
+  single: {},
+  attempt: { env: { PILOT_SEARCH: "review" } },
+  rounds: { env: { PILOT_SEARCH: "rounds", PILOT_ROUNDS: process.env.ROADMAP_ROUNDS ?? "4" } },
+};
 const armOf = (id) => ({
   id,
   label: id,
-  scaffold: id === "single" ? {} : { env: { OPENSWARM_PILOT_ARM: id, OPENSWARM_PILOT_PLAN: "/opt/pilot/plan.json" } },
+  scaffold: SCAFFOLD[id] ?? { env: { OPENSWARM_PILOT_ARM: id, OPENSWARM_PILOT_PLAN: "/opt/pilot/plan.json" } },
 });
 
 /**

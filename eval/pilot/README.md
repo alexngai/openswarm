@@ -8,6 +8,8 @@
 | `pilot-mock.mjs`, `split-patch.py` | zero-token plumbing check: a scripted model applies each thread's slice of the reference solution |
 | `leak-check.py` | a plan may name targets, directories and existing files, never what only the reference solution contains |
 | `t0-share.py` | t0's share of plan-assigned source lines; under 0.5 is the pre-registered decomposable subset |
+| `search.mjs`, `search.check.mjs` | docs/07 §7.1 search arms in the container: `attempt` (agent, then a reviewer) and `rounds` (agent rounds fed by the reviewer); the check runs it against a scripted CLI |
+| `search-report.py` | arms (a), (b), (c) and the selection ceiling from an `attempt` run and a `rounds` run |
 | `screen-report.py` | per-task summary of a run: mean/min/max reward, cost, parser audit against `reward.json` |
 
 Task data and reference slices live in the gitignored `.roadmap/` (download the task dirs from

@@ -302,6 +302,27 @@ tasks, each against a budget-matched single agent.
    About 4–5 agents a cell, so an order of magnitude cheaper than the
    calibration.
 
+*Search arms as built, pre-registered 2026-09-27 before any cell ran*
+(`eval/pilot/search.mjs`, `search-report.py`). N = 4. The verifier both
+arms share is a **reviewer**: the same model in a fresh session, given the
+instruction and the working tree, told to measure and not fix, which runs
+the repository's existing tests and small checks it writes from the
+requirements, and ends with per-target status and a 0–100 score; whatever
+it changes is rolled back, and it never sees the held-out tests, which
+reach the container only at grading. **Attempts**: 4 independent agent
+runs per task, each followed by one review. (a) is their mean held-out
+reward at agent-only cost; (c) takes the attempt the reviewer scored
+highest (ties: the mean of the tied, a random tie-break; an unparsed review
+ranks last) at the cost of all four attempts and reviews; the best
+attempt by held-out reward is reported as the selection ceiling. **(b)**:
+one agent for up to 4 rounds; after each round but the last the reviewer's
+report opens the next round's prompt; it stops early when the reviewer
+calls every target done or a round changes nothing. Same model (gpt-5.5),
+image, 8 CPU / 16 GB, and SUT as the pilot's other arms; one seed of (b)
+and one set of four attempts per task on the frozen 12, after a one-task
+calibration. The comparison is (c) against (b) on mean held-out reward and
+on reward per dollar.
+
 If (c) beats (b), `explore` earns its place. If (e) beats both (d) and (b)
 on landed reward per dollar, program-scale coordination does on our harness
 what Co-Coder showed it can; if not, docs/05's Phase C and D are re-scoped as
