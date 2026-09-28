@@ -7,9 +7,10 @@ them about 35 times the cost of a single agent for lower reward (§1). Over
 the same months, coordinated multi-agent systems produced frontier results in
 mathematics and science. This doc asks how those systems coordinate, why
 that differs from what the pilot tested, and what it implies for OpenSwarm's
-design and experiments. Sources were gathered on 2026-09-27 by four research
-passes (open mathematics, science systems, coding at scale, and the
-equal-compute literature); many primary sites blocked fetching, so every
+design and experiments. Sources were gathered on 2026-09-27 by six research
+passes (open mathematics, science systems, coding at scale, the equal-compute
+literature, large software projects, and large mathematical projects with the
+coordination literature); many primary sites blocked fetching, so every
 claim below is marked as it was sourced — **[P]** primary, **[S]**
 secondary coverage, **[SN]** search snippet only. The central Navier–Stokes
 claims were spot-checked against the primary sources.
@@ -28,9 +29,11 @@ which scored 0.67 and 0.63 on the same tasks (docs/05 §10). Two causes:
 2. **A binding budget.** A 40M-token backstop stopped two cells; vbt
    program's contracts thread alone spent it, so no target thread ran.
 
-The configuration, not the idea of a team, failed. But the literature below
-says something sharper: dividing one single-session task among concurrent
-writers is the *least*-evidenced multi-agent mechanism there is.
+The configuration, not the idea of a team, failed. The literature below
+separates two mechanisms: searching alternatives with a verifier (§3), the
+best-evidenced one, and dividing one large project among agents (§4), which
+works under five specific conditions — conditions the pilot's team arms
+violated inside every thread.
 
 ## 2. What coordinated systems have actually achieved
 
@@ -141,7 +144,81 @@ parallel writers make conflicting implicit decisions [P Cognition]; success
 is heavy-tailed, so many independent restarts matter; and "getting answers"
 decouples from "getting understanding" (Tao) [P].
 
-## 4. What the pilot tested, against this
+## 4. Coordinated development on large projects
+
+§3 is about searching alternatives. The other question is whether dividing
+one project too large for a single agent among coordinated agents works. A
+second research pass (software benchmarks since 2025, Lean formalization
+projects, Polymath, and the software-engineering coordination literature)
+says it does, under conditions that are specific and repeatable, and fails
+without them.
+
+**Uncoordinated division loses to one agent.** Two agents implementing
+overlapping features in isolated workspaces, talking only in natural
+language, succeed about 30 % less often than one agent doing both
+(CooperBench: GPT-5 50.6 % → 32.5 %); planning together first cut merge
+conflicts from 51.5 % to 29.4 % but did not raise success [P arxiv
+2601.13295]. When two agents build parts of one class, integration accuracy
+falls from 58 % to 25 % as the shared spec thins from docstrings to bare
+signatures, and a full spec restores the single-agent 89 %; an AST conflict
+detector with 97 % precision added nothing [P arxiv 2603.24284].
+
+**Coordinated division beats one agent at library and project scale.**
+Co-Coder writes an interface blueprint first, gives each heavily shared hub
+file a single owner, partitions files by dependency community and schedules
+by dependency: 68.1 % tests passed on DevEval against 56.8 % sequential and
+57.7 % file-by-file parallel, 28–35 % cheaper and 45–52 % faster; the gains
+appear only on dependency-dense projects [P arxiv 2606.00953]. STORM, whose
+engineers share one workspace and have a write rejected if anything they read
+has changed, beats one agent on Commit0-Lite (82.5 vs 66.4 macro pass) while
+separate git worktrees merged afterwards do not (63.8), at roughly 4.4× the
+spend [P arxiv 2605.20563]. AgentRoom's atomic file claims give zero semantic
+conflicts and beat one agent at about 2× compute [P arxiv 2608.23740]. Single
+agents still fail project-scale benchmarks (best 13–40 % on NL2Repo,
+RoadmapBench, SWE-EVO, SWE-Milestone), mostly by stopping early, losing
+coherence and accumulating regressions; METR's 50 % time horizon is about 12
+hours but the 80 % horizon is about 1.5 [P]. No published program-scale
+result is budget-matched against a single agent yet.
+
+**Large mathematics is coordinated the same way.** The PFR formalization
+finished in about three weeks from a blueprint — a dependency graph of lemmas
+that contributors claimed [P Tao]. Carleson (28 contributors, 179 lemmas)
+failed until the blueprint was rewritten so any lemma could be proved from
+its statement alone and most statements were formalized before contributors
+started [P]. The Equational Theories Project settled 22 million implications
+with 50+ contributors, tasks claimed through GitHub issues with CI allowing
+one claimant each [P arxiv 2512.07087]. Anthropic's agents formalized
+Fermat's Last Theorem in ten days of August 2026 (29,511 theorems, ~13M
+lines, accepted by the Lean kernel and a second checker): statements were
+immutable nodes in a shared graph, agents checked each other's statements by
+computing cases, and earlier attempts had failed because agents "lost track
+of the project's state"; about two in five statements were duplicates [P].
+Math Inc.'s Gauss formalized the strong prime number theorem in three weeks
+and the 8-dimensional sphere packing proof in five days, on top of 22 months
+of human blueprint [P]. Polymath's human precedents succeeded when
+sub-problems were nearly independent, the metric was measurable and a leader
+summarized on a rhythm [P].
+
+**The five conditions every success had:**
+
+1. **Contracts frozen first, and machine-checkable** — statements before
+   proofs, interfaces and contract tests before implementations.
+2. **A cheap checker on every unit** — the Lean kernel per lemma, tests per
+   module.
+3. **Claims enforced by the system** — CI, leases or write-time freshness
+   checks, never chat.
+4. **A small audited trust surface** — Carleson's 170-line statement file;
+   everything else is checked mechanically.
+5. **A central keeper who repairs the graph** — maintainers, the blueprint's
+   author, a chief architect; and a budgeted cleanup pass for duplication.
+
+**Search and division are phases, not rivals.** Blueprint projects divide
+work whose route is already known; the blueprint is the handoff from search
+to division. Navier–Stokes, whose route was unknown, searched competing
+variants at the top level and formalized afterwards. Search where the route
+is unknown; divide where it is known.
+
+## 5. What the pilot tested, against this
 
 | Evidence says | The pilot's team arms did |
 |---|---|
@@ -150,13 +227,17 @@ decouples from "getting understanding" (Tao) [P].
 | one writer per unit, split along the oracle | 7–13 concurrent writers per thread on overlapping files |
 | diversity by construction | one model, one prompt style, one plan |
 | shared archive with scores | none; the journal held the board, not candidates |
+| contracts frozen first, machine-checkable (§4) | t0's contracts were prose assignments, not a checked statement file or contract tests |
+| claims enforced by the system (§4) | none inside a thread; subtasks were merged from worktrees after the fact, the design STORM measured below a single agent |
+| a central keeper who repairs the graph (§4) | each thread's coordinator only decomposed and synthesized |
 
-The program-vs-sharded question is a question about division of labor, the
-mechanism with the weakest evidence at this task size. It is still worth
-answering cheaply (one writer per thread), but it is not where multi-agent
-coordination has earned its results.
+Across threads, docs/05's program design is close to Co-Coder, the strongest
+division-of-labor result: a blueprint, contracts first, partition by
+dependency, hub files owned by one thread. Inside threads, the pilot ran the
+configuration the evidence says loses. The program-vs-sharded question is
+therefore still open and worth answering, with each thread run as one writer.
 
-## 5. What this means for OpenSwarm
+## 6. What this means for OpenSwarm
 
 The kernel already has most of what the effective systems use, under other
 names: the run journal is an archive with lineage (A3–A4); worktrees isolate
@@ -179,27 +260,49 @@ the topology that uses them the way the evidence says.
    periodic consolidator** that distills the best insights back into the
    shared journal — the Navier–Stokes pattern, and a use for the protocol's
    events and steering.
-4. **Keep division of labor, but only along oracle units with one writer
-   each** — Phase C's scopes are exactly this, and should come before any
-   more program-scale experiments.
-5. **Reprioritize Phase B around the verifier.** The oracle is the
+4. **Build division of labor to the five conditions of §4.** The program
+   topology keeps its blueprint, but thread 0 lands a machine-checkable
+   statement file (interfaces, stubs, contract tests) that CI enforces and
+   agents peer-check by computing cases; claims are leases the journal
+   enforces (A3 has them) or write-time freshness checks, not worktree merges
+   after the fact; every thread has its own oracle plus a whole-program
+   regression check at each landing; threads are sized to the single agent's
+   reliable horizon (~1.5 h at 80 %), not its 50 % horizon; hub files have one
+   owner; and a keeper role repairs the graph and runs a cleanup pass. Phase
+   C's scopes are the claims half of this.
+5. **Search where the route is unknown, divide where it is known.** A program
+   can open with an `explore` or `variants` phase whose winning plan becomes
+   the blueprint — the handoff every blueprint project made by hand.
+6. **Reprioritize Phase B around the verifier.** The oracle is the
    coordinator; it has to be exact and hard to game, and the train should
    select among candidates as well as merge them.
-6. **Always run a budget-matched baseline**: one agent given N× the tokens,
+7. **Always run a budget-matched baseline**: one agent given N× the tokens,
    or N sequential retries. Most published multi-agent wins disappear against
-   it; ours must not.
-7. **Aim where single agents plateau and checkers are exact**: the hard end
-   of benchmarks (single-agent reward under about 0.45), formal proofs,
-   performance work, large migrations split by call site.
+   it; ours must not. No published program-scale result is budget-matched
+   yet, so ours would be a contribution.
+8. **Aim where single agents plateau and checkers are exact**: the hard end
+   of benchmarks (single-agent reward under about 0.45), library-scale work
+   (RoadmapBench's median change is 51 files — the scale where Co-Coder and
+   STORM win), formal proofs, performance work, large migrations split by
+   call site.
 
-## 6. What to test next
+## 7. What to test next
 
-The pilot's frozen set (docs/05 §10) can test the best-evidenced mechanism
-for the cost of a few dozen single-agent runs: on each task, compare (a) one
-agent, (b) one agent given N× the budget as sequential retries, and (c) N
-independent attempts selected by the repository's own visible tests plus a
-judge — never the held-out tests, which only grade. If (c) beats (b) on
-landed reward per dollar, `explore` earns its place; if not, the evidence
-does not transfer to our harness and we should know that before building
-more topology. The program-vs-sharded comparison, rerun with one writer per
-thread, is the second, cheaper question.
+The frozen pilot set (docs/05 §10) can test both mechanisms on the same
+tasks, each against a budget-matched single agent.
+
+1. **Search** — (a) one agent; (b) one agent given N× the budget as
+   sequential retries; (c) N independent attempts selected by the
+   repository's own visible tests plus a judge, never the held-out tests,
+   which only grade. Costs a few dozen single-agent runs.
+2. **Division** — the pilot's arms rebuilt to §4's conditions: each thread
+   one writer; thread 0 landing interfaces, stubs and contract tests that
+   gate the dependents; a whole-program regression check at each landing;
+   (d) sharded vs (e) program vs (b) the budget-matched single agent.
+   About 4–5 agents a cell, so an order of magnitude cheaper than the
+   calibration.
+
+If (c) beats (b), `explore` earns its place. If (e) beats both (d) and (b)
+on landed reward per dollar, program-scale coordination does on our harness
+what Co-Coder showed it can; if not, docs/05's Phase C and D are re-scoped as
+D10 already provides.
