@@ -306,3 +306,82 @@ If (c) beats (b), `explore` earns its place. If (e) beats both (d) and (b)
 on landed reward per dollar, program-scale coordination does on our harness
 what Co-Coder showed it can; if not, docs/05's Phase C and D are re-scoped as
 D10 already provides.
+
+## 8. What AgentRoom, Co-Coder and STORM do, and what OpenSwarm takes from them
+
+Read from the three papers directly (2026-09-27) [P arxiv 2606.00953,
+2605.20563, 2608.23740].
+
+| | Co-Coder | STORM | AgentRoom |
+|---|---|---|---|
+| Plan | an LLM writes a Repository Interface Blueprint: every file's symbols with typed signatures and its imports; a judge scores it and it is revised until it scores 7/10 (≤3 rounds) | a manager partitions the task into disjoint file sets, 2–8 engineers by the repo's complexity | none; decomposition is negotiated through broadcasts |
+| Partition | a dependency graph from the blueprint; in-hubs (files with in-degree ratio > 0.4) each get their own group, out-hubs (aggregators) all go to one integration group, the rest are clustered by Infomap; objective = critical path + α·communication | disjoint primary file sets per engineer | files claimed one at a time |
+| Workspace | files are generated into one project, in dependency order | **one shared workspace**; every file has a version; each agent keeps the versions it has read; a write is rejected if the target *or anything it read* has changed since, and the rejection returns the current content, a diff and the stale dependencies, with a short reservation to stop ping-pong | one CRDT-merged filesystem; writes are visible to peers within 2 s |
+| Scheduling | greedy list scheduling on a shared task list: a file becomes ready when its upstream files are done; no barriers | engineers run concurrently; the manager reassigns a failed subtask once | concurrent |
+| Intent | implicit in the blueprint | **intent annotations**: structured comments naming the author and why, preserved by other agents | a broadcast log and a `room_state` view of claims and recent messages |
+| Integration | a leader runs the test suite, maps failures to groups through the partition record, and dispatches repair group by group, ≤10 rounds | the manager reviews diffs, runs the tests, fixes import and naming mismatches, commits | agents poll for updates between subtasks |
+| Result | 68.1 % vs 56.8 % sequential (DevEval), 34.1 % vs 20.1 % (CodeProjectEval), 0.65× the cost, 0.48× the time; gpt-5-mini; **no ablation**; small projects (3–12 files) | 82.5 / 46.2 vs single agent 66.4 / 20.7 vs worktrees 63.8 / 24.6 (Commit0-Lite, Sonnet 4.6); ~4.4× the spend; 2→8 engineers: macro 71→87 %, cost linear, wall-clock flat; gains largest on tightly coupled repos | abandonment 31 % solo vs 5 % (odds ratio 13.7, p < 10⁻⁵); quality 0.669 vs 0.544 solo vs 0.456 parallel-merge (LLM judge); best at N = 2 |
+| Ablations that matter | — | worktrees 24.6 and prompt-only isolation 24.0 vs shared workspace with write validation 46.2; **removing intent annotations: 46.2 → 26.6** | parallel-merge is *below* solo |
+| Limits | degrades to sequential when a repo is fully coupled; Python only | shell writes (sed, scripts) bypass the validator; file-level granularity causes false rejections; "scaling is limited more by decomposition quality than by STORM itself" | agent-authored tests, LLM judge, one runtime, small n |
+
+**The common lesson.** All three reject "isolate, then merge": agents see
+each other's work while they work, a concurrency rule (write validation,
+claims, or dependency order) keeps writes consistent, peers can see each
+other's intent, ownership is disjoint, and a leader runs the tests and
+routes repairs to owners. OpenSwarm's worktree-per-task design with a merge
+at the end is STORM's losing baseline. A second, quieter lesson from
+AgentRoom: much of the gain over one agent is that a lone agent quits early
+(31 % stub-and-exit); a peer's presence, or a harness that will not accept
+"done" before the unit's checks pass, prevents it.
+
+**What OpenSwarm integrates, in order of evidence per cost:**
+
+1. **Shared workspace with validated writes** (STORM's mechanism, its
+   largest measured effect). Members of a run edit one checkout; the run
+   journal keeps a version per file (compare-and-set is what `board.ts`
+   already does for tasks); the member server (A2) routes the editor's
+   writes through the validator; a rejection returns the current content,
+   the diff and the stale dependencies, with a short reservation. Shell
+   writes cannot be mediated, so they are detected after each command (the
+   diff against the journal's versions) and validated then. Worktrees remain
+   for independent attempts (`explore`) and for landing across runs.
+2. **Intent recorded structurally** (STORM's 46.2 → 26.6 ablation). Because
+   members rarely call optional tools (D6), the harness records intent
+   itself: each validated write carries the writer, its task and the task's
+   intent header (A7) into the journal, and every read returns the recent
+   intents for that file.
+3. **File claims** (AgentRoom, Co-Coder's ownership) as Phase C's `file`
+   scopes: leases in the journal (A3 has them for tasks), taken when a task
+   is claimed, released when it lands.
+4. **Blueprint, hubs and dependency scheduling** (Co-Coder) as docs/05 C3
+   made concrete: a blueprint of per-file signatures and imports, critiqued
+   until it passes; in-hubs isolated, out-hubs to one integration owner;
+   communities for the rest; and file-level `blockedBy` on the board, whose
+   `claimNextReady` already is greedy list scheduling.
+5. **Integrate and repair** (Co-Coder, STORM's manager): the lead runs the
+   suite after each wave, maps failures to owners through the partition
+   record, and dispatches bounded repair tasks — Phase B's train gains a
+   repair loop, not just a merge.
+6. **A completion gate** (AgentRoom's anti-abandonment): a task cannot be
+   completed until its unit's checks pass; otherwise the harness sends it
+   back. This also improves a single agent, which is fine: it is a harness
+   property, and the baseline gets it too.
+7. **Width from structure**: the number of writers comes from the partition
+   (Co-Coder) or the repo's complexity (STORM, 2–8), never from a
+   coordinator's free choice, the failure the calibration measured.
+
+## 9. Where OpenSwarm stands on the five conditions
+
+| Condition (§4) | Today (`494c93a`) | Gap |
+|---|---|---|
+| 1. Contracts frozen first, machine-checkable | designed (docs/05 C3, thread 0); the pilot's contracts are prose assignments | a blueprint of signatures and imports, critiqued; a contracts step that lands stubs and contract tests CI enforces before dependents start |
+| 2. A cheap checker on every unit | the cascade's command gate; worktrees can now run the repo's tests (`5cfab25`); the merge queue runs no verifier | Phase B's L2/L3; a per-unit oracle (the tests that import the unit's files); a whole-program regression check at each landing; the completion gate |
+| 3. Claims enforced by the system | task claims with compare-and-set and leases (A3); isolation by worktree with conflicts retained at the end | file scopes (Phase C); validated writes in a shared workspace; intent recorded with each write |
+| 4. A small audited trust surface | the journal is the audit log; the default-deny protocol; hidden-test design (D4) | the statement file a human audits; the landing evidence bundle (B4) |
+| 5. A central keeper who repairs the graph | harness-raised questions (A6) route stalls and failures to a person; the coordinator only decomposes and synthesizes | a keeper role that owns the blueprint, runs integrate-and-repair and amends contracts; a scheduled cleanup pass (docs/05 C7's maintenance program) |
+
+Phase A built the substrate the five conditions sit on (durable journal,
+leases, steering, questions, protocol, sandbox); none of the five is met
+yet. The items above are, almost one for one, docs/05's Phases B and C —
+with the change that Phase C's execution inside a program moves from
+worktree-per-task to a shared workspace with validated writes.
