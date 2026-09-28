@@ -1,6 +1,8 @@
 # 05 — Control-plane redesign: steerable, program-scale, meshable swarms
 
-Status: **draft for review** · 2026-09-25 · extends [docs/06](06-mesh-positioning.md)
+Status: **draft for review** · 2026-09-25 · extends [docs/06](06-mesh-positioning.md) ·
+amended 2026-09-27 by D12–D16 after [docs/07](07-coordination-that-works.md)
+(opentasks as the substrate; Phases B and C revised in §7.4–§7.5)
 
 A redesign of OpenSwarm's construction and interface, organized by the goals
 it serves. §1 states the diagnosis, §2 the outcome and goals, §3–§4 the
@@ -60,11 +62,16 @@ verifier-passing, not "member reported done".
 
 G1–G5 are capabilities. G6–G8 are qualities that every capability must hold.
 
-**Non-goals.** Beating a single agent on resolve rate for hard single tasks
-(docs/47 and the field say parity; we do not design against it). Cross-org
-federation (innovators stage, docs/06 §4.5; the trust model in G7 keeps the
-door open). Our own UI shell (dsh's web surface hosts our views, D7).
-Further topology mechanism (docs/02's conclusion stands).
+**Non-goals.** Cross-org federation (innovators stage, docs/06 §4.5; the
+trust model in G7 keeps the door open). Our own UI shell (dsh's web surface
+hosts our views, D7). Topology mechanism beyond the verifier-selected
+search topologies and the five-condition program (D14; docs/02's
+conclusion stands for the rest).
+
+*Amended 2026-09-27.* The draft listed beating a single agent as a
+non-goal. It is now the point: every multi-agent arm is judged against a
+budget-matched single agent, aimed where single agents plateau and checkers
+are exact (docs/07 §6.7–§6.8).
 
 ## 3. Principles
 
@@ -104,6 +111,11 @@ Entities recorded in the journal, each with a stable id and a revision:
 | **Landing** | task or thread, branch, deps, priority, verifier results, batch, outcome, evidence bundle | `MergeOutcome` after the fact |
 | **Budget** | scope (run\|thread\|member), tokens, steps, ciRounds, dollars, action on exhaustion | `maxConcurrent`, `maxTaskAttempts` |
 | **Steer / Pause / Cancel** | target, principal, message | none |
+
+*Amended by D12:* Task and Scope (and a landing's verifier evidence) are
+recorded in opentasks, not the run journal: a task is a task node, a `file`
+scope a lease on a path, verification an attempt with a `verifies` edge.
+The journal records the rest and refers to tasks by opentasks id.
 
 ## 5. Foundation
 
@@ -158,6 +170,11 @@ entity revision; `waitForChange` generalizes to a filtered subscription.
   serves all single-host work; the same JSONL under `refs/swarm/<runId>`
   serves the mesh, with claims by push compare-and-set. A `sqlite` backend
   is added only if a single-host multi-lead case demands it.
+
+*Amended by D12 (2026-09-27):* tasks, claims, attempts, verification
+evidence and contracts move to opentasks' graph; this journal keeps what has
+no opentasks equivalent (run lifecycle, steers, questions, the protocol
+audit) and refers to tasks by their opentasks ids.
 
 ### 5.3 One protocol, carriers, principals, and policy
 
@@ -357,7 +374,10 @@ integration branch through the program's train.
 **Scopes (D2).** `file` and `test` scopes are declared by the planner and
 enforced: same-target detection during the run, and a diff-against-scope
 check at landing. Any other kind is recorded and displayed, marked
-unenforced. Members never have to declare anything (P9).
+unenforced. Members never have to declare anything (P9). *Amended by D12
+and C4:* inside a program, `file` scopes are opentasks leases checked on
+every write in a shared workspace (a stale write is rejected), not only by
+a diff at landing; the landing check remains for work from worktrees.
 
 **Drift.** A scheduled **maintenance program** is a first-class program
 kind: small single-purpose PRs against declared repository principles, the
@@ -425,8 +445,8 @@ through Phase C and promoted in Phase D (D3):
 - entries carry `blockedBy`, priority, and required verifier level;
 - batches merge speculatively and test once; a failure bisects to the
   culprit;
-- a conflict goes to a resolver thread (a critic-loop over the conflict)
-  before it is retained;
+- a conflict goes to the resolver, an agent step inside the
+  integrate-and-repair skeleton (D15, B3), before it is retained;
 - a scope violation raises a question instead of silently merging;
 - a forge adapter (Phase D) hands batches to GitHub or GitLab's queue for
   organizations that already gate there.
@@ -620,15 +640,21 @@ criteria met.
 ### 7.4 Phase B — Verified landing
 
 **Goal.** G4 and G8: work counts only when verified, and the north star is
-computable.
+computable. Revised 2026-09-27 (docs/07 §6.6): the verifier is the
+coordinator, so Phase B also moves task state to opentasks (D12), adds the
+completion gate and the integrate-and-repair loop (D15, D16), and ships the
+first search topology.
 
 | # | Work item |
 |---|---|
+| B0 | Task state on opentasks (D12): tasks, claims, attempts and `verifies` evidence through its daemon; `board.ts` becomes an adapter over it; the run journal keeps lifecycle, steers, questions and the audit |
 | B1 | Verifier levels L2 and L3; verifier environment members cannot read (D4); tamper logging |
-| B2 | Train class with its own journal: speculative batches, bisect, dependencies, priority; lead-hosted |
-| B3 | Resolver thread for conflicts; scope-violation and conflict questions |
+| B2 | Train class with its own journal: speculative batches, bisect, dependencies, priority; lead-hosted; selects among candidates as well as merging them |
+| B3 | Integrate and repair (D15): after each landing wave, run the checkers, map failures to owning tasks, dispatch bounded repair tasks to the owners; the resolver (§6.4) becomes the skeleton's agent step for a conflict; scope-violation and conflict questions |
 | B4 | Landing evidence bundle; landing queue view |
 | B5 | `RunMetrics`, including coordination ratio and cost per landing |
+| B6 | Completion gate (D16): a task closes only with a `verifies` edge whose evidence passes its unit's checker; otherwise the harness sends it back. The single-agent baseline gets it too |
+| B7 | `explore` topology (docs/07 §6.1): N independent attempts at one task in worktrees, each an opentasks attempt, selected by the verifier ladder with a judge only to break ties |
 | R1 | `claude-code` member at basic conformance, landing through the train |
 
 **Exit criteria.**
@@ -639,6 +665,12 @@ computable.
    tests) produces a tamper incident and no read.
 3. A mixed roster of a dsh member and a Claude Code member lands work through
    one train, with cost attributed per runtime.
+4. A member that reports done with a failing unit check is sent back, and no
+   task in the journal or the graph closes without passing evidence.
+5. docs/07 §7's search arms run on the frozen pilot set: `explore` (c)
+   against one agent (a) and a budget-matched single agent (b). `explore`
+   stays a default topology only if (c) beats (b) on landed reward per
+   dollar.
 
 ### 7.5 Phase C — Program-scale, and the decision
 
@@ -681,25 +713,42 @@ re-scoped before they are built. A positive result only licenses building
 C; the exit experiment below still decides D. The pilot also fixes the task
 set (§10).
 
+*Pilot outcome (2026-09-27).* The team-arm calibration (§10) ran each
+thread as a coordinator team, and its fan-out broke one writer per scope
+inside every thread, so the pilot as configured cannot answer its question.
+Its arms are rebuilt to docs/07 §4's five conditions (docs/07 §7.2): each
+thread one writer; thread 0 lands interfaces, stubs and contract tests that
+gate its dependents; a whole-program regression check at each landing; and
+a budget-matched single agent (b) beside sharded (d) and program (e). The
+decision rule is unchanged, except that program must also beat (b).
+
+Revised 2026-09-27 (docs/07 §8–§9): inside a program, execution moves from
+worktree-per-task to one shared workspace with validated writes (STORM's
+largest measured effect). Worktrees remain for independent attempts
+(`explore`) and for landing across runs.
+
 | # | Work item |
 |---|---|
 | C1 | `lead` member composition; thread-in-program nesting; handoff protocol |
 | C2 | Program spec (`swarm.yml`) and artifact intake from issues |
-| C3 | Planning stage: survey (TypeScript, Python, co-change fallback), partition, contracts-first thread 0, cut-from-integration |
-| C4 | `file` and `test` scopes enforced; same-target detection |
+| C3 | Planning stage: survey (TypeScript, Python, co-change fallback); blueprint of per-file signatures and imports, critiqued until it passes; in-hubs isolated, out-hubs to one integration owner; thread 0 lands stubs and contract tests, recorded as contract nodes (D13); width from the partition, never a coordinator's choice |
+| C4 | `file` claims as opentasks leases on paths (D12) and `test` scopes; a shared workspace whose writes are validated against per-file versions (a stale write is rejected with the current content, the diff and the stale reads); intent recorded with each write and returned on read (docs/07 §8 items 1–3) |
 | C5 | Budgets per run, thread, member; model allocation policy |
 | C6 | Program board and plan consent |
 | C7 | Maintenance program kind |
+| C8 | Keeper (D16): the gate that rejects writes to frozen contract files; a contract-change step in which an agent drafts the change and its blast radius and the owner approves; re-freezing, and reopening the tasks that implement the changed contract |
+| C9 | `evolve` and `variants` topologies (docs/07 §6.2–§6.3), with the consolidator's distillation on a fixed cadence (D15); a program may open with a search phase whose winning plan becomes the blueprint |
 | R2 | `codex` member at basic; `claude-code` and `codex` at steerable |
 
 **Exit experiment (go/no-go).** On the task set the pilot fixed, the
-pilot's three arms with the automated planner and the real train: single,
-sharded (for example 4 teams × 3 members), and program (4 threads × 3
-members). Measure landed work per dollar-hour at L3, landing rate,
-coordination ratio, and interventions per landed task.
+rebuilt arms with the automated planner and the real train: the
+budget-matched single agent, sharded (for example 4 teams × 3 members), and
+program (4 threads × 3 members). Measure landed work per dollar-hour at L3,
+landing rate, coordination ratio, and interventions per landed task.
 
-- **Go** to D as designed if the program arm beats the sharded arm on
-  landed work per dollar-hour without a worse landing rate.
+- **Go** to D as designed if the program arm beats both the sharded arm
+  and the budget-matched single agent on landed work per dollar-hour
+  without a worse landing rate.
 - **Re-scope** if it does not: D keeps durability, the shared train, and
   cross-host sharding for throughput, and drops cross-swarm task handoff
   until a later experiment says otherwise.
@@ -736,7 +785,7 @@ in §9 or §10 that would bring it back.
 | Dimension | Today (`main` @ `9148996`) | Redesign | Goal |
 |---|---|---|---|
 | Unit of execution | `runTeam(spec) → Promise` | durable `SwarmRun`; `runTeam` = `start().result` | G1, G6 |
-| State | board + mailbox over one lead's session log | our JSONL journal per run, linked; leased claims; projections pushed over the protocol | G6, G3 |
+| State | board + mailbox over one lead's session log | tasks, claims, attempts and contracts in opentasks (D12); our JSONL journal per run for lifecycle, steers and questions; projections pushed over the protocol | G6, G3 |
 | Survives restart | no | yes; `attach` | G6 |
 | Human entry | blocking `/swarm` line | board in dsh's web surface, CLI, protocol carriers | G1 |
 | Address a member | impossible | `steer` to member, role, thread, lead, `*` | G1 |
@@ -744,9 +793,9 @@ in §9 or §10 that would bring it back.
 | Questions | none | harness-raised plus member `ask`; one tiered queue | G1, G7 |
 | Intent | free-text prompt | intent header per task | G1, G2 |
 | Planning | coordinator numbered plan | survey, partition, contracts-first, allocation, consent | G2 |
-| Scopes | none | planner-declared `file`/`test`, enforced at landing | G2, G4 |
+| Scopes | none | planner-declared `file`/`test`; `file` as opentasks leases checked on every write in a shared workspace, and at landing for worktree work | G2, G4 |
 | Nesting | none | `lead` member composition | G2 |
-| Landing | sequential merge, conflicts retained | speculative bisecting train, resolver, evidence bundle | G4 |
+| Landing | sequential merge, conflicts retained | speculative bisecting train, integrate-and-repair with a resolver step, completion gate, evidence bundle | G4 |
 | Verification | cascade command gate | L0–L4, hidden tests where the verifier runs | G4 |
 | Member runtimes | in-process, dsh subprocess | contract with three levels; + claude-code, codex, attach, a2a | G5 |
 | Member sandbox | `danger-full-access` | write containment at the worktree (`workspace-write`) | G7 |
@@ -756,7 +805,8 @@ in §9 or §10 that would bring it back.
 | Telemetry | usage per model, progress lines | `RunMetrics` with the north-star terms | G8 |
 
 **Stays:** Cordis plugin shape and the dsh seams; log-fold state; the seven
-topologies, now thread patterns; worktrees and auto-commit; token identity;
+topologies, now thread patterns, joined by `explore`, `evolve` and
+`variants` (D14); worktrees (for independent attempts and landing across runs) and auto-commit; token identity;
 F3 and its blast radius; the eval CLI contract.
 **Goes:** the in-memory run table; lead disposal on settle; loopback as a
 hard-coded rule; blocking `/swarm`; `danger-full-access` as the member
@@ -785,6 +835,7 @@ give up dsh's projection cache and push. *Reverse if* programs need tight,
 frequent cross-thread coordination rather than occasional handoffs
 (granularity), or dsh ships plugin event-type registration with a
 conditional append (storage: a session-log backend replaces the file).
+*Amended by D12:* task state leaves this journal for opentasks.
 
 **D2 — Enforce `file` and `test` scopes; record the rest.** Weighed against
 file only, and a full semantic set enforced. File ownership is the only kind
@@ -844,7 +895,9 @@ cannot work inside a view tab.
 **D8 — One journal format, two locations.** A JSONL file per run on local
 disk for single-host work, and the same JSONL under `refs/swarm/<runId>`
 for the mesh, so the git backend is mostly a transport. `sqlite` is added
-only if a single-host multi-lead case demands it.
+only if a single-host multi-lead case demands it. *Amended by D12:* task
+state reaches the mesh through opentasks' own git JSONL and merge driver;
+`refs/swarm/<runId>` carries only the run journal.
 
 **D9 — Runtime neutrality is a parallel track, not the last phase.** It
 needs the member contract and a worktree, both available by Phase B, not the
@@ -878,8 +931,109 @@ long-poll `swarm/events`. *Cost:* two carriers to test, and remote viewers
 reach a run only through the socket. *Reverse if* dsh's web surface gains
 authenticated principals (one carrier suffices).
 
+D12–D16 were decided 2026-09-27, after docs/07 found that coordination
+beats a single agent only as verifier-selected search, or as division under
+five conditions (contracts frozen first, a checker per unit, claims the
+system enforces, a small audited trust surface, a central keeper).
+
+**D12 — opentasks is the coordination substrate; the run journal keeps
+what is ours.** Weighed against building file claims, attempts and evidence
+into our own journal, and against moving everything, run lifecycle
+included, into opentasks. opentasks (0.2.0, which we maintain) already has
+what the five conditions need underneath: atomic claims and `claimNext`,
+leases with a daemon reaper and fenced release, typed nodes and edges
+(contexts, attempts, `verifies`), change events with a resume cursor,
+idempotent writes, one daemon per repository across worktrees, and git JSONL
+persistence with a merge driver, which is the mesh transport D8 planned to
+build. Owning those twice would mean two compare-and-set domains for one
+task. Run records, steers, questions and the protocol audit have no
+opentasks equivalent and stay in our journal, which refers to tasks by
+opentasks id; opentasks is authoritative for task state. agent-inbox
+replaces the mailbox later, when members need messaging beyond steering.
+*Cost:* A3's board-over-journal becomes an adapter (B0), and every task
+write crosses a socket. *Additions,* made in opentasks itself rather than
+wrapped here: `file` claims (leases on paths) and an enforceable completion
+gate; write validation stays ours, since it mediates the member's editor.
+*Reverse if* the daemon cannot sustain a shared-workspace run's claim and
+write rate, in which case task state returns to the run journal.
+
+**D13 — The blueprint and contracts are code, recorded as file-backed
+context nodes.** Weighed against inline prose spec nodes and a new
+`contract` node type. docs/07 §4 shows integration failing as the shared
+spec thins and recovering with a full one; Co-Coder's blueprint is typed
+signatures, and Carleson succeeded once statements were formalized first. Thread 0 commits stubs and contract tests, and each module
+gets a file-backed context node, which already records the content hash and
+commit and detects drift, so "frozen" is checkable. The checker is a
+metadata convention, `metadata.contract = { files, check }`, needing no
+schema change. Tasks `implements` their contract, `blocks` edges follow the
+import graph so `ready` gives the schedulable frontier, and attempts carry
+`verifies` edges with the check's evidence. Drift is detected, not
+prevented; prevention is the keeper's gate (D16). *Reverse if* contracts
+need queries opentasks cannot answer from metadata, in which case the
+convention is promoted to a node type there.
+
+**D14 — Topologies are code; openteams is not adopted.** Weighed against
+openteams `team.yaml` (legacy's choice, legacy docs/25 Q1) and a new
+declarative format. openteams describes roles, a root with companions,
+spawn rules and signal channels: who exists and who may talk to whom.
+`explore`, `evolve` and `variants` are defined by control flow and
+selection (candidate count, diversity seeds, verifier, selector, archive,
+budget), none of which it can express; legacy's mapping already turned
+nearly every template into `coordinator` and carried the real topology in
+`x-openswarm`. Its main content, personas and channels, is what docs/07
+says to skip. Each topology is a function in `topologies.ts` with a small
+typed parameter spec. *Reverse if* users need to author team structures
+that interoperate with swarmkit, or the agent steps' prompts want an
+authoring format; openteams could then carry prompts alone.
+
+**D15 — The consolidator is a deterministic skeleton with agent steps.**
+Weighed against a fully agentic lead, and against dsh's workflow engine
+running a fixed script. The loop is mechanical: merge in dependency order,
+run the checkers, map failures to owners through the partition record,
+dispatch bounded repairs, run again. Judgment is needed only for a repair,
+a merge conflict, or a tie the verifier cannot break, and each becomes an
+agent call with structured output. A free lead is what the calibration
+measured failing (7–13 subtasks per thread, 30–60 % conflicts retained;
+P9, D6), and the systems that work keep the controller in code with the
+model in the mutation or repair step (AlphaEvolve, FunSearch, Co-Coder,
+Cursor). dsh's engine does not fit: a script gets only `agent`, `parallel`,
+`pipeline`, `phase` and `log`, runs with an empty environment behind a
+plain-JSON boundary, and its children are dsh subagents started through
+`ctx.subagents` rather than our members, while the consolidator needs git,
+tests and opentasks. We copy its event shape (phases, paired agent start and end) for the Swarm
+tab. For `variants`, distillation is a step the skeleton runs on a fixed
+cadence. *Reverse if* the engine gains host-side services and a
+member provider, when fixed scripts could run there for its isolation and
+cancellation.
+
+**D16 — The keeper is split: a code gate for the trust surface, an agent
+for contract changes, the owner approving.** Weighed against an agent
+keeper and a code-only keeper. The gate rejects writes to frozen contract
+files, enforces claims, and holds the completion gate (B6); it is code
+because conditions 3 and 4 fail if an agent can be talked past it. A
+contract change starts when the harness sees a unit's failure localize to
+a contract, or a rejected write to a frozen file (D6: members will not file
+requests on their own). An agent drafts the change and its blast radius
+from the `implements` and `blocks` edges, the owner approves through the
+question queue (A6), and the system re-freezes the nodes and reopens the
+tasks that implement them. Maintainers owned the blueprint in the
+human-led projects docs/07 §4 cites, and Anthropic's FLT run kept
+statements immutable, so owner approval is the default.
+*Reverse if* approval latency dominates run time and agent-approved changes
+with a small blast radius do not raise the regression rate; those may then
+be approved by the agent.
+
 ## 10. Still open
 
+- **opentasks placement** (D12): one `.opentasks/` graph per repository
+  with tasks tagged by run id, or a location per run; how a program's shared
+  workspace registers with the per-repository daemon; and whether the
+  per-file versions behind validated writes live in the run journal or as
+  opentasks file nodes. Shell writes cannot be mediated and are validated
+  after each command by diffing against those versions (docs/07 §8).
+- **Redesigned pilot** (§7.5, docs/07 §7): about $300–600 for the search
+  and division arms on the frozen set, with a one-seed calibration of each
+  arm first, so a configuration fault costs one cell rather than the set.
 - **Handoff timeout**: how long an unaccepted offer waits before reclaim,
   and whether it is set per program or per thread.
 - **Package caches under the sandbox**: the per-ecosystem environment that
