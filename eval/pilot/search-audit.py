@@ -46,9 +46,9 @@ for run in sys.argv[1:]:
     for f in glob.glob(f"{run}/cache/*.submission.json"):
         task = re.search(r"roadmap-bench__(.+?)__", f).group(1)
         cells[task].append((run, added(json.load(open(f)).get("patch") or "")))
-    for f in glob.glob(f"{run}/verifier-out/*.reward.json"):
+    for f in glob.glob(f"{run}/verifier-out/**/*.reward.json", recursive=True):
         task, host = os.path.basename(f).rsplit(".", 3)[:2]
-        rep = f"{run}/verifier-out/{host}.search.json"
+        rep = os.path.join(os.path.dirname(f), f"{host}.search.json")
         for r in json.load(open(rep))["rounds"] if os.path.exists(rep) else []:
             if r.get("review"):
                 rv = r["review"]

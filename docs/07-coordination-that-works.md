@@ -325,6 +325,17 @@ and one set of four attempts per task on the frozen 12, after a one-task
 calibration. The comparison is (c) against (b) on mean held-out reward and
 on reward per dollar.
 
+*Control arm (b0), pre-registered 2026-09-28 before it ran:* the same
+agent, rounds, stopping rule (a round that changes nothing ends it; no
+reviewer, so no "all done" stop) and cap of 4 as (b), but each round after
+the first opens with a prompt to check the work against the roadmap
+itself (every target's requirements, the repository's tests, checks of
+its own) instead of the reviewer's report. One seed on the frozen 12.
+(b) beating (b0) credits the independent reviewer's feedback; (b0)
+matching (b) credits the extra rounds. From this run each cell mounts only
+its own results directory, closing the channel by which a later attempt
+could read an earlier one's held-out test output.
+
 If (c) beats (b), `explore` earns its place. If (e) beats both (d) and (b)
 on landed reward per dollar, program-scale coordination does on our harness
 what Co-Coder showed it can; if not, docs/05's Phase C and D are re-scoped as

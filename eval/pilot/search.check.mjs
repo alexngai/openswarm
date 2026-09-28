@@ -73,4 +73,13 @@ function run(mode) {
   assert.ok(!existsSync(join(app, "junk.txt")));
   assert.equal(stops, 4);
 }
+// self: no reviewer; every round changes a.txt, so it runs all four rounds.
+{
+  const { report, stops, prompts } = run("self");
+  assert.equal(report.rounds.length, 4);
+  assert.ok(report.rounds.every((r) => !r.review));
+  assert.ok(prompts.every((p) => !p.startsWith("You are reviewing")), "no reviewer runs");
+  assert.ok(prompts.slice(1).every((p) => p.includes("Check the result against the roadmap yourself") && p.includes(report.base)));
+  assert.equal(stops, 4);
+}
 console.log("search.check: ok");

@@ -3,7 +3,8 @@
  * pilot (D10). Arms: `single` (one agent), `sharded` and `program` (hand-planned
  * threads; see openswarm docs/05 §7.5), and docs/07 §7.1's search arms: `attempt` (one
  * agent then a reviewer; seeds 1..N are the attempts arms a and c are built from) and
- * `rounds` (up to ROADMAP_ROUNDS agent rounds fed by the same reviewer: arm b). The
+ * `rounds` (up to ROADMAP_ROUNDS agent rounds fed by the same reviewer: arm b), and
+ * `selfrounds` (the same rounds, each opened by a self-check prompt instead: arm b0). The
  * search arms run through search.mjs, so they cannot share a run with the others.
  *
  * The system under test is a BUILT openswarm checkout on the host (the pilot pins the
@@ -21,7 +22,7 @@
  * Grading is RoadmapBench's own `tests/test.sh`, seeded into /tests only after the
  * agent finishes: one checkpoint per roadmap target, weighted as test.sh weights it,
  * so `earned/total` is the benchmark's reward and `full` is "resolved". test.sh's own
- * reward.json and log are kept under `.eval-runs/<run>/verifier-out` for audit.
+ * reward.json and log are kept under `.eval-runs/<run>/verifier-out/<cell>/` for audit.
  *
  * Zero-token plumbing check: ROADMAP_REF=1 seeds `<task>/<thread>.patch` from ROADMAP_REFS at
  * /opt/pilot/ref, and OPENSWARM_LLM_BASE_URL points the SUT at pilot-mock.mjs, whose
@@ -60,10 +61,10 @@ if (!MOCK) for (const key of ["AZURE_API_BASE", "AZURE_API_KEY"]) {
 if (!existsSync(join(OPENSWARM_ROOT, "packages/cli/dist/index.js"))) { console.error(`no built openswarm at ${OPENSWARM_ROOT}`); process.exit(2); }
 if (!existsSync("/opt/node/bin/node")) { console.error("no Node at /opt/node on the host"); process.exit(2); }
 if (TASKS.length === 0) { console.error("set ROADMAP_TASKS=<task>[,<task>…] (e.g. opt-4.4.0)"); process.exit(2); }
-for (const arm of ARMS) if (!["single", "sharded", "program", "attempt", "rounds"].includes(arm)) { console.error(`unknown arm ${arm}`); process.exit(2); }
-const SEARCH_ARMS = ["attempt", "rounds"];
+for (const arm of ARMS) if (!["single", "sharded", "program", "attempt", "rounds", "selfrounds"].includes(arm)) { console.error(`unknown arm ${arm}`); process.exit(2); }
+const SEARCH_ARMS = ["attempt", "rounds", "selfrounds"];
 const SEARCH = ARMS.some((a) => SEARCH_ARMS.includes(a));
-if (SEARCH && !ARMS.every((a) => SEARCH_ARMS.includes(a))) { console.error("attempt/rounds run through search.mjs; run them apart from the other arms"); process.exit(2); }
+if (SEARCH && !ARMS.every((a) => SEARCH_ARMS.includes(a))) { console.error("attempt/rounds/selfrounds run through search.mjs; run them apart from the other arms"); process.exit(2); }
 
 const INIT = [
   "cd /app && (git rev-parse --is-inside-work-tree >/dev/null 2>&1 || (git init -q && git add -A && git -c user.email=eval@local -c user.name=eval commit -qm base))",
@@ -129,7 +130,7 @@ const harness = harnessOf(
     captureSubmissionDiff: true,
     // The task allows 2h per agent. A search cell is an agent then a reviewer, N times
     // for `rounds`, and a timeout mid-review would grade the reviewer's edits.
-    timeoutMs: (ARMS.includes("rounds") ? 2 * Number(process.env.ROADMAP_ROUNDS ?? 4) : SEARCH ? 2 : 1) * 2 * 60 * 60 * 1000,
+    timeoutMs: (ARMS.some((a) => a.endsWith("rounds")) ? 2 * Number(process.env.ROADMAP_ROUNDS ?? 4) : SEARCH ? 2 : 1) * 2 * 60 * 60 * 1000,
     // A backstop, not the budget: cache reads count toward it, and the 2h clock is the real cap.
     maxTokens: Number(process.env.ROADMAP_MAX_TOKENS ?? 40_000_000),
     env: {
@@ -146,6 +147,7 @@ const SCAFFOLD = {
   single: {},
   attempt: { env: { PILOT_SEARCH: "review" } },
   rounds: { env: { PILOT_SEARCH: "rounds", PILOT_ROUNDS: process.env.ROADMAP_ROUNDS ?? "4" } },
+  selfrounds: { env: { PILOT_SEARCH: "self", PILOT_ROUNDS: process.env.ROADMAP_ROUNDS ?? "4" } },
 };
 const armOf = (id) => ({
   id,
@@ -161,7 +163,18 @@ const armOf = (id) => ({
  * Delete once a published swarmkit-eval passes it.
  */
 class EnvDockerBackend extends DockerBackend {
+  constructor(opts) {
+    super(opts);
+    this.sharedRunArgs = opts.runArgs;
+  }
+
   async acquire(cell) {
+    // Each cell mounts only its own verifier-out: the run's shared one would show a later
+    // cell the held-out test output of the cells graded before it. super.acquire reads
+    // runArgs before its first await, so concurrent acquires cannot swap each other's.
+    const own = join(VERIFIER_OUT, `${cell.task.id.split("/").pop()}.${cell.arm.id}.s${cell.seed}.${Date.now().toString(36)}`);
+    mkdirSync(own, { recursive: true });
+    this.opts.runArgs = [...this.sharedRunArgs, "-v", `${own}:/verifier-out`];
     const ws = await super.acquire(cell);
     const run = ws.run.bind(ws);
     const quote = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`;
@@ -195,7 +208,6 @@ const results = await runEval(
         "--cpus", process.env.ROADMAP_CPUS ?? "8", "--memory", process.env.ROADMAP_MEM ?? "16g",
         "-v", `${OPENSWARM_ROOT}:/opt/openswarm:ro`,
         "-v", "/opt/node:/opt/node:ro",
-        "-v", `${VERIFIER_OUT}:/verifier-out`,
         ...(MOCK ? ["--add-host", "host.docker.internal:host-gateway"] : []),
       ],
     }),

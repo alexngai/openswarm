@@ -21,7 +21,7 @@ for f in glob.glob(f"{run}/cache/*.json"):
     cells[d["taskId"].split("/")[1]].append((reward, usd, d.get("durationMs", 0) / 60000, d.get("status")))
 
 truth = defaultdict(list)
-for f in glob.glob(f"{run}/verifier-out/*.reward.json"):
+for f in glob.glob(f"{run}/verifier-out/**/*.reward.json", recursive=True):
     task = os.path.basename(f).rsplit(".", 3)[0]  # "<task>.<container>.reward.json"
     truth[task].append(round(json.load(open(f))["reward"], 4))
 

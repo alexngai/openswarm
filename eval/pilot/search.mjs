@@ -6,6 +6,9 @@
  *   PILOT_SEARCH=review  one agent, then the reviewer: the attempts behind arms (a) and (c)
  *   PILOT_SEARCH=rounds  up to PILOT_ROUNDS agent rounds; the reviewer's report on each
  *                        round opens the next (arm b, the budget-matched single agent)
+ *   PILOT_SEARCH=self    the same rounds with no reviewer: each round opens with a prompt
+ *                        to check the work against the roadmap itself (arm b0, the control
+ *                        that separates the reviewer's feedback from the extra rounds)
  *
  * The reviewer is the same model in a fresh session. It sees the instruction and the
  * workspace, never the held-out tests (those reach the container only at grading), and
@@ -31,8 +34,8 @@ const ROUNDS = Number(process.env.PILOT_ROUNDS ?? 4);
 const APP = process.env.PILOT_APP ?? "/app";
 const CLI = (process.env.PILOT_CLI ?? "/opt/node/bin/node /opt/pilot/openswarm.mjs").split(" ");
 const OUT = `${process.env.PILOT_OUT_DIR ?? "/verifier-out"}/${process.env.HOSTNAME || hostname()}.search.json`;
-if (!["review", "rounds"].includes(MODE)) {
-  console.error(`PILOT_SEARCH must be review or rounds (got ${MODE})`);
+if (!["review", "rounds", "self"].includes(MODE)) {
+  console.error(`PILOT_SEARCH must be review, rounds or self (got ${MODE})`);
   process.exit(2);
 }
 
@@ -104,6 +107,12 @@ You have already worked on this roadmap: your changes are in this working tree (
 
 ${JSON.stringify({ targets: rv.targets, regressions: rv.regressions, score: rv.score }, null, 1)}`;
 
+const selfContinuation = (base) => `${task}
+
+## Continue
+
+You have already worked on this roadmap: your changes are in this working tree (\`git diff ${base}\` shows them all). Check the result against the roadmap yourself: go through every target's requirements, run the repository's existing tests for the code involved plus small checks of your own, then finish what is missing or partial, fix what is broken, and stop.`;
+
 const report = { mode: MODE, rounds: [] };
 const save = () => writeFileSync(OUT, JSON.stringify(report, null, 1));
 let code = 1;
@@ -120,8 +129,13 @@ for (let i = 1; i <= maxRounds; i++) {
   const round = { round: i, code, usage: agent.usage, minutes: agent.minutes, changed: snap.tree !== prevTree };
   report.rounds.push(round);
   save();
-  // A round that changed nothing, or the last round of `rounds`, has no one to feed.
-  if (MODE === "rounds" && (!round.changed || i === maxRounds)) break;
+  // A round that changed nothing, or the last round, has no one to feed.
+  if (MODE !== "review" && (!round.changed || i === maxRounds)) break;
+  if (MODE === "self") {
+    prompt = selfContinuation(report.base);
+    prevTree = snap.tree;
+    continue;
+  }
   const before = ignored();
   round.review = review();
   restore(snap.sha, before);
