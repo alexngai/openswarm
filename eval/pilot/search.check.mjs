@@ -17,7 +17,7 @@ appendFileSync("prompts.log", JSON.stringify(prompt) + "\\n");
 const out = (o) => console.log(JSON.stringify(o));
 if (prompt.startsWith("You are reviewing")) {
   const n = readFileSync("a.txt", "utf8").split("\\n").filter(Boolean).length;
-  writeFileSync("a.txt", "vandal\\n"); writeFileSync("junk.txt", "x");
+  writeFileSync("a.txt", "vandal\\n"); writeFileSync("junk.txt", "x"); writeFileSync("cache.pyc", "x");
   const status = n >= 2 ? "done" : "partial";
   out({ type: "text_delta", text: "checked\\n" + JSON.stringify({ targets: [{ target: 1, status, notes: "" }], regressions: "none", score: n >= 2 ? 100 : 50 }) });
   out({ type: "message_stop", usage: { inputTokens: 10, outputTokens: 1, cacheReadInputTokens: 0 } });
@@ -33,7 +33,8 @@ function run(mode) {
   const git = (...a) => spawnSync("git", ["-C", app, ...a], { encoding: "utf8" });
   spawnSync("mkdir", ["-p", app]);
   writeFileSync(join(app, "a.txt"), "");
-  writeFileSync(join(app, ".gitignore"), "prompts.log\n");
+  writeFileSync(join(app, ".gitignore"), "prompts.log\n*.pyc\n");
+  writeFileSync(join(app, "image.pyc"), "the image's own ignored file");
   git("init", "-q");
   git("add", "-A");
   git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base");
@@ -56,6 +57,8 @@ function run(mode) {
   assert.equal(report.rounds[0].review.score, 50);
   assert.equal(readFileSync(join(app, "a.txt"), "utf8"), "x\n");
   assert.ok(!existsSync(join(app, "junk.txt")));
+  assert.ok(!existsSync(join(app, "cache.pyc")), "an ignored file the reviewer made is removed");
+  assert.ok(existsSync(join(app, "image.pyc")), "an ignored file the image had is kept");
   assert.equal(stops, 2, "agent and reviewer usage both reach the harness");
   assert.ok(texts.every((l) => l.includes("worked")), "only the agent's text is forwarded");
 }

@@ -307,8 +307,10 @@ tasks, each against a budget-matched single agent.
 arms share is a **reviewer**: the same model in a fresh session, given the
 instruction and the working tree, told to measure and not fix, which runs
 the repository's existing tests and small checks it writes from the
-requirements, and ends with per-target status and a 0–100 score; whatever
-it changes is rolled back, and it never sees the held-out tests, which
+requirements, and ends with per-target status and a 0–100 score; what it
+changes in the repository is rolled back (tracked files, untracked files,
+and ignored files it creates; installed packages are not), and it never
+sees the held-out tests, which
 reach the container only at grading. **Attempts**: 4 independent agent
 runs per task, each followed by one review. (a) is their mean held-out
 reward at agent-only cost; (c) takes the attempt the reviewer scored

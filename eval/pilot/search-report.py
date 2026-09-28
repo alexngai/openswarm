@@ -54,6 +54,8 @@ for task in sorted(attempts):
     cost_c = sum(sum(costs(rep)) for _, rep in xs)
     b = cost_b = nr = None
     if rounds.get(task):
+        if len(rounds[task]) > 1:
+            print(f"warning: {task} has {len(rounds[task])} graded rounds containers; using the first", file=sys.stderr)
         rb, rep = rounds[task][0]
         b, nr = rb, len(rep["rounds"]) if rep else None
         cost_b = sum(costs(rep)) if rep else None

@@ -127,8 +127,9 @@ const harness = harnessOf(
     // silently replaced by the spec default, which has no route here.
     defaultModel: MODEL,
     captureSubmissionDiff: true,
-    // `rounds` is N agents in a row, so it gets N× the task's 2h.
-    timeoutMs: (ARMS.includes("rounds") ? Number(process.env.ROADMAP_ROUNDS ?? 4) : 1) * 2 * 60 * 60 * 1000,
+    // The task allows 2h per agent. A search cell is an agent then a reviewer, N times
+    // for `rounds`, and a timeout mid-review would grade the reviewer's edits.
+    timeoutMs: (ARMS.includes("rounds") ? 2 * Number(process.env.ROADMAP_ROUNDS ?? 4) : SEARCH ? 2 : 1) * 2 * 60 * 60 * 1000,
     // A backstop, not the budget: cache reads count toward it, and the 2h clock is the real cap.
     maxTokens: Number(process.env.ROADMAP_MAX_TOKENS ?? 40_000_000),
     env: {

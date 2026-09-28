@@ -9,15 +9,17 @@
  *
  * The reviewer is the same model in a fresh session. It sees the instruction and the
  * workspace, never the held-out tests (those reach the container only at grading), and
- * ends with one line of JSON: per-target status and a 0–100 score. Anything it changes
- * in /app is rolled back. Reports go to /verifier-out/<HOSTNAME>.search.json, beside
+ * ends with one line of JSON: per-target status and a 0–100 score. What it changes in
+ * /app is rolled back: tracked files, untracked files, and ignored files it creates
+ * (changes outside the repository, such as installed packages, are not). Reports go to /verifier-out/<HOSTNAME>.search.json, beside
  * the verifier's <task>.<HOSTNAME>.reward.json, so search-report.py joins them.
  *
  * stdout forwards every child's message_stop, so the harness bills agent and reviewer
  * alike; the report keeps each step's usage so the arms can be split.
  */
 import { spawnSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { hostname } from "node:os";
 
 const argv = process.argv.slice(2);
@@ -55,7 +57,7 @@ function cli(prompt, isAgent) {
   return { code: r.status ?? 1, text, usage, minutes: (Date.now() - started) / 60000 };
 }
 
-const git = (...args) => spawnSync("git", ["-C", APP, ...args], { encoding: "utf8" }).stdout.trim();
+const git = (...args) => (spawnSync("git", ["-C", APP, ...args], { encoding: "utf8", maxBuffer: 256 << 20 }).stdout ?? "").trim();
 const EXCLUDE = [".", ":(exclude).sbx"];
 /** Commit the working tree so a reviewer's edits can be rolled back; returns the tree id. */
 function snapshot(label) {
@@ -63,11 +65,18 @@ function snapshot(label) {
   git("-c", "user.email=eval@local", "-c", "user.name=eval", "commit", "-q", "--no-verify", "--allow-empty", "-m", label);
   return { sha: git("rev-parse", "HEAD"), tree: git("rev-parse", "HEAD^{tree}") };
 }
-const restore = (sha) => { git("reset", "-q", "--hard", sha); git("clean", "-fdq", "-e", ".sbx"); };
+/** Ignored files: node_modules, build outputs, caches. `clean -x` would take the image's own. */
+const ignored = () => new Set(git("ls-files", "-z", "--others", "--ignored", "--exclude-standard").split("\0").filter(Boolean));
+/** Back to the snapshot: tracked and untracked files, and the ignored files created since `before`. */
+function restore(sha, before) {
+  git("reset", "-q", "--hard", sha);
+  git("clean", "-fdq", "-e", ".sbx");
+  for (const f of ignored()) if (!before.has(f)) rmSync(join(APP, f), { force: true, recursive: true });
+}
 
 const REVIEW = `You are reviewing another engineer's implementation of the roadmap below, in this repository's working tree. Do not fix anything: your job is to measure.
 
-For each target in the roadmap, decide whether it works as specified: check that the specified exports, signatures and behaviors exist, and run the repository's existing tests for the code involved plus small tests or scripts you write from the requirements. Everything you create or change is discarded after your review.
+For each target in the roadmap, decide whether it works as specified: check that the specified exports, signatures and behaviors exist, and run the repository's existing tests for the code involved plus small tests or scripts you write from the requirements. Everything you create or change in the repository is discarded after your review.
 
 End your reply with exactly one line of JSON and nothing after it:
 {"targets":[{"target":<number>,"status":"done"|"partial"|"missing"|"broken","notes":"<one sentence: what fails or is missing>"}],"regressions":"<existing tests that fail because of the change, or none>","score":<0-100, your estimate of the share of the roadmap's requirements that work as specified>}
@@ -101,6 +110,7 @@ let code = 1;
 let prompt = task;
 let prevTree = snapshot("pre-agent").tree;
 report.base = git("rev-parse", "HEAD");
+save();
 
 const maxRounds = MODE === "review" ? 1 : ROUNDS;
 for (let i = 1; i <= maxRounds; i++) {
@@ -112,8 +122,9 @@ for (let i = 1; i <= maxRounds; i++) {
   save();
   // A round that changed nothing, or the last round of `rounds`, has no one to feed.
   if (MODE === "rounds" && (!round.changed || i === maxRounds)) break;
+  const before = ignored();
   round.review = review();
-  restore(snap.sha);
+  restore(snap.sha, before);
   save();
   if (MODE === "rounds" && allDone(round.review)) break;
   prompt = continuation(report.base, round.review);
