@@ -18,19 +18,25 @@ import { join } from "node:path";
 
 // Overridable only so the checks can run the drivers outside a task container.
 const CLI = (process.env.PILOT_CLI ?? "/opt/node/bin/node /opt/pilot/openswarm.mjs").split(" ");
+/** One agent or review run's cap: the task's own 2h allowance. */
+const CALL_MS = Number(process.env.PILOT_CALL_TIMEOUT_MS ?? 2 * 60 * 60 * 1000);
 
 /** The harness's flags, passed to every CLI run: everything before the prompt. */
 export const flags = process.argv.slice(2, -1);
 export const task = process.argv.at(-1);
 
-/** One CLI run in `cwd`. */
+/** One CLI run in `cwd`. Never rejects: a run that fails to start, or overruns, yields code 1. */
 export function cli(cwd, prompt, isAgent) {
   const started = Date.now();
   return new Promise((resolve) => {
     const child = spawn(CLI[0], [...CLI.slice(1), ...flags, prompt], { cwd, stdio: ["ignore", "pipe", "inherit"] });
     let stdout = "";
+    const timer = setTimeout(() => child.kill("SIGKILL"), CALL_MS);
+    // Without a listener a failed spawn (EAGAIN, ENOENT) throws and kills every thread.
+    child.on("error", (error) => console.error(`pilot: ${CLI[0]} failed to run: ${error.message}`));
     child.stdout.setEncoding("utf8").on("data", (d) => { stdout += d; });
     child.on("close", (status) => {
+      clearTimeout(timer);
       const usage = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0 };
       let text = "";
       let out = "";

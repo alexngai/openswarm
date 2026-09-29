@@ -5,7 +5,8 @@
  *
  *   PILOT_DIVISION=sharded  every thread cut from the base, all at once, landed at the end
  *                           in plan order
- *   PILOT_DIVISION=program  a thread starts once its blockedBy threads have landed, cut
+ *   PILOT_DIVISION=program  a thread starts once its blockedBy threads have settled (landed,
+ *                           or failed or conflicted, which does not hold it back), cut
  *                           from the checkout as it then is (so it sees thread 0's
  *                           contracts), and lands as soon as it finishes
  *
@@ -16,7 +17,8 @@
  * - thread 0 also writes contract tests for the interfaces it exports, and the command
  *   that runs them to .pilot/contract-check.sh;
  * - after every landing that check runs in /app, and a failure gets one repair round
- *   from the landed thread's writer;
+ *   from the landed thread's writer (a check still failing after it blocks nothing);
+ * - after the last landing the worktrees are removed, so /app is the integrated tree;
  * - after the last landing one reviewer checks the whole roadmap in /app, and every
  *   target it does not call done goes to its owner (the thread other than thread 0
  *   whose assignment names it, else thread 0) for one repair round.
@@ -24,7 +26,7 @@
  * The report goes to /verifier-out/<HOSTNAME>.division.json.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { cli, gate, git, review, snapshot, task } from "./gate.mjs";
@@ -67,6 +69,7 @@ async function gatedThread(t, cut) {
   const progress = [];
   const wt = await new SwarmGit({ repoRoot: APP, teamId: `div-${t.id}`, baseRef: cut, onProgress: (l) => progress.push(l) }).worktree("w");
   rec.worktree = progress;
+  rec.path = wt.path;
   save();
   const state = await gate({
     cwd: wt.path, prompt: promptOf(t), roadmap: task, scope: t.assignment, mode: "rounds", maxRounds: ROUNDS,
@@ -123,8 +126,10 @@ if (ARM === "sharded") {
   const launchReady = () => {
     const head = git(APP, "rev-parse", "HEAD");
     for (const t of threads) {
-      if (running.has(t.id) || settled.has(t.id) || !t.blockedBy.every((b) => landed.has(b))) continue;
+      if (running.has(t.id) || settled.has(t.id) || !t.blockedBy.every((b) => settled.has(b))) continue;
+      const unlanded = t.blockedBy.filter((b) => !landed.has(b));
       running.set(t.id, runThread(t, head).then((branch) => [t, branch]));
+      if (unlanded.length > 0) report.threads[t.id].blockersNotLanded = unlanded;
     }
   };
   // One loop lands and launches, so landings are serialized and every cut reads a
@@ -138,6 +143,15 @@ if (ARM === "sharded") {
     launchReady();
   }
 }
+
+// The worktrees live under /app/.swarm; nothing below needs them, and grading must see
+// only the integrated tree (the branches stay).
+for (const t of threads) {
+  const path = report.threads[t.id]?.path;
+  if (path) git(APP, "worktree", "remove", "--force", path);
+}
+git(APP, "worktree", "prune");
+rmSync(join(APP, ".swarm"), { recursive: true, force: true });
 
 // Integrate and repair: one whole-roadmap review, each unfinished target to its owner.
 const owner = (n) => threads.find((t) => t !== t0 && new RegExp(`Target ${n}\\b`).test(t.assignment)) ?? t0;

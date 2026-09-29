@@ -83,4 +83,24 @@ for (const arm of ["sharded", "program"]) {
   // 3 writers + 3 scoped reviews + 1 whole review + 1 repair
   assert.equal(stops, 8);
 }
+// The worktrees are gone before grading, and a CLI that cannot start fails its runs, not the driver.
+{
+  const { app } = run("program");
+  assert.ok(!existsSync(join(app, ".swarm")), "no worktrees left in the graded tree");
+}
+{
+  const dir = mkdtempSync(join(tmpdir(), "division-nocli-"));
+  const app = join(dir, "app");
+  mkdirSync(app);
+  spawnSync("git", ["-C", app, "init", "-q"]);
+  spawnSync("git", ["-C", app, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base"]);
+  writeFileSync(join(dir, "plan.json"), JSON.stringify(PLAN));
+  const r = spawnSync(process.execPath, [join(HERE, "division.mjs"), "--single", "roadmap"], {
+    encoding: "utf8",
+    env: { ...process.env, PILOT_DIVISION: "program", PILOT_APP: app, PILOT_PLAN: join(dir, "plan.json"), PILOT_OUT_DIR: dir, PILOT_CLI: "/nonexistent/cli", PILOT_GIT_MODULE: GIT_MODULE, HOSTNAME: "h2" },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  const report = JSON.parse(readFileSync(join(dir, "h2.division.json"), "utf8"));
+  assert.deepEqual(Object.keys(report.threads).sort(), ["t0", "t1", "t2"], "every thread still runs");
+}
 console.log("division.check: ok");

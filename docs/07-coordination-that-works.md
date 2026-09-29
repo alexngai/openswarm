@@ -345,13 +345,15 @@ roadmap; (b) had 4 for all of it), the reviewer scoped to the thread's
 assignment, in its own worktree with the checkout's environment linked in.
 Thread 0 also writes contract tests for the interfaces it exports and the
 command that runs them; that command runs after every landing, and a
-failure gets one repair round from the landed thread's writer. After the
-last landing one reviewer checks the whole roadmap, and each target it
+failure gets one repair round from the landed thread's writer (a check
+still failing after it blocks nothing). After the last landing the
+worktrees are removed, one reviewer checks the whole roadmap, and each target it
 does not call done goes to its owning thread for one repair round
 (docs/05 D15's integrate-and-repair). **(d) sharded**: every thread cut
 from the base at once, landed at the end in plan order. **(e) program**: a
-thread starts once its `blockedBy` threads have landed, cut from the
-checkout as it then is (so it sees thread 0's contracts and tests), and
+thread starts once its `blockedBy` threads have settled (a blocker that
+fails or conflicts does not hold it back), cut from the checkout as it
+then is (so it sees thread 0's contracts and tests), and
 lands as soon as it finishes. Same model, images, container and SUT as the
 search arms, per-cell result directories; one seed per task on the frozen
 12 after a one-task calibration. (e) is compared with (d) and with (b)
