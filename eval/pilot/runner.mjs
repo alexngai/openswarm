@@ -4,8 +4,10 @@
  * threads; see openswarm docs/05 §7.5), and docs/07 §7.1's search arms: `attempt` (one
  * agent then a reviewer; seeds 1..N are the attempts arms a and c are built from) and
  * `rounds` (up to ROADMAP_ROUNDS agent rounds fed by the same reviewer: arm b), and
- * `selfrounds` (the same rounds, each opened by a self-check prompt instead: arm b0). The
- * search arms run through search.mjs, so they cannot share a run with the others.
+ * `selfrounds` (the same rounds, each opened by a self-check prompt instead: arm b0); and
+ * docs/07 §7's division arms rebuilt to its five conditions, `divsharded` (d) and
+ * `divprogram` (e), one gated writer per plan thread (division.mjs). A run's arms must
+ * share one driver: the CLI, search.mjs or division.mjs.
  *
  * The system under test is a BUILT openswarm checkout on the host (the pilot pins the
  * self-modification line), mounted read-only at /opt/openswarm, with the host's Node at
@@ -51,6 +53,8 @@ const TASKS = (process.env.ROADMAP_TASKS ?? "").split(",").filter(Boolean);
 const ARMS = (process.env.ROADMAP_ARMS ?? "single").split(",").filter(Boolean);
 const SEEDS = (process.env.ROADMAP_SEEDS ?? "1").split(",").map(Number);
 const RUN_ID = process.env.ROADMAP_RUN_ID ?? "openswarm-roadmap-pilot";
+/** Gated rounds per thread in the division arms. */
+const THREAD_ROUNDS = Number(process.env.ROADMAP_THREAD_ROUNDS ?? 3);
 const REF = process.env.ROADMAP_REF === "1";
 const VERIFIER_OUT = resolve(`.eval-runs/${RUN_ID}/verifier-out`);
 mkdirSync(VERIFIER_OUT, { recursive: true });
@@ -61,10 +65,12 @@ if (!MOCK) for (const key of ["AZURE_API_BASE", "AZURE_API_KEY"]) {
 if (!existsSync(join(OPENSWARM_ROOT, "packages/cli/dist/index.js"))) { console.error(`no built openswarm at ${OPENSWARM_ROOT}`); process.exit(2); }
 if (!existsSync("/opt/node/bin/node")) { console.error("no Node at /opt/node on the host"); process.exit(2); }
 if (TASKS.length === 0) { console.error("set ROADMAP_TASKS=<task>[,<task>…] (e.g. opt-4.4.0)"); process.exit(2); }
-for (const arm of ARMS) if (!["single", "sharded", "program", "attempt", "rounds", "selfrounds"].includes(arm)) { console.error(`unknown arm ${arm}`); process.exit(2); }
-const SEARCH_ARMS = ["attempt", "rounds", "selfrounds"];
-const SEARCH = ARMS.some((a) => SEARCH_ARMS.includes(a));
-if (SEARCH && !ARMS.every((a) => SEARCH_ARMS.includes(a))) { console.error("attempt/rounds/selfrounds run through search.mjs; run them apart from the other arms"); process.exit(2); }
+const DRIVER = { single: "openswarm", sharded: "openswarm", program: "openswarm", attempt: "search", rounds: "search", selfrounds: "search", divsharded: "division", divprogram: "division" };
+for (const arm of ARMS) if (!DRIVER[arm]) { console.error(`unknown arm ${arm}`); process.exit(2); }
+const DRIVERS = new Set(ARMS.map((a) => DRIVER[a]));
+if (DRIVERS.size > 1) { console.error(`arms ${ARMS.join(",")} need different drivers (${[...DRIVERS].join(", ")}); run them apart`); process.exit(2); }
+const BIN = [...DRIVERS][0];
+const SEARCH = BIN !== "openswarm";
 
 const INIT = [
   "cd /app && (git rev-parse --is-inside-work-tree >/dev/null 2>&1 || (git init -q && git add -A && git -c user.email=eval@local -c user.name=eval commit -qm base))",
@@ -93,9 +99,9 @@ function loadTask(name) {
   if (!image || !weights?.length || weights.some(Number.isNaN)) throw new Error(`${name}: cannot read image or weights`);
 
   const files = [{ path: "/opt/pilot/openswarm.mjs", content: ENTRY }];
-  if (SEARCH) files.push({ path: "/opt/pilot/search.mjs", content: readFileSync(join(HERE, "search.mjs"), "utf8") });
+  if (SEARCH) for (const f of ["gate.mjs", `${BIN}.mjs`]) files.push({ path: `/opt/pilot/${f}`, content: readFileSync(join(HERE, f), "utf8") });
   const plan = join(PLANS, name, "plan.json");
-  if (ARMS.some((a) => a === "sharded" || a === "program")) {
+  if (ARMS.some((a) => ["sharded", "program", "divsharded", "divprogram"].includes(a))) {
     if (!existsSync(plan)) throw new Error(`${name}: team arms need ${plan}`);
     files.push({ path: "/opt/pilot/plan.json", content: readFileSync(plan, "utf8") });
   }
@@ -123,14 +129,15 @@ const passEnv = (keys) => Object.fromEntries(keys.filter((k) => process.env[k]).
 const harness = harnessOf(
   { ...openSwarmSpec, install: [], readyCmd: undefined },
   {
-    bin: `/opt/node/bin/node /opt/pilot/${SEARCH ? "search" : "openswarm"}.mjs`,
+    bin: `/opt/node/bin/node /opt/pilot/${BIN}.mjs`,
     // Otherwise a model name the adapter reads as a placeholder (e.g. "mock-model") is
     // silently replaced by the spec default, which has no route here.
     defaultModel: MODEL,
     captureSubmissionDiff: true,
     // The task allows 2h per agent. A search cell is an agent then a reviewer, N times
-    // for `rounds`, and a timeout mid-review would grade the reviewer's edits.
-    timeoutMs: (ARMS.some((a) => a.endsWith("rounds")) ? 2 * Number(process.env.ROADMAP_ROUNDS ?? 4) : SEARCH ? 2 : 1) * 2 * 60 * 60 * 1000,
+    // for `rounds`, and a timeout mid-review would grade the reviewer's edits. A division
+    // cell runs at most two thread waves of gated rounds, then the landing repairs.
+    timeoutMs: (BIN === "division" ? 2 * 2 * THREAD_ROUNDS + 2 : ARMS.some((a) => a.endsWith("rounds")) ? 2 * Number(process.env.ROADMAP_ROUNDS ?? 4) : SEARCH ? 2 : 1) * 2 * 60 * 60 * 1000,
     // A backstop, not the budget: cache reads count toward it, and the 2h clock is the real cap.
     maxTokens: Number(process.env.ROADMAP_MAX_TOKENS ?? 40_000_000),
     env: {
@@ -148,6 +155,8 @@ const SCAFFOLD = {
   attempt: { env: { PILOT_SEARCH: "review" } },
   rounds: { env: { PILOT_SEARCH: "rounds", PILOT_ROUNDS: process.env.ROADMAP_ROUNDS ?? "4" } },
   selfrounds: { env: { PILOT_SEARCH: "self", PILOT_ROUNDS: process.env.ROADMAP_ROUNDS ?? "4" } },
+  divsharded: { env: { PILOT_DIVISION: "sharded", PILOT_ROUNDS: String(THREAD_ROUNDS), PILOT_PLAN: "/opt/pilot/plan.json" } },
+  divprogram: { env: { PILOT_DIVISION: "program", PILOT_ROUNDS: String(THREAD_ROUNDS), PILOT_PLAN: "/opt/pilot/plan.json" } },
 };
 const armOf = (id) => ({
   id,

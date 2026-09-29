@@ -10,6 +10,9 @@
 | `t0-share.py` | t0's share of plan-assigned source lines; under 0.5 is the pre-registered decomposable subset |
 | `search.mjs`, `search.check.mjs` | docs/07 §7.1 search arms in the container: `attempt` (agent, then a reviewer) and `rounds` (agent rounds fed by the reviewer); the check runs it against a scripted CLI |
 | `search-report.py` | arms (a), (b), (c) and the selection ceiling from an `attempt` run and a `rounds` run |
+| `gate.mjs` | the completion gate both drivers share: agent rounds, a reviewer whose report opens the next, rollback of the reviewer's edits |
+| `division.mjs`, `division.check.mjs` | docs/07 §7 division arms (`divsharded`, `divprogram`): one gated writer per plan thread in a worktree, thread 0's contract check at every landing, a final whole-roadmap review routed to owners |
+| `division-report.py`, `search-audit.py` | the division arms against (a), (b), (b0); the leak audit |
 | `screen-report.py` | per-task summary of a run: mean/min/max reward, cost, parser audit against `reward.json` |
 
 Task data and reference slices live in the gitignored `.roadmap/` (download the task dirs from
