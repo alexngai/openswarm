@@ -2,7 +2,8 @@
 
 Status: **draft for review** · 2026-09-25 · extends [docs/06](06-mesh-positioning.md) ·
 amended 2026-09-27 by D12–D16 after [docs/07](07-coordination-that-works.md)
-(opentasks as the substrate; Phases B and C revised in §7.4–§7.5)
+(opentasks as the substrate; Phases B and C revised in §7.4–§7.5) and
+2026-09-28 by D17 (Phase B re-ordered around the completion gate)
 
 A redesign of OpenSwarm's construction and interface, organized by the goals
 it serves. §1 states the diagnosis, §2 the outcome and goals, §3–§4 the
@@ -641,21 +642,32 @@ criteria met.
 
 **Goal.** G4 and G8: work counts only when verified, and the north star is
 computable. Revised 2026-09-27 (docs/07 §6.6): the verifier is the
-coordinator, so Phase B also moves task state to opentasks (D12), adds the
-completion gate and the integrate-and-repair loop (D15, D16), and ships the
-first search topology.
+coordinator, so Phase B also moves task state to opentasks (D12) and adds
+the completion gate and the integrate-and-repair loop (D15, D16).
+Re-ordered 2026-09-28 after docs/07 §7.1 (D17): the completion gate comes
+first, because it was the largest effect measured (one agent 0.594; up to
+four rounds sent back with an independent reviewer's report 0.712), and it
+improves a single agent as much as a team. `explore` is no longer a Phase B
+item.
+
+**Build order:** B6, B0, B1, B3, B2, B4, B5; R1 alongside.
 
 | # | Work item |
 |---|---|
+| B6 | **Completion gate** (D16, D17): a task closes only with passing evidence, recorded as a `verifies` edge. The evidence is the unit's checker where one exists (contract tests, the tests that import the unit's files), else a **reviewer**: a fresh session given the task's intent and the working tree, told to measure and not fix, whose changes are rolled back and whose report ends in per-target status (the pilot's `eval/pilot/search.mjs` is the prototype). A failing check sends the task back with the report, up to a round cap; the reviewer's "all done" ends the loop early. A round that fails a checker the previous round passed is rolled back to that round (docs/07 §7.1 finding 4); reviewer scores alone do not decide a rollback, since they rank work on one task poorly. The single-agent path gets the gate too |
 | B0 | Task state on opentasks (D12): tasks, claims, attempts and `verifies` evidence through its daemon; `board.ts` becomes an adapter over it; the run journal keeps lifecycle, steers, questions and the audit |
 | B1 | Verifier levels L2 and L3; verifier environment members cannot read (D4); tamper logging |
-| B2 | Train class with its own journal: speculative batches, bisect, dependencies, priority; lead-hosted; selects among candidates as well as merging them |
 | B3 | Integrate and repair (D15): after each landing wave, run the checkers, map failures to owning tasks, dispatch bounded repair tasks to the owners; the resolver (§6.4) becomes the skeleton's agent step for a conflict; scope-violation and conflict questions |
+| B2 | Train class with its own journal: speculative batches, bisect, dependencies, priority; lead-hosted |
 | B4 | Landing evidence bundle; landing queue view |
 | B5 | `RunMetrics`, including coordination ratio and cost per landing |
-| B6 | Completion gate (D16): a task closes only with a `verifies` edge whose evidence passes its unit's checker; otherwise the harness sends it back. The single-agent baseline gets it too |
-| B7 | `explore` topology (docs/07 §6.1): N independent attempts at one task in worktrees, each an opentasks attempt, selected by the verifier ladder with a judge only to break ties |
 | R1 | `claude-code` member at basic conformance, landing through the train |
+
+*Dropped from B (D17):* B7, the `explore` topology. It lost to the gated
+single agent at 1.7× the cost, and even perfect selection among four
+attempts (0.682) stayed under it. It returns when a verifier ranks attempts
+at one task well (the pilot's reviewer: Spearman 0.12 within a task), or
+for work whose attempts differ widely, such as open design questions.
 
 **Exit criteria.**
 1. On a fixed task set run through the eval harness, landing rate and
@@ -667,10 +679,13 @@ first search topology.
    one train, with cost attributed per runtime.
 4. A member that reports done with a failing unit check is sent back, and no
    task in the journal or the graph closes without passing evidence.
-5. docs/07 §7's search arms run on the frozen pilot set: `explore` (c)
-   against one agent (a) and a budget-matched single agent (b). `explore`
-   stays a default topology only if (c) beats (b) on landed reward per
-   dollar.
+5. ~~docs/07 §7's search arms on the frozen pilot set~~ **Met 2026-09-28**
+   (docs/07 §7.1): `explore` (c) 0.617 at $29.25 a task lost to the
+   budget-matched single agent (b) 0.712 at $17.52, so it is not a default.
+6. The product's own completion gate, on the frozen pilot set with a single
+   agent, reaches the pilot prototype's (b): mean reward at least 0.69 at
+   no more than $20 a task, with no task more than 0.15 under its
+   one-agent mean (the regression guard at work).
 
 ### 7.5 Phase C — Program-scale, and the decision
 
@@ -805,8 +820,8 @@ in §9 or §10 that would bring it back.
 | Telemetry | usage per model, progress lines | `RunMetrics` with the north-star terms | G8 |
 
 **Stays:** Cordis plugin shape and the dsh seams; log-fold state; the seven
-topologies, now thread patterns, joined by `explore`, `evolve` and
-`variants` (D14); worktrees (for independent attempts and landing across runs) and auto-commit; token identity;
+topologies, now thread patterns, joined by `evolve` and `variants` (D14;
+`explore` deferred by D17); worktrees (for independent attempts and landing across runs) and auto-commit; token identity;
 F3 and its blast radius; the eval CLI contract.
 **Goes:** the in-memory run table; lead disposal on settle; loopback as a
 hard-coded rule; blocking `/swarm`; `danger-full-access` as the member
@@ -1022,6 +1037,25 @@ statements immutable, so owner approval is the default.
 *Reverse if* approval latency dominates run time and agent-approved changes
 with a small blast radius do not raise the regression rate; those may then
 be approved by the agent.
+
+**D17 — The completion gate is Phase B's first deliverable, verified by an
+independent reviewer; `explore` is not a default topology** (2026-09-28,
+from docs/07 §7.1). Weighed against keeping Phase B's order (verifier
+levels and the train first) and against shipping `explore` as planned. On
+the frozen pilot set, one agent scored 0.594; best of four attempts picked
+by a reviewer 0.617 at $29 a task; up to four rounds that the agent opened
+with a self-check prompt 0.666 at $21; the same rounds opened by an
+independent reviewer's report 0.712 at $18. The gate is where the measured
+gain is, most of it from not accepting the first "done" and the rest,
+unconfirmed at one seed, from the reviewer, which also ends the loop
+early. It is a harness property, so it raises the single-agent baseline
+every multi-agent arm is judged against; that is intended. An audit found
+no path by which the reviewer's feedback carried the held-out tests.
+*Cost:* a review costs about two-thirds of an agent run; later rounds can
+break working code, hence the regression guard in B6. *Reverse if* a
+multi-seed rerun puts the reviewer loop under the self-check loop, in which
+case B6 keeps the gate and drops the reviewer; or if a verifier that ranks
+attempts at one task well appears, in which case `explore` returns.
 
 ## 10. Still open
 

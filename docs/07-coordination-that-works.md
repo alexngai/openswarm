@@ -341,6 +341,79 @@ on landed reward per dollar, program-scale coordination does on our harness
 what Co-Coder showed it can; if not, docs/05's Phase C and D are re-scoped as
 D10 already provides.
 
+### 7.1 Search results (2026-09-28)
+
+Run on the frozen 12 (gpt-5.5; SUT packages as `5cfab25`, unchanged through
+the runner commits `f174b2b`–`06c297f`; 8 CPU / 16 GB per cell); rewards are
+the held-out tests' own, cost at $5 / $0.50 / $30 per M fresh input /
+cached input / output. About $740 in all.
+
+| arm | mean reward | $ / task |
+|---|---|---|
+| (a) one agent (mean of 4 attempts) | 0.594 | 5.53 |
+| (c) best of 4, picked by the reviewer | 0.617 | 29.25 |
+| selection ceiling: best of 4 by held-out reward | 0.682 | 29.25 |
+| (b0) up to 4 rounds, the agent checks its own work | 0.666 | 20.94 |
+| **(b) up to 4 rounds, the reviewer's report opens each** | **0.712** | **17.52** |
+
+| task | a | c | ceiling | b | b0 |
+|---|---|---|---|---|---|
+| fal-1.3.0 | 0.42 | 0.44 | 0.44 | 0.44 | 0.44 |
+| fal-4.1.0 | 0.69 | 0.75 | 0.75 | 0.75 (1 round) | 0.75 |
+| mko-5.8.0 | 0.54 | 0.50 | 0.57 | 1.00 | 1.00 |
+| mko-6.4.0 | 0.95 | 0.90 | 1.00 | 0.60 | 0.70 |
+| mko-6.5.0 | 0.33 | 0.40 | 0.40 | 0.40 | 0.40 |
+| opt-4.4.0 | 0.75 | 0.67 | 0.89 | 0.89 | 0.89 |
+| plr-1.31.0 | 0.31 | 0.25 | 0.38 | 0.38 | 0.25 |
+| prm-6.7.0 | 0.56 | 0.67 | 0.67 | 0.67 | 0.44 |
+| pyg-2.2.0 | 0.82 | 1.00 | 1.00 | 1.00 | 1.00 |
+| pyg-2.5.0 | 0.64 | 0.56 | 0.67 | 0.67 | 0.67 |
+| spc-3.2.0 | 0.35 | 0.42 | 0.42 | 0.75 | 0.75 |
+| vbt-1.3.0 | 0.77 | 0.85 | 1.00 | 1.00 (1 round) | 0.70 |
+
+1. **Search lost.** (c) against (b): (b) ahead on 6 tasks, (c) on 1, 5
+   tied, and (b) at 60 % of (c)'s cost. Even perfect selection (0.682)
+   stays under (b). By the pre-registered rule `explore` is not a default
+   topology.
+2. **Selection had little to work with.** The reviewer ranks tasks (score
+   against reward, Spearman 0.60 pooled over 48 attempts) but hardly ranks
+   attempts at one task (0.12 within task), and four attempts differ
+   little; selection captured 0.023 of the 0.088 the ceiling allowed.
+3. **Most of the gain is more work.** Rounds with only a self-check prompt
+   add +0.072 over one agent ((b0) ahead on 8 tasks, behind on 4); the
+   reviewer's report adds +0.046 more ((b) ahead on 3, behind on 1, 8
+   tied: one seed each, not significant) and makes the loop cheaper,
+   because its "all done" ends it (1 round on the two easiest tasks, where
+   (b0) went on to 4 and on vbt-1.3.0 fell from 1.00 to 0.70). This is
+   AgentRoom's lesson (§8): a lone agent stops too early, and a harness
+   that will not take the first "done" recovers much of the difference.
+4. **Later rounds can break working code**: mko-6.4.0 averages 0.95 as one
+   agent and scores 0.60 in (b), 0.70 in (b0).
+5. **No leak of the oracle** (`search-audit.py`). No image holds a held-out
+   test, `solve.sh` or `changes.patch`, and no image's git history runs
+   past the base release. The reviewers' reports name nothing from the
+   held-out tests beyond English words and the repositories' own test
+   files. Patches share 1–7 lines with the held-out tests, all code a spec
+   implies (`requirement: DOMAIN_REGEX,`), at the same rate in (b0), which
+   has no reviewer at all; and the share of added lines that match the
+   reference solution but neither the instruction nor the base repository
+   is 0.22 for attempts, 0.195 for (b), 0.19 for (b0), with no verbatim
+   prose. One channel existed: the attempts run mounted one results
+   directory into every cell, so a later attempt could have read an
+   earlier one's held-out test output; it could only have helped (a) and
+   (c), and nothing shows it was used. Cells mount their own directory
+   from (b0) on. Agents have network access; nothing shows an upstream
+   release was fetched.
+
+**What it means.** The best-supported mechanism is a verifier loop the
+harness imposes — do not accept "done", send the work back, with an
+independent reviewer's report when one is available — and it belongs to a
+single agent as much as to a team (docs/05 B6). Parallel attempts pay only
+when a verifier can tell attempts apart better than this reviewer can.
+None of this yet shows coordination beating a single agent; the division
+arms (§7, item 2) are the remaining test of that, against (b), the
+strongest single-agent configuration found.
+
 ## 8. What AgentRoom, Co-Coder and STORM do, and what OpenSwarm takes from them
 
 Read from the three papers directly (2026-09-27) [P arxiv 2606.00953,
