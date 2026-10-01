@@ -6,8 +6,10 @@
  * `rounds` (up to ROADMAP_ROUNDS agent rounds fed by the same reviewer: arm b), and
  * `selfrounds` (the same rounds, each opened by a self-check prompt instead: arm b0); and
  * docs/07 §7's division arms rebuilt to its five conditions, `divsharded` (d) and
- * `divprogram` (e), one gated writer per plan thread (division.mjs). A run's arms must
- * share one driver: the CLI, search.mjs or division.mjs.
+ * `divprogram` (e), one gated writer per plan thread (division.mjs), and their control,
+ * `onethread4` / `onethread8` (f): the same pipeline with one thread owning the whole
+ * roadmap, capped at 4 or 8 rounds. A run's arms must share one driver: the CLI,
+ * search.mjs or division.mjs.
  *
  * The system under test is a BUILT openswarm checkout on the host (the pilot pins the
  * self-modification line), mounted read-only at /opt/openswarm, with the host's Node at
@@ -65,7 +67,7 @@ if (!MOCK) for (const key of ["AZURE_API_BASE", "AZURE_API_KEY"]) {
 if (!existsSync(join(OPENSWARM_ROOT, "packages/cli/dist/index.js"))) { console.error(`no built openswarm at ${OPENSWARM_ROOT}`); process.exit(2); }
 if (!existsSync("/opt/node/bin/node")) { console.error("no Node at /opt/node on the host"); process.exit(2); }
 if (TASKS.length === 0) { console.error("set ROADMAP_TASKS=<task>[,<task>…] (e.g. opt-4.4.0)"); process.exit(2); }
-const DRIVER = { single: "openswarm", sharded: "openswarm", program: "openswarm", attempt: "search", rounds: "search", selfrounds: "search", divsharded: "division", divprogram: "division" };
+const DRIVER = { single: "openswarm", sharded: "openswarm", program: "openswarm", attempt: "search", rounds: "search", selfrounds: "search", divsharded: "division", divprogram: "division", onethread4: "division", onethread8: "division" };
 for (const arm of ARMS) if (!DRIVER[arm]) { console.error(`unknown arm ${arm}`); process.exit(2); }
 const DRIVERS = new Set(ARMS.map((a) => DRIVER[a]));
 if (DRIVERS.size > 1) { console.error(`arms ${ARMS.join(",")} need different drivers (${[...DRIVERS].join(", ")}); run them apart`); process.exit(2); }
@@ -137,7 +139,7 @@ const harness = harnessOf(
     // The task allows 2h per agent. A search cell is an agent then a reviewer, N times
     // for `rounds`, and a timeout mid-review would grade the reviewer's edits. A division
     // cell runs at most two thread waves of gated rounds, then the landing repairs.
-    timeoutMs: (BIN === "division" ? 2 * 2 * THREAD_ROUNDS + 2 : ARMS.some((a) => a.endsWith("rounds")) ? 2 * Number(process.env.ROADMAP_ROUNDS ?? 4) : SEARCH ? 2 : 1) * 2 * 60 * 60 * 1000,
+    timeoutMs: (BIN === "division" ? 2 * Math.max(2 * THREAD_ROUNDS, ARMS.includes("onethread8") ? 8 : 4) + 2 : ARMS.some((a) => a.endsWith("rounds")) ? 2 * Number(process.env.ROADMAP_ROUNDS ?? 4) : SEARCH ? 2 : 1) * 2 * 60 * 60 * 1000,
     // A backstop, not the budget: cache reads count toward it, and the 2h clock is the real cap.
     maxTokens: Number(process.env.ROADMAP_MAX_TOKENS ?? 40_000_000),
     env: {
@@ -157,6 +159,8 @@ const SCAFFOLD = {
   selfrounds: { env: { PILOT_SEARCH: "self", PILOT_ROUNDS: process.env.ROADMAP_ROUNDS ?? "4" } },
   divsharded: { env: { PILOT_DIVISION: "sharded", PILOT_ROUNDS: String(THREAD_ROUNDS), PILOT_PLAN: "/opt/pilot/plan.json" } },
   divprogram: { env: { PILOT_DIVISION: "program", PILOT_ROUNDS: String(THREAD_ROUNDS), PILOT_PLAN: "/opt/pilot/plan.json" } },
+  onethread4: { env: { PILOT_DIVISION: "program", PILOT_ONE_THREAD: "1", PILOT_ROUNDS: "4" } },
+  onethread8: { env: { PILOT_DIVISION: "program", PILOT_ONE_THREAD: "1", PILOT_ROUNDS: "8" } },
 };
 const armOf = (id) => ({
   id,

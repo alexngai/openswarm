@@ -42,7 +42,7 @@ const PLAN = {
   ],
 };
 
-function run(arm) {
+function run(arm, extraEnv = {}) {
   const dir = mkdtempSync(join(tmpdir(), "division-check-"));
   const app = join(dir, "app");
   mkdirSync(app);
@@ -58,7 +58,7 @@ function run(arm) {
     encoding: "utf8",
     env: {
       ...process.env, PILOT_DIVISION: arm, PILOT_APP: app, PILOT_PLAN: join(dir, "plan.json"), PILOT_OUT_DIR: dir,
-      PILOT_CLI: `${process.execPath} ${join(dir, "fake.mjs")}`, PILOT_GIT_MODULE: GIT_MODULE, HOSTNAME: "h1", PROMPT_LOG: log,
+      PILOT_CLI: `${process.execPath} ${join(dir, "fake.mjs")}`, PILOT_GIT_MODULE: GIT_MODULE, HOSTNAME: "h1", PROMPT_LOG: log, ...extraEnv,
     },
   });
   assert.equal(r.status, 0, r.stderr);
@@ -83,6 +83,17 @@ for (const arm of ["sharded", "program"]) {
   // 3 writers + 3 scoped reviews + 1 whole review + 1 repair
   assert.equal(stops, 8);
 }
+// One thread (arm f): the whole roadmap, unscoped reviews, every repair to t0.
+{
+  const { report, app, prompts } = run("program", { PILOT_ONE_THREAD: "1" });
+  assert.equal(report.arm, "onethread");
+  assert.deepEqual(Object.keys(report.threads), ["t0"]);
+  assert.ok(prompts.every((p) => !p.prompt.includes("Other threads own")), "no other threads to defer to");
+  assert.ok(prompts.filter((p) => p.prompt.startsWith("You are reviewing")).every((p) => !p.prompt.includes("# Scope")), "reviews see the whole roadmap");
+  assert.deepEqual(report.final.repairs.map((x) => [x.thread, x.targets]), [["t0", [2]]]);
+  assert.ok(existsSync(join(app, "t0-fixed.txt")) && !existsSync(join(app, ".swarm")));
+}
+
 // The worktrees are gone before grading, and a CLI that cannot start fails its runs, not the driver.
 {
   const { app } = run("program");

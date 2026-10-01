@@ -437,6 +437,61 @@ None of this yet shows coordination beating a single agent; the division
 arms (§7, item 2) are the remaining test of that, against (b), the
 strongest single-agent configuration found.
 
+### 7.2 Division results (2026-09-29), and why they do not settle the question
+
+Run as pre-registered (frozen 12, one seed, about $855 with calibration):
+
+| arm | mean reward | $ / task | agent rounds / task |
+|---|---|---|---|
+| (b) one gated agent | 0.712 | 17.52 | 3.4 (+2.6 reviews) |
+| (d) sharded | 0.729 | 34.03 | 8.2 (+7.7 reviews, 2.7 repairs) |
+| (e) program | 0.770 | 32.86 | 7.3 (+6.8 reviews, 1.8 repairs) |
+
+By the pre-registered rule (e must beat (d) and (b) on reward per dollar)
+program-scale coordination failed: 0.023 a dollar against (b)'s 0.041. But
+the result is weaker than that reads, in both directions:
+
+1. **The rule was wrong.** Reward per dollar favors whatever spends least:
+   one ungated agent (0.107 a dollar) beats (b) on it, which would reject
+   the completion gate too. The question is reward at equal spend.
+2. **The reward gap is within noise.** (e) − (b) = +0.059, 95 % bootstrap
+   interval [−0.04, +0.18]; one agent's seeds differ by 0.11 (SD) on a
+   task, so a one-seed difference of 12-task means carries about ±0.046.
+   Without plr-1.31.0 (1.00 against 0.38) the gap is +0.007. Of 66 graded
+   phases, 36 pass in every cell of every arm and 7 never pass; 23 decide.
+3. **It is confounded.** (e) did 2.6× (b)'s agent work, and got a final
+   whole-roadmap review with owner repairs and contract tests that (b)
+   never had; plr-1.31.0's 1.00 came from that final review and repair.
+4. **The tasks barely engage division.** They fit one agent's context and
+   horizon. On the 4 hardest (one agent under 0.45) (e) − (b) averages
+   +0.21; on the other 8, −0.015 (noticed after the fact, n = 4).
+
+Solid regardless: contracts first cut conflicted landings from 24 of 36
+(sharded) to 2 of 36; division as built costs about 2×. The patches share
+more lines with the held-out tests (7 a cell) only because they carry
+150–190 lines of contract tests: per line written the rate matches every
+other arm (about 4 per 100 test lines, 0.18 per 100 source lines).
+
+### 7.3 Stage 1, pre-registered 2026-09-30 before any cell ran
+
+**Question:** is (e)'s lead division, or the budget and checks that came
+with it? **New arm (f):** `division.mjs` with the plan collapsed to one
+thread that owns the whole roadmap (`PILOT_ONE_THREAD=1`): the same gate,
+contract-test instruction and check, final whole-roadmap review and owner
+repair, with reviews unscoped as in (b). Two caps: **(f4)** up to 4 rounds,
+**(f8)** up to 8 (about (e)'s spend). Frozen 12, one seed, same model,
+images, container and SUT. The ladder reads: (f4) − (b) = the extra checks;
+(f8) − (f4) = more budget for one agent; **(e) − (f8) = division**, the
+primary comparison, at matched spend (or against the (f4)–(f8) cost curve
+where spends differ by more than 15 %).
+
+**Rules:** (f8) within 0.02 of (e) or above it: (e)'s lead was budget and
+checks, and division adds nothing at this scale. (e) ahead of (f8) by 0.06
+or more, including on the hard tasks: go to stage 2 (hard tasks, budget-
+matched, three seeds). In between: two more seeds of (e) and (f8) on the
+tasks where any arm has ever differed. Watched specifically: whether (f8)
+also reaches plr-1.31.0's 1.00 and mko-6.5.0's 0.60.
+
 ## 8. What AgentRoom, Co-Coder and STORM do, and what OpenSwarm takes from them
 
 Read from the three papers directly (2026-09-27) [P arxiv 2606.00953,

@@ -23,6 +23,10 @@
  *   target it does not call done goes to its owner (the thread other than thread 0
  *   whose assignment names it, else thread 0) for one repair round.
  *
+ * PILOT_ONE_THREAD=1 collapses the plan to one thread that owns the whole roadmap (arm f,
+ * docs/07 §7.2's control): the same gate, contract check, final review and repair, with
+ * reviews unscoped as in the single-agent arms, so only the division itself differs.
+ *
  * The report goes to /verifier-out/<HOSTNAME>.division.json.
  */
 import { spawnSync } from "node:child_process";
@@ -41,17 +45,21 @@ if (!["sharded", "program"].includes(ARM)) {
 const APP = process.env.PILOT_APP ?? "/app";
 const ROUNDS = Number(process.env.PILOT_ROUNDS ?? 3);
 const OUT = `${process.env.PILOT_OUT_DIR ?? "/verifier-out"}/${process.env.HOSTNAME || hostname()}.division.json`;
-const plan = JSON.parse(readFileSync(process.env.PILOT_PLAN ?? "/opt/pilot/plan.json", "utf8"));
-const threads = plan.threads.map((t) => ({ id: t.id, assignment: t.assignment, blockedBy: t.blockedBy ?? [] }));
+const ONE = process.env.PILOT_ONE_THREAD === "1";
+const threads = ONE
+  ? [{ id: "t0", assignment: "The whole roadmap: every target.", blockedBy: [] }]
+  : JSON.parse(readFileSync(process.env.PILOT_PLAN ?? "/opt/pilot/plan.json", "utf8")).threads
+      .map((t) => ({ id: t.id, assignment: t.assignment, blockedBy: t.blockedBy ?? [] }));
 const t0 = threads[0];
 const CHECK = ".pilot/contract-check.sh";
 
-const report = { arm: ARM, rounds: ROUNDS, threads: {}, landings: [], final: null };
+const report = { arm: ONE ? "onethread" : ARM, rounds: ROUNDS, threads: {}, landings: [], final: null };
 const save = () => writeFileSync(OUT, JSON.stringify(report, null, 1));
 
 const CONTRACTS = `\nAlso write contract tests for the shared interfaces you export (each exists, with the roadmap's signature and basic behavior) in the repository's usual test layout, and put the shell command that runs exactly those tests, on one line, in ${CHECK} (run from the repository root).`;
 const promptOf = (t) =>
-  `${task}\n\n## Your thread: ${t.id}\n${t.assignment}${t === t0 ? CONTRACTS : ""}\nOther threads own the rest of the roadmap; stay within your assignment.`;
+  `${task}\n\n## Your thread: ${t.id}\n${t.assignment}${t === t0 ? CONTRACTS : ""}` +
+  (ONE ? "" : "\nOther threads own the rest of the roadmap; stay within your assignment.");
 
 /** One thread's gated writer in its own worktree, cut from `cut`; its branch, or null. */
 async function runThread(t, cut) {
@@ -72,7 +80,7 @@ async function gatedThread(t, cut) {
   rec.path = wt.path;
   save();
   const state = await gate({
-    cwd: wt.path, prompt: promptOf(t), roadmap: task, scope: t.assignment, mode: "rounds", maxRounds: ROUNDS,
+    cwd: wt.path, prompt: promptOf(t), roadmap: task, scope: ONE ? undefined : t.assignment, mode: "rounds", maxRounds: ROUNDS,
     record: (s) => { rec.rounds = s.rounds; save(); },
   });
   rec.endMs = Date.now();
