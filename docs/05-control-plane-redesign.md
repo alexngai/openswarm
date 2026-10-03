@@ -2,8 +2,9 @@
 
 Status: **draft for review** · 2026-09-25 · extends [docs/06](06-mesh-positioning.md) ·
 amended 2026-09-27 by D12–D16 after [docs/07](07-coordination-that-works.md)
-(opentasks as the substrate; Phases B and C revised in §7.4–§7.5) and
-2026-09-28 by D17 (Phase B re-ordered around the completion gate)
+(opentasks as the substrate; Phases B and C revised in §7.4–§7.5),
+2026-09-28 by D17 (Phase B re-ordered around the completion gate) and
+2026-10-02 by D18 (Phases C and D re-scoped after docs/07 §7)
 
 A redesign of OpenSwarm's construction and interface, organized by the goals
 it serves. §1 states the diagnosis, §2 the outcome and goals, §3–§4 the
@@ -63,16 +64,27 @@ verifier-passing, not "member reported done".
 
 G1–G5 are capabilities. G6–G8 are qualities that every capability must hold.
 
+*Amended by D18 (2026-10-02):* G2 now means throughput across independent
+tasks — many gated tasks at once, landing through one train. Dividing one
+task among coordinated threads is deferred: at the scale tested it did not
+beat one agent with the same harness (docs/07 §7.5). G3 keeps finding each
+other, sharing a train and merging; handing tasks off between swarms is
+deferred with it.
+
 **Non-goals.** Cross-org federation (innovators stage, docs/06 §4.5; the
 trust model in G7 keeps the door open). Our own UI shell (dsh's web surface
 hosts our views, D7). Topology mechanism beyond the verifier-selected
 search topologies and the five-condition program (D14; docs/02's
 conclusion stands for the rest).
 
-*Amended 2026-09-27.* The draft listed beating a single agent as a
-non-goal. It is now the point: every multi-agent arm is judged against a
-budget-matched single agent, aimed where single agents plateau and checkers
-are exact (docs/07 §6.7–§6.8).
+*Amended 2026-09-27, and again 2026-10-02.* The draft listed beating a
+single agent as a non-goal. It became the point, and docs/07 §7 tested it:
+on tasks one agent can finish, coordination did not beat a single agent
+with the same harness, and the harness itself was the lever (D17, D18).
+Beating a single agent on larger work stays an open question with a named
+trigger (D18). The rule from 2026-09-27 stands: every multi-agent arm is
+judged against a budget-matched single agent, aimed where single agents
+plateau and checkers are exact (docs/07 §6.7–§6.8).
 
 ## 3. Principles
 
@@ -335,6 +347,11 @@ latency.
 
 ### 6.2 G2 — Program-scale
 
+*Amended by D18:* the question this section leaves to §7.5 was answered no
+for the tested regime (docs/07 §7.5). The design below is kept for when
+D18's trigger fires; G2 is met meanwhile by throughput across independent
+gated tasks (B2, B3).
+
 **What it means.** Several threads, each a team, run at once on one change
 without integration hell. The evidence is specific: partition quality and
 interfaces pinned before fan-out outrank every other mechanism (a 25–39 point
@@ -392,6 +409,9 @@ beat sharded teams of the same total size, G2 and G3 are re-scoped to
 sharded throughput.
 
 ### 6.3 G3 — Meshable
+
+*Amended by D18:* `offer` and cross-swarm task handoff are deferred;
+joining, a shared train and merging stay.
 
 **What it means.** Two independently started swarms, on different hosts,
 share coordination state and a train, hand tasks to each other, and merge
@@ -560,6 +580,11 @@ early test (D10); Phase C ends with the go/no-go experiment for the rest.
 | G7 Governed | ● sandbox, protocol policy, queue | | ◐ budgets | ◐ join policy | |
 | G8 Measurable | ◐ interventions | ● RunMetrics | ● effectiveness experiment | ◐ mesh metrics | |
 
+*Amended by D18:* Phase C's marks for G1 (program board, plan consent), G2
+and G3 (handoff), and Phase D's handoff, are deferred; the effectiveness
+experiment was run early (docs/07 §7). G2 is met by throughput across
+independent gated tasks (B2, B3).
+
 ### 7.3 Phase A — Steerable foundation
 
 **Goal.** G1, G6, and G7's foundation: a durable run a person can address,
@@ -689,6 +714,17 @@ for work whose attempts differ widely, such as open design questions.
 
 ### 7.5 Phase C — Program-scale, and the decision
 
+*Re-scoped 2026-10-02 (D18).* The decision this phase existed to make was
+made by the pilot instead (docs/07 §7): on the frozen task set, dividing a
+task among coordinated threads did not beat one agent with the same harness
+at matched spend. Kept: **C5** (budgets), **C7** (the maintenance program,
+now a schedule of gated single-agent runs) and **R2** (runtimes). Deferred
+until D18's trigger: C1, C2, C3, C4, C6, C8 and C9 — the program lead,
+planner and blueprint, file claims and shared workspace, program board,
+contract keeper, and the `evolve` and `variants` topologies. The exit
+experiment below is superseded. The text that follows is the phase as
+designed, kept for when the trigger fires.
+
 **Goal.** G2, and the effectiveness answer that decides whether D is worth
 building as designed.
 
@@ -731,7 +767,7 @@ set (§10).
 *Pilot outcome (2026-09-27).* The team-arm calibration (§10) ran each
 thread as a coordinator team, and its fan-out broke one writer per scope
 inside every thread, so the pilot as configured cannot answer its question.
-Its arms are rebuilt to docs/07 §4's five conditions (docs/07 §7.2): each
+Its arms are rebuilt to docs/07 §4's five conditions (docs/07 §7, item 2): each
 thread one writer; thread 0 lands interfaces, stubs and contract tests that
 gate its dependents; a whole-program regression check at each landing; and
 a budget-matched single agent (b) beside sharded (d) and program (e). The
@@ -770,30 +806,38 @@ landing rate, coordination ratio, and interventions per landed task.
 
 ### 7.6 Phase D — Mesh
 
+*Re-scoped 2026-10-02 (D18), by §7.5's re-scope branch:* D keeps
+durability across hosts (D1), the shared train (D2), the forge adapter (D4)
+and the runtimes (R3), and drops cross-swarm task handoff: D3 shrinks to
+`join`, `leave` and `card` for landing through a shared train, without
+`offer`; exit criteria 1 and 4 below are revised to match.
+
 **Goal.** G3, cross-host G6, and the rest of G7.
 
 | # | Work item |
 |---|---|
 | D1 | Journal under `refs/swarm/<runId>` (git backend); contention test |
 | D2 | Train promoted to a standalone service bound to a target branch |
-| D3 | `join`, `leave`, `offer`, `card`; foreign-swarm principal; join policy |
+| D3 | `join`, `leave`, `card`; foreign-swarm principal; join policy (`offer` deferred, D18) |
 | D4 | Forge adapter for GitHub and GitLab merge queues |
 | R3 | `attach` and `a2a` runtimes |
 
 **Exit criteria.**
-1. A second swarm on another host joins with a URL and token and claims an
-   offered task within ten seconds.
+1. A second swarm on another host joins with a URL and token and lands
+   work through the shared train.
 2. Killing either host loses no tasks; the survivor or a replacement
    attaches and continues.
 3. Two programs land into one target through one train with no
    integration-branch breakage.
-4. A foreign swarm cannot read, claim, or steer anything it was not offered.
+4. A foreign swarm cannot read or steer another swarm's runs.
 
 ### 7.7 What the plan does not schedule
 
 Cross-org federation, a `sqlite` backend, enforced semantic scopes, and
 voluntary member participation as a requirement. Each has a named trigger
-in §9 or §10 that would bring it back.
+in §9 or §10 that would bring it back. Since D18, also the division of one
+task among coordinated threads (Phase C's C1–C4, C6, C8, C9) and
+cross-swarm task handoff; D18 names their trigger.
 
 ## 8. Comparison with today
 
@@ -815,13 +859,13 @@ in §9 or §10 that would bring it back.
 | Member runtimes | in-process, dsh subprocess | contract with three levels; + claude-code, codex, attach, a2a | G5 |
 | Member sandbox | `danger-full-access` | write containment at the worktree (`workspace-write`) | G7 |
 | Wire | 3 UI methods (+ SDK pass-through) + 1 member method, loopback | one protocol on two carriers (web, socket), principal policy table | G1, G7 |
-| Mesh | none | git journal, join/offer, shared train | G3 |
+| Mesh | none | git journal, join, shared train (`offer` deferred, D18) | G3 |
 | Budgets | concurrency and attempt caps | per run, thread, member | G2, G7 |
 | Telemetry | usage per model, progress lines | `RunMetrics` with the north-star terms | G8 |
 
 **Stays:** Cordis plugin shape and the dsh seams; log-fold state; the seven
-topologies, now thread patterns, joined by `evolve` and `variants` (D14;
-`explore` deferred by D17); worktrees (for independent attempts and landing across runs) and auto-commit; token identity;
+topologies, now thread patterns (D14; `explore`, `evolve` and `variants`
+deferred by D17 and D18); worktrees (for independent attempts and landing across runs) and auto-commit; token identity;
 F3 and its blast radius; the eval CLI contract.
 **Goes:** the in-memory run table; lead disposal on settle; loopback as a
 hard-coded rule; blocking `/swarm`; `danger-full-access` as the member
@@ -985,7 +1029,8 @@ import graph so `ready` gives the schedulable frontier, and attempts carry
 `verifies` edges with the check's evidence. Drift is detected, not
 prevented; prevention is the keeper's gate (D16). *Reverse if* contracts
 need queries opentasks cannot answer from metadata, in which case the
-convention is promoted to a node type there.
+convention is promoted to a node type there. *Amended by D18:* deferred
+with Phase C's planner.
 
 **D14 — Topologies are code; openteams is not adopted.** Weighed against
 openteams `team.yaml` (legacy's choice, legacy docs/25 Q1) and a new
@@ -999,7 +1044,8 @@ nearly every template into `coordinator` and carried the real topology in
 says to skip. Each topology is a function in `topologies.ts` with a small
 typed parameter spec. *Reverse if* users need to author team structures
 that interoperate with swarmkit, or the agent steps' prompts want an
-authoring format; openteams could then carry prompts alone.
+authoring format; openteams could then carry prompts alone. *Amended by
+D18:* `evolve` and `variants` are deferred; topologies stay code.
 
 **D15 — The consolidator is a deterministic skeleton with agent steps.**
 Weighed against a fully agentic lead, and against dsh's workflow engine
@@ -1019,7 +1065,8 @@ tests and opentasks. We copy its event shape (phases, paired agent start and end
 tab. For `variants`, distillation is a step the skeleton runs on a fixed
 cadence. *Reverse if* the engine gains host-side services and a
 member provider, when fixed scripts could run there for its isolation and
-cancellation.
+cancellation. *Amended by D18:* the consolidator for programs is deferred;
+its integrate-and-repair loop stays for landing independent tasks (B3).
 
 **D16 — The keeper is split: a code gate for the trust surface, an agent
 for contract changes, the owner approving.** Weighed against an agent
@@ -1036,7 +1083,9 @@ human-led projects docs/07 §4 cites, and Anthropic's FLT run kept
 statements immutable, so owner approval is the default.
 *Reverse if* approval latency dominates run time and agent-approved changes
 with a small blast radius do not raise the regression rate; those may then
-be approved by the agent.
+be approved by the agent. *Amended by D18:* the contract half (frozen
+contract files, contract changes) is deferred with Phase C; the completion
+gate is B6.
 
 **D17 — The completion gate is Phase B's first deliverable, verified by an
 independent reviewer; `explore` is not a default topology** (2026-09-28,
@@ -1057,19 +1106,43 @@ multi-seed rerun puts the reviewer loop under the self-check loop, in which
 case B6 keeps the gate and drops the reviewer; or if a verifier that ranks
 attempts at one task well appears, in which case `explore` returns.
 
+**D18 — Division of one task is not built; Phases C and D are re-scoped**
+(2026-10-02, from docs/07 §7). Weighed against building Phase C as designed
+and against running stage 2 (hard or large tasks) first. On the frozen
+pilot set, one agent with the completion gate plateaus at 0.735–0.743 by
+$19–25 a task; the best division arm, program with contracts first, reached
+0.770 at $33, within noise of the plateau (and +0.016 over the single-agent
+cost curve at its spend, inside the pre-registered margin); the biggest
+win attributed to division came from its final review and repair, which a
+single thread also gets. So the phase's own go/no-go, asked early by D10,
+came back no for this regime. Kept from C: budgets (C5), the maintenance
+program (C7), runtimes (R2). Deferred: the program lead and handoff (C1),
+program spec (C2), planner and blueprint (C3), file claims and the shared
+workspace (C4), program board (C6), contract keeper (C8, D16's contract
+half), `evolve` and `variants` (C9, D14); with them D13's contract nodes and
+D15's consolidator for programs. B3's integrate-and-repair stays, for
+landing many independent tasks through one train. D follows §7.5's
+re-scope branch: durability, the shared train and cross-host throughput,
+without cross-swarm task handoff. What OpenSwarm offers is therefore a
+better harness (the gate), steerable durable runs, and throughput across
+independent tasks, not coordination inside one task. *Cost:* the
+multi-agent thesis for a single task goes unbuilt on one benchmark, one
+model and one seed per arm. *Reverse if* a pre-registered experiment on
+tasks beyond one agent's horizon (docs/07 §7's stage 2: hard or large
+tasks, budget-matched, three seeds) shows division beating a matched single
+agent, or a search-shaped workload with an exact metric shows `evolve`
+beating it; either brings back the deferred items it needs.
+
 ## 10. Still open
 
 - **opentasks placement** (D12): one `.opentasks/` graph per repository
-  with tasks tagged by run id, or a location per run; how a program's shared
-  workspace registers with the per-repository daemon; and whether the
-  per-file versions behind validated writes live in the run journal or as
-  opentasks file nodes. Shell writes cannot be mediated and are validated
-  after each command by diffing against those versions (docs/07 §8).
-- **Redesigned pilot** (§7.5, docs/07 §7): about $300–600 for the search
-  and division arms on the frozen set, with a one-seed calibration of each
-  arm first, so a configuration fault costs one cell rather than the set.
-- **Handoff timeout**: how long an unaccepted offer waits before reclaim,
-  and whether it is set per program or per thread.
+  with tasks tagged by run id, or a location per run. (The shared
+  workspace's registration and per-file versions are deferred with C4,
+  D18.)
+- ~~**Redesigned pilot**~~ **run 2026-09-28 to 2026-10-01** (docs/07 §7):
+  search, control, division and stage-1 arms on the frozen set, about
+  $2,150; the conclusion is D18.
+- ~~**Handoff timeout**~~ **deferred** with cross-swarm handoff (D18).
 - **Package caches under the sandbox**: the per-ecosystem environment that
   redirects caches into temp (Node, Python, Rust), declared in the member
   composition; the A1 prototype confirms toolchains survive it.

@@ -1,6 +1,7 @@
 # 07 — Multi-agent coordination that works, and what it means for OpenSwarm
 
-Status: **draft for discussion** · 2026-09-27 · follows [docs/05](05-control-plane-redesign.md) §7.5
+Status: **draft for discussion** · 2026-09-27 · follows [docs/05](05-control-plane-redesign.md) §7.5 ·
+experiments and conclusions in §7 (2026-09-28 to 2026-10-02)
 
 The docs/05 pilot's calibration ran four team cells on RoadmapBench and found
 them about 35 times the cost of a single agent for lower reward (§1). Over
@@ -491,6 +492,63 @@ or more, including on the hard tasks: go to stage 2 (hard tasks, budget-
 matched, three seeds). In between: two more seeds of (e) and (f8) on the
 tasks where any arm has ever differed. Watched specifically: whether (f8)
 also reaches plr-1.31.0's 1.00 and mko-6.5.0's 0.60.
+
+### 7.4 Stage 1 results (2026-10-01)
+
+Run as pre-registered (frozen 12, one seed, $532):
+
+| arm | what it is | mean reward | $ / task |
+|---|---|---|---|
+| (b) | one agent, reviewer-fed rounds | 0.712 | 17.52 |
+| (f4) | the division pipeline with one thread, up to 4 rounds | 0.735 | 19.26 |
+| (f8) | the same, up to 8 rounds | 0.743 | 25.12 |
+| (e) | program: thread 0's contracts first, then 3 threads | 0.770 | 32.86 |
+
+The ladder: **the extra checks** ((f4) − (b)) +0.023, helping on some tasks
+(plr-1.31.0 0.38 → 1.00, mko-6.4.0 0.60 → 1.00) and hurting on others
+(vbt-1.3.0 1.00 → 0.70, opt-4.4.0 0.89 → 0.67); **more budget for one agent**
+((f8) − (f4)) +0.008, tied on 10 of 12 tasks — the single agent plateaus
+near 0.74, and on the hard tasks spent all 8 rounds for nothing
+(plr-1.31.0 cost $99); **division** ((e) − (f8)) +0.027, ahead on 3 tasks,
+behind on 1, tied on 8.
+
+**By the pre-registered rule:** spends differ by 31 %, so (e) is read
+against the (f4)–(f8) cost curve, which is nearly flat and reaches about
+0.754 at (e)'s spend: (e) is +0.016 above it, inside the 0.02 margin, so
+*division adds nothing at this scale*. Read raw against (f8), +0.027 falls
+in the inconclusive band. Either way stage 2's trigger (+0.06) is not met.
+The watched tasks: the one-thread pipeline also reaches plr-1.31.0's 1.00
+(at 4 rounds), so (e)'s largest win was the final review and repair, not
+the division; mko-6.5.0 (0.60 against 0.40 for every other arm) is (e)'s
+one distinctive win left, at one seed, on a task whose single-agent seeds
+range 0.10–0.40. The hard-task lead shrinks from +0.21 (against (b)) to
++0.05–0.08 (against (f)).
+
+### 7.5 What the study shows (2026-10-02)
+
+On RoadmapBench tasks of the size one agent can finish (the frozen 12;
+gpt-5.5; one seed per arm except the four attempts):
+
+1. **Dividing a task among coordinated agents does not beat one agent with
+   the same harness at matched spend.** The best division arm reached 0.770
+   at $33 a task; one agent with the same checks plateaus at 0.735–0.743 by
+   $19–25. Both gaps are within noise; the cost gap is not.
+2. **Parallel attempts with selection lose** to a gated single agent, even
+   with perfect selection (0.682 against 0.712).
+3. **The lever is the harness:** not accepting the first "done" and sending
+   the work back (+0.07 from rounds alone, about +0.05 more with an
+   independent reviewer) moves one agent from 0.594 to 0.712, and a final
+   review with repair adds a little more (0.735); beyond 4 rounds it buys
+   nothing.
+4. **Contracts first works as a mechanism** — conflicted landings 24 of 36
+   without it, 2 of 36 with it — but at this scale conflicts were also
+   recoverable by a final review and repair, so it changed cost more than
+   reward.
+
+Not shown, and not tested: tasks beyond one agent's horizon or context
+(library-scale changes, multi-day work), search-shaped work with an exact
+metric (the untested `evolve`), other models or cheap-worker mixes, and the
+wall-clock value of parallel work. docs/05 D18 records what this changes.
 
 ## 8. What AgentRoom, Co-Coder and STORM do, and what OpenSwarm takes from them
 
