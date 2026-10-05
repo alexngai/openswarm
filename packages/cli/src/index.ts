@@ -37,6 +37,8 @@ import SwarmService, {
   runMemberProcess,
   type CascadeResult,
   type CoordinatorResult,
+  type GateResult,
+  type GateRound,
   type MemberSpec,
 } from 'openswarm-swarm'
 import { withSnapshotClone } from 'openswarm-git'
@@ -564,6 +566,47 @@ function gateOf(
   }
 }
 
+/** A text's whitespace-collapsed head, for a one-line progress report. */
+const oneLine = (text: string, max = 160): string => text.replace(/\s+/g, ' ').trim().slice(0, max)
+
+/** Target statuses in the order a reader wants them counted. */
+const STATUSES = ['done', 'partial', 'missing', 'broken']
+
+/**
+ * One gate round as a human-readable line, for stderr. The harness keeps only
+ * the head of stdout, which tool_use_start lines fill, so live runs lost the
+ * gate_round JSONL; this line carries what the agent was told.
+ */
+function gateRoundLine(round: GateRound): string {
+  const e = round.evidence
+  if (round.round > 1 && !round.changed) return `gate: round ${round.round} changed nothing — stopping`
+  if (e.error !== undefined) return `gate: round ${round.round} review unavailable — ${oneLine(e.error)}`
+  const details: string[] = []
+  if (e.kind === 'review') {
+    const statuses = (e.targets ?? []).map((t) => String(t?.status))
+    const counted = [...STATUSES, ...new Set(statuses.filter((s) => !STATUSES.includes(s)))]
+      .map((status) => [status, statuses.filter((s) => s === status).length] as const)
+      .filter(([, n]) => n > 0)
+    if (counted.length > 0) details.push(counted.map(([status, n]) => `${n} ${status}`).join(', '))
+    const regressions = typeof e.regressions === 'string' ? e.regressions : JSON.stringify(e.regressions)
+    if (regressions !== undefined && !/^\s*none\.?\s*$/i.test(regressions)) details.push(`regressions: ${oneLine(regressions, 120)}`)
+  } else if (e.failedCommands !== undefined) {
+    details.push(`failed: ${e.failedCommands.map((c) => oneLine(c, 80)).join(', ')}`)
+  }
+  if (round.rolledBack === true) details.push('rolled back')
+  const what = e.kind === 'review' ? `review score ${e.score ?? 'unparsed'}` : 'checks'
+  return `gate: round ${round.round} ${what} — ${e.passed ? 'passed' : 'not passed'}${details.length === 0 ? '' : ` (${details.join('; ')})`}`
+}
+
+/** The gate's outcome as a human-readable line, for stderr. */
+function gateResultLine(result: GateResult): string {
+  const n = result.rounds.length
+  const rounds = `${n} round${n === 1 ? '' : 's'}`
+  if (result.accepted) return `gate: accepted after ${rounds}`
+  if (result.reason !== undefined) return `gate: stopped — ${result.reason}: ${oneLine(result.rounds.at(-1)?.evidence.error ?? '')}`
+  return `gate: not accepted after ${rounds}`
+}
+
 /**
  * Why this host cannot confine a process under workspace-write, or undefined
  * when it can: the harness's own sandbox provider confines `true` once, as a
@@ -813,22 +856,38 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
                     })
                   }),
               }),
-          record: (round) =>
+          record: (round) => {
+            const e = round.evidence
             io.out(
               JSON.stringify({
                 type: 'gate_round',
                 round: round.round,
                 changed: round.changed,
-                passed: round.evidence.passed,
-                kind: round.evidence.kind,
-                score: round.evidence.score ?? null,
+                passed: e.passed,
+                kind: e.kind,
+                score: e.score ?? null,
                 rolledBack: round.rolledBack === true,
-                ...(round.evidence.error === undefined ? {} : { error: round.evidence.error }),
+                // What the agent was told: the reviewer's per-target verdicts and
+                // regressions as given, or the checks that failed.
+                ...(e.targets === undefined ? {} : { targets: e.targets.map((t) => ({ target: t.target, status: t.status })) }),
+                ...(e.regressions === undefined ? {} : { regressions: e.regressions }),
+                ...(e.failedCommands === undefined ? {} : { failed: e.failedCommands }),
+                ...(e.error === undefined ? {} : { error: e.error }),
               }),
-            ),
+            )
+            io.err(gateRoundLine(round))
+          },
         },
       )
-      io.out(JSON.stringify({ type: 'gate', accepted: result.accepted, rounds: result.rounds.length }))
+      io.out(
+        JSON.stringify({
+          type: 'gate',
+          accepted: result.accepted,
+          rounds: result.rounds.length,
+          ...(result.reason === undefined ? {} : { reason: result.reason }),
+        }),
+      )
+      io.err(gateResultLine(result))
       text = result.final.text
       completed = result.accepted
     } else {

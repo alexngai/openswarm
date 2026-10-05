@@ -139,24 +139,45 @@ it('review mode: partial then done is accepted in 2 rounds; the reviewer measure
   expect(readFileSync(join(root, '.git', 'index')).equals(index)).toBe(true)
 })
 
-it('a review that fails is recorded as a failed check, and the gate goes on', async () => {
+it('a review that cannot run is retried once; when the retry works the gate goes on as usual', async () => {
   const { root } = repo()
   const { run, prompts } = fakeRun([
     () => (writeFileSync(join(root, 'impl.txt'), 'v1\n'), 'one'),
     () => (writeFileSync(join(root, 'impl.txt'), 'v2\n'), 'two'),
   ])
-  const { review } = fakeReview([
+  const { review, calls } = fakeReview([
     () => {
       throw new Error('clone failed')
     },
+    () => verdict('partial', 40),
     () => verdict('done', 100),
   ])
   const result = await runGate({ task: 't', member }, { run, review, cwd: root })
 
   expect(result.accepted).toBe(true)
-  expect(result.rounds[0]!.evidence).toEqual({ kind: 'review', passed: false, score: null, error: 'clone failed' })
-  // As after the prototype's failed review: a report with nothing in it.
-  expect(prompts[1]).toContain('"targets": null')
+  expect(result.reason).toBeUndefined()
+  expect(result.rounds.map((r) => r.evidence.score)).toEqual([40, 100])
+  expect(result.rounds[0]!.evidence.error).toBeUndefined()
+  // The retry measured the same snapshot, and its report reached round 2.
+  expect(calls[0]!.commit).toBe(calls[1]!.commit)
+  expect(prompts[1]).toContain('"score": 40')
+})
+
+it('a review that cannot run twice stops the gate unaccepted, without another agent round', async () => {
+  const { root } = repo()
+  const { run, prompts } = fakeRun([() => (writeFileSync(join(root, 'impl.txt'), 'v1\n'), 'one')])
+  const fail = () => {
+    throw new Error('fatal: unable to read tree')
+  }
+  const { review, calls } = fakeReview([fail, fail])
+  const result = await runGate({ task: 't', member }, { run, review, cwd: root })
+
+  expect(result.accepted).toBe(false)
+  expect(result.reason).toBe('review unavailable')
+  expect(result.rounds).toHaveLength(1)
+  expect(result.rounds[0]!.evidence).toEqual({ kind: 'review', passed: false, score: null, error: 'fatal: unable to read tree' })
+  expect(calls).toHaveLength(2)
+  expect(prompts).toHaveLength(1)
 })
 
 it('an aborted run still ends the gate from inside a review', async () => {
@@ -226,6 +247,7 @@ it('without a rollback (the user\'s checkout) a regression is left in the tree a
     [false, false],
     [false, false],
   ])
+  expect(result.rounds[1]!.evidence.failedCommands).toEqual(['test -f one.txt', 'test -f two.txt'])
   expect(prompts[2]).toContain('Round 2 broke test -f one.txt, which passed in round 1.')
   expect(prompts[2]).toContain(`git diff ${result.base} ${result.rounds[1]!.snapshot}`)
 })

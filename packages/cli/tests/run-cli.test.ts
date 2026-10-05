@@ -401,15 +401,28 @@ it('--gate: the reviewer measures in its own clone, accepts round 1, and its usa
   const ws = gitWorkspace()
 
   const lines: string[] = []
+  const errs: string[] = []
   const code = await runCli(
     ['run', '--output-format', 'json', '--model', 'mock-small', '--single', '--gate', 'ship it'],
-    { out: (l) => lines.push(l), err: () => {} },
+    { out: (l) => lines.push(l), err: (l) => errs.push(l) },
   )
   expect(code).toBe(0)
   expect(gateLines(lines)).toEqual([
-    { type: 'gate_round', round: 1, changed: false, passed: true, kind: 'review', score: 100, rolledBack: false },
+    {
+      type: 'gate_round',
+      round: 1,
+      changed: false,
+      passed: true,
+      kind: 'review',
+      score: 100,
+      rolledBack: false,
+      targets: [{ target: 1, status: 'done' }],
+      regressions: 'none',
+    },
     { type: 'gate', accepted: true, rounds: 1 },
   ])
+  // The same, legible on stderr, which the harness does not truncate to its head.
+  expect(errs).toEqual(['gate: round 1 review score 100 — passed (1 done)', 'gate: accepted after 1 round'])
   const parsed = openSwarmParse(lines.join('\n'))
   expect(parsed.sawResult).toBe(true)
   expect(parsed.output).toContain('all done')
@@ -461,11 +474,12 @@ it('every --gate-check runs, from repeated flags or one per line of OPENSWARM_GA
   gitWorkspace()
   const run = async (argv: string[]) => {
     const lines: string[] = []
+    const errs: string[] = []
     const code = await runCli(['run', '--output-format', 'json', '--model', 'mock-small', '--gate', ...argv, 'go'], {
       out: (l) => lines.push(l),
-      err: () => {},
+      err: (l) => errs.push(l),
     })
-    return { code, gate: gateLines(lines) }
+    return { code, gate: gateLines(lines), errs }
   }
 
   const flags = await run(['--gate-check', `touch ${marks}/one`, '--gate-check', `touch ${marks}/two`])
@@ -480,6 +494,39 @@ it('every --gate-check runs, from repeated flags or one per line of OPENSWARM_GA
     delete process.env['OPENSWARM_GATE_CHECK']
   }
   expect(existsSync(join(marks, 'three')) && existsSync(join(marks, 'four'))).toBe(true)
+
+  // Every failing check is named, on stdout and stderr.
+  const failing = await run(['--gate-rounds', '1', '--gate-check', 'false', '--gate-check', 'true', '--gate-check', 'exit 3'])
+  expect(failing.code).toBe(1)
+  expect(failing.gate[0]).toMatchObject({ kind: 'commands', passed: false, failed: ['false', 'exit 3'] })
+  expect(failing.gate.at(-1)).toEqual({ type: 'gate', accepted: false, rounds: 1 })
+  expect(failing.errs).toEqual(['gate: round 1 checks — not passed (failed: false, exit 3)', 'gate: not accepted after 1 round'])
+}, 60_000)
+
+it('each round reports what the reviewer told the agent: per-target verdicts and regressions', async () => {
+  const verdict = { targets: [{ target: 1, status: 'done', notes: 'ok' }, { target: 2, status: 'partial', notes: 'half' }], regressions: ['test_x fails'], score: 40 }
+  await startMock({ apiKey: 'mock-key', sequence: ['success'], repeatLast: true, successText: `checked\n${JSON.stringify(verdict)}` })
+  gitWorkspace()
+
+  const lines: string[] = []
+  const errs: string[] = []
+  const code = await runCli(
+    ['run', '--output-format', 'json', '--model', 'mock-small', '--gate', 'ship it'],
+    { out: (l) => lines.push(l), err: (l) => errs.push(l) },
+  )
+  // The agent changes nothing, so round 2 stops the gate without another review.
+  expect(code).toBe(1)
+  expect(gateLines(lines)[0]).toMatchObject({
+    passed: false,
+    score: 40,
+    targets: [{ target: 1, status: 'done' }, { target: 2, status: 'partial' }],
+    regressions: ['test_x fails'],
+  })
+  expect(errs).toEqual([
+    'gate: round 1 review score 40 — not passed (1 done, 1 partial; regressions: ["test_x fails"])',
+    'gate: round 2 changed nothing — stopping',
+    'gate: not accepted after 2 rounds',
+  ])
 }, 60_000)
 
 it('OPENSWARM_GATE=1 selects the gate, since an eval Arm carries env not flags', async () => {

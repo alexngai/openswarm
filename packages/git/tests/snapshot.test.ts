@@ -1,16 +1,20 @@
 import { execFileSync } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { expect, it } from 'vitest'
 import { snapshotTree, withSnapshotClone } from '../src/index'
 
 type Git = (...args: string[]) => string
 
+const gitAt =
+  (cwd: string): Git =>
+  (...args) =>
+    execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd }).toString()
+
 function repo(): { root: string; git: Git } {
   const root = mkdtempSync(join(tmpdir(), 'openswarm-snapshot-test-'))
-  const git: Git = (...args) =>
-    execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd: root }).toString()
+  const git = gitAt(root)
   git('init', '-q', '-b', 'main')
   return { root, git }
 }
@@ -27,11 +31,13 @@ function state(root: string, git: Git) {
         return `${f}/` // a directory
       }
     })
+  // Through git, so a linked worktree's (whose `.git` is a file) resolve too.
+  const gitFile = (name: string) => readFileSync(resolve(root, git('rev-parse', '--git-path', name).trim()))
   return {
     files,
-    index: readFileSync(join(root, '.git', 'index')).toString('base64'),
-    head: readFileSync(join(root, '.git', 'HEAD'), 'utf8'),
-    config: readFileSync(join(root, '.git', 'config'), 'utf8'),
+    index: gitFile('index').toString('base64'),
+    head: gitFile('HEAD').toString(),
+    config: gitFile('config').toString(),
     refs: git('for-each-ref'),
     stash: git('stash', 'list'),
     worktrees: git('worktree', 'list', '--porcelain'),
@@ -124,7 +130,7 @@ it('withSnapshotClone: the reviewer works in its own clone; the user\'s files, s
     appendFileSync(join(cwd, 'local.py'), 'HACKED = 1\n')
     wt('add', '-A')
     wt('commit', '-qm', 'reviewer commit')
-    wt('checkout', '-q', 'main')
+    wt('checkout', '-q', '-b', 'main')
     wt('reset', '-q', '--hard', snapshot.commit)
     wt('branch', '-f', 'feature', 'HEAD')
     wt('config', 'user.name', 'reviewer')
@@ -135,6 +141,56 @@ it('withSnapshotClone: the reviewer works in its own clone; the user\'s files, s
   expect(existsSync(inside)).toBe(false)
   expect(state(root, git)).toEqual(before)
   expect(readFileSync(join(root, 'local.py'), 'utf8')).toBe('SECRET = 1\n')
+})
+
+/**
+ * Snapshot an untracked file in `root` (so the snapshot commit is referenced by
+ * nothing), review it in a copy, and check the source repository is untouched.
+ */
+async function reviewUnreferenced(root: string) {
+  const git = gitAt(root)
+  writeFileSync(join(root, 'fresh.txt'), 'only in the snapshot\n')
+  const snapshot = await snapshotTree(root)
+  const before = state(root, git)
+  const seen = await withSnapshotClone(root, snapshot.commit, async (cwd) => ({
+    file: readFileSync(join(cwd, 'fresh.txt'), 'utf8'),
+    log: execFileSync('git', ['log', '--format=%s'], { cwd }).toString(),
+  }))
+  expect(seen.file).toBe('only in the snapshot\n')
+  expect(state(root, git)).toEqual(before)
+  return seen
+}
+
+function threeCommits(): string {
+  const { root, git } = repo()
+  for (const n of [1, 2, 3]) {
+    writeFileSync(join(root, 'f.txt'), `${n}\n`)
+    git('add', '.')
+    git('commit', '-qm', `c${n}`)
+  }
+  return root
+}
+
+it('withSnapshotClone reaches an unreferenced snapshot of a SHALLOW repository', async () => {
+  // `git clone --shared` of a shallow repo falls back to copying referenced
+  // objects only, which loses the snapshot; the copy must not depend on it.
+  const source = threeCommits()
+  const shallow = join(mkdtempSync(join(tmpdir(), 'openswarm-snapshot-test-')), 'shallow')
+  execFileSync('git', ['clone', '-q', '--depth', '1', `file://${source}`, shallow])
+  expect(existsSync(join(shallow, '.git', 'shallow'))).toBe(true)
+  const { log } = await reviewUnreferenced(shallow)
+  // History stops at the same boundary, rather than failing on a missing parent.
+  expect(log).toBe('gate-snapshot\nc3\n')
+})
+
+it('withSnapshotClone reaches an unreferenced snapshot from a linked worktree', async () => {
+  const source = threeCommits()
+  const linked = join(mkdtempSync(join(tmpdir(), 'openswarm-snapshot-test-')), 'linked')
+  gitAt(source)('worktree', 'add', '-q', '--detach', linked)
+  const before = state(source, gitAt(source))
+  const { log } = await reviewUnreferenced(linked)
+  expect(log).toBe('gate-snapshot\nc3\nc2\nc1\n')
+  expect(state(source, gitAt(source))).toEqual(before)
 })
 
 it('withSnapshotClone removes the clone when the run throws', async () => {

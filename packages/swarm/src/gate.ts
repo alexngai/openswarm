@@ -101,10 +101,12 @@ export interface GateEvidence {
   targets?: GateTarget[]
   /** Review: whatever the reviewer said (models often give a list), passed on as the prototype did. */
   regressions?: unknown
+  /** Commands: every check that failed, in order. */
+  failedCommands?: string[]
   /** Commands: the first check that failed, and the tail of its output. */
   failedCommand?: string
   output?: string
-  /** Review: why the review itself failed (no clone, a crashed reviewer), when it did. */
+  /** Review: why the review could not run (no copy of the tree, a reviewer that would not start). */
   error?: string
 }
 
@@ -127,6 +129,8 @@ export interface GateResult {
   rounds: GateRound[]
   /** The last snapshot whose evidence passed, if any: the commit a `verifies` record is about. */
   lastPassing?: string
+  /** Why the gate stopped without a verdict, when it did: the review could not run, twice. */
+  reason?: 'review unavailable'
   /** The last agent round's result. */
   final: MemberRunResult
 }
@@ -204,6 +208,7 @@ export async function runGate(spec: GateSpec, deps: GateDeps): Promise<GateResul
   let kept: { round: number; snapshot: TreeSnapshot; evidence: GateEvidence; passing: Set<string> } | undefined
   let prompt = spec.task
   let lastPassing: string | undefined
+  let reason: GateResult['reason']
   for (let n = 1; n <= maxRounds; n++) {
     report(`gate round ${n}/${maxRounds}: ${spec.member.name} working…`)
     const result = await deps.run(spec.member, prompt, deps.taskKey)
@@ -232,7 +237,9 @@ export async function runGate(spec: GateSpec, deps: GateDeps): Promise<GateResul
       evidence = {
         kind: 'commands',
         passed: failed === undefined,
-        ...(failed === undefined ? {} : { failedCommand: failed.command, output: failed.output }),
+        ...(failed === undefined
+          ? {}
+          : { failedCommands: outcomes.filter((o) => !o.ok).map((o) => o.command), failedCommand: failed.command, output: failed.output }),
       }
       // Only checkers decide a regression; a reviewer's score ranks work on one
       // task too poorly to act on (docs/05 B6).
@@ -265,14 +272,35 @@ export async function runGate(spec: GateSpec, deps: GateDeps): Promise<GateResul
       }
     } else {
       report(`gate round ${n}: reviewing…`)
-      try {
-        evidence = verdictOf((await review!(REVIEW + spec.task, snapshot.commit)).text)
-      } catch (error) {
-        // A review that could not run is a failed check, not the end of the
-        // gate: the prototype's review never threw, a failed one just had no
-        // verdict. An abort is the run ending, and still ends it.
-        if (deps.signal?.aborted || (error as Error)?.name === 'AbortError') throw error
-        evidence = { kind: 'review', passed: false, score: null, error: error instanceof Error ? error.message : String(error) }
+      // A review that cannot run (no copy of the tree, a reviewer that will not
+      // start) is infrastructure, not a verdict: one retry, then the gate stops.
+      // Sending the agent another paid round with an empty report is what the
+      // prototype did, and live it bought nothing. An abort is the run ending.
+      let unavailable: string | undefined
+      evidence = { kind: 'review', passed: false, score: null }
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          evidence = verdictOf((await review!(REVIEW + spec.task, snapshot.commit)).text)
+          unavailable = undefined
+          break
+        } catch (error) {
+          if (deps.signal?.aborted || (error as Error)?.name === 'AbortError') throw error
+          unavailable = error instanceof Error ? error.message : String(error)
+          report(`gate round ${n}: review could not run (attempt ${attempt}/2): ${unavailable}`)
+        }
+      }
+      if (unavailable !== undefined) {
+        const round: GateRound = {
+          round: n,
+          result,
+          snapshot: snapshot.commit,
+          changed,
+          evidence: { kind: 'review', passed: false, score: null, error: unavailable },
+        }
+        rounds.push(round)
+        deps.record?.(round)
+        reason = 'review unavailable'
+        break
       }
       inPlace = evidence
       feedback = JSON.stringify(
@@ -280,9 +308,7 @@ export async function runGate(spec: GateSpec, deps: GateDeps): Promise<GateResul
         null,
         1,
       )
-      report(
-        `gate round ${n}: ${evidence.passed ? 'every target done' : evidence.error !== undefined ? `review failed: ${evidence.error}` : `not done (score ${evidence.score ?? 'unparsed'})`}`,
-      )
+      report(`gate round ${n}: ${evidence.passed ? 'every target done' : `not done (score ${evidence.score ?? 'unparsed'})`}`)
     }
 
     const round: GateRound = { round: n, result, snapshot: snapshot.commit, changed, evidence, ...(rolledBack ? { rolledBack } : {}) }
@@ -299,6 +325,7 @@ export async function runGate(spec: GateSpec, deps: GateDeps): Promise<GateResul
     base: base.commit,
     rounds,
     ...(lastPassing === undefined ? {} : { lastPassing }),
+    ...(reason === undefined ? {} : { reason }),
     final: rounds.at(-1)!.result,
   }
 }

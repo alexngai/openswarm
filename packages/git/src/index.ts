@@ -27,9 +27,10 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 
 const run = promisify(execFile)
@@ -507,11 +508,14 @@ export async function linkIgnored(
  * `cwd`. What runs there — a reviewer told its changes are discarded — never
  * touches the user's repository:
  *
- * - an independent clone, not a linked worktree, so its refs, stash and config
+ * - its own repository, not a linked worktree, so its refs, stash and config
  *   are its own (a worktree shares them: a `git stash pop` there pops the
- *   user's stash). `--shared` borrows the objects through alternates, which
- *   is also how the unreferenced snapshot commit is reachable from it;
- * - no remote, so a push or fetch cannot reach back into the user's repository;
+ *   user's stash), and with no remote, so a push or fetch cannot reach back;
+ * - objects borrowed through alternates, which is how the unreferenced
+ *   snapshot commit is reachable from it. Built by hand, not `git clone
+ *   --shared`: a clone of a SHALLOW repository ignores `--shared` and copies
+ *   only referenced objects, losing the snapshot. The source's `shallow` file
+ *   comes along, so history stops at the same boundary instead of failing;
  * - ignored files copied, not hard-linked (`linkIgnored`'s `copyFiles`);
  * - checked out without hooks: a `post-checkout` hook is the user's, for their
  *   own checkouts, not for this bookkeeping one;
@@ -526,11 +530,16 @@ export async function withSnapshotClone<T>(
   const git = async (dir: string, ...args: string[]) => (await run('git', args, { cwd: dir })).stdout.trim()
   const root = await git(cwd, 'rev-parse', '--show-toplevel')
   const prefix = await git(cwd, 'rev-parse', '--show-prefix')
+  // The common directory's, also from a linked worktree; resolved against root,
+  // since git prints it relative to where it ran.
+  const objects = resolve(root, await git(root, 'rev-parse', '--git-path', 'objects'))
+  const shallow = resolve(root, await git(root, 'rev-parse', '--git-path', 'shallow'))
   const dir = mkdtempSync(join(tmpdir(), 'openswarm-review-'))
   const path = join(dir, 'tree')
   try {
-    await git(dir, 'clone', '-q', '--shared', '--no-checkout', root, path)
-    await git(path, 'remote', 'remove', 'origin')
+    await git(dir, 'init', '-q', path)
+    writeFileSync(join(path, '.git', 'objects', 'info', 'alternates'), `${objects}\n`)
+    if (existsSync(shallow)) copyFileSync(shallow, join(path, '.git', 'shallow'))
     await git(path, '-c', 'core.hooksPath=/dev/null', 'checkout', '-q', '--detach', commit)
     await linkIgnored(root, path, { ...(onProgress === undefined ? {} : { onProgress }), copyFiles: true })
     return await fn(join(path, prefix))
