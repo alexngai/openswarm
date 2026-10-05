@@ -11,8 +11,8 @@ arms it also reads each cell's division.json: landings, contract checks, final r
 import glob, json, os, re, sys
 from collections import defaultdict
 
-ARMS = ["attempt", "selfrounds", "rounds", "onethread4", "onethread8", "divsharded", "divprogram"]
-NAMES = {"attempt": "a", "selfrounds": "b0", "rounds": "b", "onethread4": "f4", "onethread8": "f8", "divsharded": "d", "divprogram": "e"}
+ARMS = ["attempt", "selfrounds", "rounds", "gated", "onethread4", "onethread8", "divsharded", "divprogram"]
+NAMES = {"attempt": "a", "selfrounds": "b0", "rounds": "b", "gated": "g", "onethread4": "f4", "onethread8": "f8", "divsharded": "d", "divprogram": "e"}
 cells = defaultdict(lambda: defaultdict(list))  # task -> arm -> [(reward, usd)]
 for run in sys.argv[1:]:
     for f in glob.glob(f"{run}/cache/*.json"):
@@ -62,7 +62,7 @@ for a in present:
     print(f"{NAMES[a]:>3}: mean reward {sum(v[0] for v in vs) / len(vs):.3f}, mean $/task {sum(v[1] for v in vs) / len(vs):.2f}, "
           f"reward per $ {sum(v[0] for v in vs) / sum(v[1] for v in vs):.4f} (n={len(vs)})")
 for x, y in (("divprogram", "divsharded"), ("divprogram", "rounds"), ("divsharded", "rounds"),
-             ("onethread4", "rounds"), ("onethread8", "onethread4"), ("divprogram", "onethread8")):
+             ("onethread4", "rounds"), ("onethread8", "onethread4"), ("divprogram", "onethread8"), ("gated", "rounds")):
     paired = [r for r in rows if r.get(x) and r.get(y)]
     if paired:
         w = sum(r[x][0] > r[y][0] for r in paired), sum(r[x][0] < r[y][0] for r in paired)
