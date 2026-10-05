@@ -13,10 +13,13 @@
  * like a crash — same usage (zero), same missing result. Asserting `sawResult`
  * only on the happy path would be a guard that cannot fail where it matters.
  */
-import { mkdtempSync, existsSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { mkdtempSync, existsSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
+import { Context } from '@deepseek-ai/cordis'
+import * as SandboxLocal from '@deepseek-ai/dsh-sandbox-local'
 import { startMockLlmServer, type MockLlmServer } from '@deepseek-ai/dsh-llm-mock-server'
 import { runCli } from '../src/index'
 
@@ -339,5 +342,231 @@ it('OPENSWARM_SELF_MODIFY=1 selects the arm, since an eval Arm carries env not f
     expect(toolNamesOf(mock!)).toContain('swarm_author_plugin')
   } finally {
     delete process.env['OPENSWARM_SELF_MODIFY']
+  }
+}, 60_000)
+
+/**
+ * The completion gate on the single-agent path (docs/05 B6a). The mock answers
+ * the agent (in process) and the reviewer (a sandboxed subprocess member in a
+ * clone of the round's snapshot) alike, so its text ends in a verdict line
+ * with every target done: the reviewer passes round 1.
+ */
+/**
+ * The reviewer runs under workspace-write by default. Where this host cannot
+ * sandbox (member-sandbox.e2e.test.ts's probe: no Seatbelt, bwrap or
+ * Landlock), the review-mode cases run it unsandboxed, as an operator would.
+ */
+async function canSandbox(): Promise<boolean> {
+  const ctx = new Context()
+  ctx.plugin((SandboxLocal as any).default ?? SandboxLocal)
+  try {
+    await new Promise<void>((resolve) => ctx.inject(['sandbox'], () => resolve()))
+    const { argv } = (ctx as any).sandbox.confine(['true'], { mode: 'workspace-write', workspaceRoot: tmpdir() })
+    return spawnSync(argv[0], argv.slice(1)).status === 0
+  } catch {
+    return false
+  } finally {
+    await (ctx as any).fiber?.dispose?.()
+  }
+}
+if (!(await canSandbox())) process.env['OPENSWARM_GATE_REVIEWER_SANDBOX'] = 'danger-full-access'
+
+const DONE = `all done\n${JSON.stringify({ targets: [{ target: 1, status: 'done', notes: 'works' }], regressions: 'none', score: 100 })}`
+
+/** A temp git work tree, the cwd for the run. */
+function gitWorkspace(): string {
+  const ws = mkdtempSync(join(tmpdir(), 'openswarm-run-ws-'))
+  const git = (...args: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd: ws })
+  git('init', '-q', '-b', 'main')
+  writeFileSync(join(ws, 'README.md'), 'base\n')
+  git('add', '.')
+  git('commit', '-qm', 'init')
+  process.chdir(ws)
+  return ws
+}
+
+const gateLines = (lines: string[]) => lines.map((l) => JSON.parse(l)).filter((o) => o.type === 'gate_round' || o.type === 'gate')
+
+it('--gate: the reviewer measures in its own clone, accepts round 1, and its usage is billed', async () => {
+  // One FIFO script, consumed in order: the agent answers at once, then the
+  // reviewer writes a file in its tree before giving its verdict.
+  await startMock({
+    apiKey: 'mock-key',
+    sequence: ['success', 'tool_call_success', 'success'],
+    repeatLast: true,
+    successText: DONE,
+    toolName: 'bash',
+    toolArguments: JSON.stringify({ command: 'echo "sandbox=$OPENSWARM_MEMBER_SANDBOX" > reviewer-was-here.txt; cat reviewer-was-here.txt' }),
+  })
+  const ws = gitWorkspace()
+
+  const lines: string[] = []
+  const code = await runCli(
+    ['run', '--output-format', 'json', '--model', 'mock-small', '--single', '--gate', 'ship it'],
+    { out: (l) => lines.push(l), err: () => {} },
+  )
+  expect(code).toBe(0)
+  expect(gateLines(lines)).toEqual([
+    { type: 'gate_round', round: 1, changed: false, passed: true, kind: 'review', score: 100, rolledBack: false },
+    { type: 'gate', accepted: true, rounds: 1 },
+  ])
+  const parsed = openSwarmParse(lines.join('\n'))
+  expect(parsed.sawResult).toBe(true)
+  expect(parsed.output).toContain('all done')
+  // The agent's one call and the reviewer's two are all in the reported usage
+  // (the mock bills 3 input tokens a call), each counted once.
+  expect(mock!.requests).toHaveLength(3)
+  expect(parsed.usage.inputTokens).toBe(3 * mock!.requests.length)
+  // It ran as the measured reviewer did (review.cordis.yml's persona, not the
+  // member's "editing files" one), under the reviewer sandbox.
+  const reviewer = JSON.stringify(mock!.requests.slice(1))
+  expect(reviewer).toContain('You are a coding agent working in the current directory')
+  expect(reviewer).not.toContain('Complete your task by editing files')
+  expect(reviewer).toContain(`sandbox=${process.env['OPENSWARM_GATE_REVIEWER_SANDBOX'] ?? 'workspace-write'}`)
+  // The reviewer's edit went away with its clone; the checkout never saw it.
+  expect(parsed.trajectory).toEqual([])
+  expect(existsSync(join(ws, 'reviewer-was-here.txt'))).toBe(false)
+  expect(execFileSync('git', ['status', '--porcelain'], { cwd: ws }).toString()).toBe('')
+  expect(execFileSync('git', ['worktree', 'list'], { cwd: ws }).toString().trim().split('\n')).toHaveLength(1)
+}, 60_000)
+
+it('--gate-check makes it commands mode: no reviewer, the check decides', async () => {
+  await startMock({
+    apiKey: 'mock-key',
+    sequence: ['tool_call_success', 'success'],
+    repeatLast: true,
+    successText: 'wrote it',
+    toolName: 'bash',
+    toolArguments: JSON.stringify({ command: 'echo hi > proof.txt' }),
+  })
+  gitWorkspace()
+
+  const lines: string[] = []
+  const code = await runCli(
+    ['run', '--output-format', 'json', '--model', 'mock-small', '--gate', '--gate-check', 'test -f proof.txt', 'write proof'],
+    { out: (l) => lines.push(l), err: () => {} },
+  )
+  expect(code).toBe(0)
+  expect(gateLines(lines)).toEqual([
+    { type: 'gate_round', round: 1, changed: true, passed: true, kind: 'commands', score: null, rolledBack: false },
+    { type: 'gate', accepted: true, rounds: 1 },
+  ])
+  expect(mock!.requests).toHaveLength(2) // the agent's tool turn and its answer; no review
+}, 60_000)
+
+it('every --gate-check runs, from repeated flags or one per line of OPENSWARM_GATE_CHECK', async () => {
+  await startMock({ apiKey: 'mock-key', sequence: ['success'], repeatLast: true, successText: 'ok' })
+  // Markers outside the workspace, so the checks do not change the tree they judge.
+  const marks = mkdtempSync(join(tmpdir(), 'openswarm-gate-marks-'))
+  gitWorkspace()
+  const run = async (argv: string[]) => {
+    const lines: string[] = []
+    const code = await runCli(['run', '--output-format', 'json', '--model', 'mock-small', '--gate', ...argv, 'go'], {
+      out: (l) => lines.push(l),
+      err: () => {},
+    })
+    return { code, gate: gateLines(lines) }
+  }
+
+  const flags = await run(['--gate-check', `touch ${marks}/one`, '--gate-check', `touch ${marks}/two`])
+  expect(flags.code).toBe(0)
+  expect(flags.gate[0]).toMatchObject({ kind: 'commands', passed: true })
+  expect(existsSync(join(marks, 'one')) && existsSync(join(marks, 'two'))).toBe(true)
+
+  process.env['OPENSWARM_GATE_CHECK'] = `touch ${marks}/three\ntouch ${marks}/four\n`
+  try {
+    expect((await run([])).code).toBe(0)
+  } finally {
+    delete process.env['OPENSWARM_GATE_CHECK']
+  }
+  expect(existsSync(join(marks, 'three')) && existsSync(join(marks, 'four'))).toBe(true)
+}, 60_000)
+
+it('OPENSWARM_GATE=1 selects the gate, since an eval Arm carries env not flags', async () => {
+  await startMock({ apiKey: 'mock-key', sequence: ['success'], repeatLast: true, successText: DONE })
+  gitWorkspace()
+  process.env['OPENSWARM_GATE'] = '1'
+  try {
+    const lines: string[] = []
+    const code = await runCli(
+      ['run', '--output-format', 'json', '--model', 'mock-small', '--single', 'ship it'],
+      { out: (l) => lines.push(l), err: () => {} },
+    )
+    expect(code).toBe(0)
+    expect(gateLines(lines).at(-1)).toEqual({ type: 'gate', accepted: true, rounds: 1 })
+  } finally {
+    delete process.env['OPENSWARM_GATE']
+  }
+}, 60_000)
+
+it('--gate refuses a cwd that is not a git work tree, and the team path', async () => {
+  process.chdir(mkdtempSync(join(tmpdir(), 'openswarm-run-ws-')))
+  const lines: string[] = []
+  const code = await runCli(
+    ['run', '--output-format', 'json', '--model', 'mock-small', '--gate', 'ship it'],
+    { out: (l) => lines.push(l), err: () => {} },
+  )
+  expect(code).toBe(1)
+  expect(lines.join('\n')).toMatch(/needs a git work tree/)
+
+  gitWorkspace()
+  const teamLines: string[] = []
+  const teamCode = await runCli(
+    ['run', '--output-format', 'json', '--model', 'mock-small', '--team', '--gate', 'ship it'],
+    { out: (l) => teamLines.push(l), err: () => {} },
+  )
+  expect(teamCode).toBe(1)
+  expect(teamLines.join('\n')).toMatch(/only the single-agent path[\s\S]*--team/)
+
+  const emptyLines: string[] = []
+  const emptyCode = await runCli(
+    ['run', '--output-format', 'json', '--model', 'mock-small', '--gate', '--gate-check', '', 'ship it'],
+    { out: (l) => emptyLines.push(l), err: () => {} },
+  )
+  expect(emptyCode).toBe(1)
+  expect(emptyLines.join('\n')).toMatch(/empty --gate-check/)
+})
+
+it('a gate that fails after spending still reports the usage spent', async () => {
+  // The agent deletes the repository mid-round, so the round's snapshot fails.
+  await startMock({
+    apiKey: 'mock-key',
+    sequence: ['tool_call_success', 'success'],
+    repeatLast: true,
+    successText: 'oops',
+    toolName: 'bash',
+    toolArguments: JSON.stringify({ command: 'rm -rf .git' }),
+  })
+  gitWorkspace()
+
+  const lines: string[] = []
+  const code = await runCli(
+    ['run', '--output-format', 'json', '--model', 'mock-small', '--gate', 'ship it'],
+    { out: (l) => lines.push(l), err: () => {} },
+  )
+  expect(code).toBe(1)
+  const parsed = openSwarmParse(lines.join('\n'))
+  expect(parsed.isError).toBe(true)
+  expect(parsed.sawResult).toBe(true)
+  expect(parsed.usage.inputTokens).toBe(3 * mock!.requests.length)
+  expect(parsed.usage.inputTokens).toBeGreaterThan(0)
+}, 60_000)
+
+it('gate env without OPENSWARM_GATE=1 warns that the run is not gated', async () => {
+  await startMock({ apiKey: 'mock-key', sequence: ['success'], repeatLast: true, successText: 'ok' })
+  process.chdir(mkdtempSync(join(tmpdir(), 'openswarm-run-ws-')))
+  process.env['OPENSWARM_GATE_CHECK'] = 'true'
+  try {
+    const lines: string[] = []
+    const errs: string[] = []
+    const code = await runCli(
+      ['run', '--output-format', 'json', '--model', 'mock-small', 'go'],
+      { out: (l) => lines.push(l), err: (l) => errs.push(l) },
+    )
+    expect(code).toBe(0)
+    expect(errs.join('\n')).toMatch(/OPENSWARM_GATE_CHECK set without OPENSWARM_GATE=1/)
+    expect(gateLines(lines)).toEqual([])
+  } finally {
+    delete process.env['OPENSWARM_GATE_CHECK']
   }
 }, 60_000)

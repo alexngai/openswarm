@@ -8,6 +8,7 @@
     "openswarm": "bin/openswarm.mjs"
   },
   "dependencies": {
+    "openswarm-git": "*",
     "openswarm-swarm": "*",
     "openswarm-llm-openai": "*",
     "openswarm-llm-anthropic": "*",

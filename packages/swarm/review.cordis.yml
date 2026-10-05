@@ -1,9 +1,8 @@
-# Default worktree-member runtime composition (docs/01 Phase 2), adapted from
-# dsh's examples/jsonrpc-agent/minimal.cordis.yml. Spawned per member run by
-# subagent-dsh-sdk with cwd = the task worktree; bash/fs root at process.cwd().
-# Override per team via worktrees.member.configPath to grow richer members.
-# review.cordis.yml is this file with the gate reviewer's differences; keep
-# the two in step.
+# The completion gate's reviewer (docs/05 B6): member.cordis.yml with the two
+# settings of the reviewer that was measured (docs/07 §7.1, arm b), which ran
+# on the CLI's own stack: 300 s bash timeouts, and the CLI's persona rather
+# than "complete your task by editing files", which contradicts a reviewer
+# told not to fix anything. Keep everything else in step with member.cordis.yml.
 
 # dsh's SDK server plus resume-on-miss and `swarm/steer` (docs/05 A2).
 - id: sdk-jsonrpc-server
@@ -42,7 +41,7 @@
 - id: terminal-bash
   name: '@deepseek-ai/dsh-terminal-bash'
   config:
-    timeoutMs: 60000
+    timeoutMs: 300000
 
 # dsh-fs-local plus the sandbox's write fence: without it the editor writes
 # anywhere under workspace-write. Unfenced under danger-full-access.
@@ -56,7 +55,7 @@
   config:
     includeHarnessIdentity: false
     includeRuntimeContext: false
-    persona: 'You are a swarm member working in an isolated git worktree. Complete your task by editing files and running commands here.'
+    persona: 'You are a coding agent working in the current directory. Use your tools to complete the task; verify your work by running commands.'
     workspaceContext: false
     skills:
       enabled: false
@@ -66,7 +65,7 @@
 - id: persistent-bash
   name: '@deepseek-ai/dsh-tool-bash-persistent'
   config:
-    timeoutMs: 60000
+    timeoutMs: 300000
 
 - id: str-replace-editor
   name: '@deepseek-ai/dsh-tool-str-replace-editor'

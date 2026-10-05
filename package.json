@@ -95,7 +95,8 @@
     "packages/bundle/cordis.dev.patch.yml",
     "packages/bundle/cordis.eval.patch.yml",
     "packages/bundle/cordis.web.patch.yml",
-    "packages/swarm/member.cordis.yml"
+    "packages/swarm/member.cordis.yml",
+    "packages/swarm/review.cordis.yml"
   ],
   "dependencies": {
     "@anthropic-ai/bedrock-sdk": "0.33.1",

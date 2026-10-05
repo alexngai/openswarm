@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import * as SdkProvider from '@deepseek-ai/dsh-subagent-dsh-sdk'
 import type { SubagentRun } from '@deepseek-ai/dsh-subagent'
 import { SwarmGit, type MergeOutcome } from 'openswarm-git'
@@ -107,6 +108,11 @@ function defaultMemberConfig(): string {
   return fileURLToPath(new URL('../member.cordis.yml', import.meta.url))
 }
 
+/** The completion gate reviewer's composition: the member's, as the measured reviewer ran (review.cordis.yml). */
+export function reviewMemberConfig(): string {
+  return fileURLToPath(new URL('../review.cordis.yml', import.meta.url))
+}
+
 const plug = (m: unknown): any => (m as any).default ?? m
 
 /** Resolve the child runtime launch spec for one member config. */
@@ -136,6 +142,111 @@ export function inheritedRoute(env: NodeJS.ProcessEnv = process.env): Record<str
     DSH_MODEL: env['OPENSWARM_DEFAULT_MODEL'],
   }
   return Object.fromEntries(Object.entries(route).filter((entry): entry is [string, string] => entry[1] !== undefined))
+}
+
+/**
+ * One member run as a subprocess harness rooted at `cwd`, through a
+ * `subagent-dsh-sdk` provider mounted for this run alone and disposed after.
+ * `env` is the child's whole environment (the spawner scrubs the inherited
+ * one); `config` supplies the launch and the route a member without
+ * agentOptions falls back on.
+ */
+export async function runMemberProcess(
+  ctx: Context,
+  member: MemberSpec,
+  prompt: string,
+  options: {
+    cwd: string
+    env: Record<string, string>
+    parent: Agent
+    signal?: AbortSignal
+    config?: WorktreeMemberConfig
+    /** Unique per mount (default: random). */
+    providerName?: string
+  },
+): Promise<MemberRunResult> {
+  const cfg = options.config ?? {}
+  const text = member.persona === undefined ? prompt : `${member.persona}\n\n${prompt}`
+  const providerName = options.providerName ?? `swarm-sdk-${randomUUID().slice(0, 8)}`
+  const launch = resolveMemberLaunch(cfg)
+  const fiber = ctx.plugin(plug(SdkProvider), {
+    providerName,
+    command: launch.command,
+    args: launch.args,
+    cwd: options.cwd,
+    env: options.env,
+    provider: member.agentOptions?.provider ?? cfg.provider ?? 'openai',
+    ...((member.agentOptions?.model ?? cfg.model) === undefined
+      ? {}
+      : { model: member.agentOptions?.model ?? cfg.model }),
+    ...((member.agentOptions?.maxTokens ?? cfg.maxTokens) === undefined
+      ? {}
+      : { maxTokens: member.agentOptions?.maxTokens ?? cfg.maxTokens }),
+  })
+  let started: SubagentRun | undefined
+  try {
+    await fiber.await()
+    started = await ctx.subagents.start(providerName, {
+      label: member.name,
+      prompt: [{ type: 'text', text }],
+      parent: options.parent,
+      signal: options.signal ?? new AbortController().signal,
+    })
+    const result = await started.result
+    return {
+      member: member.name,
+      runId: started.id,
+      output: result.output,
+      text: result.output
+        .filter((b): b is Extract<(typeof result.output)[number], { type: 'text' }> => b.type === 'text')
+        .map((b) => b.text)
+        .join(''),
+      stopReason: result.stopReason,
+    }
+  } finally {
+    // Disposing the PROVIDER does not reap the run: `SubagentRun.dispose()` is
+    // what cancels remaining work, reaches child quiescence, and releases
+    // resources. Awaiting `result` and skipping it leaked the member's harness
+    // subprocess on every worktree run — one orphaned node process per member,
+    // surviving well past the provider's SIGTERM/SIGKILL grace. The suite never
+    // caught it because vitest force-exits its workers.
+    await started?.dispose().catch(() => undefined)
+    await fiber.dispose()
+  }
+}
+
+/**
+ * The environment a member starts with, passed explicitly because the
+ * one-shot spawner scrubs the inherited one. `cfg.env` wins. `runId` names the
+ * run's session and cache directories.
+ */
+export function memberEnvOf(cfg: WorktreeMemberConfig, runId: string): Record<string, string> {
+  const sandbox =
+    cfg.sandbox ?? cfg.env?.['OPENSWARM_MEMBER_SANDBOX'] ?? process.env['OPENSWARM_MEMBER_SANDBOX']
+  // Under workspace-write a member writes only its worktree and temp, so
+  // package caches move out of the home directory into a per-run temp dir.
+  // By design, global installs (`pip install` into site-packages) and git
+  // writes (the object store and `.git/worktrees/<name>` live outside the
+  // worktree) still fail; the lead auto-commits.
+  // ponytail: per run, so each run re-downloads and the OS reaps temp; share
+  // one across runs if downloads cost.
+  const caches = join(tmpdir(), 'openswarm-cache', runId)
+  return {
+    ...inheritedRoute(),
+    // Session logs must not land inside the worktree, or auto-commit
+    // sweeps them into the task branch.
+    DSH_SESSION_ROOT: join(tmpdir(), 'openswarm-sessions', runId),
+    ...(sandbox === undefined ? {} : { OPENSWARM_MEMBER_SANDBOX: sandbox }),
+    ...(sandbox === 'workspace-write'
+      ? {
+          npm_config_cache: join(caches, 'npm'),
+          PIP_CACHE_DIR: join(caches, 'pip'),
+          CARGO_HOME: join(caches, 'cargo'),
+          XDG_CACHE_HOME: join(caches, 'xdg'),
+        }
+      : {}),
+    ...cfg.env,
+  }
 }
 
 export class WorktreeRun {
@@ -189,54 +300,14 @@ export class WorktreeRun {
     // the user's checkout — the member harness carries write tools, so running
     // in repoRoot would let a model mutate the working tree.
     const cwd = taskKey === undefined ? await this.git.scratch() : (await this.worktree(taskKey)).path
-    const cfg = this.options.member ?? {}
-    const text = member.persona === undefined ? prompt : `${member.persona}\n\n${prompt}`
-    const providerName = `swarm-sdk-${this.teamId}-${this.seq++}`
-    const launch = resolveMemberLaunch(cfg)
-    const fiber = this.ctx.plugin(plug(SdkProvider), {
-      providerName,
-      command: launch.command,
-      args: launch.args,
+    return runMemberProcess(this.ctx, member, prompt, {
       cwd,
       env: this.memberEnv(),
-      provider: member.agentOptions?.provider ?? cfg.provider ?? 'openai',
-      ...((member.agentOptions?.model ?? cfg.model) === undefined
-        ? {}
-        : { model: member.agentOptions?.model ?? cfg.model }),
-      ...((member.agentOptions?.maxTokens ?? cfg.maxTokens) === undefined
-        ? {}
-        : { maxTokens: member.agentOptions?.maxTokens ?? cfg.maxTokens }),
+      parent: run.parent,
+      ...(run.signal === undefined ? {} : { signal: run.signal }),
+      ...(this.options.member === undefined ? {} : { config: this.options.member }),
+      providerName: `swarm-sdk-${this.teamId}-${this.seq++}`,
     })
-    let started: SubagentRun | undefined
-    try {
-      await fiber.await()
-      started = await this.ctx.subagents.start(providerName, {
-        label: member.name,
-        prompt: [{ type: 'text', text }],
-        parent: run.parent,
-        signal: run.signal ?? new AbortController().signal,
-      })
-      const result = await started.result
-      return {
-        member: member.name,
-        runId: started.id,
-        output: result.output,
-        text: result.output
-          .filter((b): b is Extract<(typeof result.output)[number], { type: 'text' }> => b.type === 'text')
-          .map((b) => b.text)
-          .join(''),
-        stopReason: result.stopReason,
-      }
-    } finally {
-      // Disposing the PROVIDER does not reap the run: `SubagentRun.dispose()` is
-      // what cancels remaining work, reaches child quiescence, and releases
-      // resources. Awaiting `result` and skipping it leaked the member's harness
-      // subprocess on every worktree run — one orphaned node process per member,
-      // surviving well past the provider's SIGTERM/SIGKILL grace. The suite never
-      // caught it because vitest force-exits its workers.
-      await started?.dispose().catch(() => undefined)
-      await fiber.dispose()
-    }
   }
 
   /**
@@ -244,33 +315,7 @@ export class WorktreeRun {
    * because the one-shot spawner scrubs the inherited one. `member.env` wins.
    */
   memberEnv(): Record<string, string> {
-    const cfg = this.options.member ?? {}
-    const sandbox =
-      cfg.sandbox ?? cfg.env?.['OPENSWARM_MEMBER_SANDBOX'] ?? process.env['OPENSWARM_MEMBER_SANDBOX']
-    // Under workspace-write a member writes only its worktree and temp, so
-    // package caches move out of the home directory into a per-run temp dir.
-    // By design, global installs (`pip install` into site-packages) and git
-    // writes (the object store and `.git/worktrees/<name>` live outside the
-    // worktree) still fail; the lead auto-commits.
-    // ponytail: per run, so each run re-downloads and the OS reaps temp; share
-    // one across runs if downloads cost.
-    const caches = join(tmpdir(), 'openswarm-cache', this.teamId)
-    return {
-      ...inheritedRoute(),
-      // Session logs must not land inside the worktree, or auto-commit
-      // sweeps them into the task branch.
-      DSH_SESSION_ROOT: join(tmpdir(), 'openswarm-sessions', this.teamId),
-      ...(sandbox === undefined ? {} : { OPENSWARM_MEMBER_SANDBOX: sandbox }),
-      ...(sandbox === 'workspace-write'
-        ? {
-            npm_config_cache: join(caches, 'npm'),
-            PIP_CACHE_DIR: join(caches, 'pip'),
-            CARGO_HOME: join(caches, 'cargo'),
-            XDG_CACHE_HOME: join(caches, 'xdg'),
-          }
-        : {}),
-      ...cfg.env,
-    }
+    return memberEnvOf(this.options.member ?? {}, this.teamId)
   }
 
   /** Create (or return) the worktree for one task or member key. */

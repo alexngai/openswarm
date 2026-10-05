@@ -14,10 +14,8 @@
  * direction (`steer`, `cancel`) while the run is live (docs/05 A5), and
  * answers to the questions the harness raises (A6).
  */
-import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readdirSync } from 'node:fs'
-import { promisify } from 'node:util'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
@@ -39,6 +37,7 @@ import {
   type SwarmRunView,
   type SwarmSteerEvent,
 } from './run'
+import { runGateCommand } from './gate'
 import { askPeer, registerSwarmMessaging, spawnPeer, suppressSettlementTurns } from './peers'
 import type { Principal } from './protocol'
 import type { PeerHandle } from './types'
@@ -78,6 +77,7 @@ export * from './journal'
 export * from './mailbox'
 export * from './run'
 export * from './protocol'
+export * from './gate'
 export {
   askPeer,
   nextTurnEnd,
@@ -86,10 +86,10 @@ export {
   suppressSettlementTurns,
 } from './peers'
 export { coordinatorSpec, parseNumberedPlan, renderIntent } from './topologies'
-export type { ReportProgress } from './topologies'
+export type { ReportProgress, RunMember } from './topologies'
 export { RemotePeer } from './remote-peer'
 export { SwarmServer } from './server'
-export { WorktreeRun } from './worktrees'
+export { WorktreeRun, memberEnvOf, reviewMemberConfig, runMemberProcess } from './worktrees'
 export type { WorktreeTeamOptions, WorktreeMemberConfig } from './worktrees'
 
 export interface SwarmConfig {
@@ -247,36 +247,12 @@ export interface RunTeamOptions {
   questions?: { timeoutMs?: number; maxOpen?: number }
 }
 
-const execFileAsync = promisify(execFile)
-
 /** Weakest-link default: every command must exit 0 in `cwd` for confidence 1. */
-/** Keep the tail: a failing build's useful part is at the end, not the top. */
-const OUTPUT_TAIL = 4_000
-
-/**
- * The environment the gate's commands run in: the driver's, minus the npm
- * invocation that launched the driver. `npx`/`npm run` export `npm_*` and
- * `INIT_CWD` describing THAT invocation, and the graded repo's own npm then
- * reads them as its config — an inherited `npm_config_allow_scripts` makes
- * `npm ci` fail with EALLOWSCRIPTS, scoring a correct change 0.
- */
-export function gateEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  return Object.fromEntries(Object.entries(env).filter(([key]) => !/^npm_/i.test(key) && key !== 'INIT_CWD'))
-}
-
 function defaultConfidenceRunner(cwd: string): RunConfidence {
   return async (commands) => {
     for (const command of commands) {
-      try {
-        await execFileAsync('bash', ['-c', command], { cwd, env: gateEnv(), maxBuffer: 16 * 1024 * 1024 })
-      } catch (error) {
-        const combined = `${(error as any)?.stdout ?? ''}${(error as any)?.stderr ?? ''}`
-        return {
-          score: 0,
-          failedCommand: command,
-          output: combined.length > OUTPUT_TAIL ? combined.slice(-OUTPUT_TAIL) : combined,
-        }
-      }
+      const { ok, output } = await runGateCommand(command, cwd)
+      if (!ok) return { score: 0, failedCommand: command, output }
     }
     return { score: 1 }
   }

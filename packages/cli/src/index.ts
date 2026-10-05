@@ -22,6 +22,7 @@
  * real spine; usage folds from `assistant/message` session events per member
  * session, attributed to models via the tier list.
  */
+import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdtempSync, writeFileSync, readFileSync, readdirSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -29,7 +30,16 @@ import { Context } from '@deepseek-ai/cordis'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import * as LlmOpenAi from 'openswarm-llm-openai'
 import * as LlmAnthropic from 'openswarm-llm-anthropic'
-import SwarmService, { type CascadeResult, type CoordinatorResult, type MemberSpec } from 'openswarm-swarm'
+import SwarmService, {
+  memberEnvOf,
+  reviewMemberConfig,
+  runGate,
+  runMemberProcess,
+  type CascadeResult,
+  type CoordinatorResult,
+  type MemberSpec,
+} from 'openswarm-swarm'
+import { withSnapshotClone } from 'openswarm-git'
 import * as PluginAuthoring from 'openswarm-plugin-authoring'
 import * as Spine from '@deepseek-ai/dsh-agent-spine-demo'
 import * as SessionPersistenceJsonl from '@deepseek-ai/dsh-session-persistence-jsonl'
@@ -123,7 +133,7 @@ function routeOf(model: string): Route {
  * `--single "do the thing"` swallow the prompt, which fails as a missing task
  * rather than as a parse error.
  */
-const BOOL_FLAGS = new Set(['headless', 'single', 'team', 'self-modify'])
+const BOOL_FLAGS = new Set(['headless', 'single', 'team', 'self-modify', 'gate'])
 
 function parseArgs(argv: string[]): Map<string, string> {
   return splitArgv(argv).args
@@ -492,6 +502,84 @@ function pilotOf(args: Map<string, string>, selfModify: boolean): { plan: Plan; 
 }
 
 /**
+ * The completion gate (docs/05 B6): `--gate [--gate-rounds N] [--gate-check
+ * "<cmd>"]...`, or the OPENSWARM_GATE* env for the reason OPENSWARM_SELF_MODIFY
+ * exists. Checks make it commands mode; without any an independent reviewer
+ * measures each round, under the workspace-write sandbox unless
+ * OPENSWARM_GATE_REVIEWER_SANDBOX=danger-full-access says otherwise (for hosts
+ * that cannot sandbox). B6a gates the single-agent path only, and only in a
+ * git work tree, since the gate snapshots through git.
+ */
+function gateOf(
+  argv: string[],
+  args: Map<string, string>,
+  workspace: string,
+  planned: boolean,
+  io: CliIo,
+): { maxRounds?: number; commands?: string[]; reviewerSandbox: string } | undefined {
+  if (!args.has('gate') && process.env['OPENSWARM_GATE'] !== '1') {
+    // A gate option that silently does nothing is the no-op arm again.
+    if (args.has('gate-rounds') || args.has('gate-check')) throw new Error('--gate-rounds and --gate-check need --gate')
+    // Env may be shared across arms, so only warn: an arm that set these but
+    // not OPENSWARM_GATE=1 would otherwise run ungated without a word.
+    const stray = ['OPENSWARM_GATE_ROUNDS', 'OPENSWARM_GATE_CHECK'].filter((name) => process.env[name])
+    if (stray.length > 0) io.err(`openswarm: ${stray.join(' and ')} set without OPENSWARM_GATE=1; this run is not gated`)
+    return undefined
+  }
+  if (args.has('team') || planned) {
+    throw new Error('the gate (--gate / OPENSWARM_GATE=1) covers only the single-agent path so far; it cannot be combined with --team or plan mode')
+  }
+  const rounds = args.get('gate-rounds') ?? (process.env['OPENSWARM_GATE_ROUNDS'] || undefined)
+  if (rounds !== undefined && !/^[1-9]\d*$/.test(rounds)) {
+    throw new Error(`--gate-rounds must be a positive integer (got "${rounds}")`)
+  }
+  // Every --gate-check, not just the last (splitArgv keeps one value per
+  // flag): several checks are what make the regression guard reachable. Read
+  // with splitArgv's rule, so a following flag is no value. The env form is
+  // one check per line.
+  const flagged = argv.flatMap((a, i) => {
+    const next = argv[i + 1]
+    return a !== '--gate-check' ? [] : [next === undefined || next.startsWith('--') ? '' : next]
+  })
+  const listed = process.env['OPENSWARM_GATE_CHECK']?.trim()
+  const checks = flagged.length > 0 ? flagged : listed ? listed.split('\n') : []
+  if (checks.some((check) => check.trim() === '')) {
+    throw new Error('an empty --gate-check (or blank line in OPENSWARM_GATE_CHECK) checks nothing; give each a command')
+  }
+  const reviewerSandbox = process.env['OPENSWARM_GATE_REVIEWER_SANDBOX'] || 'workspace-write'
+  if (reviewerSandbox !== 'workspace-write' && reviewerSandbox !== 'danger-full-access') {
+    throw new Error(`OPENSWARM_GATE_REVIEWER_SANDBOX must be workspace-write or danger-full-access, not "${reviewerSandbox}"`)
+  }
+  let inside = false
+  try {
+    inside = execFileSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: workspace, stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString()
+      .trim() === 'true'
+  } catch {}
+  if (!inside) throw new Error(`the gate needs a git work tree to snapshot, and ${workspace} is not in one`)
+  return {
+    ...(rounds === undefined ? {} : { maxRounds: Number(rounds) }),
+    ...(checks.length === 0 ? {} : { commands: checks }),
+    reviewerSandbox,
+  }
+}
+
+/**
+ * Why this host cannot confine a process under workspace-write, or undefined
+ * when it can: the harness's own sandbox provider confines `true` once, as a
+ * member's would (no Seatbelt, bwrap or Landlock, e.g. in plain Docker).
+ */
+function sandboxUnavailable(ctx: any): string | undefined {
+  try {
+    const { argv } = ctx.sandbox.confine(['true'], { mode: 'workspace-write', workspaceRoot: tmpdir() })
+    const probe = spawnSync(argv[0], argv.slice(1), { encoding: 'utf8' })
+    return probe.status === 0 ? undefined : probe.stderr || probe.error?.message || `exit ${probe.status}`
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error)
+  }
+}
+
+/**
  * How plan-mode members reach the model. They are worktree subprocesses booted
  * from member.cordis.yml, not this stack: one OpenAI-compatible route named
  * `openai` (hence that provider name even for Azure), configured by env. The
@@ -500,7 +588,9 @@ function pilotOf(args: Map<string, string>, selfModify: boolean): { plan: Plan; 
  */
 function memberRouteOf(route: Route): { agentOptions: { provider: string; model: string }; env: Record<string, string> } {
   if (route.adapter !== 'openai') {
-    throw new Error(`plan mode cannot run "${route.model}": worktree members only speak the OpenAI-compatible route`)
+    throw new Error(
+      `"${route.model}" cannot run as a worktree member (plan mode, the gate's reviewer): members only speak the OpenAI-compatible route`,
+    )
   }
   const baseURL = route.baseURL ?? process.env['OPENSWARM_LLM_BASE_URL']
   const key = route.apiKeyEnv === undefined ? undefined : process.env[route.apiKeyEnv]
@@ -522,8 +612,10 @@ const CAP_POLL_MS = 5_000
  *
  * The eval entry point: one task, headless, JSONL on stdout for the harness
  * adapter's `openSwarmParse`. `--single` (the default) runs one agent over the
- * tool stack; `--team` runs the coordinator topology; plan mode (`pilotOf`)
- * runs a plan's threads as coordinator teams in worktrees (./pilot.ts).
+ * tool stack, and with the gate (`gateOf`) only closes on passing evidence,
+ * one `gate_round` line per round; `--team` runs the coordinator topology;
+ * plan mode (`pilotOf`) runs a plan's threads as coordinator teams in
+ * worktrees (./pilot.ts).
  *
  * Every terminating path emits `message_stop` — the parser sets its `sawResult`
  * flag ONLY from that line, so a run that exits without one is indistinguishable
@@ -551,7 +643,9 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
   const maxTokens = numericArg(args, 'max-tokens')
   const maxTurns = numericArg(args, 'max-turns')
   const pilot = pilotOf(args, selfModify)
-  const member = pilot === undefined ? undefined : memberRouteOf(route)
+  const gate = gateOf(argv, args, workspace, pilot !== undefined, io)
+  // Plan-mode members and the gate's reviewer are worktree subprocesses.
+  const memberRoute = pilot !== undefined || (gate !== undefined && gate.commands === undefined) ? memberRouteOf(route) : undefined
 
   /** Set once a cap trips; also the flag that turns the exit into a 3. */
   let exceeded: string | undefined
@@ -573,11 +667,12 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
     onUsage: checkCaps,
   })
   const { ctx, lead, usageBySession } = harness
-  // Ours to choose, so plan-mode member usage can be read back (foldSessionLogs).
-  const memberRoot = pilot === undefined ? undefined : mkdtempSync(join(tmpdir(), 'openswarm-member-sessions-'))
+  // Ours to choose, so subprocess members' usage (plan mode's, the gate
+  // reviewer's) can be read back (foldSessionLogs).
+  const memberRoot = memberRoute === undefined ? undefined : mkdtempSync(join(tmpdir(), 'openswarm-member-sessions-'))
   const memberUsage = (): UsageTotals => (memberRoot === undefined ? emptyUsage() : foldSessionLogs(memberRoot))
   const spentNow = (): UsageTotals => foldTeam([...usageBySession.values(), memberUsage()])
-  // Member usage never reaches `onUsage`, so caps over plan-mode members poll
+  // Member usage never reaches `onUsage`, so caps over subprocess members poll
   // their logs. ponytail: rereads every log per tick and trips up to one tick
   // late; tail by byte offset if logs ever get large enough to matter.
   const capPoll =
@@ -606,7 +701,7 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
     const agentOptions = { provider: route.route, model: route.model }
     let text: string
     let completed: boolean
-    if (pilot !== undefined && member !== undefined && memberRoot !== undefined) {
+    if (pilot !== undefined && memberRoute !== undefined && memberRoot !== undefined) {
       const threads = await runPilot({
         ...pilot,
         workspace,
@@ -616,7 +711,7 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
             const result = (await (ctx as any).swarm.runTeam(
               coordinatorSpec(
                 `${prompt}\n\n## Your thread: ${thread.id}\n${thread.assignment}\nOther threads own the rest of the roadmap; stay within your assignment.`,
-                member.agentOptions,
+                memberRoute.agentOptions,
                 pilot.plan.workers,
               ),
               {
@@ -626,7 +721,7 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
                   repoRoot: workspace,
                   baseRef: baseSha,
                   targetBranch: `pilot/${thread.id}`,
-                  member: { env: { ...member.env, DSH_SESSION_ROOT: memberRoot } },
+                  member: { env: { ...memberRoute.env, DSH_SESSION_ROOT: memberRoot } },
                 },
               },
             )) as CoordinatorResult & { git?: { merged: unknown[]; conflicts: unknown[] } }
@@ -657,6 +752,85 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
       )) as CoordinatorResult
       text = result.synthesis.text
       completed = result.synthesis.stopReason === 'completed'
+    } else if (gate !== undefined) {
+      const { reviewerSandbox, ...limits } = gate
+      // Fail before any spend, and say how to proceed, rather than let every
+      // review fail inside a sandbox the host cannot provide.
+      const unsandboxable = memberRoute === undefined || reviewerSandbox !== 'workspace-write' ? undefined : sandboxUnavailable(ctx)
+      if (unsandboxable !== undefined) {
+        throw new Error(
+          `the gate's reviewer runs under the workspace-write sandbox, which this host cannot provide (${unsandboxable}); ` +
+            'set OPENSWARM_GATE_REVIEWER_SANDBOX=danger-full-access to run it unsandboxed',
+        )
+      }
+      const result = await runGate(
+        { task: prompt, member: { name: 'agent', agentOptions }, ...limits },
+        {
+          cwd: workspace,
+          signal: controller.signal,
+          // A fresh child of the lead per round and per review, so every one's
+          // usage folds into usageBySession: the harness bills the reviews too.
+          run: async (member, text) => {
+            // Past a budget stop no new run starts; the throw ends the gate as one.
+            controller.signal.throwIfAborted()
+            const run = await (ctx as any).subagents.start('spawn', {
+              label: member.name,
+              prompt: [{ type: 'text', text }],
+              parent: lead.agent,
+              signal: controller.signal,
+              agentOptions: member.agentOptions ?? agentOptions,
+            })
+            const result = await run.result
+            return {
+              member: member.name,
+              runId: run.id,
+              text: textBlocksOf(result.output),
+              output: result.output,
+              stopReason: result.stopReason,
+            }
+          },
+          // The reviewer is a subprocess member in a disposable clone of the
+          // round's snapshot, never this checkout: what it changes is thrown
+          // away with the clone, as its prompt promises, and its sandbox fences
+          // writes outside it. It runs as the measured reviewer did
+          // (review.cordis.yml). Its usage is read back from its session logs
+          // under memberRoot.
+          ...(memberRoute === undefined || memberRoot === undefined
+            ? {}
+            : {
+                review: (text: string, commit: string) =>
+                  withSnapshotClone(workspace, commit, (cwd) => {
+                    controller.signal.throwIfAborted()
+                    return runMemberProcess(ctx, { name: 'reviewer', agentOptions: memberRoute.agentOptions }, text, {
+                      cwd,
+                      env: memberEnvOf(
+                        { env: { ...memberRoute.env, DSH_SESSION_ROOT: memberRoot, OPENSWARM_MEMBER_SANDBOX: reviewerSandbox } },
+                        `review-${process.pid}`,
+                      ),
+                      parent: lead.agent,
+                      signal: controller.signal,
+                      config: { configPath: reviewMemberConfig() },
+                    })
+                  }),
+              }),
+          record: (round) =>
+            io.out(
+              JSON.stringify({
+                type: 'gate_round',
+                round: round.round,
+                changed: round.changed,
+                passed: round.evidence.passed,
+                kind: round.evidence.kind,
+                score: round.evidence.score ?? null,
+                rolledBack: round.rolledBack === true,
+                ...(round.evidence.error === undefined ? {} : { error: round.evidence.error }),
+              }),
+            ),
+        },
+      )
+      io.out(JSON.stringify({ type: 'gate', accepted: result.accepted, rounds: result.rounds.length }))
+      text = result.final.text
+      completed = result.accepted
     } else {
       const run = await (ctx as any).subagents.start('spawn', {
         label: 'agent',
@@ -691,9 +865,10 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
   } catch (error) {
     // An aborted run rejects; that is a budget stop, not a failure.
     if (exceeded !== undefined) return stopForBudget()
-    if (pilot === undefined) throw error
-    // Plan mode has spent real member tokens by now (a failed landing, a stale
-    // branch); report them rather than exiting like a crash.
+    if (pilot === undefined && gate === undefined) throw error
+    // Plan mode and the gate have spent real tokens by now (a failed landing, a
+    // snapshot or review that failed after a round); report them rather than
+    // exiting like a crash.
     io.out(JSON.stringify({ type: 'error', message: String(error instanceof Error ? error.message : error) }))
     io.err(String(error instanceof Error ? (error.stack ?? error.message) : error))
     emitStop()

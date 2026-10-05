@@ -17,19 +17,24 @@ import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   appendFileSync,
+  constants,
   copyFileSync,
   existsSync,
   linkSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
   statSync,
 } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 
 const run = promisify(execFile)
+
+export { snapshotTree, type TreeSnapshot } from './snapshot'
 
 export interface SwarmGitOptions {
   repoRoot: string
@@ -174,59 +179,16 @@ export class SwarmGit {
     const path = join(this.dir, safe)
     this.ensureDir()
     await this.git(this.options.repoRoot, 'worktree', 'add', '-b', branch, path, await this.baseCommit())
-    await this.linkIgnored(path)
+    await this.link(path)
     const info: WorktreeInfo = { taskKey, path, branch }
     this.worktrees.set(taskKey, info)
     return info
   }
 
-  /**
-   * Replicate the main checkout's git-ignored ENVIRONMENT into a fresh
-   * worktree. A worktree is gitignore-clean, so without this a TypeScript repo
-   * has no `node_modules` (a member can neither build nor test there) and a
-   * Python package with compiled extensions cannot even import.
-   *
-   * Replicated: every ignored `node_modules/` (nested ones too), ignored native
-   * extensions, and ignored `*.py` — never build output or `.swarm/`, and
-   * nothing the worktree already has. By hard link (`cp -al` keeps symlinks as
-   * symlinks, so relative workspace links resolve INSIDE the worktree), with a
-   * plain copy only where linking fails (across filesystems). Best-effort: a
-   * failure leaves the worktree as git made it, and says so.
-   */
-  private async linkIgnored(path: string): Promise<void> {
+  /** {@link linkIgnored} into a new worktree, unless the team opted out. */
+  private async link(path: string): Promise<void> {
     if (this.options.linkIgnored === false) return
-    const started = Date.now()
-    let linked = 0
-    try {
-      const { stdout } = await this.git(
-        this.options.repoRoot,
-        'ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--directory',
-      )
-      for (const entry of stdout.split('\0')) {
-        const isDir = entry.endsWith('/') // git marks directories with a trailing slash
-        const rel = isDir ? entry.slice(0, -1) : entry
-        const wanted = isDir ? /(^|\/)node_modules$/.test(rel) : ENVIRONMENT_FILE.test(rel)
-        if (!wanted || NOT_ENVIRONMENT.test(entry)) continue
-        const from = join(this.options.repoRoot, rel)
-        const to = join(path, rel)
-        if (existsSync(to)) continue
-        mkdirSync(dirname(to), { recursive: true })
-        // ponytail: a tool rewriting a linked file in place (in node_modules, a rebuilt .so) edits the main checkout's copy too; fine for dependency trees.
-        try {
-          if (isDir) await run('cp', ['-al', from, to])
-          else linkSync(from, to)
-        } catch {
-          rmSync(to, { recursive: true, force: true })
-          if (isDir) await run('cp', ['-a', from, to])
-          else copyFileSync(from, to)
-        }
-        linked++
-      }
-      this.options.onProgress?.(`worktree: linked ${linked} ignored path(s) in ${Date.now() - started}ms`)
-    } catch (error) {
-      const why = error instanceof Error ? error.message : String(error)
-      this.options.onProgress?.(`worktree: ignored environment only partly replicated (${linked} path(s)): ${why}`)
-    }
+    await linkIgnored(this.options.repoRoot, path, this.options.onProgress === undefined ? {} : { onProgress: this.options.onProgress })
   }
 
   /**
@@ -387,7 +349,7 @@ export class SwarmGit {
         const path = join(this.dir, '.scratch')
         this.ensureDir()
         await this.git(this.options.repoRoot, 'worktree', 'add', '--detach', path, await this.baseCommit())
-        await this.linkIgnored(path)
+        await this.link(path)
         return path
       })()
     }
@@ -472,5 +434,107 @@ export class SwarmGit {
         await this.git(this.options.repoRoot, 'worktree', 'remove', '--force', scratch).catch(() => {})
       }
     }
+  }
+}
+
+/**
+ * Replicate a checkout's git-ignored ENVIRONMENT into a fresh worktree of it.
+ * A worktree is gitignore-clean, so without this a TypeScript repo has no
+ * `node_modules` (a member can neither build nor test there) and a Python
+ * package with compiled extensions cannot even import.
+ *
+ * Replicated: every ignored `node_modules/` (nested ones too), ignored native
+ * extensions, and ignored `*.py` — never build output or `.swarm/`, and
+ * nothing the worktree already has. By hard link (`cp -al` keeps symlinks as
+ * symlinks, so relative workspace links resolve INSIDE the worktree), with a
+ * plain copy only where linking fails (across filesystems). Best-effort: a
+ * failure leaves the worktree as git made it, and says so.
+ *
+ * `copyFiles` copies the ignored files instead of linking them (a reflink
+ * where the filesystem has one): an ignored `*.py` can be the user's own
+ * (`local_settings.py`), and an append or `open('w')` through a hard link
+ * writes their file. `node_modules` stays linked either way.
+ */
+export async function linkIgnored(
+  repoRoot: string,
+  path: string,
+  options: { onProgress?: (line: string) => void; copyFiles?: boolean } = {},
+): Promise<void> {
+  const started = Date.now()
+  let linked = 0
+  try {
+    const { stdout } = await run(
+      'git',
+      ['ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--directory'],
+      { cwd: repoRoot },
+    )
+    for (const entry of stdout.split('\0')) {
+      const isDir = entry.endsWith('/') // git marks directories with a trailing slash
+      const rel = isDir ? entry.slice(0, -1) : entry
+      const wanted = isDir ? /(^|\/)node_modules$/.test(rel) : ENVIRONMENT_FILE.test(rel)
+      if (!wanted || NOT_ENVIRONMENT.test(entry)) continue
+      const from = join(repoRoot, rel)
+      const to = join(path, rel)
+      if (existsSync(to)) continue
+      mkdirSync(dirname(to), { recursive: true })
+      if (!isDir && options.copyFiles === true) {
+        copyFileSync(from, to, constants.COPYFILE_FICLONE)
+        linked++
+        continue
+      }
+      // ponytail: a tool rewriting a linked file in place (in node_modules, a rebuilt .so) edits the main checkout's copy too; fine for dependency trees.
+      try {
+        if (isDir) await run('cp', ['-al', from, to])
+        else linkSync(from, to)
+      } catch {
+        rmSync(to, { recursive: true, force: true })
+        if (isDir) await run('cp', ['-a', from, to])
+        else copyFileSync(from, to)
+      }
+      linked++
+    }
+    options.onProgress?.(`worktree: linked ${linked} ignored path(s) in ${Date.now() - started}ms`)
+  } catch (error) {
+    const why = error instanceof Error ? error.message : String(error)
+    options.onProgress?.(`worktree: ignored environment only partly replicated (${linked} path(s)): ${why}`)
+  }
+}
+
+/**
+ * Run `fn` in a throwaway copy of `commit` (a snapshot of the checkout at
+ * `cwd`), with the checkout's ignored environment replicated into it, and
+ * delete it afterwards however `fn` ends. `fn` gets the copy's counterpart of
+ * `cwd`. What runs there — a reviewer told its changes are discarded — never
+ * touches the user's repository:
+ *
+ * - an independent clone, not a linked worktree, so its refs, stash and config
+ *   are its own (a worktree shares them: a `git stash pop` there pops the
+ *   user's stash). `--shared` borrows the objects through alternates, which
+ *   is also how the unreferenced snapshot commit is reachable from it;
+ * - no remote, so a push or fetch cannot reach back into the user's repository;
+ * - ignored files copied, not hard-linked (`linkIgnored`'s `copyFiles`);
+ * - checked out without hooks: a `post-checkout` hook is the user's, for their
+ *   own checkouts, not for this bookkeeping one;
+ * - in temp, outside the checkout, removed with one `rm -rf`.
+ */
+export async function withSnapshotClone<T>(
+  cwd: string,
+  commit: string,
+  fn: (cwd: string) => Promise<T>,
+  onProgress?: (line: string) => void,
+): Promise<T> {
+  const git = async (dir: string, ...args: string[]) => (await run('git', args, { cwd: dir })).stdout.trim()
+  const root = await git(cwd, 'rev-parse', '--show-toplevel')
+  const prefix = await git(cwd, 'rev-parse', '--show-prefix')
+  const dir = mkdtempSync(join(tmpdir(), 'openswarm-review-'))
+  const path = join(dir, 'tree')
+  try {
+    await git(dir, 'clone', '-q', '--shared', '--no-checkout', root, path)
+    await git(path, 'remote', 'remove', 'origin')
+    await git(path, '-c', 'core.hooksPath=/dev/null', 'checkout', '-q', '--detach', commit)
+    await linkIgnored(root, path, { ...(onProgress === undefined ? {} : { onProgress }), copyFiles: true })
+    return await fn(join(path, prefix))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
   }
 }
