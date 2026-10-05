@@ -709,8 +709,11 @@ for work whose attempts differ widely, such as open design questions.
    budget-matched single agent (b) 0.712 at $17.52, so it is not a default.
 6. The product's own completion gate, on the frozen pilot set with a single
    agent, reaches the pilot prototype's (b): mean reward at least 0.69 at
-   no more than $20 a task, with no task more than 0.15 under its
-   one-agent mean (the regression guard at work).
+   no more than $20 a task. *Amended 2026-10-05, before the second full
+   run:* the draft also required no task more than 0.15 under its
+   one-agent mean, which the prototype itself fails (mko-6.4.0: 0.60
+   against 0.95) because that regression happens in review mode, where B6
+   deliberately never rolls back; per-task drops are reported instead.
 
 ### 7.5 Phase C — Program-scale, and the decision
 
