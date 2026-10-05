@@ -677,6 +677,34 @@ item.
 
 **Build order:** B6, B0, B1, B3, B2, B4, B5; R1 alongside.
 
+**Progress.** B6a, the gate's core and the single-agent path, is built:
+`a95d289` (`runGate`; `snapshotTree`; CLI `--gate`, `--gate-rounds`,
+`--gate-check`, `OPENSWARM_GATE`), `9c5317f` (the reviewer's copy is a
+`git init` with alternates, so shallow checkouts work; an unavailable
+review is retried once and then stops the gate unaccepted; per-round
+verdicts on stderr), `3385ab8` (the reviewer's copy gets the whole ignored
+environment, so it can run a monorepo's tests). The reviewer never runs in
+the user's checkout: it works in an independent copy of the round's
+snapshot under `workspace-write`, so nothing is ever restored in the user's
+tree; a regression there is reported to the next round, and rollback is
+reserved for trees the gate owns (B6b). Three review rounds found
+data-loss paths in the earlier designs (restoring the user's checkout after
+an in-place review; a linked worktree sharing the user's stash and refs);
+each is gone with the design that had it. **Exit criterion 6 is met
+(2026-10-05):** on the frozen pilot set the gated single agent scored
+0.695 at $18.78 a task (the prototype's (b): 0.712 at $17.52; equal on 10
+of 12 tasks, one each way). Per-task drops under the one-agent mean:
+mko-6.4.0 0.70 against 0.95, vbt-1.3.0 0.70 against 0.77. Two earlier
+runs were invalid and are kept only as diagnostics: on shallow task
+checkouts the reviewer could not start, and without build output it could
+not run monorepo tests (prm-6.7.0 "Cannot find module", mko-5.8.0 accepted
+at 0.57); both are fixed above. Open for B6b: the gate on board tasks
+(exit criterion 4), rollback in gate-owned worktrees, and the acceptance
+bar — 8 of 12 tasks ended unaccepted after 4 rounds, mostly because the
+reviewer would not call a target done that its environment could not
+test (mko-5.8.0's MySQL tests), so "unverifiable here" needs to be told
+apart from "partial".
+
 | # | Work item |
 |---|---|
 | B6 | **Completion gate** (D16, D17): a task closes only with passing evidence, recorded as a `verifies` edge. The evidence is the unit's checker where one exists (contract tests, the tests that import the unit's files), else a **reviewer**: a fresh session given the task's intent and the working tree, told to measure and not fix, whose changes are rolled back and whose report ends in per-target status (the pilot's `eval/pilot/search.mjs` is the prototype). A failing check sends the task back with the report, up to a round cap; the reviewer's "all done" ends the loop early. A round that fails a checker the previous round passed is rolled back to that round (docs/07 §7.1 finding 4); reviewer scores alone do not decide a rollback, since they rank work on one task poorly. The single-agent path gets the gate too |
