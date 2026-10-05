@@ -1,9 +1,19 @@
 import { execFileSync } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { expect, it } from 'vitest'
-import { snapshotTree, withSnapshotClone } from '../src/index'
+import { SwarmGit, snapshotTree, withSnapshotClone } from '../src/index'
 
 type Git = (...args: string[]) => string
 
@@ -191,6 +201,43 @@ it('withSnapshotClone reaches an unreferenced snapshot from a linked worktree', 
   const { log } = await reviewUnreferenced(linked)
   expect(log).toBe('gate-snapshot\nc3\nc2\nc1\n')
   expect(state(source, gitAt(source))).toEqual(before)
+})
+
+it('withSnapshotClone replicates the whole ignored environment, build output included; member worktrees still do not', async () => {
+  // A monorepo: package x builds to an ignored dist/, and node_modules links to
+  // it relatively, so x resolves only where its dist/ exists.
+  const { root, git } = repo()
+  writeFileSync(join(root, '.gitignore'), 'node_modules/\ndist/\n.venv/\n')
+  mkdirSync(join(root, 'packages', 'x'), { recursive: true })
+  writeFileSync(join(root, 'packages', 'x', 'package.json'), '{"name":"x","main":"dist/index.js"}\n')
+  git('add', '.')
+  git('commit', '-qm', 'init')
+  mkdirSync(join(root, 'packages', 'x', 'dist'))
+  writeFileSync(join(root, 'packages', 'x', 'dist', 'index.js'), 'module.exports = "built"\n')
+  mkdirSync(join(root, '.venv', 'bin'), { recursive: true })
+  writeFileSync(join(root, '.venv', 'bin', 'python'), '#!/bin/sh\n')
+  mkdirSync(join(root, 'node_modules'))
+  symlinkSync('../packages/x', join(root, 'node_modules', 'x'))
+  const snapshot = await snapshotTree(root)
+  const before = state(root, git)
+
+  await withSnapshotClone(root, snapshot.commit, async (cwd) => {
+    expect(readFileSync(join(cwd, 'packages', 'x', 'dist', 'index.js'), 'utf8')).toBe('module.exports = "built"\n')
+    expect(existsSync(join(cwd, '.venv', 'bin', 'python'))).toBe(true)
+    // The workspace link resolves inside the copy, to the copy's own dist/.
+    expect(realpathSync(join(cwd, 'node_modules', 'x', 'dist', 'index.js'))).toBe(
+      realpathSync(join(cwd, 'packages', 'x', 'dist', 'index.js')),
+    )
+  })
+  expect(state(root, git)).toEqual(before)
+
+  // A member worktree keeps today's filtered environment: dependencies, no build output.
+  const team = new SwarmGit({ repoRoot: root, teamId: 'filtered' })
+  const wt = await team.worktree('t')
+  expect(existsSync(join(wt.path, 'node_modules'))).toBe(true)
+  expect(existsSync(join(wt.path, 'packages', 'x', 'dist'))).toBe(false)
+  expect(existsSync(join(wt.path, '.venv'))).toBe(false)
+  await team.removeAll()
 })
 
 it('withSnapshotClone removes the clone when the run throws', async () => {

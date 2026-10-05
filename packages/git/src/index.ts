@@ -451,15 +451,19 @@ export class SwarmGit {
  * plain copy only where linking fails (across filesystems). Best-effort: a
  * failure leaves the worktree as git made it, and says so.
  *
- * `copyFiles` copies the ignored files instead of linking them (a reflink
- * where the filesystem has one): an ignored `*.py` can be the user's own
- * (`local_settings.py`), and an append or `open('w')` through a hard link
- * writes their file. `node_modules` stays linked either way.
+ * `whole` replicates ALL of it, for a reviewer's copy, which has to run the
+ * repo's tests as the checkout does: every ignored directory (build output
+ * too — a monorepo's packages resolve each other through ignored `dist/` via
+ * relative node_modules links — and `.venv`, `target`, caches), unfiltered but
+ * for `.swarm/` and anything under `.git`; and every ignored loose file
+ * COPIED rather than linked (a reflink where the filesystem has one), since
+ * one can be the user's own (`local_settings.py`) and an append or
+ * `open('w')` through a hard link writes their file.
  */
 export async function linkIgnored(
   repoRoot: string,
   path: string,
-  options: { onProgress?: (line: string) => void; copyFiles?: boolean } = {},
+  options: { onProgress?: (line: string) => void; whole?: boolean } = {},
 ): Promise<void> {
   const started = Date.now()
   let linked = 0
@@ -472,18 +476,25 @@ export async function linkIgnored(
     for (const entry of stdout.split('\0')) {
       const isDir = entry.endsWith('/') // git marks directories with a trailing slash
       const rel = isDir ? entry.slice(0, -1) : entry
-      const wanted = isDir ? /(^|\/)node_modules$/.test(rel) : ENVIRONMENT_FILE.test(rel)
-      if (!wanted || NOT_ENVIRONMENT.test(entry)) continue
+      const wanted =
+        options.whole === true
+          ? !/(^|\/)(\.swarm|\.git)(\/|$)/.test(rel)
+          : (isDir ? /(^|\/)node_modules$/.test(rel) : ENVIRONMENT_FILE.test(rel)) && !NOT_ENVIRONMENT.test(entry)
+      if (!wanted) continue
       const from = join(repoRoot, rel)
       const to = join(path, rel)
       if (existsSync(to)) continue
       mkdirSync(dirname(to), { recursive: true })
-      if (!isDir && options.copyFiles === true) {
+      if (!isDir && options.whole === true) {
         copyFileSync(from, to, constants.COPYFILE_FICLONE)
         linked++
         continue
       }
-      // ponytail: a tool rewriting a linked file in place (in node_modules, a rebuilt .so) edits the main checkout's copy too; fine for dependency trees.
+      // ponytail: a hard-linked directory means a tool rewriting a file in place
+      // (a rebuilt .so, tsc overwriting dist, a pip upgrade in .venv, a file of
+      // the user's inside an ignored directory) also changes the checkout's
+      // copy; fine for dependency trees, regenerated output and caches. Revisit
+      // with reflinks or an overlay if it bites.
       try {
         if (isDir) await run('cp', ['-al', from, to])
         else linkSync(from, to)
@@ -516,7 +527,9 @@ export async function linkIgnored(
  *   --shared`: a clone of a SHALLOW repository ignores `--shared` and copies
  *   only referenced objects, losing the snapshot. The source's `shallow` file
  *   comes along, so history stops at the same boundary instead of failing;
- * - ignored files copied, not hard-linked (`linkIgnored`'s `copyFiles`);
+ * - the checkout's WHOLE ignored environment (`linkIgnored`'s `whole`), build
+ *   output included, so the reviewer can run the tests as the checkout does;
+ *   ignored loose files copied, not hard-linked;
  * - checked out without hooks: a `post-checkout` hook is the user's, for their
  *   own checkouts, not for this bookkeeping one;
  * - in temp, outside the checkout, removed with one `rm -rf`.
@@ -541,7 +554,7 @@ export async function withSnapshotClone<T>(
     writeFileSync(join(path, '.git', 'objects', 'info', 'alternates'), `${objects}\n`)
     if (existsSync(shallow)) copyFileSync(shallow, join(path, '.git', 'shallow'))
     await git(path, '-c', 'core.hooksPath=/dev/null', 'checkout', '-q', '--detach', commit)
-    await linkIgnored(root, path, { ...(onProgress === undefined ? {} : { onProgress }), copyFiles: true })
+    await linkIgnored(root, path, { ...(onProgress === undefined ? {} : { onProgress }), whole: true })
     return await fn(join(path, prefix))
   } finally {
     rmSync(dir, { recursive: true, force: true })
