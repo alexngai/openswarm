@@ -698,12 +698,26 @@ mko-6.4.0 0.70 against 0.95, vbt-1.3.0 0.70 against 0.77. Two earlier
 runs were invalid and are kept only as diagnostics: on shallow task
 checkouts the reviewer could not start, and without build output it could
 not run monorepo tests (prm-6.7.0 "Cannot find module", mko-5.8.0 accepted
-at 0.57); both are fixed above. Open for B6b: the gate on board tasks
-(exit criterion 4), rollback in gate-owned worktrees, and the acceptance
-bar — 8 of 12 tasks ended unaccepted after 4 rounds, mostly because the
-reviewer would not call a target done that its environment could not
-test (mko-5.8.0's MySQL tests), so "unverifiable here" needs to be told
-apart from "partial".
+at 0.57); both are fixed above. B6b, the gate on board tasks, is built: `907195b`. A gated peer-team
+(`PeerTeamSpec.gate`, `PeerTask.checks`) runs each claimed task through
+`runGate`; the gated board itself refuses `complete()` without passing
+evidence, which rides in the task's journal event, and every gate round is
+journaled (`swarm/gate`). A task that never passes is released and retried
+with its member kept in the pool, then a `verifier-failure` question
+defaults to abandon; only an owner's `accept` waives the gate, recorded as
+human evidence. Rollback runs only in per-task, gate-owned worktrees;
+pinned paths are restored before every check. The reviewer gains an
+`unverifiable` status (notes required, done ≥ unverifiable), so a target
+whose tests the environment cannot run (mko-5.8.0's MySQL tests) no longer
+holds a task open — 8 of 12 single-path tasks had ended unaccepted for
+that reason. This changes the measured prompt, so exit criterion 6 should
+be re-run. **Exit criterion 4 is met** by the keyless tests
+(`board-gate.test.ts`, `worktrees.e2e.test.ts`): a member whose check fails
+is sent back with the failing command, and no gated task in the journal
+completes without passing evidence. Gating messaging teams is refused for
+now: a member's long-lived worktree would carry a failed attempt's edits
+into its next task, and a teammate's message can start a turn during a
+snapshot or rollback.
 
 | # | Work item |
 |---|---|
