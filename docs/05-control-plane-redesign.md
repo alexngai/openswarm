@@ -710,8 +710,15 @@ pinned paths are restored before every check. The reviewer gains an
 `unverifiable` status (notes required, done ≥ unverifiable), so a target
 whose tests the environment cannot run (mko-5.8.0's MySQL tests) no longer
 holds a task open — 8 of 12 single-path tasks had ended unaccepted for
-that reason. This changes the measured prompt, so exit criterion 6 should
-be re-run. **Exit criterion 4 is met** by the keyless tests
+that reason. Re-run of exit criterion 6 with it (2026-10-07): 0.685 at
+$16.89 a task, 7 of 12 accepted (before: 0.695 at $18.78, 4 of 12). The
+reward change is within one-seed noise (about ±0.046 for a 12-task mean)
+and came from reviewer variance, not the new status (opt-4.4.0 fell to
+0.56 when the reviewer called all six targets done while noting failing
+existing tests as intended behaviour changes); cost fell 10%. Over the
+two full runs the product gate averages 0.690 against the threshold of
+0.69, so the criterion is read as met, narrowly. A reported regression
+does not block acceptance today; whether it should is open. **Exit criterion 4 is met** by the keyless tests
 (`board-gate.test.ts`, `worktrees.e2e.test.ts`): a member whose check fails
 is sent back with the failing command, and no gated task in the journal
 completes without passing evidence. Gating messaging teams is refused for
