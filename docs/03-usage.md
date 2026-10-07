@@ -55,6 +55,20 @@ openswarm kill <run>
 
 `start` prints the run id. A task becomes the coordinator team `/swarm` builds (default 3 workers); a single word (no spaces) ending in `.json` is read as a `TeamSpec` file. `--provider`/`--model` name the lead's route (a route of the serving profile, e.g. `openai`, `azure`, `bedrock`); omitted, the lead takes the server's default model — the one `openswarm serve` was launched with. The run's questions wait `--question-timeout` ms (default 300000) for `answer`. A refusal from the server is printed as it arrives, led by its code (`NOT_FOUND: …`), with exit 1; usage errors exit 2. `pause`, `resume` and `join` are not implemented yet.
 
+### Mirroring a run into opentasks
+
+`openswarm tasks sync <run> [--watch] [--socket <path>]` projects a run's board into an [opentasks](https://www.npmjs.com/package/opentasks) graph so other tools see it ([docs/05](05-control-plane-redesign.md) B0): a `context` node for the run, a `task` node per board task (`implements` the run, `blocks` edges from its blockers, status and assignee mirrored), and per gate round an `attempt` with a `verifies` edge carrying the verdict (a human waiver is a `verifies` edge from `human:<by>`). It is one-way: the run journal stays authoritative, and nothing reads task state back from the graph. `--watch` re-syncs each second the journal grows, until the run settles, or stops (exit 1) when the run's writer has died, as `attach` would report it. Which node mirrors what is kept in `<home>/runs/<run>/opentasks.json`, rewritten atomically after every write, so a re-sync writes only what changed. A lost or corrupt map is rebuilt from the graph: the run's nodes (by `metadata.openswarm.key`) and edges are adopted, not duplicated, and each sync line reports created and adopted counts. A map whose run node this graph does not hold stops the sync before it writes anything; delete the map to project the run into that graph afresh. One syncer per run holds `<home>/runs/<run>/opentasks.lock`; a second is refused, and a lock whose process is gone is taken over.
+
+It needs `opentasks` installed next to openswarm (`npm install opentasks@0.2.0`; an optional peer, so nobody else pays for it) and a running daemon, which it never starts itself. Keep the graph outside your repository, because opentasks rewrites its `graph.jsonl` continuously:
+
+```
+export OPENTASKS_PROJECT_DIR=~/.openswarm/opentasks
+npx opentasks daemon start
+openswarm tasks sync run-1a2b3c4d --watch
+```
+
+The socket is `--socket`, else `OPENTASKS_SOCKET`, else the opentasks client's own discovery (a `.git/opentasks/daemon.sock` in the current repository wins over `OPENTASKS_PROJECT_DIR`); every sync line names it, and a socket inside the current git repository draws a warning. Discovery that finds nothing leaves no `~/.opentasks` behind. With no daemon reachable it exits 1 and says how to start one; a write that fails is reported (exit 1) and retried by the next sync.
+
 ## Providers
 
 Auto-detected in order — Azure, then OpenAI, then Bedrock — from these env vars:

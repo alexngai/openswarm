@@ -87,9 +87,9 @@ it('exit criterion 4: a member reporting done with a failing check is sent back,
 
   // The journal: what the member was told each round, and no completion without passing evidence.
   expect(journal.events.filter((e) => e.type === 'swarm/gate').map((e) => e.data)).toEqual([
-    { version: 1, taskId: 'task-0', member: 'm', round: 1, changed: true, kind: 'commands', passed: false, failedCommands: [check] },
-    { version: 1, taskId: 'task-0', member: 'm', round: 2, changed: true, kind: 'commands', passed: true },
-    { version: 1, taskId: 'task-1', member: 'm', round: 1, changed: false, kind: 'commands', passed: true },
+    { version: 1, taskId: 'task-0', member: 'm', round: 1, changed: true, kind: 'commands', passed: false, failedCommands: [check], snapshot: expect.any(String) },
+    { version: 1, taskId: 'task-0', member: 'm', round: 2, changed: true, kind: 'commands', passed: true, snapshot },
+    { version: 1, taskId: 'task-1', member: 'm', round: 1, changed: false, kind: 'commands', passed: true, snapshot: expect.any(String) },
   ])
   for (const event of journal.events.filter((e) => e.type === 'swarm/task')) {
     const { task } = event.data as { task: { status: string; evidence?: { passed: boolean } } }

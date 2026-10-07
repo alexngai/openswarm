@@ -14,6 +14,14 @@
     "openswarm-llm-anthropic": "*",
     "openswarm-plugin-authoring": "*"
   },
+  "peerDependencies": {
+    "opentasks": "0.2.0"
+  },
+  "peerDependenciesMeta": {
+    "opentasks": {
+      "optional": true
+    }
+  },
   "exports": {
     ".": {
       "types": "./src/index.ts",

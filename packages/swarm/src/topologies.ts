@@ -524,7 +524,7 @@ export async function runBoardWorkers(
                 return result
               },
               report,
-              record: ({ round, changed, evidence: e, rolledBack }) =>
+              record: ({ round, changed, evidence: e, rolledBack, snapshot }) =>
                 board.recordGate({
                   taskId: claimed.id,
                   member: member.name,
@@ -537,6 +537,7 @@ export async function runBoardWorkers(
                   ...(e.failedCommands === undefined ? {} : { failedCommands: e.failedCommands }),
                   ...(rolledBack === true ? { rolledBack } : {}),
                   ...(e.error === undefined ? {} : { error: e.error }),
+                  snapshot,
                 }),
             },
           )

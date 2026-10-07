@@ -4,7 +4,8 @@
  * need no server and see a run whose process died; `attach` takes such a run
  * over. `start`, `steer`, `answer` and `kill` direct a running
  * `openswarm serve` over its socket carrier, as the owner whose token it
- * wrote to `$OPENSWARM_HOME/app-server.json`.
+ * wrote to `$OPENSWARM_HOME/app-server.json`. `tasks sync` mirrors a run's
+ * board into an opentasks graph (docs/05 B0), reading only the journal.
  */
 import { once } from 'node:events'
 import { existsSync, readFileSync } from 'node:fs'
@@ -31,6 +32,7 @@ import {
   type TeamSpec,
 } from 'openswarm-swarm'
 import type { CliIo } from './index'
+import { tasksSync } from './tasks'
 
 const USAGE = `usage: openswarm ps [--json]
        openswarm board <run> [--json]
@@ -39,10 +41,11 @@ const USAGE = `usage: openswarm ps [--json]
        openswarm start <"task" | spec.json> [--workers N] [--provider P] [--model M] [--question-timeout MS]
        openswarm steer <run> --to <member> "text"
        openswarm answer <run> <question> <choice>
-       openswarm kill <run>`
+       openswarm kill <run>
+       openswarm tasks sync <run> [--watch] [--socket <path>]`
 
-const VALUE_FLAGS = new Set(['--run', '--to', '--workers', '--provider', '--model', '--question-timeout'])
-const BOOL_FLAGS = new Set(['--json', '--no-follow'])
+const VALUE_FLAGS = new Set(['--run', '--to', '--workers', '--provider', '--model', '--question-timeout', '--socket'])
+const BOOL_FLAGS = new Set(['--json', '--no-follow', '--watch'])
 
 /** Run one control verb; resolves to the exit code (2 for a usage error). */
 export async function runControl(
@@ -174,6 +177,13 @@ export async function runControl(
         await call('swarm/cancel', { runId: run })
         io.out(`cancelled ${run}`)
         return 0
+      }
+      case 'tasks': {
+        // `run` is the subcommand here: `tasks sync <run>`.
+        const [runId] = rest
+        if (run !== 'sync' || runId === undefined || rest.length > 1) break
+        const socket = flags.get('--socket')
+        return await tasksSync(runId, { watch: flags.has('--watch'), ...(socket === undefined ? {} : { socket }) }, io)
       }
     }
   } catch (error) {

@@ -13,7 +13,7 @@
  *   openswarm serve [--port N]    start the app-server (JSON-RPC, for UIs/TUIs)
  *   openswarm setup               (re)initialize the profiles
  *   openswarm config              print the resolved provider/model/home
- *   openswarm ps|board|questions|attach|start|steer|answer|kill
+ *   openswarm ps|board|questions|attach|start|steer|answer|kill|tasks
  *                                 control verbs (docs/05 §6.1), in packages/cli
  *
  * Options: --model <id>, --provider <azure|openai|bedrock>, --home <dir>.
@@ -206,6 +206,9 @@ Control (runs under <home>/runs; start/steer/answer/kill need \`openswarm serve\
   openswarm steer <run> --to <member> "text"  message a messaging peer-team member
   openswarm answer <run> <question> <choice>  answer an open question
   openswarm kill <run>                        cancel a run
+  openswarm tasks sync <run> [--watch] [--socket <path>]
+                                              mirror a run's board into an opentasks
+                                              graph (needs opentasks and its daemon)
 
 Options:
   --model <id>        model id (default: gpt-5.5, or haiku for bedrock)
@@ -229,7 +232,7 @@ function valueOf(flat, flag) {
 }
 
 /** Handled by packages/cli's runControl, which parses its own flags (docs/05 §6.1). */
-const CONTROL_VERBS = new Set(['ps', 'board', 'questions', 'attach', 'start', 'steer', 'answer', 'kill'])
+const CONTROL_VERBS = new Set(['ps', 'board', 'questions', 'attach', 'start', 'steer', 'answer', 'kill', 'tasks'])
 
 /** A control verb, in-process; only --home and --help are the launcher's. */
 function control(argv) {

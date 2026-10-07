@@ -91,6 +91,8 @@ export type SwarmGateEvent = {
   rolledBack?: boolean
   /** Review: why it could not run. */
   error?: string
+  /** The snapshot commit of the tree the round left: what its evidence is about. */
+  snapshot?: string
 }
 
 export type SwarmBoardErrorCode =

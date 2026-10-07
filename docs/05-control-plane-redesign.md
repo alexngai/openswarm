@@ -722,7 +722,7 @@ snapshot or rollback.
 | # | Work item |
 |---|---|
 | B6 | **Completion gate** (D16, D17): a task closes only with passing evidence, recorded as a `verifies` edge. The evidence is the unit's checker where one exists (contract tests, the tests that import the unit's files), else a **reviewer**: a fresh session given the task's intent and the working tree, told to measure and not fix, whose changes are rolled back and whose report ends in per-target status (the pilot's `eval/pilot/search.mjs` is the prototype). A failing check sends the task back with the report, up to a round cap; the reviewer's "all done" ends the loop early. A round that fails a checker the previous round passed is rolled back to that round (docs/07 §7.1 finding 4); reviewer scores alone do not decide a rollback, since they rank work on one task poorly. The single-agent path gets the gate too |
-| B0 | Task state on opentasks (D12): tasks, claims, attempts and `verifies` evidence through its daemon; `board.ts` becomes an adapter over it; the run journal keeps lifecycle, steers, questions and the audit |
+| B0 | **Projection first** (D12, amended 2026-10-07): `openswarm tasks sync <run> [--watch]` mirrors a run's tasks, statuses, owners and gate evidence into opentasks so other tools see them: a context node per run, a task node per board task (`implements` the run, `blocks` from its blockers), an `attempt` per gate round with a `verifies` edge for its verdict (a human waiver is one from `human:<by>`). One-way: the journal-backed board stays authoritative, and OpenSwarm never claims, completes or reads task state there. The full migration (`board.ts` as an adapter over the daemon, tasks and claims through it) is deferred (docs/01 ledger) because opentasks lacks what the board relies on: run-scoped claim-next, fenced completion, a revision compare-and-set, an enforceable completion gate and daemon autostart from the client; and `ready`/`queryNodes` stop at 100 rows and tag filters misbehave on SQLite |
 | B1 | Verifier levels L2 and L3; verifier environment members cannot read (D4); tamper logging |
 | B3 | Integrate and repair (D15): after each landing wave, run the checkers, map failures to owning tasks, dispatch bounded repair tasks to the owners; the resolver (§6.4) becomes the skeleton's agent step for a conflict; scope-violation and conflict questions |
 | B2 | Train class with its own journal: speculative batches, bisect, dependencies, priority; lead-hosted |
@@ -1060,6 +1060,9 @@ wrapped here: `file` claims (leases on paths) and an enforceable completion
 gate; write validation stays ours, since it mediates the member's editor.
 *Reverse if* the daemon cannot sustain a shared-workspace run's claim and
 write rate, in which case task state returns to the run journal.
+*Amended 2026-10-07:* B0 lands as a one-way projection; the journal-backed
+board stays authoritative until opentasks has what the board relies on
+(§7.4, B0).
 
 **D13 — The blueprint and contracts are code, recorded as file-backed
 context nodes.** Weighed against inline prose spec nodes and a new
@@ -1180,10 +1183,14 @@ beating it; either brings back the deferred items it needs.
 
 ## 10. Still open
 
-- **opentasks placement** (D12): one `.opentasks/` graph per repository
-  with tasks tagged by run id, or a location per run. (The shared
-  workspace's registration and per-file versions are deferred with C4,
-  D18.)
+- **opentasks placement** (D12): *for the projection (B0, 2026-10-07),*
+  one graph wherever the operator's daemon serves it, kept outside the
+  user's repository (`OPENTASKS_PROJECT_DIR`) because opentasks rewrites
+  `graph.jsonl` continuously; nodes are tagged `openswarm` and `run:<id>`,
+  and the run directory keeps the node mapping (`opentasks.json`). One
+  `.opentasks/` graph per repository or a location per run is decided with
+  the full migration. (The shared workspace's registration and per-file
+  versions are deferred with C4, D18.)
 - ~~**Redesigned pilot**~~ **run 2026-09-28 to 2026-10-01** (docs/07 §7):
   search, control, division and stage-1 arms on the frozen set, about
   $2,150; the conclusion is D18.

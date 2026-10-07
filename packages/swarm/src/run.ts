@@ -175,7 +175,7 @@ export function recapJournal(events: readonly SwarmJournalEvent[], since = -1): 
 }
 
 /** One gate round on a board task as a recap line: the verdict its member was sent back with. */
-function gateLine(g: SwarmGateEvent): string {
+export function gateLine(g: SwarmGateEvent): string {
   const at = `${g.taskId} gate round ${g.round} (${g.member})`
   if (g.round > 1 && !g.changed) return `${at}: changed nothing — stopping`
   if (g.error !== undefined) return `${at}: review unavailable — ${g.error.split('\n')[0]!.slice(0, 80)}`
