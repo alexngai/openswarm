@@ -54,6 +54,7 @@ import {
   runPipeline,
   seedBoard,
   withIntent,
+  type BoardGate,
   type ReportProgress,
   type RunConfidence,
   type RunMember,
@@ -86,7 +87,7 @@ export {
   suppressSettlementTurns,
 } from './peers'
 export { coordinatorSpec, parseNumberedPlan, renderIntent } from './topologies'
-export type { ReportProgress, RunMember } from './topologies'
+export type { BoardGate, ReportProgress, RunMember } from './topologies'
 export { RemotePeer } from './remote-peer'
 export { SwarmServer } from './server'
 export { WorktreeRun, memberEnvOf, reviewMemberConfig, runMemberProcess } from './worktrees'
@@ -213,7 +214,10 @@ export interface RunTeamOptions {
    * Default: bash in `confidenceCwd` (or the process cwd).
    */
   confidenceRunner?: (commands: string[]) => Promise<number>
-  /** Working directory for the default confidence runner. */
+  /**
+   * Working directory for the default confidence runner, and for a gated
+   * peer-team's checks when members do not run in worktrees.
+   */
   confidenceCwd?: string
   /**
    * Pathspecs restored from the base commit before EVERY gate run, under
@@ -331,7 +335,10 @@ export default class SwarmService extends Service {
     do id = `run-${randomUUID().slice(0, 8)}`
     while (existsSync(join(this.runsDir(), id)))
     const journal = SwarmJournal.open(this.journalPath(id))
-    const board = new SwarmBoard(journal)
+    // A gated team's board refuses to complete a task without passing evidence.
+    // A path that resumes a run from its journal must derive this flag the same
+    // way, from the journaled spec, or the resumed board closes tasks unverified.
+    const board = new SwarmBoard(journal, { gated: spec.topology === 'peer-team' && spec.gate !== undefined })
     // The members steering reaches; the messaging peer-team runners fill it.
     const roster = new Map<string, PeerHandle>()
     const mailbox = new SwarmMailbox(this.ctx, options.parent, roster, journal)
@@ -350,7 +357,7 @@ export default class SwarmService extends Service {
     let ended = false
     const recordQuestion = (question: SwarmQuestion) =>
       journal.append('swarm/question', { version: 1, question } satisfies SwarmQuestionEvent)
-    const ask: AskQuestion = (request) => {
+    const ask: AskQuestion = (request, onClosed) => {
       const question: SwarmQuestion = {
         id: `q-${asked++}`,
         kind: 'escalation',
@@ -362,6 +369,7 @@ export default class SwarmService extends Service {
       // The rate cap: the queue may not outrun the person answering it.
       if (open.size >= maxOpen) {
         const capped = { ...question, status: 'capped', answer: question.default, closedAt: Date.now() } as const
+        onClosed?.(capped)
         return recordQuestion(capped).then(() => question.default)
       }
       return new Promise<string>((resolve, reject) => {
@@ -372,13 +380,15 @@ export default class SwarmService extends Service {
           if (!open.delete(question.id)) return
           clearTimeout(timer)
           withdraw.abort()
-          recordQuestion({
+          const closed: SwarmQuestion = {
             ...question,
             status: by === undefined ? 'defaulted' : 'answered',
             answer,
             ...(by === undefined ? {} : { by }),
             closedAt: Date.now(),
-          }).then(() => resolve(answer), reject)
+          }
+          onClosed?.(closed)
+          recordQuestion(closed).then(() => resolve(answer), reject)
         }
         open.set(question.id, { question, close })
         recordQuestion(question).catch(reject)
@@ -612,12 +622,102 @@ export default class SwarmService extends Service {
         return runCascade(spec, run, this.confidenceRunner(options, worktrees), report, ask)
       case 'coordinator':
         return runCoordinator(spec, run, report)
-      case 'peer-team':
+      case 'peer-team': {
+        // Checked here, before any path seeds the board.
+        const gate = this.boardGate(spec, options, worktrees)
         return spec.messaging === true
           ? worktrees === undefined
             ? this.runPeerTeamMessaging(spec, options, board, roster, mailbox, ask)
             : this.runRemotePeerTeam(spec, options, board, roster, mailbox, ask, worktrees)
-          : runPeerTeam(spec, run, board, report, ask)
+          : runPeerTeam(spec, run, board, report, ask, gate)
+      }
+    }
+  }
+
+  /**
+   * A gated peer-team's gate (docs/05 B6b), refused before seeding when it
+   * cannot run. A task's checks run where its member's work lands: its
+   * per-task worktree under worktree execution, else `confidenceCwd`. A task
+   * without checks needs the reviewer, a subprocess member launched as
+   * worktree members are, so review mode requires worktree execution. Under
+   * worktrees the gate owns the tree, so a regression is rolled back and
+   * `confidencePinPaths` are restored after every member round; neither ever
+   * touches the user's checkout.
+   */
+  private boardGate(
+    spec: import('./types').PeerTeamSpec,
+    options: RunTeamOptions,
+    worktrees?: WorktreeRun,
+  ): BoardGate | undefined {
+    const gate = spec.gate
+    if (gate === undefined) return undefined
+    // ponytail: messaging teams are not gated. Under worktrees a member keeps
+    // one long-lived worktree, so a failed attempt's edits stay in it, taint
+    // its next task's snapshot and checks, and merge unverified; and on any
+    // path a teammate's wakeup message can start a turn while the gate
+    // snapshots, checks or rolls back (a rollback silently erases that turn's
+    // edits, or collides on index.lock). Gating them needs wakeups held quiet
+    // during a gated claim and a rollback to the claim's base before release.
+    if (spec.messaging === true) {
+      throw new Error('the completion gate (peer-team gate) does not cover messaging teams yet; drop gate or messaging')
+    }
+    if (gate.rounds !== undefined && (!Number.isInteger(gate.rounds) || gate.rounds < 1)) {
+      throw new Error('peer-team gate.rounds must be a positive integer')
+    }
+    const reviewed = spec.tasks.find((task) => (task.checks ?? gate.checks ?? []).length === 0)
+    // Sandboxed unless the env says otherwise, as on the CLI's single path.
+    // ponytail: no preflight here, so on a host that cannot sandbox each review
+    // fails and stops its gate unaccepted; probe as the CLI does if that spend matters.
+    const sandbox = process.env['OPENSWARM_GATE_REVIEWER_SANDBOX'] || 'workspace-write'
+    if (reviewed !== undefined) {
+      const which = `gated task "${reviewed.subject}" has no checks`
+      if (gate.review === false) throw new Error(`${which} and the team's gate has review off; give it checks`)
+      if (worktrees === undefined) {
+        throw new Error(
+          `${which}, so a reviewer would measure it, and the reviewer runs as a worktree member: run with worktree execution (RunTeamOptions.worktrees) or give every task checks`,
+        )
+      }
+      if (sandbox !== 'workspace-write' && sandbox !== 'danger-full-access') {
+        throw new Error(`OPENSWARM_GATE_REVIEWER_SANDBOX must be workspace-write or danger-full-access, not "${sandbox}"`)
+      }
+    }
+    const pinPaths = options.confidencePinPaths ?? []
+    const report = options.onProgress ?? (() => {})
+    return {
+      ...(gate.rounds === undefined ? {} : { rounds: gate.rounds }),
+      ...(gate.checks === undefined ? {} : { checks: gate.checks }),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      tree: (member, claimed) => {
+        // ponytail: without worktrees every member shares this one tree, so a
+        // task's checks also see siblings' work in flight; worktrees isolate it.
+        if (worktrees === undefined) return { cwd: options.confidenceCwd ?? process.cwd() }
+        const key = claimed.id
+        return {
+          cwd: async () => (await worktrees.worktree(key)).path,
+          // The member's own route reviews, as on the single path.
+          review: (prompt, commit) =>
+            worktrees.review(
+              key,
+              { name: 'reviewer', ...(member.agentOptions === undefined ? {} : { agentOptions: member.agentOptions }) },
+              prompt,
+              commit,
+              sandbox,
+              options,
+            ),
+          rollback: (commit) => worktrees.rollback(key, commit),
+          // As the cascade's gate does: the graded party may not edit what grades it.
+          ...(pinPaths.length === 0
+            ? {}
+            : {
+                pin: async () => {
+                  const discarded = await worktrees.pinForGate(key, pinPaths)
+                  if (discarded.length > 0) {
+                    report(`gate: discarded member edits to ${discarded.length} pinned path(s): ${discarded.slice(0, 5).join(', ')}`)
+                  }
+                },
+              }),
+        }
+      },
     }
   }
 

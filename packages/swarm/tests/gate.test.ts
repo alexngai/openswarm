@@ -13,7 +13,16 @@ import type { MemberRunResult } from '../src/types'
  * the reviewer and the next round what was measured (docs/07 §7.1, arm b).
  */
 const prototype = readFileSync(new URL('../../../eval/pilot/gate.mjs', import.meta.url), 'utf8')
-const REVIEW = /const REVIEW = `([\s\S]*?)`;/.exec(prototype)![1]!
+const PROTOTYPE_REVIEW = /const REVIEW = `([\s\S]*?)`;/.exec(prototype)![1]!
+/**
+ * The product's reviewer prompt is the prototype's with ONE departure (docs/05
+ * B6b): an `unverifiable` status, defined in one sentence and listed in the
+ * JSON template, so a target this environment cannot test is not "partial".
+ */
+const REVIEW = PROTOTYPE_REVIEW.replace(
+  'discarded after your review.',
+  'discarded after your review. A target is "unverifiable" when it appears implemented but this environment cannot run what would verify it (a database or service it needs is missing, say); its notes must say what you could not run.',
+).replace('"status":"done"|"partial"|"missing"|"broken",', '"status":"done"|"partial"|"missing"|"broken"|"unverifiable",')
 const prototypeContinuation = new Function(
   'prompt',
   'base',
@@ -112,8 +121,10 @@ it('review mode: partial then done is accepted in 2 rounds; the reviewer measure
   expect(recorded).toEqual(result.rounds)
   expect(result.lastPassing).toBe(result.rounds[1]!.snapshot)
   expect(result.final.text).toBe('did the rest')
-  // Each review measured its round's snapshot, with the prototype's prompt.
+  // Each review measured its round's snapshot, with the prototype's prompt but
+  // for the unverifiable departure (REVIEW above).
   expect(calls.map((c) => c.commit)).toEqual(result.rounds.map((r) => r.snapshot))
+  expect(REVIEW).not.toBe(PROTOTYPE_REVIEW)
   expect(calls[0]!.prompt).toBe(`${REVIEW}build impl`)
   expect(git('show', `${result.rounds[0]!.snapshot}:impl.txt`)).toBe('v1\n')
   // The prototype's continuation with ONE departure: the diff names both ends,
@@ -303,4 +314,31 @@ it('a later round that changes nothing stops the gate, carrying the evidence bef
   expect(result.rounds[0]!.evidence).toEqual({ kind: 'review', passed: false, score: null })
   expect(result.rounds[1]!.evidence).toBe(result.rounds[0]!.evidence)
   expect(calls).toHaveLength(1)
+})
+
+it('unverifiable is not partial: it passes beside at least as many done targets, and only with notes saying what could not run', async () => {
+  const NOTES = 'needs a MySQL server'
+  const gate = async (...targets: [status: string, notes?: string][]) => {
+    const { root } = repo()
+    const { run } = fakeRun([() => (writeFileSync(join(root, 'impl.txt'), 'v1\n'), 'done')])
+    const verdictLine = JSON.stringify({ targets: targets.map(([status, notes], i) => ({ target: i + 1, status, ...(notes === undefined ? {} : { notes }) })), regressions: 'none', score: 90 })
+    const { review } = fakeReview([() => `checked\n${verdictLine}`])
+    return runGate({ task: 't', member, maxRounds: 1 }, { run, review, cwd: root })
+  }
+
+  const passed = await gate(['done', 'ok'], ['unverifiable', NOTES])
+  expect(passed.accepted).toBe(true)
+  expect(passed.rounds[0]!.evidence.targets).toEqual([
+    { target: 1, status: 'done', notes: 'ok' },
+    { target: 2, status: 'unverifiable', notes: NOTES },
+  ])
+  expect((await gate(['done'], ['done'], ['unverifiable', NOTES], ['unverifiable', NOTES])).accepted).toBe(true)
+  // Any partial fails; so does an unverifiable target that does not say what it could not run.
+  expect((await gate(['done'], ['unverifiable', NOTES], ['partial', 'half'])).accepted).toBe(false)
+  expect((await gate(['done'], ['unverifiable'])).accepted).toBe(false)
+  expect((await gate(['done'], ['unverifiable', '  '])).accepted).toBe(false)
+  // More unverifiable than done measured too little; nothing but unverifiable, nothing.
+  expect((await gate(['done'], ['unverifiable', NOTES], ['unverifiable', NOTES])).accepted).toBe(false)
+  expect((await gate(['unverifiable', NOTES])).accepted).toBe(false)
+  expect((await gate(['done'], ['skipped'])).accepted).toBe(false)
 })

@@ -503,8 +503,16 @@ it('every --gate-check runs, from repeated flags or one per line of OPENSWARM_GA
   expect(failing.errs).toEqual(['gate: round 1 checks — not passed (failed: false, exit 3)', 'gate: not accepted after 1 round'])
 }, 60_000)
 
-it('each round reports what the reviewer told the agent: per-target verdicts and regressions', async () => {
-  const verdict = { targets: [{ target: 1, status: 'done', notes: 'ok' }, { target: 2, status: 'partial', notes: 'half' }], regressions: ['test_x fails'], score: 40 }
+it('each round reports what the reviewer told the agent: per-target verdicts, what it could not run, and regressions', async () => {
+  const verdict = {
+    targets: [
+      { target: 1, status: 'done', notes: 'ok' },
+      { target: 2, status: 'partial', notes: 'half' },
+      { target: 3, status: 'unverifiable', notes: 'needs a MySQL server' },
+    ],
+    regressions: ['test_x fails'],
+    score: 40,
+  }
   await startMock({ apiKey: 'mock-key', sequence: ['success'], repeatLast: true, successText: `checked\n${JSON.stringify(verdict)}` })
   gitWorkspace()
 
@@ -519,11 +527,11 @@ it('each round reports what the reviewer told the agent: per-target verdicts and
   expect(gateLines(lines)[0]).toMatchObject({
     passed: false,
     score: 40,
-    targets: [{ target: 1, status: 'done' }, { target: 2, status: 'partial' }],
+    targets: [{ target: 1, status: 'done' }, { target: 2, status: 'partial' }, { target: 3, status: 'unverifiable', notes: 'needs a MySQL server' }],
     regressions: ['test_x fails'],
   })
   expect(errs).toEqual([
-    'gate: round 1 review score 40 — not passed (1 done, 1 partial; regressions: ["test_x fails"])',
+    'gate: round 1 review score 40 — not passed (1 done, 1 unverifiable, 1 partial; 3 unverifiable: needs a MySQL server; regressions: ["test_x fails"])',
     'gate: round 2 changed nothing — stopping',
     'gate: not accepted after 2 rounds',
   ])

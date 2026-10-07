@@ -129,6 +129,8 @@ export interface PeerTask {
   blockedBy?: number[]
   /** Replaces the run's intent for this task. */
   intent?: Intent
+  /** This task's gate checks, replacing the team's (`PeerTeamSpec.gate`); an empty list means review mode. */
+  checks?: string[]
 }
 
 /**
@@ -160,6 +162,21 @@ export interface PeerTeamSpec extends TeamSpecBase {
    * question after as long again (default 5min).
    */
   memberIdleTimeoutMs?: number
+  /**
+   * The completion gate on every task (docs/05 B6b): a task completes only
+   * with passing evidence. A task with checks (its own, else these) is gated
+   * by them, run where its member's work lands; one without is measured by an
+   * independent reviewer, which needs worktree execution. A task that never
+   * passes is retried up to `maxTaskAttempts`, then a person may accept it
+   * without evidence; by default it is abandoned. Not yet with `messaging`.
+   */
+  gate?: {
+    /** Agent rounds per attempt before the gate gives up (default 4). */
+    rounds?: number
+    checks?: string[]
+    /** Whether a task without checks is reviewed (default true); false makes such a task an error. */
+    review?: boolean
+  }
 }
 
 export type TeamSpec =

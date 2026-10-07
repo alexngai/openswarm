@@ -79,18 +79,32 @@ export interface GateDeps {
   /** Default {@link runGateCommand}. */
   runCommand?: (command: string, cwd: string) => Promise<{ ok: boolean; output: string }>
   report?: ReportProgress
-  /** Receives each round as it completes. */
-  record?: (round: GateRound) => void
+  /** Receives each round as it completes; awaited, so a journal write lands before the next round. */
+  record?: (round: GateRound) => unknown
   /** Passed on every member run. */
   taskKey?: string
-  /** The run's abort signal: a review that fails once it is aborted ends the gate. */
+  /** The run's abort signal: checked before every round, and a review that fails once it is aborted ends the gate. */
   signal?: AbortSignal
 }
 
 export interface GateTarget {
   target: number
-  status: 'done' | 'partial' | 'missing' | 'broken'
+  /** `unverifiable`: appears implemented, but this environment cannot run what would verify it (notes say what). */
+  status: 'done' | 'partial' | 'missing' | 'broken' | 'unverifiable'
   notes?: string
+}
+
+/**
+ * Targets as a record keeps them: each status, plus the notes of an
+ * unverifiable one, which say what the reviewer could not run. Defensive: the
+ * reviewer's JSON is whatever it wrote.
+ */
+export function targetStatuses(targets: readonly GateTarget[]): { target: number; status: string; notes?: string }[] {
+  return targets.map((t) => ({
+    target: t?.target,
+    status: String(t?.status),
+    ...(t?.status === 'unverifiable' && typeof t.notes === 'string' ? { notes: t.notes } : {}),
+  }))
 }
 
 export interface GateEvidence {
@@ -135,13 +149,19 @@ export interface GateResult {
   final: MemberRunResult
 }
 
-/** The prototype's reviewer prompt, verbatim ("roadmap" included): it is what was measured. */
+/**
+ * The prototype's reviewer prompt, verbatim ("roadmap" included) but for one
+ * departure (docs/05 B6b): the `unverifiable` status and its definition. Live,
+ * 8 of 12 tasks ended unaccepted mostly because the reviewer would not call
+ * done a target its environment could not test (MySQL-backed tests with no
+ * database), so it was scored "partial", indistinguishable from half-built.
+ */
 const REVIEW = `You are reviewing another engineer's implementation of the roadmap below, in this repository's working tree. Do not fix anything: your job is to measure.
 
-For each target in the roadmap, decide whether it works as specified: check that the specified exports, signatures and behaviors exist, and run the repository's existing tests for the code involved plus small tests or scripts you write from the requirements. Everything you create or change in the repository is discarded after your review.
+For each target in the roadmap, decide whether it works as specified: check that the specified exports, signatures and behaviors exist, and run the repository's existing tests for the code involved plus small tests or scripts you write from the requirements. Everything you create or change in the repository is discarded after your review. A target is "unverifiable" when it appears implemented but this environment cannot run what would verify it (a database or service it needs is missing, say); its notes must say what you could not run.
 
 End your reply with exactly one line of JSON and nothing after it:
-{"targets":[{"target":<number>,"status":"done"|"partial"|"missing"|"broken","notes":"<one sentence: what fails or is missing>"}],"regressions":"<existing tests that fail because of the change, or none>","score":<0-100, your estimate of the share of the roadmap's requirements that work as specified>}
+{"targets":[{"target":<number>,"status":"done"|"partial"|"missing"|"broken"|"unverifiable","notes":"<one sentence: what fails or is missing>"}],"regressions":"<existing tests that fail because of the change, or none>","score":<0-100, your estimate of the share of the roadmap's requirements that work as specified>}
 
 # Roadmap
 
@@ -170,7 +190,14 @@ const CHECKED = "The task's checks then ran on the result; their report follows.
 const failure = (command: string, output: string) =>
   `Verification failed. This command exited non-zero:\n\n  ${command}\n\nIts output ended with:\n\n${output || '(no output captured)'}`
 
-/** A reviewer's reply as evidence, parsed as the prototype did: the last line that opens a JSON object. */
+/**
+ * A reviewer's reply as evidence, parsed as the prototype did: the last line
+ * that opens a JSON object. It passes when every target is done or
+ * unverifiable and at least as many are done as unverifiable. "Unverifiable
+ * here" is not "partial", but it counts only with notes saying what could not
+ * run, and a verdict mostly of unverifiable targets measured too little to
+ * close on. A status outside the five fails, as anything but done did before.
+ */
 function verdictOf(text: string): GateEvidence {
   const line = text.trim().split('\n').reverse().find((l) => l.trim().startsWith('{'))
   let verdict: any = null
@@ -180,11 +207,17 @@ function verdictOf(text: string): GateEvidence {
   const targets: GateTarget[] | undefined = Array.isArray(verdict?.targets) ? verdict.targets : undefined
   return {
     kind: 'review',
-    passed: targets !== undefined && targets.length > 0 && targets.every((t) => t?.status === 'done'),
+    passed: targets !== undefined && targets.length > 0 && passes(targets),
     score: typeof verdict?.score === 'number' ? verdict.score : null,
     ...(targets === undefined ? {} : { targets }),
     ...(verdict?.regressions === undefined ? {} : { regressions: verdict.regressions }),
   }
+}
+
+function passes(targets: GateTarget[]): boolean {
+  const unverifiable = (t: GateTarget) => t?.status === 'unverifiable' && typeof t.notes === 'string' && t.notes.trim() !== ''
+  if (!targets.every((t) => t?.status === 'done' || unverifiable(t))) return false
+  return targets.filter((t) => t.status === 'done').length >= targets.filter(unverifiable).length
 }
 
 export async function runGate(spec: GateSpec, deps: GateDeps): Promise<GateResult> {
@@ -210,8 +243,14 @@ export async function runGate(spec: GateSpec, deps: GateDeps): Promise<GateResul
   let lastPassing: string | undefined
   let reason: GateResult['reason']
   for (let n = 1; n <= maxRounds; n++) {
+    // A cancelled run starts no round: an aborted member settles as a result,
+    // not a rejection, so without this the gate would go on checking it.
+    deps.signal?.throwIfAborted()
     report(`gate round ${n}/${maxRounds}: ${spec.member.name} working…`)
     const result = await deps.run(spec.member, prompt, deps.taskKey)
+    // Nor is a round the cancel cut short measured: its checks could pass and
+    // close a task the run was told to stop.
+    deps.signal?.throwIfAborted()
     const snapshot = await snapshotTree(cwd)
     const changed = snapshot.tree !== tree.tree
     tree = snapshot
@@ -219,7 +258,7 @@ export async function runGate(spec: GateSpec, deps: GateDeps): Promise<GateResul
       // Nothing new to measure, and nothing more coming: the member has stopped.
       const round: GateRound = { round: n, result, snapshot: snapshot.commit, changed, evidence: inPlace! }
       rounds.push(round)
-      deps.record?.(round)
+      await deps.record?.(round)
       report(`gate round ${n}: no change — stopping`)
       break
     }
@@ -298,7 +337,7 @@ export async function runGate(spec: GateSpec, deps: GateDeps): Promise<GateResul
           evidence: { kind: 'review', passed: false, score: null, error: unavailable },
         }
         rounds.push(round)
-        deps.record?.(round)
+        await deps.record?.(round)
         reason = 'review unavailable'
         break
       }
@@ -308,12 +347,12 @@ export async function runGate(spec: GateSpec, deps: GateDeps): Promise<GateResul
         null,
         1,
       )
-      report(`gate round ${n}: ${evidence.passed ? 'every target done' : `not done (score ${evidence.score ?? 'unparsed'})`}`)
+      report(`gate round ${n}: ${evidence.passed ? 'passed' : `not done (score ${evidence.score ?? 'unparsed'})`}`)
     }
 
     const round: GateRound = { round: n, result, snapshot: snapshot.commit, changed, evidence, ...(rolledBack ? { rolledBack } : {}) }
     rounds.push(round)
-    deps.record?.(round)
+    await deps.record?.(round)
     if (evidence.passed) {
       lastPassing = snapshot.commit
       break

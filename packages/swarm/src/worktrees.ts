@@ -19,7 +19,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import * as SdkProvider from '@deepseek-ai/dsh-subagent-dsh-sdk'
 import type { SubagentRun } from '@deepseek-ai/dsh-subagent'
-import { SwarmGit, type MergeOutcome } from 'openswarm-git'
+import { SwarmGit, withSnapshotClone, type MergeOutcome } from 'openswarm-git'
 import type { MemberRunResult, MemberSpec } from './types'
 import type { RunTeamOptions } from './index'
 
@@ -321,6 +321,45 @@ export class WorktreeRun {
   /** Create (or return) the worktree for one task or member key. */
   worktree(key: string) {
     return this.git.worktree(key)
+  }
+
+  /**
+   * The completion gate's reviewer for the tree at `key` (docs/05 B6b), as
+   * the single path runs it: a subprocess member in a disposable clone of
+   * `commit`, never the worktree itself, so whatever it changes goes away with
+   * the clone, as its prompt promises; with the measured reviewer's
+   * composition (review.cordis.yml), under `sandbox`, in a harness slot.
+   */
+  async review(
+    key: string,
+    member: MemberSpec,
+    prompt: string,
+    commit: string,
+    sandbox: string,
+    run: RunTeamOptions,
+  ): Promise<MemberRunResult> {
+    const cwd = (await this.worktree(key)).path
+    const { sandbox: _memberSandbox, ...cfg } = this.options.member ?? {}
+    await this.slots.acquire()
+    try {
+      return await withSnapshotClone(cwd, commit, (clone) =>
+        runMemberProcess(this.ctx, member, prompt, {
+          cwd: clone,
+          env: memberEnvOf({ ...cfg, env: { ...cfg.env, OPENSWARM_MEMBER_SANDBOX: sandbox } }, this.teamId),
+          parent: run.parent,
+          ...(run.signal === undefined ? {} : { signal: run.signal }),
+          config: { ...cfg, configPath: reviewMemberConfig() },
+          providerName: `swarm-sdk-${this.teamId}-${this.seq++}`,
+        }),
+      )
+    } finally {
+      this.slots.release()
+    }
+  }
+
+  /** Put the worktree at `key` back to a gate snapshot commit (docs/05 B6b): a tree the gate owns. */
+  async rollback(key: string, commit: string): Promise<void> {
+    await this.git.resetTo(await this.git.worktree(key), commit)
   }
 
   /**

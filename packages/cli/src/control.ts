@@ -17,6 +17,7 @@ import {
   attachRun,
   coordinatorSpec,
   defaultRunsDir,
+  evidenceText,
   foldRun,
   listRuns,
   openswarmHome,
@@ -212,7 +213,8 @@ const openCount = (view: SwarmRunView) => view.questions.filter((q) => q.status 
 
 /**
  * The run's line and intent, its tasks in id order (with any end state of
- * their own), how many questions are open, and a finished run's result.
+ * their own, and what each completed one closed on), how many questions are
+ * open, and a finished run's result.
  */
 function board(io: CliIo, view: SwarmRunView): void {
   io.out(`${view.run.id}  ${view.run.status}  ${view.run.topology}`)
@@ -223,6 +225,7 @@ function board(io: CliIo, view: SwarmRunView): void {
   else table(io, [['TASK', 'STATUS', 'OWNER', 'SUBJECT'], ...tasks.map((t) => [t.id, t.status, t.owner ?? '-', t.subject])])
   for (const t of tasks) {
     if (t.intent !== undefined && t.intent.endState !== intent?.endState) io.out(`${t.id} end state: ${t.intent.endState}`)
+    if (t.evidence !== undefined) io.out(`${t.id} evidence: ${evidenceText(t.evidence)}`)
   }
   io.out(`${openCount(view)} open question(s)`)
   if (view.run.status === 'finished' && view.run.result !== undefined) io.out(`result:\n${resultText(view.run.result)}`)

@@ -2,7 +2,8 @@
  * Topology implementations, parameterized by a member-run callback so they
  * stay pure coordination logic over whatever runtime the service wires in.
  */
-import type { SwarmBoard } from './board'
+import type { SwarmBoard, SwarmTaskSnapshot, TaskEvidence } from './board'
+import { runGate, targetStatuses, type GateDeps, type GateRound } from './gate'
 import type { AskQuestion } from './run'
 import type {
   CriticLoopResult,
@@ -378,16 +379,56 @@ export async function seedBoard(board: SwarmBoard, tasks: PeerTeamSpec['tasks'])
       if (id === undefined) throw new Error(`peer task blockedBy index ${i} does not precede it`)
       return id
     })
-    created.push((await board.create({ subject: task.subject, prompt: task.prompt, blockedBy, intent: task.intent })).id)
+    created.push(
+      (await board.create({ subject: task.subject, prompt: task.prompt, blockedBy, intent: task.intent, checks: task.checks })).id,
+    )
   }
   return created
 }
 
-/** Run one claimed board task for a member. */
-export type RunClaim = (
-  member: MemberSpec,
-  claimed: import('./board').SwarmTaskSnapshot,
-) => Promise<MemberRunResult>
+/**
+ * Run one claimed board task for a member. `prompt` defaults to the task's
+ * own; a gate sending the work back passes its continuation instead. Either
+ * way the path frames it as usual (intent header included).
+ */
+export type RunClaim = (member: MemberSpec, claimed: SwarmTaskSnapshot, prompt?: string) => Promise<MemberRunResult>
+
+/**
+ * A gated team's completion gate (docs/05 B6b), as `runBoardWorkers` applies
+ * it to each claim. The execution path supplies `tree`: where the claim's
+ * work lands, its reviewer when review mode can run there, a rollback only
+ * when that tree is the gate's own (a worktree), never the user's, and `pin`
+ * when verification paths are pinned there.
+ */
+export interface BoardGate {
+  /** Agent rounds per attempt (default 4). */
+  rounds?: number
+  /** The team's checks; a task's own replace them. None → review mode. */
+  checks?: readonly string[]
+  /** The run's: a cancelled run starts no further gate round. */
+  signal?: AbortSignal
+  tree: (
+    member: MemberSpec,
+    claimed: SwarmTaskSnapshot,
+  ) => Pick<GateDeps, 'cwd' | 'review' | 'rollback'> & {
+    /** After each member round, before the gate measures it: restore the pinned paths, so no round passes by editing them. */
+    pin?: () => Promise<void>
+  }
+}
+
+/** A gate round as the evidence a board task closes on. */
+function evidenceOf(round: GateRound): TaskEvidence {
+  const e = round.evidence
+  return {
+    kind: e.kind,
+    passed: e.passed,
+    round: round.round,
+    ...(e.score === undefined ? {} : { score: e.score }),
+    ...(e.targets === undefined ? {} : { targets: targetStatuses(e.targets) }),
+    ...(e.failedCommands === undefined ? {} : { failedCommands: e.failedCommands }),
+    snapshot: round.snapshot,
+  }
+}
 
 /**
  * Work-stealing fan-out over a seeded board: every member loops
@@ -396,6 +437,11 @@ export type RunClaim = (
  * released (so the board is never left with a stuck in_progress task) and every
  * member's loop is signalled to stop before the error is rethrown — without
  * this, a single failure leaves sibling loops busy-polling forever.
+ *
+ * With a `gate`, a claim runs through the completion gate instead of once,
+ * and completes only on passing evidence. Work that never passes is a failed
+ * attempt, not a failed member: the task is released for another attempt and
+ * the member stays in the pool. Out of attempts, a person may accept it.
  */
 export async function runBoardWorkers(
   members: MemberSpec[],
@@ -405,6 +451,7 @@ export async function runBoardWorkers(
   report: ReportProgress = () => {},
   maxTaskAttempts = 2,
   ask: AskQuestion = unattended,
+  gate?: BoardGate,
 ): Promise<Record<string, MemberRunResult>> {
   const runs: Record<string, MemberRunResult> = {}
   const attempts = new Map<string, number>()
@@ -450,10 +497,86 @@ export async function runBoardWorkers(
         }
         try {
           report(`${member.name} claimed: ${claimed.subject}`)
-          const result = await runClaim(member, claimed)
-          runs[claimed.id] = result
-          report(`[${++settled}/${seeded.size}] ${member.name}: ${claimed.subject}`)
-          await board.complete(claimed.id, member.name, claimed.revision, result.text)
+          const closed = (result: MemberRunResult, evidence?: TaskEvidence) => {
+            runs[claimed.id] = result
+            report(`[${++settled}/${seeded.size}] ${member.name}: ${claimed.subject}`)
+            return board.complete(claimed.id, member.name, claimed.revision, result.text, evidence)
+          }
+          if (gate === undefined) {
+            await closed(await runClaim(member, claimed))
+            continue
+          }
+          const { pin, ...tree } = gate.tree(member, claimed)
+          const gated = await runGate(
+            {
+              task: claimed.prompt,
+              member,
+              ...(gate.rounds === undefined ? {} : { maxRounds: gate.rounds }),
+              commands: [...(claimed.checks ?? gate.checks ?? [])],
+            },
+            {
+              ...tree,
+              ...(gate.signal === undefined ? {} : { signal: gate.signal }),
+              // Round 1's prompt is the task's own, so it runs exactly as ungated.
+              run: async (m, prompt) => {
+                const result = await runClaim(m, claimed, prompt)
+                await pin?.()
+                return result
+              },
+              report,
+              record: ({ round, changed, evidence: e, rolledBack }) =>
+                board.recordGate({
+                  taskId: claimed.id,
+                  member: member.name,
+                  round,
+                  changed,
+                  kind: e.kind,
+                  passed: e.passed,
+                  ...(e.score === undefined ? {} : { score: e.score }),
+                  ...(e.targets === undefined ? {} : { targets: targetStatuses(e.targets) }),
+                  ...(e.failedCommands === undefined ? {} : { failedCommands: e.failedCommands }),
+                  ...(rolledBack === true ? { rolledBack } : {}),
+                  ...(e.error === undefined ? {} : { error: e.error }),
+                }),
+            },
+          )
+          if (gated.accepted) {
+            await closed(gated.final, evidenceOf(gated.rounds.at(-1)!))
+            continue
+          }
+          // Not accepted: a failed attempt, but the member is healthy, so it
+          // stays in the pool (the catch below is for members that break).
+          const why =
+            gated.reason === undefined
+              ? `not accepted after ${gated.rounds.length} gate round(s)`
+              : `${gated.reason}: ${head(gated.rounds.at(-1)?.evidence.error ?? '')}`
+          const attempt = (attempts.get(claimed.id) ?? 0) + 1
+          attempts.set(claimed.id, attempt)
+          if (attempt >= maxTaskAttempts + (extra.get(claimed.id) ?? 0)) {
+            // Asked while the claim holds, so no sibling starts it meanwhile.
+            // Accepting closes it without passing evidence, which only a person
+            // who answered may do (P8): a default or an ask that fails never does.
+            let by: string | undefined
+            const answer = await ask(
+              {
+                trigger: 'verifier-failure',
+                kind: 'approval',
+                prompt: `task ${claimed.id} "${claimed.subject}" did not pass its gate in ${attempt} attempt(s), last on ${member.name}: ${why}. Accept it without passing evidence, or abandon it and its dependents?`,
+                options: ['abandon', 'accept'],
+                default: 'abandon',
+              },
+              (question) => (by = question.by),
+            ).catch(() => 'abandon')
+            if (answer === 'accept' && by !== undefined) {
+              await closed(gated.final, { kind: 'human', passed: true, by })
+              continue
+            }
+            abandon(claimed.id, why)
+            report(`task "${claimed.subject}" abandoned after ${attempt} attempt(s): ${why}`)
+          } else {
+            report(`${member.name}: "${claimed.subject}" did not pass its gate (attempt ${attempt}): ${why}`)
+          }
+          await board.release(claimed.id, member.name, claimed.revision).catch(() => undefined)
         } catch (error) {
           // This member leaves the pool below, whatever else happens.
           active--
@@ -515,6 +638,7 @@ export async function runPeerTeam(
   board: SwarmBoard,
   report: ReportProgress = () => {},
   ask: AskQuestion = unattended,
+  gate?: BoardGate,
 ): Promise<PeerTeamResult> {
   if (spec.members.length === 0) throw new Error('peer-team needs at least one member')
   const seeded = new Set(await seedBoard(board, spec.tasks))
@@ -523,10 +647,11 @@ export async function runPeerTeam(
     spec.members,
     board,
     seeded,
-    (member, claimed) => run(member, claimed.prompt, claimed.id),
+    (member, claimed, prompt = claimed.prompt) => run(member, prompt, claimed.id),
     report,
     spec.maxTaskAttempts,
     ask,
+    gate,
   )
   const tasks = board.list().filter((t) => seeded.has(t.id))
   return { topology: 'peer-team', tasks, runs }

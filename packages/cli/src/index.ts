@@ -35,6 +35,7 @@ import SwarmService, {
   reviewMemberConfig,
   runGate,
   runMemberProcess,
+  targetStatuses,
   type CascadeResult,
   type CoordinatorResult,
   type GateResult,
@@ -570,7 +571,7 @@ function gateOf(
 const oneLine = (text: string, max = 160): string => text.replace(/\s+/g, ' ').trim().slice(0, max)
 
 /** Target statuses in the order a reader wants them counted. */
-const STATUSES = ['done', 'partial', 'missing', 'broken']
+const STATUSES = ['done', 'unverifiable', 'partial', 'missing', 'broken']
 
 /**
  * One gate round as a human-readable line, for stderr. The harness keeps only
@@ -588,6 +589,10 @@ function gateRoundLine(round: GateRound): string {
       .map((status) => [status, statuses.filter((s) => s === status).length] as const)
       .filter(([, n]) => n > 0)
     if (counted.length > 0) details.push(counted.map(([status, n]) => `${n} ${status}`).join(', '))
+    // What the reviewer could not run here, which a pass on unverifiable targets rests on.
+    for (const t of e.targets ?? []) {
+      if (t?.status === 'unverifiable') details.push(`${t.target} unverifiable: ${oneLine(t.notes ?? '', 80)}`)
+    }
     const regressions = typeof e.regressions === 'string' ? e.regressions : JSON.stringify(e.regressions)
     if (regressions !== undefined && !/^\s*none\.?\s*$/i.test(regressions)) details.push(`regressions: ${oneLine(regressions, 120)}`)
   } else if (e.failedCommands !== undefined) {
@@ -867,9 +872,9 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
                 kind: e.kind,
                 score: e.score ?? null,
                 rolledBack: round.rolledBack === true,
-                // What the agent was told: the reviewer's per-target verdicts and
-                // regressions as given, or the checks that failed.
-                ...(e.targets === undefined ? {} : { targets: e.targets.map((t) => ({ target: t.target, status: t.status })) }),
+                // What the agent was told: the reviewer's per-target verdicts (with
+                // what it could not run) and regressions as given, or the checks that failed.
+                ...(e.targets === undefined ? {} : { targets: targetStatuses(e.targets) }),
                 ...(e.regressions === undefined ? {} : { regressions: e.regressions }),
                 ...(e.failedCommands === undefined ? {} : { failed: e.failedCommands }),
                 ...(e.error === undefined ? {} : { error: e.error }),

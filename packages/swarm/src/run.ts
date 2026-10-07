@@ -7,7 +7,7 @@
  * Questions the harness raises (A6) are folded the same way, per question id.
  */
 import type { MergeOutcome } from 'openswarm-git'
-import type { SwarmTaskSnapshot } from './board'
+import { evidenceText, type SwarmGateEvent, type SwarmTaskSnapshot } from './board'
 import type { SwarmJournalEvent } from './journal'
 import type { SwarmMessageSnapshot } from './mailbox'
 import type { TeamResult, TeamSpec } from './types'
@@ -72,8 +72,12 @@ export type SwarmQuestionEvent = { version: 1; question: SwarmQuestion }
 export type SwarmQuestionRequest = Pick<SwarmQuestion, 'trigger' | 'prompt' | 'options' | 'default'> &
   Partial<Pick<SwarmQuestion, 'kind' | 'tier'>>
 
-/** Raise a question and resolve its answer, one of its options. */
-export type AskQuestion = (question: SwarmQuestionRequest) => Promise<string>
+/**
+ * Raise a question and resolve its answer, one of its options. `onClosed`
+ * receives the closed record, whose `by` names who answered (none when the
+ * default was taken), for a trigger whose outcome depends on who it was.
+ */
+export type AskQuestion = (question: SwarmQuestionRequest, onClosed?: (closed: SwarmQuestion) => void) => Promise<string>
 
 /** A run as its journal records it. */
 export interface SwarmRunView {
@@ -133,7 +137,8 @@ export function recapJournal(events: readonly SwarmJournalEvent[], since = -1): 
       if (task.status === 'in_progress') line = `${task.id} claimed by ${task.owner}`
       else if (task.status === 'completed') {
         const head = task.result === undefined ? '' : `: ${task.result.split('\n')[0]!.slice(0, 80)}`
-        line = `${task.id} completed by ${task.owner}${head}`
+        const evidence = task.evidence === undefined ? '' : ` (${evidenceText(task.evidence)})`
+        line = `${task.id} completed by ${task.owner}${evidence}${head}`
       } else if (before === undefined) line = `${task.id} created: ${task.subject}`
       else line = `${task.id} released (was ${before.owner})`
     } else if (type === 'swarm/message/queued') {
@@ -153,6 +158,8 @@ export function recapJournal(events: readonly SwarmJournalEvent[], since = -1): 
       else if (q.status === 'answered') line = `${q.id} answered by ${q.by}: ${q.answer}`
       else if (q.status === 'defaulted') line = `${q.id} defaulted to ${q.answer}`
       else line = `${q.id} capped (${q.trigger}): defaulted to ${q.answer}`
+    } else if (type === 'swarm/gate') {
+      line = gateLine(data as SwarmGateEvent)
     } else if (type === 'swarm/run') {
       const { run } = data as SwarmRunEvent
       const where = `pid ${run.writer.pid} on ${run.writer.host}`
@@ -165,4 +172,22 @@ export function recapJournal(events: readonly SwarmJournalEvent[], since = -1): 
     if (line !== undefined && seq > since) lines.push(`#${seq} ${line}`)
   }
   return lines
+}
+
+/** One gate round on a board task as a recap line: the verdict its member was sent back with. */
+function gateLine(g: SwarmGateEvent): string {
+  const at = `${g.taskId} gate round ${g.round} (${g.member})`
+  if (g.round > 1 && !g.changed) return `${at}: changed nothing — stopping`
+  if (g.error !== undefined) return `${at}: review unavailable — ${g.error.split('\n')[0]!.slice(0, 80)}`
+  const details: string[] = []
+  const statuses = (g.targets ?? []).map((t) => t.status)
+  const counted = [...new Set(statuses)].map((status) => `${statuses.filter((s) => s === status).length} ${status}`)
+  if (counted.length > 0) details.push(counted.join(', '))
+  for (const t of g.targets ?? []) {
+    if (t.status === 'unverifiable') details.push(`${t.target} unverifiable: ${(t.notes ?? '').slice(0, 80)}`)
+  }
+  if (g.failedCommands !== undefined) details.push(`failed: ${g.failedCommands.map((c) => c.slice(0, 80)).join(', ')}`)
+  if (g.rolledBack === true) details.push('rolled back')
+  const what = g.kind === 'review' ? `review score ${g.score ?? 'unparsed'}` : 'checks'
+  return `${at}: ${what} ${g.passed ? 'passed' : 'not passed'}${details.length === 0 ? '' : ` (${details.join('; ')})`}`
 }

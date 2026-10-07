@@ -251,6 +251,20 @@ export class SwarmGit {
   }
 
   /**
+   * Put a worktree's index and files back to a snapshot commit (the
+   * completion gate's rollback, docs/05 B6b): tracked files and the index as
+   * the snapshot has them, and every untracked file it lacks removed. Ignored
+   * files stay (the linked environment, build output), as a snapshot never
+   * holds them; HEAD does not move. Only for the team's own worktrees, which
+   * is why it takes a WorktreeInfo, never a path: nothing restores the user's
+   * checkout.
+   */
+  async resetTo(worktree: WorktreeInfo, commit: string): Promise<void> {
+    await this.git(worktree.path, 'read-tree', '-u', '--reset', commit)
+    await this.git(worktree.path, 'clean', '-fdq')
+  }
+
+  /**
    * Commit everything dirty in one worktree; false when it was clean.
    *
    * `--no-verify` here and on every merge the harness makes: these commits are

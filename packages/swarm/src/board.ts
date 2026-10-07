@@ -9,7 +9,8 @@
  * carries an `expectedRevision` compare-and-set so stale writers fail loud
  * instead of overwriting newer state. A claim carries a lease — the journal
  * incarnation that granted it — so a later opener can release a dead lead's
- * claims ({@link SwarmBoard.releaseOrphans}).
+ * claims ({@link SwarmBoard.releaseOrphans}). A board for a gated run refuses
+ * to complete a task without passing evidence (docs/05 B6, exit criterion 4).
  */
 import type { SwarmJournal } from './journal'
 import type { Intent } from './types'
@@ -34,10 +35,63 @@ export interface SwarmTaskSnapshot {
   readonly lease?: string
   /** The task's own intent; it replaces the run's for this task (docs/05 §6.1). */
   readonly intent?: Intent
+  /** The task's own gate checks; they replace the team's (docs/05 B6b). */
+  readonly checks?: readonly string[]
+  /** What closed it, when it closed through the gate or a human waived it. */
+  readonly evidence?: TaskEvidence
+}
+
+/**
+ * What a completed task closed on (docs/05 B6): the gate round that passed,
+ * or a human who accepted it without (P8: only a human principal waives the
+ * gate). The precursor of B0's `verifies` edge.
+ */
+export interface TaskEvidence {
+  readonly kind: 'commands' | 'review' | 'human'
+  readonly passed: boolean
+  /** The gate round whose evidence this is. */
+  readonly round?: number
+  /** Review: the reviewer's 0–100 estimate; null when its verdict did not parse. */
+  readonly score?: number | null
+  /** Review: each target's status, with what an unverifiable one could not run. */
+  readonly targets?: readonly { target: number; status: string; notes?: string }[]
+  readonly failedCommands?: readonly string[]
+  /**
+   * The snapshot commit of the tree the evidence is about. ponytail: no ref
+   * points at it, so `git gc` may prune it once old enough; B0's `verifies`
+   * edge must pin it (a ref, or the landed commit) to stay checkable.
+   */
+  readonly snapshot?: string
+  /** Human: who accepted it. */
+  readonly by?: string
+}
+
+/** `commands, round 2`, or `human: owner`: a task's evidence in a few words. */
+export function evidenceText(evidence: TaskEvidence): string {
+  return evidence.kind === 'human' ? `human: ${evidence.by}` : `${evidence.kind}, round ${evidence.round}`
 }
 
 /** Payload of a `swarm/task` journal event. */
 type SwarmTaskEvent = { version: 1; task: SwarmTaskSnapshot }
+
+/** Payload of a `swarm/gate` journal event: one gate round on a board task, as the member was told it. */
+export type SwarmGateEvent = {
+  version: 1
+  taskId: string
+  member: string
+  round: number
+  /** False past round 1: the member stopped changing the tree, so the gate stopped. */
+  changed: boolean
+  kind: 'commands' | 'review'
+  passed: boolean
+  score?: number | null
+  targets?: { target: number; status: string; notes?: string }[]
+  failedCommands?: string[]
+  /** The round broke a check the round before passed, and was undone. */
+  rolledBack?: boolean
+  /** Review: why it could not run. */
+  error?: string
+}
 
 export type SwarmBoardErrorCode =
   | 'SWARM_TASK_NOT_FOUND'
@@ -45,6 +99,7 @@ export type SwarmBoardErrorCode =
   | 'SWARM_TASK_NOT_READY'
   | 'SWARM_TASK_WRONG_OWNER'
   | 'SWARM_TASK_UNKNOWN_BLOCKER'
+  | 'SWARM_TASK_UNVERIFIED'
 
 export class SwarmBoardError extends Error {
   constructor(
@@ -73,7 +128,11 @@ export class SwarmBoard {
   private readonly waiters = new Set<() => void>()
   private nextTaskNumber = 0
 
-  constructor(private readonly journal: SwarmJournal) {}
+  constructor(
+    private readonly journal: SwarmJournal,
+    /** `gated`: `complete` requires passing evidence, so no path closes a task unverified. */
+    private readonly options: { gated?: boolean } = {},
+  ) {}
 
   /** Current folded state (read-only; not serialized against mutations). */
   list(): SwarmTaskSnapshot[] {
@@ -143,7 +202,13 @@ export class SwarmBoard {
     return task
   }
 
-  create(input: { subject: string; prompt: string; blockedBy?: readonly string[]; intent?: Intent }): Promise<SwarmTaskSnapshot> {
+  create(input: {
+    subject: string
+    prompt: string
+    blockedBy?: readonly string[]
+    intent?: Intent
+    checks?: readonly string[]
+  }): Promise<SwarmTaskSnapshot> {
     return this.transact(async () => {
       const state = this.fold()
       const blockedBy = input.blockedBy ?? []
@@ -165,6 +230,7 @@ export class SwarmBoard {
         status: 'pending',
         blockedBy: [...blockedBy],
         ...(input.intent === undefined ? {} : { intent: input.intent }),
+        ...(input.checks === undefined ? {} : { checks: [...input.checks] }),
       }
       return this.commit(task)
     })
@@ -187,11 +253,21 @@ export class SwarmBoard {
     })
   }
 
-  complete(id: string, owner: string, expectedRevision: number, result?: string): Promise<SwarmTaskSnapshot> {
+  complete(
+    id: string,
+    owner: string,
+    expectedRevision: number,
+    result?: string,
+    evidence?: TaskEvidence,
+  ): Promise<SwarmTaskSnapshot> {
     return this.transact(async () => {
       const task = this.expect(this.fold(), id, expectedRevision)
       if (task.owner !== owner) {
         throw new SwarmBoardError(`task "${id}" is owned by "${task.owner}"`, 'SWARM_TASK_WRONG_OWNER')
+      }
+      // A human waiver must name who gave it (P8); otherwise it is no evidence.
+      if (this.options.gated === true && (evidence?.passed !== true || (evidence.kind === 'human' && !evidence.by))) {
+        throw new SwarmBoardError(`task "${id}" is gated: it completes only with passing evidence`, 'SWARM_TASK_UNVERIFIED')
       }
       const { lease: _lease, ...rest } = task
       return this.commit({
@@ -199,8 +275,14 @@ export class SwarmBoard {
         revision: task.revision + 1,
         status: 'completed',
         ...(result === undefined ? {} : { result }),
+        ...(evidence === undefined ? {} : { evidence }),
       })
     })
+  }
+
+  /** Journal one gate round on a task (`swarm/gate`), so a recap shows what its member was told. */
+  async recordGate(event: Omit<SwarmGateEvent, 'version'>): Promise<void> {
+    await this.journal.append('swarm/gate', { version: 1, ...event } satisfies SwarmGateEvent)
   }
 
   release(id: string, owner: string, expectedRevision: number): Promise<SwarmTaskSnapshot> {
