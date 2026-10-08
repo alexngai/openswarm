@@ -11,7 +11,9 @@
  * lives beside them, never at the directory node), and a
  * configured target branch that is already checked out elsewhere fails
  * loud with git's own error. A conflicted merge is aborted and the task
- * branch retained for inspection — never auto-resolved.
+ * branch retained for inspection — never auto-resolved here; the train
+ * (docs/05 B2, B3, in openswarm-swarm) builds on the steps below and hands a
+ * conflict to a resolver.
  */
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -78,7 +80,29 @@ export interface MergeOutcome {
    * that said the work was not good enough.
    */
   withheld: { taskKey: string; branch: string }[]
+  /**
+   * Set when the train landed the run (docs/05 B2, B3); `merged` then lists
+   * what landed too, and `conflicts` what was ejected over a conflict the
+   * resolver gave up on. Ejected branches are kept, and their worktrees
+   * unless the train stopped. Commits count past the target's tip.
+   */
+  landed?: { taskKey: string; branch: string; commits: number }[]
+  ejected?: { taskKey: string; branch: string; reason: string }[]
+  /** Entries a repair was dispatched for, however they ended, and how many. */
+  repaired?: { taskKey: string; branch: string; repairs: number }[]
+  /** Entries whose conflict the resolver resolved. */
+  resolved?: { taskKey: string; branch: string }[]
+  /**
+   * Why the train stopped before every entry landed or was ejected (aborted,
+   * the verifier unavailable, a target already failing); what it never got
+   * to is `withheld`, its branch kept and its worktree removed. A failing
+   * target the owner chose to merge anyway is this queue's outcome instead.
+   */
+  stopped?: string
 }
+
+/** The identity of the harness's own commits and merges. */
+const AS_SWARM = ['-c', 'user.email=swarm@openswarm', '-c', 'user.name=openswarm']
 
 /** A team directory younger than this is treated as starting, not abandoned. */
 const RECENT_MS = 60_000
@@ -92,6 +116,7 @@ export class SwarmGit {
   private ignoreChecked = false
   private base: string | undefined
   private targetPath: string | undefined
+  private trainPath: string | undefined
   private scratchPromise: Promise<string> | undefined
 
   constructor(private readonly options: SwarmGitOptions) {}
@@ -287,11 +312,11 @@ export class SwarmGit {
     }
   }
 
-  /** Number of commits a task branch carries beyond the base. */
-  async commitCount(branch: string): Promise<number> {
+  /** Number of commits a task branch carries beyond the base, or beyond `from`. */
+  async commitCount(branch: string, from?: string): Promise<number> {
     const { stdout } = await this.git(
       this.options.repoRoot,
-      'rev-list', '--count', `${await this.baseCommit()}..${branch}`,
+      'rev-list', '--count', `${from ?? (await this.baseCommit())}..${branch}`,
     )
     return Number(stdout.trim())
   }
@@ -351,6 +376,102 @@ export class SwarmGit {
     return outcome
   }
 
+  /** This team's live task worktrees, in creation order. */
+  list(): WorktreeInfo[] {
+    return [...this.worktrees.values()]
+  }
+
+  /** The target branch's tip, read in its worktree (created on first use). */
+  async targetTip(): Promise<string> {
+    return (await this.git(await this.targetWorktree(), 'rev-parse', 'HEAD')).stdout.trim()
+  }
+
+  /**
+   * The train's speculative merge (docs/05 B2): `branches` merged `--no-ff`,
+   * in order, onto `tip`, in a detached worktree of the train's own (created
+   * on first use and linked as a member's is, so checks can build and test
+   * there), never the target's or the user's. A branch whose merge
+   * conflicts is aborted and left out; a merge git refuses outright throws.
+   * Returns that worktree, the batch commit, and the branches left out.
+   */
+  async speculate(tip: string, branches: readonly string[]): Promise<{ cwd: string; commit: string; conflicted: string[] }> {
+    if (this.trainPath === undefined) {
+      const path = join(this.dir, '.train')
+      this.ensureDir()
+      await this.git(this.options.repoRoot, 'worktree', 'add', '--detach', path, tip)
+      await this.link(path)
+      this.trainPath = path
+    }
+    const cwd = this.trainPath
+    // The last batch's tree and whatever its checks left behind go; ignored
+    // files (the linked environment, build output) stay, as in a member's tree.
+    await this.git(cwd, '-c', 'core.hooksPath=/dev/null', 'checkout', '-q', '-f', '--detach', tip)
+    await this.git(cwd, 'clean', '-fdq')
+    const conflicted: string[] = []
+    for (const branch of branches) {
+      try {
+        await this.git(cwd, ...AS_SWARM, 'merge', '--no-ff', '--no-verify', '-q', '-m', `swarm: merge ${branch}`, branch)
+      } catch (error) {
+        const { stdout } = await this.git(cwd, 'diff', '--name-only', '--diff-filter=U')
+        await this.git(cwd, 'merge', '--abort').catch(() => {})
+        if (stdout.trim() === '') throw error
+        conflicted.push(branch)
+      }
+    }
+    return { cwd, commit: (await this.git(cwd, 'rev-parse', 'HEAD')).stdout.trim(), conflicted }
+  }
+
+  /** Fast-forward the target branch, in its worktree, to a commit the train built on its tip. */
+  async advanceTarget(commit: string): Promise<void> {
+    await this.git(await this.targetWorktree(), 'merge', '--ff-only', '-q', commit)
+  }
+
+  /**
+   * Merge `ref` into a task worktree's branch, as the train's repair and
+   * resolver steps start (docs/05 B3). Returns [] once committed. On a
+   * conflict the merge is left in progress and the unmerged paths returned,
+   * for an agent to resolve; then {@link concludeMerge} or {@link abortMerge}.
+   */
+  async mergeInto(worktree: WorktreeInfo, ref: string): Promise<string[]> {
+    try {
+      await this.git(worktree.path, ...AS_SWARM, 'merge', '--no-verify', '-q', '-m', `swarm: merge ${ref} into ${worktree.branch}`, ref)
+      return []
+    } catch (error) {
+      const { stdout } = await this.git(worktree.path, 'diff', '--name-only', '--diff-filter=U')
+      const unmerged = stdout.split('\n').filter((line) => line !== '')
+      if (unmerged.length > 0) return unmerged
+      // Not a conflict: git refused the merge outright.
+      await this.abortMerge(worktree)
+      throw error
+    }
+  }
+
+  /**
+   * Commit a merge {@link mergeInto} left in progress, with whatever the
+   * worktree now holds, even a tree equal to HEAD's. An agent that concluded
+   * (or abandoned) the merge itself leaves only its edits to commit.
+   */
+  async concludeMerge(worktree: WorktreeInfo, message: string): Promise<void> {
+    const merging = await this.git(worktree.path, 'rev-parse', '-q', '--verify', 'MERGE_HEAD').then(() => true, () => false)
+    if (!merging) {
+      await this.autoCommit(worktree, message)
+      return
+    }
+    await this.git(worktree.path, 'add', '-A')
+    await this.git(worktree.path, ...AS_SWARM, 'commit', '-q', '--no-verify', '-m', message)
+  }
+
+  /** Abandon a merge in progress: the task worktree back at its branch's head, nothing of the merge left. */
+  async abortMerge(worktree: WorktreeInfo): Promise<void> {
+    await this.git(worktree.path, 'reset', '-q', '--hard', 'HEAD')
+    await this.git(worktree.path, 'clean', '-fdq')
+  }
+
+  /** Whether `commit` is in `ref`'s history. */
+  contains(ref: string, commit: string): Promise<boolean> {
+    return this.git(this.options.repoRoot, 'merge-base', '--is-ancestor', commit, ref).then(() => true, () => false)
+  }
+
   /**
    * A throwaway, detached worktree for member runs that have no task branch
    * (committee judge, coordinator synthesis, …). Detached at the base commit,
@@ -371,7 +492,8 @@ export class SwarmGit {
     return this.scratchPromise
   }
 
-  private async removeWorktree(info: WorktreeInfo): Promise<void> {
+  /** Remove one task worktree; its branch survives. */
+  async removeWorktree(info: WorktreeInfo): Promise<void> {
     await this.git(this.options.repoRoot, 'worktree', 'remove', '--force', info.path).catch(() => {
       rmSync(info.path, { recursive: true, force: true })
     })
@@ -434,13 +556,17 @@ export class SwarmGit {
     return removed
   }
 
-  /** Remove the target and scratch worktrees (branches survive). */
+  /** Remove the target, train and scratch worktrees (branches survive). */
   async dispose(): Promise<void> {
     if (this.targetPath !== undefined) {
       await this.git(this.options.repoRoot, 'worktree', 'remove', '--force', this.targetPath).catch(
         () => {},
       )
       this.targetPath = undefined
+    }
+    if (this.trainPath !== undefined) {
+      await this.git(this.options.repoRoot, 'worktree', 'remove', '--force', this.trainPath).catch(() => {})
+      this.trainPath = undefined
     }
     if (this.scratchPromise !== undefined) {
       const scratch = await this.scratchPromise.catch(() => undefined)

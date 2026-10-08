@@ -39,8 +39,9 @@ import {
   type SwarmRunView,
   type SwarmSteerEvent,
 } from './run'
-import { runGateCommand, type VerifierLevel } from './gate'
+import { runGateCommand, type HiddenSuite, type VerifierLevel } from './gate'
 import { activeVerifier, hiddenSuite, openVerifier, recordToolEvents, toolEventsFromLogs, type Verifier } from './verifier'
+import { recapTrain, trainVerify, TrainStoppedError, validateTrain } from './train'
 import { askPeer, registerSwarmMessaging, spawnPeer, suppressSettlementTurns } from './peers'
 import type { Principal } from './protocol'
 import type { PeerHandle } from './types'
@@ -63,7 +64,7 @@ import {
   type RunMember,
 } from './topologies'
 import { homedir, hostname } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { RemotePeer } from './remote-peer'
 import { SwarmServer } from './server'
 import { inheritedRoute, WorktreeRun, resolveMemberLaunch, type WorktreeTeamOptions } from './worktrees'
@@ -85,6 +86,7 @@ export * from './run'
 export * from './protocol'
 export * from './gate'
 export * from './verifier'
+export * from './train'
 export {
   askPeer,
   nextTurnEnd,
@@ -125,6 +127,11 @@ export function runJournalPath(runsDir: string, runId: string): string {
   return join(runsDir, runId, 'journal.jsonl')
 }
 
+/** A run's train journal (docs/05 B2), beside its run journal. */
+export function trainJournalPath(runsDir: string, runId: string): string {
+  return join(dirname(runJournalPath(runsDir, runId)), 'train.jsonl')
+}
+
 /** Every run record under `runsDir`, oldest first. */
 export function listRuns(runsDir: string): SwarmRunRecord[] {
   if (!existsSync(runsDir)) return []
@@ -135,16 +142,22 @@ export function listRuns(runsDir: string): SwarmRunRecord[] {
     .sort((a, b) => a.startedAt - b.startedAt)
 }
 
-/** A run read from its journal file. Read-only: it never appends or truncates. */
+/**
+ * A run read from its journal file. Read-only: it never appends or truncates.
+ * The recap ends with the train's lines, from its own journal; past a cursor
+ * into the run's, those journaled after that event.
+ */
 export function viewRun(runsDir: string, runId: string, { since }: { since?: number } = {}): SwarmRunView {
   const events = SwarmJournal.read(runJournalPath(runsDir, runId))
   const run = foldRun(events)
   if (run === undefined) throw new Error(`unknown run "${runId}"`)
+  // ponytail: by time, as the train's seqs are its own; an event in the cursor's millisecond is skipped.
+  const after = since === undefined ? -Infinity : (events.find((e) => e.seq === since)?.time ?? -Infinity)
   return {
     run,
     tasks: [...foldBoard(events).values()],
     questions: [...foldQuestions(events).values()],
-    recap: recapJournal(events, since),
+    recap: [...recapJournal(events, since), ...recapTrain(SwarmJournal.read(trainJournalPath(runsDir, runId)).filter((e) => e.time > after))],
   }
 }
 
@@ -285,6 +298,22 @@ function resolveMemberModel(
     )
   }
   return model
+}
+
+/** A spec's members, in order: who the train asks to repair or resolve an entry no member ran in. */
+function teamMembers(spec: TeamSpec): MemberSpec[] {
+  switch (spec.topology) {
+    case 'critic-loop':
+      return [spec.worker, spec.critic]
+    case 'pipeline':
+      return spec.stages.map((stage) => stage.member)
+    case 'cascade':
+      return spec.tiers
+    case 'coordinator':
+      return [...spec.workers, spec.coordinator]
+    default:
+      return spec.members
+  }
 }
 
 /** Concatenated text content of an assistant output. */
@@ -454,7 +483,7 @@ export default class SwarmService extends Service {
       spec,
     }
     await record(running)
-    const result = this.execute(spec, { ...options, signal }, board, roster, mailbox, ask)
+    const result = this.execute(spec, { ...options, signal }, board, roster, mailbox, ask, journal.path)
       .then((result) => {
         // Aborted members settle as results, not rejections, so a cancelled
         // run can come back whole; it still failed.
@@ -470,7 +499,9 @@ export default class SwarmService extends Service {
         },
         async (error: unknown) => {
           const message = error instanceof Error ? error.message : String(error)
-          await record({ ...running, status: 'failed', endedAt: Date.now(), error: message })
+          // A train that stopped says what had landed: those commits are on the target.
+          const git = error instanceof TrainStoppedError ? { git: error.outcome } : {}
+          await record({ ...running, status: 'failed', endedAt: Date.now(), error: message, ...git })
           throw error
         },
       )
@@ -546,6 +577,7 @@ export default class SwarmService extends Service {
     roster: Map<string, PeerHandle>,
     mailbox: SwarmMailbox,
     ask: AskQuestion,
+    journalPath: string,
   ): Promise<TeamResult & { git?: MergeOutcome }> {
     const worktrees =
       options.worktrees === undefined ? undefined : new WorktreeRun(this.ctx, options.worktrees, options.onProgress)
@@ -560,6 +592,14 @@ export default class SwarmService extends Service {
     }
     if (worktrees === undefined) return this.dispatch(spec, run, options, board, roster, mailbox, ask)
 
+    // The train is refused, and the L3 verifier asked whether it holds the
+    // suite, before any spend.
+    const train = options.worktrees!.train
+    if (train !== undefined) validateTrain(train, options.worktrees!)
+    const hidden =
+      train?.suite === undefined
+        ? undefined
+        : { session: await openVerifier(options.verifier ?? activeVerifier(), [train.suite]), envRoot: resolve(options.worktrees!.repoRoot) }
     // Clear anything a previously crashed team left in this repo before adding
     // our own checkouts.
     await worktrees.sweepOrphans()
@@ -576,7 +616,35 @@ export default class SwarmService extends Service {
     // has a whole-run notion of acceptance; every other topology's tasks stand
     // or fall individually, so they merge as before.
     const merge = result.topology !== 'cascade' || result.accepted
-    return { ...result, git: await worktrees.finalize({ merge }) }
+    const landing =
+      train === undefined || !merge
+        ? {}
+        : {
+            train: {
+              journal: SwarmJournal.open(join(dirname(journalPath), 'train.jsonl')),
+              tasks: board.list(),
+              members: teamMembers(spec),
+              verify: trainVerify(train, hidden),
+              // Under L3 each repair and resolver is scanned as a gate round is (B1),
+              // its transcript from the subprocess member's session logs.
+              ...(hidden === undefined
+                ? {}
+                : {
+                    scan: (key: string, step: Parameters<HiddenSuite['scan']>[0]) =>
+                      hiddenSuite(hidden.session, {
+                        suite: train.suite!,
+                        cwd: async () => (await worktrees.worktree(key)).path,
+                        envRoot: hidden.envRoot,
+                        transcript: (_result, startedAt) => toolEventsFromLogs(worktrees.memberEnv()['DSH_SESSION_ROOT']!, startedAt),
+                      }).scan(step),
+                  }),
+              ask,
+              options,
+              ...(options.onProgress === undefined ? {} : { report: options.onProgress }),
+              ...(options.signal === undefined ? {} : { signal: options.signal }),
+            },
+          }
+    return { ...result, git: await worktrees.finalize({ merge, ...landing }) }
   }
 
   /**

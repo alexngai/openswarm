@@ -25,8 +25,10 @@ import {
   openswarmHome,
   pidAlive,
   recapJournal,
+  recapTrain,
   resultText,
   runJournalPath,
+  trainJournalPath,
   viewRun,
   writerLive,
   type SwarmRunView,
@@ -126,13 +128,18 @@ export async function runControl(
           return 0
         }
         board(io, view)
-        // The recap, then (a live writer's run) each new line as it is journaled, until the run settles.
+        // The recap, then (a live writer's run) each new line as it is journaled, until the run settles;
+        // the train's own journal (docs/05 B2) is followed beside it, by its own cursor.
         const path = runJournalPath(dir, run)
         let since = -1
+        let trainSince = -1
         while (true) {
           const events = SwarmJournal.read(path)
           for (const line of recapJournal(events, since)) io.out(line)
           since = events.at(-1)?.seq ?? since
+          const train = SwarmJournal.read(trainJournalPath(dir, run))
+          for (const line of recapTrain(train, trainSince)) io.out(line)
+          trainSince = train.at(-1)?.seq ?? trainSince
           const record = foldRun(events)!
           if (record.status !== 'running' || flags.has('--no-follow')) return 0
           if (!writerLive(record)) {

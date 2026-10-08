@@ -26,6 +26,8 @@ export interface SwarmRunRecord {
   readonly endedAt?: number
   readonly error?: string
   readonly result?: TeamResult & { git?: MergeOutcome }
+  /** A run that failed while the train landed it (docs/05 B2): what had landed by then. */
+  readonly git?: MergeOutcome
   readonly spec?: TeamSpec
 }
 
@@ -49,7 +51,8 @@ export type SwarmSteerEvent = {
 export interface SwarmQuestion {
   /** `q-<n>`, unique within its run. */
   readonly id: string
-  readonly trigger: 'stall' | 'restart-budget' | 'task-attempts' | 'verifier-failure' | 'tamper'
+  /** `conflict`: the train's resolver gave up on an entry (docs/05 B3). */
+  readonly trigger: 'stall' | 'restart-budget' | 'task-attempts' | 'verifier-failure' | 'tamper' | 'conflict'
   readonly kind: 'escalation' | 'consent' | 'approval'
   /** An owner answers any tier; a driver only `low`, and never a consent or approval (§5.3). */
   readonly tier: 'low' | 'high'

@@ -7,8 +7,9 @@
  * Runs with a `taskKey` share that task's worktree (cascade tiers continue
  * each other's work; a critic reads the worker's tree). Runs without a key
  * (judge, plan, synthesis) execute at the repo root. On finalize, dirty task
- * worktrees are auto-committed (configurable) and the merge queue folds task
- * branches into the target branch — never the user's checkout.
+ * worktrees are auto-committed (configurable) and the merge queue, or the
+ * train when configured (docs/05 B2), folds task branches into the target
+ * branch — never the user's checkout.
  */
 import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
@@ -20,6 +21,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import * as SdkProvider from '@deepseek-ai/dsh-subagent-dsh-sdk'
 import type { SubagentRun } from '@deepseek-ai/dsh-subagent'
 import { SwarmGit, withSnapshotClone, type MergeOutcome } from 'openswarm-git'
+import { landTrain, type TrainConfig, type TrainDeps } from './train'
 import type { MemberRunResult, MemberSpec } from './types'
 import type { RunTeamOptions } from './index'
 
@@ -68,6 +70,13 @@ export interface WorktreeTeamOptions {
    */
   maxConcurrent?: number
   member?: WorktreeMemberConfig
+  /**
+   * Land through the train (docs/05 B2, B3) instead of the sequential queue:
+   * speculative batches verified once by `checks` (L2) or a hidden `suite`
+   * (L3), a failure bisected to its culprit, which its member repairs, and a
+   * conflict handed to a resolver. Unset, finalize merges as before.
+   */
+  train?: TrainConfig
 }
 
 /**
@@ -254,6 +263,12 @@ export class WorktreeRun {
   private readonly git: SwarmGit
   private readonly slots: Slots
   private seq = 0
+  /**
+   * Per task key, the member that first ran in its worktree and its prompt:
+   * the writer, whom the train asks to repair it. A critic, a later pipeline
+   * stage or cascade tier runs in the same worktree after it.
+   */
+  private readonly owners = new Map<string, { member: MemberSpec; prompt: string }>()
 
   constructor(
     private readonly ctx: Context,
@@ -300,6 +315,7 @@ export class WorktreeRun {
     // the user's checkout — the member harness carries write tools, so running
     // in repoRoot would let a model mutate the working tree.
     const cwd = taskKey === undefined ? await this.git.scratch() : (await this.worktree(taskKey)).path
+    if (taskKey !== undefined && !this.owners.has(taskKey)) this.owners.set(taskKey, { member, prompt })
     return runMemberProcess(this.ctx, member, prompt, {
       cwd,
       env: this.memberEnv(),
@@ -397,8 +413,14 @@ export class WorktreeRun {
    * That is what makes a gate verdict mean something: a cascade that never
    * satisfied its gate previously merged anyway, since finalize ran
    * unconditionally after dispatch and never consulted `accepted`.
+   *
+   * With `train` (and `WorktreeTeamOptions.train`), the branches land through
+   * the train instead of the queue; its repairs and resolvers run as members
+   * of this run, in the entries' own worktrees.
    */
-  async finalize(options: { merge?: boolean } = {}): Promise<MergeOutcome> {
+  async finalize(
+    options: { merge?: boolean; train?: Omit<TrainDeps, 'owners' | 'run'> & { options: RunTeamOptions } } = {},
+  ): Promise<MergeOutcome> {
     if (this.options.autoCommit !== false) {
       for (const taskKey of this.taskKeys()) {
         const wt = await this.git.worktree(taskKey)
@@ -421,6 +443,18 @@ export class WorktreeRun {
         conflicts: [],
         empty: [],
         withheld,
+      }
+    }
+    if (options.train !== undefined && this.options.train !== undefined) {
+      const { options: run, ...deps } = options.train
+      try {
+        return await landTrain(this.git, this.options.train, {
+          ...deps,
+          owners: this.owners,
+          run: (member, prompt, key) => this.runMember(member, prompt, key, run),
+        })
+      } finally {
+        await this.git.dispose()
       }
     }
     const outcome = await this.git.mergeAll()

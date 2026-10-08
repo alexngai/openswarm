@@ -737,6 +737,50 @@ of the verifier is advisory. A run the host cannot fully confine is not L3. Exit
 has not run yet; the keyless suite covers the rest with the helper run as the
 test's own user.
 
+B2 and B3 are built, opt-in: `RunTeamOptions.worktrees.train` (`checks` for
+L2, `suite` for L3 through B1's verifier; `batchSize` 4, `maxRepairs` 1)
+lands a run's branches through the train (`packages/swarm/src/train.ts`)
+instead of the run-end sequential queue, which is unchanged without it.
+Every task branch with commits is an entry carrying its board blockers and
+its task order as priority. The target's tip is verified alone first: one
+that already fails would make every entry a culprit, so a question decides
+(stop, the default, or merge unverified through the queue). Up to
+`batchSize` ready entries are merged speculatively onto the target's tip in
+the train's own worktree and verified once; a pass fast-forwards the target
+in its worktree, a failure lands each half on the then-current tip, so a
+culprit is bisected out while its batch-mates land (a pair that fails only
+together: the first lands). When a wave has nothing left ready, the
+skeleton's agent steps run (D15): a culprit is repaired by the member that
+wrote its task (the first to run in its worktree, so a critic-loop's worker,
+not its critic), in its worktree once the tip is merged in, told the failing
+check and its output (at L3, counts only); a conflict goes to a resolver run
+there. Both auto-commit and queue the entry again, to be verified like any
+other. Under L3 each step is scanned for the member reaching for the suite
+as a gate round is (B1); an incident is journaled and ejects the entry on a
+high-tier `tamper` question unless someone says continue. Past `maxRepairs`
+a `verifier-failure` question, and when the resolver gives up a `conflict`
+question, each defaulting to eject; an ejected entry keeps its branch and
+worktree and ejects its dependents. The train stops early, keeping every
+unlanded branch and removing the task worktrees, on an abort (no further
+landing or agent step, and an aborted repair's edits are not committed), on
+a verifier that cannot run twice running (the batch journaled unverified),
+or on any throw; the result's `git`, on a failed run its record's, says what
+landed. A train needs `autoCommit` and is refused without it. Members cannot
+write git under `workspace-write`, so the lead starts the merge and the
+resolver edits the conflicted files; the lead commits. The train keeps its
+own journal, `<run>/train.jsonl` (`train/enqueued`, `baseline`, `batch`,
+`verified`, `unverified`, `landed`, `ejected`, `repair`, `resolve`,
+`tamper`, `stopped`), shown in the recap as `#t` lines, and reaches the run
+only through the question queue (D3). The result's `git` gains `landed`,
+`ejected`, `repaired` and `resolved`. **Exit criterion 1 is met on a fixed
+branch set by keyless tests** (`train.test.ts`): a batch of four with a
+planted bad commit bisects it out and lands the other three before its
+repair, which lands it the next wave; on six branches with a bad commit and
+a conflict, the train lands 6 of 6 with the integrated tree passing, the
+queue 5 of 6 with it failing. Still to do: the same comparison through the
+eval harness on a benchmark task set, and scope-violation questions, which
+wait for scopes (C4, deferred by D18).
+
 | # | Work item |
 |---|---|
 | B6 | **Completion gate** (D16, D17): a task closes only with passing evidence, recorded as a `verifies` edge. The evidence is the unit's checker where one exists (contract tests, the tests that import the unit's files), else a **reviewer**: a fresh session given the task's intent and the working tree, told to measure and not fix, whose changes are rolled back and whose report ends in per-target status (the pilot's `eval/pilot/search.mjs` is the prototype). A failing check sends the task back with the report, up to a round cap; the reviewer's "all done" ends the loop early. A round that fails a checker the previous round passed is rolled back to that round (docs/07 §7.1 finding 4); reviewer scores alone do not decide a rollback, since they rank work on one task poorly. The single-agent path gets the gate too |
