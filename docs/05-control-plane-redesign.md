@@ -678,6 +678,19 @@ item.
 
 **Build order:** B6, B0, B1, B3, B2, B4, B5; R1 alongside.
 
+**Phase B status (2026-10-08): code complete.** B6 `a95d289`…`907195b`,
+B0 `4511784` (projection), B1 `f671375`, B2+B3 `9efbd8c`, B4+B5
+`d03e622`, R1 `5cca4e7`. Exit criteria: **1** met by keyless tests on a
+fixed branch set (train 6/6 landed and clean against the sequential
+queue's 5/6 landed, 0 clean); the eval-harness run on a task set is still
+to do, with clean-merge rate as the primary measure since the train
+deliberately lands fewer broken branches. **2** needs the operator's
+one-time `openswarm verifier setup` and the gated probe
+(`OPENSWARM_VERIFIER_E2E=1`). **3** met by keyless tests (a dsh and a
+claude-code member landing through one train, cost by runtime); the live
+test (`OPENSWARM_LIVE=1`) is still to run. **4**, **5** and **6** are met
+(6 narrowly, over two runs).
+
 **Progress.** B6a, the gate's core and the single-agent path, is built:
 `a95d289` (`runGate`; `snapshotTree`; CLI `--gate`, `--gate-rounds`,
 `--gate-check`, `OPENSWARM_GATE`), `9c5317f` (the reviewer's copy is a
