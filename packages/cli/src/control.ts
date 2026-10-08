@@ -1,8 +1,10 @@
 /**
- * The control verbs (docs/05 §6.1, A8). `ps`, `board`, `questions` and
- * `attach` read run journals under `$OPENSWARM_HOME/runs` directly, so they
- * need no server and see a run whose process died; `attach` takes such a run
- * over. `start`, `steer`, `answer` and `kill` direct a running
+ * The control verbs (docs/05 §6.1, A8). `ps`, `board`, `questions`,
+ * `landings`, `metrics` and `attach` read run journals under
+ * `$OPENSWARM_HOME/runs` directly, so they need no server and see a run whose
+ * process died; `attach` takes such a run over. `landings` is the landing
+ * queue (B4), `metrics` the run's RunMetrics (B5), priced by a `--pricing`
+ * file. `start`, `steer`, `answer` and `kill` direct a running
  * `openswarm serve` over its socket carrier, as the owner whose token it
  * wrote to `$OPENSWARM_HOME/app-server.json`. `tasks sync` mirrors a run's
  * board into an opentasks graph (docs/05 B0), reading only the journal.
@@ -11,7 +13,7 @@
 import { once } from 'node:events'
 import { existsSync, readFileSync } from 'node:fs'
 import { connect } from 'node:net'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { JsonRpcLineTransport } from '@deepseek-ai/dsh-sdk-protocol'
 import {
@@ -21,16 +23,21 @@ import {
   defaultRunsDir,
   evidenceText,
   foldRun,
+  landingText,
   listRuns,
+  metricsRows,
   openswarmHome,
   pidAlive,
   recapJournal,
   recapTrain,
   resultText,
   runJournalPath,
+  runLandings,
+  runMetrics,
   trainJournalPath,
   viewRun,
   writerLive,
+  type Pricing,
   type SwarmRunView,
   type TeamSpec,
 } from 'openswarm-swarm'
@@ -40,6 +47,8 @@ import { runVerifier, VERIFIER_USAGE } from './verifier'
 
 const USAGE = `usage: openswarm ps [--json]
        openswarm board <run> [--json]
+       openswarm landings <run> [--json] [--pricing <file>]
+       openswarm metrics <run> [--json] [--pricing <file>]
        openswarm questions [--run <id>] [--json]
        openswarm attach <run> [--no-follow]
        openswarm start <"task" | spec.json> [--workers N] [--provider P] [--model M] [--question-timeout MS]
@@ -49,7 +58,7 @@ const USAGE = `usage: openswarm ps [--json]
        openswarm tasks sync <run> [--watch] [--socket <path>]
        ${VERIFIER_USAGE.replace('usage: ', '')}`
 
-const VALUE_FLAGS = new Set(['--run', '--to', '--workers', '--provider', '--model', '--question-timeout', '--socket', '--node'])
+const VALUE_FLAGS = new Set(['--run', '--to', '--workers', '--provider', '--model', '--question-timeout', '--socket', '--node', '--pricing'])
 const BOOL_FLAGS = new Set(['--json', '--no-follow', '--watch', '--print'])
 
 /** Run one control verb; resolves to the exit code (2 for a usage error). */
@@ -99,6 +108,27 @@ export async function runControl(
           return json({ run: view.run.id, status: view.run.status, tasks: view.tasks, openQuestions: openCount(view) })
         }
         board(io, view)
+        return 0
+      }
+      case 'landings': {
+        if (run === undefined) break
+        if (foldRun(SwarmJournal.read(runJournalPath(dir, run))) === undefined) throw new Error(`unknown run "${run}"`)
+        const pricing = pricingOf(flags.get('--pricing'))
+        const landings = runLandings(dirname(runJournalPath(dir, run)))
+        if (flags.has('--json')) return json(landings)
+        const tiers = ['high', 'medium', 'low'].map((tier) => `${landings.filter((l) => l.risk === tier).length} ${tier}`)
+        io.out(landings.length === 0 ? `${run}: no landings` : `${run}: ${landings.length} landing(s), ${tiers.join(', ')} risk (highest first; read-only)`)
+        for (const landing of landings) for (const line of landingText(landing, pricing)) io.out(line)
+        return 0
+      }
+      case 'metrics': {
+        if (run === undefined) break
+        if (foldRun(SwarmJournal.read(runJournalPath(dir, run))) === undefined) throw new Error(`unknown run "${run}"`)
+        const pricing = pricingOf(flags.get('--pricing'))
+        const metrics = runMetrics(dirname(runJournalPath(dir, run)), pricing === undefined ? {} : { pricing })
+        if (flags.has('--json')) return json(metrics)
+        io.out(run)
+        table(io, metricsRows(metrics))
         return 0
       }
       case 'questions': {
@@ -204,6 +234,22 @@ export async function runControl(
     return 1
   }
   return usage(io)
+}
+
+/**
+ * A `--pricing` file: $ per million tokens by model id, `{ "<model>": { "input":
+ * 5, "output": 30, "cacheRead": 0.5 } }` (docs/05 B5). Absent, dollars are null.
+ */
+function pricingOf(path: string | undefined): Pricing | undefined {
+  if (path === undefined) return undefined
+  const pricing = JSON.parse(readFileSync(path, 'utf8')) as Pricing
+  for (const [model, rate] of Object.entries(pricing)) {
+    const rates = [rate?.input, rate?.output, ...(rate?.cacheRead === undefined ? [] : [rate.cacheRead]), ...(rate?.cacheWrite === undefined ? [] : [rate.cacheWrite])]
+    if (!rates.every((r) => typeof r === 'number' && r >= 0)) {
+      throw new Error(`--pricing: ${model} needs numeric input and output rates ($ per million tokens), and optionally cacheRead and cacheWrite`)
+    }
+  }
+  return pricing
 }
 
 function usage(io: CliIo, problem?: string): number {

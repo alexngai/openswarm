@@ -135,6 +135,7 @@ it("cascade asks before giving up; 'retry' runs the top tier once more with the 
   expect(asked).toEqual([
     {
       trigger: 'verifier-failure',
+      taskId: 'task',
       prompt:
         'cascade task "solve it" failed on all 2 tier(s) (2 attempt(s)); last feedback: REVISE: still no. Retry strong once more with that feedback, or stop?',
       options: ['stop', 'retry'],

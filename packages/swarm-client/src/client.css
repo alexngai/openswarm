@@ -137,3 +137,20 @@
   gap: 8px;
   margin-top: 8px;
 }
+.osw-metrics th {
+  width: 1%;
+  white-space: pre;
+}
+.osw-landing {
+  margin: 0 0 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-left-width: 3px;
+  border-radius: 8px;
+  font-family: var(--dsw-font-mono, monospace);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+.osw-risk-high {
+  border-left-color: var(--dsw-alias-state-error-primary);
+}

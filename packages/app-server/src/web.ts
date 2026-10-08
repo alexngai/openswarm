@@ -68,6 +68,14 @@ export default class SwarmWebCarrier extends TypertRemoteService {
     return this.call('attach', { runId })
   }
 
+  @Remote landings(runId: string) {
+    return this.call('landings', { runId })
+  }
+
+  @Remote metrics(runId: string) {
+    return this.call('metrics', { runId })
+  }
+
   /**
    * One owner call, absent params omitted. The gateway refuses a result that
    * is not plain JSON (an undefined field, say), so it is re-encoded as the

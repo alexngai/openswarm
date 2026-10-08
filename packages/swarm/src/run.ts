@@ -10,6 +10,7 @@ import type { MergeOutcome } from 'openswarm-git'
 import { evidenceText, type SwarmGateEvent, type SwarmTamperEvent, type SwarmTaskSnapshot } from './board'
 import type { SwarmJournalEvent } from './journal'
 import type { SwarmMessageSnapshot } from './mailbox'
+import type { RunMetrics } from './metrics'
 import type { TeamResult, TeamSpec } from './types'
 
 export type SwarmRunStatus = 'running' | 'finished' | 'failed' | 'interrupted'
@@ -24,8 +25,12 @@ export interface SwarmRunRecord {
   readonly writer: { readonly pid: number; readonly host: string; readonly incarnation: string }
   readonly startedAt: number
   readonly endedAt?: number
+  /** How its work lands (docs/05 B4): merged from worktrees by the sequential queue or the train; absent, in place. */
+  readonly landing?: 'queue' | 'train'
+  /** Its member runs journal their usage (`swarm/usage`, docs/05 B5); absent on a run from before. */
+  readonly usageJournaled?: true
   readonly error?: string
-  readonly result?: TeamResult & { git?: MergeOutcome }
+  readonly result?: TeamResult & { git?: MergeOutcome; metrics?: RunMetrics }
   /** A run that failed while the train landed it (docs/05 B2): what had landed by then. */
   readonly git?: MergeOutcome
   readonly spec?: TeamSpec
@@ -57,6 +62,8 @@ export interface SwarmQuestion {
   /** An owner answers any tier; a driver only `low`, and never a consent or approval (§5.3). */
   readonly tier: 'low' | 'high'
   readonly prompt: string
+  /** The task (or train entry) it is about, where it is about one: its landing's evidence lists it (docs/05 B4). */
+  readonly taskId?: string
   readonly options: readonly string[]
   /** Taken on timeout, past the open-question cap, or when the run ends. */
   readonly default: string
@@ -73,7 +80,7 @@ export type SwarmQuestionEvent = { version: 1; question: SwarmQuestion }
 
 /** What a trigger asks; unless it says otherwise, a low-tier escalation. */
 export type SwarmQuestionRequest = Pick<SwarmQuestion, 'trigger' | 'prompt' | 'options' | 'default'> &
-  Partial<Pick<SwarmQuestion, 'kind' | 'tier'>>
+  Partial<Pick<SwarmQuestion, 'kind' | 'tier' | 'taskId'>>
 
 /**
  * Raise a question and resolve its answer, one of its options. `onClosed`

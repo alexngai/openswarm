@@ -321,6 +321,24 @@ export class SwarmGit {
     return Number(stdout.trim())
   }
 
+  /**
+   * What `branch` changes since its merge base with `from` (`git diff
+   * --numstat from...branch`): the files, and lines added and removed; a
+   * binary file counts no lines. A landing's diff (docs/05 B4).
+   */
+  async diffStat(from: string, branch: string): Promise<{ files: string[]; insertions: number; deletions: number }> {
+    const { stdout } = await this.git(this.options.repoRoot, 'diff', '--numstat', '--no-renames', `${from}...${branch}`)
+    const stat = { files: [] as string[], insertions: 0, deletions: 0 }
+    for (const line of stdout.split('\n')) {
+      const [added, removed, ...path] = line.split('\t')
+      if (path.length === 0) continue
+      stat.files.push(path.join('\t'))
+      stat.insertions += Number(added) || 0
+      stat.deletions += Number(removed) || 0
+    }
+    return stat
+  }
+
   /** The target worktree the merge queue operates in (created on first use). */
   private async targetWorktree(): Promise<string> {
     if (this.targetPath !== undefined) return this.targetPath

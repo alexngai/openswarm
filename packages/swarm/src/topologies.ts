@@ -4,6 +4,7 @@
  */
 import type { SwarmBoard, SwarmTaskSnapshot, TaskEvidence } from './board'
 import { runGate, targetStatuses, type GateDeps, type GateEvidence, type GateRound, type VerifierLevel } from './gate'
+import type { UsageRole } from './metrics'
 import type { AskQuestion } from './run'
 import type {
   CriticLoopResult,
@@ -28,12 +29,15 @@ import type {
 /**
  * Run one member with one prompt. `taskKey` scopes the run to a shared unit
  * of work: under worktree execution, runs with the same key share a worktree
- * and runs without a key execute at the repo root.
+ * and runs without a key execute at the repo root. `role` says what the run is
+ * for when the caller knows better than the member's place in the team (the
+ * train's repair and resolver), for its journaled usage (docs/05 B5).
  */
 export type RunMember = (
   member: MemberSpec,
   prompt: string,
   taskKey?: string,
+  role?: UsageRole,
 ) => Promise<MemberRunResult>
 
 /**
@@ -229,6 +233,7 @@ export async function runCascade(
         : `${last.result.member} stopped (${last.result.stopReason})`
     const answer = await ask({
       trigger: 'verifier-failure',
+      taskId: CASCADE_TASK_KEY,
       prompt: `cascade task "${head(spec.task, 80)}" failed on all ${spec.tiers.length} tier(s) (${attempts.length} attempt(s)); ${why}. Retry ${spec.tiers[top]!.name} once more with that feedback, or stop?`,
       options: ['stop', 'retry'],
       default: 'stop',
@@ -603,6 +608,7 @@ export async function runBoardWorkers(
               trigger: 'tamper',
               kind: 'escalation',
               tier: 'high',
+              taskId: claimed.id,
               prompt: `task ${claimed.id} "${claimed.subject}": ${member.name} reached for the hidden suite in gate round ${gated.rounds.length} (${[...new Set(signals.map((t) => `${t.signal} in ${t.where}`))].join(', ')}). Abandon the task and its dependents, or continue as a failed attempt?`,
               options: ['abandon', 'continue'],
               default: 'abandon',
@@ -633,6 +639,7 @@ export async function runBoardWorkers(
               {
                 trigger: 'verifier-failure',
                 kind: 'approval',
+                taskId: claimed.id,
                 prompt: `task ${claimed.id} "${claimed.subject}" did not pass its gate in ${attempt} attempt(s), last on ${member.name}: ${why}. Accept it without passing evidence, or abandon it and its dependents?`,
                 options: ['abandon', 'accept'],
                 default: 'abandon',
@@ -664,6 +671,7 @@ export async function runBoardWorkers(
             active > 0 &&
             (await ask({
               trigger: 'task-attempts',
+              taskId: claimed.id,
               prompt: `task "${claimed.subject}" failed ${attempt} of ${allowed} allowed attempt(s), last on ${member.name}: ${head(reason)}. Retry it once more on a sibling, or abandon it and its dependents?`,
               options: ['abandon', 'retry'],
               default: 'abandon',

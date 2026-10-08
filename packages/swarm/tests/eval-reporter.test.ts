@@ -57,7 +57,7 @@ afterEach(() => {
  * logic that lives in this file; the end-to-end JSONL contract is covered by
  * running the real profile.
  */
-function mount(): { fire: (event: unknown) => void; dispose: () => void; lines: () => string } {
+function mount(): { fire: (event: unknown) => void; emit: (name: string, ...args: unknown[]) => void; dispose: () => void; lines: () => string } {
   const chunks: string[] = []
   vi.spyOn(process.stdout, 'write').mockImplementation(((c: string) => { chunks.push(String(c)); return true }) as never)
   const handlers: Record<string, Function[]> = {}
@@ -67,6 +67,7 @@ function mount(): { fire: (event: unknown) => void; dispose: () => void; lines: 
   mounted.push(dispose)
   return {
     fire: (event) => (handlers['session/event'] ?? []).forEach((h) => h({}, event)),
+    emit: (name, ...args) => (handlers[name] ?? []).forEach((h) => h(...args)),
     dispose,
     lines: () => chunks.join(''),
   }
@@ -140,4 +141,21 @@ it('ignores a junk cap rather than treating it as zero', () => {
   fire(assistant('fine', { inputTokens: 999 }))
   // A cap parsed as 0 would abort every run on its first turn.
   expect(exit).not.toHaveBeenCalled()
+})
+
+it("records each swarm run's metrics as it settles, which the parser ignores, ahead of the terminator", () => {
+  process.env['OPENSWARM_JSONL'] = '1'
+  const { fire, emit, lines } = mount()
+  fire(assistant('team done', { inputTokens: 10, outputTokens: 2 }))
+  emit('swarm/metrics', 'run-1a2b3c4d', { version: 1, runId: 'run-1a2b3c4d', landed: 2 })
+  process.emit('beforeExit', 0)
+  // Settled after the terminator: nothing more is written.
+  emit('swarm/metrics', 'run-late', { version: 1 })
+
+  const records = lines().trim().split('\n').map((line) => JSON.parse(line))
+  expect(records.map((r) => r.type)).toEqual(['run_metrics', 'text_delta', 'message_stop'])
+  expect(records[0]).toEqual({ type: 'run_metrics', runId: 'run-1a2b3c4d', metrics: { version: 1, runId: 'run-1a2b3c4d', landed: 2 } })
+  const p = openSwarmParse(lines())
+  expect(p.sawResult).toBe(true)
+  expect(p.output).toBe('team done')
 })

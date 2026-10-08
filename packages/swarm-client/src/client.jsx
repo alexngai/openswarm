@@ -3,7 +3,8 @@
  * over the web carrier (`swarm/*` on dsh's `/api` gateway, owner-only,
  * loopback). It follows one run of this web process by long-polling
  * `swarm/events` and shows its board, open questions and recap, with cancel,
- * answer, steer and a start form.
+ * answer, steer and a start form; its RunMetrics in the Result section and its
+ * landing queue, read-only (docs/05 B4, B5).
  *
  * A throwing factory or `apply` takes down the whole web UI, so `apply` only
  * registers; every call happens inside the component, whose failures render
@@ -60,6 +61,8 @@ function SwarmView({ sessionId, call }) {
   const [runs, setRuns] = useState([])
   const [chosen, setChosen] = useState()
   const [view, setView] = useState()
+  const [landings, setLandings] = useState([])
+  const [metrics, setMetrics] = useState()
   const [error, setError] = useState()
   const runId = chosen ?? pickRun(runs, sessionId)?.id
 
@@ -73,6 +76,8 @@ function SwarmView({ sessionId, call }) {
   // later one waits for the next event; any new event refreshes the view.
   useEffect(() => {
     setView(undefined)
+    setLandings([])
+    setMetrics(undefined)
     setError(undefined)
     if (runId === undefined) return
     const abort = new AbortController()
@@ -91,6 +96,12 @@ function SwarmView({ sessionId, call }) {
           afterSeq = events.at(-1).seq
           setView(next)
           setError(undefined)
+          // Extras, each on its own: one that fails says so, and never hides the board, questions, steer or cancel.
+          const [queue, measured] = await Promise.allSettled([call('landings', { runId }, signal), call('metrics', { runId }, signal)])
+          if (queue.status === 'fulfilled') setLandings(queue.value.landings)
+          if (measured.status === 'fulfilled') setMetrics(measured.value.rows)
+          const failed = [queue, measured].find((settled) => settled.status === 'rejected')
+          if (failed !== undefined && !signal.aborted) setError(message(failed.reason))
           if (next.run.status !== 'running') return void loadRuns()
         } catch (e) {
           if (signal.aborted) return
@@ -142,13 +153,15 @@ function SwarmView({ sessionId, call }) {
                 </p>
               )}
               {view.run.error !== undefined && <p className="osw-error">{view.run.error}</p>}
-              {result !== undefined && (
+              {(result !== undefined || metrics !== undefined) && (
                 <details className="osw-section">
                   <summary>Result</summary>
-                  <pre className="osw-result">{result}</pre>
+                  {result !== undefined && <pre className="osw-result">{result}</pre>}
+                  {metrics !== undefined && <Metrics rows={metrics} />}
                 </details>
               )}
               <Board tasks={view.tasks} />
+              <Landings landings={landings} />
               <Questions questions={openQuestions(view)} answer={(questionId, answer) => act('answer', { questionId, answer })} />
               {running && <Steer key={view.run.id} members={memberNames(view)} steer={(to, text) => call('steer', { runId, to, text })} />}
               <Recap lines={view.recap} />
@@ -195,6 +208,36 @@ function Board({ tasks }) {
           </tbody>
         </table>
       )}
+    </section>
+  )
+}
+
+function Metrics({ rows }) {
+  return (
+    <table className="osw-table osw-metrics">
+      <tbody>
+        {rows.map(([label, value]) => (
+          <tr key={label}>
+            <th className="osw-mono">{label}</th>
+            <td>{value}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+/** The landing queue, highest risk first, as the server orders it. Read-only: reprioritize, retain and take over are not built. */
+function Landings({ landings }) {
+  if (landings.length === 0) return null
+  return (
+    <section className="osw-section">
+      <h3>Landings</h3>
+      {landings.map((landing) => (
+        <pre key={`${landing.key}-${landing.at}`} className={`osw-landing osw-risk-${landing.risk}`}>
+          {landing.text.join('\n')}
+        </pre>
+      ))}
     </section>
   )
 }

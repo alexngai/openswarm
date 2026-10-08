@@ -199,6 +199,11 @@ Control (runs under <home>/runs; start/steer/answer/kill need \`openswarm serve\
   openswarm ps [--json]                       runs: status, topology, age, writer
   openswarm board <run> [--json]              a run's tasks and open question count
   openswarm questions [--run <id>] [--json]   open questions
+  openswarm landings <run> [--json] [--pricing <file>]
+                                              the landing queue: each landing's evidence,
+                                              highest risk first (docs/05 B4)
+  openswarm metrics <run> [--json] [--pricing <file>]
+                                              the run's RunMetrics (docs/05 B5)
   openswarm attach <run> [--no-follow]        board and recap, then follow a live run;
                                               takes over a run whose process died
   openswarm start <"task" | spec.json> [--workers N] [--provider P] [--model M]
@@ -235,7 +240,7 @@ function valueOf(flat, flag) {
 }
 
 /** Handled by packages/cli's runControl, which parses its own flags (docs/05 §6.1). */
-const CONTROL_VERBS = new Set(['ps', 'board', 'questions', 'attach', 'start', 'steer', 'answer', 'kill', 'tasks', 'verifier'])
+const CONTROL_VERBS = new Set(['ps', 'board', 'questions', 'landings', 'metrics', 'attach', 'start', 'steer', 'answer', 'kill', 'tasks', 'verifier'])
 
 /** A control verb, in-process; only --home and --help are the launcher's. */
 function control(argv) {

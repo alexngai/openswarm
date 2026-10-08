@@ -30,13 +30,16 @@
  *
  * Lead-hosted and service-shaped (D3): its own journal, `train.jsonl` beside
  * the run's, and it reaches the run only through the question queue (the
- * protocol's) until Phase D promotes it. Scope-violation questions wait for
- * scopes (C4, deferred by D18).
+ * protocol's) until Phase D promotes it; it reads the run's journal for each
+ * landing's evidence bundle (B4), journaled as `train/evidence` as the entry
+ * lands or is ejected. Scope-violation questions wait for scopes (C4,
+ * deferred by D18).
  */
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { snapshotTree, type MergeOutcome, type SwarmGit, type WorktreeInfo } from 'openswarm-git'
 import type { SwarmTaskSnapshot } from './board'
+import { buildEvidence, type LandingAt, type LandingEvidence } from './evidence'
 import { runGateCommand, type HiddenSuite, type TamperSignal } from './gate'
 import type { SwarmJournal, SwarmJournalEvent } from './journal'
 import type { AskQuestion } from './run'
@@ -95,7 +98,8 @@ export interface TrainEvents {
   'train/verified': TrainVerdict & { version: 1; batch: number; commit: string; entries: string[] }
   /** The verifier could not run on a batch (batch 0: the baseline), twice. */
   'train/unverified': { version: 1; batch: number; commit: string; entries: string[]; error: string }
-  'train/landed': TrainEntryRef & { version: 1; batch: number; commit: string }
+  /** Batch 0, `unverified`: merged by the sequential queue after a failing baseline, as the owner chose. */
+  'train/landed': TrainEntryRef & { version: 1; batch: number; commit: string; unverified?: true }
   'train/ejected': TrainEntryRef & { version: 1; reason: string }
   'train/repair': TrainEntryRef & { version: 1; member: string; attempt: number; failure: string; outcome: 'committed' | 'unchanged' | 'failed'; error?: string }
   'train/resolve': TrainEntryRef & { version: 1; member?: string; tip: string; files: string[]; outcome: 'resolved' | 'gave-up' | 'tamper'; error?: string }
@@ -103,6 +107,8 @@ export interface TrainEvents {
   'train/tamper': TrainEntryRef & { version: 1; member: string; step: 'repair' | 'resolve'; severity: 'incident' | 'advisory'; signals: TamperSignal[] }
   /** The train stopped before every entry landed or was ejected. */
   'train/stopped': { version: 1; reason: string; landed: string[]; withheld: string[] }
+  /** The reviewer's bundle for an entry that landed or was ejected (B4). */
+  'train/evidence': LandingEvidence
 }
 
 export interface TrainDeps {
@@ -117,8 +123,10 @@ export interface TrainDeps {
   owners: ReadonlyMap<string, { member: MemberSpec; prompt: string }>
   /** The team's members: who repairs or resolves an entry no member ran in (one named as its key, else the first). */
   members?: readonly MemberSpec[]
-  /** One member run in the worktree of the key it is given. */
+  /** One member run in the worktree of the key it is given; told which step it is, for its usage. */
   run: RunMember
+  /** The run's journal, which each landing's evidence bundle folds (its task, gate, questions and usage). */
+  runEvents?: () => readonly SwarmJournalEvent[]
   verify: TrainVerify
   /** Under L3: B1's tamper scan of one agent step on the entry at `key` (a {@link HiddenSuite}'s `scan`). */
   scan?: (key: string, step: Parameters<HiddenSuite['scan']>[0]) => Promise<TamperSignal[]>
@@ -295,6 +303,13 @@ export async function landTrain(git: SwarmGit, config: TrainConfig, deps: TrainD
   /** Checked before landing anything, before and after each agent step, and after each answer: an aborted run takes no further step. */
   const live = () => deps.signal?.throwIfAborted()
 
+  /** Journal an entry's evidence bundle (B4) against the tip it landed on; git that cannot say leaves the diff out. */
+  const evidence = async (e: Entry, at: Omit<LandingAt, 'key' | 'branch' | 'at' | 'diff'>) => {
+    const diff = await git.diffStat(at.base, e.worktree.branch).catch(() => undefined)
+    const landing: LandingAt = { key: e.key, branch: e.worktree.branch, at: Date.now(), ...at, ...(diff === undefined ? {} : { diff }) }
+    await deps.journal.append('train/evidence', buildEvidence(landing, deps.runEvents?.() ?? [], deps.journal.events))
+  }
+
   /**
    * Stop early: every entry not landed or ejected is withheld, branch kept;
    * every task worktree goes, as on the run's own abort path.
@@ -329,6 +344,7 @@ export async function landTrain(git: SwarmGit, config: TrainConfig, deps: TrainD
     e.state = 'ejected'
     outcome.ejected.push({ taskKey: e.key, branch: e.worktree.branch, reason })
     await record('train/ejected', { ...(await ref(e)), reason })
+    await evidence(e, { outcome: 'ejected', via: 'train', base: await git.targetTip(), reason })
     report(`train: ${e.key} ejected, branch ${e.worktree.branch} kept: ${reason}`)
     for (const dependent of entries.values()) {
       if (dependent.blockedBy.includes(e.key)) await eject(dependent, `blocked by ejected ${e.key}`)
@@ -385,6 +401,7 @@ export async function landTrain(git: SwarmGit, config: TrainConfig, deps: TrainD
         outcome.merged.push(item)
         outcome.landed.push(item)
         await record('train/landed', { ...refs[i]!, batch: id, commit })
+        await evidence(e, { outcome: 'landed', via: 'train', base: tip, batch: id, commit })
         await git.removeWorktree(e.worktree)
       }
       return
@@ -412,7 +429,7 @@ export async function landTrain(git: SwarmGit, config: TrainConfig, deps: TrainD
     let result: MemberRunResult
     let error: string | undefined
     try {
-      result = await deps.run(member, prompt, e.key)
+      result = await deps.run(member, prompt, e.key, step)
     } catch (err) {
       error = messageOf(err)
       result = { member: member.name, runId: '', text: '', output: [], stopReason: 'error' }
@@ -435,6 +452,7 @@ export async function landTrain(git: SwarmGit, config: TrainConfig, deps: TrainD
       trigger: 'tamper',
       kind: 'escalation',
       tier: 'high',
+      taskId: e.key,
       prompt: `landing ${e.key}: its ${step === 'repair' ? 'repair' : 'resolver'} reached for the hidden suite (${[...new Set(signals.map((s) => `${s.signal} in ${s.where}`))].join(', ')}). Eject it (its branch ${e.worktree.branch} is kept), or continue?`,
       options: ['eject', 'continue'],
       default: 'eject',
@@ -504,6 +522,7 @@ export async function landTrain(git: SwarmGit, config: TrainConfig, deps: TrainD
       if (how !== 'gave-up') return true
       const answer = await ask({
         trigger: 'conflict',
+        taskId: e.key,
         prompt: `landing ${e.key} conflicts with ${target}; resolver gave up. Eject it (its branch ${e.worktree.branch} is kept), or retry the resolver?`,
         options: ['eject', 'retry'],
         default: 'eject',
@@ -527,6 +546,7 @@ export async function landTrain(git: SwarmGit, config: TrainConfig, deps: TrainD
     if (e.repairs >= maxRepairs + e.extra) {
       const answer = await ask({
         trigger: 'verifier-failure',
+        taskId: e.key,
         prompt: `landing ${e.key} on ${target} still fails on the integrated tree (${failure}) after ${e.repairs} repair(s). Eject it (its branch ${e.worktree.branch} is kept), or retry one more repair?`,
         options: ['eject', 'retry'],
         default: 'eject',
@@ -601,7 +621,18 @@ export async function landTrain(git: SwarmGit, config: TrainConfig, deps: TrainD
         await stop(`baseline failing: ${failing}`)
         return result()
       }
+      // Counted past the tip before the queue moves it.
+      const refs = new Map(await Promise.all(byPriority().map(async (e) => [e.key, await ref(e)] as const)))
       const queued = await git.mergeAll()
+      const merged = await git.targetTip()
+      // Journaled as landings, and given evidence, like any: unverified, which their bundles say.
+      for (const m of queued.merged) {
+        const e = entries.get(m.taskKey)!
+        e.state = 'landed'
+        await record('train/landed', { ...refs.get(e.key)!, batch: 0, commit: merged, unverified: true })
+        await evidence(e, { outcome: 'landed', via: 'queue', base: tip, unverified: true })
+      }
+      for (const c of queued.conflicts) await evidence(entries.get(c.taskKey)!, { outcome: 'conflicted', via: 'queue', base: merged, unverified: true })
       const reason = `baseline failing (${failing}): merged unverified through the sequential queue`
       await record('train/stopped', { reason, landed: queued.merged.map((m) => m.taskKey), withheld: queued.conflicts.map((c) => c.taskKey) })
       report(`train: ${reason}`)
@@ -660,7 +691,7 @@ export function recapTrain(events: readonly SwarmJournalEvent[], since = -1): st
       line = `${d.batch === 0 ? 'baseline' : `batch ${d.batch}`} unverified: ${first(d.error)}`
     } else if (type === 'train/landed') {
       const d = data as TrainEvents['train/landed']
-      line = `${d.key} landed (batch ${d.batch}, ${d.commit.slice(0, 8)})`
+      line = `${d.key} landed (${d.unverified === true ? 'merged unverified by the queue' : `batch ${d.batch}`}, ${d.commit.slice(0, 8)})`
     } else if (type === 'train/ejected') {
       const d = data as TrainEvents['train/ejected']
       line = `${d.key} ejected, branch ${d.branch} kept: ${d.reason}`

@@ -39,6 +39,8 @@ The CLI side of steering ([docs/05](05-control-plane-redesign.md) §6.1), in `pa
 openswarm ps [--json]                      runs: id, status, topology, age, writer pid
 openswarm board <run> [--json]             tasks (id, status, owner, subject), open question count
 openswarm questions [--run <id>] [--json]  open questions of running runs (or of one run)
+openswarm landings <run> [--json] [--pricing <file>]   the landing queue, highest risk first; see below
+openswarm metrics <run> [--json] [--pricing <file>]    the run's RunMetrics; see below
 openswarm attach <run> [--no-follow]       board and recap; see below
 ```
 
@@ -54,6 +56,20 @@ openswarm kill <run>
 ```
 
 `start` prints the run id. A task becomes the coordinator team `/swarm` builds (default 3 workers); a single word (no spaces) ending in `.json` is read as a `TeamSpec` file. `--provider`/`--model` name the lead's route (a route of the serving profile, e.g. `openai`, `azure`, `bedrock`); omitted, the lead takes the server's default model — the one `openswarm serve` was launched with. The run's questions wait `--question-timeout` ms (default 300000) for `answer`. A refusal from the server is printed as it arrives, led by its code (`NOT_FOUND: …`), with exit 1; usage errors exit 2. `pause`, `resume` and `join` are not implemented yet.
+
+### Landings and metrics
+
+`openswarm landings <run>` is the landing queue ([docs/05](05-control-plane-redesign.md) §6.4, B4): one block per task that landed (through the train, or the sequential queue without it), that the train ejected, or that the queue left conflicted (its branch kept), highest risk first, then oldest. Each block is the evidence a reviewer needs, from the journals alone: why it is high risk, the intent header, the diff against the tip it landed on, the verified level with the gate's evidence and the train's batch verification (levels, counts and command names; never a check's output or a hidden suite's content), its cost in tokens by role, the questions raised about it and who answered, its repairs and resolvers, and any tamper sign. High risk is a human waiver, a partly enforced L3, a tamper sign, a repair or resolver, a merge nothing verified (a train whose target already failed, merged anyway through the queue at the owner's answer), a conflict, or nothing passing at L2 or above; medium is L2; low is a fully enforced L3. It is read-only for now (no reprioritize, retain or take over). The Swarm tab shows the same blocks under Landings; `swarm/landings` serves them to any principal that may read the run.
+
+`openswarm metrics <run>` prints the run's RunMetrics (B5) as a table: landed tasks and their verified levels; tokens (by principal, model and runtime) and dollars; wall clock; the coordination ratio, coordination tokens (reviews, repairs, resolvers, lead and judge runs) over task-work tokens, with the split; steers, answers, restarts, questions by trigger, median time-to-answer; landing rate, clean-merge rate, bisects, conflicts, latency; tasks lost or duplicated against the seeded set; tamper incidents and advisories; cost per landing. A row the journals cannot support reads `— <why>` (`null` with the reason under `unsupported` in `--json`), never 0. The same numbers are on a finished run's result (`TeamResult.metrics`), behind `swarm/metrics`, in the Swarm tab's Result section, and in an eval's JSONL as one `run_metrics` line per settled run.
+
+Dollars need prices; there are none built in. Pass `--pricing <file>`, JSON of $ per million tokens by model id (cached tokens bill as input unless given their own rate):
+
+```
+{ "gpt-5.5": { "input": 5, "output": 30, "cacheRead": 0.5 } }
+```
+
+A served profile prices `swarm/metrics` and the tab from the `openswarm-swarm` row's `pricing` config, the same shape. A model the table lacks leaves dollars `null`, naming it. Usage is journaled per member run (`swarm/usage`) since docs/05 B5, with the model the member's own messages name, so earlier runs report tokens, and their landings, as unrecorded rather than zero. A messaging team's peers keep one session across tasks and journal none yet, so its tokens, dollars, cost per landing and each bundle's cost are unsupported even where the train's repairs journaled some. Only plain `.jsonl` session logs are read; a member composition writing `compression: zstd` would count nothing.
 
 ### Mirroring a run into opentasks
 
@@ -495,7 +511,11 @@ helper as you against a temp store by injecting it in code
   - `swarm/runs {} → { runs: [{ id, status, topology, parentSessionId, writer, startedAt, endedAt?, error?, result?, spec? }] }`, read from the run journals, so it survives a server restart.
   - `swarm/view { runId, since? } → { run, tasks, questions, recap }`.
   - `swarm/events { runId, afterSeq?, waitMs? } → { events }`: the run's journal events after `afterSeq` (default -1). For a run live in this server, a poll with nothing new waits up to `waitMs` (default 0, at most 30000) for the next event, so polling with the last `seq` follows a run.
-  - `swarm/questions { runId? } → { questions: [{ runId, id, trigger, kind, tier, prompt, options, default, status, raisedAt }] }`: the open questions of every run live in this server, or of one run (a bound principal's own).
+  - `swarm/questions { runId? } → { questions: [{ runId, id, trigger, kind, tier, prompt, options, default, status, raisedAt, taskId? }] }`: the open questions of every run live in this server, or of one run (a bound principal's own). `taskId` names the task or train entry a question is about, where it is about one.
+  - `swarm/landings { runId } → { landings: [{ …bundle, text }] }`: the run's landing queue ([docs/05](05-control-plane-redesign.md) B4), highest risk first, each evidence bundle with its `openswarm landings` block as `text` lines. Read-only.
+  - `swarm/metrics { runId } → { metrics, rows }`: the run's RunMetrics (B5), and the `[row, value]` text pairs `openswarm metrics` prints; priced from the `openswarm-swarm` row's `pricing`.
+
+  The event stream is additive since B4/B5: besides the run, board, mailbox, steer, question, gate and tamper events, a run's journal now carries `swarm/usage` (one per member run, as it settles: member, role, task key, runtime, provider, model, token counts), `swarm/restart` (a dead messaging member restarted on its task) and, without the train, `swarm/evidence` (a merged or conflicted task's bundle); the run record gains `landing` and `usageJournaled`. A member run's usage is journaled before what follows from it, so a task's `completed` snapshot comes after its member's usage, and a cancelled run's `failed` record after the aborted members' usage: a client following `swarm/events` should skip types it does not know, not stop at them. The train's own journal (`train.jsonl`) gains `train/evidence`.
 - Direction:
   - `swarm/start { spec, provider?, model?, worktrees?, questionTimeoutMs? } → { runId }`; the connection that starts the run gets a `swarm.runFinished` notification carrying the `TeamResult` (or `error`). The lead's route fills a missing `provider` or `model` from the harness's default model (`ctx.agentDefaultModel`, the profile's `agent-default-model` row), which members inherit. The run's questions wait `questionTimeoutMs` (default 300000) for an answer.
   - `swarm/steer { runId, to, text } → { delivery }`: a member of a messaging peer-team; `immediate` (next step boundary) under `worktrees`, else `enqueue` (its next turn). Other topologies have no addressable members.

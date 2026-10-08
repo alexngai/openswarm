@@ -241,11 +241,13 @@ it('swarm/events long-polls a live run, and swarm/cancel fails one', async () =>
     seen.push(...events)
     polls++
   }
-  expect(seen.map((e) => e.seq)).toEqual([0, 1, 2, 3, 4])
-  expect(seen.map((e) => e.data.run?.status ?? e.data.task.status)).toEqual([
+  expect(seen.map((e) => e.seq)).toEqual([0, 1, 2, 3, 4, 5])
+  // The member run journals its usage (docs/05 B5) before its task completes.
+  expect(seen.map((e) => e.data.run?.status ?? e.data.task?.status ?? e.type)).toEqual([
     'running',
     'pending',
     'in_progress',
+    'swarm/usage',
     'completed',
     'finished',
   ])
@@ -260,13 +262,16 @@ it('swarm/events long-polls a live run, and swarm/cancel fails one', async () =>
   expect(await owner.request('swarm/events', { runId: stuck, afterSeq: 0, waitMs: 300 })).toEqual({ events: [] })
   expect(Date.now() - t0).toBeGreaterThanOrEqual(250)
 
-  // Cancel: the run records failed, and a poll waiting on it hears so.
+  // Cancel: the run records failed, and a poll waiting on it hears so, after
+  // the aborted member's usage (docs/05 B5).
   const waiting = owner.request('swarm/events', { runId: stuck, afterSeq: 0, waitMs: 10_000 })
   expect(await owner.request('swarm/cancel', { runId: stuck })).toEqual({ cancelled: true })
-  const { events } = await waiting
-  expect(events.map((e: any) => [e.type, e.data.run.status, e.data.run.error])).toEqual([
-    ['swarm/run', 'failed', `run ${stuck} cancelled`],
-  ])
+  const heard: any[] = (await waiting).events
+  while (!heard.some((e) => e.type === 'swarm/run')) {
+    heard.push(...(await owner.request('swarm/events', { runId: stuck, afterSeq: heard.at(-1).seq, waitMs: 10_000 })).events)
+  }
+  expect(heard.map((e) => e.type)).toEqual(['swarm/usage', 'swarm/run'])
+  expect([heard[1].data.run.status, heard[1].data.run.error]).toEqual(['failed', `run ${stuck} cancelled`])
   expect((await runFinished(owner, stuck)).error).toBe(`run ${stuck} cancelled`)
   expect((await owner.request('swarm/runs')).runs.find((r: any) => r.id === stuck)).toMatchObject({
     status: 'failed',

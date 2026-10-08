@@ -49,6 +49,12 @@ it("serves the swarm protocol as the owner through dsh's gateway", async () => {
   expect(seen.at(-1).data.run.result.results[0].text).toContain('web-answer')
   expect((await call('view', { runId })).run).toMatchObject({ id: runId, status: 'finished' })
   expect((await call('runs', {})).runs.map((r: any) => [r.id, r.status])).toEqual([[runId, 'finished']])
+  // The landing queue and RunMetrics (docs/05 B4, B5): an in-process fanout lands nothing, but spent tokens.
+  expect(await call('landings', { runId })).toEqual({ landings: [] })
+  const { metrics, rows } = await call('metrics', { runId })
+  // One mock turn: 3 prompt tokens, one completion token per character of 'web-answer', all the member's.
+  expect(metrics).toMatchObject({ runId, landed: null, tokens: { total: 13, calls: 1, byPrincipal: { a: 13 }, byModel: { 'mock-model': 13 } } })
+  expect(rows).toContainEqual(['landed', "— nothing lands: the run's members work in place, without worktrees, and it has no board"])
 
   // Protocol refusals keep their code; the gateway checks args; tokens stay on the socket.
   await expect(call('steer', { runId: 'run-nope', to: 'a', text: 'hi' })).rejects.toMatchObject({

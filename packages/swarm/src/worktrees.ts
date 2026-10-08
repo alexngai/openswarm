@@ -9,7 +9,8 @@
  * (judge, plan, synthesis) execute at the repo root. On finalize, dirty task
  * worktrees are auto-committed (configurable) and the merge queue, or the
  * train when configured (docs/05 B2), folds task branches into the target
- * branch — never the user's checkout.
+ * branch — never the user's checkout. Each member run keeps its session logs
+ * under a root of its own, so the usage they hold is its own (docs/05 B5).
  */
 import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
@@ -21,6 +22,8 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import * as SdkProvider from '@deepseek-ai/dsh-subagent-dsh-sdk'
 import type { SubagentRun } from '@deepseek-ai/dsh-subagent'
 import { SwarmGit, withSnapshotClone, type MergeOutcome } from 'openswarm-git'
+import type { DiffSummary } from './evidence'
+import { usageFromLogs, type RecordUsage, type UsageRole } from './metrics'
 import { landTrain, type TrainConfig, type TrainDeps } from './train'
 import type { MemberRunResult, MemberSpec } from './types'
 import type { RunTeamOptions } from './index'
@@ -274,6 +277,8 @@ export class WorktreeRun {
     private readonly ctx: Context,
     private readonly options: WorktreeTeamOptions,
     onProgress?: (line: string) => void,
+    /** Journals each member run's usage, read back from its session logs. */
+    private readonly onUsage?: RecordUsage,
   ) {
     this.slots = new Slots(options.maxConcurrent ?? 8)
     this.git = new SwarmGit({
@@ -293,13 +298,14 @@ export class WorktreeRun {
     prompt: string,
     taskKey: string | undefined,
     run: RunTeamOptions,
+    role?: UsageRole,
   ): Promise<MemberRunResult> {
     // Wait for a harness slot before touching git or spawning anything, so a
     // large fanout queues instead of creating N worktrees and N subprocesses
     // up front.
     await this.slots.acquire()
     try {
-      return await this.runMemberInSlot(member, prompt, taskKey, run)
+      return await this.runMemberInSlot(member, prompt, taskKey, run, role)
     } finally {
       this.slots.release()
     }
@@ -310,20 +316,63 @@ export class WorktreeRun {
     prompt: string,
     taskKey: string | undefined,
     run: RunTeamOptions,
+    role?: UsageRole,
   ): Promise<MemberRunResult> {
     // Keyless runs (judge/synthesis) get a throwaway detached worktree, never
     // the user's checkout — the member harness carries write tools, so running
     // in repoRoot would let a model mutate the working tree.
     const cwd = taskKey === undefined ? await this.git.scratch() : (await this.worktree(taskKey)).path
     if (taskKey !== undefined && !this.owners.has(taskKey)) this.owners.set(taskKey, { member, prompt })
-    return runMemberProcess(this.ctx, member, prompt, {
-      cwd,
-      env: this.memberEnv(),
-      parent: run.parent,
-      ...(run.signal === undefined ? {} : { signal: run.signal }),
-      ...(this.options.member === undefined ? {} : { config: this.options.member }),
-      providerName: `swarm-sdk-${this.teamId}-${this.seq++}`,
-    })
+    return this.runProcess(member, prompt, cwd, run, this.memberEnv(), this.options.member, taskKey, role)
+  }
+
+  /**
+   * One member subprocess, its session logs under a root of its own, whose
+   * usage is journaled through `onUsage` however the run ends (docs/05 B5).
+   */
+  private async runProcess(
+    member: MemberSpec,
+    prompt: string,
+    cwd: string,
+    run: RunTeamOptions,
+    env: Record<string, string>,
+    config: WorktreeMemberConfig | undefined,
+    taskKey?: string,
+    role?: UsageRole,
+  ): Promise<MemberRunResult> {
+    const providerName = `swarm-sdk-${this.teamId}-${this.seq++}`
+    const sessions = join(env['DSH_SESSION_ROOT']!, providerName)
+    const startedAt = Date.now()
+    let runId = ''
+    try {
+      const result = await runMemberProcess(this.ctx, member, prompt, {
+        cwd,
+        env: { ...env, DSH_SESSION_ROOT: sessions },
+        parent: run.parent,
+        ...(run.signal === undefined ? {} : { signal: run.signal }),
+        ...(config === undefined ? {} : { config }),
+        providerName,
+      })
+      runId = result.runId
+      return result
+    } finally {
+      // The route its messages name, else the one it was launched on.
+      const { usage, provider, model = member.agentOptions?.model ?? config?.model ?? env['DSH_MODEL'] } = usageFromLogs(sessions)
+      await this.onUsage
+        ?.({
+          member: member.name,
+          ...(role === undefined ? {} : { role }),
+          ...(taskKey === undefined ? {} : { taskKey }),
+          runtime: 'dsh:sdk',
+          provider: provider ?? member.agentOptions?.provider ?? config?.provider ?? 'openai',
+          ...(model === undefined ? {} : { model }),
+          runId,
+          usage,
+          startedAt,
+        })
+        // The member's own result or error stands; a journal that cannot append fails the run's record anyway.
+        .catch(() => undefined)
+    }
   }
 
   /**
@@ -359,18 +408,27 @@ export class WorktreeRun {
     await this.slots.acquire()
     try {
       return await withSnapshotClone(cwd, commit, (clone) =>
-        runMemberProcess(this.ctx, member, prompt, {
-          cwd: clone,
-          env: memberEnvOf({ ...cfg, env: { ...cfg.env, OPENSWARM_MEMBER_SANDBOX: sandbox } }, this.teamId),
-          parent: run.parent,
-          ...(run.signal === undefined ? {} : { signal: run.signal }),
-          config: { ...cfg, configPath: reviewMemberConfig() },
-          providerName: `swarm-sdk-${this.teamId}-${this.seq++}`,
-        }),
+        this.runProcess(
+          member,
+          prompt,
+          clone,
+          run,
+          memberEnvOf({ ...cfg, env: { ...cfg.env, OPENSWARM_MEMBER_SANDBOX: sandbox } }, this.teamId),
+          { ...cfg, configPath: reviewMemberConfig() },
+          key,
+          'review',
+        ),
       )
     } finally {
       this.slots.release()
     }
+  }
+
+  /** What a merged task branch changes against the base its worktree was cut from, and that base: a queue landing's diff (docs/05 B4). */
+  async landingDiff(branch: string): Promise<{ base: string; diff?: DiffSummary }> {
+    const base = await this.git.baseCommit()
+    const diff = await this.git.diffStat(base, branch).catch(() => undefined)
+    return { base, ...(diff === undefined ? {} : { diff }) }
   }
 
   /** Put the worktree at `key` back to a gate snapshot commit (docs/05 B6b): a tree the gate owns. */
@@ -451,7 +509,7 @@ export class WorktreeRun {
         return await landTrain(this.git, this.options.train, {
           ...deps,
           owners: this.owners,
-          run: (member, prompt, key) => this.runMember(member, prompt, key, run),
+          run: (member, prompt, key, role) => this.runMember(member, prompt, key, run, role),
         })
       } finally {
         await this.git.dispose()

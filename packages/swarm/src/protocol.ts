@@ -8,8 +8,10 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 // Type-only, for the `ctx.agentDefaultModel` Context augmentation.
 import type {} from '@deepseek-ai/dsh-agent-default-model'
+import { landingText } from './evidence'
 import type { RunHandle } from './index'
 import { SwarmJournal, type SwarmJournalEvent } from './journal'
+import { metricsRows } from './metrics'
 import { foldQuestions, foldRun } from './run'
 
 export type Role = 'owner' | 'viewer' | 'driver' | 'member'
@@ -134,6 +136,23 @@ const METHODS: Record<string, Method> = {
             .map((question) => ({ runId: id, ...question })),
         ),
       }
+    },
+  },
+  // Read-only: reprioritizing, retaining or taking over a landing is not built yet (docs/05 §6.1).
+  'swarm/landings': {
+    group: 'state',
+    params: { runId: 'string' },
+    // One read of each journal: the run's (in memory while live) shared with the fold.
+    handle: (ctx, { runId }) => ({
+      landings: ctx.swarm.landings(runId, eventsOf(ctx, runId)).map((landing) => ({ ...landing, text: landingText(landing, ctx.swarm.pricing) })),
+    }),
+  },
+  'swarm/metrics': {
+    group: 'state',
+    params: { runId: 'string' },
+    handle: (ctx, { runId }) => {
+      const metrics = ctx.swarm.metrics(runId, eventsOf(ctx, runId))
+      return { metrics, rows: metricsRows(metrics) }
     },
   },
   'swarm/answer': {

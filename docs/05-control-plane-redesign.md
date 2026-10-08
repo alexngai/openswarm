@@ -781,6 +781,48 @@ queue 5 of 6 with it failing. Still to do: the same comparison through the
 eval harness on a benchmark task set, and scope-violation questions, which
 wait for scopes (C4, deferred by D18).
 
+B4 and B5 are built. Every landing carries an evidence bundle
+(`packages/swarm/src/evidence.ts`), folded from the journals without a member
+call: the task's intent header; its diff (files, lines) against the tip it
+landed on; its verifier levels (the gate's evidence and the train's batch
+verification: levels, counts and command names, never a check's output or a
+hidden suite's content); its cost (the usage of its member runs, reviews,
+repairs and resolvers); the questions raised about it and who answered them
+(a question now names the `taskId` it concerns); and its repairs and
+resolvers. The train journals one as `train/evidence` as an entry lands or is
+ejected (and, when a failing baseline sends the entries through the queue at
+the owner's answer, as `train/landed` marked unverified, with a bundle for
+each merge and conflict); without the train, finalize journals one per merged
+or conflicted task as `swarm/evidence` in the run's journal, its verifier the
+gate's evidence only. A deterministic risk tier orders the landing queue: high
+for a human waiver, a partly enforced L3, a tamper sign, a repair or
+resolver, an unverified merge, a conflict, or a strongest passing verifier
+below L2; medium at L2; low for a fully enforced L3.
+`openswarm landings <run>`, `swarm/landings` (state, so a viewer reads it) and
+a read-only Landings section in the Swarm tab show it; its actions
+(reprioritize, retain, take over the branch) are not built. B5's `RunMetrics`
+(`metrics.ts`) folds the run's journal, the train's and each member run's
+usage, now journaled as `swarm/usage` (an in-process member's from the session
+events, a worktree member's from session logs under a root of its own, each
+with the model its messages name, and journaled however the run ends), into
+every §6.8 row: landed tasks and their level distribution; tokens by
+principal, model and runtime, and wall clock; the coordination ratio with its
+split (reviews, repairs, resolvers, lead and judge runs over task work);
+steers, answers, restarts (now journaled as `swarm/restart`), questions by
+trigger and median time-to-answer; landing rate, clean-merge rate, bisects,
+conflicts and latency; tasks lost or duplicated; tamper incidents and
+advisories; cost per landing. A row the journals cannot support is null with
+its reason, never 0: dollars without a pricing table (`SwarmConfig.pricing`,
+`--pricing`; there are no default prices); a messaging team's tokens, dollars,
+cost per landing and bundle costs (its peers keep one session across tasks, so
+the train steps' usage alone would be partial); a run from before these
+records, whose landings and usage were never journaled; the sequential
+queue's clean-merge rate, bisects and latency. It is on the result (`TeamResult.metrics`), behind
+`openswarm metrics <run>`, `swarm/metrics` and the Swarm tab's Result section,
+and the eval reporter records it as a `run_metrics` line per settled run. Not
+counted yet: the lead's own session turns, which sit outside the run, and a
+diff against scope, which waits for C4.
+
 | # | Work item |
 |---|---|
 | B6 | **Completion gate** (D16, D17): a task closes only with passing evidence, recorded as a `verifies` edge. The evidence is the unit's checker where one exists (contract tests, the tests that import the unit's files), else a **reviewer**: a fresh session given the task's intent and the working tree, told to measure and not fix, whose changes are rolled back and whose report ends in per-target status (the pilot's `eval/pilot/search.mjs` is the prototype). A failing check sends the task back with the report, up to a round cap; the reviewer's "all done" ends the loop early. A round that fails a checker the previous round passed is rolled back to that round (docs/07 §7.1 finding 4); reviewer scores alone do not decide a rollback, since they rank work on one task poorly. The single-agent path gets the gate too |
