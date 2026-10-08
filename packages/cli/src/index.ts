@@ -43,10 +43,15 @@ import SwarmService, {
   activeVerifier,
   type CascadeResult,
   type CoordinatorResult,
+  type FanoutSpec,
   type GateEvidence,
   type GateResult,
   type GateRound,
   type MemberSpec,
+  type PeerTeamSpec,
+  type RunHandle,
+  type SwarmUsageEvent,
+  type WorktreeTeamOptions,
 } from 'openswarm-swarm'
 import { withSnapshotClone } from 'openswarm-git'
 import * as PluginAuthoring from 'openswarm-plugin-authoring'
@@ -202,7 +207,7 @@ export async function runCli(argv: string[], io: CliIo = processIo): Promise<num
   if (!isCascade && !isRun) {
     io.err(
       `usage: openswarm topology cascade --spec <file> [--output <file>] [--trace-output <file>]\n` +
-        `       openswarm run --output-format json --model <m> [--single|--team] "<prompt>"`,
+        `       openswarm run --output-format json --model <m> [--single|--team|--spec <file>] "<prompt>"`,
     )
     return 2
   }
@@ -471,6 +476,7 @@ function foldTeam(sessions: Iterable<UsageTotals>): UsageTotals {
       'cacheWriteInputTokens',
       'totalTokens',
       'calls',
+      'costUsd',
     ] as const) {
       team[key] += totals[key]
     }
@@ -510,6 +516,87 @@ function pilotOf(args: Map<string, string>, selfModify: boolean): { plan: Plan; 
   return { plan: loadPlan(planPath), arm: arm as Arm }
 }
 
+/** A team spec file: a peer-team or fanout spec plus its run's worktree options. */
+interface TeamSpecFile {
+  spec: PeerTeamSpec | FanoutSpec
+  worktrees: Partial<WorktreeTeamOptions>
+}
+
+/**
+ * A headless team (docs/05 B2 exit criterion 1): `--spec <file>`, or
+ * OPENSWARM_TEAM_SPEC for the reason OPENSWARM_SELF_MODIFY exists. The file is
+ * a `peer-team` or `fanout` TeamSpec with its run's `worktrees` options beside
+ * it (`train`, `member`, …; the repo is always the workspace). An env-selected
+ * spec supersedes the `--single`/`--team` swarmkit always emits; only the
+ * explicit flags conflict.
+ */
+function teamSpecOf(args: Map<string, string>, selfModify: boolean, planned: boolean): TeamSpecFile | undefined {
+  const path = args.get('spec') ?? (process.env['OPENSWARM_TEAM_SPEC'] || undefined)
+  if (path === undefined) return undefined
+  if (args.has('spec') && (args.has('team') || args.has('single'))) throw new Error('--spec cannot be combined with --team or --single')
+  if (planned) throw new Error('a team spec (--spec / OPENSWARM_TEAM_SPEC) cannot be combined with plan mode')
+  // As in plan mode: the authoring plugin mounts in THIS process, and the members are subprocesses.
+  if (selfModify) throw new Error('--self-modify has no effect on team-spec members; refusing a no-op arm')
+  const { worktrees = {}, ...spec } = JSON.parse(readFileSync(path, 'utf8'))
+  if (spec.topology !== 'peer-team' && spec.topology !== 'fanout') {
+    throw new Error(`team spec ${path}: topology must be peer-team or fanout (got ${JSON.stringify(spec.topology)})`)
+  }
+  if (!Array.isArray(spec.members) || spec.members.length === 0 || !Array.isArray(spec.tasks)) {
+    throw new Error(`team spec ${path}: needs members and tasks`)
+  }
+  return { spec, worktrees }
+}
+
+/** Whether a team spec runs anything on dsh: a dsh member, or a gate's reviewer (a claude-code member's takes the dsh route too). */
+function needsDshRoute({ spec }: TeamSpecFile): boolean {
+  return spec.members.some((m) => m.runtime !== 'claude-code') || (spec.topology === 'peer-team' && spec.gate !== undefined && spec.gate.review !== false)
+}
+
+/** The branch checked out (`''` on a detached HEAD) and its commit. */
+export interface CheckoutState {
+  branch: string
+  head: string
+}
+
+export function checkoutState(workspace: string): CheckoutState {
+  return {
+    branch: spawnSync('git', ['symbolic-ref', '-q', 'HEAD'], { cwd: workspace, encoding: 'utf8' }).stdout.trim(),
+    head: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: workspace, encoding: 'utf8' }).trim(),
+  }
+}
+
+/**
+ * Bring a team's landed result into the workspace: fast-forward the branch
+ * that was checked out when the run started to the target branch, only when
+ * that branch is still checked out at the commit it was on (never a detached
+ * HEAD or another branch), the workspace is clean, and nothing the
+ * fast-forward writes is an ignored file there (git would overwrite it
+ * without a word). Says what happened, a refusal included; the landed result
+ * stays on the target branch either way.
+ */
+export function fastForward(workspace: string, target: string, start: CheckoutState): string {
+  const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  if (spawnSync('git', ['rev-parse', '--verify', '-q', `refs/heads/${target}`], { cwd: workspace }).status !== 0) return 'nothing landed'
+  const refuse = (why: string) => `refused to fast-forward: ${why}; the landed result is on ${target}`
+  if (start.branch === '') return refuse('the workspace was on a detached HEAD')
+  const now = checkoutState(workspace)
+  if (now.branch !== start.branch) return refuse(`${start.branch} is no longer checked out`)
+  if (now.head !== start.head) return refuse(`${start.branch} moved during the run`)
+  if (git(workspace, 'status', '--porcelain').trim() !== '') return refuse('the workspace is not clean')
+  // Paths from the top, where ls-files lists the whole checkout's ignored files (collapsed to their directories).
+  const top = git(workspace, 'rev-parse', '--show-toplevel').trim()
+  const changed = git(top, 'diff', '-z', '--name-only', '--no-renames', 'HEAD', target).split('\0').filter(Boolean)
+  const ignored = git(top, 'ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--directory').split('\0').filter(Boolean).map((e) => e.replace(/\/$/, ''))
+  const clobbered = changed.find((path) => ignored.some((e) => path === e || path.startsWith(`${e}/`) || e.startsWith(`${path}/`)))
+  if (clobbered !== undefined) return refuse(`it would overwrite ${clobbered}, which is ignored in the workspace`)
+  try {
+    git(workspace, 'merge', '--ff-only', '-q', target)
+    return 'fast-forwarded'
+  } catch (error) {
+    return refuse(`not a fast-forward (${oneLine(String((error as any)?.stderr || (error as Error).message))})`)
+  }
+}
+
 /**
  * The completion gate (docs/05 B6): `--gate [--gate-rounds N] [--gate-check
  * "<cmd>"]... [--gate-level N] [--gate-suite <name>]`, or the OPENSWARM_GATE*
@@ -541,7 +628,9 @@ function gateOf(
     return undefined
   }
   if (args.has('team') || planned) {
-    throw new Error('the gate (--gate / OPENSWARM_GATE=1) covers only the single-agent path so far; it cannot be combined with --team or plan mode')
+    throw new Error(
+      "the gate (--gate / OPENSWARM_GATE=1) covers only the single-agent path; it cannot be combined with --team, plan mode or a team spec (gate a spec's peer-team with its own `gate`)",
+    )
   }
   const rounds = args.get('gate-rounds') ?? (process.env['OPENSWARM_GATE_ROUNDS'] || undefined)
   if (rounds !== undefined && !/^[1-9]\d*$/.test(rounds)) {
@@ -721,7 +810,10 @@ const CAP_POLL_MS = 5_000
  * tool stack, and with the gate (`gateOf`) only closes on passing evidence,
  * one `gate_round` line per round; `--team` runs the coordinator topology;
  * plan mode (`pilotOf`) runs a plan's threads as coordinator teams in
- * worktrees (./pilot.ts).
+ * worktrees (./pilot.ts); a team spec (`teamSpecOf`) runs a peer-team or
+ * fanout as worktree members, lands it (through the train when its
+ * `worktrees.train` says so), fast-forwards a clean workspace to the result,
+ * and reports it in a `team_note` line with the run's metrics.
  *
  * Every terminating path emits `message_stop` — the parser sets its `sawResult`
  * flag ONLY from that line, so a run that exits without one is indistinguishable
@@ -749,9 +841,11 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
   const maxTokens = numericArg(args, 'max-tokens')
   const maxTurns = numericArg(args, 'max-turns')
   const pilot = pilotOf(args, selfModify)
-  const gate = gateOf(argv, args, workspace, pilot !== undefined, io)
-  // Plan-mode members and the gate's reviewer are worktree subprocesses.
-  const memberRoute = pilot !== undefined || (gate !== undefined && gate.commands === undefined) ? memberRouteOf(route) : undefined
+  const team = teamSpecOf(args, selfModify, pilot !== undefined)
+  const gate = gateOf(argv, args, workspace, pilot !== undefined || team !== undefined, io)
+  // Plan-mode members, a team spec's dsh members and the gate's reviewer are worktree subprocesses.
+  const memberRoute =
+    pilot !== undefined || (team !== undefined && needsDshRoute(team)) || (gate !== undefined && gate.commands === undefined) ? memberRouteOf(route) : undefined
 
   /** Set once a cap trips; also the flag that turns the exit into a 3. */
   let exceeded: string | undefined
@@ -773,18 +867,22 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
     onUsage: checkCaps,
   })
   const { ctx, lead, usageBySession } = harness
-  // Ours to choose, so subprocess members' usage (plan mode's, the gate
-  // reviewer's) can be read back (foldSessionLogs).
-  const memberRoot = memberRoute === undefined ? undefined : mkdtempSync(join(tmpdir(), 'openswarm-member-sessions-'))
+  // Ours to choose, so subprocess members' usage (plan mode's, a team's, the
+  // gate reviewer's) can be read back (foldSessionLogs).
+  const memberRoot = memberRoute === undefined && team === undefined ? undefined : mkdtempSync(join(tmpdir(), 'openswarm-member-sessions-'))
   const memberUsage = (): UsageTotals => (memberRoot === undefined ? emptyUsage() : foldSessionLogs(memberRoot))
-  const spentNow = (): UsageTotals => foldTeam([...usageBySession.values(), memberUsage()])
+  /** A team spec's claude-code members, which write no dsh session logs: their usage and dollars as the run journals them. */
+  let claudeUsage = emptyUsage
+  const spentNow = (): UsageTotals => foldTeam([...usageBySession.values(), memberUsage(), claudeUsage()])
   // Member usage never reaches `onUsage`, so caps over subprocess members poll
-  // their logs. ponytail: rereads every log per tick and trips up to one tick
-  // late; tail by byte offset if logs ever get large enough to matter.
+  // their logs and the journal. ponytail: rereads every log per tick and trips
+  // up to one tick late, and a claude-code run counts only once it settles
+  // (its usage is journaled then); tail by byte offset, or stream claude-code
+  // usage, if either ever matters.
   const capPoll =
     memberRoot !== undefined && (maxTokens !== undefined || maxTurns !== undefined)
       ? setInterval(() => {
-          const members = memberUsage()
+          const members = foldTeam([memberUsage(), claudeUsage()])
           checkCaps(foldTeam([...usageBySession.values(), members]), harness.turns() + members.calls)
         }, CAP_POLL_MS)
       : undefined
@@ -794,10 +892,14 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
     io.out(
       JSON.stringify({
         type: 'message_stop',
+        // openSwarmParse reads the first three; the rest ride along for other readers.
         usage: {
           inputTokens: team.inputTokens,
           outputTokens: team.outputTokens,
           cacheReadInputTokens: team.cacheReadInputTokens,
+          cacheWriteInputTokens: team.cacheWriteInputTokens,
+          // What claude-code members reported themselves; dsh members report no dollars.
+          ...(team.costUsd === 0 ? {} : { claudeCodeCostUsd: team.costUsd }),
         },
       }),
     )
@@ -851,6 +953,69 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
       text = `pilot ${pilot.arm}: ${threads.map((t) => `${t.id} ${t.landed}${t.error === undefined ? '' : ` (${t.error})`}`).join('; ')}`
       // Conflicts are data about the arm; only a thread that did not run fails the run.
       completed = threads.every((t) => t.landed !== 'failed')
+    } else if (team !== undefined && memberRoot !== undefined) {
+      // dsh members take the CLI's route, as plan-mode members do; a claude-code member's model is Claude Code's.
+      const members = team.spec.members.map((m) =>
+        m.runtime === 'claude-code' || memberRoute === undefined ? m : { ...m, agentOptions: { ...memberRoute.agentOptions, ...m.agentOptions } },
+      )
+      // The prompt is the whole task; each task's own prompt is its part of it.
+      const tasks = team.spec.tasks.map((t) => ({ ...t, prompt: `${prompt}\n\n${t.prompt}` }))
+      const { member } = team.worktrees
+      // What the landed result may fast-forward: this branch, at this commit.
+      const start = checkoutState(workspace)
+      const handle: RunHandle = await (ctx as any).swarm.start({ ...team.spec, members, tasks }, {
+        parent: lead.agent,
+        signal: controller.signal,
+        onProgress: (line: string) => io.err(line),
+        worktrees: {
+          ...team.worktrees,
+          repoRoot: workspace,
+          // Every member run's logs (tasks, reviews, repairs, resolvers) under memberRoot, which message_stop folds.
+          member: { ...member, env: { ...memberRoute?.env, ...member?.env, DSH_SESSION_ROOT: memberRoot } },
+        },
+      })
+      claudeUsage = () => {
+        const totals = emptyUsage()
+        for (const { type, data } of handle.journal.events) {
+          const run = data as SwarmUsageEvent
+          if (type !== 'swarm/usage' || run.runtime !== 'claude-code') continue
+          totals.inputTokens += run.usage.inputTokens
+          totals.outputTokens += run.usage.outputTokens
+          totals.cacheReadInputTokens += run.usage.cacheReadTokens
+          totals.cacheWriteInputTokens += run.usage.cacheWriteTokens
+          totals.calls += run.usage.calls
+          totals.costUsd += run.costUsd ?? 0
+        }
+        totals.totalTokens = totals.inputTokens + totals.outputTokens + totals.cacheReadInputTokens + totals.cacheWriteInputTokens
+        return totals
+      }
+      const result = await handle.result
+      const git = result.git
+      const landed = (git?.landed ?? git?.merged ?? []).map((l) => l.taskKey)
+      const ejected = (git?.ejected ?? []).map(({ taskKey, reason }) => ({ taskKey, reason }))
+      const withheld = (git?.withheld ?? []).map((w) => w.taskKey)
+      const workspaceNote = git === undefined ? 'nothing landed' : fastForward(workspace, git.targetBranch, start)
+      if (workspaceNote !== 'fast-forwarded') io.err(`openswarm: workspace ${workspaceNote}`)
+      io.out(
+        JSON.stringify({
+          type: 'team_note',
+          runId: handle.id,
+          topology: team.spec.topology,
+          targetBranch: git?.targetBranch ?? null,
+          landed,
+          ejected,
+          withheld,
+          conflicts: (git?.conflicts ?? []).map((c) => c.taskKey),
+          ...(git?.stopped === undefined ? {} : { stopped: git.stopped }),
+          workspace: workspaceNote,
+          metrics: result.metrics ?? null,
+        }),
+      )
+      text =
+        `team ${team.spec.topology} (${handle.id}): ${landed.length} landed, ${ejected.length} ejected, ${withheld.length} withheld` +
+        `${git?.stopped === undefined ? '' : ` (train stopped: ${git.stopped})`}; workspace ${workspaceNote}`
+      // Ejections are data about the run; only a train that stopped short fails it.
+      completed = git?.stopped === undefined
     } else if (args.has('team')) {
       const result = (await (ctx as any).swarm.runTeam(
         coordinatorSpec(prompt, agentOptions, Number(args.get('workers') ?? '2')),
@@ -1008,10 +1173,10 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
   } catch (error) {
     // An aborted run rejects; that is a budget stop, not a failure.
     if (exceeded !== undefined) return stopForBudget()
-    if (pilot === undefined && gate === undefined) throw error
-    // Plan mode and the gate have spent real tokens by now (a failed landing, a
-    // snapshot or review that failed after a round); report them rather than
-    // exiting like a crash.
+    if (pilot === undefined && gate === undefined && team === undefined) throw error
+    // Plan mode, a team spec and the gate have spent real tokens by now (a
+    // failed landing, a snapshot or review that failed after a round); report
+    // them rather than exiting like a crash.
     io.out(JSON.stringify({ type: 'error', message: String(error instanceof Error ? error.message : error) }))
     io.err(String(error instanceof Error ? (error.stack ?? error.message) : error))
     emitStop()

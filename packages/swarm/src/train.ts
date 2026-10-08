@@ -90,7 +90,12 @@ export interface TrainEntryRef {
 
 /** Payloads of the train's journal events, by type. */
 export interface TrainEvents {
-  'train/enqueued': TrainEntryRef & { version: 1; blockedBy: string[]; priority: number; after?: 'repair' | 'resolve' }
+  /**
+   * `tip`: the branch's commit as queued; `created`: its worktree's place in creation order, the order the
+   * sequential queue (SwarmGit.mergeAll) merges in. So the branches can be replayed through the queue as they
+   * were (docs/05 B2 exit criterion 1).
+   */
+  'train/enqueued': TrainEntryRef & { version: 1; tip: string; created: number; blockedBy: string[]; priority: number; after?: 'repair' | 'resolve' }
   /** The target's tip verified alone, before anything lands. */
   'train/baseline': TrainVerdict & { version: 1; tip: string }
   /** One speculative merge: a wave's batch, or a half of `parent` while bisecting it. */
@@ -246,6 +251,8 @@ interface Entry {
   /** Entries that must land first; a blocker with nothing to land is dropped. */
   blockedBy: string[]
   priority: number
+  /** Its worktree's place in creation order. */
+  created: number
   state: EntryState
   /** Repairs dispatched to its member. */
   repairs: number
@@ -351,9 +358,10 @@ export async function landTrain(git: SwarmGit, config: TrainConfig, deps: TrainD
     }
   }
 
-  const enqueue = async (e: Entry, after: 'repair' | 'resolve') => {
+  const enqueue = async (e: Entry, after?: 'repair' | 'resolve') => {
     e.state = 'queued'
-    await record('train/enqueued', { ...(await ref(e)), blockedBy: e.blockedBy, priority: e.priority, after })
+    const tip = await git.revParse(e.worktree.branch)
+    await record('train/enqueued', { ...(await ref(e)), tip, created: e.created, blockedBy: e.blockedBy, priority: e.priority, ...(after === undefined ? {} : { after }) })
   }
 
   /** Culprits and conflicts found this wave, awaiting their agent step. */
@@ -588,6 +596,7 @@ export async function landTrain(git: SwarmGit, config: TrainConfig, deps: TrainD
         worktree,
         blockedBy: [...(at < 0 ? [] : tasks[at]!.blockedBy)],
         priority: at < 0 ? tasks.length + i : at,
+        created: i,
         state: 'queued',
         repairs: 0,
         extra: 0,
@@ -596,7 +605,7 @@ export async function landTrain(git: SwarmGit, config: TrainConfig, deps: TrainD
     if (entries.size === 0) return result()
     for (const e of entries.values()) e.blockedBy = e.blockedBy.filter((id) => entries.has(id))
     const tip = await git.targetTip()
-    for (const e of byPriority()) await record('train/enqueued', { ...(await ref(e)), blockedBy: e.blockedBy, priority: e.priority })
+    for (const e of byPriority()) await enqueue(e)
 
     // The baseline: a target that already fails would make every entry a culprit.
     live()

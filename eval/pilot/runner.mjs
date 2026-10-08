@@ -10,7 +10,11 @@
  * `onethread4` / `onethread8` (f): the same pipeline with one thread owning the whole
  * roadmap, capped at 4 or 8 rounds. A run's arms must share one driver: the CLI,
  * search.mjs or division.mjs. `gated` is the product's own gate on the CLI's single path
- * (docs/05 B6, OPENSWARM_GATE=1).
+ * (docs/05 B6, OPENSWARM_GATE=1). `landtrain` is docs/05 Phase B's exit criterion 1: the CLI
+ * runs a peer-team of two members from a spec generated off the plan (OPENSWARM_TEAM_SPEC), one
+ * board task per thread, landed through the train on the task's check (landing-checks.json); a
+ * last weight-0 checkpoint (landing.mjs) replays today's sequential queue on the same branches
+ * and writes `<host>.landing.json` beside the graded output (landing-report.py reads them).
  *
  * The system under test is a BUILT openswarm checkout on the host (the pilot pins the
  * self-modification line), mounted read-only at /opt/openswarm, with the host's Node at
@@ -68,7 +72,7 @@ if (!MOCK) for (const key of ["AZURE_API_BASE", "AZURE_API_KEY"]) {
 if (!existsSync(join(OPENSWARM_ROOT, "packages/cli/dist/index.js"))) { console.error(`no built openswarm at ${OPENSWARM_ROOT}`); process.exit(2); }
 if (!existsSync("/opt/node/bin/node")) { console.error("no Node at /opt/node on the host"); process.exit(2); }
 if (TASKS.length === 0) { console.error("set ROADMAP_TASKS=<task>[,<task>…] (e.g. opt-4.4.0)"); process.exit(2); }
-const DRIVER = { single: "openswarm", gated: "openswarm", sharded: "openswarm", program: "openswarm", attempt: "search", rounds: "search", selfrounds: "search", divsharded: "division", divprogram: "division", onethread4: "division", onethread8: "division" };
+const DRIVER = { single: "openswarm", gated: "openswarm", sharded: "openswarm", program: "openswarm", landtrain: "openswarm", attempt: "search", rounds: "search", selfrounds: "search", divsharded: "division", divprogram: "division", onethread4: "division", onethread8: "division" };
 for (const arm of ARMS) if (!DRIVER[arm]) { console.error(`unknown arm ${arm}`); process.exit(2); }
 const DRIVERS = new Set(ARMS.map((a) => DRIVER[a]));
 if (DRIVERS.size > 1) { console.error(`arms ${ARMS.join(",")} need different drivers (${[...DRIVERS].join(", ")}); run them apart`); process.exit(2); }
@@ -91,6 +95,28 @@ const ENTRY = "import { runCli } from '/opt/openswarm/packages/cli/dist/index.js
 const phasePassed = (k) =>
   `awk '/^=== Phase ${k}:/{f=1;next} /^=== Phase |^Result:/{f=0} f&&/^(PASSED|FAILED)$/{s=$0} END{exit s=="PASSED"?0:1}' /logs/verifier/stdout.txt`;
 
+const LANDING_CHECKS = JSON.parse(readFileSync(join(HERE, "landing-checks.json"), "utf8"));
+
+/**
+ * The landtrain arm's team: two dsh members on the CLI's route, one board task per plan thread
+ * framed as plan mode frames a thread (the CLI puts the task's instruction ahead of each), the
+ * others after t0, landed through the train on the task's check.
+ */
+function landtrainSpec(name, plan) {
+  const checks = LANDING_CHECKS[name];
+  if (!checks) throw new Error(`${name}: arm landtrain needs a check in landing-checks.json`);
+  return {
+    topology: "peer-team",
+    members: [{ name: "member-0" }, { name: "member-1" }],
+    tasks: plan.threads.map((t, i) => ({
+      subject: t.id,
+      prompt: `## Your thread: ${t.id}\n${t.assignment}\nOther threads own the rest of the roadmap; stay within your assignment.`,
+      ...(i === 0 ? {} : { blockedBy: [0] }),
+    })),
+    worktrees: { train: { checks, batchSize: 4, maxRepairs: 1 } },
+  };
+}
+
 const seedDir = (dir, to) =>
   readdirSync(dir).map((f) => ({ path: `${to}/${f}`, content: readFileSync(join(dir, f), "utf8") }));
 
@@ -109,6 +135,14 @@ function loadTask(name) {
     files.push({ path: "/opt/pilot/plan.json", content: readFileSync(plan, "utf8") });
   }
   if (REF) files.push(...seedDir(join(REFS, name), "/opt/pilot/ref"));
+  const landtrain = ARMS.includes("landtrain");
+  if (landtrain) {
+    if (!existsSync(plan)) throw new Error(`${name}: arm landtrain needs ${plan}`);
+    files.push(
+      { path: "/opt/pilot/spec.json", content: JSON.stringify(landtrainSpec(name, JSON.parse(readFileSync(plan, "utf8"))), null, 1) },
+      { path: "/opt/pilot/landing.mjs", content: readFileSync(join(HERE, "landing.mjs"), "utf8") },
+    );
+  }
 
   return {
     id: `roadmap-bench/${name}`,
@@ -116,11 +150,19 @@ function loadTask(name) {
     prompt: readFileSync(join(dir, "instruction.md"), "utf8"),
     setup: { image, files, initCommands: INIT },
     checkpoints: [
+      // landtrain, weight 0 and first: /app as it is graded (HEAD, then any change), so landing.mjs pairs the
+      // graded reward with the train's landed tree only when /app was that tree, clean.
+      ...(landtrain ? [{ id: "app-state", weight: 0, check: { type: "cmd", cmd:
+        `cd /app && { git rev-parse HEAD; git status --porcelain; } > /verifier-out/${name}.$HOSTNAME.app-state.txt 2>&1; true` } }] : []),
       // Weight 0: runs the sealed tests once; the weighted phase checks below read its output.
       { id: "verifier", weight: 0, check: { type: "cmd", writeFiles: seedDir(join(dir, "tests"), "/tests"), cmd:
         "mkdir -p /logs/verifier && bash /tests/test.sh > /logs/verifier/stdout.txt 2>&1; " +
         `for f in reward.json stdout.txt; do cp /logs/verifier/$f /verifier-out/${name}.$HOSTNAME.$f 2>/dev/null; done; true` } },
       ...weights.map((w, i) => ({ id: `phase-${i + 1}`, weight: w, check: { type: "cmd", cmd: phasePassed(i + 1) } })),
+      // Weight 0 and last, after the graded checks: the counterfactual queue on the same branches.
+      // It swaps /app to the queue's tree for its own test.sh run and restores it; another arm's cell is a no-op.
+      ...(landtrain ? [{ id: "landing", weight: 0, check: { type: "cmd", cmd:
+        `/opt/node/bin/node /opt/pilot/landing.mjs ${name} > /verifier-out/${name}.$HOSTNAME.landing.log 2>&1; true` } }] : []),
     ],
   };
 }
@@ -140,7 +182,8 @@ const harness = harnessOf(
     // The task allows 2h per agent. A search cell is an agent then a reviewer, N times
     // for `rounds`, and a timeout mid-review would grade the reviewer's edits. A division
     // cell runs at most two thread waves of gated rounds, then the landing repairs.
-    timeoutMs: (ARMS.includes("gated") ? 2 * 4 : BIN === "division" ? 2 * Math.max(2 * THREAD_ROUNDS, ARMS.includes("onethread8") ? 8 : 4) + 2 : ARMS.some((a) => a.endsWith("rounds")) ? 2 * Number(process.env.ROADMAP_ROUNDS ?? 4) : SEARCH ? 2 : 1) * 2 * 60 * 60 * 1000,
+    // landtrain: t0, then two waves of threads over two members, then the train's repairs.
+    timeoutMs: (ARMS.includes("gated") ? 2 * 4 : ARMS.includes("landtrain") ? 2 : BIN === "division" ? 2 * Math.max(2 * THREAD_ROUNDS, ARMS.includes("onethread8") ? 8 : 4) + 2 : ARMS.some((a) => a.endsWith("rounds")) ? 2 * Number(process.env.ROADMAP_ROUNDS ?? 4) : SEARCH ? 2 : 1) * 2 * 60 * 60 * 1000,
     // A backstop, not the budget: cache reads count toward it, and the 2h clock is the real cap.
     maxTokens: Number(process.env.ROADMAP_MAX_TOKENS ?? 40_000_000),
     env: {
@@ -158,6 +201,8 @@ const SCAFFOLD = {
   // docs/05 B6's exit criterion 6: the product's own completion gate on the single path.
   // ROADMAP_GATE_SANDBOX=danger-full-access for hosts whose containers cannot sandbox.
   gated: { env: { OPENSWARM_GATE: "1", ...(process.env.ROADMAP_GATE_SANDBOX ? { OPENSWARM_GATE_REVIEWER_SANDBOX: process.env.ROADMAP_GATE_SANDBOX } : {}) } },
+  // docs/05 Phase B exit criterion 1: the team spec loadTask generates, landed through the train.
+  landtrain: { env: { OPENSWARM_TEAM_SPEC: "/opt/pilot/spec.json" } },
   attempt: { env: { PILOT_SEARCH: "review" } },
   rounds: { env: { PILOT_SEARCH: "rounds", PILOT_ROUNDS: process.env.ROADMAP_ROUNDS ?? "4" } },
   selfrounds: { env: { PILOT_SEARCH: "self", PILOT_ROUNDS: process.env.ROADMAP_ROUNDS ?? "4" } },

@@ -682,9 +682,10 @@ item.
 B0 `4511784` (projection), B1 `f671375`, B2+B3 `9efbd8c`, B4+B5
 `d03e622`, R1 `5cca4e7`. Exit criteria: **1** met by keyless tests on a
 fixed branch set (train 6/6 landed and clean against the sequential
-queue's 5/6 landed, 0 clean); the eval-harness run on a task set is still
-to do, with clean-merge rate as the primary measure since the train
-deliberately lands fewer broken branches. **2** needs the operator's
+queue's 5/6 landed, 0 clean); the eval-harness run on a task set is built
+(arm `landtrain`, pre-registered in the B2/B3 note below) and still to
+run: landing rate and clean-merge rate pooled, train ≥ queue on both, the
+clean-merge rate flagged when it does not discriminate. **2** needs the operator's
 one-time `openswarm verifier setup` and the gated probe
 (`OPENSWARM_VERIFIER_E2E=1`). **3** met by keyless tests (a dsh and a
 claude-code member landing through one train, cost by runtime); the live
@@ -794,6 +795,50 @@ a conflict, the train lands 6 of 6 with the integrated tree passing, the
 queue 5 of 6 with it failing. Still to do: the same comparison through the
 eval harness on a benchmark task set, and scope-violation questions, which
 wait for scopes (C4, deferred by D18).
+
+**Exit criterion 1 through the eval harness, pre-registered (2026-10-08,
+revised the same day after review, before any cell runs).** Arm `landtrain`
+(`eval/pilot/runner.mjs`) runs fal-1.3.0, fal-4.1.0, opt-4.4.0, pyg-2.2.0,
+pyg-2.5.0 and vbt-1.3.0, each as a peer-team of two dsh members from a team
+spec (`openswarm run --spec`, or `OPENSWARM_TEAM_SPEC`): one board task per
+plan thread, framed as plan mode frames a thread, the others after t0,
+landed through the train (`batchSize` 4, `maxRepairs` 1) on a cheap
+per-task check (`eval/pilot/landing-checks.json`: an import and compile
+smoke; `tsc --noEmit` for vbt), each shown to pass on its base tree by
+`eval/pilot/landing-base.mjs` before the run. `train/enqueued` now records
+each entry's tip and its worktree's creation order. After the graded
+checks, a weight-0 checkpoint (`eval/pilot/landing.mjs`) replays today's
+sequential queue on the same branches as the train first queued them: from
+the run's base, in today's order (worktree creation order, as
+`SwarmGit.mergeAll` merges), `--no-ff`, a conflict aborted and retained. It
+runs the same check on the tree every landing of either left (the train's
+on each commit it advanced the target to, the queue's after each merge),
+and the held-out test.sh on the queue's tree, with /app swapped to it and
+restored after. **The verdict is exit criterion 1 as written**, pooled over
+every graded cell of the run (`eval/pilot/landing-report.py`): the landing
+rate (landed over branches with commits) **and** the clean-merge rate (the
+landings whose merge left the check passing, over the landings), each
+train ≥ queue. The clean-merge rate is flagged "no discrimination" when no
+queue landing broke the check, since it then cannot tell the two apart; the
+verdict then rests on the landing rate. Each task's worktree is cut from
+the run's base, so sibling threads (t0's contracts and the threads after
+it) conflict when they land, and the landing rate is where the train's
+resolver shows. **Secondary:** the held-out reward of the landed tree,
+paired by cell (the train's is the graded run's own), over the cells whose
+graded /app was the train's landed tree (HEAD at the train's target tip, a
+clean checkout, as the first checkpoint records it); and the train's
+bisects, repairs, ejections and the cells' cost. A cell whose tips are not
+commits in its repo, or whose replay fails other than by a conflict, is an
+error and never scored; one whose queue reward failed keeps its landing
+data. The report gives the cells graded against those expected and lists
+every dropped one with why. No bad commit is planted in the live cells: "a
+planted bad commit is bisected out without blocking its batch-mates" is
+shown by the keyless tests (`train.test.ts`; through the CLI in
+`pilot-cli.e2e.test.ts`) and by any bisect the live cells produce. This
+clean-merge rate is per landing on the landed tree, not RunMetrics'
+(landed with no conflict, repair or resolver, over entries). The seeds are
+fixed in `ROADMAP_SEEDS` before the run starts, and the verdict pools all
+of them.
 
 B4 and B5 are built. Every landing carries an evidence bundle
 (`packages/swarm/src/evidence.ts`), folded from the journals without a member

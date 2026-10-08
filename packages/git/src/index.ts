@@ -15,7 +15,7 @@
  * (docs/05 B2, B3, in openswarm-swarm) builds on the steps below and hands a
  * conflict to a resolver.
  */
-import { execFile } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   appendFileSync,
@@ -138,11 +138,11 @@ export class SwarmGit {
    * checkout, so without this every run leaves them staring at untracked
    * directories they did not create.
    *
-   * `.git/info/exclude` rather than `.gitignore`: it is the per-clone,
-   * untracked ignore file, so we never write to a file the user commits.
-   * Skipped entirely for a custom `worktreeDir` outside the repo (not ours to
-   * ignore) and for a `.git` that is not a real directory (a checkout that is
-   * itself a worktree or submodule), where the path simply does not exist.
+   * `info/exclude` rather than `.gitignore`: it is the per-clone, untracked
+   * ignore file, so we never write to a file the user commits. Found as git
+   * finds it (`--git-path`), so a repo root that is a linked worktree, a
+   * submodule or a subdirectory gets it too. Skipped for a custom
+   * `worktreeDir` outside the repo (not ours to ignore).
    */
   private ensureDir(): void {
     mkdirSync(this.dir, { recursive: true })
@@ -151,12 +151,14 @@ export class SwarmGit {
     const swarmRoot = join(this.options.repoRoot, '.swarm')
     if (!this.dir.startsWith(swarmRoot)) return
     try {
-      const exclude = join(this.options.repoRoot, '.git', 'info', 'exclude')
-      const current = readFileSync(exclude, 'utf8')
+      const where = execFileSync('git', ['rev-parse', '--git-path', 'info/exclude'], { cwd: this.options.repoRoot, encoding: 'utf8' })
+      const exclude = resolve(this.options.repoRoot, where.trim())
+      mkdirSync(dirname(exclude), { recursive: true })
+      const current = existsSync(exclude) ? readFileSync(exclude, 'utf8') : ''
       if (/^\s*\.swarm\/?\s*$/m.test(current)) return
       appendFileSync(exclude, `${current.endsWith('\n') || current === '' ? '' : '\n'}.swarm/\n`)
     } catch {
-      // No standard .git/info/exclude here; nothing to teach.
+      // Not a git checkout git can read; nothing to teach.
     }
   }
 
@@ -397,6 +399,11 @@ export class SwarmGit {
   /** This team's live task worktrees, in creation order. */
   list(): WorktreeInfo[] {
     return [...this.worktrees.values()]
+  }
+
+  /** The commit `ref` names. */
+  async revParse(ref: string): Promise<string> {
+    return (await this.git(this.options.repoRoot, 'rev-parse', ref)).stdout.trim()
   }
 
   /** The target branch's tip, read in its worktree (created on first use). */

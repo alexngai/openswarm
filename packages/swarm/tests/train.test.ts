@@ -114,8 +114,15 @@ it('exit criterion 1: a planted bad commit is bisected out of its batch of 4, it
   const git = new SwarmGit({ repoRoot: root, teamId: 'ec1' })
   await branches(git, { t0: { 'a.txt': 'a\n' }, t1: { 'b.txt': 'b\n' }, t2: { 'bad.txt': 'x\n', 'c.txt': 'c\n' }, t3: { 'd.txt': 'd\n' } })
   const member = scripted(git, (cwd) => rmSync(join(cwd, 'bad.txt')))
+  const tips = git.list().map((w) => sh(root, 'rev-parse', w.branch))
   const { outcome, journal, events, questions } = await land(git, { checks: [BAD] }, { run: member.run })
 
+  // Each entry is journaled with its branch's tip as queued and its worktree's creation order, so the original
+  // branches can be replayed through the queue; the repaired one again with its new tip.
+  expect(events('train/enqueued').map((e) => [e.key, e.tip, e.created, e.after ?? null])).toEqual([
+    ...['t0', 't1', 't2', 't3'].map((key, i) => [key, tips[i], i, null]),
+    ['t2', sh(root, 'rev-parse', 'swarm/ec1/t2'), 2, 'repair'],
+  ])
   // Batch 1 failed once, bisected to t2; t3 landed without waiting for it.
   expect(events('train/batch').map((b) => [b.batch, b.parent ?? null, b.entries.map((e: any) => e.key)])).toEqual([
     [1, null, ['t0', 't1', 't2', 't3']],

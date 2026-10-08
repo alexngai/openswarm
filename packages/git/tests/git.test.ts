@@ -269,6 +269,19 @@ it('the first worktree teaches the repo to ignore .swarm/', async () => {
   expect(lines).toHaveLength(1)
 })
 
+it('.swarm/ is ignored where git looks for it: from a subdirectory and from a linked worktree', async () => {
+  const root = scratchRepo()
+  mkdirSync(join(root, 'sub'))
+  const sub = join(root, 'sub')
+  await new SwarmGit({ repoRoot: sub, teamId: 'in-sub' }).worktree('task-a')
+  expect(execFileSync('git', ['status', '--porcelain'], { cwd: root }).toString()).toBe('')
+
+  const linked = join(mkdtempSync(join(tmpdir(), 'openswarm-linked-')), 'wt')
+  execFileSync('git', ['worktree', 'add', '-q', '--detach', linked], { cwd: root })
+  await new SwarmGit({ repoRoot: linked, teamId: 'in-linked' }).worktree('task-b')
+  expect(execFileSync('git', ['status', '--porcelain'], { cwd: linked }).toString()).toBe('')
+})
+
 /**
  * A checkout with an installed environment, all git-ignored: a dependency
  * tree (with a relative workspace-style symlink), a compiled extension, a

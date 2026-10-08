@@ -557,6 +557,23 @@ Under the sandbox a member also cannot open PTYs (`posix_openpt` is denied), so 
 - **Basic only**: one-shot runs, cancellable: it reports `aborted`, or never starts when the run is already cancelled. A stop sends SIGTERM, then SIGKILL after 5s, to the CLI's process group and the descendants it has at that moment. Claude Code starts its Bash tool and hooks in sessions of their own, so a process one of them starts after the stop, or that detaches from it, can outlive the member until Claude's own shutdown reaps it. A CLI still running 10s after its result is stopped the same way (its result stands), and `claudeTimeoutMs` on the member (else `worktrees.member.claudeTimeoutMs`; default none) bounds a whole run, an error when it fires. Refused before any spend: a messaging peer-team (it needs members that keep one session and take messages mid-run), and an L3 run, a gated task's or the train's hidden suite (its tamper scan reads dsh session logs only, so it cannot read Claude Code transcripts). Every other topology, the completion gate at L1 and L2, and the train at L2 take it, and it repairs or resolves its own train entries as fresh runs in their worktrees.
 - **Cost**: each run journals its usage and the CLI's own `total_cost_usd` as `swarm/usage` with runtime `claude-code`. `openswarm metrics` and `landings` take those dollars as reported and price only the rest from `--pricing`. A run that reported none and that the table cannot price (a cancelled or crashed claude-code run, a dsh run without prices) is counted, and the dollars read `at least $…` with that count (`dollars.unreported` in `--json`): a lower bound, never a reported total dropped to null. A claude-code-only run has dollars without a table.
 
+### A team from the command line
+
+```
+openswarm run --model <m> --spec team.json "<task>"     # or OPENSWARM_TEAM_SPEC=team.json
+```
+
+`team.json` is a `peer-team` or `fanout` spec with its run's worktree options beside it:
+
+```json
+{ "topology": "peer-team",
+  "members": [{ "name": "a" }, { "name": "b" }],
+  "tasks": [{ "subject": "api", "prompt": "…" }, { "subject": "ui", "prompt": "…", "blockedBy": [0] }],
+  "worktrees": { "train": { "checks": ["npm run build"], "batchSize": 4, "maxRepairs": 1 } } }
+```
+
+Members run as worktree members in the current repository; a dsh member takes the CLI's route (`--model`) unless it names its own, as plan-mode members do, and a spec of claude-code members alone needs none. dsh members run `danger-full-access` unless the member sandbox is on (`OPENSWARM_MEMBER_SANDBOX=workspace-write`, or `"worktrees": { "member": { "sandbox": "workspace-write" } }`; see the member sandbox above). The `<task>` goes ahead of every task's prompt. The run lands into a fresh target branch (through the train when `worktrees.train` is set, else the sequential queue). Then the branch checked out when the run started is fast-forwarded to that target, so the checkout holds the landed result, but only when that same branch is still checked out at the same commit (never a detached HEAD or another branch), the checkout is clean, and nothing the fast-forward writes is an ignored file there; otherwise it is refused and the refusal reported (stderr and `team_note`), the result left on the target branch. Output is the headless JSONL: a `team_note` line (run id, target branch, landed, ejected, withheld, what happened to the checkout, the run's metrics), the text summary, and `message_stop` with every member run's usage (tasks, reviews, repairs, resolvers, claude-code runs), cache writes as `cacheWriteInputTokens` and claude-code's own dollars as `claudeCodeCostUsd`. `--max-tokens` and `--max-turns` count them all, a claude-code run once it ends. A spec cannot be combined with `--team`, plan mode or `--gate`; gate a peer-team with its own `gate`.
+
 ## Testing
 
 ```bash
