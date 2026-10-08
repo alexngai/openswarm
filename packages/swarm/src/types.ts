@@ -2,6 +2,7 @@ import type { AgentOptions } from '@deepseek-ai/dsh-agent'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { SubagentStopReason } from '@deepseek-ai/dsh-subagent'
+import type { VerifierLevel } from './gate'
 
 /**
  * One addressable team peer. In-process peers carry the durable continuable
@@ -131,6 +132,9 @@ export interface PeerTask {
   intent?: Intent
   /** This task's gate checks, replacing the team's (`PeerTeamSpec.gate`); an empty list means review mode. */
   checks?: string[]
+  /** This task's verifier level and hidden suite, replacing the team's (docs/05 B1). */
+  minLevel?: VerifierLevel
+  suite?: string
 }
 
 /**
@@ -176,6 +180,18 @@ export interface PeerTeamSpec extends TeamSpecBase {
     checks?: string[]
     /** Whether a task without checks is reviewed (default true); false makes such a task an error. */
     review?: boolean
+    /**
+     * The verifier level every task must reach (docs/05 B1): 1 a reviewer, 2
+     * checks, 3 a hidden suite. The board refuses evidence below it. Unset,
+     * a task reaches whatever its sources give.
+     */
+    minLevel?: VerifierLevel
+    /**
+     * The hidden suite (L3) every task runs, by the name the verifier holds
+     * it under (`openswarm verifier add-suite`). Its checks or the reviewer
+     * then give feedback only.
+     */
+    suite?: string
   }
 }
 

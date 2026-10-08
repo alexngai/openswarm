@@ -1,0 +1,1 @@
+{ "command": "cd {work}/.. && node suite/check.mjs" }

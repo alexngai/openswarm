@@ -319,6 +319,172 @@ This is the path rung 5 runs on — a live cascade using exactly the config abov
 edited this repository's own source, passed this repository's own presubmit
 inside the worktree, and merged. See `packages/swarm/tests/self-modify-live.test.ts`.
 
+## Hidden tests: the L3 verifier
+
+The completion gate ([docs/05](05-control-plane-redesign.md) B6, B1) accepts
+work on the strongest verifier it is given: L1 a reviewer, L2 the task's checks,
+L3 a hidden suite (L0 is no gate; L4, external CI on the train, is not built).
+A hidden suite is one members cannot read: it lives in a store owned by a
+separate, locked OS user with mode 0700, so the kernel refuses a member, which
+runs as you, any read of it. A root-owned helper, run through sudo, is the only
+way in, and it answers with counts.
+
+### Setup
+
+```
+openswarm verifier setup [--node <path>] [--print]
+```
+
+It prints the commands, then runs them with `sudo` (your password, at sudo's
+own prompt; nothing is stored). `--print` stops after printing. It creates:
+
+- the user: `_openswarmverifier` on macOS (hidden, uid under 500, shell
+  `/usr/bin/false`, home `/var/empty`), `openswarm-verifier` on Linux
+  (`useradd --system`, no login, no home). Its primary group is yours, so it
+  can read your repository's ignored environment through a 0750 home;
+- the store, owned by it, 0700: `/Library/Application Support/openswarm-verifier`
+  (macOS), `/var/lib/openswarm-verifier` (Linux);
+- `/usr/local/libexec/openswarm-verifier/`: the helper, its config and its own
+  copy of node, all root-owned;
+- `/etc/sudoers.d/openswarm-verifier`, checked with `visudo -cf` before it is
+  installed: `run`, `list` and `log` as the verifier without a password (the
+  gate needs them unattended), `add-suite` and `remove-suite` with your
+  password every time, so a member (you, without the password) cannot plant a
+  suite whose command reads the store.
+
+Setup refuses to run as root, into a directory that is not root-owned or that
+its group or others can write (up to `/`), or with a node that loads libraries
+from anywhere you can write. Homebrew's node does (`@rpath/libnode`,
+`/opt/homebrew/...`), and the verifier runs a copy of it, so a member could
+replace a library and run as the verifier: pass `--node` an official build
+from nodejs.org, which loads only system libraries. The root script copies
+node into a root-only staging directory first and checks the copy there (its
+sha256 against the one checked before, then its libraries with `/usr/bin/otool`
+or `/usr/bin/ldd`, system directories only) before installing it, so what is
+installed is what was checked; every tool it runs is named by absolute path.
+
+`openswarm verifier status` checks each piece, that the helper answers
+without a password, and whether this host confines a run fully. `openswarm verifier uninstall [--print]` removes the sudoers
+rules first, then the helper, the store with its suites, and the user.
+
+### Adding a suite
+
+A suite is a directory of test files with an `openswarm-suite.json` at its root:
+
+```json
+{ "command": "cd {work} && .venv/bin/python -m pytest -p no:cacheprovider --noconftest --junitxml=report.xml {suite}",
+  "junit": "report.xml", "timeoutMs": 600000 }
+```
+
+`{work}` is a fresh copy of the round's snapshot and `{suite}` the run's copy of
+the suite (both shell-quoted). With `junit` (a path under `{work}`) the counts
+are its test cases; without it the suite counts as one test that passes on exit 0.
+
+```
+openswarm verifier add-suite <name> <dir>   # your password
+openswarm verifier list                      # names and canary ids
+openswarm verifier remove-suite <name>       # your password
+```
+
+A name is 1–64 of `[a-z0-9-]`. The helper refuses an absolute path, `..`, a
+link, a device or a tar over 64 MiB; it appends a random canary comment to each
+test file whose comment syntax it knows (`#`, `//`, `--`; not JSON) and stores
+the files read-only. `list` needs no password, so it shows each canary's id (a
+hash), never the canary.
+
+### Gating at L3
+
+```
+openswarm run --gate --gate-level 3 --gate-suite <name> [--gate-check "<cmd>"] "<task>"
+```
+
+Or `OPENSWARM_GATE=1 OPENSWARM_GATE_LEVEL=3 OPENSWARM_GATE_SUITE=<name>`. A
+suite alone implies L3. `--gate-level N` declares the minimum and is refused
+before any spend when nothing configured reaches it (2 needs `--gate-check`, 3
+needs `--gate-suite`), as is a suite the verifier does not hold. The weaker
+source still runs, for feedback only: the checks if given, else the reviewer.
+For a team, give a `peer-team` spec `gate: { suite, minLevel }`, or `suite` and
+`minLevel` per task; its board refuses to complete a task on evidence below the
+task's level (a human waiver has no level). Levels show in `openswarm board`,
+the recap, the `gate_round` lines and `tasks sync`'s `verifies` edges.
+
+Each round, the helper takes `git archive` of the round's snapshot on stdin
+(`sudo -n -u <user> <helper> run <name> --env-root <repo>`), unpacks it into a
+private 0700 directory, links your repository's ignored environment
+(`node_modules`, `.venv`, `venv`, `dist`, `build`, `target`, `.tox`) in
+read-only, runs only the stored command, deletes the directory, and prints
+`{ passed, total, failed, durationMs, enforcement }` and nothing else. The
+member is told `hidden acceptance suite: F of T failing`, plus the weaker
+source's feedback. A snapshot the helper refuses (a malformed archive, a link
+under a link) fails that round, and the member is told `hidden suite: snapshot
+refused: <why>`. The command gets `HOME` and `TMPDIR` inside its directory and
+a `PATH` of system directories and the helper's node, so use a venv or
+`node_modules` from your repository, not your user-site packages.
+
+`enforcement` is `full` on macOS (Seatbelt: no network, not even localhost;
+writes only in the run's directory; the store hidden but for the run's copy of
+its suite; no shared memory) and on Linux with bwrap (new network, IPC and pid
+namespaces; the store under a tmpfs). Anywhere else it is `partial` (`unshare`
+can still cut the network), and the run goes ahead with the evidence saying so.
+Read `partial` as no confinement of what the suite's code writes: code under
+test runs as the verifier, so it can copy the suite somewhere a member reads it,
+or edit the helper's log. So L3 refuses to start on such a host, before any
+spend. Install bwrap; or set `OPENSWARM_VERIFIER_ALLOW_PARTIAL=1` to run
+anyway, when the evidence is recorded as `level: 3, enforcement: 'partial'`
+and a board counts it as L2. A run that comes back `partial` without that
+(bwrap gone mid-run) ends the gate, never counted as L3.
+
+### Tamper incidents
+
+Before a round is measured, the gate scans the member's tool calls and their
+outputs in that round, the lines its diff adds, and the helper's log. An
+**incident** needs corroboration: a suite's canary anywhere, a helper call
+during the member's turn that the gate did not make (by the member's processes
+or orphaned ones), a command of the member's own aimed by `sudo` at the
+verifier user or helper, or one naming a verifier path that the kernel denied.
+The round is then not measured, so the member learns nothing from it, and the
+gate stops: the single path prints a `tamper` JSONL line (`severity:
+"incident"`) and exits 1; a team journals `swarm/tamper` and asks a high-tier
+`tamper` question, abandon the task and its dependents (the default) or
+continue as a failed attempt. A bare mention of the store's or the helper's
+path or the user's name is **advisory**: journaled (`severity: "advisory"`)
+and the round measured as usual, since anyone can write a name. A repository
+that documents the verifier (OpenSwarm's own) can therefore be gated, and text
+a sibling plants in a file another member reads abandons nothing. Signals
+record what matched (a path, the user's name, a canary's id, a log entry's
+command and caller), never content.
+
+### Limits
+
+- **Root.** All of it rests on members not being root, since root reads any
+  file: L3 refuses to start as root. In eval containers, where members run as
+  root, the grader's held-out tests are the hidden suite instead.
+- **Counts and timing leak a little.** The member learns pass and fail counts
+  and can time the run. The code under test runs in the same process as the
+  tests, so it can read them while it runs and signal through the result: a few
+  bits a round. A member that calls the helper itself is a tamper incident.
+- **The snapshot runs the runner too.** A command that lets the work tree
+  configure it (a `conftest.py`, a runner config file) can be faked by the
+  member's code; write it so the snapshot cannot (`--noconftest`, a config from
+  `{suite}`). L3 hides tests; it does not make a runner unforgeable.
+- **Other channels.** On Linux a pathname Unix socket a member makes
+  world-writable is reachable from the run; on macOS, Mach services are not
+  filtered. Both need code that read the suite while it ran.
+- **The scan is detection; the kernel is the guarantee.** A worktree
+  member's transcript is read from session logs by time, and in-process
+  members share this process's ancestry, so with members in parallel a
+  sibling's helper call can land on another's turn as an incident.
+
+The exit criterion 2 probe needs the real setup:
+`openswarm verifier add-suite probe packages/cli/tests/fixtures/verifier-probe`,
+then `OPENSWARM_VERIFIER_E2E=1 npx vitest run packages/cli/tests/verifier.e2e.test.ts`.
+The verifier is always the installed one, `/usr/bin/sudo -n -u <user>
+<helper>`; no environment variable changes which command runs, since anything
+that could set one (a member editing your shell profile) could swap in a helper
+of its own that says whatever it likes. The keyless tests run a copy of the
+helper as you against a temp store by injecting it in code
+(`injectVerifierForTests`, or `RunTeamOptions.verifier` per run), in-process.
+
 ## The app-server (for UIs, CLIs, programs)
 
 `openswarm serve` binds a newline-delimited JSON-RPC 2.0 endpoint: the socket carrier of the swarm protocol ([docs/05](05-control-plane-redesign.md) §5.3), in front of dsh's SDK session protocol. Connect with `@deepseek-ai/dsh-sdk-protocol`'s `JsonRpcLineTransport`.

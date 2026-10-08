@@ -78,17 +78,17 @@ async function journalRun(runDir: string, pid = process.pid) {
   const flaky = await board.create({ subject: 'flaky', prompt: 'fix the flake' })
 
   let s = await board.claim(schema.id, 'm1', schema.revision)
-  const gate = { member: 'm1', changed: true, kind: 'commands' as const }
+  const gate = { member: 'm1', changed: true, kind: 'commands' as const, level: 2 as const }
   await board.recordGate({ ...gate, taskId: schema.id, round: 1, passed: false, failedCommands: ['npm test'], snapshot: 'aaa1' })
   await board.recordGate({ ...gate, taskId: schema.id, round: 2, passed: true, snapshot: 'aaa2' })
-  s = await board.complete(schema.id, 'm1', s.revision, 'done', { kind: 'commands', passed: true, round: 2, snapshot: 'aaa2' })
+  s = await board.complete(schema.id, 'm1', s.revision, 'done', { kind: 'commands', level: 2, passed: true, round: 2, snapshot: 'aaa2' })
 
   let d = await board.claim(docs.id, 'm1', docs.revision)
-  await board.recordGate({ taskId: docs.id, member: 'm1', round: 1, changed: true, kind: 'review', passed: false, score: 40, snapshot: 'ddd1' })
+  await board.recordGate({ taskId: docs.id, member: 'm1', round: 1, changed: true, kind: 'review', level: 1, passed: false, score: 40, snapshot: 'ddd1' })
   d = await board.complete(docs.id, 'm1', d.revision, 'docs', { kind: 'human', passed: true, by: 'owner' })
 
   const f = await board.claim(flaky.id, 'm2', flaky.revision)
-  await board.recordGate({ taskId: flaky.id, member: 'm2', round: 1, changed: true, kind: 'commands', passed: false, failedCommands: ['npm test'], snapshot: 'fff1' })
+  await board.recordGate({ taskId: flaky.id, member: 'm2', round: 1, changed: true, kind: 'commands', level: 2, passed: false, failedCommands: ['npm test'], snapshot: 'fff1' })
   await board.release(flaky.id, 'm2', f.revision)
 
   const a = await board.claim(api.id, 'm2', api.revision)
@@ -166,12 +166,13 @@ it('mirrors a run into opentasks: context, tasks, edges, statuses, attempts and 
   ])
   expect(attempts[0]!['metadata'].attempt.evidence).toMatchObject({ kind: 'command', ref: 'npm test' })
   const verdicts = await Promise.all(rounds.map(async (e) => (await edges({ to_id: map.attempts[e.seq]!, type: 'verifies' })).map((v) => v['metadata'])))
-  expect(verdicts.map((vs) => vs.map((v) => [v.verdict, v.verifier]))).toEqual([
-    [['fail', 'openswarm-gate:commands']],
-    [['pass', 'openswarm-gate:commands']],
+  // Each gate verdict carries its verifier level (docs/05 §6.4); a waiver is no verifier, so has none.
+  expect(verdicts.map((vs) => vs.map((v) => [v.verdict, v.verifier, v.level]))).toEqual([
+    [['fail', 'openswarm-gate:commands', 2]],
+    [['pass', 'openswarm-gate:commands', 2]],
     // The review failed; a person waived the gate on that attempt.
-    expect.arrayContaining([['fail', 'openswarm-gate:review'], ['pass', 'human:owner']]),
-    [['fail', 'openswarm-gate:commands']],
+    expect.arrayContaining([['fail', 'openswarm-gate:review', 1], ['pass', 'human:owner', undefined]]),
+    [['fail', 'openswarm-gate:commands', 2]],
   ])
   expect(verdicts[1]![0]).toMatchObject({ evidence: { hash: 'aaa2' }, verifiedAt: expect.any(String) })
   expect(await node(map.verifiers['human:owner']!)).toMatchObject({ type: 'context', title: 'human:owner (run-sync)' })
@@ -208,8 +209,8 @@ it('a later sync transitions only what changed: a completion, and the tasks a fa
   const { journal, board, run, a } = await journalRun(runDir)
   await syncRun(runDir, { client })
 
-  await board.recordGate({ taskId: a.id, member: 'm2', round: 1, changed: true, kind: 'commands', passed: true, snapshot: 'bbb1' })
-  await board.complete(a.id, 'm2', a.revision, 'api done', { kind: 'commands', passed: true, round: 1, snapshot: 'bbb1' })
+  await board.recordGate({ taskId: a.id, member: 'm2', round: 1, changed: true, kind: 'commands', level: 2, passed: true, snapshot: 'bbb1' })
+  await board.complete(a.id, 'm2', a.revision, 'api done', { kind: 'commands', level: 2, passed: true, round: 1, snapshot: 'bbb1' })
   await journal.append('swarm/run', { version: 1, run: { ...run, status: 'failed', error: 'swarm board abandoned 1 task(s)', endedAt: Date.now() } } satisfies SwarmRunEvent)
 
   // api: in_progress → complete; flaky: open → abandon. One new attempt and its verdict; the verifier exists.

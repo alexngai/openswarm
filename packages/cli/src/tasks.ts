@@ -270,9 +270,15 @@ export async function syncRun(target: string, { client }: { client: SyncClient }
       const g = e.data as SwarmGateEvent
       const line = gateLine(g)
       const checks = board.get(g.taskId)?.checks ?? spec?.gate?.checks ?? []
+      // A hidden suite is referred to by name only: its content never leaves the verifier.
       const evidence = {
-        kind: g.kind === 'commands' ? 'command' : 'commit',
-        ref: g.kind === 'commands' && checks.length > 0 ? checks.join('\n') : (g.snapshot ?? `${g.taskId} round ${g.round}`),
+        kind: g.kind === 'commands' ? 'command' : g.kind === 'hidden' ? 'test' : 'commit',
+        ref:
+          g.kind === 'commands' && checks.length > 0
+            ? checks.join('\n')
+            : g.kind === 'hidden' && g.suite !== undefined
+              ? `hidden suite ${g.suite}`
+              : (g.snapshot ?? `${g.taskId} round ${g.round}`),
         detail: line,
         ...(g.snapshot === undefined ? {} : { hash: g.snapshot }),
       }
@@ -292,13 +298,18 @@ export async function syncRun(target: string, { client }: { client: SyncClient }
           },
         })
       })
-      // A review that could not run, or a round that changed nothing, was not checked: no verdict.
-      if (g.error !== undefined || (g.round > 1 && !g.changed)) continue
+      // A review or suite that could not run, or a round that changed nothing, was not checked: no verdict.
+      // A tamper round was: it fails.
+      if (g.error !== undefined || (g.round > 1 && !g.changed && g.tamper !== true)) continue
       const name = `openswarm-gate:${g.kind}`
       await step(`${g.taskId} gate round ${g.round} verdict (#${e.seq})`, async () =>
         link(`verifies:${e.seq}`, await verifier(name), map.attempts[e.seq], 'verifies', {
           verdict: g.passed ? 'pass' : 'fail',
           verifier: name,
+          // The verifier level (docs/05 §6.4): what the verdict is worth; a
+          // partly confined L3 run says so, and a board counts it as L2.
+          level: g.level ?? 0,
+          ...(g.enforcement === undefined ? {} : { enforcement: g.enforcement }),
           evidence,
           verifiedAt: new Date(e.time).toISOString(),
         }),

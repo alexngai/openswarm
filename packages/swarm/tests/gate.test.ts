@@ -186,7 +186,7 @@ it('a review that cannot run twice stops the gate unaccepted, without another ag
   expect(result.accepted).toBe(false)
   expect(result.reason).toBe('review unavailable')
   expect(result.rounds).toHaveLength(1)
-  expect(result.rounds[0]!.evidence).toEqual({ kind: 'review', passed: false, score: null, error: 'fatal: unable to read tree' })
+  expect(result.rounds[0]!.evidence).toEqual({ kind: 'review', level: 1, passed: false, score: null, error: 'fatal: unable to read tree' })
   expect(calls).toHaveLength(2)
   expect(prompts).toHaveLength(1)
 })
@@ -311,7 +311,7 @@ it('a later round that changes nothing stops the gate, carrying the evidence bef
 
   expect(result.accepted).toBe(false)
   expect(result.rounds.map((r) => r.changed)).toEqual([true, false])
-  expect(result.rounds[0]!.evidence).toEqual({ kind: 'review', passed: false, score: null })
+  expect(result.rounds[0]!.evidence).toEqual({ kind: 'review', level: 1, passed: false, score: null })
   expect(result.rounds[1]!.evidence).toBe(result.rounds[0]!.evidence)
   expect(calls).toHaveLength(1)
 })

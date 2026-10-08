@@ -724,13 +724,24 @@ is sent back with the failing command, and no gated task in the journal
 completes without passing evidence. Gating messaging teams is refused for
 now: a member's long-lived worktree would carry a failed attempt's edits
 into its next task, and a teammate's message can start a turn during a
-snapshot or rollback.
+snapshot or rollback. B1 is built: evidence records its level (L1
+reviewer, L2 commands, L3 hidden suite), a task or team declares a minimum
+(`minLevel`, `--gate-level`) that the gated board enforces, and a weaker
+source configured beside the accepting one gives feedback only. The L3
+verifier is `openswarm verifier` (docs/03): a round with corroborated signs
+of the member reaching for the suite (a canary, its own denied read or sudo,
+a helper call the gate did not make) is a tamper incident, never measured,
+journaled as `swarm/tamper` and raising a high-tier question; a bare mention
+of the verifier is advisory. A run the host cannot fully confine is not L3. Exit criterion 2's probe
+(`verifier.e2e.test.ts`, `OPENSWARM_VERIFIER_E2E=1`) needs the real setup and
+has not run yet; the keyless suite covers the rest with the helper run as the
+test's own user.
 
 | # | Work item |
 |---|---|
 | B6 | **Completion gate** (D16, D17): a task closes only with passing evidence, recorded as a `verifies` edge. The evidence is the unit's checker where one exists (contract tests, the tests that import the unit's files), else a **reviewer**: a fresh session given the task's intent and the working tree, told to measure and not fix, whose changes are rolled back and whose report ends in per-target status (the pilot's `eval/pilot/search.mjs` is the prototype). A failing check sends the task back with the report, up to a round cap; the reviewer's "all done" ends the loop early. A round that fails a checker the previous round passed is rolled back to that round (docs/07 §7.1 finding 4); reviewer scores alone do not decide a rollback, since they rank work on one task poorly. The single-agent path gets the gate too |
 | B0 | **Projection first** (D12, amended 2026-10-07): `openswarm tasks sync <run> [--watch]` mirrors a run's tasks, statuses, owners and gate evidence into opentasks so other tools see them: a context node per run, a task node per board task (`implements` the run, `blocks` from its blockers), an `attempt` per gate round with a `verifies` edge for its verdict (a human waiver is one from `human:<by>`). One-way: the journal-backed board stays authoritative, and OpenSwarm never claims, completes or reads task state there. The full migration (`board.ts` as an adapter over the daemon, tasks and claims through it) is deferred (docs/01 ledger) because opentasks lacks what the board relies on: run-scoped claim-next, fenced completion, a revision compare-and-set, an enforceable completion gate and daemon autostart from the client; and `ready`/`queryNodes` stop at 100 rows and tag filters misbehave on SQLite |
-| B1 | Verifier levels L2 and L3; verifier environment members cannot read (D4); tamper logging |
+| B1 | Verifier levels L2 and L3; verifier environment members cannot read (D4); tamper logging. *Resolves §10's verifier environment (2026-10-08):* another OS user. A locked system user owns the suite store (0700); a root-owned helper, run through sudo (no password to run, the operator's to add a suite), runs a suite on a snapshot, confined (a host that cannot confine fully is refused, or with the operator's leave counts as L2), and answers with counts only. It protects nothing from root members, so L3 refuses root; eval containers keep the grader's held-out tests |
 | B3 | Integrate and repair (D15): after each landing wave, run the checkers, map failures to owning tasks, dispatch bounded repair tasks to the owners; the resolver (§6.4) becomes the skeleton's agent step for a conflict; scope-violation and conflict questions |
 | B2 | Train class with its own journal: speculative batches, bisect, dependencies, priority; lead-hosted |
 | B4 | Landing evidence bundle; landing queue view |
@@ -1205,9 +1216,8 @@ beating it; either brings back the deferred items it needs.
 - **Package caches under the sandbox**: the per-ecosystem environment that
   redirects caches into temp (Node, Python, Rust), declared in the member
   composition; the A1 prototype confirms toolchains survive it.
-- **Verifier environment**: a container, another host, or another OS user
-  (D4), and how hidden tests reach it; a separate repository the train
-  clones also supports a promoted train on another host.
+- ~~**Verifier environment**~~ **another OS user** (B1, 2026-10-08). How
+  hidden tests reach a promoted train on another host stays open with D.
 - **Question rate cap**: started at 3 open questions per run, beyond which a
   question is recorded `capped` and takes its default; protocol-started runs
   wait 5 minutes for an answer, unattended runs none (A6). Still open: how

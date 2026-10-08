@@ -31,13 +31,19 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import * as LlmOpenAi from 'openswarm-llm-openai'
 import * as LlmAnthropic from 'openswarm-llm-anthropic'
 import SwarmService, {
+  hiddenSuite,
   memberEnvOf,
+  openVerifier,
+  recordToolEvents,
+  refuseRootForL3,
   reviewMemberConfig,
   runGate,
   runMemberProcess,
   targetStatuses,
+  activeVerifier,
   type CascadeResult,
   type CoordinatorResult,
+  type GateEvidence,
   type GateResult,
   type GateRound,
   type MemberSpec,
@@ -506,12 +512,16 @@ function pilotOf(args: Map<string, string>, selfModify: boolean): { plan: Plan; 
 
 /**
  * The completion gate (docs/05 B6): `--gate [--gate-rounds N] [--gate-check
- * "<cmd>"]...`, or the OPENSWARM_GATE* env for the reason OPENSWARM_SELF_MODIFY
- * exists. Checks make it commands mode; without any an independent reviewer
- * measures each round, under the workspace-write sandbox unless
- * OPENSWARM_GATE_REVIEWER_SANDBOX=danger-full-access says otherwise (for hosts
- * that cannot sandbox). B6a gates the single-agent path only, and only in a
- * git work tree, since the gate snapshots through git.
+ * "<cmd>"]... [--gate-level N] [--gate-suite <name>]`, or the OPENSWARM_GATE*
+ * env for the reason OPENSWARM_SELF_MODIFY exists. Checks make it L2; without
+ * any an independent reviewer measures each round (L1), under the
+ * workspace-write sandbox unless OPENSWARM_GATE_REVIEWER_SANDBOX=
+ * danger-full-access says otherwise (for hosts that cannot sandbox). A suite
+ * makes it L3 (docs/05 B1): the verifier's hidden suite accepts, and the
+ * checks or the reviewer give feedback only. `--gate-level` declares the
+ * minimum, refused when nothing configured reaches it. B6a gates the
+ * single-agent path only, and only in a git work tree, since the gate
+ * snapshots through git.
  */
 function gateOf(
   argv: string[],
@@ -519,13 +529,14 @@ function gateOf(
   workspace: string,
   planned: boolean,
   io: CliIo,
-): { maxRounds?: number; commands?: string[]; reviewerSandbox: string } | undefined {
+): { maxRounds?: number; commands?: string[]; minLevel?: 1 | 2 | 3; suite?: string; reviewerSandbox: string } | undefined {
+  const GATE_FLAGS = ['gate-rounds', 'gate-check', 'gate-level', 'gate-suite']
   if (!args.has('gate') && process.env['OPENSWARM_GATE'] !== '1') {
     // A gate option that silently does nothing is the no-op arm again.
-    if (args.has('gate-rounds') || args.has('gate-check')) throw new Error('--gate-rounds and --gate-check need --gate')
+    if (GATE_FLAGS.some((flag) => args.has(flag))) throw new Error(`${GATE_FLAGS.map((f) => `--${f}`).join(', ')} need --gate`)
     // Env may be shared across arms, so only warn: an arm that set these but
     // not OPENSWARM_GATE=1 would otherwise run ungated without a word.
-    const stray = ['OPENSWARM_GATE_ROUNDS', 'OPENSWARM_GATE_CHECK'].filter((name) => process.env[name])
+    const stray = ['OPENSWARM_GATE_ROUNDS', 'OPENSWARM_GATE_CHECK', 'OPENSWARM_GATE_LEVEL', 'OPENSWARM_GATE_SUITE'].filter((name) => process.env[name])
     if (stray.length > 0) io.err(`openswarm: ${stray.join(' and ')} set without OPENSWARM_GATE=1; this run is not gated`)
     return undefined
   }
@@ -553,6 +564,16 @@ function gateOf(
   if (reviewerSandbox !== 'workspace-write' && reviewerSandbox !== 'danger-full-access') {
     throw new Error(`OPENSWARM_GATE_REVIEWER_SANDBOX must be workspace-write or danger-full-access, not "${reviewerSandbox}"`)
   }
+  const suite = args.get('gate-suite') ?? (process.env['OPENSWARM_GATE_SUITE'] || undefined)
+  if (suite !== undefined && !/^[a-z0-9-]{1,64}$/.test(suite)) throw new Error(`--gate-suite takes a suite name, 1-64 of [a-z0-9-] (got "${suite}")`)
+  const level = args.get('gate-level') ?? (process.env['OPENSWARM_GATE_LEVEL'] || undefined)
+  if (level !== undefined && !/^[123]$/.test(level)) {
+    throw new Error(`--gate-level is 1 (reviewer), 2 (checks) or 3 (hidden suite); L4, external CI, is not built (got "${level}")`)
+  }
+  if (level === '3' && suite === undefined) throw new Error('--gate-level 3 needs the hidden suite to run: --gate-suite <name>')
+  if (level === '2' && checks.length === 0 && suite === undefined) throw new Error('--gate-level 2 needs checks: --gate-check "<cmd>"')
+  // Fail before any spend: root reads the store, so a hidden suite hides nothing from it.
+  if (suite !== undefined) refuseRootForL3()
   let inside = false
   try {
     inside = execFileSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: workspace, stdio: ['ignore', 'pipe', 'ignore'] })
@@ -563,7 +584,26 @@ function gateOf(
   return {
     ...(rounds === undefined ? {} : { maxRounds: Number(rounds) }),
     ...(checks.length === 0 ? {} : { commands: checks }),
+    ...(level === undefined ? {} : { minLevel: Number(level) as 1 | 2 | 3 }),
+    ...(suite === undefined ? {} : { suite }),
     reviewerSandbox,
+  }
+}
+
+/**
+ * What one piece of gate evidence told the agent, as `gate_round` fields: the
+ * reviewer's per-target verdicts (with what it could not run) and regressions
+ * as given, the checks that failed, or the hidden suite's counts.
+ */
+function verdictJson(e: GateEvidence) {
+  return {
+    ...(e.targets === undefined ? {} : { targets: targetStatuses(e.targets) }),
+    ...(e.regressions === undefined ? {} : { regressions: e.regressions }),
+    ...(e.failedCommands === undefined ? {} : { failed: e.failedCommands }),
+    ...(e.kind !== 'hidden' ? {} : { suite: e.suite, enforcement: e.enforcement }),
+    ...(e.kind !== 'hidden' || e.total === undefined ? {} : { total: e.total, failedTests: e.failed }),
+    ...(e.refused === undefined ? {} : { refused: e.refused }),
+    ...(e.error === undefined ? {} : { error: e.error }),
   }
 }
 
@@ -580,8 +620,25 @@ const STATUSES = ['done', 'unverifiable', 'partial', 'missing', 'broken']
  */
 function gateRoundLine(round: GateRound): string {
   const e = round.evidence
+  if (e.tamper !== undefined) {
+    return `gate: round ${round.round} L3 tamper incident — not measured (${[...new Set(e.tamper.map((t) => `${t.signal} in ${t.where}`))].join(', ')})`
+  }
   if (round.round > 1 && !round.changed) return `gate: round ${round.round} changed nothing — stopping`
-  if (e.error !== undefined) return `gate: round ${round.round} review unavailable — ${oneLine(e.error)}`
+  if (e.error !== undefined) return `gate: round ${round.round} ${e.kind === 'hidden' ? 'hidden suite' : 'review'} unavailable — ${oneLine(e.error)}`
+  if (e.kind === 'hidden' && e.total === undefined && e.enforcement !== undefined) {
+    return `gate: round ${round.round} L3 hidden suite ${e.suite} — not run as L3 (enforcement ${e.enforcement}: the verifier could not confine it)`
+  }
+  if (e.kind === 'hidden') {
+    const counts = e.refused !== undefined ? `snapshot refused: ${oneLine(e.refused, 120)}` : e.passed ? `${e.total} of ${e.total} passing` : `${e.failed} of ${e.total} failing`
+    const f = round.feedback
+    const fed = f === undefined ? '' : f.error !== undefined ? '; feedback review unavailable' : `; feedback ${evidenceLine(f)}`
+    return `gate: round ${round.round} L3 hidden suite ${e.suite} — ${e.passed ? 'passed' : 'not passed'} (${counts}, enforcement ${e.enforcement}${fed})`
+  }
+  return `gate: round ${round.round} ${evidenceLine(e)}${round.rolledBack === true ? ' (rolled back)' : ''}`
+}
+
+/** L1 or L2 evidence in a few words: what accepted below L3, or the feedback at it. */
+function evidenceLine(e: GateEvidence): string {
   const details: string[] = []
   if (e.kind === 'review') {
     const statuses = (e.targets ?? []).map((t) => String(t?.status))
@@ -598,18 +655,19 @@ function gateRoundLine(round: GateRound): string {
   } else if (e.failedCommands !== undefined) {
     details.push(`failed: ${e.failedCommands.map((c) => oneLine(c, 80)).join(', ')}`)
   }
-  if (round.rolledBack === true) details.push('rolled back')
   const what = e.kind === 'review' ? `review score ${e.score ?? 'unparsed'}` : 'checks'
-  return `gate: round ${round.round} ${what} — ${e.passed ? 'passed' : 'not passed'}${details.length === 0 ? '' : ` (${details.join('; ')})`}`
+  return `L${e.level} ${what} — ${e.passed ? 'passed' : 'not passed'}${details.length === 0 ? '' : ` (${details.join('; ')})`}`
 }
 
 /** The gate's outcome as a human-readable line, for stderr. */
 function gateResultLine(result: GateResult): string {
   const n = result.rounds.length
   const rounds = `${n} round${n === 1 ? '' : 's'}`
-  if (result.accepted) return `gate: accepted after ${rounds}`
+  if (result.accepted) return `gate: accepted at L${result.level} after ${rounds}`
+  if (result.reason === 'tamper') return `gate: stopped — a tamper incident in round ${n}`
+  if (result.reason === 'hidden suite unconfined') return `gate: stopped — the verifier could not confine the hidden suite (OPENSWARM_VERIFIER_ALLOW_PARTIAL=1 runs it as L2)`
   if (result.reason !== undefined) return `gate: stopped — ${result.reason}: ${oneLine(result.rounds.at(-1)?.evidence.error ?? '')}`
-  return `gate: not accepted after ${rounds}`
+  return `gate: not accepted at L${result.level} after ${rounds}`
 }
 
 /**
@@ -801,7 +859,7 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
       text = result.synthesis.text
       completed = result.synthesis.stopReason === 'completed'
     } else if (gate !== undefined) {
-      const { reviewerSandbox, ...limits } = gate
+      const { reviewerSandbox, suite, ...limits } = gate
       // Fail before any spend, and say how to proceed, rather than let every
       // review fail inside a sandbox the host cannot provide.
       const unsandboxable = memberRoute === undefined || reviewerSandbox !== 'workspace-write' ? undefined : sandboxUnavailable(ctx)
@@ -811,11 +869,25 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
             'set OPENSWARM_GATE_REVIEWER_SANDBOX=danger-full-access to run it unsandboxed',
         )
       }
+      // L3 (docs/05 B1): the verifier must hold the suite before any spend.
+      // The agent's tool calls and outputs are recorded for the tamper scan.
+      const verifier = suite === undefined ? undefined : await openVerifier(activeVerifier(), [suite])
+      const toolEvents = verifier === undefined ? undefined : recordToolEvents(ctx)
       const result = await runGate(
         { task: prompt, member: { name: 'agent', agentOptions }, ...limits },
         {
           cwd: workspace,
           signal: controller.signal,
+          ...(verifier === undefined || suite === undefined
+            ? {}
+            : {
+                hidden: hiddenSuite(verifier, {
+                  suite,
+                  cwd: async () => workspace,
+                  envRoot: execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: workspace, encoding: 'utf8' }).trim(),
+                  transcript: (round) => toolEvents!.take(round.runId),
+                }),
+              }),
           // A fresh child of the lead per round and per review, so every one's
           // usage folds into usageBySession: the harness bills the reviews too.
           run: async (member, text) => {
@@ -870,24 +942,31 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
                 changed: round.changed,
                 passed: e.passed,
                 kind: e.kind,
+                level: e.level,
                 score: e.score ?? null,
                 rolledBack: round.rolledBack === true,
-                // What the agent was told: the reviewer's per-target verdicts (with
-                // what it could not run) and regressions as given, or the checks that failed.
-                ...(e.targets === undefined ? {} : { targets: targetStatuses(e.targets) }),
-                ...(e.regressions === undefined ? {} : { regressions: e.regressions }),
-                ...(e.failedCommands === undefined ? {} : { failed: e.failedCommands }),
-                ...(e.error === undefined ? {} : { error: e.error }),
+                ...verdictJson(e),
+                // Under L3, what the weaker source said, which the agent was told too.
+                ...(round.feedback === undefined ? {} : { feedback: { kind: round.feedback.kind, level: round.feedback.level, passed: round.feedback.passed, ...verdictJson(round.feedback) } }),
               }),
             )
+            // What matched, never the content around it (docs/05 §6.4). An
+            // incident ended the gate; advisory signs came with a measured round.
+            const signals = e.tamper ?? round.advisory
+            if (signals !== undefined) {
+              const severity = e.tamper === undefined ? 'advisory' : 'incident'
+              io.out(JSON.stringify({ type: 'tamper', round: round.round, suite: e.suite, severity, signals }))
+              if (severity === 'advisory') io.err(`gate: round ${round.round} advisory — ${[...new Set(signals.map((t) => `${t.signal} in ${t.where}`))].join(', ')}`)
+            }
             io.err(gateRoundLine(round))
           },
         },
-      )
+      ).finally(() => toolEvents?.dispose())
       io.out(
         JSON.stringify({
           type: 'gate',
           accepted: result.accepted,
+          level: result.level,
           rounds: result.rounds.length,
           ...(result.reason === undefined ? {} : { reason: result.reason }),
         }),

@@ -7,7 +7,7 @@
  * Questions the harness raises (A6) are folded the same way, per question id.
  */
 import type { MergeOutcome } from 'openswarm-git'
-import { evidenceText, type SwarmGateEvent, type SwarmTaskSnapshot } from './board'
+import { evidenceText, type SwarmGateEvent, type SwarmTamperEvent, type SwarmTaskSnapshot } from './board'
 import type { SwarmJournalEvent } from './journal'
 import type { SwarmMessageSnapshot } from './mailbox'
 import type { TeamResult, TeamSpec } from './types'
@@ -49,7 +49,7 @@ export type SwarmSteerEvent = {
 export interface SwarmQuestion {
   /** `q-<n>`, unique within its run. */
   readonly id: string
-  readonly trigger: 'stall' | 'restart-budget' | 'task-attempts' | 'verifier-failure'
+  readonly trigger: 'stall' | 'restart-budget' | 'task-attempts' | 'verifier-failure' | 'tamper'
   readonly kind: 'escalation' | 'consent' | 'approval'
   /** An owner answers any tier; a driver only `low`, and never a consent or approval (§5.3). */
   readonly tier: 'low' | 'high'
@@ -160,6 +160,9 @@ export function recapJournal(events: readonly SwarmJournalEvent[], since = -1): 
       else line = `${q.id} capped (${q.trigger}): defaulted to ${q.answer}`
     } else if (type === 'swarm/gate') {
       line = gateLine(data as SwarmGateEvent)
+    } else if (type === 'swarm/tamper') {
+      const t = data as SwarmTamperEvent
+      line = `${t.taskId} tamper ${t.severity ?? 'incident'} in gate round ${t.round} (${t.member}): ${[...new Set(t.signals.map((s) => `${s.signal} in ${s.where}`))].join(', ')}`
     } else if (type === 'swarm/run') {
       const { run } = data as SwarmRunEvent
       const where = `pid ${run.writer.pid} on ${run.writer.host}`
@@ -177,8 +180,18 @@ export function recapJournal(events: readonly SwarmJournalEvent[], since = -1): 
 /** One gate round on a board task as a recap line: the verdict its member was sent back with. */
 export function gateLine(g: SwarmGateEvent): string {
   const at = `${g.taskId} gate round ${g.round} (${g.member})`
+  if (g.tamper === true) return `${at}: L3 tamper incident — not measured`
   if (g.round > 1 && !g.changed) return `${at}: changed nothing — stopping`
-  if (g.error !== undefined) return `${at}: review unavailable — ${g.error.split('\n')[0]!.slice(0, 80)}`
+  if (g.error !== undefined) return `${at}: ${g.kind === 'hidden' ? 'hidden suite' : 'review'} unavailable — ${g.error.split('\n')[0]!.slice(0, 80)}`
+  if (g.kind === 'hidden' && g.total === undefined && g.enforcement !== undefined) {
+    return `${at}: L3 hidden suite ${g.suite} not run as L3 (enforcement ${g.enforcement}: the verifier could not confine it)`
+  }
+  if (g.kind === 'hidden') {
+    const f = g.feedback
+    const fed = f === undefined ? '' : `; feedback L${f.level} ${f.kind === 'review' ? `review score ${f.score ?? 'unparsed'}` : 'checks'} ${f.passed ? 'passed' : 'not passed'}`
+    const counts = g.refused !== undefined ? `snapshot refused: ${g.refused.slice(0, 80)}` : g.passed ? `${g.total} of ${g.total} passing` : `${g.failed} of ${g.total} failing`
+    return `${at}: L3 hidden suite ${g.suite} ${g.passed ? 'passed' : 'not passed'} (${counts}, enforcement ${g.enforcement}${fed})`
+  }
   const details: string[] = []
   const statuses = (g.targets ?? []).map((t) => t.status)
   const counted = [...new Set(statuses)].map((status) => `${statuses.filter((s) => s === status).length} ${status}`)
@@ -189,5 +202,5 @@ export function gateLine(g: SwarmGateEvent): string {
   if (g.failedCommands !== undefined) details.push(`failed: ${g.failedCommands.map((c) => c.slice(0, 80)).join(', ')}`)
   if (g.rolledBack === true) details.push('rolled back')
   const what = g.kind === 'review' ? `review score ${g.score ?? 'unparsed'}` : 'checks'
-  return `${at}: ${what} ${g.passed ? 'passed' : 'not passed'}${details.length === 0 ? '' : ` (${details.join('; ')})`}`
+  return `${at}: L${g.level ?? 0} ${what} ${g.passed ? 'passed' : 'not passed'}${details.length === 0 ? '' : ` (${details.join('; ')})`}`
 }

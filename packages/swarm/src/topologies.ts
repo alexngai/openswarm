@@ -3,7 +3,7 @@
  * stay pure coordination logic over whatever runtime the service wires in.
  */
 import type { SwarmBoard, SwarmTaskSnapshot, TaskEvidence } from './board'
-import { runGate, targetStatuses, type GateDeps, type GateRound } from './gate'
+import { runGate, targetStatuses, type GateDeps, type GateEvidence, type GateRound, type VerifierLevel } from './gate'
 import type { AskQuestion } from './run'
 import type {
   CriticLoopResult,
@@ -380,7 +380,17 @@ export async function seedBoard(board: SwarmBoard, tasks: PeerTeamSpec['tasks'])
       return id
     })
     created.push(
-      (await board.create({ subject: task.subject, prompt: task.prompt, blockedBy, intent: task.intent, checks: task.checks })).id,
+      (
+        await board.create({
+          subject: task.subject,
+          prompt: task.prompt,
+          blockedBy,
+          intent: task.intent,
+          checks: task.checks,
+          minLevel: task.minLevel,
+          suite: task.suite,
+        })
+      ).id,
     )
   }
   return created
@@ -405,12 +415,14 @@ export interface BoardGate {
   rounds?: number
   /** The team's checks; a task's own replace them. None → review mode. */
   checks?: readonly string[]
+  /** The team's verifier level; a task's own replaces it (docs/05 B1). */
+  minLevel?: VerifierLevel
   /** The run's: a cancelled run starts no further gate round. */
   signal?: AbortSignal
   tree: (
     member: MemberSpec,
     claimed: SwarmTaskSnapshot,
-  ) => Pick<GateDeps, 'cwd' | 'review' | 'rollback'> & {
+  ) => Pick<GateDeps, 'cwd' | 'review' | 'rollback' | 'hidden'> & {
     /** After each member round, before the gate measures it: restore the pinned paths, so no round passes by editing them. */
     pin?: () => Promise<void>
   }
@@ -421,12 +433,24 @@ function evidenceOf(round: GateRound): TaskEvidence {
   const e = round.evidence
   return {
     kind: e.kind,
+    level: e.level,
     passed: e.passed,
     round: round.round,
+    ...verdictFields(e),
+    ...(e.enforcement === undefined ? {} : { enforcement: e.enforcement }),
+    snapshot: round.snapshot,
+  }
+}
+
+/** What a piece of gate evidence says, in the fields the journal keeps. */
+function verdictFields(e: GateEvidence) {
+  return {
     ...(e.score === undefined ? {} : { score: e.score }),
     ...(e.targets === undefined ? {} : { targets: targetStatuses(e.targets) }),
     ...(e.failedCommands === undefined ? {} : { failedCommands: e.failedCommands }),
-    snapshot: round.snapshot,
+    ...(e.suite === undefined ? {} : { suite: e.suite }),
+    ...(e.total === undefined ? {} : { total: e.total, failed: e.failed }),
+    ...(e.refused === undefined ? {} : { refused: e.refused }),
   }
 }
 
@@ -513,6 +537,7 @@ export async function runBoardWorkers(
               member,
               ...(gate.rounds === undefined ? {} : { maxRounds: gate.rounds }),
               commands: [...(claimed.checks ?? gate.checks ?? [])],
+              ...((claimed.minLevel ?? gate.minLevel) === undefined ? {} : { minLevel: claimed.minLevel ?? gate.minLevel }),
             },
             {
               ...tree,
@@ -524,33 +549,79 @@ export async function runBoardWorkers(
                 return result
               },
               report,
-              record: ({ round, changed, evidence: e, rolledBack, snapshot }) =>
-                board.recordGate({
+              record: async ({ round, changed, evidence: e, rolledBack, snapshot, feedback: f, advisory }) => {
+                await board.recordGate({
                   taskId: claimed.id,
                   member: member.name,
                   round,
                   changed,
                   kind: e.kind,
+                  level: e.level,
                   passed: e.passed,
-                  ...(e.score === undefined ? {} : { score: e.score }),
-                  ...(e.targets === undefined ? {} : { targets: targetStatuses(e.targets) }),
-                  ...(e.failedCommands === undefined ? {} : { failedCommands: e.failedCommands }),
+                  ...verdictFields(e),
+                  ...(e.enforcement === undefined ? {} : { enforcement: e.enforcement }),
+                  ...(e.tamper === undefined ? {} : { tamper: true }),
+                  ...(f === undefined || f.kind === 'hidden'
+                    ? {}
+                    : {
+                        feedback: {
+                          kind: f.kind,
+                          level: f.kind === 'review' ? 1 : 2,
+                          passed: f.passed,
+                          ...(f.score === undefined ? {} : { score: f.score }),
+                          ...(f.failedCommands === undefined ? {} : { failedCommands: f.failedCommands }),
+                        },
+                      }),
                   ...(rolledBack === true ? { rolledBack } : {}),
                   ...(e.error === undefined ? {} : { error: e.error }),
                   snapshot,
-                }),
+                })
+                const signals = e.tamper ?? advisory
+                if (signals !== undefined) {
+                  await board.recordTamper({
+                    taskId: claimed.id,
+                    member: member.name,
+                    round,
+                    suite: e.suite ?? '',
+                    severity: e.tamper === undefined ? 'advisory' : 'incident',
+                    signals,
+                  })
+                }
+              },
             },
           )
           if (gated.accepted) {
             await closed(gated.final, evidenceOf(gated.rounds.at(-1)!))
             continue
           }
+          if (gated.reason === 'tamper') {
+            // An owner decides, not a default retry: the member reached for the
+            // hidden suite (docs/05 §6.4). Asked while the claim holds. Unless
+            // someone says continue, the task and its dependents are abandoned.
+            const signals = gated.rounds.at(-1)!.evidence.tamper ?? []
+            const answer = await ask({
+              trigger: 'tamper',
+              kind: 'escalation',
+              tier: 'high',
+              prompt: `task ${claimed.id} "${claimed.subject}": ${member.name} reached for the hidden suite in gate round ${gated.rounds.length} (${[...new Set(signals.map((t) => `${t.signal} in ${t.where}`))].join(', ')}). Abandon the task and its dependents, or continue as a failed attempt?`,
+              options: ['abandon', 'continue'],
+              default: 'abandon',
+            }).catch(() => 'abandon')
+            if (answer !== 'continue') {
+              abandon(claimed.id, `tamper incident in gate round ${gated.rounds.length}`)
+              report(`task "${claimed.subject}" abandoned: tamper incident`)
+              await board.release(claimed.id, member.name, claimed.revision).catch(() => undefined)
+              continue
+            }
+          }
           // Not accepted: a failed attempt, but the member is healthy, so it
           // stays in the pool (the catch below is for members that break).
           const why =
             gated.reason === undefined
               ? `not accepted after ${gated.rounds.length} gate round(s)`
-              : `${gated.reason}: ${head(gated.rounds.at(-1)?.evidence.error ?? '')}`
+              : gated.reason === 'tamper'
+                ? `tamper incident in gate round ${gated.rounds.length}`
+                : `${gated.reason}: ${head(gated.rounds.at(-1)?.evidence.error ?? '')}`
           const attempt = (attempts.get(claimed.id) ?? 0) + 1
           attempts.set(claimed.id, attempt)
           if (attempt >= maxTaskAttempts + (extra.get(claimed.id) ?? 0)) {

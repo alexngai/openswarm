@@ -414,15 +414,16 @@ it('--gate: the reviewer measures in its own clone, accepts round 1, and its usa
       changed: false,
       passed: true,
       kind: 'review',
+      level: 1,
       score: 100,
       rolledBack: false,
       targets: [{ target: 1, status: 'done' }],
       regressions: 'none',
     },
-    { type: 'gate', accepted: true, rounds: 1 },
+    { type: 'gate', accepted: true, level: 1, rounds: 1 },
   ])
   // The same, legible on stderr, which the harness does not truncate to its head.
-  expect(errs).toEqual(['gate: round 1 review score 100 — passed (1 done)', 'gate: accepted after 1 round'])
+  expect(errs).toEqual(['gate: round 1 L1 review score 100 — passed (1 done)', 'gate: accepted at L1 after 1 round'])
   const parsed = openSwarmParse(lines.join('\n'))
   expect(parsed.sawResult).toBe(true)
   expect(parsed.output).toContain('all done')
@@ -461,8 +462,8 @@ it('--gate-check makes it commands mode: no reviewer, the check decides', async 
   )
   expect(code).toBe(0)
   expect(gateLines(lines)).toEqual([
-    { type: 'gate_round', round: 1, changed: true, passed: true, kind: 'commands', score: null, rolledBack: false },
-    { type: 'gate', accepted: true, rounds: 1 },
+    { type: 'gate_round', round: 1, changed: true, passed: true, kind: 'commands', level: 2, score: null, rolledBack: false },
+    { type: 'gate', accepted: true, level: 2, rounds: 1 },
   ])
   expect(mock!.requests).toHaveLength(2) // the agent's tool turn and its answer; no review
 }, 60_000)
@@ -499,8 +500,8 @@ it('every --gate-check runs, from repeated flags or one per line of OPENSWARM_GA
   const failing = await run(['--gate-rounds', '1', '--gate-check', 'false', '--gate-check', 'true', '--gate-check', 'exit 3'])
   expect(failing.code).toBe(1)
   expect(failing.gate[0]).toMatchObject({ kind: 'commands', passed: false, failed: ['false', 'exit 3'] })
-  expect(failing.gate.at(-1)).toEqual({ type: 'gate', accepted: false, rounds: 1 })
-  expect(failing.errs).toEqual(['gate: round 1 checks — not passed (failed: false, exit 3)', 'gate: not accepted after 1 round'])
+  expect(failing.gate.at(-1)).toEqual({ type: 'gate', accepted: false, level: 2, rounds: 1 })
+  expect(failing.errs).toEqual(['gate: round 1 L2 checks — not passed (failed: false, exit 3)', 'gate: not accepted at L2 after 1 round'])
 }, 60_000)
 
 it('each round reports what the reviewer told the agent: per-target verdicts, what it could not run, and regressions', async () => {
@@ -531,9 +532,9 @@ it('each round reports what the reviewer told the agent: per-target verdicts, wh
     regressions: ['test_x fails'],
   })
   expect(errs).toEqual([
-    'gate: round 1 review score 40 — not passed (1 done, 1 unverifiable, 1 partial; 3 unverifiable: needs a MySQL server; regressions: ["test_x fails"])',
+    'gate: round 1 L1 review score 40 — not passed (1 done, 1 unverifiable, 1 partial; 3 unverifiable: needs a MySQL server; regressions: ["test_x fails"])',
     'gate: round 2 changed nothing — stopping',
-    'gate: not accepted after 2 rounds',
+    'gate: not accepted at L1 after 2 rounds',
   ])
 }, 60_000)
 
@@ -548,7 +549,7 @@ it('OPENSWARM_GATE=1 selects the gate, since an eval Arm carries env not flags',
       { out: (l) => lines.push(l), err: () => {} },
     )
     expect(code).toBe(0)
-    expect(gateLines(lines).at(-1)).toEqual({ type: 'gate', accepted: true, rounds: 1 })
+    expect(gateLines(lines).at(-1)).toEqual({ type: 'gate', accepted: true, level: 1, rounds: 1 })
   } finally {
     delete process.env['OPENSWARM_GATE']
   }

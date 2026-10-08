@@ -6,6 +6,7 @@
  * `openswarm serve` over its socket carrier, as the owner whose token it
  * wrote to `$OPENSWARM_HOME/app-server.json`. `tasks sync` mirrors a run's
  * board into an opentasks graph (docs/05 B0), reading only the journal.
+ * `verifier` installs and feeds the L3 verifier (docs/05 B1, ./verifier.ts).
  */
 import { once } from 'node:events'
 import { existsSync, readFileSync } from 'node:fs'
@@ -33,6 +34,7 @@ import {
 } from 'openswarm-swarm'
 import type { CliIo } from './index'
 import { tasksSync } from './tasks'
+import { runVerifier, VERIFIER_USAGE } from './verifier'
 
 const USAGE = `usage: openswarm ps [--json]
        openswarm board <run> [--json]
@@ -42,10 +44,11 @@ const USAGE = `usage: openswarm ps [--json]
        openswarm steer <run> --to <member> "text"
        openswarm answer <run> <question> <choice>
        openswarm kill <run>
-       openswarm tasks sync <run> [--watch] [--socket <path>]`
+       openswarm tasks sync <run> [--watch] [--socket <path>]
+       ${VERIFIER_USAGE.replace('usage: ', '')}`
 
-const VALUE_FLAGS = new Set(['--run', '--to', '--workers', '--provider', '--model', '--question-timeout', '--socket'])
-const BOOL_FLAGS = new Set(['--json', '--no-follow', '--watch'])
+const VALUE_FLAGS = new Set(['--run', '--to', '--workers', '--provider', '--model', '--question-timeout', '--socket', '--node'])
+const BOOL_FLAGS = new Set(['--json', '--no-follow', '--watch', '--print'])
 
 /** Run one control verb; resolves to the exit code (2 for a usage error). */
 export async function runControl(
@@ -185,6 +188,8 @@ export async function runControl(
         const socket = flags.get('--socket')
         return await tasksSync(runId, { watch: flags.has('--watch'), ...(socket === undefined ? {} : { socket }) }, io)
       }
+      case 'verifier':
+        return await runVerifier(args.slice(1), flags, io)
     }
   } catch (error) {
     // Protocol errors lead with their code (FORBIDDEN, NOT_FOUND, …); shown verbatim.

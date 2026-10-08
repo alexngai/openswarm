@@ -14,8 +14,10 @@
  * direction (`steer`, `cancel`) while the run is live (docs/05 A5), and
  * answers to the questions the harness raises (A6).
  */
+import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readdirSync } from 'node:fs'
+import { promisify } from 'node:util'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
@@ -37,7 +39,8 @@ import {
   type SwarmRunView,
   type SwarmSteerEvent,
 } from './run'
-import { runGateCommand } from './gate'
+import { runGateCommand, type VerifierLevel } from './gate'
+import { activeVerifier, hiddenSuite, openVerifier, recordToolEvents, toolEventsFromLogs, type Verifier } from './verifier'
 import { askPeer, registerSwarmMessaging, spawnPeer, suppressSettlementTurns } from './peers'
 import type { Principal } from './protocol'
 import type { PeerHandle } from './types'
@@ -60,7 +63,7 @@ import {
   type RunMember,
 } from './topologies'
 import { homedir, hostname } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { RemotePeer } from './remote-peer'
 import { SwarmServer } from './server'
 import { inheritedRoute, WorktreeRun, resolveMemberLaunch, type WorktreeTeamOptions } from './worktrees'
@@ -72,6 +75,8 @@ import type {
   TeamSpec,
 } from './types'
 
+const execFileAsync = promisify(execFile)
+
 export * from './types'
 export * from './board'
 export * from './journal'
@@ -79,6 +84,7 @@ export * from './mailbox'
 export * from './run'
 export * from './protocol'
 export * from './gate'
+export * from './verifier'
 export {
   askPeer,
   nextTurnEnd,
@@ -249,6 +255,11 @@ export interface RunTeamOptions {
    * needs), and how many may be open before the next is capped (default 3).
    */
   questions?: { timeoutMs?: number; maxOpen?: number }
+  /**
+   * The L3 verifier a gated team's hidden suites run on (docs/05 B1): for
+   * tests, set in code. Default the installed one (`/usr/bin/sudo -n -u …`).
+   */
+  verifier?: Verifier
 }
 
 /** Weakest-link default: every command must exit 0 in `cwd` for confidence 1. */
@@ -338,7 +349,12 @@ export default class SwarmService extends Service {
     // A gated team's board refuses to complete a task without passing evidence.
     // A path that resumes a run from its journal must derive this flag the same
     // way, from the journaled spec, or the resumed board closes tasks unverified.
-    const board = new SwarmBoard(journal, { gated: spec.topology === 'peer-team' && spec.gate !== undefined })
+    const board = new SwarmBoard(
+      journal,
+      spec.topology === 'peer-team' && spec.gate !== undefined
+        ? { gated: true, ...(spec.gate.minLevel === undefined ? {} : { minLevel: spec.gate.minLevel }) }
+        : {},
+    )
     // The members steering reaches; the messaging peer-team runners fill it.
     const roster = new Map<string, PeerHandle>()
     const mailbox = new SwarmMailbox(this.ctx, options.parent, roster, journal)
@@ -622,15 +638,20 @@ export default class SwarmService extends Service {
         return runCascade(spec, run, this.confidenceRunner(options, worktrees), report, ask)
       case 'coordinator':
         return runCoordinator(spec, run, report)
-      case 'peer-team': {
-        // Checked here, before any path seeds the board.
-        const gate = this.boardGate(spec, options, worktrees)
-        return spec.messaging === true
-          ? worktrees === undefined
-            ? this.runPeerTeamMessaging(spec, options, board, roster, mailbox, ask)
-            : this.runRemotePeerTeam(spec, options, board, roster, mailbox, ask, worktrees)
-          : runPeerTeam(spec, run, board, report, ask, gate)
-      }
+      case 'peer-team':
+        return (async () => {
+          // Checked here, before any path seeds the board.
+          const { gate, dispose } = await this.boardGate(spec, options, worktrees)
+          try {
+            return await (spec.messaging === true
+              ? worktrees === undefined
+                ? this.runPeerTeamMessaging(spec, options, board, roster, mailbox, ask)
+                : this.runRemotePeerTeam(spec, options, board, roster, mailbox, ask, worktrees)
+              : runPeerTeam(spec, run, board, report, ask, gate))
+          } finally {
+            dispose()
+          }
+        })()
     }
   }
 
@@ -643,14 +664,19 @@ export default class SwarmService extends Service {
    * worktrees the gate owns the tree, so a regression is rolled back and
    * `confidencePinPaths` are restored after every member round; neither ever
    * touches the user's checkout.
+   *
+   * Levels (docs/05 B1): a task needing L2 needs checks, L3 a hidden suite;
+   * a task with a suite is accepted by it, its checks or reviewer giving
+   * feedback only. The verifier is asked before any spend whether it holds
+   * every suite named; `dispose` ends the transcript recording L3 scans read.
    */
-  private boardGate(
+  private async boardGate(
     spec: import('./types').PeerTeamSpec,
     options: RunTeamOptions,
     worktrees?: WorktreeRun,
-  ): BoardGate | undefined {
+  ): Promise<{ gate?: BoardGate; dispose: () => void }> {
     const gate = spec.gate
-    if (gate === undefined) return undefined
+    if (gate === undefined) return { dispose: () => {} }
     // ponytail: messaging teams are not gated. Under worktrees a member keeps
     // one long-lived worktree, so a failed attempt's edits stay in it, taint
     // its next task's snapshot and checks, and merge unverified; and on any
@@ -664,7 +690,21 @@ export default class SwarmService extends Service {
     if (gate.rounds !== undefined && (!Number.isInteger(gate.rounds) || gate.rounds < 1)) {
       throw new Error('peer-team gate.rounds must be a positive integer')
     }
-    const reviewed = spec.tasks.find((task) => (task.checks ?? gate.checks ?? []).length === 0)
+    for (const task of spec.tasks) {
+      const level: VerifierLevel = task.minLevel ?? gate.minLevel ?? 0
+      const which = `gated task "${task.subject}"`
+      if (![0, 1, 2, 3].includes(level)) {
+        throw new Error(`${which} needs L${level}; a gate reaches L1 (reviewer), L2 (checks) or L3 (hidden suite), and L4 (external CI) is not built`)
+      }
+      const suite = task.suite ?? gate.suite
+      if (suite !== undefined && !/^[a-z0-9-]{1,64}$/.test(suite)) throw new Error(`${which} names suite "${suite}"; a suite name is 1-64 of [a-z0-9-]`)
+      if (level === 3 && suite === undefined) throw new Error(`${which} needs L3, a hidden suite: give it (or the gate) a suite`)
+      if (level === 2 && suite === undefined && (task.checks ?? gate.checks ?? []).length === 0) {
+        throw new Error(`${which} needs L2: give it (or the gate) checks`)
+      }
+    }
+    // A task with a suite is accepted by it; only one with neither suite nor checks rests on the reviewer.
+    const reviewed = spec.tasks.find((task) => (task.checks ?? gate.checks ?? []).length === 0 && (task.suite ?? gate.suite) === undefined)
     // Sandboxed unless the env says otherwise, as on the CLI's single path.
     // ponytail: no preflight here, so on a host that cannot sandbox each review
     // fails and stops its gate unaccepted; probe as the CLI does if that spend matters.
@@ -683,40 +723,79 @@ export default class SwarmService extends Service {
     }
     const pinPaths = options.confidencePinPaths ?? []
     const report = options.onProgress ?? (() => {})
+    const suites = [...new Set(spec.tasks.flatMap((task) => task.suite ?? gate.suite ?? []))]
+    const session = suites.length === 0 ? undefined : await openVerifier(options.verifier ?? activeVerifier(), suites)
+    const shared = options.confidenceCwd ?? process.cwd()
+    // The repository the members' ignored environment lives in (node_modules, .venv…).
+    const envRoot =
+      session === undefined
+        ? ''
+        : worktrees !== undefined
+          ? resolve(options.worktrees!.repoRoot)
+          : (await execFileAsync('git', ['rev-parse', '--show-toplevel'], { cwd: shared })).stdout.trim()
+    // In-process members' tool calls reach this context's events; subprocess
+    // members' are in their session logs. Last, so nothing above leaves it recording.
+    const recorder = session === undefined || worktrees !== undefined ? undefined : recordToolEvents(this.ctx)
+    const sessionRoot = worktrees?.memberEnv()['DSH_SESSION_ROOT']
+    const hidden = (claimed: SwarmTaskSnapshot, cwd: () => Promise<string>) => {
+      const suite = claimed.suite ?? gate.suite
+      return session === undefined || suite === undefined
+        ? {}
+        : {
+            hidden: hiddenSuite(session, {
+              suite,
+              cwd,
+              envRoot,
+              transcript: (result: MemberRunResult, startedAt: number) =>
+                recorder !== undefined ? recorder.take(result.runId) : sessionRoot === undefined ? [] : toolEventsFromLogs(sessionRoot, startedAt),
+            }),
+          }
+    }
     return {
-      ...(gate.rounds === undefined ? {} : { rounds: gate.rounds }),
-      ...(gate.checks === undefined ? {} : { checks: gate.checks }),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-      tree: (member, claimed) => {
-        // ponytail: without worktrees every member shares this one tree, so a
-        // task's checks also see siblings' work in flight; worktrees isolate it.
-        if (worktrees === undefined) return { cwd: options.confidenceCwd ?? process.cwd() }
-        const key = claimed.id
-        return {
-          cwd: async () => (await worktrees.worktree(key)).path,
-          // The member's own route reviews, as on the single path.
-          review: (prompt, commit) =>
-            worktrees.review(
-              key,
-              { name: 'reviewer', ...(member.agentOptions === undefined ? {} : { agentOptions: member.agentOptions }) },
-              prompt,
-              commit,
-              sandbox,
-              options,
-            ),
-          rollback: (commit) => worktrees.rollback(key, commit),
-          // As the cascade's gate does: the graded party may not edit what grades it.
-          ...(pinPaths.length === 0
-            ? {}
-            : {
-                pin: async () => {
-                  const discarded = await worktrees.pinForGate(key, pinPaths)
-                  if (discarded.length > 0) {
-                    report(`gate: discarded member edits to ${discarded.length} pinned path(s): ${discarded.slice(0, 5).join(', ')}`)
-                  }
-                },
-              }),
-        }
+      dispose: () => recorder?.dispose(),
+      gate: {
+        ...(gate.rounds === undefined ? {} : { rounds: gate.rounds }),
+        ...(gate.checks === undefined ? {} : { checks: gate.checks }),
+        ...(gate.minLevel === undefined ? {} : { minLevel: gate.minLevel }),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+        tree: (member, claimed) => {
+          // ponytail: without worktrees every member shares this one tree, so a
+          // task's checks also see siblings' work in flight; worktrees isolate it.
+          if (worktrees === undefined) return { cwd: shared, ...hidden(claimed, async () => shared) }
+          const key = claimed.id
+          const cwd = async () => (await worktrees.worktree(key)).path
+          return {
+            cwd,
+            ...hidden(claimed, cwd),
+            // The member's own route reviews, as on the single path; under L3
+            // only for feedback, and not at all with review off.
+            ...(gate.review === false
+              ? {}
+              : {
+                  review: (prompt: string, commit: string) =>
+                    worktrees.review(
+                      key,
+                      { name: 'reviewer', ...(member.agentOptions === undefined ? {} : { agentOptions: member.agentOptions }) },
+                      prompt,
+                      commit,
+                      sandbox,
+                      options,
+                    ),
+                }),
+            rollback: (commit) => worktrees.rollback(key, commit),
+            // As the cascade's gate does: the graded party may not edit what grades it.
+            ...(pinPaths.length === 0
+              ? {}
+              : {
+                  pin: async () => {
+                    const discarded = await worktrees.pinForGate(key, pinPaths)
+                    if (discarded.length > 0) {
+                      report(`gate: discarded member edits to ${discarded.length} pinned path(s): ${discarded.slice(0, 5).join(', ')}`)
+                    }
+                  },
+                }),
+          }
+        },
       },
     }
   }

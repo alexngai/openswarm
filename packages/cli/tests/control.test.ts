@@ -196,6 +196,7 @@ it("board prints the run's intent, a task's own end state, what a task closed on
   await board.complete(walls.id, 'alice', (await board.claim(walls.id, 'alice', walls.revision)).revision, 'up')
   await board.complete(roof.id, 'alice', (await board.claim(roof.id, 'alice', roof.revision)).revision, 'on', {
     kind: 'review',
+    level: 1,
     passed: true,
     round: 2,
   })
@@ -212,7 +213,7 @@ it("board prints the run's intent, a task's own end state, what a task closed on
     'task-0  completed  alice  walls',
     'task-1  completed  alice  roof',
     'task-0 end state: walls stand',
-    'task-1 evidence: review, round 2',
+    'task-1 evidence: L1 review, round 2',
     '0 open question(s)',
     'result:',
     '--- task-0 walls ---',

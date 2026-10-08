@@ -10,8 +10,10 @@
  * instead of overwriting newer state. A claim carries a lease — the journal
  * incarnation that granted it — so a later opener can release a dead lead's
  * claims ({@link SwarmBoard.releaseOrphans}). A board for a gated run refuses
- * to complete a task without passing evidence (docs/05 B6, exit criterion 4).
+ * to complete a task without passing evidence (docs/05 B6, exit criterion 4),
+ * or with evidence below the task's verifier level (B1).
  */
+import type { TamperSignal, VerifierLevel } from './gate'
 import type { SwarmJournal } from './journal'
 import type { Intent } from './types'
 import { Serializer } from './serialize'
@@ -37,6 +39,9 @@ export interface SwarmTaskSnapshot {
   readonly intent?: Intent
   /** The task's own gate checks; they replace the team's (docs/05 B6b). */
   readonly checks?: readonly string[]
+  /** The task's own verifier level and hidden suite; they replace the team's (docs/05 B1). */
+  readonly minLevel?: VerifierLevel
+  readonly suite?: string
   /** What closed it, when it closed through the gate or a human waived it. */
   readonly evidence?: TaskEvidence
 }
@@ -47,8 +52,10 @@ export interface SwarmTaskSnapshot {
  * gate). The precursor of B0's `verifies` edge.
  */
 export interface TaskEvidence {
-  readonly kind: 'commands' | 'review' | 'human'
+  readonly kind: 'commands' | 'review' | 'hidden' | 'human'
   readonly passed: boolean
+  /** The verifier level (docs/05 §6.4); none for a human waiver, and missing reads as L0. */
+  readonly level?: VerifierLevel
   /** The gate round whose evidence this is. */
   readonly round?: number
   /** Review: the reviewer's 0–100 estimate; null when its verdict did not parse. */
@@ -56,6 +63,12 @@ export interface TaskEvidence {
   /** Review: each target's status, with what an unverifiable one could not run. */
   readonly targets?: readonly { target: number; status: string; notes?: string }[]
   readonly failedCommands?: readonly string[]
+  /** Hidden: the suite and its counts. */
+  readonly suite?: string
+  readonly total?: number
+  readonly failed?: number
+  /** Hidden: how the run was confined; a `partial` L3 (the operator allowed it) counts as L2 here. */
+  readonly enforcement?: 'full' | 'partial'
   /**
    * The snapshot commit of the tree the evidence is about. ponytail: no ref
    * points at it, so `git gc` may prune it once old enough; B0's `verifies`
@@ -66,9 +79,16 @@ export interface TaskEvidence {
   readonly by?: string
 }
 
-/** `commands, round 2`, or `human: owner`: a task's evidence in a few words. */
+/** `L2 commands, round 2`, or `human: owner`: a task's evidence in a few words. */
 export function evidenceText(evidence: TaskEvidence): string {
-  return evidence.kind === 'human' ? `human: ${evidence.by}` : `${evidence.kind}, round ${evidence.round}`
+  if (evidence.kind === 'human') return `human: ${evidence.by}`
+  const partial = evidence.enforcement === 'partial' ? ' (partial: counts as L2)' : ''
+  return `L${evidence.level ?? 0} ${evidence.kind}${partial}, round ${evidence.round}`
+}
+
+/** The level evidence counts as: its own, but L2 for an L3 run the verifier could only partly confine. */
+export function effectiveLevel(evidence: TaskEvidence): VerifierLevel {
+  return evidence.level === 3 && evidence.enforcement === 'partial' ? 2 : (evidence.level ?? 0)
 }
 
 /** Payload of a `swarm/task` journal event. */
@@ -82,17 +102,46 @@ export type SwarmGateEvent = {
   round: number
   /** False past round 1: the member stopped changing the tree, so the gate stopped. */
   changed: boolean
-  kind: 'commands' | 'review'
+  kind: 'commands' | 'review' | 'hidden'
+  /** The verifier level; absent in journals written before docs/05 B1. */
+  level?: 1 | 2 | 3
   passed: boolean
   score?: number | null
   targets?: { target: number; status: string; notes?: string }[]
   failedCommands?: string[]
   /** The round broke a check the round before passed, and was undone. */
   rolledBack?: boolean
-  /** Review: why it could not run. */
+  /** Why the review or the hidden suite could not run. */
   error?: string
+  /** Hidden: the suite, its counts, how its run was confined. */
+  suite?: string
+  total?: number
+  failed?: number
+  enforcement?: 'full' | 'partial'
+  /** Hidden: the round was a tamper incident (its signals are the `swarm/tamper` event). */
+  tamper?: true
+  /** Hidden: the member's snapshot was refused, and why. */
+  refused?: string
+  /** Under L3: what the weaker source said, which the member was told too. */
+  feedback?: { kind: 'commands' | 'review'; level: 1 | 2; passed: boolean; score?: number | null; failedCommands?: string[] }
   /** The snapshot commit of the tree the round left: what its evidence is about. */
   snapshot?: string
+}
+
+/**
+ * Payload of a `swarm/tamper` journal event (docs/05 §6.4): signs that a
+ * member reached for the hidden suite in a gate round. What matched, never
+ * the content. An `incident` stopped the gate unmeasured; `advisory` signs
+ * (bare mentions of the verifier) were recorded and the round measured.
+ */
+export type SwarmTamperEvent = {
+  version: 1
+  taskId: string
+  member: string
+  round: number
+  suite: string
+  severity: 'incident' | 'advisory'
+  signals: TamperSignal[]
 }
 
 export type SwarmBoardErrorCode =
@@ -132,8 +181,11 @@ export class SwarmBoard {
 
   constructor(
     private readonly journal: SwarmJournal,
-    /** `gated`: `complete` requires passing evidence, so no path closes a task unverified. */
-    private readonly options: { gated?: boolean } = {},
+    /**
+     * `gated`: `complete` requires passing evidence, so no path closes a task
+     * unverified; at `minLevel` or above, unless the task says its own.
+     */
+    private readonly options: { gated?: boolean; minLevel?: VerifierLevel } = {},
   ) {}
 
   /** Current folded state (read-only; not serialized against mutations). */
@@ -210,6 +262,8 @@ export class SwarmBoard {
     blockedBy?: readonly string[]
     intent?: Intent
     checks?: readonly string[]
+    minLevel?: VerifierLevel
+    suite?: string
   }): Promise<SwarmTaskSnapshot> {
     return this.transact(async () => {
       const state = this.fold()
@@ -233,6 +287,8 @@ export class SwarmBoard {
         blockedBy: [...blockedBy],
         ...(input.intent === undefined ? {} : { intent: input.intent }),
         ...(input.checks === undefined ? {} : { checks: [...input.checks] }),
+        ...(input.minLevel === undefined ? {} : { minLevel: input.minLevel }),
+        ...(input.suite === undefined ? {} : { suite: input.suite }),
       }
       return this.commit(task)
     })
@@ -271,6 +327,12 @@ export class SwarmBoard {
       if (this.options.gated === true && (evidence?.passed !== true || (evidence.kind === 'human' && !evidence.by))) {
         throw new SwarmBoardError(`task "${id}" is gated: it completes only with passing evidence`, 'SWARM_TASK_UNVERIFIED')
       }
+      // Nor with a weaker verifier than it declared; a waiver is not a verifier, so has no level to fall short.
+      const minLevel = task.minLevel ?? this.options.minLevel ?? 0
+      const level = evidence === undefined ? 0 : effectiveLevel(evidence)
+      if (this.options.gated === true && evidence?.kind !== 'human' && level < minLevel) {
+        throw new SwarmBoardError(`task "${id}" needs L${minLevel} evidence; this counts as L${level}`, 'SWARM_TASK_UNVERIFIED')
+      }
       const { lease: _lease, ...rest } = task
       return this.commit({
         ...rest,
@@ -285,6 +347,11 @@ export class SwarmBoard {
   /** Journal one gate round on a task (`swarm/gate`), so a recap shows what its member was told. */
   async recordGate(event: Omit<SwarmGateEvent, 'version'>): Promise<void> {
     await this.journal.append('swarm/gate', { version: 1, ...event } satisfies SwarmGateEvent)
+  }
+
+  /** Journal a tamper incident in a gate round (`swarm/tamper`). */
+  async recordTamper(event: Omit<SwarmTamperEvent, 'version'>): Promise<void> {
+    await this.journal.append('swarm/tamper', { version: 1, ...event } satisfies SwarmTamperEvent)
   }
 
   release(id: string, owner: string, expectedRevision: number): Promise<SwarmTaskSnapshot> {
