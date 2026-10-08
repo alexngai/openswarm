@@ -81,6 +81,12 @@ const SEARCH = BIN !== "openswarm";
 
 const INIT = [
   "cd /app && (git rev-parse --is-inside-work-tree >/dev/null 2>&1 || (git init -q && git add -A && git -c user.email=eval@local -c user.name=eval commit -qm base))",
+  // Task images check out a detached HEAD; put it on a branch at the same commit (no file
+  // changes) so --spec's guarded fast-forward can move it to what landed.
+  "cd /app && (git symbolic-ref -q HEAD >/dev/null || git checkout -q -B eval-base)",
+  // The harness writes its prompt under /app/.sbx; ignore it so a clean checkout reads
+  // clean (the --spec fast-forward and the landing arm's app-state check need that).
+  "cd /app && x=$(git rev-parse --git-path info/exclude) && mkdir -p \"$(dirname \"$x\")\" && (grep -qx '.sbx/' \"$x\" 2>/dev/null || echo '.sbx/' >> \"$x\")",
   // Team members' worktrees hard-link the checkout's ignored node_modules. In a
   // Docker image the first link of each file forces an overlayfs copy-up (about
   // 3 min for 35k files); later links take a second. Pay it here, in EVERY arm,
