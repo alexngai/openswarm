@@ -240,12 +240,13 @@ stay structural. Three conformance levels:
 
 Everything in §6 works at **basic**; steerable adds live direction;
 participating is a bonus (P9). Runtimes today: in-process `spawn`
-(steerable), dsh subprocess (steerable via `RemotePeer`). dsh's SDK server
+(steerable), dsh subprocess (steerable via `RemotePeer`), `claude-code`
+(basic, R1). dsh's SDK server
 only queues a turn, so `immediate` delivery reaches a subprocess member
 through `openswarm-swarm-member`, which calls `agent.steer` inside the
 member (§11). Planned: a
-resume-capable dsh runtime (D5), `claude-code` and `codex` (basic, then
-steerable), `attach` to an existing endpoint, and `a2a`.
+resume-capable dsh runtime (D5), `claude-code` steerable, `codex` (basic,
+then steerable), `attach` to an existing endpoint, and `a2a`.
 
 ### 5.5 Member sandbox
 
@@ -493,7 +494,7 @@ Each runtime is an adapter to the contract:
 | Runtime | Path | Target level |
 |---|---|---|
 | dsh subprocess | exists; resume added (D5) | steerable |
-| `claude-code` | dsh ships the subagent provider | basic → steerable |
+| `claude-code` | our adapter over the `claude` CLI's headless mode; basic built (R1). dsh's provider runs in its parent's cwd and reports no usage (docs/01 ledger) | basic → steerable |
 | `codex` | dsh ships the subagent provider | basic → steerable |
 | `attach` | SDK `session/prompt` on an existing session | steerable |
 | `a2a` | A2A client; a task maps to an A2A task | basic |
@@ -822,6 +823,64 @@ queue's clean-merge rate, bisects and latency. It is on the result (`TeamResult.
 and the eval reporter records it as a `run_metrics` line per settled run. Not
 counted yet: the lead's own session turns, which sit outside the run, and a
 diff against scope, which waits for C4.
+
+R1 is built: a member with `runtime: 'claude-code'`
+(`packages/swarm/src/claude-code.ts`) runs the user's installed `claude` CLI
+headless (`-p --output-format stream-json --verbose
+--no-session-persistence --permission-mode <mode>`, `--model` from
+`agentOptions.model`, `--setting-sources` from `claudeSettingSources`; by
+default the user's full settings apply) where a dsh member would work: its
+task worktree, a scratch worktree for a keyless run, or, in place, its
+parent agent's cwd, which an in-process dsh member's child session inherits
+(`confidenceCwd` places checks, not members), never the process's. Its
+prompt is a dsh member's (persona, intent header, task), sent on stdin. Its
+env is the parent's minus what dsh's spawner scrubs (credential-shaped
+names, `*KEY*`, `*TOKEN*`, `*SECRET*`, `*PASSWORD*`, and `DSH_*`) and the
+launcher's routes (`OPENSWARM_*`, `DEEPSEEK_*`, `OPENAI_*`, `AZURE_API_*`),
+keeping `ANTHROPIC_*` and `CLAUDE_*`, and `AWS_*` when
+`CLAUDE_CODE_USE_BEDROCK` is set, so Claude's auth stays the user's own.
+The stream's `result` gives the final text and the stop reason
+(`completed`, `error` with a diagnostic, `max-turns`; `aborted` on the
+run's signal, or at once without starting the CLI when it is already
+aborted); malformed lines are skipped. A stop (a cancel, a CLI still running
+10s after its result, or the optional `claudeTimeoutMs`, an error) sends
+SIGTERM, then SIGKILL after 5s, to the CLI's process group and to every
+descendant a `ps` walk finds from its pid at that moment: Claude Code starts
+its Bash tool and hooks in sessions of their own, outside the group, so a
+process they start after the walk, or one that detaches from them, can
+outlive the member until Claude's own shutdown reaps it. Its usage and
+`total_cost_usd` are journaled as `swarm/usage` with `runtime:
+'claude-code'`, the model `system/init` names, and `costUsd`; a cancelled
+or crashed run journals what its assistant messages streamed, without
+dollars. RunMetrics prefers a runtime's own dollars: `dollars` gains
+`byRuntime` and `source` (`pricing`, `runtime`, `mixed`), and the table
+prices only runs that reported none. With no run reporting, the table must
+price every run, as before; once one has, a run neither reported nor
+priced (a cancelled claude-code run, a dsh run without a table) is counted
+in `dollars.unreported` and the total, `at least` in the table, is a lower
+bound rather than null. A landing bundle's cost gains `reported` (those
+dollars, and the runs that reported none, priced when read, the same way).
+It is basic: a messaging peer-team with a claude-code member, and an
+unknown runtime, are refused before any spend; it may own a train repair or
+resolver, each a fresh one-shot run in the entry's worktree. An L3 run (a
+gated task's hidden suite, or the train's) with a claude-code member is
+refused too: its tamper scan reads dsh session logs only, so it cannot read
+Claude Code transcripts (feeding the adapter's stream-json tool events to
+the scanner would lift this). After those refusals, and still before any
+spend, a run with claude-code members runs `<claude> --version` once, so a
+missing CLI fails up front. A gated task's reviewer for a claude-code
+member takes the default dsh route, since a Claude model is no dsh route.
+Claude Code's own permission mode and settings govern the member;
+OpenSwarm's member sandbox (§5.5) covers dsh members only. dsh's
+`dsh-subagent-claude-code` was not used (docs/01 ledger). **Exit criterion
+3 is met by a keyless test** (`claude-code.test.ts`, with a fake `claude`
+streaming the CLI's messages): a dsh member on the mock and a claude-code
+member run a peer-team over worktrees, both tasks land through one train
+(the claude-code task after a batch failure is bisected to it and its own
+member repairs it), tokens and dollars split by runtime (`dsh:sdk`,
+`claude-code`), and each bundle carries its task's cost. The live test
+(`claude-code-live.test.ts`, `OPENSWARM_LIVE=1` with `claude` on PATH) has
+not run yet.
 
 | # | Work item |
 |---|---|

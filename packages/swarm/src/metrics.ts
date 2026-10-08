@@ -11,9 +11,10 @@
  * name. Messaging peers keep one session across many tasks and journal none
  * yet, so a messaging team's tokens are null even where the train's steps
  * journaled some; the lead's own turns are its session's, outside the run.
- * Dollars need a pricing table ($ per million tokens, by model) as
- * configuration (`SwarmConfig.pricing`, `--pricing`): there are no default
- * prices, so without one dollars are null.
+ * Dollars are what a runtime reported for its own runs (a claude-code
+ * member's `total_cost_usd`), else priced by a table ($ per million tokens,
+ * by model) given as configuration (`SwarmConfig.pricing`, `--pricing`):
+ * there are no default prices, so usage nothing priced leaves dollars null.
  */
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -69,12 +70,14 @@ export type SwarmUsageEvent = {
   role: UsageRole
   /** The task (worktree) key it ran for; none for a keyless run. */
   taskKey?: string
-  /** `dsh:<provider>` in this process, `dsh:sdk` as a worktree subprocess. */
+  /** `dsh:<provider>` in this process, `dsh:sdk` as a worktree subprocess, `claude-code` for the Claude Code CLI. */
   runtime: string
   provider?: string
   model?: string
   runId: string
   usage: Usage
+  /** Dollars the runtime itself reported for the run (Claude Code's `total_cost_usd`); preferred over the pricing table. */
+  costUsd?: number
   startedAt: number
 }
 
@@ -126,6 +129,17 @@ export function priced(byModel: Readonly<Record<string, Usage>>, pricing?: Prici
     usd += (u.inputTokens * p.input + u.outputTokens * p.output + u.cacheReadTokens * (p.cacheRead ?? p.input) + u.cacheWriteTokens * (p.cacheWrite ?? p.input)) / 1e6
   }
   return usd
+}
+
+/**
+ * One run's dollars: what its runtime reported, else the table's price (0
+ * for a run that spent nothing), else undefined.
+ */
+export function runUsd(run: { costUsd?: number; model?: string; usage: Usage }, pricing?: Pricing): number | undefined {
+  if (run.costUsd !== undefined) return run.costUsd
+  if (tokensOf(run.usage) === 0) return 0
+  const usd = priced({ [run.model ?? 'unknown']: run.usage }, pricing)
+  return typeof usd === 'number' ? usd : undefined
 }
 
 /**
@@ -195,7 +209,13 @@ export interface RunMetrics {
   /** Landed tasks by the strongest passing verifier each reached (`L0`: none; a human waiver is none). */
   levels: Record<string, number> | null
   tokens: (Usage & { total: number; byPrincipal: Record<string, number>; byModel: Record<string, number>; byRuntime: Record<string, number> }) | null
-  dollars: { total: number; byModel: Record<string, number> } | null
+  /**
+   * `source`: priced by the table, reported by the runtimes (claude-code), or
+   * both. `unreported`: runs that neither reported dollars nor could be
+   * priced (a cancelled claude-code run, a model the table lacks); with any,
+   * the total is a lower bound.
+   */
+  dollars: { total: number; byModel: Record<string, number>; byRuntime: Record<string, number>; source: 'pricing' | 'runtime' | 'mixed'; unreported?: number } | null
   /** From the run's start to its end, or to now while it runs. */
   wallClockMs: number
   /** Coordination tokens (reviews, repairs, resolvers, lead and judge runs) ÷ task-work tokens, with the split. */
@@ -271,12 +291,12 @@ export function foldMetrics(
   const levels = landedLevels === undefined ? missing('levels', unsupported['landed']!) : counts(landedLevels.map((level) => `L${level}`))
 
   // The denominator: tokens and dollars by principal, model and runtime.
-  const usage = of<{ member: string; role: UsageRole; model?: string; runtime: string; usage: Usage }>(events, 'swarm/usage')
+  const usage = of<SwarmUsageEvent>(events, 'swarm/usage')
   const byModel: Record<string, Usage> = {}
   const byRole: Record<UsageRole, number> = { task: 0, review: 0, repair: 0, resolve: 0, lead: 0 }
-  const tally = (key: (u: (typeof usage)[number]) => string) => {
+  const tally = (key: (u: SwarmUsageEvent) => string, value = (u: SwarmUsageEvent) => tokensOf(u.usage)) => {
     const out: Record<string, number> = {}
-    for (const u of usage) out[key(u)] = (out[key(u)] ?? 0) + tokensOf(u.usage)
+    for (const u of usage) out[key(u)] = (out[key(u)] ?? 0) + value(u)
     return out
   }
   for (const u of usage) {
@@ -289,10 +309,24 @@ export function foldMetrics(
     unmeasured !== undefined
       ? missing('tokens', unmeasured)
       : { ...total, total: tokensOf(total), byPrincipal: tally((u) => u.member), byModel: tally((u) => u.model ?? 'unknown'), byRuntime: tally((u) => u.runtime) }
-  const usd = tokens === null ? { reason: unsupported['tokens']! } : priced(byModel, options.pricing)
+  // A runtime's own dollars win, and the table prices the other runs. With
+  // none reported the table must price every run; with some, what it cannot
+  // price is counted, and the total is a lower bound rather than nothing.
+  const reported = usage.some((u) => u.costUsd !== undefined)
+  const usd = tokens === null ? { reason: unsupported['tokens']! } : reported ? 0 : priced(byModel, options.pricing)
+  const dollarsOf = (u: SwarmUsageEvent) => runUsd(u, options.pricing) ?? 0
+  const dollarsByModel = tally((u) => u.model ?? 'unknown', dollarsOf)
+  const unreported = usage.filter((u) => runUsd(u, options.pricing) === undefined).length
+  const tabled = usage.some((u) => u.costUsd === undefined && tokensOf(u.usage) > 0 && runUsd(u, options.pricing) !== undefined)
   const dollars =
     typeof usd === 'number'
-      ? { total: usd, byModel: Object.fromEntries(Object.entries(byModel).map(([model, u]) => [model, priced({ [model]: u }, options.pricing) as number])) }
+      ? {
+          total: Object.values(dollarsByModel).reduce((a, b) => a + b, 0),
+          byModel: dollarsByModel,
+          byRuntime: tally((u) => u.runtime, dollarsOf),
+          source: !reported ? ('pricing' as const) : tabled ? ('mixed' as const) : ('runtime' as const),
+          ...(unreported === 0 ? {} : { unreported }),
+        }
       : missing('dollars', usd.reason)
 
   const { task, ...split } = byRole
@@ -453,7 +487,14 @@ export function metricsRows(m: RunMetrics): [string, string][] {
     rows.push(['  by model', list(t.byModel)])
     rows.push(['  by runtime', list(t.byRuntime)])
   }
-  rows.push(['dollars', m.dollars === null ? why('dollars') : `${usd(m.dollars.total)} (${list(m.dollars.byModel, usd)})`])
+  if (m.dollars === null) rows.push(['dollars', why('dollars')])
+  else {
+    const d = m.dollars
+    const source = d.source === 'pricing' ? '' : d.source === 'runtime' ? ', as the runtimes reported' : ', as runtimes reported where they did, the rest priced'
+    const short = d.unreported === undefined ? '' : `; ${d.unreported} run(s) neither reported nor priced`
+    rows.push(['dollars', `${d.unreported === undefined ? '' : 'at least '}${usd(d.total)} (${list(d.byModel, usd)}${source}${short})`])
+    rows.push(['  by runtime', list(d.byRuntime, usd)])
+  }
   rows.push(['wall clock', duration(m.wallClockMs)])
   const c = m.coordination
   rows.push(['coordination', c === null ? why('coordination') : `${ratio(c.ratio, 'coordination.ratio')} = ${count(c.coordination)} (${list(c.split)}) ÷ ${count(c.task)} task work`])

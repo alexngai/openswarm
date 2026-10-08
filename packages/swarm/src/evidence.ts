@@ -22,7 +22,7 @@ import { join } from 'node:path'
 import { effectiveLevel, evidenceText, foldBoard, type SwarmTamperEvent, type TaskEvidence } from './board'
 import type { VerifierLevel } from './gate'
 import { SwarmJournal, type SwarmJournalEvent } from './journal'
-import { addUsage, count, duration, emptyUsage, priced, tokensOf, usageUnmeasured, type Pricing, type SwarmUsageEvent, type Usage, type UsageRole } from './metrics'
+import { addUsage, count, duration, emptyUsage, priced, runUsd, tokensOf, usageUnmeasured, type Pricing, type SwarmUsageEvent, type Usage, type UsageRole } from './metrics'
 import { foldQuestions, foldRun } from './run'
 import { trainVerdictText, type TrainEvents, type TrainVerdict } from './train'
 import type { Intent } from './types'
@@ -71,8 +71,14 @@ export interface LandingEvidence extends LandingAt {
   gateRounds: number
   /** The train's verification of the batch that landed it, or the last one it failed. */
   train?: Omit<TrainVerdict, 'output'> & { batch: number }
-  /** Usage of its member runs, reviews, repairs and resolvers, dollars priced when read; null where it is not measured, `unmeasured` saying why. */
-  cost: { tokens: number; byRole: Partial<Record<UsageRole, number>>; byModel: Record<string, Usage> } | null
+  /**
+   * Usage of its member runs, reviews, repairs and resolvers, dollars priced
+   * when read; null where it is not measured, `unmeasured` saying why. When a
+   * runtime reported its own dollars (claude-code), `reported` holds their sum
+   * and the runs that reported none, which the table prices when read; one it
+   * cannot price leaves the dollars a lower bound.
+   */
+  cost: { tokens: number; byRole: Partial<Record<UsageRole, number>>; byModel: Record<string, Usage>; reported?: { usd: number; rest: { model: string; usage: Usage }[] } } | null
   unmeasured?: string
   questions: { id: string; trigger: string; status: string; answer?: string; by?: string; raisedAt: number; closedAt?: number }[]
   steps: { step: 'repair' | 'resolve'; member?: string; attempt?: number; outcome: string }[]
@@ -95,6 +101,8 @@ export function buildEvidence(landing: LandingAt, runEvents: readonly SwarmJourn
   let gateRounds = 0
   const tamper: LandingEvidence['tamper'] = []
   const cost = { tokens: 0, byRole: {} as Partial<Record<UsageRole, number>>, byModel: {} as Record<string, Usage> }
+  const rest: { model: string; usage: Usage }[] = []
+  let reportedUsd: number | undefined
   for (const { type, data } of runEvents) {
     if (type === 'swarm/gate' && (data as { taskId: string }).taskId === key) gateRounds++
     else if (type === 'swarm/tamper' && (data as SwarmTamperEvent).taskId === key) {
@@ -105,6 +113,8 @@ export function buildEvidence(landing: LandingAt, runEvents: readonly SwarmJourn
       cost.tokens += tokensOf(u.usage)
       cost.byRole[u.role] = (cost.byRole[u.role] ?? 0) + tokensOf(u.usage)
       addUsage((cost.byModel[u.model ?? 'unknown'] ??= emptyUsage()), u.usage)
+      if (u.costUsd !== undefined) reportedUsd = (reportedUsd ?? 0) + u.costUsd
+      else if (tokensOf(u.usage) > 0) rest.push({ model: u.model ?? 'unknown', usage: u.usage })
     }
   }
 
@@ -166,7 +176,7 @@ export function buildEvidence(landing: LandingAt, runEvents: readonly SwarmJourn
     ...(gate === undefined ? {} : { gate }),
     gateRounds,
     ...(train === undefined ? {} : { train }),
-    cost: unmeasured === undefined ? cost : null,
+    cost: unmeasured === undefined ? { ...cost, ...(reportedUsd === undefined ? {} : { reported: { usd: reportedUsd, rest } }) } : null,
     ...(unmeasured === undefined ? {} : { unmeasured }),
     questions,
     steps,
@@ -215,9 +225,13 @@ export function landingText(e: LandingEvidence, pricing?: Pricing): string[] {
   lines.push(`verified: L${e.level} (gate: ${gate}, ${e.gateRounds} round(s)${train})`)
   if (e.cost === null) lines.push(`cost: — ${e.unmeasured}`)
   else {
-    const usd = priced(e.cost.byModel, pricing)
+    const { reported } = e.cost
+    const others = reported?.rest.map((run) => runUsd(run, pricing)) ?? []
+    const short = others.filter((usd) => usd === undefined).length
+    const usd = reported === undefined ? priced(e.cost.byModel, pricing) : others.reduce((sum: number, usd) => sum + (usd ?? 0), reported.usd)
+    const dollars = typeof usd !== 'number' || e.cost.tokens === 0 ? '' : short === 0 ? `, $${usd.toFixed(2)}` : `, at least $${usd.toFixed(2)} (${short} run(s) neither reported nor priced)`
     const roles = Object.entries(e.cost.byRole).map(([role, n]) => `${role} ${count(n)}`)
-    lines.push(`cost: ${count(e.cost.tokens)} tokens${roles.length === 0 ? '' : ` (${roles.join(', ')})`}${typeof usd === 'number' && e.cost.tokens > 0 ? `, $${usd.toFixed(2)}` : ''}`)
+    lines.push(`cost: ${count(e.cost.tokens)} tokens${roles.length === 0 ? '' : ` (${roles.join(', ')})`}${dollars}`)
   }
   if (e.questions.length > 0) {
     const asked = e.questions.map((q) => {

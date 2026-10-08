@@ -15,6 +15,8 @@
  * answers to the questions the harness raises (A6). Every member run journals
  * its usage, every landing an evidence bundle (B4), and a settled run's
  * result carries its RunMetrics (B5), also emitted as `swarm/metrics`.
+ * A member with `runtime: 'claude-code'` runs the `claude` CLI instead of a
+ * dsh harness (R1), in the same place a dsh member would work.
  */
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
@@ -70,6 +72,7 @@ import {
 import { homedir, hostname } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { RemotePeer } from './remote-peer'
+import { claudeCommandOf, preflightClaude, runClaudeCode } from './claude-code'
 import { SwarmServer } from './server'
 import { inheritedRoute, WorktreeRun, resolveMemberLaunch, type WorktreeTeamOptions } from './worktrees'
 import type { MergeOutcome } from 'openswarm-git'
@@ -103,6 +106,7 @@ export {
 export { coordinatorSpec, parseNumberedPlan, renderIntent } from './topologies'
 export type { BoardGate, ReportProgress, RunMember } from './topologies'
 export { RemotePeer } from './remote-peer'
+export { claudeCommandOf, claudeEnv, preflightClaude, runClaudeCode } from './claude-code'
 export { SwarmServer } from './server'
 export { WorktreeRun, memberEnvOf, reviewMemberConfig, runMemberProcess } from './worktrees'
 export type { WorktreeTeamOptions, WorktreeMemberConfig } from './worktrees'
@@ -338,6 +342,56 @@ function teamMembers(spec: TeamSpec): MemberSpec[] {
     default:
       return spec.members
   }
+}
+
+/**
+ * Where a member works without worktrees: its parent agent's cwd, which an
+ * in-process dsh member's child session inherits (`confidenceCwd` moves
+ * neither); never this process's cwd.
+ */
+function inPlaceCwd(options: RunTeamOptions): string | undefined {
+  return options.parent.session.header.cwd
+}
+
+/**
+ * Refuse, before any spend, a member runtime the run cannot use (docs/05
+ * §5.4), and say whether any member runs on claude-code. claude-code is a
+ * basic member, one-shot runs only, so it cannot be a messaging peer, which
+ * keeps one session and takes messages mid-run; in place it needs a cwd the
+ * caller named; and an L3 run scans each member step for reaching at the
+ * hidden suite in dsh session logs, which a claude-code member does not write.
+ */
+function checkRuntimes(spec: TeamSpec, options: RunTeamOptions): boolean {
+  const all = [
+    ...teamMembers(spec),
+    ...(spec.topology === 'committee' && spec.judge !== undefined ? [spec.judge] : []),
+    ...(spec.topology === 'cascade' && spec.gate !== undefined ? [spec.gate] : []),
+  ]
+  // ponytail: refused, not scanned; feed the adapter's stream-json tool events to the scanner to lift it.
+  const hidden =
+    options.worktrees?.train?.suite !== undefined ||
+    (spec.topology === 'peer-team' && spec.gate !== undefined && spec.tasks.some((task) => (task.suite ?? spec.gate!.suite) !== undefined))
+  let claude = false
+  for (const member of all) {
+    const runtime: string = member.runtime ?? 'dsh'
+    if (runtime === 'dsh') continue
+    if (runtime !== 'claude-code') throw new Error(`member "${member.name}" names runtime "${runtime}"; the runtimes are dsh and claude-code`)
+    if (spec.topology === 'peer-team' && spec.messaging === true) {
+      throw new Error(
+        `member "${member.name}" runs on claude-code, a basic member (one-shot runs): a messaging peer-team needs steerable members that keep one session and take messages mid-run; drop messaging or run it on dsh`,
+      )
+    }
+    if (options.worktrees === undefined && inPlaceCwd(options) === undefined) {
+      throw new Error(`claude-code member "${member.name}" works in place without worktrees, in its parent agent's cwd, and the parent has none: give it one, or run with worktrees`)
+    }
+    if (hidden) {
+      throw new Error(
+        `member "${member.name}" runs on claude-code, and this run verifies at L3 with a hidden suite: the tamper scan cannot read Claude Code transcripts; drop the suite or run the member on dsh`,
+      )
+    }
+    claude = true
+  }
+  return claude
 }
 
 /** Concatenated text content of an assistant output. */
@@ -650,6 +704,8 @@ export default class SwarmService extends Service {
     ask: AskQuestion,
     journal: SwarmJournal,
   ): Promise<TeamResult & { git?: MergeOutcome }> {
+    // Refusals, then the CLI's preflight, before any spend.
+    if (checkRuntimes(spec, options)) await preflightClaude(claudeCommandOf(options.worktrees?.member?.claudeCommand))
     // Every member run's usage, journaled as it settles (docs/05 B5).
     const usage: RecordUsage = async ({ role, ...record }) => {
       await journal.append('swarm/usage', { version: 1, ...record, role: role ?? roleOf(spec, record.member) })
@@ -923,14 +979,15 @@ export default class SwarmService extends Service {
             cwd,
             ...hidden(claimed, cwd),
             // The member's own route reviews, as on the single path; under L3
-            // only for feedback, and not at all with review off.
+            // only for feedback, and not at all with review off. A claude-code
+            // member's model is Claude Code's, no dsh route: the default reviews.
             ...(gate.review === false
               ? {}
               : {
                   review: (prompt: string, commit: string) =>
                     worktrees.review(
                       key,
-                      { name: 'reviewer', ...(member.agentOptions === undefined ? {} : { agentOptions: member.agentOptions }) },
+                      { name: 'reviewer', ...(member.agentOptions === undefined || member.runtime === 'claude-code' ? {} : { agentOptions: member.agentOptions }) },
                       prompt,
                       commit,
                       sandbox,
@@ -1171,6 +1228,11 @@ export default class SwarmService extends Service {
     options: RunTeamOptions,
     account: { usage: RecordUsage; taskKey?: string; role?: UsageRole },
   ): Promise<MemberRunResult> {
+    if (member.runtime === 'claude-code') {
+      const cwd = inPlaceCwd(options)
+      if (cwd === undefined) throw new Error(`claude-code member "${member.name}" has no cwd to work in`)
+      return runClaudeCode(member, prompt, { cwd, signal: options.signal, usage: account.usage, taskKey: account.taskKey, role: account.role })
+    }
     const provider =
       member.subagentProvider ?? this.swarmConfig.defaultSubagentProvider ?? 'spawn'
     const text = member.persona === undefined ? prompt : `${member.persona}\n\n${prompt}`

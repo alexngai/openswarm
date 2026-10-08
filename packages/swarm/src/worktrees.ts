@@ -11,6 +11,8 @@
  * train when configured (docs/05 B2), folds task branches into the target
  * branch — never the user's checkout. Each member run keeps its session logs
  * under a root of its own, so the usage they hold is its own (docs/05 B5).
+ * A `claude-code` member (docs/05 R1) runs the `claude` CLI in the same
+ * worktree instead, in the same harness slots, and reports its own usage.
  */
 import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
@@ -23,9 +25,10 @@ import * as SdkProvider from '@deepseek-ai/dsh-subagent-dsh-sdk'
 import type { SubagentRun } from '@deepseek-ai/dsh-subagent'
 import { SwarmGit, withSnapshotClone, type MergeOutcome } from 'openswarm-git'
 import type { DiffSummary } from './evidence'
+import { runClaudeCode } from './claude-code'
 import { usageFromLogs, type RecordUsage, type UsageRole } from './metrics'
 import { landTrain, type TrainConfig, type TrainDeps } from './train'
-import type { MemberRunResult, MemberSpec } from './types'
+import type { ClaudePermissionMode, ClaudeSettingSource, MemberRunResult, MemberSpec } from './types'
 import type { RunTeamOptions } from './index'
 
 const require = createRequire(import.meta.url)
@@ -49,6 +52,14 @@ export interface WorktreeMemberConfig {
   provider?: string
   model?: string
   maxTokens?: number
+  /** The `claude` CLI claude-code members run (default `OPENSWARM_CLAUDE_BIN`, else `claude` on PATH). */
+  claudeCommand?: string
+  /** claude-code members' `--permission-mode` unless a member names one (default `acceptEdits`). */
+  claudePermissionMode?: ClaudePermissionMode
+  /** claude-code members' `--setting-sources` unless a member names them (default: the CLI's own, every source). */
+  claudeSettingSources?: ClaudeSettingSource[]
+  /** claude-code member runs' bound unless a member names one (default none). */
+  claudeTimeoutMs?: number
 }
 
 export interface WorktreeTeamOptions {
@@ -323,6 +334,20 @@ export class WorktreeRun {
     // in repoRoot would let a model mutate the working tree.
     const cwd = taskKey === undefined ? await this.git.scratch() : (await this.worktree(taskKey)).path
     if (taskKey !== undefined && !this.owners.has(taskKey)) this.owners.set(taskKey, { member, prompt })
+    if (member.runtime === 'claude-code') {
+      const cfg = this.options.member ?? {}
+      return runClaudeCode(member, prompt, {
+        cwd,
+        signal: run.signal,
+        command: cfg.claudeCommand,
+        permissionMode: cfg.claudePermissionMode,
+        settingSources: cfg.claudeSettingSources,
+        timeoutMs: cfg.claudeTimeoutMs,
+        usage: this.onUsage,
+        taskKey,
+        role,
+      })
+    }
     return this.runProcess(member, prompt, cwd, run, this.memberEnv(), this.options.member, taskKey, role)
   }
 

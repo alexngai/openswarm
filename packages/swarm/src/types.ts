@@ -29,7 +29,36 @@ export interface MemberSpec {
   agentOptions?: AgentOptions
   /** Subagent provider registry name; defaults to the swarm config default. */
   subagentProvider?: string
+  /**
+   * What runs the member (docs/05 §5.4; default `dsh`). `claude-code` runs
+   * the user's installed `claude` CLI headless in the member's cwd: a basic
+   * member (one-shot runs, cancellable, usage and dollars reported), so never
+   * a messaging peer. Its `agentOptions.model` is Claude Code's `--model`;
+   * `subagentProvider` does not apply. Claude Code's own permission mode and
+   * settings govern it; OpenSwarm's member sandbox covers dsh members only.
+   */
+  runtime?: 'dsh' | 'claude-code'
+  /**
+   * A claude-code member's `--permission-mode` (default
+   * `worktrees.member.claudePermissionMode`, else `acceptEdits`).
+   * `bypassPermissions` runs every tool unasked: opt in knowingly.
+   */
+  permissionMode?: ClaudePermissionMode
+  /**
+   * A claude-code member's `--setting-sources` (default
+   * `worktrees.member.claudeSettingSources`, else the CLI's own: every
+   * source, so your user-level hooks, MCP servers and CLAUDE.md apply).
+   */
+  claudeSettingSources?: ClaudeSettingSource[]
+  /** A claude-code member run's bound, after which it is stopped as a cancel is (default `worktrees.member.claudeTimeoutMs`, else none). */
+  claudeTimeoutMs?: number
 }
+
+/** Where Claude Code loads settings from (`--setting-sources`). */
+export type ClaudeSettingSource = 'user' | 'project' | 'local'
+
+/** Claude Code's `--permission-mode` choices. */
+export type ClaudePermissionMode = 'acceptEdits' | 'auto' | 'bypassPermissions' | 'manual' | 'dontAsk' | 'plan'
 
 /**
  * Commander's intent (docs/05 §6.1): why the work exists and how to tell it
