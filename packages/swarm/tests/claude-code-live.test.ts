@@ -1,8 +1,8 @@
 /**
  * Live claude-code member (docs/05 R1): the user's installed `claude` CLI, on
  * their own Claude login or ANTHROPIC_API_KEY, makes a trivial edit in a
- * temp repo's task worktree and lands it through a train whose check is
- * `test -f`; its usage and the dollars the CLI reported are journaled.
+ * temp repo's task worktree and lands it through a train (whose check must
+ * also pass on the base); its usage and the dollars the CLI reported are journaled.
  * Spends a few cents.
  *
  *   OPENSWARM_LIVE=1 npx vitest run packages/swarm/tests/claude-code-live.test.ts
@@ -42,7 +42,9 @@ it.skipIf(!live)('a claude-code member edits its worktree and lands through a tr
       members: [{ name: 'cc', runtime: 'claude-code', agentOptions: { model: process.env['OPENSWARM_LIVE_CLAUDE_MODEL'] ?? 'haiku' } }],
       tasks: [{ subject: 'hello', prompt: 'Create a file named hello.txt in the current directory containing the single word hello. Do nothing else.' }],
     },
-    { parent: h.lead.agent, worktrees: { repoRoot: repo, train: { checks: ['test -f hello.txt'] } } },
+    // The train verifies the base before anything lands, so its check must pass
+    // there too; that hello.txt landed is asserted on the target below.
+    { parent: h.lead.agent, worktrees: { repoRoot: repo, train: { checks: ['test -f README.md'] } } },
   )
   const result = await run.result
   expect(result.git!.landed!.map((l) => l.taskKey)).toEqual(['task-0'])
