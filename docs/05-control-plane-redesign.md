@@ -680,17 +680,24 @@ item.
 
 **Phase B status (2026-10-08): code complete.** B6 `a95d289`…`907195b`,
 B0 `4511784` (projection), B1 `f671375`, B2+B3 `9efbd8c`, B4+B5
-`d03e622`, R1 `5cca4e7`. Exit criteria: **1** met by keyless tests on a
-fixed branch set (train 6/6 landed and clean against the sequential
-queue's 5/6 landed, 0 clean); the eval-harness run on a task set is built
-(arm `landtrain`, pre-registered in the B2/B3 note below) and still to
-run: landing rate and clean-merge rate pooled, train ≥ queue on both, the
-clean-merge rate flagged when it does not discriminate. **2** needs the operator's
-one-time `openswarm verifier setup` and the gated probe
+`d03e622`, R1 `5cca4e7`; `--spec` and the landing harness `f213afd`.
+Exit criteria: **1 met (2026-10-09)** through the eval harness (arm
+`landtrain`, as pre-registered in the B2/B3 note below): six pilot tasks
+(fal-1.3.0, fal-4.1.0, opt-4.4.0, pyg-2.2.0, pyg-2.5.0, vbt-1.3.0; one
+seed; a peer-team of two dsh members, one board task per plan thread,
+worktrees cut from the run's base; $58.66 in all). The train landed 24 of
+24 entries; today's sequential queue, replayed on the same original
+branches, landed 11 of 24 and retained 13 conflicts, all of which the
+train's resolver resolved. Clean-merge rate did not discriminate (24/24
+against 11/11: the build-and-import checks never broke). Held-out reward
+of the landed tree, paired: train 0.736, queue 0.236 (train ahead on 5
+tasks, tied on 1). No natural bisects; the planted-bad-commit bisection
+is shown by the keyless tests. **2** needs the operator's one-time
+`openswarm verifier setup` and the gated probe
 (`OPENSWARM_VERIFIER_E2E=1`). **3** met by keyless tests (a dsh and a
-claude-code member landing through one train, cost by runtime); the live
-test (`OPENSWARM_LIVE=1`) is still to run. **4**, **5** and **6** are met
-(6 narrowly, over two runs).
+claude-code member landing through one train, cost by runtime) and live
+(`2ed95f8`: a claude-code member on haiku landed through a train,
+$0.045). **4**, **5** and **6** are met (6 narrowly, over two runs).
 
 **Progress.** B6a, the gate's core and the single-agent path, is built:
 `a95d289` (`runGate`; `snapshotTree`; CLI `--gate`, `--gate-rounds`,
