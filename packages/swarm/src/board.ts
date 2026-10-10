@@ -162,13 +162,17 @@ export class SwarmBoardError extends Error {
   }
 }
 
-/** Replay the journal into current task state, insertion-ordered. */
+/**
+ * Replay the journal into current task state, in creation order: an update
+ * keeps a task's place (Map.set on a known key does), so the order is the
+ * seed order the train takes as priority and claims follow, never the order
+ * tasks last changed in.
+ */
 export function foldBoard(events: ReadonlyArray<{ type: string; data?: unknown }>): Map<string, SwarmTaskSnapshot> {
   const tasks = new Map<string, SwarmTaskSnapshot>()
   for (const event of events) {
     if (event.type !== 'swarm/task') continue
     const { task } = event.data as SwarmTaskEvent
-    tasks.delete(task.id)
     tasks.set(task.id, task)
   }
   return tasks

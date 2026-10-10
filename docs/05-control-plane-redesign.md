@@ -803,6 +803,16 @@ queue 5 of 6 with it failing. Still to do: the same comparison through the
 eval harness on a benchmark task set, and scope-violation questions, which
 wait for scopes (C4, deferred by D18).
 
+Two fixes after the exit-criterion run (2026-10-10). Priority was the
+board's order, which put a task last whenever it changed, so the train took
+completion order, not seed order; the board now keeps creation order (an
+update keeps its place), and `claimNextReady` with it takes the earliest
+ready task, a released one included. And a branch that stops ignoring part
+of the linked environment (a generated `git_info.py`) gets it committed, so
+bisecting off that batch checked the file out of the train's worktree, and
+every later batch ran without it; every `clean` in a team worktree
+(speculate, rollback, abort) now links back whatever went missing.
+
 **Exit criterion 1 through the eval harness, pre-registered (2026-10-08,
 revised the same day after review, before any cell runs).** Arm `landtrain`
 (`eval/pilot/runner.mjs`) runs fal-1.3.0, fal-4.1.0, opt-4.4.0, pyg-2.2.0,

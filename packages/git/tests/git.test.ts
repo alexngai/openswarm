@@ -342,6 +342,24 @@ it('linkIgnored: false leaves the worktree as git made it', async () => {
   await git.dispose()
 })
 
+it("the train's worktree keeps its linked environment when a batch it leaves had tracked part of it", async () => {
+  const root = installedRepo()
+  const git = new SwarmGit({ repoRoot: root, teamId: 'unignore' })
+  const a = await git.worktree('a')
+  // The branch stops ignoring the generated git_info.py, so the lead's commit tracks it.
+  writeFileSync(join(a.path, '.gitignore'), 'node_modules/\n*.so\ndist/\n')
+  await git.autoCommit(a, 'track git_info.py')
+  const tip = await git.targetTip()
+  const { cwd } = await git.speculate(tip, [a.branch])
+  // A failing batch is bisected on the same tip: checking it out removes the
+  // file the batch tracked, the linked copy with it...
+  await git.speculate(tip, [])
+  // ...and it is linked back; the checkout's own copy was never touched.
+  expect(readFileSync(join(cwd, 'pkg', 'git_info.py'), 'utf8')).toBe('GIT_VERSION = "x"\n')
+  expect(existsSync(join(root, 'pkg', 'git_info.py'))).toBe(true)
+  await git.dispose()
+})
+
 it("the train's speculative merge leaves a conflicting branch out, but throws on a merge git refuses outright (docs/05 B2)", async () => {
   const root = scratchRepo()
   const git = new SwarmGit({ repoRoot: root, teamId: 'spec' })

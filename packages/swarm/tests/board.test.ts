@@ -79,6 +79,17 @@ it('board state is a pure fold of the run journal', async () => {
   expect(next.id).toBe('task-2')
 })
 
+it('the board keeps creation order however tasks finish, the order the train takes as priority', async () => {
+  const { board } = await bootBoard()
+  const a = await board.create({ subject: 'a', prompt: 'p' })
+  const b = await board.create({ subject: 'b', prompt: 'p' })
+  await board.claim(b.id, 'bob', 0)
+  await board.complete(b.id, 'bob', 1, 'r')
+  await board.claim(a.id, 'alice', 0)
+  await board.complete(a.id, 'alice', 1, 'r')
+  expect(board.list().map((t) => t.id)).toEqual([a.id, b.id])
+})
+
 it('a board over the journal reopened from its file replays to identical state', async () => {
   const { board, journal } = await bootBoard()
   const a = await board.create({ subject: 'a', prompt: 'p' })

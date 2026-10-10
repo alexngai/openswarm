@@ -288,7 +288,20 @@ export class SwarmGit {
    */
   async resetTo(worktree: WorktreeInfo, commit: string): Promise<void> {
     await this.git(worktree.path, 'read-tree', '-u', '--reset', commit)
-    await this.git(worktree.path, 'clean', '-fdq')
+    await this.clean(worktree.path)
+  }
+
+  /**
+   * `git clean -fdq` in one of the team's worktrees, then the linked
+   * environment put back wherever it went missing. A branch that stops
+   * ignoring part of it (a generated `git_info.py`) gets it committed, so the
+   * checkout or reset that moves a worktree off that commit deletes the file,
+   * as clean deletes one a tree no longer ignores. Deleting a hard link
+   * leaves the checkout's own file alone; the re-link only fills gaps.
+   */
+  private async clean(path: string): Promise<void> {
+    await this.git(path, 'clean', '-fdq')
+    if (this.options.linkIgnored !== false) await linkIgnored(this.options.repoRoot, path)
   }
 
   /**
@@ -431,7 +444,7 @@ export class SwarmGit {
     // The last batch's tree and whatever its checks left behind go; ignored
     // files (the linked environment, build output) stay, as in a member's tree.
     await this.git(cwd, '-c', 'core.hooksPath=/dev/null', 'checkout', '-q', '-f', '--detach', tip)
-    await this.git(cwd, 'clean', '-fdq')
+    await this.clean(cwd)
     const conflicted: string[] = []
     for (const branch of branches) {
       try {
@@ -489,7 +502,7 @@ export class SwarmGit {
   /** Abandon a merge in progress: the task worktree back at its branch's head, nothing of the merge left. */
   async abortMerge(worktree: WorktreeInfo): Promise<void> {
     await this.git(worktree.path, 'reset', '-q', '--hard', 'HEAD')
-    await this.git(worktree.path, 'clean', '-fdq')
+    await this.clean(worktree.path)
   }
 
   /** Whether `commit` is in `ref`'s history. */
