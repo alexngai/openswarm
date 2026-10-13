@@ -1008,6 +1008,37 @@ contract keeper, and the `evolve` and `variants` topologies. The exit
 experiment below is superseded. The text that follows is the phase as
 designed, kept for when the trigger fires.
 
+**Phase C as re-scoped: the plan (2026-10-13).** Goal: a gated run that
+lands many independent tasks unattended, under a spend limit, and keeps
+what passed. Three gaps stand between today's `openswarm run --spec` and
+that, built in this order:
+
+| # | Work item |
+|---|---|
+| C7a | **Partial landing.** Today one abandoned task fails a board run before anything lands (the run throws and its worktrees are dropped, branches kept). A run's completed tasks now land, through the queue or the train, before the run fails naming the abandoned ones; the failed record's `git` says what landed, as a stopped train's does. Dependents of an abandoned task are abandoned already, so nothing lands without its blockers |
+| C5 | **Budgets** (run and task; per-member budgets wait for programs, D18). `budget: { usd?, tokens? }` on a team spec and on a task. Spent is the journal's `swarm/usage` for the scope, dollars as metrics price them (runtime-reported, else `SwarmConfig.pricing`). Checked before each member run starts (task rounds, reviews, repairs, resolvers, lead runs); a run in flight is never cut, so a scope overshoots by at most its in-flight runs. Exhausted: a high-tier `budget` question, `stop` (default) or `extend` (the limit grows by its first amount), asked once per scope while that scope's starts wait; journaled as `swarm/budget`. `stop` abandons a task (and its dependents); a run stops starting member runs, its unstarted tasks are abandoned, and C7a lands what passed, the train without agent steps (an entry needing a repair or resolver is ejected). A `usd` budget with a run that cannot be priced asks at once rather than run unbounded. In the CLI, `--max-cost-usd` becomes a hard cap beside `--max-tokens` (abort, exit 3), priced by `--pricing <file>` and refused when the table lacks a model it will run |
+| C7b | **Maintenance program.** `openswarm maintain <principles.md>`: a read-only survey member reads the principles and the repository and proposes up to N small independent tasks, each with checks; they run as a gated peer-team with worktrees and the train (the `--spec` path), each under a task budget, all under a run budget. The result is the landed target branch and a markdown summary from the landing evidence, for a person or CI to open as a pull request (`gh pr create --body-file`) until D4's forge adapter. Scheduling is cron or CI, documented in docs/03; nothing schedules in-process |
+| R2 | `codex` member at basic; `claude-code` and `codex` at steerable. After C7b |
+
+**Exit criteria.**
+1. *(C7a, keyless)* A peer-team of four tasks, one of which fails its gate,
+   lands the other three through the queue and through the train; the run
+   fails naming the abandoned task, and its `git` lists the three.
+2. *(C5, keyless, scripted usage)* Under a run budget no member run starts
+   once spent reaches the limit unless an owner answers `extend`; spend
+   overshoots by at most the runs in flight; a task budget abandons only its
+   task and dependents; after a run-budget stop the train lands what passed.
+   `--max-cost-usd` aborts a CLI run past its cap and refuses an unpriced model.
+3. *(C7b, live, dogfood)* `openswarm maintain` on this repository with its
+   own principles and a fixed run budget lands at least three tasks with
+   `npm test` and `npm run typecheck` passing on the landed tree, and a
+   person reviewing the landed diff accepts at least two of three. Recorded
+   here with the cost.
+
+Throughput across independent tasks is concurrency plus verified landing,
+not coordination; no experiment here claims otherwise. D18's stage 2 is
+pre-registered alongside (docs/07), and run only on the owner's say-so.
+
 **Goal.** G2, and the effectiveness answer that decides whether D is worth
 building as designed.
 
