@@ -127,4 +127,5 @@ it('refused before any spend: no --check, or a dollar budget it could not price'
   expect(await fails(['--check', 'true', '--budget-usd', '5'])).toMatch(/need --pricing <file> with a price for mock-model/)
   expect(await fails(['--check', 'true', '--max-cost-usd', '5'])).toMatch(/need --pricing <file> with a price for mock-model/)
   expect(await fails(['--check', 'true', '--max-tokens', 'lots'])).toMatch(/--max-tokens must be a positive integer/)
+  expect(await fails(['--check', 'true', '--sandbox', 'read-only'])).toMatch(/--sandbox must be workspace-write or danger-full-access/)
 })

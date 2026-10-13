@@ -28,7 +28,7 @@ const SURVEY_TIMEOUT_MS = 20 * 60_000
 
 export const MAINTAIN_USAGE =
   'usage: openswarm maintain --model <m> --principles <file> --check <cmd> [--check <cmd>]... [--tasks 5] [--members 2] [--rounds 3] ' +
-  '[--budget-usd <n> --task-budget-usd <n> --pricing <file>] [--max-cost-usd <n>] [--max-tokens <n>] [--max-turns <n>] [--summary <file>]'
+  '[--budget-usd <n> --task-budget-usd <n> --pricing <file>] [--max-cost-usd <n>] [--max-tokens <n>] [--max-turns <n>] [--summary <file>] [--sandbox danger-full-access]'
 
 export interface SurveyTask {
   subject: string
@@ -165,6 +165,11 @@ export async function runMaintain(argv: string[], io: CliIo): Promise<number> {
   if ((budgetUsd !== undefined || taskBudgetUsd !== undefined || maxCostUsd !== undefined) && rate === undefined) {
     throw new Error(`--budget-usd, --task-budget-usd and --max-cost-usd need --pricing <file> with a price for ${route.model}`)
   }
+  // The survey and the members run confined unless the operator says otherwise: a
+  // host that cannot confine (Ubuntu 24.04 restricts unprivileged user namespaces)
+  // runs them unfenced only on an explicit `--sandbox danger-full-access`.
+  const sandbox = args.get('sandbox') ?? 'workspace-write'
+  if (sandbox !== 'workspace-write' && sandbox !== 'danger-full-access') throw new Error(`--sandbox must be workspace-write or danger-full-access, not ${sandbox}`)
   const summary = args.get('summary')
   // Never a stale summary from an earlier run standing in for this one's.
   if (summary !== undefined) rmSync(summary, { force: true })
@@ -185,12 +190,14 @@ export async function runMaintain(argv: string[], io: CliIo): Promise<number> {
     let survey: { tasks: SurveyTask[]; dropped: string[] }
     let spent: ReturnType<typeof foldSessionLogs>
     try {
-      const unsandboxable = sandboxUnavailable(harness.ctx)
-      if (unsandboxable !== undefined) throw new Error(`the survey runs under the workspace-write sandbox, which this host cannot provide (${unsandboxable})`)
+      const unsandboxable = sandbox === 'workspace-write' ? sandboxUnavailable(harness.ctx) : undefined
+      if (unsandboxable !== undefined) {
+        throw new Error(`the survey and the members run under the workspace-write sandbox, which this host cannot provide (${unsandboxable}); pass --sandbox danger-full-access to run them unfenced`)
+      }
       const result = await withSnapshotClone(workspace, head, (cwd) =>
         runMemberProcess(harness.ctx, { name: 'survey', agentOptions: memberRoute.agentOptions }, surveyPrompt(principles, max), {
           cwd,
-          env: memberEnvOf({ env: { ...memberRoute.env, DSH_SESSION_ROOT: sessions, OPENSWARM_MEMBER_SANDBOX: 'workspace-write' } }, `survey-${process.pid}`),
+          env: memberEnvOf({ env: { ...memberRoute.env, DSH_SESSION_ROOT: sessions, OPENSWARM_MEMBER_SANDBOX: sandbox } }, `survey-${process.pid}`),
           parent: harness.lead.agent,
           signal: AbortSignal.timeout(SURVEY_TIMEOUT_MS),
           config: { configPath: reviewMemberConfig() },
@@ -239,7 +246,7 @@ export async function runMaintain(argv: string[], io: CliIo): Promise<number> {
         ...(taskBudgetUsd === undefined ? {} : { budget: { usd: taskBudgetUsd } }),
       })),
       ...(budgetLeft === undefined ? {} : { budget: { usd: budgetLeft } }),
-      worktrees: { train: { checks }, member: { sandbox: 'workspace-write' } },
+      worktrees: { train: { checks }, member: { sandbox } },
     }
     const specPath = join(temp, 'team.json')
     writeFileSync(specPath, JSON.stringify(spec, null, 1))
