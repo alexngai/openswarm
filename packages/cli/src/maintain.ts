@@ -92,7 +92,7 @@ export function summaryMarkdown(note: any, principles: string, runDir: string, s
   const landings = runLandings(runDir)
   const block = (l: (typeof landings)[number]) => {
     const [head, ...rest] = landingText(l, pricing)
-    return [`- ${head!.trim()}`, ...rest.map((line) => `  - ${line}`)].join('\n')
+    return [`- ${head!.trim()}`, ...rest.map((line) => `  - ${line.trim()}`)].join('\n')
   }
   const landed = landings.filter((l) => l.outcome === 'landed')
   const other = landings.filter((l) => l.outcome !== 'landed')
