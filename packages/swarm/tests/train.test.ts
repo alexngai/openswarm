@@ -9,6 +9,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
+import { fullConfinement } from './support/confinement'
 import { SwarmGit } from 'openswarm-git'
 import {
   SwarmJournal,
@@ -353,7 +354,7 @@ async function l3() {
   return { helper, session: await openVerifier({ command: [process.execPath, helper], user: '_openswarmverifier' }, ['add']) }
 }
 
-it.skipIf(asRoot)('L3: with a suite the hidden suite verifies each batch, and a repair is told counts only', async () => {
+it.skipIf(asRoot || !fullConfinement)('L3: with a suite the hidden suite verifies each batch, and a repair is told counts only', async () => {
   const { session } = await l3()
   const root = repo({ 'lib.mjs': ADD })
   const git = new SwarmGit({ repoRoot: root, teamId: 'l3' })
@@ -374,7 +375,7 @@ it.skipIf(asRoot)('L3: with a suite the hidden suite verifies each batch, and a 
   expect(keys(outcome.landed)).toEqual(['good', 'bad'])
 })
 
-it.skipIf(asRoot)('L3: a repair that calls the verifier is a tamper incident: journaled, asked (default eject), ejected, and nothing of it committed', async () => {
+it.skipIf(asRoot || !fullConfinement)('L3: a repair that calls the verifier is a tamper incident: journaled, asked (default eject), ejected, and nothing of it committed', async () => {
   const { helper, session } = await l3()
   const root = repo({ 'lib.mjs': ADD })
   const git = new SwarmGit({ repoRoot: root, teamId: 'tamper' })

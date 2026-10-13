@@ -12,6 +12,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
+import { fullConfinement } from '../../swarm/tests/support/confinement'
 import { startMockLlmServer, type MockLlmServer } from '@deepseek-ai/dsh-llm-mock-server'
 import { injectVerifierForTests, verifierHelperSource, type RunHandle } from 'openswarm-swarm'
 import { bootHarness, runCli, runControl } from '../src/index'
@@ -95,7 +96,7 @@ it('--gate-level and --gate-suite are checked before any spend', async () => {
   expect(await error('--gate', '--gate-suite', 'missing')).toMatch(/holds no suite "missing"/)
 }, 60_000)
 
-it.skipIf(root)('--gate --gate-suite: the hidden suite accepts at L3, the check gives feedback, and the agent hears only counts', async () => {
+it.skipIf(root || !fullConfinement)('--gate --gate-suite: the hidden suite accepts at L3, the check gives feedback, and the agent hears only counts', async () => {
   install()
   expect((await ctl('verifier', 'add-suite', 'add', addSuite())).code).toBe(0)
   await startMock({
@@ -132,7 +133,7 @@ it.skipIf(root)('--gate --gate-suite: the hidden suite accepts at L3, the check 
   expect(r.errs[1]).toBe('gate: accepted at L3 after 1 round')
 }, 60_000)
 
-it.skipIf(root)('the probe, keyless: an agent that reads the store and calls the helper is a tamper incident, reported by what matched', async () => {
+it.skipIf(root || !fullConfinement)('the probe, keyless: an agent that reads the store and calls the helper is a tamper incident, reported by what matched', async () => {
   const { store, helper } = install()
   expect((await ctl('verifier', 'add-suite', 'add', addSuite())).code).toBe(0)
   await startMock({
@@ -158,7 +159,7 @@ it.skipIf(root)('the probe, keyless: an agent that reads the store and calls the
   expect(r.lines.join('\n')).not.toMatch(/openswarm-canary-[0-9a-f]{24}|add\(1, 2\)/)
 }, 60_000)
 
-it.skipIf(root)('a gated team at L3: a member reaching for the suite is journaled as swarm/tamper, asked of an owner, and abandons the task', async () => {
+it.skipIf(root || !fullConfinement)('a gated team at L3: a member reaching for the suite is journaled as swarm/tamper, asked of an owner, and abandons the task', async () => {
   const { store, helper } = install()
   expect((await ctl('verifier', 'add-suite', 'add', addSuite())).code).toBe(0)
   await startMock({

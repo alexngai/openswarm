@@ -13,6 +13,7 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
+import { fullConfinement } from './support/confinement'
 import { SwarmBoard, evidenceText } from '../src/board'
 import { runGate, type HiddenSuite, type HiddenSummary } from '../src/gate'
 import { SwarmJournal } from '../src/journal'
@@ -338,7 +339,7 @@ async function l3(repo: string, transcript: () => ToolExchange[] = () => []) {
   return { v, session, hidden }
 }
 
-it.skipIf(root)('L3: the hidden suite accepts, the checks only give feedback, and the member is told counts and nothing else', async () => {
+it.skipIf(root || !fullConfinement)('L3: the hidden suite accepts, the checks only give feedback, and the member is told counts and nothing else', async () => {
   const { repo } = gitRepo({ 'lib.mjs': 'export const add = () => 0\n' })
   const { v, hidden } = await l3(repo)
   await expect(openVerifier(v.verifier, ['add', 'missing'])).rejects.toThrow(/no suite "missing"/)
@@ -361,7 +362,7 @@ it.skipIf(root)('L3: the hidden suite accepts, the checks only give feedback, an
   expect(prompts[1]).not.toMatch(/SECRET|adds|sums|check\.mjs|openswarm-canary/)
 })
 
-it.skipIf(root)('L3: a member that reaches for the suite in its turn is a tamper incident: nothing is measured and the gate stops', async () => {
+it.skipIf(root || !fullConfinement)('L3: a member that reaches for the suite in its turn is a tamper incident: nothing is measured and the gate stops', async () => {
   const { repo } = gitRepo({ 'lib.mjs': 'export const add = (a, b) => a + b\n' })
   let transcript: ToolExchange[] = []
   const { v, session, hidden } = await l3(repo, () => transcript)
@@ -391,7 +392,7 @@ it.skipIf(root)('L3: a member that reaches for the suite in its turn is a tamper
   expect((JSON.parse(log).entries as VerifierLogEntry[]).filter((e) => e.event === 'start').map((e) => e.cmd)).toEqual(['list', 'log', 'log'])
 })
 
-it.skipIf(root)('L3 on the board: the level is journaled; a tamper incident is journaled and asked of an owner, and abandons by default', async () => {
+it.skipIf(root || !fullConfinement)('L3 on the board: the level is journaled; a tamper incident is journaled and asked of an owner, and abandons by default', async () => {
   const { repo } = gitRepo({ 'lib.mjs': 'export const add = (a, b) => a + b\n' })
   let transcript: ToolExchange[] = []
   const { session } = await l3(repo, () => transcript)
@@ -448,7 +449,7 @@ it.skipIf(root)('L3 on the board: the level is journaled; a tamper incident is j
   })
 })
 
-it.skipIf(root)('advisory signs are journaled and the round measured: a repository that names the verifier can be gated, and text a sibling planted abandons nothing', async () => {
+it.skipIf(root || !fullConfinement)('advisory signs are journaled and the round measured: a repository that names the verifier can be gated, and text a sibling planted abandons nothing', async () => {
   const { repo } = gitRepo({ 'lib.mjs': 'export const add = (a, b) => a + b\n', 'NOTES.md': '' })
   let transcript: ToolExchange[] = []
   const { session } = await l3(repo, () => transcript)
