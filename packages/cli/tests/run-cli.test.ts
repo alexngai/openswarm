@@ -229,17 +229,47 @@ it('accepts the Claude-Code permission vocabulary the harness adapter defaults t
   expect(existsSync(join(ws, 'alias-proof.txt'))).toBe(true)
 }, 60_000)
 
-it('refuses --max-cost-usd rather than letting an uncapped run look capped', async () => {
+it('--max-cost-usd refuses what it cannot price, before any spend, rather than let an uncapped run look capped', async () => {
   await startMock({ apiKey: 'mock-key', sequence: ['success'], repeatLast: true, successText: 'ok' })
-  process.chdir(mkdtempSync(join(tmpdir(), 'openswarm-run-ws-')))
+  const ws = mkdtempSync(join(tmpdir(), 'openswarm-run-ws-'))
+  process.chdir(ws)
+  const prices = join(ws, 'prices.json')
+  writeFileSync(prices, JSON.stringify({ 'other-model': { input: 1, output: 1 } }))
+  for (const [extra, problem] of [
+    [[], /--max-cost-usd needs --pricing/],
+    [['--pricing', prices], /no price for mock-small/],
+  ] as const) {
+    const lines: string[] = []
+    const code = await runCli(
+      ['run', '--output-format', 'json', '--model', 'mock-small', '--max-cost-usd', '5', ...extra, 'go'],
+      { out: (l) => lines.push(l), err: () => {} },
+    )
+    expect(code).toBe(1)
+    expect(lines.join('\n')).toMatch(problem)
+  }
+}, 60_000)
 
+it('--max-cost-usd stops the run past its cap, priced from --pricing', async () => {
+  await startMock({
+    apiKey: 'mock-key',
+    sequence: ['tool_call_success'],
+    repeatLast: true,
+    successText: 'unreachable',
+    toolName: 'bash',
+    toolArguments: JSON.stringify({ command: 'true' }),
+  })
+  const ws = mkdtempSync(join(tmpdir(), 'openswarm-run-ws-'))
+  process.chdir(ws)
+  const prices = join(ws, 'prices.json')
+  // A dollar a token: the first message passes fifty cents.
+  writeFileSync(prices, JSON.stringify({ 'mock-small': { input: 1_000_000, output: 1_000_000 } }))
   const lines: string[] = []
   const code = await runCli(
-    ['run', '--output-format', 'json', '--model', 'mock-small', '--max-cost-usd', '5', 'go'],
+    ['run', '--output-format', 'json', '--model', 'mock-small', '--max-cost-usd', '0.5', '--pricing', prices, 'spend it all'],
     { out: (l) => lines.push(l), err: () => {} },
   )
-  expect(code).toBe(1)
-  expect(lines.join('\n')).toMatch(/--max-cost-usd is not supported/)
+  expect(code).toBe(3)
+  expect(lines.map((l) => JSON.parse(l)).find((o) => o.type === 'budget_exceeded')?.limit).toMatch(/^max-cost-usd \(\$\d+\.\d{2} > \$0\.5\)$/)
 }, 60_000)
 
 it('still rejects a mode with no faithful headless equivalent', async () => {

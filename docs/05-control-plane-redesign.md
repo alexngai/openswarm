@@ -1039,6 +1039,39 @@ Throughput across independent tasks is concurrency plus verified landing,
 not coordination; no experiment here claims otherwise. D18's stage 2 is
 pre-registered alongside (docs/07), and run only on the owner's say-so.
 
+*Progress (2026-10-13).* C7a and C5 are built; **exit criteria 1 and 2 are
+met by keyless tests.** C7a: `runBoardWorkers` throws `AbandonedTasksError`;
+a run that was not cancelled then withholds the abandoned tasks' worktrees
+(work committed to the kept branch, worktree removed), lands the rest, and
+fails with `outcome` set, which the failed record keeps as `git`; the CLI's
+`--spec` path still fast-forwards and reports `abandoned`
+(`partial-landing.test.ts`: four tasks, one failing its gate, three land
+through the queue and through the train). C5: `budget.ts`'s `BudgetGuard`
+is consulted by `WorktreeRun.runMember` and `review` and by the in-process
+member path, so every member run a team starts passes it; a `BudgetStopError`
+abandons the task (a run's stop, every unstarted task) rather than failing
+the member, ends a gate's review loop, and ejects a train entry whose repair
+or resolver it refused. The CLI passes `--pricing` to `SwarmConfig.pricing`
+and implements `--max-cost-usd` (`budget.test.ts`; `run-cli.test.ts`).
+Review fixes the same day: a run is checked again once it holds a harness
+slot (a run queued behind the slots had started on whatever was spent while
+it waited; the test runs three members on one slot); partial landing is for
+one-shot peer-teams only (a messaging team's worktrees are its members', so
+nothing could be withheld); a budget needs a peer-team, whose stop can land
+what passed; a train that stops mid-landing keeps the abandoned list; and
+the CLI refuses a spec's dollar budget without a price for every dsh model
+it runs, where unattended it would stop at the first check.
+
+C7b is built: `openswarm maintain` (`packages/cli/src/maintain.ts`, docs/03).
+The survey is a subprocess member in a disposable clone of HEAD, as the
+gate's reviewer; its reply's last `{"tasks": [...]}` object is validated;
+the tasks run through the `--spec` path with every `--check` on each task's
+gate and the train, under `--budget-usd` and `--task-budget-usd`, and
+`--summary` writes the pull request body from the landing evidence.
+`maintain.e2e.test.ts` runs it keyless: three proposed tasks, two land
+through the train, one is abandoned and kept. Exit criterion 3 is the live
+dogfood run, which spends and waits for the owner's go-ahead.
+
 **Goal.** G2, and the effectiveness answer that decides whether D is worth
 building as designed.
 

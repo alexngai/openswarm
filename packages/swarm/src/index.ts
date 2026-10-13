@@ -30,6 +30,7 @@ import type {} from '@deepseek-ai/dsh-user-questions'
 import { SwarmBoard, foldBoard, type SwarmTaskSnapshot } from './board'
 import { buildEvidence, landingsOf, type LandingEvidence } from './evidence'
 import { SwarmJournal, type SwarmJournalEvent } from './journal'
+import { BudgetGuard, validateBudget } from './budget'
 import { foldMetrics, recordUsage, type Pricing, type RecordUsage, type RunMetrics, type SwarmRestartEvent, type UsageRole } from './metrics'
 import { SwarmMailbox } from './mailbox'
 import {
@@ -97,6 +98,7 @@ export * from './verifier'
 export * from './train'
 export * from './evidence'
 export * from './metrics'
+export * from './budget'
 export {
   askPeer,
   nextTurnEnd,
@@ -321,6 +323,29 @@ function resolveMemberModel(
  * critic or a cascade's gate reviews, a coordinator or a committee's judge
  * leads; everyone else does task work.
  */
+/**
+ * The run's budget check (docs/05 C5), or undefined when neither the run nor
+ * any task has a budget. A malformed budget, or one a messaging team (whose
+ * peers journal no usage) could not check, is refused before any spend.
+ */
+function budgetAdmit(spec: TeamSpec, board: SwarmBoard, journal: SwarmJournal, ask: AskQuestion, pricing?: Pricing): ((taskKey?: string) => Promise<void>) | undefined {
+  validateBudget(spec.budget, 'the team spec')
+  const tasks = spec.topology === 'peer-team' ? spec.tasks : []
+  tasks.forEach((task, i) => validateBudget(task.budget, `task ${i} ("${task.subject}")`))
+  if (spec.budget === undefined && !tasks.some((task) => task.budget !== undefined)) return undefined
+  // A stop abandons board tasks and lands what passed (C7a); other topologies would only fail.
+  if (spec.topology !== 'peer-team') throw new Error(`a budget needs a peer-team, whose board lands what passed past a stop (got ${spec.topology})`)
+  if (spec.messaging === true) throw new Error("budgets need journaled usage, which a messaging team's peers do not write yet")
+  const guard = new BudgetGuard({
+    journal,
+    ask,
+    ...(pricing === undefined ? {} : { pricing }),
+    ...(spec.budget === undefined ? {} : { run: spec.budget }),
+    task: (key) => board.list().find((task) => task.id === key)?.budget,
+  })
+  return (taskKey) => guard.admit(taskKey)
+}
+
 function roleOf(spec: TeamSpec, member: string): UsageRole {
   if (spec.topology === 'critic-loop' && spec.critic.name === member) return 'review'
   if (spec.topology === 'cascade' && spec.gate?.name === member) return 'review'
@@ -713,16 +738,20 @@ export default class SwarmService extends Service {
     const usage: RecordUsage = async ({ role, ...record }) => {
       await journal.append('swarm/usage', { version: 1, ...record, role: role ?? roleOf(spec, record.member) })
     }
+    // The run's and its tasks' budgets (docs/05 C5), checked before every member run starts.
+    const admit = budgetAdmit(spec, board, journal, ask, this.pricing)
     const worktrees =
-      options.worktrees === undefined ? undefined : new WorktreeRun(this.ctx, options.worktrees, options.onProgress, usage)
+      options.worktrees === undefined ? undefined : new WorktreeRun(this.ctx, options.worktrees, options.onProgress, usage, admit)
     // Every member prompt through here carries the intent header (docs/05
     // §6.1). A peer-team keys each member run by its board task, whose own
     // intent replaces the run's; no other topology seeds the board.
     const run: RunMember = (member, prompt, taskKey, role) => {
       const framed = withIntent(prompt, board.list().find((t) => t.id === taskKey)?.intent ?? spec.intent)
-      return worktrees === undefined
-        ? this.runMember(member, framed, options, { usage, ...(taskKey === undefined ? {} : { taskKey }), ...(role === undefined ? {} : { role }) })
-        : worktrees.runMember(member, framed, taskKey, options, role)
+      if (worktrees !== undefined) return worktrees.runMember(member, framed, taskKey, options, role)
+      const start = () => this.runMember(member, framed, options, { usage, ...(taskKey === undefined ? {} : { taskKey }), ...(role === undefined ? {} : { role }) })
+      // Without a budget the member starts in this tick, as before: a cancel
+      // right after then settles it as aborted rather than refusing its start.
+      return admit === undefined ? start() : admit(taskKey).then(start)
     }
     if (worktrees === undefined) return this.dispatch(spec, run, options, board, roster, mailbox, ask, journal)
 
@@ -744,7 +773,9 @@ export default class SwarmService extends Service {
     } catch (error) {
       // Tasks abandoned in a run that was not cancelled: the completed ones
       // still land (docs/05 C7a), the abandoned ones' branches are kept.
-      if (error instanceof AbandonedTasksError && options.signal?.aborted !== true) {
+      // Only a one-shot peer-team keys its worktrees by task; a messaging
+      // team's are its members', so nothing could be held back there.
+      if (error instanceof AbandonedTasksError && options.signal?.aborted !== true && spec.topology === 'peer-team' && spec.messaging !== true) {
         abandoned = error
         result = { topology: 'peer-team', tasks: board.list(), runs: error.runs }
       } else {
@@ -792,8 +823,13 @@ export default class SwarmService extends Service {
     try {
       git = await worktrees.finalize({ merge, ...landing })
     } catch (error) {
-      if (error instanceof TrainStoppedError) error.outcome.withheld.push(...withheld)
-      throw error
+      if (!(error instanceof TrainStoppedError)) throw error
+      error.outcome.withheld.push(...withheld)
+      if (abandoned === undefined) throw error
+      // The abandoned tasks still fail the run; the train's stop rides along.
+      abandoned.outcome = error.outcome
+      abandoned.message += `; the train stopped: ${error.message}`
+      throw abandoned
     }
     git.withheld.push(...withheld)
     // Without the train, each merged or conflicted task's evidence (docs/05 B4): its gate's, and its diff against the base.

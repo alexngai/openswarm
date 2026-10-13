@@ -39,6 +39,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { snapshotTree, type MergeOutcome, type SwarmGit, type WorktreeInfo } from 'openswarm-git'
 import type { SwarmTaskSnapshot } from './board'
+import { BudgetStopError } from './budget'
 import { buildEvidence, type LandingAt, type LandingEvidence } from './evidence'
 import { runGateCommand, type HiddenSuite, type TamperSignal } from './gate'
 import type { SwarmJournal, SwarmJournalEvent } from './journal'
@@ -430,7 +431,7 @@ export async function landTrain(git: SwarmGit, config: TrainConfig, deps: TrainD
    * train before anything of it is committed. Under L3 the step is scanned as
    * a gate round is; `incident` holds its signals when it was one.
    */
-  const agent = async (e: Entry, member: MemberSpec, step: 'repair' | 'resolve', prompt: string): Promise<{ error?: string; incident?: TamperSignal[] }> => {
+  const agent = async (e: Entry, member: MemberSpec, step: 'repair' | 'resolve', prompt: string): Promise<{ error?: string; incident?: TamperSignal[]; budget?: true }> => {
     live()
     const before = deps.scan === undefined ? undefined : await snapshotTree(e.worktree.path)
     const startedAt = Date.now()
@@ -439,6 +440,8 @@ export async function landTrain(git: SwarmGit, config: TrainConfig, deps: TrainD
     try {
       result = await deps.run(member, prompt, e.key, step)
     } catch (err) {
+      // Refused before it started (docs/05 C5): nothing ran, so nothing to scan.
+      if (err instanceof BudgetStopError) return { error: err.message, budget: true }
       error = messageOf(err)
       result = { member: member.name, runId: '', text: '', output: [], stopReason: 'error' }
     }
@@ -487,6 +490,12 @@ export async function landTrain(git: SwarmGit, config: TrainConfig, deps: TrainD
           )
     let error = step.error
     let how: 'resolved' | 'gave-up' | 'tamper' = 'gave-up'
+    if ('budget' in step) {
+      await git.abortMerge(e.worktree)
+      await record('train/resolve', { ...(await ref(e)), member: member!.name, tip, files, outcome: how, error: error! })
+      await eject(e, error!)
+      return 'ejected'
+    }
     if (step.incident !== undefined && !(await carryOn(e, 'resolve', step.incident))) {
       how = 'tamper'
       error = 'tamper incident'
@@ -574,6 +583,7 @@ export async function landTrain(git: SwarmGit, config: TrainConfig, deps: TrainD
       'repair',
       `${promptOf(e)}## Landing\n\nThe landing check failed on the integrated tree (${target}'s tip with this branch merged in): ${failureText(e.verdict!)}\n\nFix it in this worktree, where ${target}'s tip is now merged in. Change what the fix needs, then stop; the lead commits.`,
     )
+    if (step.budget === true) return eject(e, step.error!)
     // A tampered repair's edits are left uncommitted in its kept worktree, for a person to look at.
     if (step.incident !== undefined && !(await carryOn(e, 'repair', step.incident))) return eject(e, `tamper incident in repair ${e.repairs}`)
     const committed = await git.autoCommit(e.worktree, `swarm: repair ${e.key} (train)`)

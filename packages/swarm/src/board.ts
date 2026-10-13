@@ -13,6 +13,7 @@
  * to complete a task without passing evidence (docs/05 B6, exit criterion 4),
  * or with evidence below the task's verifier level (B1).
  */
+import type { Budget } from './budget'
 import type { TamperSignal, VerifierLevel } from './gate'
 import type { SwarmJournal } from './journal'
 import type { Intent } from './types'
@@ -42,6 +43,8 @@ export interface SwarmTaskSnapshot {
   /** The task's own verifier level and hidden suite; they replace the team's (docs/05 B1). */
   readonly minLevel?: VerifierLevel
   readonly suite?: string
+  /** The task's own spend limit (docs/05 C5). */
+  readonly budget?: Budget
   /** What closed it, when it closed through the gate or a human waived it. */
   readonly evidence?: TaskEvidence
 }
@@ -268,6 +271,7 @@ export class SwarmBoard {
     checks?: readonly string[]
     minLevel?: VerifierLevel
     suite?: string
+    budget?: Budget
   }): Promise<SwarmTaskSnapshot> {
     return this.transact(async () => {
       const state = this.fold()
@@ -293,6 +297,7 @@ export class SwarmBoard {
         ...(input.checks === undefined ? {} : { checks: [...input.checks] }),
         ...(input.minLevel === undefined ? {} : { minLevel: input.minLevel }),
         ...(input.suite === undefined ? {} : { suite: input.suite }),
+        ...(input.budget === undefined ? {} : { budget: { ...input.budget } }),
       }
       return this.commit(task)
     })

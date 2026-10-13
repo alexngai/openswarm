@@ -2,6 +2,7 @@ import type { AgentOptions } from '@deepseek-ai/dsh-agent'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { SubagentStopReason } from '@deepseek-ai/dsh-subagent'
+import type { Budget } from './budget'
 import type { VerifierLevel } from './gate'
 
 /**
@@ -76,6 +77,8 @@ export interface Intent {
 export interface TeamSpecBase {
   /** The run's intent; a peer-team task's own intent replaces it for that task. */
   intent?: Intent
+  /** The run's spend limit (docs/05 C5), checked before each member run starts. */
+  budget?: Budget
 }
 
 /** One fanout assignment: a member name plus its prompt. */
@@ -161,6 +164,8 @@ export interface PeerTask {
   intent?: Intent
   /** This task's gate checks, replacing the team's (`PeerTeamSpec.gate`); an empty list means review mode. */
   checks?: string[]
+  /** This task's spend limit (docs/05 C5): its rounds, reviews, repairs and resolvers. */
+  budget?: Budget
   /** This task's verifier level and hidden suite, replacing the team's (docs/05 B1). */
   minLevel?: VerifierLevel
   suite?: string

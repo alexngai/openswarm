@@ -9,7 +9,8 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
-import { AbandonedTasksError, SwarmJournal, type MergeOutcome } from '../src/index'
+import type { MergeOutcome } from 'openswarm-git'
+import { AbandonedTasksError, SwarmJournal } from '../src/index'
 import { bootHarness, type TestHarness } from './boot'
 
 let h: TestHarness | undefined
@@ -27,7 +28,7 @@ async function runFour(train: boolean) {
   git('commit', '-qm', 'init')
   h = await bootHarness({
     // Each task's turn: a bash call writing a file of its own, then done.
-    sequence: Array.from({ length: 4 }, () => ['tool_call_success', 'success']).flat(),
+    sequence: Array.from({ length: 4 }, () => ['tool_call_success', 'success'] as const).flat(),
     repeatLast: true,
     successText: 'task done',
     toolName: 'bash',

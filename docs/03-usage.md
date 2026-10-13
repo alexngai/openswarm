@@ -574,6 +574,32 @@ openswarm run --model <m> --spec team.json "<task>"     # or OPENSWARM_TEAM_SPEC
 
 Members run as worktree members in the current repository; a dsh member takes the CLI's route (`--model`) unless it names its own, as plan-mode members do, and a spec of claude-code members alone needs none. dsh members run `danger-full-access` unless the member sandbox is on (`OPENSWARM_MEMBER_SANDBOX=workspace-write`, or `"worktrees": { "member": { "sandbox": "workspace-write" } }`; see the member sandbox above). The `<task>` goes ahead of every task's prompt. The run lands into a fresh target branch (through the train when `worktrees.train` is set, else the sequential queue). Then the branch checked out when the run started is fast-forwarded to that target, so the checkout holds the landed result, but only when that same branch is still checked out at the same commit (never a detached HEAD or another branch), the checkout is clean, and nothing the fast-forward writes is an ignored file there; otherwise it is refused and the refusal reported (stderr and `team_note`), the result left on the target branch. Output is the headless JSONL: a `team_note` line (run id, target branch, landed, ejected, withheld, what happened to the checkout, the run's metrics), the text summary, and `message_stop` with every member run's usage (tasks, reviews, repairs, resolvers, claude-code runs), cache writes as `cacheWriteInputTokens` and claude-code's own dollars as `claudeCodeCostUsd`. `--max-tokens` and `--max-turns` count them all, a claude-code run once it ends. A spec cannot be combined with `--team`, plan mode or `--gate`; gate a peer-team with its own `gate`.
 
+### Budgets and partial landing
+
+A task that never passes its gate (or whose member keeps failing) is abandoned, with its dependents; the run then fails, but the tasks that completed still land, through the queue or the train, and the abandoned ones' branches are kept and listed as `withheld` (docs/05 C7a). The `team_note` carries `abandoned` (task id → why), the checkout is fast-forwarded to what landed, and the exit code is non-zero.
+
+A spend limit goes on the run, on a task, or both (docs/05 C5):
+
+```json
+{ "topology": "peer-team",
+  "budget": { "usd": 20 },
+  "tasks": [{ "subject": "api", "prompt": "…", "budget": { "usd": 5, "tokens": 2000000 } }],
+  … }
+```
+
+Spent is what the run's member runs journaled (`swarm/usage`), dollars as `openswarm metrics` prices them: Claude Code's own `total_cost_usd`, else `--pricing <file>` (`{ "<model>": { "input": 5, "output": 30, "cacheRead": 0.5 } }`, $ per million tokens). A limit is checked before each member run starts (task rounds, reviews, repairs, resolvers), never during one, so a run overshoots by at most the member runs in flight. Out of budget, the run raises a high-tier `budget` question, `stop` (the default) or `extend` (by the first amount); unattended, it stops. A stopped task is abandoned; a stopped run starts no more member runs, abandons its unstarted tasks, and lands what passed, the train without repairs or resolvers (an entry needing one is ejected). A `usd` limit over a run it cannot price (no reported dollars, no price for the model) asks at once, and there `extend` drops the dollar limit. Every decision is journaled as `swarm/budget` and shows in the recap. A messaging team, whose peers journal no usage, cannot take a budget.
+
+`--max-cost-usd <n>` is the hard cap beside `--max-tokens`: it aborts the whole process once spend passes `n` (exit 3, a `budget_exceeded` line), checked as the token cap is. It prices every dsh token at the `--model`'s rate in `--pricing`, plus claude-code's reported dollars, and refuses to start without a price for that model or when a spec's dsh member names another model. A claude-code run killed before it reports its dollars counts as $0 toward the cap (a spec `budget` treats it as unpriced and asks). An abort lands nothing; prefer a spec `budget` for a run whose finished work should land, and keep the cap as the backstop.
+
+### The maintenance program
+
+```
+openswarm maintain --principles PRINCIPLES.md --check "npm run typecheck" --check "npm test" \
+  --tasks 5 --members 2 --budget-usd 20 --task-budget-usd 5 --pricing prices.json --summary pr.md
+```
+
+A survey member reads the principles file and the repository, in a disposable clone of `HEAD` under the workspace-write sandbox (whatever it changes goes away with the clone), and proposes up to `--tasks` small independent tasks (a `survey` line lists them; `survey_note` carries its usage, which the run's budgets do not count). They run as a gated peer-team of `--members` dsh members in worktrees, `--rounds` gate rounds each and one attempt: every task's gate and the train check each `--check` (required; a task the survey gave its own checks gets them too). What passes lands through the train onto a fresh target branch and the checkout is fast-forwarded as for `--spec`; a task that does not pass is abandoned with its branch kept. `--budget-usd` and `--task-budget-usd` become the run's and each task's budget, and need `--pricing` with the model's price. `--summary` writes a markdown body for a pull request: the landings with their evidence, what did not land and why, and the cost. Schedule it from cron or CI and open the pull request there (`gh pr create --body-file pr.md`); nothing schedules or pushes in-process.
+
 ## Testing
 
 ```bash

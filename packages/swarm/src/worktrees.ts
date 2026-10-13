@@ -290,6 +290,8 @@ export class WorktreeRun {
     onProgress?: (line: string) => void,
     /** Journals each member run's usage, read back from its session logs. */
     private readonly onUsage?: RecordUsage,
+    /** Before each member run starts: the run's budget check (docs/05 C5), which throws to refuse it. */
+    private readonly admit?: (taskKey?: string) => Promise<void>,
   ) {
     this.slots = new Slots(options.maxConcurrent ?? 8)
     this.git = new SwarmGit({
@@ -311,11 +313,17 @@ export class WorktreeRun {
     run: RunTeamOptions,
     role?: UsageRole,
   ): Promise<MemberRunResult> {
+    // Admitted by the budget before it waits for a slot, so a run waiting on a
+    // budget question holds none, and again once it has one, so a run queued
+    // behind the slots starts on what was spent while it waited.
+    // ponytail: a question raised at the second check holds its slot meanwhile.
+    await this.admit?.(taskKey)
     // Wait for a harness slot before touching git or spawning anything, so a
     // large fanout queues instead of creating N worktrees and N subprocesses
     // up front.
     await this.slots.acquire()
     try {
+      await this.admit?.(taskKey)
       return await this.runMemberInSlot(member, prompt, taskKey, run, role)
     } finally {
       this.slots.release()
@@ -428,10 +436,12 @@ export class WorktreeRun {
     sandbox: string,
     run: RunTeamOptions,
   ): Promise<MemberRunResult> {
+    await this.admit?.(key)
     const cwd = (await this.worktree(key)).path
     const { sandbox: _memberSandbox, ...cfg } = this.options.member ?? {}
     await this.slots.acquire()
     try {
+      await this.admit?.(key)
       return await withSnapshotClone(cwd, commit, (clone) =>
         this.runProcess(
           member,

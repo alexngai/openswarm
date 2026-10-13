@@ -50,6 +50,7 @@ import SwarmService, {
   type GateRound,
   type MemberSpec,
   type PeerTeamSpec,
+  type Pricing,
   type RunHandle,
   type SwarmUsageEvent,
   type WorktreeTeamOptions,
@@ -63,6 +64,8 @@ import * as SpawnInProcess from '@deepseek-ai/dsh-subagent-spawn-in-process'
 import { ARMS, loadPlan, runPilot, type Arm, type Plan } from './pilot'
 
 export { runControl } from './control'
+import { pricingOf } from './control'
+import { MAINTAIN_USAGE, runMaintain } from './maintain'
 
 const plug = (m: unknown): any => (m as any).default ?? m
 
@@ -86,7 +89,7 @@ interface LegacySpec {
 }
 
 /** Legacy UsageTotals field names (readTeamUsage contract). */
-interface UsageTotals {
+export interface UsageTotals {
   inputTokens: number
   outputTokens: number
   cacheReadInputTokens: number
@@ -114,7 +117,7 @@ const emptyUsage = (): UsageTotals => ({
  * - anything else → the generic OpenAI-compatible route
  *   (OPENSWARM_LLM_BASE_URL/KEY — LiteLLM, mock, any Bearer endpoint).
  */
-interface Route {
+export interface Route {
   route: string
   model: string
   adapter: 'openai' | 'anthropic'
@@ -122,7 +125,7 @@ interface Route {
   apiKeyEnv?: string
 }
 
-function routeOf(model: string): Route {
+export function routeOf(model: string): Route {
   if (model.startsWith('azureoai/')) {
     const base = process.env['AZURE_API_BASE']
     if (base === undefined || base.length === 0) {
@@ -161,7 +164,7 @@ function parseArgs(argv: string[]): Map<string, string> {
  * via indexOf) silently drops a prompt word that happens to repeat an earlier
  * token — the prompt is the task, so that corrupts the run rather than failing it.
  */
-function splitArgv(argv: string[]): { args: Map<string, string>; positional: string[] } {
+export function splitArgv(argv: string[]): { args: Map<string, string>; positional: string[] } {
   const args = new Map<string, string>()
   const positional: string[] = []
   for (let i = 0; i < argv.length; i++) {
@@ -204,15 +207,18 @@ export async function runCli(argv: string[], io: CliIo = processIo): Promise<num
   // positional. openSwarmSpec.flags() emits no verb, so requiring one made every
   // harness cell exit 2 on the usage message — a well-formed run, zero tokens.
   const rest = command === 'run' ? argv.slice(1) : argv
-  const isRun = command === 'run' || (!isCascade && command !== 'topology' && rest.some((a) => !a.startsWith('--')))
-  if (!isCascade && !isRun) {
+  const isMaintain = command === 'maintain'
+  const isRun = !isMaintain && (command === 'run' || (!isCascade && command !== 'topology' && rest.some((a) => !a.startsWith('--'))))
+  if (!isCascade && !isRun && !isMaintain) {
     io.err(
       `usage: openswarm topology cascade --spec <file> [--output <file>] [--trace-output <file>]\n` +
-        `       openswarm run --output-format json --model <m> [--single|--team|--spec <file>] "<prompt>"`,
+        `       openswarm run --output-format json --model <m> [--single|--team|--spec <file>] "<prompt>"\n` +
+        `       ${MAINTAIN_USAGE.slice('usage: '.length)}`,
     )
     return 2
   }
   try {
+    if (isMaintain) return await runMaintain(argv.slice(1), io)
     if (isRun) return await runHeadless(rest, io)
     return await runTopologyCascade(parseArgs(argv.slice(2)), io)
   } catch (error) {
@@ -294,6 +300,8 @@ export interface BootOptions {
    * anyone but itself.
    */
   selfModify?: boolean
+  /** `--pricing`: what a run's budgets and metrics price usage at (`SwarmConfig.pricing`, docs/05 C5). */
+  pricing?: Pricing
 }
 
 /**
@@ -359,7 +367,7 @@ export async function bootHarness(opts: BootOptions): Promise<HarnessBoot> {
   ctx.plugin(plug(SessionPersistenceJsonl), { root: sessionRoot, compression: 'none' })
   ctx.plugin(plug(Subagent))
   ctx.plugin(plug(SpawnInProcess), { providerName: 'spawn' })
-  ctx.plugin(SwarmService, {})
+  ctx.plugin(SwarmService, opts.pricing === undefined ? {} : { pricing: opts.pricing })
   if (opts.selfModify === true) ctx.plugin(plug(PluginAuthoring), {})
 
   await new Promise<void>((resolve) =>
@@ -437,7 +445,7 @@ function addUsage(totals: UsageTotals, usage: any): void {
  * the members' session root, so read it back. It is disjoint from the lead's
  * in-process root, so the two sums never double count.
  */
-function foldSessionLogs(root: string): UsageTotals {
+export function foldSessionLogs(root: string): UsageTotals {
   const totals = emptyUsage()
   let files: string[]
   try {
@@ -765,7 +773,7 @@ function gateResultLine(result: GateResult): string {
  * when it can: the harness's own sandbox provider confines `true` once, as a
  * member's would (no Seatbelt, bwrap or Landlock, e.g. in plain Docker).
  */
-function sandboxUnavailable(ctx: any): string | undefined {
+export function sandboxUnavailable(ctx: any): string | undefined {
   try {
     const { argv } = ctx.sandbox.confine(['true'], { mode: 'workspace-write', workspaceRoot: tmpdir() })
     const probe = spawnSync(argv[0], argv.slice(1), { encoding: 'utf8' })
@@ -782,7 +790,7 @@ function sandboxUnavailable(ctx: any): string | undefined {
  * SDK spawner scrubs KEY/TOKEN/DSH_* names from the inherited env, so the key
  * and model travel explicitly.
  */
-function memberRouteOf(route: Route): { agentOptions: { provider: string; model: string }; env: Record<string, string> } {
+export function memberRouteOf(route: Route): { agentOptions: { provider: string; model: string }; env: Record<string, string> } {
   if (route.adapter !== 'openai') {
     throw new Error(
       `"${route.model}" cannot run as a worktree member (plan mode, the gate's reviewer): members only speak the OpenAI-compatible route`,
@@ -834,15 +842,17 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
   // eval Arm carries `scaffold.env` but cannot add a CLI flag — the harness
   // spec's `flags()` is fixed across arms.
   const selfModify = args.has('self-modify') || process.env['OPENSWARM_SELF_MODIFY'] === '1'
-  if (args.has('max-cost-usd')) {
-    // Silently ignoring a spend cap is the one failure mode worse than refusing
-    // the run: the caller believes spending is bounded when it is not.
-    throw new Error('--max-cost-usd is not supported yet; cap with --max-tokens instead')
-  }
   const maxTokens = numericArg(args, 'max-tokens')
   const maxTurns = numericArg(args, 'max-turns')
+  const maxCostUsd = numericArg(args, 'max-cost-usd')
   const pilot = pilotOf(args, selfModify)
   const team = teamSpecOf(args, selfModify, pilot !== undefined)
+  // The dollar cap (docs/05 C5) prices every dsh token at the route's model and
+  // adds what claude-code members reported. A cap that undercounts is worse
+  // than none, so whatever it cannot price is refused before any spend.
+  const pricing = pricingOf(args.get('pricing'))
+  const rate = maxCostUsd === undefined ? undefined : capRate(pricing, route.model, team?.spec.members ?? [])
+  if (team !== undefined) refuseUnpricedBudget(team.spec, route.model, pricing)
   const gate = gateOf(argv, args, workspace, pilot !== undefined || team !== undefined, io)
   // Plan-mode members, a team spec's dsh members and the gate's reviewer are worktree subprocesses.
   const memberRoute =
@@ -850,12 +860,17 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
 
   /** Set once a cap trips; also the flag that turns the exit into a 3. */
   let exceeded: string | undefined
+  /** Dollars spent so far, for the dollar cap; set once the usage readers exist. */
+  let dollarsNow = (): number => 0
   const checkCaps = (team: UsageTotals, turns: number): void => {
     if (exceeded !== undefined) return
+    const usd = maxCostUsd === undefined ? 0 : dollarsNow()
     if (maxTokens !== undefined && team.totalTokens > maxTokens) {
       exceeded = `max-tokens (${team.totalTokens} > ${maxTokens})`
     } else if (maxTurns !== undefined && turns > maxTurns) {
       exceeded = `max-turns (${turns} > ${maxTurns})`
+    } else if (maxCostUsd !== undefined && usd > maxCostUsd) {
+      exceeded = `max-cost-usd ($${usd.toFixed(2)} > $${maxCostUsd})`
     }
     if (exceeded !== undefined) controller.abort()
   }
@@ -866,6 +881,7 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
     ...(args.get('permission-mode') === undefined ? {} : { permissionMode: args.get('permission-mode')! }),
     selfModify,
     onUsage: checkCaps,
+    ...(pricing === undefined ? {} : { pricing }),
   })
   const { ctx, lead, usageBySession } = harness
   // Ours to choose, so subprocess members' usage (plan mode's, a team's, the
@@ -875,13 +891,20 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
   /** A team spec's claude-code members, which write no dsh session logs: their usage and dollars as the run journals them. */
   let claudeUsage = emptyUsage
   const spentNow = (): UsageTotals => foldTeam([...usageBySession.values(), memberUsage(), claudeUsage()])
+  if (rate !== undefined) {
+    dollarsNow = () => {
+      const dsh = foldTeam([...usageBySession.values(), memberUsage()])
+      const tokens = dsh.inputTokens * rate.input + dsh.outputTokens * rate.output + dsh.cacheReadInputTokens * (rate.cacheRead ?? rate.input) + dsh.cacheWriteInputTokens * (rate.cacheWrite ?? rate.input)
+      return tokens / 1e6 + claudeUsage().costUsd
+    }
+  }
   // Member usage never reaches `onUsage`, so caps over subprocess members poll
   // their logs and the journal. ponytail: rereads every log per tick and trips
   // up to one tick late, and a claude-code run counts only once it settles
   // (its usage is journaled then); tail by byte offset, or stream claude-code
   // usage, if either ever matters.
   const capPoll =
-    memberRoot !== undefined && (maxTokens !== undefined || maxTurns !== undefined)
+    memberRoot !== undefined && (maxTokens !== undefined || maxTurns !== undefined || maxCostUsd !== undefined)
       ? setInterval(() => {
           const members = foldTeam([memberUsage(), claudeUsage()])
           checkCaps(foldTeam([...usageBySession.values(), members]), harness.turns() + members.calls)
@@ -994,7 +1017,8 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
       const settled = await handle.result.then(
         (result) => ({ result, abandoned: undefined }),
         (error: unknown) => {
-          if (!(error instanceof AbandonedTasksError) || error.outcome === undefined) throw error
+          // A tripped cap aborted the run: its exit is the cap's, not a partial landing's.
+          if (!(error instanceof AbandonedTasksError) || error.outcome === undefined || controller.signal.aborted) throw error
           return { result: { git: error.outcome, metrics: undefined }, abandoned: error.abandoned }
         },
       )
@@ -1208,6 +1232,34 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
     emitStop()
     return 3
   }
+}
+
+/**
+ * A team spec's dollar budget (docs/05 C5) is checked against priced usage,
+ * and unattended, usage it cannot price stops the run at its first check; so
+ * every dsh model it will run (members, and the gate's reviewer on the route)
+ * needs a price before any spend. claude-code members report their own dollars.
+ */
+function refuseUnpricedBudget(spec: TeamSpecFile['spec'], model: string, pricing: Pricing | undefined): void {
+  const usd = spec.budget?.usd !== undefined || (spec.topology === 'peer-team' && spec.tasks.some((t) => t.budget?.usd !== undefined))
+  if (!usd) return
+  const models = new Set([model, ...spec.members.filter((m) => m.runtime !== 'claude-code').map((m) => m.agentOptions?.model ?? model)])
+  const unpriced = [...models].filter((m) => pricing?.[m] === undefined)
+  if (unpriced.length > 0) throw new Error(`the team spec's dollar budget needs --pricing <file> with a price for ${unpriced.join(', ')}`)
+}
+
+/**
+ * The one rate `--max-cost-usd` prices dsh tokens at: the route model's, from
+ * `--pricing`. Refused without a price for it, or when a team spec's dsh member
+ * names another model, which that one rate would misprice.
+ */
+function capRate(pricing: Pricing | undefined, model: string, members: readonly MemberSpec[]): Pricing[string] {
+  if (pricing === undefined) throw new Error('--max-cost-usd needs --pricing <file> ($ per million tokens by model)')
+  const rate = pricing[model]
+  if (rate === undefined) throw new Error(`--max-cost-usd: --pricing has no price for ${model}, so the cap could not be checked`)
+  const other = members.find((m) => m.runtime !== 'claude-code' && m.agentOptions?.model !== undefined && m.agentOptions.model !== model)
+  if (other !== undefined) throw new Error(`--max-cost-usd prices every dsh member at ${model}'s rate, but member "${other.name}" runs ${other.agentOptions!.model}`)
+  return rate
 }
 
 /** Parse a numeric flag, rejecting junk rather than silently ignoring the cap. */

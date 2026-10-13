@@ -438,7 +438,8 @@ export async function runGate(spec: GateSpec, deps: GateDeps): Promise<GateResul
           unavailable = undefined
           break
         } catch (error) {
-          if (deps.signal?.aborted || (error as Error)?.name === 'AbortError') throw error
+          // A budget stop (docs/05 C5) ends the gate too: no review starts past it.
+          if (deps.signal?.aborted || (error as Error)?.name === 'AbortError' || (error as Error)?.name === 'BudgetStopError') throw error
           unavailable = error instanceof Error ? error.message : String(error)
           report(`gate round ${n}: review could not run (attempt ${attempt}/2): ${unavailable}`)
         }

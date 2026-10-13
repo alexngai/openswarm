@@ -240,7 +240,7 @@ export async function runControl(
  * A `--pricing` file: $ per million tokens by model id, `{ "<model>": { "input":
  * 5, "output": 30, "cacheRead": 0.5 } }` (docs/05 B5). Absent, dollars are null.
  */
-function pricingOf(path: string | undefined): Pricing | undefined {
+export function pricingOf(path: string | undefined): Pricing | undefined {
   if (path === undefined) return undefined
   const pricing = JSON.parse(readFileSync(path, 'utf8')) as Pricing
   for (const [model, rate] of Object.entries(pricing)) {

@@ -3,6 +3,7 @@
  * stay pure coordination logic over whatever runtime the service wires in.
  */
 import type { MergeOutcome } from 'openswarm-git'
+import { BudgetStopError } from './budget'
 import type { SwarmBoard, SwarmTaskSnapshot, TaskEvidence } from './board'
 import { runGate, targetStatuses, type GateDeps, type GateEvidence, type GateRound, type VerifierLevel } from './gate'
 import type { UsageRole } from './metrics'
@@ -395,6 +396,7 @@ export async function seedBoard(board: SwarmBoard, tasks: PeerTeamSpec['tasks'])
           checks: task.checks,
           minLevel: task.minLevel,
           suite: task.suite,
+          budget: task.budget,
         })
       ).id,
     )
@@ -658,6 +660,17 @@ export async function runBoardWorkers(
           }
           await board.release(claimed.id, member.name, claimed.revision).catch(() => undefined)
         } catch (error) {
+          // A budget stop (docs/05 C5) is no member's failure: the task is
+          // abandoned, and on a run's stop every task not yet started with it.
+          if (error instanceof BudgetStopError) {
+            abandon(claimed.id, error.message)
+            if (error.scope === 'run') {
+              for (const task of board.list()) if (seeded.has(task.id) && task.status === 'pending') abandon(task.id, error.message)
+            }
+            report(`task "${claimed.subject}" abandoned: ${error.message}`)
+            await board.release(claimed.id, member.name, claimed.revision).catch(() => undefined)
+            continue
+          }
           // This member leaves the pool below, whatever else happens.
           active--
           const reason = error instanceof Error ? error.message : String(error)

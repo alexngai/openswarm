@@ -7,6 +7,7 @@
  * Questions the harness raises (A6) are folded the same way, per question id.
  */
 import type { MergeOutcome } from 'openswarm-git'
+import type { SwarmBudgetEvent } from './budget'
 import { evidenceText, type SwarmGateEvent, type SwarmTamperEvent, type SwarmTaskSnapshot } from './board'
 import type { SwarmJournalEvent } from './journal'
 import type { SwarmMessageSnapshot } from './mailbox'
@@ -56,8 +57,8 @@ export type SwarmSteerEvent = {
 export interface SwarmQuestion {
   /** `q-<n>`, unique within its run. */
   readonly id: string
-  /** `conflict`: the train's resolver gave up on an entry (docs/05 B3). */
-  readonly trigger: 'stall' | 'restart-budget' | 'task-attempts' | 'verifier-failure' | 'tamper' | 'conflict'
+  /** `conflict`: the train's resolver gave up on an entry (docs/05 B3); `budget`: a run or task spent its budget (C5). */
+  readonly trigger: 'stall' | 'restart-budget' | 'task-attempts' | 'verifier-failure' | 'tamper' | 'conflict' | 'budget'
   readonly kind: 'escalation' | 'consent' | 'approval'
   /** An owner answers any tier; a driver only `low`, and never a consent or approval (§5.3). */
   readonly tier: 'low' | 'high'
@@ -168,6 +169,9 @@ export function recapJournal(events: readonly SwarmJournalEvent[], since = -1): 
       else if (q.status === 'answered') line = `${q.id} answered by ${q.by}: ${q.answer}`
       else if (q.status === 'defaulted') line = `${q.id} defaulted to ${q.answer}`
       else line = `${q.id} capped (${q.trigger}): defaulted to ${q.answer}`
+    } else if (type === 'swarm/budget') {
+      const b = data as SwarmBudgetEvent
+      line = `${b.scope === 'run' ? 'run' : b.taskId} budget ${b.outcome}: ${b.reason}`
     } else if (type === 'swarm/gate') {
       line = gateLine(data as SwarmGateEvent)
     } else if (type === 'swarm/tamper') {

@@ -11,6 +11,7 @@
  *   openswarm run "<task>"        same
  *   openswarm web [flags]         open the DeepSeek browser UI on a swarm context
  *   openswarm serve [--port N]    start the app-server (JSON-RPC, for UIs/TUIs)
+ *   openswarm maintain [flags]    survey against principles, land small gated tasks
  *   openswarm setup               (re)initialize the profiles
  *   openswarm config              print the resolved provider/model/home
  *   openswarm ps|board|questions|attach|start|steer|answer|kill|tasks|verifier
@@ -192,6 +193,11 @@ Usage:
   openswarm run "<task>"        same
   openswarm web [flags]         open the DeepSeek browser UI on a swarm context
   openswarm serve [--port N]    start the app-server (JSON-RPC for UIs/TUIs)
+  openswarm maintain --principles <file> --check <cmd> [--check <cmd>]...
+                [--tasks N] [--members N] [--rounds N] [--summary <file>]
+                [--budget-usd N --task-budget-usd N --pricing <file>] [--max-cost-usd N]
+                                survey the repo against its principles, then land
+                                small gated tasks through the train (docs/05 C7b)
   openswarm setup               (re)initialize the profiles
   openswarm config              print the resolved provider/model/home
 
@@ -262,7 +268,8 @@ function control(argv) {
 function main() {
   const argv = process.argv.slice(2)
   if (CONTROL_VERBS.has(argv[0])) return control(argv)
-  const { opts, rest, headless } = parse(argv, argv[0] === 'web')
+  // web and maintain pass flags this launcher does not own straight through.
+  const { opts, rest, headless } = parse(argv, argv[0] === 'web' || argv[0] === 'maintain')
   const home = opts.home ?? process.env.OPENSWARM_HOME ?? join(homedir(), '.openswarm')
   const cmd = rest[0]
 
@@ -294,6 +301,16 @@ function main() {
     if (opts.port) args.push('--port', String(opts.port))
     bootDsh('openswarm-web', args, env, home)
     return
+  }
+
+  // The maintenance program runs in this process, in packages/cli, as `topology` does.
+  if (cmd === 'maintain') {
+    const { provider, model, env } = resolveModel(opts)
+    Object.assign(process.env, env, { OPENSWARM_HOME: home })
+    const id = provider === 'azure' ? `azureoai/${model}` : model
+    return import(join(pkgRoot, 'packages', 'cli', 'dist', 'index.js'))
+      .then(({ runCli }) => runCli(['maintain', '--model', id, ...rest.slice(1), ...headless]))
+      .then((code) => process.exit(code))
   }
 
   if (cmd === 'serve') {

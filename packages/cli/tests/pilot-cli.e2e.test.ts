@@ -13,12 +13,11 @@
  */
 import { execFileSync } from 'node:child_process'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { createServer, request } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, expect, it } from 'vitest'
-import { startMockLlmServer } from '@deepseek-ai/dsh-llm-mock-server'
+import { startMockRouter } from './support/router'
 import { checkoutState, fastForward, runCli } from '../src/index'
 import { loadPlan } from '../src/pilot'
 
@@ -34,42 +33,9 @@ afterEach(async () => {
 })
 
 async function startRouter(command: string): Promise<{ baseURL: string; requests: () => number }> {
-  const common = { apiKey: 'mock-key', repeatLast: true, chunkDelayMs: 0 }
-  const tool = await startMockLlmServer({
-    ...common,
-    sequence: ['tool_call_success'],
-    toolName: 'bash',
-    toolArguments: JSON.stringify({ command }),
-  })
-  const done = await startMockLlmServer({ ...common, sequence: ['success'], successText: '1. implement the assignment' })
-  const server = createServer((req, res) => {
-    const chunks: Buffer[] = []
-    req.on('data', (chunk: Buffer) => chunks.push(chunk))
-    req.on('end', () => {
-      const body = Buffer.concat(chunks)
-      const last = JSON.parse(body.toString()).messages?.at(-1)
-      const target = new URL(last?.role === 'tool' ? done.baseURL : tool.baseURL)
-      const upstream = request(
-        { host: target.hostname, port: target.port, path: req.url, method: req.method, headers: req.headers },
-        (reply) => {
-          res.writeHead(reply.statusCode ?? 502, reply.headers)
-          reply.pipe(res)
-        },
-      )
-      upstream.end(body)
-    })
-  })
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
-  cleanups.push(async () => {
-    server.closeAllConnections()
-    await new Promise((resolve) => server.close(resolve))
-    await tool.close()
-    await done.close()
-  })
-  const { port } = server.address() as { port: number }
-  process.env['OPENSWARM_LLM_BASE_URL'] = `http://127.0.0.1:${port}/v1`
-  process.env['OPENSWARM_LLM_API_KEY'] = 'mock-key'
-  return { baseURL: `http://127.0.0.1:${port}/v1`, requests: () => tool.requests.length + done.requests.length }
+  const router = await startMockRouter(command)
+  cleanups.push(router.close)
+  return router
 }
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd }).toString().trim()
