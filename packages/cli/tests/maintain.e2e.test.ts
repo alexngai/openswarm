@@ -6,7 +6,7 @@
  * summary says so.
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
@@ -22,36 +22,40 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup()
 })
 
-it("the survey's tasks: the last tasks object in its reply, through fences and prose, at most --tasks, each with a subject and a prompt", () => {
+it("the survey's tasks: only the last tasks object in its reply, through fences and prose, at most --tasks; an invalid task is dropped, not fatal", () => {
   const reply = [
-    'I looked around. An earlier draft: {"tasks": []}',
+    'I looked around. An earlier draft: {"tasks": [{"subject": "draft", "prompt": "never used"}]}',
     '```json',
     '{',
     '  "tasks": [',
-    '    { "subject": " Doc the parser ", "prompt": "Add a doc comment to parse() in src/parse.ts.", "checks": ["grep -q Parse src/parse.ts"] },',
-    '    { "subject": "Drop dead code", "prompt": "Remove unused helper in src/util.ts.", "checks": [] },',
-    '    { "subject": "third", "prompt": "over the cap" }',
+    '    { "subject": " Doc the parser ", "prompt": "Add a doc comment to parse() in src/parse.ts.", "verify": ["grep -q Parse src/parse.ts"] },',
+    '    { "subject": "no prompt" },',
+    '    { "subject": "Drop dead code", "prompt": "Remove unused helper in src/util.ts.", "verify": [] },',
+    '    { "subject": "fourth", "prompt": "over the cap" }',
     '  ]',
     '}',
     '```',
     'That is all.',
   ].join('\n')
-  expect(surveyTasks(reply, 2)).toEqual([
-    { subject: 'Doc the parser', prompt: 'Add a doc comment to parse() in src/parse.ts.', checks: ['grep -q Parse src/parse.ts'] },
-    { subject: 'Drop dead code', prompt: 'Remove unused helper in src/util.ts.' },
-  ])
-  expect(surveyTasks('nothing to do here {"tasks": []}', 5)).toEqual([])
+  expect(surveyTasks(reply, 3)).toEqual({
+    tasks: [
+      { subject: 'Doc the parser', prompt: 'Add a doc comment to parse() in src/parse.ts.', verify: ['grep -q Parse src/parse.ts'] },
+      { subject: 'Drop dead code', prompt: 'Remove unused helper in src/util.ts.' },
+    ],
+    dropped: ['task 1: needs a subject and a prompt'],
+  })
+  expect(surveyTasks('nothing to do here {"tasks": []}', 5)).toEqual({ tasks: [], dropped: [] })
   expect(() => surveyTasks('no object at all', 5)).toThrow(/without a \{"tasks"/)
-  expect(() => surveyTasks('{"tasks": [{"subject": "x"}]}', 5)).toThrow(/needs a subject and a prompt/)
-  expect(() => surveyTasks('{"tasks": [{"subject": "x", "prompt": "y", "checks": "npm test"}]}', 5)).toThrow(/checks must be a list/)
+  // A malformed final object is an error, never an earlier draft standing in for it.
+  expect(() => surveyTasks('{"tasks": [{"subject": "a", "prompt": "b"}]} then {"tasks": [oops', 5)).toThrow(/not valid JSON/)
 })
 
 const SURVEY = JSON.stringify({
   tasks: [
     { subject: 'first fix', prompt: 'make the first fix' },
     { subject: 'second fix', prompt: 'make the second fix' },
-    // Its own check never passes, so it is abandoned in its one round.
-    { subject: 'impossible fix', prompt: 'make the impossible fix', checks: ['false'] },
+    // A suggestion only: it reaches the member's prompt, never anything the harness runs.
+    { subject: 'impossible fix', prompt: 'make the impossible fix', verify: ['false'] },
   ],
 })
 
@@ -70,9 +74,13 @@ it('a survey in a disposable clone proposes three tasks; the two that pass land 
   process.env['OPENSWARM_HOME'] = mkdtempSync(join(tmpdir(), 'openswarm-maintain-home-'))
   const summary = join(mkdtempSync(join(tmpdir(), 'openswarm-maintain-out-')), 'summary.md')
 
+  // A stale summary from an earlier run is replaced.
+  writeFileSync(summary, 'stale')
   const lines: string[] = []
+  // The third task's own file fails the operator's check in its worktree, so its gate never passes.
+  const check = '! ls out-*-task-2.txt >/dev/null 2>&1'
   const code = await runCli(
-    ['maintain', '--model', 'mock-model', '--principles', 'PRINCIPLES.md', '--check', 'true', '--members', '1', '--rounds', '1', '--summary', summary],
+    ['maintain', '--model', 'mock-model', '--principles', 'PRINCIPLES.md', '--check', check, '--members', '1', '--rounds', '1', '--summary', summary],
     { out: (l) => lines.push(l), err: () => {} },
   )
   const events = lines.map((l) => JSON.parse(l))
@@ -84,9 +92,18 @@ it('a survey in a disposable clone proposes three tasks; the two that pass land 
   expect(note).toMatchObject({ landed: ['task-0', 'task-1'], withheld: ['task-2'], workspace: 'fast-forwarded' })
   expect(Object.keys(note.abandoned)).toEqual(['task-2'])
 
-  // The survey's own write went away with its clone; the landed tasks' files are in the checkout.
-  expect(existsSync(join(repo, 'out-HEAD.txt'))).toBe(false)
-  expect(git('ls-files').split('\n').filter((f) => f.startsWith('out-'))).toHaveLength(2)
+  // The survey's own write went away with its clone: the checkout is clean, and its only out- files are the two landed.
+  expect(git('status', '--porcelain')).toBe('')
+  const tracked = git('ls-files').split('\n').filter((f) => f.startsWith('out-'))
+  expect(tracked).toHaveLength(2)
+  expect(readdirSync(repo).filter((f) => f.startsWith('out-')).sort()).toEqual(tracked.sort())
+
+  // The survey's suggestion is in the task's prompt; the task's gate ran the operator's check alone.
+  const journal = readFileSync(join(process.env['OPENSWARM_HOME']!, 'runs', note.runId, 'journal.jsonl'), 'utf8')
+  const tasks = journal.split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((e) => e.type === 'swarm/task').map((e) => e.data.task)
+  const third = tasks.filter((t) => t.id === 'task-2').at(-1)
+  expect(third.prompt).toContain('The survey suggests confirming it with: false')
+  expect(third.checks).toBeUndefined()
 
   const md = readFileSync(summary, 'utf8')
   expect(md).toContain('# Maintenance: 2 task(s) landed')
@@ -94,6 +111,8 @@ it('a survey in a disposable clone proposes three tasks; the two that pass land 
   expect(md).toContain('second fix')
   expect(md).toContain('## Abandoned')
   expect(md).toContain('- task-2: ')
+  expect(md).toContain('Checkout: fast-forwarded.')
+  expect(md).toMatch(/the survey \d+ tokens/)
 }, 180_000)
 
 it('refused before any spend: no --check, or a dollar budget it could not price', async () => {
@@ -106,4 +125,6 @@ it('refused before any spend: no --check, or a dollar budget it could not price'
   }
   expect(await fails([])).toMatch(/needs at least one --check/)
   expect(await fails(['--check', 'true', '--budget-usd', '5'])).toMatch(/need --pricing <file> with a price for mock-model/)
+  expect(await fails(['--check', 'true', '--max-cost-usd', '5'])).toMatch(/need --pricing <file> with a price for mock-model/)
+  expect(await fails(['--check', 'true', '--max-tokens', 'lots'])).toMatch(/--max-tokens must be a positive integer/)
 })

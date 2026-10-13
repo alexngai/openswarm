@@ -1069,7 +1069,13 @@ the tasks run through the `--spec` path with every `--check` on each task's
 gate and the train, under `--budget-usd` and `--task-budget-usd`, and
 `--summary` writes the pull request body from the landing evidence.
 `maintain.e2e.test.ts` runs it keyless: three proposed tasks, two land
-through the train, one is abandoned and kept. Exit criterion 3 is the live
+through the train, one is abandoned and kept. Its review changed one
+contract: what the survey suggests for verifying a task goes into the
+task's prompt, never into its checks, since the gate runs checks in the
+lead's environment outside the member sandbox, where a steered survey
+would get a shell on the host; only the operator's `--check` commands run.
+The caps and the run budget now count the survey, and the summary is
+always rewritten. Exit criterion 3 is the live
 dogfood run, which spends and waits for the owner's go-ahead.
 
 **Goal.** G2, and the effectiveness answer that decides whether D is worth
