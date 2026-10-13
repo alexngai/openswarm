@@ -52,6 +52,7 @@ import { askPeer, registerSwarmMessaging, spawnPeer, suppressSettlementTurns } f
 import type { Principal } from './protocol'
 import type { PeerHandle } from './types'
 import {
+  AbandonedTasksError,
   CASCADE_TASK_KEY,
   head,
   runBoardWorkers,
@@ -103,7 +104,7 @@ export {
   spawnPeer,
   suppressSettlementTurns,
 } from './peers'
-export { coordinatorSpec, parseNumberedPlan, renderIntent } from './topologies'
+export { AbandonedTasksError, coordinatorSpec, parseNumberedPlan, renderIntent } from './topologies'
 export type { BoardGate, ReportProgress, RunMember } from './topologies'
 export { RemotePeer } from './remote-peer'
 export { claudeCommandOf, claudeEnv, preflightClaude, runClaudeCode } from './claude-code'
@@ -607,8 +608,10 @@ export default class SwarmService extends Service {
         },
         async (error: unknown) => {
           const message = error instanceof Error ? error.message : String(error)
-          // A train that stopped says what had landed: those commits are on the target.
-          const git = error instanceof TrainStoppedError ? { git: error.outcome } : {}
+          // A train that stopped, or a run whose completed tasks landed past
+          // abandoned ones, says what had landed: those commits are on the target.
+          const outcome = error instanceof TrainStoppedError || error instanceof AbandonedTasksError ? error.outcome : undefined
+          const git = outcome === undefined ? {} : { git: outcome }
           const endedAt = Date.now()
           settle(endedAt, git.git)
           await record({ ...running, status: 'failed', endedAt, error: message, ...git })
@@ -735,14 +738,23 @@ export default class SwarmService extends Service {
     // our own checkouts.
     await worktrees.sweepOrphans()
     let result: TeamResult
+    let abandoned: AbandonedTasksError | undefined
     try {
       result = await this.dispatch(spec, run, options, board, roster, mailbox, ask, journal, worktrees)
     } catch (error) {
-      // Abort (signal or throw): drop our worktrees rather than leaving them
-      // for the next sweep. Branches survive, so committed work is recoverable.
-      await worktrees.abort().catch(() => undefined)
-      throw error
+      // Tasks abandoned in a run that was not cancelled: the completed ones
+      // still land (docs/05 C7a), the abandoned ones' branches are kept.
+      if (error instanceof AbandonedTasksError && options.signal?.aborted !== true) {
+        abandoned = error
+        result = { topology: 'peer-team', tasks: board.list(), runs: error.runs }
+      } else {
+        // Abort (signal or throw): drop our worktrees rather than leaving them
+        // for the next sweep. Branches survive, so committed work is recoverable.
+        await worktrees.abort().catch(() => undefined)
+        throw error
+      }
     }
+    const withheld = abandoned === undefined ? [] : await worktrees.withhold([...abandoned.abandoned.keys()])
     // A verdict that does not decide anything is not a gate. Only the cascade
     // has a whole-run notion of acceptance; every other topology's tasks stand
     // or fall individually, so they merge as before.
@@ -776,7 +788,14 @@ export default class SwarmService extends Service {
               ...(options.signal === undefined ? {} : { signal: options.signal }),
             },
           }
-    const git = await worktrees.finalize({ merge, ...landing })
+    let git: MergeOutcome
+    try {
+      git = await worktrees.finalize({ merge, ...landing })
+    } catch (error) {
+      if (error instanceof TrainStoppedError) error.outcome.withheld.push(...withheld)
+      throw error
+    }
+    git.withheld.push(...withheld)
     // Without the train, each merged or conflicted task's evidence (docs/05 B4): its gate's, and its diff against the base.
     if (landing.train === undefined) {
       const landed = [...git.merged.map((m) => ['landed', m] as const), ...git.conflicts.map((c) => ['conflicted', c] as const)]
@@ -785,6 +804,10 @@ export default class SwarmService extends Service {
         const at = { key: taskKey, outcome, via: 'queue', branch, base, at: Date.now(), ...(diff === undefined ? {} : { diff }) } as const
         await journal.append('swarm/evidence', buildEvidence(at, journal.events, []))
       }
+    }
+    if (abandoned !== undefined) {
+      abandoned.outcome = git
+      throw abandoned
     }
     return { ...result, git }
   }

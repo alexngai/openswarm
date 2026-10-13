@@ -31,6 +31,7 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import * as LlmOpenAi from 'openswarm-llm-openai'
 import * as LlmAnthropic from 'openswarm-llm-anthropic'
 import SwarmService, {
+  AbandonedTasksError,
   hiddenSuite,
   memberEnvOf,
   openVerifier,
@@ -989,7 +990,15 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
         totals.totalTokens = totals.inputTokens + totals.outputTokens + totals.cacheReadInputTokens + totals.cacheWriteInputTokens
         return totals
       }
-      const result = await handle.result
+      // Tasks abandoned past completed ones fail the run, but what completed landed (docs/05 C7a).
+      const settled = await handle.result.then(
+        (result) => ({ result, abandoned: undefined }),
+        (error: unknown) => {
+          if (!(error instanceof AbandonedTasksError) || error.outcome === undefined) throw error
+          return { result: { git: error.outcome, metrics: undefined }, abandoned: error.abandoned }
+        },
+      )
+      const { result, abandoned } = settled
       const git = result.git
       const landed = (git?.landed ?? git?.merged ?? []).map((l) => l.taskKey)
       const ejected = (git?.ejected ?? []).map(({ taskKey, reason }) => ({ taskKey, reason }))
@@ -1006,16 +1015,18 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
           ejected,
           withheld,
           conflicts: (git?.conflicts ?? []).map((c) => c.taskKey),
+          ...(abandoned === undefined ? {} : { abandoned: Object.fromEntries(abandoned) }),
           ...(git?.stopped === undefined ? {} : { stopped: git.stopped }),
           workspace: workspaceNote,
-          metrics: result.metrics ?? null,
+          metrics: result.metrics ?? (await (ctx as any).swarm.metrics(handle.id)) ?? null,
         }),
       )
       text =
         `team ${team.spec.topology} (${handle.id}): ${landed.length} landed, ${ejected.length} ejected, ${withheld.length} withheld` +
+        `${abandoned === undefined ? '' : `, ${abandoned.size} abandoned`}` +
         `${git?.stopped === undefined ? '' : ` (train stopped: ${git.stopped})`}; workspace ${workspaceNote}`
-      // Ejections are data about the run; only a train that stopped short fails it.
-      completed = git?.stopped === undefined
+      // Ejections are data about the run; a train that stopped short, or abandoned tasks, fail it.
+      completed = git?.stopped === undefined && abandoned === undefined
     } else if (args.has('team')) {
       const result = (await (ctx as any).swarm.runTeam(
         coordinatorSpec(prompt, agentOptions, Number(args.get('workers') ?? '2')),

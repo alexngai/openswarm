@@ -480,6 +480,23 @@ export class WorktreeRun {
   }
 
   /**
+   * Hold tasks back from the landing (docs/05 C7a): each one's work committed
+   * to its branch, which is kept, and its worktree removed, so the queue or
+   * the train never sees it. Keys without a worktree are skipped.
+   */
+  async withhold(keys: readonly string[]): Promise<MergeOutcome['withheld']> {
+    const withheld: MergeOutcome['withheld'] = []
+    for (const key of keys) {
+      const wt = this.git.list().find((w) => w.taskKey === key)
+      if (wt === undefined) continue
+      if (this.options.autoCommit !== false) await this.git.autoCommit(wt, `swarm: ${key} (team ${this.teamId}, abandoned)`)
+      if ((await this.git.commitCount(wt.branch)) > 0) withheld.push({ taskKey: key, branch: wt.branch })
+      await this.git.removeWorktree(wt)
+    }
+    return withheld
+  }
+
+  /**
    * Abort path: drop every worktree without merging. Task branches survive, so
    * committed member work is still recoverable by branch name.
    */

@@ -2,6 +2,7 @@
  * Topology implementations, parameterized by a member-run callback so they
  * stay pure coordination logic over whatever runtime the service wires in.
  */
+import type { MergeOutcome } from 'openswarm-git'
 import type { SwarmBoard, SwarmTaskSnapshot, TaskEvidence } from './board'
 import { runGate, targetStatuses, type GateDeps, type GateEvidence, type GateRound, type VerifierLevel } from './gate'
 import type { UsageRole } from './metrics'
@@ -707,9 +708,28 @@ export async function runBoardWorkers(
 
   if (abandoned.size > 0) {
     const detail = [...abandoned.entries()].map(([id, why]) => `${id}: ${why}`).join('; ')
-    throw new Error(`swarm board abandoned ${abandoned.size} task(s) — ${detail}`)
+    throw new AbandonedTasksError(`swarm board abandoned ${abandoned.size} task(s) — ${detail}`, abandoned, runs)
   }
   return runs
+}
+
+/**
+ * A board run that ended with tasks no member will finish (docs/05 C7a).
+ * The run fails, but its completed tasks still land: `outcome` is set to what
+ * did once the landing ran, and the run's failed record keeps it.
+ */
+export class AbandonedTasksError extends Error {
+  outcome?: MergeOutcome
+  constructor(
+    message: string,
+    /** Abandoned task id → why. */
+    readonly abandoned: ReadonlyMap<string, string>,
+    /** The completed tasks' runs. */
+    readonly runs: Record<string, MemberRunResult>,
+  ) {
+    super(message)
+    this.name = 'AbandonedTasksError'
+  }
 }
 
 export async function runPeerTeam(
