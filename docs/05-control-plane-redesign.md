@@ -1037,7 +1037,7 @@ that, built in this order:
 
 Throughput across independent tasks is concurrency plus verified landing,
 not coordination; no experiment here claims otherwise. D18's stage 2 is
-pre-registered alongside (docs/07), and run only on the owner's say-so.
+pre-registered alongside (docs/07 §7.6), and run only on the owner's say-so.
 
 *Progress (2026-10-13).* C7a and C5 are built; **exit criteria 1 and 2 are
 met by keyless tests.** C7a: `runBoardWorkers` throws `AbandonedTasksError`;

@@ -550,6 +550,58 @@ Not shown, and not tested: tasks beyond one agent's horizon or context
 metric (the untested `evolve`), other models or cheap-worker mixes, and the
 wall-clock value of parallel work. docs/05 D18 records what this changes.
 
+### 7.6 Stage 2, pre-registered 2026-10-13 (not run; it runs only on the owner's say-so)
+
+D18's trigger, written down before any task is screened, so the experiment
+cannot be tuned after the fact.
+
+**Question.** On tasks beyond one gated agent's horizon, does program
+division beat one agent with the same harness at matched spend?
+
+**Task set.** RoadmapBench, Python and TypeScript, tasks outside the frozen
+12. A task enters the screen if its reference solution touches at least 3
+top-level source directories and at least 15 files (decomposable, and more
+than one context's worth). Screened by arm (f8) (the one-thread pipeline,
+up to 8 rounds) at two seeds; a task is frozen if its mean reward is at most
+0.45 and the reference scores 1.0 in 3 of 3 runs. Freeze the first 8 that
+qualify, in RoadmapBench's own order, plus the frozen 12's hard tasks (one
+agent under 0.45 there) if they meet the file rule; at fewer than 6, stop
+and report that the benchmark has no such tasks for this model. Each frozen
+task gets one hand-written partition (t0 owns shared contracts; 2–4
+file-disjoint threads), written before any division cell runs and passed
+through `leak-check.py`.
+
+**Arms**, each at three seeds, gpt-5.5, same images, container and SUT
+commit for every arm:
+- **(f8)** and **(f16)**: the one-thread pipeline at 8 and 16 rounds. Their
+  costs and rewards make the single-agent cost curve.
+- **(e)**: program: thread 0's contracts first, then the threads, with the
+  final whole-roadmap review and owner repair.
+
+**Primary comparison.** (e) against the (f8)–(f16) cost curve at (e)'s mean
+spend (linear between the two points; flat beyond (f16)), per task, averaged
+over tasks; a 95 % bootstrap interval over tasks and seeds.
+
+**Rules.**
+- (e) at least 0.06 above the curve with the interval excluding 0: D18's
+  trigger fires, and docs/05 brings back the deferred items division needs
+  (C1–C4 first).
+- Within 0.02 of the curve, or below it: division stays deferred for this
+  model and benchmark, and the question is closed until a new model or task
+  class gives a reason to reopen it.
+- In between: reported as inconclusive. No further cells without a new
+  pre-registration.
+- **Futility stop:** if after seed 1 (e) trails the curve by more than 0.05,
+  stop and report.
+
+**Recorded, not decided on:** wall-clock time per arm, conflicted landings,
+coordination ratio, repairs.
+
+**Cost estimate.** About $1,000–1,500 for the screen (12–15 tasks × 2 seeds
+of (f8) on hard tasks) and $3,500–5,500 for the arms (8 tasks × 3 seeds × 3
+arms at an estimated $40–75 a cell). The owner sets a ceiling before it
+starts; reaching it stops the run with what it has, reported as such.
+
 ## 8. What AgentRoom, Co-Coder and STORM do, and what OpenSwarm takes from them
 
 Read from the three papers directly (2026-09-27) [P arxiv 2606.00953,
