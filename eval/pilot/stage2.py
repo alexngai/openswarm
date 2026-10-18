@@ -113,7 +113,9 @@ def cell(task: str, arm: str, seed: int) -> dict | None:
         subprocess.run(["node", str(HERE / "runner.mjs")], env=env, stdout=out, stderr=subprocess.STDOUT)
     for d in cells(run_id):
         s, u = d.get("score") or {}, d.get("usage") or {}
-        reward = s["earned"] / s["total"] if s.get("total") else None
+        # An infrastructure failure, or a cell that made no model call, is no measurement (never a 0).
+        measured = s.get("total") and d.get("status") != "env_error" and u.get("inputTokens", 0) > 0
+        reward = s["earned"] / s["total"] if measured else None
         return {"reward": reward, "usd": round(usd(u), 2), "status": d.get("status"), "minutes": round(d.get("durationMs", 0) / 60000)}
     return None
 
