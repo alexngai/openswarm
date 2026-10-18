@@ -81,11 +81,12 @@ export async function pushLeased(repoRoot: string, remote: string, runId: string
   } catch (error) {
     const out = `${(error as any)?.stdout ?? ''}\n${(error as any)?.stderr ?? ''}`
     // Porcelain marks a refused ref "!": for the leased ref, its lease failed
-    // ("[rejected] (stale info)") or a concurrent writer won the ref's lock on
-    // the remote ("[remote rejected] (cannot lock ref …)"). Either way another
-    // host holds the run. A transport failure refuses no ref by name, and a
-    // ref refused only because another in the atomic push was is not fenced.
-    const fenced = out.split('\n').some((line) => line.startsWith('!') && line.includes(`:${ref}\t`) && !/atomic push fail/.test(line))
+    // ("[rejected] (stale info)") or a concurrent writer won the remote's ref
+    // transaction ("[remote rejected] (cannot lock ref …)", "(atomic
+    // transaction failed)"). Either way another host holds the run. Nothing else fences: a transport failure refuses no
+    // ref by name, and a hook declining the push, or a branch failing the
+    // atomic push, refuses the run's ref for a reason that is not another host.
+    const fenced = out.split('\n').some((line) => line.startsWith('!') && line.includes(`:${ref}\t`) && /stale info|cannot lock ref|failed to update ref|incorrect old value|atomic transaction failed/.test(line))
     return { ok: false, fenced, why: out.trim().split('\n').filter((l) => l !== '' && !l.startsWith('To ')).slice(-3).join(' ') }
   }
 }

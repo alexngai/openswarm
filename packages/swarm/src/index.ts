@@ -596,7 +596,7 @@ export default class SwarmService extends Service {
     // Clones on one host share the runs directory: a live writer's journal there is not ours to overwrite.
     const path = this.journalPath(runId)
     const local = existsSync(path) ? foldRun(SwarmJournal.read(path)) : undefined
-    if (local?.status === 'running' && writerLive(local)) throw new Error(`run ${runId} is live in pid ${local.writer.pid} on this host; stop it before taking it over here`)
+    if (local?.status === 'running' && local.writer.host === hostname() && pidAlive(local.writer.pid)) throw new Error(`run ${runId} is live in pid ${local.writer.pid} on this host; stop it before taking it over here`)
     const repoRoot = options.worktrees.repoRoot
     let journal: SwarmJournal | undefined
     const lease = await takeOver(
@@ -608,7 +608,8 @@ export default class SwarmService extends Service {
         journal = SwarmJournal.open(this.journalPath(runId))
         const prior = foldRun(journal.events)
         if (prior?.spec === undefined) throw new Error(`run ${runId}'s journal has no run record to resume`)
-        if (prior.status === 'finished' || prior.status === 'failed') throw new Error(`run ${runId} already ${prior.status}; there is nothing to resume`)
+        // A run that failed before landing landed nothing, so it may be resumed; one that landed is refused below or here.
+        if (prior.status === 'finished') throw new Error(`run ${runId} already finished; there is nothing to resume`)
         if (journal.events.some((e) => e.type === LANDING.type && (e.data as { phase?: string }).phase === LANDING.phase)) {
           throw new Error(`run ${runId} began landing on ${prior.writer.host}; its outcome is that host's (a train's or the forge's), and resuming it would land twice`)
         }
@@ -804,7 +805,8 @@ export default class SwarmService extends Service {
         throw error
       }
       const mirrored = durable
-      signal.addEventListener('abort', () => mirrored.stop(), { once: true })
+      if (signal.aborted) mirrored.stop()
+      else signal.addEventListener('abort', () => mirrored.stop(), { once: true })
     }
     /**
      * The run's metrics as it settles (docs/05 B5), emitted as `swarm/metrics`
@@ -986,7 +988,10 @@ export default class SwarmService extends Service {
     if (durable !== undefined && worktrees !== undefined) {
       durable.worktrees = worktrees
       // Its branches' namespace and base, which a host that takes it over must keep.
-      if (resumed === undefined) await journal.append('swarm/worktrees', { version: 1, teamId: worktrees.teamId, base: await worktrees.baseCommit() })
+      if (resumed === undefined) {
+        await journal.append('swarm/worktrees', { version: 1, teamId: worktrees.teamId, base: await worktrees.baseCommit() })
+        void durable.mirror.checkpoint('worktrees')
+      }
     }
     // Every member prompt through here carries the intent header (docs/05
     // §6.1). A peer-team keys each member run by its board task, whose own
@@ -1119,8 +1124,13 @@ export default class SwarmService extends Service {
     // cut off from the remote (and so perhaps taken over), it lands nothing.
     if (durable !== undefined) {
       // Cancelled, it stopped mirroring: that is the run's end, not a lost remote.
-      options.signal?.throwIfAborted()
-      await journal.append(LANDING.type, { version: 1, phase: LANDING.phase })
+      if (options.signal?.aborted === true) {
+        await worktrees.abort().catch(() => undefined)
+        options.signal.throwIfAborted()
+      }
+      // Only a shared target (a train's or the forge's) can be landed on twice;
+      // the local queue lands into each host's own clone.
+      if (forge !== undefined || train?.url !== undefined) await journal.append(LANDING.type, { version: 1, phase: LANDING.phase })
       if (!(await durable.mirror.confirm('landing'))) {
         await worktrees.abort().catch(() => undefined)
         throw new Error(durable.mirror.isFenced ? `run ${runIdOf(journal)} was taken over by another host; it lands nothing here` : `run ${runIdOf(journal)} could not reach its remote to confirm it still holds the run; it lands nothing here`)

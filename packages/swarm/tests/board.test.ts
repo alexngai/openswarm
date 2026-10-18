@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { expect, it } from 'vitest'
 import { SwarmBoard, SwarmBoardError, foldBoard } from '../src/board'
 import { SwarmJournal } from '../src/journal'
+import { runBoardWorkers, seedBoard } from '../src/topologies'
 import type { SwarmQuestionRequest } from '../src/run'
 import type { MemberSpec } from '../src/types'
 
@@ -319,3 +320,18 @@ it('a task blocked by an abandoned one is abandoned too, rather than parking the
     }),
   ).rejects.toThrow(/blocked by abandoned task/)
 }, 15_000)
+
+it('a resumed board: tasks journaled abandoned stay abandoned, and so do their dependents not journaled yet (docs/05 D1)', async () => {
+  const journal = SwarmJournal.open(join(mkdtempSync(join(tmpdir(), 'openswarm-board-test-')), 'journal.jsonl'))
+  const board = new SwarmBoard(journal)
+  // The first host seeded two of three tasks, then abandoned the first before journaling its dependent.
+  const have = await seedBoard(board, [{ subject: 'a', prompt: 'a' }, { subject: 'b', prompt: 'b', blockedBy: [0] }])
+  await board.recordAbandoned(have[0]!, 'not accepted')
+  const ids = await seedBoard(board, [{ subject: 'a', prompt: 'a' }, { subject: 'b', prompt: 'b', blockedBy: [0] }, { subject: 'c', prompt: 'c' }], have)
+  expect(ids).toEqual([...have, 'task-2'])
+  expect(board.list()).toHaveLength(3)
+  const ran: string[] = []
+  await expect(runBoardWorkers([{ name: 'm' }], board, new Set(ids), async (_member, task) => (ran.push(task.id), { text: 'done' } as never))).rejects.toThrow(/task-0: not accepted; task-1: blocked by abandoned task task-0/)
+  expect(ran).toEqual(['task-2'])
+  expect([...board.abandoned().keys()].sort()).toEqual(['task-0', 'task-1'])
+})

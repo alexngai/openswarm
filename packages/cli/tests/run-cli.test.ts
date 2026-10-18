@@ -656,3 +656,10 @@ it('gate env without OPENSWARM_GATE=1 warns that the run is not gated', async ()
     delete process.env['OPENSWARM_GATE_CHECK']
   }
 }, 60_000)
+
+it('--resume without its team spec is refused before anything runs (docs/05 D1)', async () => {
+  const lines: string[] = []
+  const code = await runCli(['run', '--model', 'mock-small', '--resume', 'run-x'], { out: (l) => lines.push(l), err: () => {} })
+  expect(code).toBe(1)
+  expect(lines.join('\n')).toMatch(/--resume takes the run's team spec/)
+})

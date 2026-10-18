@@ -1428,8 +1428,8 @@ shared train can land; its branch is the same work, but the train does not
 know the run moved), and the enqueue does not ride the atomic push.
 *Its review* found five ways to land or lose work, fixed: a cancelled run
 closed its aborted task as completed and pushed that (a cancel now stops
-the mirror, so the remote holds the run as a crash would, and a finished or
-failed run is not resumed); clones on one host share the runs directory, so
+the mirror, so the remote holds the run as a crash would, and a finished
+run is not resumed); clones on one host share the runs directory, so
 a taker overwrote a live writer's journal and pushed its late events (a
 live writer on this host now refuses the takeover); a transport error at
 the landing push counted as holding the run, so a writer cut off from the
@@ -1446,8 +1446,19 @@ journaled), the taker's member sessions shared the first host's directory
 and double-counted usage, a heartbeat longer than a third of the lease let a
 polite taker preempt a live writer (capped at 30 s), adopted tasks had no
 owner for a train's repair, a ref refused only by the atomic push's failure
-elsewhere read as a fence, and the launcher dropped `--spec`. Not fixed: two
-takers on one host at once can still race on the shared journal file.
+elsewhere read as a fence, and the launcher dropped `--spec`. *Its
+verification* held every fix and found more, fixed: a run that failed on the
+taker before landing was pushed `failed` and refused for good (a failure
+before landing is resumable; the landing marker, now journaled only for a
+shared target, is what refuses a run that may have landed); a refused
+takeover left the run's journal locally and every retry read it as a live
+writer (only a live process on this host blocks); a hook declining the push
+read as a fence (only a lease or ref-transaction refusal fences); `--resume`
+without `--spec` started a single agent with an empty prompt; journaled
+abandonments resumed without their dependents, which hung the board; a
+cancel during the first push was lost; the team's namespace waited for a
+later push. Not fixed: two takers on one host at once can still race on the
+shared journal file, and the lease wait and pushes do not take the cancel.
 Resuming in the checkout that still holds the run's worktrees fails (git
 will not check a branch out twice): resume from another clone.
 

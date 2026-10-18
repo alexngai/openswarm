@@ -131,3 +131,11 @@ it('an unreachable remote is not a fence, but confirms nothing; a stopped mirror
   expect(() => validateDurable({ remote: 'origin', heartbeatMs: 60_000 })).toThrow(/at most 30000/)
   expect(() => validateDurable({ remote: '' })).toThrow(/remote/)
 })
+
+it('a hook declining the push refuses the run ref too, but is no fence', async () => {
+  const { clones, remote } = world(1)
+  const [a] = clones
+  writeFileSync(join(remote, 'hooks', 'pre-receive'), '#!/bin/sh\necho declined >&2\nexit 1\n', { mode: 0o755 })
+  const declined = await pushLeased(a!.path, 'origin', 'run-x', commitOf(a!.path, a!.runDir), undefined, ['main'])
+  expect(declined).toMatchObject({ ok: false, fenced: false })
+})

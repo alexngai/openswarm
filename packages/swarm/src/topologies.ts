@@ -493,8 +493,8 @@ export async function runBoardWorkers(
   const attempts = new Map<string, number>()
   /** Attempts granted past `maxTaskAttempts` by a 'retry' answer. */
   const extra = new Map<string, number>()
-  /** Tasks no member will finish, with the failure that condemned them; a resumed run's from its journal. */
-  const abandoned = new Map([...board.abandoned()].filter(([id]) => seeded.has(id)))
+  /** Tasks no member will finish, with the failure that condemned them. */
+  const abandoned = new Map<string, string>()
   /** Members still in the pool; one that fails leaves it. */
   let active = members.length
   let settled = 0
@@ -504,16 +504,19 @@ export async function runBoardWorkers(
    * a task that will never complete can never become ready, and leaving it
    * pending would park the remaining members forever.
    */
-  const abandon = (id: string, reason: string): void => {
+  const abandon = (id: string, reason: string, journaled = false): void => {
     if (abandoned.has(id)) return
     abandoned.set(id, reason)
-    void board.recordAbandoned(id, reason).catch(() => undefined)
+    if (!journaled) void board.recordAbandoned(id, reason).catch(() => undefined)
     for (const task of board.list()) {
       if (seeded.has(task.id) && task.blockedBy.includes(id)) {
         abandon(task.id, `blocked by abandoned task ${id}`)
       }
     }
   }
+
+  // A resumed run's (docs/05 D1), with their dependents, which its first host may not have journaled yet.
+  for (const [id, reason] of board.abandoned()) if (seeded.has(id)) abandon(id, reason, true)
 
   const done = () =>
     board

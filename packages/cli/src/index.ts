@@ -852,6 +852,7 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
   const maxCostUsd = numericArg(args, 'max-cost-usd')
   const pilot = pilotOf(args, selfModify)
   const team = teamSpecOf(args, selfModify, pilot !== undefined)
+  if (resume !== undefined && team?.durable === undefined) throw new Error('--resume takes the run\'s team spec (--spec) with its durable remote')
   // The dollar cap (docs/05 C5) prices every dsh token at the route's model and
   // adds what claude-code members reported. A cap that undercounts is worse
   // than none, so whatever it cannot price is refused before any spend.
@@ -1004,7 +1005,6 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
         },
         ...(team.durable === undefined ? {} : { durable: team.durable }),
       }
-      if (resume !== undefined && team.durable === undefined) throw new Error('--resume takes the run\'s team spec with its durable remote')
       const handle: RunHandle =
         resume === undefined
           ? await (ctx as any).swarm.start({ ...team.spec, members, tasks }, options)
