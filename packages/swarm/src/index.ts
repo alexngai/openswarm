@@ -491,8 +491,10 @@ export default class SwarmService extends Service {
     ctx.effect(() => {
       const fromEnv = process.env['OPENSWARM_TRAIN']
       if (fromEnv !== undefined && fromEnv !== '') {
+        // A process started to host a train has no other job: one that cannot start it exits.
         this.startTrain(JSON.parse(fromEnv) as TrainServiceConfig).catch((error) => {
           process.stderr.write(`openswarm: the train did not start: ${error instanceof Error ? error.message : String(error)}\n`)
+          process.exit(1)
         })
       }
       return () => this.trainStop?.abort()

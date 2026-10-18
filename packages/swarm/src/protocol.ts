@@ -329,6 +329,10 @@ export async function dispatch(
   if (!POLICY[principal.role]?.includes(entry.group)) {
     throw new SwarmProtocolError('FORBIDDEN', `${principal.role} may not call ${method}`)
   }
+  // Checked on every call, so revoking a client cuts off a connection it already has open.
+  if (principal.role === 'client' && ctx.swarm.train !== undefined && !ctx.swarm.train.isClient(principal.client ?? '')) {
+    throw new SwarmProtocolError('FORBIDDEN', `client ${principal.client} is no longer invited`)
+  }
   if (typeof params !== 'object' || params === null || Array.isArray(params)) {
     throw invalid(method, 'params must be an object')
   }

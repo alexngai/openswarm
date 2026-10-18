@@ -259,7 +259,7 @@ const messageOf = (error: unknown) => (error instanceof Error ? error.message : 
  * holds none. ponytail: a binary or modify/delete conflict leaves no markers,
  * so it passes on the resolver's word; the batch's verifier still runs on it.
  */
-function markers(path: string): boolean {
+export function markers(path: string): boolean {
   try {
     return /^(<{7}|>{7})( |$)/m.test(readFileSync(path, 'utf8'))
   } catch {

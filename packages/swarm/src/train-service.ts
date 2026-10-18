@@ -45,6 +45,8 @@ const run = promisify(execFile)
 const git = async (cwd: string, ...args: string[]) => (await run('git', args, { cwd, maxBuffer: 64 * 1024 * 1024 })).stdout.trim()
 const ok = (p: Promise<unknown>) => p.then(() => true, () => false)
 const hash = (token: string) => createHash('sha256').update(token).digest('hex')
+/** How long a tip that failed alone stays failed before it is tried again (a flaky check). */
+const BASELINE_RETRY_MS = 10 * 60_000
 
 export interface TrainServiceConfig {
   /** A checkout of the repository for the train alone; its target must not be checked out there. */
@@ -63,7 +65,7 @@ export interface TrainServiceConfig {
   report?: (line: string) => void
 }
 
-export type EjectKind = 'conflict' | 'check' | 'moved'
+export type EjectKind = 'conflict' | 'check' | 'moved' | 'blocked'
 
 /** Payloads of the train's journal (its own file, not a run's). */
 export interface TrainServiceEvents {
@@ -76,8 +78,8 @@ export interface TrainServiceEvents {
   'shared/baseline': { version: 1; tip: string; passed: boolean; failedCommand?: string }
   'shared/batch': { version: 1; batch: number; tip: string; ids: string[] }
   'shared/verified': { version: 1; batch: number; commit: string; passed: boolean; failedCommand?: string }
-  /** Landed: `commit` is the target once it did; `batch` -1 when found in the target on recovery. */
-  'shared/landed': { version: 1; id: string; batch: number; commit: string }
+  /** Landed: `commit` is the target once it did, `tip` the target before; `batch` -1 when found in the target on recovery. */
+  'shared/landed': { version: 1; id: string; batch: number; commit: string; tip: string }
   'shared/ejected': { version: 1; id: string; kind: EjectKind; reason: string; failedCommand?: string; output?: string }
 }
 
@@ -110,7 +112,8 @@ export class TrainService {
   private batches = 0
   /** The target this train last pushed, and tips already verified alone. */
   private pushed: string | undefined
-  private readonly baselines = new Map<string, boolean>()
+  /** Each tip verified alone: whether it passed, and when; a failure is tried again after BASELINE_RETRY_MS. */
+  private readonly baselines = new Map<string, { passed: boolean; at: number }>()
   private readonly work: string
   private readonly report: (line: string) => void
 
@@ -127,6 +130,7 @@ export class TrainService {
   /** Open (or resume) the train for `config.target`: its journal folded, its worktree ready. */
   static async open(config: TrainServiceConfig): Promise<TrainService> {
     if (config.checks.length === 0) throw new Error('a train needs at least one check its batches must pass')
+    if (config.batchSize !== undefined && (!Number.isInteger(config.batchSize) || config.batchSize < 1)) throw new Error('a train batch size is a positive integer')
     const head = await git(config.repoRoot, 'symbolic-ref', '-q', 'HEAD').catch(() => '')
     if (head === `refs/heads/${config.target}`) {
       throw new Error(`the train's checkout has ${config.target} checked out; give it a checkout of its own, where the train alone moves the target`)
@@ -169,7 +173,7 @@ export class TrainService {
         this.batches = Math.max(this.batches, d.batch)
         break
       case 'shared/baseline':
-        this.baselines.set(d.tip, d.passed)
+        this.baselines.set(d.tip, { passed: d.passed, at: event.time })
         break
     }
   }
@@ -181,6 +185,17 @@ export class TrainService {
 
   private async record<K extends keyof TrainServiceEvents>(type: K, data: Omit<TrainServiceEvents[K], 'version'>): Promise<void> {
     this.fold(await this.journal.append(type, { version: 1, ...data }))
+    // An entry out of the queue for good takes its principal's queued dependents with it,
+    // or they would wait forever on a blocker that will never land.
+    if (type === 'shared/ejected' || (type === 'shared/withdrawn' && (data as any).why === 'withdrawn')) {
+      const gone = this.entries.get((data as any).id)
+      if (gone === undefined) return
+      for (const e of [...this.entries.values()]) {
+        if (e.state === 'queued' && e.principal === gone.principal && e.blockedBy.includes(gone.branch)) {
+          await this.record('shared/ejected', { id: e.id, kind: 'blocked', reason: `blocked by ${gone.branch}, which left the queue without landing` })
+        }
+      }
+    }
   }
 
   card(): TrainCard {
@@ -190,6 +205,7 @@ export class TrainService {
   /** Invite a client: a new token for it, journaled as a hash; returned once, here. */
   async invite(name: string): Promise<string> {
     if (!/^[\w.-]{1,64}$/.test(name)) throw new Error('a client name is 1-64 of [A-Za-z0-9_.-]')
+    if (name === 'owner') throw new Error('"owner" names the train\'s owner; pick another name')
     if ([...this.clients.values()].includes(name)) throw new Error(`a client named "${name}" is already invited; revoke it first`)
     const token = randomBytes(32).toString('base64url')
     await this.record('shared/client', { name, hash: hash(token) })
@@ -199,6 +215,11 @@ export class TrainService {
   async revoke(name: string): Promise<void> {
     if (![...this.clients.values()].includes(name)) throw new Error(`no client named "${name}"`)
     await this.record('shared/revoked', { name })
+  }
+
+  /** Whether `name` is an invited client, not revoked: checked on every call, so a revocation reaches an open connection. */
+  isClient(name: string): boolean {
+    return [...this.clients.values()].includes(name)
   }
 
   /** The client a token belongs to, unless revoked. */
@@ -296,7 +317,7 @@ export class TrainService {
     // Already in the target: landed, whether by this train before a crash or by hand.
     const live: Entry[] = []
     for (const e of batch) {
-      if (await ok(git(this.config.repoRoot, 'merge-base', '--is-ancestor', e.sha, tip))) await this.record('shared/landed', { id: e.id, batch: -1, commit: tip })
+      if (await ok(git(this.config.repoRoot, 'merge-base', '--is-ancestor', e.sha, tip))) await this.record('shared/landed', { id: e.id, batch: -1, commit: tip, tip })
       else live.push(e)
     }
     if (live.length === 0) return true
@@ -322,11 +343,15 @@ export class TrainService {
     const verdict = await this.verify(commit)
     await this.record('shared/verified', { batch, commit, passed: verdict.passed, ...(verdict.failedCommand === undefined ? {} : { failedCommand: verdict.failedCommand }) })
     if (verdict.passed) {
-      if (!(await this.push(commit, tip))) {
+      const refused = await this.push(commit, tip)
+      if (refused !== undefined) {
+        // Moved by someone else: verified again on the new tip next pass. Unmoved, the push
+        // failed for another reason (credentials, protection, the network): an error, backed off.
+        if ((await this.syncTip()) === tip) throw new Error(`pushing ${this.config.target} failed: ${refused}`)
         this.report(`train: ${this.config.target} moved during batch ${batch}; it is verified again on the new tip`)
         return
       }
-      for (const e of clean) await this.record('shared/landed', { id: e.id, batch, commit })
+      for (const e of clean) await this.record('shared/landed', { id: e.id, batch, commit, tip })
       this.report(`train: batch ${batch} landed ${clean.map((e) => e.id).join(', ')}`)
       return
     }
@@ -336,7 +361,9 @@ export class TrainService {
     }
     const half = Math.ceil(clean.length / 2)
     await this.land(clean.slice(0, half), tip)
-    await this.land(clean.slice(half), await this.syncTip())
+    // The second half on the tip as it is now, through the same checks a pass makes:
+    // already landed, a tip pushed from outside verified alone first.
+    await this.pass(clean.slice(half).filter((e) => this.entries.get(e.id)?.state === 'queued'))
   }
 
   /** The target's tip, fetched first from the remote when there is one. */
@@ -359,7 +386,7 @@ export class TrainService {
   private async baseline(tip: string): Promise<boolean> {
     if (tip === this.pushed) return true
     const known = this.baselines.get(tip)
-    if (known !== undefined) return known
+    if (known !== undefined && (known.passed || Date.now() - known.at < BASELINE_RETRY_MS)) return known.passed
     const verdict = await this.verify(tip)
     await this.record('shared/baseline', { tip, passed: verdict.passed, ...(verdict.failedCommand === undefined ? {} : { failedCommand: verdict.failedCommand }) })
     if (!verdict.passed) this.report(`train: ${this.config.target} at ${tip.slice(0, 8)} fails ${verdict.failedCommand} before anything lands; paused until it changes`)
@@ -404,13 +431,29 @@ export class TrainService {
     })
   }
 
-  /** Land `commit` by moving the target from `tip` to it: a non-forced push, or a compare-and-set on one host. */
-  private async push(commit: string, tip: string): Promise<boolean> {
+  /**
+   * Land `commit` by moving the target from `tip` to it: a non-forced push, or
+   * a compare-and-set on one host. Undefined when it landed, else git's reason.
+   */
+  private async push(commit: string, tip: string): Promise<string | undefined> {
     const { remote, target, repoRoot } = this.config
-    if (remote === undefined) return ok(git(repoRoot, 'update-ref', `refs/heads/${target}`, commit, tip))
-    if (!(await ok(git(repoRoot, 'push', '-q', '--no-verify', remote, `${commit}:refs/heads/${target}`)))) return false
-    await git(repoRoot, 'update-ref', `refs/remotes/${remote}/${target}`, commit)
-    return true
+    const why = (error: unknown) =>
+      String((error as any)?.stderr || (error as Error)?.message || error)
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line !== '' && !line.startsWith('To '))
+        .join(' ')
+        .slice(0, 400)
+    try {
+      if (remote === undefined) await git(repoRoot, 'update-ref', `refs/heads/${target}`, commit, tip)
+      else {
+        await git(repoRoot, 'push', '-q', '--no-verify', remote, `${commit}:refs/heads/${target}`)
+        await git(repoRoot, 'update-ref', `refs/remotes/${remote}/${target}`, commit)
+      }
+      return undefined
+    } catch (error) {
+      return why(error)
+    }
   }
 
   /** What is queued, landed and ejected, for the owner's view. */

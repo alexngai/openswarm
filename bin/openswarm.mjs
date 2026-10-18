@@ -284,13 +284,9 @@ function trainServe(argv) {
   ensureBuilt()
   ensureProfiles(home)
   const config = { repoRoot: process.cwd(), target, checks, ...(one('--remote') ? { remote: one('--remote') } : {}), ...(one('--batch') ? { batchSize: Number(one('--batch')) } : {}) }
-  // The profile loads a model route, which a train never calls: the configured
-  // provider's when there is one, else a placeholder nothing reaches.
-  const provider = process.env.OPENSWARM_PROVIDER ?? autoProvider()
-  const route =
-    provider === undefined
-      ? { OPENSWARM_DEFAULT_PROVIDER: 'openai', OPENSWARM_LLM_BASE_URL: 'http://127.0.0.1:9/v1', OPENSWARM_LLM_API_KEY: 'unused', OPENSWARM_DEFAULT_MODEL: 'unused' }
-      : resolveModel({}).env
+  // The profile loads a model route, which a train never calls: a placeholder
+  // nothing reaches, so no real credential sits in the process running entrants' checks.
+  const route = { OPENSWARM_DEFAULT_PROVIDER: 'openai', OPENSWARM_LLM_BASE_URL: 'http://127.0.0.1:9/v1', OPENSWARM_LLM_API_KEY: 'unused', OPENSWARM_DEFAULT_MODEL: 'unused' }
   const env = { ...route, OPENSWARM_TRAIN: JSON.stringify(config), OPENSWARM_APP_PORT: one('--port') ?? '4620', ...(one('--host') ? { OPENSWARM_APP_HOST: one('--host') } : {}) }
   process.stderr.write(`openswarm: train for ${target} on :${env.OPENSWARM_APP_PORT}; invite a swarm with: openswarm train invite <name>\n`)
   bootDsh('openswarm-dev', [], env, home)

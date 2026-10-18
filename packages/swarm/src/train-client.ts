@@ -22,7 +22,8 @@ import { JsonRpcLineTransport } from '@deepseek-ai/dsh-sdk-protocol'
 import type { MergeOutcome, SwarmGit, WorktreeInfo } from 'openswarm-git'
 import { buildEvidence } from './evidence'
 import type { SwarmJournal, SwarmJournalEvent } from './journal'
-import { TrainStoppedError, repairPrompt, resolverPrompt, type TrainConfig } from './train'
+import { join } from 'node:path'
+import { TrainStoppedError, markers, repairPrompt, resolverPrompt, type TrainConfig } from './train'
 import type { TrainCard } from './train-service'
 import type { ReportProgress, RunMember } from './topologies'
 import type { MemberSpec } from './types'
@@ -61,7 +62,10 @@ export async function landRemote(git_: SwarmGit, config: TrainConfig, deps: Remo
   const report = deps.report ?? (() => {})
   const remote = config.remote ?? 'origin'
   const maxRepairs = config.maxRepairs ?? 1
-  const train = await dial(config.url!, config.token!)
+  let train = await dial(config.url!, config.token!)
+  // A cancel ends a long-poll at once: the socket closes under it.
+  const hangUp = () => train.close()
+  deps.signal?.addEventListener('abort', hangUp, { once: true })
   const outcome = {
     targetBranch: '',
     merged: [] as MergeOutcome['merged'],
@@ -84,16 +88,16 @@ export async function landRemote(git_: SwarmGit, config: TrainConfig, deps: Remo
       throw new Error(`the train lands from ${card.remoteUrl ?? 'its own checkout'}, and this repository's ${remote} is ${ours || 'not set'}: point worktrees.train.remote at the train's remote`)
     }
     const branchOf = new Map(git_.list().map((w) => [w.taskKey, w.branch]))
-    /** Push the branch and enqueue its commit; returns the id. */
-    const enqueue = async (key: string, worktree: WorktreeInfo): Promise<string> => {
+    /** Push the branch and enqueue its commit: its id, and its state when the train already had it at that commit. */
+    const enqueue = async (key: string, worktree: WorktreeInfo): Promise<{ id: string; state: string }> => {
       deps.signal?.throwIfAborted()
       await git(deps.repoRoot, 'push', '-q', '--no-verify', '--force', remote, `${worktree.branch}:refs/heads/${worktree.branch}`)
       const sha = await git(deps.repoRoot, 'rev-parse', worktree.branch)
       const blockedBy = (deps.tasks?.find((t) => t.id === key)?.blockedBy ?? []).flatMap((b) => branchOf.get(b) ?? [])
-      const { id } = await train.call('swarm/train/enqueue', { branch: worktree.branch, sha, blockedBy })
+      const { id, state } = await train.call('swarm/train/enqueue', { branch: worktree.branch, sha, blockedBy })
       byId.set(id, key)
       await deps.journal.append('train/enqueued', { version: 1, key, branch: worktree.branch, commits: 0, tip: sha, created: Date.now(), blockedBy, priority: 0 })
-      return id
+      return { id, state }
     }
     for (const worktree of git_.list()) {
       if ((await git_.commitCount(worktree.branch)) === 0) {
@@ -101,7 +105,11 @@ export async function landRemote(git_: SwarmGit, config: TrainConfig, deps: Remo
         await git_.removeWorktree(worktree)
         continue
       }
-      entries.set(worktree.taskKey, { worktree, id: await enqueue(worktree.taskKey, worktree), repairs: 0, settled: false })
+      const { id, state } = await enqueue(worktree.taskKey, worktree)
+      entries.set(worktree.taskKey, { worktree, id, repairs: 0, settled: state !== 'queued' })
+      // The train already had it at this commit and is done with it: no event will come.
+      if (state === 'landed') outcome.landed.push({ taskKey: worktree.taskKey, branch: worktree.branch, commits: await git_.commitCount(worktree.branch) })
+      else if (state !== 'queued') outcome.ejected.push({ taskKey: worktree.taskKey, branch: worktree.branch, reason: `the train already ${state === 'withdrawn' ? 'withdrew' : 'ejected'} it at this commit` })
     }
     report(`train: ${entries.size} entr${entries.size === 1 ? 'y' : 'ies'} enqueued at ${config.url}`)
 
@@ -112,35 +120,58 @@ export async function landRemote(git_: SwarmGit, config: TrainConfig, deps: Remo
     }
     const evidence = async (key: string, at: { outcome: 'landed' | 'ejected'; base: string; commit?: string; batch?: number; reason?: string }) => {
       const branch = entries.get(key)!.worktree.branch
+      // The tip it landed on is the train's: fetched, so the diff can be read here.
+      await git(deps.repoRoot, 'fetch', '-q', remote, `+refs/heads/${card.target}:refs/remotes/${remote}/${card.target}`).catch(() => undefined)
       const diff = await git_.diffStat(at.base, branch).catch(() => undefined)
       const landing = { key, branch, via: 'train' as const, at: Date.now(), ...at, ...(diff === undefined ? {} : { diff }) }
       await deps.journal.append('train/evidence', buildEvidence(landing, deps.runEvents?.() ?? [], deps.journal.events))
     }
-    /** Repair an ejected entry here and enqueue it again; false when it is out of repairs or the step failed. */
+    /**
+     * Repair an ejected entry here and enqueue it again. False, and the entry
+     * is ejected for good, when it is out of repairs, its step failed or
+     * changed nothing, or its resolver left conflict markers or dropped the
+     * target's tip; any error repairing it ends that entry, not the landing.
+     */
     const repair = async (key: string, ejected: { kind: string; reason: string; failedCommand?: string; output?: string }): Promise<boolean> => {
       const e = entries.get(key)!
       const member = ownerOf(key)
-      if (e.repairs >= maxRepairs || member === undefined || ejected.kind === 'moved') return false
+      if (e.repairs >= maxRepairs || member === undefined || ejected.kind === 'moved' || ejected.kind === 'blocked') return false
       e.repairs++
-      await git(deps.repoRoot, 'fetch', '-q', remote, `+refs/heads/${card.target}:refs/remotes/${remote}/${card.target}`)
-      const tip = `refs/remotes/${remote}/${card.target}`
-      const files = await git_.mergeInto(e.worktree, tip)
-      const step = files.length > 0 ? 'resolve' : 'repair'
-      const prompt =
-        step === 'resolve'
-          ? resolverPrompt(promptOf(key), card.target, files)
-          : repairPrompt(promptOf(key), card.target, `\`${ejected.failedCommand ?? ejected.reason}\`${ejected.output ? `\n\n${ejected.output}` : ''}`)
-      const result = await deps.run(member, prompt, key, step).catch((error: unknown) => ({ stopReason: 'error', text: String(error) }) as any)
-      if (step === 'resolve') {
-        await git_.concludeMerge(e.worktree, `swarm: merge ${card.target} into ${e.worktree.branch} (resolved)`)
-        outcome.resolved.push({ taskKey: key, branch: e.worktree.branch })
-      } else {
-        await git_.autoCommit(e.worktree, `swarm: repair ${key} (train)`)
+      try {
+        await git(deps.repoRoot, 'fetch', '-q', remote, `+refs/heads/${card.target}:refs/remotes/${remote}/${card.target}`)
+        const tip = await git(deps.repoRoot, 'rev-parse', `refs/remotes/${remote}/${card.target}`)
+        const before = await git(deps.repoRoot, 'rev-parse', e.worktree.branch)
+        const files = await git_.mergeInto(e.worktree, tip)
+        const step = files.length > 0 ? 'resolve' : 'repair'
+        const prompt =
+          step === 'resolve'
+            ? resolverPrompt(promptOf(key), card.target, files)
+            : repairPrompt(promptOf(key), card.target, `\`${ejected.failedCommand ?? ejected.reason}\`${ejected.output ? `\n\n${ejected.output}` : ''}`)
+        const result = await deps.run(member, prompt, key, step).catch((error: unknown) => ({ stopReason: 'error', text: String(error) }) as any)
+        let failed = result.stopReason === 'error' ? `the ${step} step failed: ${String(result.text).slice(0, 200)}` : undefined
+        if (step === 'resolve' && failed === undefined) {
+          const left = files.filter((file) => markers(join(e.worktree.path, file)))
+          if (left.length > 0) failed = `conflict markers remain in ${left.join(', ')}`
+          else {
+            await git_.concludeMerge(e.worktree, `swarm: merge ${card.target} into ${e.worktree.branch} (resolved)`)
+            // A resolver that aborted the merge itself left the tip out.
+            if (!(await git_.contains(e.worktree.branch, tip))) failed = `${card.target}'s tip is not in the branch after the resolver`
+          }
+        }
+        if (step === 'resolve' && failed !== undefined) await git_.abortMerge(e.worktree).catch(() => undefined)
+        if (step === 'repair' && failed === undefined) await git_.autoCommit(e.worktree, `swarm: repair ${key} (train)`)
+        if (failed === undefined && (await git(deps.repoRoot, 'rev-parse', e.worktree.branch)) === before) failed = `the ${step} changed nothing`
+        await deps.journal.append(`train/${step}`, { version: 1, key, branch: e.worktree.branch, commits: 0, member: member.name, attempt: e.repairs, outcome: failed === undefined ? 'committed' : 'failed', failure: ejected.reason, ...(failed === undefined ? {} : { error: failed }) })
+        report(`train: ${step} ${e.repairs} of ${key} by ${member.name}${failed === undefined ? '' : `: ${failed}`}`)
+        if (failed !== undefined) return false
+        if (step === 'resolve') outcome.resolved.push({ taskKey: key, branch: e.worktree.branch })
+        const again = await enqueue(key, e.worktree)
+        e.id = again.id
+        return again.state === 'queued'
+      } catch (error) {
+        report(`train: repairing ${key} failed: ${error instanceof Error ? error.message : String(error)}`)
+        return false
       }
-      await deps.journal.append(`train/${step}`, { version: 1, key, branch: e.worktree.branch, commits: 0, member: member.name, attempt: e.repairs, outcome: result.stopReason === 'error' ? 'failed' : 'committed', failure: ejected.reason })
-      report(`train: ${step} ${e.repairs} of ${key} by ${member.name}`)
-      e.id = await enqueue(key, e.worktree)
-      return true
     }
 
     let after = -1
@@ -159,7 +190,7 @@ export async function landRemote(git_: SwarmGit, config: TrainConfig, deps: Remo
           outcome.landed.push({ taskKey: key, branch: e.worktree.branch, commits })
           outcome.merged.push({ taskKey: key, branch: e.worktree.branch, commits })
           await deps.journal.append('train/landed', { version: 1, key, branch: e.worktree.branch, commits, batch: d.batch, commit: d.commit })
-          await evidence(key, { outcome: 'landed', base: `${d.commit}^`, commit: d.commit, batch: d.batch })
+          await evidence(key, { outcome: 'landed', base: d.tip ?? `${d.commit}^`, commit: d.commit, batch: d.batch })
           report(`train: ${key} landed (${d.commit.slice(0, 8)})`)
           await git_.removeWorktree(e.worktree)
         } else if (event.type === 'shared/ejected' || (event.type === 'shared/withdrawn' && d.why === 'withdrawn')) {
@@ -178,7 +209,11 @@ export async function landRemote(git_: SwarmGit, config: TrainConfig, deps: Remo
     for (const e of entries.values()) if (e.repairs > 0) outcome.repaired.push({ taskKey: e.worktree.taskKey, branch: e.worktree.branch, repairs: e.repairs })
     return outcome
   } catch (error) {
-    // Stopped: nothing of this run lands after it, and every unsettled entry is withheld.
+    // Stopped: nothing of this run lands after it, and every unsettled entry is withheld,
+    // withdrawn over a fresh connection when a cancel closed the first.
+    // ponytail: a batch already verifying still lands; withdraw only reaches queued entries.
+    train.close()
+    train = await dial(config.url!, config.token!).catch(() => train)
     for (const e of entries.values()) {
       if (e.settled) continue
       await train.call('swarm/train/withdraw', { id: e.id }).catch(() => undefined)
@@ -187,6 +222,7 @@ export async function landRemote(git_: SwarmGit, config: TrainConfig, deps: Remo
     const message = error instanceof Error ? error.message : String(error)
     throw new TrainStoppedError(`landing through the train at ${config.url} stopped: ${message}`, { ...outcome, stopped: message }, { cause: error })
   } finally {
+    deps.signal?.removeEventListener('abort', hangUp)
     train.close()
   }
 }

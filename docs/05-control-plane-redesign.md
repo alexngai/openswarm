@@ -1358,7 +1358,20 @@ by its own member, and lands; a client is refused every other protocol
 method in a process that hosts runs, and dsh's pass-through; a revoked token
 cannot authenticate. Not built: the train's checks confined under another
 user, so only invited clients; D1's epoch is accepted on an entry but
-nothing checks it yet.
+nothing checks it yet. Its review found three ways to hang or land bad work,
+fixed: an entry that leaves the queue without landing now ejects its
+principal's queued dependents (they waited forever); a repair that changes
+nothing, or an enqueue the train already settled, settles the client's entry
+instead of waiting; and the client checks a resolver's work as the in-run
+train does (no conflict markers, the target's tip in the branch) before
+committing it. Also fixed: a push refused for any reason but a moved target
+is an error the loop backs off on, not a hot retry; a bisect's second half
+goes through a pass (baseline, recovery); a revocation reaches an open
+connection, checked on every call; a cancel closes the long-poll and
+withdraws over a fresh connection; one failed repair ends its entry, not the
+landing; a failed baseline is tried again after ten minutes; `owner` is not
+a client name; `train serve` gives its process only a placeholder model
+route, and exits when the train cannot start.
 
 *D4 is built (2026-10-18); exit criterion 4 is met keyless.* `forge.ts`:
 with `worktrees.forge: { kind: 'github' }` each task branch is pushed,

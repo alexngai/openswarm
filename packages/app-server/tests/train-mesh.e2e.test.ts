@@ -117,7 +117,9 @@ it('two swarms in their own clones land through one train with their own tokens;
     ['shared/landed', 'ci', undefined],
   ])
   // Every verified batch passed the check before it landed; the only remote is the bare one.
-  expect(train.journal.events.filter((e) => e.type === 'shared/verified').every((e) => (e.data as any).passed)).toBe(true)
+  const verified = train.journal.events.filter((e) => e.type === 'shared/verified')
+  expect(verified.length).toBeGreaterThan(0)
+  expect(verified.every((e) => (e.data as any).passed)).toBe(true)
   expect(sh(trainRoot, 'remote')).toBe('origin')
   // Each swarm's own train journal carries its landing's evidence.
   for (const { run, h } of [{ run: a.run, h: host }, { run: b.run, h: other }]) {
@@ -135,8 +137,10 @@ it('two swarms in their own clones land through one train with their own tokens;
   await socket.request('swarm/auth', { token: laptop.token })
   await expect(socket.request('initialize', {})).rejects.toThrow(/FORBIDDEN/)
   expect((await socket.request('swarm/train/card')).target).toBe('main')
-  // Revoked: the token no longer authenticates.
+  // Revoked: the token no longer authenticates, and a connection already open is cut off.
   await dispatch(ctx, owner, 'swarm/train/revoke', { name: 'ci' })
   const revoked = await client(url)
   await expect(revoked.request('swarm/auth', { token: ci.token })).rejects.toThrow(/unknown token/)
+  await dispatch(ctx, owner, 'swarm/train/revoke', { name: 'laptop' })
+  await expect(socket.request('swarm/train/card')).rejects.toThrow(/client laptop is no longer invited/)
 }, 240_000)

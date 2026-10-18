@@ -198,3 +198,26 @@ it('refuses a checkout with the target checked out, and a train without checks',
   await expect(open(w, [])).rejects.toThrow('at least one check')
   expect(existsSync(w.trainRoot)).toBe(true)
 })
+
+it("an entry that leaves the queue without landing takes its principal's queued dependents with it, and enqueueing an ejected commit again reports it ejected", async () => {
+  const w = world()
+  const train = await open(w, ['! test -f bad.txt'])
+  const bad = w.branch('bad', { 'bad.txt': 'x\n' })
+  await train.enqueue('laptop', { branch: 'bad', sha: bad })
+  await train.enqueue('laptop', { branch: 'dep', sha: w.branch('dep', { 'dep.txt': 'd\n' }), blockedBy: ['bad'] })
+  await passAll(train)
+  expect(states(train)).toEqual({ bad: 'ejected', dep: 'ejected' })
+  expect(train.journal.events.filter((e) => e.type === 'shared/ejected').map((e) => (e.data as any).kind)).toEqual(['check', 'blocked'])
+  // The same commit again is the same, settled entry: a client must not wait on it.
+  expect((await train.enqueue('laptop', { branch: 'bad', sha: bad })).state).toBe('ejected')
+})
+
+it('a push refused for a reason other than a moved target is an error to back off on, not a retry loop', async () => {
+  const w = world()
+  // Branch protection on main alone: clients may push their branches, nobody main.
+  writeFileSync(join(w.remote, 'hooks', 'pre-receive'), '#!/bin/sh\nwhile read old new ref; do [ "$ref" = refs/heads/main ] && { echo "protected: no pushes" >&2; exit 1; }; done\nexit 0\n', { mode: 0o755 })
+  const train = await open(w, ['true'])
+  await train.enqueue('laptop', { branch: 'a', sha: w.branch('a', { 'a.txt': 'a\n' }) })
+  await expect(train.pass((train as any).ready())).rejects.toThrow(/pushing main failed: .*protected: no pushes/)
+  expect(states(train)).toEqual({ a: 'queued' })
+})
