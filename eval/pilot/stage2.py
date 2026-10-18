@@ -28,6 +28,7 @@ $RESERVE for each cell running and the one starting, would pass the cap.
 import glob
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -84,7 +85,7 @@ class Budget:
 
 def image_of(task: str) -> str:
     toml = (ROADMAP / f"{task}-roadmap" / "task.toml").read_text()
-    return toml.split('docker_image = "', 1)[1].split('"', 1)[0]
+    return re.search(r'docker_image\s*=\s*"([^"]+)"', toml).group(1)
 
 
 def gold(task: str) -> list[float]:
@@ -105,12 +106,30 @@ def gold(task: str) -> list[float]:
     return rewards
 
 
+def live_runner(run_id: str) -> bool:
+    """Whether a process is running this cell already (a driver restarted while it ran)."""
+    mark = f"\0ROADMAP_RUN_ID={run_id}\0".encode()
+    for p in Path("/proc").iterdir():
+        try:
+            if p.name.isdigit() and mark in b"\0" + (p / "environ").read_bytes() + b"\0":
+                return True
+        except OSError:
+            pass
+    return False
+
+
 def cell(task: str, arm: str, seed: int) -> dict | None:
-    """One runner cell; its record (reward, cost), or None when it failed to run."""
+    """One runner cell; its record (reward, cost), or None when it failed to run.
+
+    A cell already graded is read, and one still running (from before a
+    restart) is waited for, never run twice."""
     run_id = f"{PREFIX}-{arm}-{task}-s{seed}"
-    env = {**os.environ, "ROADMAP_TASKS": task, "ROADMAP_ARMS": arm, "ROADMAP_SEEDS": str(seed), "ROADMAP_RUN_ID": run_id, "ROADMAP_CONCURRENCY": "1"}
-    with open(f".eval-runs/{run_id}.out", "w") as out:
-        subprocess.run(["node", str(HERE / "runner.mjs")], env=env, stdout=out, stderr=subprocess.STDOUT)
+    while live_runner(run_id):
+        time.sleep(30)
+    if next(cells(run_id), None) is None:
+        env = {**os.environ, "ROADMAP_TASKS": task, "ROADMAP_ARMS": arm, "ROADMAP_SEEDS": str(seed), "ROADMAP_RUN_ID": run_id, "ROADMAP_CONCURRENCY": "1"}
+        with open(f".eval-runs/{run_id}.out", "a") as out:
+            subprocess.run(["node", str(HERE / "runner.mjs")], env=env, stdout=out, stderr=subprocess.STDOUT)
     for d in cells(run_id):
         s, u = d.get("score") or {}, d.get("usage") or {}
         # An infrastructure failure, or a cell that made no model call, is no measurement (never a 0).
