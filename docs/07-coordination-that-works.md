@@ -561,7 +561,15 @@ division beat one agent with the same harness at matched spend?
 **Task set.** RoadmapBench, Python and TypeScript, tasks outside the frozen
 12. A task enters the screen if its reference solution touches at least 3
 top-level source directories and at least 15 files (decomposable, and more
-than one context's worth). Screened by arm (f8) (the one-thread pipeline,
+than one context's worth). *Defined 2026-10-17, before any task was
+screened:* a source file is a changed file in the reference patch outside
+test, doc and example directories and not data or configuration (`.md`,
+`.rst`, `.txt`, `.json`, `.lock`, `.toml`, `.yml`, `.yaml`, `.cfg`); its
+top-level source directory is its first two path components (its first, for
+a file one level deep); the 15 counts every changed file. Of the eight local
+tasks outside the frozen 12, five pass (mko-6.6.0, opt-4.6.0, prm-7.0.0,
+pyg-2.1.0, spc-3.4.0) and three do not (plr-1.18.0, plr-1.30.0, vbt-1.1.0,
+each under one directory). Screened by arm (f8) (the one-thread pipeline,
 up to 8 rounds) at two seeds; a task is frozen if its mean reward is at most
 0.45 and the reference scores 1.0 in 3 of 3 runs. Freeze the first 8 that
 qualify, in RoadmapBench's own order, plus the frozen 12's hard tasks (one
