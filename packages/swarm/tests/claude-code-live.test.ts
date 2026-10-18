@@ -3,7 +3,8 @@
  * their own Claude login or ANTHROPIC_API_KEY, makes a trivial edit in a
  * temp repo's task worktree and lands it through a train (whose check must
  * also pass on the base); its usage and the dollars the CLI reported are journaled.
- * Spends a few cents.
+ * Then a steer (R2): a message written into its open turn, which it reads once
+ * its running tool call finishes. Spends a few cents.
  *
  *   OPENSWARM_LIVE=1 npx vitest run packages/swarm/tests/claude-code-live.test.ts
  *
@@ -14,7 +15,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
-import { SwarmJournal, type SwarmUsageEvent } from '../src/index'
+import { SwarmJournal, runClaudeCode, type SwarmUsageEvent } from '../src/index'
 import { bootHarness, type TestHarness } from './boot'
 
 const claude = process.env['OPENSWARM_CLAUDE_BIN'] ?? 'claude'
@@ -62,4 +63,24 @@ it.skipIf(!live)('a claude-code member edits its worktree and lands through a tr
   expect(m.tokens!.byRuntime['claude-code']).toBeGreaterThan(0)
   expect(m.dollars).toMatchObject({ source: 'runtime', total: usage[0]!.costUsd })
   expect(h.swarm.landings(run.id)[0]!.cost!.reported!.usd).toBe(usage[0]!.costUsd)
+}, 300_000)
+
+it.skipIf(!live)('a steer written into an open turn reaches it: the member answers with what it was told mid-turn', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'openswarm-claude-live-steer-'))
+  let deliver: ((text: string) => boolean) | undefined
+  const recorded: SwarmUsageEvent[] = []
+  const settled = runClaudeCode(
+    { name: 'cc', agentOptions: { model: process.env['OPENSWARM_LIVE_CLAUDE_MODEL'] ?? 'haiku' } },
+    'Use the Bash tool to run exactly `sleep 10`. When it has finished, reply with only the codeword you were sent in a later message, or NONE if no message came.',
+    // A temp dir and a fixed command: bypassPermissions lets the sleep run headless.
+    { cwd, permissionMode: 'bypassPermissions', usage: async (u) => void recorded.push(u as SwarmUsageEvent), live: (d) => void (d === undefined || (deliver = d)) },
+  )
+  // Its turn is open once the CLI has its prompt; give it time to start the sleep.
+  for (const end = Date.now() + 30_000; deliver === undefined && Date.now() < end; ) await new Promise((r) => setTimeout(r, 100))
+  await new Promise((r) => setTimeout(r, 4_000))
+  expect(deliver!('The codeword is PERSIMMON.')).toBe(true)
+  const result = await settled
+  expect(result.stopReason).toBe('completed')
+  expect(result.text).toMatch(/PERSIMMON/)
+  expect(recorded[0]!.costUsd).toBeGreaterThan(0)
 }, 300_000)

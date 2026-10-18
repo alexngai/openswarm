@@ -1118,10 +1118,11 @@ released for a run that never started; the committee judge and the cascade
 gate are addressable.
 
 **Phase C, as re-scoped, is complete (2026-10-17):** C7a, C5, C7b and R2
-are built and all three exit criteria are met. Not yet verified live: the
-claude-code runtime since it moved to stream-json input (keyless tests only;
-the env-gated `claude-code-live.test.ts` is the check, and spends on the
-owner's Claude account).
+are built and all three exit criteria are met. The claude-code runtime's
+move to stream-json input is verified live (2026-10-17, haiku, the owner's
+Claude account, a few cents): `claude-code-live.test.ts` lands a task
+through a train as before, and a codeword written into a run's open turn,
+while its Bash tool slept, came back in its answer.
 
 **Exit criterion 3 is met (2026-10-17).** `openswarm maintain` ran on this
 repository (commit `02c19de`) against `eval/maintain/principles.md`, on the
