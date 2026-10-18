@@ -31,6 +31,7 @@ import { SwarmBoard, foldBoard, type SwarmTaskSnapshot } from './board'
 import { buildEvidence, landingsOf, type LandingEvidence } from './evidence'
 import { SwarmJournal, type SwarmJournalEvent } from './journal'
 import { BudgetGuard, validateBudget } from './budget'
+import { TrainService, type TrainServiceConfig } from './train-service'
 import { foldMetrics, recordUsage, type Pricing, type RecordUsage, type RunMetrics, type SwarmRestartEvent, type UsageRole } from './metrics'
 import { SwarmMailbox } from './mailbox'
 import {
@@ -100,6 +101,7 @@ export * from './train'
 export * from './evidence'
 export * from './metrics'
 export * from './budget'
+export * from './train-service'
 export {
   askPeer,
   nextTurnEnd,
@@ -471,6 +473,9 @@ export default class SwarmService extends Service {
    * restart; persist them once a principal must outlive the process.
    */
   readonly tokens = new Map<string, Principal>()
+  /** The standalone train this process hosts, if any (docs/05 D2): `startTrain`, or `OPENSWARM_TRAIN`. */
+  train: TrainService | undefined
+  private trainStop: AbortController | undefined
   private swarmConfig: SwarmConfig
   private readonly liveRuns = new Map<string, RunHandle>()
   /** In-process members' usage, by session, until their run takes it. */
@@ -480,6 +485,31 @@ export default class SwarmService extends Service {
     super(ctx, 'swarm')
     this.swarmConfig = config
     this.usage = recordUsage(ctx)
+    // `openswarm train serve` boots a process with the train's config in the env.
+    ctx.effect(() => {
+      const fromEnv = process.env['OPENSWARM_TRAIN']
+      if (fromEnv !== undefined && fromEnv !== '') {
+        this.startTrain(JSON.parse(fromEnv) as TrainServiceConfig).catch((error) => {
+          process.stderr.write(`openswarm: the train did not start: ${error instanceof Error ? error.message : String(error)}\n`)
+        })
+      }
+      return () => this.trainStop?.abort()
+    })
+  }
+
+  /** Host a standalone train (docs/05 D2) in this process: opened from its journal, landing until disposed. */
+  async startTrain(config: TrainServiceConfig): Promise<TrainService> {
+    if (this.train !== undefined) throw new Error('this process already hosts a train')
+    const train = await TrainService.open(config)
+    this.train = train
+    this.trainStop = new AbortController()
+    void train.run(this.trainStop.signal)
+    return train
+  }
+
+  /** The principal a protocol token stands for: a minted one, or a train client the owner invited. */
+  principalOf(token: string): Principal | undefined {
+    return this.tokens.get(token) ?? this.train?.principalOf(token)
   }
 
   private runsDir(): string {

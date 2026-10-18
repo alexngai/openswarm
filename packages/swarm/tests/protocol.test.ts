@@ -19,6 +19,7 @@ const principals: Record<Role, Principal> = {
   viewer: { role: 'viewer' },
   driver: { role: 'driver' },
   member: { role: 'member', runId: 'run-00000000', member: 'm' },
+  client: { role: 'client', client: 'laptop' },
 }
 
 /** The call's error message, or 'ok'. */
@@ -31,10 +32,11 @@ const outcome = (principal: Principal, method: string, params: unknown) =>
 it('the policy matrix: each role reaches exactly its groups', async () => {
   h = await bootHarness({ sequence: ['success'], successText: 'unused' })
   const expected: Record<Role, MethodGroup[]> = {
-    owner: ['state', 'direction', 'answer', 'admin'],
+    owner: ['state', 'direction', 'answer', 'admin', 'train'],
     viewer: ['state'],
     driver: ['state', 'direction', 'answer'],
     member: ['member', 'state'],
+    client: ['train'],
   }
   // Every group, including `member`, which has no Phase A method yet.
   expect(POLICY).toEqual(expected)
@@ -44,6 +46,7 @@ it('the policy matrix: each role reaches exactly its groups', async () => {
     ['direction', 'swarm/cancel', { runId: 'run-00000000' }],
     ['answer', 'swarm/answer', { runId: 'run-00000000', questionId: 'q-0', answer: 'drop' }],
     ['admin', 'swarm/token', { role: 'viewer' }],
+    ['train', 'swarm/train/card', {}],
   ]
   for (const role of Object.keys(principals) as Role[]) {
     for (const [group, method, params] of probes) {

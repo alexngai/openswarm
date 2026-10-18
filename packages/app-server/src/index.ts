@@ -98,7 +98,7 @@ export default class SwarmAppServer extends Service {
     transport.onRequest(async (method, params) => {
       if (method === 'swarm/auth') {
         if (principal !== undefined) throw new SwarmProtocolError('FORBIDDEN', 'this connection is already authenticated')
-        principal = this.ctx.swarm.tokens.get(String(params['token']))
+        principal = this.ctx.swarm.principalOf(String(params['token']))
         if (principal === undefined) throw new SwarmProtocolError('FORBIDDEN', 'unknown token')
         if (principal.role === 'owner') sdk = new HarnessSdkJsonRpcServer(this.ctx, transport)
         return { principal }

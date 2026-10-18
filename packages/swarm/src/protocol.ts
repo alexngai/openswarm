@@ -13,21 +13,24 @@ import type { RunHandle } from './index'
 import { SwarmJournal, type SwarmJournalEvent } from './journal'
 import { metricsRows } from './metrics'
 import { foldQuestions, foldRun } from './run'
+import type { TrainService } from './train-service'
 
-export type Role = 'owner' | 'viewer' | 'driver' | 'member'
+export type Role = 'owner' | 'viewer' | 'driver' | 'member' | 'client'
 
 /**
  * The caller, as its carrier established it. A member is bound to one run and
- * member name; a viewer or driver token may also name a run to be bound to.
- * Lead-member and foreign-swarm principals arrive with nesting and the mesh.
+ * member name; a viewer or driver token may also name a run to be bound to. A
+ * client is a swarm the owner invited to land through this process's train
+ * (docs/05 D2, D3), by name; it reaches nothing else.
  */
 export interface Principal {
   role: Role
   runId?: string
   member?: string
+  client?: string
 }
 
-export type MethodGroup = 'state' | 'direction' | 'answer' | 'member' | 'admin'
+export type MethodGroup = 'state' | 'direction' | 'answer' | 'member' | 'admin' | 'train'
 
 /**
  * The groups each role may call; anything else is refused. A driver's
@@ -36,10 +39,11 @@ export type MethodGroup = 'state' | 'direction' | 'answer' | 'member' | 'admin'
  * dsh's SDK pass-through, for owners only.
  */
 export const POLICY: Readonly<Record<Role, readonly MethodGroup[]>> = {
-  owner: ['state', 'direction', 'answer', 'admin'],
+  owner: ['state', 'direction', 'answer', 'admin', 'train'],
   viewer: ['state'],
   driver: ['state', 'direction', 'answer'],
   member: ['member', 'state'],
+  client: ['train'],
 }
 
 export type SwarmProtocolErrorCode = 'FORBIDDEN' | 'UNKNOWN_METHOD' | 'INVALID_PARAMS' | 'NOT_FOUND'
@@ -60,7 +64,7 @@ type Params = Record<string, any>
 interface Method {
   group: MethodGroup
   /** Accepted params by type; a name ending in `?` is optional. */
-  params: Record<string, 'string' | 'number' | 'object'>
+  params: Record<string, 'string' | 'number' | 'object' | 'array'>
   handle(ctx: Context, params: Params, principal: Principal): unknown
 }
 
@@ -74,6 +78,18 @@ function boundRun(principal: Principal): string | undefined {
     throw new SwarmProtocolError('FORBIDDEN', 'a member principal must be bound to a run')
   }
   return principal.runId
+}
+
+/** This process's train; a process that hosts none refuses its methods. */
+function trainOf(ctx: Context): TrainService {
+  const train = ctx.swarm.train
+  if (train === undefined) throw new SwarmProtocolError('NOT_FOUND', 'this process hosts no train')
+  return train
+}
+
+/** Whose entries a train call is about: a client's own, or the owner's. */
+function trainName(principal: Principal): string {
+  return principal.role === 'client' ? principal.client! : 'owner'
 }
 
 /** A run's journal: in memory while it is live here, else read from its file. */
@@ -240,10 +256,48 @@ const METHODS: Record<string, Method> = {
       return ctx.swarm.attach(runId)
     },
   },
+  // The train (docs/05 D2, D3): a client lands its own entries; the owner sees all and invites.
+  'swarm/train/card': {
+    group: 'train',
+    params: {},
+    handle: (ctx) => trainOf(ctx).card(),
+  },
+  'swarm/train/enqueue': {
+    group: 'train',
+    params: { branch: 'string', sha: 'string', 'blockedBy?': 'array', 'epoch?': 'number' },
+    handle: (ctx, { branch, sha, blockedBy, epoch }, principal) =>
+      trainOf(ctx).enqueue(trainName(principal), { branch, sha, ...(blockedBy === undefined ? {} : { blockedBy }), ...(epoch === undefined ? {} : { epoch }) }),
+  },
+  'swarm/train/withdraw': {
+    group: 'train',
+    params: { id: 'string' },
+    handle: async (ctx, { id }, principal) => (await trainOf(ctx).withdraw(trainName(principal), id), { withdrawn: true }),
+  },
+  'swarm/train/events': {
+    group: 'train',
+    params: { 'afterSeq?': 'number', 'waitMs?': 'number' },
+    handle: (ctx, { afterSeq, waitMs }, principal) => trainOf(ctx).events(principal, afterSeq ?? -1, waitMs ?? 0),
+  },
+  'swarm/train/status': {
+    group: 'admin',
+    params: {},
+    handle: (ctx) => trainOf(ctx).status(),
+  },
+  'swarm/train/invite': {
+    group: 'admin',
+    params: { name: 'string' },
+    handle: async (ctx, { name }) => ({ token: await trainOf(ctx).invite(name), card: trainOf(ctx).card() }),
+  },
+  'swarm/train/revoke': {
+    group: 'admin',
+    params: { name: 'string' },
+    handle: async (ctx, { name }) => (await trainOf(ctx).revoke(name), { revoked: true }),
+  },
   'swarm/token': {
     group: 'admin',
     params: { role: 'string', 'runId?': 'string', 'member?': 'string' },
     handle: (ctx, { role, runId, member }) => {
+      if (role === 'client') throw invalid('swarm/token', 'a client token comes from swarm/train/invite, which names the client')
       if (!Object.hasOwn(POLICY, role)) {
         throw invalid('swarm/token', `role must be one of ${Object.keys(POLICY).join(', ')}`)
       }
@@ -279,8 +333,8 @@ export async function dispatch(
   for (const [name, type] of Object.entries(entry.params)) {
     const key = name.replace(/\?$/, '')
     if (p[key] === undefined && name.endsWith('?')) continue
-    if (typeof p[key] !== type || p[key] === null || Array.isArray(p[key])) {
-      throw invalid(method, `${key} must be ${type === 'object' ? 'an object' : `a ${type}`}`)
+    if (type === 'array' ? !Array.isArray(p[key]) : typeof p[key] !== type || p[key] === null || Array.isArray(p[key])) {
+      throw invalid(method, `${key} must be ${type === 'object' || type === 'array' ? `an ${type}` : `a ${type}`}`)
     }
   }
   if (p['runId'] !== undefined && !/^[\w-]+$/.test(p['runId'])) throw invalid(method, `invalid run id "${p['runId']}"`)
