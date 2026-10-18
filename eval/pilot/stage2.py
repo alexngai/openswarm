@@ -96,11 +96,12 @@ def gold(task: str) -> list[float]:
         r = subprocess.run(
             ["docker", "run", "--rm", "--cpus", "8", "--memory", "16g",
              "-v", f"{d / 'solution'}:/solution:ro", "-v", f"{d / 'tests'}:/tests-src:ro", image_of(task),
-             "bash", "-c", "cp -r /tests-src /tests && bash /solution/solve.sh >/dev/null 2>&1; bash /tests/test.sh >/dev/null 2>&1; cat /logs/verifier/reward.json"],
+             "bash", "-c", "cp -r /tests-src /tests && bash /solution/solve.sh >/dev/null 2>&1; bash /tests/test.sh >/dev/null 2>&1; echo REWARD_JSON; cat /logs/verifier/reward.json"],
             capture_output=True, text=True, timeout=3600,
         )
         try:
-            rewards.append(float(json.loads(r.stdout.strip().splitlines()[-1])["reward"]))
+            # Some tasks pretty-print reward.json over several lines.
+            rewards.append(float(json.loads(r.stdout.rsplit("REWARD_JSON", 1)[1])["reward"]))
         except Exception:
             rewards.append(-1.0)
     return rewards
@@ -130,12 +131,23 @@ def cell(task: str, arm: str, seed: int) -> dict | None:
         env = {**os.environ, "ROADMAP_TASKS": task, "ROADMAP_ARMS": arm, "ROADMAP_SEEDS": str(seed), "ROADMAP_RUN_ID": run_id, "ROADMAP_CONCURRENCY": "1"}
         with open(f".eval-runs/{run_id}.out", "a") as out:
             subprocess.run(["node", str(HERE / "runner.mjs")], env=env, stdout=out, stderr=subprocess.STDOUT)
+    return record(run_id)
+
+
+def record(run_id: str) -> dict | None:
+    """A graded cell's reward and cost, or None when it has none.
+
+    The reward is test.sh's own (its reward.json), as the pre-registration
+    defines it: the runner's phase parser scores a phase pass or fail, while
+    some tasks' test.sh give partial credit within a phase."""
     for d in cells(run_id):
         s, u = d.get("score") or {}, d.get("usage") or {}
+        truth = glob.glob(f".eval-runs/{run_id}/verifier-out/**/*.reward.json", recursive=True)
         # An infrastructure failure, or a cell that made no model call, is no measurement (never a 0).
-        measured = s.get("total") and d.get("status") != "env_error" and u.get("inputTokens", 0) > 0
-        reward = s["earned"] / s["total"] if measured else None
-        return {"reward": reward, "usd": round(usd(u), 2), "status": d.get("status"), "minutes": round(d.get("durationMs", 0) / 60000)}
+        measured = truth and d.get("status") != "env_error" and u.get("inputTokens", 0) > 0
+        reward = round(float(json.load(open(truth[0]))["reward"]), 4) if measured else None
+        parsed = round(s["earned"] / s["total"], 4) if s.get("total") else None
+        return {"reward": reward, "parsed": parsed, "usd": round(usd(u), 2), "status": d.get("status"), "minutes": round(d.get("durationMs", 0) / 60000)}
     return None
 
 
@@ -153,6 +165,12 @@ def screen(candidates: list[str], cap: float) -> None:
     budget = Budget(cap)
     results = state["screen"]
     running: dict[str, threading.Thread] = {}
+    # Rewards recorded before they were read from reward.json, read again.
+    for task, rec in results.items():
+        for key in ("s1", "s2"):
+            if key in rec and (fresh := record(f"{PREFIX}-onethread8-{task}-{key}")) is not None:
+                rec[key] = fresh
+    save(state)
 
     def qualified() -> list[str]:
         return [t for t in candidates if results.get(t, {}).get("verdict") == "qualifies"]
