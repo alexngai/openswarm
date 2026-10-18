@@ -1117,6 +1117,12 @@ refusal); a steer no later run carries is journaled undelivered; mail is
 released for a run that never started; the committee judge and the cascade
 gate are addressable.
 
+**Phase C, as re-scoped, is complete (2026-10-17):** C7a, C5, C7b and R2
+are built and all three exit criteria are met. Not yet verified live: the
+claude-code runtime since it moved to stream-json input (keyless tests only;
+the env-gated `claude-code-live.test.ts` is the check, and spends on the
+owner's Claude account).
+
 **Exit criterion 3 is met (2026-10-17).** `openswarm maintain` ran on this
 repository (commit `02c19de`) against `eval/maintain/principles.md`, on the
 EC2 box with `azureoai/gpt-5.5`: 4 tasks, 2 members, up to 3 rounds; checks
