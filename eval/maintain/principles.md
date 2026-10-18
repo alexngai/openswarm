@@ -14,4 +14,6 @@ and `eval/pilot/`. Never `legacy/`, `node_modules/` or `dist/`.
    fix (the flag to pass, the command to run, the file to create).
 5. A `ponytail:` comment names its ceiling and the upgrade path.
 6. Tests import package sources (`../src/...` or the package name through the
-   vitest alias), never a `dist/` build.
+   vitest alias), never a `dist/` build, unless the built artifact is what the
+   test is about (a bundle's format, a published entry point): such a test
+   says so in its header and skips without the build, and is left as it is.

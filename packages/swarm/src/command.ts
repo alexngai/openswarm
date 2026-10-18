@@ -35,7 +35,7 @@ import type { CommandInvocation, CommandResult } from '@deepseek-ai/dsh-commands
 import type { JobId, JobOutcome } from '@deepseek-ai/dsh-jobs'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { coordinatorSpec } from './topologies'
-import type { CoordinatorResult, MemberSpec } from './types'
+import type { CoordinatorResult } from './types'
 
 export const name = 'openswarm-swarm-command'
 export const inject = ['commands', 'swarm']

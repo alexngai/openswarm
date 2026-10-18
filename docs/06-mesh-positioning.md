@@ -102,8 +102,8 @@ produces headlines that do not replicate. The eval record (legacy docs/47,
 |---|---|---|
 | **Quality at cost** | resolve-rate vs $/task and FLOPs/task, per arm, Pareto frontier | the research spine (legacy docs/50, 59, 60, 62); tokens authoritative, `costUsd` ledgered |
 | **Oracle pre-check** | does `cost(cheap) < p_cheap × cost(large)` hold for a model pair | the one gate that predicts whether a cascade can pay (legacy docs/62 F1, F8) |
-| **Escalation signal AUC** | how well the visible-correctness signal predicts a tier's correctness | 0.84–0.89 single-shot; **0.50 agentic** for a 3B tier (docs/62 F16) — the open problem |
-| **Team vs single** | paired resolve-rate on hard SWE | parity across two families (docs/47); the honest baseline |
+| **Escalation signal AUC** | how well the visible-correctness signal predicts a tier's correctness | 0.84–0.89 single-shot; **0.50 agentic** for a 3B tier (legacy docs/62 F16) — the open problem |
+| **Team vs single** | paired resolve-rate on hard SWE | parity across two families (legacy docs/47); the honest baseline |
 
 ### 3.3 One north-star
 
@@ -112,8 +112,8 @@ mesh.** "Landed" means merged into the integration branch and gate-passing,
 not "member reported done". Every mesh metric above is a term in it (join
 time and recovery are the denominator, landing rate and overhead are the
 numerator), and the effectiveness metrics say whether the mesh should exist at
-all for a given workload. It is deliberately not "resolve rate": docs/47 and
-docs/60 showed that more coordination does not raise resolve rate on hard
+all for a given workload. It is deliberately not "resolve rate": legacy docs/47 and
+legacy docs/60 showed that more coordination does not raise resolve rate on hard
 tasks, and a north-star that pretends otherwise would push us back into the
 topology-mechanism trap docs/02 warned against.
 
@@ -192,8 +192,8 @@ language.
 - Cognition, 2026 follow-up: "writes stay single-threaded and the additional
   agents contribute intelligence rather than actions"; unstructured swarms
   are "mostly a distraction".
-- Our own record agrees: docs/47 parity, docs/60 cascade ties mono-large on
-  gap tasks, docs/62 the deployable agentic signal degenerates.
+- Our own record agrees: legacy docs/47 parity, legacy docs/60 cascade ties mono-large on
+  gap tasks, legacy docs/62 the deployable agentic signal degenerates.
 
 Routing/cascade evidence is strong on **cost** for QA-shaped work (40–85 %
 cost cuts at ~95 % quality) and absent for agentic SWE quality; there is
@@ -247,7 +247,7 @@ on `main` or is one phase away:
    A2A Agent Card for discovery; cross-org is the phase after.
 
 What we should *not* claim: that teams raise resolve rate. Our number is
-parity (docs/47); the industry's is "only when decomposable". The value
+parity (legacy docs/47); the industry's is "only when decomposable". The value
 proposition is throughput, cost, isolation, and auditability at parity
 quality — the north star in §3.3.
 
@@ -268,7 +268,7 @@ Ordered by leverage per unit of work; each maps to a §1 capability and a
 | 3 | **Attach, not just spawn.** `RemotePeer.attach(url)` so a member that already runs on another host joins a roster; the SDK wire already supports `session/prompt` on an existing session. | M1, M6 → 3 | time-to-join, MTTR |
 | 4 | **Runtime-neutral roster.** Exercise `subagent-claude-code` and `subagent-codex` as members in a test and a live run; one A2A client member. | M7 → 3 | runtime coverage |
 | 5 | **Cross-team merge.** Let two teams target one integration branch through one queue; add the cut-from-integration option (ledgered "sibling visibility"). | M4 → 3 | landing rate/latency |
-| 6 | **Coordination overhead in every run's result.** Split usage into coordination vs task tokens in `TeamResult`; it is the single metric the whole field lacks and docs/61 says it is the dominant cost. | M8 | overhead ratio |
+| 6 | **Coordination overhead in every run's result.** Split usage into coordination vs task tokens in `TeamResult`; it is the single metric the whole field lacks and legacy docs/61 says it is the dominant cost. | M8 | overhead ratio |
 | 7 | **A2A Agent Card + trace ids.** Publish a signed card for a swarm (discovery, identity); thread a mesh-wide trace id through session events. Skip AGNTCY/NANDA/ANP. | M2, M9 → 3, M8 | trust rejections |
 | 8 | **Join policy.** Per-swarm principal and a policy hook for join/claim/message, reusing the F3 approval seam for the gated cases. Prerequisite for any cross-org claim. | M5 → 3/4 | trust rejections |
 | 9 | **A published team benchmark.** One reproducible multi-runtime team result on SWE-bench Pro or Multi-SWE-bench with cost per landed task. The field has none. | effectiveness | quality at cost |

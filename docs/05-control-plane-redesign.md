@@ -1075,8 +1075,34 @@ task's prompt, never into its checks, since the gate runs checks in the
 lead's environment outside the member sandbox, where a steered survey
 would get a shell on the host; only the operator's `--check` commands run.
 The caps and the run budget now count the survey, and the summary is
-always rewritten. Exit criterion 3 is the live
-dogfood run, which spends and waits for the owner's go-ahead.
+always rewritten.
+
+**Exit criterion 3 is met (2026-10-17).** `openswarm maintain` ran on this
+repository (commit `02c19de`) against `eval/maintain/principles.md`, on the
+EC2 box with `azureoai/gpt-5.5`: 4 tasks, 2 members, up to 3 rounds; checks
+`npm run build`, `npm run typecheck`, `npm test`; a $25 run budget, $6 a
+task, a $40 cap. The survey proposed 4 tasks ($0.97); each passed its gate
+in round 1, all 4 landed in one train batch, and the checkout was
+fast-forwarded; the team cost $2.92 (all task work, no repairs), 46 minutes
+in all, and the landed tree passed all three checks when rerun. The owner
+reviewed the diff and accepted 2 of the first 3, 3 of the 4 in all:
+removing an unused import, and naming the upgrade path in a `ponytail:`
+comment, as landed; marking bare `docs/NN` citations of legacy docs as
+`legacy docs/NN`, with two of its 13 edits undone (it had turned the valid
+path `legacy/docs/47–64` into prose, and garbled a sentence). Rejected:
+rewriting the Swarm tab's bundle test to import sources, which passed every
+check while deleting what the test exists for (the built bundle's format),
+invited by a principle written too broadly (now narrowed). The accepted
+work is on this branch. What it shows: passing checks are not acceptance,
+since the run's one bad landing and its two bad edits all passed them; an
+L1 reviewer on maintenance tasks is the next thing to try.
+
+Getting there changed three things, all committed: the box cannot confine
+members (Ubuntu 24.04 restricts the user namespaces bubblewrap needs), so
+`maintain` gained an explicit `--sandbox danger-full-access` rather than a
+change to the host's security settings; the real-L3 tests now skip on such
+a host, where `openVerifier` refuses L3 by design; and the run's checks
+build first, since a worktree is linked `node_modules` but no build output.
 
 **Goal.** G2, and the effectiveness answer that decides whether D is worth
 building as designed.
@@ -1318,9 +1344,9 @@ mesh. Shipping it last would delay the one claim nobody else can make.
 **D10 — A hand-planned pilot before Phase C is built.** Weighed against
 running the go/no-go only at the end of C, and piloting after Phase B with
 the real train. Ending C with the experiment means building A through C
-before any evidence on G2, and the record leans negative (docs/47 parity;
-an ensemble beat a coordinated team at equal compute; docs/63 closed
-diversity). The pilot is docs/62's oracle pre-check applied to planning: if
+before any evidence on G2, and the record leans negative (legacy docs/47 parity;
+an ensemble beat a coordinated team at equal compute; legacy docs/63 closed
+diversity). The pilot is legacy docs/62's oracle pre-check applied to planning: if
 the best available plan does not beat sharding on today's runtime, an
 automated planner will not. Piloting after B buys a real train, but L3
 comes from the benchmark grader either way. *Cost:* manual git steps, cost

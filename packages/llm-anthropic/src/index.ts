@@ -13,8 +13,8 @@
  * streamed as argumentsDelta; block indexes in first-seen order; throw
  * LlmError for transport failures; honor options.signal.
  *
- * ponytail: no extended-thinking support v1 (reasoning blocks in history
- * are dropped; no reasoning advertisement), images rejected UNSUPPORTED.
+ * ponytail: ceiling: no extended-thinking support v1; images rejected UNSUPPORTED; upgrade path: map Anthropic reasoning/image blocks
+ * into the dsh stream/history contract once the adapter/runtime supports them.
  */
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
