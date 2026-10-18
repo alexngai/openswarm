@@ -42,7 +42,7 @@ export interface LandingAt {
   key: string
   /** `conflicted`: the sequential queue could not merge it; its branch is kept. */
   outcome: 'landed' | 'ejected' | 'conflicted'
-  via: 'train' | 'queue'
+  via: 'train' | 'queue' | 'forge'
   /** The queue merged (or tried) it because the train's baseline already failed: nothing verified the integrated tree. */
   unverified?: true
   branch: string
@@ -213,7 +213,9 @@ export function landingText(e: LandingEvidence, pricing?: Pricing): string[] {
         ? `queue, branch ${e.branch} kept`
         : e.via === 'train'
           ? `train batch ${e.batch}, ${e.commit?.slice(0, 8)}`
-          : `queue${e.unverified === true ? ' unverified' : ''}, branch ${e.branch}`
+          : e.via === 'forge'
+            ? `merge queue${e.commit ? `, ${e.commit.slice(0, 8)}` : ''}`
+            : `queue${e.unverified === true ? ' unverified' : ''}, branch ${e.branch}`
   const lines = [`${e.risk.toUpperCase().padEnd(6)} ${e.key} ${e.outcome} (${where})${e.subject === undefined ? '' : ` — ${first(e.subject)}`}`]
   if (e.why.length > 0) lines.push(`why: ${e.why.join('; ')}`)
   if (e.intent !== undefined) lines.push(`intent: ${first(e.intent.purpose)} — end state: ${first(e.intent.endState)}`)

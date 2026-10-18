@@ -1360,6 +1360,15 @@ cannot authenticate. Not built: the train's checks confined under another
 user, so only invited clients; D1's epoch is accepted on an entry but
 nothing checks it yet.
 
+*D4 is built (2026-10-18); exit criterion 4 is met keyless.* `forge.ts`:
+with `worktrees.forge: { kind: 'github' }` each task branch is pushed,
+opened as a pull request with its landing evidence as the body, and queued
+with `gh pr merge --auto`; the run polls `gh pr view` until merged
+(landed), closed (ejected) or its wait ends (withheld, left to the queue),
+journaling outcomes and bundles in its train journal (`forge.test.ts`,
+against a fake `gh` and a real bare remote). Not built: repairing a pull
+request the queue rejects. A live run waits for a repository the owner names.
+
 **Goal.** G3, cross-host G6, and the rest of G7.
 
 | # | Work item |

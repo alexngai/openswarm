@@ -624,6 +624,10 @@ A swarm lands through it with its team spec's `"worktrees": { "train": { "url": 
 
 The train batches entries round-robin across clients, merges them onto the target's tip, runs every check once in a disposable copy of the batch tree (no remote, credentials scrubbed, ten-minute timeout), and lands a passing batch by a plain push, journaled only after it succeeded; a failing batch is bisected. A tip it did not push itself (a push from outside) is checked alone first, and a failing one pauses the queue until the target changes. Only the train should push the target (branch protection); its checkout must not have the target checked out. Client tokens are journaled hashed, and survive a restart, as revocations do. A client reaches only `swarm/train/*` for its own entries: no run, no other client's output, no dsh pass-through. The socket is plain TCP on loopback by default: across hosts, reach it through an SSH tunnel or a private network. The checks run entrants' code as the train's user, so invite only swarms you would run code from.
 
+### Landing through GitHub's merge queue
+
+`"worktrees": { "forge": { "kind": "github", "remote": "origin", "base": "main", "method": "merge", "waitMs": 7200000 } }` lands through the repository's own merge queue instead of a train ([docs/05](05-control-plane-redesign.md) D4): each task branch with commits is pushed to `remote`, opened with `gh pr create` against `base` (its title the task's subject, its body the landing evidence: the gate's verdict, the diff, the cost), and handed to the queue with `gh pr merge --auto --<method>`. The run waits up to `waitMs` (default two hours; `0` opens and queues without waiting), looking every `pollMs` (default 30 s): a merged pull request is landed at GitHub's merge commit, a closed one ejected, one still open withheld and left to the queue. Each outcome and its bundle are in the run's `train.jsonl`. The CLI is `command`, else `OPENSWARM_GH_BIN`, else `gh`, logged in as you. GitHub's required checks verify; nothing repairs a pull request the queue rejects, which stays open for a person. A run takes a forge or a train, not both.
+
 ### The maintenance program
 
 ```

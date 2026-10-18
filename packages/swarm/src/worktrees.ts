@@ -30,6 +30,7 @@ import { runCodex } from './codex'
 import { usageFromLogs, type RecordUsage, type UsageRole } from './metrics'
 import { landTrain, type TrainConfig, type TrainDeps } from './train'
 import { landRemote } from './train-client'
+import { landForge, type ForgeConfig, type ForgeDeps } from './forge'
 import type { ClaudePermissionMode, ClaudeSettingSource, CodexSandbox, MemberRunResult, MemberSpec } from './types'
 import type { RunTeamOptions } from './index'
 
@@ -99,6 +100,8 @@ export interface WorktreeTeamOptions {
    * conflict handed to a resolver. Unset, finalize merges as before.
    */
   train?: TrainConfig
+  /** Land through a forge's merge queue instead (docs/05 D4): GitHub, by `gh`. */
+  forge?: ForgeConfig
 }
 
 /**
@@ -549,7 +552,11 @@ export class WorktreeRun {
    * of this run, in the entries' own worktrees.
    */
   async finalize(
-    options: { merge?: boolean; train?: Omit<TrainDeps, 'owners' | 'run'> & { options: RunTeamOptions } } = {},
+    options: {
+      merge?: boolean
+      train?: Omit<TrainDeps, 'owners' | 'run'> & { options: RunTeamOptions }
+      forge?: Omit<ForgeDeps, 'repoRoot'>
+    } = {},
   ): Promise<MergeOutcome> {
     if (this.options.autoCommit !== false) {
       for (const taskKey of this.taskKeys()) {
@@ -573,6 +580,13 @@ export class WorktreeRun {
         conflicts: [],
         empty: [],
         withheld,
+      }
+    }
+    if (options.forge !== undefined && this.options.forge !== undefined) {
+      try {
+        return await landForge(this.git, this.options.forge, { ...options.forge, repoRoot: this.options.repoRoot })
+      } finally {
+        await this.git.dispose()
       }
     }
     if (options.train !== undefined && this.options.train !== undefined) {

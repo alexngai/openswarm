@@ -32,6 +32,7 @@ import { buildEvidence, landingsOf, type LandingEvidence } from './evidence'
 import { SwarmJournal, type SwarmJournalEvent } from './journal'
 import { BudgetGuard, validateBudget } from './budget'
 import { TrainService, type TrainServiceConfig } from './train-service'
+import { validateForge } from './forge'
 import { foldMetrics, recordUsage, type Pricing, type RecordUsage, type RunMetrics, type SwarmRestartEvent, type UsageRole } from './metrics'
 import { SwarmMailbox } from './mailbox'
 import {
@@ -102,6 +103,7 @@ export * from './evidence'
 export * from './metrics'
 export * from './budget'
 export * from './train-service'
+export * from './forge'
 export {
   askPeer,
   nextTurnEnd,
@@ -862,6 +864,11 @@ export default class SwarmService extends Service {
     // suite, before any spend.
     const train = options.worktrees!.train
     if (train !== undefined) validateTrain(train, options.worktrees!)
+    const forge = options.worktrees!.forge
+    if (forge !== undefined) {
+      if (train !== undefined) throw new Error('worktrees takes a train or a forge to land through, not both')
+      validateForge(forge)
+    }
     const hidden =
       train?.suite === undefined
         ? undefined
@@ -894,7 +901,17 @@ export default class SwarmService extends Service {
     // or fall individually, so they merge as before.
     const merge = result.topology !== 'cascade' || result.accepted
     const landing =
-      train === undefined || !merge
+      forge !== undefined && merge
+        ? {
+            forge: {
+              journal: SwarmJournal.open(join(dirname(journal.path), 'train.jsonl')),
+              runEvents: () => journal.events,
+              subjectOf: (key: string) => board.list().find((task) => task.id === key)?.subject,
+              ...(options.onProgress === undefined ? {} : { report: options.onProgress }),
+              ...(options.signal === undefined ? {} : { signal: options.signal }),
+            },
+          }
+        : train === undefined || !merge
         ? {}
         : {
             train: {
@@ -936,7 +953,7 @@ export default class SwarmService extends Service {
     }
     git.withheld.push(...withheld)
     // Without the train, each merged or conflicted task's evidence (docs/05 B4): its gate's, and its diff against the base.
-    if (landing.train === undefined) {
+    if (!('train' in landing) && !('forge' in landing)) {
       const landed = [...git.merged.map((m) => ['landed', m] as const), ...git.conflicts.map((c) => ['conflicted', c] as const)]
       for (const [outcome, { taskKey, branch }] of landed) {
         const { base, diff } = await worktrees.landingDiff(branch)
