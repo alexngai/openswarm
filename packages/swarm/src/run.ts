@@ -156,6 +156,10 @@ export function recapJournal(events: readonly SwarmJournalEvent[], since = -1): 
       const { message } = data as { message: SwarmMessageSnapshot }
       messages.set(message.id, message)
       line = `message ${message.from}→${message.to} queued (${message.delivery})`
+    } else if (type === 'swarm/message/undelivered') {
+      const { messageId, to } = data as { messageId: string; to: string }
+      const message = messages.get(messageId)
+      line = `message ${message === undefined ? `to ${to}` : `${message.from}→${to}`} undelivered: no later run of ${to}'s carried it`
     } else if (type === 'swarm/message/delivered') {
       const { messageId } = data as { messageId: string }
       const message = messages.get(messageId)

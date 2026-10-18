@@ -117,7 +117,7 @@ it('a cancel interrupts the CLI with SIGINT and kills the descendants it started
   expect(log().some((e) => e.event === 'sigint')).toBe(true)
   await until(() => !alive(pid) && !alive(grandchild) && !alive(detached))
   // Codex reports usage only when a turn completes: what this one spent is unknown, not zero.
-  expect(recorded).toEqual([expect.objectContaining({ runtime: 'codex', unmeasured: true, usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, calls: 0 } })])
+  expect(recorded).toEqual([expect.objectContaining({ runtime: 'codex', unmeasured: true, usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, calls: 1 } })])
   expect(runUsd(recorded[0], { 'gpt-5.5': { input: 1, output: 1 } })).toBeUndefined()
 }, 30_000)
 

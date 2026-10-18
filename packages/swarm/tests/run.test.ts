@@ -228,4 +228,8 @@ it("steer reaches a one-shot team's members from the start, and refuses a name o
   expect(await run.steer('a', 'hi')).toBe('enqueue')
   await run.result
   expect(run.journal.events.filter((e) => e.type === 'swarm/steer').map((e) => (e.data as any).delivery)).toEqual(['enqueue'])
+  // Its one run had already started, so no later run carried it: the run's end says so.
+  const undelivered = run.journal.events.filter((e) => e.type === 'swarm/message/undelivered')
+  expect(undelivered.map((e) => (e.data as any).to)).toEqual(['a'])
+  expect(h.swarm.view(run.id).recap).toContainEqual(expect.stringMatching(/message owner→a undelivered: no later run of a's carried it/))
 })

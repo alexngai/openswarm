@@ -17,6 +17,8 @@
  *   FAKE_CRASH      stream an assistant message, then exit 2 without a result
  *   FAKE_LINGER     succeed, then never exit
  *   FAKE_STEER      wait for a second user message (a steer), then answer with it
+ *   FAKE_LATE       end its turn without reading the steer it got, then take it as
+ *                   a second turn, as Claude Code does with one that came too late
  *   otherwise       write claude-out.txt in its cwd ("broken" the first time,
  *                   "fixed" when it is already there, as a repair finds it), then succeed
  *
@@ -90,6 +92,12 @@ if (prompt.includes('FAKE_HANG')) {
   const steer = textOf(await nextLine())
   log({ event: 'steer', text: steer })
   emit(success(`heard: ${steer}`, USAGE))
+} else if (prompt.includes('FAKE_LATE')) {
+  const steer = textOf(await nextLine())
+  log({ event: 'steer', text: steer })
+  emit({ ...success('turn 1 done', USAGE), queued_turn_count: 1 })
+  emit({ type: 'assistant', session_id, message: { id: 'msg_2', model, role: 'assistant', content: [{ type: 'text', text: 'on it' }], usage: USAGE } })
+  emit(success(`turn 2 heard: ${steer}`, USAGE))
 } else if (prompt.includes('FAKE_LINGER')) {
   emit(success('done, lingering', USAGE))
   setInterval(() => {}, 1_000)

@@ -30,6 +30,9 @@ declare module '@deepseek-ai/dsh-subagent' {
   }
 }
 
+/** How long a steered run waits, past a result, for the turn a late steer started to show output. */
+const STEERED_GRACE_MS = 30_000
+
 /** The CLI a claude-code member runs: the configured one, else `OPENSWARM_CLAUDE_BIN`, else `claude` on PATH. */
 export const claudeCommandOf = (configured?: string): string => configured ?? process.env['OPENSWARM_CLAUDE_BIN'] ?? 'claude'
 
@@ -121,7 +124,11 @@ export async function runClaudeCode(
   const startedAt = Date.now()
 
   let init: any
+  /** The last turn's result: the run's answer. */
   let result: any
+  let results = 0
+  /** Whether a steer went in: one that reached the CLI as its turn ended starts another turn. */
+  let steered = false
   /** Streamed assistant usage by message id (one API call may stream as several messages). */
   const calls = new Map<string, Usage>()
   /** A user message as Claude Code's stream-json input takes it, one line. */
@@ -134,6 +141,8 @@ export async function runClaudeCode(
     input.end()
     input = undefined
   }
+  // A cancelled run takes no steer: it would go to a CLI being stopped.
+  options.signal?.addEventListener('abort', closeTurn, { once: true })
   const { exit, stderr, spawnError, aborted, timedOut } = await runCli({
     command,
     args,
@@ -144,32 +153,42 @@ export async function runClaudeCode(
     hold: {
       onInput: (io) => {
         input = io
-        options.live?.((steer) => input !== undefined && io.write(message(steer)))
+        options.live?.((steer) => input !== undefined && io.write(message(steer)) && (steered = true))
       },
     },
     interrupt: 'SIGTERM',
     signal: options.signal,
     timeoutMs,
     exitGraceMs: options.exitGraceMs,
-    onLine: (line, done) => {
+    onLine: (line, done, busy) => {
       let msg: any
       try {
         msg = JSON.parse(line)
       } catch {
         return
       }
+      if (msg?.type === 'result') {
+        result = msg
+        results++
+        // Its answer is in, and no more steering. Unsteered, a CLI that
+        // lingers past the grace is stopped. Steered, a message that came as
+        // the turn ended has started another, so the run waits for the turn
+        // the CLI reports queued, or for output, and its answer is the last
+        // result. ponytail: a turn started by such a steer is seen only by
+        // its output; one silent past STEERED_GRACE_MS is stopped.
+        closeTurn()
+        done(steered ? (Number(msg.queued_turn_count) > 0 ? STEERED_GRACE_MS * 10 : STEERED_GRACE_MS) : undefined)
+        return
+      }
+      // A turn's messages after a result are another turn at work.
+      if (results > 0 && steered && (msg?.type === 'assistant' || msg?.type === 'user')) busy()
       if (msg?.type === 'system' && msg.subtype === 'init') init = msg
       else if (msg?.type === 'assistant' && msg.message?.usage !== undefined) calls.set(String(msg.message.id ?? calls.size), apiUsage(msg.message.usage))
-      else if (msg?.type === 'result' && result === undefined) {
-        result = msg
-        // Its answer is in; a CLI that lingers past the grace is stopped.
-        closeTurn()
-        done()
-      }
     },
   })
   // However it ended.
   closeTurn()
+  options.signal?.removeEventListener('abort', closeTurn)
 
   const said = typeof result?.result === 'string' ? (result.result as string) : ''
   let stopReason: MemberRunResult['stopReason']
@@ -195,8 +214,10 @@ export async function runClaudeCode(
 
   // ponytail: one record per run under the session's model, from the result's
   // `usage`; `modelUsage` splits side calls (a small model's) out, so read it
-  // if per-model tokens must be exact. The dollars already cover them.
-  const usage = result?.usage !== undefined ? { ...apiUsage(result.usage), calls: calls.size } : [...calls.values()].reduce(addUsage, emptyUsage())
+  // if per-model tokens must be exact. The dollars already cover them. Over
+  // several turns, the streamed messages' sum; `total_cost_usd` is the
+  // session's running total, so the last result's covers every turn.
+  const usage = result?.usage !== undefined && results === 1 ? { ...apiUsage(result.usage), calls: calls.size } : [...calls.values()].reduce(addUsage, emptyUsage())
   const model: string | undefined = init?.model ?? requested
   const runId: string = init?.session_id ?? result?.session_id ?? `claude-code-${randomUUID().slice(0, 8)}`
   await options

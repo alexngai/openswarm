@@ -167,7 +167,7 @@ export async function runCodex(
         // The model asked for; Codex's stream does not name the one it used.
         ...(model === undefined ? {} : { model }),
         runId,
-        usage: usage === undefined ? emptyUsage() : codexUsage(usage, turns),
+        usage: usage === undefined ? { ...emptyUsage(), calls: turns } : codexUsage(usage, turns),
         ...(usage === undefined ? { unmeasured: true as const } : {}),
         startedAt,
       })

@@ -369,6 +369,15 @@ function roleOf(spec: TeamSpec, member: string): UsageRole {
 }
 
 /** A spec's members, in order: who the train asks to repair or resolve an entry no member ran in. */
+/** Every member a run can start: its team, and a committee's judge or a cascade's gate. */
+function everyMember(spec: TeamSpec): MemberSpec[] {
+  return [
+    ...teamMembers(spec),
+    ...(spec.topology === 'committee' && spec.judge !== undefined ? [spec.judge] : []),
+    ...(spec.topology === 'cascade' && spec.gate !== undefined ? [spec.gate] : []),
+  ]
+}
+
 function teamMembers(spec: TeamSpec): MemberSpec[] {
   switch (spec.topology) {
     case 'critic-loop':
@@ -402,11 +411,7 @@ function inPlaceCwd(options: RunTeamOptions): string | undefined {
  * the hidden suite in dsh session logs, which neither CLI writes.
  */
 function checkRuntimes(spec: TeamSpec, options: RunTeamOptions): Set<'claude-code' | 'codex'> {
-  const all = [
-    ...teamMembers(spec),
-    ...(spec.topology === 'committee' && spec.judge !== undefined ? [spec.judge] : []),
-    ...(spec.topology === 'cascade' && spec.gate !== undefined ? [spec.gate] : []),
-  ]
+  const all = everyMember(spec)
   // ponytail: refused, not scanned; feed the adapter's stream-json tool events to the scanner to lift it.
   const hidden =
     options.worktrees?.train?.suite !== undefined ||
@@ -516,7 +521,7 @@ export default class SwarmService extends Service {
     // run, unless its run takes messages mid-turn (`live`).
     const roster = new Map<string, PeerHandle>()
     const oneShot = !(spec.topology === 'peer-team' && spec.messaging === true)
-    if (oneShot) for (const member of teamMembers(spec)) roster.set(member.name, { name: member.name })
+    if (oneShot) for (const member of everyMember(spec)) roster.set(member.name, { name: member.name })
     /** Deliverers into the open turns of members whose runtime takes a message mid-turn (claude-code), by member. */
     const live = new Map<string, (text: string) => boolean>()
     const mailbox = new SwarmMailbox(this.ctx, options.parent, roster, journal)
@@ -642,8 +647,15 @@ export default class SwarmService extends Service {
         signal.throwIfAborted()
         return result
       })
-      // Journaled ahead of the run's own record.
+      // Journaled ahead of the run's own record: the questions it leaves open,
+      // and a one-shot team's steers no later run of their member carried.
       .finally(endQuestions)
+      .finally(async () => {
+        if (!oneShot) return
+        for (const message of mailbox.pending()) {
+          await journal.append('swarm/message/undelivered', { version: 1, messageId: message.id, to: message.to }).catch(() => undefined)
+        }
+      })
       .then(
         async (result) => {
           const endedAt = Date.now()
@@ -797,10 +809,17 @@ export default class SwarmService extends Service {
       // Without a budget the member starts in this tick, as before: a cancel
       // right after then settles it as aborted rather than refusing its start.
       const settled = worktrees !== undefined ? worktrees.runMember(member, framed, taskKey, options, role) : admit === undefined ? start() : admit(taskKey).then(start)
+      // ponytail: framed when the run is asked for, so a steer that comes while
+      // it waits for a budget check or a slot rides the member's run after.
       return mail === undefined
         ? settled
         : settled.then(
-            async (result) => (await mail.ack(), result),
+            async (result) => {
+              // A run that never started (already cancelled) carried nothing.
+              if (result.runId === '') mail.release()
+              else await mail.ack().catch(() => mail.release())
+              return result
+            },
             (error) => {
               mail.release()
               throw error

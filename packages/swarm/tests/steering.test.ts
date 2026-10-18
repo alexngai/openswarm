@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeAll, expect, it } from 'vitest'
-import { SwarmJournal } from '../src/index'
+import { SwarmJournal, runClaudeCode } from '../src/index'
 import { bootHarness, type TestHarness } from './boot'
 
 const FAKE = fileURLToPath(new URL('./support/fake-claude.mjs', import.meta.url))
@@ -50,7 +50,7 @@ it('a one-shot member is steerable from the start: the message waits as quiet ma
   expect(events.find((e) => e.type === 'swarm/steer')?.data).toMatchObject({ to: 'a', delivery: 'enqueue', by: 'owner' })
 }, 60_000)
 
-it("a claude-code member's open turn takes a steer at once, as a user message in its session; after the turn, steering waits for the next run", async () => {
+it("a claude-code member's open turn takes a steer at once, as a user message in its session", async () => {
   const file = join(mkdtempSync(join(tmpdir(), 'openswarm-steer-claude-')), 'log.jsonl')
   process.env['FAKE_CLAUDE_LOG'] = file
   const log = () => (existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [])
@@ -74,3 +74,30 @@ it("a claude-code member's open turn takes a steer at once, as a user message in
   expect(log().find((e) => e.event === 'steer')).toEqual({ event: 'steer', text: 'turn left' })
   expect(log().find((e) => e.event === 'start').argv).toContain('--input-format')
 }, 60_000)
+
+it('a steer that reaches Claude Code as its turn ends starts a second turn: the run waits for it, and its answer is the last result', async () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'openswarm-steer-late-')), 'log.jsonl')
+  process.env['FAKE_CLAUDE_LOG'] = file
+  const log = () => (existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [])
+  const deliverers: (((text: string) => boolean) | undefined)[] = []
+  const settled = runClaudeCode({ name: 'cc' }, 'FAKE_LATE', { cwd: mkdtempSync(join(tmpdir(), 'openswarm-steer-late-cwd-')), command: FAKE, live: (d) => void deliverers.push(d) })
+  await until(() => log().some((e) => e.event === 'start'))
+  expect(deliverers[0]!('go right')).toBe(true)
+  const result = await settled
+  expect([result.stopReason, result.text]).toEqual(['completed', 'turn 2 heard: go right'])
+  // Registered while the turn was open, cleared once it closed.
+  expect(deliverers.at(-1)).toBeUndefined()
+}, 30_000)
+
+it('a steer behind a large prompt is written once, though the pipe asks for backpressure', async () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'openswarm-steer-big-')), 'log.jsonl')
+  process.env['FAKE_CLAUDE_LOG'] = file
+  const log = () => (existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [])
+  let deliver: ((text: string) => boolean) | undefined
+  const settled = runClaudeCode({ name: 'cc' }, `FAKE_STEER ${'x'.repeat(200_000)}`, { cwd: mkdtempSync(join(tmpdir(), 'openswarm-steer-big-cwd-')), command: FAKE, live: (d) => void (d === undefined || (deliver = d)) })
+  await until(() => deliver !== undefined)
+  // Written while 200 KB of prompt may still sit in the pipe: queued counts as written.
+  expect(deliver!('once')).toBe(true)
+  expect((await settled).text).toBe('heard: once')
+  expect(log().filter((e) => e.event === 'steer')).toEqual([{ event: 'steer', text: 'once' }])
+}, 30_000)

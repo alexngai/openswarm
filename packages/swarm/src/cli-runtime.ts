@@ -67,9 +67,11 @@ export interface CliRun {
 
 /**
  * Run one CLI to its end. `onLine` gets each stdout line (the last one too,
- * without its newline) and `done`, which it calls once the CLI's final event
- * is in: a CLI still running `exitGraceMs` after that is stopped. Resolves
- * once the process has closed, however it ended; never rejects.
+ * without its newline), `done`, which it calls once a final event is in (a
+ * CLI that prints nothing more for `exitGraceMs`, or the grace `done` is
+ * given, is stopped), and `busy`, which disarms that until the next `done`
+ * (the CLI is working again). Resolves once the process has closed, however
+ * it ended; never rejects.
  */
 export async function runCli(options: {
   command: string
@@ -87,7 +89,7 @@ export async function runCli(options: {
   signal?: AbortSignal | undefined
   timeoutMs?: number | undefined
   exitGraceMs?: number | undefined
-  onLine: (line: string, done: () => void) => void
+  onLine: (line: string, done: (graceMs?: number) => void, busy: () => void) => void
 }): Promise<CliRun> {
   const run: CliRun = { exit: '', stderr: '', aborted: false, timedOut: false }
   let lingering: ReturnType<typeof setTimeout> | undefined
@@ -123,15 +125,20 @@ export async function runCli(options: {
   }
   options.signal?.addEventListener('abort', cancel, { once: true })
   const bounded = options.timeoutMs === undefined ? undefined : setTimeout(() => ((run.timedOut = true), stop()), options.timeoutMs)
-  const done = () => {
-    if (lingering === undefined) lingering = setTimeout(stop, options.exitGraceMs ?? EXIT_GRACE_MS)
+  const done = (graceMs = options.exitGraceMs ?? EXIT_GRACE_MS) => {
+    clearTimeout(lingering)
+    lingering = setTimeout(stop, graceMs)
+  }
+  const busy = () => {
+    clearTimeout(lingering)
+    lingering = undefined
   }
 
   let pending = ''
   child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
     const lines = (pending + chunk).split('\n')
     pending = lines.pop()!
-    for (const line of lines) options.onLine(line, done)
+    for (const line of lines) options.onLine(line, done, busy)
   })
   child.stderr.setEncoding('utf8').on('data', (chunk: string) => void (run.stderr = (run.stderr + chunk).slice(-4_000)))
   // A CLI that exits before reading its prompt closes the pipe under us.
@@ -140,7 +147,9 @@ export async function runCli(options: {
   else {
     child.stdin.write(options.input)
     options.hold.onInput({
-      write: (text) => child.stdin.writable && child.stdin.write(text),
+      // Queued is written: write's false only asks for backpressure, and a
+      // caller treating it as refused would deliver the text a second way.
+      write: (text) => child.stdin.writable && (child.stdin.write(text), true),
       end: () => void (child.stdin.writable && child.stdin.end()),
     })
   }
@@ -153,7 +162,7 @@ export async function runCli(options: {
     child.once('exit', () => group('SIGKILL'))
     child.once('close', (code, signal) => resolve(signal ?? `code ${code}`))
   })
-  if (pending !== '') options.onLine(pending, done)
+  if (pending !== '') options.onLine(pending, done, busy)
   clearTimeout(bounded)
   clearTimeout(lingering)
   options.signal?.removeEventListener('abort', cancel)
