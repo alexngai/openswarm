@@ -610,6 +610,18 @@ of (f8) on hard tasks) and $3,500–5,500 for the arms (8 tasks × 3 seeds × 3
 arms at an estimated $40–75 a cell). The owner sets a ceiling before it
 starts; reaching it stops the run with what it has, reported as such.
 
+*Started 2026-10-18; the owner's ceiling is $7,000 for screen and arms
+together.* The file rule (`eval/pilot/file-rule.py`, which reproduces the
+five passes and three failures above) passes 33 of the 51 tasks outside the
+frozen 12; of the frozen 12's four hard tasks, fal-1.3.0, mko-6.5.0 and
+spc-3.2.0 pass it and plr-1.31.0 does not. `eval/pilot/stage2.py` runs it:
+each candidate, in RoadmapBench's order, gets the reference check first (no
+model), then (f8) at seed 1, and seed 2 unless seed 1 is above 0.90 (the
+two-seed mean could then not be at most 0.45, so the verdict is the same);
+up to four tasks at once, none started once the qualified and the running
+could make 8. The screen stops at $2,000, leaving the rest for the arms;
+the arms run seed 1 alone first, for the futility check.
+
 ## 8. What AgentRoom, Co-Coder and STORM do, and what OpenSwarm takes from them
 
 Read from the three papers directly (2026-09-27) [P arxiv 2606.00953,

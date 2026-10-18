@@ -7,8 +7,8 @@
  * `selfrounds` (the same rounds, each opened by a self-check prompt instead: arm b0); and
  * docs/07 §7's division arms rebuilt to its five conditions, `divsharded` (d) and
  * `divprogram` (e), one gated writer per plan thread (division.mjs), and their control,
- * `onethread4` / `onethread8` (f): the same pipeline with one thread owning the whole
- * roadmap, capped at 4 or 8 rounds. A run's arms must share one driver: the CLI,
+ * `onethread4` / `onethread8` / `onethread16` (f): the same pipeline with one thread owning
+ * the whole roadmap, capped at 4, 8 or 16 rounds (docs/07 §7.6's (f8) and (f16)). A run's arms must share one driver: the CLI,
  * search.mjs or division.mjs. `gated` is the product's own gate on the CLI's single path
  * (docs/05 B6, OPENSWARM_GATE=1). `landtrain` is docs/05 Phase B's exit criterion 1: the CLI
  * runs a peer-team of two members from a spec generated off the plan (OPENSWARM_TEAM_SPEC), one
@@ -72,7 +72,9 @@ if (!MOCK) for (const key of ["AZURE_API_BASE", "AZURE_API_KEY"]) {
 if (!existsSync(join(OPENSWARM_ROOT, "packages/cli/dist/index.js"))) { console.error(`no built openswarm at ${OPENSWARM_ROOT}`); process.exit(2); }
 if (!existsSync("/opt/node/bin/node")) { console.error("no Node at /opt/node on the host"); process.exit(2); }
 if (TASKS.length === 0) { console.error("set ROADMAP_TASKS=<task>[,<task>…] (e.g. opt-4.4.0)"); process.exit(2); }
-const DRIVER = { single: "openswarm", gated: "openswarm", sharded: "openswarm", program: "openswarm", landtrain: "openswarm", attempt: "search", rounds: "search", selfrounds: "search", divsharded: "division", divprogram: "division", onethread4: "division", onethread8: "division" };
+const DRIVER = { single: "openswarm", gated: "openswarm", sharded: "openswarm", program: "openswarm", landtrain: "openswarm", attempt: "search", rounds: "search", selfrounds: "search", divsharded: "division", divprogram: "division", onethread4: "division", onethread8: "division", onethread16: "division" };
+/** The most rounds a one-thread arm of this run may take (its timeout scales with it). */
+const ONE_ROUNDS = Math.max(4, ...ARMS.filter((a) => a.startsWith("onethread")).map((a) => Number(a.slice("onethread".length))));
 for (const arm of ARMS) if (!DRIVER[arm]) { console.error(`unknown arm ${arm}`); process.exit(2); }
 const DRIVERS = new Set(ARMS.map((a) => DRIVER[a]));
 if (DRIVERS.size > 1) { console.error(`arms ${ARMS.join(",")} need different drivers (${[...DRIVERS].join(", ")}); run them apart`); process.exit(2); }
@@ -189,7 +191,7 @@ const harness = harnessOf(
     // for `rounds`, and a timeout mid-review would grade the reviewer's edits. A division
     // cell runs at most two thread waves of gated rounds, then the landing repairs.
     // landtrain: t0, then two waves of threads over two members, then the train's repairs.
-    timeoutMs: (ARMS.includes("gated") ? 2 * 4 : ARMS.includes("landtrain") ? 2 : BIN === "division" ? 2 * Math.max(2 * THREAD_ROUNDS, ARMS.includes("onethread8") ? 8 : 4) + 2 : ARMS.some((a) => a.endsWith("rounds")) ? 2 * Number(process.env.ROADMAP_ROUNDS ?? 4) : SEARCH ? 2 : 1) * 2 * 60 * 60 * 1000,
+    timeoutMs: (ARMS.includes("gated") ? 2 * 4 : ARMS.includes("landtrain") ? 2 : BIN === "division" ? 2 * Math.max(2 * THREAD_ROUNDS, ONE_ROUNDS) + 2 : ARMS.some((a) => a.endsWith("rounds")) ? 2 * Number(process.env.ROADMAP_ROUNDS ?? 4) : SEARCH ? 2 : 1) * 2 * 60 * 60 * 1000,
     // A backstop, not the budget: cache reads count toward it, and the 2h clock is the real cap.
     maxTokens: Number(process.env.ROADMAP_MAX_TOKENS ?? 40_000_000),
     env: {
@@ -216,6 +218,7 @@ const SCAFFOLD = {
   divprogram: { env: { PILOT_DIVISION: "program", PILOT_ROUNDS: String(THREAD_ROUNDS), PILOT_PLAN: "/opt/pilot/plan.json" } },
   onethread4: { env: { PILOT_DIVISION: "program", PILOT_ONE_THREAD: "1", PILOT_ROUNDS: "4" } },
   onethread8: { env: { PILOT_DIVISION: "program", PILOT_ONE_THREAD: "1", PILOT_ROUNDS: "8" } },
+  onethread16: { env: { PILOT_DIVISION: "program", PILOT_ONE_THREAD: "1", PILOT_ROUNDS: "16" } },
 };
 const armOf = (id) => ({
   id,
