@@ -1155,8 +1155,16 @@ maintain` turns it on with a brief aimed at what slipped through (a test
 made to check less, coverage deleted, a valid path broken, anything beyond
 the task), `--no-review` to skip it. Keyless tests show the mechanism
 (`gate.test.ts`, `maintain.e2e.test.ts`: a rejecting reviewer keeps every
-task out though their checks pass). Whether it would have caught the
-dogfood run's bad task is a live question, not yet run. Its review: the
+task out though their checks pass). **Replayed live on the dogfood run
+(2026-10-17):** the sign-off, with `maintain`'s brief and each task's diff
+from its fork point, on `azureoai/gpt-5.5` ($0.58 for four reviews), matched
+the owner's review on all four. It accepted the unused import and the
+`ponytail:` comment, and rejected the bundle-test rewrite for deleting the
+built bundle's smoke coverage. It also rejected the doc-citation task for
+turning the valid path `legacy/docs/47–64` into prose, which the owner had
+instead accepted with that edit undone: stricter than the owner, in the
+direction that keeps a bad edit from landing. One run and four tasks, so a
+mechanism shown, not a rate measured. Its review: the
 sign-off diffed against the gate's own base, so a retried task, whose
 worktree keeps a rejected attempt's edits, would have shown the reviewer
 only the new ones; it now diffs against the worktree's fork point, what
