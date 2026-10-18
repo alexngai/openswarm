@@ -29,6 +29,7 @@ import { runClaudeCode } from './claude-code'
 import { runCodex } from './codex'
 import { usageFromLogs, type RecordUsage, type UsageRole } from './metrics'
 import { landTrain, type TrainConfig, type TrainDeps } from './train'
+import { landRemote } from './train-client'
 import type { ClaudePermissionMode, ClaudeSettingSource, CodexSandbox, MemberRunResult, MemberSpec } from './types'
 import type { RunTeamOptions } from './index'
 
@@ -577,6 +578,20 @@ export class WorktreeRun {
     if (options.train !== undefined && this.options.train !== undefined) {
       const { options: run, ...deps } = options.train
       try {
+        // A standalone train elsewhere (docs/05 D2): push, enqueue, follow, repair here.
+        if (this.options.train.url !== undefined) {
+          return await landRemote(this.git, this.options.train, {
+            repoRoot: this.options.repoRoot,
+            journal: deps.journal,
+            ...(deps.runEvents === undefined ? {} : { runEvents: deps.runEvents }),
+            ...(deps.tasks === undefined ? {} : { tasks: deps.tasks }),
+            owners: this.owners,
+            ...(deps.members === undefined ? {} : { members: deps.members }),
+            run: (member, prompt, key, role) => this.runMember(member, prompt, key, run, role),
+            ...(deps.report === undefined ? {} : { report: deps.report }),
+            ...(deps.signal === undefined ? {} : { signal: deps.signal }),
+          })
+        }
         return await landTrain(this.git, this.options.train, {
           ...deps,
           owners: this.owners,

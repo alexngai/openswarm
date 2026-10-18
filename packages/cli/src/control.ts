@@ -56,6 +56,7 @@ const USAGE = `usage: openswarm ps [--json]
        openswarm answer <run> <question> <choice>
        openswarm kill <run>
        openswarm tasks sync <run> [--watch] [--socket <path>]
+       openswarm train invite <name> | revoke <name> | status
        ${VERIFIER_USAGE.replace('usage: ', '')}`
 
 const VALUE_FLAGS = new Set(['--run', '--to', '--workers', '--provider', '--model', '--question-timeout', '--socket', '--node', '--pricing'])
@@ -227,6 +228,32 @@ export async function runControl(
       }
       case 'verifier':
         return await runVerifier(args.slice(1), flags, io)
+      case 'train': {
+        // The standalone train `openswarm train serve` hosts (docs/05 D2, D3); `run` is the subcommand.
+        const [name] = rest
+        if (run === 'invite' && name !== undefined && rest.length === 1) {
+          const { token, card } = await call('swarm/train/invite', { name })
+          const url = (JSON.parse(readFileSync(join(openswarmHome(), 'app-server.json'), 'utf8')) as { url: string }).url
+          if (flags.has('--json')) return json({ name, url, token, card })
+          io.out(`invited ${name} to land on ${card.target} (checks: ${card.checks.join('; ')})`)
+          io.out(`its team spec's worktrees: { "train": { "url": "${url}", "token": "${token}", "remote": "<the remote that is ${card.remoteUrl}>" } }`)
+          io.out('the token is shown once; revoke it with: openswarm train revoke ' + name)
+          return 0
+        }
+        if (run === 'revoke' && name !== undefined && rest.length === 1) {
+          await call('swarm/train/revoke', { name })
+          io.out(`revoked ${name}`)
+          return 0
+        }
+        if (run === 'status' && rest.length === 0) {
+          const status = await call('swarm/train/status', {})
+          if (flags.has('--json')) return json(status)
+          io.out(`clients: ${status.clients.join(', ') || 'none'}`)
+          for (const e of status.entries) io.out(`${e.state.padEnd(9)} ${e.id}`)
+          return 0
+        }
+        break
+      }
     }
   } catch (error) {
     // Protocol errors lead with their code (FORBIDDEN, NOT_FOUND, …); shown verbatim.

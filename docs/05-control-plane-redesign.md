@@ -1335,6 +1335,31 @@ stopping the old writer (SIGSTOP) rather than killing it, so its fencing is
 exercised; every run method dispatched as a client in a process that hosts
 a run.
 
+*Progress (2026-10-18): D2 and D3 are built; exit criteria 1 and 3 are met
+by keyless tests.* `train-service.ts` is the train: a journal of its own
+(`shared/*` events), entries pinned and keyed by principal, round-robin
+batches, checks in a disposable copy with a scrubbed environment and a
+timeout, a non-forced push journaled after it, bisection, a baseline for a
+tip it did not push, recovery of an entry the remote target already holds
+(`train-service.test.ts`, over a real bare remote: two clients in one
+batch; a failing entry and a pair failing only together bisected out; a
+conflict; an outside push that breaks the target pausing the queue; a
+target moved mid-batch verified again rather than overwritten; a crash
+between push and journal; tokens and revocations across a restart). The
+protocol gains the `client` role and the `train` group; `SwarmService`
+hosts a train from `startTrain` or `OPENSWARM_TRAIN`, which `openswarm train
+serve` sets on the dev profile (verified by hand, with `train invite` and
+`status`). `train-client.ts` lands a run through it: push, enqueue, follow,
+repair an ejection with the run's own member, evidence in the run's train
+journal. `train-mesh.e2e.test.ts`: two swarms, each its own context, clone,
+journal and mock, land through one train with their own tokens; the
+second's work conflicts with the first's on the target, is ejected, resolved
+by its own member, and lands; a client is refused every other protocol
+method in a process that hosts runs, and dsh's pass-through; a revoked token
+cannot authenticate. Not built: the train's checks confined under another
+user, so only invited clients; D1's epoch is accepted on an entry but
+nothing checks it yet.
+
 **Goal.** G3, cross-host G6, and the rest of G7.
 
 | # | Work item |

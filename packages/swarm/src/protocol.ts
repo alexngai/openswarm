@@ -310,6 +310,9 @@ const METHODS: Record<string, Method> = {
   },
 }
 
+/** Every method and its group, for tests that sweep the policy. */
+export const methodNames = (): [string, MethodGroup][] => Object.entries(METHODS).map(([name, m]) => [name, m.group])
+
 /**
  * Run one `swarm/*` call for `principal`: policy first (default-deny), then
  * params, then the handler. A refused, unknown or malformed call, or an

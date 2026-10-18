@@ -58,6 +58,15 @@ export interface TrainConfig {
   batchSize?: number
   /** Repairs per entry before a question asks whether to eject it (default 1). */
   maxRepairs?: number
+  /**
+   * A standalone train to land through instead (docs/05 D2): its socket
+   * (`host:port`) and the token its owner invited this swarm with. Task
+   * branches are pushed to `remote` (default `origin`), which must be the
+   * train's remote; the run repairs its own ejected entries.
+   */
+  url?: string
+  token?: string
+  remote?: string
 }
 
 /** What verifying one batch tree said. */
@@ -153,9 +162,23 @@ export class TrainStoppedError extends Error {
   }
 }
 
+/** The resolver's brief (B3): `prefix` is its task's own prompt, if any. */
+export const resolverPrompt = (prefix: string, target: string, files: readonly string[]) =>
+  `${prefix}## Integrate\n\nLanding this work on ${target} conflicts. The lead has merged ${target}'s tip into this worktree, and these files hold conflicts: ${files.join(', ')}. Resolve every conflict, keeping the intent of both sides, and leave no conflict markers. Do not commit, abort or redo the merge; the lead commits when you stop.`
+
+/** A culprit's repair brief (B3). */
+export const repairPrompt = (prefix: string, target: string, failure: string) =>
+  `${prefix}## Landing\n\nThe landing check failed on the integrated tree (${target}'s tip with this branch merged in): ${failure}\n\nFix it in this worktree, where ${target}'s tip is now merged in. Change what the fix needs, then stop; the lead commits.`
+
 /** Refuse a train that cannot verify or is misconfigured, before any spend. */
 export function validateTrain(config: TrainConfig, worktrees: { autoCommit?: boolean } = {}): void {
-  if ((config.checks ?? []).length === 0 && config.suite === undefined) {
+  if (config.url !== undefined) {
+    // A remote train verifies with its own checks; the run only pushes, enqueues and repairs.
+    if (config.token === undefined || config.token === '') throw new Error('worktrees.train.url needs the token its owner invited this swarm with')
+    if ((config.checks ?? []).length > 0 || config.suite !== undefined || config.batchSize !== undefined) {
+      throw new Error('worktrees.train.url lands through a remote train, which runs its own checks and batches: drop checks, suite and batchSize')
+    }
+  } else if ((config.checks ?? []).length === 0 && config.suite === undefined) {
     throw new Error('worktrees.train needs checks (L2) or a hidden suite (L3) to verify its batches')
   }
   // Entries are the committed branches, and repairs and resolvers land by auto-commit.
@@ -486,7 +509,7 @@ export async function landTrain(git: SwarmGit, config: TrainConfig, deps: TrainD
             e,
             member,
             'resolve',
-            `${promptOf(e)}## Integrate\n\nLanding this work on ${target} conflicts. The lead has merged ${target}'s tip into this worktree, and these files hold conflicts: ${files.join(', ')}. Resolve every conflict, keeping the intent of both sides, and leave no conflict markers. Do not commit, abort or redo the merge; the lead commits when you stop.`,
+            resolverPrompt(promptOf(e), target, files),
           )
     let error = step.error
     let how: 'resolved' | 'gave-up' | 'tamper' = 'gave-up'
@@ -581,7 +604,7 @@ export async function landTrain(git: SwarmGit, config: TrainConfig, deps: TrainD
       e,
       member,
       'repair',
-      `${promptOf(e)}## Landing\n\nThe landing check failed on the integrated tree (${target}'s tip with this branch merged in): ${failureText(e.verdict!)}\n\nFix it in this worktree, where ${target}'s tip is now merged in. Change what the fix needs, then stop; the lead commits.`,
+      repairPrompt(promptOf(e), target, failureText(e.verdict!)),
     )
     if (step.budget === true) return eject(e, step.error!)
     // A tampered repair's edits are left uncommitted in its kept worktree, for a person to look at.

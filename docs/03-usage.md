@@ -609,6 +609,21 @@ Spent is what the run's member runs journaled (`swarm/usage`), dollars as `opens
 
 `--max-cost-usd <n>` is the hard cap beside `--max-tokens`: it aborts the whole process once spend passes `n` (exit 3, a `budget_exceeded` line), checked as the token cap is. It prices every dsh token at the `--model`'s rate in `--pricing`, plus claude-code's reported dollars, and refuses to start without a price for that model or when a spec's dsh member names another model. A claude-code run killed before it reports its dollars counts as $0 toward the cap (a spec `budget` treats it as unpriced and asks). An abort lands nothing; prefer a spec `budget` for a run whose finished work should land, and keep the cap as the backstop.
 
+### A shared train across hosts
+
+One process per target branch lands what swarms on any host send it ([docs/05](05-control-plane-redesign.md) D2, D3):
+
+```
+git clone <remote> train && cd train && git checkout --detach   # the train's own checkout
+openswarm train serve --target main --check "npm run build" --check "npm test" --remote origin [--port 4620] [--host 0.0.0.0]
+openswarm train invite laptop        # prints the URL and a token, once
+openswarm train status | revoke laptop
+```
+
+A swarm lands through it with its team spec's `"worktrees": { "train": { "url": "<host:port>", "token": "<token>", "remote": "origin" } }`, where `remote` is its own name for the train's remote: each task branch with commits is pushed there and enqueued at its commit, the run follows the train's events, and a landed task's worktree goes. An entry the train ejects (a conflict with the target, or a check that fails with it merged) is repaired in its own worktree by the member that wrote it, as the in-run train's repairs are: the remote target is merged in, a conflict goes to the resolver and a failure to a repair, and the result is pushed and enqueued again, up to `maxRepairs` (default 1); past that it is ejected, branch and worktree kept. Each outcome and its evidence bundle are in the run's own `train.jsonl`, so `openswarm landings` shows them. A cancelled run withdraws its queued entries.
+
+The train batches entries round-robin across clients, merges them onto the target's tip, runs every check once in a disposable copy of the batch tree (no remote, credentials scrubbed, ten-minute timeout), and lands a passing batch by a plain push, journaled only after it succeeded; a failing batch is bisected. A tip it did not push itself (a push from outside) is checked alone first, and a failing one pauses the queue until the target changes. Only the train should push the target (branch protection); its checkout must not have the target checked out. Client tokens are journaled hashed, and survive a restart, as revocations do. A client reaches only `swarm/train/*` for its own entries: no run, no other client's output, no dsh pass-through. The socket is plain TCP on loopback by default: across hosts, reach it through an SSH tunnel or a private network. The checks run entrants' code as the train's user, so invite only swarms you would run code from.
+
 ### The maintenance program
 
 ```

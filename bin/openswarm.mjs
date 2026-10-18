@@ -220,6 +220,10 @@ Control (runs under <home>/runs; start/steer/answer/kill need \`openswarm serve\
   openswarm tasks sync <run> [--watch] [--socket <path>]
                                               mirror a run's board into an opentasks
                                               graph (needs opentasks and its daemon)
+  openswarm train serve --target <branch> --check <cmd> [--check <cmd>]... [--remote <name>] [--port N] [--host H]
+                                              host a standalone train for this checkout (docs/05 D2)
+  openswarm train invite <name> | revoke <name> | status
+                                              invite a swarm to land through it, with its own token
   openswarm verifier setup|status|uninstall|add-suite|remove-suite|list
                                               the L3 verifier: hidden suites under a
                                               separate OS user (docs/03, docs/05 B1)
@@ -246,7 +250,7 @@ function valueOf(flat, flag) {
 }
 
 /** Handled by packages/cli's runControl, which parses its own flags (docs/05 §6.1). */
-const CONTROL_VERBS = new Set(['ps', 'board', 'questions', 'landings', 'metrics', 'attach', 'start', 'steer', 'answer', 'kill', 'tasks', 'verifier'])
+const CONTROL_VERBS = new Set(['ps', 'board', 'questions', 'landings', 'metrics', 'attach', 'start', 'steer', 'answer', 'kill', 'tasks', 'verifier', 'train'])
 
 /** A control verb, in-process; only --home and --help are the launcher's. */
 function control(argv) {
@@ -265,8 +269,36 @@ function control(argv) {
     .then((code) => process.exit(code))
 }
 
+/**
+ * `train serve`: an app-server process that hosts a standalone train (docs/05
+ * D2) for the current checkout, which must be the train's own: the target is
+ * not checked out there, and only the train pushes it.
+ */
+function trainServe(argv) {
+  const values = (flag) => argv.flatMap((a, i) => (a === flag && argv[i + 1] !== undefined ? [argv[i + 1]] : []))
+  const one = (flag) => values(flag).at(-1)
+  const target = one('--target')
+  const checks = values('--check')
+  if (target === undefined || checks.length === 0) die('train serve needs --target <branch> and at least one --check <cmd>')
+  const home = one('--home') ?? process.env.OPENSWARM_HOME ?? join(homedir(), '.openswarm')
+  ensureBuilt()
+  ensureProfiles(home)
+  const config = { repoRoot: process.cwd(), target, checks, ...(one('--remote') ? { remote: one('--remote') } : {}), ...(one('--batch') ? { batchSize: Number(one('--batch')) } : {}) }
+  // The profile loads a model route, which a train never calls: the configured
+  // provider's when there is one, else a placeholder nothing reaches.
+  const provider = process.env.OPENSWARM_PROVIDER ?? autoProvider()
+  const route =
+    provider === undefined
+      ? { OPENSWARM_DEFAULT_PROVIDER: 'openai', OPENSWARM_LLM_BASE_URL: 'http://127.0.0.1:9/v1', OPENSWARM_LLM_API_KEY: 'unused', OPENSWARM_DEFAULT_MODEL: 'unused' }
+      : resolveModel({}).env
+  const env = { ...route, OPENSWARM_TRAIN: JSON.stringify(config), OPENSWARM_APP_PORT: one('--port') ?? '4620', ...(one('--host') ? { OPENSWARM_APP_HOST: one('--host') } : {}) }
+  process.stderr.write(`openswarm: train for ${target} on :${env.OPENSWARM_APP_PORT}; invite a swarm with: openswarm train invite <name>\n`)
+  bootDsh('openswarm-dev', [], env, home)
+}
+
 function main() {
   const argv = process.argv.slice(2)
+  if (argv[0] === 'train' && argv[1] === 'serve') return trainServe(argv.slice(2))
   if (CONTROL_VERBS.has(argv[0])) return control(argv)
   // web and maintain pass flags this launcher does not own straight through.
   const { opts, rest, headless } = parse(argv, argv[0] === 'web' || argv[0] === 'maintain')
