@@ -1296,6 +1296,45 @@ Built in this order:
 4. *(D4)* Keyless against a fake `gh`; live only on a repository the owner
    names, on their say-so.
 
+*Revised after its architecture review, the same day.* Five changes:
+(1) **D2 and D3 ship as one item**, since every enqueuer needs a principal
+from the first day: the socket carrier gains a `client` role whose only
+group is `train` (its own entries, the card); `swarm/auth` binds it, and
+client tokens are stored hashed in the train's journal, with revocations,
+so a restart keeps them. (2) **Repairs stay, on the client:** the server
+speculates, verifies, bisects and ejects; the run that enqueued an entry
+keeps its worktree until the entry settles, and on an ejection merges the
+remote target in, runs B3's resolver or repair as its own member's step,
+pushes and enqueues again, up to `maxRepairs` (B3's resolver was what took
+landing from 11 of 24 to 24 of 24). (3) **The remote target is the truth:**
+a batch lands by a plain, non-forced push of the verified commit, and is
+journaled only after it; a rejected push means someone else moved the
+target, so the train fetches and verifies again; a target the train did not
+push gets a fresh baseline; on restart an entry whose commit is in the
+remote target has landed. Only the train should push the target (branch
+protection, a stated precondition). (4) **Entrants' code:** the train runs
+each check in a disposable copy of the batch tree (its own repository, no
+remote), with a scrubbed environment and a timeout, and pushes from a
+process no check descends from. That stops accidents, not an adversary: the
+checks still run as the train's user, so v1 admits only clients the owner
+invites (their own swarms, CI); entrants the owner does not trust wait for
+checks confined under another user (B1's verifier), with cross-org
+federation (§7.7). (5) **Entries** are keyed by principal and branch,
+pinned to the commit enqueued, idempotent on (principal, branch, commit),
+ordered round-robin across principals, with `blockedBy` only among a
+principal's own; they carry an `epoch` from the start, which D1's fencing
+checks. Landing evidence is built by the client, from its own run's journal.
+D1, when it comes, pushes the run ref, the task branches and the enqueue in
+one atomic compare-and-set push naming the expected object, with a lease
+(heartbeat pushes, a TTL, `--steal` to take a live run), and resumes only
+one-shot peer-team runs, rebuilding gate mode, spent budgets and open
+questions. D4 is independent of D1. The exit criteria gain: each process
+its own home; a pair that fails only together; a push to the target from
+outside; a train killed between push and journal; a takeover tested by
+stopping the old writer (SIGSTOP) rather than killing it, so its fencing is
+exercised; every run method dispatched as a client in a process that hosts
+a run.
+
 **Goal.** G3, cross-host G6, and the rest of G7.
 
 | # | Work item |
