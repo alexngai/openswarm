@@ -1077,6 +1077,19 @@ would get a shell on the host; only the operator's `--check` commands run.
 The caps and the run budget now count the survey, and the summary is
 always rewritten.
 
+R2's `codex` member is built at basic (2026-10-17):
+`packages/swarm/src/codex.ts` runs `codex exec --json --ephemeral` where a
+claude-code member would run, from the event schema in codex-rs 0.144
+(`exec_events.rs`): the last `agent_message` is the answer, `turn.completed`
+the usage (cached input split out; no dollars, so the table prices it by the
+member's model), `turn.failed` and `error` the failure. Codex handles SIGINT
+but not SIGTERM and starts its shell children in sessions of their own, so a
+stop interrupts, then kills the group and the descendants. The process
+handling the two CLIs share moved to `cli-runtime.ts` (R1's tests unchanged).
+`codex.test.ts` runs a fake CLI keyless. A test written without the fake's
+path ran the real `codex` once (prompt "p", about 2 seconds) before it was
+pinned to the fake for every run.
+
 **Exit criterion 3 is met (2026-10-17).** `openswarm maintain` ran on this
 repository (commit `02c19de`) against `eval/maintain/principles.md`, on the
 EC2 box with `azureoai/gpt-5.5`: 4 tasks, 2 members, up to 3 rounds; checks

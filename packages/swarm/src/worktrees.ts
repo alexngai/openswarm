@@ -26,9 +26,10 @@ import type { SubagentRun } from '@deepseek-ai/dsh-subagent'
 import { SwarmGit, withSnapshotClone, type MergeOutcome } from 'openswarm-git'
 import type { DiffSummary } from './evidence'
 import { runClaudeCode } from './claude-code'
+import { runCodex } from './codex'
 import { usageFromLogs, type RecordUsage, type UsageRole } from './metrics'
 import { landTrain, type TrainConfig, type TrainDeps } from './train'
-import type { ClaudePermissionMode, ClaudeSettingSource, MemberRunResult, MemberSpec } from './types'
+import type { ClaudePermissionMode, ClaudeSettingSource, CodexSandbox, MemberRunResult, MemberSpec } from './types'
 import type { RunTeamOptions } from './index'
 
 const require = createRequire(import.meta.url)
@@ -60,6 +61,12 @@ export interface WorktreeMemberConfig {
   claudeSettingSources?: ClaudeSettingSource[]
   /** claude-code member runs' bound unless a member names one (default none). */
   claudeTimeoutMs?: number
+  /** The `codex` CLI codex members run (default `OPENSWARM_CODEX_BIN`, else `codex` on PATH). */
+  codexCommand?: string
+  /** codex members' `-s` sandbox unless a member names one (default `workspace-write`). */
+  codexSandbox?: CodexSandbox
+  /** codex member runs' bound unless a member names one (default none). */
+  codexTimeoutMs?: number
 }
 
 export interface WorktreeTeamOptions {
@@ -355,6 +362,10 @@ export class WorktreeRun {
         taskKey,
         role,
       })
+    }
+    if (member.runtime === 'codex') {
+      const cfg = this.options.member ?? {}
+      return runCodex(member, prompt, { cwd, signal: run.signal, command: cfg.codexCommand, sandbox: cfg.codexSandbox, timeoutMs: cfg.codexTimeoutMs, usage: this.onUsage, taskKey, role })
     }
     return this.runProcess(member, prompt, cwd, run, this.memberEnv(), this.options.member, taskKey, role)
   }

@@ -75,6 +75,7 @@ import { homedir, hostname } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { RemotePeer } from './remote-peer'
 import { claudeCommandOf, preflightClaude, runClaudeCode } from './claude-code'
+import { codexCommandOf, preflightCodex, runCodex } from './codex'
 import { SwarmServer } from './server'
 import { inheritedRoute, WorktreeRun, resolveMemberLaunch, type WorktreeTeamOptions } from './worktrees'
 import type { MergeOutcome } from 'openswarm-git'
@@ -110,6 +111,7 @@ export { AbandonedTasksError, coordinatorSpec, parseNumberedPlan, renderIntent }
 export type { BoardGate, ReportProgress, RunMember } from './topologies'
 export { RemotePeer } from './remote-peer'
 export { claudeCommandOf, claudeEnv, preflightClaude, runClaudeCode } from './claude-code'
+export { codexCommandOf, codexEnv, preflightCodex, runCodex } from './codex'
 export { SwarmServer } from './server'
 export { WorktreeRun, memberEnvOf, reviewMemberConfig, runMemberProcess } from './worktrees'
 export type { WorktreeTeamOptions, WorktreeMemberConfig } from './worktrees'
@@ -381,13 +383,13 @@ function inPlaceCwd(options: RunTeamOptions): string | undefined {
 
 /**
  * Refuse, before any spend, a member runtime the run cannot use (docs/05
- * §5.4), and say whether any member runs on claude-code. claude-code is a
- * basic member, one-shot runs only, so it cannot be a messaging peer, which
- * keeps one session and takes messages mid-run; in place it needs a cwd the
- * caller named; and an L3 run scans each member step for reaching at the
- * hidden suite in dsh session logs, which a claude-code member does not write.
+ * §5.4), and say which CLI runtimes the run uses. claude-code and codex are
+ * basic members, one-shot runs only, so neither can be a messaging peer,
+ * which keeps one session and takes messages mid-run; in place each needs a
+ * cwd the caller named; and an L3 run scans each member step for reaching at
+ * the hidden suite in dsh session logs, which neither CLI writes.
  */
-function checkRuntimes(spec: TeamSpec, options: RunTeamOptions): boolean {
+function checkRuntimes(spec: TeamSpec, options: RunTeamOptions): Set<'claude-code' | 'codex'> {
   const all = [
     ...teamMembers(spec),
     ...(spec.topology === 'committee' && spec.judge !== undefined ? [spec.judge] : []),
@@ -397,27 +399,27 @@ function checkRuntimes(spec: TeamSpec, options: RunTeamOptions): boolean {
   const hidden =
     options.worktrees?.train?.suite !== undefined ||
     (spec.topology === 'peer-team' && spec.gate !== undefined && spec.tasks.some((task) => (task.suite ?? spec.gate!.suite) !== undefined))
-  let claude = false
+  const clis = new Set<'claude-code' | 'codex'>()
   for (const member of all) {
     const runtime: string = member.runtime ?? 'dsh'
     if (runtime === 'dsh') continue
-    if (runtime !== 'claude-code') throw new Error(`member "${member.name}" names runtime "${runtime}"; the runtimes are dsh and claude-code`)
+    if (runtime !== 'claude-code' && runtime !== 'codex') throw new Error(`member "${member.name}" names runtime "${runtime}"; the runtimes are dsh, claude-code and codex`)
     if (spec.topology === 'peer-team' && spec.messaging === true) {
       throw new Error(
-        `member "${member.name}" runs on claude-code, a basic member (one-shot runs): a messaging peer-team needs steerable members that keep one session and take messages mid-run; drop messaging or run it on dsh`,
+        `member "${member.name}" runs on ${runtime}, a basic member (one-shot runs): a messaging peer-team needs steerable members that keep one session and take messages mid-run; drop messaging or run it on dsh`,
       )
     }
     if (options.worktrees === undefined && inPlaceCwd(options) === undefined) {
-      throw new Error(`claude-code member "${member.name}" works in place without worktrees, in its parent agent's cwd, and the parent has none: give it one, or run with worktrees`)
+      throw new Error(`${runtime} member "${member.name}" works in place without worktrees, in its parent agent's cwd, and the parent has none: give it one, or run with worktrees`)
     }
     if (hidden) {
       throw new Error(
-        `member "${member.name}" runs on claude-code, and this run verifies at L3 with a hidden suite: the tamper scan cannot read Claude Code transcripts; drop the suite or run the member on dsh`,
+        `member "${member.name}" runs on ${runtime}, and this run verifies at L3 with a hidden suite: the tamper scan cannot read ${runtime === 'codex' ? 'Codex' : 'Claude Code'} transcripts; drop the suite or run the member on dsh`,
       )
     }
-    claude = true
+    clis.add(runtime)
   }
-  return claude
+  return clis
 }
 
 /** Concatenated text content of an assistant output. */
@@ -733,7 +735,9 @@ export default class SwarmService extends Service {
     journal: SwarmJournal,
   ): Promise<TeamResult & { git?: MergeOutcome }> {
     // Refusals, then the CLI's preflight, before any spend.
-    if (checkRuntimes(spec, options)) await preflightClaude(claudeCommandOf(options.worktrees?.member?.claudeCommand))
+    const clis = checkRuntimes(spec, options)
+    if (clis.has('claude-code')) await preflightClaude(claudeCommandOf(options.worktrees?.member?.claudeCommand))
+    if (clis.has('codex')) await preflightCodex(codexCommandOf(options.worktrees?.member?.codexCommand))
     // Every member run's usage, journaled as it settles (docs/05 B5).
     const usage: RecordUsage = async ({ role, ...record }) => {
       await journal.append('swarm/usage', { version: 1, ...record, role: role ?? roleOf(spec, record.member) })
@@ -1046,7 +1050,7 @@ export default class SwarmService extends Service {
                   review: (prompt: string, commit: string) =>
                     worktrees.review(
                       key,
-                      { name: 'reviewer', ...(member.agentOptions === undefined || member.runtime === 'claude-code' ? {} : { agentOptions: member.agentOptions }) },
+                      { name: 'reviewer', ...(member.agentOptions === undefined || (member.runtime ?? 'dsh') !== 'dsh' ? {} : { agentOptions: member.agentOptions }) },
                       prompt,
                       commit,
                       sandbox,
@@ -1287,10 +1291,11 @@ export default class SwarmService extends Service {
     options: RunTeamOptions,
     account: { usage: RecordUsage; taskKey?: string; role?: UsageRole },
   ): Promise<MemberRunResult> {
-    if (member.runtime === 'claude-code') {
+    if (member.runtime === 'claude-code' || member.runtime === 'codex') {
       const cwd = inPlaceCwd(options)
-      if (cwd === undefined) throw new Error(`claude-code member "${member.name}" has no cwd to work in`)
-      return runClaudeCode(member, prompt, { cwd, signal: options.signal, usage: account.usage, taskKey: account.taskKey, role: account.role })
+      if (cwd === undefined) throw new Error(`${member.runtime} member "${member.name}" has no cwd to work in`)
+      const run = { cwd, signal: options.signal, usage: account.usage, taskKey: account.taskKey, role: account.role }
+      return member.runtime === 'codex' ? runCodex(member, prompt, run) : runClaudeCode(member, prompt, run)
     }
     const provider =
       member.subagentProvider ?? this.swarmConfig.defaultSubagentProvider ?? 'spawn'

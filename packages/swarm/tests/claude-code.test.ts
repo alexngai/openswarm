@@ -261,8 +261,8 @@ it('a claude-code member is refused before any spend in a messaging peer-team, a
     h.swarm.runTeam({ topology: 'peer-team', messaging: true, members: [{ name: 'a' }, { name: 'cc', runtime: 'claude-code' }], tasks }, { parent: h.lead.agent }),
   ).rejects.toThrow('member "cc" runs on claude-code, a basic member (one-shot runs): a messaging peer-team needs steerable members')
   await expect(
-    h.swarm.runTeam({ topology: 'committee', members: [{ name: 'a' }], judge: { name: 'j', runtime: 'codex' as any }, task: 't' }, { parent: h.lead.agent }),
-  ).rejects.toThrow('member "j" names runtime "codex"; the runtimes are dsh and claude-code')
+    h.swarm.runTeam({ topology: 'committee', members: [{ name: 'a' }], judge: { name: 'j', runtime: 'a2a' as any }, task: 't' }, { parent: h.lead.agent }),
+  ).rejects.toThrow('member "j" names runtime "a2a"; the runtimes are dsh, claude-code and codex')
   expect(h.mock.requests).toHaveLength(0)
   expect(log()).toEqual([])
 })

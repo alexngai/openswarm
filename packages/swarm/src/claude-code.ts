@@ -14,9 +14,10 @@
  * Claude Code's own permission mode and settings govern what it may do;
  * OpenSwarm's member sandbox (§5.5) covers dsh members only.
  */
-import { execFile, execFileSync, spawn } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
+import { cliEnv, runCli } from './cli-runtime'
 import { addUsage, emptyUsage, type RecordUsage, type Usage, type UsageRole } from './metrics'
 import type { ClaudePermissionMode, ClaudeSettingSource, MemberRunResult, MemberSpec } from './types'
 
@@ -26,16 +27,6 @@ declare module '@deepseek-ai/dsh-subagent' {
     'max-turns': 'max-turns'
   }
 }
-
-/** Credential-shaped names, as dsh's spawner scrubs them (`@deepseek-ai/dsh-subprocess`'s `SENSITIVE_ENV_PATTERN`). */
-const SENSITIVE = /KEY|PASSWORD|SECRET|TOKEN/i
-/** The launcher's own routes: OpenSwarm's, dsh's, and the providers its dsh members speak. */
-const ROUTES = /^(OPENSWARM_|DSH_|DEEPSEEK_|OPENAI_|AZURE_API_)/i
-
-/** How long a stopped CLI's processes have between SIGTERM and SIGKILL. */
-const KILL_GRACE_MS = 5_000
-/** How long the CLI has to exit once it has sent its result. */
-const EXIT_GRACE_MS = 10_000
 
 /** The CLI a claude-code member runs: the configured one, else `OPENSWARM_CLAUDE_BIN`, else `claude` on PATH. */
 export const claudeCommandOf = (configured?: string): string => configured ?? process.env['OPENSWARM_CLAUDE_BIN'] ?? 'claude'
@@ -47,10 +38,7 @@ export const claudeCommandOf = (configured?: string): string => configured ?? pr
  */
 export function claudeEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const bedrock = env['CLAUDE_CODE_USE_BEDROCK'] !== undefined && env['CLAUDE_CODE_USE_BEDROCK'] !== '' && env['CLAUDE_CODE_USE_BEDROCK'] !== '0'
-  const kept = (name: string) => /^(ANTHROPIC_|CLAUDE_)/i.test(name) || (bedrock && /^AWS_/i.test(name))
-  return Object.fromEntries(
-    Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined && (kept(entry[0]) || !(SENSITIVE.test(entry[0]) || ROUTES.test(entry[0])))),
-  )
+  return cliEnv((name) => /^(ANTHROPIC_|CLAUDE_)/i.test(name) || (bedrock && /^AWS_/i.test(name)), env)
 }
 
 /**
@@ -75,29 +63,6 @@ const apiUsage = (u: any): Usage => ({
   cacheWriteTokens: u?.cache_creation_input_tokens ?? 0,
   calls: 1,
 })
-
-/** Every process descending from `pid` now, by walking `ps`'s parent links. */
-function descendants(pid: number): number[] {
-  let table: string
-  try {
-    table = execFileSync('ps', ['-A', '-o', 'pid=,ppid='], { encoding: 'utf8' })
-  } catch {
-    return []
-  }
-  const children = new Map<number, number[]>()
-  for (const line of table.split('\n')) {
-    const [child, parent] = line.trim().split(/\s+/).map(Number)
-    if (child !== undefined && parent !== undefined && !Number.isNaN(parent)) children.set(parent, [...(children.get(parent) ?? []), child])
-  }
-  const found: number[] = []
-  for (const queue = [pid]; queue.length > 0; ) {
-    for (const child of children.get(queue.shift()!) ?? []) {
-      found.push(child)
-      queue.push(child)
-    }
-  }
-  return found
-}
 
 /**
  * One claude-code member run in `cwd`. Never rejects: a CLI that cannot
@@ -147,93 +112,34 @@ export async function runClaudeCode(
 
   let init: any
   let result: any
-  let stderr = ''
-  let spawnError: Error | undefined
-  let aborted = false
-  let timedOut = false
   /** Streamed assistant usage by message id (one API call may stream as several messages). */
   const calls = new Map<string, Usage>()
-  let lingering: ReturnType<typeof setTimeout> | undefined
-
-  // Its own process group, so a stop reaches what it starts there. The prompt
-  // goes on stdin: no ARG_MAX, and a prompt starting with `-` is not a flag.
-  const child = spawn(command, args, { cwd: options.cwd, env: claudeEnv(), detached: true, stdio: ['pipe', 'pipe', 'pipe'] })
-  const group = (signal: NodeJS.Signals) => {
-    if (child.pid === undefined) return
-    try {
-      process.kill(-child.pid, signal)
-    } catch {}
-  }
-  let stopping = false
-  /**
-   * SIGTERM, then SIGKILL after a grace, to the CLI's process group and every
-   * descendant it has now. Claude Code starts its Bash tool and hooks in
-   * sessions of their own, outside its group, so they are found by parent
-   * link while the CLI is alive. ponytail: one `ps` walk at the stop; what
-   * they spawn after it, or detach from them, outlives the member until
-   * Claude's own shutdown reaps it.
-   */
-  const stop = () => {
-    if (stopping || child.pid === undefined) return
-    stopping = true
-    const tree = descendants(child.pid)
-    const signal = (sig: NodeJS.Signals) => {
-      group(sig)
-      for (const pid of tree) {
-        try {
-          process.kill(pid, sig)
-        } catch {}
+  const { exit, stderr, spawnError, aborted, timedOut } = await runCli({
+    command,
+    args,
+    cwd: options.cwd,
+    env: claudeEnv(),
+    input: text,
+    interrupt: 'SIGTERM',
+    signal: options.signal,
+    timeoutMs,
+    exitGraceMs: options.exitGraceMs,
+    onLine: (line, done) => {
+      let msg: any
+      try {
+        msg = JSON.parse(line)
+      } catch {
+        return
       }
-    }
-    signal('SIGTERM')
-    // Never cleared: a tool process outside its group may outlast the CLI.
-    setTimeout(() => signal('SIGKILL'), KILL_GRACE_MS).unref()
-  }
-  const cancel = () => {
-    aborted = true
-    stop()
-  }
-  options.signal?.addEventListener('abort', cancel, { once: true })
-  const bounded = timeoutMs === undefined ? undefined : setTimeout(() => ((timedOut = true), stop()), timeoutMs)
-
-  const take = (line: string) => {
-    let msg: any
-    try {
-      msg = JSON.parse(line)
-    } catch {
-      return
-    }
-    if (msg?.type === 'system' && msg.subtype === 'init') init = msg
-    else if (msg?.type === 'assistant' && msg.message?.usage !== undefined) calls.set(String(msg.message.id ?? calls.size), apiUsage(msg.message.usage))
-    else if (msg?.type === 'result' && result === undefined) {
-      result = msg
-      // Its answer is in; a CLI that lingers past the grace is stopped.
-      lingering = setTimeout(stop, options.exitGraceMs ?? EXIT_GRACE_MS)
-    }
-  }
-  let pending = ''
-  child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
-    const lines = (pending + chunk).split('\n')
-    pending = lines.pop()!
-    lines.forEach(take)
+      if (msg?.type === 'system' && msg.subtype === 'init') init = msg
+      else if (msg?.type === 'assistant' && msg.message?.usage !== undefined) calls.set(String(msg.message.id ?? calls.size), apiUsage(msg.message.usage))
+      else if (msg?.type === 'result' && result === undefined) {
+        result = msg
+        // Its answer is in; a CLI that lingers past the grace is stopped.
+        done()
+      }
+    },
   })
-  child.stderr.setEncoding('utf8').on('data', (chunk: string) => void (stderr = (stderr + chunk).slice(-4_000)))
-  // A CLI that exits before reading its prompt closes the pipe under us.
-  child.stdin.on('error', () => undefined)
-  child.stdin.end(text)
-  const exit = await new Promise<string>((resolve) => {
-    child.once('error', (error) => {
-      spawnError = error
-      resolve(error.message)
-    })
-    // Reap what it left running in its group, so its pipes close and `close` comes.
-    child.once('exit', () => group('SIGKILL'))
-    child.once('close', (code, signal) => resolve(signal ?? `code ${code}`))
-  })
-  take(pending)
-  clearTimeout(bounded)
-  clearTimeout(lingering)
-  options.signal?.removeEventListener('abort', cancel)
 
   const said = typeof result?.result === 'string' ? (result.result as string) : ''
   let stopReason: MemberRunResult['stopReason']

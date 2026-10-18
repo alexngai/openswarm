@@ -556,9 +556,9 @@ function teamSpecOf(args: Map<string, string>, selfModify: boolean, planned: boo
   return { spec, worktrees }
 }
 
-/** Whether a team spec runs anything on dsh: a dsh member, or a gate's reviewer (a claude-code member's takes the dsh route too). */
+/** Whether a team spec runs anything on dsh: a dsh member, or a gate's reviewer (a CLI member's takes the dsh route too). */
 function needsDshRoute({ spec }: TeamSpecFile): boolean {
-  return spec.members.some((m) => m.runtime !== 'claude-code') || (spec.topology === 'peer-team' && spec.gate !== undefined && spec.gate.review !== false)
+  return spec.members.some((m) => (m.runtime ?? 'dsh') === 'dsh') || (spec.topology === 'peer-team' && spec.gate !== undefined && spec.gate.review !== false)
 }
 
 /** The branch checked out (`''` on a detached HEAD) and its commit. */
@@ -978,9 +978,9 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
       // Conflicts are data about the arm; only a thread that did not run fails the run.
       completed = threads.every((t) => t.landed !== 'failed')
     } else if (team !== undefined && memberRoot !== undefined) {
-      // dsh members take the CLI's route, as plan-mode members do; a claude-code member's model is Claude Code's.
+      // dsh members take the CLI's route, as plan-mode members do; a CLI member's model is its CLI's.
       const members = team.spec.members.map((m) =>
-        m.runtime === 'claude-code' || memberRoute === undefined ? m : { ...m, agentOptions: { ...memberRoute.agentOptions, ...m.agentOptions } },
+        (m.runtime ?? 'dsh') !== 'dsh' || memberRoute === undefined ? m : { ...m, agentOptions: { ...memberRoute.agentOptions, ...m.agentOptions } },
       )
       // The prompt is the whole task; each task's own prompt is its part of it.
       const tasks = team.spec.tasks.map((t) => ({ ...t, prompt: `${prompt}\n\n${t.prompt}` }))
@@ -1002,7 +1002,7 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
         const totals = emptyUsage()
         for (const { type, data } of handle.journal.events) {
           const run = data as SwarmUsageEvent
-          if (type !== 'swarm/usage' || run.runtime !== 'claude-code') continue
+          if (type !== 'swarm/usage' || (run.runtime !== 'claude-code' && run.runtime !== 'codex')) continue
           totals.inputTokens += run.usage.inputTokens
           totals.outputTokens += run.usage.outputTokens
           totals.cacheReadInputTokens += run.usage.cacheReadTokens
@@ -1238,11 +1238,14 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
  * A team spec's dollar budget (docs/05 C5) is checked against priced usage,
  * and unattended, usage it cannot price stops the run at its first check; so
  * every dsh model it will run (members, and the gate's reviewer on the route)
- * needs a price before any spend. claude-code members report their own dollars.
+ * and every codex member's needs a price before any spend; claude-code members
+ * report their own dollars, codex members none, so a codex member names its model.
  */
 function refuseUnpricedBudget(spec: TeamSpecFile['spec'], model: string, pricing: Pricing | undefined): void {
   const usd = spec.budget?.usd !== undefined || (spec.topology === 'peer-team' && spec.tasks.some((t) => t.budget?.usd !== undefined))
   if (!usd) return
+  const unnamed = spec.members.find((m) => m.runtime === 'codex' && m.agentOptions?.model === undefined)
+  if (unnamed !== undefined) throw new Error(`the team spec's dollar budget prices codex member "${unnamed.name}" by its model, and it names none (agentOptions.model)`)
   const models = new Set([model, ...spec.members.filter((m) => m.runtime !== 'claude-code').map((m) => m.agentOptions?.model ?? model)])
   const unpriced = [...models].filter((m) => pricing?.[m] === undefined)
   if (unpriced.length > 0) throw new Error(`the team spec's dollar budget needs --pricing <file> with a price for ${unpriced.join(', ')}`)
@@ -1257,6 +1260,8 @@ function capRate(pricing: Pricing | undefined, model: string, members: readonly 
   if (pricing === undefined) throw new Error('--max-cost-usd needs --pricing <file> ($ per million tokens by model)')
   const rate = pricing[model]
   if (rate === undefined) throw new Error(`--max-cost-usd: --pricing has no price for ${model}, so the cap could not be checked`)
+  const codex = members.find((m) => m.runtime === 'codex')
+  if (codex !== undefined) throw new Error(`--max-cost-usd cannot count codex member "${codex.name}", which reports no dollars; cap with --max-tokens, or give the spec a budget with --pricing`)
   const other = members.find((m) => m.runtime !== 'claude-code' && m.agentOptions?.model !== undefined && m.agentOptions.model !== model)
   if (other !== undefined) throw new Error(`--max-cost-usd prices every dsh member at ${model}'s rate, but member "${other.name}" runs ${other.agentOptions!.model}`)
   return rate

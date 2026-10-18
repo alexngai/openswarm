@@ -37,8 +37,11 @@ export interface MemberSpec {
    * a messaging peer. Its `agentOptions.model` is Claude Code's `--model`;
    * `subagentProvider` does not apply. Claude Code's own permission mode and
    * settings govern it; OpenSwarm's member sandbox covers dsh members only.
+   * `codex` runs the user's installed `codex` CLI (`codex exec`) the same
+   * way (R2), under Codex's own sandbox (`codexSandbox`); it reports no
+   * dollars, so its `agentOptions.model` is what a pricing table prices.
    */
-  runtime?: 'dsh' | 'claude-code'
+  runtime?: 'dsh' | 'claude-code' | 'codex'
   /**
    * A claude-code member's `--permission-mode` (default
    * `worktrees.member.claudePermissionMode`, else `acceptEdits`).
@@ -53,7 +56,14 @@ export interface MemberSpec {
   claudeSettingSources?: ClaudeSettingSource[]
   /** A claude-code member run's bound, after which it is stopped as a cancel is (default `worktrees.member.claudeTimeoutMs`, else none). */
   claudeTimeoutMs?: number
+  /** A codex member's `-s` sandbox (default `worktrees.member.codexSandbox`, else `workspace-write`). */
+  codexSandbox?: CodexSandbox
+  /** A codex member run's bound (default `worktrees.member.codexTimeoutMs`, else none). */
+  codexTimeoutMs?: number
 }
+
+/** Codex's sandbox policies (`codex exec -s`). */
+export type CodexSandbox = 'read-only' | 'workspace-write' | 'danger-full-access'
 
 /** Where Claude Code loads settings from (`--setting-sources`). */
 export type ClaudeSettingSource = 'user' | 'project' | 'local'
