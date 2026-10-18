@@ -1156,7 +1156,14 @@ made to check less, coverage deleted, a valid path broken, anything beyond
 the task), `--no-review` to skip it. Keyless tests show the mechanism
 (`gate.test.ts`, `maintain.e2e.test.ts`: a rejecting reviewer keeps every
 task out though their checks pass). Whether it would have caught the
-dogfood run's bad task is a live question, not yet run.
+dogfood run's bad task is a live question, not yet run. Its review: the
+sign-off diffed against the gate's own base, so a retried task, whose
+worktree keeps a rejected attempt's edits, would have shown the reviewer
+only the new ones; it now diffs against the worktree's fork point, what
+lands. Also fixed: a rollback to a round that was not signed off restored
+the checks' verdict alone (and briefed an empty failed command); the
+reviewer's sandbox setting is validated whenever a sign-off is on; a cancel
+during the sign-off is the run ending, not a rejection.
 
 Getting there changed three things, all committed: the box cannot confine
 members (Ubuntu 24.04 restricts the user namespaces bubblewrap needs), so

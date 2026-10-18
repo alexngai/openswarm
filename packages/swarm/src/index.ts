@@ -1055,6 +1055,9 @@ export default class SwarmService extends Service {
     // ponytail: no preflight here, so on a host that cannot sandbox each review
     // fails and stops its gate unaccepted; probe as the CLI does if that spend matters.
     const sandbox = process.env['OPENSWARM_GATE_REVIEWER_SANDBOX'] || 'workspace-write'
+    if ((reviewed !== undefined || gate.signoff !== undefined) && sandbox !== 'workspace-write' && sandbox !== 'danger-full-access') {
+      throw new Error(`OPENSWARM_GATE_REVIEWER_SANDBOX must be workspace-write or danger-full-access, not "${sandbox}"`)
+    }
     if (reviewed !== undefined) {
       const which = `gated task "${reviewed.subject}" has no checks`
       if (gate.review === false) throw new Error(`${which} and the team's gate has review off; give it checks`)
@@ -1062,9 +1065,6 @@ export default class SwarmService extends Service {
         throw new Error(
           `${which}, so a reviewer would measure it, and the reviewer runs as a worktree member: run with worktree execution (RunTeamOptions.worktrees) or give every task checks`,
         )
-      }
-      if (sandbox !== 'workspace-write' && sandbox !== 'danger-full-access') {
-        throw new Error(`OPENSWARM_GATE_REVIEWER_SANDBOX must be workspace-write or danger-full-access, not "${sandbox}"`)
       }
     }
     const pinPaths = options.confidencePinPaths ?? []
@@ -1131,6 +1131,8 @@ export default class SwarmService extends Service {
                     ),
                 }),
             rollback: (commit) => worktrees.rollback(key, commit),
+            // A sign-off reads all the task will land, earlier attempts' edits included.
+            diffBase: () => worktrees.baseCommit(),
             // As the cascade's gate does: the graded party may not edit what grades it.
             ...(pinPaths.length === 0
               ? {}

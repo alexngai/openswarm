@@ -480,6 +480,11 @@ export class WorktreeRun {
     return { base, ...(diff === undefined ? {} : { diff }) }
   }
 
+  /** The commit every task worktree was cut from: what a task's landing diffs against. */
+  baseCommit(): Promise<string> {
+    return this.git.baseCommit()
+  }
+
   /** Put the worktree at `key` back to a gate snapshot commit (docs/05 B6b): a tree the gate owns. */
   async rollback(key: string, commit: string): Promise<void> {
     await this.git.resetTo(await this.git.worktree(key), commit)

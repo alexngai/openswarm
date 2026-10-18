@@ -432,7 +432,7 @@ export interface BoardGate {
   tree: (
     member: MemberSpec,
     claimed: SwarmTaskSnapshot,
-  ) => Pick<GateDeps, 'cwd' | 'review' | 'rollback' | 'hidden'> & {
+  ) => Pick<GateDeps, 'cwd' | 'review' | 'rollback' | 'hidden' | 'diffBase'> & {
     /** After each member round, before the gate measures it: restore the pinned paths, so no round passes by editing them. */
     pin?: () => Promise<void>
   }

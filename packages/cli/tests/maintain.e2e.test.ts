@@ -131,6 +131,11 @@ it('a reviewer that will not sign off keeps a task from landing, though its chec
   expect(Object.keys(note.abandoned).sort()).toEqual(['task-0', 'task-1', 'task-2'])
 }, 180_000)
 
+it('--no-review lands what passes its checks without a sign-off', async () => {
+  const { events } = await maintainRun(false, ['--no-review'])
+  expect(events.find((e) => e.type === 'team_note').landed).toEqual(['task-0', 'task-1'])
+}, 180_000)
+
 it('refused before any spend: no --check, or a dollar budget it could not price', async () => {
   process.chdir(mkdtempSync(join(tmpdir(), 'openswarm-maintain-refuse-')))
   writeFileSync('P.md', '- x\n')

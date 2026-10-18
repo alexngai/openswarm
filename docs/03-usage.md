@@ -342,9 +342,12 @@ work on the strongest verifier it is given: L1 a reviewer, L2 the task's checks,
 L3 a hidden suite (L0 is no gate; L4, external CI on the train, is not built).
 A peer-team's `gate.signoff` (a prompt) adds a sign-off on top: once a round's
 checks or suite pass, a reviewer, run under worktree execution as review mode's
-is, reads the change (`git diff <base>` in a disposable copy of the round's
-tree) and must reply `{"accept": true, …}`, or the round fails and its
-`reasons` brief the next round. An unparsed reply is no sign-off; a sign-off
+is, reads the change (`git diff <fork point>` in a disposable copy of the
+round's tree: everything the task will land, an earlier attempt's edits in
+its worktree included) and must reply `{"accept": true, …}`, or the round
+fails and its `reasons` brief the next round. A task without checks then
+runs two reviews on a passing round, the one that measures it and the
+sign-off. An unparsed reply is no sign-off; a sign-off
 that cannot run twice stops the gate unaccepted. The verdict is journaled on
 the gate round (`signoff`) and shows in the recap.
 A hidden suite is one members cannot read: it lives in a store owned by a

@@ -140,6 +140,13 @@ export interface GateDeps {
   rollback?: (commit: string) => Promise<void>
   /** L3: the hidden suite, which accepts in place of commands or the reviewer (those then give feedback only). */
   hidden?: HiddenSuite
+  /**
+   * What a sign-off diffs against: everything that will land, so the commit
+   * the task's tree was cut from (default: the gate's own base snapshot). A
+   * worktree that a retried task reuses holds an earlier attempt's edits,
+   * which the gate's base would hide from the reviewer.
+   */
+  diffBase?: () => Promise<string>
   /** Default {@link runGateCommand}. */
   runCommand?: (command: string, cwd: string) => Promise<{ ok: boolean; output: string }>
   report?: ReportProgress
@@ -431,8 +438,9 @@ export async function runGate(spec: GateSpec, deps: GateDeps): Promise<GateResul
         feedback = [
           'Your last round was rolled back: it broke a check that passed before it.',
           failure(broke.command, broke.output),
-          'The working tree is back as it was before that round, where a check still fails.',
-          failure(kept.evidence.failedCommand ?? '', kept.evidence.output ?? ''),
+          ...(kept.evidence.signoff?.accepted === false
+            ? ['The working tree is back as it was before that round, which passed its checks but was not signed off:', kept.evidence.signoff.reasons]
+            : ['The working tree is back as it was before that round, where a check still fails.', failure(kept.evidence.failedCommand ?? '', kept.evidence.output ?? '')]),
         ].join('\n\n')
         report(`gate round ${n}: broke ${broke.command}, which passed before — rolled back`)
       } else {
@@ -545,7 +553,11 @@ export async function runGate(spec: GateSpec, deps: GateDeps): Promise<GateResul
     let unsigned = false
     if (evidence!.passed && spec.signoff !== undefined) {
       report(`gate round ${n}: sign-off review…`)
-      const brief = `${spec.signoff}\n\nThe change is \`git diff ${base.commit}\` in this working tree.\n\n# Task\n\n${spec.task}`
+      // ponytail: the verdict is the reply's last JSON line, and the task and the
+      // diff reach the reviewer as text, so a member's file quoted last could
+      // forge one; fine against a cooperative member, not an adversarial one.
+      const from = deps.diffBase === undefined ? base.commit : await deps.diffBase()
+      const brief = `${spec.signoff}\n\nThe change is \`git diff ${from}\` in this working tree.\n\n# Task\n\n${spec.task}`
       let reply: string | undefined
       let unavailable = ''
       for (let attempt = 1; attempt <= 2 && reply === undefined; attempt++) {
@@ -562,9 +574,13 @@ export async function runGate(spec: GateSpec, deps: GateDeps): Promise<GateResul
         await stop({ round: n, result, snapshot: snapshot.commit, changed, evidence: { ...evidence!, passed: false, error: `sign-off review could not run: ${unavailable}` }, ...extra }, 'review unavailable')
         break
       }
+      // A cancel during the review is the run ending, not a rejection.
+      deps.signal?.throwIfAborted()
       const signoff = signoffOf(reply)
       evidence = { ...evidence!, passed: signoff.accepted, signoff }
       inPlace = evidence
+      // A rollback to this round restores this verdict, not the checks' alone.
+      if (kept?.round === n) kept.evidence = evidence
       if (!signoff.accepted) {
         unsigned = true
         feedback = signoff.reasons

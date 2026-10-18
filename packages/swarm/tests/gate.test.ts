@@ -402,3 +402,39 @@ it('a sign-off that does not parse is no sign-off; one that cannot run twice sto
 
   await expect(runGate({ task: 't', member, commands: ['true'], signoff: SIGNOFF }, { run: fakeRun([]).run, cwd: root })).rejects.toThrow('a sign-off needs a reviewer')
 })
+
+it("a sign-off diffs against what lands (deps.diffBase), not only this gate's rounds: a retried task's earlier edits are in it", async () => {
+  const { root } = repo()
+  const { review, calls } = fakeReview([() => signed(true, 'fine')])
+  await runGate(
+    { task: 't', member, commands: ['true'], signoff: SIGNOFF },
+    { run: fakeRun([() => (writeFileSync(join(root, 'z.txt'), '1\n'), 'z')]).run, cwd: root, review, diffBase: async () => 'cafe1234' },
+  )
+  expect(calls[0]!.prompt).toContain('The change is `git diff cafe1234` in this working tree.')
+})
+
+it('a rollback to a round that was not signed off restores that verdict, and the member is told the reviewer’s reasons, not an empty check', async () => {
+  const { root, git } = repo()
+  const rollback = async (commit: string) => {
+    git('reset', '-q', '--hard', commit)
+    git('clean', '-fdq')
+  }
+  const { run, prompts } = fakeRun([
+    () => (writeFileSync(join(root, 'one.txt'), '1\n'), 'one'),
+    () => (rmSync(join(root, 'one.txt')), 'removed one'),
+    () => (writeFileSync(join(root, 'three.txt'), '3\n'), 'three'),
+  ])
+  const { review } = fakeReview([() => signed(false, 'one.txt is too broad for the task'), () => signed(true, 'fine now')])
+  const result = await runGate({ task: 'make one', member, commands: ['test -f one.txt'], signoff: SIGNOFF }, { run, cwd: root, review, rollback })
+  expect(result.accepted).toBe(true)
+  expect(result.rounds.map((r) => [r.evidence.passed, r.rolledBack ?? false, r.evidence.signoff?.accepted])).toEqual([
+    [false, false, false],
+    [false, true, undefined],
+    [true, false, true],
+  ])
+  expect(prompts[2]).toContain('which passed its checks but was not signed off')
+  expect(prompts[2]).toContain('one.txt is too broad for the task')
+  // The check it broke is named; no empty command stands in for the restored round's verdict.
+  expect(prompts[2]).toContain('exited non-zero:\n\n  test -f one.txt')
+  expect(prompts[2]).not.toContain('exited non-zero:\n\n  \n')
+})
