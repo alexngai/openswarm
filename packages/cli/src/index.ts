@@ -54,6 +54,7 @@ import SwarmService, {
   type RunHandle,
   type SwarmUsageEvent,
   type WorktreeTeamOptions,
+  type DurableConfig,
 } from 'openswarm-swarm'
 import { withSnapshotClone } from 'openswarm-git'
 import * as PluginAuthoring from 'openswarm-plugin-authoring'
@@ -151,7 +152,7 @@ export function routeOf(model: string): Route {
  * `--single "do the thing"` swallow the prompt, which fails as a missing task
  * rather than as a parse error.
  */
-const BOOL_FLAGS = new Set(['headless', 'single', 'team', 'self-modify', 'gate', 'no-review'])
+const BOOL_FLAGS = new Set(['headless', 'single', 'team', 'self-modify', 'gate', 'no-review', 'steal'])
 
 function parseArgs(argv: string[]): Map<string, string> {
   return splitArgv(argv).args
@@ -525,10 +526,11 @@ function pilotOf(args: Map<string, string>, selfModify: boolean): { plan: Plan; 
   return { plan: loadPlan(planPath), arm: arm as Arm }
 }
 
-/** A team spec file: a peer-team or fanout spec plus its run's worktree options. */
+/** A team spec file: a peer-team or fanout spec plus its run's worktree options, and its remote when durable (docs/05 D1). */
 interface TeamSpecFile {
   spec: PeerTeamSpec | FanoutSpec
   worktrees: Partial<WorktreeTeamOptions>
+  durable?: DurableConfig
 }
 
 /**
@@ -546,14 +548,15 @@ function teamSpecOf(args: Map<string, string>, selfModify: boolean, planned: boo
   if (planned) throw new Error('a team spec (--spec / OPENSWARM_TEAM_SPEC) cannot be combined with plan mode')
   // As in plan mode: the authoring plugin mounts in THIS process, and the members are subprocesses.
   if (selfModify) throw new Error('--self-modify has no effect on team-spec members; refusing a no-op arm')
-  const { worktrees = {}, ...spec } = JSON.parse(readFileSync(path, 'utf8'))
+  const { worktrees = {}, durable, ...spec } = JSON.parse(readFileSync(path, 'utf8'))
   if (spec.topology !== 'peer-team' && spec.topology !== 'fanout') {
     throw new Error(`team spec ${path}: topology must be peer-team or fanout (got ${JSON.stringify(spec.topology)})`)
   }
   if (!Array.isArray(spec.members) || spec.members.length === 0 || !Array.isArray(spec.tasks)) {
     throw new Error(`team spec ${path}: needs members and tasks`)
   }
-  return { spec, worktrees }
+  if (durable !== undefined && typeof durable?.remote !== 'string') throw new Error(`team spec ${path}: durable needs a remote`)
+  return { spec, worktrees, ...(durable === undefined ? {} : { durable }) }
 }
 
 /** Whether a team spec runs anything on dsh: a dsh member, or a gate's reviewer (a CLI member's takes the dsh route too). */
@@ -831,7 +834,9 @@ const CAP_POLL_MS = 5_000
 export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
   const { args, positional } = splitArgv(argv)
   const prompt = positional.join(' ').trim()
-  if (prompt.length === 0) throw new Error('a task prompt is required')
+  // A resumed run's tasks are its journal's (docs/05 D1).
+  const resume = args.get('resume')
+  if (prompt.length === 0 && resume === undefined) throw new Error('a task prompt is required')
   const model = args.get('model')
   if (model === undefined) throw new Error('--model is required')
 
@@ -987,7 +992,7 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
       const { member } = team.worktrees
       // What the landed result may fast-forward: this branch, at this commit.
       const start = checkoutState(workspace)
-      const handle: RunHandle = await (ctx as any).swarm.start({ ...team.spec, members, tasks }, {
+      const options = {
         parent: lead.agent,
         signal: controller.signal,
         onProgress: (line: string) => io.err(line),
@@ -997,7 +1002,13 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
           // Every member run's logs (tasks, reviews, repairs, resolvers) under memberRoot, which message_stop folds.
           member: { ...member, env: { ...memberRoute?.env, ...member?.env, DSH_SESSION_ROOT: memberRoot } },
         },
-      })
+        ...(team.durable === undefined ? {} : { durable: team.durable }),
+      }
+      if (resume !== undefined && team.durable === undefined) throw new Error('--resume takes the run\'s team spec with its durable remote')
+      const handle: RunHandle =
+        resume === undefined
+          ? await (ctx as any).swarm.start({ ...team.spec, members, tasks }, options)
+          : await (ctx as any).swarm.resume(resume, options, { steal: args.has('steal') })
       claudeUsage = () => {
         const totals = emptyUsage()
         for (const { type, data } of handle.journal.events) {

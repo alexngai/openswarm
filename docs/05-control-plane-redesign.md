@@ -1173,6 +1173,22 @@ the checks' verdict alone (and briefed an empty failed command); the
 reviewer's sandbox setting is validated whenever a sign-off is on; a cancel
 during the sign-off is the run ending, not a rejection.
 
+*The second live run, with the sign-off (2026-10-18):* nothing landed, and
+the cause was ours. `maintain --sandbox danger-full-access` sets
+`OPENSWARM_GATE_REVIEWER_SANDBOX` in its process, the gate's checks inherit
+the lead's environment, and one of this repository's tests read that
+variable without pinning it, so `npm test` failed at base on that host for
+every task (reproduced there, keyless, with the variable set and unset).
+Two of the four members found the test and fixed it correctly, and the
+sign-off rejected both changes for editing a test file outside a
+comment-only or docs-only task: right by its brief. The other two never
+reached it. Four tasks abandoned, $3.67 for the team and $1.16 for the
+survey. The test now pins the variable (the members' fix). What it says
+about the sign-off: on scope it held, even against a change that was
+needed; whether that was right is the owner's call. What it says about
+`maintain`: a check that fails at base fails every task, so a run should
+check its base first and stop (not built).
+
 Getting there changed three things, all committed: the box cannot confine
 members (Ubuntu 24.04 restricts the user namespaces bubblewrap needs), so
 `maintain` gained an explicit `--sandbox danger-full-access` rather than a
@@ -1381,6 +1397,59 @@ with `gh pr merge --auto`; the run polls `gh pr view` until merged
 journaling outcomes and bundles in its train journal (`forge.test.ts`,
 against a fake `gh` and a real bare remote). Not built: repairing a pull
 request the queue rejects. A live run waits for a repository the owner names.
+
+*D1 is built (2026-10-18); exit criterion 2 is met keyless.* `durable.ts`:
+a durable run (`durable: { remote }`, a one-shot peer-team in worktrees)
+pushes its journals as a commit to `refs/swarm/<runId>` together with its
+completed tasks' branches, in one `--atomic` push leased on the ref's object
+as last pushed (`--force-with-lease=<ref>:<oid>`, never a remote-tracking
+ref), at its start, as each task completes, before landing, at its end and
+on a heartbeat. A push refused for that ref, whether for its lease or for
+the remote's lock, fences the writer: the run is cancelled and lands
+nothing; a transport error is retried at the next push. `SwarmService.resume`
+(`openswarm run --spec … --resume <run> [--steal]`) takes a run over: it
+fetches the ref, waits the lease out (the ref still for 90 s) unless it
+steals, records the run interrupted, releases the old writer's claims and
+defaults its open questions, and pushes that leased on the object it
+fetched; then the run continues on that journal, its spec the journaled one
+(gate mode and spent budgets follow from it), its branch namespace kept,
+completed tasks adopted from their pushed branches and the rest run again.
+`durable.test.ts`: a leased push, a stale lease fenced and a transport error
+not; six hosts pushing compare-and-set to one ref for three rounds, one
+winner each; a polite taker refused by a live writer; of two stealing takers
+that observed the same object, one wins; the old writer fenced at its next
+push. `durable-run.e2e.test.ts`, over a real bare remote: host A finishes
+one task and blocks in the second (paused, not killed, so its fencing is
+exercised); host B steals the run from its own clone; A, released, is
+fenced and lands nothing; B lands both, the first from A's pushed branch;
+on the remote's journal each task completed once. Not built: the train
+entry's epoch is still unchecked (a fenced writer's enqueue already in a
+shared train can land; its branch is the same work, but the train does not
+know the run moved), and the enqueue does not ride the atomic push.
+*Its review* found five ways to land or lose work, fixed: a cancelled run
+closed its aborted task as completed and pushed that (a cancel now stops
+the mirror, so the remote holds the run as a crash would, and a finished or
+failed run is not resumed); clones on one host share the runs directory, so
+a taker overwrote a live writer's journal and pushed its late events (a
+live writer on this host now refuses the takeover); a transport error at
+the landing push counted as holding the run, so a writer cut off from the
+remote, and taken over, landed anyway (starting and landing now need a push
+that landed); a completed task that committed nothing pushed no branch and
+made the run unresumable (it is skipped); and the heartbeat committed task
+worktrees while the train was merging in them (each is committed once, as
+its task completes). Also fixed: a run taken over before its tasks were
+pushed resumed with none (seeding resumes), a takeover after landing began
+would land twice through the forge or a train (the journal marks landing
+begun, and that run is refused), abandoned tasks were run again (they are
+journaled), tasks rerun on the taker were cut from its own HEAD (the base is
+journaled), the taker's member sessions shared the first host's directory
+and double-counted usage, a heartbeat longer than a third of the lease let a
+polite taker preempt a live writer (capped at 30 s), adopted tasks had no
+owner for a train's repair, a ref refused only by the atomic push's failure
+elsewhere read as a fence, and the launcher dropped `--spec`. Not fixed: two
+takers on one host at once can still race on the shared journal file.
+Resuming in the checkout that still holds the run's worktrees fails (git
+will not check a branch out twice): resume from another clone.
 
 **Goal.** G3, cross-host G6, and the rest of G7.
 

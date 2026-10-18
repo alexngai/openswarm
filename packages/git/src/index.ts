@@ -107,6 +107,12 @@ const AS_SWARM = ['-c', 'user.email=swarm@openswarm', '-c', 'user.name=openswarm
 /** A team directory younger than this is treated as starting, not abandoned. */
 const RECENT_MS = 60_000
 
+/** A task key's two worktree names: sanitized, and that with a short hash of the key. */
+const namesFor = (taskKey: string): [string, string] => {
+  const sanitized = taskKey.replace(/[^A-Za-z0-9._-]/g, '-')
+  return [sanitized, `${sanitized}-${createHash('sha1').update(taskKey).digest('hex').slice(0, 8)}`]
+}
+
 export class SwarmGit {
   private readonly worktrees = new Map<string, WorktreeInfo>()
   /** One in-flight creation promise per task key — the concurrency memo. */
@@ -193,15 +199,37 @@ export class SwarmGit {
     return promise
   }
 
+  /**
+   * A worktree for `taskKey` on its branch as another host left it on
+   * `remote` (a resumed run's completed task, docs/05 D1), not a new one cut
+   * from the base. Its name is one of the two {@link createWorktree} gives a
+   * key, the hashed one being unambiguous. Undefined when the remote has
+   * neither: a task that committed nothing pushed no branch.
+   */
+  async adopt(taskKey: string, remote: string): Promise<WorktreeInfo | undefined> {
+    const [plain, hashed] = namesFor(taskKey)
+    const heads = (await this.git(this.options.repoRoot, 'ls-remote', '--heads', remote, `swarm/${this.options.teamId}/${plain}`, `swarm/${this.options.teamId}/${hashed}`)).stdout.split('\n')
+    const safe = heads.some((line) => line.endsWith(`/${hashed}`)) ? hashed : heads.some((line) => line.endsWith(`/${plain}`)) ? plain : undefined
+    if (safe === undefined) return undefined
+    const branch = `swarm/${this.options.teamId}/${safe}`
+    await this.git(this.options.repoRoot, 'fetch', '-q', remote, `+refs/heads/${branch}:refs/heads/${branch}`)
+    this.usedNames.add(safe)
+    const path = join(this.dir, safe)
+    this.ensureDir()
+    await this.git(this.options.repoRoot, 'worktree', 'add', '-q', path, branch)
+    await this.link(path)
+    const info: WorktreeInfo = { taskKey, path, branch }
+    this.worktrees.set(taskKey, info)
+    this.worktreePromises.set(taskKey, Promise.resolve(info))
+    return info
+  }
+
   private async createWorktree(taskKey: string): Promise<WorktreeInfo> {
-    const sanitized = taskKey.replace(/[^A-Za-z0-9._-]/g, '-')
+    const [plain, hashed] = namesFor(taskKey)
     // Distinct keys that sanitize to the same name (or a name already taken)
     // would otherwise collide on one branch; a short deterministic hash keeps
     // each key's branch unique while staying readable.
-    const safe =
-      sanitized === taskKey && !this.usedNames.has(sanitized)
-        ? sanitized
-        : `${sanitized}-${createHash('sha1').update(taskKey).digest('hex').slice(0, 8)}`
+    const safe = plain === taskKey && !this.usedNames.has(plain) ? plain : hashed
     this.usedNames.add(safe)
     const branch = `swarm/${this.options.teamId}/${safe}`
     const path = join(this.dir, safe)

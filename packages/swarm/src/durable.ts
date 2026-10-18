@@ -8,8 +8,10 @@
  * refs/swarm/<id>:<oid>`, never the remote-tracking ref a fetch moves). Pushes
  * come at checkpoints (a task completing, the run about to land) and as
  * heartbeats. A push refused for that ref means another host took the run
- * over: the writer is fenced, stops, and lands nothing; a transport error is
- * not a fence, and is retried at the next push.
+ * over: the writer is fenced, stops, and lands nothing. A transport error is
+ * not a fence and is retried at the next push, but starting and landing
+ * `confirm`: they need a push that landed, since a writer cut off from the
+ * remote may have been taken over.
  *
  * A taker fetches the ref, waits a lease (the ref unchanged for `ttlMs`, as it
  * observes it) unless it steals, writes the journal locally, records the run
@@ -35,9 +37,18 @@ const git = async (cwd: string, args: string[], input?: string) => {
 export interface DurableConfig {
   /** The shared remote the run's journal and task branches are pushed to. */
   remote: string
-  /** How often the writer pushes when nothing else made it (default 30 s). */
+  /** How often the writer pushes when nothing else made it (default 30 s, at most 30 s: a taker's lease is 90 s). */
   heartbeatMs?: number
 }
+
+export function validateDurable(config: DurableConfig): void {
+  if (typeof config.remote !== 'string' || config.remote === '') throw new Error('durable.remote must name a git remote')
+  const beat = config.heartbeatMs
+  if (beat !== undefined && (!Number.isFinite(beat) || beat <= 0 || beat > 30_000)) throw new Error('durable.heartbeatMs must be over 0 and at most 30000, a third of a taker\'s lease')
+}
+
+/** What a push did: landed, refused because another host holds the run, or did not reach the remote. */
+export type Pushed = 'pushed' | 'fenced' | 'unreachable'
 
 export const runRef = (runId: string) => `refs/swarm/${runId}`
 
@@ -72,8 +83,9 @@ export async function pushLeased(repoRoot: string, remote: string, runId: string
     // Porcelain marks a refused ref "!": for the leased ref, its lease failed
     // ("[rejected] (stale info)") or a concurrent writer won the ref's lock on
     // the remote ("[remote rejected] (cannot lock ref …)"). Either way another
-    // host holds the run. A transport failure refuses no ref by name.
-    const fenced = out.split('\n').some((line) => line.startsWith('!') && line.includes(`:${ref}\t`))
+    // host holds the run. A transport failure refuses no ref by name, and a
+    // ref refused only because another in the atomic push was is not fenced.
+    const fenced = out.split('\n').some((line) => line.startsWith('!') && line.includes(`:${ref}\t`) && !/atomic push fail/.test(line))
     return { ok: false, fenced, why: out.trim().split('\n').filter((l) => l !== '' && !l.startsWith('To ')).slice(-3).join(' ') }
   }
 }
@@ -88,6 +100,7 @@ export async function remoteRunOid(repoRoot: string, remote: string, runId: stri
 export class JournalMirror {
   private lease: string | undefined
   private fenced = false
+  private stopped = false
   private timer: ReturnType<typeof setInterval> | undefined
   private queue: Promise<unknown> = Promise.resolve()
 
@@ -109,38 +122,62 @@ export class JournalMirror {
     return this.fenced
   }
 
-  /** Push now, after any push in flight: false once fenced. */
-  checkpoint(why: string): Promise<boolean> {
+  /** Push now, after any push in flight. Once fenced or stopped, nothing is pushed. */
+  checkpoint(why: string): Promise<Pushed> {
     const next = this.queue.then(() => this.push(why))
     this.queue = next.catch(() => undefined)
     return next
   }
 
-  private async push(why: string): Promise<boolean> {
-    if (this.fenced) return false
-    const commit = await snapshot(this.repoRoot, this.runDir, this.lease, `swarm: ${this.runId} ${why}`)
-    const result = await pushLeased(this.repoRoot, this.config.remote, this.runId, commit, this.lease, await this.branches())
+  /**
+   * A push that must land: tried `tries` times while the remote is
+   * unreachable. True only when it landed, so the run still holds its lease
+   * (what landing and starting require: a writer cut off from the remote may
+   * have been taken over, and a mistyped remote would mirror nothing).
+   */
+  async confirm(why: string, tries = 3): Promise<boolean> {
+    for (let i = 0; i < tries; i++) {
+      const pushed = await this.checkpoint(why)
+      if (pushed !== 'unreachable') return pushed === 'pushed'
+      if (this.stopped) return false
+      if (i < tries - 1) await new Promise((resolve) => setTimeout(resolve, 1000 * (i + 1)))
+    }
+    return false
+  }
+
+  private async push(why: string): Promise<Pushed> {
+    if (this.fenced || this.stopped) return 'fenced'
+    let result: PushResult
+    try {
+      const commit = await snapshot(this.repoRoot, this.runDir, this.lease, `swarm: ${this.runId} ${why}`)
+      result = await pushLeased(this.repoRoot, this.config.remote, this.runId, commit, this.lease, await this.branches())
+    } catch (error) {
+      result = { ok: false, fenced: false, why: error instanceof Error ? error.message : String(error) }
+    }
     if (result.ok) {
       this.lease = result.oid
-      return true
+      return 'pushed'
     }
     if (result.fenced) {
       this.fenced = true
       this.stop()
       this.onFenced(`another host took run ${this.runId} over (${result.why})`)
-      return false
+      return 'fenced'
     }
     // A transport error: the next push tries again.
-    return true
+    return 'unreachable'
   }
 
   start(): void {
+    if (this.stopped) return
     const every = this.config.heartbeatMs ?? 30_000
     this.timer = setInterval(() => void this.checkpoint('heartbeat'), every)
     this.timer.unref?.()
   }
 
+  /** No more pushes, queued ones included. */
   stop(): void {
+    this.stopped = true
     if (this.timer !== undefined) clearInterval(this.timer)
     this.timer = undefined
   }

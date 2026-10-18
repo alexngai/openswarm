@@ -12,7 +12,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
-import { JournalMirror, pushLeased, remoteRunOid, takeOver } from '../src/durable'
+import { JournalMirror, pushLeased, remoteRunOid, takeOver, validateDurable } from '../src/durable'
 
 const sh = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd, encoding: 'utf8' }).trim()
 
@@ -77,7 +77,7 @@ it('a takeover waits out a live writer unless it steals, beats a second taker, a
   const [writer, taker, late] = clones
   const fenced: string[] = []
   const mirror = new JournalMirror(writer!.path, { remote: 'origin' }, 'run-x', writer!.runDir, async () => [], (why) => fenced.push(why))
-  expect(await mirror.checkpoint('start')).toBe(true)
+  expect(await mirror.checkpoint('start')).toBe('pushed')
   // The writer heartbeats while a polite taker waits its lease out.
   const beat = setInterval(() => void mirror.checkpoint('heartbeat'), 50)
   await expect(takeOver(taker!.path, 'origin', 'run-x', taker!.runDir, async () => {}, { ttlMs: 300 })).rejects.toThrow(/writer is alive/)
@@ -96,11 +96,38 @@ it('a takeover waits out a live writer unless it steals, beats a second taker, a
   expect(recorded).toEqual(['took'])
   expect(readFileSync(join(taker!.runDir, 'journal.jsonl'), 'utf8')).toBe('{"seq":0,"host":0}\n{"seq":1,"took":true}\n')
   expect(await remoteRunOid(taker!.path, 'origin', 'run-x')).toBe(lease)
-  // A second taker that observed the old object loses.
-  execFileSync('git', ['fetch', '-q', 'origin', '+refs/swarm/run-x:refs/swarm/run-x'], { cwd: late!.path })
   // The old writer's next push is refused: fenced, it stops.
-  expect(await mirror.checkpoint('after takeover')).toBe(false)
+  expect(await mirror.checkpoint('after takeover')).toBe('fenced')
   expect(mirror.isFenced).toBe(true)
   expect(fenced[0]).toMatch(/another host took run run-x over/)
-  expect(await mirror.checkpoint('again')).toBe(false)
+  expect(await mirror.checkpoint('again')).toBe('fenced')
+  expect(await mirror.confirm('landing')).toBe(false)
+  // Two takers that observed the same object, both stealing: one wins, the other is refused.
+  let arrived = 0
+  let both!: () => void
+  const met = new Promise<void>((resolve) => (both = resolve))
+  const barrier = async () => {
+    if (++arrived === 2) both()
+    await met
+  }
+  const results = await Promise.allSettled([taker, late].map((c) => takeOver(c!.path, 'origin', 'run-x', c!.runDir, barrier, { steal: true })))
+  expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1)
+  expect(results.find((r) => r.status === 'rejected')).toMatchObject({ reason: { message: expect.stringMatching(/took run run-x over first/) } })
+})
+
+it('an unreachable remote is not a fence, but confirms nothing; a stopped mirror pushes nothing; a long heartbeat is refused', async () => {
+  const { clones } = world(1)
+  const [a] = clones
+  const fenced: string[] = []
+  const lost = new JournalMirror(a!.path, { remote: 'no-such-remote' }, 'run-x', a!.runDir, async () => [], (why) => fenced.push(why))
+  expect(await lost.checkpoint('heartbeat')).toBe('unreachable')
+  expect(await lost.confirm('landing', 1)).toBe(false)
+  expect(lost.isFenced).toBe(false)
+  expect(fenced).toEqual([])
+  const mirror = new JournalMirror(a!.path, { remote: 'origin' }, 'run-x', a!.runDir, async () => [], () => {})
+  expect(await mirror.confirm('started')).toBe(true)
+  mirror.stop()
+  expect(await mirror.checkpoint('after stop')).toBe('fenced')
+  expect(() => validateDurable({ remote: 'origin', heartbeatMs: 60_000 })).toThrow(/at most 30000/)
+  expect(() => validateDurable({ remote: '' })).toThrow(/remote/)
 })

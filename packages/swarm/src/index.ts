@@ -33,6 +33,7 @@ import { SwarmJournal, type SwarmJournalEvent } from './journal'
 import { BudgetGuard, validateBudget } from './budget'
 import { TrainService, type TrainServiceConfig } from './train-service'
 import { validateForge } from './forge'
+import { JournalMirror, takeOver, validateDurable, type DurableConfig } from './durable'
 import { foldMetrics, recordUsage, type Pricing, type RecordUsage, type RunMetrics, type SwarmRestartEvent, type UsageRole } from './metrics'
 import { SwarmMailbox } from './mailbox'
 import {
@@ -74,7 +75,7 @@ import {
   type RunMember,
 } from './topologies'
 import { homedir, hostname } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { RemotePeer } from './remote-peer'
 import { claudeCommandOf, preflightClaude, runClaudeCode } from './claude-code'
 import { codexCommandOf, preflightCodex, runCodex } from './codex'
@@ -104,6 +105,7 @@ export * from './metrics'
 export * from './budget'
 export * from './train-service'
 export * from './forge'
+export { JournalMirror, pushLeased, remoteRunOid, runRef, takeOver, type DurableConfig } from './durable'
 export {
   askPeer,
   nextTurnEnd,
@@ -252,6 +254,12 @@ export interface RunTeamOptions {
   /** The delegating agent; members spawn as its subagent children. */
   parent: Agent
   signal?: AbortSignal
+  /**
+   * Mirror the run to a shared remote so another host can take it over
+   * (docs/05 D1): its journal under `refs/swarm/<runId>`, its completed tasks'
+   * branches with it, in one leased push. A one-shot peer-team with worktrees.
+   */
+  durable?: DurableConfig
   /**
    * Runs cascade command-confidence gates (weakest link over exit codes).
    * Default: bash in `confidenceCwd` (or the process cwd).
@@ -444,6 +452,37 @@ function checkRuntimes(spec: TeamSpec, options: RunTeamOptions): Set<'claude-cod
 }
 
 /** Concatenated text content of an assistant output. */
+/** A durable run's `swarm/worktrees` record: its branches' namespace and base. */
+const worktreesOf = (journal: SwarmJournal) => journal.events.find((e) => e.type === 'swarm/worktrees')?.data as { teamId?: string; base?: string } | undefined
+const runIdOf = (journal: SwarmJournal) => basename(dirname(journal.path))
+
+/** A durable run, or a resumed one, is a one-shot peer-team in worktrees (docs/05 D1). */
+function refuseUndurable(spec: TeamSpec, options: RunTeamOptions): void {
+  if (spec.topology !== 'peer-team' || spec.messaging === true) throw new Error('a durable run is a one-shot peer-team')
+  if (options.worktrees === undefined) throw new Error('a durable run needs worktrees: its tasks land from the branches it pushes')
+  if (options.durable !== undefined) validateDurable(options.durable)
+}
+
+/** A durable run's journal marks where its landing began: past it, a taker would land twice. */
+const LANDING = { type: 'swarm/durable', phase: 'landing' } as const
+
+/** What a run taken over brings from its journal (docs/05 D1). */
+interface Resumed {
+  /** The takeover's commit on the run's ref: the mirror's first lease. */
+  lease: string
+  startedAt: number
+  teamId?: string
+  /** The commit its worktrees were cut from, so tasks run here start where the first host's did. */
+  base?: string
+}
+
+/** A durable run's mirror, and the worktrees whose branches it pushes once they exist. */
+interface DurableRun {
+  mirror: JournalMirror
+  worktrees?: WorktreeRun
+  stop(): void
+}
+
 function textOf(output: ContentBlock[]): string {
   return output
     .filter((b): b is Extract<ContentBlock, { type: 'text' }> => b.type === 'text')
@@ -539,7 +578,102 @@ export default class SwarmService extends Service {
     let id: string
     do id = `run-${randomUUID().slice(0, 8)}`
     while (existsSync(join(this.runsDir(), id)))
-    const journal = SwarmJournal.open(this.journalPath(id))
+    if (options.durable !== undefined) refuseUndurable(spec, options)
+    return this.launch(id, SwarmJournal.open(this.journalPath(id)), spec, options)
+  }
+
+  /**
+   * Take a durable run over from its remote and finish it here (docs/05 D1):
+   * its journal fetched, the writer's lease waited out unless `steal`, the run
+   * recorded as taken over and its dead claims released, all pushed under a
+   * lease, so of two takers one wins and the old writer is fenced. Then it
+   * runs again on that journal, its spec the journaled one: completed tasks
+   * land from the branches their first host pushed, the rest are run.
+   */
+  async resume(runId: string, options: RunTeamOptions, takeover: { steal?: boolean; ttlMs?: number } = {}): Promise<RunHandle> {
+    const durable = options.durable
+    if (durable === undefined || options.worktrees === undefined) throw new Error('resuming a run takes options.durable (its remote) and options.worktrees')
+    // Clones on one host share the runs directory: a live writer's journal there is not ours to overwrite.
+    const path = this.journalPath(runId)
+    const local = existsSync(path) ? foldRun(SwarmJournal.read(path)) : undefined
+    if (local?.status === 'running' && writerLive(local)) throw new Error(`run ${runId} is live in pid ${local.writer.pid} on this host; stop it before taking it over here`)
+    const repoRoot = options.worktrees.repoRoot
+    let journal: SwarmJournal | undefined
+    const lease = await takeOver(
+      options.worktrees.repoRoot,
+      durable.remote,
+      runId,
+      dirname(this.journalPath(runId)),
+      async () => {
+        journal = SwarmJournal.open(this.journalPath(runId))
+        const prior = foldRun(journal.events)
+        if (prior?.spec === undefined) throw new Error(`run ${runId}'s journal has no run record to resume`)
+        if (prior.status === 'finished' || prior.status === 'failed') throw new Error(`run ${runId} already ${prior.status}; there is nothing to resume`)
+        if (journal.events.some((e) => e.type === LANDING.type && (e.data as { phase?: string }).phase === LANDING.phase)) {
+          throw new Error(`run ${runId} began landing on ${prior.writer.host}; its outcome is that host's (a train's or the forge's), and resuming it would land twice`)
+        }
+        refuseUndurable(prior.spec, options)
+        const base = worktreesOf(journal)?.base
+        if (base !== undefined) {
+          await execFileAsync('git', ['cat-file', '-e', `${base}^{commit}`], { cwd: repoRoot }).catch(() => {
+            throw new Error(`run ${runId} started from ${base}, which this clone does not have: fetch the branch it started on`)
+          })
+        }
+        await journal.append('swarm/run', { version: 1, run: { ...prior, status: 'interrupted', writer: writerOf(journal) } } satisfies SwarmRunEvent)
+        await new SwarmBoard(journal).releaseOrphans()
+        // The old writer's open questions were its members', who are gone: each takes its default.
+        for (const question of foldQuestions(journal.events).values()) {
+          if (question.status !== 'open') continue
+          await journal.append('swarm/question', { version: 1, question: { ...question, status: 'defaulted', answer: question.default, closedAt: Date.now() } } satisfies SwarmQuestionEvent)
+        }
+      },
+      takeover,
+    )
+    const prior = foldRun(journal!.events)!
+    const { teamId, base } = worktreesOf(journal!) ?? {}
+    return this.launch(runId, journal!, prior.spec!, options, { lease, startedAt: prior.startedAt, ...(teamId === undefined ? {} : { teamId }), ...(base === undefined ? {} : { base }) })
+  }
+
+  /**
+   * Mirror a durable run to its remote (docs/05 D1): now, as each task
+   * completes, and on a heartbeat, its completed tasks' branches pushed with
+   * its journal. Fenced by a host that took it over, the run is cancelled.
+   */
+  private async mirror(id: string, journal: SwarmJournal, board: SwarmBoard, config: DurableConfig, repoRoot: string, controller: AbortController, resumed?: Resumed): Promise<DurableRun> {
+    // Each completed task's worktree is committed once, at the first push after
+    // it completes; later pushes only push its branch, never touching a
+    // worktree the landing may be working in.
+    const committed = new Set<string>()
+    const branches = new Set<string>()
+    const pushable = async () => {
+      const fresh = board.list().filter((task) => task.status === 'completed' && !committed.has(task.id)).map((task) => task.id)
+      if (run.worktrees !== undefined && fresh.length > 0) {
+        for (const branch of await run.worktrees.committedBranches(fresh)) branches.add(branch)
+        for (const key of fresh) committed.add(key)
+      }
+      return [...branches]
+    }
+    const run: DurableRun = { mirror: undefined as unknown as JournalMirror, stop: () => {} }
+    run.mirror = new JournalMirror(repoRoot, config, id, dirname(journal.path), pushable, (why) => controller.abort(new Error(why)), resumed?.lease)
+    const onEvent = (event: SwarmJournalEvent) => {
+      const task = (event.data as { task?: SwarmTaskSnapshot } | undefined)?.task
+      if (event.type === 'swarm/task' && task?.status === 'completed') void run.mirror.checkpoint(`${task.id} completed`)
+    }
+    journal.listeners.add(onEvent)
+    run.stop = () => {
+      journal.listeners.delete(onEvent)
+      run.mirror.stop()
+    }
+    // A run that cannot reach its remote, or lost it already, spends nothing.
+    if (!(await run.mirror.confirm(resumed === undefined ? 'started' : 'resumed'))) {
+      run.stop()
+      throw new Error(run.mirror.isFenced ? `another host took run ${id} over before it started here` : `run ${id} could not push to its remote ${config.remote}`)
+    }
+    run.mirror.start()
+    return run
+  }
+
+  private async launch(id: string, journal: SwarmJournal, spec: TeamSpec, options: RunTeamOptions, resumed?: Resumed): Promise<RunHandle> {
     // A gated team's board refuses to complete a task without passing evidence.
     // A path that resumes a run from its journal must derive this flag the same
     // way, from the journaled spec, or the resumed board closes tasks unverified.
@@ -570,7 +704,8 @@ export default class SwarmService extends Service {
     // end; the rest find it gone.
     const { timeoutMs = 0, maxOpen = 3 } = options.questions ?? {}
     const open = new Map<string, { question: SwarmQuestion; close: (answer: string, by?: string) => void }>()
-    let asked = 0
+    // A resumed run's questions follow the ones its journal holds (docs/05 D1).
+    let asked = foldQuestions(journal.events).size
     let ended = false
     const recordQuestion = (question: SwarmQuestion) =>
       journal.append('swarm/question', { version: 1, question } satisfies SwarmQuestionEvent)
@@ -651,12 +786,26 @@ export default class SwarmService extends Service {
       topology: spec.topology,
       parentSessionId: options.parent.session.id,
       writer: writerOf(journal),
-      startedAt: Date.now(),
+      startedAt: resumed?.startedAt ?? Date.now(),
       ...(options.worktrees === undefined ? {} : { landing: options.worktrees.train === undefined ? 'queue' : 'train' }),
       usageJournaled: true,
       spec,
     }
     await record(running)
+    // A durable run (docs/05 D1): mirrored to its remote from here on; fenced,
+    // it is cancelled. Cancelled, it pushes nothing more, so its remote holds
+    // it as a crash would leave it, not an aborted task closed as completed.
+    let durable: DurableRun | undefined
+    if (options.durable !== undefined) {
+      try {
+        durable = await this.mirror(id, journal, board, options.durable, options.worktrees!.repoRoot, controller, resumed)
+      } catch (error) {
+        await record({ ...running, status: 'failed', endedAt: Date.now(), error: error instanceof Error ? error.message : String(error) })
+        throw error
+      }
+      const mirrored = durable
+      signal.addEventListener('abort', () => mirrored.stop(), { once: true })
+    }
     /**
      * The run's metrics as it settles (docs/05 B5), emitted as `swarm/metrics`
      * for an eval to record; neither a fold nor a listener that throws fails the run.
@@ -674,7 +823,7 @@ export default class SwarmService extends Service {
       } catch {}
       return metrics
     }
-    const result = this.execute(spec, { ...options, signal }, board, roster, mailbox, ask, journal, oneShot ? live : undefined)
+    const result = this.execute(spec, { ...options, signal }, board, roster, mailbox, ask, journal, oneShot ? live : undefined, durable, resumed)
       .then((result) => {
         // Aborted members settle as results, not rejections, so a cancelled
         // run can come back whole; it still failed.
@@ -710,6 +859,13 @@ export default class SwarmService extends Service {
           throw error
         },
       )
+      // Its end mirrored too, then the mirror stops.
+      .finally(async () => {
+        if (durable !== undefined) {
+          await durable.mirror.checkpoint('settled').catch(() => undefined)
+          durable.stop()
+        }
+      })
       .finally(() => this.liveRuns.delete(id))
     const handle: RunHandle = {
       id,
@@ -808,6 +964,8 @@ export default class SwarmService extends Service {
     journal: SwarmJournal,
     /** A one-shot team's live deliverers (see `start`); none for a messaging team. */
     live?: Map<string, (text: string) => boolean>,
+    durable?: DurableRun,
+    resumed?: Resumed,
   ): Promise<TeamResult & { git?: MergeOutcome }> {
     // Refusals, then the CLI's preflight, before any spend.
     const clis = checkRuntimes(spec, options)
@@ -822,7 +980,14 @@ export default class SwarmService extends Service {
     // A CLI member's open turn, registered while it runs, so a steer reaches it.
     const steerable = live === undefined ? undefined : (member: string) => liveSlot(live, member)
     const worktrees =
-      options.worktrees === undefined ? undefined : new WorktreeRun(this.ctx, options.worktrees, options.onProgress, usage, admit, steerable)
+      options.worktrees === undefined
+        ? undefined
+        : new WorktreeRun(this.ctx, resumed?.base === undefined ? options.worktrees : { ...options.worktrees, baseRef: resumed.base }, options.onProgress, usage, admit, steerable, resumed?.teamId)
+    if (durable !== undefined && worktrees !== undefined) {
+      durable.worktrees = worktrees
+      // Its branches' namespace and base, which a host that takes it over must keep.
+      if (resumed === undefined) await journal.append('swarm/worktrees', { version: 1, teamId: worktrees.teamId, base: await worktrees.baseCommit() })
+    }
     // Every member prompt through here carries the intent header (docs/05
     // §6.1). A peer-team keys each member run by its board task, whose own
     // intent replaces the run's; no other topology seeds the board.
@@ -878,10 +1043,19 @@ export default class SwarmService extends Service {
     // Clear anything a previously crashed team left in this repo before adding
     // our own checkouts.
     await worktrees.sweepOrphans()
+    const existing = resumed === undefined ? undefined : board.list().map((task) => task.id)
     let result: TeamResult
     let abandoned: AbandonedTasksError | undefined
     try {
-      result = await this.dispatch(spec, run, options, board, roster, mailbox, ask, journal, worktrees)
+      // A resumed run's completed tasks land from the branches their first host pushed.
+      if (resumed !== undefined) {
+        for (const task of board.list()) {
+          if (task.status !== 'completed') continue
+          const member = task.owner === undefined ? undefined : everyMember(spec).find((m) => m.name === task.owner)
+          await worktrees.adopt(task.id, options.durable!.remote, member === undefined ? undefined : { member, prompt: task.prompt })
+        }
+      }
+      result = await this.dispatch(spec, run, options, board, roster, mailbox, ask, journal, worktrees, existing)
     } catch (error) {
       // Tasks abandoned in a run that was not cancelled: the completed ones
       // still land (docs/05 C7a), the abandoned ones' branches are kept.
@@ -941,6 +1115,17 @@ export default class SwarmService extends Service {
               ...(options.signal === undefined ? {} : { signal: options.signal }),
             },
           }
+    // It lands only on a push that shows it still holds the run: fenced, or
+    // cut off from the remote (and so perhaps taken over), it lands nothing.
+    if (durable !== undefined) {
+      // Cancelled, it stopped mirroring: that is the run's end, not a lost remote.
+      options.signal?.throwIfAborted()
+      await journal.append(LANDING.type, { version: 1, phase: LANDING.phase })
+      if (!(await durable.mirror.confirm('landing'))) {
+        await worktrees.abort().catch(() => undefined)
+        throw new Error(durable.mirror.isFenced ? `run ${runIdOf(journal)} was taken over by another host; it lands nothing here` : `run ${runIdOf(journal)} could not reach its remote to confirm it still holds the run; it lands nothing here`)
+      }
+    }
     let git: MergeOutcome
     try {
       git = await worktrees.finalize({ merge, ...landing })
@@ -1015,6 +1200,8 @@ export default class SwarmService extends Service {
     ask: AskQuestion,
     journal: SwarmJournal,
     worktrees?: WorktreeRun,
+    /** A resumed run's tasks, already on its board (docs/05 D1). */
+    existing?: readonly string[],
   ): Promise<TeamResult> {
     const report = options.onProgress
     switch (spec.topology) {
@@ -1039,7 +1226,7 @@ export default class SwarmService extends Service {
               ? worktrees === undefined
                 ? this.runPeerTeamMessaging(spec, options, board, roster, mailbox, ask)
                 : this.runRemotePeerTeam(spec, options, board, roster, mailbox, ask, worktrees, journal)
-              : runPeerTeam(spec, run, board, report, ask, gate))
+              : runPeerTeam(spec, run, board, report, ask, gate, existing))
           } finally {
             dispose()
           }

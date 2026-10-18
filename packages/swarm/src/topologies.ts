@@ -378,9 +378,10 @@ export async function runCoordinator(
 }
 
 /** Seed the board from spec tasks; `blockedBy` indices resolve to created ids. */
-export async function seedBoard(board: SwarmBoard, tasks: PeerTeamSpec['tasks']): Promise<string[]> {
-  const created: string[] = []
-  for (const task of tasks) {
+export async function seedBoard(board: SwarmBoard, tasks: PeerTeamSpec['tasks'], have: readonly string[] = []): Promise<string[]> {
+  // A resumed run (docs/05 D1) has the first `have.length` on its board already, in spec order.
+  const created: string[] = have.slice(0, tasks.length)
+  for (const task of tasks.slice(created.length)) {
     const blockedBy = (task.blockedBy ?? []).map((i) => {
       const id = created[i]
       if (id === undefined) throw new Error(`peer task blockedBy index ${i} does not precede it`)
@@ -492,8 +493,8 @@ export async function runBoardWorkers(
   const attempts = new Map<string, number>()
   /** Attempts granted past `maxTaskAttempts` by a 'retry' answer. */
   const extra = new Map<string, number>()
-  /** Tasks no member will finish, with the failure that condemned them. */
-  const abandoned = new Map<string, string>()
+  /** Tasks no member will finish, with the failure that condemned them; a resumed run's from its journal. */
+  const abandoned = new Map([...board.abandoned()].filter(([id]) => seeded.has(id)))
   /** Members still in the pool; one that fails leaves it. */
   let active = members.length
   let settled = 0
@@ -506,6 +507,7 @@ export async function runBoardWorkers(
   const abandon = (id: string, reason: string): void => {
     if (abandoned.has(id)) return
     abandoned.set(id, reason)
+    void board.recordAbandoned(id, reason).catch(() => undefined)
     for (const task of board.list()) {
       if (seeded.has(task.id) && task.blockedBy.includes(id)) {
         abandon(task.id, `blocked by abandoned task ${id}`)
@@ -756,9 +758,11 @@ export async function runPeerTeam(
   report: ReportProgress = () => {},
   ask: AskQuestion = unattended,
   gate?: BoardGate,
+  existing?: readonly string[],
 ): Promise<PeerTeamResult> {
   if (spec.members.length === 0) throw new Error('peer-team needs at least one member')
-  const seeded = new Set(await seedBoard(board, spec.tasks))
+  // A resumed run (docs/05 D1) has its tasks on the board already, or some of them: none is seeded twice.
+  const seeded = new Set(await seedBoard(board, spec.tasks, existing))
   report(`peer-team: ${seeded.size} task(s) across ${spec.members.length} member(s)`)
   const runs = await runBoardWorkers(
     spec.members,

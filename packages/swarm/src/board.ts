@@ -362,6 +362,22 @@ export class SwarmBoard {
     await this.journal.append('swarm/gate', { version: 1, ...event } satisfies SwarmGateEvent)
   }
 
+  /** Journal a task no member will finish (`swarm/abandoned`), so a run taken over does not run it again (docs/05 D1). */
+  async recordAbandoned(taskId: string, reason: string): Promise<void> {
+    await this.journal.append('swarm/abandoned', { version: 1, taskId, reason })
+  }
+
+  /** The tasks journaled abandoned, with why. */
+  abandoned(): Map<string, string> {
+    const abandoned = new Map<string, string>()
+    for (const event of this.journal.events) {
+      if (event.type !== 'swarm/abandoned') continue
+      const { taskId, reason } = event.data as { taskId: string; reason: string }
+      abandoned.set(taskId, reason)
+    }
+    return abandoned
+  }
+
   /** Journal a tamper incident in a gate round (`swarm/tamper`). */
   async recordTamper(event: Omit<SwarmTamperEvent, 'version'>): Promise<void> {
     await this.journal.append('swarm/tamper', { version: 1, ...event } satisfies SwarmTamperEvent)

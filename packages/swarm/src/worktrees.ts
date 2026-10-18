@@ -23,7 +23,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import * as SdkProvider from '@deepseek-ai/dsh-subagent-dsh-sdk'
 import type { SubagentRun } from '@deepseek-ai/dsh-subagent'
-import { SwarmGit, withSnapshotClone, type MergeOutcome } from 'openswarm-git'
+import { SwarmGit, withSnapshotClone, type MergeOutcome, type WorktreeInfo } from 'openswarm-git'
 import type { DiffSummary } from './evidence'
 import { runClaudeCode } from './claude-code'
 import { runCodex } from './codex'
@@ -284,7 +284,9 @@ export function memberEnvOf(cfg: WorktreeMemberConfig, runId: string): Record<st
 }
 
 export class WorktreeRun {
-  readonly teamId = randomUUID().slice(0, 8)
+  /** Its branches' namespace: a resumed run keeps the one it was started with (docs/05 D1). */
+  readonly teamId: string
+  private readonly instance = randomUUID().slice(0, 4)
   private readonly git: SwarmGit
   private readonly slots: Slots
   private seq = 0
@@ -305,7 +307,9 @@ export class WorktreeRun {
     private readonly admit?: (taskKey?: string) => Promise<void>,
     /** A member's steering slot, for a runtime that takes a message mid-turn (claude-code). */
     private readonly steerable?: (member: string) => (deliver: ((text: string) => boolean) | undefined) => void,
+    teamId?: string,
   ) {
+    this.teamId = teamId ?? randomUUID().slice(0, 8)
     this.slots = new Slots(options.maxConcurrent ?? 8)
     this.git = new SwarmGit({
       repoRoot: options.repoRoot,
@@ -391,7 +395,8 @@ export class WorktreeRun {
     taskKey?: string,
     role?: UsageRole,
   ): Promise<MemberRunResult> {
-    const providerName = `swarm-sdk-${this.teamId}-${this.seq++}`
+    // `instance` keeps a resumed run's member sessions apart from its first host's (same teamId).
+    const providerName = `swarm-sdk-${this.teamId}-${this.instance}-${this.seq++}`
     const sessions = join(env['DSH_SESSION_ROOT']!, providerName)
     const startedAt = Date.now()
     let runId = ''
@@ -432,6 +437,32 @@ export class WorktreeRun {
    */
   memberEnv(): Record<string, string> {
     return memberEnvOf(this.options.member ?? {}, this.teamId)
+  }
+
+  /**
+   * A resumed run's completed task (docs/05 D1): its branch fetched from
+   * `remote`, where the run's first host pushed it, and a worktree on it,
+   * owned by the member that did it (a train's repair goes to it). None when
+   * the task committed nothing.
+   */
+  async adopt(key: string, remote: string, owner?: { member: MemberSpec; prompt: string }): Promise<WorktreeInfo | undefined> {
+    const info = await this.git.adopt(key, remote)
+    if (info !== undefined && owner !== undefined) this.owners.set(key, owner)
+    return info
+  }
+
+  /**
+   * The branches of `keys`' worktrees, each committed first, that carry
+   * commits: what a durable run pushes with its journal.
+   */
+  async committedBranches(keys: readonly string[]): Promise<string[]> {
+    const branches: string[] = []
+    for (const wt of this.git.list()) {
+      if (!keys.includes(wt.taskKey)) continue
+      if (this.options.autoCommit !== false) await this.git.autoCommit(wt, `swarm: ${wt.taskKey} (team ${this.teamId})`)
+      if ((await this.git.commitCount(wt.branch)) > 0) branches.push(wt.branch)
+    }
+    return branches
   }
 
   /** Create (or return) the worktree for one task or member key. */

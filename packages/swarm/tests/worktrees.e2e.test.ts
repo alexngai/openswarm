@@ -301,8 +301,11 @@ async function canSandbox(): Promise<boolean> {
 
 it('a gated task without checks is reviewed by a subprocess reviewer in a clone of its worktree (docs/05 B6b)', async () => {
   // Where the host cannot sandbox, the reviewer runs unsandboxed, as an operator would set it.
+  // Pinned either way, so a parent's setting (`openswarm maintain --sandbox danger-full-access`) cannot change it.
+  const previous = process.env['OPENSWARM_GATE_REVIEWER_SANDBOX']
   const unsandboxed = !(await canSandbox())
-  if (unsandboxed) process.env['OPENSWARM_GATE_REVIEWER_SANDBOX'] = 'danger-full-access'
+  const sandbox = unsandboxed ? 'danger-full-access' : 'workspace-write'
+  process.env['OPENSWARM_GATE_REVIEWER_SANDBOX'] = sandbox
   try {
     const repo = scratchRepo()
     const verdict = `all done\n${JSON.stringify({ targets: [{ target: 1, status: 'done', notes: 'works' }], regressions: 'none', score: 100 })}`
@@ -333,13 +336,14 @@ it('a gated task without checks is reviewed by a subprocess reviewer in a clone 
     const reviewer = JSON.stringify(h.mock.requests.slice(1))
     expect(reviewer).toContain('You are a coding agent working in the current directory')
     expect(reviewer).not.toContain('Complete your task by editing files')
-    expect(reviewer).toContain(`sandbox=${unsandboxed ? 'danger-full-access' : 'workspace-write'}`)
+    expect(reviewer).toContain(`sandbox=${sandbox}`)
     // The reviewer's edit went away with its clone: not in the task's branch, nor the checkout.
     const target = result.git!.targetBranch
     expect(() => execFileSync('git', ['cat-file', '-e', `${target}:reviewer-was-here.txt`], { cwd: repo, stdio: 'ignore' })).toThrow()
     expect(existsSync(join(repo, 'reviewer-was-here.txt'))).toBe(false)
     expect(execFileSync('git', ['status', '--porcelain'], { cwd: repo }).toString()).toBe('')
   } finally {
-    if (unsandboxed) delete process.env['OPENSWARM_GATE_REVIEWER_SANDBOX']
+    if (previous === undefined) delete process.env['OPENSWARM_GATE_REVIEWER_SANDBOX']
+    else process.env['OPENSWARM_GATE_REVIEWER_SANDBOX'] = previous
   }
 }, 120_000)

@@ -44,6 +44,8 @@ export class SwarmJournal {
   readonly incarnation = randomUUID()
   private readonly writes = new Serializer()
   private readonly waiters = new Set<() => void>()
+  /** Called with each event once it is written (a durable run's checkpoints, docs/05 D1). */
+  readonly listeners = new Set<(event: SwarmJournalEvent) => void>()
   private nextSeq: number
 
   private constructor(
@@ -82,6 +84,11 @@ export class SwarmJournal {
       await appendFile(this.path, `${JSON.stringify(event)}\n`)
       this.events.push(event)
       for (const wake of [...this.waiters]) wake()
+      for (const listener of [...this.listeners]) {
+        try {
+          listener(event)
+        } catch {}
+      }
       return event
     })
   }

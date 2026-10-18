@@ -63,8 +63,9 @@ const HEADLESS_VALUE_FLAGS = new Set([
   '--spec',
   '--output',
   '--trace-output',
+  '--resume',
 ])
-const HEADLESS_BOOL_FLAGS = new Set(['--headless', '--single', '--team', '--self-modify'])
+const HEADLESS_BOOL_FLAGS = new Set(['--headless', '--single', '--team', '--self-modify', '--steal'])
 
 /**
  * `lenient` forwards flags this launcher does not own instead of rejecting
@@ -360,6 +361,17 @@ function main() {
     Object.assign(process.env, env)
     return import(join(pkgRoot, 'packages', 'cli', 'dist', 'index.js'))
       .then(({ runCli }) => runCli(['topology', ...rest.slice(1), ...headless]))
+      .then((code) => process.exit(code))
+  }
+
+  // A team spec, or a durable run to resume, runs in packages/cli as `maintain`
+  // does: the profile's boot takes a prompt, not a team, and would drop them.
+  if (valueOf(headless, '--spec') !== undefined || valueOf(headless, '--resume') !== undefined) {
+    const { provider, model, env } = resolveModel(opts)
+    Object.assign(process.env, env, { OPENSWARM_HOME: home })
+    const id = provider === 'azure' ? `azureoai/${model}` : model
+    return import(join(pkgRoot, 'packages', 'cli', 'dist', 'index.js'))
+      .then(({ runCli }) => runCli(['run', '--model', id, ...task, ...headless]))
       .then((code) => process.exit(code))
   }
 
