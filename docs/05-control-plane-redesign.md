@@ -1107,6 +1107,15 @@ after a restart for either CLI (`--session-id`/`--resume`; `codex exec
 resume`), and mid-turn input for codex, which only `codex app-server`'s
 `turn/steer` offers. Those are what a messaging team needs, and messaging
 teams are coordination inside one task, which D18 defers; they come with it.
+Its review found a real race, fixed: a steer reaching Claude Code as its
+final reply streams starts a second turn after the first `result`, which
+had been taken as the answer, with the CLI stopped 10s later mid-turn; a
+steered run now waits for the turn the result reports queued or for its
+output, and answers with the last result. Also fixed: a steer behind a large
+prompt was written and queued both (Node's backpressure `false` read as a
+refusal); a steer no later run carries is journaled undelivered; mail is
+released for a run that never started; the committee judge and the cascade
+gate are addressable.
 
 **Exit criterion 3 is met (2026-10-17).** `openswarm maintain` ran on this
 repository (commit `02c19de`) against `eval/maintain/principles.md`, on the
