@@ -170,6 +170,9 @@ def screen(candidates: list[str], cap: float) -> None:
         finally:
             save(state)
             log(f"{task}: {rec.get('verdict')} (spent ${spend():.2f})")
+            # Images run to tens of GB; only a qualifying task's is needed again.
+            if rec.get("verdict") in ("too easy", "reference fails"):
+                subprocess.run(["docker", "rmi", image_of(task)], capture_output=True)
 
     for task in candidates:
         if results.get(task, {}).get("verdict") in ("qualifies", "too easy", "reference fails"):
