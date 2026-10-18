@@ -1144,6 +1144,20 @@ work is on this branch. What it shows: passing checks are not acceptance,
 since the run's one bad landing and its two bad edits all passed them; an
 L1 reviewer on maintenance tasks is the next thing to try.
 
+*Built (2026-10-17): the sign-off.* The existing reviewer would not have
+caught the rejected change: it measures roadmap targets, and its
+`regressions` are failing tests, which there were none of. So the gate
+gained `signoff` (`GateSpec.signoff`, a peer-team's `gate.signoff`): once a
+round's checks or suite pass, a reviewer reads the change (`git diff <base>`
+in a disposable copy) and must accept it, or the round fails with its reasons
+as the next brief; evidence stays L2 with the verdict on it. `openswarm
+maintain` turns it on with a brief aimed at what slipped through (a test
+made to check less, coverage deleted, a valid path broken, anything beyond
+the task), `--no-review` to skip it. Keyless tests show the mechanism
+(`gate.test.ts`, `maintain.e2e.test.ts`: a rejecting reviewer keeps every
+task out though their checks pass). Whether it would have caught the
+dogfood run's bad task is a live question, not yet run.
+
 Getting there changed three things, all committed: the box cannot confine
 members (Ubuntu 24.04 restricts the user namespaces bubblewrap needs), so
 `maintain` gained an explicit `--sandbox danger-full-access` rather than a

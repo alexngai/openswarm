@@ -225,6 +225,13 @@ export interface PeerTeamSpec extends TeamSpecBase {
     /** Whether a task without checks is reviewed (default true); false makes such a task an error. */
     review?: boolean
     /**
+     * A sign-off (docs/05 C7b's lesson): once a task's checks (or suite) pass,
+     * a reviewer reads its change and must accept it too, or the round fails
+     * and the reviewer's reasons brief the next. This opens its prompt. Needs
+     * worktree execution, where the reviewer runs.
+     */
+    signoff?: string
+    /**
      * The verifier level every task must reach (docs/05 B1): 1 a reviewer, 2
      * checks, 3 a hidden suite. The board refuses evidence below it. Unset,
      * a task reaches whatever its sources give.

@@ -115,6 +115,13 @@ export interface GateSpec {
   commands?: string[]
   /** The level the task must reach; the gate refuses to start when its sources cannot. */
   minLevel?: VerifierLevel
+  /**
+   * A sign-off: once a round's evidence passes, a reviewer (`deps.review`)
+   * reads the change and must accept it too, or the round fails and its
+   * reasons brief the next. This opens the reviewer's prompt; where the change
+   * is and the task follow. Its reply ends in `{"accept": bool, "reasons": …}`.
+   */
+  signoff?: string
 }
 
 export interface GateDeps {
@@ -189,6 +196,14 @@ export interface GateEvidence {
   tamper?: TamperSignal[]
   /** Hidden: the member's snapshot was refused, and why. */
   refused?: string
+  /** The sign-off reviewer's verdict on a round whose evidence passed (`GateSpec.signoff`). */
+  signoff?: Signoff
+}
+
+/** A sign-off reviewer's verdict: whether it accepts the change, and why. */
+export interface Signoff {
+  accepted: boolean
+  reasons: string
 }
 
 export interface GateRound {
@@ -261,6 +276,7 @@ You have already worked on this roadmap: your changes are in this working tree (
 ${report}`
 
 const REVIEWED = 'A reviewer then checked the result against the roadmap; its report follows.'
+const UNSIGNED = 'The checks passed; a reviewer then read the change and did not sign off. Its reasons follow.'
 const CHECKED = "The task's checks then ran on the result; their report follows."
 const HIDDEN = 'A hidden acceptance suite, which you cannot see, then ran on the result; the report follows.'
 
@@ -293,6 +309,17 @@ function verdictOf(text: string): GateEvidence {
   }
 }
 
+/** A sign-off reviewer's reply: the last line opening a JSON object, `accept` true to sign off; anything else is no sign-off. */
+function signoffOf(text: string): Signoff {
+  const line = text.trim().split('\n').reverse().find((l) => l.trim().startsWith('{'))
+  let verdict: any = null
+  try {
+    verdict = JSON.parse(line ?? '')
+  } catch {}
+  const reasons = typeof verdict?.reasons === 'string' && verdict.reasons.trim() !== '' ? verdict.reasons.trim() : verdict === null ? 'the reviewer gave no verdict' : 'no reasons given'
+  return { accepted: verdict?.accept === true, reasons }
+}
+
 function passes(targets: GateTarget[]): boolean {
   const unverifiable = (t: GateTarget) => t?.status === 'unverifiable' && typeof t.notes === 'string' && t.notes.trim() !== ''
   if (!targets.every((t) => t?.status === 'done' || unverifiable(t))) return false
@@ -307,6 +334,7 @@ export async function runGate(spec: GateSpec, deps: GateDeps): Promise<GateResul
   if (commands.length === 0 && review === undefined && hidden === undefined) {
     throw new Error('the gate needs checks (spec.commands), a reviewer (deps.review) or a hidden suite (deps.hidden)')
   }
+  if (spec.signoff !== undefined && review === undefined) throw new Error('a sign-off needs a reviewer (deps.review)')
   // The strongest source accepts; any weaker one configured gives feedback.
   const level = hidden !== undefined ? 3 : commands.length > 0 ? 2 : 1
   if ((spec.minLevel ?? 0) > level) {
@@ -511,6 +539,39 @@ export async function runGate(spec: GateSpec, deps: GateDeps): Promise<GateResul
       report(`gate round ${n}: ${summary.passed ? 'hidden suite passed' : told}`)
     }
 
+    // A sign-off: evidence that passes is not acceptance until a reviewer has
+    // read the change and accepted it; a rejection fails the round, and its
+    // reasons are what the member is told.
+    let unsigned = false
+    if (evidence!.passed && spec.signoff !== undefined) {
+      report(`gate round ${n}: sign-off review…`)
+      const brief = `${spec.signoff}\n\nThe change is \`git diff ${base.commit}\` in this working tree.\n\n# Task\n\n${spec.task}`
+      let reply: string | undefined
+      let unavailable = ''
+      for (let attempt = 1; attempt <= 2 && reply === undefined; attempt++) {
+        try {
+          reply = (await review!(brief, snapshot.commit)).text
+        } catch (error) {
+          if (deps.signal?.aborted || (error as Error)?.name === 'AbortError' || (error as Error)?.name === 'BudgetStopError') throw error
+          unavailable = error instanceof Error ? error.message : String(error)
+          report(`gate round ${n}: sign-off review could not run (attempt ${attempt}/2): ${unavailable}`)
+        }
+      }
+      if (reply === undefined) {
+        const extra = { ...(lower === undefined ? {} : { feedback: lower }), ...(advisory.length === 0 ? {} : { advisory }) }
+        await stop({ round: n, result, snapshot: snapshot.commit, changed, evidence: { ...evidence!, passed: false, error: `sign-off review could not run: ${unavailable}` }, ...extra }, 'review unavailable')
+        break
+      }
+      const signoff = signoffOf(reply)
+      evidence = { ...evidence!, passed: signoff.accepted, signoff }
+      inPlace = evidence
+      if (!signoff.accepted) {
+        unsigned = true
+        feedback = signoff.reasons
+      }
+      report(`gate round ${n}: ${signoff.accepted ? 'signed off' : `not signed off: ${signoff.reasons.split('\n')[0]!.slice(0, 80)}`}`)
+    }
+
     const round: GateRound = {
       round: n,
       result,
@@ -527,7 +588,7 @@ export async function runGate(spec: GateSpec, deps: GateDeps): Promise<GateResul
       lastPassing = snapshot.commit
       break
     }
-    prompt = continuation(spec.task, base.commit, tree.commit, level === 3 ? HIDDEN : level === 2 ? CHECKED : REVIEWED, feedback)
+    prompt = continuation(spec.task, base.commit, tree.commit, unsigned ? UNSIGNED : level === 3 ? HIDDEN : level === 2 ? CHECKED : REVIEWED, feedback)
   }
   return {
     accepted: lastPassing !== undefined,

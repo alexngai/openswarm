@@ -342,3 +342,63 @@ it('unverifiable is not partial: it passes beside at least as many done targets,
   expect((await gate(['unverifiable', NOTES])).accepted).toBe(false)
   expect((await gate(['done'], ['skipped'])).accepted).toBe(false)
 })
+
+const signed = (accept: boolean, reasons: string) => `read the diff\n${JSON.stringify({ accept, reasons })}`
+const SIGNOFF = 'You are signing off a change before it lands.'
+
+it('a sign-off: checks that pass are not acceptance until a reviewer reads the change and accepts it; a rejection briefs the next round', async () => {
+  const { root } = repo()
+  const { run, prompts } = fakeRun([
+    () => (writeFileSync(join(root, 'done.txt'), 'x\n'), writeFileSync(join(root, 'a.txt'), ''), 'done'),
+    () => (writeFileSync(join(root, 'a.txt'), 'base\n'), 'restored a.txt'),
+  ])
+  // The reviewer sees the change in its clone: round 1 emptied a.txt, round 2 restored it.
+  const { review, calls } = fakeReview(
+    [
+      (cwd) => (readFileSync(join(cwd, 'a.txt'), 'utf8') === '' ? signed(false, 'it also empties a.txt, which the task never asked for') : 'wrong tree'),
+      (cwd) => (readFileSync(join(cwd, 'a.txt'), 'utf8') === 'base\n' ? signed(true, 'only done.txt is added') : 'wrong tree'),
+    ],
+    root,
+  )
+  const result = await runGate({ task: 'make done.txt', member, commands: ['test -f done.txt'], signoff: SIGNOFF }, { run, cwd: root, review })
+
+  expect(result.accepted).toBe(true)
+  expect(result.rounds.map((r) => [r.evidence.kind, r.evidence.level, r.evidence.passed, r.evidence.signoff?.accepted])).toEqual([
+    ['commands', 2, false, false],
+    ['commands', 2, true, true],
+  ])
+  // Its brief: the sign-off prompt, where the change is, and the task.
+  expect(calls[0]!.prompt).toBe(`${SIGNOFF}\n\nThe change is \`git diff ${result.base}\` in this working tree.\n\n# Task\n\nmake done.txt`)
+  expect(prompts[1]).toContain('a reviewer then read the change and did not sign off')
+  expect(prompts[1]).toContain('it also empties a.txt, which the task never asked for')
+})
+
+it('a sign-off that does not parse is no sign-off; one that cannot run twice stops the gate unaccepted; without a reviewer it is refused', async () => {
+  const { root } = repo()
+  const unparsed = await runGate(
+    { task: 't', member, maxRounds: 1, commands: ['true'], signoff: SIGNOFF },
+    { run: fakeRun([() => (writeFileSync(join(root, 'x.txt'), '1\n'), 'x')]).run, cwd: root, review: fakeReview([() => 'looks fine to me']).review },
+  )
+  expect(unparsed.accepted).toBe(false)
+  expect(unparsed.rounds[0]!.evidence.signoff).toEqual({ accepted: false, reasons: 'the reviewer gave no verdict' })
+
+  const down = await runGate(
+    { task: 't', member, commands: ['true'], signoff: SIGNOFF },
+    {
+      run: fakeRun([() => (writeFileSync(join(root, 'y.txt'), '1\n'), 'y')]).run,
+      cwd: root,
+      review: fakeReview([
+        () => {
+          throw new Error('no reviewer')
+        },
+        () => {
+          throw new Error('no reviewer')
+        },
+      ]).review,
+    },
+  )
+  expect([down.accepted, down.reason, down.rounds.length]).toEqual([false, 'review unavailable', 1])
+  expect(down.rounds[0]!.evidence).toMatchObject({ kind: 'commands', passed: false, error: 'sign-off review could not run: no reviewer' })
+
+  await expect(runGate({ task: 't', member, commands: ['true'], signoff: SIGNOFF }, { run: fakeRun([]).run, cwd: root })).rejects.toThrow('a sign-off needs a reviewer')
+})

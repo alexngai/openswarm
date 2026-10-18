@@ -23,12 +23,23 @@ import { defaultRunsDir, landingText, memberEnvOf, reviewMemberConfig, runJourna
 import { pricingOf } from './control'
 import { bootHarness, foldSessionLogs, memberRouteOf, routeOf, runHeadless, sandboxUnavailable, splitArgv, type CliIo } from './index'
 
+/**
+ * The sign-off reviewer's brief (`gate.signoff`): the dogfood run's one bad
+ * landing passed every check while weakening what a test verified, so a
+ * maintenance task lands only once a reviewer has read its change and judged
+ * it does the task, stays inside it, and weakens nothing.
+ */
+export const MAINTAIN_SIGNOFF = `You are signing off another engineer's maintenance change to this repository before it lands. Do not fix anything: your job is to judge. Read the task below and the change, and look at the files it touches. Accept only if the change does what the task asks, stays inside it, and removes or weakens nothing the repository relies on: no test made to check less than it did or something other than what it was for, no coverage deleted, no valid path, link or reference broken, no behavior changed beyond the task. The repository's checks already pass; that is not your question.
+
+End your reply with exactly one line of JSON and nothing after it:
+{"accept": true or false, "reasons": "<one or two sentences: what is wrong, or why it is fine>"}`
+
 /** How long the survey may run before it is stopped. */
 const SURVEY_TIMEOUT_MS = 20 * 60_000
 
 export const MAINTAIN_USAGE =
   'usage: openswarm maintain --model <m> --principles <file> --check <cmd> [--check <cmd>]... [--tasks 5] [--members 2] [--rounds 3] ' +
-  '[--budget-usd <n> --task-budget-usd <n> --pricing <file>] [--max-cost-usd <n>] [--max-tokens <n>] [--max-turns <n>] [--summary <file>] [--sandbox danger-full-access]'
+  '[--budget-usd <n> --task-budget-usd <n> --pricing <file>] [--max-cost-usd <n>] [--max-tokens <n>] [--max-turns <n>] [--summary <file>] [--sandbox danger-full-access] [--no-review]'
 
 export interface SurveyTask {
   subject: string
@@ -239,7 +250,8 @@ export async function runMaintain(argv: string[], io: CliIo): Promise<number> {
       members: Array.from({ length: members }, (_, i) => ({ name: `maintainer-${i + 1}` })),
       // One attempt: a task that does not pass in its rounds is abandoned, and what passed lands (C7a).
       maxTaskAttempts: 1,
-      gate: { rounds, checks },
+      // A reviewer signs off each task's change once its checks pass, unless --no-review.
+      gate: { rounds, checks, ...(args.has('no-review') ? {} : { signoff: MAINTAIN_SIGNOFF }) },
       tasks: survey.tasks.map((t) => ({
         subject: t.subject,
         prompt: t.verify === undefined ? t.prompt : `${t.prompt}\n\nThe survey suggests confirming it with: ${t.verify.join('; ')}`,
@@ -267,6 +279,9 @@ export async function runMaintain(argv: string[], io: CliIo): Promise<number> {
       ...(turnsLeft === undefined ? [] : ['--max-turns', String(turnsLeft)]),
       ...(['pricing', 'permission-mode'] as const).flatMap((flag) => (args.has(flag) ? [`--${flag}`, args.get(flag)!] : [])),
     ]
+    // The sign-off reviewer runs under the members' sandbox, for this run.
+    const reviewerSandbox = process.env['OPENSWARM_GATE_REVIEWER_SANDBOX']
+    process.env['OPENSWARM_GATE_REVIEWER_SANDBOX'] = sandbox
     let code: number
     try {
       code = await runHeadless(
@@ -276,6 +291,9 @@ export async function runMaintain(argv: string[], io: CliIo): Promise<number> {
     } catch (error) {
       fail(`the team run failed before landing anything it could report: ${error instanceof Error ? error.message : String(error)}`, 1)
       throw error
+    } finally {
+      if (reviewerSandbox === undefined) delete process.env['OPENSWARM_GATE_REVIEWER_SANDBOX']
+      else process.env['OPENSWARM_GATE_REVIEWER_SANDBOX'] = reviewerSandbox
     }
     if (note?.runId === undefined) return fail(`the team run ended without a landing report (exit ${code}${code === 3 ? ', a cap tripped' : ''}).`, code)
     if (summary !== undefined) writeFileSync(summary, summaryMarkdown(note, principlesPath, dirname(runJournalPath(defaultRunsDir(), note.runId)), surveyCost, pricing))

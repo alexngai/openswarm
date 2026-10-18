@@ -425,6 +425,8 @@ export interface BoardGate {
   checks?: readonly string[]
   /** The team's verifier level; a task's own replaces it (docs/05 B1). */
   minLevel?: VerifierLevel
+  /** A reviewer's sign-off every passing round also needs (`GateSpec.signoff`). */
+  signoff?: string
   /** The run's: a cancelled run starts no further gate round. */
   signal?: AbortSignal
   tree: (
@@ -459,6 +461,7 @@ function verdictFields(e: GateEvidence) {
     ...(e.suite === undefined ? {} : { suite: e.suite }),
     ...(e.total === undefined ? {} : { total: e.total, failed: e.failed }),
     ...(e.refused === undefined ? {} : { refused: e.refused }),
+    ...(e.signoff === undefined ? {} : { signoff: e.signoff }),
   }
 }
 
@@ -546,6 +549,7 @@ export async function runBoardWorkers(
               ...(gate.rounds === undefined ? {} : { maxRounds: gate.rounds }),
               commands: [...(claimed.checks ?? gate.checks ?? [])],
               ...((claimed.minLevel ?? gate.minLevel) === undefined ? {} : { minLevel: claimed.minLevel ?? gate.minLevel }),
+              ...(gate.signoff === undefined ? {} : { signoff: gate.signoff }),
             },
             {
               ...tree,

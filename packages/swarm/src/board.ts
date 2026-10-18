@@ -72,6 +72,8 @@ export interface TaskEvidence {
   readonly failed?: number
   /** Hidden: how the run was confined; a `partial` L3 (the operator allowed it) counts as L2 here. */
   readonly enforcement?: 'full' | 'partial'
+  /** A sign-off reviewer's verdict on the change (`gate.signoff`). */
+  readonly signoff?: { accepted: boolean; reasons: string }
   /**
    * The snapshot commit of the tree the evidence is about. ponytail: no ref
    * points at it, so `git gc` may prune it once old enough; B0's `verifies`
@@ -123,6 +125,8 @@ export type SwarmGateEvent = {
   enforcement?: 'full' | 'partial'
   /** Hidden: the round was a tamper incident (its signals are the `swarm/tamper` event). */
   tamper?: true
+  /** A sign-off reviewer's verdict on a round whose checks passed. */
+  signoff?: { accepted: boolean; reasons: string }
   /** Hidden: the member's snapshot was refused, and why. */
   refused?: string
   /** Under L3: what the weaker source said, which the member was told too. */

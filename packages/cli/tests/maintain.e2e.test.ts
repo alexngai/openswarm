@@ -59,9 +59,9 @@ const SURVEY = JSON.stringify({
   ],
 })
 
-it('a survey in a disposable clone proposes three tasks; the two that pass land through the train, the third is abandoned, and the summary says so', async () => {
-  // Every member's first turn writes a file named by its branch; its closing text is the survey's reply.
-  const router = await startMockRouter('b=$(git rev-parse --abbrev-ref HEAD | tr / -); echo "$b" > "out-$b.txt"', SURVEY)
+/** Every member's first turn writes a file named by its branch; every closing text is the survey's reply, then a sign-off verdict. */
+async function maintainRun(accept: boolean, extra: string[] = []) {
+  const router = await startMockRouter('b=$(git rev-parse --abbrev-ref HEAD | tr / -); echo "$b" > "out-$b.txt"', `${SURVEY}\n${JSON.stringify({ accept, reasons: accept ? 'stays inside its task' : 'it rewrites a file the task never named' })}`)
   cleanups.push(router.close)
   const repo = mkdtempSync(join(tmpdir(), 'openswarm-maintain-e2e-'))
   const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim()
@@ -80,10 +80,15 @@ it('a survey in a disposable clone proposes three tasks; the two that pass land 
   // The third task's own file fails the operator's check in its worktree, so its gate never passes.
   const check = '! ls out-*-task-2.txt >/dev/null 2>&1'
   const code = await runCli(
-    ['maintain', '--model', 'mock-model', '--principles', 'PRINCIPLES.md', '--check', check, '--members', '1', '--rounds', '1', '--summary', summary],
+    ['maintain', '--model', 'mock-model', '--principles', 'PRINCIPLES.md', '--check', check, '--members', '1', '--rounds', '1', '--summary', summary, ...extra],
     { out: (l) => lines.push(l), err: () => {} },
   )
   const events = lines.map((l) => JSON.parse(l))
+  return { code, events, repo, git, summary }
+}
+
+it('a survey in a disposable clone proposes three tasks; the two that pass their checks and the sign-off land through the train, the third is abandoned, and the summary says so', async () => {
+  const { code, events, repo, git, summary } = await maintainRun(true)
   // Abandoned work fails the run, though what passed landed.
   expect(code).toBe(1)
   expect(events.find((e) => e.type === 'survey').tasks.map((t: any) => t.subject)).toEqual(['first fix', 'second fix', 'impossible fix'])
@@ -104,6 +109,9 @@ it('a survey in a disposable clone proposes three tasks; the two that pass land 
   const third = tasks.filter((t) => t.id === 'task-2').at(-1)
   expect(third.prompt).toContain('The survey suggests confirming it with: false')
   expect(third.checks).toBeUndefined()
+  // The two that landed were signed off by a reviewer after their checks passed.
+  const gates = journal.split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((e) => e.type === 'swarm/gate').map((e) => e.data)
+  expect(gates.filter((g) => g.signoff?.accepted === true).map((g) => g.taskId).sort()).toEqual(['task-0', 'task-1'])
 
   const md = readFileSync(summary, 'utf8')
   expect(md).toContain('# Maintenance: 2 task(s) landed')
@@ -113,6 +121,14 @@ it('a survey in a disposable clone proposes three tasks; the two that pass land 
   expect(md).toContain('- task-2: ')
   expect(md).toContain('Checkout: fast-forwarded.')
   expect(md).toMatch(/the survey \d+ tokens/)
+}, 180_000)
+
+it('a reviewer that will not sign off keeps a task from landing, though its checks pass', async () => {
+  const { code, events } = await maintainRun(false)
+  expect(code).toBe(1)
+  const note = events.find((e) => e.type === 'team_note')
+  expect(note.landed).toEqual([])
+  expect(Object.keys(note.abandoned).sort()).toEqual(['task-0', 'task-1', 'task-2'])
 }, 180_000)
 
 it('refused before any spend: no --check, or a dollar budget it could not price', async () => {

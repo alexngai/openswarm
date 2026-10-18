@@ -200,6 +200,7 @@ export function gateLine(g: SwarmGateEvent): string {
   const at = `${g.taskId} gate round ${g.round} (${g.member})`
   if (g.tamper === true) return `${at}: L3 tamper incident — not measured`
   if (g.round > 1 && !g.changed) return `${at}: changed nothing — stopping`
+  if (g.signoff !== undefined && !g.signoff.accepted) return `${at}: checks passed, not signed off — ${g.signoff.reasons.split('\n')[0]!.slice(0, 80)}`
   if (g.error !== undefined) return `${at}: ${g.kind === 'hidden' ? 'hidden suite' : 'review'} unavailable — ${g.error.split('\n')[0]!.slice(0, 80)}`
   if (g.kind === 'hidden' && g.total === undefined && g.enforcement !== undefined) {
     return `${at}: L3 hidden suite ${g.suite} not run as L3 (enforcement ${g.enforcement}: the verifier could not confine it)`

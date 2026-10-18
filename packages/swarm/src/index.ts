@@ -1033,6 +1033,9 @@ export default class SwarmService extends Service {
     if (gate.rounds !== undefined && (!Number.isInteger(gate.rounds) || gate.rounds < 1)) {
       throw new Error('peer-team gate.rounds must be a positive integer')
     }
+    if (gate.signoff !== undefined && (worktrees === undefined || gate.review === false)) {
+      throw new Error('a gate sign-off needs a reviewer, which runs as a worktree member: run with worktree execution, and without review off')
+    }
     for (const task of spec.tasks) {
       const level: VerifierLevel = task.minLevel ?? gate.minLevel ?? 0
       const which = `gated task "${task.subject}"`
@@ -1100,6 +1103,7 @@ export default class SwarmService extends Service {
         ...(gate.rounds === undefined ? {} : { rounds: gate.rounds }),
         ...(gate.checks === undefined ? {} : { checks: gate.checks }),
         ...(gate.minLevel === undefined ? {} : { minLevel: gate.minLevel }),
+        ...(gate.signoff === undefined ? {} : { signoff: gate.signoff }),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
         tree: (member, claimed) => {
           // ponytail: without worktrees every member shares this one tree, so a

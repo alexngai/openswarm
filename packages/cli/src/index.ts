@@ -151,7 +151,7 @@ export function routeOf(model: string): Route {
  * `--single "do the thing"` swallow the prompt, which fails as a missing task
  * rather than as a parse error.
  */
-const BOOL_FLAGS = new Set(['headless', 'single', 'team', 'self-modify', 'gate'])
+const BOOL_FLAGS = new Set(['headless', 'single', 'team', 'self-modify', 'gate', 'no-review'])
 
 function parseArgs(argv: string[]): Map<string, string> {
   return splitArgv(argv).args
