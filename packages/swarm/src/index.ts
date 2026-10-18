@@ -348,6 +348,18 @@ function budgetAdmit(spec: TeamSpec, board: SwarmBoard, journal: SwarmJournal, a
   return (taskKey) => guard.admit(taskKey)
 }
 
+/**
+ * A member's slot in `live`: it holds the member's deliverer while its turn
+ * is open, and is cleared when it closes, unless a later run's took it.
+ */
+function liveSlot(live: Map<string, (text: string) => boolean>, member: string): (deliver: ((text: string) => boolean) | undefined) => void {
+  let mine: ((text: string) => boolean) | undefined
+  return (deliver) => {
+    if (deliver !== undefined) live.set(member, (mine = deliver))
+    else if (live.get(member) === mine) live.delete(member)
+  }
+}
+
 function roleOf(spec: TeamSpec, member: string): UsageRole {
   if (spec.topology === 'critic-loop' && spec.critic.name === member) return 'review'
   if (spec.topology === 'cascade' && spec.gate?.name === member) return 'review'
@@ -498,8 +510,15 @@ export default class SwarmService extends Service {
         ? { gated: true, ...(spec.gate.minLevel === undefined ? {} : { minLevel: spec.gate.minLevel }) }
         : {},
     )
-    // The members steering reaches; the messaging peer-team runners fill it.
+    // The members steering reaches: a messaging peer-team's runners fill it
+    // with continuable peers; every other team's members are here from the
+    // start, one-shot, so a steer waits as quiet mail for the member's next
+    // run, unless its run takes messages mid-turn (`live`).
     const roster = new Map<string, PeerHandle>()
+    const oneShot = !(spec.topology === 'peer-team' && spec.messaging === true)
+    if (oneShot) for (const member of teamMembers(spec)) roster.set(member.name, { name: member.name })
+    /** Deliverers into the open turns of members whose runtime takes a message mid-turn (claude-code), by member. */
+    const live = new Map<string, (text: string) => boolean>()
     const mailbox = new SwarmMailbox(this.ctx, options.parent, roster, journal)
     const controller = new AbortController()
     const signal =
@@ -616,7 +635,7 @@ export default class SwarmService extends Service {
       } catch {}
       return metrics
     }
-    const result = this.execute(spec, { ...options, signal }, board, roster, mailbox, ask, journal)
+    const result = this.execute(spec, { ...options, signal }, board, roster, mailbox, ask, journal, oneShot ? live : undefined)
       .then((result) => {
         // Aborted members settle as results, not rejections, so a cancelled
         // run can come back whole; it still failed.
@@ -661,9 +680,17 @@ export default class SwarmService extends Service {
               : `run ${id} has no member "${to}"`,
           )
         }
-        const delivery = peer.remote === undefined ? 'enqueue' : 'immediate'
-        if (peer.remote === undefined) await mailbox.send({ from: by, to, text })
-        else await peer.remote.steer(text)
+        // An open CLI turn reads it once its running tool calls finish, a
+        // continuable remote peer at its next step boundary; anyone else gets
+        // it with its next turn, or a one-shot member with its next run.
+        let delivery: SwarmSteerEvent['delivery'] = 'immediate'
+        if (live.get(to)?.(text) !== true) {
+          if (peer.remote !== undefined) await peer.remote.steer(text)
+          else {
+            delivery = 'enqueue'
+            await mailbox.send({ from: by, to, text, ...(oneShot ? { delivery: 'quiet' as const } : {}) })
+          }
+        }
         await journal.append('swarm/steer', { version: 1, to, text, delivery, by } satisfies SwarmSteerEvent)
         return delivery
       },
@@ -733,6 +760,8 @@ export default class SwarmService extends Service {
     mailbox: SwarmMailbox,
     ask: AskQuestion,
     journal: SwarmJournal,
+    /** A one-shot team's live deliverers (see `start`); none for a messaging team. */
+    live?: Map<string, (text: string) => boolean>,
   ): Promise<TeamResult & { git?: MergeOutcome }> {
     // Refusals, then the CLI's preflight, before any spend.
     const clis = checkRuntimes(spec, options)
@@ -744,18 +773,39 @@ export default class SwarmService extends Service {
     }
     // The run's and its tasks' budgets (docs/05 C5), checked before every member run starts.
     const admit = budgetAdmit(spec, board, journal, ask, this.pricing)
+    // A CLI member's open turn, registered while it runs, so a steer reaches it.
+    const steerable = live === undefined ? undefined : (member: string) => liveSlot(live, member)
     const worktrees =
-      options.worktrees === undefined ? undefined : new WorktreeRun(this.ctx, options.worktrees, options.onProgress, usage, admit)
+      options.worktrees === undefined ? undefined : new WorktreeRun(this.ctx, options.worktrees, options.onProgress, usage, admit, steerable)
     // Every member prompt through here carries the intent header (docs/05
     // §6.1). A peer-team keys each member run by its board task, whose own
     // intent replaces the run's; no other topology seeds the board.
     const run: RunMember = (member, prompt, taskKey, role) => {
-      const framed = withIntent(prompt, board.list().find((t) => t.id === taskKey)?.intent ?? spec.intent)
-      if (worktrees !== undefined) return worktrees.runMember(member, framed, taskKey, options, role)
-      const start = () => this.runMember(member, framed, options, { usage, ...(taskKey === undefined ? {} : { taskKey }), ...(role === undefined ? {} : { role }) })
+      const intended = withIntent(prompt, board.list().find((t) => t.id === taskKey)?.intent ?? spec.intent)
+      // Steering a one-shot member waited for this run: it rides in front of
+      // the prompt, delivered once the run settles, kept if it never started.
+      const mail = live !== undefined && roster.has(member.name) ? mailbox.framePendingQuiet(member.name) : undefined
+      const said = (mail?.blocks ?? []).map((block) => (block.type === 'text' ? block.text : '')).join('\n\n')
+      const framed = said === '' ? intended : `${said}\n\n${intended}`
+      const start = () =>
+        this.runMember(member, framed, options, {
+          usage,
+          ...(taskKey === undefined ? {} : { taskKey }),
+          ...(role === undefined ? {} : { role }),
+          ...(steerable === undefined ? {} : { live: steerable(member.name) }),
+        })
       // Without a budget the member starts in this tick, as before: a cancel
       // right after then settles it as aborted rather than refusing its start.
-      return admit === undefined ? start() : admit(taskKey).then(start)
+      const settled = worktrees !== undefined ? worktrees.runMember(member, framed, taskKey, options, role) : admit === undefined ? start() : admit(taskKey).then(start)
+      return mail === undefined
+        ? settled
+        : settled.then(
+            async (result) => (await mail.ack(), result),
+            (error) => {
+              mail.release()
+              throw error
+            },
+          )
     }
     if (worktrees === undefined) return this.dispatch(spec, run, options, board, roster, mailbox, ask, journal)
 
@@ -1289,13 +1339,13 @@ export default class SwarmService extends Service {
     member: MemberSpec,
     prompt: string,
     options: RunTeamOptions,
-    account: { usage: RecordUsage; taskKey?: string; role?: UsageRole },
+    account: { usage: RecordUsage; taskKey?: string; role?: UsageRole; live?: (deliver: ((text: string) => boolean) | undefined) => void },
   ): Promise<MemberRunResult> {
     if (member.runtime === 'claude-code' || member.runtime === 'codex') {
       const cwd = inPlaceCwd(options)
       if (cwd === undefined) throw new Error(`${member.runtime} member "${member.name}" has no cwd to work in`)
       const run = { cwd, signal: options.signal, usage: account.usage, taskKey: account.taskKey, role: account.role }
-      return member.runtime === 'codex' ? runCodex(member, prompt, run) : runClaudeCode(member, prompt, run)
+      return member.runtime === 'codex' ? runCodex(member, prompt, run) : runClaudeCode(member, prompt, { ...run, live: account.live })
     }
     const provider =
       member.subagentProvider ?? this.swarmConfig.defaultSubagentProvider ?? 'spawn'

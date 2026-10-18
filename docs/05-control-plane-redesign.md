@@ -241,7 +241,7 @@ stay structural. Three conformance levels:
 Everything in §6 works at **basic**; steerable adds live direction;
 participating is a bonus (P9). Runtimes today: in-process `spawn`
 (steerable), dsh subprocess (steerable via `RemotePeer`), `claude-code`
-(basic, R1). dsh's SDK server
+(basic, R1, with mid-run messages, R2), `codex` (basic, R2). dsh's SDK server
 only queues a turn, so `immediate` delivery reaches a subprocess member
 through `openswarm-swarm-member`, which calls `agent.steer` inside the
 member (§11). Planned: a
@@ -1088,7 +1088,25 @@ stop interrupts, then kills the group and the descendants. The process
 handling the two CLIs share moved to `cli-runtime.ts` (R1's tests unchanged).
 `codex.test.ts` runs a fake CLI keyless. A test written without the fake's
 path ran the real `codex` once (prompt "p", about 2 seconds) before it was
-pinned to the fake for every run.
+pinned to the fake for every run. Its review: a non-fatal `error` event (a
+reconnect) no longer fails a turn that completes, and a run cut short is
+journaled as unmeasured, not as zero.
+
+R2's steering, re-scoped (2026-10-17). Building it found that only a
+messaging peer-team ever had addressable members: in a one-shot team, the
+mode D17 and D18 leave as the default, `openswarm steer` refused every
+member, whatever its runtime. So G1 for that mode comes first: every member
+of a one-shot team is in the roster from the run's start; a steer to one
+waits as quiet mail and rides in front of its next run's prompt (a gate
+round or a task), delivered once that run settles (`enqueue`); and a
+claude-code member now takes its prompt as stream-json input with stdin
+open while the turn runs, so a steer to it mid-turn is written into that
+session and read once its running tool calls finish (`immediate`;
+`steering.test.ts`). Not built: a session kept across runs and resumed
+after a restart for either CLI (`--session-id`/`--resume`; `codex exec
+resume`), and mid-turn input for codex, which only `codex app-server`'s
+`turn/steer` offers. Those are what a messaging team needs, and messaging
+teams are coordination inside one task, which D18 defers; they come with it.
 
 **Exit criterion 3 is met (2026-10-17).** `openswarm maintain` ran on this
 repository (commit `02c19de`) against `eval/maintain/principles.md`, on the

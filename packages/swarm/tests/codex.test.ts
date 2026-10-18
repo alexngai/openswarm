@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, afterEach, beforeAll, expect, it } from 'vitest'
-import { SwarmJournal, codexEnv, runCodex, type SwarmUsageEvent } from '../src/index'
+import { SwarmJournal, codexEnv, runCodex, runUsd, type SwarmUsageEvent } from '../src/index'
 import { bootHarness, type TestHarness } from './boot'
 
 const FAKE = fileURLToPath(new URL('./support/fake-codex.mjs', import.meta.url))
@@ -102,7 +102,7 @@ it('the CLI gets exec --json, the pinned sandbox, the cwd and model, the prompt 
   expect(log().filter((e) => e.event === 'start')[1].argv).toContain('read-only')
 })
 
-it('a cancel interrupts the CLI with SIGINT and kills the descendants it started in sessions of their own; aborted, with no usage to journal', async () => {
+it('a cancel interrupts the CLI with SIGINT and kills the descendants it started in sessions of their own; aborted, its spend journaled as unmeasured', async () => {
   const log = fakeLog()
   const cwd = mkdtempSync(join(tmpdir(), 'openswarm-codex-cancel-'))
   const recorded: any[] = []
@@ -116,13 +116,16 @@ it('a cancel interrupts the CLI with SIGINT and kills the descendants it started
   expect(result.stopReason).toBe('aborted')
   expect(log().some((e) => e.event === 'sigint')).toBe(true)
   await until(() => !alive(pid) && !alive(grandchild) && !alive(detached))
-  // Codex reports usage only when a turn completes.
-  expect(recorded).toEqual([])
+  // Codex reports usage only when a turn completes: what this one spent is unknown, not zero.
+  expect(recorded).toEqual([expect.objectContaining({ runtime: 'codex', unmeasured: true, usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, calls: 0 } })])
+  expect(runUsd(recorded[0], { 'gpt-5.5': { input: 1, output: 1 } })).toBeUndefined()
 }, 30_000)
 
-it('a failed turn, a crash and a missing CLI settle as errors with a diagnostic', async () => {
+it('a non-fatal error event does not fail a turn that completes; a failed turn, a crash and a missing CLI settle as errors with a diagnostic', async () => {
   fakeLog()
   const cwd = mkdtempSync(join(tmpdir(), 'openswarm-codex-error-'))
+  const warned = await runCodex({ name: 'cx' }, 'FAKE_WARN', { cwd, command: FAKE })
+  expect([warned.stopReason, warned.text]).toEqual(['completed', 'wrote codex-out.txt'])
   const failed = await runCodex({ name: 'cx' }, 'FAKE_FAIL', { cwd, command: FAKE })
   expect(failed.stopReason).toBe('error')
   expect(failed.text).toContain('codex failed: unexpected status 401 Unauthorized')

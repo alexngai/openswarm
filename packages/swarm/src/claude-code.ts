@@ -9,8 +9,10 @@
  *
  * Not dsh's `dsh-subagent-claude-code`: that provider always runs in its
  * parent session's cwd, so never in a member's worktree, and reports no
- * usage, which the contract requires (docs/01 ledger). Basic only: no
- * mid-run messages and no session across runs, so messaging teams refuse it.
+ * usage, which the contract requires (docs/01 ledger). Basic, plus mid-run
+ * messages (R2): the prompt goes in as Claude Code's stream-json input and
+ * stdin stays open while the turn runs, so a steer can be written into it
+ * (`live`). No session across runs, so messaging teams still refuse it.
  * Claude Code's own permission mode and settings govern what it may do;
  * OpenSwarm's member sandbox (§5.5) covers dsh members only.
  */
@@ -91,6 +93,13 @@ export async function runClaudeCode(
     usage?: RecordUsage | undefined
     taskKey?: string | undefined
     role?: UsageRole | undefined
+    /**
+     * Steering (docs/05 §5.4): called with a deliverer while the run's turn is
+     * open, and with undefined once it has ended. The deliverer writes a user
+     * message into the running session, which Claude Code reads in the same
+     * turn once the tool calls it is running finish; false once it cannot.
+     */
+    live?: ((deliver: ((text: string) => boolean) | undefined) => void) | undefined
   },
 ): Promise<MemberRunResult> {
   if (options.signal?.aborted === true) return { member: member.name, runId: '', text: '', output: [], stopReason: 'aborted' }
@@ -102,6 +111,7 @@ export async function runClaudeCode(
   const args = [
     '-p',
     '--output-format', 'stream-json',
+    '--input-format', 'stream-json',
     '--verbose',
     '--no-session-persistence',
     '--permission-mode', member.permissionMode ?? options.permissionMode ?? 'acceptEdits',
@@ -114,12 +124,29 @@ export async function runClaudeCode(
   let result: any
   /** Streamed assistant usage by message id (one API call may stream as several messages). */
   const calls = new Map<string, Usage>()
+  /** A user message as Claude Code's stream-json input takes it, one line. */
+  const message = (content: string) => `${JSON.stringify({ type: 'user', message: { role: 'user', content }, parent_tool_use_id: null })}\n`
+  let input: { write: (text: string) => boolean; end: () => void } | undefined
+  /** Its turn is over: no more steering, and stdin closes, which ends the CLI. */
+  const closeTurn = () => {
+    if (input === undefined) return
+    options.live?.(undefined)
+    input.end()
+    input = undefined
+  }
   const { exit, stderr, spawnError, aborted, timedOut } = await runCli({
     command,
     args,
     cwd: options.cwd,
     env: claudeEnv(),
-    input: text,
+    input: message(text),
+    // stdin stays open while the turn runs, for steering; closing it ends the CLI.
+    hold: {
+      onInput: (io) => {
+        input = io
+        options.live?.((steer) => input !== undefined && io.write(message(steer)))
+      },
+    },
     interrupt: 'SIGTERM',
     signal: options.signal,
     timeoutMs,
@@ -136,10 +163,13 @@ export async function runClaudeCode(
       else if (msg?.type === 'result' && result === undefined) {
         result = msg
         // Its answer is in; a CLI that lingers past the grace is stopped.
+        closeTurn()
         done()
       }
     },
   })
+  // However it ended.
+  closeTurn()
 
   const said = typeof result?.result === 'string' ? (result.result as string) : ''
   let stopReason: MemberRunResult['stopReason']

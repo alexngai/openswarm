@@ -78,6 +78,8 @@ export type SwarmUsageEvent = {
   usage: Usage
   /** Dollars the runtime itself reported for the run (Claude Code's `total_cost_usd`); preferred over the pricing table. */
   costUsd?: number
+  /** The run spent what its runtime never reported (a codex run cut short): its usage is not zero, it is unknown. */
+  unmeasured?: true
   startedAt: number
 }
 
@@ -135,8 +137,9 @@ export function priced(byModel: Readonly<Record<string, Usage>>, pricing?: Prici
  * One run's dollars: what its runtime reported, else the table's price (0
  * for a run that spent nothing), else undefined.
  */
-export function runUsd(run: { costUsd?: number; model?: string; usage: Usage }, pricing?: Pricing): number | undefined {
+export function runUsd(run: { costUsd?: number; model?: string; usage: Usage; unmeasured?: true }, pricing?: Pricing): number | undefined {
   if (run.costUsd !== undefined) return run.costUsd
+  if (run.unmeasured === true) return undefined
   if (tokensOf(run.usage) === 0) return 0
   const usd = priced({ [run.model ?? 'unknown']: run.usage }, pricing)
   return typeof usd === 'number' ? usd : undefined

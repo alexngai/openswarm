@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
  * A stand-in for the `claude` CLI in headless mode (`-p --output-format
- * stream-json --verbose`), for keyless claude-code member tests (docs/05 R1).
- * It reads the prompt on stdin and streams what the real CLI does: a
+ * stream-json --verbose --input-format stream-json`), for keyless claude-code
+ * member tests (docs/05 R1, R2). It reads user messages as JSON lines on stdin
+ * (the first is the prompt) and streams what the real CLI does: a
  * `system/init` message, assistant messages carrying usage, and a final
  * `result` with usage and `total_cost_usd`. The prompt picks the behaviour:
  *
@@ -15,17 +16,21 @@
  *                   that has no trailing newline
  *   FAKE_CRASH      stream an assistant message, then exit 2 without a result
  *   FAKE_LINGER     succeed, then never exit
+ *   FAKE_STEER      wait for a second user message (a steer), then answer with it
  *   otherwise       write claude-out.txt in its cwd ("broken" the first time,
  *                   "fixed" when it is already there, as a repair finds it), then succeed
  *
- * `--version` prints a version and exits, as the run's preflight expects.
+ * Like the real CLI it stays up until stdin closes, which the adapter does
+ * once the result is in. `--version` prints a version and exits, as the
+ * run's preflight expects.
  * With FAKE_CLAUDE_LOG set, it appends one JSON line per event (a version
  * call; its start: pid, argv, cwd, prompt, and the credential-shaped or
- * launcher-route variables it inherited; the sleeps' pids; a SIGTERM) to that file.
+ * launcher-route variables it inherited; the sleeps' pids; a steer; a SIGTERM) to that file.
  */
 import { spawn } from 'node:child_process'
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { createInterface } from 'node:readline'
 
 const log = (entry) => process.env.FAKE_CLAUDE_LOG && appendFileSync(process.env.FAKE_CLAUDE_LOG, `${JSON.stringify(entry)}\n`)
 const emit = (msg) => process.stdout.write(`${JSON.stringify(msg)}\n`)
@@ -36,7 +41,17 @@ if (argv.includes('--version')) {
   process.stdout.write('0.0.0-fake (Claude Code)\n')
   process.exit(0)
 }
-const prompt = readFileSync(0, 'utf8')
+// User messages, one JSON line each; the first is the prompt.
+const lines = createInterface({ input: process.stdin })
+const queue = []
+let waiting
+lines.on('line', (line) => (waiting === undefined ? queue.push(line) : (waiting(line), (waiting = undefined))))
+const nextLine = () => (queue.length > 0 ? Promise.resolve(queue.shift()) : new Promise((resolve) => (waiting = resolve)))
+const textOf = (line) => {
+  const content = JSON.parse(line).message.content
+  return typeof content === 'string' ? content : content.map((block) => block.text ?? '').join('')
+}
+const prompt = textOf(await nextLine())
 const at = argv.indexOf('--model')
 const model = at === -1 ? 'claude-fake-1' : argv[at + 1]
 const session_id = `fake-${process.pid}`
@@ -65,11 +80,16 @@ if (prompt.includes('FAKE_HANG')) {
   emit({ type: 'result', subtype: 'error_max_turns', is_error: true, num_turns: 3, session_id, total_cost_usd: 0.01, usage: USAGE })
 } else if (prompt.includes('FAKE_GARBAGE')) {
   process.stdout.write('not json at all\n{"type": "assistant", "message": {"id": "msg_1", "usa\nnull\n42\n{"type":"mystery"}\n\n')
-  process.stdout.write(JSON.stringify(success('survived', USAGE)))
+  // No trailing newline: the adapter sees it only once the CLI exits, so it exits.
+  process.stdout.write(JSON.stringify(success('survived', USAGE)), () => process.exit(0))
 } else if (prompt.includes('FAKE_CRASH')) {
   emit({ type: 'assistant', session_id, message: { id: 'msg_1', model, role: 'assistant', content: [{ type: 'text', text: 'about to' }], usage: { input_tokens: 9, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } })
-  process.stderr.write('fake: segfault\n')
-  process.exitCode = 2
+  process.stderr.write('fake: segfault\n', () => process.exit(2))
+} else if (prompt.includes('FAKE_STEER')) {
+  emit({ type: 'assistant', session_id, message: { id: 'msg_1', model, role: 'assistant', content: [{ type: 'text', text: 'working' }], usage: USAGE } })
+  const steer = textOf(await nextLine())
+  log({ event: 'steer', text: steer })
+  emit(success(`heard: ${steer}`, USAGE))
 } else if (prompt.includes('FAKE_LINGER')) {
   emit(success('done, lingering', USAGE))
   setInterval(() => {}, 1_000)

@@ -19,7 +19,7 @@ import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
 import { cliEnv, runCli } from './cli-runtime'
-import type { RecordUsage, Usage, UsageRole } from './metrics'
+import { emptyUsage, type RecordUsage, type Usage, type UsageRole } from './metrics'
 import type { CodexSandbox, MemberRunResult, MemberSpec } from './types'
 
 /** The CLI a codex member runs: the configured one, else `OPENSWARM_CODEX_BIN`, else `codex` on PATH. */
@@ -57,8 +57,9 @@ const codexUsage = (u: any, calls: number): Usage => {
  * One codex member run in `cwd`. Never rejects: a CLI that cannot start,
  * fails its turn, exits without finishing it or runs past its timeout settles
  * as `error` with a diagnostic as its text; a signal already aborted settles
- * `aborted` without starting it. Its usage is journaled however it ends (none
- * when the turn never completed: Codex reports usage only then).
+ * `aborted` without starting it. Its usage is journaled however it ends:
+ * Codex reports it only when the turn completes, so a run cut short is
+ * journaled as unmeasured.
  */
 export async function runCodex(
   member: MemberSpec,
@@ -100,6 +101,8 @@ export async function runCodex(
   let said = ''
   let usage: any
   let failure: string | undefined
+  /** The last `error` event: not fatal by itself (reconnect warnings send one), only the diagnostic if the turn fails. */
+  let warning: string | undefined
   let turns = 0
   const { exit, stderr, spawnError, aborted, timedOut } = await runCli({
     command,
@@ -127,14 +130,14 @@ export async function runCodex(
       } else if (event?.type === 'turn.failed') {
         failure = String(event.error?.message ?? 'turn failed')
         done()
-      } else if (event?.type === 'error' && failure === undefined) failure = String(event.message ?? 'error')
+      } else if (event?.type === 'error') warning = String(event.message ?? 'error')
     },
   })
 
   let stopReason: MemberRunResult['stopReason']
   let output = said
   if (aborted) stopReason = 'aborted'
-  else if (usage !== undefined && failure === undefined) stopReason = 'completed'
+  else if (usage !== undefined) stopReason = 'completed'
   else {
     stopReason = 'error'
     const why =
@@ -145,12 +148,15 @@ export async function runCodex(
           : timedOut
             ? `timed out after ${timeoutMs}ms before its turn ended`
             : `exited (${exit}) before its turn ended`
-    const detail = [said, stderr.trim()].filter((s) => s !== '')
+    const detail = [said, ...(warning === undefined || warning === failure ? [] : [warning]), stderr.trim()].filter((s) => s !== '')
     output = `codex ${why}${detail.length === 0 ? '' : `\n${detail.join('\n')}`}`
   }
 
   const runId = threadId ?? `codex-${randomUUID().slice(0, 8)}`
-  if (usage !== undefined) {
+  // A run that started but never completed its turn spent what Codex never
+  // reported: journaled as unmeasured, so metrics count it as unreported and a
+  // dollar budget treats it as unpriced, rather than as a free run.
+  if (usage !== undefined || threadId !== undefined) {
     await options
       .usage?.({
         member: member.name,
@@ -161,7 +167,8 @@ export async function runCodex(
         // The model asked for; Codex's stream does not name the one it used.
         ...(model === undefined ? {} : { model }),
         runId,
-        usage: codexUsage(usage, turns),
+        usage: usage === undefined ? emptyUsage() : codexUsage(usage, turns),
+        ...(usage === undefined ? { unmeasured: true as const } : {}),
         startedAt,
       })
       // The member's own result stands; a journal that cannot append fails the run's record anyway.

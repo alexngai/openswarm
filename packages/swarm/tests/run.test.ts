@@ -217,13 +217,15 @@ it('steer reaches an in-process messaging peer as its next turn, journaled', asy
   )
 })
 
-it('steer refuses a run with no addressable members', async () => {
+it("steer reaches a one-shot team's members from the start, and refuses a name outside the team", async () => {
   h = await bootHarness({ sequence: ['success'], repeatLast: true, successText: 'done' })
   const run = await h.swarm.start(
     { topology: 'fanout', members: [{ name: 'a' }], tasks: [{ member: 'a', prompt: 'go' }] },
     { parent: h.lead.agent },
   )
-  await expect(run.steer('a', 'hi')).rejects.toThrow(`run ${run.id} (fanout) has no addressable members`)
+  await expect(run.steer('b', 'hi')).rejects.toThrow(`run ${run.id} has no member "b"`)
+  // No turn of its takes it mid-run, so it waits for the member's next run.
+  expect(await run.steer('a', 'hi')).toBe('enqueue')
   await run.result
-  expect(run.journal.events.some((e) => e.type === 'swarm/steer')).toBe(false)
+  expect(run.journal.events.filter((e) => e.type === 'swarm/steer').map((e) => (e.data as any).delivery)).toEqual(['enqueue'])
 })

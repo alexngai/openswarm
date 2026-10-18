@@ -140,7 +140,7 @@ it('a mixed roster of a dsh member and a claude-code member lands both tasks thr
   // The fake reports its cwd resolved; the worktree is gone once the train lands it.
   expect(first.cwd.startsWith(join(realpathSync(repo), '.swarm', 'worktrees'))).toBe(true)
   expect(repair.cwd).toBe(first.cwd)
-  expect(first.argv).toEqual(['-p', '--output-format', 'stream-json', '--verbose', '--no-session-persistence', '--permission-mode', 'acceptEdits', '--setting-sources', 'project,local'])
+  expect(first.argv).toEqual(['-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose', '--no-session-persistence', '--permission-mode', 'acceptEdits', '--setting-sources', 'project,local'])
   expect(first.prompt).toMatch(/^You are the Claude Code member\.\n\n/)
   expect(first.prompt).toContain('ship both parts')
   expect(first.prompt).toContain('write your part')

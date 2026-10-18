@@ -76,8 +76,13 @@ export async function runCli(options: {
   args: string[]
   cwd: string
   env: Record<string, string>
-  /** Written to stdin, which is then closed. */
+  /** Written to stdin, which is then closed, unless `hold`. */
   input: string
+  /**
+   * Keep stdin open after `input`: `onInput` gets a writer for more of it and
+   * the means to close it, which the caller must, as the CLI runs until then.
+   */
+  hold?: { onInput: (input: { write: (text: string) => boolean; end: () => void }) => void }
   interrupt: NodeJS.Signals
   signal?: AbortSignal | undefined
   timeoutMs?: number | undefined
@@ -131,7 +136,14 @@ export async function runCli(options: {
   child.stderr.setEncoding('utf8').on('data', (chunk: string) => void (run.stderr = (run.stderr + chunk).slice(-4_000)))
   // A CLI that exits before reading its prompt closes the pipe under us.
   child.stdin.on('error', () => undefined)
-  child.stdin.end(options.input)
+  if (options.hold === undefined) child.stdin.end(options.input)
+  else {
+    child.stdin.write(options.input)
+    options.hold.onInput({
+      write: (text) => child.stdin.writable && child.stdin.write(text),
+      end: () => void (child.stdin.writable && child.stdin.end()),
+    })
+  }
   run.exit = await new Promise<string>((resolve) => {
     child.once('error', (error) => {
       run.spawnError = error

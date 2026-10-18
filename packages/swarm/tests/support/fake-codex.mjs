@@ -11,6 +11,7 @@
  *                SIGINT ends it without a final event, as Codex's does
  *   FAKE_FAIL    report `error` and `turn.failed`, exit 1
  *   FAKE_CRASH   start a turn, then exit 2 without ending it
+ *   FAKE_WARN    send a non-fatal `error` (a reconnect), then complete as usual
  *   otherwise    write codex-out.txt in its cwd, then complete
  *
  * `--version` prints a version and exits. With FAKE_CODEX_LOG set, it appends
@@ -58,6 +59,7 @@ if (prompt.includes('FAKE_HANG')) {
   process.stderr.write('codex: panicked\n')
   process.exit(2)
 } else {
+  if (prompt.includes('FAKE_WARN')) emit({ type: 'error', message: 'stream disconnected; retrying (1/5)' })
   writeFileSync(join(cwd, 'codex-out.txt'), 'done\n')
   emit({ type: 'item.completed', item: { id: 'item_0', type: 'command_execution', command: 'echo done > codex-out.txt', aggregated_output: '', exit_code: 0, status: 'completed' } })
   emit({ type: 'item.completed', item: { id: 'item_1', type: 'agent_message', text: 'first thought' } })

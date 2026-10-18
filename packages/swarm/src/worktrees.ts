@@ -299,6 +299,8 @@ export class WorktreeRun {
     private readonly onUsage?: RecordUsage,
     /** Before each member run starts: the run's budget check (docs/05 C5), which throws to refuse it. */
     private readonly admit?: (taskKey?: string) => Promise<void>,
+    /** A member's steering slot, for a runtime that takes a message mid-turn (claude-code). */
+    private readonly steerable?: (member: string) => (deliver: ((text: string) => boolean) | undefined) => void,
   ) {
     this.slots = new Slots(options.maxConcurrent ?? 8)
     this.git = new SwarmGit({
@@ -358,6 +360,7 @@ export class WorktreeRun {
         permissionMode: cfg.claudePermissionMode,
         settingSources: cfg.claudeSettingSources,
         timeoutMs: cfg.claudeTimeoutMs,
+        live: this.steerable?.(member.name),
         usage: this.onUsage,
         taskKey,
         role,

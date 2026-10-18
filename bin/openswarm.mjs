@@ -214,7 +214,7 @@ Control (runs under <home>/runs; start/steer/answer/kill need \`openswarm serve\
                                               takes over a run whose process died
   openswarm start <"task" | spec.json> [--workers N] [--provider P] [--model M]
                   [--question-timeout MS]     start a run (a task gets /swarm's team)
-  openswarm steer <run> --to <member> "text"  message a messaging peer-team member
+  openswarm steer <run> --to <member> "text"  message a member: into its open turn, or its next run
   openswarm answer <run> <question> <choice>  answer an open question
   openswarm kill <run>                        cancel a run
   openswarm tasks sync <run> [--watch] [--socket <path>]
