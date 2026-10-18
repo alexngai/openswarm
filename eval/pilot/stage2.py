@@ -42,6 +42,7 @@ PREFIX = os.environ.get("STAGE2_PREFIX", "stage2")
 STATE = Path(f".eval-runs/{PREFIX}-state.json")
 LOG = Path(f".eval-runs/{PREFIX}.log")
 lock = threading.Lock()
+Path(".eval-runs").mkdir(exist_ok=True)
 
 
 def log(line: str) -> None:
