@@ -1,0 +1,56 @@
+{
+  "workers": 2,
+  "threads": [
+    {
+      "id": "t0",
+      "default": true,
+      "paths": [
+        "falcon/__init__.py",
+        "falcon/constants.py",
+        "falcon/errors.py",
+        "falcon/util/__init__.py",
+        "falcon/stream.py",
+        "falcon/request_helpers.py",
+        "falcon/api.py",
+        "falcon/request.py",
+        "falcon/media/__init__.py",
+        "falcon/media/base.py",
+        "falcon/media/handlers.py"
+      ],
+      "assignment": "Shared contracts and hub files only. Make App (the WSGI application class, renamed from API, which keeps working), the sync/async utilities, BoundedStream and CORSMiddleware importable from falcon/__init__.py (the utilities through falcon/util/__init__.py; BoundedStream also from falcon.stream, moved out of falcon/request_helpers.py where it lives today), and add ASGI_SUPPORTED to falcon/constants.py; add every new error class to falcon/errors.py so falcon exports it: CompatibilityError, UnsupportedScopeError, UnsupportedError, WebSocketDisconnected, WebSocketPathNotFound (close code 3404), WebSocketHandlerNotFound, WebSocketServerError, MediaNotFoundError, MediaMalformedError and HTTPRouteNotFound; add serialize_async and deserialize_async defaults to BaseHandler in falcon/media/base.py; export MultipartFormHandler and URLEncodedFormHandler from falcon/media/__init__.py and register both, alongside JSON, in the default handler map in falcon/media/handlers.py. Pin the modules other threads implement with stubs carrying the roadmap's exact signatures: falcon/util/sync.py (t1), falcon/media/multipart.py and falcon/media/urlencoded.py (t2), falcon/middleware.py (t3). falcon/api.py and falcon/request.py are shared by several targets, so this thread makes every roadmap change to them and no other thread edits them: the App rename (Target 1), the cors_enable option that prepends a CORSMiddleware (Target 4), raising HTTPRouteNotFound when no route, sink or static route matches (Target 6), and get_media() on Request with default_when_empty, dispatching on Content-Type while req.media keeps working (Targets 3 and 6). Nothing else."
+    },
+    {
+      "id": "t1",
+      "blockedBy": ["t0"],
+      "paths": [
+        "falcon/asgi/",
+        "falcon/util/sync.py",
+        "falcon/testing/",
+        "falcon/routing/",
+        "falcon/responders.py",
+        "falcon/hooks.py",
+        "falcon/api_helpers.py",
+        "falcon/response.py"
+      ],
+      "assignment": "Target 1 (ASGI HTTP Support) and Target 2 (ASGI WebSocket and Server-Sent Events): build the falcon.asgi package under falcon/asgi (App handling the http, lifespan and websocket scopes; Request with an async get_media(); Response with text, data, media, stream, set_stream() and sse; BoundedStream, SSEvent, WebSocket and WebSocketOptions; all exported from falcon/asgi/__init__.py); implement the sync/async bridge in falcon/util/sync.py over t0's stubs; extend falcon/testing with ASGIConductor (including simulate_ws), TestClient's ASGI support with default-header merging, ASGI results with the WSGI Result surface, create_scope, create_scope_ws, ASGIRequestEventEmitter, ASGIResponseEventCollector, ASGILifespanEventEmitter, ASGIWebSocketSimulator and SimpleTestResourceAsync; require coroutine responders on ASGI resources, reject them on the WSGI App, and map on_websocket responders in falcon/routing; adapt the default responders (falcon/responders.py), hooks (falcon/hooks.py), middleware preparation (falcon/api_helpers.py) and falcon/response.py (the text attribute) for async apps. The App class in falcon/api.py, the error classes, the falcon/__init__.py exports, BaseHandler's async methods and falcon/request.py belong to t0."
+    },
+    {
+      "id": "t2",
+      "blockedBy": ["t0"],
+      "paths": [
+        "falcon/media/"
+      ],
+      "assignment": "Target 3 (Multipart Form Data Handler) and Target 6 (URL-Encoded Form Handler and New Error Types): implement MultipartFormHandler, BodyPart, MultipartParseError and MultipartParseOptions in falcon/media/multipart.py, and URLEncodedFormHandler with its sync and async serialize/deserialize in falcon/media/urlencoded.py; make the existing JSON and MessagePack handlers raise MediaMalformedError on unparseable bodies (and MediaNotFoundError where they cannot deserialize an empty body) in falcon/media/json.py and falcon/media/msgpack.py. Work under falcon/media; falcon/media/__init__.py, BaseHandler, the default handler map in falcon/media/handlers.py, the error classes, get_media() on falcon/request.py and the HTTPRouteNotFound dispatch belong to t0."
+    },
+    {
+      "id": "t3",
+      "blockedBy": ["t0"],
+      "paths": [
+        "falcon/middleware.py",
+        "falcon/inspect.py",
+        "falcon/cmd/"
+      ],
+      "assignment": "Target 4 (CORS Middleware) and Target 5 (Application Inspection): implement CORSMiddleware (allow_origins, expose_headers, allow_credentials, process_response with preflight handling, process_response_async) in falcon/middleware.py over t0's stub; implement falcon/inspect.py with inspect_app, inspect_routes, inspect_static_routes, inspect_sinks, inspect_error_handlers, inspect_middleware, the info classes, StringVisitor and register_router (with CompiledRouter registered), for both WSGI and ASGI apps; any CLI tooling over it goes under falcon/cmd. The cors_enable App option and the falcon export of CORSMiddleware belong to t0."
+    }
+  ]
+}
