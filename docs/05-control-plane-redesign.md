@@ -1267,6 +1267,35 @@ and the runtimes (R3), and drops cross-swarm task handoff: D3 shrinks to
 `join`, `leave` and `card` for landing through a shared train, without
 `offer`; exit criteria 1 and 4 below are revised to match.
 
+**Phase D as re-scoped: the plan (2026-10-17).** Goal: swarms on different
+hosts land their work through one train into one target, and a run outlives
+its host. Throughput and durability, not coordination inside a task (D18).
+Built in this order:
+
+| # | Work item |
+|---|---|
+| D2 | **Standalone train.** `openswarm train serve --target <branch> --check <cmd>… [--remote <name>]`: one process per target branch, in its own checkout, owning the target. An entry is a branch on the shared remote (or the local repository on one host), enqueued with `train/enqueue {branch, task?, blockedBy?}`; the landing loop is B2's (speculate, verify once, fast-forward, bisect) and the target is pushed after each landing with compare-and-set. No agent steps: an entry that fails or conflicts is ejected to its enqueuer with the reason, its branch kept, since repairs belong to the swarm whose member wrote it. The train keeps its own journal and resumes queued entries after a restart. A run lands through it with `worktrees.train: { url, token }`: it pushes each task branch, enqueues it, and follows `train/events` for its entries' outcomes |
+| D3 | **Join, leave, card.** `openswarm train invite --name <swarm>` mints a token for a new principal, `foreign`, which may call only `train/*` for its own entries and `train/card`; `train/join` binds the connection and returns the card (A2A-shaped: name, target, checks, URL); `train/leave` withdraws its queued entries. A foreign principal reaches no run method (default-deny, §5.3) |
+| D1 | **Durable runs across hosts.** A run with `durable: { remote }` mirrors its journal to `refs/swarm/<runId>` on the remote (a commit per append batch, pushed with compare-and-set, D8) and pushes each task branch as its task completes. `openswarm attach <run> --remote <name>` on another host fetches it and takes it over with compare-and-set, so of two takers one wins and the old writer, whose next push fails, stops (fencing); `openswarm resume <run>` then lands what had completed, from its pushed branches, and re-runs what had not, from the journaled spec |
+| D4 | **GitHub merge-queue adapter.** `worktrees.land: 'github'`: each task branch is pushed, opened as a pull request with its landing evidence as the body, and handed to the repository's merge queue through `gh`; outcomes are journaled as landings |
+| R3 | `attach` and `a2a` runtimes: after D4, or dropped if nothing asks for them |
+
+**Exit criteria (revised).**
+1. *(D2, D3, keyless)* Two runs in two processes, each in its own clone of
+   one bare remote (two hosts in all but the machine), join one train with
+   their own tokens and land their tasks through it into one target; the
+   target passes the train's checks after every landing, and a pair that
+   conflicts is ejected, never merged broken.
+2. *(D1, keyless)* A run whose process is killed mid-run is taken over from
+   another clone: a second taker is refused, the old writer is fenced, the
+   tasks that had completed land and those that had not are run, and the
+   journal shows no task lost or duplicated. A contention test: concurrent
+   compare-and-set pushes to one ref, exactly one winner per round.
+3. *(D3, keyless)* A foreign principal is refused every run method and sees
+   only its own entries; a revoked token is refused.
+4. *(D4)* Keyless against a fake `gh`; live only on a repository the owner
+   names, on their say-so.
+
 **Goal.** G3, cross-host G6, and the rest of G7.
 
 | # | Work item |
