@@ -165,11 +165,16 @@ def screen(candidates: list[str], cap: float) -> None:
     budget = Budget(cap)
     results = state["screen"]
     running: dict[str, threading.Thread] = {}
-    # Rewards recorded before they were read from reward.json, read again.
+    # Rewards recorded before they were read from reward.json, read again; a
+    # cell that never ran (an infrastructure failure) runs again.
     for task, rec in results.items():
         for key in ("s1", "s2"):
             if key in rec and (fresh := record(f"{PREFIX}-onethread8-{task}-{key}")) is not None:
                 rec[key] = fresh
+            elif key in rec and rec[key].get("reward") is None:
+                del rec[key]
+        if rec.get("verdict") == "cell failed":
+            del rec["verdict"]
     save(state)
 
     def qualified() -> list[str]:

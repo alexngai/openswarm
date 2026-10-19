@@ -133,7 +133,10 @@ function loadTask(name) {
   const image = /docker_image\s*=\s*"([^"]+)"/.exec(readFileSync(join(dir, "task.toml"), "utf8"))?.[1];
   const testSh = readFileSync(join(dir, "tests/test.sh"), "utf8");
   const weights = /weights\s*=\s*\[([^\]]+)\]/.exec(testSh)?.[1].split(",").map(Number);
-  if (!image || !weights?.length || weights.some(Number.isNaN)) throw new Error(`${name}: cannot read image or weights`);
+  if (!image) throw new Error(`${name}: cannot read the image`);
+  // A test.sh without a weights list (some stage-2 tasks) is graded by its reward.json alone,
+  // as docs/07 §7.6 grades every task; one checkpoint stands in for the phases.
+  const phases = weights?.length && !weights.some(Number.isNaN) ? weights : null;
 
   const files = [{ path: "/opt/pilot/openswarm.mjs", content: ENTRY }];
   if (SEARCH) for (const f of ["gate.mjs", `${BIN}.mjs`]) files.push({ path: `/opt/pilot/${f}`, content: readFileSync(join(HERE, f), "utf8") });
@@ -166,7 +169,10 @@ function loadTask(name) {
       { id: "verifier", weight: 0, check: { type: "cmd", writeFiles: seedDir(join(dir, "tests"), "/tests"), cmd:
         "mkdir -p /logs/verifier && bash /tests/test.sh > /logs/verifier/stdout.txt 2>&1; " +
         `for f in reward.json stdout.txt; do cp /logs/verifier/$f /verifier-out/${name}.$HOSTNAME.$f 2>/dev/null; done; true` } },
-      ...weights.map((w, i) => ({ id: `phase-${i + 1}`, weight: w, check: { type: "cmd", cmd: phasePassed(i + 1) } })),
+      ...(phases
+        ? phases.map((w, i) => ({ id: `phase-${i + 1}`, weight: w, check: { type: "cmd", cmd: phasePassed(i + 1) } }))
+        : [{ id: "reward", weight: 1, check: { type: "cmd", cmd:
+            `/opt/node/bin/node -e "process.exit(JSON.parse(require('fs').readFileSync('/logs/verifier/reward.json','utf8')).reward === 1 ? 0 : 1)"` } }]),
       // Weight 0 and last, after the graded checks: the counterfactual queue on the same branches.
       // It swaps /app to the queue's tree for its own test.sh run and restores it; another arm's cell is a no-op.
       ...(landtrain ? [{ id: "landing", weight: 0, check: { type: "cmd", cmd:
