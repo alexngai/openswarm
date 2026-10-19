@@ -622,6 +622,19 @@ up to four tasks at once, none started once the qualified and the running
 could make 8. The screen stops at $2,000, leaving the rest for the arms;
 the arms run seed 1 alone first, for the futility check.
 
+*Screen result (2026-10-19), $1,435:* of the 33, 31 had a reference that
+scores 1.0 in 3 of 3 (opt-3.0.0's own test runner fails in its image;
+pyg-1.6.3's tests are flaky, 0.89 once); 5 qualify, in order fal-3.0.0
+(mean 0.30), mko-5.0.0 (0.39), pyg-2.0.0 (0.45), spc-3.1.0 (0.39) and
+spc-3.3.0 (0.44); the other 26 are above 0.45, 9 of them at 1.0 on seed 1.
+With fal-1.3.0, mko-6.5.0 and spc-3.2.0 from the frozen 12, eight tasks,
+above the six that would have stopped it. Every reward is test.sh's own
+reward.json: the runner's phase parser, which counts a phase passed or
+failed, read 0 for mko-6.0.0's 0.78 and 0.84 (its test.sh gives partial
+credit within a phase), which would have qualified it wrongly; the other
+cells agree. The arms run fresh cells, never a screened task's screen cells
+(which selected it for scoring low).
+
 ## 8. What AgentRoom, Co-Coder and STORM do, and what OpenSwarm takes from them
 
 Read from the three papers directly (2026-09-27) [P arxiv 2606.00953,

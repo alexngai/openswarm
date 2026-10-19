@@ -119,12 +119,14 @@ def live_runner(run_id: str) -> bool:
     return False
 
 
-def cell(task: str, arm: str, seed: int) -> dict | None:
+def cell(task: str, arm: str, seed: int, phase: str = "") -> dict | None:
     """One runner cell; its record (reward, cost), or None when it failed to run.
 
     A cell already graded is read, and one still running (from before a
     restart) is waited for, never run twice."""
-    run_id = f"{PREFIX}-{arm}-{task}-s{seed}"
+    # The arms' cells are their own: a screened task's (f8) screen cells, which
+    # selected it for scoring low, are never reused as its (f8) arm.
+    run_id = f"{PREFIX}-{phase}{arm}-{task}-s{seed}"
     while live_runner(run_id):
         time.sleep(30)
     if next(cells(run_id), None) is None:
@@ -254,14 +256,14 @@ def arms(frozen: list[str], cap: float, seeds: list[int]) -> None:
 
         def work(task: str, arm: str, seed: int = seed) -> None:
             try:
-                results[f"{arm}-{task}-s{seed}"] = cell(task, arm, seed) or {"reward": None}
+                results[f"{arm}-{task}-s{seed}"] = cell(task, arm, seed, "arms-") or {"reward": None}
             finally:
                 budget.done()
             save(state)
             log(f"{arm} {task} seed {seed}: {results[f'{arm}-{task}-s{seed}']} (spent ${spend():.2f})")
 
         for task, arm in jobs:
-            while len([th for th in running if th.is_alive()]) >= 4:
+            while len([th for th in running if th.is_alive()]) >= int(os.environ.get("STAGE2_ARM_CELLS", 6)):
                 time.sleep(30)
             if not budget.admit():
                 stopped = True
