@@ -249,6 +249,18 @@ def arms(frozen: list[str], cap: float, seeds: list[int]) -> None:
     state = load()
     budget = Budget(cap)
     results = state["arms"]
+
+    def refresh() -> None:
+        # A cell that finished outside this process (a restart while it ran) is read from its cache.
+        for task in frozen:
+            for arm in ("onethread8", "onethread16", "divprogram"):
+                for seed in (1, 2, 3):
+                    key = f"{arm}-{task}-s{seed}"
+                    if results.get(key, {}).get("reward") is None and (rec := record(f"{PREFIX}-arms-{key}")) is not None:
+                        results[key] = rec
+        save(state)
+
+    refresh()
     for seed in seeds:
         jobs = [(t, a) for t in frozen for a in ("onethread8", "onethread16", "divprogram") if f"{a}-{t}-s{seed}" not in results]
         running: list[threading.Thread] = []
@@ -277,6 +289,10 @@ def arms(frozen: list[str], cap: float, seeds: list[int]) -> None:
             log(f"arms stopped at the cap during seed {seed}; spent ${spend():.2f}")
             return
         log(f"seed {seed} done; spent ${spend():.2f}")
+    while any(live_runner(f"{PREFIX}-arms-{a}-{t}-s{k}") for t in frozen for a in ("onethread8", "onethread16", "divprogram") for k in (1, 2, 3)):
+        time.sleep(60)
+    refresh()
+    log(f"arms done for seeds {seeds}; spent ${spend():.2f}")
 
 
 if __name__ == "__main__":
