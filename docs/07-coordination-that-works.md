@@ -635,6 +635,15 @@ credit within a phase), which would have qualified it wrongly; the other
 cells agree. The arms run fresh cells, never a screened task's screen cells
 (which selected it for scoring low).
 
+*Grading timeout (2026-10-19, during seed 1 of the arms).* The runner
+enforces no verifier timeout, and two (f) cells on fal-3.0.0 hung in grading
+for over an hour: the first held-out test file never returned on the
+agent's code. `eval/pilot/grade-watchdog.sh` now kills any test process
+under `/tests/test.sh` older than the task's own verifier timeout (1800 s),
+in every arm: that phase fails and test.sh goes on, so a cell keeps the
+credit of its other phases rather than none. The agent's own test runs are
+not touched. Those two were the first it killed; every kill is logged.
+
 ## 8. What AgentRoom, Co-Coder and STORM do, and what OpenSwarm takes from them
 
 Read from the three papers directly (2026-09-27) [P arxiv 2606.00953,
