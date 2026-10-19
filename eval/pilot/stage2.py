@@ -261,34 +261,30 @@ def arms(frozen: list[str], cap: float, seeds: list[int]) -> None:
         save(state)
 
     refresh()
-    for seed in seeds:
-        jobs = [(t, a) for t in frozen for a in ("onethread8", "onethread16", "divprogram") if f"{a}-{t}-s{seed}" not in results]
-        running: list[threading.Thread] = []
-        stopped = False
+    # One queue across the seeds given: a slot a long task's seed holds no other
+    # seed waits for (seed 1 alone came first, for the futility check).
+    jobs = [(t, a, k) for k in seeds for t in frozen for a in ("onethread8", "onethread16", "divprogram") if results.get(f"{a}-{t}-s{k}", {}).get("reward") is None]
+    running: list[threading.Thread] = []
 
-        def work(task: str, arm: str, seed: int = seed) -> None:
-            try:
-                results[f"{arm}-{task}-s{seed}"] = cell(task, arm, seed, "arms-") or {"reward": None}
-            finally:
-                budget.done()
-            save(state)
-            log(f"{arm} {task} seed {seed}: {results[f'{arm}-{task}-s{seed}']} (spent ${spend():.2f})")
+    def work(task: str, arm: str, seed: int) -> None:
+        try:
+            results[f"{arm}-{task}-s{seed}"] = cell(task, arm, seed, "arms-") or {"reward": None}
+        finally:
+            budget.done()
+        save(state)
+        log(f"{arm} {task} seed {seed}: {results[f'{arm}-{task}-s{seed}']} (spent ${spend():.2f})")
 
-        for task, arm in jobs:
-            while len([th for th in running if th.is_alive()]) >= int(os.environ.get("STAGE2_ARM_CELLS", 6)):
-                time.sleep(30)
-            if not budget.admit():
-                stopped = True
-                break
-            th = threading.Thread(target=work, args=(task, arm))
-            th.start()
-            running.append(th)
-        for th in running:
-            th.join()
-        if stopped:
-            log(f"arms stopped at the cap during seed {seed}; spent ${spend():.2f}")
-            return
-        log(f"seed {seed} done; spent ${spend():.2f}")
+    for task, arm, seed in jobs:
+        while len([th for th in running if th.is_alive()]) >= int(os.environ.get("STAGE2_ARM_CELLS", 6)):
+            time.sleep(30)
+        if not budget.admit():
+            log(f"arms stopped at the cap before {arm} {task} seed {seed}; spent ${spend():.2f}")
+            break
+        th = threading.Thread(target=work, args=(task, arm, seed))
+        th.start()
+        running.append(th)
+    for th in running:
+        th.join()
     while any(live_runner(f"{PREFIX}-arms-{a}-{t}-s{k}") for t in frozen for a in ("onethread8", "onethread16", "divprogram") for k in (1, 2, 3)):
         time.sleep(60)
     refresh()
