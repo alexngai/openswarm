@@ -17,8 +17,11 @@ for p in /proc/[0-9]*; do
     tr "\0" " " < /proc/$q/cmdline 2>/dev/null | grep -q "/tests/test.sh" && { under=1; break; }
   done
   [ $under = 1 ] || continue
-  read -r -a st < $p/stat 2>/dev/null || continue
-  age=$(( now - ${st[21]} / hz ))
+  # Fields after the command name, which is in parentheses and may hold spaces
+  # (jest is "npm exec jest t"): split there, or every later field shifts.
+  line=$(cat $p/stat 2>/dev/null) || continue
+  read -r -a st <<< "${line##*) }"
+  age=$(( now - ${st[19]} / hz ))
   if [ $age -gt '"$LIMIT"' ]; then kill -9 $pid && echo "killed pid $pid age ${age}s: ${cmd:0:120}"; fi
 done'
 once() {

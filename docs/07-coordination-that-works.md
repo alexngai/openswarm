@@ -643,6 +643,13 @@ under `/tests/test.sh` older than the task's own verifier timeout (1800 s),
 in every arm: that phase fails and test.sh goes on, so a cell keeps the
 credit of its other phases rather than none. The agent's own test runs are
 not touched. Those two were the first it killed; every kill is logged.
+Its third kill was wrong: it read a process's age from `/proc/<pid>/stat`
+split on spaces, and jest's command name ("npm exec jest t") holds spaces,
+so a live jest run read as 25 hours old and was killed, failing a phase of
+mko-5.0.0's (f8) seed 3 (0.21 against 0.43 on seeds 1 and 2). The parse is
+fixed (fields are split after the command name), that cell is voided and run
+again, and its spend still counts; the two earlier kills were of `python`,
+whose ages were right.
 
 ## 8. What AgentRoom, Co-Coder and STORM do, and what OpenSwarm takes from them
 
