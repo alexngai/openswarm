@@ -1785,6 +1785,15 @@ tasks beyond one agent's horizon (docs/07 §7's stage 2: hard or large
 tasks, budget-matched, three seeds) shows division beating a matched single
 agent, or a search-shaped workload with an exact metric shows `evolve`
 beating it; either brings back the deferred items it needs.
+*Stage 2 ran (2026-10-18 to 10-19, docs/07 §7.7): inconclusive, so D18
+stands.* On eight hard tasks, three seeds, division was +0.11 over the
+single-agent cost curve, with a 95 % interval from −0.004 to +0.23 (+0.10,
+[−0.02, +0.21] with a curve that never falls); the single agent plateaued
+(16 rounds no better than 8), and division's gains were large on four tasks
+and small losses on three. Not enough to bring back C1–C4; enough to say
+where to look. A new pre-registration, if one is written, needs about 30
+hard tasks (more than RoadmapBench has), and the curve's handling of an arm
+that costs less or scores lower fixed in advance.
 
 ## 10. Still open
 

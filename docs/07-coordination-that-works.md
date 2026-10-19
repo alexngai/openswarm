@@ -550,7 +550,7 @@ Not shown, and not tested: tasks beyond one agent's horizon or context
 metric (the untested `evolve`), other models or cheap-worker mixes, and the
 wall-clock value of parallel work. docs/05 D18 records what this changes.
 
-### 7.6 Stage 2, pre-registered 2026-10-13 (not run; it runs only on the owner's say-so)
+### 7.6 Stage 2, pre-registered 2026-10-13, run 2026-10-18 to 2026-10-19
 
 D18's trigger, written down before any task is screened, so the experiment
 cannot be tuned after the fact.
@@ -650,6 +650,68 @@ mko-5.0.0's (f8) seed 3 (0.21 against 0.43 on seeds 1 and 2). The parse is
 fixed (fields are split after the command name), that cell is voided and run
 again, and its spend still counts; the two earlier kills were of `python`,
 whose ages were right.
+
+### 7.7 Stage 2 results (2026-10-19)
+
+Run as pre-registered on the eight frozen tasks, three seeds per arm, 72
+cells, gpt-5.5; $4,131 in all ($1,435 the screen, $2,696 the arms, a voided
+cell's $26 included), under the owner's $7,000 ceiling. Rewards are test.sh's
+own; cost at $5 / $0.50 / $30 per M. Per task, the mean over three seeds:
+
+| task | (f8) | $ | (f16) | $ | (e) | $ | (e) − curve |
+|---|---|---|---|---|---|---|---|
+| fal-1.3.0 | 0.44 | 17.08 | 0.44 | 12.63 | 0.67 | 15.83 | +0.22 |
+| fal-3.0.0 | 0.23 | 36.22 | 0.27 | 48.34 | 0.53 | 32.13 | +0.30 |
+| mko-5.0.0 | 0.43 | 41.17 | 0.43 | 53.84 | 0.36 | 78.50 | −0.07 |
+| mko-6.5.0 | 0.47 | 51.01 | 0.47 | 69.46 | 0.40 | 66.48 | −0.07 |
+| pyg-2.0.0 | 0.47 | 33.83 | 0.47 | 51.80 | 0.44 | 41.48 | −0.04 |
+| spc-3.1.0 | 0.44 | 29.92 | 0.26 | 33.79 | 0.63 | 32.20 | +0.30 (+0.19) |
+| spc-3.2.0 | 0.75 | 23.07 | 0.75 | 21.94 | 0.75 | 30.28 | 0.00 |
+| spc-3.3.0 | 0.58 | 25.71 | 0.58 | 15.49 | 0.83 | 27.76 | +0.25 |
+| **mean** | **0.478** | 32.25 | **0.459** | 38.41 | **0.576** | 40.58 | |
+
+**By the pre-registered rule: inconclusive.** (e) against the (f8)–(f16)
+cost curve at its spend is **+0.112, 95 % interval [−0.004, +0.232]**: above
++0.06, but the interval does not exclude 0. The rule did not foresee a
+curve that falls with spend: on spc-3.1.0, (f16) scored below (f8), so the
+line between them dips at (e)'s spend. Read with a curve that never falls
+(the best single-agent reward at or below (e)'s spend, `stage2-report.py
+--envelope`, the bracketed figure above), it is **+0.098, [−0.023,
++0.206]**: inconclusive either way. The futility stop did not fire (+0.055
+after seed 1). Under the rules, no further cells without a new
+pre-registration.
+
+What the run shows, beyond the rule:
+1. **The single agent plateaus.** (f16) averaged 0.459 against (f8)'s 0.478
+   at 19 % more spend: 16 rounds beat 8 on one task (fal-3.0.0, 0.27 against
+   0.23), lost on one (spc-3.1.0) and tied on six. More budget for one gated
+   agent buys nothing here, as in stage 1.
+2. **Division's gain, where there is one, is large; elsewhere it is a small
+   loss.** (e) leads by +0.22 to +0.30 on four tasks (both falcon, two of
+   the three spaCy), ties on one, and trails by 0.04–0.07 on three (both
+   MikroORM, pyg-2.0.0). In stage 1 its gain was +0.016. The leads are on
+   roadmaps whose targets sit in separate modules; the losses on ones whose
+   changes meet in shared core files, which the plan gives to thread 0. That
+   split is a pattern in eight tasks, not a finding.
+3. **It costs little more.** (e) averaged $40.58 a task, close to (f16)'s
+   $38.41 and 26 % over (f8); on mko-5.0.0 it cost the most of any arm
+   ($78.50) and scored lowest.
+4. **Hard tasks are rare.** Of 33 tasks that pass the file rule, 5 had a
+   gated single agent at or under 0.45; it solved 9 outright at seed 1. The
+   regime where division could matter is small on this benchmark.
+5. **Power.** Per-task gaps have a standard deviation of about 0.17, so
+   eight tasks give an interval of about ±0.12. An interval of ±0.06, enough
+   to settle a +0.10 effect, needs about 30 such tasks: more than
+   RoadmapBench's Python and TypeScript tasks hold.
+
+*Departures from the plan, all recorded above:* seed 2 skipped in the screen
+when seed 1 was over 0.90 (the verdict cannot change); every reward from
+test.sh's reward.json, not the runner's phase parser; fresh arm cells, never
+screen cells; seeds 2 and 3 started once seed 1's last cell could no longer
+change the futility check; a grading timeout at the task's own 1800 s (one
+false kill, voided and rerun). Data: `eval/pilot/results/stage2-state.json`;
+`python3 -I eval/pilot/stage2-report.py eval/pilot/results/stage2-state.json
+[--envelope]` reproduces both readings.
 
 ## 8. What AgentRoom, Co-Coder and STORM do, and what OpenSwarm takes from them
 
