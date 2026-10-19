@@ -19,13 +19,23 @@ import sys
 ARMS = {"f8": "onethread8", "f16": "onethread16", "e": "divprogram"}
 
 
+ENVELOPE = "--envelope" in sys.argv
+
+
 def curve(points: list[tuple[float, float]], spend: float) -> float:
     (c0, r0), (c1, r1) = sorted(points)
     if spend <= c0:
-        return r0
-    if spend >= c1 or c1 == c0:
-        return r1
-    return r0 + (r1 - r0) * (spend - c0) / (c1 - c0)
+        value = r0
+    elif spend >= c1 or c1 == c0:
+        value = r1
+    else:
+        value = r0 + (r1 - r0) * (spend - c0) / (c1 - c0)
+    # --envelope: the curve never falls with spend. The pre-registration assumed
+    # (f16) costs more than (f8) and does no worse; where a seed's noise breaks
+    # that, the best single-agent reward at or below (e)'s spend is the fairer bar.
+    if ENVELOPE:
+        value = max([value] + [r for c, r in points if c <= spend])
+    return value
 
 
 def mean(xs):
