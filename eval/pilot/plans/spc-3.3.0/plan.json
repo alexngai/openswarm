@@ -1,0 +1,29 @@
+{
+  "workers": 2,
+  "threads": [
+    {
+      "id": "t0",
+      "default": true,
+      "paths": ["spacy/errors.py", "setup.py", "spacy/pipeline/__init__.py"],
+      "assignment": "Shared contracts and hub files only. Add the error and warning codes the roadmap needs to spacy/errors.py: E855 (span not from the same doc) and E856 (index out of bounds) for Target 2, W117 (the spans key has no spans) for Target 3, and whatever codes the Target 1 lemmatizer and its edit-tree serialization raise (initialize finding no lemma annotations among them). Register the Cython module spacy.pipeline._edit_tree_internals.edit_trees in setup.py's MOD_NAMES and give it a stub package, spacy/pipeline/_edit_tree_internals/__init__.py and spacy/pipeline/_edit_tree_internals/edit_trees.pyx, holding the EditTrees extension type with the roadmap's exact signatures (EditTrees(strings), add, apply, tree_to_str, to_bytes, from_bytes, to_disk, from_disk, __len__) so the build compiles before t1 implements it. Export EditTreeLemmatizer from spacy/pipeline/__init__.py over a stub module under spacy/pipeline carrying the roadmap's constructor signature; t1 implements it and registers the trainable_lemmatizer factory. Nothing else."
+    },
+    {
+      "id": "t1",
+      "blockedBy": ["t0"],
+      "paths": ["spacy/pipeline/", "spacy/tests/pipeline/"],
+      "assignment": "Target 1 (Trainable Edit Tree Lemmatizer): implement the EditTrees extension type in spacy/pipeline/_edit_tree_internals/edit_trees.pyx over t0's stub (a deduplicated store of trees addressed by integer ID, match nodes built around the longest common substring and substitution nodes interned in the StringStore, identity pairs sharing one tree, apply returning None when a tree does not fit the form, the tree_to_str S-expressions, bytes and disk serialization that keeps deduplication after loading), the Pydantic node schemas in spacy.pipeline._edit_tree_internals.schemas, and the EditTreeLemmatizer component in t0's stub module under spacy/pipeline (registered as the trainable_lemmatizer factory with backoff, min_tree_freq, overwrite, top_k and the existing lemmatizer accuracy scorer in spacy/pipeline/lemmatizer.py as defaults; the public trees attribute; initialize rejecting a missing, non-callable or empty get_examples with TypeError, raising ValueError when the examples hold no lemma annotations, pruning trees seen fewer than min_tree_freq times, or taking the label set from labels as returned by label_data; top-k prediction with backoff; partial annotation from empty lemma strings; disk, bytes and pickle serialization that preserves predictions), with tests under spacy/tests/pipeline. Work under spacy/pipeline; setup.py, the spacy/pipeline/__init__.py export and the error codes belong to t0, and spacy/pipeline/spancat.py belongs to t3."
+    },
+    {
+      "id": "t2",
+      "blockedBy": ["t0"],
+      "paths": ["spacy/tokens/", "spacy/tests/doc/"],
+      "assignment": "Target 2 (SpanGroup Collection API) and Target 4 (Doc and Span Improvements): in spacy/tokens/span_group.* add __setitem__ and __delitem__ with negative indexing and the bounds and same-doc checks, _concat with its inplace mode and non-destructive attribute merge, __add__ (SpanGroup operands only, name from the left), __iadd__, an extend that also accepts a SpanGroup, and a deep copy(); in spacy/tokens/doc.* add the keyword-only exclude parameter to Doc.from_docs (\"spans\", \"user_data\", \"tensor\") with vstack concatenation of the non-empty tensors when the tensor is not excluded, and the \"spans\" key in Doc.to_json; in spacy/tokens/span.* order spans by (start_char, end_char, label, kb_id) in <, <=, > and >= while equality stays as it is; with tests under spacy/tests/doc. The E855 and E856 error codes belong to t0."
+    },
+    {
+      "id": "t3",
+      "blockedBy": ["t0"],
+      "paths": ["spacy/displacy/", "spacy/tests/test_displacy.py", "spacy/pipeline/spancat.py", "spacy/tests/pipeline/test_spancat.py", "spacy/tokenizer.", "spacy/tests/tokenizer/", "spacy/tests/serialize/test_serialize_tokenizer.py"],
+      "assignment": "Target 3 (Span Visualization) and Target 5 (Pipeline Component Enhancements): under spacy/displacy add parse_spans to spacy/displacy/__init__.py, SpanRenderer to spacy/displacy/render.py registered under \"span\" in the render factories, the span templates (outer container, per-token wrapper, underline bars and label-start bars with RTL variants) to spacy/displacy/templates.py, the (start, end) sort of entities in manual ent mode, and the DependencyRenderer.get_levels fix (separate levels for overlapping arcs with different labels, duplicate arcs deduplicated, highest_level the actual maximum); add SpanCategorizer.set_candidates to spacy/pipeline/spancat.py; add the faster_heuristics option to Tokenizer in spacy/tokenizer.* (constructor parameter defaulting to True, a settable attribute that reloads the special cases, round-tripped by to_bytes/from_bytes) and make Tokenizer.explain agree with tokenization for initial special cases; with tests in spacy/tests/test_displacy.py, spacy/tests/pipeline/test_spancat.py, spacy/tests/tokenizer and spacy/tests/serialize/test_serialize_tokenizer.py. The W117 warning code belongs to t0."
+    }
+  ]
+}
