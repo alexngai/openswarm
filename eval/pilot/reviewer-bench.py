@@ -58,6 +58,8 @@ def select() -> None:
     trees = []
     for stage, pattern in SOURCES:
         for run in sorted(glob.glob(pattern)):
+            if ".void" in run:  # a voided cell's labels are not the held-out tests' (docs/07 §7.6)
+                continue
             for c in glob.glob(f"{run}/cache/*.json"):
                 if c.endswith((".submission.json", ".trace.jsonl")):
                     continue
