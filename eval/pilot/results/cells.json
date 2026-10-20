@@ -1,0 +1,16451 @@
+[
+{
+"stage": 1,
+"run": "division",
+"task": "mko-6.5.0",
+"arm": "divprogram",
+"seed": 1,
+"usd": 66.56,
+"minutes": 123.2,
+"phase_screen": false,
+"reward": 0.6,
+"phases": [
+false,
+true,
+true,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 54.1
+},
+"t1": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 12.7
+},
+"t2": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 44.3
+},
+"t3": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 25.2
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+],
+[
+"t1",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"done"
+],
+[
+3,
+"broken"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+3
+]
+],
+[
+"t1",
+[
+1
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "division",
+"task": "opt-4.4.0",
+"arm": "divprogram",
+"seed": 1,
+"usd": 28.86,
+"minutes": 49.8,
+"phase_screen": false,
+"reward": 0.6667,
+"phases": [
+true,
+false,
+true,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 16.2
+},
+"t1": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 20.1
+},
+"t2": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 27.4
+},
+"t3": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 1.9
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+],
+[
+"t1",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+]
+],
+"repairs": [
+[
+"t2",
+[
+3
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "division",
+"task": "pyg-2.2.0",
+"arm": "divsharded",
+"seed": 1,
+"usd": 23.05,
+"minutes": 37.4,
+"phase_screen": false,
+"reward": 0.9,
+"phases": [
+true,
+true,
+false,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 3.4
+},
+"t1": {
+"rounds": 2,
+"landed": "conflict",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 14.6
+},
+"t2": {
+"rounds": 3,
+"landed": "conflict",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 22.8
+},
+"t3": {
+"rounds": 3,
+"landed": "conflict",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 13.2
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t1",
+"conflict",
+null,
+false
+],
+[
+"t2",
+"conflict",
+null,
+false
+],
+[
+"t3",
+"conflict",
+null,
+false
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"partial"
+],
+[
+6,
+"partial"
+]
+],
+"repairs": [
+[
+"t1",
+[
+1,
+4
+]
+],
+[
+"t2",
+[
+2,
+3,
+6
+]
+],
+[
+"t3",
+[
+5
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "division",
+"task": "mko-6.5.0",
+"arm": "divsharded",
+"seed": 1,
+"usd": 71.9,
+"minutes": 103.0,
+"phase_screen": false,
+"reward": 0.4,
+"phases": [
+false,
+true,
+false,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 57.5
+},
+"t1": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 22.0
+},
+"t2": {
+"rounds": 3,
+"landed": "conflict",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 32.8
+},
+"t3": {
+"rounds": 3,
+"landed": "conflict",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 30.3
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+],
+[
+"t1",
+"merged",
+false,
+true
+],
+[
+"t2",
+"conflict",
+null,
+false
+],
+[
+"t3",
+"conflict",
+null,
+false
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"broken"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+3
+]
+],
+[
+"t1",
+[
+1
+]
+],
+[
+"t2",
+[
+2
+]
+],
+[
+"t3",
+[
+4
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "division",
+"task": "fal-4.1.0",
+"arm": "divsharded",
+"seed": 1,
+"usd": 18.35,
+"minutes": 27.2,
+"phase_screen": false,
+"reward": 0.75,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 3.8
+},
+"t1": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 22.3
+},
+"t2": {
+"rounds": 2,
+"landed": "conflict",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 10.8
+},
+"t3": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 3.2
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t1",
+"merged",
+true,
+false
+],
+[
+"t2",
+"conflict",
+null,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"missing"
+],
+[
+6,
+"done"
+]
+],
+"repairs": [
+[
+"t2",
+[
+2,
+5
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "division",
+"task": "spc-3.2.0",
+"arm": "divprogram",
+"seed": 1,
+"usd": 33.32,
+"minutes": 60.4,
+"phase_screen": false,
+"reward": 0.75,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+false
+],
+"error": false,
+"minutes": 31.2
+},
+"t1": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 18.1
+},
+"t2": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 11.5
+},
+"t3": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 16.1
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+],
+[
+"t2",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+],
+[
+"t1",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+]
+],
+"repairs": [
+[
+"t1",
+[
+1
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "division",
+"task": "pyg-2.2.0",
+"arm": "divprogram",
+"seed": 1,
+"usd": 22.38,
+"minutes": 32.2,
+"phase_screen": false,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 4.5
+},
+"t1": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 18.4
+},
+"t2": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 22.9
+},
+"t3": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 13.8
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+],
+[
+"t1",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 1,
+"run": "division",
+"task": "vbt-1.3.0",
+"arm": "divsharded",
+"seed": 1,
+"usd": 28.79,
+"minutes": 44.4,
+"phase_screen": false,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 25.4
+},
+"t1": {
+"rounds": 1,
+"landed": "conflict",
+"changed": [
+true
+],
+"error": false,
+"minutes": 23.9
+},
+"t2": {
+"rounds": 1,
+"landed": "conflict",
+"changed": [
+true
+],
+"error": false,
+"minutes": 12.8
+},
+"t3": {
+"rounds": 2,
+"landed": "conflict",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 12.7
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t1",
+"conflict",
+null,
+false
+],
+[
+"t2",
+"conflict",
+null,
+false
+],
+[
+"t3",
+"conflict",
+null,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"done"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t1",
+[
+2
+]
+],
+[
+"t3",
+[
+4
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "division",
+"task": "mko-6.4.0",
+"arm": "divsharded",
+"seed": 1,
+"usd": 38.29,
+"minutes": 52.2,
+"phase_screen": false,
+"reward": 0.7,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 25.0
+},
+"t1": {
+"rounds": 2,
+"landed": "conflict",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 19.4
+},
+"t2": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 41.0
+},
+"t3": {
+"rounds": 2,
+"landed": "conflict",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 17.9
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+],
+[
+"t1",
+"conflict",
+null,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+],
+[
+"t3",
+"conflict",
+null,
+false
+]
+],
+"review": [
+[
+1,
+"broken"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"partial"
+],
+[
+7,
+"partial"
+]
+],
+"repairs": [
+[
+"t1",
+[
+1
+]
+],
+[
+"t3",
+[
+6,
+7
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "division",
+"task": "vbt-1.3.0",
+"arm": "divprogram",
+"seed": 1,
+"usd": 27.69,
+"minutes": 50.3,
+"phase_screen": false,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 25.0
+},
+"t1": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 16.0
+},
+"t2": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 21.5
+},
+"t3": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 9.7
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+],
+[
+"t1",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 1,
+"run": "division",
+"task": "fal-1.3.0",
+"arm": "divprogram",
+"seed": 1,
+"usd": 19.76,
+"minutes": 31.0,
+"phase_screen": false,
+"reward": 0.4444,
+"phases": [
+false,
+false,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 18.8
+},
+"t1": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 5.4
+},
+"t2": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 9.4
+},
+"t3": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+false
+],
+"error": false,
+"minutes": 0.5
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+],
+[
+"t1",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 1,
+"run": "division",
+"task": "mko-6.4.0",
+"arm": "divprogram",
+"seed": 1,
+"usd": 38.63,
+"minutes": 78.0,
+"phase_screen": false,
+"reward": 0.7,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+false
+],
+"error": false,
+"minutes": 22.3
+},
+"t1": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 27.4
+},
+"t2": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 23.6
+},
+"t3": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 40.7
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+],
+[
+"t2",
+"merged",
+true,
+false
+],
+[
+"t1",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+]
+],
+"repairs": [
+[
+"t2",
+[
+3
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "division",
+"task": "prm-6.7.0",
+"arm": "divprogram",
+"seed": 1,
+"usd": 22.61,
+"minutes": 43.9,
+"phase_screen": false,
+"reward": 0.6667,
+"phases": [
+true,
+true,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 17.0
+},
+"t1": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 18.8
+},
+"t2": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 8.4
+},
+"t3": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 4.9
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+],
+[
+"t1",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"partial"
+]
+],
+"repairs": [
+[
+"t3",
+[
+3,
+4
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "division",
+"task": "plr-1.31.0",
+"arm": "divprogram",
+"seed": 1,
+"usd": 51.47,
+"minutes": 79.6,
+"phase_screen": false,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 38.6
+},
+"t1": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 19.8
+},
+"t2": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 9.7
+},
+"t3": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 7.2
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+],
+[
+"t1",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"broken"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t1",
+[
+1
+]
+],
+[
+"t2",
+[
+2
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "division",
+"task": "opt-4.4.0",
+"arm": "divsharded",
+"seed": 1,
+"usd": 16.83,
+"minutes": 25.7,
+"phase_screen": false,
+"reward": 0.8889,
+"phases": [
+true,
+true,
+true,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 4.0
+},
+"t1": {
+"rounds": 1,
+"landed": "conflict",
+"changed": [
+true
+],
+"error": false,
+"minutes": 9.3
+},
+"t2": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 19.2
+},
+"t3": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 1.7
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t1",
+"conflict",
+null,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"missing"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+]
+],
+"repairs": [
+[
+"t1",
+[
+1,
+2
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "division",
+"task": "fal-4.1.0",
+"arm": "divprogram",
+"seed": 1,
+"usd": 32.15,
+"minutes": 66.0,
+"phase_screen": false,
+"reward": 0.75,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 4.6
+},
+"t1": {
+"rounds": 3,
+"landed": "conflict",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 51.1
+},
+"t2": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 4.9
+},
+"t3": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 3.6
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+],
+[
+"t1",
+"conflict",
+null,
+false
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"done"
+],
+[
+3,
+"missing"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+]
+],
+"repairs": [
+[
+"t1",
+[
+1,
+3
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "division",
+"task": "mko-5.8.0",
+"arm": "divprogram",
+"seed": 1,
+"usd": 32.67,
+"minutes": 72.5,
+"phase_screen": false,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 40.5
+},
+"t1": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 3.1
+},
+"t2": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 9.6
+},
+"t3": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 2.1
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+],
+[
+"t3",
+"merged",
+true,
+false
+],
+[
+"t1",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"partial"
+]
+],
+"repairs": [
+[
+"t0",
+[
+3
+]
+],
+[
+"t2",
+[
+2
+]
+],
+[
+"t3",
+[
+4
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "division",
+"task": "prm-6.7.0",
+"arm": "divsharded",
+"seed": 1,
+"usd": 37.62,
+"minutes": 64.0,
+"phase_screen": false,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 24.2
+},
+"t1": {
+"rounds": 2,
+"landed": "conflict",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 52.2
+},
+"t2": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 16.7
+},
+"t3": {
+"rounds": 2,
+"landed": "conflict",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 27.9
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+],
+[
+"t1",
+"conflict",
+null,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+],
+[
+"t3",
+"conflict",
+null,
+false
+]
+],
+"review": [
+[
+1,
+"broken"
+],
+[
+2,
+"done"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"partial"
+]
+],
+"repairs": [
+[
+"t1",
+[
+1
+]
+],
+[
+"t3",
+[
+3,
+4
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "division",
+"task": "spc-3.2.0",
+"arm": "divsharded",
+"seed": 1,
+"usd": 41.66,
+"minutes": 58.5,
+"phase_screen": false,
+"reward": 0.75,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 41.9
+},
+"t1": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 26.2
+},
+"t2": {
+"rounds": 2,
+"landed": "conflict",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 20.2
+},
+"t3": {
+"rounds": 2,
+"landed": "conflict",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 22.5
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+],
+[
+"t1",
+"merged",
+false,
+true
+],
+[
+"t2",
+"conflict",
+null,
+false
+],
+[
+"t3",
+"conflict",
+null,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"partial"
+],
+[
+7,
+"broken"
+]
+],
+"repairs": [
+[
+"t0",
+[
+6
+]
+],
+[
+"t2",
+[
+7
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "division",
+"task": "mko-5.8.0",
+"arm": "divsharded",
+"seed": 1,
+"usd": 32.98,
+"minutes": 57.0,
+"phase_screen": false,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 42.5
+},
+"t1": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 2.4
+},
+"t2": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 27.6
+},
+"t3": {
+"rounds": 1,
+"landed": "conflict",
+"changed": [
+true
+],
+"error": false,
+"minutes": 3.5
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+],
+[
+"t1",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+],
+[
+"t3",
+"conflict",
+null,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+]
+],
+"repairs": [
+[
+"t2",
+[
+2
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "division",
+"task": "pyg-2.5.0",
+"arm": "divprogram",
+"seed": 1,
+"usd": 18.26,
+"minutes": 40.9,
+"phase_screen": false,
+"reward": 0.6667,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 4.4
+},
+"t1": {
+"rounds": 3,
+"landed": "conflict",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 27.7
+},
+"t2": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 9.6
+},
+"t3": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 11.3
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+],
+[
+"t1",
+"conflict",
+null,
+false
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+]
+],
+"repairs": [
+[
+"t1",
+[
+1
+]
+],
+[
+"t2",
+[
+2
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "division",
+"task": "plr-1.31.0",
+"arm": "divsharded",
+"seed": 1,
+"usd": 56.82,
+"minutes": 68.1,
+"phase_screen": false,
+"reward": 0.25,
+"phases": [
+false,
+false,
+false,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 31.1
+},
+"t1": {
+"rounds": 3,
+"landed": "conflict",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 51.0
+},
+"t2": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 8.4
+},
+"t3": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 15.2
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t1",
+"conflict",
+null,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"broken"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+4
+]
+],
+[
+"t1",
+[
+1
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "division",
+"task": "pyg-2.5.0",
+"arm": "divsharded",
+"seed": 1,
+"usd": 15.57,
+"minutes": 29.6,
+"phase_screen": false,
+"reward": 0.6667,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 3.3
+},
+"t1": {
+"rounds": 3,
+"landed": "conflict",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 15.9
+},
+"t2": {
+"rounds": 1,
+"landed": "conflict",
+"changed": [
+true
+],
+"error": false,
+"minutes": 14.9
+},
+"t3": {
+"rounds": 1,
+"landed": "conflict",
+"changed": [
+true
+],
+"error": false,
+"minutes": 8.7
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t1",
+"conflict",
+null,
+false
+],
+[
+"t2",
+"conflict",
+null,
+false
+],
+[
+"t3",
+"conflict",
+null,
+false
+]
+],
+"review": [
+[
+1,
+"broken"
+],
+[
+2,
+"done"
+],
+[
+3,
+"missing"
+],
+[
+4,
+"done"
+],
+[
+5,
+"missing"
+],
+[
+6,
+"missing"
+]
+],
+"repairs": [
+[
+"t1",
+[
+1
+]
+],
+[
+"t2",
+[
+3,
+6
+]
+],
+[
+"t3",
+[
+5
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "division",
+"task": "fal-1.3.0",
+"arm": "divsharded",
+"seed": 1,
+"usd": 26.5,
+"minutes": 33.3,
+"phase_screen": false,
+"reward": 0.4444,
+"phases": [
+false,
+false,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 28.4
+},
+"t1": {
+"rounds": 1,
+"landed": "conflict",
+"changed": [
+true
+],
+"error": false,
+"minutes": 4.6
+},
+"t2": {
+"rounds": 2,
+"landed": "conflict",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 21.2
+},
+"t3": {
+"rounds": 1,
+"landed": "conflict",
+"changed": [
+true
+],
+"error": false,
+"minutes": 1.5
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t1",
+"conflict",
+null,
+false
+],
+[
+"t2",
+"conflict",
+null,
+false
+],
+[
+"t3",
+"conflict",
+null,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"done"
+],
+[
+5,
+"partial"
+]
+],
+"repairs": [
+[
+"t0",
+[
+3
+]
+],
+[
+"t3",
+[
+5
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "stage1",
+"task": "mko-5.8.0",
+"arm": "onethread4",
+"seed": 1,
+"usd": 25.71,
+"minutes": 81.5,
+"phase_screen": false,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 66.1
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+2
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "stage1",
+"task": "fal-1.3.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 10.78,
+"minutes": 21.2,
+"phase_screen": false,
+"reward": 0.4444,
+"phases": [
+false,
+false,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 4,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 17.4
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 1,
+"run": "stage1",
+"task": "mko-5.8.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 23.8,
+"minutes": 51.4,
+"phase_screen": false,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 45.4
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 1,
+"run": "stage1",
+"task": "mko-6.5.0",
+"arm": "onethread4",
+"seed": 1,
+"usd": 36.38,
+"minutes": 123.1,
+"phase_screen": false,
+"reward": 0.4,
+"phases": [
+false,
+true,
+false,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 4,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 96.9
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"done"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+2,
+4
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "stage1",
+"task": "prm-6.7.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 30.74,
+"minutes": 71.4,
+"phase_screen": false,
+"reward": 0.6667,
+"phases": [
+true,
+true,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 5,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 49.6
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"broken"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+2,
+3,
+4
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "stage1",
+"task": "mko-6.4.0",
+"arm": "onethread4",
+"seed": 1,
+"usd": 14.51,
+"minutes": 37.3,
+"phase_screen": false,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 12.6
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"done"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"partial"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+3,
+7
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "stage1",
+"task": "fal-4.1.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 8.38,
+"minutes": 16.7,
+"phase_screen": false,
+"reward": 0.75,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 11.9
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"partial"
+]
+],
+"repairs": [
+[
+"t0",
+[
+6
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "stage1",
+"task": "pyg-2.5.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 11.86,
+"minutes": 44.1,
+"phase_screen": false,
+"reward": 0.6667,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 5,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 41.2
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 1,
+"run": "stage1",
+"task": "spc-3.2.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 18.52,
+"minutes": 44.9,
+"phase_screen": false,
+"reward": 0.75,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 4,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 36.9
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 1,
+"run": "stage1",
+"task": "mko-6.4.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 9.0,
+"minutes": 27.3,
+"phase_screen": false,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 12.7
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 1,
+"run": "stage1",
+"task": "spc-3.2.0",
+"arm": "onethread4",
+"seed": 1,
+"usd": 23.19,
+"minutes": 43.6,
+"phase_screen": false,
+"reward": 0.75,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 4,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 36.8
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 1,
+"run": "stage1",
+"task": "pyg-2.2.0",
+"arm": "onethread4",
+"seed": 1,
+"usd": 11.45,
+"minutes": 28.8,
+"phase_screen": false,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 4,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 22.5
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"done"
+],
+[
+5,
+"partial"
+],
+[
+6,
+"partial"
+]
+],
+"repairs": [
+[
+"t0",
+[
+3,
+5,
+6
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "stage1",
+"task": "mko-6.5.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 46.56,
+"minutes": 174.0,
+"phase_screen": false,
+"reward": 0.4,
+"phases": [
+false,
+true,
+false,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 156.4
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+2,
+3
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "stage1",
+"task": "fal-4.1.0",
+"arm": "onethread4",
+"seed": 1,
+"usd": 7.06,
+"minutes": 14.0,
+"phase_screen": false,
+"reward": 0.75,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 10.5
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"partial"
+]
+],
+"repairs": [
+[
+"t0",
+[
+6
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "stage1",
+"task": "opt-4.4.0",
+"arm": "onethread4",
+"seed": 1,
+"usd": 21.31,
+"minutes": 46.6,
+"phase_screen": false,
+"reward": 0.6667,
+"phases": [
+true,
+false,
+true,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 4,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 32.8
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"broken"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"partial"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+2,
+3,
+6
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "stage1",
+"task": "fal-1.3.0",
+"arm": "onethread4",
+"seed": 1,
+"usd": 13.15,
+"minutes": 20.9,
+"phase_screen": false,
+"reward": 0.4444,
+"phases": [
+false,
+false,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 14.8
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+2
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "stage1",
+"task": "vbt-1.3.0",
+"arm": "onethread4",
+"seed": 1,
+"usd": 12.34,
+"minutes": 28.2,
+"phase_screen": false,
+"reward": 0.7,
+"phases": [
+true,
+true,
+false,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 25.8
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 1,
+"run": "stage1",
+"task": "vbt-1.3.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 13.49,
+"minutes": 41.0,
+"phase_screen": false,
+"reward": 0.7,
+"phases": [
+true,
+true,
+false,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 26.6
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+3
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "stage1",
+"task": "plr-1.31.0",
+"arm": "onethread4",
+"seed": 1,
+"usd": 35.31,
+"minutes": 58.0,
+"phase_screen": false,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 4,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 45.2
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"partial"
+]
+],
+"repairs": [
+[
+"t0",
+[
+2,
+5
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "stage1",
+"task": "prm-6.7.0",
+"arm": "onethread4",
+"seed": 1,
+"usd": 20.29,
+"minutes": 45.4,
+"phase_screen": false,
+"reward": 0.4444,
+"phases": [
+false,
+true,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 4,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 39.4
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "stage1",
+"task": "pyg-2.5.0",
+"arm": "onethread4",
+"seed": 1,
+"usd": 10.44,
+"minutes": 45.5,
+"phase_screen": false,
+"reward": 0.6667,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 4,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 37.0
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"partial"
+],
+[
+6,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+5
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "stage1",
+"task": "plr-1.31.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 99.02,
+"minutes": 133.0,
+"phase_screen": false,
+"reward": 0.875,
+"phases": [
+true,
+true,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 118.0
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"partial"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+2,
+5
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "stage1",
+"task": "opt-4.4.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 12.42,
+"minutes": 28.1,
+"phase_screen": false,
+"reward": 0.6667,
+"phases": [
+true,
+false,
+true,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 19.5
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"partial"
+]
+],
+"repairs": [
+[
+"t0",
+[
+6
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "stage1",
+"task": "pyg-2.2.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 16.85,
+"minutes": 84.7,
+"phase_screen": false,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 6,
+"landed": "conflict",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 82.1
+}
+},
+"landings": [
+[
+"t0",
+"conflict",
+null,
+false
+]
+],
+"review": [
+[
+1,
+"missing"
+],
+[
+2,
+"missing"
+],
+[
+3,
+"missing"
+],
+[
+4,
+"missing"
+],
+[
+5,
+"missing"
+],
+[
+6,
+"missing"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+2,
+3,
+4,
+5,
+6
+]
+]
+]
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "pyg-2.2.0",
+"arm": "attempt",
+"seed": 3,
+"usd": 2.31,
+"minutes": 7.7,
+"phase_screen": false,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "mko-6.5.0",
+"arm": "attempt",
+"seed": 3,
+"usd": 7.46,
+"minutes": 26.2,
+"phase_screen": false,
+"reward": 0.1,
+"phases": [
+false,
+false,
+false,
+false,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "prm-6.7.0",
+"arm": "attempt",
+"seed": 2,
+"usd": 7.33,
+"minutes": 14.0,
+"phase_screen": false,
+"reward": 0.4444,
+"phases": [
+false,
+true,
+false,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "fal-4.1.0",
+"arm": "attempt",
+"seed": 3,
+"usd": 5.06,
+"minutes": 12.4,
+"phase_screen": false,
+"reward": 0.75,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "vbt-1.3.0",
+"arm": "attempt",
+"seed": 2,
+"usd": 6.49,
+"minutes": 20.9,
+"phase_screen": false,
+"reward": 0.7,
+"phases": [
+true,
+true,
+false,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "fal-4.1.0",
+"arm": "attempt",
+"seed": 2,
+"usd": 5.37,
+"minutes": 11.2,
+"phase_screen": false,
+"reward": 0.5,
+"phases": [
+false,
+true,
+false,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "mko-5.8.0",
+"arm": "attempt",
+"seed": 2,
+"usd": 12.23,
+"minutes": 28.1,
+"phase_screen": false,
+"reward": 0.5714,
+"phases": [
+true,
+false,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "fal-1.3.0",
+"arm": "attempt",
+"seed": 4,
+"usd": 8.4,
+"minutes": 10.7,
+"phase_screen": false,
+"reward": 0.3333,
+"phases": [
+false,
+false,
+true,
+true,
+false
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "opt-4.4.0",
+"arm": "attempt",
+"seed": 1,
+"usd": 4.46,
+"minutes": 10.2,
+"phase_screen": false,
+"reward": 0.6667,
+"phases": [
+true,
+false,
+true,
+true,
+true,
+false
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "fal-4.1.0",
+"arm": "attempt",
+"seed": 1,
+"usd": 5.34,
+"minutes": 12.3,
+"phase_screen": false,
+"reward": 0.75,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "vbt-1.3.0",
+"arm": "attempt",
+"seed": 4,
+"usd": 3.59,
+"minutes": 11.5,
+"phase_screen": false,
+"reward": 0.7,
+"phases": [
+true,
+true,
+false,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "opt-4.4.0",
+"arm": "attempt",
+"seed": 3,
+"usd": 6.31,
+"minutes": 14.0,
+"phase_screen": false,
+"reward": 0.8889,
+"phases": [
+true,
+true,
+true,
+true,
+true,
+false
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "spc-3.2.0",
+"arm": "attempt",
+"seed": 3,
+"usd": 6.72,
+"minutes": 16.6,
+"phase_screen": false,
+"reward": 0.4167,
+"phases": [
+false,
+true,
+true,
+false,
+false,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "plr-1.31.0",
+"arm": "attempt",
+"seed": 1,
+"usd": 14.08,
+"minutes": 16.3,
+"phase_screen": false,
+"reward": 0.375,
+"phases": [
+false,
+false,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "plr-1.31.0",
+"arm": "attempt",
+"seed": 3,
+"usd": 22.6,
+"minutes": 28.8,
+"phase_screen": false,
+"reward": 0.375,
+"phases": [
+false,
+false,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "fal-1.3.0",
+"arm": "attempt",
+"seed": 1,
+"usd": 9.19,
+"minutes": 13.4,
+"phase_screen": false,
+"reward": 0.4444,
+"phases": [
+false,
+false,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "vbt-1.3.0",
+"arm": "attempt",
+"seed": 3,
+"usd": 4.88,
+"minutes": 20.3,
+"phase_screen": false,
+"reward": 0.7,
+"phases": [
+true,
+true,
+false,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "pyg-2.5.0",
+"arm": "attempt",
+"seed": 2,
+"usd": 1.8,
+"minutes": 7.1,
+"phase_screen": false,
+"reward": 0.6667,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "mko-6.5.0",
+"arm": "attempt",
+"seed": 1,
+"usd": 4.73,
+"minutes": 13.1,
+"phase_screen": false,
+"reward": 0.4,
+"phases": [
+false,
+true,
+false,
+false,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "spc-3.2.0",
+"arm": "attempt",
+"seed": 4,
+"usd": 9.8,
+"minutes": 16.2,
+"phase_screen": false,
+"reward": 0.3333,
+"phases": [
+false,
+true,
+true,
+false,
+false,
+true,
+false
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "mko-6.4.0",
+"arm": "attempt",
+"seed": 4,
+"usd": 4.55,
+"minutes": 12.7,
+"phase_screen": false,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "pyg-2.5.0",
+"arm": "attempt",
+"seed": 4,
+"usd": 2.38,
+"minutes": 9.7,
+"phase_screen": false,
+"reward": 0.5556,
+"phases": [
+false,
+true,
+true,
+true,
+false,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "mko-6.5.0",
+"arm": "attempt",
+"seed": 2,
+"usd": 7.37,
+"minutes": 14.8,
+"phase_screen": false,
+"reward": 0.4,
+"phases": [
+false,
+true,
+false,
+false,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "fal-1.3.0",
+"arm": "attempt",
+"seed": 2,
+"usd": 6.75,
+"minutes": 12.7,
+"phase_screen": false,
+"reward": 0.4444,
+"phases": [
+false,
+false,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "opt-4.4.0",
+"arm": "attempt",
+"seed": 4,
+"usd": 4.69,
+"minutes": 7.7,
+"phase_screen": false,
+"reward": 0.6667,
+"phases": [
+true,
+false,
+true,
+true,
+true,
+false
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "mko-5.8.0",
+"arm": "attempt",
+"seed": 1,
+"usd": 8.8,
+"minutes": 13.4,
+"phase_screen": false,
+"reward": 0.4286,
+"phases": [
+true,
+false,
+true,
+false
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "spc-3.2.0",
+"arm": "attempt",
+"seed": 1,
+"usd": 11.15,
+"minutes": 27.7,
+"phase_screen": false,
+"reward": 0.3333,
+"phases": [
+false,
+true,
+true,
+false,
+false,
+true,
+false
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "plr-1.31.0",
+"arm": "attempt",
+"seed": 2,
+"usd": 27.7,
+"minutes": 34.3,
+"phase_screen": false,
+"reward": 0.25,
+"phases": [
+false,
+false,
+true,
+false,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "prm-6.7.0",
+"arm": "attempt",
+"seed": 4,
+"usd": 6.9,
+"minutes": 12.3,
+"phase_screen": false,
+"reward": 0.6667,
+"phases": [
+true,
+true,
+false,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "fal-4.1.0",
+"arm": "attempt",
+"seed": 4,
+"usd": 6.65,
+"minutes": 15.4,
+"phase_screen": false,
+"reward": 0.75,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "mko-6.5.0",
+"arm": "attempt",
+"seed": 4,
+"usd": 4.85,
+"minutes": 10.9,
+"phase_screen": false,
+"reward": 0.4,
+"phases": [
+false,
+true,
+false,
+false,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "pyg-2.2.0",
+"arm": "attempt",
+"seed": 2,
+"usd": 2.05,
+"minutes": 5.9,
+"phase_screen": false,
+"reward": 0.7,
+"phases": [
+true,
+true,
+true,
+true,
+false,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "pyg-2.5.0",
+"arm": "attempt",
+"seed": 1,
+"usd": 3.6,
+"minutes": 9.7,
+"phase_screen": false,
+"reward": 0.6667,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "mko-5.8.0",
+"arm": "attempt",
+"seed": 3,
+"usd": 5.8,
+"minutes": 10.4,
+"phase_screen": false,
+"reward": 0.5714,
+"phases": [
+true,
+false,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "mko-5.8.0",
+"arm": "attempt",
+"seed": 4,
+"usd": 9.25,
+"minutes": 12.3,
+"phase_screen": false,
+"reward": 0.5714,
+"phases": [
+true,
+false,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "plr-1.31.0",
+"arm": "attempt",
+"seed": 4,
+"usd": 24.85,
+"minutes": 28.9,
+"phase_screen": false,
+"reward": 0.25,
+"phases": [
+false,
+false,
+true,
+false,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "prm-6.7.0",
+"arm": "attempt",
+"seed": 3,
+"usd": 6.89,
+"minutes": 14.4,
+"phase_screen": false,
+"reward": 0.6667,
+"phases": [
+true,
+true,
+false,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "mko-6.4.0",
+"arm": "attempt",
+"seed": 2,
+"usd": 5.61,
+"minutes": 12.5,
+"phase_screen": false,
+"reward": 0.9,
+"phases": [
+true,
+true,
+true,
+false,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "mko-6.4.0",
+"arm": "attempt",
+"seed": 3,
+"usd": 5.31,
+"minutes": 14.2,
+"phase_screen": false,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "opt-4.4.0",
+"arm": "attempt",
+"seed": 2,
+"usd": 4.92,
+"minutes": 7.9,
+"phase_screen": false,
+"reward": 0.7778,
+"phases": [
+true,
+false,
+true,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "pyg-2.5.0",
+"arm": "attempt",
+"seed": 3,
+"usd": 2.98,
+"minutes": 9.6,
+"phase_screen": false,
+"reward": 0.6667,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "mko-6.4.0",
+"arm": "attempt",
+"seed": 1,
+"usd": 8.24,
+"minutes": 25.6,
+"phase_screen": false,
+"reward": 0.9,
+"phases": [
+true,
+true,
+true,
+false,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "fal-1.3.0",
+"arm": "attempt",
+"seed": 3,
+"usd": 6.91,
+"minutes": 8.2,
+"phase_screen": false,
+"reward": 0.4444,
+"phases": [
+false,
+false,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "vbt-1.3.0",
+"arm": "attempt",
+"seed": 1,
+"usd": 3.79,
+"minutes": 14.2,
+"phase_screen": false,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "pyg-2.2.0",
+"arm": "attempt",
+"seed": 4,
+"usd": 2.2,
+"minutes": 8.4,
+"phase_screen": false,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "pyg-2.2.0",
+"arm": "attempt",
+"seed": 1,
+"usd": 1.75,
+"minutes": 6.8,
+"phase_screen": false,
+"reward": 0.6,
+"phases": [
+true,
+true,
+false,
+true,
+false,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "spc-3.2.0",
+"arm": "attempt",
+"seed": 2,
+"usd": 8.47,
+"minutes": 19.1,
+"phase_screen": false,
+"reward": 0.3333,
+"phases": [
+false,
+true,
+true,
+false,
+false,
+true,
+false
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-attempt",
+"task": "prm-6.7.0",
+"arm": "attempt",
+"seed": 1,
+"usd": 8.56,
+"minutes": 24.9,
+"phase_screen": false,
+"reward": 0.4444,
+"phases": [
+false,
+true,
+false,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-rounds",
+"task": "prm-6.7.0",
+"arm": "rounds",
+"seed": 1,
+"usd": 24.14,
+"minutes": 80.4,
+"phase_screen": false,
+"reward": 0.6667,
+"phases": [
+true,
+true,
+false,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-rounds",
+"task": "pyg-2.2.0",
+"arm": "rounds",
+"seed": 1,
+"usd": 7.34,
+"minutes": 34.8,
+"phase_screen": false,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-rounds",
+"task": "opt-4.4.0",
+"arm": "rounds",
+"seed": 1,
+"usd": 13.81,
+"minutes": 29.0,
+"phase_screen": false,
+"reward": 0.8889,
+"phases": [
+true,
+true,
+true,
+true,
+true,
+false
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-rounds",
+"task": "mko-5.8.0",
+"arm": "rounds",
+"seed": 1,
+"usd": 20.53,
+"minutes": 34.5,
+"phase_screen": false,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-rounds",
+"task": "mko-6.5.0",
+"arm": "rounds",
+"seed": 1,
+"usd": 22.58,
+"minutes": 46.6,
+"phase_screen": false,
+"reward": 0.4,
+"phases": [
+false,
+true,
+false,
+false,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-rounds",
+"task": "mko-6.4.0",
+"arm": "rounds",
+"seed": 1,
+"usd": 15.91,
+"minutes": 52.2,
+"phase_screen": false,
+"reward": 0.6,
+"phases": [
+false,
+true,
+true,
+false,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-rounds",
+"task": "spc-3.2.0",
+"arm": "rounds",
+"seed": 1,
+"usd": 16.22,
+"minutes": 44.1,
+"phase_screen": false,
+"reward": 0.75,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-rounds",
+"task": "fal-4.1.0",
+"arm": "rounds",
+"seed": 1,
+"usd": 4.86,
+"minutes": 12.1,
+"phase_screen": false,
+"reward": 0.75,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-rounds",
+"task": "pyg-2.5.0",
+"arm": "rounds",
+"seed": 1,
+"usd": 8.85,
+"minutes": 32.4,
+"phase_screen": false,
+"reward": 0.6667,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-rounds",
+"task": "fal-1.3.0",
+"arm": "rounds",
+"seed": 1,
+"usd": 14.25,
+"minutes": 24.1,
+"phase_screen": false,
+"reward": 0.4444,
+"phases": [
+false,
+false,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-rounds",
+"task": "plr-1.31.0",
+"arm": "rounds",
+"seed": 1,
+"usd": 57.86,
+"minutes": 96.2,
+"phase_screen": false,
+"reward": 0.375,
+"phases": [
+false,
+false,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 1,
+"run": "search-rounds",
+"task": "vbt-1.3.0",
+"arm": "rounds",
+"seed": 1,
+"usd": 3.96,
+"minutes": 10.5,
+"phase_screen": false,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true,
+true
+],
+"reward_from": "parser"
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread16-spc-3.3.0-s3",
+"task": "spc-3.3.0",
+"arm": "onethread16",
+"seed": 3,
+"usd": 15.32,
+"minutes": 36.4,
+"phase_screen": false,
+"reward": 0.125,
+"phases": [
+false,
+false,
+false,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 4,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 30.0
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-pyg-2.3.0-s1",
+"task": "pyg-2.3.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 21.54,
+"minutes": 44.2,
+"phase_screen": true,
+"reward": 0.7059,
+"phases": [
+true,
+false,
+true,
+false,
+true,
+true,
+false,
+true,
+true,
+false,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 6,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 40.1
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+],
+[
+8,
+"done"
+],
+[
+9,
+"done"
+],
+[
+10,
+"partial"
+],
+[
+11,
+"done"
+],
+[
+12,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+10
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-mko-4.0.0-s2",
+"task": "mko-4.0.0",
+"arm": "onethread8",
+"seed": 2,
+"usd": 74.95,
+"minutes": 98.9,
+"phase_screen": true,
+"reward": 0.6154,
+"phases": [
+false,
+false,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 89.7
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"done"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"partial"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+2,
+4,
+5
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread16-fal-1.3.0-s1",
+"task": "fal-1.3.0",
+"arm": "onethread16",
+"seed": 1,
+"usd": 9.36,
+"minutes": 10.4,
+"phase_screen": false,
+"reward": 0.4444,
+"phases": [
+false,
+false,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 7.8
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-fal-4.0.0-s2",
+"task": "fal-4.0.0",
+"arm": "onethread8",
+"seed": 2,
+"usd": 14.9,
+"minutes": 23.1,
+"phase_screen": true,
+"reward": 0.625,
+"phases": [
+false,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 4,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 20.5
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread16-mko-5.0.0-s3",
+"task": "mko-5.0.0",
+"arm": "onethread16",
+"seed": 3,
+"usd": 41.99,
+"minutes": 164.9,
+"phase_screen": false,
+"reward": 0.4286,
+"phases": [
+false,
+true,
+true,
+false,
+true,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 5,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 146.3
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+4
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread8-pyg-2.0.0-s2",
+"task": "pyg-2.0.0",
+"arm": "onethread8",
+"seed": 2,
+"usd": 32.93,
+"minutes": 53.0,
+"phase_screen": false,
+"reward": 0.4211,
+"phases": [
+false,
+false,
+true,
+true,
+false,
+true,
+false,
+true,
+true,
+false,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 47.4
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"done"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"partial"
+],
+[
+6,
+"done"
+],
+[
+7,
+"partial"
+],
+[
+8,
+"partial"
+],
+[
+9,
+"done"
+],
+[
+10,
+"partial"
+],
+[
+11,
+"done"
+],
+[
+12,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+3,
+4,
+5,
+7,
+8,
+10
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread16-mko-6.5.0-s3",
+"task": "mko-6.5.0",
+"arm": "onethread16",
+"seed": 3,
+"usd": 47.22,
+"minutes": 128.1,
+"phase_screen": false,
+"reward": 0.4,
+"phases": [
+false,
+true,
+false,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 7,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 112.2
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"broken"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+2,
+3
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-divprogram-spc-3.2.0-s1",
+"task": "spc-3.2.0",
+"arm": "divprogram",
+"seed": 1,
+"usd": 29.43,
+"minutes": 47.2,
+"phase_screen": false,
+"reward": 0.75,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 19.4
+},
+"t1": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 7.4
+},
+"t2": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 10.5
+},
+"t3": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 11.9
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+],
+[
+"t1",
+"merged",
+false,
+true
+],
+[
+"t2",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"done"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"broken"
+]
+],
+"repairs": [
+[
+"t2",
+[
+2,
+7
+]
+],
+[
+"t3",
+[
+4
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-pyg-2.7.0-s2",
+"task": "pyg-2.7.0",
+"arm": "onethread8",
+"seed": 2,
+"usd": 13.32,
+"minutes": 36.1,
+"phase_screen": true,
+"reward": 0.6667,
+"phases": [
+true,
+false,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 6,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 32.0
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread16-mko-5.0.0-s2",
+"task": "mko-5.0.0",
+"arm": "onethread16",
+"seed": 2,
+"usd": 47.82,
+"minutes": 63.9,
+"phase_screen": false,
+"reward": 0.4286,
+"phases": [
+false,
+true,
+true,
+false,
+true,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 6,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 60.7
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-spc-3.3.0-s1",
+"task": "spc-3.3.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 25.76,
+"minutes": 63.6,
+"phase_screen": true,
+"reward": 0.375,
+"phases": [
+false,
+false,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 7,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 58.1
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread16-spc-3.3.0-s2",
+"task": "spc-3.3.0",
+"arm": "onethread16",
+"seed": 2,
+"usd": 14.86,
+"minutes": 28.1,
+"phase_screen": false,
+"reward": 0.75,
+"phases": [
+true,
+false,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 5,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 24.8
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-mko-5.0.0-s1",
+"task": "mko-5.0.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 38.89,
+"minutes": 65.9,
+"phase_screen": true,
+"reward": 0.4286,
+"phases": [
+false,
+true,
+true,
+false,
+true,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 5,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 61.0
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-prm-5.0.0-s1",
+"task": "prm-5.0.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 46.89,
+"minutes": 70.8,
+"phase_screen": true,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 5,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 63.1
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread16-mko-6.5.0-s2",
+"task": "mko-6.5.0",
+"arm": "onethread16",
+"seed": 2,
+"usd": 63.29,
+"minutes": 266.3,
+"phase_screen": false,
+"reward": 0.4,
+"phases": [
+false,
+true,
+false,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 10,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 251.4
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+2
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread8-pyg-2.0.0-s3",
+"task": "pyg-2.0.0",
+"arm": "onethread8",
+"seed": 3,
+"usd": 37.87,
+"minutes": 69.0,
+"phase_screen": false,
+"reward": 0.3158,
+"phases": [
+false,
+false,
+true,
+true,
+false,
+true,
+false,
+false,
+false,
+false,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 62.7
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"partial"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+],
+[
+8,
+"partial"
+],
+[
+9,
+"done"
+],
+[
+10,
+"partial"
+],
+[
+11,
+"done"
+],
+[
+12,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+5,
+8,
+10
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread8-spc-3.1.0-s2",
+"task": "spc-3.1.0",
+"arm": "onethread8",
+"seed": 2,
+"usd": 32.74,
+"minutes": 52.1,
+"phase_screen": false,
+"reward": 0.4444,
+"phases": [
+true,
+false,
+false,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 7,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 48.0
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-mko-7.0.0-s1",
+"task": "mko-7.0.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 103.33,
+"minutes": 275.6,
+"phase_screen": true,
+"reward": 0.3333,
+"phases": [
+false,
+false,
+false,
+true,
+false,
+false,
+false,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 254.6
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"broken"
+],
+[
+2,
+"broken"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"done"
+],
+[
+5,
+"partial"
+],
+[
+6,
+"partial"
+],
+[
+7,
+"done"
+],
+[
+8,
+"done"
+],
+[
+9,
+"partial"
+],
+[
+10,
+"partial"
+],
+[
+11,
+"partial"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+2,
+3,
+5,
+6,
+9,
+10,
+11
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-divprogram-fal-1.3.0-s2",
+"task": "fal-1.3.0",
+"arm": "divprogram",
+"seed": 2,
+"usd": 22.04,
+"minutes": 28.6,
+"phase_screen": false,
+"reward": 0.7778,
+"phases": [
+true,
+false,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 14.3
+},
+"t1": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 3.9
+},
+"t2": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 7.1
+},
+"t3": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+false
+],
+"error": false,
+"minutes": 1.4
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+],
+[
+"t1",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t2",
+[
+2
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-opt-2.0.0-s2",
+"task": "opt-2.0.0",
+"arm": "onethread8",
+"seed": 2,
+"usd": 5.77,
+"minutes": 11.7,
+"phase_screen": true,
+"reward": 0.75,
+"phases": [
+true,
+false,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 5.8
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"partial"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+5
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread16-spc-3.2.0-s2",
+"task": "spc-3.2.0",
+"arm": "onethread16",
+"seed": 2,
+"usd": 20.33,
+"minutes": 46.3,
+"phase_screen": false,
+"reward": 0.75,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 37.7
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-prm-6.4.0-s1",
+"task": "prm-6.4.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 7.04,
+"minutes": 27.3,
+"phase_screen": true,
+"reward": 1.0,
+"phases": [
+false,
+true,
+false,
+true,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 23.0
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-prm-7.0.0-s1",
+"task": "prm-7.0.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 24.3,
+"minutes": 43.3,
+"phase_screen": true,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 24.7
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"partial"
+]
+],
+"repairs": [
+[
+"t0",
+[
+4
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-mko-6.0.0-s2",
+"task": "mko-6.0.0",
+"arm": "onethread8",
+"seed": 2,
+"usd": 42.57,
+"minutes": 197.4,
+"phase_screen": true,
+"reward": 0.8356,
+"phases": [
+false,
+false,
+false,
+false,
+false,
+false
+],
+"threads": {
+"t0": {
+"rounds": 6,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 186.6
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+2,
+3
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-divprogram-mko-5.0.0-s1",
+"task": "mko-5.0.0",
+"arm": "divprogram",
+"seed": 1,
+"usd": 64.21,
+"minutes": 50.3,
+"phase_screen": false,
+"reward": 0.3571,
+"phases": [
+false,
+true,
+true,
+false,
+true,
+false,
+false
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 15.0
+},
+"t1": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 25.9
+},
+"t2": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 25.4
+},
+"t3": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 28.2
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+],
+[
+"t2",
+"merged",
+true,
+false
+],
+[
+"t1",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+]
+],
+"repairs": [
+[
+"t2",
+[
+4
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-divprogram-fal-1.3.0-s3",
+"task": "fal-1.3.0",
+"arm": "divprogram",
+"seed": 3,
+"usd": 16.44,
+"minutes": 22.1,
+"phase_screen": false,
+"reward": 0.7778,
+"phases": [
+true,
+false,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 11.8
+},
+"t1": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 2.7
+},
+"t2": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 8.3
+},
+"t3": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+false
+],
+"error": false,
+"minutes": 1.0
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+],
+[
+"t1",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-arms-divprogram-spc-3.3.0-s1",
+"task": "spc-3.3.0",
+"arm": "divprogram",
+"seed": 1,
+"usd": 22.76,
+"minutes": 29.4,
+"phase_screen": false,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 7.7
+},
+"t1": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 16.2
+},
+"t2": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 11.5
+},
+"t3": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 13.3
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+],
+[
+"t1",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"broken"
+],
+[
+3,
+"done"
+],
+[
+4,
+"broken"
+],
+[
+5,
+"partial"
+]
+],
+"repairs": [
+[
+"t2",
+[
+2,
+4
+]
+],
+[
+"t3",
+[
+5
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread8-spc-3.1.0-s3",
+"task": "spc-3.1.0",
+"arm": "onethread8",
+"seed": 3,
+"usd": 36.21,
+"minutes": 60.6,
+"phase_screen": false,
+"reward": 0.4444,
+"phases": [
+true,
+false,
+false,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 52.0
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+4
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-opt-4.2.0-s1",
+"task": "opt-4.2.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 20.82,
+"minutes": 64.4,
+"phase_screen": true,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 5,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 54.4
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+2
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-mko-4.1.0-s2",
+"task": "mko-4.1.0",
+"arm": "onethread8",
+"seed": 2,
+"usd": 41.48,
+"minutes": 80.1,
+"phase_screen": true,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 68.9
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"done"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+2,
+4
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread8-fal-3.0.0-s1",
+"task": "fal-3.0.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 33.73,
+"minutes": 57.5,
+"phase_screen": false,
+"reward": 0.2,
+"phases": [
+false,
+false,
+false,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 53.8
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+2
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-divprogram-mko-6.5.0-s1",
+"task": "mko-6.5.0",
+"arm": "divprogram",
+"seed": 1,
+"usd": 59.81,
+"minutes": 85.9,
+"phase_screen": false,
+"reward": 0.4,
+"phases": [
+false,
+true,
+false,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 37.9
+},
+"t1": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 23.4
+},
+"t2": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 26.5
+},
+"t3": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 29.9
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+],
+[
+"t1",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+3
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread16-spc-3.2.0-s3",
+"task": "spc-3.2.0",
+"arm": "onethread16",
+"seed": 3,
+"usd": 26.61,
+"minutes": 59.6,
+"phase_screen": false,
+"reward": 0.75,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 5,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 52.9
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-spc-3.5.0-s1",
+"task": "spc-3.5.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 32.41,
+"minutes": 61.4,
+"phase_screen": true,
+"reward": 0.9231,
+"phases": [
+true,
+true,
+true,
+true,
+true,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 53.1
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+3
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread16-fal-3.0.0-s2",
+"task": "fal-3.0.0",
+"arm": "onethread16",
+"seed": 2,
+"usd": 40.54,
+"minutes": 58.4,
+"phase_screen": false,
+"reward": 0.2,
+"phases": [
+false,
+false,
+false,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 51.5
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"done"
+],
+[
+5,
+"partial"
+],
+[
+6,
+"partial"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+2,
+3,
+5,
+6
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-mko-3.0.0-s1",
+"task": "mko-3.0.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 26.62,
+"minutes": 48.0,
+"phase_screen": true,
+"reward": 0.875,
+"phases": [
+true,
+true,
+true,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 6,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 40.5
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"partial"
+],
+[
+6,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+4,
+5
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-fal-3.0.0-s1",
+"task": "fal-3.0.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 38.35,
+"minutes": 52.8,
+"phase_screen": true,
+"reward": 0.2,
+"phases": [
+false,
+false,
+false,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 50.0
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-arms-divprogram-pyg-2.0.0-s3",
+"task": "pyg-2.0.0",
+"arm": "divprogram",
+"seed": 3,
+"usd": 41.35,
+"minutes": 38.8,
+"phase_screen": false,
+"reward": 0.3684,
+"phases": [
+false,
+false,
+true,
+true,
+false,
+true,
+false,
+false,
+true,
+false,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 5.1
+},
+"t1": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 13.0
+},
+"t2": {
+"rounds": 3,
+"landed": "conflict",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 24.7
+},
+"t3": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 11.4
+},
+"t4": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 23.0
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+],
+[
+"t1",
+"merged",
+false,
+true
+],
+[
+"t4",
+"merged",
+true,
+false
+],
+[
+"t2",
+"conflict",
+null,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"missing"
+],
+[
+4,
+"missing"
+],
+[
+5,
+"partial"
+],
+[
+6,
+"done"
+],
+[
+7,
+"missing"
+],
+[
+8,
+"partial"
+],
+[
+9,
+"done"
+],
+[
+10,
+"done"
+],
+[
+11,
+"done"
+],
+[
+12,
+"done"
+]
+],
+"repairs": [
+[
+"t2",
+[
+3,
+4,
+7,
+8
+]
+],
+[
+"t4",
+[
+5
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread16-spc-3.1.0-s1",
+"task": "spc-3.1.0",
+"arm": "onethread16",
+"seed": 1,
+"usd": 17.38,
+"minutes": 34.4,
+"phase_screen": false,
+"reward": 0.3333,
+"phases": [
+true,
+false,
+false,
+false,
+false
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 26.7
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"broken"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+4
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-spc-3.1.0-s2",
+"task": "spc-3.1.0",
+"arm": "onethread8",
+"seed": 2,
+"usd": 32.22,
+"minutes": 59.7,
+"phase_screen": true,
+"reward": 0.2222,
+"phases": [
+false,
+false,
+true,
+false,
+false
+],
+"threads": {
+"t0": {
+"rounds": 6,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 50.4
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+4
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-opt-4.5.0-s1",
+"task": "opt-4.5.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 8.74,
+"minutes": 17.3,
+"phase_screen": true,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 15.6
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-arms-divprogram-pyg-2.0.0-s2",
+"task": "pyg-2.0.0",
+"arm": "divprogram",
+"seed": 2,
+"usd": 40.63,
+"minutes": 67.9,
+"phase_screen": false,
+"reward": 0.4737,
+"phases": [
+false,
+true,
+true,
+true,
+false,
+true,
+false,
+false,
+true,
+false,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 8.1
+},
+"t1": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 45.2
+},
+"t2": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 12.9
+},
+"t3": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 16.7
+},
+"t4": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 16.8
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+false,
+true
+],
+[
+"t3",
+"merged",
+true,
+false
+],
+[
+"t4",
+"merged",
+true,
+false
+],
+[
+"t1",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"partial"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+],
+[
+8,
+"partial"
+],
+[
+9,
+"done"
+],
+[
+10,
+"done"
+],
+[
+11,
+"done"
+],
+[
+12,
+"done"
+]
+],
+"repairs": [
+[
+"t2",
+[
+8
+]
+],
+[
+"t4",
+[
+5
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread8-spc-3.2.0-s1",
+"task": "spc-3.2.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 21.5,
+"minutes": 36.7,
+"phase_screen": false,
+"reward": 0.75,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 31.3
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread16-fal-3.0.0-s3",
+"task": "fal-3.0.0",
+"arm": "onethread16",
+"seed": 3,
+"usd": 38.86,
+"minutes": 73.3,
+"phase_screen": false,
+"reward": 0.4,
+"phases": [
+false,
+false,
+true,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 65.7
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"partial"
+],
+[
+6,
+"partial"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+2,
+3,
+4,
+5,
+6
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-mko-6.6.0-s2",
+"task": "mko-6.6.0",
+"arm": "onethread8",
+"seed": 2,
+"usd": 58.89,
+"minutes": 146.4,
+"phase_screen": true,
+"reward": 0.5455,
+"phases": [
+true,
+false,
+false,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 132.3
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread8-fal-1.3.0-s3",
+"task": "fal-1.3.0",
+"arm": "onethread8",
+"seed": 3,
+"usd": 19.69,
+"minutes": 27.8,
+"phase_screen": false,
+"reward": 0.4444,
+"phases": [
+false,
+false,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 4,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 25.0
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread8-mko-5.0.0-s1",
+"task": "mko-5.0.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 34.4,
+"minutes": 66.8,
+"phase_screen": false,
+"reward": 0.4286,
+"phases": [
+false,
+true,
+true,
+false,
+true,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 4,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 45.7
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"done"
+],
+[
+5,
+"partial"
+],
+[
+6,
+"partial"
+],
+[
+7,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+2,
+3,
+5,
+6
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread8-spc-3.3.0-s1",
+"task": "spc-3.3.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 10.96,
+"minutes": 20.5,
+"phase_screen": false,
+"reward": 0.5,
+"phases": [
+false,
+true,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 15.1
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"done"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+3
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-divprogram-spc-3.1.0-s3",
+"task": "spc-3.1.0",
+"arm": "divprogram",
+"seed": 3,
+"usd": 36.17,
+"minutes": 41.1,
+"phase_screen": false,
+"reward": 0.7778,
+"phases": [
+true,
+false,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 3.2
+},
+"t1": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 23.7
+},
+"t2": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 17.3
+},
+"t3": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 23.9
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+],
+[
+"t1",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"broken"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t1",
+[
+1
+]
+],
+[
+"t3",
+[
+4
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-pyg-2.4.0-s1",
+"task": "pyg-2.4.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 19.98,
+"minutes": 51.1,
+"phase_screen": true,
+"reward": 0.8,
+"phases": [
+false,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 45.3
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-arms-divprogram-fal-3.0.0-s1",
+"task": "fal-3.0.0",
+"arm": "divprogram",
+"seed": 1,
+"usd": 30.26,
+"minutes": 33.3,
+"phase_screen": false,
+"reward": 0.4,
+"phases": [
+false,
+false,
+true,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 9.4
+},
+"t1": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 20.8
+},
+"t2": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 9.3
+},
+"t3": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 10.8
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+],
+[
+"t1",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+]
+],
+"repairs": [
+[
+"t3",
+[
+4
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread8-mko-6.5.0-s1",
+"task": "mko-6.5.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 42.49,
+"minutes": 149.4,
+"phase_screen": false,
+"reward": 0.4,
+"phases": [
+false,
+true,
+false,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 139.7
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-divprogram-spc-3.1.0-s2",
+"task": "spc-3.1.0",
+"arm": "divprogram",
+"seed": 2,
+"usd": 35.33,
+"minutes": 32.8,
+"phase_screen": false,
+"reward": 0.4444,
+"phases": [
+true,
+false,
+false,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 3.3
+},
+"t1": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 15.4
+},
+"t2": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 25.7
+},
+"t3": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 20.0
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t1",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"broken"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t3",
+[
+4
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread8-fal-1.3.0-s2",
+"task": "fal-1.3.0",
+"arm": "onethread8",
+"seed": 2,
+"usd": 16.25,
+"minutes": 20.6,
+"phase_screen": false,
+"reward": 0.4444,
+"phases": [
+false,
+false,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 18.2
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread16-pyg-2.0.0-s1",
+"task": "pyg-2.0.0",
+"arm": "onethread16",
+"seed": 1,
+"usd": 48.86,
+"minutes": 89.0,
+"phase_screen": false,
+"reward": 0.3158,
+"phases": [
+false,
+false,
+true,
+true,
+false,
+true,
+false,
+false,
+false,
+false,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 12,
+"landed": "conflict",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 84.4
+}
+},
+"landings": [
+[
+"t0",
+"conflict",
+null,
+false
+]
+],
+"review": [
+[
+1,
+"missing"
+],
+[
+2,
+"missing"
+],
+[
+3,
+"missing"
+],
+[
+4,
+"missing"
+],
+[
+5,
+"missing"
+],
+[
+6,
+"missing"
+],
+[
+7,
+"missing"
+],
+[
+8,
+"missing"
+],
+[
+9,
+"missing"
+],
+[
+10,
+"missing"
+],
+[
+11,
+"missing"
+],
+[
+12,
+"missing"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+2,
+3,
+4,
+5,
+6,
+7,
+8,
+9,
+10,
+11,
+12
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-spc-3.4.0-s1",
+"task": "spc-3.4.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 14.02,
+"minutes": 26.0,
+"phase_screen": true,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 4,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 21.1
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+4
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-opt-3.2.0-s2",
+"task": "opt-3.2.0",
+"arm": "onethread8",
+"seed": 2,
+"usd": 17.68,
+"minutes": 43.5,
+"phase_screen": true,
+"reward": 0.5,
+"phases": [
+true,
+false,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 6,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 39.1
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-pyg-2.0.0-s2",
+"task": "pyg-2.0.0",
+"arm": "onethread8",
+"seed": 2,
+"usd": 32.65,
+"minutes": 60.1,
+"phase_screen": true,
+"reward": 0.4211,
+"phases": [
+false,
+false,
+true,
+true,
+false,
+true,
+true,
+true,
+false,
+false,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 53.5
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"partial"
+],
+[
+8,
+"done"
+],
+[
+9,
+"done"
+],
+[
+10,
+"done"
+],
+[
+11,
+"done"
+],
+[
+12,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+7
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-divprogram-spc-3.2.0-s2",
+"task": "spc-3.2.0",
+"arm": "divprogram",
+"seed": 2,
+"usd": 31.44,
+"minutes": 53.9,
+"phase_screen": false,
+"reward": 0.75,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 27.7
+},
+"t1": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 18.8
+},
+"t2": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 10.7
+},
+"t3": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 6.1
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+],
+[
+"t3",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+],
+[
+"t1",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread8-pyg-2.0.0-s1",
+"task": "pyg-2.0.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 30.68,
+"minutes": 55.1,
+"phase_screen": false,
+"reward": 0.6842,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true,
+true,
+false,
+true,
+false,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 46.4
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"partial"
+],
+[
+6,
+"done"
+],
+[
+7,
+"partial"
+],
+[
+8,
+"done"
+],
+[
+9,
+"done"
+],
+[
+10,
+"done"
+],
+[
+11,
+"done"
+],
+[
+12,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+5,
+7
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-mko-4.0.0-s1",
+"task": "mko-4.0.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 55.0,
+"minutes": 74.2,
+"phase_screen": true,
+"reward": 0.4615,
+"phases": [
+false,
+false,
+true,
+false,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 7,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 68.5
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+2
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread16-fal-1.3.0-s2",
+"task": "fal-1.3.0",
+"arm": "onethread16",
+"seed": 2,
+"usd": 19.51,
+"minutes": 25.2,
+"phase_screen": false,
+"reward": 0.4444,
+"phases": [
+false,
+false,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 15.3
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+2
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-fal-4.0.0-s1",
+"task": "fal-4.0.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 12.91,
+"minutes": 19.2,
+"phase_screen": true,
+"reward": 0.625,
+"phases": [
+false,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 16.4
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-pyg-2.3.0-s2",
+"task": "pyg-2.3.0",
+"arm": "onethread8",
+"seed": 2,
+"usd": 29.22,
+"minutes": 54.1,
+"phase_screen": true,
+"reward": 0.7059,
+"phases": [
+true,
+false,
+true,
+false,
+true,
+true,
+false,
+true,
+true,
+false,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 48.6
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+],
+[
+8,
+"done"
+],
+[
+9,
+"done"
+],
+[
+10,
+"partial"
+],
+[
+11,
+"done"
+],
+[
+12,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+10
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread16-mko-6.5.0-s1",
+"task": "mko-6.5.0",
+"arm": "onethread16",
+"seed": 1,
+"usd": 97.87,
+"minutes": 482.2,
+"phase_screen": false,
+"reward": 0.6,
+"phases": [
+false,
+true,
+true,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 16,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 470.5
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-divprogram-spc-3.2.0-s3",
+"task": "spc-3.2.0",
+"arm": "divprogram",
+"seed": 3,
+"usd": 29.97,
+"minutes": 49.0,
+"phase_screen": false,
+"reward": 0.75,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 28.5
+},
+"t1": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 10.3
+},
+"t2": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 7.7
+},
+"t3": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 11.3
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+],
+[
+"t2",
+"merged",
+true,
+false
+],
+[
+"t1",
+"merged",
+false,
+true
+],
+[
+"t3",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"broken"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+]
+],
+"repairs": [
+[
+"t3",
+[
+4
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-spc-3.3.0-s2",
+"task": "spc-3.3.0",
+"arm": "onethread8",
+"seed": 2,
+"usd": 15.3,
+"minutes": 29.5,
+"phase_screen": true,
+"reward": 0.5,
+"phases": [
+false,
+true,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 25.3
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-pyg-2.7.0-s1",
+"task": "pyg-2.7.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 15.82,
+"minutes": 49.4,
+"phase_screen": true,
+"reward": 0.7778,
+"phases": [
+true,
+false,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 4,
+"landed": "conflict",
+"changed": [
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 43.8
+}
+},
+"landings": [
+[
+"t0",
+"conflict",
+null,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"done"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+2,
+4
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread16-mko-5.0.0-s1",
+"task": "mko-5.0.0",
+"arm": "onethread16",
+"seed": 1,
+"usd": 71.7,
+"minutes": 112.7,
+"phase_screen": false,
+"reward": 0.4286,
+"phases": [
+false,
+true,
+true,
+false,
+true,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 7,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 103.9
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread16-fal-1.3.0-s3",
+"task": "fal-1.3.0",
+"arm": "onethread16",
+"seed": 3,
+"usd": 9.03,
+"minutes": 15.1,
+"phase_screen": false,
+"reward": 0.4444,
+"phases": [
+false,
+false,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 12.8
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-mko-5.0.0-s2",
+"task": "mko-5.0.0",
+"arm": "onethread8",
+"seed": 2,
+"usd": 73.23,
+"minutes": 174.5,
+"phase_screen": true,
+"reward": 0.3571,
+"phases": [
+false,
+true,
+true,
+false,
+true,
+false,
+false
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 161.1
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread16-spc-3.3.0-s1",
+"task": "spc-3.3.0",
+"arm": "onethread16",
+"seed": 1,
+"usd": 16.29,
+"minutes": 44.7,
+"phase_screen": false,
+"reward": 0.875,
+"phases": [
+true,
+true,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 5,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 40.5
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-arms-divprogram-mko-6.5.0-s3",
+"task": "mko-6.5.0",
+"arm": "divprogram",
+"seed": 3,
+"usd": 69.78,
+"minutes": 132.3,
+"phase_screen": false,
+"reward": 0.4,
+"phases": [
+false,
+true,
+false,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 34.8
+},
+"t1": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 14.2
+},
+"t2": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 46.5
+},
+"t3": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 39.7
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+],
+[
+"t1",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"broken"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+3
+]
+],
+[
+"t1",
+[
+1
+]
+],
+[
+"t2",
+[
+2
+]
+],
+[
+"t3",
+[
+4
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread16-spc-3.2.0-s1",
+"task": "spc-3.2.0",
+"arm": "onethread16",
+"seed": 1,
+"usd": 18.88,
+"minutes": 46.8,
+"phase_screen": false,
+"reward": 0.75,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 32.4
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"partial"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+4,
+5
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-opt-2.0.0-s1",
+"task": "opt-2.0.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 6.49,
+"minutes": 12.5,
+"phase_screen": true,
+"reward": 0.75,
+"phases": [
+true,
+false,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 10.4
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-pyg-2.6.0-s1",
+"task": "pyg-2.6.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 6.05,
+"minutes": 12.2,
+"phase_screen": true,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+false
+],
+"error": false,
+"minutes": 7.7
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+],
+[
+8,
+"done"
+],
+[
+9,
+"partial"
+],
+[
+10,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+9
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread8-fal-3.0.0-s3",
+"task": "fal-3.0.0",
+"arm": "onethread8",
+"seed": 3,
+"usd": 36.23,
+"minutes": 52.2,
+"phase_screen": false,
+"reward": 0.4,
+"phases": [
+false,
+false,
+true,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 6,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 44.5
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"done"
+],
+[
+5,
+"partial"
+],
+[
+6,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+2,
+3,
+5
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-opt-4.6.0-s1",
+"task": "opt-4.6.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 19.7,
+"minutes": 56.2,
+"phase_screen": true,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 5,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 49.6
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-arms-divprogram-spc-3.3.0-s3",
+"task": "spc-3.3.0",
+"arm": "divprogram",
+"seed": 3,
+"usd": 27.72,
+"minutes": 54.9,
+"phase_screen": false,
+"reward": 0.625,
+"phases": [
+false,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 20.2
+},
+"t1": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 21.6
+},
+"t2": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 8.2
+},
+"t3": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 15.7
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+],
+[
+"t1",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"broken"
+],
+[
+3,
+"done"
+],
+[
+4,
+"broken"
+],
+[
+5,
+"partial"
+]
+],
+"repairs": [
+[
+"t1",
+[
+1
+]
+],
+[
+"t2",
+[
+2,
+4
+]
+],
+[
+"t3",
+[
+5
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread8-spc-3.1.0-s1",
+"task": "spc-3.1.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 20.82,
+"minutes": 35.1,
+"phase_screen": false,
+"reward": 0.4444,
+"phases": [
+true,
+false,
+false,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 26.7
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+4
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-mko-7.0.0-s2",
+"task": "mko-7.0.0",
+"arm": "onethread8",
+"seed": 2,
+"usd": 88.33,
+"minutes": 218.2,
+"phase_screen": true,
+"reward": 0.6111,
+"phases": [
+false,
+false,
+true,
+true,
+true,
+true,
+true,
+false,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 192.0
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"broken"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"partial"
+],
+[
+6,
+"partial"
+],
+[
+7,
+"done"
+],
+[
+8,
+"done"
+],
+[
+9,
+"partial"
+],
+[
+10,
+"done"
+],
+[
+11,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+2,
+5,
+6,
+9
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-divprogram-fal-1.3.0-s1",
+"task": "fal-1.3.0",
+"arm": "divprogram",
+"seed": 1,
+"usd": 9.0,
+"minutes": 15.1,
+"phase_screen": false,
+"reward": 0.4444,
+"phases": [
+false,
+false,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 4.2
+},
+"t1": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 2.9
+},
+"t2": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 8.3
+},
+"t3": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+false
+],
+"error": false,
+"minutes": 0.6
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+],
+[
+"t1",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t2",
+[
+2
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-divprogram-mko-5.0.0-s3",
+"task": "mko-5.0.0",
+"arm": "divprogram",
+"seed": 3,
+"usd": 95.5,
+"minutes": 92.3,
+"phase_screen": false,
+"reward": 0.3571,
+"phases": [
+false,
+true,
+true,
+false,
+true,
+false,
+false
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 37.4
+},
+"t1": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 24.9
+},
+"t2": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 32.7
+},
+"t3": {
+"rounds": 3,
+"landed": "conflict",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 35.9
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+],
+[
+"t1",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+],
+[
+"t3",
+"conflict",
+null,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"partial"
+],
+[
+6,
+"missing"
+],
+[
+7,
+"done"
+]
+],
+"repairs": [
+[
+"t2",
+[
+4
+]
+],
+[
+"t3",
+[
+5,
+6
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread8-fal-3.0.0-s2",
+"task": "fal-3.0.0",
+"arm": "onethread8",
+"seed": 2,
+"usd": 38.71,
+"minutes": 56.3,
+"phase_screen": false,
+"reward": 0.1,
+"phases": [
+false,
+false,
+false,
+false,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 53.1
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-mko-4.1.0-s1",
+"task": "mko-4.1.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 25.51,
+"minutes": 47.7,
+"phase_screen": true,
+"reward": 0.8,
+"phases": [
+true,
+true,
+true,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 4,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 36.1
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"done"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"partial"
+]
+],
+"repairs": [
+[
+"t0",
+[
+2,
+4,
+5
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-divprogram-mko-6.5.0-s2",
+"task": "mko-6.5.0",
+"arm": "divprogram",
+"seed": 2,
+"usd": 69.85,
+"minutes": 129.9,
+"phase_screen": false,
+"reward": 0.4,
+"phases": [
+false,
+true,
+false,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 33.2
+},
+"t1": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 17.6
+},
+"t2": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 36.5
+},
+"t3": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 27.0
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+],
+[
+"t1",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"broken"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+3
+]
+],
+[
+"t1",
+[
+1
+]
+],
+[
+"t2",
+[
+2
+]
+],
+[
+"t3",
+[
+4
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-mko-6.0.0-s1",
+"task": "mko-6.0.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 40.07,
+"minutes": 86.5,
+"phase_screen": true,
+"reward": 0.781,
+"phases": [
+false,
+false,
+false,
+false,
+false,
+false
+],
+"threads": {
+"t0": {
+"rounds": 4,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 70.1
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+2
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-divprogram-mko-5.0.0-s2",
+"task": "mko-5.0.0",
+"arm": "divprogram",
+"seed": 2,
+"usd": 75.79,
+"minutes": 80.9,
+"phase_screen": false,
+"reward": 0.3571,
+"phases": [
+false,
+true,
+true,
+false,
+true,
+false,
+false
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 21.1
+},
+"t1": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 12.8
+},
+"t2": {
+"rounds": 3,
+"landed": "conflict",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 42.8
+},
+"t3": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 33.7
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+],
+[
+"t1",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+],
+[
+"t2",
+"conflict",
+null,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"missing"
+],
+[
+3,
+"done"
+],
+[
+4,
+"broken"
+],
+[
+5,
+"done"
+],
+[
+6,
+"partial"
+],
+[
+7,
+"done"
+]
+],
+"repairs": [
+[
+"t2",
+[
+2,
+4
+]
+],
+[
+"t3",
+[
+6
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-divprogram-spc-3.3.0-s2",
+"task": "spc-3.3.0",
+"arm": "divprogram",
+"seed": 2,
+"usd": 32.79,
+"minutes": 56.3,
+"phase_screen": false,
+"reward": 0.875,
+"phases": [
+true,
+true,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 9.0
+},
+"t1": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 23.7
+},
+"t2": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 11.5
+},
+"t3": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 17.2
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+],
+[
+"t1",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"broken"
+],
+[
+3,
+"done"
+],
+[
+4,
+"broken"
+],
+[
+5,
+"partial"
+]
+],
+"repairs": [
+[
+"t1",
+[
+1
+]
+],
+[
+"t2",
+[
+2,
+4
+]
+],
+[
+"t3",
+[
+5
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread16-fal-3.0.0-s1",
+"task": "fal-3.0.0",
+"arm": "onethread16",
+"seed": 1,
+"usd": 65.61,
+"minutes": 84.9,
+"phase_screen": false,
+"reward": 0.2,
+"phases": [
+false,
+false,
+false,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 15,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 80.7
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-prm-5.19.0-s1",
+"task": "prm-5.19.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 17.83,
+"minutes": 51.3,
+"phase_screen": true,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 39.0
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"partial"
+]
+],
+"repairs": [
+[
+"t0",
+[
+3,
+4,
+5
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread8-spc-3.2.0-s3",
+"task": "spc-3.2.0",
+"arm": "onethread8",
+"seed": 3,
+"usd": 21.69,
+"minutes": 44.3,
+"phase_screen": false,
+"reward": 0.75,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 36.6
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+4
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-mko-3.0.0-s2",
+"task": "mko-3.0.0",
+"arm": "onethread8",
+"seed": 2,
+"usd": 19.36,
+"minutes": 36.2,
+"phase_screen": true,
+"reward": 0.875,
+"phases": [
+true,
+true,
+true,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 4,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 30.0
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"partial"
+],
+[
+6,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+5
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-fal-3.0.0-s2",
+"task": "fal-3.0.0",
+"arm": "onethread8",
+"seed": 2,
+"usd": 32.01,
+"minutes": 57.2,
+"phase_screen": true,
+"reward": 0.4,
+"phases": [
+false,
+false,
+true,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 48.8
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"partial"
+],
+[
+6,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+2,
+5
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-pyg-2.1.0-s1",
+"task": "pyg-2.1.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 18.85,
+"minutes": 51.6,
+"phase_screen": true,
+"reward": 0.9167,
+"phases": [
+true,
+false,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 4,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 47.6
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+],
+[
+8,
+"done"
+],
+[
+9,
+"done"
+],
+[
+10,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+4
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread16-spc-3.1.0-s3",
+"task": "spc-3.1.0",
+"arm": "onethread16",
+"seed": 3,
+"usd": 37.5,
+"minutes": 64.5,
+"phase_screen": false,
+"reward": 0.1111,
+"phases": [
+false,
+false,
+false,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 60.6
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread8-spc-3.2.0-s2",
+"task": "spc-3.2.0",
+"arm": "onethread8",
+"seed": 2,
+"usd": 26.01,
+"minutes": 49.3,
+"phase_screen": false,
+"reward": 0.75,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 39.4
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"partial"
+],
+[
+6,
+"partial"
+],
+[
+7,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+4,
+5,
+6
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-divprogram-pyg-2.0.0-s1",
+"task": "pyg-2.0.0",
+"arm": "divprogram",
+"seed": 1,
+"usd": 42.45,
+"minutes": 55.4,
+"phase_screen": false,
+"reward": 0.4737,
+"phases": [
+false,
+true,
+true,
+true,
+false,
+true,
+false,
+false,
+true,
+false,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 11.7
+},
+"t1": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 11.8
+},
+"t2": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 13.5
+},
+"t3": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 11.9
+},
+"t4": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 22.2
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t1",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+false,
+true
+],
+[
+"t2",
+"merged",
+true,
+false
+],
+[
+"t4",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"done"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"done"
+],
+[
+5,
+"partial"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+],
+[
+8,
+"done"
+],
+[
+9,
+"done"
+],
+[
+10,
+"partial"
+],
+[
+11,
+"done"
+],
+[
+12,
+"done"
+]
+],
+"repairs": [
+[
+"t1",
+[
+1
+]
+],
+[
+"t2",
+[
+3
+]
+],
+[
+"t3",
+[
+10
+]
+],
+[
+"t4",
+[
+5
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-fal-2.0.0-s1",
+"task": "fal-2.0.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 19.41,
+"minutes": 24.3,
+"phase_screen": true,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 17.6
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"partial"
+],
+[
+8,
+"done"
+],
+[
+9,
+"partial"
+],
+[
+10,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+2,
+3,
+4,
+7,
+9
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread16-spc-3.1.0-s2",
+"task": "spc-3.1.0",
+"arm": "onethread16",
+"seed": 2,
+"usd": 46.48,
+"minutes": 78.3,
+"phase_screen": false,
+"reward": 0.3333,
+"phases": [
+false,
+false,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 70.4
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+4
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-spc-3.1.0-s1",
+"task": "spc-3.1.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 33.3,
+"minutes": 59.8,
+"phase_screen": true,
+"reward": 0.5556,
+"phases": [
+true,
+true,
+false,
+false,
+false
+],
+"threads": {
+"t0": {
+"rounds": 7,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 54.5
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-pyg-2.4.0-s2",
+"task": "pyg-2.4.0",
+"arm": "onethread8",
+"seed": 2,
+"usd": 15.35,
+"minutes": 43.5,
+"phase_screen": true,
+"reward": 0.6,
+"phases": [
+true,
+false,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 6,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 37.4
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"done"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+2,
+4
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-divprogram-fal-3.0.0-s2",
+"task": "fal-3.0.0",
+"arm": "divprogram",
+"seed": 2,
+"usd": 28.74,
+"minutes": 30.1,
+"phase_screen": false,
+"reward": 0.5,
+"phases": [
+true,
+false,
+false,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 11.1
+},
+"t1": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 16.0
+},
+"t2": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 15.0
+},
+"t3": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 4.4
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+],
+[
+"t1",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+]
+],
+"repairs": [
+[
+"t2",
+[
+3
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread16-pyg-2.0.0-s3",
+"task": "pyg-2.0.0",
+"arm": "onethread16",
+"seed": 3,
+"usd": 56.26,
+"minutes": 98.4,
+"phase_screen": false,
+"reward": 0.6842,
+"phases": [
+false,
+true,
+true,
+true,
+true,
+true,
+false,
+true,
+true,
+false,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 15,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 95.3
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+],
+[
+8,
+"done"
+],
+[
+9,
+"done"
+],
+[
+10,
+"done"
+],
+[
+11,
+"done"
+],
+[
+12,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-pyg-1.7.2-s1",
+"task": "pyg-1.7.2",
+"arm": "onethread8",
+"seed": 1,
+"usd": 6.8,
+"minutes": 14.9,
+"phase_screen": true,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 11.5
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"partial"
+],
+[
+6,
+"done"
+],
+[
+7,
+"partial"
+]
+],
+"repairs": [
+[
+"t0",
+[
+5,
+7
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread8-mko-6.5.0-s2",
+"task": "mko-6.5.0",
+"arm": "onethread8",
+"seed": 2,
+"usd": 60.58,
+"minutes": 210.2,
+"phase_screen": false,
+"reward": 0.4,
+"phases": [
+false,
+true,
+false,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 180.5
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"broken"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+2,
+3,
+4
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-mko-6.6.0-s1",
+"task": "mko-6.6.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 56.87,
+"minutes": 156.7,
+"phase_screen": true,
+"reward": 0.5455,
+"phases": [
+true,
+false,
+false,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 4,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 142.0
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"partial"
+],
+[
+5,
+"done"
+],
+[
+6,
+"partial"
+]
+],
+"repairs": [
+[
+"t0",
+[
+4,
+6
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread8-mko-5.0.0-s2",
+"task": "mko-5.0.0",
+"arm": "onethread8",
+"seed": 2,
+"usd": 52.27,
+"minutes": 178.1,
+"phase_screen": false,
+"reward": 0.4286,
+"phases": [
+false,
+true,
+true,
+false,
+true,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 7,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 174.4
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+]
+],
+"repairs": []
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread8-spc-3.3.0-s2",
+"task": "spc-3.3.0",
+"arm": "onethread8",
+"seed": 2,
+"usd": 31.57,
+"minutes": 56.3,
+"phase_screen": false,
+"reward": 0.5,
+"phases": [
+true,
+false,
+false,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 46.5
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"done"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+3
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread8-mko-6.5.0-s3",
+"task": "mko-6.5.0",
+"arm": "onethread8",
+"seed": 3,
+"usd": 49.96,
+"minutes": 144.2,
+"phase_screen": false,
+"reward": 0.6,
+"phases": [
+false,
+true,
+true,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 7,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 130.3
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"partial"
+]
+],
+"repairs": [
+[
+"t0",
+[
+2,
+5
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread16-pyg-2.0.0-s2",
+"task": "pyg-2.0.0",
+"arm": "onethread16",
+"seed": 2,
+"usd": 50.27,
+"minutes": 86.9,
+"phase_screen": false,
+"reward": 0.4211,
+"phases": [
+false,
+false,
+true,
+true,
+false,
+true,
+true,
+true,
+false,
+false,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 13,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 79.6
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"partial"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+],
+[
+8,
+"done"
+],
+[
+9,
+"done"
+],
+[
+10,
+"done"
+],
+[
+11,
+"done"
+],
+[
+12,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+2,
+5
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-pyg-2.0.0-s1",
+"task": "pyg-2.0.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 33.6,
+"minutes": 61.7,
+"phase_screen": true,
+"reward": 0.4737,
+"phases": [
+false,
+false,
+true,
+true,
+false,
+true,
+true,
+false,
+true,
+true,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 53.5
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"partial"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+],
+[
+8,
+"partial"
+],
+[
+9,
+"done"
+],
+[
+10,
+"done"
+],
+[
+11,
+"done"
+],
+[
+12,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+5,
+8
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-opt-3.2.0-s1",
+"task": "opt-3.2.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 24.45,
+"minutes": 61.1,
+"phase_screen": true,
+"reward": 0.5,
+"phases": [
+true,
+false,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 56.3
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"partial"
+]
+],
+"repairs": [
+[
+"t0",
+[
+3,
+4
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-divprogram-fal-3.0.0-s3",
+"task": "fal-3.0.0",
+"arm": "divprogram",
+"seed": 3,
+"usd": 37.4,
+"minutes": 49.0,
+"phase_screen": false,
+"reward": 0.7,
+"phases": [
+true,
+false,
+true,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 19.1
+},
+"t1": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 16.0
+},
+"t2": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 14.7
+},
+"t3": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 6.6
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+],
+[
+"t1",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"done"
+],
+[
+5,
+"partial"
+],
+[
+6,
+"done"
+]
+],
+"repairs": [
+[
+"t1",
+[
+1,
+2
+]
+],
+[
+"t2",
+[
+3
+]
+],
+[
+"t3",
+[
+5
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-onethread8-opt-4.0.0-s1",
+"task": "opt-4.0.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 6.83,
+"minutes": 31.7,
+"phase_screen": true,
+"reward": 1.0,
+"phases": [
+true,
+true,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 24.7
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1,
+2
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread8-spc-3.3.0-s3",
+"task": "spc-3.3.0",
+"arm": "onethread8",
+"seed": 3,
+"usd": 34.61,
+"minutes": 77.2,
+"phase_screen": false,
+"reward": 0.75,
+"phases": [
+true,
+false,
+true,
+true,
+false
+],
+"threads": {
+"t0": {
+"rounds": 8,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 69.3
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"partial"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+1
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-divprogram-spc-3.1.0-s1",
+"task": "spc-3.1.0",
+"arm": "divprogram",
+"seed": 1,
+"usd": 25.11,
+"minutes": 27.4,
+"phase_screen": false,
+"reward": 0.6667,
+"phases": [
+true,
+false,
+true,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 1,
+"landed": "merged",
+"changed": [
+true
+],
+"error": false,
+"minutes": 3.2
+},
+"t1": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 11.8
+},
+"t2": {
+"rounds": 2,
+"landed": "merged",
+"changed": [
+true,
+true
+],
+"error": false,
+"minutes": 16.7
+},
+"t3": {
+"rounds": 3,
+"landed": "merged",
+"changed": [
+true,
+true,
+true
+],
+"error": false,
+"minutes": 20.0
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+],
+[
+"t1",
+"merged",
+true,
+false
+],
+[
+"t2",
+"merged",
+true,
+false
+],
+[
+"t3",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"broken"
+],
+[
+5,
+"done"
+]
+],
+"repairs": [
+[
+"t3",
+[
+4
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread8-mko-5.0.0-s3",
+"task": "mko-5.0.0",
+"arm": "onethread8",
+"seed": 3,
+"usd": 36.83,
+"minutes": 62.7,
+"phase_screen": false,
+"reward": 0.4286,
+"phases": [
+false,
+true,
+true,
+false,
+true,
+false,
+true
+],
+"threads": {
+"t0": {
+"rounds": 4,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 48.1
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+false,
+true
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"partial"
+],
+[
+3,
+"partial"
+],
+[
+4,
+"done"
+],
+[
+5,
+"partial"
+],
+[
+6,
+"done"
+],
+[
+7,
+"done"
+]
+],
+"repairs": [
+[
+"t0",
+[
+2,
+3,
+5
+]
+]
+]
+},
+{
+"stage": 2,
+"run": "stage2-arms-onethread8-fal-1.3.0-s1",
+"task": "fal-1.3.0",
+"arm": "onethread8",
+"seed": 1,
+"usd": 15.31,
+"minutes": 25.2,
+"phase_screen": false,
+"reward": 0.4444,
+"phases": [
+false,
+false,
+true,
+true,
+true
+],
+"threads": {
+"t0": {
+"rounds": 6,
+"landed": "merged",
+"changed": [
+true,
+true,
+true,
+true,
+true,
+true
+],
+"error": false,
+"minutes": 23.0
+}
+},
+"landings": [
+[
+"t0",
+"merged",
+true,
+false
+]
+],
+"review": [
+[
+1,
+"done"
+],
+[
+2,
+"done"
+],
+[
+3,
+"done"
+],
+[
+4,
+"done"
+],
+[
+5,
+"partial"
+]
+],
+"repairs": [
+[
+"t0",
+[
+5
+]
+]
+]
+}
+]

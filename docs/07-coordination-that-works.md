@@ -713,6 +713,56 @@ false kill, voided and rerun). Data: `eval/pilot/results/stage2-state.json`;
 `python3 -I eval/pilot/stage2-report.py eval/pilot/results/stage2-state.json
 [--envelope]` reproduces both readings.
 
+### 7.8 What the cells say, beyond the score (2026-10-20, no new spend)
+
+Per-target results, gate behaviour and final reviews of every graded cell of
+stages 1 and 2 (228; `eval/pilot/analysis/`, table in
+`eval/pilot/results/cells.json`). A target is one test phase; the two map one
+to one.
+
+1. **Most targets decide nothing.** Of the 52 targets in the stage-2 tasks,
+   13 fail in all nine cells (every arm and seed, though the reference passes
+   them) and 20 pass in all nine: 63 % score the same whatever the arm. The
+   comparison rests on 19 contested targets, and (e)'s lead on 4 of them
+   (taken by 2 seeds or more over both single arms) against 2 lost.
+2. **The single agent stops because its reviewer says it is done.** (f16)
+   stopped before its cap in 23 of 24 cells, every time on the reviewer
+   calling every target done (f8: 56 of 84 so, 27 at the cap). But that
+   verdict is weak evidence: of 553 targets the final review called *done*
+   in one-thread cells, 67 % pass the held-out tests, against 55 % of those
+   it called *partial*. More rounds cannot help a gate whose reviewer cannot
+   see what is wrong; that, not budget, is the plateau of §7.4 and
+   §7.7. The lever is the verifier's precision.
+3. **No horizon effect.** Single agents fail a roadmap's *first* targets
+   most (stage 2, (f8)+(f16): 0.45 on the first third, 0.61 the middle,
+   0.56 the last; the screen 0.61 / 0.75 / 0.69), the large foundational
+   ones listed first, not the late ones an exhausted context would drop.
+   (e) is flat (0.58 / 0.59 / 0.62): its gain is on those first targets.
+4. **Division helps where a thread is narrow.** On contested targets owned
+   by a thread that carries one or two targets, (e) is +0.33 to +0.35 over
+   the single arms' mean (14 targets); owned by a thread carrying three or
+   more, it gains nothing or loses (4 targets). Few targets, but the same
+   direction as the task split of §7.7: focus per target is what division
+   buys, and a plan that loads a thread with many targets gives it back.
+5. **The machinery works.** Contracts first: 3 conflicts in 99 landings;
+   the contract check failed 18 landings, each given its repair round; the
+   whole-roadmap review then left 2.25 targets open per cell, and 1.8
+   repairs per cell went to their owners. No thread errors.
+6. **Faster, at about the same reward per dollar.** (e) took 54 minutes a
+   task against (f8)'s 69 and (f16)'s 92 (threads in parallel), for 0.014
+   reward per dollar against (f8)'s 0.015 and (f16)'s 0.012.
+7. **Bigger gains where one agent is weak.** Across the 20 tasks of both
+   stages, (e) − (f8) correlates −0.46 with (f8)'s reward: +0.09 on average
+   where (f8) is under 0.5 (8 tasks), +0.03 above (12).
+
+So: on this benchmark and model, a gated single agent is held back by its
+reviewer's blindness more than by its budget or context; division's measured
+gain comes from narrow per-target focus on the large targets, on the few
+targets still in play. Two things follow without new spend: the verifier's
+precision against held-out tests is the metric to improve (and to report for
+any gate, docs/05 B6), and any future division plan should cap a thread at
+two targets.
+
 ## 8. What AgentRoom, Co-Coder and STORM do, and what OpenSwarm takes from them
 
 Read from the three papers directly (2026-09-27) [P arxiv 2606.00953,
