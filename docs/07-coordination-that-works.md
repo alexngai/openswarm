@@ -763,6 +763,41 @@ precision against held-out tests is the metric to improve (and to report for
 any gate, docs/05 B6), and any future division plan should cap a thread at
 two targets.
 
+### 7.9 How well the gate's reviewer judges (2026-10-20, no new spend)
+
+Every final verdict on record, against the held-out tests of the tree it
+judged (`eval/pilot/analysis/reviewer.py`). Two reviewers with the same brief
+(the product's adds `unverifiable`): the product's L1 gate (`openswarm
+--gate`, docs/05 B6, its two valid runs on the frozen 12; only status counts
+survive in its log, so its precision is an upper bound) and the pilot gate
+(`gate.mjs`, the one-thread and division arms of stages 1 and 2).
+
+| reviewer | cells | "done" passes | failing targets it flags | reward, accepted / not | its score / actual |
+|---|---|---|---|---|---|
+| product L1 gate | 24 | ≤ 85 % | — | 0.70 / 0.68 | 93 / 69 |
+| pilot gate, one thread | 120 | 67 % | 33 % | 0.62 / 0.62 | 88 / 62 |
+| pilot gate, division's final review | 48 | 74 % | 45 % | 0.79 / 0.65 | 78 / 66 |
+
+1. **Acceptance carries no information about the outcome.** Cells the gate
+   accepted scored what the rest scored (0.70 against 0.68 for the product;
+   0.62 against 0.62 for the pilot); of the product's 11 accepted cells, 2
+   pass every held-out test.
+2. **It is confident and wrong in one direction.** Its own score runs 12 to
+   26 points above the held-out reward and barely tracks it (correlation
+   0.02 to 0.29). It catches a third to a half of the targets that fail.
+3. **Why:** of 217 targets it called done that fail, its notes say they
+   "worked in smoke tests", "spot checks", "focused tests" or "contract
+   tests" it wrote itself. What the held-out tests caught instead: the exact
+   signatures and attributes the roadmap specifies (an `insert()` arity, a
+   missing `edge_attr`, `_value` for `_values`), edge cases (an empty form,
+   overflow, version variants), every listed variant (joined *and* balanced
+   strategies), and quantitative expectations. The reviewer checks that its
+   own reading works, not that the specification does.
+
+This is the plateau of §7.4 and §7.8 explained: the gate stops on a verdict
+that cannot tell a finished roadmap from a half-finished one. The next lever
+is the review itself, measured against these labels (§7.10).
+
 ## 8. What AgentRoom, Co-Coder and STORM do, and what OpenSwarm takes from them
 
 Read from the three papers directly (2026-09-27) [P arxiv 2606.00953,
