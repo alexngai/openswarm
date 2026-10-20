@@ -70,7 +70,7 @@ function restore(cwd, sha, before) {
   for (const f of ignored(cwd)) if (!before.has(f)) rmSync(join(cwd, f), { force: true, recursive: true });
 }
 
-const REVIEW = `You are reviewing another engineer's implementation of the roadmap below, in this repository's working tree. Do not fix anything: your job is to measure.
+export const REVIEW = `You are reviewing another engineer's implementation of the roadmap below, in this repository's working tree. Do not fix anything: your job is to measure.
 
 For each target in the roadmap, decide whether it works as specified: check that the specified exports, signatures and behaviors exist, and run the repository's existing tests for the code involved plus small tests or scripts you write from the requirements. Everything you create or change in the repository is discarded after your review.
 
@@ -85,11 +85,11 @@ End your reply with exactly one line of JSON and nothing after it:
  * Review the tree at `cwd` (committed first, rolled back after). `scope`, when given, is
  * the part of the roadmap one engineer was assigned; the reviewer judges only that part.
  */
-export async function review(cwd, roadmap, scope) {
+export async function review(cwd, roadmap, scope, brief = REVIEW) {
   const snap = snapshot(cwd, "pre-review");
   const before = ignored(cwd);
   const scoped = scope === undefined ? "" : `\n\n# Scope\n\nThe engineer was assigned only this part of the roadmap. Judge and list only the targets it covers; work that belongs to other parts is not theirs:\n\n${scope}`;
-  const r = await cli(cwd, REVIEW + roadmap + scoped, false);
+  const r = await cli(cwd, brief + roadmap + scoped, false);
   restore(cwd, snap.sha, before);
   const line = r.text.trim().split("\n").reverse().find((l) => l.trim().startsWith("{"));
   let verdict = null;

@@ -255,7 +255,8 @@ export interface GateResult {
  * done a target its environment could not test (MySQL-backed tests with no
  * database), so it was scored "partial", indistinguishable from half-built.
  */
-const REVIEW = `You are reviewing another engineer's implementation of the roadmap below, in this repository's working tree. Do not fix anything: your job is to measure.
+/** The L1 reviewer's brief, exported so a reviewer benchmark measures this exact text (eval/pilot/reviewer-bench, docs/07 §7.10). */
+export const REVIEW_BRIEF = `You are reviewing another engineer's implementation of the roadmap below, in this repository's working tree. Do not fix anything: your job is to measure.
 
 For each target in the roadmap, decide whether it works as specified: check that the specified exports, signatures and behaviors exist, and run the repository's existing tests for the code involved plus small tests or scripts you write from the requirements. Everything you create or change in the repository is discarded after your review. A target is "unverifiable" when it appears implemented but this environment cannot run what would verify it (a database or service it needs is missing, say); its notes must say what you could not run.
 
@@ -470,7 +471,7 @@ export async function runGate(spec: GateSpec, deps: GateDeps): Promise<GateResul
       evidence = { kind: 'review', level: 1, passed: false, score: null }
       for (let attempt = 1; attempt <= 2; attempt++) {
         try {
-          evidence = verdictOf((await review(REVIEW + spec.task, snapshot.commit)).text)
+          evidence = verdictOf((await review(REVIEW_BRIEF + spec.task, snapshot.commit)).text)
           unavailable = undefined
           break
         } catch (error) {
