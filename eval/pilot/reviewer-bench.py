@@ -38,9 +38,9 @@ OPENSWARM = os.environ.get("OPENSWARM_ROOT", os.path.expanduser("~/openswarm-s2"
 MODEL = os.environ.get("OPENSWARM_MODEL", "mock-model" if os.environ.get("OPENSWARM_LLM_BASE_URL") else "azureoai/gpt-5.5")
 FLAGS = ["--single", "--headless", "--output-format", "json", "--model", MODEL, "--permission-mode", "danger-full-access"]
 ENTRY = "import { runCli } from '/opt/openswarm/packages/cli/dist/index.js'\nprocess.exit(await runCli(process.argv.slice(2)))\n"
-INIT = (  # as runner.mjs's: a base commit on a branch, .sbx ignored
-    "cd /app && (git rev-parse --is-inside-work-tree >/dev/null 2>&1 || (git init -q && git add -A && git -c user.email=eval@local -c user.name=eval commit -qm base)) && "
-    "(git symbolic-ref -q HEAD >/dev/null || git checkout -q -B eval-base) && git config --global --add safe.directory '*' && "
+INIT = (  # as runner.mjs's: a base commit on a branch, .sbx ignored (safe.directory first: an image's /app may be another user's)
+    "git config --global --add safe.directory '*' && cd /app && (git rev-parse --is-inside-work-tree >/dev/null 2>&1 || (git init -q && git add -A && git -c user.email=eval@local -c user.name=eval commit -qm base)) && "
+    "(git symbolic-ref -q HEAD >/dev/null || git checkout -q -B eval-base) && "
     "x=$(git rev-parse --git-path info/exclude) && mkdir -p \"$(dirname \"$x\")\" && (grep -qx '.sbx/' \"$x\" 2>/dev/null || echo '.sbx/' >> \"$x\")"
 )
 lock = threading.Lock()

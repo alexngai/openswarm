@@ -798,6 +798,55 @@ This is the plateau of §7.4 and §7.8 explained: the gate stops on a verdict
 that cannot tell a finished roadmap from a half-finished one. The next lever
 is the review itself, measured against these labels (§7.10).
 
+### 7.10 The reviewer bench (2026-10-20, $113)
+
+`eval/pilot/reviewer-bench.py`: 36 fixed trees, the final state of every
+(f8) cell of stages 1 and 2 (the task's image plus the agent's diff), and
+222 labels, each target's held-out phase (137 pass, 62 %). A reviewer
+variant reviews every tree once; its per-target verdicts are scored against
+the labels. The recorded final reviews (the pilot brief) are a free
+baseline; two variants ran: the product's L1 brief as it stands
+(`REVIEW_BRIEF`, now exported so the bench measures that exact text), and a
+requirements-first brief written from §7.9's failure modes, not from the
+held-out tests (`eval/pilot/reviewer-briefs/spec.txt`: list every stated
+requirement, test each with the roadmap's own names, done only when every
+test passes, an untested requirement is not done).
+
+| reviewer | trees | accuracy | "done" passes | failures flagged | passes called done | reward, accepted / not |
+|---|---|---|---|---|---|---|
+| calling every target done | 36 | 62 % | 62 % | 0 % | 100 % | — |
+| recorded (pilot brief) | 36 | 56 % | 62 % | 31 % | 72 % | 0.68 / 0.59 |
+| product brief, rerun | 35 | 56 % | 61 % | 23 % | 77 % | 0.56 / 0.65 |
+| requirements-first | 35 | 59 % | 63 % | 21 % | 83 % | 0.64 / 0.60 |
+
+(One tree, vbt-1.3.0, gave no verdict in either run: the bench set git's
+`safe.directory` after its first git call; fixed since.)
+
+1. **No brief beats calling every target done.** Each reviewer's "done" is
+   as likely to pass as a target chosen at random (61–63 % against 62 %), and
+   acceptance does not pick the better trees (the product brief's accepted
+   ones scored lower).
+2. **Asking for rigour did not change what the reviewer finds.** The
+   requirements-first brief made it more lenient, not less: it called more
+   passing targets done and flagged fewer failures. Its notes still report
+   tests it wrote that pass.
+3. **The verdict is close to noise.** Two reviews of the same tree agree on
+   63–69 % of targets, where two reviewers saying "done" at random at their
+   own rates would agree on about 62 %. And 39 of the 84 failing targets were
+   called done by all three: what the reviewer misses, it misses
+   consistently. The same model reviewing the same model's work shares its
+   reading of the roadmap, so the tests it writes encode the same mistakes.
+
+So the review brief is not the lever: wording does not give this reviewer
+sight of what it gets wrong. What the gate is worth (the rounds' +0.07 to
++0.12 in §7.1 and §7.4) comes from sending the work back with notes, some of
+which are right, not from a stop decision, which carries no information. What
+could give a reviewer independent sight, untested here: a different model
+reviewing (independent errors), or checks that do not come from the
+reviewer's reading at all (the repository's tests and the roadmap's own
+examples run verbatim, L2). For the product (docs/05 B6): an L1 acceptance
+should not be read as evidence that a task is done.
+
 ## 8. What AgentRoom, Co-Coder and STORM do, and what OpenSwarm takes from them
 
 Read from the three papers directly (2026-09-27) [P arxiv 2606.00953,
