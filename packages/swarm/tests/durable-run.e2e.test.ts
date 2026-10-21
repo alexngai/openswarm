@@ -7,12 +7,14 @@
  * second. On the remote's journal each task completed once.
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, expect, it } from 'vitest'
 import { bootHarness, type TestHarness } from './boot'
 
+const FAKE_GH = fileURLToPath(new URL('./support/fake-gh.mjs', import.meta.url))
 const harnesses: TestHarness[] = []
 afterEach(async () => {
   for (const h of harnesses.splice(0)) await h.close()
@@ -161,6 +163,31 @@ it('a cancelled durable run pushes nothing more, so its in-flight task is not co
   const resultB = await (await B.h.swarm.resume(runA.id, { parent: B.h.lead.agent, worktrees: { repoRoot: b, member: B.member }, durable }, { steal: true })).result
   expect(resultB.git?.merged.map((m) => m.taskKey)).toEqual(['task-0'])
   writeFileSync(marker, '')
+}, 180_000)
+
+it('a run cut off from its remote at landing lands nothing and stays resumable: its landing marker never reaches the remote', async () => {
+  const { dir, a, b } = world()
+  const remote = join(dir, 'remote.git')
+  const marker = join(dir, 'release-a')
+  const ghDir = join(dir, 'gh')
+  mkdirSync(ghDir)
+  process.env['FAKE_GH_DIR'] = ghDir
+  const forge = { kind: 'github' as const, command: FAKE_GH, waitMs: 0, pollMs: 10 }
+  const one = { ...twoTasks, tasks: [twoTasks.tasks[0]!] }
+  const A = await host(`${write}; while [ ! -f '${marker}' ]; do sleep 0.2; done`)
+  const runA = await A.h.swarm.start(one, { parent: A.h.lead.agent, worktrees: { repoRoot: a, member: A.member, forge }, durable })
+  const settledA = runA.result.then(() => undefined, (e: unknown) => e)
+  await until('task-0 under way on A', () => runA.board().list().some((t) => t.id === 'task-0' && t.status === 'in_progress'))
+  // The remote goes away while A works: A's landing push cannot confirm it still holds the run.
+  renameSync(remote, `${remote}.away`)
+  writeFileSync(marker, '')
+  expect(String(await settledA)).toMatch(/could not reach its remote/)
+  renameSync(`${remote}.away`, remote)
+  // Back: the remote never got A's landing marker, so another host takes the run over and lands it.
+  expect(remoteEvents(b, runA.id).some((e) => e.type === 'swarm/durable')).toBe(false)
+  const B = await host(write, 1)
+  const resultB = await (await B.h.swarm.resume(runA.id, { parent: B.h.lead.agent, worktrees: { repoRoot: b, member: B.member, forge }, durable }, { steal: true })).result
+  expect(resultB.git?.withheld.map((w) => w.taskKey)).toEqual(['task-0'])
 }, 180_000)
 
 it('a durable run must be a one-shot peer-team in worktrees', async () => {

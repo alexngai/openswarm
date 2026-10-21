@@ -21,7 +21,7 @@
  * fenced at its next push, by design.
  */
 import { execFile } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 
@@ -83,10 +83,16 @@ export async function pushLeased(repoRoot: string, remote: string, runId: string
     // Porcelain marks a refused ref "!": for the leased ref, its lease failed
     // ("[rejected] (stale info)") or a concurrent writer won the remote's ref
     // transaction ("[remote rejected] (cannot lock ref …)", "(atomic
-    // transaction failed)"). Either way another host holds the run. Nothing else fences: a transport failure refuses no
-    // ref by name, and a hook declining the push, or a branch failing the
-    // atomic push, refuses the run's ref for a reason that is not another host.
-    const fenced = out.split('\n').some((line) => line.startsWith('!') && line.includes(`:${ref}\t`) && /stale info|cannot lock ref|failed to update ref|incorrect old value|atomic transaction failed/.test(line))
+    // transaction failed)"). Either way another host holds the run. Nothing
+    // else fences: a transport failure refuses no ref by name, and a hook
+    // declining the push, or a branch failing the atomic push, refuses the
+    // run's ref for a reason that is not another host. A lock refused in the
+    // remote's transaction reads the same on every ref's line; only the
+    // remote's own message names the ref it could not lock.
+    const fenced = out
+      .split('\n')
+      .filter((line) => line.startsWith('!') && line.includes(`:${ref}\t`))
+      .some((line) => /stale info|failed to update ref|incorrect old value/.test(line) || (/cannot lock ref|atomic transaction failed/.test(line) && out.includes(`cannot lock ref '${ref}'`)))
     return { ok: false, fenced, why: out.trim().split('\n').filter((l) => l !== '' && !l.startsWith('To ')).slice(-3).join(' ') }
   }
 }
@@ -211,15 +217,29 @@ export async function takeOver(
     if ((await fetch()) !== observed) throw new Error(`run ${runId}'s writer is alive (its ref moved during the lease); pass --steal to take it anyway`)
   }
   mkdirSync(runDir, { recursive: true })
-  for (const name of ['journal.jsonl', 'train.jsonl']) {
-    const text = await git(repoRoot, ['show', `${observed}:${name}`]).catch(() => undefined)
-    if (text !== undefined) writeFileSync(join(runDir, name), text === '' ? '' : `${text}\n`)
+  const journalFile = join(runDir, 'journal.jsonl')
+  const trainFile = join(runDir, 'train.jsonl')
+  const text = await git(repoRoot, ['show', `${observed}:journal.jsonl`]).catch(() => undefined)
+  if (text === undefined) throw new Error(`run ${runId}'s ref holds no journal`)
+  // This host's own copy, kept whole if the takeover is refused.
+  const before = existsSync(journalFile) ? readFileSync(journalFile) : undefined
+  const trainAside = existsSync(trainFile) ? `${trainFile}.before-takeover-${Date.now()}` : undefined
+  writeFileSync(journalFile, text === '' ? '' : `${text}\n`)
+  // The train journal starts afresh: the first host's was about its own landing,
+  // and a run that began landing on a shared target is not taken over.
+  if (trainAside !== undefined) renameSync(trainFile, trainAside)
+  try {
+    await record()
+    const commit = await snapshot(repoRoot, runDir, observed, `swarm: ${runId} taken over`)
+    const pushed = await pushLeased(repoRoot, remote, runId, commit, observed)
+    if (!pushed.ok) throw new Error(pushed.fenced ? `another host took run ${runId} over first` : `pushing the takeover failed: ${pushed.why}`)
+    return pushed.oid
+  } catch (error) {
+    if (before === undefined) rmSync(journalFile, { force: true })
+    else writeFileSync(journalFile, before)
+    if (trainAside !== undefined) renameSync(trainAside, trainFile)
+    throw error
   }
-  await record()
-  const commit = await snapshot(repoRoot, runDir, observed, `swarm: ${runId} taken over`)
-  const pushed = await pushLeased(repoRoot, remote, runId, commit, observed)
-  if (!pushed.ok) throw new Error(pushed.fenced ? `another host took run ${runId} over first` : `pushing the takeover failed: ${pushed.why}`)
-  return pushed.oid
 }
 
 /** Read a journal file's text, empty when absent (for tests and views). */

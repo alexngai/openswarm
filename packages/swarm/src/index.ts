@@ -455,6 +455,8 @@ function checkRuntimes(spec: TeamSpec, options: RunTeamOptions): Set<'claude-cod
 /** A durable run's `swarm/worktrees` record: its branches' namespace and base. */
 const worktreesOf = (journal: SwarmJournal) => journal.events.find((e) => e.type === 'swarm/worktrees')?.data as { teamId?: string; base?: string } | undefined
 const runIdOf = (journal: SwarmJournal) => basename(dirname(journal.path))
+/** Whether a run's record says it landed any of its work (finished, or failed past landing). */
+const landedAny = (run: SwarmRunRecord) => (run.git?.landed?.length ?? 0) + (run.git?.merged?.length ?? 0) > 0
 
 /** A durable run, or a resumed one, is a one-shot peer-team in worktrees (docs/05 D1). */
 function refuseUndurable(spec: TeamSpec, options: RunTeamOptions): void {
@@ -597,6 +599,8 @@ export default class SwarmService extends Service {
     const path = this.journalPath(runId)
     const local = existsSync(path) ? foldRun(SwarmJournal.read(path)) : undefined
     if (local?.status === 'running' && local.writer.host === hostname() && pidAlive(local.writer.pid)) throw new Error(`run ${runId} is live in pid ${local.writer.pid} on this host; stop it before taking it over here`)
+    // A run that landed here (finished, or failed past landing) would land into this clone again.
+    if (local !== undefined && (local.status === 'finished' || (local.status === 'failed' && landedAny(local)))) throw new Error(`run ${runId} already ${local.status} on this host, past landing; there is nothing to resume`)
     const repoRoot = options.worktrees.repoRoot
     let journal: SwarmJournal | undefined
     const lease = await takeOver(
@@ -608,8 +612,9 @@ export default class SwarmService extends Service {
         journal = SwarmJournal.open(this.journalPath(runId))
         const prior = foldRun(journal.events)
         if (prior?.spec === undefined) throw new Error(`run ${runId}'s journal has no run record to resume`)
-        // A run that failed before landing landed nothing, so it may be resumed; one that landed is refused below or here.
+        // A run that failed before landing landed nothing, so it may be resumed; one that landed some of its work is refused.
         if (prior.status === 'finished') throw new Error(`run ${runId} already finished; there is nothing to resume`)
+        if (prior.status === 'failed' && landedAny(prior)) throw new Error(`run ${runId} landed part of its work on ${prior.writer.host} before failing; resuming it would land it again`)
         if (journal.events.some((e) => e.type === LANDING.type && (e.data as { phase?: string }).phase === LANDING.phase)) {
           throw new Error(`run ${runId} began landing on ${prior.writer.host}; its outcome is that host's (a train's or the forge's), and resuming it would land twice`)
         }
@@ -969,10 +974,8 @@ export default class SwarmService extends Service {
     durable?: DurableRun,
     resumed?: Resumed,
   ): Promise<TeamResult & { git?: MergeOutcome }> {
-    // Refusals, then the CLI's preflight, before any spend.
+    // Refusals, then the CLI's preflight (below, once a durable run's namespace is pushed), before any spend.
     const clis = checkRuntimes(spec, options)
-    if (clis.has('claude-code')) await preflightClaude(claudeCommandOf(options.worktrees?.member?.claudeCommand))
-    if (clis.has('codex')) await preflightCodex(codexCommandOf(options.worktrees?.member?.codexCommand))
     // Every member run's usage, journaled as it settles (docs/05 B5).
     const usage: RecordUsage = async ({ role, ...record }) => {
       await journal.append('swarm/usage', { version: 1, ...record, role: role ?? roleOf(spec, record.member) })
@@ -987,12 +990,16 @@ export default class SwarmService extends Service {
         : new WorktreeRun(this.ctx, resumed?.base === undefined ? options.worktrees : { ...options.worktrees, baseRef: resumed.base }, options.onProgress, usage, admit, steerable, resumed?.teamId)
     if (durable !== undefined && worktrees !== undefined) {
       durable.worktrees = worktrees
-      // Its branches' namespace and base, which a host that takes it over must keep.
-      if (resumed === undefined) {
+      // Its branches' namespace and base, which a host that takes it over must
+      // keep: written by whoever first runs it (a run taken over before its
+      // first host wrote one gets this host's).
+      if (resumed?.teamId === undefined) {
         await journal.append('swarm/worktrees', { version: 1, teamId: worktrees.teamId, base: await worktrees.baseCommit() })
         void durable.mirror.checkpoint('worktrees')
       }
     }
+    if (clis.has('claude-code')) await preflightClaude(claudeCommandOf(options.worktrees?.member?.claudeCommand))
+    if (clis.has('codex')) await preflightCodex(codexCommandOf(options.worktrees?.member?.codexCommand))
     // Every member prompt through here carries the intent header (docs/05
     // §6.1). A peer-team keys each member run by its board task, whose own
     // intent replaces the run's; no other topology seeds the board.
@@ -1131,8 +1138,14 @@ export default class SwarmService extends Service {
       // Only a shared target (a train's or the forge's) can be landed on twice;
       // the local queue lands into each host's own clone.
       if (forge !== undefined || train?.url !== undefined) await journal.append(LANDING.type, { version: 1, phase: LANDING.phase })
-      if (!(await durable.mirror.confirm('landing'))) {
+      const held = await durable.mirror.confirm('landing')
+      // Not landing (cut off, fenced, or cancelled while the push was in flight):
+      // it pushes nothing more, so the remote keeps the run as a crash would
+      // leave it, without a landing marker the push did not deliver.
+      if (!held || options.signal?.aborted === true) {
+        durable.stop()
         await worktrees.abort().catch(() => undefined)
+        options.signal?.throwIfAborted()
         throw new Error(durable.mirror.isFenced ? `run ${runIdOf(journal)} was taken over by another host; it lands nothing here` : `run ${runIdOf(journal)} could not reach its remote to confirm it still holds the run; it lands nothing here`)
       }
     }

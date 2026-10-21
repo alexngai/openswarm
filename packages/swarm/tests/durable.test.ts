@@ -139,3 +139,33 @@ it('a hook declining the push refuses the run ref too, but is no fence', async (
   const declined = await pushLeased(a!.path, 'origin', 'run-x', commitOf(a!.path, a!.runDir), undefined, ['main'])
   expect(declined).toMatchObject({ ok: false, fenced: false })
 })
+
+it('a lock on a task branch alone fails the atomic push without fencing the run', async () => {
+  const { clones, remote } = world(1)
+  const [a] = clones
+  sh(a!.path, 'checkout', '-qb', 'work')
+  writeFileSync(join(a!.path, 'w.txt'), 'w\n')
+  sh(a!.path, 'add', '.')
+  sh(a!.path, 'commit', '-qm', 'w')
+  // A stale lock on the branch, as a crashed receive leaves one: the remote's transaction fails on it, not on the run's ref.
+  mkdirSync(join(remote, 'refs', 'heads'), { recursive: true })
+  writeFileSync(join(remote, 'refs', 'heads', 'work.lock'), '')
+  const r = await pushLeased(a!.path, 'origin', 'run-x', commitOf(a!.path, a!.runDir), undefined, ['work'])
+  expect(r).toMatchObject({ ok: false, fenced: false })
+})
+
+it("a refused takeover leaves this host's journal and train journal as they were", async () => {
+  const { clones } = world(2)
+  const [writer, taker] = clones
+  const mirror = new JournalMirror(writer!.path, { remote: 'origin' }, 'run-x', writer!.runDir, async () => [], () => {})
+  expect(await mirror.checkpoint('start')).toBe('pushed')
+  writeFileSync(join(taker!.runDir, 'journal.jsonl'), 'LOCAL\n')
+  writeFileSync(join(taker!.runDir, 'train.jsonl'), 'TRAIN\n')
+  await expect(
+    takeOver(taker!.path, 'origin', 'run-x', taker!.runDir, async () => {
+      throw new Error('refused by the record hook')
+    }, { steal: true }),
+  ).rejects.toThrow(/refused by the record hook/)
+  expect(readFileSync(join(taker!.runDir, 'journal.jsonl'), 'utf8')).toBe('LOCAL\n')
+  expect(readFileSync(join(taker!.runDir, 'train.jsonl'), 'utf8')).toBe('TRAIN\n')
+})
