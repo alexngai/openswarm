@@ -144,7 +144,7 @@ def record(run_id: str) -> dict | None:
     some tasks' test.sh give partial credit within a phase."""
     for d in cells(run_id):
         s, u = d.get("score") or {}, d.get("usage") or {}
-        truth = glob.glob(f".eval-runs/{run_id}/verifier-out/**/*.reward.json", recursive=True)
+        truth = sorted(glob.glob(f".eval-runs/{run_id}/verifier-out/**/*.reward.json", recursive=True))
         # An infrastructure failure, or a cell that made no model call, is no measurement (never a 0).
         measured = truth and d.get("status") != "env_error" and u.get("inputTokens", 0) > 0
         reward = round(float(json.load(open(truth[0]))["reward"]), 4) if measured else None
@@ -177,6 +177,14 @@ def screen(candidates: list[str], cap: float) -> None:
                 del rec[key]
         if rec.get("verdict") == "cell failed":
             del rec["verdict"]
+        # A verdict from rewards read before this restart is recomputed from the ones read now.
+        rewards = [rec[k]["reward"] for k in ("s1", "s2") if k in rec]
+        if rec.get("verdict") in ("qualifies", "too easy") and rewards and None not in rewards:
+            if len(rewards) == 2:
+                rec["mean"] = sum(rewards) / 2
+                rec["verdict"] = "qualifies" if rec["mean"] <= 0.45 else "too easy"
+            elif rewards[0] > 0.90:
+                rec["verdict"] = "too easy"
     save(state)
 
     def qualified() -> list[str]:

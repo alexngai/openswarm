@@ -87,7 +87,7 @@ def main() -> None:
     lo, hi = boots[249], boots[9749]
     print(f"\n(e) − curve: {observed:+.3f}  95% interval [{lo:+.3f}, {hi:+.3f}]")
     spend = sum(r["usd"] for r in state.values() if r.get("usd") is not None)
-    print(f"arms spend: ${spend:.2f}")
+    print(f"arms spend, every seed: ${spend:.2f}")
     if seeds == [1]:
         print("futility stop: (e) trails by more than 0.05" if observed < -0.05 else "futility: continue to seeds 2 and 3")
     elif observed >= 0.06 and lo > 0:

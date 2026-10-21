@@ -4,11 +4,15 @@ import statistics as st
 import sys
 from collections import Counter, defaultdict
 
+import re
+
 rows = json.load(open(sys.argv[1]))
+# Phase labels only where they reproduce test.sh's reward (load.py's labels_ok).
+labelled = [r for r in rows if r.get("labels_ok")]
 ARMS2 = {"onethread8": "f8", "onethread16": "f16", "divprogram": "e"}
-s2 = [r for r in rows if r["stage"] == 2 and not r["phase_screen"]]
-screen = [r for r in rows if r["stage"] == 2 and r["phase_screen"]]
-s1 = [r for r in rows if r["stage"] == 1]
+s2 = [r for r in labelled if r["stage"] == 2 and not r["phase_screen"]]
+screen = [r for r in labelled if r["stage"] == 2 and r["phase_screen"]]
+s1 = [r for r in labelled if r["stage"] == 1]
 mean = lambda xs: sum(xs) / len(xs) if xs else float("nan")
 
 
@@ -53,11 +57,12 @@ for label, rs in [
     print(f"  {label:<30} first {a:.2f}  middle {b:.2f}  last {c:.2f}   (n={len(rs)})")
 
 print("\n== C. Reviewer calibration (final whole-roadmap review vs held-out phase result), one-thread arms and e")
+print("   only cells with no repair after the final review: a repaired cell was graded on a tree the review never saw")
 for label, arms in [("one-thread (f4/f8/f16)", ("onethread4", "onethread8", "onethread16")), ("division e", ("divprogram",))]:
     pairs = Counter()
     allsaid = []
-    for r in rows:
-        if r["arm"] not in arms or not r.get("review"):
+    for r in labelled:
+        if r["arm"] not in arms or not r.get("review") or r.get("repairs"):
             continue
         st_ = {t: s for t, s in r["review"] if isinstance(t, int)}
         for i, p in enumerate(r["phases"]):
@@ -73,7 +78,7 @@ for label, arms in [("one-thread (f4/f8/f16)", ("onethread4", "onethread8", "one
 
 print("\n== D. Gate behaviour in one-thread arms: rounds used, and how many changed nothing")
 for arm in ("onethread4", "onethread8", "onethread16"):
-    rs = [r for r in rows if r["arm"] == arm and r.get("threads")]
+    rs = [r for r in rows if r["arm"] == arm and r.get("threads")]  # gate behaviour needs no labels
     used = [r["threads"]["t0"]["rounds"] for r in rs]
     cap = int(arm[len("onethread"):])
     print(f"  {arm:<12} n={len(rs):>3} rounds used mean {mean(used):.1f} (cap {cap}); hit the cap {sum(u >= cap for u in used)}/{len(used)}; "
@@ -109,10 +114,38 @@ for stage, rs, single in ((1, s1, "onethread8"), (2, s2, "onethread8")):
 for stage, task, f, g in sorted(pts, key=lambda p: p[2]):
     print(f"  s{stage} {task:<10} single {f:.2f}  e−single {g:+.2f}")
 xs, ys = [p[2] for p in pts], [p[3] for p in pts]
-print(f"  correlation(single level, gain) = {st.correlation(xs, ys):+.2f} over {len(pts)} tasks")
+print(f"  correlation(single level, gain) = {st.correlation(xs, ys):+.2f} over {len(pts)} cells of {len({p[1] for p in pts})} tasks "
+      "((f8) is on both axes, which biases this negative)")
+ind = []
+for task in sorted({r["task"] for r in s2}):
+    lvl = [r["reward"] for r in s2 if r["task"] == task and r["arm"] == "onethread16"]
+    f8 = [r["reward"] for r in s2 if r["task"] == task and r["arm"] == "onethread8"]
+    e = [r["reward"] for r in s2 if r["task"] == task and r["arm"] == "divprogram"]
+    ind.append((mean(lvl), mean(e) - mean(f8)))
+print(f"  stage 2 only, level from (f16), gain (e) - (f8): correlation {st.correlation([a for a, _ in ind], [b for _, b in ind]):+.2f} over {len(ind)} tasks")
 lo = [g for _, _, f, g in pts if f < 0.5]
 hi = [g for _, _, f, g in pts if f >= 0.5]
 print(f"  mean gain where single < 0.5: {mean(lo):+.3f} (n={len(lo)}); where single >= 0.5: {mean(hi):+.3f} (n={len(hi)})")
+
+print("\n== H. Contested targets by the load of the thread that owns them (division.mjs's owner rule), stage 2")
+from pathlib import Path
+PLANS = Path(__file__).resolve().parent.parent / "plans"
+loads = []
+for task in sorted({r["task"] for r in s2}):
+    plan = json.loads((PLANS / task / "plan.json").read_text())
+    threads = plan["threads"]
+    owner = lambda n: next((t["id"] for t in threads[1:] if re.search(rf"Target {n}\b", t["assignment"])), threads[0]["id"])
+    carried = Counter(owner(n) for n in range(1, len(next(r for r in s2 if r["task"] == task)["phases"]) + 1))
+    cells = [r for r in s2 if r["task"] == task]
+    for i in range(len(cells[0]["phases"])):
+        allp = [c["phases"][i] for c in cells]
+        if any(allp) and not all(allp):
+            rate = {ARMS2[a]: mean([c["phases"][i] for c in cells if c["arm"] == a]) for a in ARMS2}
+            o = owner(i + 1)
+            loads.append((task, i + 1, o, carried[o] if o != threads[0]["id"] else 0, rate["e"] - mean([rate["f8"], rate["f16"]])))
+for k in sorted({l[3] for l in loads}):
+    g = [l for l in loads if l[3] == k]
+    print(f"  owner carries {k} target(s){' (t0)' if k == 0 else ''}: n={len(g)} mean e - singles {mean([l[4] for l in g]):+.2f}  tasks {sorted({l[0] for l in g})}")
 
 print("\n== I. Seed variance (SD of reward over 3 seeds), stage 2")
 for a, l in ARMS2.items():

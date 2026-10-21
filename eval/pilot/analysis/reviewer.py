@@ -3,10 +3,16 @@
     python3 -I reviewer.py <analysis root>
 
 Two reviewers, the same verdict shape (a status per target, a 0-100 score):
-the product's L1 gate (`openswarm --gate`, docs/05 B6; runs gated, gated2,
-gated3 on the frozen 12) and the pilot gate (eval/pilot/gate.mjs, the
-one-thread and division arms of stages 1 and 2). Each final verdict judged
-the tree the held-out tests graded; a target is one test phase.
+the product's L1 gate (`openswarm --gate`, docs/05 B6, on the frozen 12;
+the runs whose log keeps the per-round summary) and the pilot gate
+(eval/pilot/gate.mjs, the one-thread and division arms of stages 1 and 2).
+
+The product gate's last review judged the tree that was graded. The pilot's
+final review did not, when targets it flagged were repaired before grading
+(division.mjs), so pilot cells count here only when nothing was repaired after
+the review. Labels are the runner's phase checks, where they reproduce
+test.sh's reward (load.py's labels_ok). Writes reviewer-cells.json beside the
+input, the product gate's per-cell summary in it.
 """
 import glob
 import json
@@ -65,6 +71,7 @@ for run in ("gated", "gated2", "gated3"):
             product.append(dict(run=run, task=task, rounds=rounds, accepted=accepted, phases=ph, reward=reward,
                                 stop=next((l for l in stderr.splitlines() if l.startswith("gate:") and "round" not in l[:12]), "")))
 
+labels_ok = {(c["task"], c["arm"], c["seed"]): c for c in json.load(open(f"{ROOT}/cells.json"))}
 for div in glob.glob(f"{ROOT}/openswarm*/eval/.eval-runs/*/verifier-out/*/*.division.json"):
     v = os.path.dirname(div)
     name = os.path.basename(v)  # <task>.<arm>.s<seed>.<stamp>
@@ -77,16 +84,19 @@ for div in glob.glob(f"{ROOT}/openswarm*/eval/.eval-runs/*/verifier-out/*/*.divi
     if not (rj and so):
         continue
     dv = json.load(open(div))
+    cell = labels_ok.get((task, arm, seed))
+    # A cell repaired after its final review was graded on a tree that review never saw.
+    if cell is None or not cell.get("labels_ok") or (dv.get("final") or {}).get("repairs"):
+        continue
     review = (dv.get("final") or {}).get("review") or {}
     verdict = {t["target"]: t["status"] for t in review.get("targets") or [] if isinstance(t.get("target"), int)}
     if not verdict:
         continue
     gate = "pilot, one thread" if arm.startswith("onethread") else "pilot, division"
-    cells.append((gate, arm, task, verdict, review.get("score"), phases(open(so[0], errors="replace").read()),
-                  float(json.load(open(rj[0]))["reward"]), None, all(s == "done" for s in verdict.values())))
+    cells.append((gate, arm, task, verdict, review.get("score"), cell["phases"], cell["reward"], None, all(s == "done" for s in verdict.values())))
 
 mean = lambda xs: sum(xs) / len(xs) if xs else float("nan")
-print(f"== product L1 gate (openswarm --gate): {len(product)} cells, {sum(len(p['phases']) for p in product)} targets")
+print(f"== product L1 gate (openswarm --gate): {len(product)} cells from {sorted({p['run'] for p in product})}, {sum(len(p['phases']) for p in product)} targets")
 over = [sum(v for k, v in p["rounds"][-1]["counts"].items() if k in DONE) - sum(p["phases"]) for p in product]
 print(f"   final round: targets called done minus targets that pass, per cell: mean {mean(over):+.2f}; "
       f"over-claims in {sum(o > 0 for o in over)} cells, under-claims in {sum(o < 0 for o in over)}, exact in {sum(o == 0 for o in over)}")

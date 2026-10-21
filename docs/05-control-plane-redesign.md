@@ -1789,7 +1789,7 @@ beating it; either brings back the deferred items it needs.
 stands.* On eight hard tasks, three seeds, division was +0.11 over the
 single-agent cost curve, with a 95 % interval from −0.004 to +0.23 (+0.10,
 [−0.02, +0.21] with a curve that never falls); the single agent plateaued
-(16 rounds no better than 8), and division's gains were large on four tasks
+(a 16-round cap no better than 8), and division's gains were large on four tasks
 and small losses on three. Not enough to bring back C1–C4; enough to say
 where to look. A new pre-registration, if one is written, needs about 30
 hard tasks (more than RoadmapBench has), and the curve's handling of an arm

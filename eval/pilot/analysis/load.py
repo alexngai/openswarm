@@ -69,6 +69,19 @@ for run, stage in RUNS.items():
             rec["reward"] = round(sc["earned"] / sc["total"], 4)
             rec["phases"] = [c["passed"] for c in sc["checkpoints"] if c["id"].startswith("phase-")]
             rec["reward_from"] = "parser"
+        # The phase parse must agree with test.sh's own reward: some test.sh give
+        # partial credit within a phase (mko-6.0.0) or print more phase blocks
+        # than the roadmap has targets (prm-6.4.0); their phases are not labels.
+        # The runner's score is the phases' pass/fail weighted as test.sh weights them:
+        # the labels are those phases only where it equals test.sh's own reward.
+        sc = d.get("score") or {}
+        parsed = sc["earned"] / sc["total"] if sc.get("total") else None
+        # Labels: the runner's own phase checks (one per roadmap target, matched by
+        # phase number), not a split of stdout, which some tasks print more blocks into.
+        checks = [c["passed"] for c in sc.get("checkpoints") or [] if c["id"].startswith("phase-")]
+        if checks:
+            rec["phases"] = checks
+        rec["labels_ok"] = bool(checks) and parsed is not None and abs(parsed - rec["reward"]) < 0.01
         rows.append(rec)
 
 json.dump(rows, open(f"{ROOT}/cells.json", "w"), indent=0)

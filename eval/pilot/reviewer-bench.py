@@ -74,10 +74,12 @@ def select() -> None:
                 so, dv = glob.glob(f"{vo[0]}*.stdout.txt"), glob.glob(f"{vo[0]}*.division.json")
                 if not so or not dv:
                     continue
-                review = (json.load(open(dv[0])).get("final") or {}).get("review") or {}
+                final = json.load(open(dv[0])).get("final") or {}
+                review = final.get("review") or {}
                 trees.append({"id": f"s{stage}-{task}-s{seed}", "stage": stage, "task": task, "submission": sub,
                               "labels": phases(open(so[0], errors="replace").read()),
-                              "baseline": {str(t["target"]): t["status"] for t in review.get("targets") or [] if isinstance(t.get("target"), int)}})
+                              "baseline": {str(t["target"]): t["status"] for t in review.get("targets") or [] if isinstance(t.get("target"), int)},
+                              "repaired": bool(final.get("repairs"))})
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "manifest.json").write_text(json.dumps(trees, indent=1))
     print(f"{len(trees)} trees, {sum(len(t['labels']) for t in trees)} labeled targets, {sum(sum(t['labels']) for t in trees)} passing")
@@ -157,45 +159,82 @@ def run(variant: str, cap: float) -> None:
     print(f"{name}: done, spent ${spent(name):.2f}")
 
 
-DONE = ("done", "unverifiable")
+DONE = ("done", "unverifiable")  # the product gate accepts either
 
 
-def metrics(trees: list[dict], verdict_of) -> dict:
-    tp = fp = fn = tn = 0
-    acc, rej = [], []
+def pairs(trees: list[dict], verdict_of) -> list[list[tuple[bool, bool]]]:
+    """Per tree, (reviewer said done, held-out passed) for each target; trees without a verdict left out."""
+    out = []
     for t in trees:
         v = verdict_of(t)
-        if v is None:
-            continue
-        for i, passed in enumerate(t["labels"]):
-            said = v.get(str(i + 1)) in DONE
-            tp += said and passed
-            fp += said and not passed
-            fn += (not said) and passed
-            tn += (not said) and (not passed)
-        reward = sum(t["labels"]) / len(t["labels"])
-        (acc if all(v.get(str(i + 1)) in DONE for i in range(len(t["labels"]))) else rej).append(reward)
-    m = lambda xs: sum(xs) / len(xs) if xs else float("nan")
-    return {"trees": len(acc) + len(rej), "done_precision": tp / max(1, tp + fp), "failures_flagged": tn / max(1, tn + fp),
-            "passes_called_done": tp / max(1, tp + fn), "accuracy": (tp + tn) / max(1, tp + fp + fn + tn),
-            "accepted": len(acc), "accepted_reward": m(acc), "rejected_reward": m(rej)}
+        if v is not None:
+            out.append([(v.get(str(i + 1)) in DONE, passed) for i, passed in enumerate(t["labels"])])
+    return out
 
 
-def score() -> None:
-    trees = json.loads((OUT / "manifest.json").read_text())
-    rows = [("baseline (recorded)", metrics(trees, lambda t: t["baseline"] or None))]
-    for d in sorted(p for p in OUT.iterdir() if p.is_dir()):
-        def verdict_of(t, d=d):
+def stats(tree_pairs: list[list[tuple[bool, bool]]]) -> dict:
+    flat = [p for tp in tree_pairs for p in tp]
+    tp = sum(s and y for s, y in flat)
+    fp = sum(s and not y for s, y in flat)
+    fn = sum((not s) and y for s, y in flat)
+    tn = sum((not s) and (not y) for s, y in flat)
+    n = max(1, tp + fp + fn + tn)
+    tpr, tnr = tp / max(1, tp + fn), tn / max(1, tn + fp)
+    po = (tp + tn) / n
+    pe = ((tp + fp) * (tp + fn) + (fn + tn) * (fp + tn)) / n / n
+    return {"done_precision": tp / max(1, tp + fp), "failures_flagged": tnr, "passes_called_done": tpr, "accuracy": po,
+            "informedness": tpr + tnr - 1, "kappa": (po - pe) / (1 - pe) if pe < 1 else 0.0}
+
+
+def interval(tree_pairs, key: str, draws: int = 4000) -> tuple[float, float]:
+    """95 % bootstrap over trees: targets within a tree are not independent."""
+    import random
+    rng = random.Random(0)
+    vals = sorted(stats([tree_pairs[rng.randrange(len(tree_pairs))] for _ in tree_pairs])[key] for _ in range(draws))
+    return vals[int(0.025 * draws)], vals[int(0.975 * draws)]
+
+
+def score(root: Path = OUT) -> None:
+    trees = json.loads((root / "manifest.json").read_text())
+
+    def file_verdict(d: Path):
+        def verdict_of(t):
             f = d / f"{t['id']}.json"
             if not f.exists():
                 return None
             v = json.loads(f.read_text())
             return {str(x["target"]): x["status"] for x in v.get("targets") or [] if isinstance(x, dict)} or None
-        rows.append((d.name, metrics(trees, verdict_of)))
-    print(f"{'reviewer':<22} {'trees':>5} {'done→pass':>9} {'fails flagged':>13} {'passes→done':>11} {'accuracy':>8}  accepted (reward) / not")
-    for name, m in rows:
-        print(f"{name:<22} {m['trees']:>5} {m['done_precision']:>9.0%} {m['failures_flagged']:>13.0%} {m['passes_called_done']:>11.0%} {m['accuracy']:>8.0%}  "
-              f"{m['accepted']} ({m['accepted_reward']:.2f}) / {m['rejected_reward']:.2f}")
+        return verdict_of
+
+    variants = {d.name: file_verdict(d) for d in sorted(p for p in root.iterdir() if p.is_dir())}
+    # Compared on the trees every variant judged.
+    common = [t for t in trees if all(v(t) is not None for v in variants.values())]
+    rows = [("calling every target done", lambda t: {str(i + 1): "done" for i in range(len(t["labels"]))}),
+            ("recorded (pre-repair tree)", lambda t: t["baseline"] or None), *variants.items()]
+    print(f"{len(common)} trees every variant judged, {sum(len(t['labels']) for t in common)} targets, "
+          f"{sum(sum(t['labels']) for t in common)} pass. The recorded verdicts judged the tree before the final repairs "
+          f"({sum(1 for t in common if t.get('repaired'))} of these trees were repaired after them): not comparable.")
+    print(f"{'reviewer':<28} {'done→pass':>9} {'fails flagged':>13} {'passes→done':>11} {'accuracy':>8} {'informedness (95%)':>22} {'kappa':>6}")
+    for name, verdict_of in rows:
+        tps = pairs(common, verdict_of)
+        m = stats(tps)
+        lo, hi = interval(tps, "informedness") if name != "calling every target done" else (0.0, 0.0)
+        print(f"{name:<28} {m['done_precision']:>9.0%} {m['failures_flagged']:>13.0%} {m['passes_called_done']:>11.0%} {m['accuracy']:>8.0%} "
+              f"{m['informedness']:>+8.2f} [{lo:+.2f}, {hi:+.2f}] {m['kappa']:>+6.2f}")
+    names = list(variants)
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            same = [x == y for t in common for x, y in zip([s for s, _ in pairs([t], variants[a])[0]], [s for s, _ in pairs([t], variants[b])[0]])]
+            pa = mean_([s for t in common for s, _ in pairs([t], variants[a])[0]])
+            pb = mean_([s for t in common for s, _ in pairs([t], variants[b])[0]])
+            chance = pa * pb + (1 - pa) * (1 - pb)
+            po = mean_(same)
+            print(f"agreement {a} vs {b}: {po:.0%} (chance at their rates {chance:.0%}, kappa {(po - chance) / (1 - chance):+.2f})")
+
+
+def mean_(xs):
+    xs = [float(x) for x in xs]
+    return sum(xs) / len(xs) if xs else float("nan")
 
 
 if __name__ == "__main__":
@@ -205,4 +244,4 @@ if __name__ == "__main__":
     elif cmd == "run":
         run(sys.argv[2], float(sys.argv[sys.argv.index("--cap") + 1]) if "--cap" in sys.argv else 75.0)
     elif cmd == "score":
-        score()
+        score(Path(sys.argv[2]) if len(sys.argv) > 2 else OUT)

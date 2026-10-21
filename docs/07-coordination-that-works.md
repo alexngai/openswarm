@@ -626,13 +626,14 @@ the arms run seed 1 alone first, for the futility check.
 scores 1.0 in 3 of 3 (opt-3.0.0's own test runner fails in its image;
 pyg-1.6.3's tests are flaky, 0.89 once); 5 qualify, in order fal-3.0.0
 (mean 0.30), mko-5.0.0 (0.39), pyg-2.0.0 (0.45), spc-3.1.0 (0.39) and
-spc-3.3.0 (0.44); the other 26 are above 0.45, 9 of them at 1.0 on seed 1.
+spc-3.3.0 (0.44); the other 26 are above 0.45, 12 of them at 1.0 on seed 1.
 With fal-1.3.0, mko-6.5.0 and spc-3.2.0 from the frozen 12, eight tasks,
 above the six that would have stopped it. Every reward is test.sh's own
 reward.json: the runner's phase parser, which counts a phase passed or
 failed, read 0 for mko-6.0.0's 0.78 and 0.84 (its test.sh gives partial
-credit within a phase), which would have qualified it wrongly; the other
-cells agree. The arms run fresh cells, never a screened task's screen cells
+credit within a phase) and for pyg-2.4.0's 0.8 and 0.6 (its test.sh has no
+phase weights), which would have qualified both wrongly; the other cells
+agree. The arms run fresh cells, never a screened task's screen cells
 (which selected it for scoring low).
 
 *Grading timeout (2026-10-19, during seed 1 of the arms).* The runner
@@ -642,7 +643,12 @@ agent's code. `eval/pilot/grade-watchdog.sh` now kills any test process
 under `/tests/test.sh` older than the task's own verifier timeout (1800 s),
 in every arm: that phase fails and test.sh goes on, so a cell keeps the
 credit of its other phases rather than none. The agent's own test runs are
-not touched. Those two were the first it killed; every kill is logged.
+not touched. The limit is per test process, not the task's whole-verifier
+timeout, and six cells shared 32 vCPUs, so a slow but correct suite could in
+principle be cut. It killed four processes: three runs of the same fal-3.0.0
+ASGI test file, which hangs on those trees (at 68, 95 and 30 minutes), and
+the false kill below. Every kill is logged
+(`eval/pilot/results/grade-watchdog.log`).
 Its third kill was wrong: it read a process's age from `/proc/<pid>/stat`
 split on spaces, and jest's command name ("npm exec jest t") holds spaces,
 so a live jest run read as 25 hours old and was killed, failing a phase of
@@ -682,10 +688,11 @@ after seed 1). Under the rules, no further cells without a new
 pre-registration.
 
 What the run shows, beyond the rule:
-1. **The single agent plateaus.** (f16) averaged 0.459 against (f8)'s 0.478
-   at 19 % more spend: 16 rounds beat 8 on one task (fal-3.0.0, 0.27 against
-   0.23), lost on one (spc-3.1.0) and tied on six. More budget for one gated
-   agent buys nothing here, as in stage 1.
+1. **A higher round cap buys nothing.** (f16) averaged 0.459 against
+   (f8)'s 0.478 at 19 % more spend: 16 rounds beat 8 on one task (fal-3.0.0,
+   0.27 against 0.23), lost on one (spc-3.1.0) and tied on six. (f16) used
+   7.1 rounds on average and reached its cap once, so this varies the cap,
+   not what one agent could do with more spend; as in stage 1.
 2. **Division's gain, where there is one, is large; elsewhere it is a small
    loss.** (e) leads by +0.22 to +0.30 on four tasks (both falcon, two of
    the three spaCy), ties on one, and trails by 0.04–0.07 on three (both
@@ -697,19 +704,29 @@ What the run shows, beyond the rule:
    $38.41 and 26 % over (f8); on mko-5.0.0 it cost the most of any arm
    ($78.50) and scored lowest.
 4. **Hard tasks are rare.** Of 33 tasks that pass the file rule, 5 had a
-   gated single agent at or under 0.45; it solved 9 outright at seed 1. The
+   gated single agent at or under 0.45; it solved 12 outright at seed 1. The
    regime where division could matter is small on this benchmark.
 5. **Power.** Per-task gaps have a standard deviation of about 0.17, so
    eight tasks give an interval of about ±0.12. An interval of ±0.06, enough
    to settle a +0.10 effect, needs about 30 such tasks: more than
    RoadmapBench's Python and TypeScript tasks hold.
 
-*Departures from the plan, all recorded above:* seed 2 skipped in the screen
-when seed 1 was over 0.90 (the verdict cannot change); every reward from
-test.sh's reward.json, not the runner's phase parser; fresh arm cells, never
-screen cells; seeds 2 and 3 started once seed 1's last cell could no longer
-change the futility check; a grading timeout at the task's own 1800 s (one
-false kill, voided and rerun). Data: `eval/pilot/results/stage2-state.json`;
+*Departures from the plan:* seed 2 skipped in the screen when seed 1 was
+over 0.90 (the verdict cannot change); every reward from test.sh's
+reward.json, not the runner's phase parser; fresh arm cells, never screen
+cells; seeds 2 and 3 started once seed 1's last cell could no longer change
+the futility check (its only outcome left, mko-6.5.0's (f16), could not move
+the eight-task mean below −0.05); a grading timeout per test process at the
+task's 1800 s (one false kill, voided and rerun, which lowered (e)'s gap).
+Also: the never-falling curve is a reading added after (f16)'s results were
+seen, reported beside the pre-registered one, never instead of it; the code's
+curve is flat beyond either end, not only beyond (f16) (no effect: where
+(f16) is cheaper, the two arms' mean rewards are equal); the coordination
+ratio, listed as recorded, was not computed; the runner's per-arm timeouts
+differ (28 h to 68 h; the longest cell ran 8 h); the five new partitions
+were written after their tasks' screen cells, by writers given only the
+roadmap and the base repository (`leak-check.py` checks assignments, not
+`paths`). Data: `eval/pilot/results/stage2-state.json`;
 `python3 -I eval/pilot/stage2-report.py eval/pilot/results/stage2-state.json
 [--envelope]` reproduces both readings.
 
@@ -717,33 +734,43 @@ false kill, voided and rerun). Data: `eval/pilot/results/stage2-state.json`;
 
 Per-target results, gate behaviour and final reviews of every graded cell of
 stages 1 and 2 (228; `eval/pilot/analysis/`, table in
-`eval/pilot/results/cells.json`). A target is one test phase; the two map one
-to one.
+`eval/pilot/results/cells.json`). A target's label is the runner's check of
+its test phase, used only where those checks reproduce test.sh's reward
+(223 cells: mko-6.0.0 and pyg-2.4.0, whose test.sh do not score phases pass
+or fail, and one opt-4.0.0 cell drop out). Eight tasks and three seeds:
+what follows are patterns and hypotheses, not findings.
 
 1. **Most targets decide nothing.** Of the 52 targets in the stage-2 tasks,
    13 fail in all nine cells (every arm and seed, though the reference passes
    them) and 20 pass in all nine: 63 % score the same whatever the arm. The
-   comparison rests on 19 contested targets, and (e)'s lead on 4 of them
-   (taken by 2 seeds or more over both single arms) against 2 lost.
-2. **The single agent stops because its reviewer says it is done.** (f16)
-   stopped before its cap in 23 of 24 cells, every time on the reviewer
-   calling every target done (f8: 56 of 84 so, 27 at the cap). But that
-   verdict is weak evidence: of 553 targets the final review called *done*
-   in one-thread cells, 67 % pass the held-out tests, against 55 % of those
-   it called *partial*. More rounds cannot help a gate whose reviewer cannot
-   see what is wrong; that, not budget, is the plateau of §7.4 and
-   §7.7. The lever is the verifier's precision.
-3. **No horizon effect.** Single agents fail a roadmap's *first* targets
-   most (stage 2, (f8)+(f16): 0.45 on the first third, 0.61 the middle,
-   0.56 the last; the screen 0.61 / 0.75 / 0.69), the large foundational
-   ones listed first, not the late ones an exhausted context would drop.
-   (e) is flat (0.58 / 0.59 / 0.62): its gain is on those first targets.
-4. **Division helps where a thread is narrow.** On contested targets owned
-   by a thread that carries one or two targets, (e) is +0.33 to +0.35 over
-   the single arms' mean (14 targets); owned by a thread carrying three or
-   more, it gains nothing or loses (4 targets). Few targets, but the same
-   direction as the task split of §7.7: focus per target is what division
-   buys, and a plan that loads a thread with many targets gives it back.
+   comparison rests on 19 contested targets: (e) leads on 4 of them by 2
+   seeds or more over both single arms, and trails on 2.
+2. **The single agent stops before its cap.** (f16) stopped before its cap
+   in 23 of 24 cells, (f8) in 57 of 84; the gate stops on the reviewer
+   calling every target done or on a round that changes nothing, and in all
+   but one of those cells the last round changed something (the per-round
+   verdicts are not kept, so the reviewer's call is inferred). Its final
+   "done" is weak evidence: in the 36 one-thread cells with no repair after
+   the final review (where the review judged the graded tree; it called every
+   target done in all of them), 67 % of its 204 "done" targets pass the
+   held-out tests. *Hypothesis:* the plateau of §7.4 and §7.7 is the gate
+   stopping on a verdict that cannot see what is wrong. The arm that would
+   test it stops on an oracle instead (the held-out phases).
+3. **No sign of an exhausted context.** Single agents fail a roadmap's
+   *first* targets most (stage 2, (f8)+(f16): 0.45 on the first third, 0.61
+   the middle, 0.56 the last; the screen 0.64 / 0.77 / 0.73), the large
+   foundational ones listed first, not the late ones a run out of context
+   would drop. (e) is flat (0.58 / 0.59 / 0.62), its gain on those first
+   targets. Position in a roadmap is not an agent's horizon, so this rules
+   out only the simplest form of a horizon effect.
+4. **Division's gain sits on narrowly owned targets, in the same tasks.** On
+   contested targets owned by a thread carrying one or two targets, (e) is
+   +0.33 (3 targets) and +0.35 (11) over the single arms' mean; on the 4
+   owned by threads carrying three or more it averages −0.34 (−1.00, +0.50,
+   −0.42, −0.42), and on the one thread 0 owns, −0.33. All the heavily
+   loaded threads are in mko-5.0.0 and pyg-2.0.0, so thread load and
+   repository cannot be told apart here: this is §7.7's task split cut
+   another way, a hypothesis to test, not a rule.
 5. **The machinery works.** Contracts first: 3 conflicts in 99 landings;
    the contract check failed 18 landings, each given its repair round; the
    whole-roadmap review then left 2.25 targets open per cell, and 1.8
@@ -751,101 +778,106 @@ to one.
 6. **Faster, at about the same reward per dollar.** (e) took 54 minutes a
    task against (f8)'s 69 and (f16)'s 92 (threads in parallel), for 0.014
    reward per dollar against (f8)'s 0.015 and (f16)'s 0.012.
-7. **Bigger gains where one agent is weak.** Across the 20 tasks of both
-   stages, (e) − (f8) correlates −0.46 with (f8)'s reward: +0.09 on average
-   where (f8) is under 0.5 (8 tasks), +0.03 above (12).
-
-So: on this benchmark and model, a gated single agent is held back by its
-reviewer's blindness more than by its budget or context; division's measured
-gain comes from narrow per-target focus on the large targets, on the few
-targets still in play. Two things follow without new spend: the verifier's
-precision against held-out tests is the metric to improve (and to report for
-any gate, docs/05 B6), and any future division plan should cap a thread at
-two targets.
+7. **Perhaps bigger gains where one agent is weak.** Across both stages, (e)
+   − (f8) correlates −0.46 with (f8)'s reward (20 cells of 17 tasks, stage 1
+   at one seed); (f8) on both axes biases that negative. With an independent
+   level ((f16)'s reward) in stage 2 alone, −0.38 over 8 tasks.
 
 ### 7.9 How well the gate's reviewer judges (2026-10-20, no new spend)
 
-Every final verdict on record, against the held-out tests of the tree it
-judged (`eval/pilot/analysis/reviewer.py`). Two reviewers with the same brief
-(the product's adds `unverifiable`): the product's L1 gate (`openswarm
---gate`, docs/05 B6, its two valid runs on the frozen 12; only status counts
-survive in its log, so its precision is an upper bound) and the pilot gate
-(`gate.mjs`, the one-thread and division arms of stages 1 and 2).
+Final verdicts against the held-out tests of the tree each judged
+(`eval/pilot/analysis/reviewer.py`; the product gate's cells in
+`eval/pilot/results/reviewer-product.json`). Two reviewers with the same
+brief (the product's adds `unverifiable`): the product's L1 gate (`openswarm
+--gate`, docs/05 B6, its two valid runs on the frozen 12, whose last review
+judged the graded tree; only status counts survive in its log, so its
+precision is an upper bound), and the pilot gate (`gate.mjs`), counted only
+in cells with no repair after its final review: the division driver repairs
+every target the final review flags before grading, so in a repaired cell
+the review never saw the graded tree (83 of 120 one-thread cells, 43 of 48
+division). In the unrepaired cells it called every target done, so only its
+"done" can be measured.
 
-| reviewer | cells | "done" passes | failing targets it flags | reward, accepted / not | its score / actual |
-|---|---|---|---|---|---|
-| product L1 gate | 24 | ≤ 85 % | — | 0.70 / 0.68 | 93 / 69 |
-| pilot gate, one thread | 120 | 67 % | 33 % | 0.62 / 0.62 | 88 / 62 |
-| pilot gate, division's final review | 48 | 74 % | 45 % | 0.79 / 0.65 | 78 / 66 |
+| reviewer | cells | "done" passes | reward, accepted / not | its score / actual (correlation) |
+|---|---|---|---|---|
+| product L1 gate | 24 | ≤ 85 % | 0.70 (11) / 0.68 (13) | 93 / 69 (+0.29) |
+| pilot gate, one thread, unrepaired | 36 | 67 % | 0.62 (all accepted) | 97 / 62 (+0.59) |
+| pilot gate, division, unrepaired | 5 | 86 % | 0.79 (all accepted) | 99 / 79 |
 
-1. **Acceptance carries no information about the outcome.** Cells the gate
-   accepted scored what the rest scored (0.70 against 0.68 for the product;
-   0.62 against 0.62 for the pilot); of the product's 11 accepted cells, 2
-   pass every held-out test.
-2. **It is confident and wrong in one direction.** Its own score runs 12 to
-   26 points above the held-out reward and barely tracks it (correlation
-   0.02 to 0.29). It catches a third to a half of the targets that fail.
-3. **Why:** of 217 targets it called done that fail, its notes say they
-   "worked in smoke tests", "spot checks", "focused tests" or "contract
-   tests" it wrote itself. What the held-out tests caught instead: the exact
-   signatures and attributes the roadmap specifies (an `insert()` arity, a
-   missing `edge_attr`, `_value` for `_values`), edge cases (an empty form,
-   overflow, version variants), every listed variant (joined *and* balanced
-   strategies), and quantitative expectations. The reviewer checks that its
+1. **The product gate's acceptance did not separate outcomes.** Its accepted
+   cells scored 0.70, the rest 0.68; of the 11 accepted, 2 pass every
+   held-out test (24 cells, one seed each: a difference this small is noise).
+2. **It is confident.** Its own score runs 24 to 35 points above the held-out
+   reward, tracking it weakly (product) to moderately (pilot).
+3. **What it misses**, from the 215 targets a final review called done that
+   fail (clean labels; repaired cells included, since a repair is aimed at
+   flagged targets, not done ones): its notes say they "worked in smoke
+   tests", "spot checks", "focused tests" or "contract tests" it wrote
+   itself, while the held-out tests exercised the exact signatures and
+   attributes the roadmap specifies, edge cases it names, every variant it
+   lists, and its quantitative expectations. In a sample of 15, about 12 fail
+   on behaviour the roadmap states, 1 on an ambiguous sentence, and about 2
+   on something it does not state. *Hypothesis:* the reviewer checks that its
    own reading works, not that the specification does.
-
-This is the plateau of §7.4 and §7.8 explained: the gate stops on a verdict
-that cannot tell a finished roadmap from a half-finished one. The next lever
-is the review itself, measured against these labels (§7.10).
 
 ### 7.10 The reviewer bench (2026-10-20, $113)
 
-`eval/pilot/reviewer-bench.py`: 36 fixed trees, the final state of every
-(f8) cell of stages 1 and 2 (the task's image plus the agent's diff), and
-222 labels, each target's held-out phase (137 pass, 62 %). A reviewer
-variant reviews every tree once; its per-target verdicts are scored against
-the labels. The recorded final reviews (the pilot brief) are a free
-baseline; two variants ran: the product's L1 brief as it stands
+`eval/pilot/reviewer-bench.py`: fixed trees, the final state of every (f8)
+cell of stages 1 and 2 (the task's image plus the agent's diff), each target
+labelled by its held-out phase. A reviewer variant reviews every tree once
+and its per-target verdicts are scored against the labels. Two variants ran,
+one review per tree each: the product's L1 brief as it stands
 (`REVIEW_BRIEF`, now exported so the bench measures that exact text), and a
 requirements-first brief written from §7.9's failure modes, not from the
 held-out tests (`eval/pilot/reviewer-briefs/spec.txt`: list every stated
 requirement, test each with the roadmap's own names, done only when every
-test passes, an untested requirement is not done).
+test passes, an untested requirement is not done). The recorded final
+reviews are not a baseline here: 25 of the 36 trees were repaired after
+them.
 
-| reviewer | trees | accuracy | "done" passes | failures flagged | passes called done | reward, accepted / not |
-|---|---|---|---|---|---|---|
-| calling every target done | 36 | 62 % | 62 % | 0 % | 100 % | — |
-| recorded (pilot brief) | 36 | 56 % | 62 % | 31 % | 72 % | 0.68 / 0.59 |
-| product brief, rerun | 35 | 56 % | 61 % | 23 % | 77 % | 0.56 / 0.65 |
-| requirements-first | 35 | 59 % | 63 % | 21 % | 83 % | 0.64 / 0.60 |
+*What the trees are:* states the gate let through: an (f8) cell ends when
+its reviewer calls every target done or after 8 rounds, and the final
+review's flagged targets were then repaired. The failures left are mostly
+ones this reviewer family already missed, so the bench measures review of
+work after the gate, not review in general.
 
-(One tree, vbt-1.3.0, gave no verdict in either run: the bench set git's
-`safe.directory` after its first git call; fixed since.)
+On the 35 trees both variants judged (217 targets, 133 pass; one tree,
+vbt-1.3.0, gave no verdict in either run, from a git `safe.directory`
+ordering in the bench, fixed since; two, s2-mko-5.0.0-s1 and s1-prm-6.7.0-s1,
+were rebuilt through `git apply --reject`, whose kept log shows their files
+applying cleanly but is cut at 1,000 characters, so a rejected hunk there
+cannot be ruled out), with 95 % intervals over trees:
 
-1. **No brief beats calling every target done.** Each reviewer's "done" is
-   as likely to pass as a target chosen at random (61–63 % against 62 %), and
-   acceptance does not pick the better trees (the product brief's accepted
-   ones scored lower).
-2. **Asking for rigour did not change what the reviewer finds.** The
-   requirements-first brief made it more lenient, not less: it called more
-   passing targets done and flagged fewer failures. Its notes still report
-   tests it wrote that pass.
-3. **The verdict is close to noise.** Two reviews of the same tree agree on
-   63–69 % of targets, where two reviewers saying "done" at random at their
-   own rates would agree on about 62 %. And 39 of the 84 failing targets were
-   called done by all three: what the reviewer misses, it misses
-   consistently. The same model reviewing the same model's work shares its
+| reviewer | "done" passes | failures flagged | passes called done | informedness | kappa |
+|---|---|---|---|---|---|
+| calling every target done | 61 % | 0 % | 100 % | 0 | 0 |
+| product brief | 61 % | 23 % | 77 % | +0.00 [−0.10, +0.12] | 0.00 |
+| requirements-first | 63 % | 21 % | 83 % | +0.05 [−0.05, +0.17] | +0.05 |
+
+(Informedness is the share of passes called done plus the share of failures
+flagged, minus one: 0 for a reviewer that tells nothing apart, whatever its
+leniency.)
+
+1. **Neither brief shows information about these trees.** Both intervals
+   include 0 and exclude more than modest information (+0.12, +0.17).
+2. **The requirements-first brief changed nothing measurable.** It flagged
+   18 of 84 failing targets against 19, and called 111 of 133 passing ones
+   done against 103: differences within one run's noise. Two briefs, one run
+   each, so this says wording did not help *here*, not that no brief can.
+3. **The two runs agree about as often as chance.** 69 % of targets, where
+   two reviewers at their own rates would agree on 67 % by chance (kappa
+   +0.06); 54 of the 84 failing targets were called done by both.
+   *Hypothesis:* the same model reviewing the same model's work shares its
    reading of the roadmap, so the tests it writes encode the same mistakes.
 
-So the review brief is not the lever: wording does not give this reviewer
-sight of what it gets wrong. What the gate is worth (the rounds' +0.07 to
-+0.12 in §7.1 and §7.4) comes from sending the work back with notes, some of
-which are right, not from a stop decision, which carries no information. What
-could give a reviewer independent sight, untested here: a different model
-reviewing (independent errors), or checks that do not come from the
-reviewer's reading at all (the repository's tests and the roadmap's own
-examples run verbatim, L2). For the product (docs/05 B6): an L1 acceptance
-should not be read as evidence that a task is done.
+For the product (docs/05 B6): an L1 acceptance, on this evidence, is not
+evidence that a task is done. What could give a reviewer independent sight,
+untested here: a different model reviewing (errors that need not coincide),
+or checks that do not come from the reviewer's reading (the repository's
+tests and the roadmap's own examples, run verbatim at L2). The gate's
+measured value (the rounds' +0.07 to +0.12 in §7.1 and §7.4) may come from
+sending work back with notes rather than from its stop decision; an arm
+that sends work back a fixed number of times would tell.
 
 ## 8. What AgentRoom, Co-Coder and STORM do, and what OpenSwarm takes from them
 
