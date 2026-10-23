@@ -1920,6 +1920,25 @@ that costs less or scores lower fixed in advance.
   session after one board write does not. `/swarm` (coordinator) never
   touches the board and is unaffected. A3's journal fixes it; the test
   flips if dsh accepts plugin event types first.
+- **What to cut** (an audit of the surface against the evidence,
+  2026-10-23). Removed: CLI plan mode and `--team` (now refused), the
+  docs/04 self-modification rig with `recover.ts`, and three dead config
+  and helper names; and the launcher's `run --gate`, which docs/03
+  documented but the launcher rejected, now reaches the gate. Open, for
+  the owner:
+  - *Two headless engines.* `--output-format json` boots the dsh profile
+    with `eval-reporter.ts`; `--spec`, `--resume`, the gate and the caps
+    run `runCli`, which every docs/07 number was measured on. One should go.
+  - *Features serving a deferred or disproven goal:* messaging peer-teams
+    (D18 defers them, R2), the coordinator behind `/swarm` and
+    `openswarm start` (the calibration that failed), the cascade topology
+    and `topology cascade` (port its pinning tests to a gated peer-team
+    first), self-modification (0 uses in 103 runs), and the critic-loop,
+    committee and pipeline topologies the CLI cannot run.
+  - *Duplication:* usage folding in the CLI against `metrics.ts`, a gate
+    round rendered three ways, `review.cordis.yml` as a copy of
+    `member.cordis.yml`, and the landing step written in `train.ts`,
+    `train-client.ts` and `forge.ts`.
 
 ## 11. dsh seams, checked against the installed packages
 
