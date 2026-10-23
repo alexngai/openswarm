@@ -879,6 +879,45 @@ measured value (the rounds' +0.07 to +0.12 in §7.1 and §7.4) may come from
 sending work back with notes rather than from its stop decision; an arm
 that sends work back a fixed number of times would tell.
 
+### 7.11 A different model reviewing (2026-10-23, $40)
+
+§7.10's first untested lever: a reviewer from another model family, whose
+errors need not coincide with the agent's. The bench ran the product brief
+on Claude Opus 4.6 through Bedrock (the strongest Claude model enabled on
+the account; no Claude 5 model was), with prompt caching added to the
+Anthropic adapter for it (a review read about 1M tokens from cache and
+wrote about 60k). Dollars are at Anthropic's list rates; Bedrock's bill may
+differ.
+
+*What went wrong:* the account's daily Bedrock token quota for the model
+ran out partway. From then on every request was refused (429, "too many
+tokens per day"), and dsh ended those reviews without a verdict or an error
+(the adapter now keeps the provider's message, and the CLI says why a run
+stopped). 9 of 36 trees have a verdict; the other 27 are left out. The 9
+are the reviews that finished before the quota ran out, five of them on
+one task family, so they are not a random sample.
+
+On those 9 trees (51 targets, 32 pass, 19 fail), with 95 % intervals over
+trees:
+
+| reviewer | "done" passes | failures flagged | passes called done | informedness |
+|---|---|---|---|---|
+| calling every target done | 63 % | 0 % | 100 % | 0 |
+| product brief, gpt-5.5 | 58 % | 5 % | 78 % | −0.17 [−0.29, −0.04] |
+| product brief, Opus 4.6 | 61 % | 0 % | 94 % | −0.06 [−0.12, +0.00] |
+
+1. **No sign the other model sees more.** Opus 4.6 flagged none of the 19
+   failing targets and called 94 % of the passing ones done: more lenient
+   than gpt-5.5, not more discriminating. The two agree on 84 % of targets
+   against 82 % by chance (kappa +0.15).
+2. **Small and selected.** Nine trees and 19 failures cannot rule out a
+   modest gain on the full bench. Finishing it needs the 27 trees re-run,
+   about $35 at these rates, after the quota resets or is raised.
+
+For the product: the lever left untested is checks that do not come from
+any reviewer's reading. The gate now says so: an L1 acceptance is labelled
+unverified and a gate without checks warns (docs/05, B6).
+
 ## 8. What AgentRoom, Co-Coder and STORM do, and what OpenSwarm takes from them
 
 Read from the three papers directly (2026-09-27) [P arxiv 2606.00953,
