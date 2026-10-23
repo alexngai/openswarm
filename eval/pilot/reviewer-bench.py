@@ -6,7 +6,8 @@ reviewer variant reviews every tree once; its verdicts are scored against the
 labels. The trees are one-thread (f8) cells of stages 1 and 2, whose recorded
 final reviews (the pilot brief, the same model) are a free baseline.
 
-Run on the eval host from openswarm's eval/ directory, Azure route in the env:
+Run on the eval host from openswarm's eval/ directory, Azure route in the env
+(or OPENSWARM_MODEL=us.anthropic.claude-opus-4-6-v1 and AWS_BEARER_TOKEN_BEDROCK for a Claude reviewer):
 
     python3 -I pilot/reviewer-bench.py select
     python3 -I pilot/reviewer-bench.py run <variant> [--cap USD]   # product | pilot | <brief file>
@@ -89,8 +90,16 @@ def image_of(task: str) -> str:
     return re.search(r'docker_image\s*=\s*"([^"]+)"', (ROADMAP / f"{task}-roadmap" / "task.toml").read_text()).group(1)
 
 
+# $/MTok: input, cache read, cache write, output. Claude at Anthropic's list rates (Bedrock's bill may differ); else gpt-5.5's.
+FAMILY = MODEL.split(".")[-1]
+PRICE = {"claude-opus-4-6-v1": (5, 0.5, 6.25, 25)}.get(FAMILY, (5, 0.5, 0, 30))
+# A Claude reviewer's results sit beside the default model's: product-claude-opus-4-6-v1.
+TAG = f"-{FAMILY}" if FAMILY.startswith("claude-") else ""
+
+
 def usd(u: dict) -> float:
-    return (u.get("inputTokens", 0) * 5 + u.get("cacheReadInputTokens", 0) * 0.5 + u.get("outputTokens", 0) * 30) / 1e6
+    return (u.get("inputTokens", 0) * PRICE[0] + u.get("cacheReadInputTokens", 0) * PRICE[1]
+            + u.get("cacheWriteInputTokens", 0) * PRICE[2] + u.get("outputTokens", 0) * PRICE[3]) / 1e6
 
 
 def spent(variant: str) -> float:
@@ -107,7 +116,7 @@ def review_one(tree: dict, variant: str, brief_mount: list[str], brief_name: str
         for f in ("gate.mjs", "review-driver.mjs"):
             shutil.copy(HERE / f, stage / f)
         env = []
-        for k in ("AZURE_API_BASE", "AZURE_API_KEY", "OPENSWARM_LLM_BASE_URL", "OPENSWARM_LLM_API_KEY"):
+        for k in ("AZURE_API_BASE", "AZURE_API_KEY", "OPENSWARM_LLM_BASE_URL", "OPENSWARM_LLM_API_KEY", "AWS_BEARER_TOKEN_BEDROCK", "AWS_REGION"):
             if os.environ.get(k):
                 env += ["-e", k]
         roadmap = (ROADMAP / f"{tree['task']}-roadmap" / "instruction.md").read_text()
@@ -139,6 +148,7 @@ def run(variant: str, cap: float) -> None:
         name, brief_mount, brief_name = variant, [], variant
     else:  # a brief file: its results go under its stem
         name, brief_mount, brief_name = Path(variant).stem, ["-v", f"{Path(variant).resolve()}:/opt/bench/brief.txt:ro"], "/opt/bench/brief.txt"
+    name += TAG
     if os.environ.get("BENCH_TREES"):
         trees = [t for t in trees if t["id"] in os.environ["BENCH_TREES"].split(",")]
     (OUT / name).mkdir(parents=True, exist_ok=True)

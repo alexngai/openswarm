@@ -37,7 +37,7 @@ export function cli(cwd, prompt, isAgent) {
     child.stdout.setEncoding("utf8").on("data", (d) => { stdout += d; });
     child.on("close", (status) => {
       clearTimeout(timer);
-      const usage = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0 };
+      const usage = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 };
       let text = "";
       let out = "";
       for (const line of stdout.split("\n")) {
