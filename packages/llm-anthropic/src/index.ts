@@ -239,6 +239,17 @@ export async function* translateEvents(
   throw new LlmError('Anthropic stream ended without message_stop', 'TRANSPORT')
 }
 
+/**
+ * The SDK's failure as an LlmError that says what the provider said, so a
+ * quota or auth refusal is legible upstream: 429 is RATE_LIMIT, 401/403 AUTH.
+ */
+export function providerError(what: string, error: unknown): LlmError {
+  const status = (error as { status?: unknown } | undefined)?.status
+  const http = typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599 ? status : undefined
+  const code = http === 429 ? 'RATE_LIMIT' : http === 401 || http === 403 ? 'AUTH' : 'TRANSPORT'
+  return new LlmError(`${what}: ${error instanceof Error ? error.message : String(error)}`, code, { cause: error, ...(http === undefined ? {} : { status: http }) })
+}
+
 // ---------------------------------------------------------------------------
 // Adapter.
 
@@ -308,14 +319,14 @@ class AnthropicAdapter extends LlmAdapter {
       )
     } catch (error) {
       if (options.signal?.aborted) throw new LlmError('Anthropic request aborted by caller', 'ABORTED', { cause: error })
-      throw new LlmError('Anthropic Messages request failed', 'TRANSPORT', { cause: error })
+      throw providerError('Anthropic Messages request failed', error)
     }
     try {
       yield* translateEvents(events)
     } catch (error) {
       if (options.signal?.aborted) throw new LlmError('Anthropic request aborted by caller', 'ABORTED', { cause: error })
       if (error instanceof LlmError) throw error
-      throw new LlmError('Anthropic stream failed', 'TRANSPORT', { cause: error })
+      throw providerError('Anthropic stream failed', error)
     }
   }
 }

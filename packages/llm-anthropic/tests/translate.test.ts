@@ -3,7 +3,7 @@
  * contract, and dsh message history → Anthropic params. No SDK, no network.
  */
 import { expect, it } from 'vitest'
-import { mapMessages, mapTools, translateEvents, withCache } from '../src/index'
+import { mapMessages, mapTools, providerError, translateEvents, withCache } from '../src/index'
 
 async function collect(events: unknown[]): Promise<any[]> {
   const out: any[] = []
@@ -96,4 +96,14 @@ it('caches the system prompt and the newest block, nothing else', () => {
   // an empty or missing system prompt sends none; empty history marks nothing
   expect(withCache('', [])).toEqual({ messages: [] })
   expect(withCache(undefined, [])).toEqual({ messages: [] })
+})
+
+it('a provider refusal keeps what the provider said, and its status', () => {
+  const quota = Object.assign(new Error('429 Too many tokens per day, please wait before trying again.'), { status: 429 })
+  expect(providerError('Anthropic Messages request failed', quota)).toMatchObject({
+    code: 'RATE_LIMIT',
+    message: 'Anthropic Messages request failed: 429 Too many tokens per day, please wait before trying again.',
+  })
+  expect(providerError('x', Object.assign(new Error('denied'), { status: 403 })).code).toBe('AUTH')
+  expect(providerError('x', new Error('socket hang up')).code).toBe('TRANSPORT')
 })

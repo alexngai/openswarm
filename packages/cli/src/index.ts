@@ -919,6 +919,7 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
     const agentOptions = { provider: route.route, model: route.model }
     let text: string
     let completed: boolean
+    let diagnostic: string | undefined
     if (team !== undefined && memberRoot !== undefined) {
       // dsh members take the CLI's route, as plan-mode members do; a CLI member's model is its CLI's.
       const members = team.spec.members.map((m) =>
@@ -1125,6 +1126,9 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
       const result = await run.result
       text = textBlocksOf(result.output)
       completed = result.stopReason === 'completed'
+      // Why a run stopped short (a model or transport failure) is only here; say it.
+      if (!completed) io.err(`openswarm: the agent stopped (${result.stopReason})${result.diagnostic === undefined ? '' : `: ${result.diagnostic}`}`)
+      diagnostic = result.diagnostic
     }
     if (exceeded !== undefined) return stopForBudget()
     // Zero usage means no model call was ever billed — auth or routing failed,
@@ -1136,7 +1140,7 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
       io.out(
         JSON.stringify({
           type: 'error',
-          message: `no model call was made for "${model}" — check the provider route and credentials`,
+          message: `no model call was made for "${model}" — check the provider route and credentials${diagnostic === undefined ? '' : ` (${diagnostic})`}`,
         }),
       )
       emitStop()
