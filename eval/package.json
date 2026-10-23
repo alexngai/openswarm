@@ -2,7 +2,7 @@
   "name": "openswarm-eval",
   "private": true,
   "type": "module",
-  "description": "Self-modification experiments (docs/04, docs/05) on swarmkit-eval. Separate package so swarmkit-eval never reaches openswarm's consumers.",
+  "description": "Experiments on OpenSwarm (docs/07) on swarmkit-eval. Separate package so swarmkit-eval never reaches openswarm's consumers.",
   "dependencies": {
     "swarmkit-eval": "0.2.0"
   }

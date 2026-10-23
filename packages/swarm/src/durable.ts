@@ -241,7 +241,3 @@ export async function takeOver(
     throw error
   }
 }
-
-/** Read a journal file's text, empty when absent (for tests and views). */
-export const journalText = (runDir: string) => (existsSync(join(runDir, 'journal.jsonl')) ? readFileSync(join(runDir, 'journal.jsonl'), 'utf8') : '')
-export const runDirOf = (journalPath: string) => dirname(journalPath)
