@@ -118,6 +118,20 @@ export function mapMessages(messages: Message[]): AnthropicMessage[] {
   return out
 }
 
+const EPHEMERAL = { type: 'ephemeral' } as const
+
+/**
+ * Prompt caching: a breakpoint on the system prompt (tools render before it,
+ * so it covers both) and one on the newest block, which the next turn of an
+ * agent loop reads back instead of paying for its whole history again.
+ * Explicit markers, not the top-level field the Bedrock path may reject.
+ */
+export function withCache(system: string | undefined, messages: AnthropicMessage[]): { system?: AnthropicContent[]; messages: AnthropicMessage[] } {
+  const last = messages.at(-1)?.content.at(-1)
+  if (last !== undefined) last['cache_control'] = EPHEMERAL
+  return system === undefined || system === '' ? { messages } : { system: [{ type: 'text', text: system, cache_control: EPHEMERAL }], messages }
+}
+
 export function mapTools(tools: ToolSchema[] | undefined): AnthropicContent[] | undefined {
   if (tools === undefined || tools.length === 0) return undefined
   return tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters }))
@@ -282,8 +296,7 @@ class AnthropicAdapter extends LlmAdapter {
         {
           model: options.model,
           max_tokens: options.maxTokens ?? cfg.maxTokens ?? 32_768,
-          ...(options.system === undefined ? {} : { system: options.system }),
-          messages: mapMessages(options.messages),
+          ...withCache(options.system, mapMessages(options.messages)),
           ...(mapTools(options.tools) === undefined ? {} : { tools: mapTools(options.tools) }),
           ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
           ...(options.stop === undefined || options.stop.length === 0
