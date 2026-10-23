@@ -135,6 +135,8 @@ def review_one(tree: dict, variant: str, brief_mount: list[str], brief_name: str
                            capture_output=True, text=True, timeout=3 * 3600)
         verdict = json.loads((o / "verdict.json").read_text()) if (o / "verdict.json").exists() else {"error": r.stderr[-2000:]}
         verdict["apply_errors"] = (o / "apply.err").read_text()[-1000:] if (o / "apply.err").exists() else ""
+        if verdict.get("score") is None:
+            verdict["stderr"] = r.stderr[-2000:]
         (out / f"{tree['id']}.json").write_text(json.dumps(verdict))
         with lock:
             print(f"{tree['id']}: score {verdict.get('score')} ${usd(verdict.get('usage') or {}):.2f} (spent ${spent(variant):.2f})", flush=True)
