@@ -180,29 +180,13 @@ it('--max-tokens stops the run and reports the usage actually spent', async () =
   expect(parsed.usage.totalTokens).toBeGreaterThan(0)
 }, 60_000)
 
-it('--team runs the coordinator topology and still honors the output contract', async () => {
-  // The coordinator's first turn MUST parse as a numbered plan (runCoordinator
-  // throws otherwise), so the scripted reply is a list, not prose.
-  await startMock({
-    apiKey: 'mock-key',
-    sequence: ['success'],
-    repeatLast: true,
-    successText: '1. first subtask\n2. second subtask',
-  })
+it('--team is refused, not run as a single agent: the coordinator team it ran failed calibration', async () => {
   process.chdir(mkdtempSync(join(tmpdir(), 'openswarm-run-ws-')))
-
   const lines: string[] = []
-  const errs: string[] = []
-  const code = await runCli(
-    ['run', '--output-format', 'json', '--model', 'mock-small', '--team', '--workers', '2', 'ship it'],
-    { out: (l) => lines.push(l), err: (l) => errs.push(l) },
-  )
-  expect(errs.join('\n')).toBe('')
-  expect(code).toBe(0)
-  const parsed = openSwarmParse(lines.join('\n'))
-  expect(parsed.sawResult).toBe(true)
-  expect(parsed.usage.totalTokens).toBeGreaterThan(0)
-}, 120_000)
+  const code = await runCli(['run', '--output-format', 'json', '--model', 'mock-small', '--team', 'ship it'], { out: (l) => lines.push(l), err: () => {} })
+  expect(code).toBe(1)
+  expect(lines.map((l) => JSON.parse(l)).find((e) => e.type === 'error')?.message).toMatch(/--team \(the coordinator team\) is gone/)
+})
 
 it('accepts the Claude-Code permission vocabulary the harness adapter defaults to', async () => {
   // CliHarnessAdapter falls back to "bypassPermissions" when no mode is set, so
@@ -588,7 +572,7 @@ it('OPENSWARM_GATE=1 selects the gate, since an eval Arm carries env not flags',
   }
 }, 60_000)
 
-it('--gate refuses a cwd that is not a git work tree, and the team path', async () => {
+it('--gate refuses a cwd that is not a git work tree, and an empty check', async () => {
   process.chdir(mkdtempSync(join(tmpdir(), 'openswarm-run-ws-')))
   const lines: string[] = []
   const code = await runCli(
@@ -599,14 +583,6 @@ it('--gate refuses a cwd that is not a git work tree, and the team path', async 
   expect(lines.join('\n')).toMatch(/needs a git work tree/)
 
   gitWorkspace()
-  const teamLines: string[] = []
-  const teamCode = await runCli(
-    ['run', '--output-format', 'json', '--model', 'mock-small', '--team', '--gate', 'ship it'],
-    { out: (l) => teamLines.push(l), err: () => {} },
-  )
-  expect(teamCode).toBe(1)
-  expect(teamLines.join('\n')).toMatch(/only the single-agent path[\s\S]*--team/)
-
   const emptyLines: string[] = []
   const emptyCode = await runCli(
     ['run', '--output-format', 'json', '--model', 'mock-small', '--gate', '--gate-check', '', 'ship it'],

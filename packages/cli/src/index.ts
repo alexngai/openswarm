@@ -43,7 +43,6 @@ import SwarmService, {
   targetStatuses,
   activeVerifier,
   type CascadeResult,
-  type CoordinatorResult,
   type FanoutSpec,
   type GateEvidence,
   type GateResult,
@@ -62,7 +61,6 @@ import * as Spine from '@deepseek-ai/dsh-agent-spine-demo'
 import * as SessionPersistenceJsonl from '@deepseek-ai/dsh-session-persistence-jsonl'
 import * as Subagent from '@deepseek-ai/dsh-subagent'
 import * as SpawnInProcess from '@deepseek-ai/dsh-subagent-spawn-in-process'
-import { ARMS, loadPlan, runPilot, type Arm, type Plan } from './pilot'
 
 export { runControl } from './control'
 import { pricingOf } from './control'
@@ -494,38 +492,6 @@ function foldTeam(sessions: Iterable<UsageTotals>): UsageTotals {
   return team
 }
 
-/** The coordinator team `--team` runs; plan mode runs one per thread. */
-function coordinatorSpec(task: string, agentOptions: { provider: string; model: string }, workers: number) {
-  return {
-    topology: 'coordinator' as const,
-    coordinator: { name: 'coordinator', agentOptions },
-    workers: Array.from({ length: workers }, (_, i) => ({ name: `worker-${i}`, agentOptions })),
-    task,
-  }
-}
-
-/**
- * Plan mode (docs/05 pilot): `--plan <file> --arm <name>`, or the env pair for
- * the reason OPENSWARM_SELF_MODIFY exists. swarmkit's `openSwarmSpec.flags()`
- * always emits `--single` or `--team`, so an env-selected plan supersedes them;
- * only the explicit flags conflict.
- */
-function pilotOf(args: Map<string, string>, selfModify: boolean): { plan: Plan; arm: Arm } | undefined {
-  const planPath = args.get('plan') ?? (process.env['OPENSWARM_PILOT_PLAN'] || undefined)
-  const arm = args.get('arm') ?? (process.env['OPENSWARM_PILOT_ARM'] || undefined)
-  if (planPath === undefined && arm === undefined) return undefined
-  if ((args.has('plan') || args.has('arm')) && (args.has('team') || args.has('single'))) {
-    throw new Error('--plan/--arm cannot be combined with --team or --single')
-  }
-  if (planPath === undefined || arm === undefined) {
-    throw new Error('plan mode needs both a plan (--plan or OPENSWARM_PILOT_PLAN) and an arm (--arm or OPENSWARM_PILOT_ARM)')
-  }
-  if (!(ARMS as readonly string[]).includes(arm)) throw new Error(`unknown arm "${arm}" (expected ${ARMS.join(' | ')})`)
-  // The authoring plugin mounts in THIS process; plan-mode members are subprocesses it never reaches.
-  if (selfModify) throw new Error('--self-modify has no effect on plan-mode members; refusing a no-op arm')
-  return { plan: loadPlan(planPath), arm: arm as Arm }
-}
-
 /** A team spec file: a peer-team or fanout spec plus its run's worktree options, and its remote when durable (docs/05 D1). */
 interface TeamSpecFile {
   spec: PeerTeamSpec | FanoutSpec
@@ -541,12 +507,11 @@ interface TeamSpecFile {
  * spec supersedes the `--single`/`--team` swarmkit always emits; only the
  * explicit flags conflict.
  */
-function teamSpecOf(args: Map<string, string>, selfModify: boolean, planned: boolean): TeamSpecFile | undefined {
+function teamSpecOf(args: Map<string, string>, selfModify: boolean): TeamSpecFile | undefined {
   const path = args.get('spec') ?? (process.env['OPENSWARM_TEAM_SPEC'] || undefined)
   if (path === undefined) return undefined
   if (args.has('spec') && (args.has('team') || args.has('single'))) throw new Error('--spec cannot be combined with --team or --single')
-  if (planned) throw new Error('a team spec (--spec / OPENSWARM_TEAM_SPEC) cannot be combined with plan mode')
-  // As in plan mode: the authoring plugin mounts in THIS process, and the members are subprocesses.
+  // The authoring plugin mounts in THIS process, and the members are subprocesses.
   if (selfModify) throw new Error('--self-modify has no effect on team-spec members; refusing a no-op arm')
   const { worktrees = {}, durable, ...spec } = JSON.parse(readFileSync(path, 'utf8'))
   if (spec.topology !== 'peer-team' && spec.topology !== 'fanout') {
@@ -632,7 +597,7 @@ function gateOf(
   argv: string[],
   args: Map<string, string>,
   workspace: string,
-  planned: boolean,
+  teamed: boolean,
   io: CliIo,
 ): { maxRounds?: number; commands?: string[]; minLevel?: 1 | 2 | 3; suite?: string; reviewerSandbox: string } | undefined {
   const GATE_FLAGS = ['gate-rounds', 'gate-check', 'gate-level', 'gate-suite']
@@ -645,9 +610,9 @@ function gateOf(
     if (stray.length > 0) io.err(`openswarm: ${stray.join(' and ')} set without OPENSWARM_GATE=1; this run is not gated`)
     return undefined
   }
-  if (args.has('team') || planned) {
+  if (teamed) {
     throw new Error(
-      "the gate (--gate / OPENSWARM_GATE=1) covers only the single-agent path; it cannot be combined with --team, plan mode or a team spec (gate a spec's peer-team with its own `gate`)",
+      "the gate (--gate / OPENSWARM_GATE=1) covers only the single-agent path; it cannot be combined with a team spec (gate a spec's peer-team with its own `gate`)",
     )
   }
   const rounds = args.get('gate-rounds') ?? (process.env['OPENSWARM_GATE_ROUNDS'] || undefined)
@@ -805,7 +770,7 @@ export function sandboxUnavailable(ctx: any): string | undefined {
 export function memberRouteOf(route: Route): { agentOptions: { provider: string; model: string }; env: Record<string, string> } {
   if (route.adapter !== 'openai') {
     throw new Error(
-      `"${route.model}" cannot run as a worktree member (plan mode, the gate's reviewer): members only speak the OpenAI-compatible route`,
+      `"${route.model}" cannot run as a worktree member (a team spec's member, the gate's reviewer): members only speak the OpenAI-compatible route`,
     )
   }
   const baseURL = route.baseURL ?? process.env['OPENSWARM_LLM_BASE_URL']
@@ -820,18 +785,16 @@ export function memberRouteOf(route: Route): { agentOptions: { provider: string;
   }
 }
 
-/** How often plan mode re-reads member logs to enforce `--max-tokens`/`--max-turns`. */
+/** How often a team run re-reads member logs to enforce `--max-tokens`/`--max-turns`. */
 const CAP_POLL_MS = 5_000
 
 /**
- * `openswarm run --output-format json --model <m> [--single|--team] "<prompt>"`
+ * `openswarm run --output-format json --model <m> [--single] "<prompt>"`
  *
  * The eval entry point: one task, headless, JSONL on stdout for the harness
  * adapter's `openSwarmParse`. `--single` (the default) runs one agent over the
  * tool stack, and with the gate (`gateOf`) only closes on passing evidence,
- * one `gate_round` line per round; `--team` runs the coordinator topology;
- * plan mode (`pilotOf`) runs a plan's threads as coordinator teams in
- * worktrees (./pilot.ts); a team spec (`teamSpecOf`) runs a peer-team or
+ * one `gate_round` line per round; a team spec (`teamSpecOf`) runs a peer-team or
  * fanout as worktree members, lands it (through the train when its
  * `worktrees.train` says so), fast-forwards a clean workspace to the result,
  * and reports it in a `team_note` line with the run's metrics.
@@ -859,8 +822,11 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
   const maxTokens = numericArg(args, 'max-tokens')
   const maxTurns = numericArg(args, 'max-turns')
   const maxCostUsd = numericArg(args, 'max-cost-usd')
-  const pilot = pilotOf(args, selfModify)
-  const team = teamSpecOf(args, selfModify, pilot !== undefined)
+  const team = teamSpecOf(args, selfModify)
+  // swarmkit's arms always emit --single or --team; an env-selected spec supersedes them.
+  if (args.has('team') && team === undefined) {
+    throw new Error('--team (the coordinator team) is gone: it failed calibration (docs/07 §1); run a team spec (--spec) instead')
+  }
   if (resume !== undefined && team?.durable === undefined) throw new Error('--resume takes the run\'s team spec (--spec) with its durable remote')
   // The dollar cap (docs/05 C5) prices every dsh token at the route's model and
   // adds what claude-code members reported. A cap that undercounts is worse
@@ -873,10 +839,10 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
     const unchecked = tasks.filter((t) => (t.checks ?? teamGate.checks ?? []).length === 0 && (t.suite ?? teamGate.suite) === undefined)
     if (unchecked.length > 0) io.err(`openswarm: ${unchecked.length} of ${tasks.length} gated task(s) have no checks, so ${REVIEW_ONLY}; give them checks (or the gate minLevel: 1 to silence this)`)
   }
-  const gate = gateOf(argv, args, workspace, pilot !== undefined || team !== undefined, io)
+  const gate = gateOf(argv, args, workspace, team !== undefined, io)
   // Plan-mode members, a team spec's dsh members and the gate's reviewer are worktree subprocesses.
   const memberRoute =
-    pilot !== undefined || (team !== undefined && needsDshRoute(team)) || (gate !== undefined && gate.commands === undefined) ? memberRouteOf(route) : undefined
+    (team !== undefined && needsDshRoute(team)) || (gate !== undefined && gate.commands === undefined) ? memberRouteOf(route) : undefined
 
   /** Set once a cap trips; also the flag that turns the exit into a 3. */
   let exceeded: string | undefined
@@ -904,7 +870,7 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
     ...(pricing === undefined ? {} : { pricing }),
   })
   const { ctx, lead, usageBySession } = harness
-  // Ours to choose, so subprocess members' usage (plan mode's, a team's, the
+  // Ours to choose, so subprocess members' usage (a team's, the
   // gate reviewer's) can be read back (foldSessionLogs).
   const memberRoot = memberRoute === undefined && team === undefined ? undefined : mkdtempSync(join(tmpdir(), 'openswarm-member-sessions-'))
   const memberUsage = (): UsageTotals => (memberRoot === undefined ? emptyUsage() : foldSessionLogs(memberRoot))
@@ -953,51 +919,7 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
     const agentOptions = { provider: route.route, model: route.model }
     let text: string
     let completed: boolean
-    if (pilot !== undefined && memberRoute !== undefined && memberRoot !== undefined) {
-      const threads = await runPilot({
-        ...pilot,
-        workspace,
-        signal: controller.signal,
-        runThread: async (thread, baseSha) => {
-          try {
-            const result = (await (ctx as any).swarm.runTeam(
-              coordinatorSpec(
-                `${prompt}\n\n## Your thread: ${thread.id}\n${thread.assignment}\nOther threads own the rest of the roadmap; stay within your assignment.`,
-                memberRoute.agentOptions,
-                pilot.plan.workers,
-              ),
-              {
-                parent: lead.agent,
-                signal: controller.signal,
-                worktrees: {
-                  repoRoot: workspace,
-                  baseRef: baseSha,
-                  targetBranch: `pilot/${thread.id}`,
-                  member: { env: { ...memberRoute.env, DSH_SESSION_ROOT: memberRoot } },
-                },
-              },
-            )) as CoordinatorResult & { git?: { merged: unknown[]; conflicts: unknown[] } }
-            io.out(
-              JSON.stringify({
-                type: 'team_note',
-                thread: thread.id,
-                stopReason: result.synthesis.stopReason,
-                merged: result.git?.merged.length ?? 0,
-                conflicts: result.git?.conflicts.length ?? 0,
-                text: result.synthesis.text,
-              }),
-            )
-          } catch (error) {
-            io.out(JSON.stringify({ type: 'team_note', thread: thread.id, error: String(error instanceof Error ? error.message : error) }))
-            throw error
-          }
-        },
-      })
-      io.out(JSON.stringify({ type: 'pilot', arm: pilot.arm, threads }))
-      text = `pilot ${pilot.arm}: ${threads.map((t) => `${t.id} ${t.landed}${t.error === undefined ? '' : ` (${t.error})`}`).join('; ')}`
-      // Conflicts are data about the arm; only a thread that did not run fails the run.
-      completed = threads.every((t) => t.landed !== 'failed')
-    } else if (team !== undefined && memberRoot !== undefined) {
+    if (team !== undefined && memberRoot !== undefined) {
       // dsh members take the CLI's route, as plan-mode members do; a CLI member's model is its CLI's.
       const members = team.spec.members.map((m) =>
         (m.runtime ?? 'dsh') !== 'dsh' || memberRoute === undefined ? m : { ...m, agentOptions: { ...memberRoute.agentOptions, ...m.agentOptions } },
@@ -1076,13 +998,6 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
         `${git?.stopped === undefined ? '' : ` (train stopped: ${git.stopped})`}; workspace ${workspaceNote}`
       // Ejections are data about the run; a train that stopped short, or abandoned tasks, fail it.
       completed = git?.stopped === undefined && abandoned === undefined
-    } else if (args.has('team')) {
-      const result = (await (ctx as any).swarm.runTeam(
-        coordinatorSpec(prompt, agentOptions, Number(args.get('workers') ?? '2')),
-        { parent: lead.agent, signal: controller.signal },
-      )) as CoordinatorResult
-      text = result.synthesis.text
-      completed = result.synthesis.stopReason === 'completed'
     } else if (gate !== undefined) {
       const { reviewerSandbox, suite, ...limits } = gate
       // Fail before any spend, and say how to proceed, rather than let every
@@ -1233,8 +1148,8 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
   } catch (error) {
     // An aborted run rejects; that is a budget stop, not a failure.
     if (exceeded !== undefined) return stopForBudget()
-    if (pilot === undefined && gate === undefined && team === undefined) throw error
-    // Plan mode, a team spec and the gate have spent real tokens by now (a
+    if (gate === undefined && team === undefined) throw error
+    // A team spec and the gate have spent real tokens by now (a
     // failed landing, a snapshot or review that failed after a round); report
     // them rather than exiting like a crash.
     io.out(JSON.stringify({ type: 'error', message: String(error instanceof Error ? error.message : error) }))

@@ -59,7 +59,6 @@ const HEADLESS_VALUE_FLAGS = new Set([
   '--max-tokens',
   '--max-turns',
   '--max-cost-usd',
-  '--workers',
   '--spec',
   '--output',
   '--trace-output',
