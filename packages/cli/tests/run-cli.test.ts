@@ -453,7 +453,9 @@ it('--gate: the reviewer measures in its own clone, accepts round 1, and its usa
     { type: 'gate', accepted: true, level: 1, rounds: 1 },
   ])
   // The same, legible on stderr, which the harness does not truncate to its head.
-  expect(errs).toEqual(['gate: round 1 L1 review score 100 — passed (1 done)', 'gate: accepted at L1 after 1 round'])
+  // A gate without checks says up front that a reviewer alone decides (docs/07 §7.10), and labels the acceptance.
+  expect(errs[0]).toMatch(/^openswarm: the gate has no checks, so a reviewer alone accepts.*§7\.10/)
+  expect(errs.slice(1)).toEqual(['gate: round 1 L1 review score 100 — passed (1 done)', 'gate: accepted at L1 after 1 round — by review alone, unverified (no checks ran)'])
   const parsed = openSwarmParse(lines.join('\n'))
   expect(parsed.sawResult).toBe(true)
   expect(parsed.output).toContain('all done')
@@ -550,7 +552,8 @@ it('each round reports what the reviewer told the agent: per-target verdicts, wh
   const lines: string[] = []
   const errs: string[] = []
   const code = await runCli(
-    ['run', '--output-format', 'json', '--model', 'mock-small', '--gate', 'ship it'],
+    // Declaring L1 silences the no-checks warning.
+    ['run', '--output-format', 'json', '--model', 'mock-small', '--gate', '--gate-level', '1', 'ship it'],
     { out: (l) => lines.push(l), err: (l) => errs.push(l) },
   )
   // The agent changes nothing, so round 2 stops the gate without another review.

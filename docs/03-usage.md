@@ -340,6 +340,13 @@ inside the worktree, and merged. See `packages/swarm/tests/self-modify-live.test
 The completion gate ([docs/05](05-control-plane-redesign.md) B6, B1) accepts
 work on the strongest verifier it is given: L1 a reviewer, L2 the task's checks,
 L3 a hidden suite (L0 is no gate; L4, external CI on the train, is not built).
+An L1 acceptance is not evidence the work is done: on held-out tests the
+reviewer's acceptance carried no detectable signal ([docs/07](07-coordination-that-works.md)
+§7.10). So `openswarm run --gate` without checks warns before it starts and
+labels an L1 acceptance `by review alone, unverified (no checks ran)`, a
+peer-team spec warns with the count of gated tasks that have no checks, and
+landing evidence rates anything below L2 high risk. `--gate-level 1` (or the
+spec gate's `minLevel: 1`) declares L1 on purpose and silences the warning.
 A peer-team's `gate.signoff` (a prompt) adds a sign-off on top: once a round's
 checks or suite pass, a reviewer, run under worktree execution as review mode's
 is, reads the change (`git diff <fork point>` in a disposable copy of the

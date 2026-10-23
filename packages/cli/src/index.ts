@@ -610,6 +610,12 @@ export function fastForward(workspace: string, target: string, start: CheckoutSt
 }
 
 /**
+ * An acceptance by review alone is not evidence the work is done: on held-out
+ * tests the gate's reviewer carried no detectable signal (docs/07 §7.10).
+ */
+const REVIEW_ONLY = 'a reviewer alone accepts, and on held-out tests its acceptance carried no detectable signal (docs/07 §7.10)'
+
+/**
  * The completion gate (docs/05 B6): `--gate [--gate-rounds N] [--gate-check
  * "<cmd>"]... [--gate-level N] [--gate-suite <name>]`, or the OPENSWARM_GATE*
  * env for the reason OPENSWARM_SELF_MODIFY exists. Checks make it L2; without
@@ -682,6 +688,9 @@ function gateOf(
       .trim() === 'true'
   } catch {}
   if (!inside) throw new Error(`the gate needs a git work tree to snapshot, and ${workspace} is not in one`)
+  if (checks.length === 0 && suite === undefined && level !== '1') {
+    io.err(`openswarm: the gate has no checks, so ${REVIEW_ONLY}; add --gate-check "<cmd>" to verify (--gate-level 1 silences this)`)
+  }
   return {
     ...(rounds === undefined ? {} : { maxRounds: Number(rounds) }),
     ...(checks.length === 0 ? {} : { commands: checks }),
@@ -764,7 +773,7 @@ function evidenceLine(e: GateEvidence): string {
 function gateResultLine(result: GateResult): string {
   const n = result.rounds.length
   const rounds = `${n} round${n === 1 ? '' : 's'}`
-  if (result.accepted) return `gate: accepted at L${result.level} after ${rounds}`
+  if (result.accepted) return `gate: accepted at L${result.level} after ${rounds}${result.level === 1 ? ' — by review alone, unverified (no checks ran)' : ''}`
   if (result.reason === 'tamper') return `gate: stopped — a tamper incident in round ${n}`
   if (result.reason === 'hidden suite unconfined') return `gate: stopped — the verifier could not confine the hidden suite (OPENSWARM_VERIFIER_ALLOW_PARTIAL=1 runs it as L2)`
   if (result.reason !== undefined) return `gate: stopped — ${result.reason}: ${oneLine(result.rounds.at(-1)?.evidence.error ?? '')}`
@@ -859,6 +868,11 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
   const pricing = pricingOf(args.get('pricing'))
   const rate = maxCostUsd === undefined ? undefined : capRate(pricing, route.model, team?.spec.members ?? [])
   if (team !== undefined) refuseUnpricedBudget(team.spec, route.model, pricing)
+  if (team?.spec.topology === 'peer-team' && team.spec.gate !== undefined && team.spec.gate.review !== false && team.spec.gate.minLevel === undefined) {
+    const { gate: teamGate, tasks } = team.spec
+    const unchecked = tasks.filter((t) => (t.checks ?? teamGate.checks ?? []).length === 0 && (t.suite ?? teamGate.suite) === undefined)
+    if (unchecked.length > 0) io.err(`openswarm: ${unchecked.length} of ${tasks.length} gated task(s) have no checks, so ${REVIEW_ONLY}; give them checks (or the gate minLevel: 1 to silence this)`)
+  }
   const gate = gateOf(argv, args, workspace, pilot !== undefined || team !== undefined, io)
   // Plan-mode members, a team spec's dsh members and the gate's reviewer are worktree subprocesses.
   const memberRoute =

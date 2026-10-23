@@ -299,6 +299,11 @@ it('team spec: refused before booting when it conflicts or is not a peer-team or
   expect(await fails(['--spec', peer, '--plan', writePlan(), '--arm', 'program'])).toMatch(/cannot be combined with plan mode/)
   expect(await fails(['--spec', peer, '--gate'])).toMatch(/cannot be combined with --team, plan mode or a team spec/)
   expect(await fails(['--spec', writeSpec({ topology: 'coordinator' })])).toMatch(/topology must be peer-team or fanout/)
+  // A gated task without checks is accepted by review alone, which the run says up front (docs/07 §7.10).
+  const errs: string[] = []
+  const reviewed = writeSpec({ topology: 'peer-team', members: [{ name: 'm' }], gate: {}, tasks: [{ subject: 's', prompt: 'p' }, { subject: 't', prompt: 'q', checks: ['true'] }] })
+  await runCli(['--output-format', 'json', '--model', 'mock-model', '--spec', reviewed, '--gate', 'go'], { out: () => {}, err: (l) => errs.push(l) })
+  expect(errs).toContainEqual(expect.stringMatching(/^openswarm: 1 of 2 gated task\(s\) have no checks, so a reviewer alone accepts/))
 })
 
 it('team spec: claude-code members alone need no dsh route; their usage, cache writes and dollars reach message_stop', async () => {
