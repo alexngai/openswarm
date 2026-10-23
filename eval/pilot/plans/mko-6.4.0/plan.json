@@ -1,0 +1,29 @@
+{
+  "workers": 2,
+  "threads": [
+    {
+      "id": "t0",
+      "default": true,
+      "paths": ["packages/core/src/index.ts", "packages/core/src/decorators/index.ts", "packages/core/src/typings.ts", "packages/core/src/utils/Configuration.ts", "packages/core/src/metadata/MetadataDiscovery.ts"],
+      "assignment": "Shared contracts and hub files only. Add the ContextProvider<T> type and EntityProperty.prefixMode to packages/core/src/typings.ts; add embeddables.prefixMode, onQuery, upsertManaged, discovery.checkNonPersistentCompositeProps, ignoreDeprecations and preferTs (falling back to tsNode) with their defaults to packages/core/src/utils/Configuration.ts; export Transactional from packages/core/src/decorators/index.ts and the new public names from packages/core/src/index.ts (a stub module with the exact signature from the roadmap is enough; other threads implement it). packages/core/src/metadata/MetadataDiscovery.ts is shared by two targets, so this thread makes every roadmap change to it: the prefixMode-aware embedded prefix calculation (Target 2) and the tsNode-to-preferTs rename there (Target 7). Nothing else."
+    },
+    {
+      "id": "t1",
+      "blockedBy": ["t0"],
+      "paths": ["packages/core/src/decorators/Transactional.ts", "packages/core/src/decorators/CreateRequestContext.ts", "packages/core/src/decorators/Embedded.ts", "packages/core/src/utils/resolveContextProvider.ts"],
+      "assignment": "Target 1 (Transactional method decorator) and Target 2 (Embeddable prefix modes), decorator side: implement @Transactional() in packages/core/src/decorators/Transactional.ts and resolveContextProvider in packages/core/src/utils/resolveContextProvider.ts, move CreateRequestContext/EnsureRequestContext in packages/core/src/decorators/CreateRequestContext.ts onto it, and add EmbeddedPrefixMode and the prefixMode option in packages/core/src/decorators/Embedded.ts. The ContextProvider type, the config options and the prefix calculation in MetadataDiscovery belong to t0."
+    },
+    {
+      "id": "t2",
+      "blockedBy": ["t0"],
+      "paths": ["packages/knex/src/AbstractSqlConnection.ts", "packages/core/src/EntityManager.ts", "packages/knex/src/query/QueryBuilder.ts"],
+      "assignment": "Target 3 (Query interception hook), Target 4 (Upsert managed entities) and Target 5 (Query builder HAVING clause composition): call onQuery before every SQL query in packages/knex/src/AbstractSqlConnection.ts, make em.upsert/em.upsertMany honour upsertManaged in packages/core/src/EntityManager.ts, and add andHaving()/orHaving() in packages/knex/src/query/QueryBuilder.ts. The config options belong to t0."
+    },
+    {
+      "id": "t3",
+      "blockedBy": ["t0"],
+      "paths": ["packages/core/src/metadata/MetadataValidator.ts", "packages/core/src/errors.ts", "packages/core/src/logging/", "packages/core/src/MikroORM.ts", "packages/core/src/utils/ConfigurationLoader.ts", "packages/cli/src/CLIConfigurator.ts", "packages/cli/src/CLIHelper.ts", "packages/cli/src/commands/DebugCommand.ts", "packages/migrations/src/Migrator.ts", "packages/migrations-mongodb/src/Migrator.ts", "packages/seeder/src/SeedManager.ts"],
+      "assignment": "Target 6 (Non-persistent composite relation validation) and Target 7 (Deprecation warnings system): add the validation to packages/core/src/metadata/MetadataValidator.ts and MetadataError.nonPersistentCompositeProp to packages/core/src/errors.ts; add the 'deprecated' namespace and ignoreDeprecations handling in packages/core/src/logging; wire ignoreDeprecations and the tsNode-to-preferTs rename through packages/core/src/MikroORM.ts, packages/core/src/utils/ConfigurationLoader.ts, the CLI config handling (packages/cli/src/CLIConfigurator.ts, CLIHelper.ts, commands/DebugCommand.ts), both migrators and the seeder. The config options and MetadataDiscovery belong to t0."
+    }
+  ]
+}

@@ -1,0 +1,84 @@
+# The completion gate's reviewer (docs/05 B6): member.cordis.yml with the two
+# settings of the reviewer that was measured (docs/07 §7.1, arm b), which ran
+# on the CLI's own stack: 300 s bash timeouts, and the CLI's persona rather
+# than "complete your task by editing files", which contradicts a reviewer
+# told not to fix anything. Keep everything else in step with member.cordis.yml.
+
+# dsh's SDK server plus resume-on-miss and `swarm/steer` (docs/05 A2).
+- id: sdk-jsonrpc-server
+  name: 'openswarm-swarm-member/server'
+  config:
+    maxTokensAsSuccess: false
+
+- id: llm-openai
+  name: 'openswarm-llm-openai'
+  config:
+    routes:
+      - openai
+    apiKeyEnv: OPENSWARM_LLM_API_KEY
+    models:
+      - id: !!js process.env.DSH_MODEL ?? 'mock-model'
+        contextWindow: 128000
+
+- id: sandbox
+  name: '@deepseek-ai/dsh-sandbox-local'
+
+# Member sandbox (docs/05 §5.5): OPENSWARM_MEMBER_SANDBOX=workspace-write
+# confines bash and editor writes to the worktree (the session cwd) and temp;
+# reads and network stay open. Unset means danger-full-access.
+- id: sandbox-policy
+  name: '@deepseek-ai/dsh-sandbox-policy'
+  config:
+    mode: !!js "{ const mode = process.env.OPENSWARM_MEMBER_SANDBOX ?? 'danger-full-access'; if (mode !== 'workspace-write' && mode !== 'danger-full-access') throw new Error(`OPENSWARM_MEMBER_SANDBOX must be workspace-write or danger-full-access, not ${mode}`); mode }"
+    workspaceRoot: !!js process.cwd()
+
+- id: subprocess
+  name: '@deepseek-ai/dsh-subprocess-local'
+
+- id: pty
+  name: '@deepseek-ai/dsh-terminal'
+
+- id: terminal-bash
+  name: '@deepseek-ai/dsh-terminal-bash'
+  config:
+    timeoutMs: 300000
+
+# dsh-fs-local plus the sandbox's write fence: without it the editor writes
+# anywhere under workspace-write. Unfenced under danger-full-access.
+- id: fs
+  name: '@deepseek-ai/dsh-fs-sandbox'
+  config:
+    cwd: !!js process.cwd()
+
+- id: agent-spine
+  name: '@deepseek-ai/dsh-agent-spine-demo'
+  config:
+    includeHarnessIdentity: false
+    includeRuntimeContext: false
+    persona: 'You are a coding agent working in the current directory. Use your tools to complete the task; verify your work by running commands.'
+    workspaceContext: false
+    skills:
+      enabled: false
+    toolBash: false
+    toolJobs: false
+
+- id: persistent-bash
+  name: '@deepseek-ai/dsh-tool-bash-persistent'
+  config:
+    timeoutMs: 300000
+
+- id: str-replace-editor
+  name: '@deepseek-ai/dsh-tool-str-replace-editor'
+  config:
+    maxOutputChars: 16000
+
+- id: sessions
+  name: '@deepseek-ai/dsh-session-persistence-jsonl'
+  config:
+    root: !!js process.env.DSH_SESSION_ROOT ?? './.sessions'
+    compression: none
+
+# Member-side swarm capabilities: swarm_send_message over the lead's socket.
+# Silent no-op unless OPENSWARM_SWARM_URL / OPENSWARM_SWARM_TOKEN are set.
+- id: swarm-member
+  name: 'openswarm-swarm-member'

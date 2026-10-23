@@ -1,0 +1,29 @@
+{
+  "workers": 2,
+  "threads": [
+    {
+      "id": "t0",
+      "default": true,
+      "paths": ["optuna/_hypervolume/__init__.py", "optuna/_convert_positional_args.py"],
+      "assignment": "Shared contracts only. Export get_non_dominated_box_bounds from optuna/_hypervolume/__init__.py and add it to __all__ (a stub optuna/_hypervolume/box_decomposition.py with the exact signature from the roadmap is enough; another thread implements it), and make any change the keyword-only deprecation of Target 3 needs in the shared helper optuna/_convert_positional_args.py. Nothing else."
+    },
+    {
+      "id": "t1",
+      "blockedBy": ["t0"],
+      "paths": ["optuna/_gp/", "optuna/samplers/_gp/", "optuna/_hypervolume/"],
+      "assignment": "Target 1 (Multi-Objective Gaussian Process Sampler) and Target 2 (Hypervolume Computation Improvements): add LOG_EHVI, logehvi, MultiObjectiveAcquisitionFunctionParams and the eval_acqf dispatch in optuna/_gp; multi-objective support and _standardize_values in optuna/samplers/_gp/sampler.py; the box decomposition module optuna/_hypervolume/box_decomposition.py; and _compute_3d and assume_pareto in optuna/_hypervolume/wfg.py. The optuna/_hypervolume/__init__.py export belongs to t0."
+    },
+    {
+      "id": "t2",
+      "blockedBy": ["t0"],
+      "paths": ["optuna/samplers/_tpe/", "optuna/samplers/_cmaes.py", "optuna/samplers/nsgaii/_crossovers/"],
+      "assignment": "Target 3 (TPE Sampler Simplification), Target 4 (CMA-ES Sampler Simplification) and Target 6 (Crossover Operator Improvements): implement them in optuna/samplers/_tpe, optuna/samplers/_cmaes.py and optuna/samplers/nsgaii/_crossovers."
+    },
+    {
+      "id": "t3",
+      "blockedBy": ["t0"],
+      "paths": ["optuna/visualization/_timeline.py", "optuna/visualization/matplotlib/_timeline.py"],
+      "assignment": "Target 5 (Timeline Visualization Enhancement): add n_recent_trials to plot_timeline and _get_timeline_info in optuna/visualization/_timeline.py and to plot_timeline in optuna/visualization/matplotlib/_timeline.py."
+    }
+  ]
+}

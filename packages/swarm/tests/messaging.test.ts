@@ -5,6 +5,7 @@ import {
   registerSwarmMessaging,
   spawnPeer,
   suppressSettlementTurns,
+  SwarmMailbox,
   type PeerHandle,
 } from '../src/index'
 import { bootHarness, type TestHarness } from './boot'
@@ -19,7 +20,7 @@ async function spawnPair(h: TestHarness) {
   const ctx = (h as any).ctx
   suppressSettlementTurns(h.lead.agent)
   const roster = new Map<string, PeerHandle>()
-  const mailbox = h.swarm.mailbox(h.lead.agent, roster)
+  const mailbox = new SwarmMailbox(ctx, h.lead.agent, roster, h.journal)
   registerSwarmMessaging(ctx, roster, mailbox)
   const a = await spawnPeer(ctx, { name: 'peer-a' }, {
     parent: h.lead.agent,
@@ -37,7 +38,7 @@ async function spawnPair(h: TestHarness) {
 }
 
 function leadEvents(h: TestHarness, type: string): any[] {
-  return h.lead.agent.session.events.filter((e: any) => e.type === type)
+  return h.journal.events.filter((e) => e.type === type)
 }
 
 it('wakeup send queues durably, wakes the target, and acks delivery', async () => {
@@ -47,7 +48,7 @@ it('wakeup send queues durably, wakes the target, and acks delivery', async () =
   const turnDone = nextTurnEnd(ctx, () => b.childId)
   const message = await mailbox.send({ from: 'peer-a', to: 'peer-b', text: 'the walls are ready' })
 
-  // Durable queued + delivered pair in the lead log, and nothing pending.
+  // Durable queued + delivered pair in the run journal, and nothing pending.
   expect(leadEvents(h, 'swarm/message/queued')).toHaveLength(1)
   expect(leadEvents(h, 'swarm/message/delivered')).toHaveLength(1)
   expect(mailbox.pending()).toHaveLength(0)
@@ -97,7 +98,7 @@ it('a member sends through the swarm_send_message tool (model-driven, end-to-end
   const result = await askPeer(ctx, h.lead.agent, a, 'notify your teammate')
   expect(result.stopReason).toBe('completed')
 
-  // Mailbox committed durably in the lead log.
+  // Mailbox committed durably in the run journal.
   expect(leadEvents(h, 'swarm/message/queued')).toHaveLength(1)
   expect(leadEvents(h, 'swarm/message/delivered')).toHaveLength(1)
   // Peer-b's wakeup turn saw the framed message.

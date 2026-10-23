@@ -6,18 +6,59 @@
  * inherit its model route unless `agentOptions` overrides; with
  * `RunTeamOptions.worktrees` they run as subprocess harnesses in per-task
  * git worktrees whose branches merge on finish (docs/01 Phase 2).
+ *
+ * A team run is durable (docs/05 A4): `start` mints a run id whose journal,
+ * `<runsDir>/<run id>/journal.jsonl`, holds the run record, board and
+ * mailbox, so `view`, `attach` and `runs` work from any process that can read
+ * it. `runTeam` is `start` plus waiting for the result. Its handle takes
+ * direction (`steer`, `cancel`) while the run is live (docs/05 A5), and
+ * answers to the questions the harness raises (A6). Every member run journals
+ * its usage, every landing an evidence bundle (B4), and a settled run's
+ * result carries its RunMetrics (B5), also emitted as `swarm/metrics`.
+ * A member with `runtime: 'claude-code'` runs the `claude` CLI instead of a
+ * dsh harness (R1), in the same place a dsh member would work.
  */
 import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { existsSync, readdirSync } from 'node:fs'
 import { promisify } from 'node:util'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import { SwarmBoard } from './board'
+// Type-only, for the `ctx.userQuestions` Context augmentation.
+import type {} from '@deepseek-ai/dsh-user-questions'
+import { SwarmBoard, foldBoard, type SwarmTaskSnapshot } from './board'
+import { buildEvidence, landingsOf, type LandingEvidence } from './evidence'
+import { SwarmJournal, type SwarmJournalEvent } from './journal'
+import { BudgetGuard, validateBudget } from './budget'
+import { TrainService, type TrainServiceConfig } from './train-service'
+import { validateForge } from './forge'
+import { JournalMirror, takeOver, validateDurable, type DurableConfig } from './durable'
+import { foldMetrics, recordUsage, type Pricing, type RecordUsage, type RunMetrics, type SwarmRestartEvent, type UsageRole } from './metrics'
 import { SwarmMailbox } from './mailbox'
+import {
+  foldQuestions,
+  foldRun,
+  recapJournal,
+  type AskQuestion,
+  type SwarmQuestion,
+  type SwarmQuestionEvent,
+  type SwarmQuestionRequest,
+  type SwarmRunEvent,
+  type SwarmRunRecord,
+  type SwarmRunView,
+  type SwarmSteerEvent,
+} from './run'
+import { runGateCommand, type HiddenSuite, type VerifierLevel } from './gate'
+import { activeVerifier, hiddenSuite, openVerifier, recordToolEvents, toolEventsFromLogs, type Verifier } from './verifier'
+import { recapTrain, trainVerify, TrainStoppedError, validateTrain } from './train'
 import { askPeer, registerSwarmMessaging, spawnPeer, suppressSettlementTurns } from './peers'
+import type { Principal } from './protocol'
 import type { PeerHandle } from './types'
 import {
+  AbandonedTasksError,
   CASCADE_TASK_KEY,
+  head,
   runBoardWorkers,
   runCascade,
   runCommittee,
@@ -27,15 +68,19 @@ import {
   runPeerTeam,
   runPipeline,
   seedBoard,
+  withIntent,
+  type BoardGate,
   type ReportProgress,
   type RunConfidence,
   type RunMember,
 } from './topologies'
-import { tmpdir } from 'node:os'
+import { homedir, hostname } from 'node:os'
+import { basename, dirname, join, resolve } from 'node:path'
 import { RemotePeer } from './remote-peer'
+import { claudeCommandOf, preflightClaude, runClaudeCode } from './claude-code'
+import { codexCommandOf, preflightCodex, runCodex } from './codex'
 import { SwarmServer } from './server'
-import { digestSessionLog, findSessionLog, renderRecoveryBriefing } from './recover'
-import { WorktreeRun, resolveMemberLaunch, type WorktreeTeamOptions } from './worktrees'
+import { inheritedRoute, WorktreeRun, resolveMemberLaunch, type WorktreeTeamOptions } from './worktrees'
 import type { MergeOutcome } from 'openswarm-git'
 import type {
   MemberRunResult,
@@ -44,9 +89,23 @@ import type {
   TeamSpec,
 } from './types'
 
+const execFileAsync = promisify(execFile)
+
 export * from './types'
 export * from './board'
+export * from './journal'
 export * from './mailbox'
+export * from './run'
+export * from './protocol'
+export * from './gate'
+export * from './verifier'
+export * from './train'
+export * from './evidence'
+export * from './metrics'
+export * from './budget'
+export * from './train-service'
+export * from './forge'
+export { JournalMirror, pushLeased, remoteRunOid, runRef, takeOver, type DurableConfig } from './durable'
 export {
   askPeer,
   nextTurnEnd,
@@ -54,18 +113,141 @@ export {
   spawnPeer,
   suppressSettlementTurns,
 } from './peers'
-export { parseNumberedPlan } from './topologies'
-export { digestSessionLog, findSessionLog, renderRecoveryBriefing } from './recover'
-export type { SessionDigest } from './recover'
-export type { ReportProgress } from './topologies'
+export { AbandonedTasksError, coordinatorSpec, parseNumberedPlan, renderIntent } from './topologies'
+export type { BoardGate, ReportProgress, RunMember } from './topologies'
 export { RemotePeer } from './remote-peer'
+export { claudeCommandOf, claudeEnv, preflightClaude, runClaudeCode } from './claude-code'
+export { codexCommandOf, codexEnv, preflightCodex, runCodex } from './codex'
 export { SwarmServer } from './server'
-export { WorktreeRun } from './worktrees'
+export { WorktreeRun, memberEnvOf, reviewMemberConfig, runMemberProcess } from './worktrees'
 export type { WorktreeTeamOptions, WorktreeMemberConfig } from './worktrees'
 
 export interface SwarmConfig {
   /** Subagent provider used when a member does not name one (default 'spawn'). */
   defaultSubagentProvider?: string
+  /**
+   * Where run journals live, one `<run id>/journal.jsonl` each
+   * (default `$OPENSWARM_HOME/runs`, else `~/.openswarm/runs`).
+   */
+  runsDir?: string
+  /**
+   * $ per million tokens by model id, for RunMetrics' dollars (docs/05 B5).
+   * No default: without a price, metrics report tokens and dollars are null.
+   */
+  pricing?: Pricing
+}
+
+/** `$OPENSWARM_HOME`, else `~/.openswarm`. */
+export function openswarmHome(): string {
+  return process.env['OPENSWARM_HOME'] ?? join(homedir(), '.openswarm')
+}
+
+/** Where run journals live unless `SwarmConfig.runsDir` says otherwise. */
+export function defaultRunsDir(): string {
+  return join(openswarmHome(), 'runs')
+}
+
+/** A run's journal file under `runsDir`. The id names a directory, so it may not be a path. */
+export function runJournalPath(runsDir: string, runId: string): string {
+  if (!/^[\w-]+$/.test(runId)) throw new Error(`invalid run id "${runId}"`)
+  return join(runsDir, runId, 'journal.jsonl')
+}
+
+/** A run's train journal (docs/05 B2), beside its run journal. */
+export function trainJournalPath(runsDir: string, runId: string): string {
+  return join(dirname(runJournalPath(runsDir, runId)), 'train.jsonl')
+}
+
+/** Every run record under `runsDir`, oldest first. */
+export function listRuns(runsDir: string): SwarmRunRecord[] {
+  if (!existsSync(runsDir)) return []
+  // ponytail: reads whole journals; add an index if listing gets slow.
+  return readdirSync(runsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .flatMap((entry) => foldRun(SwarmJournal.read(join(runsDir, entry.name, 'journal.jsonl'))) ?? [])
+    .sort((a, b) => a.startedAt - b.startedAt)
+}
+
+/**
+ * A run read from its journal file. Read-only: it never appends or truncates.
+ * The recap ends with the train's lines, from its own journal; past a cursor
+ * into the run's, those journaled after that event.
+ */
+export function viewRun(runsDir: string, runId: string, { since }: { since?: number } = {}): SwarmRunView {
+  const events = SwarmJournal.read(runJournalPath(runsDir, runId))
+  const run = foldRun(events)
+  if (run === undefined) throw new Error(`unknown run "${runId}"`)
+  // ponytail: by time, as the train's seqs are its own; an event in the cursor's millisecond is skipped.
+  const after = since === undefined ? -Infinity : (events.find((e) => e.seq === since)?.time ?? -Infinity)
+  return {
+    run,
+    tasks: [...foldBoard(events).values()],
+    questions: [...foldQuestions(events).values()],
+    recap: [...recapJournal(events, since), ...recapTrain(SwarmJournal.read(trainJournalPath(runsDir, runId)).filter((e) => e.time > after))],
+  }
+}
+
+/**
+ * Whether a run's writer may still be appending. A writer on another host is
+ * never judged dead from here.
+ */
+export function writerLive(run: SwarmRunRecord): boolean {
+  // ponytail: same-host pid liveness; the git journal / mesh needs a real lease.
+  return run.writer.host !== hostname() || pidAlive(run.writer.pid)
+}
+
+/**
+ * Take over a run whose writer is dead: become the journal's writer,
+ * release the dead writer's claims, and record the run `interrupted` under
+ * this process. A run already settled is returned as viewed, untouched.
+ * Resuming execution is out of scope; a later direction method does that.
+ */
+export async function attachRun(
+  runsDir: string,
+  runId: string,
+): Promise<SwarmRunView & { released: SwarmTaskSnapshot[] }> {
+  const view = viewRun(runsDir, runId)
+  const { run } = view
+  if (run.status !== 'running') return { ...view, released: [] }
+  if (writerLive(run)) throw new Error(`run ${runId} is live in pid ${run.writer.pid} on ${run.writer.host}; use view`)
+  const journal = SwarmJournal.open(runJournalPath(runsDir, runId))
+  const released = await new SwarmBoard(journal).releaseOrphans()
+  await journal.append('swarm/run', {
+    version: 1,
+    run: { ...run, status: 'interrupted', writer: writerOf(journal) },
+  } satisfies SwarmRunEvent)
+  return { ...viewRun(runsDir, runId), released }
+}
+
+/** A started team run (docs/05 §5.1). */
+export interface RunHandle {
+  /** `run-<8 hex>`; names the run's journal directory. */
+  readonly id: string
+  readonly journal: SwarmJournal
+  board(): SwarmBoard
+  /**
+   * Direct one member of a messaging peer-team (docs/05 §6.1): a worktree
+   * (subprocess) member is steered `immediate`, at its next step boundary; an
+   * in-process one gets a waking mailbox message, its next turn (`enqueue`).
+   * Journaled as `swarm/steer` once delivered. Throws for an unknown member or
+   * a run with no addressable members.
+   */
+  steer(to: string, text: string, by?: string): Promise<SwarmSteerEvent['delivery']>
+  /** Abort the run; it records `failed` with the abort error. */
+  cancel(): void
+  /**
+   * Raise a question (docs/05 §6.1), journaled as `swarm/question`, and
+   * resolve the first of: an `answer`, an answer from dsh's
+   * `ctx.userQuestions` when one is mounted, or its default once
+   * `RunTeamOptions.questions.timeoutMs` passes. Past `maxOpen` open questions
+   * it is recorded `capped` and takes its default at once; a run that ends
+   * closes its open questions with their defaults. The triggers call this.
+   */
+  ask(question: SwarmQuestionRequest): Promise<string>
+  /** Answer an open question with one of its options; throws for anything else. */
+  answer(questionId: string, answer: string, by: string): void
+  /** Settles after the run's `finished` or `failed` record is written; a finished run's carries its metrics (docs/05 B5). */
+  readonly result: Promise<TeamResult & { git?: MergeOutcome; metrics?: RunMetrics }>
 }
 
 export interface RunTeamOptions {
@@ -73,11 +255,20 @@ export interface RunTeamOptions {
   parent: Agent
   signal?: AbortSignal
   /**
+   * Mirror the run to a shared remote so another host can take it over
+   * (docs/05 D1): its journal under `refs/swarm/<runId>`, its completed tasks'
+   * branches with it, in one leased push. A one-shot peer-team with worktrees.
+   */
+  durable?: DurableConfig
+  /**
    * Runs cascade command-confidence gates (weakest link over exit codes).
    * Default: bash in `confidenceCwd` (or the process cwd).
    */
   confidenceRunner?: (commands: string[]) => Promise<number>
-  /** Working directory for the default confidence runner. */
+  /**
+   * Working directory for the default confidence runner, and for a gated
+   * peer-team's checks when members do not run in worktrees.
+   */
   confidenceCwd?: string
   /**
    * Pathspecs restored from the base commit before EVERY gate run, under
@@ -103,27 +294,25 @@ export interface RunTeamOptions {
   worktrees?: WorktreeTeamOptions
   /** Receives human-readable progress lines as the team advances. */
   onProgress?: ReportProgress
+  /**
+   * Harness-raised questions (docs/05 §6.1): how long one waits for an answer
+   * before taking its default (default 0: at once, as an unattended run
+   * needs), and how many may be open before the next is capped (default 3).
+   */
+  questions?: { timeoutMs?: number; maxOpen?: number }
+  /**
+   * The L3 verifier a gated team's hidden suites run on (docs/05 B1): for
+   * tests, set in code. Default the installed one (`/usr/bin/sudo -n -u …`).
+   */
+  verifier?: Verifier
 }
 
-const execFileAsync = promisify(execFile)
-
 /** Weakest-link default: every command must exit 0 in `cwd` for confidence 1. */
-/** Keep the tail: a failing build's useful part is at the end, not the top. */
-const OUTPUT_TAIL = 4_000
-
 function defaultConfidenceRunner(cwd: string): RunConfidence {
   return async (commands) => {
     for (const command of commands) {
-      try {
-        await execFileAsync('bash', ['-c', command], { cwd, maxBuffer: 16 * 1024 * 1024 })
-      } catch (error) {
-        const combined = `${(error as any)?.stdout ?? ''}${(error as any)?.stderr ?? ''}`
-        return {
-          score: 0,
-          failedCommand: command,
-          output: combined.length > OUTPUT_TAIL ? combined.slice(-OUTPUT_TAIL) : combined,
-        }
-      }
+      const { ok, output } = await runGateCommand(command, cwd)
+      if (!ok) return { score: 0, failedCommand: command, output }
     }
     return { score: 1 }
   }
@@ -134,7 +323,7 @@ function resolveMemberModel(
   member: MemberSpec,
   cfg: import('./worktrees').WorktreeMemberConfig,
 ): string {
-  const model = member.agentOptions?.model ?? cfg.model ?? cfg.env?.['DSH_MODEL']
+  const model = member.agentOptions?.model ?? cfg.model ?? cfg.env?.['DSH_MODEL'] ?? inheritedRoute()['DSH_MODEL']
   if (model === undefined) {
     throw new Error(
       `remote member "${member.name}" has no model: set member.agentOptions.model, worktrees.member.model, or DSH_MODEL in worktrees.member.env`,
@@ -143,7 +332,159 @@ function resolveMemberModel(
   return model
 }
 
+/**
+ * What a member's run is for when its caller does not say (docs/05 B5): a
+ * critic or a cascade's gate reviews, a coordinator or a committee's judge
+ * leads; everyone else does task work.
+ */
+/**
+ * The run's budget check (docs/05 C5), or undefined when neither the run nor
+ * any task has a budget. A malformed budget, or one a messaging team (whose
+ * peers journal no usage) could not check, is refused before any spend.
+ */
+function budgetAdmit(spec: TeamSpec, board: SwarmBoard, journal: SwarmJournal, ask: AskQuestion, pricing?: Pricing): ((taskKey?: string) => Promise<void>) | undefined {
+  validateBudget(spec.budget, 'the team spec')
+  const tasks = spec.topology === 'peer-team' ? spec.tasks : []
+  tasks.forEach((task, i) => validateBudget(task.budget, `task ${i} ("${task.subject}")`))
+  if (spec.budget === undefined && !tasks.some((task) => task.budget !== undefined)) return undefined
+  // A stop abandons board tasks and lands what passed (C7a); other topologies would only fail.
+  if (spec.topology !== 'peer-team') throw new Error(`a budget needs a peer-team, whose board lands what passed past a stop (got ${spec.topology})`)
+  if (spec.messaging === true) throw new Error("budgets need journaled usage, which a messaging team's peers do not write yet")
+  const guard = new BudgetGuard({
+    journal,
+    ask,
+    ...(pricing === undefined ? {} : { pricing }),
+    ...(spec.budget === undefined ? {} : { run: spec.budget }),
+    task: (key) => board.list().find((task) => task.id === key)?.budget,
+  })
+  return (taskKey) => guard.admit(taskKey)
+}
+
+/**
+ * A member's slot in `live`: it holds the member's deliverer while its turn
+ * is open, and is cleared when it closes, unless a later run's took it.
+ */
+function liveSlot(live: Map<string, (text: string) => boolean>, member: string): (deliver: ((text: string) => boolean) | undefined) => void {
+  let mine: ((text: string) => boolean) | undefined
+  return (deliver) => {
+    if (deliver !== undefined) live.set(member, (mine = deliver))
+    else if (live.get(member) === mine) live.delete(member)
+  }
+}
+
+function roleOf(spec: TeamSpec, member: string): UsageRole {
+  if (spec.topology === 'critic-loop' && spec.critic.name === member) return 'review'
+  if (spec.topology === 'cascade' && spec.gate?.name === member) return 'review'
+  if (spec.topology === 'committee' && spec.judge?.name === member) return 'lead'
+  if (spec.topology === 'coordinator' && spec.coordinator.name === member) return 'lead'
+  return 'task'
+}
+
+/** A spec's members, in order: who the train asks to repair or resolve an entry no member ran in. */
+/** Every member a run can start: its team, and a committee's judge or a cascade's gate. */
+function everyMember(spec: TeamSpec): MemberSpec[] {
+  return [
+    ...teamMembers(spec),
+    ...(spec.topology === 'committee' && spec.judge !== undefined ? [spec.judge] : []),
+    ...(spec.topology === 'cascade' && spec.gate !== undefined ? [spec.gate] : []),
+  ]
+}
+
+function teamMembers(spec: TeamSpec): MemberSpec[] {
+  switch (spec.topology) {
+    case 'critic-loop':
+      return [spec.worker, spec.critic]
+    case 'pipeline':
+      return spec.stages.map((stage) => stage.member)
+    case 'cascade':
+      return spec.tiers
+    case 'coordinator':
+      return [...spec.workers, spec.coordinator]
+    default:
+      return spec.members
+  }
+}
+
+/**
+ * Where a member works without worktrees: its parent agent's cwd, which an
+ * in-process dsh member's child session inherits (`confidenceCwd` moves
+ * neither); never this process's cwd.
+ */
+function inPlaceCwd(options: RunTeamOptions): string | undefined {
+  return options.parent.session.header.cwd
+}
+
+/**
+ * Refuse, before any spend, a member runtime the run cannot use (docs/05
+ * §5.4), and say which CLI runtimes the run uses. claude-code and codex are
+ * basic members, one-shot runs only, so neither can be a messaging peer,
+ * which keeps one session and takes messages mid-run; in place each needs a
+ * cwd the caller named; and an L3 run scans each member step for reaching at
+ * the hidden suite in dsh session logs, which neither CLI writes.
+ */
+function checkRuntimes(spec: TeamSpec, options: RunTeamOptions): Set<'claude-code' | 'codex'> {
+  const all = everyMember(spec)
+  // ponytail: refused, not scanned; feed the adapter's stream-json tool events to the scanner to lift it.
+  const hidden =
+    options.worktrees?.train?.suite !== undefined ||
+    (spec.topology === 'peer-team' && spec.gate !== undefined && spec.tasks.some((task) => (task.suite ?? spec.gate!.suite) !== undefined))
+  const clis = new Set<'claude-code' | 'codex'>()
+  for (const member of all) {
+    const runtime: string = member.runtime ?? 'dsh'
+    if (runtime === 'dsh') continue
+    if (runtime !== 'claude-code' && runtime !== 'codex') throw new Error(`member "${member.name}" names runtime "${runtime}"; the runtimes are dsh, claude-code and codex`)
+    if (spec.topology === 'peer-team' && spec.messaging === true) {
+      throw new Error(
+        `member "${member.name}" runs on ${runtime}, a basic member (one-shot runs): a messaging peer-team needs steerable members that keep one session and take messages mid-run; drop messaging or run it on dsh`,
+      )
+    }
+    if (options.worktrees === undefined && inPlaceCwd(options) === undefined) {
+      throw new Error(`${runtime} member "${member.name}" works in place without worktrees, in its parent agent's cwd, and the parent has none: give it one, or run with worktrees`)
+    }
+    if (hidden) {
+      throw new Error(
+        `member "${member.name}" runs on ${runtime}, and this run verifies at L3 with a hidden suite: the tamper scan cannot read ${runtime === 'codex' ? 'Codex' : 'Claude Code'} transcripts; drop the suite or run the member on dsh`,
+      )
+    }
+    clis.add(runtime)
+  }
+  return clis
+}
+
 /** Concatenated text content of an assistant output. */
+/** A durable run's `swarm/worktrees` record: its branches' namespace and base. */
+const worktreesOf = (journal: SwarmJournal) => journal.events.find((e) => e.type === 'swarm/worktrees')?.data as { teamId?: string; base?: string } | undefined
+const runIdOf = (journal: SwarmJournal) => basename(dirname(journal.path))
+/** Whether a run's record says it landed any of its work (finished, or failed past landing). */
+const landedAny = (run: SwarmRunRecord) => (run.git?.landed?.length ?? 0) + (run.git?.merged?.length ?? 0) > 0
+
+/** A durable run, or a resumed one, is a one-shot peer-team in worktrees (docs/05 D1). */
+function refuseUndurable(spec: TeamSpec, options: RunTeamOptions): void {
+  if (spec.topology !== 'peer-team' || spec.messaging === true) throw new Error('a durable run is a one-shot peer-team')
+  if (options.worktrees === undefined) throw new Error('a durable run needs worktrees: its tasks land from the branches it pushes')
+  if (options.durable !== undefined) validateDurable(options.durable)
+}
+
+/** A durable run's journal marks where its landing began: past it, a taker would land twice. */
+const LANDING = { type: 'swarm/durable', phase: 'landing' } as const
+
+/** What a run taken over brings from its journal (docs/05 D1). */
+interface Resumed {
+  /** The takeover's commit on the run's ref: the mirror's first lease. */
+  lease: string
+  startedAt: number
+  teamId?: string
+  /** The commit its worktrees were cut from, so tasks run here start where the first host's did. */
+  base?: string
+}
+
+/** A durable run's mirror, and the worktrees whose branches it pushes once they exist. */
+interface DurableRun {
+  mirror: JournalMirror
+  worktrees?: WorktreeRun
+  stop(): void
+}
+
 function textOf(output: ContentBlock[]): string {
   return output
     .filter((b): b is Extract<ContentBlock, { type: 'text' }> => b.type === 'text')
@@ -151,61 +492,694 @@ function textOf(output: ContentBlock[]): string {
     .join('')
 }
 
-export default class SwarmService extends Service {
-  // 'sessions' is a real dependency: the board and mailbox flush durable
-  // events through ctx.sessions. Undeclared it resolves only when accessed
-  // from an unrestricted root context — service-to-service callers hit
-  // cordis's inject guard.
-  static inject = ['subagents', 'sessions']
+/** This process as the writer of `journal`. */
+function writerOf(journal: SwarmJournal): SwarmRunRecord['writer'] {
+  return { pid: process.pid, host: hostname(), incarnation: journal.incarnation }
+}
 
+/** Whether a pid on this host exists; EPERM means it does, under another user. */
+export function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
+export default class SwarmService extends Service {
+  static inject = ['subagents']
+
+  /**
+   * Protocol credentials, token → principal (docs/05 §5.3), which the socket
+   * carrier resolves. ponytail: in memory, so minted tokens do not survive a
+   * restart; persist them once a principal must outlive the process.
+   */
+  readonly tokens = new Map<string, Principal>()
+  /** The standalone train this process hosts, if any (docs/05 D2): `startTrain`, or `OPENSWARM_TRAIN`. */
+  train: TrainService | undefined
+  private trainStop: AbortController | undefined
   private swarmConfig: SwarmConfig
+  private readonly liveRuns = new Map<string, RunHandle>()
+  /** In-process members' usage, by session, until their run takes it. */
+  private readonly usage: ReturnType<typeof recordUsage>
 
   constructor(ctx: Context, config: SwarmConfig = {}) {
     super(ctx, 'swarm')
     this.swarmConfig = config
+    this.usage = recordUsage(ctx)
+    // `openswarm train serve` boots a process with the train's config in the env.
+    ctx.effect(() => {
+      const fromEnv = process.env['OPENSWARM_TRAIN']
+      if (fromEnv !== undefined && fromEnv !== '') {
+        // A process started to host a train has no other job: one that cannot start it exits.
+        this.startTrain(JSON.parse(fromEnv) as TrainServiceConfig).catch((error) => {
+          process.stderr.write(`openswarm: the train did not start: ${error instanceof Error ? error.message : String(error)}\n`)
+          process.exit(1)
+        })
+      }
+      return () => this.trainStop?.abort()
+    })
   }
 
-  private boards = new WeakMap<Agent, SwarmBoard>()
+  /** Host a standalone train (docs/05 D2) in this process: opened from its journal, landing until disposed. */
+  async startTrain(config: TrainServiceConfig): Promise<TrainService> {
+    if (this.train !== undefined) throw new Error('this process already hosts a train')
+    const train = await TrainService.open(config)
+    this.train = train
+    this.trainStop = new AbortController()
+    void train.run(this.trainStop.signal)
+    return train
+  }
 
-  /** The shared task board bound to one lead agent's session log. */
-  board(lead: Agent): SwarmBoard {
-    let board = this.boards.get(lead)
-    if (board === undefined) {
-      board = new SwarmBoard(this.ctx, lead)
-      this.boards.set(lead, board)
+  /** The principal a protocol token stands for: a minted one, or a train client the owner invited. */
+  principalOf(token: string): Principal | undefined {
+    return this.tokens.get(token) ?? this.train?.principalOf(token)
+  }
+
+  private runsDir(): string {
+    return this.swarmConfig.runsDir ?? defaultRunsDir()
+  }
+
+  /** `SwarmConfig.pricing`: what metrics and landings price usage at. */
+  get pricing(): Pricing | undefined {
+    return this.swarmConfig.pricing
+  }
+
+  /** A run's journal file. The id names a directory, so it may not be a path. */
+  journalPath(runId: string): string {
+    return runJournalPath(this.runsDir(), runId)
+  }
+
+  /**
+   * Start a team run: open its journal, record it `running`, and return once
+   * that record is written. The result settles after the `finished` (with the
+   * result) or `failed` (with the error message) record is written.
+   */
+  async start(spec: TeamSpec, options: RunTeamOptions): Promise<RunHandle> {
+    let id: string
+    do id = `run-${randomUUID().slice(0, 8)}`
+    while (existsSync(join(this.runsDir(), id)))
+    if (options.durable !== undefined) refuseUndurable(spec, options)
+    return this.launch(id, SwarmJournal.open(this.journalPath(id)), spec, options)
+  }
+
+  /**
+   * Take a durable run over from its remote and finish it here (docs/05 D1):
+   * its journal fetched, the writer's lease waited out unless `steal`, the run
+   * recorded as taken over and its dead claims released, all pushed under a
+   * lease, so of two takers one wins and the old writer is fenced. Then it
+   * runs again on that journal, its spec the journaled one: completed tasks
+   * land from the branches their first host pushed, the rest are run.
+   */
+  async resume(runId: string, options: RunTeamOptions, takeover: { steal?: boolean; ttlMs?: number } = {}): Promise<RunHandle> {
+    const durable = options.durable
+    if (durable === undefined || options.worktrees === undefined) throw new Error('resuming a run takes options.durable (its remote) and options.worktrees')
+    // Clones on one host share the runs directory: a live writer's journal there is not ours to overwrite.
+    const path = this.journalPath(runId)
+    const local = existsSync(path) ? foldRun(SwarmJournal.read(path)) : undefined
+    if (local?.status === 'running' && local.writer.host === hostname() && pidAlive(local.writer.pid)) throw new Error(`run ${runId} is live in pid ${local.writer.pid} on this host; stop it before taking it over here`)
+    // A run that landed here (finished, or failed past landing) would land into this clone again.
+    if (local !== undefined && (local.status === 'finished' || (local.status === 'failed' && landedAny(local)))) throw new Error(`run ${runId} already ${local.status} on this host, past landing; there is nothing to resume`)
+    const repoRoot = options.worktrees.repoRoot
+    let journal: SwarmJournal | undefined
+    const lease = await takeOver(
+      options.worktrees.repoRoot,
+      durable.remote,
+      runId,
+      dirname(this.journalPath(runId)),
+      async () => {
+        journal = SwarmJournal.open(this.journalPath(runId))
+        const prior = foldRun(journal.events)
+        if (prior?.spec === undefined) throw new Error(`run ${runId}'s journal has no run record to resume`)
+        // A run that failed before landing landed nothing, so it may be resumed; one that landed some of its work is refused.
+        if (prior.status === 'finished') throw new Error(`run ${runId} already finished; there is nothing to resume`)
+        if (prior.status === 'failed' && landedAny(prior)) throw new Error(`run ${runId} landed part of its work on ${prior.writer.host} before failing; resuming it would land it again`)
+        if (journal.events.some((e) => e.type === LANDING.type && (e.data as { phase?: string }).phase === LANDING.phase)) {
+          throw new Error(`run ${runId} began landing on ${prior.writer.host}; its outcome is that host's (a train's or the forge's), and resuming it would land twice`)
+        }
+        refuseUndurable(prior.spec, options)
+        const base = worktreesOf(journal)?.base
+        if (base !== undefined) {
+          await execFileAsync('git', ['cat-file', '-e', `${base}^{commit}`], { cwd: repoRoot }).catch(() => {
+            throw new Error(`run ${runId} started from ${base}, which this clone does not have: fetch the branch it started on`)
+          })
+        }
+        await journal.append('swarm/run', { version: 1, run: { ...prior, status: 'interrupted', writer: writerOf(journal) } } satisfies SwarmRunEvent)
+        await new SwarmBoard(journal).releaseOrphans()
+        // The old writer's open questions were its members', who are gone: each takes its default.
+        for (const question of foldQuestions(journal.events).values()) {
+          if (question.status !== 'open') continue
+          await journal.append('swarm/question', { version: 1, question: { ...question, status: 'defaulted', answer: question.default, closedAt: Date.now() } } satisfies SwarmQuestionEvent)
+        }
+      },
+      takeover,
+    )
+    const prior = foldRun(journal!.events)!
+    const { teamId, base } = worktreesOf(journal!) ?? {}
+    return this.launch(runId, journal!, prior.spec!, options, { lease, startedAt: prior.startedAt, ...(teamId === undefined ? {} : { teamId }), ...(base === undefined ? {} : { base }) })
+  }
+
+  /**
+   * Mirror a durable run to its remote (docs/05 D1): now, as each task
+   * completes, and on a heartbeat, its completed tasks' branches pushed with
+   * its journal. Fenced by a host that took it over, the run is cancelled.
+   */
+  private async mirror(id: string, journal: SwarmJournal, board: SwarmBoard, config: DurableConfig, repoRoot: string, controller: AbortController, resumed?: Resumed): Promise<DurableRun> {
+    // Each completed task's worktree is committed once, at the first push after
+    // it completes; later pushes only push its branch, never touching a
+    // worktree the landing may be working in.
+    const committed = new Set<string>()
+    const branches = new Set<string>()
+    const pushable = async () => {
+      const fresh = board.list().filter((task) => task.status === 'completed' && !committed.has(task.id)).map((task) => task.id)
+      if (run.worktrees !== undefined && fresh.length > 0) {
+        for (const branch of await run.worktrees.committedBranches(fresh)) branches.add(branch)
+        for (const key of fresh) committed.add(key)
+      }
+      return [...branches]
     }
-    return board
+    const run: DurableRun = { mirror: undefined as unknown as JournalMirror, stop: () => {} }
+    run.mirror = new JournalMirror(repoRoot, config, id, dirname(journal.path), pushable, (why) => controller.abort(new Error(why)), resumed?.lease)
+    const onEvent = (event: SwarmJournalEvent) => {
+      const task = (event.data as { task?: SwarmTaskSnapshot } | undefined)?.task
+      if (event.type === 'swarm/task' && task?.status === 'completed') void run.mirror.checkpoint(`${task.id} completed`)
+    }
+    journal.listeners.add(onEvent)
+    run.stop = () => {
+      journal.listeners.delete(onEvent)
+      run.mirror.stop()
+    }
+    // A run that cannot reach its remote, or lost it already, spends nothing.
+    if (!(await run.mirror.confirm(resumed === undefined ? 'started' : 'resumed'))) {
+      run.stop()
+      throw new Error(run.mirror.isFenced ? `another host took run ${id} over before it started here` : `run ${id} could not push to its remote ${config.remote}`)
+    }
+    run.mirror.start()
+    return run
+  }
+
+  private async launch(id: string, journal: SwarmJournal, spec: TeamSpec, options: RunTeamOptions, resumed?: Resumed): Promise<RunHandle> {
+    // A gated team's board refuses to complete a task without passing evidence.
+    // A path that resumes a run from its journal must derive this flag the same
+    // way, from the journaled spec, or the resumed board closes tasks unverified.
+    const board = new SwarmBoard(
+      journal,
+      spec.topology === 'peer-team' && spec.gate !== undefined
+        ? { gated: true, ...(spec.gate.minLevel === undefined ? {} : { minLevel: spec.gate.minLevel }) }
+        : {},
+    )
+    // The members steering reaches: a messaging peer-team's runners fill it
+    // with continuable peers; every other team's members are here from the
+    // start, one-shot, so a steer waits as quiet mail for the member's next
+    // run, unless its run takes messages mid-turn (`live`).
+    const roster = new Map<string, PeerHandle>()
+    const oneShot = !(spec.topology === 'peer-team' && spec.messaging === true)
+    if (oneShot) for (const member of everyMember(spec)) roster.set(member.name, { name: member.name })
+    /** Deliverers into the open turns of members whose runtime takes a message mid-turn (claude-code), by member. */
+    const live = new Map<string, (text: string) => boolean>()
+    const mailbox = new SwarmMailbox(this.ctx, options.parent, roster, journal)
+    const controller = new AbortController()
+    const signal =
+      options.signal === undefined ? controller.signal : AbortSignal.any([options.signal, controller.signal])
+    const record = (run: SwarmRunRecord) =>
+      journal.append('swarm/run', { version: 1, run } satisfies SwarmRunEvent)
+
+    // The run's question queue (docs/05 §6.1). An open question's `close` is
+    // called by the first of an answer, userQuestions, the timeout or the run's
+    // end; the rest find it gone.
+    const { timeoutMs = 0, maxOpen = 3 } = options.questions ?? {}
+    const open = new Map<string, { question: SwarmQuestion; close: (answer: string, by?: string) => void }>()
+    // A resumed run's questions follow the ones its journal holds (docs/05 D1).
+    let asked = foldQuestions(journal.events).size
+    let ended = false
+    const recordQuestion = (question: SwarmQuestion) =>
+      journal.append('swarm/question', { version: 1, question } satisfies SwarmQuestionEvent)
+    const ask: AskQuestion = (request, onClosed) => {
+      const question: SwarmQuestion = {
+        id: `q-${asked++}`,
+        kind: 'escalation',
+        tier: 'low',
+        ...request,
+        status: 'open',
+        raisedAt: Date.now(),
+      }
+      // The rate cap: the queue may not outrun the person answering it.
+      if (open.size >= maxOpen) {
+        const capped = { ...question, status: 'capped', answer: question.default, closedAt: Date.now() } as const
+        onClosed?.(capped)
+        return recordQuestion(capped).then(() => question.default)
+      }
+      return new Promise<string>((resolve, reject) => {
+        let timer: ReturnType<typeof setTimeout> | undefined
+        const withdraw = new AbortController()
+        // Without `by` nobody answered, and the default was taken.
+        const close = (answer: string, by?: string) => {
+          if (!open.delete(question.id)) return
+          clearTimeout(timer)
+          withdraw.abort()
+          const closed: SwarmQuestion = {
+            ...question,
+            status: by === undefined ? 'defaulted' : 'answered',
+            answer,
+            ...(by === undefined ? {} : { by }),
+            closedAt: Date.now(),
+          }
+          onClosed?.(closed)
+          recordQuestion(closed).then(() => resolve(answer), reject)
+        }
+        open.set(question.id, { question, close })
+        recordQuestion(question).catch(reject)
+        if (ended || signal.aborted || timeoutMs <= 0) return close(question.default)
+        // Clamped: past 2^31-1 ms (about 24.8 days) setTimeout fires at once.
+        timer = setTimeout(() => close(question.default), Math.min(timeoutMs, 2 ** 31 - 1))
+        // A person at dsh's web surface may answer first. Its provider shows a
+        // question in the asking agent's session, so it refuses one without.
+        this.ctx
+          .get('userQuestions')
+          ?.ask({
+            agent: options.parent,
+            questions: [
+              {
+                id: question.id,
+                header: `swarm ${id}`,
+                question: question.prompt,
+                detail: `Defaults to ${question.default} in ${Math.round(timeoutMs / 1000)}s.`,
+                options: question.options.map((label) => ({ label })),
+              },
+            ],
+            signal: withdraw.signal,
+          })
+          .then(({ answers }) => {
+            const reply = answers.find((a) => a.id === question.id)
+            const text = (reply?.custom ?? reply?.selected[0])?.trim().toLowerCase()
+            // Anything but one of the options is no answer; the question stays open.
+            const choice = question.options.find((option) => option.toLowerCase() === text)
+            if (choice !== undefined) close(choice, 'userQuestions')
+          }, () => undefined)
+      })
+    }
+    /** A run that ends, settled or cancelled, takes every open question's default. */
+    const endQuestions = () => {
+      ended = true
+      for (const { question, close } of [...open.values()]) close(question.default)
+    }
+    signal.addEventListener('abort', endQuestions, { once: true })
+
+    const running: SwarmRunRecord = {
+      id,
+      status: 'running',
+      topology: spec.topology,
+      parentSessionId: options.parent.session.id,
+      writer: writerOf(journal),
+      startedAt: resumed?.startedAt ?? Date.now(),
+      ...(options.worktrees === undefined ? {} : { landing: options.worktrees.train === undefined ? 'queue' : 'train' }),
+      usageJournaled: true,
+      spec,
+    }
+    await record(running)
+    // A durable run (docs/05 D1): mirrored to its remote from here on; fenced,
+    // it is cancelled. Cancelled, it pushes nothing more, so its remote holds
+    // it as a crash would leave it, not an aborted task closed as completed.
+    let durable: DurableRun | undefined
+    if (options.durable !== undefined) {
+      try {
+        durable = await this.mirror(id, journal, board, options.durable, options.worktrees!.repoRoot, controller, resumed)
+      } catch (error) {
+        await record({ ...running, status: 'failed', endedAt: Date.now(), error: error instanceof Error ? error.message : String(error) })
+        throw error
+      }
+      const mirrored = durable
+      if (signal.aborted) mirrored.stop()
+      else signal.addEventListener('abort', () => mirrored.stop(), { once: true })
+    }
+    /**
+     * The run's metrics as it settles (docs/05 B5), emitted as `swarm/metrics`
+     * for an eval to record; neither a fold nor a listener that throws fails the run.
+     */
+    const settle = (endedAt: number, git?: MergeOutcome): RunMetrics | undefined => {
+      let metrics: RunMetrics
+      try {
+        const train = SwarmJournal.read(trainJournalPath(this.runsDir(), id))
+        metrics = foldMetrics(journal.events, train, { now: endedAt, ...(git === undefined ? {} : { git }), ...(this.pricing === undefined ? {} : { pricing: this.pricing }) })
+      } catch {
+        return undefined
+      }
+      try {
+        this.ctx.emit('swarm/metrics', id, metrics)
+      } catch {}
+      return metrics
+    }
+    const result = this.execute(spec, { ...options, signal }, board, roster, mailbox, ask, journal, oneShot ? live : undefined, durable, resumed)
+      .then((result) => {
+        // Aborted members settle as results, not rejections, so a cancelled
+        // run can come back whole; it still failed.
+        signal.throwIfAborted()
+        return result
+      })
+      // Journaled ahead of the run's own record: the questions it leaves open,
+      // and a one-shot team's steers no later run of their member carried.
+      .finally(endQuestions)
+      .finally(async () => {
+        if (!oneShot) return
+        for (const message of mailbox.pending()) {
+          await journal.append('swarm/message/undelivered', { version: 1, messageId: message.id, to: message.to }).catch(() => undefined)
+        }
+      })
+      .then(
+        async (result) => {
+          const endedAt = Date.now()
+          const metrics = settle(endedAt, result.git)
+          const settled = metrics === undefined ? result : { ...result, metrics }
+          await record({ ...running, status: 'finished', endedAt, result: settled })
+          return settled
+        },
+        async (thrown: unknown) => {
+          // A train that stopped, or a run whose completed tasks landed past
+          // abandoned ones, says what had landed: those commits are on the target.
+          const outcome = thrown instanceof TrainStoppedError || thrown instanceof AbandonedTasksError ? thrown.outcome : undefined
+          // A cancelled run failed because it was cancelled, whatever its members
+          // threw after (an aborted member can fail rather than settle, and leave
+          // its task with no members to run it).
+          const error = signal.aborted && signal.reason !== undefined ? signal.reason : thrown
+          const message = error instanceof Error ? error.message : String(error)
+          const git = outcome === undefined ? {} : { git: outcome }
+          const endedAt = Date.now()
+          settle(endedAt, git.git)
+          await record({ ...running, status: 'failed', endedAt, error: message, ...git })
+          throw error
+        },
+      )
+      // Its end mirrored too, then the mirror stops.
+      .finally(async () => {
+        if (durable !== undefined) {
+          await durable.mirror.checkpoint('settled').catch(() => undefined)
+          durable.stop()
+        }
+      })
+      .finally(() => this.liveRuns.delete(id))
+    const handle: RunHandle = {
+      id,
+      journal,
+      board: () => board,
+      result,
+      cancel: () => controller.abort(new Error(`run ${id} cancelled`)),
+      steer: async (to, text, by = 'owner') => {
+        const peer = roster.get(to)
+        if (peer === undefined) {
+          throw new Error(
+            roster.size === 0
+              ? `run ${id} (${spec.topology}) has no addressable members`
+              : `run ${id} has no member "${to}"`,
+          )
+        }
+        // An open CLI turn reads it once its running tool calls finish, a
+        // continuable remote peer at its next step boundary; anyone else gets
+        // it with its next turn, or a one-shot member with its next run.
+        let delivery: SwarmSteerEvent['delivery'] = 'immediate'
+        if (live.get(to)?.(text) !== true) {
+          if (peer.remote !== undefined) await peer.remote.steer(text)
+          else {
+            delivery = 'enqueue'
+            await mailbox.send({ from: by, to, text, ...(oneShot ? { delivery: 'quiet' as const } : {}) })
+          }
+        }
+        await journal.append('swarm/steer', { version: 1, to, text, delivery, by } satisfies SwarmSteerEvent)
+        return delivery
+      },
+      ask,
+      answer: (questionId, answer, by) => {
+        const entry = open.get(questionId)
+        if (entry === undefined) throw new Error(`run ${id} has no open question "${questionId}"`)
+        if (!entry.question.options.includes(answer)) {
+          throw new Error(`question ${questionId} takes ${entry.question.options.join(' or ')}, not "${answer}"`)
+        }
+        entry.close(answer, by)
+      },
+    }
+    this.liveRuns.set(id, handle)
+    return handle
+  }
+
+  /** A run this process started that has not settled yet; with no id, every such run. */
+  live(): RunHandle[]
+  live(runId: string): RunHandle | undefined
+  live(runId?: string): RunHandle[] | RunHandle | undefined {
+    return runId === undefined ? [...this.liveRuns.values()] : this.liveRuns.get(runId)
   }
 
   async runTeam(
     spec: TeamSpec,
     options: RunTeamOptions,
-  ): Promise<TeamResult & { git?: MergeOutcome }> {
-    const worktrees =
-      options.worktrees === undefined ? undefined : new WorktreeRun(this.ctx, options.worktrees)
-    const run: RunMember = (member, prompt, taskKey) =>
-      worktrees === undefined
-        ? this.runMember(member, prompt, options)
-        : worktrees.runMember(member, prompt, taskKey, options)
-    if (worktrees === undefined) return this.dispatch(spec, run, options, worktrees)
+  ): Promise<TeamResult & { git?: MergeOutcome; metrics?: RunMetrics }> {
+    return (await this.start(spec, options)).result
+  }
 
+  /** {@link viewRun} under this service's runs directory. */
+  view(runId: string, options: { since?: number } = {}): SwarmRunView {
+    return viewRun(this.runsDir(), runId, options)
+  }
+
+  /** {@link attachRun} under this service's runs directory. */
+  attach(runId: string): Promise<SwarmRunView & { released: SwarmTaskSnapshot[] }> {
+    return attachRun(this.runsDir(), runId)
+  }
+
+  /** {@link listRuns} under this service's runs directory. */
+  runs(): SwarmRunRecord[] {
+    return listRuns(this.runsDir())
+  }
+
+  /** A run's journal events: in memory while it is live here, else read from its file. */
+  events(runId: string): readonly SwarmJournalEvent[] {
+    return this.liveRuns.get(runId)?.journal.events ?? SwarmJournal.read(this.journalPath(runId))
+  }
+
+  /** A run's landing queue (docs/05 B4), from `events` when the caller has them. */
+  landings(runId: string, events = this.events(runId)): LandingEvidence[] {
+    return landingsOf(events, SwarmJournal.read(trainJournalPath(this.runsDir(), runId)))
+  }
+
+  /** A run's {@link foldMetrics} (docs/05 B5), priced with `SwarmConfig.pricing`, from `events` when the caller has them. */
+  metrics(runId: string, events = this.events(runId)): RunMetrics {
+    return foldMetrics(events, SwarmJournal.read(trainJournalPath(this.runsDir(), runId)), this.pricing === undefined ? {} : { pricing: this.pricing })
+  }
+
+  private async execute(
+    spec: TeamSpec,
+    options: RunTeamOptions,
+    board: SwarmBoard,
+    roster: Map<string, PeerHandle>,
+    mailbox: SwarmMailbox,
+    ask: AskQuestion,
+    journal: SwarmJournal,
+    /** A one-shot team's live deliverers (see `start`); none for a messaging team. */
+    live?: Map<string, (text: string) => boolean>,
+    durable?: DurableRun,
+    resumed?: Resumed,
+  ): Promise<TeamResult & { git?: MergeOutcome }> {
+    // Refusals, then the CLI's preflight (below, once a durable run's namespace is pushed), before any spend.
+    const clis = checkRuntimes(spec, options)
+    // Every member run's usage, journaled as it settles (docs/05 B5).
+    const usage: RecordUsage = async ({ role, ...record }) => {
+      await journal.append('swarm/usage', { version: 1, ...record, role: role ?? roleOf(spec, record.member) })
+    }
+    // The run's and its tasks' budgets (docs/05 C5), checked before every member run starts.
+    const admit = budgetAdmit(spec, board, journal, ask, this.pricing)
+    // A CLI member's open turn, registered while it runs, so a steer reaches it.
+    const steerable = live === undefined ? undefined : (member: string) => liveSlot(live, member)
+    const worktrees =
+      options.worktrees === undefined
+        ? undefined
+        : new WorktreeRun(this.ctx, resumed?.base === undefined ? options.worktrees : { ...options.worktrees, baseRef: resumed.base }, options.onProgress, usage, admit, steerable, resumed?.teamId)
+    if (durable !== undefined && worktrees !== undefined) {
+      durable.worktrees = worktrees
+      // Its branches' namespace and base, which a host that takes it over must
+      // keep: written by whoever first runs it (a run taken over before its
+      // first host wrote one gets this host's).
+      if (resumed?.teamId === undefined) {
+        await journal.append('swarm/worktrees', { version: 1, teamId: worktrees.teamId, base: await worktrees.baseCommit() })
+        void durable.mirror.checkpoint('worktrees')
+      }
+    }
+    if (clis.has('claude-code')) await preflightClaude(claudeCommandOf(options.worktrees?.member?.claudeCommand))
+    if (clis.has('codex')) await preflightCodex(codexCommandOf(options.worktrees?.member?.codexCommand))
+    // Every member prompt through here carries the intent header (docs/05
+    // §6.1). A peer-team keys each member run by its board task, whose own
+    // intent replaces the run's; no other topology seeds the board.
+    const run: RunMember = (member, prompt, taskKey, role) => {
+      const intended = withIntent(prompt, board.list().find((t) => t.id === taskKey)?.intent ?? spec.intent)
+      // Steering a one-shot member waited for this run: it rides in front of
+      // the prompt, delivered once the run settles, kept if it never started.
+      const mail = live !== undefined && roster.has(member.name) ? mailbox.framePendingQuiet(member.name) : undefined
+      const said = (mail?.blocks ?? []).map((block) => (block.type === 'text' ? block.text : '')).join('\n\n')
+      const framed = said === '' ? intended : `${said}\n\n${intended}`
+      const start = () =>
+        this.runMember(member, framed, options, {
+          usage,
+          ...(taskKey === undefined ? {} : { taskKey }),
+          ...(role === undefined ? {} : { role }),
+          ...(steerable === undefined ? {} : { live: steerable(member.name) }),
+        })
+      // Without a budget the member starts in this tick, as before: a cancel
+      // right after then settles it as aborted rather than refusing its start.
+      const settled = worktrees !== undefined ? worktrees.runMember(member, framed, taskKey, options, role) : admit === undefined ? start() : admit(taskKey).then(start)
+      // ponytail: framed when the run is asked for, so a steer that comes while
+      // it waits for a budget check or a slot rides the member's run after.
+      return mail === undefined
+        ? settled
+        : settled.then(
+            async (result) => {
+              // A run that never started (already cancelled) carried nothing.
+              if (result.runId === '') mail.release()
+              else await mail.ack().catch(() => mail.release())
+              return result
+            },
+            (error) => {
+              mail.release()
+              throw error
+            },
+          )
+    }
+    if (worktrees === undefined) return this.dispatch(spec, run, options, board, roster, mailbox, ask, journal)
+
+    // The train is refused, and the L3 verifier asked whether it holds the
+    // suite, before any spend.
+    const train = options.worktrees!.train
+    if (train !== undefined) validateTrain(train, options.worktrees!)
+    const forge = options.worktrees!.forge
+    if (forge !== undefined) {
+      if (train !== undefined) throw new Error('worktrees takes a train or a forge to land through, not both')
+      validateForge(forge)
+    }
+    const hidden =
+      train?.suite === undefined
+        ? undefined
+        : { session: await openVerifier(options.verifier ?? activeVerifier(), [train.suite]), envRoot: resolve(options.worktrees!.repoRoot) }
     // Clear anything a previously crashed team left in this repo before adding
     // our own checkouts.
     await worktrees.sweepOrphans()
+    const existing = resumed === undefined ? undefined : board.list().map((task) => task.id)
     let result: TeamResult
+    let abandoned: AbandonedTasksError | undefined
     try {
-      result = await this.dispatch(spec, run, options, worktrees)
+      // A resumed run's completed tasks land from the branches their first host pushed.
+      if (resumed !== undefined) {
+        for (const task of board.list()) {
+          if (task.status !== 'completed') continue
+          const member = task.owner === undefined ? undefined : everyMember(spec).find((m) => m.name === task.owner)
+          await worktrees.adopt(task.id, options.durable!.remote, member === undefined ? undefined : { member, prompt: task.prompt })
+        }
+      }
+      result = await this.dispatch(spec, run, options, board, roster, mailbox, ask, journal, worktrees, existing)
     } catch (error) {
-      // Abort (signal or throw): drop our worktrees rather than leaving them
-      // for the next sweep. Branches survive, so committed work is recoverable.
-      await worktrees.abort().catch(() => undefined)
-      throw error
+      // Tasks abandoned in a run that was not cancelled: the completed ones
+      // still land (docs/05 C7a), the abandoned ones' branches are kept.
+      // Only a one-shot peer-team keys its worktrees by task; a messaging
+      // team's are its members', so nothing could be held back there.
+      if (error instanceof AbandonedTasksError && options.signal?.aborted !== true && spec.topology === 'peer-team' && spec.messaging !== true) {
+        abandoned = error
+        result = { topology: 'peer-team', tasks: board.list(), runs: error.runs }
+      } else {
+        // Abort (signal or throw): drop our worktrees rather than leaving them
+        // for the next sweep. Branches survive, so committed work is recoverable.
+        await worktrees.abort().catch(() => undefined)
+        throw error
+      }
     }
+    const withheld = abandoned === undefined ? [] : await worktrees.withhold([...abandoned.abandoned.keys()])
     // A verdict that does not decide anything is not a gate. Only the cascade
     // has a whole-run notion of acceptance; every other topology's tasks stand
     // or fall individually, so they merge as before.
     const merge = result.topology !== 'cascade' || result.accepted
-    return { ...result, git: await worktrees.finalize({ merge }) }
+    const landing =
+      forge !== undefined && merge
+        ? {
+            forge: {
+              journal: SwarmJournal.open(join(dirname(journal.path), 'train.jsonl')),
+              runEvents: () => journal.events,
+              subjectOf: (key: string) => board.list().find((task) => task.id === key)?.subject,
+              ...(options.onProgress === undefined ? {} : { report: options.onProgress }),
+              ...(options.signal === undefined ? {} : { signal: options.signal }),
+            },
+          }
+        : train === undefined || !merge
+        ? {}
+        : {
+            train: {
+              journal: SwarmJournal.open(join(dirname(journal.path), 'train.jsonl')),
+              runEvents: () => journal.events,
+              tasks: board.list(),
+              members: teamMembers(spec),
+              verify: trainVerify(train, hidden),
+              // Under L3 each repair and resolver is scanned as a gate round is (B1),
+              // its transcript from the subprocess member's session logs.
+              ...(hidden === undefined
+                ? {}
+                : {
+                    scan: (key: string, step: Parameters<HiddenSuite['scan']>[0]) =>
+                      hiddenSuite(hidden.session, {
+                        suite: train.suite!,
+                        cwd: async () => (await worktrees.worktree(key)).path,
+                        envRoot: hidden.envRoot,
+                        transcript: (_result, startedAt) => toolEventsFromLogs(worktrees.memberEnv()['DSH_SESSION_ROOT']!, startedAt),
+                      }).scan(step),
+                  }),
+              ask,
+              options,
+              ...(options.onProgress === undefined ? {} : { report: options.onProgress }),
+              ...(options.signal === undefined ? {} : { signal: options.signal }),
+            },
+          }
+    // It lands only on a push that shows it still holds the run: fenced, or
+    // cut off from the remote (and so perhaps taken over), it lands nothing.
+    if (durable !== undefined) {
+      // Cancelled, it stopped mirroring: that is the run's end, not a lost remote.
+      if (options.signal?.aborted === true) {
+        await worktrees.abort().catch(() => undefined)
+        options.signal.throwIfAborted()
+      }
+      // Only a shared target (a train's or the forge's) can be landed on twice;
+      // the local queue lands into each host's own clone.
+      if (forge !== undefined || train?.url !== undefined) await journal.append(LANDING.type, { version: 1, phase: LANDING.phase })
+      const held = await durable.mirror.confirm('landing')
+      // Not landing (cut off, fenced, or cancelled while the push was in flight):
+      // it pushes nothing more, so the remote keeps the run as a crash would
+      // leave it, without a landing marker the push did not deliver.
+      if (!held || options.signal?.aborted === true) {
+        durable.stop()
+        await worktrees.abort().catch(() => undefined)
+        options.signal?.throwIfAborted()
+        throw new Error(durable.mirror.isFenced ? `run ${runIdOf(journal)} was taken over by another host; it lands nothing here` : `run ${runIdOf(journal)} could not reach its remote to confirm it still holds the run; it lands nothing here`)
+      }
+    }
+    let git: MergeOutcome
+    try {
+      git = await worktrees.finalize({ merge, ...landing })
+    } catch (error) {
+      if (!(error instanceof TrainStoppedError)) throw error
+      error.outcome.withheld.push(...withheld)
+      if (abandoned === undefined) throw error
+      // The abandoned tasks still fail the run; the train's stop rides along.
+      abandoned.outcome = error.outcome
+      abandoned.message += `; the train stopped: ${error.message}`
+      throw abandoned
+    }
+    git.withheld.push(...withheld)
+    // Without the train, each merged or conflicted task's evidence (docs/05 B4): its gate's, and its diff against the base.
+    if (!('train' in landing) && !('forge' in landing)) {
+      const landed = [...git.merged.map((m) => ['landed', m] as const), ...git.conflicts.map((c) => ['conflicted', c] as const)]
+      for (const [outcome, { taskKey, branch }] of landed) {
+        const { base, diff } = await worktrees.landingDiff(branch)
+        const at = { key: taskKey, outcome, via: 'queue', branch, base, at: Date.now(), ...(diff === undefined ? {} : { diff }) } as const
+        await journal.append('swarm/evidence', buildEvidence(at, journal.events, []))
+      }
+    }
+    if (abandoned !== undefined) {
+      abandoned.outcome = git
+      throw abandoned
+    }
+    return { ...result, git }
   }
 
   /**
@@ -247,7 +1221,14 @@ export default class SwarmService extends Service {
     spec: TeamSpec,
     run: RunMember,
     options: RunTeamOptions,
+    board: SwarmBoard,
+    roster: Map<string, PeerHandle>,
+    mailbox: SwarmMailbox,
+    ask: AskQuestion,
+    journal: SwarmJournal,
     worktrees?: WorktreeRun,
+    /** A resumed run's tasks, already on its board (docs/05 D1). */
+    existing?: readonly string[],
   ): Promise<TeamResult> {
     const report = options.onProgress
     switch (spec.topology) {
@@ -260,15 +1241,175 @@ export default class SwarmService extends Service {
       case 'pipeline':
         return runPipeline(spec, run, report)
       case 'cascade':
-        return runCascade(spec, run, this.confidenceRunner(options, worktrees), report)
+        return runCascade(spec, run, this.confidenceRunner(options, worktrees), report, ask)
       case 'coordinator':
         return runCoordinator(spec, run, report)
       case 'peer-team':
-        return spec.messaging === true
-          ? worktrees === undefined
-            ? this.runPeerTeamMessaging(spec, options)
-            : this.runRemotePeerTeam(spec, options, worktrees)
-          : runPeerTeam(spec, run, this.board(options.parent), report)
+        return (async () => {
+          // Checked here, before any path seeds the board.
+          const { gate, dispose } = await this.boardGate(spec, options, worktrees)
+          try {
+            return await (spec.messaging === true
+              ? worktrees === undefined
+                ? this.runPeerTeamMessaging(spec, options, board, roster, mailbox, ask)
+                : this.runRemotePeerTeam(spec, options, board, roster, mailbox, ask, worktrees, journal)
+              : runPeerTeam(spec, run, board, report, ask, gate, existing))
+          } finally {
+            dispose()
+          }
+        })()
+    }
+  }
+
+  /**
+   * A gated peer-team's gate (docs/05 B6b), refused before seeding when it
+   * cannot run. A task's checks run where its member's work lands: its
+   * per-task worktree under worktree execution, else `confidenceCwd`. A task
+   * without checks needs the reviewer, a subprocess member launched as
+   * worktree members are, so review mode requires worktree execution. Under
+   * worktrees the gate owns the tree, so a regression is rolled back and
+   * `confidencePinPaths` are restored after every member round; neither ever
+   * touches the user's checkout.
+   *
+   * Levels (docs/05 B1): a task needing L2 needs checks, L3 a hidden suite;
+   * a task with a suite is accepted by it, its checks or reviewer giving
+   * feedback only. The verifier is asked before any spend whether it holds
+   * every suite named; `dispose` ends the transcript recording L3 scans read.
+   */
+  private async boardGate(
+    spec: import('./types').PeerTeamSpec,
+    options: RunTeamOptions,
+    worktrees?: WorktreeRun,
+  ): Promise<{ gate?: BoardGate; dispose: () => void }> {
+    const gate = spec.gate
+    if (gate === undefined) return { dispose: () => {} }
+    // ponytail: messaging teams are not gated. Under worktrees a member keeps
+    // one long-lived worktree, so a failed attempt's edits stay in it, taint
+    // its next task's snapshot and checks, and merge unverified; and on any
+    // path a teammate's wakeup message can start a turn while the gate
+    // snapshots, checks or rolls back (a rollback silently erases that turn's
+    // edits, or collides on index.lock). Gating them needs wakeups held quiet
+    // during a gated claim and a rollback to the claim's base before release.
+    if (spec.messaging === true) {
+      throw new Error('the completion gate (peer-team gate) does not cover messaging teams yet; drop gate or messaging')
+    }
+    if (gate.rounds !== undefined && (!Number.isInteger(gate.rounds) || gate.rounds < 1)) {
+      throw new Error('peer-team gate.rounds must be a positive integer')
+    }
+    if (gate.signoff !== undefined && (worktrees === undefined || gate.review === false)) {
+      throw new Error('a gate sign-off needs a reviewer, which runs as a worktree member: run with worktree execution, and without review off')
+    }
+    for (const task of spec.tasks) {
+      const level: VerifierLevel = task.minLevel ?? gate.minLevel ?? 0
+      const which = `gated task "${task.subject}"`
+      if (![0, 1, 2, 3].includes(level)) {
+        throw new Error(`${which} needs L${level}; a gate reaches L1 (reviewer), L2 (checks) or L3 (hidden suite), and L4 (external CI) is not built`)
+      }
+      const suite = task.suite ?? gate.suite
+      if (suite !== undefined && !/^[a-z0-9-]{1,64}$/.test(suite)) throw new Error(`${which} names suite "${suite}"; a suite name is 1-64 of [a-z0-9-]`)
+      if (level === 3 && suite === undefined) throw new Error(`${which} needs L3, a hidden suite: give it (or the gate) a suite`)
+      if (level === 2 && suite === undefined && (task.checks ?? gate.checks ?? []).length === 0) {
+        throw new Error(`${which} needs L2: give it (or the gate) checks`)
+      }
+    }
+    // A task with a suite is accepted by it; only one with neither suite nor checks rests on the reviewer.
+    const reviewed = spec.tasks.find((task) => (task.checks ?? gate.checks ?? []).length === 0 && (task.suite ?? gate.suite) === undefined)
+    // Sandboxed unless the env says otherwise, as on the CLI's single path.
+    // ponytail: no preflight here, so on a host that cannot sandbox each review
+    // fails and stops its gate unaccepted; probe as the CLI does if that spend matters.
+    const sandbox = process.env['OPENSWARM_GATE_REVIEWER_SANDBOX'] || 'workspace-write'
+    if ((reviewed !== undefined || gate.signoff !== undefined) && sandbox !== 'workspace-write' && sandbox !== 'danger-full-access') {
+      throw new Error(`OPENSWARM_GATE_REVIEWER_SANDBOX must be workspace-write or danger-full-access, not "${sandbox}"`)
+    }
+    if (reviewed !== undefined) {
+      const which = `gated task "${reviewed.subject}" has no checks`
+      if (gate.review === false) throw new Error(`${which} and the team's gate has review off; give it checks`)
+      if (worktrees === undefined) {
+        throw new Error(
+          `${which}, so a reviewer would measure it, and the reviewer runs as a worktree member: run with worktree execution (RunTeamOptions.worktrees) or give every task checks`,
+        )
+      }
+    }
+    const pinPaths = options.confidencePinPaths ?? []
+    const report = options.onProgress ?? (() => {})
+    const suites = [...new Set(spec.tasks.flatMap((task) => task.suite ?? gate.suite ?? []))]
+    const session = suites.length === 0 ? undefined : await openVerifier(options.verifier ?? activeVerifier(), suites)
+    const shared = options.confidenceCwd ?? process.cwd()
+    // The repository the members' ignored environment lives in (node_modules, .venv…).
+    const envRoot =
+      session === undefined
+        ? ''
+        : worktrees !== undefined
+          ? resolve(options.worktrees!.repoRoot)
+          : (await execFileAsync('git', ['rev-parse', '--show-toplevel'], { cwd: shared })).stdout.trim()
+    // In-process members' tool calls reach this context's events; subprocess
+    // members' are in their session logs. Last, so nothing above leaves it recording.
+    const recorder = session === undefined || worktrees !== undefined ? undefined : recordToolEvents(this.ctx)
+    const sessionRoot = worktrees?.memberEnv()['DSH_SESSION_ROOT']
+    const hidden = (claimed: SwarmTaskSnapshot, cwd: () => Promise<string>) => {
+      const suite = claimed.suite ?? gate.suite
+      return session === undefined || suite === undefined
+        ? {}
+        : {
+            hidden: hiddenSuite(session, {
+              suite,
+              cwd,
+              envRoot,
+              transcript: (result: MemberRunResult, startedAt: number) =>
+                recorder !== undefined ? recorder.take(result.runId) : sessionRoot === undefined ? [] : toolEventsFromLogs(sessionRoot, startedAt),
+            }),
+          }
+    }
+    return {
+      dispose: () => recorder?.dispose(),
+      gate: {
+        ...(gate.rounds === undefined ? {} : { rounds: gate.rounds }),
+        ...(gate.checks === undefined ? {} : { checks: gate.checks }),
+        ...(gate.minLevel === undefined ? {} : { minLevel: gate.minLevel }),
+        ...(gate.signoff === undefined ? {} : { signoff: gate.signoff }),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+        tree: (member, claimed) => {
+          // ponytail: without worktrees every member shares this one tree, so a
+          // task's checks also see siblings' work in flight; worktrees isolate it.
+          if (worktrees === undefined) return { cwd: shared, ...hidden(claimed, async () => shared) }
+          const key = claimed.id
+          const cwd = async () => (await worktrees.worktree(key)).path
+          return {
+            cwd,
+            ...hidden(claimed, cwd),
+            // The member's own route reviews, as on the single path; under L3
+            // only for feedback, and not at all with review off. A claude-code
+            // member's model is Claude Code's, no dsh route: the default reviews.
+            ...(gate.review === false
+              ? {}
+              : {
+                  review: (prompt: string, commit: string) =>
+                    worktrees.review(
+                      key,
+                      { name: 'reviewer', ...(member.agentOptions === undefined || (member.runtime ?? 'dsh') !== 'dsh' ? {} : { agentOptions: member.agentOptions }) },
+                      prompt,
+                      commit,
+                      sandbox,
+                      options,
+                    ),
+                }),
+            rollback: (commit) => worktrees.rollback(key, commit),
+            // A sign-off reads all the task will land, earlier attempts' edits included.
+            diffBase: () => worktrees.baseCommit(),
+            // As the cascade's gate does: the graded party may not edit what grades it.
+            ...(pinPaths.length === 0
+              ? {}
+              : {
+                  pin: async () => {
+                    const discarded = await worktrees.pinForGate(key, pinPaths)
+                    if (discarded.length > 0) {
+                      report(`gate: discarded member edits to ${discarded.length} pinned path(s): ${discarded.slice(0, 5).join(', ')}`)
+                    }
+                  },
+                }),
+          }
+        },
+      },
     }
   }
 
@@ -282,31 +1423,31 @@ export default class SwarmService extends Service {
   private async runRemotePeerTeam(
     spec: import('./types').PeerTeamSpec,
     options: RunTeamOptions,
+    board: SwarmBoard,
+    roster: Map<string, PeerHandle>,
+    mailbox: SwarmMailbox,
+    ask: AskQuestion,
     worktrees: WorktreeRun,
+    journal: SwarmJournal,
   ): Promise<import('./types').PeerTeamResult> {
     if (spec.members.length === 0) throw new Error('peer-team needs at least one member')
-    const lead = options.parent
-    const board = this.board(lead)
     const created = await seedBoard(board, spec.tasks)
     const seeded = new Set(created)
 
-    const roster = new Map<string, PeerHandle>()
-    const mailbox = this.mailbox(lead, roster)
     const server = new SwarmServer(mailbox)
     await server.listen()
     const cfg = options.worktrees?.member ?? {}
     const launch = resolveMemberLaunch(cfg)
-    const sessionRoot = `${tmpdir()}/openswarm-sessions/${worktrees.teamId}`
     const peers: RemotePeer[] = []
     const report = options.onProgress ?? (() => {})
+    const idleTimeoutMs = spec.memberIdleTimeoutMs ?? 300_000
     const restarts = new Map<string, number>()
     const maxRestarts = spec.maxMemberRestarts ?? 1
+    /** Per member, `maxRestarts` plus one for each 'restart' answer once it was spent. */
+    const budgets = new Map<string, number>()
 
-    /** Spawn one member; `recovery` is prepended for a warm restart. */
-    const spawnMember = async (
-      member: MemberSpec,
-      recovery?: string,
-    ): Promise<RemotePeer> => {
+    /** Spawn one member; a restarted one resumes its session, so it is not re-briefed. */
+    const spawnMember = async (member: MemberSpec, restarted = false): Promise<RemotePeer> => {
       const names = spec.members.filter((m) => m.name !== member.name).map((m) => m.name)
       const worktree = await worktrees.worktree(member.name)
       const peer = await RemotePeer.spawn({
@@ -315,18 +1456,29 @@ export default class SwarmService extends Service {
         args: launch.args,
         cwd: worktree.path,
         env: {
-          DSH_SESSION_ROOT: sessionRoot,
-          ...cfg.env,
+          // Same session root on restart, so the member server resumes.
+          ...worktrees.memberEnv(),
           OPENSWARM_SWARM_URL: server.url,
           // A restart is a new identity on the wire; the dead token stays dead.
           OPENSWARM_SWARM_TOKEN: server.addMember(member.name),
         },
         provider: member.agentOptions?.provider ?? cfg.provider ?? 'openai',
         model: resolveMemberModel(member, cfg),
-        ...(spec.memberIdleTimeoutMs === undefined
-          ? {}
-          : { idleTimeoutMs: spec.memberIdleTimeoutMs }),
-        briefing: `${member.persona === undefined ? '' : `${member.persona}\n\n`}You are ${member.name}, a member of a swarm team working in your own git worktree. Your teammates: ${names.join(', ') || '(none)'}. Coordinate with them via the swarm_send_message tool.${recovery === undefined ? ' Acknowledge this briefing and wait for tasks.' : `\n\n${recovery}`}`,
+        idleTimeoutMs,
+        onStall: async () => {
+          const task = board.list().find((t) => t.status === 'in_progress' && t.owner === member.name)
+          const answer = await ask({
+            trigger: 'stall',
+            ...(task === undefined ? {} : { taskId: task.id }),
+            prompt: `${member.name} has produced no output for over ${Math.round((2 * idleTimeoutMs) / 1000)}s${task === undefined ? '' : ` on "${task.subject}"`} and did not respond to a nudge. Restart it (its session resumes), or wait another ${Math.round(idleTimeoutMs / 1000)}s?`,
+            options: ['restart', 'wait'],
+            default: 'restart',
+          })
+          return answer === 'wait' ? 'wait' : 'restart'
+        },
+        briefing: restarted
+          ? 'Your process was restarted. Your conversation and worktree are intact; continue your task.'
+          : `${member.persona === undefined ? '' : `${member.persona}\n\n`}You are ${member.name}, a member of a swarm team working in your own git worktree. Your teammates: ${names.join(', ') || '(none)'}. Coordinate with them via the swarm_send_message tool. Acknowledge this briefing and wait for tasks.`,
       })
       peers.push(peer)
       roster.set(member.name, { name: member.name, remote: peer })
@@ -334,31 +1486,34 @@ export default class SwarmService extends Service {
     }
 
     /**
-     * Bring a dead member back with what it knew. Its session log is on disk
-     * (persisted, never auto-resumed), and its worktree still holds its file
-     * changes, so the replacement is briefed with a digest of both rather than
-     * starting blank. Returns false once the restart budget is spent, which
-     * hands the task to `runBoardWorkers` to retry on a sibling.
+     * Bring a dead member back with what it knew: the replacement reuses the
+     * session id and root, so the member server resumes its persisted session,
+     * and its worktree still holds its file changes. Once the restart budget
+     * is spent it asks: 'restart' allows exactly one more, 'drop' (the
+     * default) returns false, which hands the task to `runBoardWorkers` to
+     * retry on a sibling.
      */
-    const restart = async (member: MemberSpec): Promise<boolean> => {
+    const restart = async (member: MemberSpec, task: SwarmTaskSnapshot, error: unknown): Promise<boolean> => {
       const used = restarts.get(member.name) ?? 0
-      if (used >= maxRestarts) {
-        report(`${member.name} exhausted its restart budget (${maxRestarts})`)
-        return false
+      let budget = budgets.get(member.name) ?? maxRestarts
+      if (used >= budget) {
+        report(`${member.name} exhausted its restart budget (${budget})`)
+        const answer = await ask({
+          trigger: 'restart-budget',
+          taskId: task.id,
+          prompt: `${member.name} died on "${task.subject}" with its restart budget spent (${used}/${budget}); last error: ${head(error instanceof Error ? error.message : String(error))}. Restart it once more, or drop it and leave the task to a sibling?`,
+          options: ['drop', 'restart'],
+          default: 'drop',
+        })
+        if (answer !== 'restart') return false
+        budgets.set(member.name, ++budget)
       }
       restarts.set(member.name, used + 1)
-      const dead = roster.get(member.name)?.remote
-      await dead?.close().catch(() => undefined)
-      let recovery: string | undefined
-      if (dead !== undefined) {
-        const log = findSessionLog(sessionRoot, dead.sessionId)
-        if (log !== undefined) recovery = renderRecoveryBriefing(digestSessionLog(log))
-      }
-      report(
-        `restarting ${member.name} (${used + 1}/${maxRestarts})${recovery === undefined ? '' : ' with recovered context'}`,
-      )
+      await roster.get(member.name)?.remote?.close().catch(() => undefined)
+      report(`restarting ${member.name} (${used + 1}/${budget})`)
       try {
-        await spawnMember(member, recovery)
+        await spawnMember(member, true)
+        await journal.append('swarm/restart', { version: 1, member: member.name, taskId: task.id, restart: used + 1 } satisfies SwarmRestartEvent)
         return true
       } catch (error) {
         report(`${member.name} failed to restart: ${error instanceof Error ? error.message : String(error)}`)
@@ -374,7 +1529,9 @@ export default class SwarmService extends Service {
         board,
         seeded,
         async (member, claimed) => {
-          const blocks: ContentBlock[] = [{ type: 'text', text: claimed.prompt }]
+          // A cancelled run takes no new turns; a running turn finishes first.
+          options.signal?.throwIfAborted()
+          const blocks: ContentBlock[] = [{ type: 'text', text: withIntent(claimed.prompt, claimed.intent ?? spec.intent) }]
           for (let attempt = 0; ; attempt++) {
             const handle = roster.get(member.name)!
             const prelude = mailbox.framePendingQuiet(member.name)
@@ -386,12 +1543,13 @@ export default class SwarmService extends Service {
               // Mail stays pending for the replacement rather than being
               // consumed by a turn that never happened.
               prelude.release()
-              if (attempt > 0 || !(await restart(member))) throw error
+              if (attempt > 0 || !(await restart(member, claimed, error))) throw error
             }
           }
         },
         options.onProgress,
         spec.maxTaskAttempts,
+        ask,
       )
       const tasks = board.list().filter((t) => seeded.has(t.id))
       return { topology: 'peer-team', tasks, runs }
@@ -409,20 +1567,26 @@ export default class SwarmService extends Service {
   private async runPeerTeamMessaging(
     spec: import('./types').PeerTeamSpec,
     options: RunTeamOptions,
+    board: SwarmBoard,
+    roster: Map<string, PeerHandle>,
+    mailbox: SwarmMailbox,
+    ask: AskQuestion,
   ): Promise<import('./types').PeerTeamResult> {
     if (spec.members.length === 0) throw new Error('peer-team needs at least one member')
     const lead = options.parent
-    const board = this.board(lead)
     const created = await seedBoard(board, spec.tasks)
     const seeded = new Set(created)
 
-    const roster = new Map<string, PeerHandle>()
-    const mailbox = this.mailbox(lead, roster)
     const provider = this.swarmConfig.defaultSubagentProvider ?? 'spawn'
-    const disposers: (() => void)[] = [
-      suppressSettlementTurns(lead),
-      registerSwarmMessaging(this.ctx, roster, mailbox),
-    ]
+    // A child's last settlement notice can reach the lead after this runner
+    // returns, so the suppression outlives the run: every notice while it
+    // runs, then only this run's children's, for the lead's lifetime.
+    // ponytail: one filter per run on a long-lived parent; drop it once each
+    // child's final notice is swallowed if parents ever host many runs.
+    const children = new Set<string>()
+    let running = true
+    suppressSettlementTurns(lead, (childId) => running || children.has(childId))
+    const disposers: (() => void)[] = [registerSwarmMessaging(this.ctx, roster, mailbox)]
     for (const member of spec.members) {
       const names = spec.members.filter((m) => m.name !== member.name).map((m) => m.name)
       const handle = await spawnPeer(this.ctx, member, {
@@ -432,6 +1596,7 @@ export default class SwarmService extends Service {
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       })
       roster.set(member.name, handle)
+      if (handle.childId !== undefined) children.add(String(handle.childId))
     }
 
     let runs: Record<string, MemberRunResult>
@@ -441,34 +1606,39 @@ export default class SwarmService extends Service {
         board,
         seeded,
         (member, claimed) =>
-          askPeer(this.ctx, lead, roster.get(member.name)!, claimed.prompt, {
+          askPeer(this.ctx, lead, roster.get(member.name)!, withIntent(claimed.prompt, claimed.intent ?? spec.intent), {
             mailbox,
             ...(options.signal === undefined ? {} : { signal: options.signal }),
           }),
         options.onProgress,
         spec.maxTaskAttempts,
+        ask,
       )
     } finally {
+      running = false
       for (const dispose of disposers) dispose()
     }
     const tasks = board.list().filter((t) => seeded.has(t.id))
     return { topology: 'peer-team', tasks, runs }
   }
 
-  /** A durable mailbox over one lead's session log and a live roster. */
-  mailbox(lead: Agent, roster: Map<string, PeerHandle>): SwarmMailbox {
-    return new SwarmMailbox(this.ctx, lead, roster)
-  }
-
-  /** One member, one prompt, one settled subagent run. */
+  /** One member, one prompt, one settled subagent run, its usage journaled (docs/05 B5). */
   private async runMember(
     member: MemberSpec,
     prompt: string,
     options: RunTeamOptions,
+    account: { usage: RecordUsage; taskKey?: string; role?: UsageRole; live?: (deliver: ((text: string) => boolean) | undefined) => void },
   ): Promise<MemberRunResult> {
+    if (member.runtime === 'claude-code' || member.runtime === 'codex') {
+      const cwd = inPlaceCwd(options)
+      if (cwd === undefined) throw new Error(`${member.runtime} member "${member.name}" has no cwd to work in`)
+      const run = { cwd, signal: options.signal, usage: account.usage, taskKey: account.taskKey, role: account.role }
+      return member.runtime === 'codex' ? runCodex(member, prompt, run) : runClaudeCode(member, prompt, { ...run, live: account.live })
+    }
     const provider =
       member.subagentProvider ?? this.swarmConfig.defaultSubagentProvider ?? 'spawn'
     const text = member.persona === undefined ? prompt : `${member.persona}\n\n${prompt}`
+    const startedAt = Date.now()
     const run = await this.ctx.subagents.start(provider, {
       label: member.name,
       prompt: [{ type: 'text', text }],
@@ -476,13 +1646,34 @@ export default class SwarmService extends Service {
       signal: options.signal ?? new AbortController().signal,
       ...(member.agentOptions === undefined ? {} : { agentOptions: member.agentOptions }),
     })
-    const result = await run.result
-    return {
-      member: member.name,
-      runId: run.id,
-      output: result.output,
-      text: textOf(result.output),
-      stopReason: result.stopReason,
+    try {
+      const result = await run.result
+      return {
+        member: member.name,
+        runId: run.id,
+        output: result.output,
+        text: textOf(result.output),
+        stopReason: result.stopReason,
+      }
+    } finally {
+      // Settled or thrown, what it spent is journaled. A local provider's run id is its child
+      // session's id. ponytail: a member's own subagents are other sessions, not counted.
+      const { usage, ...named } = this.usage.take(run.id)
+      const route = { ...options.parent.options, ...member.agentOptions, ...named }
+      await account
+        .usage({
+          member: member.name,
+          ...(account.role === undefined ? {} : { role: account.role }),
+          ...(account.taskKey === undefined ? {} : { taskKey: account.taskKey }),
+          runtime: `dsh:${provider}`,
+          ...(route.provider === undefined ? {} : { provider: route.provider }),
+          ...(route.model === undefined ? {} : { model: route.model }),
+          runId: run.id,
+          usage,
+          startedAt,
+        })
+        // The member's own result or error stands; a journal that cannot append fails the run's record anyway.
+        .catch(() => undefined)
     }
   }
 
@@ -491,5 +1682,9 @@ export default class SwarmService extends Service {
 declare module '@deepseek-ai/cordis' {
   interface Context {
     swarm: SwarmService
+  }
+  interface Events {
+    /** A run settled, with its metrics (docs/05 B5); the eval reporter records them. */
+    'swarm/metrics'(runId: string, metrics: RunMetrics): void
   }
 }

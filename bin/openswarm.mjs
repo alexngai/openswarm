@@ -11,8 +11,11 @@
  *   openswarm run "<task>"        same
  *   openswarm web [flags]         open the DeepSeek browser UI on a swarm context
  *   openswarm serve [--port N]    start the app-server (JSON-RPC, for UIs/TUIs)
+ *   openswarm maintain [flags]    survey against principles, land small gated tasks
  *   openswarm setup               (re)initialize the profiles
  *   openswarm config              print the resolved provider/model/home
+ *   openswarm ps|board|questions|attach|start|steer|answer|kill|tasks|verifier
+ *                                 control verbs (docs/05 §6.1), in packages/cli
  *
  * Options: --model <id>, --provider <azure|openai|bedrock>, --home <dir>.
  * Provider auto-detect (when --provider is unset): Azure (AZURE_API_KEY +
@@ -60,8 +63,9 @@ const HEADLESS_VALUE_FLAGS = new Set([
   '--spec',
   '--output',
   '--trace-output',
+  '--resume',
 ])
-const HEADLESS_BOOL_FLAGS = new Set(['--headless', '--single', '--team', '--self-modify'])
+const HEADLESS_BOOL_FLAGS = new Set(['--headless', '--single', '--team', '--self-modify', '--steal'])
 
 /**
  * `lenient` forwards flags this launcher does not own instead of rejecting
@@ -177,7 +181,8 @@ function bootDsh(profile, positional, extraEnv, home) {
   const child = spawn('node', [dshScript, '--profile', profile, ...launcher, ...positional], {
     cwd: process.cwd(),
     stdio: 'inherit',
-    env: { ...process.env, DSH_HOME: home, ...extraEnv },
+    // OPENSWARM_HOME too, so run journals and app-server.json land where the control verbs read them.
+    env: { ...process.env, DSH_HOME: home, OPENSWARM_HOME: home, ...extraEnv },
   })
   child.on('exit', (code) => process.exit(code ?? 0))
 }
@@ -189,8 +194,40 @@ Usage:
   openswarm run "<task>"        same
   openswarm web [flags]         open the DeepSeek browser UI on a swarm context
   openswarm serve [--port N]    start the app-server (JSON-RPC for UIs/TUIs)
+  openswarm maintain --principles <file> --check <cmd> [--check <cmd>]...
+                [--tasks N] [--members N] [--rounds N] [--summary <file>]
+                [--budget-usd N --task-budget-usd N --pricing <file>] [--max-cost-usd N]
+                                survey the repo against its principles, then land
+                                small gated tasks through the train (docs/05 C7b)
   openswarm setup               (re)initialize the profiles
   openswarm config              print the resolved provider/model/home
+
+Control (runs under <home>/runs; start/steer/answer/kill need \`openswarm serve\`):
+  openswarm ps [--json]                       runs: status, topology, age, writer
+  openswarm board <run> [--json]              a run's tasks and open question count
+  openswarm questions [--run <id>] [--json]   open questions
+  openswarm landings <run> [--json] [--pricing <file>]
+                                              the landing queue: each landing's evidence,
+                                              highest risk first (docs/05 B4)
+  openswarm metrics <run> [--json] [--pricing <file>]
+                                              the run's RunMetrics (docs/05 B5)
+  openswarm attach <run> [--no-follow]        board and recap, then follow a live run;
+                                              takes over a run whose process died
+  openswarm start <"task" | spec.json> [--workers N] [--provider P] [--model M]
+                  [--question-timeout MS]     start a run (a task gets /swarm's team)
+  openswarm steer <run> --to <member> "text"  message a member: into its open turn, or its next run
+  openswarm answer <run> <question> <choice>  answer an open question
+  openswarm kill <run>                        cancel a run
+  openswarm tasks sync <run> [--watch] [--socket <path>]
+                                              mirror a run's board into an opentasks
+                                              graph (needs opentasks and its daemon)
+  openswarm train serve --target <branch> --check <cmd> [--check <cmd>]... [--remote <name>] [--port N] [--host H]
+                                              host a standalone train for this checkout (docs/05 D2)
+  openswarm train invite <name> | revoke <name> | status
+                                              invite a swarm to land through it, with its own token
+  openswarm verifier setup|status|uninstall|add-suite|remove-suite|list
+                                              the L3 verifier: hidden suites under a
+                                              separate OS user (docs/03, docs/05 B1)
 
 Options:
   --model <id>        model id (default: gpt-5.5, or haiku for bedrock)
@@ -213,9 +250,55 @@ function valueOf(flat, flag) {
   return i === -1 ? undefined : flat[i + 1]
 }
 
+/** Handled by packages/cli's runControl, which parses its own flags (docs/05 §6.1). */
+const CONTROL_VERBS = new Set(['ps', 'board', 'questions', 'landings', 'metrics', 'attach', 'start', 'steer', 'answer', 'kill', 'tasks', 'verifier', 'train'])
+
+/** A control verb, in-process; only --home and --help are the launcher's. */
+function control(argv) {
+  if (argv.includes('--help') || argv.includes('-h')) {
+    process.stdout.write(HELP)
+    process.exit(0)
+  }
+  const at = argv.indexOf('--home')
+  if (at !== -1) {
+    if (argv[at + 1] === undefined) die('--home requires a value')
+    process.env.OPENSWARM_HOME = argv.splice(at, 2)[1]
+  }
+  ensureBuilt()
+  return import(join(pkgRoot, 'packages', 'cli', 'dist', 'index.js'))
+    .then(({ runControl }) => runControl(argv))
+    .then((code) => process.exit(code))
+}
+
+/**
+ * `train serve`: an app-server process that hosts a standalone train (docs/05
+ * D2) for the current checkout, which must be the train's own: the target is
+ * not checked out there, and only the train pushes it.
+ */
+function trainServe(argv) {
+  const values = (flag) => argv.flatMap((a, i) => (a === flag && argv[i + 1] !== undefined ? [argv[i + 1]] : []))
+  const one = (flag) => values(flag).at(-1)
+  const target = one('--target')
+  const checks = values('--check')
+  if (target === undefined || checks.length === 0) die('train serve needs --target <branch> and at least one --check <cmd>')
+  const home = one('--home') ?? process.env.OPENSWARM_HOME ?? join(homedir(), '.openswarm')
+  ensureBuilt()
+  ensureProfiles(home)
+  const config = { repoRoot: process.cwd(), target, checks, ...(one('--remote') ? { remote: one('--remote') } : {}), ...(one('--batch') ? { batchSize: Number(one('--batch')) } : {}) }
+  // The profile loads a model route, which a train never calls: a placeholder
+  // nothing reaches, so no real credential sits in the process running entrants' checks.
+  const route = { OPENSWARM_DEFAULT_PROVIDER: 'openai', OPENSWARM_LLM_BASE_URL: 'http://127.0.0.1:9/v1', OPENSWARM_LLM_API_KEY: 'unused', OPENSWARM_DEFAULT_MODEL: 'unused' }
+  const env = { ...route, OPENSWARM_TRAIN: JSON.stringify(config), OPENSWARM_APP_PORT: one('--port') ?? '4620', ...(one('--host') ? { OPENSWARM_APP_HOST: one('--host') } : {}) }
+  process.stderr.write(`openswarm: train for ${target} on :${env.OPENSWARM_APP_PORT}; invite a swarm with: openswarm train invite <name>\n`)
+  bootDsh('openswarm-dev', [], env, home)
+}
+
 function main() {
   const argv = process.argv.slice(2)
-  const { opts, rest, headless } = parse(argv, argv[0] === 'web')
+  if (argv[0] === 'train' && argv[1] === 'serve') return trainServe(argv.slice(2))
+  if (CONTROL_VERBS.has(argv[0])) return control(argv)
+  // web and maintain pass flags this launcher does not own straight through.
+  const { opts, rest, headless } = parse(argv, argv[0] === 'web' || argv[0] === 'maintain')
   const home = opts.home ?? process.env.OPENSWARM_HOME ?? join(homedir(), '.openswarm')
   const cmd = rest[0]
 
@@ -249,6 +332,16 @@ function main() {
     return
   }
 
+  // The maintenance program runs in this process, in packages/cli, as `topology` does.
+  if (cmd === 'maintain') {
+    const { provider, model, env } = resolveModel(opts)
+    Object.assign(process.env, env, { OPENSWARM_HOME: home })
+    const id = provider === 'azure' ? `azureoai/${model}` : model
+    return import(join(pkgRoot, 'packages', 'cli', 'dist', 'index.js'))
+      .then(({ runCli }) => runCli(['maintain', '--model', id, ...rest.slice(1), ...headless]))
+      .then((code) => process.exit(code))
+  }
+
   if (cmd === 'serve') {
     const { env } = resolveModel(opts)
     if (opts.port) env.OPENSWARM_APP_PORT = String(opts.port)
@@ -268,6 +361,17 @@ function main() {
     Object.assign(process.env, env)
     return import(join(pkgRoot, 'packages', 'cli', 'dist', 'index.js'))
       .then(({ runCli }) => runCli(['topology', ...rest.slice(1), ...headless]))
+      .then((code) => process.exit(code))
+  }
+
+  // A team spec, or a durable run to resume, runs in packages/cli as `maintain`
+  // does: the profile's boot takes a prompt, not a team, and would drop them.
+  if (valueOf(headless, '--spec') !== undefined || valueOf(headless, '--resume') !== undefined) {
+    const { provider, model, env } = resolveModel(opts)
+    Object.assign(process.env, env, { OPENSWARM_HOME: home })
+    const id = provider === 'azure' ? `azureoai/${model}` : model
+    return import(join(pkgRoot, 'packages', 'cli', 'dist', 'index.js'))
+      .then(({ runCli }) => runCli(['run', '--model', id, ...task, ...headless]))
       .then((code) => process.exit(code))
   }
 

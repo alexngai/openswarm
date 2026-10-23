@@ -1,5 +1,17 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, writeFileSync, existsSync, readFileSync, utimesSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  writeFileSync,
+  existsSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+  lstatSync,
+  statSync,
+  symlinkSync,
+  utimesSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
@@ -42,6 +54,28 @@ it('per-task worktrees: create, auto-commit, clean merges into the integration b
   expect(show(root, 'swarm/team1/integration', 'b.txt')).toBe('from-b\n')
   // Merged worktrees are removed; branches survive.
   expect(existsSync(a.path)).toBe(false)
+  await git.dispose()
+})
+
+it('auto-commit and the merge queue never run repository hooks', async () => {
+  const root = scratchRepo()
+  // Fails everything, as a husky hook does when its git-ignored
+  // `.husky/_/husky.sh` is absent from a worktree.
+  for (const hook of ['pre-commit', 'pre-merge-commit', 'commit-msg']) {
+    writeFileSync(join(root, '.git', 'hooks', hook), '#!/bin/sh\nexit 1\n', { mode: 0o755 })
+  }
+  const git = new SwarmGit({ repoRoot: root, teamId: 'hooked' })
+  const a = await git.worktree('task-a')
+  writeFileSync(join(a.path, 'a.txt'), 'from-a\n')
+  // The hooks are live: a member's own commit in the worktree is refused.
+  execFileSync('git', ['add', '-A'], { cwd: a.path })
+  const memberCommit = ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'member']
+  expect(() => execFileSync('git', memberCommit, { cwd: a.path, stdio: 'pipe' })).toThrow()
+
+  expect(await git.autoCommit(a, 'swarm: task-a')).toBe(true)
+  const outcome = await git.mergeAll()
+  expect(outcome.merged.map((m) => m.taskKey)).toEqual(['task-a'])
+  expect(show(root, 'swarm/hooked/integration', 'a.txt')).toBe('from-a\n')
   await git.dispose()
 })
 
@@ -233,4 +267,112 @@ it('the first worktree teaches the repo to ignore .swarm/', async () => {
   await second.worktree('task-b')
   const lines = readFileSync(exclude, 'utf8').split('\n').filter((l) => l.trim() === '.swarm/')
   expect(lines).toHaveLength(1)
+})
+
+it('.swarm/ is ignored where git looks for it: from a subdirectory and from a linked worktree', async () => {
+  const root = scratchRepo()
+  mkdirSync(join(root, 'sub'))
+  const sub = join(root, 'sub')
+  await new SwarmGit({ repoRoot: sub, teamId: 'in-sub' }).worktree('task-a')
+  expect(execFileSync('git', ['status', '--porcelain'], { cwd: root }).toString()).toBe('')
+
+  const linked = join(mkdtempSync(join(tmpdir(), 'openswarm-linked-')), 'wt')
+  execFileSync('git', ['worktree', 'add', '-q', '--detach', linked], { cwd: root })
+  await new SwarmGit({ repoRoot: linked, teamId: 'in-linked' }).worktree('task-b')
+  expect(execFileSync('git', ['status', '--porcelain'], { cwd: linked }).toString()).toBe('')
+})
+
+/**
+ * A checkout with an installed environment, all git-ignored: a dependency
+ * tree (with a relative workspace-style symlink), a compiled extension, a
+ * generated Python module, and build output.
+ */
+function installedRepo(): string {
+  const root = scratchRepo()
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: root })
+  writeFileSync(join(root, '.gitignore'), 'node_modules/\n*.so\ngit_info.py\ndist/\n')
+  mkdirSync(join(root, 'pkg'))
+  writeFileSync(join(root, 'pkg', '__init__.py'), '')
+  git('add', '.')
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'layout')
+  mkdirSync(join(root, 'node_modules', 'dep'), { recursive: true })
+  writeFileSync(join(root, 'node_modules', 'dep', 'index.js'), 'module.exports = 1\n')
+  symlinkSync('../pkg', join(root, 'node_modules', 'pkg-link'))
+  writeFileSync(join(root, 'pkg', 'ext.so'), 'ELF\n')
+  writeFileSync(join(root, 'pkg', 'git_info.py'), 'GIT_VERSION = "x"\n')
+  mkdirSync(join(root, 'dist'))
+  writeFileSync(join(root, 'dist', 'out.js'), 'built\n')
+  return root
+}
+
+it('a new worktree gets the ignored environment by hard link, never build output', async () => {
+  const root = installedRepo()
+  const progress: string[] = []
+  const git = new SwarmGit({ repoRoot: root, teamId: 'env', onProgress: (line) => progress.push(line) })
+  const wt = await git.worktree('task-a')
+
+  // Same inode: linked, not copied.
+  const dep = join('node_modules', 'dep', 'index.js')
+  expect(statSync(join(wt.path, dep)).ino).toBe(statSync(join(root, dep)).ino)
+  expect(statSync(join(wt.path, 'pkg', 'ext.so')).ino).toBe(statSync(join(root, 'pkg', 'ext.so')).ino)
+  expect(existsSync(join(wt.path, 'pkg', 'git_info.py'))).toBe(true)
+  // The workspace link stays a relative symlink, so it resolves inside the worktree.
+  const link = join(wt.path, 'node_modules', 'pkg-link')
+  expect(lstatSync(link).isSymbolicLink()).toBe(true)
+  expect(readlinkSync(link)).toBe('../pkg')
+  expect(realpathSync(link)).toBe(realpathSync(join(wt.path, 'pkg')))
+  // Build output is the member's to regenerate.
+  expect(existsSync(join(wt.path, 'dist'))).toBe(false)
+  expect(progress.some((l) => /linked 3 ignored path\(s\)/.test(l))).toBe(true)
+
+  // Still ignored in the worktree: auto-commit sweeps none of it in.
+  expect(await git.autoCommit(wt, 'noop')).toBe(false)
+  // The scratch worktree gets it too.
+  expect(existsSync(join(await git.scratch(), dep))).toBe(true)
+  await git.dispose()
+})
+
+it('linkIgnored: false leaves the worktree as git made it', async () => {
+  const root = installedRepo()
+  const git = new SwarmGit({ repoRoot: root, teamId: 'bare', linkIgnored: false })
+  const wt = await git.worktree('task-a')
+  expect(existsSync(join(wt.path, 'node_modules'))).toBe(false)
+  expect(existsSync(join(wt.path, 'pkg', 'ext.so'))).toBe(false)
+  expect(existsSync(join(wt.path, 'pkg', '__init__.py'))).toBe(true)
+  await git.dispose()
+})
+
+it("the train's worktree keeps its linked environment when a batch it leaves had tracked part of it", async () => {
+  const root = installedRepo()
+  const git = new SwarmGit({ repoRoot: root, teamId: 'unignore' })
+  const a = await git.worktree('a')
+  // The branch stops ignoring the generated git_info.py, so the lead's commit tracks it.
+  writeFileSync(join(a.path, '.gitignore'), 'node_modules/\n*.so\ndist/\n')
+  await git.autoCommit(a, 'track git_info.py')
+  const tip = await git.targetTip()
+  const { cwd } = await git.speculate(tip, [a.branch])
+  // A failing batch is bisected on the same tip: checking it out removes the
+  // file the batch tracked, the linked copy with it...
+  await git.speculate(tip, [])
+  // ...and it is linked back; the checkout's own copy was never touched.
+  expect(readFileSync(join(cwd, 'pkg', 'git_info.py'), 'utf8')).toBe('GIT_VERSION = "x"\n')
+  expect(existsSync(join(root, 'pkg', 'git_info.py'))).toBe(true)
+  await git.dispose()
+})
+
+it("the train's speculative merge leaves a conflicting branch out, but throws on a merge git refuses outright (docs/05 B2)", async () => {
+  const root = scratchRepo()
+  const git = new SwarmGit({ repoRoot: root, teamId: 'spec' })
+  const a = await git.worktree('a')
+  const b = await git.worktree('b')
+  writeFileSync(join(a.path, 's.txt'), 'a\n')
+  writeFileSync(join(b.path, 's.txt'), 'b\n')
+  await git.autoCommit(a, 'a')
+  await git.autoCommit(b, 'b')
+  const tip = await git.targetTip()
+  const { conflicted, commit } = await git.speculate(tip, [a.branch, b.branch])
+  expect(conflicted).toEqual([b.branch])
+  expect(show(root, commit, 's.txt')).toBe('a\n')
+  await expect(git.speculate(tip, ['no-such-branch'])).rejects.toThrow()
+  await git.dispose()
 })

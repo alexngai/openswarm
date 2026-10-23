@@ -2,6 +2,8 @@ import type { AgentOptions } from '@deepseek-ai/dsh-agent'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { SubagentStopReason } from '@deepseek-ai/dsh-subagent'
+import type { Budget } from './budget'
+import type { VerifierLevel } from './gate'
 
 /**
  * One addressable team peer. In-process peers carry the durable continuable
@@ -28,6 +30,65 @@ export interface MemberSpec {
   agentOptions?: AgentOptions
   /** Subagent provider registry name; defaults to the swarm config default. */
   subagentProvider?: string
+  /**
+   * What runs the member (docs/05 §5.4; default `dsh`). `claude-code` runs
+   * the user's installed `claude` CLI headless in the member's cwd: a basic
+   * member (one-shot runs, cancellable, usage and dollars reported), so never
+   * a messaging peer. Its `agentOptions.model` is Claude Code's `--model`;
+   * `subagentProvider` does not apply. Claude Code's own permission mode and
+   * settings govern it; OpenSwarm's member sandbox covers dsh members only.
+   * `codex` runs the user's installed `codex` CLI (`codex exec`) the same
+   * way (R2), under Codex's own sandbox (`codexSandbox`); it reports no
+   * dollars, so its `agentOptions.model` is what a pricing table prices.
+   */
+  runtime?: 'dsh' | 'claude-code' | 'codex'
+  /**
+   * A claude-code member's `--permission-mode` (default
+   * `worktrees.member.claudePermissionMode`, else `acceptEdits`).
+   * `bypassPermissions` runs every tool unasked: opt in knowingly.
+   */
+  permissionMode?: ClaudePermissionMode
+  /**
+   * A claude-code member's `--setting-sources` (default
+   * `worktrees.member.claudeSettingSources`, else the CLI's own: every
+   * source, so your user-level hooks, MCP servers and CLAUDE.md apply).
+   */
+  claudeSettingSources?: ClaudeSettingSource[]
+  /** A claude-code member run's bound, after which it is stopped as a cancel is (default `worktrees.member.claudeTimeoutMs`, else none). */
+  claudeTimeoutMs?: number
+  /** A codex member's `-s` sandbox (default `worktrees.member.codexSandbox`, else `workspace-write`). */
+  codexSandbox?: CodexSandbox
+  /** A codex member run's bound (default `worktrees.member.codexTimeoutMs`, else none). */
+  codexTimeoutMs?: number
+}
+
+/** Codex's sandbox policies (`codex exec -s`). */
+export type CodexSandbox = 'read-only' | 'workspace-write' | 'danger-full-access'
+
+/** Where Claude Code loads settings from (`--setting-sources`). */
+export type ClaudeSettingSource = 'user' | 'project' | 'local'
+
+/** Claude Code's `--permission-mode` choices. */
+export type ClaudePermissionMode = 'acceptEdits' | 'auto' | 'bypassPermissions' | 'manual' | 'dontAsk' | 'plan'
+
+/**
+ * Commander's intent (docs/05 §6.1): why the work exists and how to tell it
+ * is done. Rendered as a header on every member prompt it applies to.
+ */
+export interface Intent {
+  purpose: string
+  /** Checkable: a member can tell whether it holds. */
+  endState: string
+  constraints?: string[]
+  preferences?: string[]
+}
+
+/** What every topology's spec may carry. */
+export interface TeamSpecBase {
+  /** The run's intent; a peer-team task's own intent replaces it for that task. */
+  intent?: Intent
+  /** The run's spend limit (docs/05 C5), checked before each member run starts. */
+  budget?: Budget
 }
 
 /** One fanout assignment: a member name plus its prompt. */
@@ -37,7 +98,7 @@ export interface FanoutTask {
 }
 
 /** Run every task concurrently, one subagent run per task. */
-export interface FanoutSpec {
+export interface FanoutSpec extends TeamSpecBase {
   topology: 'fanout'
   members: MemberSpec[]
   tasks: FanoutTask[]
@@ -48,7 +109,7 @@ export interface FanoutSpec {
  * The critic replies `APPROVED` or `REVISE: <feedback>` (plain-text protocol;
  * a structured `outputSchema` verdict is a later refinement).
  */
-export interface CriticLoopSpec {
+export interface CriticLoopSpec extends TeamSpecBase {
   topology: 'critic-loop'
   worker: MemberSpec
   critic: MemberSpec
@@ -58,7 +119,7 @@ export interface CriticLoopSpec {
 }
 
 /** N members answer the same task in parallel; an optional judge synthesizes. */
-export interface CommitteeSpec {
+export interface CommitteeSpec extends TeamSpecBase {
   topology: 'committee'
   members: MemberSpec[]
   task: string
@@ -67,7 +128,7 @@ export interface CommitteeSpec {
 }
 
 /** Sequential stages; each stage's prompt receives the previous stage's output. */
-export interface PipelineSpec {
+export interface PipelineSpec extends TeamSpecBase {
   topology: 'pipeline'
   stages: { member: MemberSpec; prompt: string }[]
 }
@@ -78,7 +139,7 @@ export interface PipelineSpec {
  * (same APPROVED / REVISE protocol as the critic); rejection feedback threads
  * into the next tier's prompt.
  */
-export interface CascadeSpec {
+export interface CascadeSpec extends TeamSpecBase {
   topology: 'cascade'
   tiers: MemberSpec[]
   task: string
@@ -97,7 +158,7 @@ export interface CascadeSpec {
  * A coordinator decomposes the task into a numbered subtask list, workers run
  * the subtasks concurrently (round-robin), and the coordinator synthesizes.
  */
-export interface CoordinatorSpec {
+export interface CoordinatorSpec extends TeamSpecBase {
   topology: 'coordinator'
   coordinator: MemberSpec
   workers: MemberSpec[]
@@ -109,6 +170,15 @@ export interface PeerTask {
   subject: string
   prompt: string
   blockedBy?: number[]
+  /** Replaces the run's intent for this task. */
+  intent?: Intent
+  /** This task's gate checks, replacing the team's (`PeerTeamSpec.gate`); an empty list means review mode. */
+  checks?: string[]
+  /** This task's spend limit (docs/05 C5): its rounds, reviews, repairs and resolvers. */
+  budget?: Budget
+  /** This task's verifier level and hidden suite, replacing the team's (docs/05 B1). */
+  minLevel?: VerifierLevel
+  suite?: string
 }
 
 /**
@@ -117,7 +187,7 @@ export interface PeerTask {
  * messaging between live members needs continuable children and arrives with
  * the mailbox in a later phase.
  */
-export interface PeerTeamSpec {
+export interface PeerTeamSpec extends TeamSpecBase {
   topology: 'peer-team'
   members: MemberSpec[]
   tasks: PeerTask[]
@@ -131,12 +201,49 @@ export interface PeerTeamSpec {
   maxTaskAttempts?: number
   /**
    * Warm restarts allowed per member before its task falls to a sibling
-   * (default 1). Remote messaging teams only — the replacement is briefed from
-   * the dead member's persisted log plus its surviving worktree.
+   * (default 1). Remote messaging teams only — the replacement resumes the
+   * dead member's persisted session in its surviving worktree.
    */
   maxMemberRestarts?: number
-  /** Fail a member turn producing no event for this long (default 5min). */
+  /**
+   * Nudge a member turn producing no event for this long, then raise a stall
+   * question after as long again (default 5min).
+   */
   memberIdleTimeoutMs?: number
+  /**
+   * The completion gate on every task (docs/05 B6b): a task completes only
+   * with passing evidence. A task with checks (its own, else these) is gated
+   * by them, run where its member's work lands; one without is measured by an
+   * independent reviewer, which needs worktree execution. A task that never
+   * passes is retried up to `maxTaskAttempts`, then a person may accept it
+   * without evidence; by default it is abandoned. Not yet with `messaging`.
+   */
+  gate?: {
+    /** Agent rounds per attempt before the gate gives up (default 4). */
+    rounds?: number
+    checks?: string[]
+    /** Whether a task without checks is reviewed (default true); false makes such a task an error. */
+    review?: boolean
+    /**
+     * A sign-off (docs/05 C7b's lesson): once a task's checks (or suite) pass,
+     * a reviewer reads its change and must accept it too, or the round fails
+     * and the reviewer's reasons brief the next. This opens its prompt. Needs
+     * worktree execution, where the reviewer runs.
+     */
+    signoff?: string
+    /**
+     * The verifier level every task must reach (docs/05 B1): 1 a reviewer, 2
+     * checks, 3 a hidden suite. The board refuses evidence below it. Unset,
+     * a task reaches whatever its sources give.
+     */
+    minLevel?: VerifierLevel
+    /**
+     * The hidden suite (L3) every task runs, by the name the verifier holds
+     * it under (`openswarm verifier add-suite`). Its checks or the reviewer
+     * then give feedback only.
+     */
+    suite?: string
+  }
 }
 
 export type TeamSpec =

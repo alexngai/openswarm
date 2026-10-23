@@ -1,23 +1,13 @@
 /**
- * Warm-restart support: recover what a dead member knew from the log it
- * already persisted.
+ * Fold a member's persisted session log into what it was asked and what it
+ * reported.
  *
- * A member's composition mounts `dsh-session-persistence-jsonl` rooted at
- * `DSH_SESSION_ROOT`, so when a child dies its full session log is on disk
- * beside the worktree. What does NOT happen is resume: the SDK server's
- * `getOrCreateSession` consults an in-memory map for that process and falls
- * through to `agents.create`, never to persistence, so a respawned child is
- * amnesiac by default (pinned by `member-resume.test.ts`).
- *
- * So we rehydrate the only way available to us — read the log, fold it to what
- * the member was asked and what it reported, and hand that to the replacement
- * as briefing context. Combined with the worktree, which still holds the
- * member's actual file changes, a replacement resumes with the two things that
- * matter: the work and the narrative. Exact tool-call state and in-context
- * nuance are genuinely lost.
+ * This was the warm-restart workaround for members that could not resume.
+ * They now resume their own session (docs/05 A2), so nothing in the runtime
+ * uses it; it stays only because eval/benchmark.mjs tasks (`digest-tool-calls`,
+ * `briefing-clip-count`) are cut from HEAD and target these two functions.
  */
-import { readFileSync, readdirSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
 
 /** Text blocks of a message-shaped event payload, tolerant of both shapes. */
 function textOf(data: any): string {
@@ -28,45 +18,6 @@ function textOf(data: any): string {
     .map((block: any) => block.text)
     .join('')
     .trim()
-}
-
-/**
- * Locate a session's `session.jsonl` under a persistence root. The store nests
- * logs under a workspace-derived directory whose naming is the persistence
- * plugin's business, so this searches for the session-id directory rather than
- * reconstructing that scheme.
- */
-export function findSessionLog(root: string, sessionId: string): string | undefined {
-  const stack = [root]
-  while (stack.length > 0) {
-    const dir = stack.pop()!
-    let entries: string[]
-    try {
-      entries = readdirSync(dir)
-    } catch {
-      continue
-    }
-    for (const entry of entries) {
-      const path = join(dir, entry)
-      let isDir: boolean
-      try {
-        isDir = statSync(path).isDirectory()
-      } catch {
-        continue
-      }
-      if (!isDir) continue
-      if (entry === sessionId) {
-        const log = join(path, 'session.jsonl')
-        try {
-          if (statSync(log).isFile()) return log
-        } catch {
-          // Directory without a log yet; keep looking.
-        }
-      }
-      stack.push(path)
-    }
-  }
-  return undefined
 }
 
 export interface SessionDigest {

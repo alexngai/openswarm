@@ -2,9 +2,12 @@
 # dsh's examples/jsonrpc-agent/minimal.cordis.yml. Spawned per member run by
 # subagent-dsh-sdk with cwd = the task worktree; bash/fs root at process.cwd().
 # Override per team via worktrees.member.configPath to grow richer members.
+# review.cordis.yml is this file with the gate reviewer's differences; keep
+# the two in step.
 
+# dsh's SDK server plus resume-on-miss and `swarm/steer` (docs/05 A2).
 - id: sdk-jsonrpc-server
-  name: '@deepseek-ai/dsh-sdk-jsonrpc-server'
+  name: 'openswarm-swarm-member/server'
   config:
     maxTokensAsSuccess: false
 
@@ -21,10 +24,13 @@
 - id: sandbox
   name: '@deepseek-ai/dsh-sandbox-local'
 
+# Member sandbox (docs/05 §5.5): OPENSWARM_MEMBER_SANDBOX=workspace-write
+# confines bash and editor writes to the worktree (the session cwd) and temp;
+# reads and network stay open. Unset means danger-full-access.
 - id: sandbox-policy
   name: '@deepseek-ai/dsh-sandbox-policy'
   config:
-    mode: danger-full-access
+    mode: !!js "{ const mode = process.env.OPENSWARM_MEMBER_SANDBOX ?? 'danger-full-access'; if (mode !== 'workspace-write' && mode !== 'danger-full-access') throw new Error(`OPENSWARM_MEMBER_SANDBOX must be workspace-write or danger-full-access, not ${mode}`); mode }"
     workspaceRoot: !!js process.cwd()
 
 - id: subprocess
@@ -38,8 +44,10 @@
   config:
     timeoutMs: 60000
 
-- id: fs-local
-  name: '@deepseek-ai/dsh-fs-local'
+# dsh-fs-local plus the sandbox's write fence: without it the editor writes
+# anywhere under workspace-write. Unfenced under danger-full-access.
+- id: fs
+  name: '@deepseek-ai/dsh-fs-sandbox'
   config:
     cwd: !!js process.cwd()
 

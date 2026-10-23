@@ -8,10 +8,19 @@
     "openswarm": "bin/openswarm.mjs"
   },
   "dependencies": {
+    "openswarm-git": "*",
     "openswarm-swarm": "*",
     "openswarm-llm-openai": "*",
     "openswarm-llm-anthropic": "*",
     "openswarm-plugin-authoring": "*"
+  },
+  "peerDependencies": {
+    "opentasks": "0.2.0"
+  },
+  "peerDependenciesMeta": {
+    "opentasks": {
+      "optional": true
+    }
   },
   "exports": {
     ".": {

@@ -1,0 +1,29 @@
+{
+  "workers": 2,
+  "threads": [
+    {
+      "id": "t0",
+      "default": true,
+      "paths": ["packages/core/src/index.ts", "packages/core/src/utils/index.ts", "packages/core/src/utils/Configuration.ts", "packages/core/src/utils/upsert-utils.ts", "packages/core/src/typings.ts", "packages/core/src/enums.ts", "packages/core/src/drivers/IDatabaseDriver.ts", "packages/core/src/EntityManager.ts", "packages/knex/src/AbstractSqlDriver.ts", "packages/knex/src/query/QueryBuilder.ts"],
+      "assignment": "Shared contracts and hub files only. Add UpsertOptions<Entity> and UpsertManyOptions<Entity> and the comments/hintComments fields on FindOptions and CountOptions in packages/core/src/drivers/IDatabaseDriver.ts; add clear to TransactionOptions in packages/core/src/enums.ts; add disableIdentityMap, resultCache.global and discovery.checkDuplicateEntities (default true) to packages/core/src/utils/Configuration.ts; keep packages/core/src/index.ts and packages/core/src/utils/index.ts exporting the new names. packages/core/src/EntityManager.ts, packages/knex/src/AbstractSqlDriver.ts and packages/knex/src/query/QueryBuilder.ts are shared by several targets, so this thread makes every roadmap change to them, with any upsert field-resolution helper they share in packages/core/src/utils: the em.upsert/em.upsertMany options and batching and the onConflict property-to-column mapping (Target 2), comment()/hintComment() and their FindOptions/CountOptions pass-through (Target 3), and the global disableIdentityMap, global result cache and transactional clear behaviour (Target 4). Nothing else."
+    },
+    {
+      "id": "t1",
+      "blockedBy": ["t0"],
+      "paths": ["packages/core/src/entity/ArrayCollection.ts", "packages/core/src/entity/Collection.ts"],
+      "assignment": "Target 1 (Collection Helper Methods): add find, map, filter, reduce, exists, isEmpty, slice and indexBy to ArrayCollection and the initialization-checked overrides to Collection, in packages/core/src/entity/ArrayCollection.ts and packages/core/src/entity/Collection.ts."
+    },
+    {
+      "id": "t2",
+      "blockedBy": ["t0"],
+      "paths": ["packages/mongodb/src/MongoDriver.ts", "packages/mongodb/src/MongoConnection.ts"],
+      "assignment": "Target 2 (Fine-grained Upsert Control), MongoDB driver side: honour onConflictFields, onConflictAction, onConflictMergeFields and onConflictExcludeFields in upserts in packages/mongodb/src (MongoDriver.ts, MongoConnection.ts), using the UpsertOptions types pinned by t0. The EntityManager and SQL side of Target 2 belong to t0."
+    },
+    {
+      "id": "t3",
+      "blockedBy": ["t0"],
+      "paths": ["packages/core/src/metadata/MetadataValidator.ts", "packages/core/src/metadata/MetadataDiscovery.ts"],
+      "assignment": "Target 4 (Global Configuration and Discovery Options), discovery side: add the checkDuplicateEntities fourth parameter (default true) to MetadataValidator.validateDiscovered, skipping both duplicate checks when it is false, and pass the discovery option through from MetadataDiscovery, in packages/core/src/metadata. The configuration options and EntityManager behaviour of Target 4 belong to t0."
+    }
+  ]
+}

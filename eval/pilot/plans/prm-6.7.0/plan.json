@@ -1,0 +1,29 @@
+{
+  "workers": 2,
+  "threads": [
+    {
+      "id": "t0",
+      "default": true,
+      "paths": ["packages/driver-adapter-utils/", "packages/client-engine-runtime/package.json", "packages/client-engine-runtime/src/index.ts", "packages/client-engine-runtime/src/QueryPlan.ts", "packages/client-engine-runtime/src/interpreter/QueryInterpreter.ts", "packages/adapter-better-sqlite3/package.json", "packages/adapter-better-sqlite3/tsconfig", "packages/adapter-better-sqlite3/helpers/", "packages/adapter-better-sqlite3/src/index.ts"],
+      "assignment": "Shared contracts and hub files only. In packages/driver-adapter-utils, add the new Error variants to types.ts (Target 2, requirement 1) and export isDriverAdapterError with an any parameter from the index (Target 2, requirement 2). In packages/client-engine-runtime, add PrismaValueType, ResultNode, the parameterTupleList Fragment and the dataMap QueryPlanNode to src/QueryPlan.ts (Target 3, requirement 6); export UserFacingError, noopTracingHelper and the TracingHelper type from src/index.ts (Target 4, requirement 3); add any new dependency to its package.json. src/interpreter/QueryInterpreter.ts is shared by Targets 3 and 4, so this thread makes every roadmap change to it and no other thread edits it: interpreting dataMap nodes with applyDataMap, using serializeSql, rethrowing through rethrowAsUserFacing, and running queries through a TracingHelper. Scaffold the new @prisma/adapter-better-sqlite3 package (package.json, tsconfig, build helper, and src/index.ts exporting PrismaBetterSQLite3). Back every name you import or export with a stub module with the roadmap's signature where it does not exist yet (DataMapper, serializeSql, UserFacingError, tracing, the better-sqlite3 factory); other threads implement them. Nothing else."
+    },
+    {
+      "id": "t1",
+      "blockedBy": ["t0"],
+      "paths": ["packages/adapter-better-sqlite3/src/"],
+      "assignment": "Target 1 (better-sqlite3 Driver Adapter): implement PrismaBetterSQLite3AdapterFactory, PrismaBetterSQLite3Adapter, BetterSQLite3Queryable, BetterSQLite3Transaction, conversion.ts and errors.ts under packages/adapter-better-sqlite3/src, with tests there. The package scaffolding and src/index.ts belong to t0."
+    },
+    {
+      "id": "t2",
+      "blockedBy": ["t0"],
+      "paths": ["packages/adapter-pg/", "packages/adapter-neon/", "packages/adapter-libsql/", "packages/adapter-d1/", "packages/adapter-pg-worker/"],
+      "assignment": "Target 2 (Structured Driver Adapter Error Handling), requirements 3 to 5 and the same pattern in every other existing adapter under packages/adapter-* (not better-sqlite3): add an errors.ts with convertDriverError to each adapter package and make its onError throw new DriverAdapterError(convertDriverError(error)), with tests. The new Error variants and isDriverAdapterError belong to t0."
+    },
+    {
+      "id": "t3",
+      "blockedBy": ["t0"],
+      "paths": ["packages/client-engine-runtime/src/interpreter/", "packages/client-engine-runtime/src/UserFacingError.ts", "packages/client-engine-runtime/src/tracing.ts"],
+      "assignment": "Target 3 (Query Compiler Runtime Enhancements), requirements 1 to 5, and Target 4 (User-Facing Error & Tracing Infrastructure), requirements 1, 2 and 4: DataMapper.ts, the product generator, parameterTupleList rendering and recursive evaluateParam in renderQuery.ts, and the serialize to serializeSql rename under packages/client-engine-runtime/src/interpreter; UserFacingError.ts with rethrowAsUserFacing and tracing.ts in packages/client-engine-runtime/src; with tests next to them. src/QueryPlan.ts, src/index.ts and src/interpreter/QueryInterpreter.ts belong to t0."
+    }
+  ]
+}

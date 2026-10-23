@@ -1,0 +1,29 @@
+{
+  "workers": 2,
+  "threads": [
+    {
+      "id": "t0",
+      "default": true,
+      "paths": ["spacy/errors.py", "setup.cfg", "spacy/util.py", "spacy/scorer.py", "spacy/pipeline/trainable_pipe.pxd", "spacy/pipeline/tagger.pyx", "spacy/pipeline/senter.pyx", "spacy/pipeline/sentencizer.pyx", "spacy/pipeline/morphologizer.pyx", "spacy/pipeline/entity_linker.py", "spacy/tests/test_language.py", "spacy/tests/test_scorer.py", "spacy/tests/pipeline/test_morphologizer.py"],
+      "assignment": "Shared contracts and hub files only. Add the error and warning codes the roadmap needs to spacy/errors.py (E866 among them); add the langcodes dependency to setup.cfg; add the scorers registry to spacy.util.registry; declare scorer as a public attribute of TrainablePipe in spacy/pipeline/trainable_pipe.pxd (Target 4, requirement 5). spacy/util.py, spacy/scorer.py and the tagger, senter, sentencizer, morphologizer and entity_linker components (spacy/pipeline/tagger.pyx, senter.pyx, sentencizer.pyx, morphologizer.pyx, entity_linker.py) are shared by several targets, so this thread makes every roadmap change to them and no other thread edits them: Target 3 (IETF Language Code Support) in spacy/util.py; Target 6 (Morphological Feature Micro-PRF Scoring) and the Scorer changes that Target 4's scoring functions need in spacy/scorer.py; and in those five components both Target 4 (the scorer parameter, its default config and the tagger, morphologizer, senter and entity_linker scoring functions and registry entries) and Target 5 (Component Overwrite and Extend Settings). Tests for these go in spacy/tests/test_language.py, spacy/tests/test_scorer.py and spacy/tests/pipeline. Nothing else."
+    },
+    {
+      "id": "t1",
+      "blockedBy": ["t0"],
+      "paths": ["spacy/vectors.", "spacy/vocab.", "spacy/training/initialize.py", "spacy/tests/vocab_vectors/test_vectors.py", "spacy/tests/serialize/test_serialize_vocab_strings.py"],
+      "assignment": "Target 1 (Floret Vector Support): the Mode enum, the extended Vectors constructor, floret-mode behaviour, the new methods and serialization in spacy/vectors.pyx; the Vocab integration in spacy/vocab.*; and the mode parameter and floret .hashvec reading of convert_vectors in spacy/training/initialize.py; with tests under spacy/tests/vocab_vectors and spacy/tests/serialize. New error codes belong to t0."
+    },
+    {
+      "id": "t2",
+      "blockedBy": ["t0"],
+      "paths": ["spacy/language.py", "spacy/tokens/doc.", "spacy/tokenizer.", "spacy/lang/tokenizer_exceptions.py", "spacy/tests/doc/test_pickle_doc.py", "spacy/tests/tokenizer/"],
+      "assignment": "Target 2 (Doc Input for Pipelines) and Target 7 (Tokenizer Prefix/Suffix Handling Fix): Doc input to Language.__call__ and Language.pipe with _ensure_doc and _ensure_doc_with_context in spacy/language.py and Doc._context (including pickling) in spacy/tokens/doc.*; and the _split_affixes fix in spacy/tokenizer.* (and spacy/lang/tokenizer_exceptions.py if existing behaviour needs it); with tests under spacy/tests/doc and spacy/tests/tokenizer. The E866 error code belongs to t0."
+    },
+    {
+      "id": "t3",
+      "blockedBy": ["t0"],
+      "paths": ["spacy/pipeline/pipe.pyx", "spacy/pipeline/transition_parser.pyx", "spacy/pipeline/textcat.py", "spacy/pipeline/textcat_multilabel.py", "spacy/pipeline/spancat.py", "spacy/pipeline/ner.pyx"],
+      "assignment": "Target 4 (Registered Scoring Functions), apart from the registry, the TrainablePipe declaration, the Scorer changes and the tagger, senter, sentencizer, morphologizer and entity_linker components, which belong to t0: the Pipe.score() dispatch in spacy/pipeline/pipe.pyx, and the scorer parameter, its default config, the scoring function and its registry entry for textcat, textcat_multilabel, spancat, ner and beam_ner (spacy/pipeline/textcat.py, textcat_multilabel.py, spancat.py, ner.pyx and its parser base), with tests under spacy/tests/pipeline."
+    }
+  ]
+}

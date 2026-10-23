@@ -11,15 +11,33 @@
  * lives beside them, never at the directory node), and a
  * configured target branch that is already checked out elsewhere fails
  * loud with git's own error. A conflicted merge is aborted and the task
- * branch retained for inspection — never auto-resolved.
+ * branch retained for inspection — never auto-resolved here; the train
+ * (docs/05 B2, B3, in openswarm-swarm) builds on the steps below and hands a
+ * conflict to a resolver.
  */
-import { execFile } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { appendFileSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import {
+  appendFileSync,
+  constants,
+  copyFileSync,
+  existsSync,
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 
 const run = promisify(execFile)
+
+export { snapshotTree, type TreeSnapshot } from './snapshot'
 
 export interface SwarmGitOptions {
   repoRoot: string
@@ -30,7 +48,16 @@ export interface SwarmGitOptions {
   targetBranch?: string
   /** Directory holding this team's worktrees (default `<repoRoot>/.swarm/worktrees/<teamId>`). */
   worktreeDir?: string
+  /** Hard-link the main checkout's ignored environment into each new member worktree (default true). */
+  linkIgnored?: boolean
+  /** One human-readable progress line (what was linked, and how long it took). */
+  onProgress?: (line: string) => void
 }
+
+/** Ignored files an import needs: native extensions and generated Python source (spaCy's `git_info.py`). */
+const ENVIRONMENT_FILE = /\.(so|pyd|dylib|node|py)$/
+/** Never replicated: build output a member's build regenerates, and the swarm's own scratch. */
+const NOT_ENVIRONMENT = /(^|\/)(dist|build|out|coverage|\.cache|__pycache__|[^/]*\.egg-info|\.turbo|\.next|\.swarm)\//
 
 export interface WorktreeInfo {
   taskKey: string
@@ -53,10 +80,38 @@ export interface MergeOutcome {
    * that said the work was not good enough.
    */
   withheld: { taskKey: string; branch: string }[]
+  /**
+   * Set when the train landed the run (docs/05 B2, B3); `merged` then lists
+   * what landed too, and `conflicts` what was ejected over a conflict the
+   * resolver gave up on. Ejected branches are kept, and their worktrees
+   * unless the train stopped. Commits count past the target's tip.
+   */
+  landed?: { taskKey: string; branch: string; commits: number }[]
+  ejected?: { taskKey: string; branch: string; reason: string }[]
+  /** Entries a repair was dispatched for, however they ended, and how many. */
+  repaired?: { taskKey: string; branch: string; repairs: number }[]
+  /** Entries whose conflict the resolver resolved. */
+  resolved?: { taskKey: string; branch: string }[]
+  /**
+   * Why the train stopped before every entry landed or was ejected (aborted,
+   * the verifier unavailable, a target already failing); what it never got
+   * to is `withheld`, its branch kept and its worktree removed. A failing
+   * target the owner chose to merge anyway is this queue's outcome instead.
+   */
+  stopped?: string
 }
+
+/** The identity of the harness's own commits and merges. */
+const AS_SWARM = ['-c', 'user.email=swarm@openswarm', '-c', 'user.name=openswarm']
 
 /** A team directory younger than this is treated as starting, not abandoned. */
 const RECENT_MS = 60_000
+
+/** A task key's two worktree names: sanitized, and that with a short hash of the key. */
+const namesFor = (taskKey: string): [string, string] => {
+  const sanitized = taskKey.replace(/[^A-Za-z0-9._-]/g, '-')
+  return [sanitized, `${sanitized}-${createHash('sha1').update(taskKey).digest('hex').slice(0, 8)}`]
+}
 
 export class SwarmGit {
   private readonly worktrees = new Map<string, WorktreeInfo>()
@@ -67,6 +122,7 @@ export class SwarmGit {
   private ignoreChecked = false
   private base: string | undefined
   private targetPath: string | undefined
+  private trainPath: string | undefined
   private scratchPromise: Promise<string> | undefined
 
   constructor(private readonly options: SwarmGitOptions) {}
@@ -88,11 +144,11 @@ export class SwarmGit {
    * checkout, so without this every run leaves them staring at untracked
    * directories they did not create.
    *
-   * `.git/info/exclude` rather than `.gitignore`: it is the per-clone,
-   * untracked ignore file, so we never write to a file the user commits.
-   * Skipped entirely for a custom `worktreeDir` outside the repo (not ours to
-   * ignore) and for a `.git` that is not a real directory (a checkout that is
-   * itself a worktree or submodule), where the path simply does not exist.
+   * `info/exclude` rather than `.gitignore`: it is the per-clone, untracked
+   * ignore file, so we never write to a file the user commits. Found as git
+   * finds it (`--git-path`), so a repo root that is a linked worktree, a
+   * submodule or a subdirectory gets it too. Skipped for a custom
+   * `worktreeDir` outside the repo (not ours to ignore).
    */
   private ensureDir(): void {
     mkdirSync(this.dir, { recursive: true })
@@ -101,12 +157,14 @@ export class SwarmGit {
     const swarmRoot = join(this.options.repoRoot, '.swarm')
     if (!this.dir.startsWith(swarmRoot)) return
     try {
-      const exclude = join(this.options.repoRoot, '.git', 'info', 'exclude')
-      const current = readFileSync(exclude, 'utf8')
+      const where = execFileSync('git', ['rev-parse', '--git-path', 'info/exclude'], { cwd: this.options.repoRoot, encoding: 'utf8' })
+      const exclude = resolve(this.options.repoRoot, where.trim())
+      mkdirSync(dirname(exclude), { recursive: true })
+      const current = existsSync(exclude) ? readFileSync(exclude, 'utf8') : ''
       if (/^\s*\.swarm\/?\s*$/m.test(current)) return
       appendFileSync(exclude, `${current.endsWith('\n') || current === '' ? '' : '\n'}.swarm/\n`)
     } catch {
-      // No standard .git/info/exclude here; nothing to teach.
+      // Not a git checkout git can read; nothing to teach.
     }
   }
 
@@ -141,23 +199,52 @@ export class SwarmGit {
     return promise
   }
 
+  /**
+   * A worktree for `taskKey` on its branch as another host left it on
+   * `remote` (a resumed run's completed task, docs/05 D1), not a new one cut
+   * from the base. Its name is one of the two {@link createWorktree} gives a
+   * key, the hashed one being unambiguous. Undefined when the remote has
+   * neither: a task that committed nothing pushed no branch.
+   */
+  async adopt(taskKey: string, remote: string): Promise<WorktreeInfo | undefined> {
+    const [plain, hashed] = namesFor(taskKey)
+    const heads = (await this.git(this.options.repoRoot, 'ls-remote', '--heads', remote, `swarm/${this.options.teamId}/${plain}`, `swarm/${this.options.teamId}/${hashed}`)).stdout.split('\n')
+    const safe = heads.some((line) => line.endsWith(`/${hashed}`)) ? hashed : heads.some((line) => line.endsWith(`/${plain}`)) ? plain : undefined
+    if (safe === undefined) return undefined
+    const branch = `swarm/${this.options.teamId}/${safe}`
+    await this.git(this.options.repoRoot, 'fetch', '-q', remote, `+refs/heads/${branch}:refs/heads/${branch}`)
+    this.usedNames.add(safe)
+    const path = join(this.dir, safe)
+    this.ensureDir()
+    await this.git(this.options.repoRoot, 'worktree', 'add', '-q', path, branch)
+    await this.link(path)
+    const info: WorktreeInfo = { taskKey, path, branch }
+    this.worktrees.set(taskKey, info)
+    this.worktreePromises.set(taskKey, Promise.resolve(info))
+    return info
+  }
+
   private async createWorktree(taskKey: string): Promise<WorktreeInfo> {
-    const sanitized = taskKey.replace(/[^A-Za-z0-9._-]/g, '-')
+    const [plain, hashed] = namesFor(taskKey)
     // Distinct keys that sanitize to the same name (or a name already taken)
     // would otherwise collide on one branch; a short deterministic hash keeps
     // each key's branch unique while staying readable.
-    const safe =
-      sanitized === taskKey && !this.usedNames.has(sanitized)
-        ? sanitized
-        : `${sanitized}-${createHash('sha1').update(taskKey).digest('hex').slice(0, 8)}`
+    const safe = plain === taskKey && !this.usedNames.has(plain) ? plain : hashed
     this.usedNames.add(safe)
     const branch = `swarm/${this.options.teamId}/${safe}`
     const path = join(this.dir, safe)
     this.ensureDir()
     await this.git(this.options.repoRoot, 'worktree', 'add', '-b', branch, path, await this.baseCommit())
+    await this.link(path)
     const info: WorktreeInfo = { taskKey, path, branch }
     this.worktrees.set(taskKey, info)
     return info
+  }
+
+  /** {@link linkIgnored} into a new worktree, unless the team opted out. */
+  private async link(path: string): Promise<void> {
+    if (this.options.linkIgnored === false) return
+    await linkIgnored(this.options.repoRoot, path, this.options.onProgress === undefined ? {} : { onProgress: this.options.onProgress })
   }
 
   /**
@@ -218,7 +305,41 @@ export class SwarmGit {
     return touched
   }
 
-  /** Commit everything dirty in one worktree; false when it was clean. */
+  /**
+   * Put a worktree's index and files back to a snapshot commit (the
+   * completion gate's rollback, docs/05 B6b): tracked files and the index as
+   * the snapshot has them, and every untracked file it lacks removed. Ignored
+   * files stay (the linked environment, build output), as a snapshot never
+   * holds them; HEAD does not move. Only for the team's own worktrees, which
+   * is why it takes a WorktreeInfo, never a path: nothing restores the user's
+   * checkout.
+   */
+  async resetTo(worktree: WorktreeInfo, commit: string): Promise<void> {
+    await this.git(worktree.path, 'read-tree', '-u', '--reset', commit)
+    await this.clean(worktree.path)
+  }
+
+  /**
+   * `git clean -fdq` in one of the team's worktrees, then the linked
+   * environment put back wherever it went missing. A branch that stops
+   * ignoring part of it (a generated `git_info.py`) gets it committed, so the
+   * checkout or reset that moves a worktree off that commit deletes the file,
+   * as clean deletes one a tree no longer ignores. Deleting a hard link
+   * leaves the checkout's own file alone; the re-link only fills gaps.
+   */
+  private async clean(path: string): Promise<void> {
+    await this.git(path, 'clean', '-fdq')
+    if (this.options.linkIgnored !== false) await linkIgnored(this.options.repoRoot, path)
+  }
+
+  /**
+   * Commit everything dirty in one worktree; false when it was clean.
+   *
+   * `--no-verify` here and on every merge the harness makes: these commits are
+   * bookkeeping, not authorship, and a repo's hooks often depend on git-ignored
+   * setup a worktree lacks (husky's `.husky/_/husky.sh`), so one failing hook
+   * failed every thread of a task. Members' own git commands still run hooks.
+   */
   async autoCommit(worktree: WorktreeInfo, message: string): Promise<boolean> {
     await this.git(worktree.path, 'add', '-A')
     try {
@@ -228,19 +349,37 @@ export class SwarmGit {
       await this.git(
         worktree.path,
         '-c', 'user.email=swarm@openswarm', '-c', 'user.name=openswarm',
-        'commit', '-q', '-m', message,
+        'commit', '-q', '--no-verify', '-m', message,
       )
       return true
     }
   }
 
-  /** Number of commits a task branch carries beyond the base. */
-  async commitCount(branch: string): Promise<number> {
+  /** Number of commits a task branch carries beyond the base, or beyond `from`. */
+  async commitCount(branch: string, from?: string): Promise<number> {
     const { stdout } = await this.git(
       this.options.repoRoot,
-      'rev-list', '--count', `${await this.baseCommit()}..${branch}`,
+      'rev-list', '--count', `${from ?? (await this.baseCommit())}..${branch}`,
     )
     return Number(stdout.trim())
+  }
+
+  /**
+   * What `branch` changes since its merge base with `from` (`git diff
+   * --numstat from...branch`): the files, and lines added and removed; a
+   * binary file counts no lines. A landing's diff (docs/05 B4).
+   */
+  async diffStat(from: string, branch: string): Promise<{ files: string[]; insertions: number; deletions: number }> {
+    const { stdout } = await this.git(this.options.repoRoot, 'diff', '--numstat', '--no-renames', `${from}...${branch}`)
+    const stat = { files: [] as string[], insertions: 0, deletions: 0 }
+    for (const line of stdout.split('\n')) {
+      const [added, removed, ...path] = line.split('\t')
+      if (path.length === 0) continue
+      stat.files.push(path.join('\t'))
+      stat.insertions += Number(added) || 0
+      stat.deletions += Number(removed) || 0
+    }
+    return stat
   }
 
   /** The target worktree the merge queue operates in (created on first use). */
@@ -285,7 +424,7 @@ export class SwarmGit {
         await this.git(
           target,
           '-c', 'user.email=swarm@openswarm', '-c', 'user.name=openswarm',
-          'merge', '--no-ff', '-q', '-m', `swarm: merge ${info.branch}`, info.branch,
+          'merge', '--no-ff', '--no-verify', '-q', '-m', `swarm: merge ${info.branch}`, info.branch,
         )
         outcome.merged.push({ taskKey: info.taskKey, branch: info.branch, commits })
         await this.removeWorktree(info)
@@ -296,6 +435,107 @@ export class SwarmGit {
       }
     }
     return outcome
+  }
+
+  /** This team's live task worktrees, in creation order. */
+  list(): WorktreeInfo[] {
+    return [...this.worktrees.values()]
+  }
+
+  /** The commit `ref` names. */
+  async revParse(ref: string): Promise<string> {
+    return (await this.git(this.options.repoRoot, 'rev-parse', ref)).stdout.trim()
+  }
+
+  /** The target branch's tip, read in its worktree (created on first use). */
+  async targetTip(): Promise<string> {
+    return (await this.git(await this.targetWorktree(), 'rev-parse', 'HEAD')).stdout.trim()
+  }
+
+  /**
+   * The train's speculative merge (docs/05 B2): `branches` merged `--no-ff`,
+   * in order, onto `tip`, in a detached worktree of the train's own (created
+   * on first use and linked as a member's is, so checks can build and test
+   * there), never the target's or the user's. A branch whose merge
+   * conflicts is aborted and left out; a merge git refuses outright throws.
+   * Returns that worktree, the batch commit, and the branches left out.
+   */
+  async speculate(tip: string, branches: readonly string[]): Promise<{ cwd: string; commit: string; conflicted: string[] }> {
+    if (this.trainPath === undefined) {
+      const path = join(this.dir, '.train')
+      this.ensureDir()
+      await this.git(this.options.repoRoot, 'worktree', 'add', '--detach', path, tip)
+      await this.link(path)
+      this.trainPath = path
+    }
+    const cwd = this.trainPath
+    // The last batch's tree and whatever its checks left behind go; ignored
+    // files (the linked environment, build output) stay, as in a member's tree.
+    await this.git(cwd, '-c', 'core.hooksPath=/dev/null', 'checkout', '-q', '-f', '--detach', tip)
+    await this.clean(cwd)
+    const conflicted: string[] = []
+    for (const branch of branches) {
+      try {
+        await this.git(cwd, ...AS_SWARM, 'merge', '--no-ff', '--no-verify', '-q', '-m', `swarm: merge ${branch}`, branch)
+      } catch (error) {
+        const { stdout } = await this.git(cwd, 'diff', '--name-only', '--diff-filter=U')
+        await this.git(cwd, 'merge', '--abort').catch(() => {})
+        if (stdout.trim() === '') throw error
+        conflicted.push(branch)
+      }
+    }
+    return { cwd, commit: (await this.git(cwd, 'rev-parse', 'HEAD')).stdout.trim(), conflicted }
+  }
+
+  /** Fast-forward the target branch, in its worktree, to a commit the train built on its tip. */
+  async advanceTarget(commit: string): Promise<void> {
+    await this.git(await this.targetWorktree(), 'merge', '--ff-only', '-q', commit)
+  }
+
+  /**
+   * Merge `ref` into a task worktree's branch, as the train's repair and
+   * resolver steps start (docs/05 B3). Returns [] once committed. On a
+   * conflict the merge is left in progress and the unmerged paths returned,
+   * for an agent to resolve; then {@link concludeMerge} or {@link abortMerge}.
+   */
+  async mergeInto(worktree: WorktreeInfo, ref: string): Promise<string[]> {
+    try {
+      await this.git(worktree.path, ...AS_SWARM, 'merge', '--no-verify', '-q', '-m', `swarm: merge ${ref} into ${worktree.branch}`, ref)
+      return []
+    } catch (error) {
+      const { stdout } = await this.git(worktree.path, 'diff', '--name-only', '--diff-filter=U')
+      const unmerged = stdout.split('\n').filter((line) => line !== '')
+      if (unmerged.length > 0) return unmerged
+      // Not a conflict: git refused the merge outright.
+      await this.abortMerge(worktree)
+      throw error
+    }
+  }
+
+  /**
+   * Commit a merge {@link mergeInto} left in progress, with whatever the
+   * worktree now holds, even a tree equal to HEAD's. An agent that concluded
+   * (or abandoned) the merge itself leaves only its edits to commit.
+   */
+  async concludeMerge(worktree: WorktreeInfo, message: string): Promise<void> {
+    const merging = await this.git(worktree.path, 'rev-parse', '-q', '--verify', 'MERGE_HEAD').then(() => true, () => false)
+    if (!merging) {
+      await this.autoCommit(worktree, message)
+      return
+    }
+    await this.git(worktree.path, 'add', '-A')
+    await this.git(worktree.path, ...AS_SWARM, 'commit', '-q', '--no-verify', '-m', message)
+  }
+
+  /** Abandon a merge in progress: the task worktree back at its branch's head, nothing of the merge left. */
+  async abortMerge(worktree: WorktreeInfo): Promise<void> {
+    await this.git(worktree.path, 'reset', '-q', '--hard', 'HEAD')
+    await this.clean(worktree.path)
+  }
+
+  /** Whether `commit` is in `ref`'s history. */
+  contains(ref: string, commit: string): Promise<boolean> {
+    return this.git(this.options.repoRoot, 'merge-base', '--is-ancestor', commit, ref).then(() => true, () => false)
   }
 
   /**
@@ -311,13 +551,15 @@ export class SwarmGit {
         const path = join(this.dir, '.scratch')
         this.ensureDir()
         await this.git(this.options.repoRoot, 'worktree', 'add', '--detach', path, await this.baseCommit())
+        await this.link(path)
         return path
       })()
     }
     return this.scratchPromise
   }
 
-  private async removeWorktree(info: WorktreeInfo): Promise<void> {
+  /** Remove one task worktree; its branch survives. */
+  async removeWorktree(info: WorktreeInfo): Promise<void> {
     await this.git(this.options.repoRoot, 'worktree', 'remove', '--force', info.path).catch(() => {
       rmSync(info.path, { recursive: true, force: true })
     })
@@ -380,13 +622,17 @@ export class SwarmGit {
     return removed
   }
 
-  /** Remove the target and scratch worktrees (branches survive). */
+  /** Remove the target, train and scratch worktrees (branches survive). */
   async dispose(): Promise<void> {
     if (this.targetPath !== undefined) {
       await this.git(this.options.repoRoot, 'worktree', 'remove', '--force', this.targetPath).catch(
         () => {},
       )
       this.targetPath = undefined
+    }
+    if (this.trainPath !== undefined) {
+      await this.git(this.options.repoRoot, 'worktree', 'remove', '--force', this.trainPath).catch(() => {})
+      this.trainPath = undefined
     }
     if (this.scratchPromise !== undefined) {
       const scratch = await this.scratchPromise.catch(() => undefined)
@@ -395,5 +641,128 @@ export class SwarmGit {
         await this.git(this.options.repoRoot, 'worktree', 'remove', '--force', scratch).catch(() => {})
       }
     }
+  }
+}
+
+/**
+ * Replicate a checkout's git-ignored ENVIRONMENT into a fresh worktree of it.
+ * A worktree is gitignore-clean, so without this a TypeScript repo has no
+ * `node_modules` (a member can neither build nor test there) and a Python
+ * package with compiled extensions cannot even import.
+ *
+ * Replicated: every ignored `node_modules/` (nested ones too), ignored native
+ * extensions, and ignored `*.py` — never build output or `.swarm/`, and
+ * nothing the worktree already has. By hard link (`cp -al` keeps symlinks as
+ * symlinks, so relative workspace links resolve INSIDE the worktree), with a
+ * plain copy only where linking fails (across filesystems). Best-effort: a
+ * failure leaves the worktree as git made it, and says so.
+ *
+ * `whole` replicates ALL of it, for a reviewer's copy, which has to run the
+ * repo's tests as the checkout does: every ignored directory (build output
+ * too — a monorepo's packages resolve each other through ignored `dist/` via
+ * relative node_modules links — and `.venv`, `target`, caches), unfiltered but
+ * for `.swarm/` and anything under `.git`; and every ignored loose file
+ * COPIED rather than linked (a reflink where the filesystem has one), since
+ * one can be the user's own (`local_settings.py`) and an append or
+ * `open('w')` through a hard link writes their file.
+ */
+export async function linkIgnored(
+  repoRoot: string,
+  path: string,
+  options: { onProgress?: (line: string) => void; whole?: boolean } = {},
+): Promise<void> {
+  const started = Date.now()
+  let linked = 0
+  try {
+    const { stdout } = await run(
+      'git',
+      ['ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--directory'],
+      { cwd: repoRoot },
+    )
+    for (const entry of stdout.split('\0')) {
+      const isDir = entry.endsWith('/') // git marks directories with a trailing slash
+      const rel = isDir ? entry.slice(0, -1) : entry
+      const wanted =
+        options.whole === true
+          ? !/(^|\/)(\.swarm|\.git)(\/|$)/.test(rel)
+          : (isDir ? /(^|\/)node_modules$/.test(rel) : ENVIRONMENT_FILE.test(rel)) && !NOT_ENVIRONMENT.test(entry)
+      if (!wanted) continue
+      const from = join(repoRoot, rel)
+      const to = join(path, rel)
+      if (existsSync(to)) continue
+      mkdirSync(dirname(to), { recursive: true })
+      if (!isDir && options.whole === true) {
+        copyFileSync(from, to, constants.COPYFILE_FICLONE)
+        linked++
+        continue
+      }
+      // ponytail: a hard-linked directory means a tool rewriting a file in place
+      // (a rebuilt .so, tsc overwriting dist, a pip upgrade in .venv, a file of
+      // the user's inside an ignored directory) also changes the checkout's
+      // copy; fine for dependency trees, regenerated output and caches. Revisit
+      // with reflinks or an overlay if it bites.
+      try {
+        if (isDir) await run('cp', ['-al', from, to])
+        else linkSync(from, to)
+      } catch {
+        rmSync(to, { recursive: true, force: true })
+        if (isDir) await run('cp', ['-a', from, to])
+        else copyFileSync(from, to)
+      }
+      linked++
+    }
+    options.onProgress?.(`worktree: linked ${linked} ignored path(s) in ${Date.now() - started}ms`)
+  } catch (error) {
+    const why = error instanceof Error ? error.message : String(error)
+    options.onProgress?.(`worktree: ignored environment only partly replicated (${linked} path(s)): ${why}`)
+  }
+}
+
+/**
+ * Run `fn` in a throwaway copy of `commit` (a snapshot of the checkout at
+ * `cwd`), with the checkout's ignored environment replicated into it, and
+ * delete it afterwards however `fn` ends. `fn` gets the copy's counterpart of
+ * `cwd`. What runs there — a reviewer told its changes are discarded — never
+ * touches the user's repository:
+ *
+ * - its own repository, not a linked worktree, so its refs, stash and config
+ *   are its own (a worktree shares them: a `git stash pop` there pops the
+ *   user's stash), and with no remote, so a push or fetch cannot reach back;
+ * - objects borrowed through alternates, which is how the unreferenced
+ *   snapshot commit is reachable from it. Built by hand, not `git clone
+ *   --shared`: a clone of a SHALLOW repository ignores `--shared` and copies
+ *   only referenced objects, losing the snapshot. The source's `shallow` file
+ *   comes along, so history stops at the same boundary instead of failing;
+ * - the checkout's WHOLE ignored environment (`linkIgnored`'s `whole`), build
+ *   output included, so the reviewer can run the tests as the checkout does;
+ *   ignored loose files copied, not hard-linked;
+ * - checked out without hooks: a `post-checkout` hook is the user's, for their
+ *   own checkouts, not for this bookkeeping one;
+ * - in temp, outside the checkout, removed with one `rm -rf`.
+ */
+export async function withSnapshotClone<T>(
+  cwd: string,
+  commit: string,
+  fn: (cwd: string) => Promise<T>,
+  onProgress?: (line: string) => void,
+): Promise<T> {
+  const git = async (dir: string, ...args: string[]) => (await run('git', args, { cwd: dir })).stdout.trim()
+  const root = await git(cwd, 'rev-parse', '--show-toplevel')
+  const prefix = await git(cwd, 'rev-parse', '--show-prefix')
+  // The common directory's, also from a linked worktree; resolved against root,
+  // since git prints it relative to where it ran.
+  const objects = resolve(root, await git(root, 'rev-parse', '--git-path', 'objects'))
+  const shallow = resolve(root, await git(root, 'rev-parse', '--git-path', 'shallow'))
+  const dir = mkdtempSync(join(tmpdir(), 'openswarm-review-'))
+  const path = join(dir, 'tree')
+  try {
+    await git(dir, 'init', '-q', path)
+    writeFileSync(join(path, '.git', 'objects', 'info', 'alternates'), `${objects}\n`)
+    if (existsSync(shallow)) copyFileSync(shallow, join(path, '.git', 'shallow'))
+    await git(path, '-c', 'core.hooksPath=/dev/null', 'checkout', '-q', '--detach', commit)
+    await linkIgnored(root, path, { ...(onProgress === undefined ? {} : { onProgress }), whole: true })
+    return await fn(join(path, prefix))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
   }
 }

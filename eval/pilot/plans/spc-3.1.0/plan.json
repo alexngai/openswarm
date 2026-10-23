@@ -1,0 +1,29 @@
+{
+  "workers": 2,
+  "threads": [
+    {
+      "id": "t0",
+      "default": true,
+      "paths": ["spacy/errors.py", "spacy/pipeline/__init__.py", "spacy/ml/models/__init__.py"],
+      "assignment": "Shared contracts and hub files only. Add the error codes the roadmap needs to spacy/errors.py: the SpanCategorizer's ValueError when initialize ends with no labels and its ValueError for add_label on an initialized (non-resizable) model, for Target 1 (E187 already exists for non-string labels), and the ValueError for the deprecated \"!\"-prefixed negative entity labels pointing users to incorrect_spans_key, for Target 4. Export SpanCategorizer from spacy/pipeline/__init__.py (Target 1, requirement 7) over a stub module under spacy/pipeline carrying the roadmap's constructor signature, __init__(self, vocab, model, suggester, name=\"spancat\", *, spans_key=\"spans\", threshold=0.5, max_positive=None), as a TrainablePipe subclass; t1 implements it and registers the spancat factory and the n-gram suggester. Import a stub module under spacy/ml/models from spacy/ml/models/__init__.py holding the spacy.SpanCategorizer.v1 architecture with the roadmap's signature (tok2vec, reducer, scorer); t1 implements it and its layers. Nothing else."
+    },
+    {
+      "id": "t1",
+      "blockedBy": ["t0"],
+      "paths": ["spacy/pipeline/", "spacy/ml/", "spacy/tests/pipeline/"],
+      "assignment": "Target 1 (Span Categorizer Component): implement the SpanCategorizer over t0's stub module under spacy/pipeline (the \"spancat\" factory with assigns=[\"doc.spans\"], the roadmap's default config and score weights; cfg with labels, spans_key, threshold and max_positive; key, labels and label_data; add_label returning 0 or 1, E187 for non-strings and a ValueError once the model's output dimension is set; predict, set_annotations into a SpanGroup under doc.spans[key] with threshold and max_positive, update, get_loss aligning gold spans from example.reference.spans[key] with get_aligned_spans_y2x, initialize taking labels or extracting them and raising ValueError when none are found, and score through Scorer.score_spans), the spacy.ngram_suggester.v1 function in registry.misc returning a Ragged of (start, end) rows per doc; and under spacy/ml the spacy.SpanCategorizer.v1 architecture over t0's stub module in spacy/ml/models, the spacy.LinearLogistic.v1 and spacy.mean_max_reducer.v1 layers and the spacy.extract_spans.v1 layer (forward indexing, backward scattering the gradient) in registry.layers, with tests under spacy/tests/pipeline. The error codes, the spacy/pipeline/__init__.py export and the spacy/ml/models/__init__.py import belong to t0; spacy/pipeline/textcat.py, spacy/pipeline/textcat_multilabel.py and spacy/ml/models/textcat.py belong to t2, and the NER and parser files belong to t3."
+    },
+    {
+      "id": "t2",
+      "blockedBy": ["t0"],
+      "paths": ["spacy/language.py", "spacy/schemas.py", "spacy/default_config.cfg", "spacy/training/loop.py", "spacy/pipeline/textcat.py", "spacy/pipeline/textcat_multilabel.py", "spacy/ml/models/textcat.py", "spacy/tests/test_language.py", "spacy/tests/training/", "spacy/tests/pipeline/test_textcat.py", "spacy/tests/test_models.py"],
+      "assignment": "Target 2 (Predicted Annotations During Training) and Target 3 (Resizable Text Classification Architectures): add the annotates parameter (default an empty SimpleFrozenList) to Language.update in spacy/language.py so that each named component, in pipeline order, sets its predictions on every example.predicted after its own update; add annotating_components (List[str], default []) to ConfigSchemaTraining in spacy/schemas.py and to the [training] block of spacy/default_config.cfg, and pass it as annotates to every nlp.update call in spacy/training/loop.py; register spacy.TextCatCNN.v2 and spacy.TextCatBOW.v2 in spacy/ml/models/textcat.py with the v1 signatures, a resizable output layer, model.attrs[\"resize_output\"] and the resize helper (new labels near-zero probability for exclusive classes, neutral weights otherwise; BOW v2 setting nO explicitly), leaving the v1 architectures as they are; call resize_output from TextCategorizer.add_label in spacy/pipeline/textcat.py when the model has it, and switch the default model configs in spacy/pipeline/textcat.py and spacy/pipeline/textcat_multilabel.py to the v2 architectures; with tests in spacy/tests/test_language.py, spacy/tests/training, spacy/tests/pipeline/test_textcat.py and spacy/tests/test_models.py. The error codes belong to t0."
+    },
+    {
+      "id": "t3",
+      "blockedBy": ["t0"],
+      "paths": ["spacy/pipeline/ner.pyx", "spacy/pipeline/transition_parser.", "spacy/pipeline/dep_parser.pyx", "spacy/pipeline/_parser_internals/", "spacy/tests/parser/", "spacy/cli/package.py", "spacy/tests/test_cli.py"],
+      "assignment": "Target 4 (NER Incorrect Span Annotations) and Target 5 (Pipeline Package README Generation): add incorrect_spans_key (Optional[str], default None) to the \"ner\" and \"beam_ner\" factories and their default configs in spacy/pipeline/ner.pyx and pass it through EntityRecognizer (and the parser base in spacy/pipeline/transition_parser.* if needed) to BiluoPushDown in spacy/pipeline/_parser_internals/ner.pyx, which stores it as cfg[\"neg_key\"], extends the gold state struct with the negative spans from the reference doc's spans under that key so the oracle never predicts those (start, end, label) entities, and raises a clear ValueError for the deprecated \"!\"-prefixed labels; add generate_readme(meta) using wasabi.MarkdownRenderer and the _format_sources, _format_label_scheme and _format_accuracy helpers to spacy/cli/package.py and have package() write the README to the package root and the inner model directory when none exists; with tests under spacy/tests/parser and in spacy/tests/test_cli.py. The error codes belong to t0."
+    }
+  ]
+}

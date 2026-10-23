@@ -13,10 +13,13 @@
  * like a crash — same usage (zero), same missing result. Asserting `sawResult`
  * only on the happy path would be a guard that cannot fail where it matters.
  */
-import { mkdtempSync, existsSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { mkdtempSync, existsSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
+import { Context } from '@deepseek-ai/cordis'
+import * as SandboxLocal from '@deepseek-ai/dsh-sandbox-local'
 import { startMockLlmServer, type MockLlmServer } from '@deepseek-ai/dsh-llm-mock-server'
 import { runCli } from '../src/index'
 
@@ -226,17 +229,47 @@ it('accepts the Claude-Code permission vocabulary the harness adapter defaults t
   expect(existsSync(join(ws, 'alias-proof.txt'))).toBe(true)
 }, 60_000)
 
-it('refuses --max-cost-usd rather than letting an uncapped run look capped', async () => {
+it('--max-cost-usd refuses what it cannot price, before any spend, rather than let an uncapped run look capped', async () => {
   await startMock({ apiKey: 'mock-key', sequence: ['success'], repeatLast: true, successText: 'ok' })
-  process.chdir(mkdtempSync(join(tmpdir(), 'openswarm-run-ws-')))
+  const ws = mkdtempSync(join(tmpdir(), 'openswarm-run-ws-'))
+  process.chdir(ws)
+  const prices = join(ws, 'prices.json')
+  writeFileSync(prices, JSON.stringify({ 'other-model': { input: 1, output: 1 } }))
+  for (const [extra, problem] of [
+    [[], /--max-cost-usd needs --pricing/],
+    [['--pricing', prices], /no price for mock-small/],
+  ] as const) {
+    const lines: string[] = []
+    const code = await runCli(
+      ['run', '--output-format', 'json', '--model', 'mock-small', '--max-cost-usd', '5', ...extra, 'go'],
+      { out: (l) => lines.push(l), err: () => {} },
+    )
+    expect(code).toBe(1)
+    expect(lines.join('\n')).toMatch(problem)
+  }
+}, 60_000)
 
+it('--max-cost-usd stops the run past its cap, priced from --pricing', async () => {
+  await startMock({
+    apiKey: 'mock-key',
+    sequence: ['tool_call_success'],
+    repeatLast: true,
+    successText: 'unreachable',
+    toolName: 'bash',
+    toolArguments: JSON.stringify({ command: 'true' }),
+  })
+  const ws = mkdtempSync(join(tmpdir(), 'openswarm-run-ws-'))
+  process.chdir(ws)
+  const prices = join(ws, 'prices.json')
+  // A dollar a token: the first message passes fifty cents.
+  writeFileSync(prices, JSON.stringify({ 'mock-small': { input: 1_000_000, output: 1_000_000 } }))
   const lines: string[] = []
   const code = await runCli(
-    ['run', '--output-format', 'json', '--model', 'mock-small', '--max-cost-usd', '5', 'go'],
+    ['run', '--output-format', 'json', '--model', 'mock-small', '--max-cost-usd', '0.5', '--pricing', prices, 'spend it all'],
     { out: (l) => lines.push(l), err: () => {} },
   )
-  expect(code).toBe(1)
-  expect(lines.join('\n')).toMatch(/--max-cost-usd is not supported/)
+  expect(code).toBe(3)
+  expect(lines.map((l) => JSON.parse(l)).find((o) => o.type === 'budget_exceeded')?.limit).toMatch(/^max-cost-usd \(\$\d+\.\d{2} > \$0\.5\)$/)
 }, 60_000)
 
 it('still rejects a mode with no faithful headless equivalent', async () => {
@@ -341,3 +374,292 @@ it('OPENSWARM_SELF_MODIFY=1 selects the arm, since an eval Arm carries env not f
     delete process.env['OPENSWARM_SELF_MODIFY']
   }
 }, 60_000)
+
+/**
+ * The completion gate on the single-agent path (docs/05 B6a). The mock answers
+ * the agent (in process) and the reviewer (a sandboxed subprocess member in a
+ * clone of the round's snapshot) alike, so its text ends in a verdict line
+ * with every target done: the reviewer passes round 1.
+ */
+/**
+ * The reviewer runs under workspace-write by default. Where this host cannot
+ * sandbox (member-sandbox.e2e.test.ts's probe: no Seatbelt, bwrap or
+ * Landlock), the review-mode cases run it unsandboxed, as an operator would.
+ */
+async function canSandbox(): Promise<boolean> {
+  const ctx = new Context()
+  ctx.plugin((SandboxLocal as any).default ?? SandboxLocal)
+  try {
+    await new Promise<void>((resolve) => ctx.inject(['sandbox'], () => resolve()))
+    const { argv } = (ctx as any).sandbox.confine(['true'], { mode: 'workspace-write', workspaceRoot: tmpdir() })
+    return spawnSync(argv[0], argv.slice(1)).status === 0
+  } catch {
+    return false
+  } finally {
+    await (ctx as any).fiber?.dispose?.()
+  }
+}
+if (!(await canSandbox())) process.env['OPENSWARM_GATE_REVIEWER_SANDBOX'] = 'danger-full-access'
+
+const DONE = `all done\n${JSON.stringify({ targets: [{ target: 1, status: 'done', notes: 'works' }], regressions: 'none', score: 100 })}`
+
+/** A temp git work tree, the cwd for the run. */
+function gitWorkspace(): string {
+  const ws = mkdtempSync(join(tmpdir(), 'openswarm-run-ws-'))
+  const git = (...args: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd: ws })
+  git('init', '-q', '-b', 'main')
+  writeFileSync(join(ws, 'README.md'), 'base\n')
+  git('add', '.')
+  git('commit', '-qm', 'init')
+  process.chdir(ws)
+  return ws
+}
+
+const gateLines = (lines: string[]) => lines.map((l) => JSON.parse(l)).filter((o) => o.type === 'gate_round' || o.type === 'gate')
+
+it('--gate: the reviewer measures in its own clone, accepts round 1, and its usage is billed', async () => {
+  // One FIFO script, consumed in order: the agent answers at once, then the
+  // reviewer writes a file in its tree before giving its verdict.
+  await startMock({
+    apiKey: 'mock-key',
+    sequence: ['success', 'tool_call_success', 'success'],
+    repeatLast: true,
+    successText: DONE,
+    toolName: 'bash',
+    toolArguments: JSON.stringify({ command: 'echo "sandbox=$OPENSWARM_MEMBER_SANDBOX" > reviewer-was-here.txt; cat reviewer-was-here.txt' }),
+  })
+  const ws = gitWorkspace()
+
+  const lines: string[] = []
+  const errs: string[] = []
+  const code = await runCli(
+    ['run', '--output-format', 'json', '--model', 'mock-small', '--single', '--gate', 'ship it'],
+    { out: (l) => lines.push(l), err: (l) => errs.push(l) },
+  )
+  expect(code).toBe(0)
+  expect(gateLines(lines)).toEqual([
+    {
+      type: 'gate_round',
+      round: 1,
+      changed: false,
+      passed: true,
+      kind: 'review',
+      level: 1,
+      score: 100,
+      rolledBack: false,
+      targets: [{ target: 1, status: 'done' }],
+      regressions: 'none',
+    },
+    { type: 'gate', accepted: true, level: 1, rounds: 1 },
+  ])
+  // The same, legible on stderr, which the harness does not truncate to its head.
+  expect(errs).toEqual(['gate: round 1 L1 review score 100 — passed (1 done)', 'gate: accepted at L1 after 1 round'])
+  const parsed = openSwarmParse(lines.join('\n'))
+  expect(parsed.sawResult).toBe(true)
+  expect(parsed.output).toContain('all done')
+  // The agent's one call and the reviewer's two are all in the reported usage
+  // (the mock bills 3 input tokens a call), each counted once.
+  expect(mock!.requests).toHaveLength(3)
+  expect(parsed.usage.inputTokens).toBe(3 * mock!.requests.length)
+  // It ran as the measured reviewer did (review.cordis.yml's persona, not the
+  // member's "editing files" one), under the reviewer sandbox.
+  const reviewer = JSON.stringify(mock!.requests.slice(1))
+  expect(reviewer).toContain('You are a coding agent working in the current directory')
+  expect(reviewer).not.toContain('Complete your task by editing files')
+  expect(reviewer).toContain(`sandbox=${process.env['OPENSWARM_GATE_REVIEWER_SANDBOX'] ?? 'workspace-write'}`)
+  // The reviewer's edit went away with its clone; the checkout never saw it.
+  expect(parsed.trajectory).toEqual([])
+  expect(existsSync(join(ws, 'reviewer-was-here.txt'))).toBe(false)
+  expect(execFileSync('git', ['status', '--porcelain'], { cwd: ws }).toString()).toBe('')
+  expect(execFileSync('git', ['worktree', 'list'], { cwd: ws }).toString().trim().split('\n')).toHaveLength(1)
+}, 60_000)
+
+it('--gate-check makes it commands mode: no reviewer, the check decides', async () => {
+  await startMock({
+    apiKey: 'mock-key',
+    sequence: ['tool_call_success', 'success'],
+    repeatLast: true,
+    successText: 'wrote it',
+    toolName: 'bash',
+    toolArguments: JSON.stringify({ command: 'echo hi > proof.txt' }),
+  })
+  gitWorkspace()
+
+  const lines: string[] = []
+  const code = await runCli(
+    ['run', '--output-format', 'json', '--model', 'mock-small', '--gate', '--gate-check', 'test -f proof.txt', 'write proof'],
+    { out: (l) => lines.push(l), err: () => {} },
+  )
+  expect(code).toBe(0)
+  expect(gateLines(lines)).toEqual([
+    { type: 'gate_round', round: 1, changed: true, passed: true, kind: 'commands', level: 2, score: null, rolledBack: false },
+    { type: 'gate', accepted: true, level: 2, rounds: 1 },
+  ])
+  expect(mock!.requests).toHaveLength(2) // the agent's tool turn and its answer; no review
+}, 60_000)
+
+it('every --gate-check runs, from repeated flags or one per line of OPENSWARM_GATE_CHECK', async () => {
+  await startMock({ apiKey: 'mock-key', sequence: ['success'], repeatLast: true, successText: 'ok' })
+  // Markers outside the workspace, so the checks do not change the tree they judge.
+  const marks = mkdtempSync(join(tmpdir(), 'openswarm-gate-marks-'))
+  gitWorkspace()
+  const run = async (argv: string[]) => {
+    const lines: string[] = []
+    const errs: string[] = []
+    const code = await runCli(['run', '--output-format', 'json', '--model', 'mock-small', '--gate', ...argv, 'go'], {
+      out: (l) => lines.push(l),
+      err: (l) => errs.push(l),
+    })
+    return { code, gate: gateLines(lines), errs }
+  }
+
+  const flags = await run(['--gate-check', `touch ${marks}/one`, '--gate-check', `touch ${marks}/two`])
+  expect(flags.code).toBe(0)
+  expect(flags.gate[0]).toMatchObject({ kind: 'commands', passed: true })
+  expect(existsSync(join(marks, 'one')) && existsSync(join(marks, 'two'))).toBe(true)
+
+  process.env['OPENSWARM_GATE_CHECK'] = `touch ${marks}/three\ntouch ${marks}/four\n`
+  try {
+    expect((await run([])).code).toBe(0)
+  } finally {
+    delete process.env['OPENSWARM_GATE_CHECK']
+  }
+  expect(existsSync(join(marks, 'three')) && existsSync(join(marks, 'four'))).toBe(true)
+
+  // Every failing check is named, on stdout and stderr.
+  const failing = await run(['--gate-rounds', '1', '--gate-check', 'false', '--gate-check', 'true', '--gate-check', 'exit 3'])
+  expect(failing.code).toBe(1)
+  expect(failing.gate[0]).toMatchObject({ kind: 'commands', passed: false, failed: ['false', 'exit 3'] })
+  expect(failing.gate.at(-1)).toEqual({ type: 'gate', accepted: false, level: 2, rounds: 1 })
+  expect(failing.errs).toEqual(['gate: round 1 L2 checks — not passed (failed: false, exit 3)', 'gate: not accepted at L2 after 1 round'])
+}, 60_000)
+
+it('each round reports what the reviewer told the agent: per-target verdicts, what it could not run, and regressions', async () => {
+  const verdict = {
+    targets: [
+      { target: 1, status: 'done', notes: 'ok' },
+      { target: 2, status: 'partial', notes: 'half' },
+      { target: 3, status: 'unverifiable', notes: 'needs a MySQL server' },
+    ],
+    regressions: ['test_x fails'],
+    score: 40,
+  }
+  await startMock({ apiKey: 'mock-key', sequence: ['success'], repeatLast: true, successText: `checked\n${JSON.stringify(verdict)}` })
+  gitWorkspace()
+
+  const lines: string[] = []
+  const errs: string[] = []
+  const code = await runCli(
+    ['run', '--output-format', 'json', '--model', 'mock-small', '--gate', 'ship it'],
+    { out: (l) => lines.push(l), err: (l) => errs.push(l) },
+  )
+  // The agent changes nothing, so round 2 stops the gate without another review.
+  expect(code).toBe(1)
+  expect(gateLines(lines)[0]).toMatchObject({
+    passed: false,
+    score: 40,
+    targets: [{ target: 1, status: 'done' }, { target: 2, status: 'partial' }, { target: 3, status: 'unverifiable', notes: 'needs a MySQL server' }],
+    regressions: ['test_x fails'],
+  })
+  expect(errs).toEqual([
+    'gate: round 1 L1 review score 40 — not passed (1 done, 1 unverifiable, 1 partial; 3 unverifiable: needs a MySQL server; regressions: ["test_x fails"])',
+    'gate: round 2 changed nothing — stopping',
+    'gate: not accepted at L1 after 2 rounds',
+  ])
+}, 60_000)
+
+it('OPENSWARM_GATE=1 selects the gate, since an eval Arm carries env not flags', async () => {
+  await startMock({ apiKey: 'mock-key', sequence: ['success'], repeatLast: true, successText: DONE })
+  gitWorkspace()
+  process.env['OPENSWARM_GATE'] = '1'
+  try {
+    const lines: string[] = []
+    const code = await runCli(
+      ['run', '--output-format', 'json', '--model', 'mock-small', '--single', 'ship it'],
+      { out: (l) => lines.push(l), err: () => {} },
+    )
+    expect(code).toBe(0)
+    expect(gateLines(lines).at(-1)).toEqual({ type: 'gate', accepted: true, level: 1, rounds: 1 })
+  } finally {
+    delete process.env['OPENSWARM_GATE']
+  }
+}, 60_000)
+
+it('--gate refuses a cwd that is not a git work tree, and the team path', async () => {
+  process.chdir(mkdtempSync(join(tmpdir(), 'openswarm-run-ws-')))
+  const lines: string[] = []
+  const code = await runCli(
+    ['run', '--output-format', 'json', '--model', 'mock-small', '--gate', 'ship it'],
+    { out: (l) => lines.push(l), err: () => {} },
+  )
+  expect(code).toBe(1)
+  expect(lines.join('\n')).toMatch(/needs a git work tree/)
+
+  gitWorkspace()
+  const teamLines: string[] = []
+  const teamCode = await runCli(
+    ['run', '--output-format', 'json', '--model', 'mock-small', '--team', '--gate', 'ship it'],
+    { out: (l) => teamLines.push(l), err: () => {} },
+  )
+  expect(teamCode).toBe(1)
+  expect(teamLines.join('\n')).toMatch(/only the single-agent path[\s\S]*--team/)
+
+  const emptyLines: string[] = []
+  const emptyCode = await runCli(
+    ['run', '--output-format', 'json', '--model', 'mock-small', '--gate', '--gate-check', '', 'ship it'],
+    { out: (l) => emptyLines.push(l), err: () => {} },
+  )
+  expect(emptyCode).toBe(1)
+  expect(emptyLines.join('\n')).toMatch(/empty --gate-check/)
+})
+
+it('a gate that fails after spending still reports the usage spent', async () => {
+  // The agent deletes the repository mid-round, so the round's snapshot fails.
+  await startMock({
+    apiKey: 'mock-key',
+    sequence: ['tool_call_success', 'success'],
+    repeatLast: true,
+    successText: 'oops',
+    toolName: 'bash',
+    toolArguments: JSON.stringify({ command: 'rm -rf .git' }),
+  })
+  gitWorkspace()
+
+  const lines: string[] = []
+  const code = await runCli(
+    ['run', '--output-format', 'json', '--model', 'mock-small', '--gate', 'ship it'],
+    { out: (l) => lines.push(l), err: () => {} },
+  )
+  expect(code).toBe(1)
+  const parsed = openSwarmParse(lines.join('\n'))
+  expect(parsed.isError).toBe(true)
+  expect(parsed.sawResult).toBe(true)
+  expect(parsed.usage.inputTokens).toBe(3 * mock!.requests.length)
+  expect(parsed.usage.inputTokens).toBeGreaterThan(0)
+}, 60_000)
+
+it('gate env without OPENSWARM_GATE=1 warns that the run is not gated', async () => {
+  await startMock({ apiKey: 'mock-key', sequence: ['success'], repeatLast: true, successText: 'ok' })
+  process.chdir(mkdtempSync(join(tmpdir(), 'openswarm-run-ws-')))
+  process.env['OPENSWARM_GATE_CHECK'] = 'true'
+  try {
+    const lines: string[] = []
+    const errs: string[] = []
+    const code = await runCli(
+      ['run', '--output-format', 'json', '--model', 'mock-small', 'go'],
+      { out: (l) => lines.push(l), err: (l) => errs.push(l) },
+    )
+    expect(code).toBe(0)
+    expect(errs.join('\n')).toMatch(/OPENSWARM_GATE_CHECK set without OPENSWARM_GATE=1/)
+    expect(gateLines(lines)).toEqual([])
+  } finally {
+    delete process.env['OPENSWARM_GATE_CHECK']
+  }
+}, 60_000)
+
+it('--resume without its team spec is refused before anything runs (docs/05 D1)', async () => {
+  const lines: string[] = []
+  const code = await runCli(['run', '--model', 'mock-small', '--resume', 'run-x'], { out: (l) => lines.push(l), err: () => {} })
+  expect(code).toBe(1)
+  expect(lines.join('\n')).toMatch(/--resume takes the run's team spec/)
+})

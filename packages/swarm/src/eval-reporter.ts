@@ -39,6 +39,13 @@
  * On exceed we emit `budget_exceeded` AND the normal terminator, so a capped run
  * still reports the usage it spent instead of looking like a crash.
  *
+ * ## Swarm runs
+ *
+ *   {"type":"run_metrics","runId":…,"metrics":{…}}   per swarm run, as it settles
+ *
+ * A team run's RunMetrics (docs/05 §6.8, B5), so an eval records the numbers
+ * the product reports from the same journals. The parser ignores the type.
+ *
  * ## Off unless asked
  *
  * Gated on `OPENSWARM_JSONL=1`. The profile is shared with interactive use, and
@@ -106,6 +113,10 @@ export function apply(ctx: Context): void {
       stop()
       process.exit(3)
     }
+  }) as never)
+
+  ctx.on('swarm/metrics' as never, ((runId: string, metrics: unknown) => {
+    if (!stopped) emit({ type: 'run_metrics', runId, metrics })
   }) as never)
 
   process.on('beforeExit', stop)

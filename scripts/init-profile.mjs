@@ -4,7 +4,8 @@
 // the patch resolve to the workspace packages. Three profiles:
 //   openswarm      — HMR cold, one-shot headless runner (headless/eval default)
 //   openswarm-dev  — HMR hot + app-server bound (cordis.dev.patch.yml)
-//   openswarm-web  — dsh's browser UI over the OpenSwarm context
+//   openswarm-web  — dsh's browser UI over the OpenSwarm context + the web
+//                    carrier (cordis.web.patch.yml)
 //
 // Usage: node scripts/init-profile.mjs [dshHome]   (default .dsh-home)
 import { mkdirSync, writeFileSync, symlinkSync, existsSync, rmSync, readdirSync, readFileSync } from 'node:fs'
@@ -101,11 +102,11 @@ function initProfile(name) {
       2,
     ) + '\n',
   )
-  // A cold profile carries no user patch; the dev profile overlays the dev patch.
-  const devPatch = join(pkgRoot, 'packages', 'bundle', 'cordis.dev.patch.yml')
+  // A cold profile carries no user patch; the dev and web profiles overlay their own.
+  const overlay = { 'openswarm-dev': 'cordis.dev.patch.yml', 'openswarm-web': 'cordis.web.patch.yml' }[name]
   writeFileSync(
     join(dir, 'cordis.patch.yml'),
-    name.endsWith('-dev') ? readFileSync(devPatch, 'utf8') : '[]\n',
+    overlay ? readFileSync(join(pkgRoot, 'packages', 'bundle', overlay), 'utf8') : '[]\n',
   )
   healModules(dir)
   console.log(`profile ${name} → ${dir}`)

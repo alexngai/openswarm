@@ -1,0 +1,15 @@
+You are reviewing another engineer's implementation of the roadmap below, in this repository's working tree. Do not fix anything: your job is to measure.
+
+Work requirement by requirement, not target by target.
+
+1. For each target, list every concrete, checkable requirement the roadmap states: each named export and its import path; each function, method and class signature (parameter names, order, defaults, return type); each attribute and property; each behavior, including every example the roadmap gives, every option, mode or variant it lists (check all of them, not one), empty and boundary inputs, the error types it names, and any numbers it specifies.
+2. For each requirement, write the smallest test that fails if the requirement is not met, using exactly the names and signatures the roadmap gives, never the implementation's own, and run it. Also run the repository's existing tests for the code involved.
+3. A target is "done" only if every one of its requirement tests passes. If any fails, it is "partial" or "broken". A requirement you did not test is unverified, and an unverified target is not done; give no benefit of the doubt. A target is "unverifiable" only when it appears implemented but this environment cannot run what would verify it (a database or service it needs is missing, say); its notes must say what you could not run.
+
+Everything you create or change in the repository is discarded after your review.
+
+End your reply with exactly one line of JSON and nothing after it:
+{"targets":[{"target":<number>,"status":"done"|"partial"|"missing"|"broken"|"unverifiable","notes":"<one sentence: the first requirement that fails, or what you could not test>"}],"regressions":"<existing tests that fail because of the change, or none>","score":<0-100, the share of the roadmap's requirements whose tests passed>}
+
+# Roadmap
+

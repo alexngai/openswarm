@@ -1,0 +1,229 @@
+/**
+ * The run record and recap over a run's journal (docs/05 §5.1, A4).
+ *
+ * A run's lifecycle is a whole-snapshot `swarm/run` event, folded like board
+ * tasks (last wins): `running` at start, then `finished` or `failed` when its
+ * result settles, or `interrupted` when `attach` takes over from a dead writer.
+ * Questions the harness raises (A6) are folded the same way, per question id.
+ */
+import type { MergeOutcome } from 'openswarm-git'
+import type { SwarmBudgetEvent } from './budget'
+import { evidenceText, type SwarmGateEvent, type SwarmTamperEvent, type SwarmTaskSnapshot } from './board'
+import type { SwarmJournalEvent } from './journal'
+import type { SwarmMessageSnapshot } from './mailbox'
+import type { RunMetrics } from './metrics'
+import type { TeamResult, TeamSpec } from './types'
+
+export type SwarmRunStatus = 'running' | 'finished' | 'failed' | 'interrupted'
+
+/** Whole durable run value; the latest `swarm/run` event wins. */
+export interface SwarmRunRecord {
+  readonly id: string
+  readonly status: SwarmRunStatus
+  readonly topology: TeamSpec['topology']
+  readonly parentSessionId: string
+  /** The process appending to the journal; its claims carry `incarnation` as their lease. */
+  readonly writer: { readonly pid: number; readonly host: string; readonly incarnation: string }
+  readonly startedAt: number
+  readonly endedAt?: number
+  /** How its work lands (docs/05 B4): merged from worktrees by the sequential queue or the train; absent, in place. */
+  readonly landing?: 'queue' | 'train'
+  /** Its member runs journal their usage (`swarm/usage`, docs/05 B5); absent on a run from before. */
+  readonly usageJournaled?: true
+  readonly error?: string
+  readonly result?: TeamResult & { git?: MergeOutcome; metrics?: RunMetrics }
+  /** A run that failed while the train landed it (docs/05 B2): what had landed by then. */
+  readonly git?: MergeOutcome
+  readonly spec?: TeamSpec
+}
+
+/** Payload of a `swarm/run` journal event. */
+export type SwarmRunEvent = { version: 1; run: SwarmRunRecord }
+
+/** Payload of a `swarm/steer` journal event: a steer as it was delivered (docs/05 §6.1). */
+export type SwarmSteerEvent = {
+  version: 1
+  to: string
+  text: string
+  /** `immediate` at the member's next step boundary, `enqueue` as its next turn. */
+  delivery: 'immediate' | 'enqueue'
+  by: string
+}
+
+/**
+ * A harness-raised question (docs/05 §6.1), whole snapshot: the latest
+ * `swarm/question` event per id wins.
+ */
+export interface SwarmQuestion {
+  /** `q-<n>`, unique within its run. */
+  readonly id: string
+  /** `conflict`: the train's resolver gave up on an entry (docs/05 B3); `budget`: a run or task spent its budget (C5). */
+  readonly trigger: 'stall' | 'restart-budget' | 'task-attempts' | 'verifier-failure' | 'tamper' | 'conflict' | 'budget'
+  readonly kind: 'escalation' | 'consent' | 'approval'
+  /** An owner answers any tier; a driver only `low`, and never a consent or approval (§5.3). */
+  readonly tier: 'low' | 'high'
+  readonly prompt: string
+  /** The task (or train entry) it is about, where it is about one: its landing's evidence lists it (docs/05 B4). */
+  readonly taskId?: string
+  readonly options: readonly string[]
+  /** Taken on timeout, past the open-question cap, or when the run ends. */
+  readonly default: string
+  readonly status: 'open' | 'answered' | 'defaulted' | 'capped'
+  readonly answer?: string
+  /** The answering principal's role, or `userQuestions` for dsh's web prompt. */
+  readonly by?: string
+  readonly raisedAt: number
+  readonly closedAt?: number
+}
+
+/** Payload of a `swarm/question` journal event. */
+export type SwarmQuestionEvent = { version: 1; question: SwarmQuestion }
+
+/** What a trigger asks; unless it says otherwise, a low-tier escalation. */
+export type SwarmQuestionRequest = Pick<SwarmQuestion, 'trigger' | 'prompt' | 'options' | 'default'> &
+  Partial<Pick<SwarmQuestion, 'kind' | 'tier' | 'taskId'>>
+
+/**
+ * Raise a question and resolve its answer, one of its options. `onClosed`
+ * receives the closed record, whose `by` names who answered (none when the
+ * default was taken), for a trigger whose outcome depends on who it was.
+ */
+export type AskQuestion = (question: SwarmQuestionRequest, onClosed?: (closed: SwarmQuestion) => void) => Promise<string>
+
+/** A run as its journal records it. */
+export interface SwarmRunView {
+  run: SwarmRunRecord
+  tasks: SwarmTaskSnapshot[]
+  questions: SwarmQuestion[]
+  /** {@link recapJournal} lines. */
+  recap: string[]
+}
+
+/**
+ * A settled run's deliverable as text: the synthesis or final output where
+ * the topology has one, else each member's output under its label.
+ */
+export function resultText(result: TeamResult): string {
+  const one = 'synthesis' in result ? result.synthesis : 'final' in result ? result.final : undefined
+  if (one !== undefined) return one.text
+  const parts: [string, string][] =
+    result.topology === 'peer-team'
+      ? result.tasks.map((t) => [`${t.id} ${t.subject}`, t.result ?? ''])
+      : (result.topology === 'fanout' ? result.results : 'answers' in result ? result.answers : []).map((r) => [r.member, r.text])
+  return parts.map(([label, text]) => `--- ${label} ---\n${text}`).join('\n\n')
+}
+
+/** The run's current record, or undefined when the journal holds none. */
+export function foldRun(events: ReadonlyArray<{ type: string; data?: unknown }>): SwarmRunRecord | undefined {
+  let run: SwarmRunRecord | undefined
+  for (const event of events) if (event.type === 'swarm/run') run = (event.data as SwarmRunEvent).run
+  return run
+}
+
+/** Every question the journal records, oldest first, each as its latest snapshot. */
+export function foldQuestions(events: ReadonlyArray<{ type: string; data?: unknown }>): Map<string, SwarmQuestion> {
+  const questions = new Map<string, SwarmQuestion>()
+  for (const event of events) {
+    if (event.type !== 'swarm/question') continue
+    const { question } = event.data as SwarmQuestionEvent
+    questions.set(question.id, question)
+  }
+  return questions
+}
+
+/**
+ * One human-readable line per journal event with seq > `since`, prefixed with
+ * that seq so a reader can pass the last one back as its next cursor.
+ */
+export function recapJournal(events: readonly SwarmJournalEvent[], since = -1): string[] {
+  const tasks = new Map<string, SwarmTaskSnapshot>()
+  const messages = new Map<string, SwarmMessageSnapshot>()
+  const lines: string[] = []
+  for (const { seq, type, data } of events) {
+    let line: string | undefined
+    if (type === 'swarm/task') {
+      const { task } = data as { task: SwarmTaskSnapshot }
+      const before = tasks.get(task.id)
+      tasks.set(task.id, task)
+      if (task.status === 'in_progress') line = `${task.id} claimed by ${task.owner}`
+      else if (task.status === 'completed') {
+        const head = task.result === undefined ? '' : `: ${task.result.split('\n')[0]!.slice(0, 80)}`
+        const evidence = task.evidence === undefined ? '' : ` (${evidenceText(task.evidence)})`
+        line = `${task.id} completed by ${task.owner}${evidence}${head}`
+      } else if (before === undefined) line = `${task.id} created: ${task.subject}`
+      else line = `${task.id} released (was ${before.owner})`
+    } else if (type === 'swarm/message/queued') {
+      const { message } = data as { message: SwarmMessageSnapshot }
+      messages.set(message.id, message)
+      line = `message ${message.from}→${message.to} queued (${message.delivery})`
+    } else if (type === 'swarm/message/undelivered') {
+      const { messageId, to } = data as { messageId: string; to: string }
+      const message = messages.get(messageId)
+      line = `message ${message === undefined ? `to ${to}` : `${message.from}→${to}`} undelivered: no later run of ${to}'s carried it`
+    } else if (type === 'swarm/message/delivered') {
+      const { messageId } = data as { messageId: string }
+      const message = messages.get(messageId)
+      line = `message ${message === undefined ? messageId : `${message.from}→${message.to}`} delivered`
+    } else if (type === 'swarm/steer') {
+      const { by, to, delivery, text } = data as SwarmSteerEvent
+      line = `steer ${by}→${to} (${delivery}): ${text.split('\n')[0]!.slice(0, 80)}`
+    } else if (type === 'swarm/question') {
+      const { question: q } = data as SwarmQuestionEvent
+      if (q.status === 'open') line = `${q.id} raised (${q.trigger}): ${q.prompt.split('\n')[0]!.slice(0, 80)}`
+      else if (q.status === 'answered') line = `${q.id} answered by ${q.by}: ${q.answer}`
+      else if (q.status === 'defaulted') line = `${q.id} defaulted to ${q.answer}`
+      else line = `${q.id} capped (${q.trigger}): defaulted to ${q.answer}`
+    } else if (type === 'swarm/budget') {
+      const b = data as SwarmBudgetEvent
+      line = `${b.scope === 'run' ? 'run' : b.taskId} budget ${b.outcome}: ${b.reason}`
+    } else if (type === 'swarm/gate') {
+      line = gateLine(data as SwarmGateEvent)
+    } else if (type === 'swarm/tamper') {
+      const t = data as SwarmTamperEvent
+      line = `${t.taskId} tamper ${t.severity ?? 'incident'} in gate round ${t.round} (${t.member}): ${[...new Set(t.signals.map((s) => `${s.signal} in ${s.where}`))].join(', ')}`
+    } else if (type === 'swarm/run') {
+      const { run } = data as SwarmRunEvent
+      const where = `pid ${run.writer.pid} on ${run.writer.host}`
+      const purpose = run.spec?.intent === undefined ? '' : `: ${run.spec.intent.purpose.split('\n')[0]!.slice(0, 80)}`
+      if (run.status === 'running') line = `run started: ${run.topology} (${where})${purpose}`
+      else if (run.status === 'failed') line = `run failed: ${run.error}`
+      else if (run.status === 'interrupted') line = `run interrupted; taken over by ${where}`
+      else line = 'run finished'
+    }
+    if (line !== undefined && seq > since) lines.push(`#${seq} ${line}`)
+  }
+  return lines
+}
+
+/** One gate round on a board task as a recap line: the verdict its member was sent back with. */
+export function gateLine(g: SwarmGateEvent): string {
+  const at = `${g.taskId} gate round ${g.round} (${g.member})`
+  if (g.tamper === true) return `${at}: L3 tamper incident — not measured`
+  if (g.round > 1 && !g.changed) return `${at}: changed nothing — stopping`
+  if (g.error?.startsWith('sign-off') === true) return `${at}: ${g.error.split('\n')[0]!.slice(0, 100)}`
+  if (g.signoff !== undefined && !g.signoff.accepted) {
+    const passed = g.kind === 'hidden' ? 'hidden suite passed' : g.kind === 'review' ? 'review passed' : 'checks passed'
+    return `${at}: ${passed}, not signed off — ${g.signoff.reasons.split('\n')[0]!.slice(0, 80)}`
+  }
+  if (g.error !== undefined) return `${at}: ${g.kind === 'hidden' ? 'hidden suite' : 'review'} unavailable — ${g.error.split('\n')[0]!.slice(0, 80)}`
+  if (g.kind === 'hidden' && g.total === undefined && g.enforcement !== undefined) {
+    return `${at}: L3 hidden suite ${g.suite} not run as L3 (enforcement ${g.enforcement}: the verifier could not confine it)`
+  }
+  if (g.kind === 'hidden') {
+    const f = g.feedback
+    const fed = f === undefined ? '' : `; feedback L${f.level} ${f.kind === 'review' ? `review score ${f.score ?? 'unparsed'}` : 'checks'} ${f.passed ? 'passed' : 'not passed'}`
+    const counts = g.refused !== undefined ? `snapshot refused: ${g.refused.slice(0, 80)}` : g.passed ? `${g.total} of ${g.total} passing` : `${g.failed} of ${g.total} failing`
+    return `${at}: L3 hidden suite ${g.suite} ${g.passed ? 'passed' : 'not passed'} (${counts}, enforcement ${g.enforcement}${fed})`
+  }
+  const details: string[] = []
+  const statuses = (g.targets ?? []).map((t) => t.status)
+  const counted = [...new Set(statuses)].map((status) => `${statuses.filter((s) => s === status).length} ${status}`)
+  if (counted.length > 0) details.push(counted.join(', '))
+  for (const t of g.targets ?? []) {
+    if (t.status === 'unverifiable') details.push(`${t.target} unverifiable: ${(t.notes ?? '').slice(0, 80)}`)
+  }
+  if (g.failedCommands !== undefined) details.push(`failed: ${g.failedCommands.map((c) => c.slice(0, 80)).join(', ')}`)
+  if (g.rolledBack === true) details.push('rolled back')
+  const what = g.kind === 'review' ? `review score ${g.score ?? 'unparsed'}` : 'checks'
+  return `${at}: L${g.level ?? 0} ${what} ${g.passed ? 'passed' : 'not passed'}${details.length === 0 ? '' : ` (${details.join('; ')})`}`
+}

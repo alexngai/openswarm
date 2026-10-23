@@ -1,0 +1,92 @@
+{
+  "workers": 2,
+  "threads": [
+    {
+      "id": "t0",
+      "default": true,
+      "paths": [
+        "packages/core/src/index.ts",
+        "packages/core/src/enums.ts",
+        "packages/core/src/typings.ts",
+        "packages/core/src/drivers/IDatabaseDriver.ts",
+        "packages/core/src/decorators/index.ts",
+        "packages/core/src/utils/index.ts",
+        "packages/core/src/utils/Logger.ts",
+        "packages/core/src/utils/Configuration.ts",
+        "packages/core/src/MikroORM.ts",
+        "packages/core/src/connections/Connection.ts",
+        "packages/knex/src/AbstractSqlConnection.ts",
+        "packages/mongodb/src/MongoConnection.ts"
+      ],
+      "assignment": "Shared contracts and hub files only. In packages/core/src/enums.ts add FlushMode (COMMIT 0, AUTO 1, ALWAYS 2), PopulateHint (INFER 0, ALL 1), IsolationLevel with the roadmap's five string values, EventType.onLoad, LockMode.PESSIMISTIC_PARTIAL_WRITE (4), PESSIMISTIC_WRITE_OR_FAIL (5), PESSIMISTIC_PARTIAL_READ (6) and PESSIMISTIC_READ_OR_FAIL (7), and the TransactionOptions interface (ctx, isolationLevel, flushMode); keep PlainObject exported from @mikro-orm/core. In packages/core/src/typings.ts add the OptionalProps unique symbol (exported from packages/core/src/index.ts) and let the entity data types honour it, the EntityMetadata/EntityProperty fields polymorphic embeddables need (an abstract embeddable with a discriminatorColumn, a discriminatorValue per concrete embeddable, an embedded property that can name several embeddable classes), and CheckConstraint<T> with its property field plus a list of check constraints on EntityMetadata. In packages/core/src/drivers/IDatabaseDriver.ts give the find and count option types a flushMode. Logging contract (Target 3): create the packages/core/src/logging module with the Logger interface, LoggerNamespace, LogContext and LoggerOptions exactly as the roadmap gives them and a minimal working DefaultLogger (t1 completes it), export it from packages/core/src/index.ts, remove the old class in packages/core/src/utils/Logger.ts and its re-export from packages/core/src/utils/index.ts, and switch packages/core/src/MikroORM.ts to the new Logger. packages/core/src/utils/Configuration.ts is shared by several targets, so this thread makes every roadmap change to it: build a DefaultLogger from the existing logger and debug options (with the highlighter and usesReplicas), add an option for supplying a custom Logger implementation, and make getLogger() return the Logger interface (Target 3); add the seeder settings SeedManager reads, i.e. the path it resolves seeder classes from and writes generated seeder files to (Target 1); add a global flush mode defaulting to FlushMode.AUTO (Target 5). packages/core/src/connections/Connection.ts, packages/knex/src/AbstractSqlConnection.ts and packages/mongodb/src/MongoConnection.ts are shared by Targets 3 and 5, so this thread makes every roadmap change to them: query logging through logQuery() on the Logger with a LogContext (query, took, level 'error' for a failed query, connection type and name), and transactional()/begin() accepting the TransactionOptions fields so an isolationLevel reaches the database transaction. Export Check, CheckOptions and UseRequestContext from packages/core/src/decorators/index.ts over stub modules under packages/core/src/decorators carrying the roadmap's signatures (t1 implements them). Nothing else."
+    },
+    {
+      "id": "t1",
+      "blockedBy": ["t0"],
+      "paths": [
+        "packages/seeder/",
+        "packages/core/src/logging/",
+        "packages/cli/",
+        "packages/core/package.json",
+        "packages/core/src/decorators/",
+        "packages/core/src/entity/Collection.ts",
+        "packages/core/src/entity/ArrayCollection.ts"
+      ],
+      "assignment": "Target 1 (Seeder Package), Target 3 (Logging Architecture) and Target 7 (Check Constraint Decorator and Collection Callback): build the @mikro-orm/seeder package under packages/seeder (its package.json with the @faker-js/faker dependency; Seeder with run() and call(); Factory<T> with model, definition(faker), makeOne, make, createOne, create and each; SeedManager with seed, seedString and createSeeder, which writes a kebab-case .seeder.ts file at the configured seeder path; the faker and Faker re-exports; all exported from the package index); complete DefaultLogger in packages/core/src/logging (log, error, warn, logQuery with timing and the connection info when usesReplicas is set, isEnabled, debugMode from options.debugMode ?? false) and add the internal colors utility there with colour output controlled by environment variables, then move packages/cli and packages/core/package.json off the ansi-colors dependency; implement the Check decorator (entity-level and property-level, setting property from the decorated property name and registering the constraint in the entity's metadata) and the UseRequestContext decorator factory (requires an orm property, runs the method in a fresh RequestContext with its arguments) under packages/core/src/decorators over t0's stubs; and accept a predicate in Collection.remove() in packages/core/src/entity/Collection.ts and ArrayCollection.ts. The Logger contracts, Configuration (logger construction, the seeder path), the connections' logQuery calls, the decorators index, CheckConstraint and the metadata field it fills belong to t0; metadata discovery and the schema generator belong to t2."
+    },
+    {
+      "id": "t2",
+      "blockedBy": ["t0"],
+      "paths": [
+        "packages/core/src/types/",
+        "packages/core/src/platforms/",
+        "packages/core/src/metadata/",
+        "packages/core/src/hydration/",
+        "packages/core/src/decorators/Embeddable.ts",
+        "packages/core/src/decorators/Embedded.ts",
+        "packages/core/src/entity/EntityAssigner.ts",
+        "packages/core/src/entity/EntityTransformer.ts",
+        "packages/core/src/entity/EntityValidator.ts",
+        "packages/core/src/entity/EntityHelper.ts",
+        "packages/core/src/utils/EntityComparator.ts",
+        "packages/core/src/utils/QueryHelper.ts",
+        "packages/core/src/utils/Utils.ts",
+        "packages/core/src/drivers/DatabaseDriver.ts",
+        "packages/core/src/errors.ts",
+        "packages/knex/src/AbstractSqlPlatform.ts",
+        "packages/knex/src/schema/",
+        "packages/knex/src/query/ObjectCriteriaNode.ts",
+        "packages/knex/src/query/CriteriaNodeFactory.ts",
+        "packages/mysql-base/src/MySqlPlatform.ts",
+        "packages/mysql-base/src/MySqlSchemaHelper.ts",
+        "packages/postgresql/src/PostgreSqlPlatform.ts",
+        "packages/postgresql/src/PostgreSqlSchemaHelper.ts",
+        "packages/sqlite/src/SqlitePlatform.ts",
+        "packages/sqlite/src/SqliteSchemaHelper.ts",
+        "packages/mongodb/src/MongoPlatform.ts",
+        "packages/reflection/",
+        "packages/entity-generator/"
+      ],
+      "assignment": "Target 2 (Core Type System Expansion) and Target 4 (Polymorphic Embeddables): add BooleanType, IntegerType, SmallIntType, TinyIntType, FloatType, DoubleType, DecimalType, StringType, TextType, UuidType, DateTimeType, EnumType and UnknownType under packages/core/src/types, each extending Type with getColumnType() and the roadmap's compareAsType(), plus the types map and its t alias exported from packages/core/src/types/index.ts; add the column-type declarations they need to the platforms (packages/core/src/platforms, packages/knex/src/AbstractSqlPlatform.ts and the MySQL, PostgreSQL, SQLite and Mongo platforms and schema helpers) and map columns to the built-in types in metadata discovery and the schema and entity generators. For polymorphic embeddables: accept abstract, discriminatorColumn and discriminatorValue in @Embeddable() (packages/core/src/decorators/Embeddable.ts) and union and array targets in @Embedded() (Embedded.ts), including object mode; discover them in packages/core/src/metadata (and union property types in packages/reflection), with subclass-only properties nullable in columns; pick the subclass from the discriminator value on em.create() and when loading (packages/core/src/hydration), on em.assign() (EntityAssigner.ts, throwing about an unknown class prototype when an array embeddable item has no type), in snapshots and change detection (EntityComparator.ts) and in toObject() (EntityTransformer.ts), and keep querying by embedded properties working (DatabaseDriver.ts, QueryHelper.ts, ObjectCriteriaNode.ts, CriteriaNodeFactory.ts). OptionalProps and the shared metadata fields in packages/core/src/typings.ts belong to t0; EntityFactory.ts and EntityManager.ts belong to t3."
+    },
+    {
+      "id": "t3",
+      "blockedBy": ["t0"],
+      "paths": [
+        "packages/core/src/EntityManager.ts",
+        "packages/core/src/unit-of-work/",
+        "packages/core/src/entity/EntityFactory.ts",
+        "packages/core/src/entity/EntityLoader.ts",
+        "packages/core/src/entity/Reference.ts",
+        "packages/core/src/entity/WrappedEntity.ts",
+        "packages/core/src/events/",
+        "packages/core/src/decorators/hooks.ts",
+        "packages/knex/src/query/",
+        "packages/knex/src/SqlEntityManager.ts",
+        "packages/knex/src/SqlEntityRepository.ts",
+        "packages/knex/src/AbstractSqlDriver.ts"
+      ],
+      "assignment": "Target 5 (New Enums and Core Constructs) and Target 6 (QueryBuilder Typed Variants): make the EntityManager (packages/core/src/EntityManager.ts) and the unit of work honour the flush modes (COMMIT delays flushing until transaction commit, AUTO flushes before a query only when necessary, ALWAYS flushes before every query) from the global option, the find options and TransactionOptions, and pass TransactionOptions (ctx, isolationLevel, flushMode) from em.transactional() to the connection; fire EventType.onLoad once an entity is fully loaded but not for references (EntityFactory.ts, EntityLoader.ts, Reference.ts, WrappedEntity.ts and packages/core/src/events, with any hook decorator for it in packages/core/src/decorators/hooks.ts); support the four new lock modes in em.lock(), the unit of work, the query builder's setLockMode() and its lock SQL. In packages/knex/src/query give QueryBuilder the SelectQueryBuilder, CountQueryBuilder, InsertQueryBuilder, UpdateQueryBuilder, DeleteQueryBuilder and TruncateQueryBuilder variants returned by select()/addSelect(), count(), insert(), update(), delete() and truncate(), make the builder awaitable (a select yields T[], a count a number), and add getCount(), indexHint(sql) and setFlushMode(flushMode), all exported from @mikro-orm/knex; adapt SqlEntityManager.ts, SqlEntityRepository.ts and AbstractSqlDriver.ts. The enums, TransactionOptions, the flushMode option fields, Configuration and the connections' transaction handling belong to t0; ObjectCriteriaNode.ts and CriteriaNodeFactory.ts belong to t2."
+    }
+  ]
+}

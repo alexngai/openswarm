@@ -31,7 +31,8 @@
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "verifier-helper.mjs"
   ],
   "types": "src/index.ts"
 }

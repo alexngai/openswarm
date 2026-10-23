@@ -1,0 +1,8 @@
+{
+  "fal-1.3.0": ["python -c 'import falcon'", "python -m compileall -q falcon"],
+  "fal-4.1.0": ["python -c 'import falcon'", "python -m compileall -q falcon"],
+  "opt-4.4.0": ["python -c 'import optuna'", "python -m compileall -q optuna"],
+  "pyg-2.2.0": ["python -c 'import torch_geometric'", "python -m compileall -q torch_geometric"],
+  "pyg-2.5.0": ["python -c 'import torch_geometric'", "python -m compileall -q torch_geometric"],
+  "vbt-1.3.0": ["cd library && ./node_modules/.bin/tsc --noEmit"]
+}

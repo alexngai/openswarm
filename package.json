@@ -30,6 +30,7 @@
     "@deepseek-ai/dsh-agent-spine-demo": "0.1.1-rc.2",
     "@deepseek-ai/dsh-commands": "0.1.1-rc.2",
     "@deepseek-ai/dsh-fs-local": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-fs-sandbox": "^0.1.1-rc.2",
     "@deepseek-ai/dsh-llm": "0.1.1-rc.2",
     "@deepseek-ai/dsh-llm-deepseek": "0.1.1-rc.2",
     "@deepseek-ai/dsh-llm-mock-server": "0.1.1-rc.2",
@@ -48,6 +49,7 @@
     "@deepseek-ai/dsh-tool-bash-persistent": "^0.1.1-rc.2",
     "@deepseek-ai/dsh-tool-str-replace-editor": "^0.1.1-rc.2",
     "esbuild": "^0.25.0",
+    "opentasks": "0.2.0",
     "typescript": "^5.8.0",
     "vitest": "^3.2.0"
   },
@@ -82,6 +84,9 @@
     "packages/swarm-member/dist",
     "packages/swarm-member/src",
     "packages/swarm-member/package.json",
+    "packages/swarm-client/dist",
+    "packages/swarm-client/src",
+    "packages/swarm-client/package.json",
     "packages/cli/dist",
     "packages/cli/src",
     "packages/cli/package.json",
@@ -90,7 +95,10 @@
     "packages/bundle/cordis.patch.yml",
     "packages/bundle/cordis.dev.patch.yml",
     "packages/bundle/cordis.eval.patch.yml",
-    "packages/swarm/member.cordis.yml"
+    "packages/bundle/cordis.web.patch.yml",
+    "packages/swarm/member.cordis.yml",
+    "packages/swarm/review.cordis.yml",
+    "packages/swarm/verifier-helper.mjs"
   ],
   "dependencies": {
     "@anthropic-ai/bedrock-sdk": "0.33.1",
@@ -104,6 +112,7 @@
     "@deepseek-ai/dsh-agent": "0.1.1-rc.2",
     "@deepseek-ai/dsh-agent-spine-demo": "0.1.1-rc.2",
     "@deepseek-ai/dsh-fs-local": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-fs-sandbox": "0.1.1-rc.2",
     "@deepseek-ai/dsh-llm": "0.1.1-rc.2",
     "@deepseek-ai/dsh-llm-deepseek": "0.1.1-rc.2",
     "@deepseek-ai/dsh-sandbox-local": "0.1.1-rc.2",
@@ -119,7 +128,16 @@
     "@deepseek-ai/dsh-terminal-bash": "0.1.1-rc.2",
     "@deepseek-ai/dsh-tool-bash-persistent": "0.1.1-rc.2",
     "@deepseek-ai/dsh-tool-str-replace-editor": "0.1.1-rc.2",
-    "@deepseek-ai/dsh-tools": "0.1.1-rc.2"
+    "@deepseek-ai/dsh-tools": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-typert-protocol": "0.1.1-rc.2"
+  },
+  "peerDependencies": {
+    "opentasks": "0.2.0"
+  },
+  "peerDependenciesMeta": {
+    "opentasks": {
+      "optional": true
+    }
   },
   "repository": {
     "type": "git",

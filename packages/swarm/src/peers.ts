@@ -28,14 +28,21 @@ export interface SpawnPeerOptions {
  * settles a turn; under a service-driven lead (our topologies) that reactive
  * model call is pure cost. Rejecting the claim closes a durable turn with no
  * step — the notice stays in the log, the model is never called. Leads whose
- * own model orchestrates the team should NOT install this.
+ * own model orchestrates the team should NOT install this. `suppresses`
+ * picks which children's notices to swallow, by child session id (default:
+ * all).
  */
-export function suppressSettlementTurns(lead: Agent): () => void {
+export function suppressSettlementTurns(
+  lead: Agent,
+  suppresses: (childId: string) => boolean = () => true,
+): () => void {
   return lead.ctx.on('agent/pre-step', (payload: any, next: () => Promise<any>) => {
     if (
       payload.agent.id === lead.id &&
       payload.messages.length > 0 &&
-      payload.messages.every((m: any) => m.source?.kind === 'subagent-settled')
+      payload.messages.every(
+        (m: any) => m.source?.kind === 'subagent-settled' && suppresses(String(m.source.senderSessionId)),
+      )
     ) {
       return Promise.resolve({ kind: 'reject' })
     }

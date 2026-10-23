@@ -1,0 +1,1928 @@
+# 05 — Control-plane redesign: steerable, program-scale, meshable swarms
+
+Status: **draft for review** · 2026-09-25 · extends [docs/06](06-mesh-positioning.md) ·
+amended 2026-09-27 by D12–D16 after [docs/07](07-coordination-that-works.md)
+(opentasks as the substrate; Phases B and C revised in §7.4–§7.5),
+2026-09-28 by D17 (Phase B re-ordered around the completion gate) and
+2026-10-02 by D18 (Phases C and D re-scoped after docs/07 §7)
+
+A redesign of OpenSwarm's construction and interface, organized by the goals
+it serves. §1 states the diagnosis, §2 the outcome and goals, §3–§4 the
+principles and model, §5 the foundation every goal builds on, §6 how the
+design reaches each goal, §7 the phased plan and its exit criteria, §8–§10
+the comparison with today, the recorded decisions, and what is still open,
+and §11 the dsh seams checked against the installed packages.
+The evidence is the docs/06 discussion record (lab demonstrations,
+program-scale coordination lineage, human-swarm interaction research, and the
+project's own evals); this doc cites it by principle rather than repeating it.
+
+## 1. The diagnosis
+
+The kernel is sound: state is a fold over an append-only log, members are
+complete peer harnesses in their own processes and worktrees, coordination is
+a compare-and-set board plus a durable mailbox, and landing goes through a
+merge queue. What is wrong is one shape decision that everything
+human-facing and mesh-facing inherits:
+
+```ts
+ctx.swarm.runTeam(spec, { parent }) : Promise<TeamResult>
+```
+
+A team is a **function call**. You cannot steer a promise, join one, observe
+one except through progress lines, or nest one without blocking the parent's
+turn. Every gap docs/06 scored follows from it: the run table dies with the
+app-server process, the lead is disposed on settle, `/swarm` blocks and
+returns a synthesis, the only human control is "kill the jobs row", and a
+member cannot lead. The redesign changes the unit from *a call that returns
+a result* to **a durable run that exposes state and accepts direction**, at
+every level from member to mesh.
+
+A second, quieter lesson shapes the whole design. The project's own
+engagement measurements found models used an offered delegation tool about
+4 % of the time and self-modification 0 of 103 times. **Any feature that
+depends on a member choosing to call a coordination tool will mostly sit
+empty.** Coordination therefore has to be structural: declared by planners,
+derived from diffs, raised by the harness. Members that participate
+voluntarily are a bonus, never a dependency (D6).
+
+## 2. Outcome and goals
+
+**North star** (docs/06 §3.3): *landed work per dollar-hour, at zero task
+loss, across a heterogeneous mesh.* "Landed" means merged into the target and
+verifier-passing, not "member reported done".
+
+| Goal | Statement | North-star term it serves |
+|---|---|---|
+| **G1 Steerable** | A person or program can address, direct, observe, and approve any unit of a swarm, not only a lead. | *dollar-hour*: human interaction cost caps how many agents one person can direct |
+| **G2 Program-scale** | Many threads of work run under one coordination layer: partitioned, contract-first, dependency-aware, integrated. | *landed work*: throughput beyond one team |
+| **G3 Meshable** | Independently started swarms find each other, share a train and hand off tasks, and merge. | *across a mesh* |
+| **G4 Verified landing** | Work counts only after a verifier the member cannot game passes it, through a train that keeps the target green. | *landed*, not reported |
+| **G5 Runtime-neutral** | Any runtime that meets a small contract can be a member: dsh, Claude Code, Codex, A2A. | *heterogeneous* |
+| **G6 Durable** | No run, task, or decision is lost to a crash; everything replays and resumes. | *zero task loss* |
+| **G7 Governed** | Blast radius is contained, provenance is enforced, approvals are real rather than rubber-stamped. | makes all of it deployable |
+| **G8 Measurable** | Every run reports the north-star terms, so every claim is checkable. | makes the north star observable |
+
+G1–G5 are capabilities. G6–G8 are qualities that every capability must hold.
+
+*Amended by D18 (2026-10-02):* G2 now means throughput across independent
+tasks — many gated tasks at once, landing through one train. Dividing one
+task among coordinated threads is deferred: at the scale tested it did not
+beat one agent with the same harness (docs/07 §7.5). G3 keeps finding each
+other, sharing a train and merging; handing tasks off between swarms is
+deferred with it.
+
+**Non-goals.** Cross-org federation (innovators stage, docs/06 §4.5; the
+trust model in G7 keeps the door open). Our own UI shell (dsh's web surface
+hosts our views, D7). Topology mechanism beyond the verifier-selected
+search topologies and the five-condition program (D14; docs/02's
+conclusion stands for the rest).
+
+*Amended 2026-09-27, and again 2026-10-02.* The draft listed beating a
+single agent as a non-goal. It became the point, and docs/07 §7 tested it:
+on tasks one agent can finish, coordination did not beat a single agent
+with the same harness, and the harness itself was the lever (D17, D18).
+Beating a single agent on larger work stays an open question with a named
+trigger (D18). The rule from 2026-09-27 stands: every multi-agent arm is
+judged against a budget-matched single agent, aimed where single agents
+plateau and checkers are exact (docs/07 §6.7–§6.8).
+
+## 3. Principles
+
+| # | Principle | Goals |
+|---|---|---|
+| P1 | **Fan-out = neglect time ÷ interaction time.** Every feature is judged by which term it moves: watchdogs, verifiers, and trains raise neglect time; boards, recaps, and one question queue cut interaction time. | G1, G2 |
+| P2 | **Artifacts carry intent; chat carries correction.** Dispatch is by spec, issue, or board with a commander's-intent header; chat is for exceptions. | G1 |
+| P3 | **State is a fold over a journal.** A journal per run with pluggable backends; every view is a projection; replication is a backend. | G6, G3 |
+| P4 | **One writer per scope; land only through a train; verify before landing.** | G2, G4 |
+| P5 | **Consent at plan time, exception at run time.** | G1, G7 |
+| P6 | **Same primitives at every level.** Member, thread, program, and mesh share verbs and the protocol. | G1, G3 |
+| P7 | **Runtime-neutral members behind a small contract.** | G5 |
+| P8 | **A foreign message is never consent.** Provenance on every message; only a human principal answers a question or approves a mount. | G7 |
+| P9 | **Structural, not voluntary, coordination.** The harness declares, derives, and raises; members may participate. | G1, G2, G4 |
+
+## 4. The model
+
+```
+Mesh
+ └─ Program            durable run; owns a plan, a train, a budget
+     └─ Thread         a team (any of the seven topologies); owns a scope set
+         └─ Member     a runtime meeting the member contract (§5.4)
+             └─ Task   intent + scope + verifier level + budget → landing
+```
+
+Entities recorded in the journal, each with a stable id and a revision:
+
+| Entity | Fields (beyond id/revision) | Today |
+|---|---|---|
+| **Run** | kind (`program`\|`thread`), spec, parent run, status, principal, budget | in-memory `RunRecord`, lost on restart |
+| **Task** | subject, prompt, **intent** {purpose, endState, constraints, preferences}, **scope**, blockedBy, priority, owner, **lease**, attempts, result, **verifiedLevel** | subject, prompt, blockedBy, owner, result |
+| **Scope** | task or thread, kind (`file`\|`test` enforced; any other string recorded only), pattern, lease | none |
+| **Member** | name, runtime, conformance level, thread, state (`provisioning`\|`active`\|`idle`\|`blocked`\|`dead`), session ref, budget used | roster in memory |
+| **Message** | from principal, to (member\|role\|thread\|`lead`\|`*`), delivery (`immediate`\|`enqueue`\|`quiet`), outcome | from/to member names, `wakeup`/`quiet` |
+| **Question** | raised by (harness trigger or member), kind (`consent`\|`approval`\|`input`\|`escalation`), risk tier, prompt, answer, answered by | none |
+| **Offer** | offerId, from run, to run, task, accepted/reclaimed | none |
+| **Landing** | task or thread, branch, deps, priority, verifier results, batch, outcome, evidence bundle | `MergeOutcome` after the fact |
+| **Budget** | scope (run\|thread\|member), tokens, steps, ciRounds, dollars, action on exhaustion | `maxConcurrent`, `maxTaskAttempts` |
+| **Steer / Pause / Cancel** | target, principal, message | none |
+
+*Amended by D12:* Task and Scope (and a landing's verifier evidence) are
+recorded in opentasks, not the run journal: a task is a task node, a `file`
+scope a lease on a path, verification an attempt with a `verifies` edge.
+The journal records the rest and refers to tasks by opentasks id.
+
+## 5. Foundation
+
+Five pieces of construction that every goal depends on. They are built first
+because nothing in §6 is sound without them.
+
+### 5.1 Durable run
+
+```ts
+const run = await ctx.swarm.start(spec, { parent, policy, budget })   // RunHandle
+run.id            // stable; survives process restart
+run.board()       // projection
+run.steer(...)    // direction
+run.result        // Promise<TeamResult>  ← today's runTeam, kept for compatibility
+await ctx.swarm.attach(runId)   // from any process that can read the journal
+```
+
+A finished run is a readable record: the run's journal, not its lead, holds
+it, so disposing the lead on settle loses nothing. The app-server's run
+table becomes a projection, so `swarm/runs` survives a restart and `attach`
+works from a new process. `view(runId)` reads a run without writing;
+`attach(runId)` takes over only from a dead writer (same-host pid check
+until the git journal brings a real lease), releases its claims, and marks
+the run `interrupted`; resuming execution is a later direction method.
+
+### 5.2 Journal per run, projections, handoff
+
+Board and mailbox stop being the storage layer and become projections of a
+typed journal (`swarm/task`, `swarm/scope`, `swarm/message/*`,
+`swarm/question`, `swarm/offer`, `swarm/landing`, `swarm/budget`,
+`swarm/member`, `swarm/steer`). Every mutation is compare-and-set on the
+entity revision; `waitForChange` generalizes to a filtered subscription.
+
+- **One journal per run, linked by parent id** (D1). The journal is **our
+  own append-only JSONL file**, not a dsh session log: dsh refuses to reload
+  a session containing event types outside its built-in list, and offers no
+  compare-and-set (§11). The run's lead is the journal's only writer; every
+  other principal writes through the protocol (§5.3), so compare-and-set
+  stays the in-process transaction tail `board.ts` already has. Projections
+  are our own folds, delivered to views through the protocol's event
+  subscription (§5.3). When dsh accepts plugin event types, a session-log
+  backend can replace the file.
+- **Claims carry a lease** tied to the owner's liveness. `attach` releases
+  claims whose owner is gone; today a lead crash leaves claimed tasks
+  `in_progress` forever.
+- **Handoff** is the only way work crosses a journal boundary: the parent
+  appends `offered {offerId, task}`, the child appends `accepted {offerId}`,
+  a restarted parent re-offers anything unaccepted after a timeout, and a
+  child treats a repeated `offerId` as a no-op. Nested threads and foreign
+  swarms use the same protocol.
+- **Backends** (D8): one JSONL format in two places. A local file per run
+  serves all single-host work; the same JSONL under `refs/swarm/<runId>`
+  serves the mesh, with claims by push compare-and-set. A `sqlite` backend
+  is added only if a single-host multi-lead case demands it.
+
+*Amended by D12 (2026-09-27):* tasks, claims, attempts, verification
+evidence and contracts move to opentasks' graph; this journal keeps what has
+no opentasks equivalent (run lifecycle, steers, questions, the protocol
+audit) and refers to tasks by their opentasks ids.
+
+### 5.3 One protocol, carriers, principals, and policy
+
+Members, humans and UIs, drivers, and foreign swarms speak one `swarm/*`
+method table. The table and its policy check are one transport-free module;
+a **carrier** binds it to a transport and establishes the caller's
+principal (D11):
+
+| Carrier | Transport | Principal | Serves |
+|---|---|---|---|
+| **web** | `@Remote` methods on dsh's `/api` gateway, called by the client plugin (§6.1); no dsh codegen needed (§11) | always owner; dsh's web server authenticates nothing, so this carrier is loopback-only | the board in the browser |
+| **socket** | the app-server's JSON-RPC socket | from the token: owner (a local token file, for the CLI), viewer, driver, member, foreign swarm | CLI, programs, members, the mesh |
+
+The web gateway is request/response only: its host-event push is a fixed
+allowlist a plugin cannot extend. So the event subscription is one
+long-poll method, `swarm/events {run, afterSeq, waitMs}`, which returns
+journal entries after `afterSeq` as soon as any exist (today's
+`waitForChange`, over the protocol). Both carriers use it unchanged.
+
+A new interface (a TUI, an IDE, A2A) is a new carrier, not a new protocol.
+Identity comes from the carrier's credential, never from a field. Because
+every principal sees the same method table, **policy is the security
+boundary**, and it is default-deny:
+
+| Method group | Owner (human) | Viewer (human) | Driver (program) | Lead member | Member | Foreign swarm |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|
+| State: `runs`, `board`, `members`, `questions`, `landings`, `events` | ✓ | ✓ | ✓ | own thread | own tasks | offered tasks only |
+| Direction: `start`, `steer`, `pause`, `resume`, `cancel`, `reprioritize`, `budget` | ✓ | — | ✓ within policy | own thread | — | — |
+| Answer: `answer` | ✓ | — | policy-tiered only | — | — | — |
+| Member: `claim`, `complete`, `report`, `ask`, `declare-scope`, `send` | — | — | — | ✓ | ✓ | on accepted offers |
+| Mesh: `join`, `leave`, `offer`, `card` | ✓ | — | — | — | — | ✓ after join policy |
+
+A driver may answer only questions whose risk tier its policy allows; a
+consent or approval question always needs a human (P8). The socket binds
+wherever the run's policy says; loopback stops being a hard-coded rule. The
+web carrier stays on loopback until dsh's web surface authenticates
+requests. Today the app-server forwards every non-`swarm/` method to dsh's
+SDK server; under the policy table that pass-through is owner-only.
+
+### 5.4 Member contract
+
+The contract is what makes G5 real and what lets the rest of the design
+stay structural. Three conformance levels:
+
+| Level | A member must | Unlocks |
+|---|---|---|
+| **Basic** | accept a task prompt with its intent header; run with a given cwd; return final text, stop reason, and usage; be cancellable | fanout, pipeline, cascade, coordinator; landing; scopes derived from diffs; harness-raised questions |
+| **Steerable** | accept a mid-run message with `immediate` or `enqueue` delivery; keep one session across turns; resume that session after a restart | live steering, messaging peer-teams, warm restart without amnesia |
+| **Participating** | call `swarm/ask`, `report`, `declare-scope`, `send` | members raising their own questions and narrowing their own scopes |
+
+Everything in §6 works at **basic**; steerable adds live direction;
+participating is a bonus (P9). Runtimes today: in-process `spawn`
+(steerable), dsh subprocess (steerable via `RemotePeer`), `claude-code`
+(basic, R1, with mid-run messages, R2), `codex` (basic, R2). dsh's SDK server
+only queues a turn, so `immediate` delivery reaches a subprocess member
+through `openswarm-swarm-member`, which calls `agent.steer` inside the
+member (§11). Planned: a
+resume-capable dsh runtime (D5), `claude-code` steerable, `codex` (basic,
+then steerable), `attach` to an existing endpoint, and `a2a`.
+
+### 5.5 Member sandbox
+
+Today `member.cordis.yml` runs members with sandbox mode
+`danger-full-access`: a member can read or write anything on the host. The
+default becomes dsh's `workspace-write`, rooted at the worktree. dsh's
+sandbox confines **writes** to the session cwd and temp directories for the
+whole process tree, git and npm included; it does not restrict reads or
+network, and takes no extra paths (§11). So the sandbox is **write
+containment**: a member cannot damage the host or another member's
+worktree, and package caches are redirected into temp by environment
+(`npm_config_cache`, `PIP_CACHE_DIR`, `CARGO_HOME`) in the member
+composition. It is not a confidentiality boundary; hidden tests are
+protected by where the verifier runs (§6.4, D4). It ships behind a flag
+until the keyless and live suites pass under it.
+
+## 6. How the design reaches each goal
+
+### 6.1 G1 — Steerable
+
+**What it means.** One person directs many agents without routing
+everything through a lead, and without drowning in prompts. The evidence
+sets the bar: shipped surfaces cap at single digits of agents per person;
+humans approve 93–97 % of prompts and block 5 % after fifty, so per-action
+approval is rubber-stamping; information is lost relaying through a lead.
+
+**Addressing.** Four units of address, all stable names: member, thread (or
+role), task, and landing; plus `*` for broadcast. The lead stays the default
+conversational target; every other unit is one step away.
+
+**Direction.**
+- `steer {target, message, delivery}`: `immediate` lands after the current
+  tool call, `enqueue` after the turn, `quiet` rides the next turn. The
+  journal records what actually happened, so a view never shows "queued" for
+  a message already acted on. Targets below *steerable* conformance get
+  `enqueue` only, and the response says so.
+- `pause`, `resume`, `cancel`, `reprioritize`, `budget` on any unit.
+- **Intent header** on every task, filled by the planner, the issue, or the
+  person: purpose, end state (checkable), constraints, preferences.
+- **Plan consent**: `start { consent: 'plan' }` runs the planner, raises one
+  consent question carrying the partition, contracts, and budgets, and fans
+  out only on a human answer.
+
+**Questions, raised structurally (P9).** The harness raises a question when:
+
+| Trigger | Question |
+|---|---|
+| stall (idle clock, after one nudge) | "member X has made no progress in N minutes: nudge, restart, reassign?" |
+| budget exhausted | "thread T spent its budget at task K: extend, stop, reassign?" |
+| verifier failure after retries | "task K failed L3 twice; last failure: …" |
+| scope violation at landing | "task K edited files outside its scope: accept, split, reject?" |
+| same-target convergence | "three members are on the same failing test: re-partition?" |
+| restart budget spent | "member X died twice on task K" |
+| conflict the resolver could not fix | "landing L conflicts with M; resolver gave up" |
+
+Members at *participating* level may also `ask`. All questions go to one
+queue in the journal, tagged with a risk tier, with a rate cap so the queue
+cannot escalate faster than a person can think, and are answered over any
+carrier. The web carrier also surfaces them through dsh's
+`ctx.userQuestions`, which works outside an agent turn. `ctx.approval` does
+not (it throws unless a turn is open, §11), so it stays what it is today:
+the gate on member tool calls and F3 mounts.
+
+**Observing.**
+
+| View | Shows | Actions |
+|---|---|---|
+| **Program board** | threads: state, scope, budget used, landing state | steer, pause, reprioritize, open |
+| **Thread board** | tasks: `pending`/`claimed`/`blocked`/`needs-input`/`landed`/`failed`, owner, verified level | steer member, reopen, answer |
+| **Member peek** | the member's own dsh session, current tool call, the exact question if blocked | message, interrupt, stop |
+| **Question queue** | every open question across runs, tiered, oldest first | answer, batch-answer a tier, escalate |
+| **Landing queue** | batches, verifier results and evidence, conflicts at the resolver | reprioritize, retain, take over the branch |
+| **Recap on attach** | a change log folded from the journal since the viewer last looked | — |
+
+These render inside dsh's web surface as a client plugin (D7): a package
+declaring `dsh.client` that contributes a view tab to `conversation.view`
+and actions to `conversation.session.header.actions`, fed through the web
+carrier. dsh has no full-page or route slot, so each view must fit a tab
+(§11). The same data is on the socket carrier for any other client, and a
+CLI covers the headless case:
+
+```
+openswarm start  <swarm.yml | "task"> [--program] [--consent plan] [--budget …]
+openswarm ps                                  runs, threads, members, states
+openswarm board  <run>
+openswarm steer  <run> [--to member|role|thread|*] [--now] "message"
+openswarm questions                           open questions
+openswarm answer <question> "…"
+openswarm attach <run>                        recap, then follow events
+openswarm pause|resume|kill <run|thread|member>
+openswarm join   <url> [--token]
+openswarm run "task"                          unchanged one-shot
+```
+
+**Risks.** The board lives on dsh's release-candidate client API; the
+compatibility smoke suite grows a client-plugin load check. The rate cap
+has no evidence-based default yet; start conservative and measure answer
+latency.
+
+### 6.2 G2 — Program-scale
+
+*Amended by D18:* the question this section leaves to §7.5 was answered no
+for the tested regime (docs/07 §7.5). The design below is kept for when
+D18's trigger fires; G2 is met meanwhile by throughput across independent
+gated tasks (B2, B3).
+
+**What it means.** Several threads, each a team, run at once on one change
+without integration hell. The evidence is specific: partition quality and
+interfaces pinned before fan-out outrank every other mechanism (a 25–39 point
+integration loss without a pinned spec; performance rising from two to four
+agents and falling at eight without dependency-aware partitioning); cross-agent
+concurrent PRs conflict at about 42 %; the comfortable ceiling is 20–30
+agents, not hundreds.
+
+**The planning stage.** A program starts with a planner run (frontier model)
+that produces a plan artifact, which is what plan consent shows:
+
+1. **Survey.** Build a dependency graph of the target: the language's import
+   graph where tooling exists, falling back to git co-change history. Mark
+   hub files (high fan-in, or touched by many planned tasks).
+2. **Partition.** Group the work into threads by community in that graph,
+   bounded by `maxThreads` (default 6, hard cap 8) and 3–5 members per
+   thread. Each thread's file set becomes its **scope** (D2). Hub files are
+   never shared between threads.
+3. **Contracts first.** Interfaces, schemas, and stubs that more than one
+   thread needs are extracted into **thread 0**, which lands through the train
+   before any other thread starts. The others then cut their worktrees from
+   the integration branch, not from base. This also resolves the ledgered
+   "sibling visibility" row: siblings see the contracts they share.
+4. **Dependencies and priority.** Threads carry `blockedBy`; the train and
+   the scheduler both honour it.
+5. **Allocation.** A frontier model plans and resolves; cheaper models
+   execute (the one published allocation policy with numbers, an 8× cost
+   spread at similar quality). Per-thread budgets follow the partition sizes.
+6. **Consent.** One question with the partition, contracts, budgets, and
+   model allocation.
+
+**Nesting.** A thread's lead is a member running the `lead` composition
+(`leaf` plus `openswarm-swarm`, a subagent provider, and the journal
+client). Its worktrees cut from its own task branch; its journal is linked
+to the program's by parent id; its landing target is the program's
+integration branch through the program's train.
+
+**Scopes (D2).** `file` and `test` scopes are declared by the planner and
+enforced: same-target detection during the run, and a diff-against-scope
+check at landing. Any other kind is recorded and displayed, marked
+unenforced. Members never have to declare anything (P9). *Amended by D12
+and C4:* inside a program, `file` scopes are opentasks leases checked on
+every write in a shared workspace (a stale write is rejected), not only by
+a diff at landing; the landing check remains for work from worktrees.
+
+**Drift.** A scheduled **maintenance program** is a first-class program
+kind: small single-purpose PRs against declared repository principles, the
+only self-improvement loop in the docs/06 record with a plausible
+enterprise path.
+
+**Risks.** The survey step is per-language; start with TypeScript and
+Python and fall back to co-change. The whole goal is conditional on the
+pilot and the Phase C experiment (§7.5): if a program of threads does not
+beat sharded teams of the same total size, G2 and G3 are re-scoped to
+sharded throughput.
+
+### 6.3 G3 — Meshable
+
+*Amended by D18:* `offer` and cross-swarm task handoff are deferred;
+joining, a shared train and merging stay.
+
+**What it means.** Two independently started swarms, on different hosts,
+share coordination state and a train, hand tasks to each other, and merge
+their work, without either restarting.
+
+**Design.**
+- **Transport**: the journal under `refs/swarm/<runId>` (D8); every swarm already has the
+  repository, so joining needs no broker.
+- **Join**: `swarm/join {card, token}` against a swarm's published Agent
+  Card; the join policy (§6.7) decides the principal it becomes.
+- **Work exchange**: `swarm/offer` over the handoff protocol (§5.2); an
+  accepted offer is claimable by the foreign swarm's members at the
+  foreign-swarm row of the policy table.
+- **Merging**: both swarms enqueue into one train, promoted to a
+  standalone service bound to the target branch (D3). That shared train is
+  the concrete meaning of "merging two swarms".
+- **Discovery**: an A2A Agent Card per swarm; no AGNTCY, NANDA, or ANP
+  (docs/06 §4.1).
+
+**Risks.** Push compare-and-set contention on the git journal at mesh scale
+is unmeasured; the Phase D exit test includes contention. Trust is the
+riskiest part and is designed in G7 before this ships, not with it.
+
+### 6.4 G4 — Verified landing
+
+**What it means.** Throughput that does not become review debt. The field
+record: agent PRs wait 4.6× longer for review and merge far less often;
+review time rose 441 % in high-adoption teams; agents game visible
+verifiers, and gaming scales with capability.
+
+**Verifier hierarchy.** Each task, thread, or program declares the minimum
+level it must reach to land; results record the level reached.
+
+| Level | Verifier | Today |
+|---|---|---|
+| L0 | member self-report | the default |
+| L1 | LLM judge (`APPROVED`/`REVISE:`) | critic-loop, cascade gate |
+| L2 | declared commands, weakest link over exit codes | cascade `confidence` only |
+| L3 | **hidden tests**, held where the verifier runs and never on a filesystem a member can read, run by the train | new |
+| L4 | external CI on the train's batch | new |
+
+dsh's sandbox does not restrict reads (§5.5), and worktrees share one object
+store, so no location on a member's host is hidden from it. Hidden tests
+therefore live where the verifier runs: a container, another host, or an OS
+user the members cannot read as (D4). Benchmark runs hold this by
+construction, since the grader applies held-out tests after the member has
+finished. Where the verifier's isolation reports a denied access by a
+member, that is a tamper incident.
+
+**The train.** A service-shaped class with its own journal, lead-hosted
+through Phase C and promoted in Phase D (D3):
+- entries carry `blockedBy`, priority, and required verifier level;
+- batches merge speculatively and test once; a failure bisects to the
+  culprit;
+- a conflict goes to the resolver, an agent step inside the
+  integrate-and-repair skeleton (D15, B3), before it is retained;
+- a scope violation raises a question instead of silently merging;
+- a forge adapter (Phase D) hands batches to GitHub or GitLab's queue for
+  organizations that already gate there.
+
+**Reviewer-facing evidence.** Each landing carries a small bundle: intent
+header, scope and diff-against-scope, verifier levels and outputs, cost, and
+questions answered along the way. Batches are sized so a human can review
+one in minutes; the landing queue sorts by risk tier. Review is the scarce
+resource and this is where the design spends on it.
+
+### 6.5 G5 — Runtime-neutral
+
+**What it means.** A dsh worker, a Claude Code reviewer, and a Codex tester
+on one task graph and one train. No shipped product does this; it is the
+claim in docs/06 §5 that only a runtime-neutral layer can make.
+
+**Design.** The member contract (§5.4) is the whole mechanism. Because
+coordination is structural, a *basic* member (prompt in, result out,
+cancellable, run in a cwd) takes part in every topology, lands through the
+train, has scopes derived from its diff, and triggers harness questions.
+Each runtime is an adapter to the contract:
+
+| Runtime | Path | Target level |
+|---|---|---|
+| dsh subprocess | exists; resume added (D5) | steerable |
+| `claude-code` | our adapter over the `claude` CLI's headless mode; basic built (R1). dsh's provider runs in its parent's cwd and reports no usage (docs/01 ledger) | basic → steerable |
+| `codex` | dsh ships the subagent provider | basic → steerable |
+| `attach` | SDK `session/prompt` on an existing session | steerable |
+| `a2a` | A2A client; a task maps to an A2A task | basic |
+
+**Risks.** Usage and cost reporting differ per runtime; G8's cost-per-landing
+needs each adapter to report tokens and dollars, and the contract makes that
+mandatory rather than best-effort.
+
+### 6.6 G6 — Durable
+
+- Runs, questions, offers, and landings are journal records (§5.1–§5.2);
+  `attach` rebuilds any view from them.
+- A lead's death loses nothing: a new process attaches, releases claims
+  whose owner is gone (§5.2), re-offers unaccepted handoffs, and resumes the
+  train from its journal.
+- Member death keeps today's detection, task re-claim, and warm restart, and
+  adds true resume: the dsh member runtime resumes its persisted session on
+  a miss instead of briefing an amnesiac from a digest (D5).
+- Cross-host durability comes with the git journal in Phase D.
+
+### 6.7 G7 — Governed
+
+- **Member sandbox** (§5.5): write containment at the worktree. Network
+  stays open; dsh's sandbox has no network control.
+- **Protocol policy** (§5.3): default-deny by principal and method group,
+  enforced from Phase A, when the protocol first opens to humans, not
+  deferred to the mesh.
+- **Approvals**: one risk-tiered queue with a rate cap; plan consent before
+  fan-out; drivers may answer only tiers their policy allows.
+- **Provenance** (P8): every message carries its principal; only a human
+  answers a consent or approval question or approves an F3 lead mount.
+- **Budgets**: per run, thread, and member; exhaustion pauses and raises a
+  question.
+- **Join policy** (Phase D): a foreign swarm is admitted by an owner-signed
+  token scoped to specific runs, becomes the foreign-swarm principal, and
+  can only see and claim what it has been offered.
+- **Audit**: the journal is the audit log; nothing coordination-relevant
+  happens outside it.
+
+### 6.8 G8 — Measurable
+
+`RunMetrics` on every result and on the event stream:
+
+| Metric | Why it exists |
+|---|---|
+| landed tasks, verified level distribution | the north-star numerator |
+| tokens and dollars by principal, model, and runtime; wall-clock | the north-star denominator |
+| coordination tokens ÷ task tokens | the overhead nobody publishes |
+| interventions: steers, answers, restarts; questions raised by trigger; time-to-answer | the G1 cost term |
+| landing rate, clean-merge rate, bisect count, conflicts, latency | train health |
+| tasks lost or duplicated | the zero-loss term |
+| tamper incidents | the gaming signal |
+
+The eval harness from docs/02 runs every phase's exit experiment, so the
+numbers come from the same measurement apparatus that replicated the legacy
+results.
+
+## 7. Phased plan
+
+### 7.1 Shape
+
+One **spine** of four phases, each with a goal and an exit criterion, plus
+a **runtime track** that runs alongside from Phase B. A hand-planned
+**pilot** runs alongside Phase A and puts the program-scale question to an
+early test (D10); Phase C ends with the go/no-go experiment for the rest.
+
+| | A — Steerable foundation | B — Verified landing | C — Program-scale | D — Mesh |
+|---|---|---|---|---|
+| **Pilot** | hand-planned program vs sharded vs single (§7.5) | — | — | — |
+| **Runtime track** | — | R1: `claude-code` basic | R2: `codex` basic; both steerable | R3: `attach`, `a2a` |
+
+### 7.2 Goals by phase
+
+● delivered · ◐ partial.
+
+| Goal | A | B | C | D | Track |
+|---|:-:|:-:|:-:|:-:|:-:|
+| G1 Steerable | ● | ◐ landing queue | ◐ program board, plan consent | ◐ cross-swarm steer | |
+| G2 Program-scale | | ◐ scope check at landing | ● | | |
+| G3 Meshable | | | ◐ handoff | ● | |
+| G4 Verified landing | ◐ sandbox | ● | | ◐ forge adapter | |
+| G5 Runtime-neutral | ◐ contract, resume | | | ◐ attach | ● |
+| G6 Durable | ● | ◐ train journal | ◐ handoff | ● cross-host | |
+| G7 Governed | ● sandbox, protocol policy, queue | | ◐ budgets | ◐ join policy | |
+| G8 Measurable | ◐ interventions | ● RunMetrics | ● effectiveness experiment | ◐ mesh metrics | |
+
+*Amended by D18:* Phase C's marks for G1 (program board, plan consent), G2
+and G3 (handoff), and Phase D's handoff, are deferred; the effectiveness
+experiment was run early (docs/07 §7). G2 is met by throughput across
+independent gated tasks (B2, B3).
+
+### 7.3 Phase A — Steerable foundation
+
+**Goal.** G1, G6, and G7's foundation: a durable run a person can address,
+direct, and observe, on a protocol that is governed from its first day.
+
+| # | Work item | Where |
+|---|---|---|
+| A1 | Member sandbox to `workspace-write` behind a flag; package caches redirected into temp | `packages/swarm/member.cordis.yml`, bundle |
+| A2 | Resume-capable dsh member runtime (wraps the SDK server; `ctx.agents.resume` on miss); `member-resume.test.ts` flips; `immediate` steering through `openswarm-swarm-member` | `packages/swarm`, `packages/swarm-member` |
+| A3 | Per-run JSONL journal; board and mailbox as projections over it; claims with leases | `packages/swarm` |
+| A4 | `SwarmRun`: `start`, `attach`, `result`; leads kept; run table as a projection | `packages/swarm`, `packages/app-server` |
+| A5 | Protocol module: state and direction groups, per-run event subscription, principal policy table; socket carrier (tokens, CLI owner token) and web carrier (owner, loopback) | `packages/app-server`, `packages/swarm` |
+| A6 | Harness-raised questions (stall, budget, verifier failure, restart budget) in one tiered, rate-capped queue; surfaced on the web carrier through `ctx.userQuestions` | `packages/swarm` |
+| A7 | Intent header on tasks; `/swarm` renders the board instead of blocking | `packages/swarm` |
+| A8 | CLI verbs | `bin/openswarm` |
+| A9 | Board client plugin: thread board, member peek, question queue, recap; long-polls `swarm/events`; build step for the `dsh.client` bundle format | new `packages/swarm-client` |
+| A10 | File the upstream issues: continuable `subagent-dsh-sdk`, SDK method registry, plugin event-type registration for session logs | upstream |
+
+**Exit criteria.**
+1. From the web surface and from the CLI, a person redirects a running
+   member with `immediate` delivery and answers a harness-raised question;
+   the run continues without a restart.
+2. Killing the process hosting a lead, then `openswarm attach` from a new
+   process, shows the same board and a recap; the dead lead's claims are
+   released; zero tasks lost or duplicated.
+3. A member in the sandbox cannot write outside its worktree and temp; the
+   keyless and live suites pass with the flag on, including a member that
+   installs packages.
+4. On the socket carrier, a viewer principal is refused every direction
+   method and a member principal is refused `answer`.
+
+**Deliberately not in A.** Scopes, the train, nesting, new runtimes.
+
+**Progress** (branch `claude/phase-a`): A3 `38eafab` (run journal, claim
+leases; peer-team sessions reopen again), A2 `926bf3a` (member server:
+resume on miss, `swarm/steer`), A4 `e34b350` (`start`, `view`, `attach`,
+`runs`; run ids; the app-server's run table from journals), A5a `d440294`
+(protocol module with the default-deny policy; token-authenticated socket
+carrier, owner token in `$OPENSWARM_HOME/app-server.json`; `start`,
+`steer`, `cancel`, `attach`, `events` long-poll), A5b `9a671a1` (web
+carrier: `@Remote` methods on dsh's `/api` gateway, owner-only, refuses to
+load unless dsh's web server binds 127.0.0.1), A6 `bb5258e` (journaled
+questions at four triggers — stall after one nudge, restart budget, task
+attempts, cascade exhaustion — each defaulting to the old behavior;
+`swarm/questions`, `swarm/answer` with the tier rule; also raised through
+`ctx.userQuestions` in the web profile), A8 `294e69c` (CLI: `ps`, `board`,
+`questions`, `attach` read journals with no server; `start`, `steer`,
+`answer`, `kill` go through `openswarm serve`'s socket; `swarm/start`
+now uses the profile's default model). Exit criterion 2 is met by a test
+that SIGKILLs a lead mid-task and attaches from the test process: same
+board, recap, claims released, run `interrupted`, task set unchanged.
+Built in the order A3, A2, A4, A5, A6, A8, since direction methods
+address runs. A1 `32376a9` (member sandbox behind
+`OPENSWARM_MEMBER_SANDBOX=workspace-write`: bash and, via `dsh-fs-sandbox`,
+the editor are write-confined to the worktree and temp; caches redirected
+to temp; git writes and PTYs are denied inside a member by design). Exit
+criterion 3 is met: the keyless suite passes with and without the flag,
+and all seven live tests pass with it (the rung-5 self-edit needed
+`27c83b0`, which stops the command gate inheriting the driver's `npm_*`).
+A9 `fc0428d` (the Swarm tab: a `conversation.view` client plugin over
+the web carrier; board, questions, recap, steer, cancel, start form; the
+web profile also serves the socket carrier so the CLI directs the same
+runs). Exit criterion 1 was verified 2026-09-27 in a real browser and the
+CLI against one `openswarm web`: a run started from the tab was steered
+`immediate` from the tab and another from the CLI, each member changing
+course mid-turn, and a harness-raised question was answered from each
+surface, with no restart. That exercise found two defects, fixed:
+`ecf77cb` (a messaging team's late settlement notices woke the lead for a
+model turn) and `2f28e99` (worktree members need the launcher's model
+route, not a key sent by the caller). A7 `7cefb19` (intent header on runs
+and peer-team tasks, rendered into member prompts and shown on the board,
+the tab and the recap; `/swarm` starts the run and returns its id, the
+outcome reaching the tab, `openswarm attach` and the invoking session as
+injected context; `/swarm --wait` keeps the blocking form).
+
+**Phase A is complete** (2026-09-27): all ten items built, all four exit
+criteria met.
+
+### 7.4 Phase B — Verified landing
+
+**Goal.** G4 and G8: work counts only when verified, and the north star is
+computable. Revised 2026-09-27 (docs/07 §6.6): the verifier is the
+coordinator, so Phase B also moves task state to opentasks (D12) and adds
+the completion gate and the integrate-and-repair loop (D15, D16).
+Re-ordered 2026-09-28 after docs/07 §7.1 (D17): the completion gate comes
+first, because it was the largest effect measured (one agent 0.594; up to
+four rounds sent back with an independent reviewer's report 0.712), and it
+improves a single agent as much as a team. `explore` is no longer a Phase B
+item.
+
+**Build order:** B6, B0, B1, B3, B2, B4, B5; R1 alongside.
+
+**Phase B status (2026-10-08): code complete.** B6 `a95d289`…`907195b`,
+B0 `4511784` (projection), B1 `f671375`, B2+B3 `9efbd8c`, B4+B5
+`d03e622`, R1 `5cca4e7`; `--spec` and the landing harness `f213afd`.
+Exit criteria: **1 met (2026-10-09)** through the eval harness (arm
+`landtrain`, as pre-registered in the B2/B3 note below): six pilot tasks
+(fal-1.3.0, fal-4.1.0, opt-4.4.0, pyg-2.2.0, pyg-2.5.0, vbt-1.3.0; one
+seed; a peer-team of two dsh members, one board task per plan thread,
+worktrees cut from the run's base; $58.66 in all). The train landed 24 of
+24 entries; today's sequential queue, replayed on the same original
+branches, landed 11 of 24 and retained 13 conflicts, all of which the
+train's resolver resolved. Clean-merge rate did not discriminate (24/24
+against 11/11: the build-and-import checks never broke). Held-out reward
+of the landed tree, paired: train 0.736, queue 0.236 (train ahead on 5
+tasks, tied on 1). No natural bisects; the planted-bad-commit bisection
+is shown by the keyless tests. **2** needs the operator's one-time
+`openswarm verifier setup` and the gated probe
+(`OPENSWARM_VERIFIER_E2E=1`). **3** met by keyless tests (a dsh and a
+claude-code member landing through one train, cost by runtime) and live
+(`2ed95f8`: a claude-code member on haiku landed through a train,
+$0.045). **4**, **5** and **6** are met (6 narrowly, over two runs).
+
+**Progress.** B6a, the gate's core and the single-agent path, is built:
+`a95d289` (`runGate`; `snapshotTree`; CLI `--gate`, `--gate-rounds`,
+`--gate-check`, `OPENSWARM_GATE`), `9c5317f` (the reviewer's copy is a
+`git init` with alternates, so shallow checkouts work; an unavailable
+review is retried once and then stops the gate unaccepted; per-round
+verdicts on stderr), `3385ab8` (the reviewer's copy gets the whole ignored
+environment, so it can run a monorepo's tests). The reviewer never runs in
+the user's checkout: it works in an independent copy of the round's
+snapshot under `workspace-write`, so nothing is ever restored in the user's
+tree; a regression there is reported to the next round, and rollback is
+reserved for trees the gate owns (B6b). Three review rounds found
+data-loss paths in the earlier designs (restoring the user's checkout after
+an in-place review; a linked worktree sharing the user's stash and refs);
+each is gone with the design that had it. **Exit criterion 6 is met
+(2026-10-05):** on the frozen pilot set the gated single agent scored
+0.695 at $18.78 a task (the prototype's (b): 0.712 at $17.52; equal on 10
+of 12 tasks, one each way). Per-task drops under the one-agent mean:
+mko-6.4.0 0.70 against 0.95, vbt-1.3.0 0.70 against 0.77. Two earlier
+runs were invalid and are kept only as diagnostics: on shallow task
+checkouts the reviewer could not start, and without build output it could
+not run monorepo tests (prm-6.7.0 "Cannot find module", mko-5.8.0 accepted
+at 0.57); both are fixed above. B6b, the gate on board tasks, is built: `907195b`. A gated peer-team
+(`PeerTeamSpec.gate`, `PeerTask.checks`) runs each claimed task through
+`runGate`; the gated board itself refuses `complete()` without passing
+evidence, which rides in the task's journal event, and every gate round is
+journaled (`swarm/gate`). A task that never passes is released and retried
+with its member kept in the pool, then a `verifier-failure` question
+defaults to abandon; only an owner's `accept` waives the gate, recorded as
+human evidence. Rollback runs only in per-task, gate-owned worktrees;
+pinned paths are restored before every check. The reviewer gains an
+`unverifiable` status (notes required, done ≥ unverifiable), so a target
+whose tests the environment cannot run (mko-5.8.0's MySQL tests) no longer
+holds a task open — 8 of 12 single-path tasks had ended unaccepted for
+that reason. Re-run of exit criterion 6 with it (2026-10-07): 0.685 at
+$16.89 a task, 7 of 12 accepted (before: 0.695 at $18.78, 4 of 12). The
+reward change is within one-seed noise (about ±0.046 for a 12-task mean)
+and came from reviewer variance, not the new status (opt-4.4.0 fell to
+0.56 when the reviewer called all six targets done while noting failing
+existing tests as intended behaviour changes); cost fell 10%. Over the
+two full runs the product gate averages 0.690 against the threshold of
+0.69, so the criterion is read as met, narrowly. A reported regression
+does not block acceptance today; whether it should is open. **Exit criterion 4 is met** by the keyless tests
+(`board-gate.test.ts`, `worktrees.e2e.test.ts`): a member whose check fails
+is sent back with the failing command, and no gated task in the journal
+completes without passing evidence. Gating messaging teams is refused for
+now: a member's long-lived worktree would carry a failed attempt's edits
+into its next task, and a teammate's message can start a turn during a
+snapshot or rollback. B1 is built: evidence records its level (L1
+reviewer, L2 commands, L3 hidden suite), a task or team declares a minimum
+(`minLevel`, `--gate-level`) that the gated board enforces, and a weaker
+source configured beside the accepting one gives feedback only. The L3
+verifier is `openswarm verifier` (docs/03): a round with corroborated signs
+of the member reaching for the suite (a canary, its own denied read or sudo,
+a helper call the gate did not make) is a tamper incident, never measured,
+journaled as `swarm/tamper` and raising a high-tier question; a bare mention
+of the verifier is advisory. A run the host cannot fully confine is not L3. Exit criterion 2's probe
+(`verifier.e2e.test.ts`, `OPENSWARM_VERIFIER_E2E=1`) needs the real setup and
+has not run yet; the keyless suite covers the rest with the helper run as the
+test's own user.
+
+B2 and B3 are built, opt-in: `RunTeamOptions.worktrees.train` (`checks` for
+L2, `suite` for L3 through B1's verifier; `batchSize` 4, `maxRepairs` 1)
+lands a run's branches through the train (`packages/swarm/src/train.ts`)
+instead of the run-end sequential queue, which is unchanged without it.
+Every task branch with commits is an entry carrying its board blockers and
+its task order as priority. The target's tip is verified alone first: one
+that already fails would make every entry a culprit, so a question decides
+(stop, the default, or merge unverified through the queue). Up to
+`batchSize` ready entries are merged speculatively onto the target's tip in
+the train's own worktree and verified once; a pass fast-forwards the target
+in its worktree, a failure lands each half on the then-current tip, so a
+culprit is bisected out while its batch-mates land (a pair that fails only
+together: the first lands). When a wave has nothing left ready, the
+skeleton's agent steps run (D15): a culprit is repaired by the member that
+wrote its task (the first to run in its worktree, so a critic-loop's worker,
+not its critic), in its worktree once the tip is merged in, told the failing
+check and its output (at L3, counts only); a conflict goes to a resolver run
+there. Both auto-commit and queue the entry again, to be verified like any
+other. Under L3 each step is scanned for the member reaching for the suite
+as a gate round is (B1); an incident is journaled and ejects the entry on a
+high-tier `tamper` question unless someone says continue. Past `maxRepairs`
+a `verifier-failure` question, and when the resolver gives up a `conflict`
+question, each defaulting to eject; an ejected entry keeps its branch and
+worktree and ejects its dependents. The train stops early, keeping every
+unlanded branch and removing the task worktrees, on an abort (no further
+landing or agent step, and an aborted repair's edits are not committed), on
+a verifier that cannot run twice running (the batch journaled unverified),
+or on any throw; the result's `git`, on a failed run its record's, says what
+landed. A train needs `autoCommit` and is refused without it. Members cannot
+write git under `workspace-write`, so the lead starts the merge and the
+resolver edits the conflicted files; the lead commits. The train keeps its
+own journal, `<run>/train.jsonl` (`train/enqueued`, `baseline`, `batch`,
+`verified`, `unverified`, `landed`, `ejected`, `repair`, `resolve`,
+`tamper`, `stopped`), shown in the recap as `#t` lines, and reaches the run
+only through the question queue (D3). The result's `git` gains `landed`,
+`ejected`, `repaired` and `resolved`. **Exit criterion 1 is met on a fixed
+branch set by keyless tests** (`train.test.ts`): a batch of four with a
+planted bad commit bisects it out and lands the other three before its
+repair, which lands it the next wave; on six branches with a bad commit and
+a conflict, the train lands 6 of 6 with the integrated tree passing, the
+queue 5 of 6 with it failing. Still to do: the same comparison through the
+eval harness on a benchmark task set, and scope-violation questions, which
+wait for scopes (C4, deferred by D18).
+
+Two fixes after the exit-criterion run (2026-10-10). Priority was the
+board's order, which put a task last whenever it changed, so the train took
+completion order, not seed order; the board now keeps creation order (an
+update keeps its place), and `claimNextReady` with it takes the earliest
+ready task, a released one included. And a branch that stops ignoring part
+of the linked environment (a generated `git_info.py`) gets it committed, so
+bisecting off that batch checked the file out of the train's worktree, and
+every later batch ran without it; every `clean` in a team worktree
+(speculate, rollback, abort) now links back whatever went missing.
+
+**Exit criterion 1 through the eval harness, pre-registered (2026-10-08,
+revised the same day after review, before any cell runs).** Arm `landtrain`
+(`eval/pilot/runner.mjs`) runs fal-1.3.0, fal-4.1.0, opt-4.4.0, pyg-2.2.0,
+pyg-2.5.0 and vbt-1.3.0, each as a peer-team of two dsh members from a team
+spec (`openswarm run --spec`, or `OPENSWARM_TEAM_SPEC`): one board task per
+plan thread, framed as plan mode frames a thread, the others after t0,
+landed through the train (`batchSize` 4, `maxRepairs` 1) on a cheap
+per-task check (`eval/pilot/landing-checks.json`: an import and compile
+smoke; `tsc --noEmit` for vbt), each shown to pass on its base tree by
+`eval/pilot/landing-base.mjs` before the run. `train/enqueued` now records
+each entry's tip and its worktree's creation order. After the graded
+checks, a weight-0 checkpoint (`eval/pilot/landing.mjs`) replays today's
+sequential queue on the same branches as the train first queued them: from
+the run's base, in today's order (worktree creation order, as
+`SwarmGit.mergeAll` merges), `--no-ff`, a conflict aborted and retained. It
+runs the same check on the tree every landing of either left (the train's
+on each commit it advanced the target to, the queue's after each merge),
+and the held-out test.sh on the queue's tree, with /app swapped to it and
+restored after. **The verdict is exit criterion 1 as written**, pooled over
+every graded cell of the run (`eval/pilot/landing-report.py`): the landing
+rate (landed over branches with commits) **and** the clean-merge rate (the
+landings whose merge left the check passing, over the landings), each
+train ≥ queue. The clean-merge rate is flagged "no discrimination" when no
+queue landing broke the check, since it then cannot tell the two apart; the
+verdict then rests on the landing rate. Each task's worktree is cut from
+the run's base, so sibling threads (t0's contracts and the threads after
+it) conflict when they land, and the landing rate is where the train's
+resolver shows. **Secondary:** the held-out reward of the landed tree,
+paired by cell (the train's is the graded run's own), over the cells whose
+graded /app was the train's landed tree (HEAD at the train's target tip, a
+clean checkout, as the first checkpoint records it); and the train's
+bisects, repairs, ejections and the cells' cost. A cell whose tips are not
+commits in its repo, or whose replay fails other than by a conflict, is an
+error and never scored; one whose queue reward failed keeps its landing
+data. The report gives the cells graded against those expected and lists
+every dropped one with why. No bad commit is planted in the live cells: "a
+planted bad commit is bisected out without blocking its batch-mates" is
+shown by the keyless tests (`train.test.ts`; through the CLI in
+`pilot-cli.e2e.test.ts`) and by any bisect the live cells produce. This
+clean-merge rate is per landing on the landed tree, not RunMetrics'
+(landed with no conflict, repair or resolver, over entries). The seeds are
+fixed in `ROADMAP_SEEDS` before the run starts, and the verdict pools all
+of them.
+
+B4 and B5 are built. Every landing carries an evidence bundle
+(`packages/swarm/src/evidence.ts`), folded from the journals without a member
+call: the task's intent header; its diff (files, lines) against the tip it
+landed on; its verifier levels (the gate's evidence and the train's batch
+verification: levels, counts and command names, never a check's output or a
+hidden suite's content); its cost (the usage of its member runs, reviews,
+repairs and resolvers); the questions raised about it and who answered them
+(a question now names the `taskId` it concerns); and its repairs and
+resolvers. The train journals one as `train/evidence` as an entry lands or is
+ejected (and, when a failing baseline sends the entries through the queue at
+the owner's answer, as `train/landed` marked unverified, with a bundle for
+each merge and conflict); without the train, finalize journals one per merged
+or conflicted task as `swarm/evidence` in the run's journal, its verifier the
+gate's evidence only. A deterministic risk tier orders the landing queue: high
+for a human waiver, a partly enforced L3, a tamper sign, a repair or
+resolver, an unverified merge, a conflict, or a strongest passing verifier
+below L2; medium at L2; low for a fully enforced L3.
+`openswarm landings <run>`, `swarm/landings` (state, so a viewer reads it) and
+a read-only Landings section in the Swarm tab show it; its actions
+(reprioritize, retain, take over the branch) are not built. B5's `RunMetrics`
+(`metrics.ts`) folds the run's journal, the train's and each member run's
+usage, now journaled as `swarm/usage` (an in-process member's from the session
+events, a worktree member's from session logs under a root of its own, each
+with the model its messages name, and journaled however the run ends), into
+every §6.8 row: landed tasks and their level distribution; tokens by
+principal, model and runtime, and wall clock; the coordination ratio with its
+split (reviews, repairs, resolvers, lead and judge runs over task work);
+steers, answers, restarts (now journaled as `swarm/restart`), questions by
+trigger and median time-to-answer; landing rate, clean-merge rate, bisects,
+conflicts and latency; tasks lost or duplicated; tamper incidents and
+advisories; cost per landing. A row the journals cannot support is null with
+its reason, never 0: dollars without a pricing table (`SwarmConfig.pricing`,
+`--pricing`; there are no default prices); a messaging team's tokens, dollars,
+cost per landing and bundle costs (its peers keep one session across tasks, so
+the train steps' usage alone would be partial); a run from before these
+records, whose landings and usage were never journaled; the sequential
+queue's clean-merge rate, bisects and latency. It is on the result (`TeamResult.metrics`), behind
+`openswarm metrics <run>`, `swarm/metrics` and the Swarm tab's Result section,
+and the eval reporter records it as a `run_metrics` line per settled run. Not
+counted yet: the lead's own session turns, which sit outside the run, and a
+diff against scope, which waits for C4.
+
+R1 is built: a member with `runtime: 'claude-code'`
+(`packages/swarm/src/claude-code.ts`) runs the user's installed `claude` CLI
+headless (`-p --output-format stream-json --verbose
+--no-session-persistence --permission-mode <mode>`, `--model` from
+`agentOptions.model`, `--setting-sources` from `claudeSettingSources`; by
+default the user's full settings apply) where a dsh member would work: its
+task worktree, a scratch worktree for a keyless run, or, in place, its
+parent agent's cwd, which an in-process dsh member's child session inherits
+(`confidenceCwd` places checks, not members), never the process's. Its
+prompt is a dsh member's (persona, intent header, task), sent on stdin. Its
+env is the parent's minus what dsh's spawner scrubs (credential-shaped
+names, `*KEY*`, `*TOKEN*`, `*SECRET*`, `*PASSWORD*`, and `DSH_*`) and the
+launcher's routes (`OPENSWARM_*`, `DEEPSEEK_*`, `OPENAI_*`, `AZURE_API_*`),
+keeping `ANTHROPIC_*` and `CLAUDE_*`, and `AWS_*` when
+`CLAUDE_CODE_USE_BEDROCK` is set, so Claude's auth stays the user's own.
+The stream's `result` gives the final text and the stop reason
+(`completed`, `error` with a diagnostic, `max-turns`; `aborted` on the
+run's signal, or at once without starting the CLI when it is already
+aborted); malformed lines are skipped. A stop (a cancel, a CLI still running
+10s after its result, or the optional `claudeTimeoutMs`, an error) sends
+SIGTERM, then SIGKILL after 5s, to the CLI's process group and to every
+descendant a `ps` walk finds from its pid at that moment: Claude Code starts
+its Bash tool and hooks in sessions of their own, outside the group, so a
+process they start after the walk, or one that detaches from them, can
+outlive the member until Claude's own shutdown reaps it. Its usage and
+`total_cost_usd` are journaled as `swarm/usage` with `runtime:
+'claude-code'`, the model `system/init` names, and `costUsd`; a cancelled
+or crashed run journals what its assistant messages streamed, without
+dollars. RunMetrics prefers a runtime's own dollars: `dollars` gains
+`byRuntime` and `source` (`pricing`, `runtime`, `mixed`), and the table
+prices only runs that reported none. With no run reporting, the table must
+price every run, as before; once one has, a run neither reported nor
+priced (a cancelled claude-code run, a dsh run without a table) is counted
+in `dollars.unreported` and the total, `at least` in the table, is a lower
+bound rather than null. A landing bundle's cost gains `reported` (those
+dollars, and the runs that reported none, priced when read, the same way).
+It is basic: a messaging peer-team with a claude-code member, and an
+unknown runtime, are refused before any spend; it may own a train repair or
+resolver, each a fresh one-shot run in the entry's worktree. An L3 run (a
+gated task's hidden suite, or the train's) with a claude-code member is
+refused too: its tamper scan reads dsh session logs only, so it cannot read
+Claude Code transcripts (feeding the adapter's stream-json tool events to
+the scanner would lift this). After those refusals, and still before any
+spend, a run with claude-code members runs `<claude> --version` once, so a
+missing CLI fails up front. A gated task's reviewer for a claude-code
+member takes the default dsh route, since a Claude model is no dsh route.
+Claude Code's own permission mode and settings govern the member;
+OpenSwarm's member sandbox (§5.5) covers dsh members only. dsh's
+`dsh-subagent-claude-code` was not used (docs/01 ledger). **Exit criterion
+3 is met by a keyless test** (`claude-code.test.ts`, with a fake `claude`
+streaming the CLI's messages): a dsh member on the mock and a claude-code
+member run a peer-team over worktrees, both tasks land through one train
+(the claude-code task after a batch failure is bisected to it and its own
+member repairs it), tokens and dollars split by runtime (`dsh:sdk`,
+`claude-code`), and each bundle carries its task's cost. The live test
+(`claude-code-live.test.ts`, `OPENSWARM_LIVE=1` with `claude` on PATH) has
+not run yet.
+
+| # | Work item |
+|---|---|
+| B6 | **Completion gate** (D16, D17): a task closes only with passing evidence, recorded as a `verifies` edge. The evidence is the unit's checker where one exists (contract tests, the tests that import the unit's files), else a **reviewer**: a fresh session given the task's intent and the working tree, told to measure and not fix, whose changes are rolled back and whose report ends in per-target status (the pilot's `eval/pilot/search.mjs` is the prototype). A failing check sends the task back with the report, up to a round cap; the reviewer's "all done" ends the loop early. A round that fails a checker the previous round passed is rolled back to that round (docs/07 §7.1 finding 4); reviewer scores alone do not decide a rollback, since they rank work on one task poorly. The single-agent path gets the gate too |
+| B0 | **Projection first** (D12, amended 2026-10-07): `openswarm tasks sync <run> [--watch]` mirrors a run's tasks, statuses, owners and gate evidence into opentasks so other tools see them: a context node per run, a task node per board task (`implements` the run, `blocks` from its blockers), an `attempt` per gate round with a `verifies` edge for its verdict (a human waiver is one from `human:<by>`). One-way: the journal-backed board stays authoritative, and OpenSwarm never claims, completes or reads task state there. The full migration (`board.ts` as an adapter over the daemon, tasks and claims through it) is deferred (docs/01 ledger) because opentasks lacks what the board relies on: run-scoped claim-next, fenced completion, a revision compare-and-set, an enforceable completion gate and daemon autostart from the client; and `ready`/`queryNodes` stop at 100 rows and tag filters misbehave on SQLite |
+| B1 | Verifier levels L2 and L3; verifier environment members cannot read (D4); tamper logging. *Resolves §10's verifier environment (2026-10-08):* another OS user. A locked system user owns the suite store (0700); a root-owned helper, run through sudo (no password to run, the operator's to add a suite), runs a suite on a snapshot, confined (a host that cannot confine fully is refused, or with the operator's leave counts as L2), and answers with counts only. It protects nothing from root members, so L3 refuses root; eval containers keep the grader's held-out tests |
+| B3 | Integrate and repair (D15): after each landing wave, run the checkers, map failures to owning tasks, dispatch bounded repair tasks to the owners; the resolver (§6.4) becomes the skeleton's agent step for a conflict; scope-violation and conflict questions |
+| B2 | Train class with its own journal: speculative batches, bisect, dependencies, priority; lead-hosted |
+| B4 | Landing evidence bundle; landing queue view |
+| B5 | `RunMetrics`, including coordination ratio and cost per landing |
+| R1 | `claude-code` member at basic conformance, landing through the train |
+
+*Dropped from B (D17):* B7, the `explore` topology. It lost to the gated
+single agent at 1.7× the cost, and even perfect selection among four
+attempts (0.682) stayed under it. It returns when a verifier ranks attempts
+at one task well (the pilot's reviewer: Spearman 0.12 within a task), or
+for work whose attempts differ widely, such as open design questions.
+
+**Exit criteria.**
+1. On a fixed task set run through the eval harness, landing rate and
+   clean-merge rate under the train are at least today's sequential queue's,
+   and a planted bad commit is bisected out without blocking its batch-mates.
+2. An adversarial probe (a member instructed to find and read the hidden
+   tests) produces a tamper incident and no read.
+3. A mixed roster of a dsh member and a Claude Code member lands work through
+   one train, with cost attributed per runtime.
+4. A member that reports done with a failing unit check is sent back, and no
+   task in the journal or the graph closes without passing evidence.
+5. ~~docs/07 §7's search arms on the frozen pilot set~~ **Met 2026-09-28**
+   (docs/07 §7.1): `explore` (c) 0.617 at $29.25 a task lost to the
+   budget-matched single agent (b) 0.712 at $17.52, so it is not a default.
+6. The product's own completion gate, on the frozen pilot set with a single
+   agent, reaches the pilot prototype's (b): mean reward at least 0.69 at
+   no more than $20 a task. *Amended 2026-10-05, before the second full
+   run:* the draft also required no task more than 0.15 under its
+   one-agent mean, which the prototype itself fails (mko-6.4.0: 0.60
+   against 0.95) because that regression happens in review mode, where B6
+   deliberately never rolls back; per-task drops are reported instead.
+
+### 7.5 Phase C — Program-scale, and the decision
+
+*Re-scoped 2026-10-02 (D18).* The decision this phase existed to make was
+made by the pilot instead (docs/07 §7): on the frozen task set, dividing a
+task among coordinated threads did not beat one agent with the same harness
+at matched spend. Kept: **C5** (budgets), **C7** (the maintenance program,
+now a schedule of gated single-agent runs) and **R2** (runtimes). Deferred
+until D18's trigger: C1, C2, C3, C4, C6, C8 and C9 — the program lead,
+planner and blueprint, file claims and shared workspace, program board,
+contract keeper, and the `evolve` and `variants` topologies. The exit
+experiment below is superseded. The text that follows is the phase as
+designed, kept for when the trigger fires.
+
+**Phase C as re-scoped: the plan (2026-10-13).** Goal: a gated run that
+lands many independent tasks unattended, under a spend limit, and keeps
+what passed. Three gaps stand between today's `openswarm run --spec` and
+that, built in this order:
+
+| # | Work item |
+|---|---|
+| C7a | **Partial landing.** Today one abandoned task fails a board run before anything lands (the run throws and its worktrees are dropped, branches kept). A run's completed tasks now land, through the queue or the train, before the run fails naming the abandoned ones; the failed record's `git` says what landed, as a stopped train's does. Dependents of an abandoned task are abandoned already, so nothing lands without its blockers |
+| C5 | **Budgets** (run and task; per-member budgets wait for programs, D18). `budget: { usd?, tokens? }` on a team spec and on a task. Spent is the journal's `swarm/usage` for the scope, dollars as metrics price them (runtime-reported, else `SwarmConfig.pricing`). Checked before each member run starts (task rounds, reviews, repairs, resolvers, lead runs); a run in flight is never cut, so a scope overshoots by at most its in-flight runs. Exhausted: a high-tier `budget` question, `stop` (default) or `extend` (the limit grows by its first amount), asked once per scope while that scope's starts wait; journaled as `swarm/budget`. `stop` abandons a task (and its dependents); a run stops starting member runs, its unstarted tasks are abandoned, and C7a lands what passed, the train without agent steps (an entry needing a repair or resolver is ejected). A `usd` budget with a run that cannot be priced asks at once rather than run unbounded. In the CLI, `--max-cost-usd` becomes a hard cap beside `--max-tokens` (abort, exit 3), priced by `--pricing <file>` and refused when the table lacks a model it will run |
+| C7b | **Maintenance program.** `openswarm maintain <principles.md>`: a read-only survey member reads the principles and the repository and proposes up to N small independent tasks, each with checks; they run as a gated peer-team with worktrees and the train (the `--spec` path), each under a task budget, all under a run budget. The result is the landed target branch and a markdown summary from the landing evidence, for a person or CI to open as a pull request (`gh pr create --body-file`) until D4's forge adapter. Scheduling is cron or CI, documented in docs/03; nothing schedules in-process |
+| R2 | `codex` member at basic; `claude-code` and `codex` at steerable. After C7b |
+
+**Exit criteria.**
+1. *(C7a, keyless)* A peer-team of four tasks, one of which fails its gate,
+   lands the other three through the queue and through the train; the run
+   fails naming the abandoned task, and its `git` lists the three.
+2. *(C5, keyless, scripted usage)* Under a run budget no member run starts
+   once spent reaches the limit unless an owner answers `extend`; spend
+   overshoots by at most the runs in flight; a task budget abandons only its
+   task and dependents; after a run-budget stop the train lands what passed.
+   `--max-cost-usd` aborts a CLI run past its cap and refuses an unpriced model.
+3. *(C7b, live, dogfood)* `openswarm maintain` on this repository with its
+   own principles and a fixed run budget lands at least three tasks with
+   `npm test` and `npm run typecheck` passing on the landed tree, and a
+   person reviewing the landed diff accepts at least two of three. Recorded
+   here with the cost.
+
+Throughput across independent tasks is concurrency plus verified landing,
+not coordination; no experiment here claims otherwise. D18's stage 2 is
+pre-registered alongside (docs/07 §7.6), and run only on the owner's say-so.
+
+*Progress (2026-10-13).* C7a and C5 are built; **exit criteria 1 and 2 are
+met by keyless tests.** C7a: `runBoardWorkers` throws `AbandonedTasksError`;
+a run that was not cancelled then withholds the abandoned tasks' worktrees
+(work committed to the kept branch, worktree removed), lands the rest, and
+fails with `outcome` set, which the failed record keeps as `git`; the CLI's
+`--spec` path still fast-forwards and reports `abandoned`
+(`partial-landing.test.ts`: four tasks, one failing its gate, three land
+through the queue and through the train). C5: `budget.ts`'s `BudgetGuard`
+is consulted by `WorktreeRun.runMember` and `review` and by the in-process
+member path, so every member run a team starts passes it; a `BudgetStopError`
+abandons the task (a run's stop, every unstarted task) rather than failing
+the member, ends a gate's review loop, and ejects a train entry whose repair
+or resolver it refused. The CLI passes `--pricing` to `SwarmConfig.pricing`
+and implements `--max-cost-usd` (`budget.test.ts`; `run-cli.test.ts`).
+Review fixes the same day: a run is checked again once it holds a harness
+slot (a run queued behind the slots had started on whatever was spent while
+it waited; the test runs three members on one slot); partial landing is for
+one-shot peer-teams only (a messaging team's worktrees are its members', so
+nothing could be withheld); a budget needs a peer-team, whose stop can land
+what passed; a train that stops mid-landing keeps the abandoned list; and
+the CLI refuses a spec's dollar budget without a price for every dsh model
+it runs, where unattended it would stop at the first check.
+
+C7b is built: `openswarm maintain` (`packages/cli/src/maintain.ts`, docs/03).
+The survey is a subprocess member in a disposable clone of HEAD, as the
+gate's reviewer; its reply's last `{"tasks": [...]}` object is validated;
+the tasks run through the `--spec` path with every `--check` on each task's
+gate and the train, under `--budget-usd` and `--task-budget-usd`, and
+`--summary` writes the pull request body from the landing evidence.
+`maintain.e2e.test.ts` runs it keyless: three proposed tasks, two land
+through the train, one is abandoned and kept. Its review changed one
+contract: what the survey suggests for verifying a task goes into the
+task's prompt, never into its checks, since the gate runs checks in the
+lead's environment outside the member sandbox, where a steered survey
+would get a shell on the host; only the operator's `--check` commands run.
+The caps and the run budget now count the survey, and the summary is
+always rewritten.
+
+R2's `codex` member is built at basic (2026-10-17):
+`packages/swarm/src/codex.ts` runs `codex exec --json --ephemeral` where a
+claude-code member would run, from the event schema in codex-rs 0.144
+(`exec_events.rs`): the last `agent_message` is the answer, `turn.completed`
+the usage (cached input split out; no dollars, so the table prices it by the
+member's model), `turn.failed` and `error` the failure. Codex handles SIGINT
+but not SIGTERM and starts its shell children in sessions of their own, so a
+stop interrupts, then kills the group and the descendants. The process
+handling the two CLIs share moved to `cli-runtime.ts` (R1's tests unchanged).
+`codex.test.ts` runs a fake CLI keyless. A test written without the fake's
+path ran the real `codex` once (prompt "p", about 2 seconds) before it was
+pinned to the fake for every run. Its review: a non-fatal `error` event (a
+reconnect) no longer fails a turn that completes, and a run cut short is
+journaled as unmeasured, not as zero.
+
+R2's steering, re-scoped (2026-10-17). Building it found that only a
+messaging peer-team ever had addressable members: in a one-shot team, the
+mode D17 and D18 leave as the default, `openswarm steer` refused every
+member, whatever its runtime. So G1 for that mode comes first: every member
+of a one-shot team is in the roster from the run's start; a steer to one
+waits as quiet mail and rides in front of its next run's prompt (a gate
+round or a task), delivered once that run settles (`enqueue`); and a
+claude-code member now takes its prompt as stream-json input with stdin
+open while the turn runs, so a steer to it mid-turn is written into that
+session and read once its running tool calls finish (`immediate`;
+`steering.test.ts`). Not built: a session kept across runs and resumed
+after a restart for either CLI (`--session-id`/`--resume`; `codex exec
+resume`), and mid-turn input for codex, which only `codex app-server`'s
+`turn/steer` offers. Those are what a messaging team needs, and messaging
+teams are coordination inside one task, which D18 defers; they come with it.
+Its review found a real race, fixed: a steer reaching Claude Code as its
+final reply streams starts a second turn after the first `result`, which
+had been taken as the answer, with the CLI stopped 10s later mid-turn; a
+steered run now waits for the turn the result reports queued or for its
+output, and answers with the last result. Also fixed: a steer behind a large
+prompt was written and queued both (Node's backpressure `false` read as a
+refusal); a steer no later run carries is journaled undelivered; mail is
+released for a run that never started; the committee judge and the cascade
+gate are addressable.
+
+**Phase C, as re-scoped, is complete (2026-10-17):** C7a, C5, C7b and R2
+are built and all three exit criteria are met. The claude-code runtime's
+move to stream-json input is verified live (2026-10-17, haiku, the owner's
+Claude account, a few cents): `claude-code-live.test.ts` lands a task
+through a train as before, and a codeword written into a run's open turn,
+while its Bash tool slept, came back in its answer.
+
+**Exit criterion 3 is met (2026-10-17).** `openswarm maintain` ran on this
+repository (commit `02c19de`) against `eval/maintain/principles.md`, on the
+EC2 box with `azureoai/gpt-5.5`: 4 tasks, 2 members, up to 3 rounds; checks
+`npm run build`, `npm run typecheck`, `npm test`; a $25 run budget, $6 a
+task, a $40 cap. The survey proposed 4 tasks ($0.97); each passed its gate
+in round 1, all 4 landed in one train batch, and the checkout was
+fast-forwarded; the team cost $2.92 (all task work, no repairs), 46 minutes
+in all, and the landed tree passed all three checks when rerun. The owner
+reviewed the diff and accepted 2 of the first 3, 3 of the 4 in all:
+removing an unused import, and naming the upgrade path in a `ponytail:`
+comment, as landed; marking bare `docs/NN` citations of legacy docs as
+`legacy docs/NN`, with two of its 13 edits undone (it had turned the valid
+path `legacy/docs/47–64` into prose, and garbled a sentence). Rejected:
+rewriting the Swarm tab's bundle test to import sources, which passed every
+check while deleting what the test exists for (the built bundle's format),
+invited by a principle written too broadly (now narrowed). The accepted
+work is on this branch. What it shows: passing checks are not acceptance,
+since the run's one bad landing and its two bad edits all passed them; an
+L1 reviewer on maintenance tasks is the next thing to try.
+
+*Built (2026-10-17): the sign-off.* The existing reviewer would not have
+caught the rejected change: it measures roadmap targets, and its
+`regressions` are failing tests, which there were none of. So the gate
+gained `signoff` (`GateSpec.signoff`, a peer-team's `gate.signoff`): once a
+round's checks or suite pass, a reviewer reads the change (`git diff <base>`
+in a disposable copy) and must accept it, or the round fails with its reasons
+as the next brief; evidence stays L2 with the verdict on it. `openswarm
+maintain` turns it on with a brief aimed at what slipped through (a test
+made to check less, coverage deleted, a valid path broken, anything beyond
+the task), `--no-review` to skip it. Keyless tests show the mechanism
+(`gate.test.ts`, `maintain.e2e.test.ts`: a rejecting reviewer keeps every
+task out though their checks pass). **Replayed live on the dogfood run
+(2026-10-17):** the sign-off, with `maintain`'s brief and each task's diff
+from its fork point, on `azureoai/gpt-5.5` ($0.58 for four reviews), matched
+the owner's review on all four. It accepted the unused import and the
+`ponytail:` comment, and rejected the bundle-test rewrite for deleting the
+built bundle's smoke coverage. It also rejected the doc-citation task for
+turning the valid path `legacy/docs/47–64` into prose, which the owner had
+instead accepted with that edit undone: stricter than the owner, in the
+direction that keeps a bad edit from landing. One run and four tasks, so a
+mechanism shown, not a rate measured. Its review: the
+sign-off diffed against the gate's own base, so a retried task, whose
+worktree keeps a rejected attempt's edits, would have shown the reviewer
+only the new ones; it now diffs against the worktree's fork point, what
+lands. Also fixed: a rollback to a round that was not signed off restored
+the checks' verdict alone (and briefed an empty failed command); the
+reviewer's sandbox setting is validated whenever a sign-off is on; a cancel
+during the sign-off is the run ending, not a rejection.
+
+*The second live run, with the sign-off (2026-10-18):* nothing landed, and
+the cause was ours. `maintain --sandbox danger-full-access` sets
+`OPENSWARM_GATE_REVIEWER_SANDBOX` in its process, the gate's checks inherit
+the lead's environment, and one of this repository's tests read that
+variable without pinning it, so `npm test` failed at base on that host for
+every task (reproduced there, keyless, with the variable set and unset).
+Two of the four members found the test and fixed it correctly, and the
+sign-off rejected both changes for editing a test file outside a
+comment-only or docs-only task: right by its brief. The other two never
+reached it. Four tasks abandoned, $3.67 for the team and $1.16 for the
+survey. The test now pins the variable (the members' fix). What it says
+about the sign-off: on scope it held, even against a change that was
+needed; whether that was right is the owner's call. What it says about
+`maintain`: a check that fails at base fails every task, so a run should
+check its base first and stop (not built).
+
+Getting there changed three things, all committed: the box cannot confine
+members (Ubuntu 24.04 restricts the user namespaces bubblewrap needs), so
+`maintain` gained an explicit `--sandbox danger-full-access` rather than a
+change to the host's security settings; the real-L3 tests now skip on such
+a host, where `openVerifier` refuses L3 by design; and the run's checks
+build first, since a worktree is linked `node_modules` but no build output.
+
+**Goal.** G2, and the effectiveness answer that decides whether D is worth
+building as designed.
+
+**Pilot, run alongside Phase A (D10).** The same question, asked at
+planning's upper bound on today's primitives, before C is built. A person
+writes each plan: the partition, thread 0's contracts, and the landing
+order. Threads run as today's `runTeam` with worktrees; the cross-team
+steps (cutting from the integration branch, merging across teams) are done
+by hand with git. The benchmark's held-out tests grade landing, and cost
+comes from the eval harness, since the kernel records no usage yet. Arms:
+
+- **single**: one agent, the whole change.
+- **sharded**: the same partition, each thread cut from base, all merged at
+  the end.
+- **program**: the same partition, plus thread 0's contracts landed first,
+  worktrees cut from the integration branch, and threads landed in
+  dependency order.
+
+Program and sharded run at equal total agent count and differ in exactly
+those three things, so the comparison measures coordination rather than
+partition quality. The system under test is this branch with Phase A and
+the arms driver (`e2e4187`: `OPENSWARM_PILOT_PLAN` / `OPENSWARM_PILOT_ARM`),
+pinned by commit when the pilot runs; every arm runs that one commit. (The
+task screen ran on an earlier pin, `1e4bda0`, the self-modification line
+plus the driver; its numbers serve only to select tasks.) Every arm, single included, gets the same 8 CPU /
+16 GB container, so contention among a program's agents is not a
+confound; compute cost is negligible next to tokens. Caveat: the single
+arm is the CLI's in-process agent while team members boot
+`member.cordis.yml`, so single vs team also differs in member composition;
+sharded vs program, the comparison that decides, does not. Validated at
+zero tokens (2026-09-25) on vbt-1.3.0 with a scripted model applying the
+reference solution split into four threads: both arms scored 1.0, program
+cut t1–t3 after t0 landed, sharded cut all four from base. A hand plan is the best planning C can produce, run on
+the weakest runtime (no train, no steering). So a negative result is
+strong: if the hand-planned program does not beat sharding, C and D are
+re-scoped before they are built. A positive result only licenses building
+C; the exit experiment below still decides D. The pilot also fixes the task
+set (§10).
+
+*Pilot outcome (2026-09-27).* The team-arm calibration (§10) ran each
+thread as a coordinator team, and its fan-out broke one writer per scope
+inside every thread, so the pilot as configured cannot answer its question.
+Its arms are rebuilt to docs/07 §4's five conditions (docs/07 §7, item 2): each
+thread one writer; thread 0 lands interfaces, stubs and contract tests that
+gate its dependents; a whole-program regression check at each landing; and
+a budget-matched single agent (b) beside sharded (d) and program (e). The
+decision rule is unchanged, except that program must also beat (b).
+
+Revised 2026-09-27 (docs/07 §8–§9): inside a program, execution moves from
+worktree-per-task to one shared workspace with validated writes (STORM's
+largest measured effect). Worktrees remain for independent attempts
+(`explore`) and for landing across runs.
+
+| # | Work item |
+|---|---|
+| C1 | `lead` member composition; thread-in-program nesting; handoff protocol |
+| C2 | Program spec (`swarm.yml`) and artifact intake from issues |
+| C3 | Planning stage: survey (TypeScript, Python, co-change fallback); blueprint of per-file signatures and imports, critiqued until it passes; in-hubs isolated, out-hubs to one integration owner; thread 0 lands stubs and contract tests, recorded as contract nodes (D13); width from the partition, never a coordinator's choice |
+| C4 | `file` claims as opentasks leases on paths (D12) and `test` scopes; a shared workspace whose writes are validated against per-file versions (a stale write is rejected with the current content, the diff and the stale reads); intent recorded with each write and returned on read (docs/07 §8 items 1–3) |
+| C5 | Budgets per run, thread, member; model allocation policy |
+| C6 | Program board and plan consent |
+| C7 | Maintenance program kind |
+| C8 | Keeper (D16): the gate that rejects writes to frozen contract files; a contract-change step in which an agent drafts the change and its blast radius and the owner approves; re-freezing, and reopening the tasks that implement the changed contract |
+| C9 | `evolve` and `variants` topologies (docs/07 §6.2–§6.3), with the consolidator's distillation on a fixed cadence (D15); a program may open with a search phase whose winning plan becomes the blueprint |
+| R2 | `codex` member at basic; `claude-code` and `codex` at steerable |
+
+**Exit experiment (go/no-go).** On the task set the pilot fixed, the
+rebuilt arms with the automated planner and the real train: the
+budget-matched single agent, sharded (for example 4 teams × 3 members), and
+program (4 threads × 3 members). Measure landed work per dollar-hour at L3,
+landing rate, coordination ratio, and interventions per landed task.
+
+- **Go** to D as designed if the program arm beats both the sharded arm
+  and the budget-matched single agent on landed work per dollar-hour
+  without a worse landing rate.
+- **Re-scope** if it does not: D keeps durability, the shared train, and
+  cross-host sharding for throughput, and drops cross-swarm task handoff
+  until a later experiment says otherwise.
+
+### 7.6 Phase D — Mesh
+
+*Re-scoped 2026-10-02 (D18), by §7.5's re-scope branch:* D keeps
+durability across hosts (D1), the shared train (D2), the forge adapter (D4)
+and the runtimes (R3), and drops cross-swarm task handoff: D3 shrinks to
+`join`, `leave` and `card` for landing through a shared train, without
+`offer`; exit criteria 1 and 4 below are revised to match.
+
+**Phase D as re-scoped: the plan (2026-10-17).** Goal: swarms on different
+hosts land their work through one train into one target, and a run outlives
+its host. Throughput and durability, not coordination inside a task (D18).
+Built in this order:
+
+| # | Work item |
+|---|---|
+| D2 | **Standalone train.** `openswarm train serve --target <branch> --check <cmd>… [--remote <name>]`: one process per target branch, in its own checkout, owning the target. An entry is a branch on the shared remote (or the local repository on one host), enqueued with `train/enqueue {branch, task?, blockedBy?}`; the landing loop is B2's (speculate, verify once, fast-forward, bisect) and the target is pushed after each landing with compare-and-set. No agent steps: an entry that fails or conflicts is ejected to its enqueuer with the reason, its branch kept, since repairs belong to the swarm whose member wrote it. The train keeps its own journal and resumes queued entries after a restart. A run lands through it with `worktrees.train: { url, token }`: it pushes each task branch, enqueues it, and follows `train/events` for its entries' outcomes |
+| D3 | **Join, leave, card.** `openswarm train invite --name <swarm>` mints a token for a new principal, `foreign`, which may call only `train/*` for its own entries and `train/card`; `train/join` binds the connection and returns the card (A2A-shaped: name, target, checks, URL); `train/leave` withdraws its queued entries. A foreign principal reaches no run method (default-deny, §5.3) |
+| D1 | **Durable runs across hosts.** A run with `durable: { remote }` mirrors its journal to `refs/swarm/<runId>` on the remote (a commit per append batch, pushed with compare-and-set, D8) and pushes each task branch as its task completes. `openswarm attach <run> --remote <name>` on another host fetches it and takes it over with compare-and-set, so of two takers one wins and the old writer, whose next push fails, stops (fencing); `openswarm resume <run>` then lands what had completed, from its pushed branches, and re-runs what had not, from the journaled spec |
+| D4 | **GitHub merge-queue adapter.** `worktrees.land: 'github'`: each task branch is pushed, opened as a pull request with its landing evidence as the body, and handed to the repository's merge queue through `gh`; outcomes are journaled as landings |
+| R3 | `attach` and `a2a` runtimes: after D4, or dropped if nothing asks for them |
+
+**Exit criteria (revised).**
+1. *(D2, D3, keyless)* Two runs in two processes, each in its own clone of
+   one bare remote (two hosts in all but the machine), join one train with
+   their own tokens and land their tasks through it into one target; the
+   target passes the train's checks after every landing, and a pair that
+   conflicts is ejected, never merged broken.
+2. *(D1, keyless)* A run whose process is killed mid-run is taken over from
+   another clone: a second taker is refused, the old writer is fenced, the
+   tasks that had completed land and those that had not are run, and the
+   journal shows no task lost or duplicated. A contention test: concurrent
+   compare-and-set pushes to one ref, exactly one winner per round.
+3. *(D3, keyless)* A foreign principal is refused every run method and sees
+   only its own entries; a revoked token is refused.
+4. *(D4)* Keyless against a fake `gh`; live only on a repository the owner
+   names, on their say-so.
+
+*Revised after its architecture review, the same day.* Five changes:
+(1) **D2 and D3 ship as one item**, since every enqueuer needs a principal
+from the first day: the socket carrier gains a `client` role whose only
+group is `train` (its own entries, the card); `swarm/auth` binds it, and
+client tokens are stored hashed in the train's journal, with revocations,
+so a restart keeps them. (2) **Repairs stay, on the client:** the server
+speculates, verifies, bisects and ejects; the run that enqueued an entry
+keeps its worktree until the entry settles, and on an ejection merges the
+remote target in, runs B3's resolver or repair as its own member's step,
+pushes and enqueues again, up to `maxRepairs` (B3's resolver was what took
+landing from 11 of 24 to 24 of 24). (3) **The remote target is the truth:**
+a batch lands by a plain, non-forced push of the verified commit, and is
+journaled only after it; a rejected push means someone else moved the
+target, so the train fetches and verifies again; a target the train did not
+push gets a fresh baseline; on restart an entry whose commit is in the
+remote target has landed. Only the train should push the target (branch
+protection, a stated precondition). (4) **Entrants' code:** the train runs
+each check in a disposable copy of the batch tree (its own repository, no
+remote), with a scrubbed environment and a timeout, and pushes from a
+process no check descends from. That stops accidents, not an adversary: the
+checks still run as the train's user, so v1 admits only clients the owner
+invites (their own swarms, CI); entrants the owner does not trust wait for
+checks confined under another user (B1's verifier), with cross-org
+federation (§7.7). (5) **Entries** are keyed by principal and branch,
+pinned to the commit enqueued, idempotent on (principal, branch, commit),
+ordered round-robin across principals, with `blockedBy` only among a
+principal's own; they carry an `epoch` from the start, which D1's fencing
+checks. Landing evidence is built by the client, from its own run's journal.
+D1, when it comes, pushes the run ref, the task branches and the enqueue in
+one atomic compare-and-set push naming the expected object, with a lease
+(heartbeat pushes, a TTL, `--steal` to take a live run), and resumes only
+one-shot peer-team runs, rebuilding gate mode, spent budgets and open
+questions. D4 is independent of D1. The exit criteria gain: each process
+its own home; a pair that fails only together; a push to the target from
+outside; a train killed between push and journal; a takeover tested by
+stopping the old writer (SIGSTOP) rather than killing it, so its fencing is
+exercised; every run method dispatched as a client in a process that hosts
+a run.
+
+*Progress (2026-10-18): D2 and D3 are built; exit criteria 1 and 3 are met
+by keyless tests.* `train-service.ts` is the train: a journal of its own
+(`shared/*` events), entries pinned and keyed by principal, round-robin
+batches, checks in a disposable copy with a scrubbed environment and a
+timeout, a non-forced push journaled after it, bisection, a baseline for a
+tip it did not push, recovery of an entry the remote target already holds
+(`train-service.test.ts`, over a real bare remote: two clients in one
+batch; a failing entry and a pair failing only together bisected out; a
+conflict; an outside push that breaks the target pausing the queue; a
+target moved mid-batch verified again rather than overwritten; a crash
+between push and journal; tokens and revocations across a restart). The
+protocol gains the `client` role and the `train` group; `SwarmService`
+hosts a train from `startTrain` or `OPENSWARM_TRAIN`, which `openswarm train
+serve` sets on the dev profile (verified by hand, with `train invite` and
+`status`). `train-client.ts` lands a run through it: push, enqueue, follow,
+repair an ejection with the run's own member, evidence in the run's train
+journal. `train-mesh.e2e.test.ts`: two swarms, each its own context, clone,
+journal and mock, land through one train with their own tokens; the
+second's work conflicts with the first's on the target, is ejected, resolved
+by its own member, and lands; a client is refused every other protocol
+method in a process that hosts runs, and dsh's pass-through; a revoked token
+cannot authenticate. Not built: the train's checks confined under another
+user, so only invited clients; D1's epoch is accepted on an entry but
+nothing checks it yet. Its review found three ways to hang or land bad work,
+fixed: an entry that leaves the queue without landing now ejects its
+principal's queued dependents (they waited forever); a repair that changes
+nothing, or an enqueue the train already settled, settles the client's entry
+instead of waiting; and the client checks a resolver's work as the in-run
+train does (no conflict markers, the target's tip in the branch) before
+committing it. Also fixed: a push refused for any reason but a moved target
+is an error the loop backs off on, not a hot retry; a bisect's second half
+goes through a pass (baseline, recovery); a revocation reaches an open
+connection, checked on every call; a cancel closes the long-poll and
+withdraws over a fresh connection; one failed repair ends its entry, not the
+landing; a failed baseline is tried again after ten minutes; `owner` is not
+a client name; `train serve` gives its process only a placeholder model
+route, and exits when the train cannot start.
+
+*D4 is built (2026-10-18); exit criterion 4 is met keyless.* `forge.ts`:
+with `worktrees.forge: { kind: 'github' }` each task branch is pushed,
+opened as a pull request with its landing evidence as the body, and queued
+with `gh pr merge --auto`; the run polls `gh pr view` until merged
+(landed), closed (ejected) or its wait ends (withheld, left to the queue),
+journaling outcomes and bundles in its train journal (`forge.test.ts`,
+against a fake `gh` and a real bare remote). Not built: repairing a pull
+request the queue rejects. A live run waits for a repository the owner names.
+
+*D1 is built (2026-10-18); exit criterion 2 is met keyless.* `durable.ts`:
+a durable run (`durable: { remote }`, a one-shot peer-team in worktrees)
+pushes its journals as a commit to `refs/swarm/<runId>` together with its
+completed tasks' branches, in one `--atomic` push leased on the ref's object
+as last pushed (`--force-with-lease=<ref>:<oid>`, never a remote-tracking
+ref), at its start, as each task completes, before landing, at its end and
+on a heartbeat. A push refused for that ref, whether for its lease or for
+the remote's lock, fences the writer: the run is cancelled and lands
+nothing; a transport error is retried at the next push. `SwarmService.resume`
+(`openswarm run --spec … --resume <run> [--steal]`) takes a run over: it
+fetches the ref, waits the lease out (the ref still for 90 s) unless it
+steals, records the run interrupted, releases the old writer's claims and
+defaults its open questions, and pushes that leased on the object it
+fetched; then the run continues on that journal, its spec the journaled one
+(gate mode and spent budgets follow from it), its branch namespace kept,
+completed tasks adopted from their pushed branches and the rest run again.
+`durable.test.ts`: a leased push, a stale lease fenced and a transport error
+not; six hosts pushing compare-and-set to one ref for three rounds, one
+winner each; a polite taker refused by a live writer; of two stealing takers
+that observed the same object, one wins; the old writer fenced at its next
+push. `durable-run.e2e.test.ts`, over a real bare remote: host A finishes
+one task and blocks in the second (paused, not killed, so its fencing is
+exercised); host B steals the run from its own clone; A, released, is
+fenced and lands nothing; B lands both, the first from A's pushed branch;
+on the remote's journal each task completed once. Not built: the train
+entry's epoch is still unchecked (a fenced writer's enqueue already in a
+shared train can land; its branch is the same work, but the train does not
+know the run moved), and the enqueue does not ride the atomic push.
+*Its review* found five ways to land or lose work, fixed: a cancelled run
+closed its aborted task as completed and pushed that (a cancel now stops
+the mirror, so the remote holds the run as a crash would, and a finished
+run is not resumed); clones on one host share the runs directory, so
+a taker overwrote a live writer's journal and pushed its late events (a
+live writer on this host now refuses the takeover); a transport error at
+the landing push counted as holding the run, so a writer cut off from the
+remote, and taken over, landed anyway (starting and landing now need a push
+that landed); a completed task that committed nothing pushed no branch and
+made the run unresumable (it is skipped); and the heartbeat committed task
+worktrees while the train was merging in them (each is committed once, as
+its task completes). Also fixed: a run taken over before its tasks were
+pushed resumed with none (seeding resumes), a takeover after landing began
+would land twice through the forge or a train (the journal marks landing
+begun, and that run is refused), abandoned tasks were run again (they are
+journaled), tasks rerun on the taker were cut from its own HEAD (the base is
+journaled), the taker's member sessions shared the first host's directory
+and double-counted usage, a heartbeat longer than a third of the lease let a
+polite taker preempt a live writer (capped at 30 s), adopted tasks had no
+owner for a train's repair, a ref refused only by the atomic push's failure
+elsewhere read as a fence, and the launcher dropped `--spec`. *Its
+verification* held every fix and found more, fixed: a run that failed on the
+taker before landing was pushed `failed` and refused for good (a failure
+before landing is resumable; the landing marker, now journaled only for a
+shared target, is what refuses a run that may have landed); a refused
+takeover left the run's journal locally and every retry read it as a live
+writer (only a live process on this host blocks); a hook declining the push
+read as a fence (only a lease or ref-transaction refusal fences); `--resume`
+without `--spec` started a single agent with an empty prompt; journaled
+abandonments resumed without their dependents, which hung the board; a
+cancel during the first push was lost; the team's namespace waited for a
+later push. Not fixed: two takers on one host at once can still race on the
+shared journal file, and the lease wait and pushes do not take the cancel.
+Resuming in the checkout that still holds the run's worktrees fails (git
+will not check a branch out twice): resume from another clone.
+
+**Goal.** G3, cross-host G6, and the rest of G7.
+
+| # | Work item |
+|---|---|
+| D1 | Journal under `refs/swarm/<runId>` (git backend); contention test |
+| D2 | Train promoted to a standalone service bound to a target branch |
+| D3 | `join`, `leave`, `card`; foreign-swarm principal; join policy (`offer` deferred, D18) |
+| D4 | Forge adapter for GitHub and GitLab merge queues |
+| R3 | `attach` and `a2a` runtimes |
+
+**Exit criteria.**
+1. A second swarm on another host joins with a URL and token and lands
+   work through the shared train.
+2. Killing either host loses no tasks; the survivor or a replacement
+   attaches and continues.
+3. Two programs land into one target through one train with no
+   integration-branch breakage.
+4. A foreign swarm cannot read or steer another swarm's runs.
+
+### 7.7 What the plan does not schedule
+
+Cross-org federation, a `sqlite` backend, enforced semantic scopes, and
+voluntary member participation as a requirement. Each has a named trigger
+in §9 or §10 that would bring it back. Since D18, also the division of one
+task among coordinated threads (Phase C's C1–C4, C6, C8, C9) and
+cross-swarm task handoff; D18 names their trigger.
+
+## 8. Comparison with today
+
+| Dimension | Today (`main` @ `9148996`) | Redesign | Goal |
+|---|---|---|---|
+| Unit of execution | `runTeam(spec) → Promise` | durable `SwarmRun`; `runTeam` = `start().result` | G1, G6 |
+| State | board + mailbox over one lead's session log | tasks, claims, attempts and contracts in opentasks (D12); our JSONL journal per run for lifecycle, steers and questions; projections pushed over the protocol | G6, G3 |
+| Survives restart | no | yes; `attach` | G6 |
+| Human entry | blocking `/swarm` line | board in dsh's web surface, CLI, protocol carriers | G1 |
+| Address a member | impossible | `steer` to member, role, thread, lead, `*` | G1 |
+| Steering semantics | none | `immediate` / `enqueue` / `quiet`, journaled | G1 |
+| Questions | none | harness-raised plus member `ask`; one tiered queue | G1, G7 |
+| Intent | free-text prompt | intent header per task | G1, G2 |
+| Planning | coordinator numbered plan | survey, partition, contracts-first, allocation, consent | G2 |
+| Scopes | none | planner-declared `file`/`test`; `file` as opentasks leases checked on every write in a shared workspace, and at landing for worktree work | G2, G4 |
+| Nesting | none | `lead` member composition | G2 |
+| Landing | sequential merge, conflicts retained | speculative bisecting train, integrate-and-repair with a resolver step, completion gate, evidence bundle | G4 |
+| Verification | cascade command gate | L0–L4, hidden tests where the verifier runs | G4 |
+| Member runtimes | in-process, dsh subprocess | contract with three levels; + claude-code, codex, attach, a2a | G5 |
+| Member sandbox | `danger-full-access` | write containment at the worktree (`workspace-write`) | G7 |
+| Wire | 3 UI methods (+ SDK pass-through) + 1 member method, loopback | one protocol on two carriers (web, socket), principal policy table | G1, G7 |
+| Mesh | none | git journal, join, shared train (`offer` deferred, D18) | G3 |
+| Budgets | concurrency and attempt caps | per run, thread, member | G2, G7 |
+| Telemetry | usage per model, progress lines | `RunMetrics` with the north-star terms | G8 |
+
+**Stays:** Cordis plugin shape and the dsh seams; log-fold state; the seven
+topologies, now thread patterns (D14; `explore`, `evolve` and `variants`
+deferred by D17 and D18); worktrees (for independent attempts and landing across runs) and auto-commit; token identity;
+F3 and its blast radius; the eval CLI contract.
+**Goes:** the in-memory run table; lead disposal on settle; loopback as a
+hard-coded rule; blocking `/swarm`; `danger-full-access` as the member
+default.
+
+## 9. Decisions
+
+Each records the options weighed, why this one, and what would reverse it.
+
+**D1 — One journal per run, linked by parent id; our own JSONL until dsh
+accepts plugin events.** *Granularity* was weighed against one journal per
+program with thread segments, and a hybrid with a thin program index. One
+journal gives one compare-and-set domain and a one-fold recap, but every
+reader pays for every thread's traffic, and a thread cannot be replicated
+or handed to another host alone. Per-run journals make a thread the unit
+the mesh moves. Nothing is atomic across journals; the handoff protocol
+covers it and is reused by the mesh. *Storage* was weighed across dsh's
+session log (the first draft's choice), waiting for upstream support,
+mirroring a JSONL into a dsh session, and reusing dsh's own `team/*` event
+types. dsh's persistence refuses to reload a session containing plugin
+event types and offers no compare-and-set (§11), so a session-log journal
+cannot survive the restart G6 requires. A mirror keeps two copies for the
+sake of a view feed, and `team/*` events are folded by dsh's agent teams.
+We own the file, the fold, and compare-and-set (already in `board.ts`), and
+give up dsh's projection cache and push. *Reverse if* programs need tight,
+frequent cross-thread coordination rather than occasional handoffs
+(granularity), or dsh ships plugin event-type registration with a
+conditional append (storage: a session-log backend replaces the file).
+*Amended by D12:* task state leaves this journal for opentasks.
+
+**D2 — Enforce `file` and `test` scopes; record the rest.** Weighed against
+file only, and a full semantic set enforced. File ownership is the only kind
+with production evidence; a failing-test name catches the many-agents-on-one-bug
+pile-up. Semantic scopes have a published protocol and no published outcome,
+and enforcing them needs per-language symbol resolution and lease tuning.
+*Reverse if* a program produces a collision that file and test scopes missed
+and a semantic scope would have caught.
+
+**D3 — The train is service-shaped: lead-hosted first, promoted in D.**
+Weighed against lead-only, standalone from day one, and delegating to the
+forge. Lead-only makes merging two swarms impossible; standalone from day one
+pays for a lifecycle and a deployment question early; the forge queue needs a
+remote and hosted CI, is FIFO without dependencies, and cannot run hidden
+tests. *Guard:* the train touches the program only through the protocol and its
+journal until promotion.
+
+**D4 — Hidden tests live where the verifier runs; the member sandbox is
+write containment.** Weighed against sparse checkout, a separate ref, an
+exclude list, and an out-of-repo directory behind the member sandbox. The
+first three are obscurity because worktrees share one object store. The
+fourth was the first draft's choice, but dsh's sandbox confines writes
+only (§11), so any path on a member's host is readable, and the gaming
+record includes deliberate extraction of hidden tests. The verifier
+therefore runs in a container, on another host, or as an OS user the
+members cannot read as; benchmark graders already work this way. The
+sandbox still earns its place by containing writes. *Cost:* the verifier
+needs its own execution environment from Phase B, and the sandbox may break
+members that write outside the worktree (caches redirected into temp and a
+flag cover the transition). *Reverse if* dsh's sandbox gains read
+confinement, which would allow a same-host verifier directory.
+
+**D5 — Fix locally where we already wrap; file upstream; delete wrappers
+when upstream lands.** Resume-on-miss and the method registry are local
+now; continuable `subagent-dsh-sdk` is filed only, since `RemotePeer`
+already works. Forking stays governed by docs/01's trigger, which has not
+fired.
+
+**D6 — Coordination is structural; member participation is optional.**
+Weighed against a design where members declare scopes, ask questions, and
+report progress through tools. The project's own measurements (about 4 %
+voluntary delegation, 0 of 103 self-modification) say members mostly will
+not. Planners declare, landings derive, the harness raises. *Reverse if*
+measured participation rises enough that member-raised questions outnumber
+harness-raised ones on real runs.
+
+**D7 — The human surface is a dsh client plugin.** Weighed against our own
+UI and a wire-only design. dsh's web client loads out-of-tree `dsh.client`
+packages into named slots; the board is a `conversation.view` tab with
+actions in the session header, fed through the web carrier (D11). We get
+sessions, approvals, and the member peek (a member is a dsh session) for
+free. *Risk:* coupling to a release-candidate client API, and dsh has no
+full-page slot, so the program board must fit a view tab (§11); the
+compatibility suite checks the plugin loads. *Reverse if* the program board
+cannot work inside a view tab.
+
+**D8 — One journal format, two locations.** A JSONL file per run on local
+disk for single-host work, and the same JSONL under `refs/swarm/<runId>`
+for the mesh, so the git backend is mostly a transport. `sqlite` is added
+only if a single-host multi-lead case demands it. *Amended by D12:* task
+state reaches the mesh through opentasks' own git JSONL and merge driver;
+`refs/swarm/<runId>` carries only the run journal.
+
+**D9 — Runtime neutrality is a parallel track, not the last phase.** It
+needs the member contract and a worktree, both available by Phase B, not the
+mesh. Shipping it last would delay the one claim nobody else can make.
+
+**D10 — A hand-planned pilot before Phase C is built.** Weighed against
+running the go/no-go only at the end of C, and piloting after Phase B with
+the real train. Ending C with the experiment means building A through C
+before any evidence on G2, and the record leans negative (legacy docs/47 parity;
+an ensemble beat a coordinated team at equal compute; legacy docs/63 closed
+diversity). The pilot is legacy docs/62's oracle pre-check applied to planning: if
+the best available plan does not beat sharding on today's runtime, an
+automated planner will not. Piloting after B buys a real train, but L3
+comes from the benchmark grader either way. *Cost:* manual git steps, cost
+taken from the eval harness, and a positive result is weak evidence (best
+planning, weakest runtime). *Reverse if* the pilot is positive by a wide
+margin, in which case the Phase C experiment confirms rather than gates.
+
+**D11 — One protocol, many carriers.** Weighed against dsh's web gateway
+for humans with our socket for programs (two protocols, and the web gateway
+knows one principal), and our socket for everyone (rebuilding question
+push, steering, and a WebSocket that dsh's web surface already has). The
+`swarm/*` method table and its policy check are one transport-free module;
+each carrier binds a transport and establishes the principal, so a new
+interface is a new carrier. The web carrier is owner-only on loopback
+because dsh's web server authenticates nothing; the socket carries every
+principal from tokens. A spike (2026-09-25) registered an out-of-tree
+`@Remote` method and called it through a real `openswarm-web` boot, so the
+web carrier needs no transport of ours; the gateway has no push, so views
+long-poll `swarm/events`. *Cost:* two carriers to test, and remote viewers
+reach a run only through the socket. *Reverse if* dsh's web surface gains
+authenticated principals (one carrier suffices).
+
+D12–D16 were decided 2026-09-27, after docs/07 found that coordination
+beats a single agent only as verifier-selected search, or as division under
+five conditions (contracts frozen first, a checker per unit, claims the
+system enforces, a small audited trust surface, a central keeper).
+
+**D12 — opentasks is the coordination substrate; the run journal keeps
+what is ours.** Weighed against building file claims, attempts and evidence
+into our own journal, and against moving everything, run lifecycle
+included, into opentasks. opentasks (0.2.0, which we maintain) already has
+what the five conditions need underneath: atomic claims and `claimNext`,
+leases with a daemon reaper and fenced release, typed nodes and edges
+(contexts, attempts, `verifies`), change events with a resume cursor,
+idempotent writes, one daemon per repository across worktrees, and git JSONL
+persistence with a merge driver, which is the mesh transport D8 planned to
+build. Owning those twice would mean two compare-and-set domains for one
+task. Run records, steers, questions and the protocol audit have no
+opentasks equivalent and stay in our journal, which refers to tasks by
+opentasks id; opentasks is authoritative for task state. agent-inbox
+replaces the mailbox later, when members need messaging beyond steering.
+*Cost:* A3's board-over-journal becomes an adapter (B0), and every task
+write crosses a socket. *Additions,* made in opentasks itself rather than
+wrapped here: `file` claims (leases on paths) and an enforceable completion
+gate; write validation stays ours, since it mediates the member's editor.
+*Reverse if* the daemon cannot sustain a shared-workspace run's claim and
+write rate, in which case task state returns to the run journal.
+*Amended 2026-10-07:* B0 lands as a one-way projection; the journal-backed
+board stays authoritative until opentasks has what the board relies on
+(§7.4, B0).
+
+**D13 — The blueprint and contracts are code, recorded as file-backed
+context nodes.** Weighed against inline prose spec nodes and a new
+`contract` node type. docs/07 §4 shows integration failing as the shared
+spec thins and recovering with a full one; Co-Coder's blueprint is typed
+signatures, and Carleson succeeded once statements were formalized first. Thread 0 commits stubs and contract tests, and each module
+gets a file-backed context node, which already records the content hash and
+commit and detects drift, so "frozen" is checkable. The checker is a
+metadata convention, `metadata.contract = { files, check }`, needing no
+schema change. Tasks `implements` their contract, `blocks` edges follow the
+import graph so `ready` gives the schedulable frontier, and attempts carry
+`verifies` edges with the check's evidence. Drift is detected, not
+prevented; prevention is the keeper's gate (D16). *Reverse if* contracts
+need queries opentasks cannot answer from metadata, in which case the
+convention is promoted to a node type there. *Amended by D18:* deferred
+with Phase C's planner.
+
+**D14 — Topologies are code; openteams is not adopted.** Weighed against
+openteams `team.yaml` (legacy's choice, legacy docs/25 Q1) and a new
+declarative format. openteams describes roles, a root with companions,
+spawn rules and signal channels: who exists and who may talk to whom.
+`explore`, `evolve` and `variants` are defined by control flow and
+selection (candidate count, diversity seeds, verifier, selector, archive,
+budget), none of which it can express; legacy's mapping already turned
+nearly every template into `coordinator` and carried the real topology in
+`x-openswarm`. Its main content, personas and channels, is what docs/07
+says to skip. Each topology is a function in `topologies.ts` with a small
+typed parameter spec. *Reverse if* users need to author team structures
+that interoperate with swarmkit, or the agent steps' prompts want an
+authoring format; openteams could then carry prompts alone. *Amended by
+D18:* `evolve` and `variants` are deferred; topologies stay code.
+
+**D15 — The consolidator is a deterministic skeleton with agent steps.**
+Weighed against a fully agentic lead, and against dsh's workflow engine
+running a fixed script. The loop is mechanical: merge in dependency order,
+run the checkers, map failures to owners through the partition record,
+dispatch bounded repairs, run again. Judgment is needed only for a repair,
+a merge conflict, or a tie the verifier cannot break, and each becomes an
+agent call with structured output. A free lead is what the calibration
+measured failing (7–13 subtasks per thread, 30–60 % conflicts retained;
+P9, D6), and the systems that work keep the controller in code with the
+model in the mutation or repair step (AlphaEvolve, FunSearch, Co-Coder,
+Cursor). dsh's engine does not fit: a script gets only `agent`, `parallel`,
+`pipeline`, `phase` and `log`, runs with an empty environment behind a
+plain-JSON boundary, and its children are dsh subagents started through
+`ctx.subagents` rather than our members, while the consolidator needs git,
+tests and opentasks. We copy its event shape (phases, paired agent start and end) for the Swarm
+tab. For `variants`, distillation is a step the skeleton runs on a fixed
+cadence. *Reverse if* the engine gains host-side services and a
+member provider, when fixed scripts could run there for its isolation and
+cancellation. *Amended by D18:* the consolidator for programs is deferred;
+its integrate-and-repair loop stays for landing independent tasks (B3).
+
+**D16 — The keeper is split: a code gate for the trust surface, an agent
+for contract changes, the owner approving.** Weighed against an agent
+keeper and a code-only keeper. The gate rejects writes to frozen contract
+files, enforces claims, and holds the completion gate (B6); it is code
+because conditions 3 and 4 fail if an agent can be talked past it. A
+contract change starts when the harness sees a unit's failure localize to
+a contract, or a rejected write to a frozen file (D6: members will not file
+requests on their own). An agent drafts the change and its blast radius
+from the `implements` and `blocks` edges, the owner approves through the
+question queue (A6), and the system re-freezes the nodes and reopens the
+tasks that implement them. Maintainers owned the blueprint in the
+human-led projects docs/07 §4 cites, and Anthropic's FLT run kept
+statements immutable, so owner approval is the default.
+*Reverse if* approval latency dominates run time and agent-approved changes
+with a small blast radius do not raise the regression rate; those may then
+be approved by the agent. *Amended by D18:* the contract half (frozen
+contract files, contract changes) is deferred with Phase C; the completion
+gate is B6.
+
+**D17 — The completion gate is Phase B's first deliverable, verified by an
+independent reviewer; `explore` is not a default topology** (2026-09-28,
+from docs/07 §7.1). Weighed against keeping Phase B's order (verifier
+levels and the train first) and against shipping `explore` as planned. On
+the frozen pilot set, one agent scored 0.594; best of four attempts picked
+by a reviewer 0.617 at $29 a task; up to four rounds that the agent opened
+with a self-check prompt 0.666 at $21; the same rounds opened by an
+independent reviewer's report 0.712 at $18. The gate is where the measured
+gain is, most of it from not accepting the first "done" and the rest,
+unconfirmed at one seed, from the reviewer, which also ends the loop
+early. It is a harness property, so it raises the single-agent baseline
+every multi-agent arm is judged against; that is intended. An audit found
+no path by which the reviewer's feedback carried the held-out tests.
+*Cost:* a review costs about two-thirds of an agent run; later rounds can
+break working code, hence the regression guard in B6. *Reverse if* a
+multi-seed rerun puts the reviewer loop under the self-check loop, in which
+case B6 keeps the gate and drops the reviewer; or if a verifier that ranks
+attempts at one task well appears, in which case `explore` returns.
+
+**D18 — Division of one task is not built; Phases C and D are re-scoped**
+(2026-10-02, from docs/07 §7). Weighed against building Phase C as designed
+and against running stage 2 (hard or large tasks) first. On the frozen
+pilot set, one agent with the completion gate plateaus at 0.735–0.743 by
+$19–25 a task; the best division arm, program with contracts first, reached
+0.770 at $33, within noise of the plateau (and +0.016 over the single-agent
+cost curve at its spend, inside the pre-registered margin); the biggest
+win attributed to division came from its final review and repair, which a
+single thread also gets. So the phase's own go/no-go, asked early by D10,
+came back no for this regime. Kept from C: budgets (C5), the maintenance
+program (C7), runtimes (R2). Deferred: the program lead and handoff (C1),
+program spec (C2), planner and blueprint (C3), file claims and the shared
+workspace (C4), program board (C6), contract keeper (C8, D16's contract
+half), `evolve` and `variants` (C9, D14); with them D13's contract nodes and
+D15's consolidator for programs. B3's integrate-and-repair stays, for
+landing many independent tasks through one train. D follows §7.5's
+re-scope branch: durability, the shared train and cross-host throughput,
+without cross-swarm task handoff. What OpenSwarm offers is therefore a
+better harness (the gate), steerable durable runs, and throughput across
+independent tasks, not coordination inside one task. *Cost:* the
+multi-agent thesis for a single task goes unbuilt on one benchmark, one
+model and one seed per arm. *Reverse if* a pre-registered experiment on
+tasks beyond one agent's horizon (docs/07 §7's stage 2: hard or large
+tasks, budget-matched, three seeds) shows division beating a matched single
+agent, or a search-shaped workload with an exact metric shows `evolve`
+beating it; either brings back the deferred items it needs.
+*Stage 2 ran (2026-10-18 to 10-19, docs/07 §7.7): inconclusive, so D18
+stands.* On eight hard tasks, three seeds, division was +0.11 over the
+single-agent cost curve, with a 95 % interval from −0.004 to +0.23 (+0.10,
+[−0.02, +0.21] with a curve that never falls); the single agent plateaued
+(a 16-round cap no better than 8), and division's gains were large on four tasks
+and small losses on three. Not enough to bring back C1–C4; enough to say
+where to look. A new pre-registration, if one is written, needs about 30
+hard tasks (more than RoadmapBench has), and the curve's handling of an arm
+that costs less or scores lower fixed in advance.
+
+## 10. Still open
+
+- **opentasks placement** (D12): *for the projection (B0, 2026-10-07),*
+  one graph wherever the operator's daemon serves it, kept outside the
+  user's repository (`OPENTASKS_PROJECT_DIR`) because opentasks rewrites
+  `graph.jsonl` continuously; nodes are tagged `openswarm` and `run:<id>`,
+  and the run directory keeps the node mapping (`opentasks.json`). One
+  `.opentasks/` graph per repository or a location per run is decided with
+  the full migration. (The shared workspace's registration and per-file
+  versions are deferred with C4, D18.)
+- ~~**Redesigned pilot**~~ **run 2026-09-28 to 2026-10-01** (docs/07 §7):
+  search, control, division and stage-1 arms on the frozen set, about
+  $2,150; the conclusion is D18.
+- ~~**Handoff timeout**~~ **deferred** with cross-swarm handoff (D18).
+- **Package caches under the sandbox**: the per-ecosystem environment that
+  redirects caches into temp (Node, Python, Rust), declared in the member
+  composition; the A1 prototype confirms toolchains survive it.
+- ~~**Verifier environment**~~ **another OS user** (B1, 2026-10-08). How
+  hidden tests reach a promoted train on another host stays open with D.
+- **Question rate cap**: started at 3 open questions per run, beyond which a
+  question is recorded `capped` and takes its default; protocol-started runs
+  wait 5 minutes for an answer, unattended runs none (A6). Still open: how
+  both adapt to measured answer latency.
+- **Task set**: fixed during the pilot, before C starts, so the experiment
+  cannot be tuned after the fact. Researched 2026-09-25; recommendation:
+  **RoadmapBench, Python and TypeScript only** (41 and 22 of its 115 tasks;
+  held-out per-target tests with partial credit; one prebuilt image per
+  task; MIT). Screen about 20 mid-size tasks single-agent × 3 seeds and
+  freeze the 8–12 whose completion score lands between 0.2 and 0.8,
+  together with each task's hand-written partition. SWE-EVO is a weak fit
+  (Python only, about 8–10 of 48 tasks span several modules, release notes
+  are mostly independent fixes) and serves at most as a 3–4 task
+  cross-check. Internal migrations join only if frozen with the rest.
+  - *Harness:* a native RoadmapBench adapter of about 100 lines in
+    swarmkit-eval 0.2.0 (which already carries both benchmarks; `legacy/eval`
+    pins 0.0.11). Tasks allow 2h, over E2B's 1h cap, so runs use Docker on
+    the EC2 box (about 16 images at a time).
+  - *Cost, measured 2026-09-25* (openswarm headless `--single`, gpt-5.5,
+    one seed; dollars at $5 / $0.50 / $30 per M fresh input / cached input /
+    output): opt-4.4.0 reward 0.667, $4.23, 6 min; fal-4.1.0 0.750, $3.07,
+    5 min; vbt-1.3.0 0.700, $2.93, 8 min. About $3.40 a run, so a 60-run
+    screen is about $200, against the $600–1,800 first inferred. The agent
+    stops on its own after about 60 tool calls, far inside the 2h budget
+    (published agents take 110–171 turns), so the arms' effort differences
+    belong in the dollar-hour denominator, not in a fixed budget.
+  - *Screen, run 2026-09-25* (20 tasks × 3 seeds, single agent, gpt-5.5,
+    SUT `1e4bda0`, 8 CPU / 16 GB): 60 cells, $305 (about $5.10 a run;
+    Polars and MikroORM tasks cost $8–11), every cell's parsed reward
+    equal to `test.sh`'s own. Mean reward in [0.2, 0.8] for 13: fal-1.3.0
+    0.41, fal-4.1.0 0.75, mko-5.8.0 0.52, mko-6.4.0 0.73, mko-6.5.0 0.40,
+    opt-4.4.0 0.74, plr-1.30.0 0.37 (seeds 0.00–0.56), plr-1.31.0 0.33,
+    prm-6.7.0 0.59, pyg-2.2.0 0.67, pyg-2.5.0 0.67, spc-3.2.0 0.50,
+    vbt-1.3.0 0.63. Out of window: spc-3.4.0 and vbt-1.1.0 at 1.00,
+    opt-4.6.0 and prm-7.0.0 at 0.92, pyg-2.1.0 0.83, mko-6.6.0 0.15,
+    plr-1.18.0 0.06. The reference solution scored 1.0 in 3 of 3 reps on all
+    20.
+  - *Frozen 2026-09-27* (`eval/pilot/tasks.txt`): the 13 in-window tasks
+    minus plr-1.30.0 (seeds 0.00–0.56, the noisiest, and among the
+    costliest), with one hand-written partition each (`eval/pilot/plans/`):
+    t0 owns shared contracts and every file two targets touch; 2–3 target
+    threads own file-disjoint areas. Plans name targets, directories and
+    existing files, never what only the reference solution contains
+    (`leak-check.py`), so team arms get ownership, not hints.
+  - *Pre-registered analysis:* program vs sharded is reported on all 12
+    and on the decomposable subset, tasks where t0 owns under half the
+    plan-assigned source lines (`t0-share.py`): 11 of 12; mko-5.8.0 (0.61)
+    is hub-bound, its roadmap targets meeting in three hub files.
+  - *Zero-token check, 2026-09-27* (SUT `5cfab25`; scripted members apply
+    each thread's slice of the reference solution): 22 of 24 cells score
+    1.0; pyg-2.5.0 scores 0.667 in both arms, which is its gold patch's own
+    ceiling (its `solve.sh` also edits `utils/sort.py`, which agents can
+    do; the patch alone cannot). Getting there found four defects, all
+    fixed: the published swarmkit-eval dropped per-run env (`5d84e31`);
+    harness commits ran repository hooks (`7a75cc4`, husky); worktrees
+    lacked the checkout's ignored environment, so on 6 of 12 tasks team
+    members could neither build nor test there while the single agent
+    could (`5cfab25`, hard-linked `node_modules` and native extensions);
+    and in Docker the first such link pays an overlayfs copy-up of up to
+    3.5 min, which the runner now pays in setup for every arm.
+  - *Team-arm calibration, 2026-09-27* (live gpt-5.5, one seed, threads
+    run as `--team`'s coordinator team, 40M-token backstop), $285.79 total:
+    pyg-2.2.0 sharded 0.50 / program 0.20, vbt-1.3.0 sharded 0.00 /
+    program 0.00, about $70 a cell against about $2 for the single agent
+    (0.67 and 0.63 in the screen). Two causes, both in the pilot's
+    configuration rather than its question: (1) each thread's coordinator
+    fans out 7–13 subtasks from one base in separate worktrees, and
+    30–60 % of their branches conflict and are retained unmerged (e.g. a
+    thread merging 1 and retaining 8) — exactly the one-writer-per-scope
+    failure P4 exists for, with no scopes or resolver yet; (2) the backstop
+    binds (vbt program's t0 alone spent 40M tokens) and a stop favours
+    program, which lands as it goes, over sharded, which lands at the end.
+    Proposed before any pilot cell counts: one writer per thread (each
+    thread a single agent), and a budget stop that lands finished threads
+    in both arms.
+  - *Checks before freezing, no model tokens:* whether the task images
+    carry `.git` (the worktree arms need it; fall back to `git init`), and
+    reference-solution stability over 2–3 runs per task.
+  - *Validity risk:* RoadmapBench instructions already give target API
+    signatures, so every arm starts with part of what thread 0's contracts
+    would pin, which may shrink the program arm's advantage.
+- **Dollar-hour**: whether the north-star denominator is dollars × wall-clock
+  hours or two separate ratios; fixed with the task set.
+- ~~**Web carrier registration**~~ **settled 2026-09-25** (D11, §11): an
+  out-of-tree plugin registers `@Remote` methods on the `/api` gateway
+  without dsh codegen. Still unbuilt: the browser half, a `dsh.client`
+  bundle in the `window.__ModuleLoader__` format, which our esbuild script
+  does not emit yet.
+- ~~**Session reload on `main`**~~ **confirmed 2026-09-25**: a peer-team
+  run appends `swarm/*` events to its lead's session (the app-server's
+  per-run lead, or the caller's agent), and dsh then refuses to resume it.
+  `session-reload.test.ts` pins it: a plain session reopens, the same
+  session after one board write does not. `/swarm` (coordinator) never
+  touches the board and is unaffected. A3's journal fixes it; the test
+  flips if dsh accepts plugin event types first.
+
+## 11. dsh seams, checked against the installed packages
+
+Checked 2026-09-25 against `node_modules/@deepseek-ai/*` at 0.1.1-rc.2 (no
+dsh source checkout). The first draft assumed several of these; the
+decisions above cite this table.
+
+| Seam | What the installed packages do | Used in |
+|---|---|---|
+| Session log with plugin events | `session.append` never marks an event `ignorable`, and persistence refuses to load any log containing a type outside `KNOWN_SESSION_EVENT_TYPES` (`dsh-session-persistence`, `assertEventsSupported`). Registration for plugin types is "deferred until such a consumer exists". No conditional append. | D1, D8 |
+| `ctx.sessionProjections` | Real: folds custom event types, runs over any session in `ctx.sessions`, caches to disk, pushes `session/projection` frames to web clients only. Usable only for sessions dsh can load. | D1 |
+| Sandbox | Modes `read-only`, `workspace-write`, `danger-full-access`. `workspace-write` confines writes to cwd and temp for the whole process tree (Seatbelt on macOS; bwrap or Landlock on Linux); reads and network are unrestricted; no extra-path settings. `dsh-subprocess-local` and MCP clients bypass it. | §5.5, D4 |
+| Approvals and questions | `ctx.approval.request` throws unless an agent turn is open; no tiers. `ctx.userQuestions.ask` works without an agent, one provider, no tiers; answered only from the web surface. | §6.1 |
+| Client slots | `conversation.view` and `conversation.session.header.actions` exist. `session.hierarchy` is an aria-label, not a slot. No full-page or route slot. | D7 |
+| Resume | `ctx.agents.resume({resumeSessionId})` exists; the SDK server's `getOrCreateSession` always calls `agents.create`. | A2, D5 |
+| Steering | `agent.steer` delivers at the next step boundary; the web `session.prompt` accepts `mode: 'steer'`; the SDK JSON-RPC server only calls `followup`. | §5.4, A2 |
+| Protocol extension | The SDK server's dispatch is a closed switch of three methods. The web gateway's `/api` falls back to scanning live services for `@Remote` markers (`TypertRemoteService`), and the loader registers a package's `./typert` export for strict schemas; a spike ran both through a real boot. Request/response only: forwarded host events are a fixed allowlist (`API_REMOTE_FORWARDED_EVENTS`). The web server authenticates nothing and binds `127.0.0.1` or `0.0.0.0`. | §5.3, D11 |

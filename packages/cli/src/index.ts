@@ -22,19 +22,51 @@
  * real spine; usage folds from `assistant/message` session events per member
  * session, attributed to models via the tier list.
  */
-import { mkdtempSync, writeFileSync, readFileSync, mkdirSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { mkdtempSync, writeFileSync, readFileSync, readdirSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import * as LlmOpenAi from 'openswarm-llm-openai'
 import * as LlmAnthropic from 'openswarm-llm-anthropic'
-import SwarmService, { type CascadeResult, type CoordinatorResult, type MemberSpec } from 'openswarm-swarm'
+import SwarmService, {
+  AbandonedTasksError,
+  hiddenSuite,
+  memberEnvOf,
+  openVerifier,
+  recordToolEvents,
+  refuseRootForL3,
+  reviewMemberConfig,
+  runGate,
+  runMemberProcess,
+  targetStatuses,
+  activeVerifier,
+  type CascadeResult,
+  type CoordinatorResult,
+  type FanoutSpec,
+  type GateEvidence,
+  type GateResult,
+  type GateRound,
+  type MemberSpec,
+  type PeerTeamSpec,
+  type Pricing,
+  type RunHandle,
+  type SwarmUsageEvent,
+  type WorktreeTeamOptions,
+  type DurableConfig,
+} from 'openswarm-swarm'
+import { withSnapshotClone } from 'openswarm-git'
 import * as PluginAuthoring from 'openswarm-plugin-authoring'
 import * as Spine from '@deepseek-ai/dsh-agent-spine-demo'
 import * as SessionPersistenceJsonl from '@deepseek-ai/dsh-session-persistence-jsonl'
 import * as Subagent from '@deepseek-ai/dsh-subagent'
 import * as SpawnInProcess from '@deepseek-ai/dsh-subagent-spawn-in-process'
+import { ARMS, loadPlan, runPilot, type Arm, type Plan } from './pilot'
+
+export { runControl } from './control'
+import { pricingOf } from './control'
+import { MAINTAIN_USAGE, runMaintain } from './maintain'
 
 const plug = (m: unknown): any => (m as any).default ?? m
 
@@ -58,7 +90,7 @@ interface LegacySpec {
 }
 
 /** Legacy UsageTotals field names (readTeamUsage contract). */
-interface UsageTotals {
+export interface UsageTotals {
   inputTokens: number
   outputTokens: number
   cacheReadInputTokens: number
@@ -86,7 +118,7 @@ const emptyUsage = (): UsageTotals => ({
  * - anything else → the generic OpenAI-compatible route
  *   (OPENSWARM_LLM_BASE_URL/KEY — LiteLLM, mock, any Bearer endpoint).
  */
-interface Route {
+export interface Route {
   route: string
   model: string
   adapter: 'openai' | 'anthropic'
@@ -94,7 +126,7 @@ interface Route {
   apiKeyEnv?: string
 }
 
-function routeOf(model: string): Route {
+export function routeOf(model: string): Route {
   if (model.startsWith('azureoai/')) {
     const base = process.env['AZURE_API_BASE']
     if (base === undefined || base.length === 0) {
@@ -120,7 +152,7 @@ function routeOf(model: string): Route {
  * `--single "do the thing"` swallow the prompt, which fails as a missing task
  * rather than as a parse error.
  */
-const BOOL_FLAGS = new Set(['headless', 'single', 'team', 'self-modify'])
+const BOOL_FLAGS = new Set(['headless', 'single', 'team', 'self-modify', 'gate', 'no-review', 'steal'])
 
 function parseArgs(argv: string[]): Map<string, string> {
   return splitArgv(argv).args
@@ -133,7 +165,7 @@ function parseArgs(argv: string[]): Map<string, string> {
  * via indexOf) silently drops a prompt word that happens to repeat an earlier
  * token — the prompt is the task, so that corrupts the run rather than failing it.
  */
-function splitArgv(argv: string[]): { args: Map<string, string>; positional: string[] } {
+export function splitArgv(argv: string[]): { args: Map<string, string>; positional: string[] } {
   const args = new Map<string, string>()
   const positional: string[] = []
   for (let i = 0; i < argv.length; i++) {
@@ -176,15 +208,18 @@ export async function runCli(argv: string[], io: CliIo = processIo): Promise<num
   // positional. openSwarmSpec.flags() emits no verb, so requiring one made every
   // harness cell exit 2 on the usage message — a well-formed run, zero tokens.
   const rest = command === 'run' ? argv.slice(1) : argv
-  const isRun = command === 'run' || (!isCascade && command !== 'topology' && rest.some((a) => !a.startsWith('--')))
-  if (!isCascade && !isRun) {
+  const isMaintain = command === 'maintain'
+  const isRun = !isMaintain && (command === 'run' || (!isCascade && command !== 'topology' && rest.some((a) => !a.startsWith('--'))))
+  if (!isCascade && !isRun && !isMaintain) {
     io.err(
       `usage: openswarm topology cascade --spec <file> [--output <file>] [--trace-output <file>]\n` +
-        `       openswarm run --output-format json --model <m> [--single|--team] "<prompt>"`,
+        `       openswarm run --output-format json --model <m> [--single|--team|--spec <file>] "<prompt>"\n` +
+        `       ${MAINTAIN_USAGE.slice('usage: '.length)}`,
     )
     return 2
   }
   try {
+    if (isMaintain) return await runMaintain(argv.slice(1), io)
     if (isRun) return await runHeadless(rest, io)
     return await runTopologyCascade(parseArgs(argv.slice(2)), io)
   } catch (error) {
@@ -266,6 +301,8 @@ export interface BootOptions {
    * anyone but itself.
    */
   selfModify?: boolean
+  /** `--pricing`: what a run's budgets and metrics price usage at (`SwarmConfig.pricing`, docs/05 C5). */
+  pricing?: Pricing
 }
 
 /**
@@ -331,7 +368,7 @@ export async function bootHarness(opts: BootOptions): Promise<HarnessBoot> {
   ctx.plugin(plug(SessionPersistenceJsonl), { root: sessionRoot, compression: 'none' })
   ctx.plugin(plug(Subagent))
   ctx.plugin(plug(SpawnInProcess), { providerName: 'spawn' })
-  ctx.plugin(SwarmService, {})
+  ctx.plugin(SwarmService, opts.pricing === undefined ? {} : { pricing: opts.pricing })
   if (opts.selfModify === true) ctx.plugin(plug(PluginAuthoring), {})
 
   await new Promise<void>((resolve) =>
@@ -356,14 +393,8 @@ export async function bootHarness(opts: BootOptions): Promise<HarnessBoot> {
       totals = emptyUsage()
       usageBySession.set(session.id, totals)
     }
-    totals.inputTokens += usage.inputTokens ?? 0
-    totals.outputTokens += usage.outputTokens ?? 0
-    totals.cacheReadInputTokens += usage.cacheReadTokens ?? 0
-    totals.cacheWriteInputTokens += usage.cacheWriteTokens ?? 0
-    totals.calls += 1
-    totals.totalTokens =
-      totals.inputTokens + totals.outputTokens + totals.cacheReadInputTokens + totals.cacheWriteInputTokens
-    opts.onUsage?.(foldTeam(usageBySession), turnCount)
+    addUsage(totals, usage)
+    opts.onUsage?.(foldTeam(usageBySession.values()), turnCount)
   })
 
   const first = routes[0]!
@@ -394,10 +425,60 @@ function textBlocksOf(output: readonly any[]): string {
     .join('')
 }
 
-/** Fold every session's usage into one team total. */
-function foldTeam(usageBySession: Map<string, UsageTotals>): UsageTotals {
+/** Add one `assistant/message` usage record (dsh field names) to a running total. */
+function addUsage(totals: UsageTotals, usage: any): void {
+  totals.inputTokens += usage.inputTokens ?? 0
+  totals.outputTokens += usage.outputTokens ?? 0
+  totals.cacheReadInputTokens += usage.cacheReadTokens ?? 0
+  totals.cacheWriteInputTokens += usage.cacheWriteTokens ?? 0
+  totals.calls += 1
+  totals.totalTokens =
+    totals.inputTokens + totals.outputTokens + totals.cacheReadInputTokens + totals.cacheWriteInputTokens
+}
+
+/**
+ * Fold token usage out of worktree members' session logs (ported from
+ * eval/adapter.mjs, c1299b2).
+ *
+ * A worktree member is a SUBPROCESS: its `assistant/message` events go to the
+ * child's own session, so `session/event` in this context never sees them and
+ * the live fold reports zero for a run that plainly called the model. We choose
+ * the members' session root, so read it back. It is disjoint from the lead's
+ * in-process root, so the two sums never double count.
+ */
+export function foldSessionLogs(root: string): UsageTotals {
+  const totals = emptyUsage()
+  let files: string[]
+  try {
+    files = readdirSync(root, { recursive: true, encoding: 'utf8' })
+  } catch {
+    return totals
+  }
+  for (const file of files) {
+    if (!file.endsWith('.jsonl')) continue
+    let raw: string
+    try {
+      raw = readFileSync(join(root, file), 'utf8')
+    } catch {
+      continue
+    }
+    for (const line of raw.split('\n')) {
+      let event: any
+      try {
+        event = JSON.parse(line)
+      } catch {
+        continue // blank, or a torn final frame from a killed member
+      }
+      if (event?.type === 'assistant/message' && event.data?.usage !== undefined) addUsage(totals, event.data.usage)
+    }
+  }
+  return totals
+}
+
+/** Fold per-session usage into one team total. */
+function foldTeam(sessions: Iterable<UsageTotals>): UsageTotals {
   const team = emptyUsage()
-  for (const totals of usageBySession.values()) {
+  for (const totals of sessions) {
     for (const key of [
       'inputTokens',
       'outputTokens',
@@ -405,6 +486,7 @@ function foldTeam(usageBySession: Map<string, UsageTotals>): UsageTotals {
       'cacheWriteInputTokens',
       'totalTokens',
       'calls',
+      'costUsd',
     ] as const) {
       team[key] += totals[key]
     }
@@ -412,12 +494,338 @@ function foldTeam(usageBySession: Map<string, UsageTotals>): UsageTotals {
   return team
 }
 
+/** The coordinator team `--team` runs; plan mode runs one per thread. */
+function coordinatorSpec(task: string, agentOptions: { provider: string; model: string }, workers: number) {
+  return {
+    topology: 'coordinator' as const,
+    coordinator: { name: 'coordinator', agentOptions },
+    workers: Array.from({ length: workers }, (_, i) => ({ name: `worker-${i}`, agentOptions })),
+    task,
+  }
+}
+
+/**
+ * Plan mode (docs/05 pilot): `--plan <file> --arm <name>`, or the env pair for
+ * the reason OPENSWARM_SELF_MODIFY exists. swarmkit's `openSwarmSpec.flags()`
+ * always emits `--single` or `--team`, so an env-selected plan supersedes them;
+ * only the explicit flags conflict.
+ */
+function pilotOf(args: Map<string, string>, selfModify: boolean): { plan: Plan; arm: Arm } | undefined {
+  const planPath = args.get('plan') ?? (process.env['OPENSWARM_PILOT_PLAN'] || undefined)
+  const arm = args.get('arm') ?? (process.env['OPENSWARM_PILOT_ARM'] || undefined)
+  if (planPath === undefined && arm === undefined) return undefined
+  if ((args.has('plan') || args.has('arm')) && (args.has('team') || args.has('single'))) {
+    throw new Error('--plan/--arm cannot be combined with --team or --single')
+  }
+  if (planPath === undefined || arm === undefined) {
+    throw new Error('plan mode needs both a plan (--plan or OPENSWARM_PILOT_PLAN) and an arm (--arm or OPENSWARM_PILOT_ARM)')
+  }
+  if (!(ARMS as readonly string[]).includes(arm)) throw new Error(`unknown arm "${arm}" (expected ${ARMS.join(' | ')})`)
+  // The authoring plugin mounts in THIS process; plan-mode members are subprocesses it never reaches.
+  if (selfModify) throw new Error('--self-modify has no effect on plan-mode members; refusing a no-op arm')
+  return { plan: loadPlan(planPath), arm: arm as Arm }
+}
+
+/** A team spec file: a peer-team or fanout spec plus its run's worktree options, and its remote when durable (docs/05 D1). */
+interface TeamSpecFile {
+  spec: PeerTeamSpec | FanoutSpec
+  worktrees: Partial<WorktreeTeamOptions>
+  durable?: DurableConfig
+}
+
+/**
+ * A headless team (docs/05 B2 exit criterion 1): `--spec <file>`, or
+ * OPENSWARM_TEAM_SPEC for the reason OPENSWARM_SELF_MODIFY exists. The file is
+ * a `peer-team` or `fanout` TeamSpec with its run's `worktrees` options beside
+ * it (`train`, `member`, …; the repo is always the workspace). An env-selected
+ * spec supersedes the `--single`/`--team` swarmkit always emits; only the
+ * explicit flags conflict.
+ */
+function teamSpecOf(args: Map<string, string>, selfModify: boolean, planned: boolean): TeamSpecFile | undefined {
+  const path = args.get('spec') ?? (process.env['OPENSWARM_TEAM_SPEC'] || undefined)
+  if (path === undefined) return undefined
+  if (args.has('spec') && (args.has('team') || args.has('single'))) throw new Error('--spec cannot be combined with --team or --single')
+  if (planned) throw new Error('a team spec (--spec / OPENSWARM_TEAM_SPEC) cannot be combined with plan mode')
+  // As in plan mode: the authoring plugin mounts in THIS process, and the members are subprocesses.
+  if (selfModify) throw new Error('--self-modify has no effect on team-spec members; refusing a no-op arm')
+  const { worktrees = {}, durable, ...spec } = JSON.parse(readFileSync(path, 'utf8'))
+  if (spec.topology !== 'peer-team' && spec.topology !== 'fanout') {
+    throw new Error(`team spec ${path}: topology must be peer-team or fanout (got ${JSON.stringify(spec.topology)})`)
+  }
+  if (!Array.isArray(spec.members) || spec.members.length === 0 || !Array.isArray(spec.tasks)) {
+    throw new Error(`team spec ${path}: needs members and tasks`)
+  }
+  if (durable !== undefined && typeof durable?.remote !== 'string') throw new Error(`team spec ${path}: durable needs a remote`)
+  return { spec, worktrees, ...(durable === undefined ? {} : { durable }) }
+}
+
+/** Whether a team spec runs anything on dsh: a dsh member, or a gate's reviewer (a CLI member's takes the dsh route too). */
+function needsDshRoute({ spec }: TeamSpecFile): boolean {
+  return spec.members.some((m) => (m.runtime ?? 'dsh') === 'dsh') || (spec.topology === 'peer-team' && spec.gate !== undefined && spec.gate.review !== false)
+}
+
+/** The branch checked out (`''` on a detached HEAD) and its commit. */
+export interface CheckoutState {
+  branch: string
+  head: string
+}
+
+export function checkoutState(workspace: string): CheckoutState {
+  return {
+    branch: spawnSync('git', ['symbolic-ref', '-q', 'HEAD'], { cwd: workspace, encoding: 'utf8' }).stdout.trim(),
+    head: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: workspace, encoding: 'utf8' }).trim(),
+  }
+}
+
+/**
+ * Bring a team's landed result into the workspace: fast-forward the branch
+ * that was checked out when the run started to the target branch, only when
+ * that branch is still checked out at the commit it was on (never a detached
+ * HEAD or another branch), the workspace is clean, and nothing the
+ * fast-forward writes is an ignored file there (git would overwrite it
+ * without a word). Says what happened, a refusal included; the landed result
+ * stays on the target branch either way.
+ */
+export function fastForward(workspace: string, target: string, start: CheckoutState): string {
+  const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  if (spawnSync('git', ['rev-parse', '--verify', '-q', `refs/heads/${target}`], { cwd: workspace }).status !== 0) return 'nothing landed'
+  const refuse = (why: string) => `refused to fast-forward: ${why}; the landed result is on ${target}`
+  if (start.branch === '') return refuse('the workspace was on a detached HEAD')
+  const now = checkoutState(workspace)
+  if (now.branch !== start.branch) return refuse(`${start.branch} is no longer checked out`)
+  if (now.head !== start.head) return refuse(`${start.branch} moved during the run`)
+  if (git(workspace, 'status', '--porcelain').trim() !== '') return refuse('the workspace is not clean')
+  // Paths from the top, where ls-files lists the whole checkout's ignored files (collapsed to their directories).
+  const top = git(workspace, 'rev-parse', '--show-toplevel').trim()
+  const changed = git(top, 'diff', '-z', '--name-only', '--no-renames', 'HEAD', target).split('\0').filter(Boolean)
+  const ignored = git(top, 'ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--directory').split('\0').filter(Boolean).map((e) => e.replace(/\/$/, ''))
+  const clobbered = changed.find((path) => ignored.some((e) => path === e || path.startsWith(`${e}/`) || e.startsWith(`${path}/`)))
+  if (clobbered !== undefined) return refuse(`it would overwrite ${clobbered}, which is ignored in the workspace`)
+  try {
+    git(workspace, 'merge', '--ff-only', '-q', target)
+    return 'fast-forwarded'
+  } catch (error) {
+    return refuse(`not a fast-forward (${oneLine(String((error as any)?.stderr || (error as Error).message))})`)
+  }
+}
+
+/**
+ * The completion gate (docs/05 B6): `--gate [--gate-rounds N] [--gate-check
+ * "<cmd>"]... [--gate-level N] [--gate-suite <name>]`, or the OPENSWARM_GATE*
+ * env for the reason OPENSWARM_SELF_MODIFY exists. Checks make it L2; without
+ * any an independent reviewer measures each round (L1), under the
+ * workspace-write sandbox unless OPENSWARM_GATE_REVIEWER_SANDBOX=
+ * danger-full-access says otherwise (for hosts that cannot sandbox). A suite
+ * makes it L3 (docs/05 B1): the verifier's hidden suite accepts, and the
+ * checks or the reviewer give feedback only. `--gate-level` declares the
+ * minimum, refused when nothing configured reaches it. B6a gates the
+ * single-agent path only, and only in a git work tree, since the gate
+ * snapshots through git.
+ */
+function gateOf(
+  argv: string[],
+  args: Map<string, string>,
+  workspace: string,
+  planned: boolean,
+  io: CliIo,
+): { maxRounds?: number; commands?: string[]; minLevel?: 1 | 2 | 3; suite?: string; reviewerSandbox: string } | undefined {
+  const GATE_FLAGS = ['gate-rounds', 'gate-check', 'gate-level', 'gate-suite']
+  if (!args.has('gate') && process.env['OPENSWARM_GATE'] !== '1') {
+    // A gate option that silently does nothing is the no-op arm again.
+    if (GATE_FLAGS.some((flag) => args.has(flag))) throw new Error(`${GATE_FLAGS.map((f) => `--${f}`).join(', ')} need --gate`)
+    // Env may be shared across arms, so only warn: an arm that set these but
+    // not OPENSWARM_GATE=1 would otherwise run ungated without a word.
+    const stray = ['OPENSWARM_GATE_ROUNDS', 'OPENSWARM_GATE_CHECK', 'OPENSWARM_GATE_LEVEL', 'OPENSWARM_GATE_SUITE'].filter((name) => process.env[name])
+    if (stray.length > 0) io.err(`openswarm: ${stray.join(' and ')} set without OPENSWARM_GATE=1; this run is not gated`)
+    return undefined
+  }
+  if (args.has('team') || planned) {
+    throw new Error(
+      "the gate (--gate / OPENSWARM_GATE=1) covers only the single-agent path; it cannot be combined with --team, plan mode or a team spec (gate a spec's peer-team with its own `gate`)",
+    )
+  }
+  const rounds = args.get('gate-rounds') ?? (process.env['OPENSWARM_GATE_ROUNDS'] || undefined)
+  if (rounds !== undefined && !/^[1-9]\d*$/.test(rounds)) {
+    throw new Error(`--gate-rounds must be a positive integer (got "${rounds}")`)
+  }
+  // Every --gate-check, not just the last (splitArgv keeps one value per
+  // flag): several checks are what make the regression guard reachable. Read
+  // with splitArgv's rule, so a following flag is no value. The env form is
+  // one check per line.
+  const flagged = argv.flatMap((a, i) => {
+    const next = argv[i + 1]
+    return a !== '--gate-check' ? [] : [next === undefined || next.startsWith('--') ? '' : next]
+  })
+  const listed = process.env['OPENSWARM_GATE_CHECK']?.trim()
+  const checks = flagged.length > 0 ? flagged : listed ? listed.split('\n') : []
+  if (checks.some((check) => check.trim() === '')) {
+    throw new Error('an empty --gate-check (or blank line in OPENSWARM_GATE_CHECK) checks nothing; give each a command')
+  }
+  const reviewerSandbox = process.env['OPENSWARM_GATE_REVIEWER_SANDBOX'] || 'workspace-write'
+  if (reviewerSandbox !== 'workspace-write' && reviewerSandbox !== 'danger-full-access') {
+    throw new Error(`OPENSWARM_GATE_REVIEWER_SANDBOX must be workspace-write or danger-full-access, not "${reviewerSandbox}"`)
+  }
+  const suite = args.get('gate-suite') ?? (process.env['OPENSWARM_GATE_SUITE'] || undefined)
+  if (suite !== undefined && !/^[a-z0-9-]{1,64}$/.test(suite)) throw new Error(`--gate-suite takes a suite name, 1-64 of [a-z0-9-] (got "${suite}")`)
+  const level = args.get('gate-level') ?? (process.env['OPENSWARM_GATE_LEVEL'] || undefined)
+  if (level !== undefined && !/^[123]$/.test(level)) {
+    throw new Error(`--gate-level is 1 (reviewer), 2 (checks) or 3 (hidden suite); L4, external CI, is not built (got "${level}")`)
+  }
+  if (level === '3' && suite === undefined) throw new Error('--gate-level 3 needs the hidden suite to run: --gate-suite <name>')
+  if (level === '2' && checks.length === 0 && suite === undefined) throw new Error('--gate-level 2 needs checks: --gate-check "<cmd>"')
+  // Fail before any spend: root reads the store, so a hidden suite hides nothing from it.
+  if (suite !== undefined) refuseRootForL3()
+  let inside = false
+  try {
+    inside = execFileSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: workspace, stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString()
+      .trim() === 'true'
+  } catch {}
+  if (!inside) throw new Error(`the gate needs a git work tree to snapshot, and ${workspace} is not in one`)
+  return {
+    ...(rounds === undefined ? {} : { maxRounds: Number(rounds) }),
+    ...(checks.length === 0 ? {} : { commands: checks }),
+    ...(level === undefined ? {} : { minLevel: Number(level) as 1 | 2 | 3 }),
+    ...(suite === undefined ? {} : { suite }),
+    reviewerSandbox,
+  }
+}
+
+/**
+ * What one piece of gate evidence told the agent, as `gate_round` fields: the
+ * reviewer's per-target verdicts (with what it could not run) and regressions
+ * as given, the checks that failed, or the hidden suite's counts.
+ */
+function verdictJson(e: GateEvidence) {
+  return {
+    ...(e.targets === undefined ? {} : { targets: targetStatuses(e.targets) }),
+    ...(e.regressions === undefined ? {} : { regressions: e.regressions }),
+    ...(e.failedCommands === undefined ? {} : { failed: e.failedCommands }),
+    ...(e.kind !== 'hidden' ? {} : { suite: e.suite, enforcement: e.enforcement }),
+    ...(e.kind !== 'hidden' || e.total === undefined ? {} : { total: e.total, failedTests: e.failed }),
+    ...(e.refused === undefined ? {} : { refused: e.refused }),
+    ...(e.error === undefined ? {} : { error: e.error }),
+  }
+}
+
+/** A text's whitespace-collapsed head, for a one-line progress report. */
+const oneLine = (text: string, max = 160): string => text.replace(/\s+/g, ' ').trim().slice(0, max)
+
+/** Target statuses in the order a reader wants them counted. */
+const STATUSES = ['done', 'unverifiable', 'partial', 'missing', 'broken']
+
+/**
+ * One gate round as a human-readable line, for stderr. The harness keeps only
+ * the head of stdout, which tool_use_start lines fill, so live runs lost the
+ * gate_round JSONL; this line carries what the agent was told.
+ */
+function gateRoundLine(round: GateRound): string {
+  const e = round.evidence
+  if (e.tamper !== undefined) {
+    return `gate: round ${round.round} L3 tamper incident — not measured (${[...new Set(e.tamper.map((t) => `${t.signal} in ${t.where}`))].join(', ')})`
+  }
+  if (round.round > 1 && !round.changed) return `gate: round ${round.round} changed nothing — stopping`
+  if (e.error !== undefined) return `gate: round ${round.round} ${e.kind === 'hidden' ? 'hidden suite' : 'review'} unavailable — ${oneLine(e.error)}`
+  if (e.kind === 'hidden' && e.total === undefined && e.enforcement !== undefined) {
+    return `gate: round ${round.round} L3 hidden suite ${e.suite} — not run as L3 (enforcement ${e.enforcement}: the verifier could not confine it)`
+  }
+  if (e.kind === 'hidden') {
+    const counts = e.refused !== undefined ? `snapshot refused: ${oneLine(e.refused, 120)}` : e.passed ? `${e.total} of ${e.total} passing` : `${e.failed} of ${e.total} failing`
+    const f = round.feedback
+    const fed = f === undefined ? '' : f.error !== undefined ? '; feedback review unavailable' : `; feedback ${evidenceLine(f)}`
+    return `gate: round ${round.round} L3 hidden suite ${e.suite} — ${e.passed ? 'passed' : 'not passed'} (${counts}, enforcement ${e.enforcement}${fed})`
+  }
+  return `gate: round ${round.round} ${evidenceLine(e)}${round.rolledBack === true ? ' (rolled back)' : ''}`
+}
+
+/** L1 or L2 evidence in a few words: what accepted below L3, or the feedback at it. */
+function evidenceLine(e: GateEvidence): string {
+  const details: string[] = []
+  if (e.kind === 'review') {
+    const statuses = (e.targets ?? []).map((t) => String(t?.status))
+    const counted = [...STATUSES, ...new Set(statuses.filter((s) => !STATUSES.includes(s)))]
+      .map((status) => [status, statuses.filter((s) => s === status).length] as const)
+      .filter(([, n]) => n > 0)
+    if (counted.length > 0) details.push(counted.map(([status, n]) => `${n} ${status}`).join(', '))
+    // What the reviewer could not run here, which a pass on unverifiable targets rests on.
+    for (const t of e.targets ?? []) {
+      if (t?.status === 'unverifiable') details.push(`${t.target} unverifiable: ${oneLine(t.notes ?? '', 80)}`)
+    }
+    const regressions = typeof e.regressions === 'string' ? e.regressions : JSON.stringify(e.regressions)
+    if (regressions !== undefined && !/^\s*none\.?\s*$/i.test(regressions)) details.push(`regressions: ${oneLine(regressions, 120)}`)
+  } else if (e.failedCommands !== undefined) {
+    details.push(`failed: ${e.failedCommands.map((c) => oneLine(c, 80)).join(', ')}`)
+  }
+  const what = e.kind === 'review' ? `review score ${e.score ?? 'unparsed'}` : 'checks'
+  return `L${e.level} ${what} — ${e.passed ? 'passed' : 'not passed'}${details.length === 0 ? '' : ` (${details.join('; ')})`}`
+}
+
+/** The gate's outcome as a human-readable line, for stderr. */
+function gateResultLine(result: GateResult): string {
+  const n = result.rounds.length
+  const rounds = `${n} round${n === 1 ? '' : 's'}`
+  if (result.accepted) return `gate: accepted at L${result.level} after ${rounds}`
+  if (result.reason === 'tamper') return `gate: stopped — a tamper incident in round ${n}`
+  if (result.reason === 'hidden suite unconfined') return `gate: stopped — the verifier could not confine the hidden suite (OPENSWARM_VERIFIER_ALLOW_PARTIAL=1 runs it as L2)`
+  if (result.reason !== undefined) return `gate: stopped — ${result.reason}: ${oneLine(result.rounds.at(-1)?.evidence.error ?? '')}`
+  return `gate: not accepted at L${result.level} after ${rounds}`
+}
+
+/**
+ * Why this host cannot confine a process under workspace-write, or undefined
+ * when it can: the harness's own sandbox provider confines `true` once, as a
+ * member's would (no Seatbelt, bwrap or Landlock, e.g. in plain Docker).
+ */
+export function sandboxUnavailable(ctx: any): string | undefined {
+  try {
+    const { argv } = ctx.sandbox.confine(['true'], { mode: 'workspace-write', workspaceRoot: tmpdir() })
+    const probe = spawnSync(argv[0], argv.slice(1), { encoding: 'utf8' })
+    return probe.status === 0 ? undefined : probe.stderr || probe.error?.message || `exit ${probe.status}`
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error)
+  }
+}
+
+/**
+ * How plan-mode members reach the model. They are worktree subprocesses booted
+ * from member.cordis.yml, not this stack: one OpenAI-compatible route named
+ * `openai` (hence that provider name even for Azure), configured by env. The
+ * SDK spawner scrubs KEY/TOKEN/DSH_* names from the inherited env, so the key
+ * and model travel explicitly.
+ */
+export function memberRouteOf(route: Route): { agentOptions: { provider: string; model: string }; env: Record<string, string> } {
+  if (route.adapter !== 'openai') {
+    throw new Error(
+      `"${route.model}" cannot run as a worktree member (plan mode, the gate's reviewer): members only speak the OpenAI-compatible route`,
+    )
+  }
+  const baseURL = route.baseURL ?? process.env['OPENSWARM_LLM_BASE_URL']
+  const key = route.apiKeyEnv === undefined ? undefined : process.env[route.apiKeyEnv]
+  return {
+    agentOptions: { provider: 'openai', model: route.model },
+    env: {
+      ...(baseURL === undefined ? {} : { OPENSWARM_LLM_BASE_URL: baseURL }),
+      ...(key === undefined ? {} : { OPENSWARM_LLM_API_KEY: key }),
+      DSH_MODEL: route.model,
+    },
+  }
+}
+
+/** How often plan mode re-reads member logs to enforce `--max-tokens`/`--max-turns`. */
+const CAP_POLL_MS = 5_000
+
 /**
  * `openswarm run --output-format json --model <m> [--single|--team] "<prompt>"`
  *
  * The eval entry point: one task, headless, JSONL on stdout for the harness
  * adapter's `openSwarmParse`. `--single` (the default) runs one agent over the
- * tool stack; `--team` runs the coordinator topology.
+ * tool stack, and with the gate (`gateOf`) only closes on passing evidence,
+ * one `gate_round` line per round; `--team` runs the coordinator topology;
+ * plan mode (`pilotOf`) runs a plan's threads as coordinator teams in
+ * worktrees (./pilot.ts); a team spec (`teamSpecOf`) runs a peer-team or
+ * fanout as worktree members, lands it (through the train when its
+ * `worktrees.train` says so), fast-forwards a clean workspace to the result,
+ * and reports it in a `team_note` line with the run's metrics.
  *
  * Every terminating path emits `message_stop` — the parser sets its `sawResult`
  * flag ONLY from that line, so a run that exits without one is indistinguishable
@@ -426,7 +834,9 @@ function foldTeam(usageBySession: Map<string, UsageTotals>): UsageTotals {
 export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
   const { args, positional } = splitArgv(argv)
   const prompt = positional.join(' ').trim()
-  if (prompt.length === 0) throw new Error('a task prompt is required')
+  // A resumed run's tasks are its journal's (docs/05 D1).
+  const resume = args.get('resume')
+  if (prompt.length === 0 && resume === undefined) throw new Error('a task prompt is required')
   const model = args.get('model')
   if (model === undefined) throw new Error('--model is required')
 
@@ -437,43 +847,89 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
   // eval Arm carries `scaffold.env` but cannot add a CLI flag — the harness
   // spec's `flags()` is fixed across arms.
   const selfModify = args.has('self-modify') || process.env['OPENSWARM_SELF_MODIFY'] === '1'
-  if (args.has('max-cost-usd')) {
-    // Silently ignoring a spend cap is the one failure mode worse than refusing
-    // the run: the caller believes spending is bounded when it is not.
-    throw new Error('--max-cost-usd is not supported yet; cap with --max-tokens instead')
-  }
   const maxTokens = numericArg(args, 'max-tokens')
   const maxTurns = numericArg(args, 'max-turns')
+  const maxCostUsd = numericArg(args, 'max-cost-usd')
+  const pilot = pilotOf(args, selfModify)
+  const team = teamSpecOf(args, selfModify, pilot !== undefined)
+  if (resume !== undefined && team?.durable === undefined) throw new Error('--resume takes the run\'s team spec (--spec) with its durable remote')
+  // The dollar cap (docs/05 C5) prices every dsh token at the route's model and
+  // adds what claude-code members reported. A cap that undercounts is worse
+  // than none, so whatever it cannot price is refused before any spend.
+  const pricing = pricingOf(args.get('pricing'))
+  const rate = maxCostUsd === undefined ? undefined : capRate(pricing, route.model, team?.spec.members ?? [])
+  if (team !== undefined) refuseUnpricedBudget(team.spec, route.model, pricing)
+  const gate = gateOf(argv, args, workspace, pilot !== undefined || team !== undefined, io)
+  // Plan-mode members, a team spec's dsh members and the gate's reviewer are worktree subprocesses.
+  const memberRoute =
+    pilot !== undefined || (team !== undefined && needsDshRoute(team)) || (gate !== undefined && gate.commands === undefined) ? memberRouteOf(route) : undefined
 
   /** Set once a cap trips; also the flag that turns the exit into a 3. */
   let exceeded: string | undefined
+  /** Dollars spent so far, for the dollar cap; set once the usage readers exist. */
+  let dollarsNow = (): number => 0
+  const checkCaps = (team: UsageTotals, turns: number): void => {
+    if (exceeded !== undefined) return
+    const usd = maxCostUsd === undefined ? 0 : dollarsNow()
+    if (maxTokens !== undefined && team.totalTokens > maxTokens) {
+      exceeded = `max-tokens (${team.totalTokens} > ${maxTokens})`
+    } else if (maxTurns !== undefined && turns > maxTurns) {
+      exceeded = `max-turns (${turns} > ${maxTurns})`
+    } else if (maxCostUsd !== undefined && usd > maxCostUsd) {
+      exceeded = `max-cost-usd ($${usd.toFixed(2)} > $${maxCostUsd})`
+    }
+    if (exceeded !== undefined) controller.abort()
+  }
   const harness = await bootHarness({
     routes: [route],
     workspace,
     io,
     ...(args.get('permission-mode') === undefined ? {} : { permissionMode: args.get('permission-mode')! }),
     selfModify,
-    onUsage: (team, turns) => {
-      if (exceeded !== undefined) return
-      if (maxTokens !== undefined && team.totalTokens > maxTokens) {
-        exceeded = `max-tokens (${team.totalTokens} > ${maxTokens})`
-      } else if (maxTurns !== undefined && turns > maxTurns) {
-        exceeded = `max-turns (${turns} > ${maxTurns})`
-      }
-      if (exceeded !== undefined) controller.abort()
-    },
+    onUsage: checkCaps,
+    ...(pricing === undefined ? {} : { pricing }),
   })
   const { ctx, lead, usageBySession } = harness
+  // Ours to choose, so subprocess members' usage (plan mode's, a team's, the
+  // gate reviewer's) can be read back (foldSessionLogs).
+  const memberRoot = memberRoute === undefined && team === undefined ? undefined : mkdtempSync(join(tmpdir(), 'openswarm-member-sessions-'))
+  const memberUsage = (): UsageTotals => (memberRoot === undefined ? emptyUsage() : foldSessionLogs(memberRoot))
+  /** A team spec's claude-code members, which write no dsh session logs: their usage and dollars as the run journals them. */
+  let claudeUsage = emptyUsage
+  const spentNow = (): UsageTotals => foldTeam([...usageBySession.values(), memberUsage(), claudeUsage()])
+  if (rate !== undefined) {
+    dollarsNow = () => {
+      const dsh = foldTeam([...usageBySession.values(), memberUsage()])
+      const tokens = dsh.inputTokens * rate.input + dsh.outputTokens * rate.output + dsh.cacheReadInputTokens * (rate.cacheRead ?? rate.input) + dsh.cacheWriteInputTokens * (rate.cacheWrite ?? rate.input)
+      return tokens / 1e6 + claudeUsage().costUsd
+    }
+  }
+  // Member usage never reaches `onUsage`, so caps over subprocess members poll
+  // their logs and the journal. ponytail: rereads every log per tick and trips
+  // up to one tick late, and a claude-code run counts only once it settles
+  // (its usage is journaled then); tail by byte offset, or stream claude-code
+  // usage, if either ever matters.
+  const capPoll =
+    memberRoot !== undefined && (maxTokens !== undefined || maxTurns !== undefined || maxCostUsd !== undefined)
+      ? setInterval(() => {
+          const members = foldTeam([memberUsage(), claudeUsage()])
+          checkCaps(foldTeam([...usageBySession.values(), members]), harness.turns() + members.calls)
+        }, CAP_POLL_MS)
+      : undefined
 
   const emitStop = (): void => {
-    const team = foldTeam(usageBySession)
+    const team = spentNow()
     io.out(
       JSON.stringify({
         type: 'message_stop',
+        // openSwarmParse reads the first three; the rest ride along for other readers.
         usage: {
           inputTokens: team.inputTokens,
           outputTokens: team.outputTokens,
           cacheReadInputTokens: team.cacheReadInputTokens,
+          cacheWriteInputTokens: team.cacheWriteInputTokens,
+          // What claude-code members reported themselves; dsh members report no dollars.
+          ...(team.costUsd === 0 ? {} : { claudeCodeCostUsd: team.costUsd }),
         },
       }),
     )
@@ -483,19 +939,252 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
     const agentOptions = { provider: route.route, model: route.model }
     let text: string
     let completed: boolean
-    if (args.has('team')) {
-      const workers = Number(args.get('workers') ?? '2')
-      const result = (await (ctx as any).swarm.runTeam(
-        {
-          topology: 'coordinator',
-          coordinator: { name: 'coordinator', agentOptions },
-          workers: Array.from({ length: workers }, (_, i) => ({ name: `worker-${i}`, agentOptions })),
-          task: prompt,
+    if (pilot !== undefined && memberRoute !== undefined && memberRoot !== undefined) {
+      const threads = await runPilot({
+        ...pilot,
+        workspace,
+        signal: controller.signal,
+        runThread: async (thread, baseSha) => {
+          try {
+            const result = (await (ctx as any).swarm.runTeam(
+              coordinatorSpec(
+                `${prompt}\n\n## Your thread: ${thread.id}\n${thread.assignment}\nOther threads own the rest of the roadmap; stay within your assignment.`,
+                memberRoute.agentOptions,
+                pilot.plan.workers,
+              ),
+              {
+                parent: lead.agent,
+                signal: controller.signal,
+                worktrees: {
+                  repoRoot: workspace,
+                  baseRef: baseSha,
+                  targetBranch: `pilot/${thread.id}`,
+                  member: { env: { ...memberRoute.env, DSH_SESSION_ROOT: memberRoot } },
+                },
+              },
+            )) as CoordinatorResult & { git?: { merged: unknown[]; conflicts: unknown[] } }
+            io.out(
+              JSON.stringify({
+                type: 'team_note',
+                thread: thread.id,
+                stopReason: result.synthesis.stopReason,
+                merged: result.git?.merged.length ?? 0,
+                conflicts: result.git?.conflicts.length ?? 0,
+                text: result.synthesis.text,
+              }),
+            )
+          } catch (error) {
+            io.out(JSON.stringify({ type: 'team_note', thread: thread.id, error: String(error instanceof Error ? error.message : error) }))
+            throw error
+          }
         },
+      })
+      io.out(JSON.stringify({ type: 'pilot', arm: pilot.arm, threads }))
+      text = `pilot ${pilot.arm}: ${threads.map((t) => `${t.id} ${t.landed}${t.error === undefined ? '' : ` (${t.error})`}`).join('; ')}`
+      // Conflicts are data about the arm; only a thread that did not run fails the run.
+      completed = threads.every((t) => t.landed !== 'failed')
+    } else if (team !== undefined && memberRoot !== undefined) {
+      // dsh members take the CLI's route, as plan-mode members do; a CLI member's model is its CLI's.
+      const members = team.spec.members.map((m) =>
+        (m.runtime ?? 'dsh') !== 'dsh' || memberRoute === undefined ? m : { ...m, agentOptions: { ...memberRoute.agentOptions, ...m.agentOptions } },
+      )
+      // The prompt is the whole task; each task's own prompt is its part of it.
+      const tasks = team.spec.tasks.map((t) => ({ ...t, prompt: `${prompt}\n\n${t.prompt}` }))
+      const { member } = team.worktrees
+      // What the landed result may fast-forward: this branch, at this commit.
+      const start = checkoutState(workspace)
+      const options = {
+        parent: lead.agent,
+        signal: controller.signal,
+        onProgress: (line: string) => io.err(line),
+        worktrees: {
+          ...team.worktrees,
+          repoRoot: workspace,
+          // Every member run's logs (tasks, reviews, repairs, resolvers) under memberRoot, which message_stop folds.
+          member: { ...member, env: { ...memberRoute?.env, ...member?.env, DSH_SESSION_ROOT: memberRoot } },
+        },
+        ...(team.durable === undefined ? {} : { durable: team.durable }),
+      }
+      const handle: RunHandle =
+        resume === undefined
+          ? await (ctx as any).swarm.start({ ...team.spec, members, tasks }, options)
+          : await (ctx as any).swarm.resume(resume, options, { steal: args.has('steal') })
+      claudeUsage = () => {
+        const totals = emptyUsage()
+        for (const { type, data } of handle.journal.events) {
+          const run = data as SwarmUsageEvent
+          if (type !== 'swarm/usage' || (run.runtime !== 'claude-code' && run.runtime !== 'codex')) continue
+          totals.inputTokens += run.usage.inputTokens
+          totals.outputTokens += run.usage.outputTokens
+          totals.cacheReadInputTokens += run.usage.cacheReadTokens
+          totals.cacheWriteInputTokens += run.usage.cacheWriteTokens
+          totals.calls += run.usage.calls
+          totals.costUsd += run.costUsd ?? 0
+        }
+        totals.totalTokens = totals.inputTokens + totals.outputTokens + totals.cacheReadInputTokens + totals.cacheWriteInputTokens
+        return totals
+      }
+      // Tasks abandoned past completed ones fail the run, but what completed landed (docs/05 C7a).
+      const settled = await handle.result.then(
+        (result) => ({ result, abandoned: undefined }),
+        (error: unknown) => {
+          // A tripped cap aborted the run: its exit is the cap's, not a partial landing's.
+          if (!(error instanceof AbandonedTasksError) || error.outcome === undefined || controller.signal.aborted) throw error
+          return { result: { git: error.outcome, metrics: undefined }, abandoned: error.abandoned }
+        },
+      )
+      const { result, abandoned } = settled
+      const git = result.git
+      const landed = (git?.landed ?? git?.merged ?? []).map((l) => l.taskKey)
+      const ejected = (git?.ejected ?? []).map(({ taskKey, reason }) => ({ taskKey, reason }))
+      const withheld = (git?.withheld ?? []).map((w) => w.taskKey)
+      const workspaceNote = git === undefined ? 'nothing landed' : fastForward(workspace, git.targetBranch, start)
+      if (workspaceNote !== 'fast-forwarded') io.err(`openswarm: workspace ${workspaceNote}`)
+      io.out(
+        JSON.stringify({
+          type: 'team_note',
+          runId: handle.id,
+          topology: team.spec.topology,
+          targetBranch: git?.targetBranch ?? null,
+          landed,
+          ejected,
+          withheld,
+          conflicts: (git?.conflicts ?? []).map((c) => c.taskKey),
+          ...(abandoned === undefined ? {} : { abandoned: Object.fromEntries(abandoned) }),
+          ...(git?.stopped === undefined ? {} : { stopped: git.stopped }),
+          workspace: workspaceNote,
+          metrics: result.metrics ?? (await (ctx as any).swarm.metrics(handle.id)) ?? null,
+        }),
+      )
+      text =
+        `team ${team.spec.topology} (${handle.id}): ${landed.length} landed, ${ejected.length} ejected, ${withheld.length} withheld` +
+        `${abandoned === undefined ? '' : `, ${abandoned.size} abandoned`}` +
+        `${git?.stopped === undefined ? '' : ` (train stopped: ${git.stopped})`}; workspace ${workspaceNote}`
+      // Ejections are data about the run; a train that stopped short, or abandoned tasks, fail it.
+      completed = git?.stopped === undefined && abandoned === undefined
+    } else if (args.has('team')) {
+      const result = (await (ctx as any).swarm.runTeam(
+        coordinatorSpec(prompt, agentOptions, Number(args.get('workers') ?? '2')),
         { parent: lead.agent, signal: controller.signal },
       )) as CoordinatorResult
       text = result.synthesis.text
       completed = result.synthesis.stopReason === 'completed'
+    } else if (gate !== undefined) {
+      const { reviewerSandbox, suite, ...limits } = gate
+      // Fail before any spend, and say how to proceed, rather than let every
+      // review fail inside a sandbox the host cannot provide.
+      const unsandboxable = memberRoute === undefined || reviewerSandbox !== 'workspace-write' ? undefined : sandboxUnavailable(ctx)
+      if (unsandboxable !== undefined) {
+        throw new Error(
+          `the gate's reviewer runs under the workspace-write sandbox, which this host cannot provide (${unsandboxable}); ` +
+            'set OPENSWARM_GATE_REVIEWER_SANDBOX=danger-full-access to run it unsandboxed',
+        )
+      }
+      // L3 (docs/05 B1): the verifier must hold the suite before any spend.
+      // The agent's tool calls and outputs are recorded for the tamper scan.
+      const verifier = suite === undefined ? undefined : await openVerifier(activeVerifier(), [suite])
+      const toolEvents = verifier === undefined ? undefined : recordToolEvents(ctx)
+      const result = await runGate(
+        { task: prompt, member: { name: 'agent', agentOptions }, ...limits },
+        {
+          cwd: workspace,
+          signal: controller.signal,
+          ...(verifier === undefined || suite === undefined
+            ? {}
+            : {
+                hidden: hiddenSuite(verifier, {
+                  suite,
+                  cwd: async () => workspace,
+                  envRoot: execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: workspace, encoding: 'utf8' }).trim(),
+                  transcript: (round) => toolEvents!.take(round.runId),
+                }),
+              }),
+          // A fresh child of the lead per round and per review, so every one's
+          // usage folds into usageBySession: the harness bills the reviews too.
+          run: async (member, text) => {
+            // Past a budget stop no new run starts; the throw ends the gate as one.
+            controller.signal.throwIfAborted()
+            const run = await (ctx as any).subagents.start('spawn', {
+              label: member.name,
+              prompt: [{ type: 'text', text }],
+              parent: lead.agent,
+              signal: controller.signal,
+              agentOptions: member.agentOptions ?? agentOptions,
+            })
+            const result = await run.result
+            return {
+              member: member.name,
+              runId: run.id,
+              text: textBlocksOf(result.output),
+              output: result.output,
+              stopReason: result.stopReason,
+            }
+          },
+          // The reviewer is a subprocess member in a disposable clone of the
+          // round's snapshot, never this checkout: what it changes is thrown
+          // away with the clone, as its prompt promises, and its sandbox fences
+          // writes outside it. It runs as the measured reviewer did
+          // (review.cordis.yml). Its usage is read back from its session logs
+          // under memberRoot.
+          ...(memberRoute === undefined || memberRoot === undefined
+            ? {}
+            : {
+                review: (text: string, commit: string) =>
+                  withSnapshotClone(workspace, commit, (cwd) => {
+                    controller.signal.throwIfAborted()
+                    return runMemberProcess(ctx, { name: 'reviewer', agentOptions: memberRoute.agentOptions }, text, {
+                      cwd,
+                      env: memberEnvOf(
+                        { env: { ...memberRoute.env, DSH_SESSION_ROOT: memberRoot, OPENSWARM_MEMBER_SANDBOX: reviewerSandbox } },
+                        `review-${process.pid}`,
+                      ),
+                      parent: lead.agent,
+                      signal: controller.signal,
+                      config: { configPath: reviewMemberConfig() },
+                    })
+                  }),
+              }),
+          record: (round) => {
+            const e = round.evidence
+            io.out(
+              JSON.stringify({
+                type: 'gate_round',
+                round: round.round,
+                changed: round.changed,
+                passed: e.passed,
+                kind: e.kind,
+                level: e.level,
+                score: e.score ?? null,
+                rolledBack: round.rolledBack === true,
+                ...verdictJson(e),
+                // Under L3, what the weaker source said, which the agent was told too.
+                ...(round.feedback === undefined ? {} : { feedback: { kind: round.feedback.kind, level: round.feedback.level, passed: round.feedback.passed, ...verdictJson(round.feedback) } }),
+              }),
+            )
+            // What matched, never the content around it (docs/05 §6.4). An
+            // incident ended the gate; advisory signs came with a measured round.
+            const signals = e.tamper ?? round.advisory
+            if (signals !== undefined) {
+              const severity = e.tamper === undefined ? 'advisory' : 'incident'
+              io.out(JSON.stringify({ type: 'tamper', round: round.round, suite: e.suite, severity, signals }))
+              if (severity === 'advisory') io.err(`gate: round ${round.round} advisory — ${[...new Set(signals.map((t) => `${t.signal} in ${t.where}`))].join(', ')}`)
+            }
+            io.err(gateRoundLine(round))
+          },
+        },
+      ).finally(() => toolEvents?.dispose())
+      io.out(
+        JSON.stringify({
+          type: 'gate',
+          accepted: result.accepted,
+          level: result.level,
+          rounds: result.rounds.length,
+          ...(result.reason === undefined ? {} : { reason: result.reason }),
+        }),
+      )
+      io.err(gateResultLine(result))
+      text = result.final.text
+      completed = result.accepted
     } else {
       const run = await (ctx as any).subagents.start('spawn', {
         label: 'agent',
@@ -513,7 +1202,7 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
     // not "the agent tried and produced nothing". Without an `error` line this
     // reads to the harness as a legitimate empty answer and grades as a real
     // zero, so the run is scored instead of being flagged as broken.
-    const spent = foldTeam(usageBySession)
+    const spent = spentNow()
     if (spent.totalTokens === 0) {
       io.out(
         JSON.stringify({
@@ -530,8 +1219,16 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
   } catch (error) {
     // An aborted run rejects; that is a budget stop, not a failure.
     if (exceeded !== undefined) return stopForBudget()
-    throw error
+    if (pilot === undefined && gate === undefined && team === undefined) throw error
+    // Plan mode, a team spec and the gate have spent real tokens by now (a
+    // failed landing, a snapshot or review that failed after a round); report
+    // them rather than exiting like a crash.
+    io.out(JSON.stringify({ type: 'error', message: String(error instanceof Error ? error.message : error) }))
+    io.err(String(error instanceof Error ? (error.stack ?? error.message) : error))
+    emitStop()
+    return 1
   } finally {
+    if (capPoll !== undefined) clearInterval(capPoll)
     await harness.dispose()
   }
 
@@ -546,6 +1243,39 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
     emitStop()
     return 3
   }
+}
+
+/**
+ * A team spec's dollar budget (docs/05 C5) is checked against priced usage,
+ * and unattended, usage it cannot price stops the run at its first check; so
+ * every dsh model it will run (members, and the gate's reviewer on the route)
+ * and every codex member's needs a price before any spend; claude-code members
+ * report their own dollars, codex members none, so a codex member names its model.
+ */
+function refuseUnpricedBudget(spec: TeamSpecFile['spec'], model: string, pricing: Pricing | undefined): void {
+  const usd = spec.budget?.usd !== undefined || (spec.topology === 'peer-team' && spec.tasks.some((t) => t.budget?.usd !== undefined))
+  if (!usd) return
+  const unnamed = spec.members.find((m) => m.runtime === 'codex' && m.agentOptions?.model === undefined)
+  if (unnamed !== undefined) throw new Error(`the team spec's dollar budget prices codex member "${unnamed.name}" by its model, and it names none (agentOptions.model)`)
+  const models = new Set([model, ...spec.members.filter((m) => m.runtime !== 'claude-code').map((m) => m.agentOptions?.model ?? model)])
+  const unpriced = [...models].filter((m) => pricing?.[m] === undefined)
+  if (unpriced.length > 0) throw new Error(`the team spec's dollar budget needs --pricing <file> with a price for ${unpriced.join(', ')}`)
+}
+
+/**
+ * The one rate `--max-cost-usd` prices dsh tokens at: the route model's, from
+ * `--pricing`. Refused without a price for it, or when a team spec's dsh member
+ * names another model, which that one rate would misprice.
+ */
+function capRate(pricing: Pricing | undefined, model: string, members: readonly MemberSpec[]): Pricing[string] {
+  if (pricing === undefined) throw new Error('--max-cost-usd needs --pricing <file> ($ per million tokens by model)')
+  const rate = pricing[model]
+  if (rate === undefined) throw new Error(`--max-cost-usd: --pricing has no price for ${model}, so the cap could not be checked`)
+  const codex = members.find((m) => m.runtime === 'codex')
+  if (codex !== undefined) throw new Error(`--max-cost-usd cannot count codex member "${codex.name}", which reports no dollars; cap with --max-tokens, or give the spec a budget with --pricing`)
+  const other = members.find((m) => m.runtime !== 'claude-code' && m.agentOptions?.model !== undefined && m.agentOptions.model !== model)
+  if (other !== undefined) throw new Error(`--max-cost-usd prices every dsh member at ${model}'s rate, but member "${other.name}" runs ${other.agentOptions!.model}`)
+  return rate
 }
 
 /** Parse a numeric flag, rejecting junk rather than silently ignoring the cap. */

@@ -1,32 +1,28 @@
 /**
- * `ctx.swarmAppServer` — the OpenSwarm app-server (docs/01 F2): one JSON-RPC
- * endpoint any UI/TUI connects to, codex-app-server-shaped.
+ * `ctx.swarmAppServer` — the socket carrier of the swarm protocol (docs/05
+ * §5.3, D11): one JSON-RPC endpoint for UIs, CLIs and programs.
  *
- * Per TCP connection, dsh's exported `HarnessSdkJsonRpcServer` is
- * instantiated over the connection's `JsonRpcLineTransport` (wrap, don't
- * fork — the Phase-0 probe-3 conclusion): the standard SDK surface
- * (`initialize`, `session/prompt`, streamed `session.event` /
- * `session.status`) delegates to it verbatim, while `swarm/*` methods are
- * handled here:
+ * A connection starts unauthenticated: until `swarm/auth { token }` binds its
+ * principal from `ctx.swarm.tokens`, every other method is refused. `swarm/*`
+ * methods then go through the protocol's `dispatch`, whose policy table is
+ * the security boundary. Any other method passes through to dsh's exported
+ * `HarnessSdkJsonRpcServer` (wrap, don't fork: `initialize`, `session/prompt`,
+ * streamed `session.event` / `session.status`), for owners only; that server
+ * streams every session in the process, so only an owner connection gets one.
  *
- *   swarm/runTeam  {spec, provider, model, worktrees?} → {runId}; completion
- *                  arrives as a `swarm.runFinished` notification carrying the
- *                  TeamResult (+ merge outcome under worktrees).
- *   swarm/runs     {} → run list with status.
- *   swarm/board    {runId} → the run's lead-session task board.
- *
- * Loopback by default. UI-grade trust: clients on this socket are the
- * user's own frontends (member harnesses use the separate token-guarded
- * SwarmServer socket).
+ * At listen an owner token is minted and written with the URL and pid to
+ * `$OPENSWARM_HOME/app-server.json` (mode 0600), for the CLI; close removes
+ * it. The connection that starts a run gets a `swarm.runFinished`
+ * notification, carrying the TeamResult or the error, when it settles.
  */
-import { randomUUID } from 'node:crypto'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
+import { dirname, join } from 'node:path'
 import { Service, type Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { JsonRpcLineTransport } from '@deepseek-ai/dsh-sdk-protocol'
 import { HarnessSdkJsonRpcServer } from '@deepseek-ai/dsh-sdk-jsonrpc-server'
-import { SessionId } from '@deepseek-ai/dsh-session'
-import type { SwarmTaskSnapshot, TeamSpec } from 'openswarm-swarm'
+import { SwarmProtocolError, dispatch, mintToken, openswarmHome, type Principal } from 'openswarm-swarm'
 
 export const Config = z.object({
   host: z.string().default('127.0.0.1'),
@@ -38,23 +34,14 @@ export interface AppServerConfig {
   port?: number
 }
 
-interface RunRecord {
-  runId: string
-  status: 'running' | 'finished' | 'failed'
-  leadSessionId: string
-  /** Board snapshot captured at finish, so swarm/board survives lead disposal. */
-  tasks: SwarmTaskSnapshot[]
-  /** Idempotent lead teardown. */
-  dispose: () => Promise<void>
-}
-
 export default class SwarmAppServer extends Service {
   static inject = ['agents', 'swarm']
 
   private server: Server | undefined
   private boundPort = 0
   private readonly sockets = new Set<Socket>()
-  private readonly runs = new Map<string, RunRecord>()
+  /** The owner credential's file and revocation, for close. */
+  private owner: { file: string; revoke: () => void } | undefined
 
   constructor(
     ctx: Context,
@@ -80,6 +67,11 @@ export default class SwarmAppServer extends Service {
     this.ready = new Promise((resolve) => {
       this.markReady = resolve
     })
+    // Minted before binding, while the context is surely active; close revokes it.
+    const { tokens } = this.ctx.swarm
+    const token = mintToken(this.ctx, { role: 'owner' })
+    const owner = { file: join(openswarmHome(), 'app-server.json'), revoke: () => tokens.delete(token) }
+    this.owner = owner
     const server = createServer((socket) => this.accept(socket))
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject)
@@ -87,103 +79,60 @@ export default class SwarmAppServer extends Service {
     })
     const address = server.address()
     if (address === null || typeof address === 'string') throw new Error('app-server did not bind')
+    // Closed while binding: the token is revoked, so publish nothing.
+    if (this.owner !== owner) return void server.close()
     this.boundPort = address.port
     this.server = server
+    mkdirSync(dirname(owner.file), { recursive: true })
+    // Written fresh, so a stale file's looser mode cannot carry over.
+    rmSync(owner.file, { force: true })
+    writeFileSync(owner.file, JSON.stringify({ url: this.url, token, pid: process.pid }), { mode: 0o600 })
     this.markReady()
   }
 
   private accept(socket: Socket): void {
     this.sockets.add(socket)
     const transport = new JsonRpcLineTransport(socket, socket)
-    const inner = new HarnessSdkJsonRpcServer(this.ctx, transport)
+    let principal: Principal | undefined
+    let sdk: HarnessSdkJsonRpcServer | undefined
     transport.onRequest(async (method, params) => {
-      if (method.startsWith('swarm/')) return this.handleSwarm(method, params ?? {}, transport)
-      return inner.handleRequest(method, params)
+      if (method === 'swarm/auth') {
+        if (principal !== undefined) throw new SwarmProtocolError('FORBIDDEN', 'this connection is already authenticated')
+        principal = this.ctx.swarm.principalOf(String(params['token']))
+        if (principal === undefined) throw new SwarmProtocolError('FORBIDDEN', 'unknown token')
+        if (principal.role === 'owner') sdk = new HarnessSdkJsonRpcServer(this.ctx, transport)
+        return { principal }
+      }
+      if (principal === undefined) throw new SwarmProtocolError('FORBIDDEN', `authenticate with swarm/auth before ${method}`)
+      if (!method.startsWith('swarm/')) {
+        if (sdk === undefined) throw new SwarmProtocolError('FORBIDDEN', `${principal.role} may not call ${method}`)
+        return sdk.handleRequest(method, params)
+      }
+      const result = await dispatch(this.ctx, principal, method, params)
+      if (method === 'swarm/start') {
+        const { runId } = result as { runId: string }
+        void this.ctx.swarm.live(runId)?.result.then(
+          (result) => transport.notify('swarm.runFinished', { runId, result }),
+          (error) => transport.notify('swarm.runFinished', { runId, error: String(error?.message ?? error) }),
+        )
+      }
+      return result
     })
     transport.start()
     socket.on('close', () => {
       transport.close()
       this.sockets.delete(socket)
-      void inner.shutdown().catch(() => undefined)
+      void sdk?.shutdown().catch(() => undefined)
     })
     socket.on('error', () => socket.destroy())
   }
 
-  private async handleSwarm(
-    method: string,
-    params: Record<string, unknown>,
-    transport: JsonRpcLineTransport,
-  ): Promise<unknown> {
-    switch (method) {
-      case 'swarm/runTeam': {
-        const spec = params['spec'] as TeamSpec | undefined
-        if (spec === undefined || typeof spec !== 'object') throw new Error('swarm/runTeam: spec is required')
-        const provider = String(params['provider'] ?? 'deepseek-official')
-        const model = params['model'] === undefined ? undefined : String(params['model'])
-        const runId = `run-${randomUUID().slice(0, 8)}`
-        const lead = await this.ctx.agents.create({
-          sessionId: SessionId(`swarm-app-${runId}`),
-          meta: { cwd: process.cwd() },
-          agentOptions: { provider, ...(model === undefined ? {} : { model }) },
-        } as never)
-        let disposed = false
-        const record: RunRecord = {
-          runId,
-          status: 'running',
-          leadSessionId: String(lead.agent.id),
-          tasks: [],
-          dispose: async () => {
-            if (disposed) return
-            disposed = true
-            await lead.dispose()
-          },
-        }
-        this.runs.set(runId, record)
-        // Capture the final board and dispose the lead once the run settles, so
-        // leads don't accumulate for the server's lifetime; swarm/board then
-        // reads the snapshot.
-        const settle = (status: 'finished' | 'failed', payload: Record<string, unknown>) => {
-          record.status = status
-          record.tasks = this.ctx.swarm.board(lead.agent).list()
-          transport.notify('swarm.runFinished', { runId, ...payload })
-          void record.dispose().catch(() => undefined)
-        }
-        void this.ctx.swarm
-          .runTeam(spec, {
-            parent: lead.agent,
-            ...(params['worktrees'] === undefined ? {} : { worktrees: params['worktrees'] as never }),
-          })
-          .then(
-            (result) => settle('finished', { result }),
-            (error) => settle('failed', { error: String(error?.message ?? error) }),
-          )
-        return { runId }
-      }
-      case 'swarm/runs':
-        return {
-          runs: [...this.runs.values()].map((r) => ({
-            runId: r.runId,
-            status: r.status,
-            leadSessionId: r.leadSessionId,
-          })),
-        }
-      case 'swarm/board': {
-        const runId = String(params['runId'] ?? '')
-        const record = this.runs.get(runId)
-        if (record === undefined) throw new Error(`unknown run "${runId}"`)
-        // Live board while the run is in flight; the captured snapshot after the
-        // lead has been disposed.
-        const lead = this.ctx.agents.get(record.leadSessionId as never)
-        return { tasks: lead !== undefined ? this.ctx.swarm.board(lead).list() : record.tasks }
-      }
-      default:
-        throw new Error(`unknown swarm method: ${method}`)
-    }
-  }
-
   async close(): Promise<void> {
-    for (const record of this.runs.values()) await record.dispose().catch(() => undefined)
-    this.runs.clear()
+    if (this.owner !== undefined) {
+      this.owner.revoke()
+      rmSync(this.owner.file, { force: true })
+      this.owner = undefined
+    }
     for (const socket of this.sockets) socket.destroy()
     if (this.server !== undefined) {
       await new Promise<void>((resolve) => this.server!.close(() => resolve()))

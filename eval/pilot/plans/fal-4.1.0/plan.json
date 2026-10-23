@@ -1,0 +1,29 @@
+{
+  "workers": 2,
+  "threads": [
+    {
+      "id": "t0",
+      "default": true,
+      "paths": ["falcon/__init__.py", "falcon/constants.py", "falcon/routing/__init__.py", "falcon/testing/__init__.py", "falcon/util/misc.py"],
+      "assignment": "Shared contracts only. Add MEDIA_CSV and MEDIA_PARQUET and their static media type mappings to falcon/constants.py and export them from falcon/__init__.py; add the __all__ tuple to falcon/routing/__init__.py; deprecate the falcon.testing.httpnow alias in falcon/testing/__init__.py. falcon/util/misc.py is a shared utility module (Target 3 depends on its new helper), so this thread makes both roadmap changes there: the _has_arg_name(func, name) helper and secure_filename(filename, max_length=None) truncation. Nothing else."
+    },
+    {
+      "id": "t1",
+      "blockedBy": ["t0"],
+      "paths": ["falcon/routing/static.py", "falcon/middleware.py", "falcon/asgi/app.py"],
+      "assignment": "Target 1 (Static Route Cache Validation) and Target 3 (CORS Private Network Access and WebSocket Sink Routing): implement ETag/Last-Modified, conditional-request evaluation, the _open_file/_set_range refactor and the StaticRouteAsync ws argument in falcon/routing/static.py; the allow_private_network option in falcon/middleware.py; and the WebSocket sink dispatch in falcon/asgi/app.py, using the _has_arg_name helper that t0 pins in falcon/util/misc.py."
+    },
+    {
+      "id": "t2",
+      "blockedBy": ["t0"],
+      "paths": ["falcon/media/multipart.py", "falcon/media/json.py", "falcon/testing/helpers.py"],
+      "assignment": "Target 2 (Filename Length Limiting) and Target 5 (Media Handler Resilience and ASGI Scope Improvements): add max_secure_filename_length to MultipartParseOptions and pass it to secure_filename in falcon/media/multipart.py (secure_filename's max_length is t0's); make JSONHandler recognise non-ValueError deserialization errors in falcon/media/json.py; add raw_path to create_scope in falcon/testing/helpers.py."
+    },
+    {
+      "id": "t3",
+      "blockedBy": ["t0"],
+      "paths": ["falcon/response.py", "falcon/testing/client.py"],
+      "assignment": "Target 4 (Cookie API Consistency) and Target 6 (Testing Utilities and Constants): change unset_cookie to the same_site signature with the deprecated samesite fallback in falcon/response.py, and add Result.__rich__ with the truncation logic shared with __repr__ in falcon/testing/client.py. The new constants and the httpnow deprecation belong to t0."
+    }
+  ]
+}
