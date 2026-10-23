@@ -64,8 +64,12 @@ const HEADLESS_VALUE_FLAGS = new Set([
   '--output',
   '--trace-output',
   '--resume',
+  '--gate-rounds',
+  '--gate-check',
+  '--gate-level',
+  '--gate-suite',
 ])
-const HEADLESS_BOOL_FLAGS = new Set(['--headless', '--single', '--team', '--self-modify', '--steal'])
+const HEADLESS_BOOL_FLAGS = new Set(['--headless', '--single', '--team', '--self-modify', '--steal', '--gate'])
 
 /**
  * `lenient` forwards flags this launcher does not own instead of rejecting
@@ -234,6 +238,9 @@ Options:
   --provider <name>   azure | openai | bedrock (default: auto-detect)
   --home <dir>        profile home (default: $OPENSWARM_HOME or ~/.openswarm)
   --port <n>          web / serve port (web default: 3080, serve: 4620)
+  --gate [--gate-check <cmd>]... [--gate-level N] [--gate-suite <name>] [--gate-rounds N]
+                      close the task only on passing evidence (docs/03); without
+                      a check a reviewer alone accepts, which is unverified
 
 The web command forwards its remaining flags to the dsh web app (--host,
 --no-open, --trusted-host …); type /swarm in the UI to run a team.
@@ -364,9 +371,11 @@ function main() {
       .then((code) => process.exit(code))
   }
 
-  // A team spec, or a durable run to resume, runs in packages/cli as `maintain`
-  // does: the profile's boot takes a prompt, not a team, and would drop them.
-  if (valueOf(headless, '--spec') !== undefined || valueOf(headless, '--resume') !== undefined) {
+  // A team spec, a durable run to resume, or a gated run runs in packages/cli
+  // as `maintain` does: the profile's boot takes a prompt, not a team, and
+  // knows no gate, so it would drop them.
+  const gated = headless.some((f) => f.startsWith('--gate')) || process.env.OPENSWARM_GATE === '1'
+  if (valueOf(headless, '--spec') !== undefined || valueOf(headless, '--resume') !== undefined || gated) {
     const { provider, model, env } = resolveModel(opts)
     Object.assign(process.env, env, { OPENSWARM_HOME: home })
     const id = provider === 'azure' ? `azureoai/${model}` : model
