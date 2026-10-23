@@ -15,4 +15,9 @@ details.
 The self-modification rig of [docs/04](../docs/04-gate-discrimination.md) and
 docs/05 (the cascade adapter, its benchmark, the mutation gate) finished its
 study (self-modification was used 0 of 103 times) and was removed; it is at
-`1849cf7` in git history.
+`027c536` (main) in git history.
+
+**Cache writes.** swarmkit-eval 0.2.0's `openSwarmParse` reads input, output
+and cache-read tokens from `message_stop`, not `cacheWriteInputTokens`, so
+its token and dollar totals undercount a Claude-routed cell (Anthropic bills
+writes at 1.25× input). The pilot rig's own `gate.mjs` counts them.

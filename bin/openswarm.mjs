@@ -67,6 +67,7 @@ const HEADLESS_VALUE_FLAGS = new Set([
   '--gate-check',
   '--gate-level',
   '--gate-suite',
+  '--pricing',
 ])
 const HEADLESS_BOOL_FLAGS = new Set(['--headless', '--single', '--team', '--self-modify', '--steal', '--gate'])
 
@@ -370,11 +371,13 @@ function main() {
       .then((code) => process.exit(code))
   }
 
-  // A team spec, a durable run to resume, or a gated run runs in packages/cli
-  // as `maintain` does: the profile's boot takes a prompt, not a team, and
-  // knows no gate, so it would drop them.
+  // A team spec (flag or env), a durable run to resume, or a gated run runs in
+  // packages/cli as `maintain` does: the profile's boot takes a prompt, not a
+  // team, and knows no gate, so it would drop them. So does `--team`, which
+  // packages/cli refuses rather than let it run as a single agent.
   const gated = headless.some((f) => f.startsWith('--gate')) || process.env.OPENSWARM_GATE === '1'
-  if (valueOf(headless, '--spec') !== undefined || valueOf(headless, '--resume') !== undefined || gated) {
+  const teamed = valueOf(headless, '--spec') !== undefined || !!process.env.OPENSWARM_TEAM_SPEC || headless.includes('--team')
+  if (teamed || valueOf(headless, '--resume') !== undefined || gated) {
     const { provider, model, env } = resolveModel(opts)
     Object.assign(process.env, env, { OPENSWARM_HOME: home })
     const id = provider === 'azure' ? `azureoai/${model}` : model

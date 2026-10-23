@@ -101,9 +101,11 @@ it('caches the system prompt and the newest block, nothing else', () => {
 it('a provider refusal keeps what the provider said, and its status', () => {
   const quota = Object.assign(new Error('429 Too many tokens per day, please wait before trying again.'), { status: 429 })
   expect(providerError('Anthropic Messages request failed', quota)).toMatchObject({
-    code: 'RATE_LIMIT',
+    code: 'QUOTA',
     message: 'Anthropic Messages request failed: 429 Too many tokens per day, please wait before trying again.',
   })
   expect(providerError('x', Object.assign(new Error('denied'), { status: 403 })).code).toBe('AUTH')
+  expect(providerError('x', Object.assign(new Error('429 slow down'), { status: 429 })).code).toBe('RATE_LIMIT')
+  expect(providerError('x', Object.assign(new Error('400 prompt is too long: 210000 tokens > 200000 maximum'), { status: 400 })).code).toBe('CONTEXT_WINDOW_EXCEEDED')
   expect(providerError('x', new Error('socket hang up')).code).toBe('TRANSPORT')
 })

@@ -911,8 +911,9 @@ trees:
    than gpt-5.5, not more discriminating. The two agree on 84 % of targets
    against 82 % by chance (kappa +0.15).
 2. **Small and selected.** Nine trees and 19 failures cannot rule out a
-   modest gain on the full bench. Finishing it needs the 27 trees re-run,
-   about $35 at these rates, after the quota resets or is raised.
+   modest gain on the full bench. Finishing it needs the 27 trees re-run
+   (the bench re-runs a tree with no verdict), about $35 at these rates,
+   after the quota resets or is raised.
 
 For the product: the lever left untested is checks that do not come from
 any reviewer's reading. The gate now says so: an L1 acceptance is labelled

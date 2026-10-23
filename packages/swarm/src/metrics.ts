@@ -118,6 +118,8 @@ export type SwarmRestartEvent = { version: 1; member: string; taskId: string; re
 
 /** $ per million tokens, by model id. Cached tokens are billed as input unless their own rate is given. */
 export type Pricing = Record<string, { input: number; output: number; cacheRead?: number; cacheWrite?: number }>
+/** A cache write's rate unpriced: Anthropic's (the only route here that writes) 5-minute premium, 1.25× input, so a cap never undercounts. */
+export const cacheWriteRate = (p: Pricing[string]): number => p.cacheWrite ?? p.input * 1.25
 
 /** Dollars for usage by model, or why there are none: no table, or a model that spent tokens it does not price. */
 export function priced(byModel: Readonly<Record<string, Usage>>, pricing?: Pricing): number | { reason: string } {
@@ -128,7 +130,7 @@ export function priced(byModel: Readonly<Record<string, Usage>>, pricing?: Prici
   let usd = 0
   for (const [model, u] of spent) {
     const p = pricing[model]!
-    usd += (u.inputTokens * p.input + u.outputTokens * p.output + u.cacheReadTokens * (p.cacheRead ?? p.input) + u.cacheWriteTokens * (p.cacheWrite ?? p.input)) / 1e6
+    usd += (u.inputTokens * p.input + u.outputTokens * p.output + u.cacheReadTokens * (p.cacheRead ?? p.input) + u.cacheWriteTokens * cacheWriteRate(p)) / 1e6
   }
   return usd
 }

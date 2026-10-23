@@ -107,7 +107,7 @@ const LANDING_CHECKS = JSON.parse(readFileSync(join(HERE, "landing-checks.json")
 
 /**
  * The landtrain arm's team: two dsh members on the CLI's route, one board task per plan thread
- * framed as plan mode frames a thread (the CLI puts the task's instruction ahead of each), the
+ * framed under `## Your thread` (the CLI puts the task's instruction ahead of each), the
  * others after t0, landed through the train on the task's check.
  */
 function landtrainSpec(name, plan) {

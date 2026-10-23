@@ -42,6 +42,7 @@ import SwarmService, {
   runMemberProcess,
   targetStatuses,
   activeVerifier,
+  cacheWriteRate,
   type CascadeResult,
   type FanoutSpec,
   type GateEvidence,
@@ -211,7 +212,7 @@ export async function runCli(argv: string[], io: CliIo = processIo): Promise<num
   if (!isCascade && !isRun && !isMaintain) {
     io.err(
       `usage: openswarm topology cascade --spec <file> [--output <file>] [--trace-output <file>]\n` +
-        `       openswarm run --output-format json --model <m> [--single|--team|--spec <file>] "<prompt>"\n` +
+        `       openswarm run --output-format json --model <m> [--single|--spec <file>] "<prompt>"\n` +
         `       ${MAINTAIN_USAGE.slice('usage: '.length)}`,
     )
     return 2
@@ -761,8 +762,8 @@ export function sandboxUnavailable(ctx: any): string | undefined {
 }
 
 /**
- * How plan-mode members reach the model. They are worktree subprocesses booted
- * from member.cordis.yml, not this stack: one OpenAI-compatible route named
+ * How worktree members (a team spec's, the gate's reviewer) reach the model.
+ * They are subprocesses booted from member.cordis.yml, not this stack: one OpenAI-compatible route named
  * `openai` (hence that provider name even for Azure), configured by env. The
  * SDK spawner scrubs KEY/TOKEN/DSH_* names from the inherited env, so the key
  * and model travel explicitly.
@@ -783,6 +784,16 @@ export function memberRouteOf(route: Route): { agentOptions: { provider: string;
       DSH_MODEL: route.model,
     },
   }
+}
+
+/**
+ * Why an in-process agent's last turn failed, from its session: the
+ * in-process driver leaves the result's `diagnostic` unset, and the loop
+ * records the failure (an LlmError's facts) on the turn's end.
+ */
+function turnFailure(agent: { session: { events: readonly any[] } } | undefined): string | undefined {
+  const reason = [...(agent?.session.events ?? [])].reverse().find((e) => e.type === 'turn/end')?.data.reason
+  return reason?.kind === 'error' ? `${reason.error.code}: ${reason.error.message}` : undefined
 }
 
 /** How often a team run re-reads member logs to enforce `--max-tokens`/`--max-turns`. */
@@ -834,13 +845,14 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
   const pricing = pricingOf(args.get('pricing'))
   const rate = maxCostUsd === undefined ? undefined : capRate(pricing, route.model, team?.spec.members ?? [])
   if (team !== undefined) refuseUnpricedBudget(team.spec, route.model, pricing)
-  if (team?.spec.topology === 'peer-team' && team.spec.gate !== undefined && team.spec.gate.review !== false && team.spec.gate.minLevel === undefined) {
+  if (team?.spec.topology === 'peer-team' && team.spec.gate !== undefined && team.spec.gate.review !== false) {
     const { gate: teamGate, tasks } = team.spec
-    const unchecked = tasks.filter((t) => (t.checks ?? teamGate.checks ?? []).length === 0 && (t.suite ?? teamGate.suite) === undefined)
-    if (unchecked.length > 0) io.err(`openswarm: ${unchecked.length} of ${tasks.length} gated task(s) have no checks, so ${REVIEW_ONLY}; give them checks (or the gate minLevel: 1 to silence this)`)
+    // A declared level (the task's, else the team's) is a choice, not an oversight.
+    const unchecked = tasks.filter((t) => (t.checks ?? teamGate.checks ?? []).length === 0 && (t.suite ?? teamGate.suite) === undefined && (t.minLevel ?? teamGate.minLevel) === undefined)
+    if (unchecked.length > 0) io.err(`openswarm: ${unchecked.length} of ${tasks.length} gated task(s) have no checks, so ${REVIEW_ONLY}; give them checks (or minLevel: 1 to silence this)`)
   }
   const gate = gateOf(argv, args, workspace, team !== undefined, io)
-  // Plan-mode members, a team spec's dsh members and the gate's reviewer are worktree subprocesses.
+  // A team spec's dsh members and the gate's reviewer are worktree subprocesses.
   const memberRoute =
     (team !== undefined && needsDshRoute(team)) || (gate !== undefined && gate.commands === undefined) ? memberRouteOf(route) : undefined
 
@@ -880,7 +892,7 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
   if (rate !== undefined) {
     dollarsNow = () => {
       const dsh = foldTeam([...usageBySession.values(), memberUsage()])
-      const tokens = dsh.inputTokens * rate.input + dsh.outputTokens * rate.output + dsh.cacheReadInputTokens * (rate.cacheRead ?? rate.input) + dsh.cacheWriteInputTokens * (rate.cacheWrite ?? rate.input)
+      const tokens = dsh.inputTokens * rate.input + dsh.outputTokens * rate.output + dsh.cacheReadInputTokens * (rate.cacheRead ?? rate.input) + dsh.cacheWriteInputTokens * cacheWriteRate(rate)
       return tokens / 1e6 + claudeUsage().costUsd
     }
   }
@@ -889,13 +901,14 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
   // up to one tick late, and a claude-code run counts only once it settles
   // (its usage is journaled then); tail by byte offset, or stream claude-code
   // usage, if either ever matters.
-  const capPoll =
+  const pollMembers =
     memberRoot !== undefined && (maxTokens !== undefined || maxTurns !== undefined || maxCostUsd !== undefined)
-      ? setInterval(() => {
+      ? () => {
           const members = foldTeam([memberUsage(), claudeUsage()])
           checkCaps(foldTeam([...usageBySession.values(), members]), harness.turns() + members.calls)
-        }, CAP_POLL_MS)
+        }
       : undefined
+  const capPoll = pollMembers === undefined ? undefined : setInterval(pollMembers, CAP_POLL_MS)
 
   const emitStop = (): void => {
     const team = spentNow()
@@ -921,7 +934,7 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
     let completed: boolean
     let diagnostic: string | undefined
     if (team !== undefined && memberRoot !== undefined) {
-      // dsh members take the CLI's route, as plan-mode members do; a CLI member's model is its CLI's.
+      // dsh members take the CLI's route; a CLI member's model is its CLI's.
       const members = team.spec.members.map((m) =>
         (m.runtime ?? 'dsh') !== 'dsh' || memberRoute === undefined ? m : { ...m, agentOptions: { ...memberRoute.agentOptions, ...m.agentOptions } },
       )
@@ -1126,10 +1139,12 @@ export async function runHeadless(argv: string[], io: CliIo): Promise<number> {
       const result = await run.result
       text = textBlocksOf(result.output)
       completed = result.stopReason === 'completed'
-      // Why a run stopped short (a model or transport failure) is only here; say it.
-      if (!completed) io.err(`openswarm: the agent stopped (${result.stopReason})${result.diagnostic === undefined ? '' : `: ${result.diagnostic}`}`)
-      diagnostic = result.diagnostic
+      // Why a run stopped short (a model or transport failure); say it.
+      diagnostic = result.diagnostic ?? turnFailure(run.localAgent)
+      if (!completed && exceeded === undefined) io.err(`openswarm: the agent stopped (${result.stopReason})${diagnostic === undefined ? '' : `: ${diagnostic}`}`)
     }
+    // Members that finished between polls are counted once more, so a short run cannot slip a cap.
+    pollMembers?.()
     if (exceeded !== undefined) return stopForBudget()
     // Zero usage means no model call was ever billed — auth or routing failed,
     // not "the agent tried and produced nothing". Without an `error` line this

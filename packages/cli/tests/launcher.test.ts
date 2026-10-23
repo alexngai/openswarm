@@ -1,7 +1,8 @@
 /**
- * The installed launcher routes a gated run to packages/cli's runCli, where
- * the gate lives (docs/03 documents `openswarm run --gate`); it used to reject
- * `--gate` as an unknown option. Needs the build, as the launcher imports dist.
+ * The installed launcher routes a gated run, and `--team`, to packages/cli's
+ * runCli, where the gate and the refusal live (docs/03 documents `openswarm
+ * run --gate`); it used to reject `--gate` as an unknown option and run
+ * `--team` as a single agent. Needs the build, as the launcher imports dist.
  */
 import { execFile } from 'node:child_process'
 import { existsSync, mkdtempSync } from 'node:fs'
@@ -24,4 +25,12 @@ it.skipIf(!built)('openswarm run --gate reaches the gate, not an unknown-option 
   const said = `${failed!.stdout}${failed!.stderr}`
   expect(said).not.toMatch(/unknown option/)
   expect(said).toMatch(/the gate needs a git work tree/)
+}, 60_000)
+
+it.skipIf(!built)('openswarm run --team is refused, not run as a single agent', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'openswarm-launcher-'))
+  const env = { PATH: process.env['PATH'] ?? '', HOME: cwd, AZURE_API_KEY: 'unused', AZURE_API_BASE: 'http://127.0.0.1:9' }
+  const run = promisify(execFile)(process.execPath, [join(repo, 'bin', 'openswarm.mjs'), 'run', '--output-format', 'json', '--team', 'do it'], { cwd, env })
+  const failed = await run.then(() => undefined, (e: { stdout: string; stderr: string }) => e)
+  expect(`${failed?.stdout}${failed?.stderr}`).toMatch(/--team \(the coordinator team\) is gone/)
 }, 60_000)

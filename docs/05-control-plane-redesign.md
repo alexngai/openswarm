@@ -1927,7 +1927,8 @@ that costs less or scores lower fixed in advance.
   documented but the launcher rejected, now reaches the gate. Open, for
   the owner:
   - *Two headless engines.* `--output-format json` boots the dsh profile
-    with `eval-reporter.ts`; `--spec`, `--resume`, the gate and the caps
+    with `eval-reporter.ts` (which enforces `--max-tokens` and
+    `--max-turns` there); `--spec`, `--resume`, the gate and the dollar cap
     run `runCli`, which every docs/07 number was measured on. One should go.
   - *Features serving a deferred or disproven goal:* messaging peer-teams
     (D18 defers them, R2), the coordinator behind `/swarm` and

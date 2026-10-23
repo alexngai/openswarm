@@ -140,6 +140,16 @@ it('team spec: a fanout lands through the queue; a workspace that is not clean i
   expect(stop.usage.inputTokens).toBe(3 * router.requests())
 }, 180_000)
 
+it('team spec: --max-tokens sees member usage and still reports a result', async () => {
+  await startRouter(LIST_TREE)
+  process.chdir(scratchRepo())
+  const { code, events, stop } = await run(['--spec', writeSpec({ topology: 'fanout', members: [{ name: 'solo' }], tasks: [{ member: 'solo', prompt: 'list the tree' }] }), '--max-tokens', '1'])
+  expect(code).toBe(3)
+  expect(events.find((e) => e.type === 'budget_exceeded')?.limit).toMatch(/max-tokens/)
+  expect(stop.type).toBe('message_stop')
+  expect(stop.usage.inputTokens).toBeGreaterThan(1)
+}, 180_000)
+
 it('team spec: refused before booting when it conflicts or is not a peer-team or fanout', async () => {
   const fails = async (argv: string[]) => {
     const lines: string[] = []
@@ -153,9 +163,9 @@ it('team spec: refused before booting when it conflicts or is not a peer-team or
   expect(await fails(['--spec', writeSpec({ topology: 'coordinator' })])).toMatch(/topology must be peer-team or fanout/)
   // A gated task without checks is accepted by review alone, which the run says up front (docs/07 §7.10).
   const errs: string[] = []
-  const reviewed = writeSpec({ topology: 'peer-team', members: [{ name: 'm' }], gate: {}, tasks: [{ subject: 's', prompt: 'p' }, { subject: 't', prompt: 'q', checks: ['true'] }] })
+  const reviewed = writeSpec({ topology: 'peer-team', members: [{ name: 'm' }], gate: {}, tasks: [{ subject: 's', prompt: 'p' }, { subject: 't', prompt: 'q', checks: ['true'] }, { subject: 'u', prompt: 'r', minLevel: 1 }] })
   await runCli(['--output-format', 'json', '--model', 'mock-model', '--spec', reviewed, '--gate', 'go'], { out: () => {}, err: (l) => errs.push(l) })
-  expect(errs).toContainEqual(expect.stringMatching(/^openswarm: 1 of 2 gated task\(s\) have no checks, so a reviewer alone accepts/))
+  expect(errs).toContainEqual(expect.stringMatching(/^openswarm: 1 of 3 gated task\(s\) have no checks, so a reviewer alone accepts/))
 })
 
 it('team spec: claude-code members alone need no dsh route; their usage, cache writes and dollars reach message_stop', async () => {

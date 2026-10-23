@@ -195,8 +195,10 @@ it('a run the model fails says why it stopped, not only that nothing was spent',
   const errs: string[] = []
   const code = await runCli(['run', '--output-format', 'json', '--model', 'mock-small', 'ship it'], { out: (l) => lines.push(l), err: (l) => errs.push(l) })
   expect(code).toBe(1)
-  expect(errs).toContainEqual(expect.stringMatching(/^openswarm: the agent stopped \(error\)/))
-  expect(lines.map((l) => JSON.parse(l)).find((e) => e.type === 'error')?.message).toMatch(/no model call was made/)
+  const stopped = errs.find((l) => l.startsWith('openswarm: the agent stopped'))
+  // The provider's failure itself, not only that the run stopped.
+  expect(stopped).toMatch(/^openswarm: the agent stopped \(error\): [A-Z_]+: \S/)
+  expect(lines.map((l) => JSON.parse(l)).find((e) => e.type === 'error')?.message).toMatch(/no model call was made .*\([A-Z_]+: \S/)
 }, 120_000)
 
 it('accepts the Claude-Code permission vocabulary the harness adapter defaults to', async () => {

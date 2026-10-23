@@ -136,7 +136,7 @@ assertion, and is a finding in its own right:
 
 ## Running it
 
-*The script and the eval rig it drove were removed on 2026-10-23, once the study was done; both are at `1849cf7`.*
+*The script and the eval rig it drove were removed on 2026-10-23, once the study was done; both are at `027c536` (main).*
 
 ```bash
 node scripts/mutation-gate.mjs                    # all classes

@@ -18,7 +18,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { LlmAdapter, LlmError } from '@deepseek-ai/dsh-llm'
+import { CONTEXT_WINDOW_EXCEEDED_CODE, isContextWindowExceededError, isQuotaExceededError, LlmAdapter, LlmError, QUOTA_EXCEEDED_CODE } from '@deepseek-ai/dsh-llm'
 import type {
   ContentBlock,
   GenerateOptions,
@@ -240,14 +240,25 @@ export async function* translateEvents(
 }
 
 /**
- * The SDK's failure as an LlmError that says what the provider said, so a
- * quota or auth refusal is legible upstream: 429 is RATE_LIMIT, 401/403 AUTH.
+ * The SDK's failure as an LlmError that says what the provider said, coded so
+ * dsh acts on it: a spent quota (Bedrock's "too many tokens per day") is not
+ * retried, an overlong prompt ("prompt is too long") compacts, other 429s
+ * retry, 401/403 fail fast. The providers give no structured field for the
+ * first two, so their wording is matched, as dsh's own classifiers do.
  */
 export function providerError(what: string, error: unknown): LlmError {
   const status = (error as { status?: unknown } | undefined)?.status
   const http = typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599 ? status : undefined
-  const code = http === 429 ? 'RATE_LIMIT' : http === 401 || http === 403 ? 'AUTH' : 'TRANSPORT'
-  return new LlmError(`${what}: ${error instanceof Error ? error.message : String(error)}`, code, { cause: error, ...(http === undefined ? {} : { status: http }) })
+  const detail = error instanceof Error ? error.message : String(error)
+  const code =
+    http === 429
+      ? isQuotaExceededError(detail) || /per day/i.test(detail) ? QUOTA_EXCEEDED_CODE : 'RATE_LIMIT'
+      : http === 400 && (isContextWindowExceededError(detail) || /prompt is too long/i.test(detail))
+        ? CONTEXT_WINDOW_EXCEEDED_CODE
+        : http === 401 || http === 403
+          ? 'AUTH'
+          : 'TRANSPORT'
+  return new LlmError(`${what}: ${detail}`, code, { cause: error, ...(http === undefined ? {} : { status: http }) })
 }
 
 // ---------------------------------------------------------------------------

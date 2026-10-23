@@ -156,8 +156,12 @@ def run(variant: str, cap: float) -> None:
     (OUT / name).mkdir(parents=True, exist_ok=True)
     running: list[threading.Thread] = []
     for tree in trees:
-        if (OUT / name / f"{tree['id']}.json").exists():
-            continue
+        done = OUT / name / f"{tree['id']}.json"
+        if done.exists():
+            if json.loads(done.read_text()).get("targets") is not None:
+                continue
+            # A review that gave no verdict runs again; its spend stays counted under another name.
+            done.rename(done.with_suffix(f".failed-{int(time.time())}.json"))
         while len([t for t in running if t.is_alive()]) >= int(os.environ.get("BENCH_CELLS", 6)):
             time.sleep(10)
         if spent(name) + 3 * (len([t for t in running if t.is_alive()]) + 1) > cap:
