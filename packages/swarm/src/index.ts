@@ -854,11 +854,15 @@ export default class SwarmService extends Service {
           await record({ ...running, status: 'finished', endedAt, result: settled })
           return settled
         },
-        async (error: unknown) => {
-          const message = error instanceof Error ? error.message : String(error)
+        async (thrown: unknown) => {
           // A train that stopped, or a run whose completed tasks landed past
           // abandoned ones, says what had landed: those commits are on the target.
-          const outcome = error instanceof TrainStoppedError || error instanceof AbandonedTasksError ? error.outcome : undefined
+          const outcome = thrown instanceof TrainStoppedError || thrown instanceof AbandonedTasksError ? thrown.outcome : undefined
+          // A cancelled run failed because it was cancelled, whatever its members
+          // threw after (an aborted member can fail rather than settle, and leave
+          // its task with no members to run it).
+          const error = signal.aborted && signal.reason !== undefined ? signal.reason : thrown
+          const message = error instanceof Error ? error.message : String(error)
           const git = outcome === undefined ? {} : { git: outcome }
           const endedAt = Date.now()
           settle(endedAt, git.git)
