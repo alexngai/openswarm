@@ -18,7 +18,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { LlmAdapter, LlmError } from '@deepseek-ai/dsh-llm'
+import { CONTEXT_WINDOW_EXCEEDED_CODE, isContextWindowExceededError, isQuotaExceededError, LlmAdapter, LlmError, QUOTA_EXCEEDED_CODE } from '@deepseek-ai/dsh-llm'
 import type {
   ContentBlock,
   GenerateOptions,
@@ -116,6 +116,20 @@ export function mapMessages(messages: Message[]): AnthropicMessage[] {
     else out.push({ role, content })
   }
   return out
+}
+
+const EPHEMERAL = { type: 'ephemeral' } as const
+
+/**
+ * Prompt caching: a breakpoint on the system prompt (tools render before it,
+ * so it covers both) and one on the newest block, which the next turn of an
+ * agent loop reads back instead of paying for its whole history again.
+ * Explicit markers, not the top-level field the Bedrock path may reject.
+ */
+export function withCache(system: string | undefined, messages: AnthropicMessage[]): { system?: AnthropicContent[]; messages: AnthropicMessage[] } {
+  const last = messages.at(-1)?.content.at(-1)
+  if (last !== undefined) last['cache_control'] = EPHEMERAL
+  return system === undefined || system === '' ? { messages } : { system: [{ type: 'text', text: system, cache_control: EPHEMERAL }], messages }
 }
 
 export function mapTools(tools: ToolSchema[] | undefined): AnthropicContent[] | undefined {
@@ -225,6 +239,28 @@ export async function* translateEvents(
   throw new LlmError('Anthropic stream ended without message_stop', 'TRANSPORT')
 }
 
+/**
+ * The SDK's failure as an LlmError that says what the provider said, coded so
+ * dsh acts on it: a spent quota (Bedrock's "too many tokens per day") is not
+ * retried, an overlong prompt ("prompt is too long") compacts, other 429s
+ * retry, 401/403 fail fast. The providers give no structured field for the
+ * first two, so their wording is matched, as dsh's own classifiers do.
+ */
+export function providerError(what: string, error: unknown): LlmError {
+  const status = (error as { status?: unknown } | undefined)?.status
+  const http = typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599 ? status : undefined
+  const detail = error instanceof Error ? error.message : String(error)
+  const code =
+    http === 429
+      ? isQuotaExceededError(detail) || /per day/i.test(detail) ? QUOTA_EXCEEDED_CODE : 'RATE_LIMIT'
+      : http === 400 && (isContextWindowExceededError(detail) || /prompt is too long/i.test(detail))
+        ? CONTEXT_WINDOW_EXCEEDED_CODE
+        : http === 401 || http === 403
+          ? 'AUTH'
+          : 'TRANSPORT'
+  return new LlmError(`${what}: ${detail}`, code, { cause: error, ...(http === undefined ? {} : { status: http }) })
+}
+
 // ---------------------------------------------------------------------------
 // Adapter.
 
@@ -282,8 +318,7 @@ class AnthropicAdapter extends LlmAdapter {
         {
           model: options.model,
           max_tokens: options.maxTokens ?? cfg.maxTokens ?? 32_768,
-          ...(options.system === undefined ? {} : { system: options.system }),
-          messages: mapMessages(options.messages),
+          ...withCache(options.system, mapMessages(options.messages)),
           ...(mapTools(options.tools) === undefined ? {} : { tools: mapTools(options.tools) }),
           ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
           ...(options.stop === undefined || options.stop.length === 0
@@ -295,14 +330,14 @@ class AnthropicAdapter extends LlmAdapter {
       )
     } catch (error) {
       if (options.signal?.aborted) throw new LlmError('Anthropic request aborted by caller', 'ABORTED', { cause: error })
-      throw new LlmError('Anthropic Messages request failed', 'TRANSPORT', { cause: error })
+      throw providerError('Anthropic Messages request failed', error)
     }
     try {
       yield* translateEvents(events)
     } catch (error) {
       if (options.signal?.aborted) throw new LlmError('Anthropic request aborted by caller', 'ABORTED', { cause: error })
       if (error instanceof LlmError) throw error
-      throw new LlmError('Anthropic stream failed', 'TRANSPORT', { cause: error })
+      throw providerError('Anthropic stream failed', error)
     }
   }
 }

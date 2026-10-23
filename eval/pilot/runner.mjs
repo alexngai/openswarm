@@ -1,7 +1,7 @@
 /**
  * openswarm on RoadmapBench, Docker on a native x86 Linux host: the openswarm docs/05
- * pilot (D10). Arms: `single` (one agent), `sharded` and `program` (hand-planned
- * threads; see openswarm docs/05 §7.5), and docs/07 §7.1's search arms: `attempt` (one
+ * pilot (D10). Arms: `single` (one agent; the pilot's plan-mode `sharded` and
+ * `program` arms, docs/05 §7.5, are gone with plan mode), and docs/07 §7.1's search arms: `attempt` (one
  * agent then a reviewer; seeds 1..N are the attempts arms a and c are built from) and
  * `rounds` (up to ROADMAP_ROUNDS agent rounds fed by the same reviewer: arm b), and
  * `selfrounds` (the same rounds, each opened by a self-check prompt instead: arm b0); and
@@ -22,7 +22,7 @@
  * a single-file bundle cannot launch, so the bundle path is gone.
  *
  *   (host) build openswarm at $OPENSWARM_ROOT; Node 24 at /opt/node
- *   ROADMAP_TASKS=vbt-1.3.0 ROADMAP_ARMS=single,sharded,program node examples/openswarm-roadmap-docker.mjs
+ *   ROADMAP_TASKS=vbt-1.3.0 ROADMAP_ARMS=single node eval/pilot/runner.mjs
  *
  * Task dirs come from the HF dataset (`UnipatAI/RoadmapBench`) under ROADMAP_DIR
  * (default eval/pilot/.roadmap, gitignored): `<task>-roadmap/{instruction.md,task.toml,tests/}`;
@@ -72,7 +72,7 @@ if (!MOCK) for (const key of ["AZURE_API_BASE", "AZURE_API_KEY"]) {
 if (!existsSync(join(OPENSWARM_ROOT, "packages/cli/dist/index.js"))) { console.error(`no built openswarm at ${OPENSWARM_ROOT}`); process.exit(2); }
 if (!existsSync("/opt/node/bin/node")) { console.error("no Node at /opt/node on the host"); process.exit(2); }
 if (TASKS.length === 0) { console.error("set ROADMAP_TASKS=<task>[,<task>…] (e.g. opt-4.4.0)"); process.exit(2); }
-const DRIVER = { single: "openswarm", gated: "openswarm", sharded: "openswarm", program: "openswarm", landtrain: "openswarm", attempt: "search", rounds: "search", selfrounds: "search", divsharded: "division", divprogram: "division", onethread4: "division", onethread8: "division", onethread16: "division" };
+const DRIVER = { single: "openswarm", gated: "openswarm", landtrain: "openswarm", attempt: "search", rounds: "search", selfrounds: "search", divsharded: "division", divprogram: "division", onethread4: "division", onethread8: "division", onethread16: "division" };
 /** The most rounds a one-thread arm of this run may take (its timeout scales with it). */
 const ONE_ROUNDS = Math.max(4, ...ARMS.filter((a) => a.startsWith("onethread")).map((a) => Number(a.slice("onethread".length))));
 for (const arm of ARMS) if (!DRIVER[arm]) { console.error(`unknown arm ${arm}`); process.exit(2); }
@@ -107,7 +107,7 @@ const LANDING_CHECKS = JSON.parse(readFileSync(join(HERE, "landing-checks.json")
 
 /**
  * The landtrain arm's team: two dsh members on the CLI's route, one board task per plan thread
- * framed as plan mode frames a thread (the CLI puts the task's instruction ahead of each), the
+ * framed under `## Your thread` (the CLI puts the task's instruction ahead of each), the
  * others after t0, landed through the train on the task's check.
  */
 function landtrainSpec(name, plan) {
@@ -141,7 +141,7 @@ function loadTask(name) {
   const files = [{ path: "/opt/pilot/openswarm.mjs", content: ENTRY }];
   if (SEARCH) for (const f of ["gate.mjs", `${BIN}.mjs`]) files.push({ path: `/opt/pilot/${f}`, content: readFileSync(join(HERE, f), "utf8") });
   const plan = join(PLANS, name, "plan.json");
-  if (ARMS.some((a) => ["sharded", "program", "divsharded", "divprogram"].includes(a))) {
+  if (ARMS.some((a) => ["divsharded", "divprogram"].includes(a))) {
     if (!existsSync(plan)) throw new Error(`${name}: team arms need ${plan}`);
     files.push({ path: "/opt/pilot/plan.json", content: readFileSync(plan, "utf8") });
   }
@@ -229,13 +229,13 @@ const SCAFFOLD = {
 const armOf = (id) => ({
   id,
   label: id,
-  scaffold: SCAFFOLD[id] ?? { env: { OPENSWARM_PILOT_ARM: id, OPENSWARM_PILOT_PLAN: "/opt/pilot/plan.json" } },
+  scaffold: SCAFFOLD[id],
 });
 
 /**
  * swarmkit-eval 0.2.0's DockerWorkspace.run drops `opts.env` (fixed in its
  * source, not yet published), so the harness's route and each arm's
- * OPENSWARM_PILOT_* never reached the CLI and every cell ran as a bare single
+ * env never reached the CLI and every cell ran as a bare single
  * agent with no model route. Re-add the env as exports ahead of the command.
  * Delete once a published swarmkit-eval passes it.
  */

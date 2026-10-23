@@ -7,7 +7,7 @@
  *       -> "1. git apply /opt/pilot/ref/<id>.patch"
  *   worker            (prompt carries that command, no tool result yet)
  *       -> bash tool call running it
- *   team-spec member  (a thread framed as plan mode frames it, no plan to decompose: landtrain)
+ *   team-spec member  (a thread framed as `## Your thread`, no plan to decompose: landtrain)
  *       -> bash tool call applying that thread's slice
  *   anything else     (tool result, synthesis) -> "done"
  *
@@ -25,7 +25,7 @@ function decide(messages) {
   if (all.includes("Decompose this task") && thread) return { content: `1. git apply /opt/pilot/ref/${thread}.patch` };
   const cmd = /git apply \/opt\/pilot\/ref\/\S+\.patch/.exec(text(last))?.[0];
   if (cmd) return { tool: { name: "bash", arguments: JSON.stringify({ command: `${cmd} && git status --short | head -5` }) } };
-  // A team-spec member (arm landtrain) is given its thread as plan mode frames it; a repair re-applies it, which fails harmlessly.
+  // A team-spec member (arm landtrain) is given its thread under `## Your thread`; a repair re-applies it, which fails harmlessly.
   if (thread && all.includes("Other threads own the rest of the roadmap")) return { tool: { name: "bash", arguments: JSON.stringify({ command: `git apply /opt/pilot/ref/${thread}.patch && git status --short | head -5` }) } };
   return { content: "done" };
 }

@@ -558,6 +558,10 @@ it('session logs: only message lines are parsed, the route is the one the messag
   const spent = { ...emptyUsage(), inputTokens: 1_000_000, calls: 1 }
   expect(priced({ 'gpt-x': spent, idle: emptyUsage() }, { 'gpt-x': { input: 2, output: 8 } })).toBe(2)
   expect(priced({ 'gpt-x': spent, other: spent }, { 'gpt-x': { input: 2, output: 8 } })).toEqual({ reason: 'no price for other' })
+  // An unpriced cache write costs Anthropic's 1.25× input, not input, so a cap never undercounts it.
+  const written = { ...emptyUsage(), cacheWriteTokens: 1_000_000, calls: 1 }
+  expect(priced({ claude: written }, { claude: { input: 2, output: 8 } })).toBe(2.5)
+  expect(priced({ claude: written }, { claude: { input: 2, output: 8, cacheWrite: 4 } })).toBe(4)
 })
 
 it('an in-process member that spends and then throws still has its usage journaled, its error intact, and nothing left in the recorder', async () => {

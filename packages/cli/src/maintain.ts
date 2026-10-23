@@ -19,7 +19,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { withSnapshotClone } from 'openswarm-git'
-import { defaultRunsDir, landingText, memberEnvOf, reviewMemberConfig, runJournalPath, runLandings, runMemberProcess, type Pricing } from 'openswarm-swarm'
+import { cacheWriteRate, defaultRunsDir, landingText, memberEnvOf, reviewMemberConfig, runJournalPath, runLandings, runMemberProcess, type Pricing } from 'openswarm-swarm'
 import { pricingOf } from './control'
 import { bootHarness, foldSessionLogs, memberRouteOf, routeOf, runHeadless, sandboxUnavailable, splitArgv, type CliIo } from './index'
 
@@ -222,7 +222,7 @@ export async function runMaintain(argv: string[], io: CliIo): Promise<number> {
       spent = foldSessionLogs(sessions)
       await harness.dispose()
     }
-    const surveyUsd = rate === undefined ? undefined : (spent.inputTokens * rate.input + spent.outputTokens * rate.output + spent.cacheReadInputTokens * (rate.cacheRead ?? rate.input) + spent.cacheWriteInputTokens * (rate.cacheWrite ?? rate.input)) / 1e6
+    const surveyUsd = rate === undefined ? undefined : (spent.inputTokens * rate.input + spent.outputTokens * rate.output + spent.cacheReadInputTokens * (rate.cacheRead ?? rate.input) + spent.cacheWriteInputTokens * cacheWriteRate(rate)) / 1e6
     const surveyCost = `${spent.totalTokens} tokens${surveyUsd === undefined ? '' : `, $${surveyUsd.toFixed(2)}`}`
     io.out(JSON.stringify({ type: 'survey_note', usage: spent, ...(surveyUsd === undefined ? {} : { usd: surveyUsd }), dropped: survey.dropped }))
     io.out(JSON.stringify({ type: 'survey', tasks: survey.tasks }))

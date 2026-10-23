@@ -163,7 +163,8 @@ it('a mixed roster of a dsh member and a claude-code member lands both tasks thr
   // Priced, dollars by runtime: claude-code's as it reported them, dsh's from the table.
   const pricing = { 'deepseek-v4-flash': { input: 1, output: 2 } }
   const priced = runMetrics(join(h.runsDir, run.id), { pricing })
-  const dshUsd = (dsh[0]!.usage.inputTokens + dsh[0]!.usage.cacheReadTokens + dsh[0]!.usage.cacheWriteTokens + 2 * dsh[0]!.usage.outputTokens) / 1e6
+  // Unpriced cache writes cost 1.25× input (cacheWriteRate).
+  const dshUsd = (dsh[0]!.usage.inputTokens + dsh[0]!.usage.cacheReadTokens + 1.25 * dsh[0]!.usage.cacheWriteTokens + 2 * dsh[0]!.usage.outputTokens) / 1e6
   expect(priced.dollars).toMatchObject({ source: 'mixed', byRuntime: { 'claude-code': expect.closeTo(2 * RUN_USD, 10), 'dsh:sdk': expect.closeTo(dshUsd, 10) } })
   expect(priced.dollars!.total).toBeCloseTo(2 * RUN_USD + dshUsd, 10)
   expect(priced.dollars!.unreported).toBeUndefined()

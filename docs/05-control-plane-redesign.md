@@ -699,6 +699,17 @@ claude-code member landing through one train, cost by runtime) and live
 (`2ed95f8`: a claude-code member on haiku landed through a train,
 $0.045). **4**, **5** and **6** are met (6 narrowly, over two runs).
 
+**L1 is labelled unverified (2026-10-23).** On held-out tests the gate's
+reviewer carried no detectable signal on the trees it let through (docs/07
+§7.10), so an acceptance by review alone is no longer reported as plain
+success: `run --gate` without checks warns before any spend and its recap
+line reads `accepted at L1 … by review alone, unverified (no checks ran)`;
+a peer-team spec warns with the count of gated tasks that have no checks.
+Declaring L1 (`--gate-level 1`, the spec gate's `minLevel: 1`) silences the
+warning. Nothing is refused; landing evidence already rated L1 high risk.
+This is not D17's reversal condition (that is the reviewer loop scoring
+under the self-check loop), which the bench did not test.
+
 **Progress.** B6a, the gate's core and the single-agent path, is built:
 `a95d289` (`runGate`; `snapshotTree`; CLI `--gate`, `--gate-rounds`,
 `--gate-check`, `OPENSWARM_GATE`), `9c5317f` (the reviewer's copy is a
@@ -1909,6 +1920,26 @@ that costs less or scores lower fixed in advance.
   session after one board write does not. `/swarm` (coordinator) never
   touches the board and is unaffected. A3's journal fixes it; the test
   flips if dsh accepts plugin event types first.
+- **What to cut** (an audit of the surface against the evidence,
+  2026-10-23). Removed: CLI plan mode and `--team` (now refused), the
+  docs/04 self-modification rig with `recover.ts`, and three dead config
+  and helper names; and the launcher's `run --gate`, which docs/03
+  documented but the launcher rejected, now reaches the gate. Open, for
+  the owner:
+  - *Two headless engines.* `--output-format json` boots the dsh profile
+    with `eval-reporter.ts` (which enforces `--max-tokens` and
+    `--max-turns` there); `--spec`, `--resume`, the gate and the dollar cap
+    run `runCli`, which every docs/07 number was measured on. One should go.
+  - *Features serving a deferred or disproven goal:* messaging peer-teams
+    (D18 defers them, R2), the coordinator behind `/swarm` and
+    `openswarm start` (the calibration that failed), the cascade topology
+    and `topology cascade` (port its pinning tests to a gated peer-team
+    first), self-modification (0 uses in 103 runs), and the critic-loop,
+    committee and pipeline topologies the CLI cannot run.
+  - *Duplication:* usage folding in the CLI against `metrics.ts`, a gate
+    round rendered three ways, `review.cordis.yml` as a copy of
+    `member.cordis.yml`, and the landing step written in `train.ts`,
+    `train-client.ts` and `forge.ts`.
 
 ## 11. dsh seams, checked against the installed packages
 

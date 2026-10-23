@@ -3,7 +3,7 @@
  * contract, and dsh message history → Anthropic params. No SDK, no network.
  */
 import { expect, it } from 'vitest'
-import { mapMessages, mapTools, translateEvents } from '../src/index'
+import { mapMessages, mapTools, providerError, translateEvents, withCache } from '../src/index'
 
 async function collect(events: unknown[]): Promise<any[]> {
   const out: any[] = []
@@ -81,4 +81,31 @@ it('maps dsh history: system stays out, tool round-trips, same roles merge', () 
   expect(mapTools([{ name: 't', description: 'd', parameters: { type: 'object' } }])).toEqual([
     { name: 't', description: 'd', input_schema: { type: 'object' } },
   ])
+})
+
+it('caches the system prompt and the newest block, nothing else', () => {
+  const messages = mapMessages([
+    { role: 'user', content: [{ type: 'text', text: 'fix it' }], id: 'm1', source: { kind: 'user' } },
+    { role: 'assistant', content: [{ type: 'tool-call', id: 'toolu_1', name: 'bash', arguments: '{}' }], id: 'm2', source: { kind: 'user' } },
+    { role: 'user', content: [{ type: 'tool-result', toolCallId: 'toolu_1', content: [{ type: 'text', text: 'ok' }] }], id: 'm3', source: { kind: 'user' } },
+  ] as any[])
+  const params = withCache('be brief', messages)
+  expect(params.system).toEqual([{ type: 'text', text: 'be brief', cache_control: { type: 'ephemeral' } }])
+  expect(params.messages[2]!.content[0]).toMatchObject({ type: 'tool_result', cache_control: { type: 'ephemeral' } })
+  expect(JSON.stringify(params.messages.slice(0, 2))).not.toContain('cache_control')
+  // an empty or missing system prompt sends none; empty history marks nothing
+  expect(withCache('', [])).toEqual({ messages: [] })
+  expect(withCache(undefined, [])).toEqual({ messages: [] })
+})
+
+it('a provider refusal keeps what the provider said, and its status', () => {
+  const quota = Object.assign(new Error('429 Too many tokens per day, please wait before trying again.'), { status: 429 })
+  expect(providerError('Anthropic Messages request failed', quota)).toMatchObject({
+    code: 'QUOTA',
+    message: 'Anthropic Messages request failed: 429 Too many tokens per day, please wait before trying again.',
+  })
+  expect(providerError('x', Object.assign(new Error('denied'), { status: 403 })).code).toBe('AUTH')
+  expect(providerError('x', Object.assign(new Error('429 slow down'), { status: 429 })).code).toBe('RATE_LIMIT')
+  expect(providerError('x', Object.assign(new Error('400 prompt is too long: 210000 tokens > 200000 maximum'), { status: 400 })).code).toBe('CONTEXT_WINDOW_EXCEEDED')
+  expect(providerError('x', new Error('socket hang up')).code).toBe('TRANSPORT')
 })

@@ -180,28 +180,25 @@ it('--max-tokens stops the run and reports the usage actually spent', async () =
   expect(parsed.usage.totalTokens).toBeGreaterThan(0)
 }, 60_000)
 
-it('--team runs the coordinator topology and still honors the output contract', async () => {
-  // The coordinator's first turn MUST parse as a numbered plan (runCoordinator
-  // throws otherwise), so the scripted reply is a list, not prose.
-  await startMock({
-    apiKey: 'mock-key',
-    sequence: ['success'],
-    repeatLast: true,
-    successText: '1. first subtask\n2. second subtask',
-  })
+it('--team is refused, not run as a single agent: the coordinator team it ran failed calibration', async () => {
   process.chdir(mkdtempSync(join(tmpdir(), 'openswarm-run-ws-')))
+  const lines: string[] = []
+  const code = await runCli(['run', '--output-format', 'json', '--model', 'mock-small', '--team', 'ship it'], { out: (l) => lines.push(l), err: () => {} })
+  expect(code).toBe(1)
+  expect(lines.map((l) => JSON.parse(l)).find((e) => e.type === 'error')?.message).toMatch(/--team \(the coordinator team\) is gone/)
+})
 
+it('a run the model fails says why it stopped, not only that nothing was spent', async () => {
+  await startMock({ apiKey: 'mock-key', sequence: ['server_error'], repeatLast: true })
+  process.chdir(mkdtempSync(join(tmpdir(), 'openswarm-run-ws-')))
   const lines: string[] = []
   const errs: string[] = []
-  const code = await runCli(
-    ['run', '--output-format', 'json', '--model', 'mock-small', '--team', '--workers', '2', 'ship it'],
-    { out: (l) => lines.push(l), err: (l) => errs.push(l) },
-  )
-  expect(errs.join('\n')).toBe('')
-  expect(code).toBe(0)
-  const parsed = openSwarmParse(lines.join('\n'))
-  expect(parsed.sawResult).toBe(true)
-  expect(parsed.usage.totalTokens).toBeGreaterThan(0)
+  const code = await runCli(['run', '--output-format', 'json', '--model', 'mock-small', 'ship it'], { out: (l) => lines.push(l), err: (l) => errs.push(l) })
+  expect(code).toBe(1)
+  const stopped = errs.find((l) => l.startsWith('openswarm: the agent stopped'))
+  // The provider's failure itself, not only that the run stopped.
+  expect(stopped).toMatch(/^openswarm: the agent stopped \(error\): [A-Z_]+: \S/)
+  expect(lines.map((l) => JSON.parse(l)).find((e) => e.type === 'error')?.message).toMatch(/no model call was made .*\([A-Z_]+: \S/)
 }, 120_000)
 
 it('accepts the Claude-Code permission vocabulary the harness adapter defaults to', async () => {
@@ -453,7 +450,9 @@ it('--gate: the reviewer measures in its own clone, accepts round 1, and its usa
     { type: 'gate', accepted: true, level: 1, rounds: 1 },
   ])
   // The same, legible on stderr, which the harness does not truncate to its head.
-  expect(errs).toEqual(['gate: round 1 L1 review score 100 — passed (1 done)', 'gate: accepted at L1 after 1 round'])
+  // A gate without checks says up front that a reviewer alone decides (docs/07 §7.10), and labels the acceptance.
+  expect(errs[0]).toMatch(/^openswarm: the gate has no checks, so a reviewer alone accepts.*§7\.10/)
+  expect(errs.slice(1)).toEqual(['gate: round 1 L1 review score 100 — passed (1 done)', 'gate: accepted at L1 after 1 round — by review alone, unverified (no checks ran)'])
   const parsed = openSwarmParse(lines.join('\n'))
   expect(parsed.sawResult).toBe(true)
   expect(parsed.output).toContain('all done')
@@ -550,7 +549,8 @@ it('each round reports what the reviewer told the agent: per-target verdicts, wh
   const lines: string[] = []
   const errs: string[] = []
   const code = await runCli(
-    ['run', '--output-format', 'json', '--model', 'mock-small', '--gate', 'ship it'],
+    // Declaring L1 silences the no-checks warning.
+    ['run', '--output-format', 'json', '--model', 'mock-small', '--gate', '--gate-level', '1', 'ship it'],
     { out: (l) => lines.push(l), err: (l) => errs.push(l) },
   )
   // The agent changes nothing, so round 2 stops the gate without another review.
@@ -585,7 +585,7 @@ it('OPENSWARM_GATE=1 selects the gate, since an eval Arm carries env not flags',
   }
 }, 60_000)
 
-it('--gate refuses a cwd that is not a git work tree, and the team path', async () => {
+it('--gate refuses a cwd that is not a git work tree, and an empty check', async () => {
   process.chdir(mkdtempSync(join(tmpdir(), 'openswarm-run-ws-')))
   const lines: string[] = []
   const code = await runCli(
@@ -596,14 +596,6 @@ it('--gate refuses a cwd that is not a git work tree, and the team path', async 
   expect(lines.join('\n')).toMatch(/needs a git work tree/)
 
   gitWorkspace()
-  const teamLines: string[] = []
-  const teamCode = await runCli(
-    ['run', '--output-format', 'json', '--model', 'mock-small', '--team', '--gate', 'ship it'],
-    { out: (l) => teamLines.push(l), err: () => {} },
-  )
-  expect(teamCode).toBe(1)
-  expect(teamLines.join('\n')).toMatch(/only the single-agent path[\s\S]*--team/)
-
   const emptyLines: string[] = []
   const emptyCode = await runCli(
     ['run', '--output-format', 'json', '--model', 'mock-small', '--gate', '--gate-check', '', 'ship it'],

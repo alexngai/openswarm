@@ -37,18 +37,20 @@ export function cli(cwd, prompt, isAgent) {
     child.stdout.setEncoding("utf8").on("data", (d) => { stdout += d; });
     child.on("close", (status) => {
       clearTimeout(timer);
-      const usage = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0 };
+      const usage = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 };
       let text = "";
       let out = "";
+      let error;
       for (const line of stdout.split("\n")) {
         let o;
         try { o = JSON.parse(line); } catch { continue; }
         if (o.type === "text_delta") text += o.text;
+        if (o.type === "error") error = o.message;
         if (o.type === "message_stop") for (const k of Object.keys(usage)) usage[k] += o.usage?.[k] ?? 0;
         if (isAgent || o.type === "message_stop") out += `${line}\n`;
       }
       process.stdout.write(out);
-      resolve({ code: status ?? 1, text, usage, minutes: (Date.now() - started) / 60000 });
+      resolve({ code: status ?? 1, text, usage, minutes: (Date.now() - started) / 60000, ...(error === undefined ? {} : { error }) });
     });
   });
 }
@@ -95,7 +97,7 @@ export async function review(cwd, roadmap, scope, brief = REVIEW) {
   let verdict = null;
   try { verdict = JSON.parse(line); } catch {}
   const score = typeof verdict?.score === "number" ? verdict.score : null;
-  return { score, targets: verdict?.targets ?? null, regressions: verdict?.regressions ?? null, usage: r.usage, minutes: r.minutes, tail: r.text.slice(-1500) };
+  return { score, targets: verdict?.targets ?? null, regressions: verdict?.regressions ?? null, usage: r.usage, minutes: r.minutes, tail: r.text.slice(-1500), ...(r.error === undefined ? {} : { error: r.error }) };
 }
 
 export const allDone = (rv) => Array.isArray(rv.targets) && rv.targets.length > 0 && rv.targets.every((t) => t.status === "done");

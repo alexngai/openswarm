@@ -123,8 +123,6 @@ export { WorktreeRun, memberEnvOf, reviewMemberConfig, runMemberProcess } from '
 export type { WorktreeTeamOptions, WorktreeMemberConfig } from './worktrees'
 
 export interface SwarmConfig {
-  /** Subagent provider used when a member does not name one (default 'spawn'). */
-  defaultSubagentProvider?: string
   /**
    * Where run journals live, one `<run id>/journal.jsonl` each
    * (default `$OPENSWARM_HOME/runs`, else `~/.openswarm/runs`).
@@ -1577,7 +1575,7 @@ export default class SwarmService extends Service {
     const created = await seedBoard(board, spec.tasks)
     const seeded = new Set(created)
 
-    const provider = this.swarmConfig.defaultSubagentProvider ?? 'spawn'
+    const provider = 'spawn'
     // A child's last settlement notice can reach the lead after this runner
     // returns, so the suppression outlives the run: every notice while it
     // runs, then only this run's children's, for the lead's lifetime.
@@ -1636,7 +1634,7 @@ export default class SwarmService extends Service {
       return member.runtime === 'codex' ? runCodex(member, prompt, run) : runClaudeCode(member, prompt, { ...run, live: account.live })
     }
     const provider =
-      member.subagentProvider ?? this.swarmConfig.defaultSubagentProvider ?? 'spawn'
+      member.subagentProvider ?? 'spawn'
     const text = member.persona === undefined ? prompt : `${member.persona}\n\n${prompt}`
     const startedAt = Date.now()
     const run = await this.ctx.subagents.start(provider, {
